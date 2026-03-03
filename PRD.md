@@ -21,9 +21,9 @@ Laborer is a local-first, API-first application for orchestrating multiple AI co
 - A **tmux-style panel system** where each pane is a live terminal (xterm.js) showing an agent's TUI, a diff viewer, or a raw shell. Panes split recursively (horizontal/vertical), resize, and persist across sessions.
 - **Automated workspace isolation** via git worktrees (v1) with a pluggable provider interface for future Docker/Daytona support. Each workspace gets its own branch, port allocation, file watcher scope, and setup script execution.
 - **Task-driven lifecycle** where workspaces are created from Linear tickets or GitHub issues, and cleaned up when PRs merge or tasks close.
-- A **standalone Bun server** running Effect TS services, separate from the UI. The server manages all side effects (process spawning, git operations, file system). The UI can run in a browser or a Tauri desktop shell.
-- **LiveStore** for reactive state sync (workspaces, terminals, sessions, layout, diffs) between server and UI, with **Effect RPC** for triggering side effects.
-- The **full rlph workflow** accessible via UI: PRD writing, issue creation, ralph loop execution, review, and fix cycles.
+- A **standalone Bun server** running Effect TS services, separate from the app. The server manages all side effects (process spawning, git operations, file system). The app can run in a browser or a Tauri desktop shell.
+- **LiveStore** for reactive state sync (workspaces, terminals, sessions, layout, diffs) between server and app, with **Effect RPC** for triggering side effects.
+- The **full rlph workflow** accessible via the app: PRD writing, issue creation, ralph loop execution, review, and fix cycles.
 
 ## User Stories
 
@@ -39,8 +39,8 @@ Laborer is a local-first, API-first application for orchestrating multiple AI co
 10. As a developer, I want each workspace to have its own allocated port for its dev server, so that I can run multiple Next.js (or similar) dev servers simultaneously without port conflicts.
 11. As a developer, I want the workspace setup to automatically run project-specific scripts (install deps, copy .env files, etc.), so that I don't have to manually bootstrap each worktree.
 12. As a developer, I want to manage multiple projects (repos) simultaneously, so that I can work across different codebases in the same session.
-13. As a developer, I want to start a ralph loop on a workspace via a UI button, so that I can kick off autonomous agent work without switching to a terminal.
-14. As a developer, I want to write a PRD through the UI, so that I can start the full workflow (PRD -> issues -> implementation) from within laborer.
+13. As a developer, I want to start a ralph loop on a workspace via a button in the app, so that I can kick off autonomous agent work without switching to a terminal.
+14. As a developer, I want to write a PRD through the app, so that I can start the full workflow (PRD -> issues -> implementation) from within laborer.
 15. As a developer, I want PRD-generated issues to automatically become tasks that drive workspace creation, so that the workflow from idea to implementation is seamless.
 16. As a developer, I want to interact with agents in human-in-the-loop mode (typing directly into the agent's terminal), so that I can guide the agent when needed.
 17. As a developer, I want to switch between watching an autonomous ralph loop and directly interacting with an agent, so that I can intervene when the agent gets stuck.
@@ -51,12 +51,12 @@ Laborer is a local-first, API-first application for orchestrating multiple AI co
 22. As a developer, I want the server to expose an API, so that I can build custom tooling (Slack bots, CLI wrappers, CI integrations) on top of laborer.
 23. As a developer, I want the file watcher load to be isolated per workspace, so that running 10 agents doesn't exhaust the OS file descriptor limit.
 24. As a developer, I want to see which tasks are completed, in progress, or pending across all my active workspaces, so that I have a high-level view of what's happening.
-25. As a developer, I want to trigger rlph review on a PR from the UI, so that I can review agent-produced code without leaving laborer.
-26. As a developer, I want to trigger rlph fix on checked review findings from the UI, so that the review-fix cycle stays within laborer.
+25. As a developer, I want to trigger rlph review on a PR from the app, so that I can review agent-produced code without leaving laborer.
+26. As a developer, I want to trigger rlph fix on checked review findings from the app, so that the review-fix cycle stays within laborer.
 27. As a developer, I want workspaces to be resource-bound (no artificial limit), so that I can spin up as many as my machine can handle.
 28. As a developer, I want to easily re-enter an agent session that was previously running in a workspace, so that I can resume conversation context.
 29. As a developer, I want the server to run without authentication (local-only), so that there's zero friction to get started.
-30. As a developer, I want the UI to be keyboard-navigable with discoverable shortcuts, so that I can work efficiently without the mouse.
+30. As a developer, I want the app to be keyboard-navigable with discoverable shortcuts, so that I can work efficiently without the mouse.
 31. As a developer, I want to use the accept/reject UI in the diff viewer (@pierre/diffs annotations), so that I can selectively accept or reject agent changes.
 
 ## 'Polishing' Requirements
@@ -73,7 +73,7 @@ Once the core user stories are implemented, the following checks should be made:
 8. **Loading states.** Workspace creation, agent startup, and diff computation should have appropriate loading indicators.
 9. **Responsive layout.** The panel system should work well on different screen sizes, from a single 1080p monitor to a 5K display.
 10. **Scroll performance.** Terminal output in xterm.js should handle large buffers (100k+ lines) without UI lag.
-11. **Theme consistency.** The UI chrome around terminals and diff viewers should visually integrate well. Dark mode by default.
+11. **Theme consistency.** The app chrome around terminals and diff viewers should visually integrate well. Dark mode by default. shadcn/ui theming should be consistent across all components.
 12. **Status indicators.** Each workspace/terminal should have clear visual indicators of its state (running, stopped, errored, completed).
 13. **Empty states.** First launch, no projects, no workspaces — all empty states should guide the user toward getting started.
 
@@ -83,7 +83,7 @@ Once the core user stories are implemented, the following checks should be made:
 
 Laborer runs as two processes:
 - **Laborer Server**: A standalone Bun process running Effect TS (v4, from effect-smol). Manages all side effects: process spawning, PTY management, git operations, file system access, port allocation. Exposes an Effect RPC API for actions and serves as the LiveStore sync backend.
-- **Laborer UI**: A React + TypeScript frontend that runs in a browser or Tauri shell. Connects to the server via LiveStore for reactive state and Effect RPC for actions.
+- **Laborer App**: A React + TypeScript frontend built on TanStack Start (with TanStack Router) that runs in a browser or Tauri shell. Uses shadcn/ui (backed by Base UI) for components. Connects to the server via LiveStore for reactive state and Effect RPC for actions.
 
 The Tauri desktop shell is a thin wrapper that opens a webview to the local server. It adds native features (system tray, global shortcuts) but the core experience is identical in a browser.
 
@@ -97,11 +97,11 @@ All application state lives in LiveStore:
 - **Projects**: id, repoPath, name, rlphConfig
 - **Tasks**: id, projectId, source (linear/github/manual/prd), externalId, title, status
 
-Events are committed by both client and server. The server commits events for state changes resulting from side effects (workspace created, terminal output, diff updated). The client commits events for UI state (layout changes, task selection).
+Events are committed by both client and server. The server commits events for state changes resulting from side effects (workspace created, terminal output, diff updated). The client commits events for app state (layout changes, task selection).
 
 ### Action Layer: Effect RPC
 
-Effect RPC handles all side-effect-producing operations. The UI calls RPC methods; the server executes them and commits resulting state changes to LiveStore.
+Effect RPC handles all side-effect-producing operations. The app calls RPC methods; the server executes them and commits resulting state changes to LiveStore.
 
 Key RPC methods:
 - `workspace.create(projectId, taskConfig?)` — creates worktree, allocates port, runs setup
@@ -153,8 +153,8 @@ The Effect RPC router that exposes all side-effect operations. Thin layer that d
 
 Responsibilities: RPC method definitions, request validation, delegation to services, error handling.
 
-**7. PanelManager (React, UI)**
-The tmux-style panel system in the React frontend. Built on allotment for recursive split/resize. Each pane can display an xterm.js terminal or a @pierre/diffs diff viewer. Layout state is persisted via LiveStore.
+**7. PanelManager (React, App)**
+The tmux-style panel system in the React frontend. Built on allotment for recursive split/resize. Each pane can display an xterm.js terminal or a @pierre/diffs diff viewer. Layout state is persisted via LiveStore. All UI components use shadcn/ui (backed by Base UI) for consistent styling.
 
 Responsibilities: panel splitting/resizing/closing, pane type management (terminal/diff), keyboard shortcuts, layout serialization/deserialization, xterm.js integration, @pierre/diffs integration.
 
@@ -166,7 +166,9 @@ Responsibilities: panel splitting/resizing/closing, pane type management (termin
 | Core framework | Effect TS v4 | effect-smol |
 | Reactive state | LiveStore | v0.3+ |
 | RPC | Effect RPC | From effect-smol |
-| UI framework | React + TypeScript | React 19+ |
+| App framework | TanStack Start + React | Latest |
+| Routing | TanStack Router | Via TanStack Start |
+| Component library | shadcn/ui (Base UI) | Latest |
 | Panel system | allotment | Latest |
 | Terminal emulator | xterm.js | Latest |
 | Diff viewer | @pierre/diffs | v1.x |
@@ -192,12 +194,13 @@ laborer/
 │   │   │   └── main.ts      # Server entry point
 │   │   └── package.json
 │   │
-│   ├── ui/                  # React frontend
+│   ├── app/                 # TanStack Start + React (shadcn/ui + Base UI)
 │   │   ├── src/
 │   │   │   ├── panels/      # Panel system (allotment)
 │   │   │   ├── panes/       # Pane types (terminal, diff)
-│   │   │   ├── components/  # Shared UI components
-│   │   │   └── main.tsx     # UI entry point
+│   │   │   ├── components/  # shadcn/ui components
+│   │   │   ├── routes/      # TanStack Router file-based routes
+│   │   │   └── main.tsx     # App entry point
 │   │   └── package.json
 │   │
 │   ├── shared/              # Shared types, LiveStore schema, RPC contract
@@ -227,7 +230,7 @@ The PortAllocator service maintains a range of available ports (e.g., 3100-3999)
 
 ### rlph Integration
 
-Laborer wraps rlph as a subprocess. The UI provides buttons that map to rlph commands:
+Laborer wraps rlph as a subprocess. The app provides buttons that map to rlph commands:
 - "Write PRD" → `rlph prd [description]`
 - "Start Ralph Loop" → `rlph --once`
 - "Review PR" → `rlph review <pr>`

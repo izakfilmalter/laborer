@@ -174,7 +174,8 @@ Responsibilities: panel splitting/resizing/closing, pane type management (termin
 | Diff viewer | @pierre/diffs | v1.x |
 | Desktop shell | Tauri 2 | Optional |
 | Persistence | SQLite (via LiveStore) | |
-| Monorepo | Bun workspaces | |
+| Monorepo | Turborepo + Bun | Latest |
+| Linting / Formatting | Ultracite (Biome) | Latest |
 | Testing | Vitest (via @effect/vitest) | |
 
 ### Project Structure
@@ -214,6 +215,8 @@ laborer/
 │       ├── src-tauri/
 │       └── package.json
 │
+├── turbo.json               # Turborepo pipeline config
+├── biome.jsonc              # Ultracite / Biome config
 ├── package.json             # Bun workspace root
 └── bun.lockb
 ```

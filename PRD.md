@@ -167,8 +167,10 @@ Responsibilities: panel splitting/resizing/closing, pane type management (termin
 | Reactive state | LiveStore | v0.3+ |
 | RPC | Effect RPC | From effect-smol |
 | App framework | TanStack Start + React | Latest |
+| React compiler | React Compiler | Latest |
 | Routing | TanStack Router | Via TanStack Start |
 | Component library | shadcn/ui (Base UI) | Latest |
+| TypeScript | tsgo (TypeScript Go) | Latest |
 | Panel system | allotment | Latest |
 | Terminal emulator | xterm.js | Latest |
 | Diff viewer | @pierre/diffs | v1.x |

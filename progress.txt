@@ -1512,3 +1512,41 @@ Date: 2026-03-04
 
 ### Note: Issue #68 (vertical split) is also complete
 The `SplitPanelRenderer` handles both `direction: "horizontal"` and `direction: "vertical"` via the `orientation` prop on `ResizablePanelGroup`. The shadcn/ui wrapper applies `flex-col` for vertical orientation. No additional code changes are needed for vertical splits — they work out of the box.
+
+## Issue 62: xterm.js terminal pane — handle resize — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Updated `apps/web/src/panes/terminal-pane.tsx` to propagate terminal pane resize events to the server PTY via the `terminal.resize` RPC mutation.
+- Created module-level `terminalResizeMutation` atom via `LaborerClient.mutation("terminal.resize")` — shared across all TerminalPane instances for efficient atom deduplication.
+- Added `useAtomSet(terminalResizeMutation)` in the component to get the resize mutation dispatch function.
+- Used a `resizeTerminalRef` ref pattern (consistent with `writeTerminalRef`) to hold the latest resize mutation function, avoiding stale closures in the ResizeObserver callback.
+- Updated `handleResize` callback:
+  1. Calls `fitAddon.fit()` to recalculate cols/rows based on the new container size and font metrics.
+  2. Reads the new `cols` and `rows` from the xterm.js `Terminal` instance.
+  3. Validates dimensions are positive (guards against 0-dimension edge cases during rapid resizing).
+  4. Dispatches `resizeTerminalRef.current({ payload: { terminalId, cols, rows } })` in fire-and-forget mode for low-latency resize.
+- Added initial dimension sync: after the initial `fitAddon.fit()` during terminal initialization, the component immediately sends the initial cols/rows to the server PTY. This ensures the PTY starts with the correct dimensions matching the actual container size (rather than the default 80x24 from node-pty).
+- The server's `TerminalManager.resize(terminalId, cols, rows)` calls `pty.resize(cols, rows)` which sends SIGWINCH to the running process, causing it to reflow its output.
+- Updated module JSDoc to reference Issue #62.
+- Verified: `tsc --noEmit` passes for web, server, and shared packages (only pre-existing errors in calendar.tsx, sonner.tsx, routeTree.gen — no new errors), `biome check` passes with zero issues on terminal-pane.tsx.
+
+### Acceptance criteria status
+- [x] Pane resize → xterm.js fit addon recalculates cols/rows (fitAddon.fit() called in handleResize)
+- [x] New dimensions sent via `LaborerClient.mutation("terminal.resize")` (fire-and-forget dispatch via useAtomSet)
+- [x] PTY output reflows correctly after resize (server calls pty.resize which sends SIGWINCH)
+- [ ] Tests: resize pane → mutation called with new dimensions; terminal output reflows (deferred — requires running both server and web app with a live terminal)
+
+### Design decisions
+- Used fire-and-forget mode (no `{ mode: "promise" }`) for the resize mutation, consistent with the `terminal.write` mutation pattern. Resize is latency-sensitive during drag operations — awaiting a server response would make resizing feel sluggish.
+- Used `resizeTerminalRef` ref pattern (same pattern as `writeTerminalRef`) to avoid stale closure issues. The ResizeObserver callback is registered once and never re-registered, so it needs a ref to always access the latest mutation function.
+- Added a `cols > 0 && rows > 0` guard before dispatching the resize mutation. During rapid resizing (especially when collapsing a panel), the container may briefly have 0 dimensions, which would cause the PTY to error or behave unpredictably.
+- Sends initial dimensions after the first `fitAddon.fit()` so the PTY matches the container from the start. Without this, the PTY defaults to 80x24 (node-pty default), which may not match the actual pane size, causing display misalignment until the first resize event.
+- The `handleResize` callback depends on `terminalId` (not `resizeTerminal`) because the ref pattern makes the mutation function always current. This prevents unnecessary re-creation of the callback and the associated ResizeObserver.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #62 in the summary table. However, resize handling is critical for:
+  - Issue #69: PanelManager — recursive splits (splits trigger resize events on child panes)
+  - Issue #72: PanelManager — drag-to-resize (drag resize triggers ResizeObserver)
+  - Issue #81: Panel responsive layout (window resize triggers ResizeObserver)

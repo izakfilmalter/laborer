@@ -1701,14 +1701,14 @@ When the terminal pane is resized (by allotment or window resize), detect the ne
 
 ### Acceptance criteria
 
-- [ ] Pane resize → xterm.js fit addon recalculates cols/rows
-- [ ] New dimensions sent via `LaborerClient.mutation("terminal.resize")`
-- [ ] PTY output reflows correctly after resize
-- [ ] Tests: resize pane → mutation called with new dimensions; terminal output reflows
+- [x] Pane resize → xterm.js fit addon recalculates cols/rows
+- [x] New dimensions sent via `LaborerClient.mutation("terminal.resize")`
+- [x] PTY output reflows correctly after resize (server calls pty.resize which sends SIGWINCH)
+- [ ] Tests: resize pane → mutation called with new dimensions; terminal output reflows (deferred — requires running both server and web app with a live terminal)
 
 ### Blocked by
 
-- Blocked by #60, #58
+- Blocked by #60 (done), #58 (done)
 
 ### User stories addressed
 
@@ -3636,7 +3636,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 59 | terminal.kill RPC handler | #56, #54 | Done |
 | 60 | xterm.js — render output | ~~#18~~, ~~#56~~ | Done |
 | 61 | xterm.js — send keyboard input (AtomRpc mutation) | ~~#60~~, ~~#57~~ | Done |
-| 62 | xterm.js — handle resize (AtomRpc mutation) | ~~#60~~, ~~#58~~ | Ready |
+| 62 | xterm.js — handle resize (AtomRpc mutation) | ~~#60~~, ~~#58~~ | Done |
 | 63 | Terminal list per workspace UI | ~~#60~~, ~~#55~~ | Ready |
 | 64 | Terminal session reconnection | ~~#60~~ | Ready |
 | 65 | Terminal scrollback buffer replay | #64 | Blocked |

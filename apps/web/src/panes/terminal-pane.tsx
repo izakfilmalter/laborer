@@ -21,6 +21,7 @@
  * @see packages/shared/src/schema.ts (terminalOutput event)
  * @see Issue #60: xterm.js terminal pane — render output
  * @see Issue #61: xterm.js terminal pane — send keyboard input
+ * @see Issue #62: xterm.js terminal pane — handle resize
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -34,6 +35,9 @@ import { useLaborerStore } from "@/livestore/store";
 
 /** Module-level mutation atom for terminal.write — shared across all TerminalPane instances. */
 const terminalWriteMutation = LaborerClient.mutation("terminal.write");
+
+/** Module-level mutation atom for terminal.resize — shared across all TerminalPane instances. */
+const terminalResizeMutation = LaborerClient.mutation("terminal.resize");
 
 interface TerminalPaneProps {
 	/** The terminal ID to subscribe to for output events. */
@@ -54,6 +58,11 @@ interface TerminalPaneProps {
  * Special keys (enter, backspace, ctrl-c, arrows) are handled natively
  * by xterm.js which encodes them as the correct ANSI escape sequences.
  *
+ * When the container is resized (by panel splits, window resize, etc.),
+ * the fit addon recalculates cols/rows and the new dimensions are sent
+ * to the server PTY via the `terminal.resize` RPC mutation. This ensures
+ * the PTY sends SIGWINCH to the running process so it can reflow output.
+ *
  * The component also handles:
  * - Responsive sizing via the xterm.js fit addon
  * - WebGL rendering for performance (falls back to canvas if unavailable)
@@ -62,6 +71,7 @@ interface TerminalPaneProps {
 function TerminalPane({ terminalId }: TerminalPaneProps) {
 	const store = useLaborerStore();
 	const writeTerminal = useAtomSet(terminalWriteMutation);
+	const resizeTerminal = useAtomSet(terminalResizeMutation);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const terminalRef = useRef<Terminal | null>(null);
 	const fitAddonRef = useRef<FitAddon | null>(null);
@@ -74,6 +84,13 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 	 */
 	const writeTerminalRef = useRef(writeTerminal);
 	writeTerminalRef.current = writeTerminal;
+
+	/**
+	 * Ref to hold the latest resizeTerminal function so the ResizeObserver
+	 * callback always has access to the current mutation function.
+	 */
+	const resizeTerminalRef = useRef(resizeTerminal);
+	resizeTerminalRef.current = resizeTerminal;
 
 	/**
 	 * Initialize xterm.js and subscribe to terminal output events.
@@ -147,9 +164,17 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 			// WebGL not available — fall back to canvas renderer (default)
 		}
 
-		// Initial fit
+		// Initial fit — also send dimensions to server PTY so it starts
+		// with the correct size (default node-pty is 80x24, which may not
+		// match the actual container dimensions)
 		try {
 			fitAddon.fit();
+			const { cols, rows } = terminal;
+			if (cols > 0 && rows > 0) {
+				resizeTerminalRef.current({
+					payload: { terminalId, cols, rows },
+				});
+			}
 		} catch {
 			// Container may not have dimensions yet
 		}
@@ -209,18 +234,39 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 
 	/**
 	 * Handle container resize — re-fit the terminal when the
-	 * pane dimensions change.
+	 * pane dimensions change, then send new dimensions to the
+	 * server PTY via `terminal.resize` RPC mutation.
+	 *
+	 * The fit addon recalculates cols/rows based on the container
+	 * size and font metrics. After fitting, we read the new dimensions
+	 * from the xterm.js Terminal instance and dispatch a resize mutation.
+	 * The server PTY sends SIGWINCH so the process can reflow output.
+	 *
+	 * Uses fire-and-forget mode (no await) for low-latency resize —
+	 * the PTY resize is best-effort and doesn't need acknowledgment.
 	 */
 	const handleResize = useCallback(() => {
 		const fitAddon = fitAddonRef.current;
-		if (fitAddon) {
-			try {
-				fitAddon.fit();
-			} catch {
-				// Ignore errors during resize (container may have 0 dimensions)
-			}
+		const terminal = terminalRef.current;
+		if (!(fitAddon && terminal)) {
+			return;
 		}
-	}, []);
+
+		try {
+			fitAddon.fit();
+		} catch {
+			// Ignore errors during resize (container may have 0 dimensions)
+			return;
+		}
+
+		// Send new dimensions to the server PTY
+		const { cols, rows } = terminal;
+		if (cols > 0 && rows > 0) {
+			resizeTerminalRef.current({
+				payload: { terminalId, cols, rows },
+			});
+		}
+	}, [terminalId]);
 
 	/**
 	 * Observe the container element for size changes using ResizeObserver.

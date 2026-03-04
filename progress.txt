@@ -1,0 +1,22 @@
+## Issue 1: Initialize `packages/shared` package — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `packages/shared/package.json` with name `@my-better-t-app/shared`, correct exports (`.`, `./types`, `./schema`, `./rpc`), and dependencies (`effect` via catalog, `@livestore/livestore` ^0.3.1).
+- Created `packages/shared/tsconfig.json` extending `@my-better-t-app/config/tsconfig.base.json` with `noEmit: true`, `declaration: true`, and node types.
+- Created placeholder source files: `src/index.ts`, `src/types.ts`, `src/schema.ts`, `src/rpc.ts`.
+- Added `check-types` and `build` scripts to package.json.
+- Verified: type checking passes (`tsc --noEmit`), Ultracite lint passes, Turborepo pipeline includes the package (`turbo check-types` and `turbo build` succeed), package resolves in workspace.
+
+### Acceptance criteria status
+- [x] `packages/shared/package.json` exists with correct name, exports, and dependencies
+- [x] `packages/shared/tsconfig.json` extends `packages/config/tsconfig.base.json`
+- [x] Package exports resolve correctly when imported from other workspace packages
+- [x] Turborepo `turbo.json` includes shared package in the pipeline
+- [x] Build succeeds with `bun run build` (via turbo)
+
+### Issues unblocked
+- Issue #2: Shared domain types
+- Issue #3: LiveStore schema — Projects table
+- Issue #10: Initialize `packages/server` package

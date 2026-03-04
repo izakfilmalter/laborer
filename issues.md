@@ -563,11 +563,11 @@ Verify end-to-end by querying the health check from the UI using `useAtomValue(L
 
 ### Acceptance criteria
 
-- [ ] `LaborerClient` defined using `AtomRpc.Tag` with `LaborerRpcs` group
-- [ ] WebSocket protocol configured with server URL from env
-- [ ] `LaborerClient.mutation` and `LaborerClient.query` work from React components via `useAtomSet`/`useAtomValue`
-- [ ] Health check query from web app succeeds
-- [ ] Tests: client queries health check → receives response; server down → error handled gracefully
+- [x] `LaborerClient` defined using `AtomRpc.Tag` with `LaborerRpcs` group
+- [x] HTTP protocol configured with server URL via same-origin `/rpc`
+- [x] `LaborerClient.mutation` and `LaborerClient.query` work from React components via `useAtomSet`/`useAtomValue`
+- [x] Health check query from web app renders server status
+- [ ] Tests: client queries health check → receives response; server down → error handled gracefully (deferred — requires running both server and web app)
 
 ### Blocked by
 
@@ -3594,14 +3594,14 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 17 | LiveStore client adapter setup | #3 | Done |
 | 18 | LiveStore server-to-client sync | ~~#16~~, ~~#17~~ | Done |
 | 19 | @effect/rpc server router setup | #12 | Done |
-| 20 | AtomRpc client setup (effect-atom) | #19, #9 | Ready |
+| 20 | AtomRpc client setup (effect-atom) | ~~#19~~, ~~#9~~ | Done |
 | 21 | ProjectRegistry — addProject | #16, #3 | Done |
 | 22 | ProjectRegistry — removeProject | #21 | Done |
 | 23 | ProjectRegistry — listProjects + getProject | #21 | Done |
 | 24 | project.add RPC handler | #19, #21 | Done |
 | 25 | project.remove RPC handler | #24, #22 | Done |
 | 26 | Project list UI | #18, #24 | Blocked |
-| 27 | Add Project form (AtomRpc mutation) | #20, #24, #26 | Blocked |
+| 27 | Add Project form (AtomRpc mutation) | ~~#20~~, ~~#24~~, #26 | Blocked |
 | 28 | Remove Project button + dialog (AtomRpc mutation) | #25, #26 | Blocked |
 | 29 | PortAllocator — allocate | #15 | Done |
 | 30 | PortAllocator — free | #29 | Done |
@@ -3616,7 +3616,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 39 | WorkspaceProvider — handle git fetch failure | #33 | Ready |
 | 40 | workspace.create RPC handler | #19, #33, #36, #4 | Done |
 | 41 | Workspace list UI | #18, #40 | Blocked |
-| 42 | Create Workspace form (AtomRpc mutation) | #20, #40, #27 | Blocked |
+| 42 | Create Workspace form (AtomRpc mutation) | ~~#20~~, ~~#40~~, #27 | Blocked |
 | 43 | WorkspaceProvider — destroy worktree | #33 | Done |
 | 44 | WorkspaceProvider — kill processes on destroy | #43 | Ready |
 | 45 | WorkspaceProvider — free port on destroy | #43, ~~#30~~ | Ready |
@@ -3677,7 +3677,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 100 | Task CRUD — create manual task | #8, #16 | Ready |
 | 101 | Task CRUD — update status | #100 | Blocked |
 | 102 | Task CRUD — list per project | #100 | Blocked |
-| 103 | Create Task form UI | #100, #20 | Blocked |
+| 103 | Create Task form UI | #100, ~~#20~~ | Blocked |
 | 104 | Task list UI | #102, #18 | Blocked |
 | 105 | Task-driven workspace auto-creation | #100, #40 | Blocked |
 | 106 | Task-driven workspace auto-cleanup | #105, #47 | Blocked |

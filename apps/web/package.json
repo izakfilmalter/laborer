@@ -15,6 +15,9 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",
+    "@effect-atom/atom": "0.4.13",
+    "@effect-atom/atom-react": "0.4.6",
+    "@effect/experimental": "0.57.11",
     "@effect/platform": "0.93.8",
     "@effect/platform-browser": "0.73.0",
     "@effect/rpc": "0.72.2",
@@ -42,6 +45,7 @@
     "react-dom": "19.2.3",
     "react-resizable-panels": "^4.7.1",
     "recharts": "2.15.4",
+    "scheduler": "^0.27.0",
     "shadcn": "^3.6.2",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",

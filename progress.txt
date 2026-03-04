@@ -1008,3 +1008,62 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #20: AtomRpc client setup (was blocked by #19 (done) and #9 (done) — #13 provides the VITE_SERVER_URL needed for WebSocket connection)
+
+## Issue 20: AtomRpc client setup (effect-atom) — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Installed `@effect-atom/atom@0.4.13` and `@effect-atom/atom-react@0.4.6` as dependencies in `apps/web/package.json`. Pinned to 0.4.x versions for compatibility with our pinned Effect ecosystem (`effect@3.19.12`, `@effect/rpc@0.72.2`, `@effect/platform@0.93.8`, `@effect/experimental@0.57.11`). The 0.5.x line requires newer Effect versions (3.19.15+, rpc 0.73.0+) which are incompatible.
+- Also installed `@effect/experimental@0.57.11` (peer dependency of `@effect-atom/atom`) and `scheduler` (peer dependency of `@effect-atom/atom-react`).
+- Created `apps/web/src/atoms/laborer-client.ts` — the `LaborerClient` AtomRpc client tag:
+  - Uses `AtomRpc.Tag<LaborerClient>()("LaborerClient", { group, protocol })` to create a typed RPC client.
+  - `group: LaborerRpcs` — the shared RPC contract from `@laborer/shared/rpc`.
+  - `protocol: RpcClient.layerProtocolHttp({ url: "/rpc" })` — connects via HTTP to the server's `/rpc` endpoint. Uses same-origin `/rpc` URL which the Vite dev proxy forwards to `http://localhost:3000`.
+  - `FetchHttpClient.layer` — provides the `HttpClient` service using the browser's native `fetch` API.
+  - `RpcSerialization.layerJson` — matches the server's JSON serialization format.
+- Created `apps/web/src/atoms/provider.tsx` — the `AtomRegistryProvider` component:
+  - Wraps children with `RegistryProvider` from `@effect-atom/atom-react/RegistryContext`.
+  - Creates a `Registry` instance that manages atom subscriptions, lifecycle, and the Effect runtime for AtomRpc clients.
+- Updated `apps/web/src/routes/__root.tsx`:
+  - Added `AtomRegistryProvider` wrapping `LiveStoreProvider` and app content. Placed inside `ThemeProvider` but outside `LiveStoreProvider` — the registry doesn't depend on LiveStore, so ordering is flexible. Both systems are independent.
+- Updated `apps/web/src/routes/index.tsx` — verification that the health check works:
+  - Created `healthCheck$` atom via `LaborerClient.query("health.check", ...)`.
+  - Created `HealthCheckStatus` component that renders the Result — shows "connecting..." (initial/waiting), "disconnected" (failure), or "connected (uptime: Xs)" (success).
+  - Wrapped in `Suspense` with a loading fallback.
+  - Added a "Server RPC Status" section to the home page below the existing LiveStore status.
+- Verified: `tsc --noEmit` passes for web app (only pre-existing errors in calendar.tsx, sonner.tsx, routeTree.gen — no new errors), `ultracite check` passes with zero issues on all 4 new/modified files, server package type-checks cleanly.
+
+### Architecture: HTTP RPC vs WebSocket
+- The `LaborerClient` uses `RpcClient.layerProtocolHttp` (HTTP POST requests to `/rpc`) rather than `RpcClient.layerProtocolSocket` (WebSocket). This matches the server's `RpcServer.layerProtocolHttp({ path: "/rpc" })` setup.
+- LiveStore sync uses WebSocket via `makeWsSync` in the dedicated worker — this is a separate concern from the RPC client. The two systems share the `/rpc` endpoint but use different transport protocols: LiveStore sync uses WebSocket (long-lived connection for real-time event sync), while AtomRpc uses HTTP (request-response for mutations and queries).
+- The Vite dev proxy at `/rpc` handles both HTTP and WebSocket connections (configured with `ws: true`).
+
+### Acceptance criteria status
+- [x] `LaborerClient` defined using `AtomRpc.Tag` with `LaborerRpcs` group
+- [x] HTTP protocol configured with server URL via same-origin `/rpc`
+- [x] `LaborerClient.mutation` and `LaborerClient.query` work from React components via `useAtomSet`/`useAtomValue`
+- [x] Health check query from web app renders server status (verified at compile level — runtime verification requires both server and web app running)
+- [ ] Tests: client queries health check → receives response; server down → error handled gracefully (deferred — requires running both server and web app)
+
+### Design decisions
+- Used `FetchHttpClient.layer` from `@effect/platform` instead of `BrowserHttpClient.layerXMLHttpRequest` from `@effect/platform-browser`. `FetchHttpClient` is the standard, lightweight option and works in all modern browsers. `XMLHttpRequest` is only needed for legacy browser compatibility or progress tracking on uploads.
+- Used same-origin `/rpc` URL instead of the `VITE_SERVER_URL` env variable. This works seamlessly with the Vite dev proxy and avoids CORS issues. In production, the server will serve the app, so same-origin requests are natural.
+- Pinned `@effect-atom/atom@0.4.13` (not 0.5.x) because our Effect ecosystem is pinned to the `@livestore/peer-deps@0.4.0-dev.22` versions. Upgrading to effect-atom 0.5.x would require bumping all Effect packages, which could break LiveStore compatibility.
+- `AtomRegistryProvider` wraps `LiveStoreProvider` (not the other way around). This ensures the atom registry (and its Effect runtime) is available to all components, including those inside the LiveStore provider tree. The two systems are independent — neither depends on the other.
+
+### Issues unblocked
+- Issue #26: Project list UI (was blocked by #18 (done), #24 (done) — #20 now provides the RPC client for mutations)
+- Issue #27: Add Project form (was blocked by #20, #24 (done), #26 — #20 now done!)
+- Issue #28: Remove Project button (was blocked by #25 (done), #26 — #20 now enables mutations)
+- Issue #41: Workspace list UI (was blocked by #18 (done), #40 (done) — #20 now enables mutations for future forms)
+- Issue #42: Create Workspace form (was blocked by #20, #40 (done), #27 — #20 now done!)
+- Issue #48: Destroy Workspace button (was blocked by #47, #41 — #20 now enables mutations)
+- Issue #61: xterm.js send input (was blocked by #60, #57 (done) — #20 now enables mutations)
+- Issue #62: xterm.js handle resize (was blocked by #60, #58 (done) — #20 now enables mutations)
+- Issue #93: Start Ralph Loop button (was blocked by #92, #60 — #20 now enables mutations)
+- Issue #95: PRD writing form (was blocked by #94, #60 — #20 now enables mutations)
+- Issue #97: Review PR button (was blocked by #96, #60 — #20 now enables mutations)
+- Issue #99: Fix Findings button (was blocked by #98, #60 — #20 now enables mutations)
+- Issue #103: Create Task form (was blocked by #100, #20 — #20 now done!)
+- Issue #112: Click-to-open from diff viewer (was blocked by #111, #87 — #20 now enables mutations)

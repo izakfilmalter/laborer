@@ -23,6 +23,9 @@
       "version": "0.0.0",
       "dependencies": {
         "@base-ui/react": "^1.2.0",
+        "@effect-atom/atom": "0.4.13",
+        "@effect-atom/atom-react": "0.4.6",
+        "@effect/experimental": "0.57.11",
         "@effect/platform": "0.93.8",
         "@effect/platform-browser": "0.73.0",
         "@effect/rpc": "0.72.2",
@@ -50,6 +53,7 @@
         "react-dom": "19.2.3",
         "react-resizable-panels": "^4.7.1",
         "recharts": "2.15.4",
+        "scheduler": "^0.27.0",
         "shadcn": "^3.6.2",
         "sonner": "^2.0.7",
         "tailwind-merge": "^3.3.1",
@@ -263,6 +267,10 @@
     "@dotenvx/dotenvx": ["@dotenvx/dotenvx@1.52.0", "", { "dependencies": { "commander": "^11.1.0", "dotenv": "^17.2.1", "eciesjs": "^0.4.10", "execa": "^5.1.1", "fdir": "^6.2.0", "ignore": "^5.3.0", "object-treeify": "1.1.33", "picomatch": "^4.0.2", "which": "^4.0.0" }, "bin": { "dotenvx": "src/cli/dotenvx.js" } }, "sha512-CaQcc8JvtzQhUSm9877b6V4Tb7HCotkcyud9X2YwdqtQKwgljkMRwU96fVYKnzN3V0Hj74oP7Es+vZ0mS+Aa1w=="],
 
     "@ecies/ciphers": ["@ecies/ciphers@0.2.5", "", { "peerDependencies": { "@noble/ciphers": "^1.0.0" } }, "sha512-GalEZH4JgOMHYYcYmVqnFirFsjZHeoGMDt9IxEnM9F7GRUUyUksJ7Ou53L83WHJq3RWKD3AcBpo0iQh0oMpf8A=="],
+
+    "@effect-atom/atom": ["@effect-atom/atom@0.4.13", "", { "peerDependencies": { "@effect/experimental": "^0.57.0", "@effect/platform": "^0.93.0", "@effect/rpc": "^0.72.1", "effect": "^3.19.0" } }, "sha512-wYCPDg/vN2IWTqxho7kTTSivh//V2TSAcdkQvLXMJWww8YzhcCGmCiDpT6cefyNXvHj+qZrqYB54mrUqG6EYCA=="],
+
+    "@effect-atom/atom-react": ["@effect-atom/atom-react@0.4.6", "", { "dependencies": { "@effect-atom/atom": "^0.4.13" }, "peerDependencies": { "effect": "^3.19", "react": ">=18 <20", "scheduler": "*" } }, "sha512-ZvncuSQsCcUrsddD00JcKDMraPge0AiDMGiJqKc7ProvagCVrxB+Emy5uHM0l0SLGUx4X56bFE0d1tp9Z/Bf+g=="],
 
     "@effect/ai": ["@effect/ai@0.29.1", "", { "dependencies": { "find-my-way-ts": "^0.1.6" }, "peerDependencies": { "@effect/experimental": "^0.56.0", "@effect/platform": "^0.92.0", "@effect/rpc": "^0.71.0", "effect": "^3.18.1" } }, "sha512-uSeAPYha2yJVyEl1xdcbwrXF7GpQlt5225HMP2HXH92OIYNQO9jOel/bCiqV7Q2QWk3I0NP/2zfIM+nThAGoVg=="],
 

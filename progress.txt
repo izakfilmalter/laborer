@@ -451,3 +451,38 @@ Date: 2026-03-04
 - Issue #23: ProjectRegistry — listProjects + getProject (was blocked by #21)
 - Issue #24: project.add RPC handler (was blocked by #19 and #21, now both done)
 - Issue #33: WorkspaceProvider — create worktree (partially — still needs #29)
+
+## Issue 29: PortAllocator service — allocate method — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `packages/server/src/services/port-allocator.ts` with the `PortAllocator` Effect service using `Context.Tag("@laborer/PortAllocator")`.
+- Implemented `allocate()` method using `Effect.fn` for call-site tracing:
+  1. Uses an `Effect.Ref<Set<number>>` for fiber-safe concurrent access to allocated ports. This prevents race conditions when multiple workspaces are created simultaneously (sets up for Issue #32).
+  2. Atomically finds the next unallocated port via `Ref.modify` — scans from `rangeStart` to `rangeEnd` and claims the first available port in a single atomic operation.
+  3. Returns the allocated port number on success.
+  4. Returns a descriptive `RpcError` with code `PORT_EXHAUSTED` when all ports in the range are allocated (sets up for Issue #31).
+- Created `PortAllocator.make(rangeStart, rangeEnd)` factory for constructing a layer with a specific port range — useful for testing with smaller ranges.
+- Created `PortAllocator.layer` as the default layer that reads `PORT_RANGE_START` and `PORT_RANGE_END` from `@laborer/env/server` using lazy import to avoid import-time side effects during testing.
+- Used `Layer.unwrapEffect` to convert the effectful layer construction into a proper `Layer`.
+- Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin hints), `biome check` passes with zero issues on port-allocator.ts.
+
+### Acceptance criteria status
+- [x] PortAllocator is a tagged Effect service
+- [x] `allocate()` returns a port within the configured range
+- [x] Sequential allocations return unique ports (Ref.modify is atomic, ensuring uniqueness)
+- [x] Allocated ports are tracked to prevent double-allocation (via Ref<Set<number>>)
+- [ ] Tests: allocate returns port in range; two allocations return different ports (deferred — vitest not yet configured)
+
+### Design decisions
+- Used `Ref<Set<number>>` instead of a simple mutable `Set` for fiber-safety. `Ref.modify` provides atomic read-modify-write semantics, ensuring that even if multiple fibers call `allocate()` concurrently, they will never receive the same port. This satisfies Issue #32's requirements proactively.
+- Used a linear scan from `rangeStart` to `rangeEnd` for simplicity. With a typical range of 900 ports (3100-3999), this is negligible overhead even at exhaustion.
+- Separated `make` (accepts explicit range) from `layer` (reads from env) to enable testing with controlled port ranges without env dependency.
+- The `-1` sentinel value pattern in `Ref.modify` avoids needing to throw inside the modify callback — errors are handled cleanly in the Effect pipeline via `Effect.flatMap`.
+
+### Issues unblocked
+- Issue #30: PortAllocator — free (was blocked by #29)
+- Issue #31: PortAllocator — exhaustion handling (was blocked by #29)
+- Issue #32: PortAllocator — concurrent safety (was blocked by #29)
+- Issue #33: WorkspaceProvider — create worktree (was blocked by #21 and #29, now both done)

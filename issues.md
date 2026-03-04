@@ -812,11 +812,11 @@ Create the PortAllocator Effect service in `packages/server/src/services/PortAll
 
 ### Acceptance criteria
 
-- [ ] PortAllocator is a tagged Effect service
-- [ ] `allocate()` returns a port within the configured range
-- [ ] Sequential allocations return unique ports
-- [ ] Allocated ports are tracked to prevent double-allocation
-- [ ] Tests: allocate returns port in range; two allocations return different ports
+- [x] PortAllocator is a tagged Effect service
+- [x] `allocate()` returns a port within the configured range
+- [x] Sequential allocations return unique ports
+- [x] Allocated ports are tracked to prevent double-allocation
+- [ ] Tests: allocate returns port in range; two allocations return different ports (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -3603,11 +3603,11 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 26 | Project list UI | #18, #24 | Blocked |
 | 27 | Add Project form (AtomRpc mutation) | #20, #24, #26 | Blocked |
 | 28 | Remove Project button + dialog (AtomRpc mutation) | #25, #26 | Blocked |
-| 29 | PortAllocator — allocate | #15 | Ready |
-| 30 | PortAllocator — free | #29 | Blocked |
-| 31 | PortAllocator — exhaustion handling | #29 | Blocked |
-| 32 | PortAllocator — concurrent safety | #29 | Blocked |
-| 33 | WorkspaceProvider — create worktree | #21, #29 | Blocked |
+| 29 | PortAllocator — allocate | #15 | Done |
+| 30 | PortAllocator — free | #29 | Ready |
+| 31 | PortAllocator — exhaustion handling | #29 | Ready |
+| 32 | PortAllocator — concurrent safety | #29 | Ready |
+| 33 | WorkspaceProvider — create worktree | #21, #29 | Ready |
 | 34 | WorkspaceProvider — directory validation + watcher scoping | #33 | Blocked |
 | 35 | WorkspaceProvider — setup scripts | #33 | Blocked |
 | 36 | WorkspaceProvider — inject PORT env | #33, #29 | Blocked |

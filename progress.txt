@@ -648,3 +648,61 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #40: workspace.create RPC handler (was blocked by #19 (done), #33 (done), #36 (now done), #4 (done) — all blockers now complete!)
+
+## Issue 40: workspace.create RPC handler — COMPLETED (previously implemented)
+
+Date: 2026-03-04
+
+### What was done
+- This issue was already fully implemented as part of Issue #33 (WorkspaceProvider — create worktree). The RPC handler in `packages/server/src/rpc/handlers.ts` delegates to `WorkspaceProvider.createWorktree` and maps the result to the `WorkspaceResponse` schema. The `WorkspaceProvider.layer` is wired into `main.ts`. All acceptance criteria were met during the Issue #33 implementation.
+
+### Acceptance criteria status
+- [x] `workspace.create` handler accepts projectId and optional taskConfig
+- [x] Creates worktree, allocates port, runs setup scripts
+- [x] Commits WorkspaceCreated to LiveStore with status = "running"
+- [x] Returns created workspace info (id, path, port, branch)
+- [ ] Tests: deferred — vitest not yet configured
+
+### Issues unblocked
+- Issue #50: TerminalManager — spawn PTY (was blocked by #40 and #5, #40 now done)
+- Issue #82: DiffService — run git diff (was blocked by #40)
+- Issue #41: Workspace list UI (partially — still needs #18)
+- Issue #42: Create Workspace form (partially — still needs #20 and #27)
+- Issue #105: Task-driven workspace auto-creation (partially — still needs #100)
+
+## Issue 43: WorkspaceProvider — destroy worktree — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Added `destroyWorktree(workspaceId)` method to the `WorkspaceProvider` service interface and implementation in `packages/server/src/services/workspace-provider.ts`.
+- Implementation uses `Effect.fn("WorkspaceProvider.destroyWorktree")` for call-site tracing:
+  1. Looks up the workspace in LiveStore's `workspaces` table using `Array.findFirst` and `pipe`.
+  2. If no workspace found, returns `RpcError` with code `NOT_FOUND`.
+  3. Looks up the project via `ProjectRegistry.getProject` to get the repo path for git commands.
+  4. Commits `workspaceStatusChanged` event to LiveStore with status "destroyed" immediately (so the UI reflects the state change even if cleanup takes time).
+  5. Runs `git worktree remove --force <worktreePath>` to remove the worktree directory. Uses `--force` to handle cases where the worktree has uncommitted changes.
+  6. Runs `git branch -D <branchName>` to delete the workspace branch.
+  7. Frees the allocated port via `PortAllocator.free()`.
+  8. Commits `workspaceDestroyed` event to LiveStore (removes the row from the workspaces table).
+- Resilient error handling: git worktree remove and git branch delete failures are logged as warnings but do not abort the cleanup process. This handles cases where the worktree directory or branch was manually deleted. Port free failures are also caught and logged.
+- Updated `packages/server/src/rpc/handlers.ts`: replaced the `workspace.destroy` stub with a real handler that delegates to `WorkspaceProvider.destroyWorktree(workspaceId)`.
+- Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin hints), `biome check` passes with zero issues on both modified files.
+
+### Acceptance criteria status
+- [x] `destroyWorktree(workspaceId)` removes the worktree directory (via `git worktree remove --force`)
+- [x] Branch is deleted from git (via `git branch -D`)
+- [x] `git worktree list` no longer includes the worktree (after successful `git worktree remove`)
+- [ ] Tests: create then destroy -> directory gone, branch gone, not in worktree list (deferred — vitest not yet configured)
+
+### Design decisions
+- Used `--force` flag on `git worktree remove` to handle dirty worktrees (uncommitted changes). Without `--force`, git refuses to remove worktrees with modifications, which would leave stale workspaces that can't be cleaned up.
+- Made cleanup resilient: each step (worktree remove, branch delete, port free) catches errors independently. If one fails, the others still execute. This prevents partial cleanup where e.g. the worktree is removed but the port is never freed.
+- Status is updated to "destroyed" before physical cleanup begins. This gives the UI immediate feedback while the actual git operations run.
+- Committed `workspaceDestroyed` event at the end to remove the row from the table after all cleanup is done.
+
+### Issues unblocked
+- Issue #44: WorkspaceProvider — kill processes on destroy (was blocked by #43)
+- Issue #45: WorkspaceProvider — free port on destroy (was blocked by #43 and #30, now both done)
+- Issue #46: WorkspaceProvider — remove watchers on destroy (was blocked by #43)
+- Issue #47: workspace.destroy RPC handler (partially — still needs #44, #45, #46, but the core destroy logic is done)

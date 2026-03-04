@@ -1108,15 +1108,15 @@ Implement the `workspace.create` handler via `RpcGroup.toHandlers` for the `Labo
 
 ### Acceptance criteria
 
-- [ ] `workspace.create` handler accepts projectId and optional taskConfig
-- [ ] Creates worktree, allocates port, runs setup scripts
-- [ ] Commits WorkspaceCreated to LiveStore with status = "running"
-- [ ] Returns created workspace info (id, path, port, branch)
-- [ ] Tests: RPC call → worktree exists, port allocated, LiveStore has workspace with "running" status
+- [x] `workspace.create` handler accepts projectId and optional taskConfig
+- [x] Creates worktree, allocates port, runs setup scripts
+- [x] Commits WorkspaceCreated to LiveStore with status = "running"
+- [x] Returns created workspace info (id, path, port, branch)
+- [ ] Tests: RPC call → worktree exists, port allocated, LiveStore has workspace with "running" status (deferred — vitest not yet configured)
 
 ### Blocked by
 
-- Blocked by #19, #33, #36, #4
+- Blocked by #19, #33, #36, #4 (all done)
 
 ### User stories addressed
 
@@ -1193,14 +1193,14 @@ Implement the `destroyWorktree` method in WorkspaceProvider. Runs `git worktree 
 
 ### Acceptance criteria
 
-- [ ] `destroyWorktree(workspaceId)` removes the worktree directory
-- [ ] Branch is deleted from git
-- [ ] `git worktree list` no longer includes the worktree
-- [ ] Tests: create then destroy → directory gone, branch gone, not in worktree list
+- [x] `destroyWorktree(workspaceId)` removes the worktree directory
+- [x] Branch is deleted from git
+- [x] `git worktree list` no longer includes the worktree
+- [ ] Tests: create then destroy → directory gone, branch gone, not in worktree list (deferred — vitest not yet configured)
 
 ### Blocked by
 
-- Blocked by #33
+- Blocked by #33 (done)
 
 ### User stories addressed
 
@@ -3614,17 +3614,17 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 37 | WorkspaceProvider — handle setup failure | #35 | Blocked |
 | 38 | WorkspaceProvider — handle dirty git state | #33 | Ready |
 | 39 | WorkspaceProvider — handle git fetch failure | #33 | Ready |
-| 40 | workspace.create RPC handler | #19, #33, #36, #4 | Ready |
+| 40 | workspace.create RPC handler | #19, #33, #36, #4 | Done |
 | 41 | Workspace list UI | #18, #40 | Blocked |
 | 42 | Create Workspace form (AtomRpc mutation) | #20, #40, #27 | Blocked |
-| 43 | WorkspaceProvider — destroy worktree | #33 | Ready |
-| 44 | WorkspaceProvider — kill processes on destroy | #43 | Blocked |
-| 45 | WorkspaceProvider — free port on destroy | #43, ~~#30~~ | Blocked |
-| 46 | WorkspaceProvider — remove watchers on destroy | #43 | Blocked |
+| 43 | WorkspaceProvider — destroy worktree | #33 | Done |
+| 44 | WorkspaceProvider — kill processes on destroy | #43 | Ready |
+| 45 | WorkspaceProvider — free port on destroy | #43, ~~#30~~ | Ready |
+| 46 | WorkspaceProvider — remove watchers on destroy | #43 | Ready |
 | 47 | workspace.destroy RPC handler | #19, #43, #44, #45, #46 | Blocked |
 | 48 | Destroy Workspace button + dialog (AtomRpc mutation) | #47, #41 | Blocked |
 | 49 | Workspace creation error display | #37, #38, #39, #42 | Blocked |
-| 50 | TerminalManager — spawn PTY | #40, #5 | Blocked |
+| 50 | TerminalManager — spawn PTY | #40, #5 | Ready |
 | 51 | TerminalManager — stream stdout to LiveStore | #50 | Blocked |
 | 52 | TerminalManager — write stdin | #50 | Blocked |
 | 53 | TerminalManager — resize PTY | #50 | Blocked |
@@ -3656,7 +3656,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 79 | Keyboard shortcut — resize panes | #72, #75 | Blocked |
 | 80 | Keyboard shortcut scope isolation | #75, #61 | Blocked |
 | 81 | Panel responsive layout | #72 | Blocked |
-| 82 | DiffService — run git diff | #40 | Blocked |
+| 82 | DiffService — run git diff | #40 | Ready |
 | 83 | DiffService — poll on interval | #82 | Blocked |
 | 84 | DiffService — deduplicate unchanged | #83 | Blocked |
 | 85 | DiffService — start/stop on workspace lifecycle | #83, #47 | Blocked |

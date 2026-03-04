@@ -8,6 +8,7 @@
  *
  * Responsibilities:
  * - Worktree creation via `git worktree add`
+ * - Worktree destruction via `git worktree remove` + `git branch -D`
  * - Port allocation via PortAllocator
  * - Project validation via ProjectRegistry
  * - Workspace state tracking via LiveStore
@@ -21,11 +22,13 @@
  *   const workspace = yield* provider.createWorktree("project-id", "feature/my-branch")
  *   const env = yield* provider.getWorkspaceEnv("workspace-id")
  *   // env.PORT === "3142"
+ *   yield* provider.destroyWorktree("workspace-id")
  * })
  * ```
  *
  * Issue #33: createWorktree method
  * Issue #36: inject PORT env var
+ * Issue #43: destroyWorktree method
  */
 
 import { join, resolve } from "node:path";
@@ -89,6 +92,25 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 			branchName?: string,
 			taskId?: string
 		) => Effect.Effect<WorkspaceRecord, RpcError>;
+
+		/**
+		 * Destroy a workspace by removing its git worktree, deleting the branch,
+		 * freeing the allocated port, and committing a WorkspaceDestroyed event
+		 * to LiveStore.
+		 *
+		 * Steps:
+		 * 1. Look up the workspace in LiveStore
+		 * 2. Look up the project to get the repo path
+		 * 3. Run `git worktree remove --force` to remove the worktree directory
+		 * 4. Delete the branch via `git branch -D`
+		 * 5. Free the allocated port via PortAllocator
+		 * 6. Commit WorkspaceDestroyed event to LiveStore
+		 *
+		 * @param workspaceId - ID of the workspace to destroy
+		 */
+		readonly destroyWorktree: (
+			workspaceId: string
+		) => Effect.Effect<void, RpcError>;
 
 		/**
 		 * Get environment variables for a workspace.
@@ -275,6 +297,118 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 				}
 			);
 
+			const destroyWorktree = Effect.fn("WorkspaceProvider.destroyWorktree")(
+				function* (workspaceId: string) {
+					// 1. Look up the workspace in LiveStore
+					const allWorkspaces = store.query(tables.workspaces);
+					const workspaceOpt = pipe(
+						allWorkspaces,
+						Arr.findFirst((w) => w.id === workspaceId)
+					);
+
+					if (workspaceOpt._tag === "None") {
+						return yield* new RpcError({
+							message: `Workspace not found: ${workspaceId}`,
+							code: "NOT_FOUND",
+						});
+					}
+
+					const workspace = workspaceOpt.value;
+
+					// 2. Look up the project to get the repo path for git commands
+					const project = yield* registry.getProject(workspace.projectId);
+
+					// 3. Update workspace status to "destroyed" in LiveStore first
+					//    (so the UI reflects the state change even if cleanup takes time)
+					store.commit(
+						events.workspaceStatusChanged({
+							id: workspaceId,
+							status: "destroyed",
+						})
+					);
+
+					// 4. Remove the git worktree using --force to handle dirty state
+					const removeResult = yield* Effect.tryPromise({
+						try: async () => {
+							const proc = Bun.spawn(
+								[
+									"git",
+									"worktree",
+									"remove",
+									"--force",
+									workspace.worktreePath,
+								],
+								{
+									cwd: project.repoPath,
+									stdout: "pipe",
+									stderr: "pipe",
+								}
+							);
+							const exitCode = await proc.exited;
+							const stderr = await new Response(proc.stderr).text();
+							return { exitCode, stderr };
+						},
+						catch: (error) =>
+							new RpcError({
+								message: `Failed to spawn git worktree remove: ${String(error)}`,
+								code: "GIT_WORKTREE_FAILED",
+							}),
+					});
+
+					if (removeResult.exitCode !== 0) {
+						// Log the error but continue cleanup — the worktree directory
+						// may have been manually deleted already
+						yield* Effect.logWarning(
+							`git worktree remove failed (exit ${removeResult.exitCode}): ${removeResult.stderr.trim()}`
+						);
+					}
+
+					// 5. Delete the branch via git branch -D
+					const branchResult = yield* Effect.tryPromise({
+						try: async () => {
+							const proc = Bun.spawn(
+								["git", "branch", "-D", workspace.branchName],
+								{
+									cwd: project.repoPath,
+									stdout: "pipe",
+									stderr: "pipe",
+								}
+							);
+							const exitCode = await proc.exited;
+							const stderr = await new Response(proc.stderr).text();
+							return { exitCode, stderr };
+						},
+						catch: (error) =>
+							new RpcError({
+								message: `Failed to spawn git branch delete: ${String(error)}`,
+								code: "GIT_BRANCH_DELETE_FAILED",
+							}),
+					});
+
+					if (branchResult.exitCode !== 0) {
+						// Log but continue — the branch may have been manually deleted
+						yield* Effect.logWarning(
+							`git branch -D failed (exit ${branchResult.exitCode}): ${branchResult.stderr.trim()}`
+						);
+					}
+
+					// 6. Free the allocated port
+					yield* portAllocator
+						.free(workspace.port)
+						.pipe(
+							Effect.catchAll((err) =>
+								Effect.logWarning(
+									`Failed to free port ${workspace.port}: ${err.message}`
+								)
+							)
+						);
+
+					// 7. Commit WorkspaceDestroyed event to LiveStore
+					//    This removes the row from the workspaces table
+					store.commit(events.workspaceDestroyed({ id: workspaceId }));
+				}
+			);
+
 			const getWorkspaceEnv = Effect.fn("WorkspaceProvider.getWorkspaceEnv")(
 				function* (workspaceId: string) {
 					// Look up the workspace from LiveStore
@@ -303,7 +437,11 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 				}
 			);
 
-			return WorkspaceProvider.of({ createWorktree, getWorkspaceEnv });
+			return WorkspaceProvider.of({
+				createWorktree,
+				destroyWorktree,
+				getWorkspaceEnv,
+			});
 		})
 	);
 }

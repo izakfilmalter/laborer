@@ -23,8 +23,11 @@ const notImplemented = (method: string) =>
  * RPC handler layer for the LaborerRpcs group.
  *
  * Implemented handlers:
- * - health.check: returns server uptime
+ * - health.check: returns server uptime (Issue #12)
  * - project.add: delegates to ProjectRegistry.addProject (Issue #21)
+ * - project.remove: delegates to ProjectRegistry.removeProject (Issue #22)
+ * - workspace.create: delegates to WorkspaceProvider.createWorktree (Issue #33/#40)
+ * - workspace.destroy: delegates to WorkspaceProvider.destroyWorktree (Issue #43)
  *
  * All other handlers are stubs that will be replaced as
  * their backing services are implemented.
@@ -85,7 +88,11 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 						| "destroyed",
 				};
 			}),
-		"workspace.destroy": () => Effect.fail(notImplemented("workspace.destroy")),
+		"workspace.destroy": ({ workspaceId }) =>
+			Effect.gen(function* () {
+				const provider = yield* WorkspaceProvider;
+				yield* provider.destroyWorktree(workspaceId);
+			}),
 
 		// -------------------------------------------------------------------
 		// Terminal RPCs (stubs — Issue #50-59)

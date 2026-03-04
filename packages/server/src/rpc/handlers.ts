@@ -3,28 +3,25 @@
  *
  * Implements handler logic for the LaborerRpcs group.
  * Handlers delegate to Effect services for real work.
- * Services that aren't yet implemented return "not implemented" errors.
+ * All RPC methods are now fully implemented — no stubs remain.
  */
 
+import { join } from "node:path";
 import { LaborerRpcs, RpcError } from "@laborer/shared/rpc";
-import { Effect } from "effect";
+import { tables } from "@laborer/shared/schema";
+import { Array as Arr, Effect, pipe } from "effect";
 import { DiffService } from "../services/diff-service.js";
+import { LaborerStore } from "../services/laborer-store.js";
 import { ProjectRegistry } from "../services/project-registry.js";
 import { TerminalManager } from "../services/terminal-manager.js";
 import { WorkspaceProvider } from "../services/workspace-provider.js";
 
 const startTime = Date.now();
 
-const notImplemented = (method: string) =>
-	new RpcError({
-		message: `${method} is not yet implemented`,
-		code: "NOT_IMPLEMENTED",
-	});
-
 /**
  * RPC handler layer for the LaborerRpcs group.
  *
- * Implemented handlers:
+ * All 16 RPC methods are fully implemented:
  * - health.check: returns server uptime (Issue #12)
  * - project.add: delegates to ProjectRegistry.addProject (Issue #21)
  * - project.remove: delegates to ProjectRegistry.removeProject (Issue #22)
@@ -35,13 +32,11 @@ const notImplemented = (method: string) =>
  * - terminal.resize: delegates to TerminalManager.resize (Issue #53)
  * - terminal.kill: delegates to TerminalManager.kill (Issue #54)
  * - diff.refresh: delegates to DiffService.getDiff (Issue #82)
+ * - editor.open: opens file in configured editor (Issue #111)
  * - rlph.startLoop: delegates to TerminalManager.spawn with `rlph --once` (Issue #92)
  * - rlph.writePRD: delegates to TerminalManager.spawn with `rlph prd [description]` (Issue #94)
  * - rlph.review: delegates to TerminalManager.spawn with `rlph review <prNumber>` (Issue #96)
  * - rlph.fix: delegates to TerminalManager.spawn with `rlph fix <prNumber>` (Issue #98)
- *
- * All other handlers are stubs that will be replaced as
- * their backing services are implemented.
  */
 export const LaborerRpcsLive = LaborerRpcs.toLayer(
 	LaborerRpcs.of({
@@ -139,9 +134,64 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 			}),
 
 		// -------------------------------------------------------------------
-		// Editor RPCs (stubs — Issue #111)
+		// Editor RPCs (Issue #111)
 		// -------------------------------------------------------------------
-		"editor.open": () => Effect.fail(notImplemented("editor.open")),
+		"editor.open": ({ workspaceId, filePath }) =>
+			Effect.gen(function* () {
+				const { store } = yield* LaborerStore;
+
+				// 1. Look up the workspace to get worktreePath
+				const allWorkspaces = store.query(tables.workspaces);
+				const workspaceOpt = pipe(
+					allWorkspaces,
+					Arr.findFirst((w) => w.id === workspaceId)
+				);
+
+				if (workspaceOpt._tag === "None") {
+					return yield* new RpcError({
+						message: `Workspace not found: ${workspaceId}`,
+						code: "NOT_FOUND",
+					});
+				}
+
+				const workspace = workspaceOpt.value;
+
+				// 2. Build the target path
+				const targetPath = filePath
+					? join(workspace.worktreePath, filePath)
+					: workspace.worktreePath;
+
+				// 3. Get the editor command from env (lazy import to avoid import-time side effects)
+				const { env } = yield* Effect.promise(
+					() => import("@laborer/env/server")
+				);
+				const editorCommand = env.EDITOR_COMMAND;
+
+				// 4. Execute the editor command
+				yield* Effect.tryPromise({
+					try: async () => {
+						const proc = Bun.spawn([editorCommand, targetPath], {
+							stdout: "ignore",
+							stderr: "pipe",
+						});
+						const exitCode = await proc.exited;
+						if (exitCode !== 0) {
+							const stderr = await new Response(proc.stderr).text();
+							throw new Error(
+								`Editor command '${editorCommand} ${targetPath}' exited with code ${exitCode}: ${stderr.trim()}`
+							);
+						}
+					},
+					catch: (error) =>
+						new RpcError({
+							message:
+								error instanceof Error
+									? error.message
+									: `Failed to open editor: ${String(error)}`,
+							code: "EDITOR_FAILED",
+						}),
+				});
+			}),
 
 		// -------------------------------------------------------------------
 		// rlph RPCs (Issue #92-98)

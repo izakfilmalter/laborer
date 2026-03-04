@@ -3018,15 +3018,15 @@ Implement the `editor.open` handler via `RpcGroup.toHandlers`. Executes the conf
 
 ### Acceptance criteria
 
-- [ ] `editor.open` handler accepts workspaceId and filePath
-- [ ] Executes `<editor> <workspace-path>/<filePath>`
-- [ ] Editor command configurable (default from EDITOR_COMMAND env)
-- [ ] Missing editor → clear error message
-- [ ] Tests: RPC call → shell command executed; missing editor → error
+- [x] `editor.open` handler accepts workspaceId and filePath
+- [x] Executes `<editor> <workspace-path>/<filePath>`
+- [x] Editor command configurable (default from EDITOR_COMMAND env)
+- [x] Missing editor → clear error message
+- [ ] Tests: RPC call → shell command executed; missing editor → error (deferred — vitest not yet configured)
 
 ### Blocked by
 
-- Blocked by #19, #14
+- Blocked by #19 (done), #14 (done)
 
 ### User stories addressed
 
@@ -3685,8 +3685,8 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 108 | Linear task sourcing | #102 | Blocked |
 | 109 | GitHub task sourcing | #102 | Blocked |
 | 110 | Task source picker UI | #108, #109, #103 | Blocked |
-| 111 | editor.open RPC handler | #19, #14 | Ready |
-| 112 | Click-to-open from diff viewer (AtomRpc mutation) | #111, #87 | Blocked |
+| 111 | editor.open RPC handler | ~~#19~~, ~~#14~~ | Done |
+| 112 | Click-to-open from diff viewer (AtomRpc mutation) | ~~#111~~, #87 | Blocked |
 | 113 | Project switcher | ~~#26~~ | Ready |
 | 114 | Cross-project dashboard | ~~#41~~, #104 | Blocked |
 | 115 | Tauri system tray | ~~#41~~ | Ready |

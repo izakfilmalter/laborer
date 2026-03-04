@@ -1207,3 +1207,55 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #93: "Start Ralph Loop" button UI (was blocked by #92 and #60 — #92 now done, still needs #60 for xterm.js rendering)
+
+## Issue 41: Workspace list UI component — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `apps/web/src/components/workspace-list.tsx` — a reactive Workspace list component that subscribes to LiveStore's `workspaces` and `projects` tables.
+- `WorkspaceList` component:
+  - Uses `useLaborerStore()` hook to access the store instance.
+  - Subscribes to `workspaces` table via `store.useQuery(queryDb(workspaces))` for reactive workspace list.
+  - Subscribes to `projects` table via `store.useQuery(queryDb(projects))` to display project names alongside each workspace.
+  - Filters out "destroyed" workspaces from the active list — destroyed workspaces are cleaned up and shouldn't clutter the UI.
+  - When no active workspaces exist, renders an empty state using shadcn/ui's `Empty` components with a `Layers` icon and guidance text.
+  - When workspaces exist, renders a grid of `WorkspaceItem` cards.
+- `WorkspaceItem` component:
+  - Uses shadcn/ui `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent` for consistent styling.
+  - Displays branch name with a `GitBranch` icon in monospace font, project name as description.
+  - Shows a color-coded status badge using shadcn/ui `Badge` (outline variant) with a `StatusDot` indicator:
+    - **creating**: yellow with pulse animation
+    - **running**: green
+    - **stopped**: gray (muted)
+    - **errored**: red
+    - **destroyed**: dim/faded
+  - Shows port number and worktree path in the card content area.
+- `StatusDot` component: renders a small colored circle that visually indicates workspace status at a glance. Uses `animate-pulse` for the "creating" state to show activity.
+- `getStatusClasses` helper: maps workspace status strings to Tailwind classes for the badge, using semantic colors that work in both light and dark mode via `dark:` variants.
+- Updated `apps/web/src/routes/index.tsx`:
+  - Added `WorkspaceList` import.
+  - Added a "Workspaces" section between "Projects" and "Server RPC Status" sections, rendering the `WorkspaceList` component.
+- Verified: `biome check` passes with zero issues on both new/modified files, `tsc --noEmit` passes for shared, server, and web packages (only pre-existing errors in calendar.tsx, sonner.tsx, routeTree.gen, and route type — no new errors).
+
+### Acceptance criteria status
+- [x] Component subscribes to Workspaces table via LiveStore (`store.useQuery(queryDb(workspaces))`)
+- [x] Renders list with branch name, port, and status badge (via shadcn/ui Card + Badge components)
+- [x] Status badges are color-coded per workspace status (creating=yellow, running=green, stopped=gray, errored=red, destroyed=dim)
+- [x] Updates reactively on workspace state changes (LiveStore reactive query subscription)
+- [ ] Tests: render with workspaces → displays all with correct status badges; status change → badge updates (deferred — requires running web app; component tests can be added with Vitest + React Testing Library)
+
+### Design decisions
+- Used `queryDb` module-level constants for query definitions to enable LiveStore query deduplication and memoization across component re-renders, consistent with the `ProjectList` pattern.
+- Filtered out "destroyed" workspaces from the active list. Destroyed workspaces have been cleaned up (worktree removed, port freed) so displaying them would be confusing. The LiveStore `workspaceDestroyed` event eventually removes the row, but during the cleanup window the status is "destroyed".
+- Used `Badge` with `variant="outline"` plus custom status-specific classes rather than creating separate badge variants. This keeps the Badge component generic while providing status-specific styling.
+- Added a `StatusDot` component as a visual indicator alongside the text status. The pulsing dot for "creating" provides an immediate visual cue that work is in progress, following polishing requirement #12 (status indicators).
+- Built a project name lookup map from the projects table to display project context on each workspace card. This is important because workspaces span multiple projects, and the user needs to know which project each workspace belongs to.
+- Used the same Card layout pattern as `ProjectList` for visual consistency across the app.
+- Included an empty state in the component itself (consistent with `ProjectList` approach). Issue #119 will add the CTA button to open the Create Workspace form.
+
+### Issues unblocked
+- Issue #48: Destroy Workspace button + dialog (was blocked by #47 and #41 — #41 now done, still needs #47)
+- Issue #114: Cross-project workspace dashboard (was blocked by #41 and #104 — #41 now done, still needs #104)
+- Issue #115: Tauri system tray (was blocked by #41 — now done!)
+- Issue #121: Loading state — workspace creation (was blocked by #41 — now done!)

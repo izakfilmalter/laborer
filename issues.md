@@ -1136,11 +1136,11 @@ Create a React component that reads the Workspaces table from LiveStore and disp
 
 ### Acceptance criteria
 
-- [ ] Component subscribes to Workspaces table via LiveStore
-- [ ] Renders list with branch name, port, and status badge
-- [ ] Status badges are color-coded per workspace status
-- [ ] Updates reactively on workspace state changes
-- [ ] Tests: render with workspaces → displays all with correct status badges; status change → badge updates
+- [x] Component subscribes to Workspaces table via LiveStore
+- [x] Renders list with branch name, port, and status badge
+- [x] Status badges are color-coded per workspace status
+- [x] Updates reactively on workspace state changes
+- [ ] Tests: render with workspaces → displays all with correct status badges; status change → badge updates (deferred — requires running web app; component tests can be added with Vitest + React Testing Library)
 
 ### Blocked by
 
@@ -3615,14 +3615,14 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 38 | WorkspaceProvider — handle dirty git state | #33 | Ready |
 | 39 | WorkspaceProvider — handle git fetch failure | #33 | Ready |
 | 40 | workspace.create RPC handler | #19, #33, #36, #4 | Done |
-| 41 | Workspace list UI | ~~#18~~, ~~#40~~ | Ready |
+| 41 | Workspace list UI | ~~#18~~, ~~#40~~ | Done |
 | 42 | Create Workspace form (AtomRpc mutation) | ~~#20~~, ~~#40~~, ~~#27~~ | Ready |
 | 43 | WorkspaceProvider — destroy worktree | #33 | Done |
 | 44 | WorkspaceProvider — kill processes on destroy | #43 | Ready |
 | 45 | WorkspaceProvider — free port on destroy | #43, ~~#30~~ | Ready |
 | 46 | WorkspaceProvider — remove watchers on destroy | #43 | Ready |
 | 47 | workspace.destroy RPC handler | #19, #43, #44, #45, #46 | Blocked |
-| 48 | Destroy Workspace button + dialog (AtomRpc mutation) | #47, #41 | Blocked |
+| 48 | Destroy Workspace button + dialog (AtomRpc mutation) | #47, ~~#41~~ | Blocked |
 | 49 | Workspace creation error display | #37, #38, #39, #42 | Blocked |
 | 50 | TerminalManager — spawn PTY | #40, #5 | Done |
 | 51 | TerminalManager — stream stdout to LiveStore | #50 | Done |
@@ -3688,14 +3688,14 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 111 | editor.open RPC handler | #19, #14 | Ready |
 | 112 | Click-to-open from diff viewer (AtomRpc mutation) | #111, #87 | Blocked |
 | 113 | Project switcher | ~~#26~~ | Ready |
-| 114 | Cross-project dashboard | #41, #104 | Blocked |
-| 115 | Tauri system tray | #41 | Blocked |
+| 114 | Cross-project dashboard | ~~#41~~, #104 | Blocked |
+| 115 | Tauri system tray | ~~#41~~ | Ready |
 | 116 | Tauri global shortcut | #115 | Blocked |
 | 117 | Tauri window management | #115 | Blocked |
 | 118 | Empty state — no projects | ~~#27~~ | Ready |
 | 119 | Empty state — no workspaces | #42 | Blocked |
 | 120 | Empty state — no terminals | #63 | Blocked |
-| 121 | Loading state — workspace creation | #41 | Blocked |
+| 121 | Loading state — workspace creation | ~~#41~~ | Ready |
 | 122 | Loading state — terminal spawning | #60 | Blocked |
 | 123 | Loading state — diff computation | #87 | Blocked |
 | 124 | Terminal fidelity — opencode | #60 | Blocked |

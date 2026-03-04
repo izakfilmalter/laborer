@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
 import { ProjectList } from "@/components/project-list";
+import { WorkspaceList } from "@/components/workspace-list";
 
 export const Route = createFileRoute("/")({
 	component: HomeComponent,
@@ -51,6 +52,10 @@ function HomeComponent() {
 						<AddProjectForm />
 					</div>
 					<ProjectList />
+				</section>
+				<section>
+					<h2 className="mb-2 font-medium">Workspaces</h2>
+					<WorkspaceList />
 				</section>
 				<section className="rounded-lg border p-4">
 					<h2 className="mb-2 font-medium">Server RPC Status</h2>

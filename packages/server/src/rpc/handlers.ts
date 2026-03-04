@@ -96,6 +96,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 			}),
 		"workspace.destroy": ({ workspaceId }) =>
 			Effect.gen(function* () {
+				// Issue #44: Kill all workspace processes before removing the worktree.
+				// This prevents orphan PTY processes that would keep running after
+				// the workspace directory is removed.
+				const tm = yield* TerminalManager;
+				yield* tm.killAllForWorkspace(workspaceId);
+
 				const provider = yield* WorkspaceProvider;
 				yield* provider.destroyWorktree(workspaceId);
 			}),

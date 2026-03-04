@@ -25,6 +25,7 @@
  * })
  * ```
  *
+ * Issue #44: kill all workspace processes on destroy (killAllForWorkspace method)
  * Issue #50: spawn PTY
  * Issue #51: stream stdout to LiveStore (included — output events emitted on data)
  * Issue #52: write to stdin (included — write method sends data to PTY)
@@ -131,6 +132,23 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 		readonly listTerminals: (
 			workspaceId: string
 		) => Effect.Effect<readonly TerminalRecord[], RpcError>;
+
+		/**
+		 * Kill all terminals belonging to a workspace.
+		 *
+		 * Iterates all in-memory terminals, finds those belonging to the given
+		 * workspace, and kills each PTY process. Used during workspace destruction
+		 * to ensure no orphan processes remain after the worktree is removed.
+		 *
+		 * Errors from individual terminal kills are logged as warnings but do not
+		 * abort the operation — best-effort cleanup ensures maximum resource recovery.
+		 *
+		 * @param workspaceId - ID of the workspace whose terminals should be killed
+		 * @returns The number of terminals that were killed
+		 */
+		readonly killAllForWorkspace: (
+			workspaceId: string
+		) => Effect.Effect<number, never>;
 	}
 >() {
 	static readonly layer = Layer.effect(
@@ -390,12 +408,78 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				}
 			);
 
+			const killAllForWorkspace = Effect.fn(
+				"TerminalManager.killAllForWorkspace"
+			)(function* (workspaceId: string) {
+				// 1. Get a snapshot of the current terminals map
+				const map = yield* Ref.get(terminalsRef);
+
+				// 2. Find all terminals belonging to this workspace
+				const workspaceTerminals = pipe(
+					[...map.values()],
+					Arr.filter((t) => t.workspaceId === workspaceId)
+				);
+
+				if (workspaceTerminals.length === 0) {
+					return 0;
+				}
+
+				// 3. Kill each terminal, catching individual errors to ensure
+				//    best-effort cleanup (one failure doesn't stop the rest)
+				let killedCount = 0;
+				yield* Effect.forEach(
+					workspaceTerminals,
+					(terminal) =>
+						pipe(
+							Effect.try({
+								try: () => terminal.pty.kill(),
+								catch: (error) =>
+									new RpcError({
+										message: `Failed to kill terminal ${terminal.id}: ${String(error)}`,
+										code: "PTY_KILL_FAILED",
+									}),
+							}),
+							Effect.tap(() =>
+								Ref.update(terminalsRef, (m) => {
+									const next = new Map(m);
+									next.delete(terminal.id);
+									return next;
+								})
+							),
+							Effect.tap(() =>
+								Effect.sync(() => {
+									store.commit(
+										events.terminalStatusChanged({
+											id: terminal.id,
+											status: "stopped",
+										})
+									);
+									killedCount += 1;
+								})
+							),
+							Effect.catchAll((err) =>
+								Effect.logWarning(
+									`Failed to kill terminal ${terminal.id} during workspace cleanup: ${err.message}`
+								)
+							)
+						),
+					{ discard: true }
+				);
+
+				yield* Effect.log(
+					`Killed ${killedCount}/${workspaceTerminals.length} terminals for workspace ${workspaceId}`
+				);
+
+				return killedCount;
+			});
+
 			return TerminalManager.of({
 				spawn,
 				write,
 				resize,
 				kill,
 				listTerminals,
+				killAllForWorkspace,
 			});
 		})
 	);

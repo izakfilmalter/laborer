@@ -1884,3 +1884,43 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #120: Empty state — no terminals (was blocked by #63, now done)
+
+## Issue 44: WorkspaceProvider — kill all workspace processes on destroy — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Added `killAllForWorkspace(workspaceId)` method to the `TerminalManager` Effect service in `packages/server/src/services/terminal-manager.ts`.
+- Implementation uses `Effect.fn("TerminalManager.killAllForWorkspace")` for call-site tracing:
+  1. Takes a snapshot of the current in-memory terminals map via `Ref.get(terminalsRef)`.
+  2. Filters terminals belonging to the given workspace using `Array.filter` and `pipe`.
+  3. Iterates over matching terminals using `Effect.forEach` with `{ discard: true }`:
+     - Calls `terminal.pty.kill()` via `Effect.try` to terminate the PTY process.
+     - Atomically removes the terminal from the in-memory map via `Ref.update`.
+     - Commits `terminalStatusChanged` event to LiveStore with status "stopped".
+  4. Each individual terminal kill is wrapped in `Effect.catchAll` — errors are logged as warnings but do not abort the cleanup. This ensures best-effort resource recovery (one failed kill doesn't prevent killing the rest).
+  5. Logs the total killed count for observability.
+  6. Returns the number of terminals successfully killed.
+- Updated the `workspace.destroy` RPC handler in `packages/server/src/rpc/handlers.ts`:
+  - Added `tm.killAllForWorkspace(workspaceId)` call before `provider.destroyWorktree(workspaceId)`.
+  - This ensures all PTY processes are terminated before the worktree directory is removed, preventing orphan processes.
+- Avoided a circular dependency between `TerminalManager` and `WorkspaceProvider`:
+  - `TerminalManager` depends on `WorkspaceProvider` (for `getWorkspaceEnv`).
+  - Instead of making `WorkspaceProvider` depend on `TerminalManager` (which would create a cycle), the orchestration happens in the RPC handler layer — the handler calls `killAllForWorkspace` first, then `destroyWorktree`.
+- Updated module JSDoc in terminal-manager.ts to reference Issue #44.
+- Verified: `tsc --noEmit` passes for server package (no type errors — only pre-existing Effect plugin informational messages), `biome check` passes with zero issues on both modified files.
+
+### Acceptance criteria status
+- [x] All processes in workspace directory killed on destroy (killAllForWorkspace iterates all in-memory terminals for the workspace and kills each PTY)
+- [x] No orphan processes after destroy (workspace.destroy handler calls killAllForWorkspace before destroyWorktree)
+- [ ] Tests: spawn processes in worktree → destroy → all processes terminated; verify with process list (deferred — vitest not yet configured)
+
+### Design decisions
+- Placed `killAllForWorkspace` on `TerminalManager` rather than `WorkspaceProvider` to avoid a circular dependency. `TerminalManager` already depends on `WorkspaceProvider` for `getWorkspaceEnv`, so adding the reverse dependency would create a cycle. The RPC handler layer is the natural orchestration point.
+- Used `Effect.forEach` with `{ discard: true }` per Effect best practices (AGENTS.md) instead of `Effect.all` + `Array.map`.
+- Used best-effort cleanup pattern: each terminal kill catches errors independently. If one PTY is already dead or in a bad state, the others are still killed. This matches the resilient error handling pattern already established in `destroyWorktree` (where git worktree remove and branch delete failures are logged but don't abort cleanup).
+- The method returns the count of successfully killed terminals (not the total found). This is useful for logging and debugging without requiring the caller to handle individual failure details.
+- The error type is `never` (not `RpcError`) because the method never fails — all errors are caught and logged internally. This makes it safe to call during cleanup without error propagation concerns.
+
+### Issues unblocked
+- Issue #47: workspace.destroy RPC handler (was blocked by #19 (done), #43 (done), #44 (now done), #45, #46 — still needs #45 and #46)

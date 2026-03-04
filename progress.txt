@@ -564,3 +564,54 @@ Date: 2026-03-04
 ### Issues unblocked
 - Issue #45: WorkspaceProvider — free port on destroy (was blocked by #43 and #30, #30 now done)
 - Issue #130: Graceful shutdown — free all ports (was blocked by #30, now done)
+
+## Issue 33: WorkspaceProvider — create git worktree — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `packages/server/src/services/workspace-provider.ts` with the `WorkspaceProvider` Effect service using `Context.Tag("@laborer/WorkspaceProvider")`.
+- Implemented `createWorktree(projectId, branchName?, taskId?)` method using `Effect.fn` for call-site tracing:
+  1. Validates the project exists via `ProjectRegistry.getProject(projectId)`.
+  2. Generates a branch name if not provided (`laborer/<uuid-prefix>`).
+  3. Checks if the branch already exists via `git rev-parse --verify`.
+  4. Allocates a port via `PortAllocator.allocate()`.
+  5. Computes the worktree path at `<repoPath>/.worktrees/<slugified-branch>`.
+  6. Ensures the `.worktrees` directory exists via `mkdir -p`.
+  7. Creates the git worktree with `git worktree add -b <branch> <path>`.
+  8. Verifies the worktree by running `git rev-parse --is-inside-work-tree` in the new directory.
+  9. On any failure after port allocation, cleans up by freeing the port.
+  10. Commits `workspaceCreated` event to LiveStore with status "running".
+- Service depends on `LaborerStore`, `PortAllocator`, and `ProjectRegistry`.
+- Created `WorkspaceProvider.layer` as a `Layer.effect` that depends on all three services.
+- Updated `packages/server/src/rpc/handlers.ts`:
+  - Replaced the `workspace.create` stub with a real handler that delegates to `WorkspaceProvider.createWorktree`.
+  - Maps workspace record fields to the `WorkspaceResponse` schema.
+- Updated `packages/server/src/main.ts`:
+  - Added `WorkspaceProvider.layer` and `PortAllocator.layer` to the `RpcLive` layer composition.
+  - Layer dependencies: WorkspaceProvider requires ProjectRegistry and PortAllocator, both provided in the same composition.
+- Helper functions: `slugify()` converts branch names to safe directory names, `WORKTREE_DIR` constant defines `.worktrees` as the worktree storage directory.
+- Error handling: each failure point returns a descriptive `RpcError` with specific codes: `GIT_CHECK_FAILED`, `BRANCH_EXISTS`, `FILESYSTEM_ERROR`, `GIT_WORKTREE_FAILED`, `WORKTREE_VERIFY_FAILED`. Port is freed on any failure after allocation.
+- Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin hints), `biome check` passes with zero issues on all 3 modified/new files, server layer composition resolves correctly (verified by starting the server — fails only due to port in use, not layer errors).
+
+### Acceptance criteria status
+- [x] WorkspaceProvider is a tagged Effect service with a pluggable interface
+- [x] `createWorktree(projectId, branchName)` creates a git worktree via `git worktree add`
+- [x] Worktree directory exists at expected path (`<repoPath>/.worktrees/<slug>`)
+- [x] Branch is created in git (via `-b` flag on `git worktree add`)
+- [ ] Tests: create worktree → directory exists, branch in `git branch` output, `git worktree list` includes it (deferred — vitest not yet configured)
+
+### Design decisions
+- Worktrees are stored under `<repoPath>/.worktrees/` to keep them co-located with the project repo. This should be added to `.gitignore` for each project.
+- Branch name auto-generation uses `laborer/<uuid-prefix>` format — short enough to be readable in git log, unique enough to avoid collisions.
+- The `slugify` function converts branch names like `feature/my-thing` to safe directory names like `feature-my-thing`.
+- Port cleanup on failure uses `Effect.catchAll(() => Effect.void)` to ensure the cleanup itself doesn't throw — if port free fails (shouldn't happen), the original error is still surfaced.
+- The service accepts an optional `taskId` parameter for future task-driven workspace creation (Issue #105).
+
+### Issues unblocked
+- Issue #34: WorkspaceProvider — directory validation + watcher scoping (was blocked by #33)
+- Issue #35: WorkspaceProvider — setup scripts (was blocked by #33)
+- Issue #36: WorkspaceProvider — inject PORT env (was blocked by #33 and #29, now both done)
+- Issue #38: WorkspaceProvider — handle dirty git state (was blocked by #33)
+- Issue #39: WorkspaceProvider — handle git fetch failure (was blocked by #33)
+- Issue #43: WorkspaceProvider — destroy worktree (was blocked by #33)

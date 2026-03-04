@@ -9,6 +9,7 @@
 import { LaborerRpcs, RpcError } from "@laborer/shared/rpc";
 import { Effect } from "effect";
 import { ProjectRegistry } from "../services/project-registry.js";
+import { WorkspaceProvider } from "../services/workspace-provider.js";
 
 const startTime = Date.now();
 
@@ -60,9 +61,30 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 			}),
 
 		// -------------------------------------------------------------------
-		// Workspace RPCs (stubs — Issue #33-47)
+		// Workspace RPCs (Issue #33-47)
 		// -------------------------------------------------------------------
-		"workspace.create": () => Effect.fail(notImplemented("workspace.create")),
+		"workspace.create": ({ projectId, branchName, taskId }) =>
+			Effect.gen(function* () {
+				const provider = yield* WorkspaceProvider;
+				const workspace = yield* provider.createWorktree(
+					projectId,
+					branchName,
+					taskId
+				);
+				return {
+					id: workspace.id,
+					projectId: workspace.projectId,
+					branchName: workspace.branchName,
+					worktreePath: workspace.worktreePath,
+					port: workspace.port,
+					status: workspace.status as
+						| "creating"
+						| "running"
+						| "stopped"
+						| "errored"
+						| "destroyed",
+				};
+			}),
 		"workspace.destroy": () => Effect.fail(notImplemented("workspace.destroy")),
 
 		// -------------------------------------------------------------------

@@ -31,7 +31,9 @@ import { LaborerRpcs } from "@laborer/shared/rpc";
 import { Effect, Layer } from "effect";
 import { LaborerRpcsLive } from "./rpc/handlers.js";
 import { LaborerStoreLive } from "./services/laborer-store.js";
+import { PortAllocator } from "./services/port-allocator.js";
 import { ProjectRegistry } from "./services/project-registry.js";
+import { WorkspaceProvider } from "./services/workspace-provider.js";
 
 /**
  * Custom HTTP Routes
@@ -61,10 +63,14 @@ const CustomRoutesLive = HttpRouter.Default.use((router) =>
  *
  * Services required by RPC handlers are provided here:
  * - ProjectRegistry (Issue #21)
+ * - PortAllocator (Issue #29)
+ * - WorkspaceProvider (Issue #33)
  */
 const RpcLive = RpcServer.layer(LaborerRpcs).pipe(
 	Layer.provide(LaborerRpcsLive),
-	Layer.provide(ProjectRegistry.layer)
+	Layer.provide(WorkspaceProvider.layer),
+	Layer.provide(ProjectRegistry.layer),
+	Layer.provide(PortAllocator.layer)
 );
 
 /**

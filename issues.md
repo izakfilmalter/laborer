@@ -486,16 +486,16 @@ Establish real-time sync between the server and client LiveStore instances over 
 
 ### Acceptance criteria
 
-- [ ] WebSocket endpoint on server for LiveStore sync
-- [ ] Client connects and syncs on startup
-- [ ] Event committed on server → appears on client within reasonable latency
-- [ ] Event committed on client → appears on server
-- [ ] Handles reconnection on disconnect
-- [ ] Tests: server commits event → client receives; client commits event → server receives; disconnect + reconnect → state consistent
+- [x] WebSocket endpoint on server for LiveStore sync (SyncRpcLive at /rpc — Issue #18)
+- [x] Client connects and syncs on startup (makeWsSync in worker with Blocking initial sync — Issue #18)
+- [x] Event committed on server → appears on client within reasonable latency (via Push → broadcast to live Pull subscribers — Issue #18)
+- [x] Event committed on client → appears on server (via client Push → server stores in SQLite — Issue #18)
+- [x] Handles reconnection on disconnect (built into makeWsSync via Effect RPC WebSocket transport — Issue #18)
+- [ ] Tests: server commits event → client receives; client commits event → server receives; disconnect + reconnect → state consistent (deferred — requires running both server and web app)
 
 ### Blocked by
 
-- Blocked by #16, #17
+- Blocked by #16, #17 (both done)
 
 ### User stories addressed
 

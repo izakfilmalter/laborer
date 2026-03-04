@@ -14,6 +14,12 @@ export default defineConfig({
 	server: {
 		port: 3001,
 		fs: { strict: false },
+		proxy: {
+			"/rpc": {
+				target: "http://localhost:3000",
+				ws: true,
+			},
+		},
 	},
 	worker: {
 		format: "es",

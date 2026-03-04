@@ -33,6 +33,7 @@ import { LaborerRpcsLive } from "./rpc/handlers.js";
 import { LaborerStoreLive } from "./services/laborer-store.js";
 import { PortAllocator } from "./services/port-allocator.js";
 import { ProjectRegistry } from "./services/project-registry.js";
+import { SyncRpcLive } from "./services/sync-backend.js";
 import { TerminalManager } from "./services/terminal-manager.js";
 import { WorkspaceProvider } from "./services/workspace-provider.js";
 
@@ -96,18 +97,24 @@ const ServerLive = BunHttpServer.layer({ port: env.PORT });
  * Layer composition:
  *   HttpRouter.Default.serve() — serves the Default router with logging middleware
  *   + CustomRoutesLive — adds GET / to the router
- *   + RpcLive — RPC request handling
- *   + RpcServer.layerProtocolHttp — mounts RPC at /rpc on the Default router
- *   + RpcSerialization.layerNdjson — wire format for RPC messages
+ *   + RpcLive — Laborer RPC request handling
+ *   + SyncRpcLive — LiveStore sync RPC handler (Issue #18)
+ *   + RpcServer.layerProtocolHttp — mounts both RPC groups on the Default router
+ *   + RpcSerialization.layerJson — wire format for RPC messages (JSON for sync compat)
  *   + LaborerStoreLive — LiveStore with SQLite persistence (Issue #16)
  *   + ServerLive — Bun HTTP server
+ *
+ * Note: Both LaborerRpcs and SyncWsRpc share a single protocol layer at /rpc.
+ * The sync client from @livestore/sync-cf/client connects via WebSocket to /rpc.
+ * Effect RPC routes each request to the correct handler based on the RPC tag name.
  */
 const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	HttpServer.withLogAddress,
 	Layer.provide(CustomRoutesLive),
 	Layer.provide(RpcLive),
+	Layer.provide(SyncRpcLive),
 	Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-	Layer.provide(RpcSerialization.layerNdjson),
+	Layer.provide(RpcSerialization.layerJson),
 	Layer.provide(LaborerStoreLive),
 	Layer.provide(ServerLive)
 );

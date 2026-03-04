@@ -23,12 +23,16 @@
       "version": "0.0.0",
       "dependencies": {
         "@base-ui/react": "^1.2.0",
+        "@effect/platform": "0.93.8",
+        "@effect/platform-browser": "0.73.0",
+        "@effect/rpc": "0.72.2",
         "@hookform/resolvers": "^5.1.1",
         "@laborer/env": "workspace:*",
         "@laborer/shared": "workspace:*",
         "@livestore/adapter-web": "0.4.0-dev.22",
         "@livestore/livestore": "0.4.0-dev.22",
         "@livestore/react": "0.4.0-dev.22",
+        "@livestore/sync-cf": "0.4.0-dev.22",
         "@tailwindcss/vite": "^4.0.15",
         "@tanstack/react-router": "^1.141.1",
         "class-variance-authority": "^0.7.1",
@@ -99,6 +103,7 @@
         "@laborer/shared": "workspace:*",
         "@livestore/adapter-node": "0.4.0-dev.22",
         "@livestore/livestore": "0.4.0-dev.22",
+        "@livestore/sync-cf": "0.4.0-dev.22",
         "effect": "catalog:",
         "node-pty": "1.1.0",
       },
@@ -402,6 +407,8 @@
     "@livestore/react": ["@livestore/react@0.4.0-dev.22", "", { "dependencies": { "@livestore/common": "0.4.0-dev.22", "@livestore/livestore": "0.4.0-dev.22", "@livestore/utils": "0.4.0-dev.22", "@opentelemetry/api": "1.9.0" }, "peerDependencies": { "react": "^19.1.0" } }, "sha512-SFeZPvnS8bVICYai+eeLEtGMKU/RkzA5J+TS+oh638F602PWSBVurPuLQA6o0Ryj6UeO8/jeAUjxr44UO5f2aw=="],
 
     "@livestore/sqlite-wasm": ["@livestore/sqlite-wasm@0.4.0-dev.22", "", { "dependencies": { "@cloudflare/workers-types": "4.20251118.0", "@livestore/common": "0.4.0-dev.22", "@livestore/common-cf": "0.4.0-dev.22", "@livestore/utils": "0.4.0-dev.22", "@livestore/wa-sqlite": "0.4.0-dev.22" } }, "sha512-ZdhwguqJbEjPqem2rYfI6mdrnMLFmbLtgWAwLNFQRmiSiY4F20i7y/c3tFbHTJUDYoQwWmvunLRL8GYDHtCXzA=="],
+
+    "@livestore/sync-cf": ["@livestore/sync-cf@0.4.0-dev.22", "", { "dependencies": { "@cloudflare/workers-types": "4.20251118.0", "@livestore/common": "0.4.0-dev.22", "@livestore/common-cf": "0.4.0-dev.22", "@livestore/utils": "0.4.0-dev.22" } }, "sha512-RJlNTwpzxuJ5PCHcUalvRwlwRDIYXbyri5aima8J6w4CbIZusZ1wTZDUN5xw8bM1Ck6nN9lKRyAv8uG7e15rew=="],
 
     "@livestore/utils": ["@livestore/utils@0.4.0-dev.22", "", { "dependencies": { "@effect/platform-node": "0.103.0", "@standard-schema/spec": "1.0.0", "nanoid": "5.1.5", "pretty-bytes": "7.0.1", "qrcode-generator": "2.0.4" }, "peerDependencies": { "@effect/ai": "^0.29.0", "@effect/cli": "^0.71.0", "@effect/cluster": "^0.50.6", "@effect/experimental": "^0.56.0", "@effect/opentelemetry": "^0.58.0", "@effect/platform": "^0.92.1", "@effect/platform-browser": "^0.72.0", "@effect/platform-bun": "^0.81.1", "@effect/printer": "^0.46.0", "@effect/printer-ansi": "^0.46.0", "@effect/rpc": "^0.71.1", "@effect/sql": "^0.46.0", "@effect/typeclass": "^0.37.0", "@opentelemetry/api": "^1.9.0", "@opentelemetry/resources": "^2.0.1", "effect": "^3.19.9" } }, "sha512-5eDFievmIQA9A/KpqNYbfm5hyLahHHyzl4dlkeEe26EefF2cxF5/7EH2Bt5fMzsDgIyAc4WNgxSXtZRp74TftQ=="],
 

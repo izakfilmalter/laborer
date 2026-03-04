@@ -706,3 +706,86 @@ Date: 2026-03-04
 - Issue #45: WorkspaceProvider — free port on destroy (was blocked by #43 and #30, now both done)
 - Issue #46: WorkspaceProvider — remove watchers on destroy (was blocked by #43)
 - Issue #47: workspace.destroy RPC handler (partially — still needs #44, #45, #46, but the core destroy logic is done)
+
+## Issue 50: TerminalManager service — spawn PTY — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `packages/server/src/services/terminal-manager.ts` with the `TerminalManager` Effect service using `Context.Tag("@laborer/TerminalManager")`.
+- Added `node-pty@1.1.0` as a dependency in `packages/server/package.json` for pseudo-terminal emulation. node-pty provides native PTY support with full ANSI/xterm compatibility, which is essential for rendering agent TUIs (opencode, claude, codex) correctly.
+- Implemented 5 methods covering Issues #50-#55:
+
+  **`spawn(workspaceId, command?)` (Issue #50):**
+  1. Validates workspace exists in LiveStore and is in "running" or "creating" status.
+  2. Gets workspace environment variables via `WorkspaceProvider.getWorkspaceEnv` (PORT, LABORER_*).
+  3. Determines shell command: if custom command provided, runs it via `$SHELL -c <cmd>`; if no command, spawns user's default shell interactively.
+  4. Spawns PTY via `nodePty.spawn` with `xterm-256color` terminal type, 80x24 default size, workspace env vars merged with process env.
+  5. Wires `pty.onData` to emit `terminalOutput` events to LiveStore for real-time output streaming (Issue #51).
+  6. Wires `pty.onExit` to update terminal status to "stopped" and clean up in-memory state.
+  7. Commits `terminalSpawned` event to LiveStore with `ptySessionRef` set to the PTY PID.
+  8. Returns terminal record with id, workspaceId, command, and status.
+
+  **`write(terminalId, data)` (Issue #52):**
+  - Looks up terminal in in-memory map, writes data to `pty.write()`.
+  - Returns NOT_FOUND error if terminal doesn't exist.
+
+  **`resize(terminalId, cols, rows)` (Issue #53):**
+  - Looks up terminal in in-memory map, calls `pty.resize(cols, rows)`.
+  - node-pty sends SIGWINCH to the process so it can reflow output.
+
+  **`kill(terminalId)` (Issue #54):**
+  - Looks up terminal, calls `pty.kill()` to terminate the process.
+  - Removes from in-memory map and updates LiveStore status to "stopped".
+  - Handles double-kill gracefully (terminal removed from map on first kill).
+
+  **`listTerminals(workspaceId)` (Issue #55):**
+  - Queries LiveStore terminals table filtered by workspaceId.
+  - Returns all terminals for that workspace with their current status.
+
+- Used `Effect.Ref<Map<string, ManagedTerminal>>` for fiber-safe concurrent access to the in-memory terminal registry.
+- Extracted the Effect runtime via `Effect.runtime<never>()` and used `Runtime.runSync(runtime)` in node-pty callbacks (onExit) to avoid the `Effect.runSync` inside-Effect anti-pattern flagged by the Effect language service.
+- Used dynamic `import("node-pty")` to lazily load the native module only when the layer is constructed (not at module evaluation time), consistent with the `@livestore/adapter-node` import pattern in `laborer-store.ts`.
+- Updated `packages/server/src/rpc/handlers.ts`:
+  - Replaced all 4 terminal RPC stubs (`terminal.spawn`, `terminal.write`, `terminal.resize`, `terminal.kill`) with real handlers that delegate to `TerminalManager`.
+  - Added `TerminalManager` import.
+  - Updated doc comment to list all implemented handlers.
+- Updated `packages/server/src/main.ts`:
+  - Added `TerminalManager.layer` to the `RpcLive` layer composition.
+  - Added import for `TerminalManager`.
+  - `TerminalManager.layer` depends on `LaborerStore` and `WorkspaceProvider`, both already provided in the layer stack.
+- Verified: `tsc --noEmit` passes for server and shared packages (only pre-existing Effect plugin informational messages), `biome check` passes with zero issues on all 3 modified/new files, `turbo check-types` passes for server and shared (only pre-existing web app failures).
+
+### Acceptance criteria status
+- [x] TerminalManager is a tagged Effect service
+- [x] `spawn(workspaceId, command?)` creates a PTY process in the workspace directory
+- [x] Default command is user's shell (falls back to /bin/sh)
+- [x] PTY tracked by unique ID (UUID, stored in Map<string, ManagedTerminal>)
+- [x] PTY stdout piped to LiveStore events (Issue #51 — TerminalOutput events via pty.onData)
+- [x] `write(terminalId, data)` sends data to PTY stdin (Issue #52)
+- [x] `resize(terminalId, cols, rows)` updates PTY dimensions with SIGWINCH (Issue #53)
+- [x] `kill(terminalId)` terminates PTY process and updates LiveStore (Issue #54)
+- [x] Multiple terminals per workspace tracked independently (Issue #55)
+- [ ] Tests: deferred — vitest not yet configured
+
+### Design decisions
+- Used `node-pty` instead of Bun.spawn because Bun 1.3.5 doesn't support pseudo-terminal allocation. `node-pty` provides proper PTY emulation with `SIGWINCH`, `onData`, `onExit`, and `resize` — all required for full terminal fidelity with agent TUIs.
+- Custom commands run via `$SHELL -c <cmd>` so pipes, redirects, and complex shell syntax work. Interactive shell sessions spawn the shell directly without `-c`.
+- Terminal type set to `xterm-256color` to match what xterm.js will advertise on the client side, ensuring agent TUIs render colors correctly.
+- `pty.onData` streams raw output directly to LiveStore as `terminalOutput` events. The materializer for `v1.TerminalOutput` is a no-op (returns `[]`) — output is ephemeral and consumed by subscribers, not persisted to a table row.
+- The `pty.onExit` callback handles the case where the process exits naturally (not via `kill`). It updates LiveStore and removes the terminal from the in-memory map. The `kill` method also does this explicitly for the user-initiated kill path.
+- Used `Effect.try` (synchronous) instead of `Effect.tryPromise` for `pty.write`, `pty.resize`, and `pty.kill` since these are synchronous node-pty operations.
+
+### Issues unblocked
+- Issue #56: terminal.spawn RPC handler (was blocked by #19 (done) and #50 — now both done!)
+- Issue #57: terminal.write RPC handler (was blocked by #56 and #52 — #52 now done)
+- Issue #58: terminal.resize RPC handler (was blocked by #56 and #53 — #53 now done)
+- Issue #59: terminal.kill RPC handler (was blocked by #56 and #54 — #54 now done)
+- Issue #51: TerminalManager — stream stdout to LiveStore (completed as part of #50)
+- Issue #52: TerminalManager — write stdin (completed as part of #50)
+- Issue #53: TerminalManager — resize PTY (completed as part of #50)
+- Issue #54: TerminalManager — kill PTY (completed as part of #50)
+- Issue #55: TerminalManager — multiple terminals per workspace (completed as part of #50)
+
+### Note: Issues #51-#55 and #56-#59 completed
+The TerminalManager implementation includes all 5 sub-issues (#50-#55) in a single service. The 4 terminal RPC handlers (#56-#59) are also wired up. This means the entire terminal pipeline from RPC → service → PTY → LiveStore is complete on the server side. The next step is the client-side xterm.js integration (Issue #60), which still requires LiveStore client adapter setup (Issue #17) and LiveStore sync (Issue #18).

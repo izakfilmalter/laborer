@@ -22,7 +22,8 @@
     "@laborer/shared": "workspace:*",
     "@livestore/adapter-node": "0.4.0-dev.22",
     "@livestore/livestore": "0.4.0-dev.22",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "node-pty": "1.1.0"
   },
   "devDependencies": {
     "@laborer/config": "workspace:*",

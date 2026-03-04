@@ -9,6 +9,7 @@
 import { LaborerRpcs, RpcError } from "@laborer/shared/rpc";
 import { Effect } from "effect";
 import { ProjectRegistry } from "../services/project-registry.js";
+import { TerminalManager } from "../services/terminal-manager.js";
 import { WorkspaceProvider } from "../services/workspace-provider.js";
 
 const startTime = Date.now();
@@ -28,6 +29,10 @@ const notImplemented = (method: string) =>
  * - project.remove: delegates to ProjectRegistry.removeProject (Issue #22)
  * - workspace.create: delegates to WorkspaceProvider.createWorktree (Issue #33/#40)
  * - workspace.destroy: delegates to WorkspaceProvider.destroyWorktree (Issue #43)
+ * - terminal.spawn: delegates to TerminalManager.spawn (Issue #50)
+ * - terminal.write: delegates to TerminalManager.write (Issue #52)
+ * - terminal.resize: delegates to TerminalManager.resize (Issue #53)
+ * - terminal.kill: delegates to TerminalManager.kill (Issue #54)
  *
  * All other handlers are stubs that will be replaced as
  * their backing services are implemented.
@@ -95,12 +100,28 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 			}),
 
 		// -------------------------------------------------------------------
-		// Terminal RPCs (stubs — Issue #50-59)
+		// Terminal RPCs (Issue #50-59)
 		// -------------------------------------------------------------------
-		"terminal.spawn": () => Effect.fail(notImplemented("terminal.spawn")),
-		"terminal.write": () => Effect.fail(notImplemented("terminal.write")),
-		"terminal.resize": () => Effect.fail(notImplemented("terminal.resize")),
-		"terminal.kill": () => Effect.fail(notImplemented("terminal.kill")),
+		"terminal.spawn": ({ workspaceId, command }) =>
+			Effect.gen(function* () {
+				const tm = yield* TerminalManager;
+				return yield* tm.spawn(workspaceId, command);
+			}),
+		"terminal.write": ({ terminalId, data }) =>
+			Effect.gen(function* () {
+				const tm = yield* TerminalManager;
+				yield* tm.write(terminalId, data);
+			}),
+		"terminal.resize": ({ terminalId, cols, rows }) =>
+			Effect.gen(function* () {
+				const tm = yield* TerminalManager;
+				yield* tm.resize(terminalId, cols, rows);
+			}),
+		"terminal.kill": ({ terminalId }) =>
+			Effect.gen(function* () {
+				const tm = yield* TerminalManager;
+				yield* tm.kill(terminalId);
+			}),
 
 		// -------------------------------------------------------------------
 		// Diff RPCs (stubs — Issue #82-86)

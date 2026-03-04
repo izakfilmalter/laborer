@@ -33,6 +33,7 @@ import { LaborerRpcsLive } from "./rpc/handlers.js";
 import { LaborerStoreLive } from "./services/laborer-store.js";
 import { PortAllocator } from "./services/port-allocator.js";
 import { ProjectRegistry } from "./services/project-registry.js";
+import { TerminalManager } from "./services/terminal-manager.js";
 import { WorkspaceProvider } from "./services/workspace-provider.js";
 
 /**
@@ -65,9 +66,11 @@ const CustomRoutesLive = HttpRouter.Default.use((router) =>
  * - ProjectRegistry (Issue #21)
  * - PortAllocator (Issue #29)
  * - WorkspaceProvider (Issue #33)
+ * - TerminalManager (Issue #50)
  */
 const RpcLive = RpcServer.layer(LaborerRpcs).pipe(
 	Layer.provide(LaborerRpcsLive),
+	Layer.provide(TerminalManager.layer),
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ProjectRegistry.layer),
 	Layer.provide(PortAllocator.layer)

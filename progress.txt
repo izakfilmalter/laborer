@@ -508,3 +508,31 @@ Date: 2026-03-04
 ### Issues unblocked
 - Issue #25: project.remove RPC handler (was blocked by #24 and #22, now both done)
 - Issue #23: ProjectRegistry — listProjects + getProject (was already unblocked by #21)
+
+## Issue 23: ProjectRegistry — listProjects + getProject methods — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Added `listProjects()` and `getProject(projectId)` methods to the `ProjectRegistry` service interface and implementation in `packages/server/src/services/project-registry.ts`.
+- Extracted `ProjectRecord` interface to describe the shape of project records returned by the registry, matching the LiveStore projects table columns.
+- `listProjects()` implementation:
+  - Uses `Effect.sync` to wrap the synchronous `store.query(tables.projects)` call.
+  - Returns all registered projects as a readonly array.
+- `getProject(projectId)` implementation:
+  - Uses `Effect.fn("ProjectRegistry.getProject")` for call-site tracing.
+  - Queries the LiveStore `projects` table with `.where("id", projectId)`.
+  - If no project found, returns `RpcError` with code `NOT_FOUND` and descriptive message.
+  - Returns the first matching project record on success.
+- Updated the `ProjectRegistry.of(...)` call to include both new methods.
+- No new RPC handlers needed — these are service-level methods used internally by other server services (e.g., WorkspaceProvider will use `getProject` to validate project existence). The UI reads projects directly from LiveStore via sync.
+- Verified: `tsc --noEmit` passes (exit code 0, no type errors — only pre-existing Effect plugin hints), `biome check` passes with zero issues on project-registry.ts.
+
+### Acceptance criteria status
+- [x] `listProjects()` returns all registered projects
+- [x] `getProject(id)` returns a specific project
+- [x] `getProject` with nonexistent ID → returns descriptive error (NOT_FOUND)
+- [ ] Tests: add multiple projects → list returns all; get by ID → correct project; get nonexistent → error (deferred — vitest not yet configured)
+
+### Issues unblocked
+- No direct downstream issues were exclusively blocked by #23, but the methods are used by future services (WorkspaceProvider needs `getProject` to validate projectId during workspace creation)

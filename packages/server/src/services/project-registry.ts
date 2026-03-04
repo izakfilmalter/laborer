@@ -15,7 +15,7 @@
  *
  * Issue #21: addProject method
  * Issue #22: removeProject method
- * Issue #23: listProjects + getProject methods (future)
+ * Issue #23: listProjects + getProject methods
  */
 
 import { statSync } from "node:fs";
@@ -31,21 +31,30 @@ import { LaborerStore } from "./laborer-store.js";
  * Tagged service that manages project registration, validation,
  * and lifecycle. Depends on LaborerStore for persistence.
  */
+/**
+ * Shape of a project record returned by the registry.
+ * Matches the LiveStore projects table columns.
+ */
+interface ProjectRecord {
+	readonly id: string;
+	readonly name: string;
+	readonly repoPath: string;
+	readonly rlphConfig: string | null;
+}
+
 class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 	ProjectRegistry,
 	{
-		readonly addProject: (repoPath: string) => Effect.Effect<
-			{
-				readonly id: string;
-				readonly repoPath: string;
-				readonly name: string;
-				readonly rlphConfig: string | null;
-			},
-			RpcError
-		>;
+		readonly addProject: (
+			repoPath: string
+		) => Effect.Effect<ProjectRecord, RpcError>;
 		readonly removeProject: (
 			projectId: string
 		) => Effect.Effect<void, RpcError>;
+		readonly listProjects: () => Effect.Effect<readonly ProjectRecord[], never>;
+		readonly getProject: (
+			projectId: string
+		) => Effect.Effect<ProjectRecord, RpcError>;
 	}
 >() {
 	static readonly layer = Layer.effect(
@@ -158,7 +167,31 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 				}
 			);
 
-			return ProjectRegistry.of({ addProject, removeProject });
+			const listProjects = () =>
+				Effect.sync(() => store.query(tables.projects));
+
+			const getProject = Effect.fn("ProjectRegistry.getProject")(function* (
+				projectId: string
+			) {
+				const results = store.query(tables.projects.where("id", projectId));
+
+				if (results.length === 0) {
+					return yield* new RpcError({
+						message: `Project not found: ${projectId}`,
+						code: "NOT_FOUND",
+					});
+				}
+
+				// Safe: length > 0 guaranteed by the check above
+				return results[0] as (typeof results)[number];
+			});
+
+			return ProjectRegistry.of({
+				addProject,
+				removeProject,
+				listProjects,
+				getProject,
+			});
 		})
 	);
 }

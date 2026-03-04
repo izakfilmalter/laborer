@@ -646,10 +646,10 @@ Add `listProjects` and `getProject(id)` methods to the ProjectRegistry service. 
 
 ### Acceptance criteria
 
-- [ ] `listProjects()` returns all registered projects
-- [ ] `getProject(id)` returns a specific project
-- [ ] `getProject` with nonexistent ID → returns descriptive error
-- [ ] Tests: add multiple projects → list returns all; get by ID → correct project; get nonexistent → error
+- [x] `listProjects()` returns all registered projects
+- [x] `getProject(id)` returns a specific project
+- [x] `getProject` with nonexistent ID → returns descriptive error
+- [ ] Tests: add multiple projects → list returns all; get by ID → correct project; get nonexistent → error (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -3597,7 +3597,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 20 | AtomRpc client setup (effect-atom) | #19, #9 | Ready |
 | 21 | ProjectRegistry — addProject | #16, #3 | Done |
 | 22 | ProjectRegistry — removeProject | #21 | Done |
-| 23 | ProjectRegistry — listProjects + getProject | #21 | Ready |
+| 23 | ProjectRegistry — listProjects + getProject | #21 | Done |
 | 24 | project.add RPC handler | #19, #21 | Done |
 | 25 | project.remove RPC handler | #24, #22 | Done |
 | 26 | Project list UI | #18, #24 | Blocked |
@@ -3674,7 +3674,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 97 | "Review PR" button + input (AtomRpc mutation) | #96, #60 | Blocked |
 | 98 | rlph.fix RPC handler | #56 | Blocked |
 | 99 | "Fix Findings" button + input (AtomRpc mutation) | #98, #60 | Blocked |
-| 100 | Task CRUD — create manual task | #8, #16 | Blocked |
+| 100 | Task CRUD — create manual task | #8, #16 | Ready |
 | 101 | Task CRUD — update status | #100 | Blocked |
 | 102 | Task CRUD — list per project | #100 | Blocked |
 | 103 | Create Task form UI | #100, #20 | Blocked |
@@ -3703,6 +3703,6 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 126 | Terminal fidelity — codex | #60 | Blocked |
 | 127 | Terminal scroll performance | #60 | Blocked |
 | 128 | Graceful shutdown — kill terminals | #54 | Blocked |
-| 129 | Graceful shutdown — persist state | #16 | Blocked |
+| 129 | Graceful shutdown — persist state | #16 | Ready |
 | 130 | Graceful shutdown — free ports | #30 | Blocked |
 | 131 | Theme consistency audit | #90 | Blocked |

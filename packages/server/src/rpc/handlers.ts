@@ -38,6 +38,7 @@ const notImplemented = (method: string) =>
  * - rlph.startLoop: delegates to TerminalManager.spawn with `rlph --once` (Issue #92)
  * - rlph.writePRD: delegates to TerminalManager.spawn with `rlph prd [description]` (Issue #94)
  * - rlph.review: delegates to TerminalManager.spawn with `rlph review <prNumber>` (Issue #96)
+ * - rlph.fix: delegates to TerminalManager.spawn with `rlph fix <prNumber>` (Issue #98)
  *
  * All other handlers are stubs that will be replaced as
  * their backing services are implemented.
@@ -161,6 +162,10 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 				const tm = yield* TerminalManager;
 				return yield* tm.spawn(workspaceId, `rlph review ${prNumber}`);
 			}),
-		"rlph.fix": () => Effect.fail(notImplemented("rlph.fix")),
+		"rlph.fix": ({ workspaceId, prNumber }) =>
+			Effect.gen(function* () {
+				const tm = yield* TerminalManager;
+				return yield* tm.spawn(workspaceId, `rlph fix ${prNumber}`);
+			}),
 	})
 );

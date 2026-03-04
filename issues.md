@@ -2667,10 +2667,10 @@ Implement the `rlph.fix` handler via `RpcGroup.toHandlers`. Spawns a terminal ru
 
 ### Acceptance criteria
 
-- [ ] `rlph.fix` handler accepts workspaceId and prNumber
-- [ ] Spawns terminal with `rlph fix <prNumber>`
-- [ ] Returns terminal ID
-- [ ] Tests: RPC call → terminal spawned with `rlph fix <pr>`
+- [x] `rlph.fix` handler accepts workspaceId and prNumber
+- [x] Spawns terminal with `rlph fix <prNumber>`
+- [x] Returns terminal ID
+- [ ] Tests: RPC call → terminal spawned with `rlph fix <pr>` (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -3672,8 +3672,8 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 95 | PRD writing form + button (AtomRpc mutation) | ~~#94~~, ~~#60~~ | Ready |
 | 96 | rlph.review RPC handler | ~~#56~~ | Done |
 | 97 | "Review PR" button + input (AtomRpc mutation) | ~~#96~~, ~~#60~~ | Ready |
-| 98 | rlph.fix RPC handler | ~~#56~~ | Ready |
-| 99 | "Fix Findings" button + input (AtomRpc mutation) | #98, ~~#60~~ | Blocked |
+| 98 | rlph.fix RPC handler | ~~#56~~ | Done |
+| 99 | "Fix Findings" button + input (AtomRpc mutation) | ~~#98~~, ~~#60~~ | Ready |
 | 100 | Task CRUD — create manual task | #8, #16 | Ready |
 | 101 | Task CRUD — update status | #100 | Blocked |
 | 102 | Task CRUD — list per project | #100 | Blocked |

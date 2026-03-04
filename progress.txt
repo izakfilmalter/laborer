@@ -1725,3 +1725,39 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #97: "Review PR" button + PR number input (was blocked by #96 and #60 (done) — now all blockers done!)
+
+## Issue 98: rlph.fix RPC handler — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Replaced the `rlph.fix` stub in `packages/server/src/rpc/handlers.ts` with a real handler that delegates to `TerminalManager.spawn(workspaceId, command)`.
+- The handler accepts `workspaceId` (required) and `prNumber` (required, integer) from the payload.
+- Constructs the command: `rlph fix <prNumber>` and spawns a PTY terminal running it in the workspace's worktree directory via `TerminalManager.spawn`.
+- Returns the terminal record (id, workspaceId, command, status) matching the `TerminalResponse` schema.
+- This follows the exact same pattern as `rlph.startLoop` (Issue #92), `rlph.writePRD` (Issue #94), and `rlph.review` (Issue #96) — a thin convenience wrapper around the existing terminal infrastructure.
+- The `rlph fix <prNumber>` command starts rlph's fix workflow. It fetches the PR's review findings and runs an agent to fix them. The user sees the rlph TUI output in real-time via xterm.js.
+- Updated the handler doc comment to list `rlph.fix` as implemented.
+- Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin informational messages), `biome check` passes with zero issues on handlers.ts.
+
+### Acceptance criteria status
+- [x] `rlph.fix` handler accepts workspaceId and prNumber
+- [x] Spawns terminal with `rlph fix <prNumber>` (via TerminalManager.spawn)
+- [x] Returns terminal ID (along with workspaceId, command, status in TerminalResponse)
+- [ ] Tests: RPC call → terminal spawned with `rlph fix <pr>` (deferred — vitest not yet configured)
+
+### Design decisions
+- Used the existing `TerminalManager.spawn` method rather than duplicating PTY logic, consistent with all other rlph handler patterns. All rlph handlers are thin wrappers that compose the correct command string and delegate to the terminal infrastructure.
+- The `prNumber` is interpolated directly into the command string as an integer. Since it's validated as `Schema.Int` in the RPC contract, there's no risk of shell injection.
+
+### Note: All 4 rlph RPC handlers are now implemented
+With this issue complete, the full rlph integration pipeline on the server side is done:
+1. `rlph.startLoop` → `rlph --once` (Issue #92)
+2. `rlph.writePRD` → `rlph prd [description]` (Issue #94)
+3. `rlph.review` → `rlph review <prNumber>` (Issue #96)
+4. `rlph.fix` → `rlph fix <prNumber>` (Issue #98)
+
+The only remaining RPC stub is `editor.open` (Issue #111).
+
+### Issues unblocked
+- Issue #99: "Fix Findings" button + PR number input (was blocked by #98 and #60 (done) — now all blockers done!)

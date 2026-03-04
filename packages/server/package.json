@@ -20,6 +20,8 @@
     "@effect/sql": "^0.49.0",
     "@laborer/env": "workspace:*",
     "@laborer/shared": "workspace:*",
+    "@livestore/adapter-node": "^0.3.1",
+    "@livestore/livestore": "^0.3.1",
     "effect": "catalog:"
   },
   "devDependencies": {

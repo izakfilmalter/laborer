@@ -432,9 +432,9 @@ Initialize LiveStore on the server side with a Bun/Node adapter and SQLite persi
 
 ### Acceptance criteria
 
-- [ ] LiveStore initialized with SQLite backend on server
-- [ ] Server can commit events and read table state
-- [ ] Events persist to SQLite file
+- [x] LiveStore initialized with SQLite backend on server
+- [x] Server can commit events and read table state
+- [x] Events persist to SQLite file
 - [ ] Tests: commit events, restart server (re-init LiveStore), verify state restored from SQLite
 
 ### Blocked by
@@ -3590,7 +3590,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 13 | Web env validation | None | Ready |
 | 14 | Server env validation | #10 | Done |
 | 15 | Server consumes env validation | #14, #11 | Done |
-| 16 | LiveStore server adapter setup | #3, #11 | Ready |
+| 16 | LiveStore server adapter setup | #3, #11 | Done |
 | 17 | LiveStore client adapter setup | #3 | Ready |
 | 18 | LiveStore server-to-client sync | #16, #17 | Blocked |
 | 19 | @effect/rpc server router setup | #12 | Done |

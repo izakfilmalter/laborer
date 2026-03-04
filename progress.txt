@@ -364,3 +364,38 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #29: PortAllocator — allocate (was blocked by #15, now done)
+
+## Issue 16: LiveStore server adapter setup — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `packages/server/src/services/laborer-store.ts` with:
+  - `LaborerStore` — Effect Context Tag wrapping the LiveStore instance with full schema type safety. Consumers use `yield* LaborerStore` to get `{ store }` with typed `commit()` and `query()` methods.
+  - `LaborerStoreLive` — `Layer.scoped` that creates the store using `createStore` from `@livestore/livestore` with `@livestore/adapter-node` for filesystem-backed SQLite persistence in `./data/laborer/`.
+  - Dynamic `import("@livestore/adapter-node")` to defer loading of the adapter (avoids eager module evaluation issues).
+  - `provideOtel({})` to satisfy LiveStore's OtelTracer requirement with a no-op tracer (no OpenTelemetry in v1).
+  - `batchUpdates: (run) => run()` — server-side no-op (no React batching needed).
+  - `disableDevtools: true` — disables LiveStore devtools on server.
+- Added `@livestore/adapter-node@^0.3.1` and `@livestore/livestore@^0.3.1` as dependencies in `packages/server/package.json`.
+- Updated `packages/server/src/main.ts` to import `LaborerStoreLive` and compose it into the `HttpLive` layer stack via `Layer.provide(LaborerStoreLive)`.
+- **Resolved critical dependency conflict**: LiveStore 0.3.1's transitive dependency `@livestore/utils` re-exports `@effect/platform-node@0.81.5`, which eagerly imports `@effect/cluster/ShardStorage`. Our project uses `@effect/cluster@0.56.4` (which removed `ShardStorage`). Bun's module resolution hoisted the wrong version. Fixed by creating a Bun patch (`patches/@effect%2Fplatform-node@0.81.5.patch`) that comments out the `NodeCluster*` exports from `@effect/platform-node@0.81.5`'s index — these modules import `@effect/cluster` at the old API surface and are not used by LiveStore's adapter code.
+- Added `patchedDependencies` to root `package.json` so the patch is automatically applied on `bun install`.
+- Added `data/` to `.gitignore` to exclude LiveStore SQLite database files from version control.
+- Verified: server starts successfully, LiveStore initializes and creates SQLite databases at `packages/server/data/laborer/` (eventlog and state DBs), HTTP endpoint responds correctly, `tsc --noEmit` passes (exit code 0, no type errors), `biome check` passes on all modified files.
+
+### Acceptance criteria status
+- [x] LiveStore initialized with SQLite backend on server
+- [x] Server can commit events and read table state
+- [x] Events persist to SQLite file (eventlog@4.db and state-*.db created)
+- [ ] Tests: commit events, restart server (re-init LiveStore), verify state restored from SQLite (deferred — will be testable when integration test infrastructure is set up with @effect/vitest)
+
+### Technical details
+- **Patch**: `@effect/platform-node@0.81.5` is a transitive dependency of `@livestore/utils@0.3.1`. Its index eagerly exports `NodeClusterRunnerHttp`, `NodeClusterRunnerSocket`, `NodeClusterShardManagerHttp`, and `NodeClusterShardManagerSocket` — all of which import from `@effect/cluster`. Since Bun's hoisting gives this package `@effect/cluster@0.56.4` (our version) instead of `@effect/cluster@0.34.5` (LiveStore's expected version), the `ShardStorage` module doesn't exist, causing a runtime `Cannot find module` error. The patch removes these four unused re-exports.
+- **Store type inference**: The `LaborerStore` tag uses conditional type inference to extract the store type from `createStore`'s return Effect, giving consumers fully typed access to all 6 tables and 18 events.
+
+### Issues unblocked
+- Issue #21: ProjectRegistry — add project (was blocked by #16)
+- Issue #100: Task CRUD — create manual task (was blocked by #16 and #8, #8 is done)
+- Issue #129: Graceful shutdown — persist state (was blocked by #16)
+- Issue #18: LiveStore server-to-client sync (partially — still needs #17)

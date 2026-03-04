@@ -15,7 +15,6 @@
  * - Environment variables validated at import time via @laborer/env/server
  *
  * Future issues will add:
- * - LiveStore server adapter (Issue #16)
  * - Full RPC router with real service implementations (Issue #19+)
  */
 
@@ -31,6 +30,7 @@ import { env } from "@laborer/env/server";
 import { LaborerRpcs } from "@laborer/shared/rpc";
 import { Effect, Layer } from "effect";
 import { LaborerRpcsLive } from "./rpc/handlers.js";
+import { LaborerStoreLive } from "./services/laborer-store.js";
 
 /**
  * Custom HTTP Routes
@@ -85,6 +85,7 @@ const ServerLive = BunHttpServer.layer({ port: env.PORT });
  *   + RpcLive — RPC request handling
  *   + RpcServer.layerProtocolHttp — mounts RPC at /rpc on the Default router
  *   + RpcSerialization.layerNdjson — wire format for RPC messages
+ *   + LaborerStoreLive — LiveStore with SQLite persistence (Issue #16)
  *   + ServerLive — Bun HTTP server
  */
 const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
@@ -93,6 +94,7 @@ const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	Layer.provide(RpcLive),
 	Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
 	Layer.provide(RpcSerialization.layerNdjson),
+	Layer.provide(LaborerStoreLive),
 	Layer.provide(ServerLive)
 );
 

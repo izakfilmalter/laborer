@@ -46,6 +46,9 @@ coverage
 # Effect reference
 .reference/
 
+# LiveStore data (SQLite persistence)
+data/
+
 # Misc
 *.tgz
 .cache

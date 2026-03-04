@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect-atom/atom-react/Hooks";
 import { terminals, workspaces } from "@laborer/shared/schema";
-import type { LeafNode } from "@laborer/shared/types";
+import type { LeafNode, PanelNode, SplitNode } from "@laborer/shared/types";
 import { queryDb } from "@livestore/livestore";
 import { createFileRoute } from "@tanstack/react-router";
 import { Suspense, useMemo } from "react";
@@ -51,18 +51,41 @@ function HealthCheckStatus() {
 /**
  * Builds a default panel layout from the current LiveStore state.
  *
- * If there are running terminals, creates a LeafNode for the first one.
- * If there are running workspaces but no terminals, shows an empty terminal pane.
- * Otherwise, returns undefined (PanelManager shows empty state).
+ * - Multiple running terminals → horizontal SplitNode (side-by-side panes)
+ * - Single running terminal → LeafNode
+ * - Active workspaces but no terminals → empty terminal pane
+ * - No workspaces → undefined (PanelManager shows empty state)
  */
-function usePanelLayout(): LeafNode | undefined {
+function usePanelLayout(): PanelNode | undefined {
 	const store = useLaborerStore();
 	const terminalList = store.useQuery(allTerminals$);
 	const workspaceList = store.useQuery(allWorkspaces$);
 
 	return useMemo(() => {
-		// Find the first running terminal
-		const runningTerminal = terminalList.find((t) => t.status === "running");
+		const runningTerminals = terminalList.filter((t) => t.status === "running");
+
+		// Multiple running terminals → horizontal split
+		if (runningTerminals.length > 1) {
+			const children: readonly LeafNode[] = runningTerminals.map((t) => ({
+				_tag: "LeafNode" as const,
+				id: `pane-${t.id}`,
+				paneType: "terminal" as const,
+				terminalId: t.id,
+				workspaceId: t.workspaceId,
+			}));
+			const equalSize = 100 / children.length;
+			const sizes: readonly number[] = children.map(() => equalSize);
+			return {
+				_tag: "SplitNode" as const,
+				id: "split-root",
+				direction: "horizontal" as const,
+				children,
+				sizes,
+			} satisfies SplitNode;
+		}
+
+		// Single running terminal → single pane
+		const runningTerminal = runningTerminals[0];
 		if (runningTerminal) {
 			return {
 				_tag: "LeafNode" as const,
@@ -70,10 +93,10 @@ function usePanelLayout(): LeafNode | undefined {
 				paneType: "terminal" as const,
 				terminalId: runningTerminal.id,
 				workspaceId: runningTerminal.workspaceId,
-			};
+			} satisfies LeafNode;
 		}
 
-		// If there are active workspaces but no terminals, show an empty terminal pane
+		// Active workspaces but no terminals → empty terminal pane
 		const activeWorkspace = workspaceList.find(
 			(ws) => ws.status === "running" || ws.status === "creating"
 		);
@@ -84,7 +107,7 @@ function usePanelLayout(): LeafNode | undefined {
 				paneType: "terminal" as const,
 				terminalId: undefined,
 				workspaceId: activeWorkspace.id,
-			};
+			} satisfies LeafNode;
 		}
 
 		return undefined;

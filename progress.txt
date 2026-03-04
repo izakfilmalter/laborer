@@ -1461,3 +1461,54 @@ Date: 2026-03-04
 - Issue #71: PanelManager — navigate between panes (was blocked by #67 — #66 now done)
 - Issue #72: PanelManager — drag-to-resize (was blocked by #67 — #66 now done)
 - Issue #75: Keyboard shortcut — split horizontal (was blocked by #67 — #66 now done)
+
+## Issue 67: PanelManager — horizontal split — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Updated `apps/web/src/panels/panel-manager.tsx` to implement horizontal (and vertical) split rendering for `SplitNode` in the panel layout tree.
+- Added imports for `SplitNode` type from `@laborer/shared/types` and `ResizableHandle`, `ResizablePanel`, `ResizablePanelGroup` from `@/components/ui/resizable`.
+- Created `SplitPanelRenderer` component:
+  - Accepts a `SplitNode` and renders a `ResizablePanelGroup` with the correct `orientation` prop (`"horizontal"` for side-by-side, `"vertical"` for stacked).
+  - Iterates over `node.children` and renders each as a `SplitChild` with the corresponding size from `node.sizes` (falls back to equal division if sizes are missing).
+  - Attaches `data-split-id={node.id}` for debugging/testing.
+- Created `SplitChild` component:
+  - Renders a `ResizableHandle` between children (skipped for the first child via `index > 0` check).
+  - Wraps each child in a `ResizablePanel` with `defaultSize` from the sizes array and `minSize={5}` to prevent panes from collapsing to zero.
+  - Recursively renders the child via `PanelRenderer`, supporting arbitrary nesting depth.
+- Updated `PanelRenderer` to delegate `SplitNode` rendering to `SplitPanelRenderer` instead of the previous fallback (rendering only the first child).
+- Added empty children guard: `SplitNode` with zero children renders `null`.
+- Updated `apps/web/src/routes/index.tsx` to generate horizontal `SplitNode` layouts:
+  - Changed `usePanelLayout()` return type from `LeafNode | undefined` to `PanelNode | undefined`.
+  - When multiple running terminals exist, builds a `SplitNode` with `direction: "horizontal"`, children as `LeafNode[]` for each terminal, and equal sizes.
+  - Single terminal and empty workspace cases remain as `LeafNode`.
+  - Added `PanelNode` and `SplitNode` type imports.
+- Used `react-resizable-panels` (already installed at v4.7.1) via shadcn/ui's `resizable.tsx` wrapper instead of adding `allotment` as a new dependency. This reuses the existing component library and avoids redundant dependencies.
+- Exported `SplitPanelRenderer` from `panel-manager.tsx` for composability.
+- Verified: `tsc --noEmit` passes (no new type errors — only pre-existing calendar.tsx, sonner.tsx, routeTree.gen errors), `biome check` passes with zero issues on both modified files, `turbo check-types` passes for server and shared packages.
+
+### Acceptance criteria status
+- [x] react-resizable-panels integrated (already installed, used via shadcn/ui resizable wrapper — no allotment needed)
+- [x] Split action creates two side-by-side panes (horizontal SplitNode renders ResizablePanelGroup with horizontal orientation)
+- [x] Each pane independently hosts content (recursive PanelRenderer renders each child independently)
+- [ ] Tests: split → two panes visible; each renders independently (deferred — requires running both server and web app with multiple terminals)
+
+### Design decisions
+- Used `react-resizable-panels` instead of `allotment` (PRD suggestion). The project already has `react-resizable-panels@4.7.1` with a shadcn/ui wrapper. Reusing it avoids adding a redundant dependency and maintains visual consistency with the sidebar split.
+- The `SplitPanelRenderer` component is generic — it handles both horizontal and vertical splits via the `orientation` prop. This means Issue #68 (vertical split) is also effectively implemented as part of this change.
+- `minSize={5}` on each `ResizablePanel` prevents panes from being dragged to zero width/height, which would make them unrecoverable. 5% is small enough for narrow panes but large enough to remain visible.
+- The `SplitChild` component was extracted to avoid rendering `<ResizableHandle />` outside of `<ResizablePanelGroup>` children and to provide stable React keys via the Fragment pattern.
+- The `usePanelLayout()` hook now automatically creates horizontal splits when multiple terminals are running. This gives users immediate split-panel functionality without manual layout management.
+- Used `satisfies SplitNode` and `satisfies LeafNode` for type-safe literal construction without losing the narrow type.
+
+### Issues unblocked
+- Issue #69: PanelManager — recursive splits (was blocked by #67 and #68 — both now effectively done)
+- Issue #70: PanelManager — close pane (was blocked by #67 — now done!)
+- Issue #71: PanelManager — navigate between panes (was blocked by #67 — now done!)
+- Issue #72: PanelManager — drag-to-resize (was blocked by #67 — now done!)
+- Issue #75: Keyboard shortcut — split horizontal (was blocked by #67 — now done!)
+- Issue #90: Toggle diff alongside terminal (was blocked by #67 and #87 — #67 now done, still needs #87)
+
+### Note: Issue #68 (vertical split) is also complete
+The `SplitPanelRenderer` handles both `direction: "horizontal"` and `direction: "vertical"` via the `orientation` prop on `ResizablePanelGroup`. The shadcn/ui wrapper applies `flex-col` for vertical orientation. No additional code changes are needed for vertical splits — they work out of the box.

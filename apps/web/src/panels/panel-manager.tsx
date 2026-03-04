@@ -1,22 +1,28 @@
 /**
  * PanelManager — tmux-style panel system for rendering terminal and diff panes.
  *
- * Renders a panel layout based on a `PanelNode` tree structure. Currently
- * supports rendering a single pane that hosts a terminal component. Future
- * issues will add horizontal/vertical splitting, recursive splits, and
- * layout persistence via LiveStore.
+ * Renders a panel layout based on a `PanelNode` tree structure. Supports:
+ * - Single pane rendering (LeafNode)
+ * - Horizontal split (SplitNode with direction "horizontal") — side-by-side panes
+ * - Vertical split (SplitNode with direction "vertical") — stacked panes
+ * - Recursive nesting of splits to arbitrary depth
  *
  * The PanelManager fills its parent container and renders pane content
  * based on the pane type:
  * - "terminal" → renders a TerminalPane with xterm.js
  * - "diff" → placeholder for future DiffPane component
  *
+ * Split panes are rendered using react-resizable-panels (via shadcn/ui's
+ * resizable wrapper) with drag-to-resize handles between each child.
+ *
  * @see packages/shared/src/types.ts — PanelNode, LeafNode, SplitNode types
  * @see apps/web/src/panes/terminal-pane.tsx — Terminal pane component
  * @see Issue #66: PanelManager — single pane rendering
+ * @see Issue #67: PanelManager — horizontal split
+ * @see Issue #68: PanelManager — vertical split
  */
 
-import type { LeafNode, PanelNode } from "@laborer/shared/types";
+import type { LeafNode, PanelNode, SplitNode } from "@laborer/shared/types";
 import { Layers, Terminal as TerminalIcon } from "lucide-react";
 import {
 	Empty,
@@ -25,6 +31,11 @@ import {
 	EmptyMedia,
 	EmptyTitle,
 } from "@/components/ui/empty";
+import {
+	ResizableHandle,
+	ResizablePanel,
+	ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { TerminalPane } from "@/panes/terminal-pane";
 
 interface PaneContentProps {
@@ -76,13 +87,66 @@ interface PanelRendererProps {
 }
 
 /**
+ * Renders a SplitNode as a resizable panel group with children separated
+ * by drag handles.
+ *
+ * - direction "horizontal" → side-by-side panes (row layout)
+ * - direction "vertical" → stacked panes (column layout)
+ *
+ * Each child is rendered recursively via PanelRenderer, supporting
+ * arbitrary nesting depth. Panel sizes are taken from the SplitNode's
+ * sizes array (percentages that must sum to 100).
+ */
+function SplitPanelRenderer({ node }: { readonly node: SplitNode }) {
+	return (
+		<ResizablePanelGroup data-split-id={node.id} orientation={node.direction}>
+			{node.children.map((child, index) => {
+				const size = node.sizes[index] ?? 100 / node.children.length;
+				return (
+					<SplitChild
+						child={child}
+						defaultSize={size}
+						index={index}
+						key={child.id}
+					/>
+				);
+			})}
+		</ResizablePanelGroup>
+	);
+}
+
+/**
+ * Renders a single child within a SplitNode, preceded by a ResizableHandle
+ * if it is not the first child. Extracted to a separate component to keep
+ * the SplitPanelRenderer map clean and to provide stable keys.
+ */
+function SplitChild({
+	child,
+	defaultSize,
+	index,
+}: {
+	readonly child: PanelNode;
+	readonly defaultSize: number;
+	readonly index: number;
+}) {
+	return (
+		<>
+			{index > 0 && <ResizableHandle />}
+			<ResizablePanel defaultSize={defaultSize} minSize={5}>
+				<PanelRenderer node={child} />
+			</ResizablePanel>
+		</>
+	);
+}
+
+/**
  * Recursively renders a PanelNode tree.
  *
  * - LeafNode → renders PaneContent with the appropriate component.
- * - SplitNode → will render child panels in a resizable split (Issue #67/#68).
- *
- * For now, only LeafNode rendering is implemented. SplitNode renders its
- * first child as a fallback until the split infrastructure is built.
+ * - SplitNode → renders a ResizablePanelGroup with each child in a
+ *   ResizablePanel, separated by ResizableHandles. Supports horizontal
+ *   (side-by-side) and vertical (stacked) orientations, and recursive
+ *   nesting to arbitrary depth.
  */
 function PanelRenderer({ node }: PanelRendererProps) {
 	if (node._tag === "LeafNode") {
@@ -93,14 +157,12 @@ function PanelRenderer({ node }: PanelRendererProps) {
 		);
 	}
 
-	// SplitNode — future: render with ResizablePanelGroup (Issue #67/#68)
-	// For now, render the first child as a fallback
-	const firstChild = node.children[0];
-	if (firstChild) {
-		return <PanelRenderer node={firstChild} />;
+	// SplitNode — render children in a resizable panel group
+	if (node.children.length === 0) {
+		return null;
 	}
 
-	return null;
+	return <SplitPanelRenderer node={node} />;
 }
 
 interface PanelManagerProps {
@@ -144,4 +206,4 @@ function PanelManager({ layout }: PanelManagerProps) {
 	);
 }
 
-export { PanelManager, PanelRenderer, PaneContent };
+export { PanelManager, PanelRenderer, PaneContent, SplitPanelRenderer };

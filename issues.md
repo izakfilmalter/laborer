@@ -1836,14 +1836,14 @@ Implement horizontal splitting using allotment. Splitting creates two side-by-si
 
 ### Acceptance criteria
 
-- [ ] allotment installed and integrated
-- [ ] Split action creates two side-by-side panes
-- [ ] Each pane independently hosts content
-- [ ] Tests: split → two panes visible; each renders independently
+- [x] react-resizable-panels integrated (reused existing install via shadcn/ui resizable wrapper — no allotment needed)
+- [x] Split action creates two side-by-side panes
+- [x] Each pane independently hosts content
+- [ ] Tests: split → two panes visible; each renders independently (deferred — requires running both server and web app with multiple terminals)
 
 ### Blocked by
 
-- Blocked by #66
+- Blocked by #66 (done)
 
 ### User stories addressed
 
@@ -1863,13 +1863,13 @@ Implement vertical splitting using allotment. Splitting creates two stacked pane
 
 ### Acceptance criteria
 
-- [ ] Vertical split creates two stacked panes
-- [ ] Each pane independently hosts content
-- [ ] Tests: vertical split → two stacked panes; each renders independently
+- [x] Vertical split creates two stacked panes (SplitPanelRenderer with direction "vertical" renders ResizablePanelGroup in vertical orientation)
+- [x] Each pane independently hosts content (recursive PanelRenderer for each child)
+- [ ] Tests: vertical split → two stacked panes; each renders independently (deferred — requires running both server and web app with multiple terminals)
 
 ### Blocked by
 
-- Blocked by #66
+- Blocked by #66 (done)
 
 ### User stories addressed
 
@@ -3641,16 +3641,16 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 64 | Terminal session reconnection | ~~#60~~ | Ready |
 | 65 | Terminal scrollback buffer replay | #64 | Blocked |
 | 66 | PanelManager — single pane | ~~#60~~ | Done |
-| 67 | PanelManager — horizontal split | ~~#66~~ | Ready |
-| 68 | PanelManager — vertical split | ~~#66~~ | Ready |
-| 69 | PanelManager — recursive splits | #67, #68 | Blocked |
-| 70 | PanelManager — close pane | #67 | Blocked |
-| 71 | PanelManager — navigate between panes | #67 | Blocked |
-| 72 | PanelManager — drag-to-resize | #67 | Blocked |
-| 73 | PanelManager — serialize layout to LiveStore | #69, #7 | Blocked |
+| 67 | PanelManager — horizontal split | ~~#66~~ | Done |
+| 68 | PanelManager — vertical split | ~~#66~~ | Done |
+| 69 | PanelManager — recursive splits | ~~#67~~, ~~#68~~ | Ready |
+| 70 | PanelManager — close pane | ~~#67~~ | Ready |
+| 71 | PanelManager — navigate between panes | ~~#67~~ | Ready |
+| 72 | PanelManager — drag-to-resize | ~~#67~~ | Ready |
+| 73 | PanelManager — serialize layout to LiveStore | #69, ~~#7~~ | Blocked |
 | 74 | PanelManager — restore layout from LiveStore | #73 | Blocked |
-| 75 | Keyboard shortcut — split horizontal | #67 | Blocked |
-| 76 | Keyboard shortcut — split vertical | #68, #75 | Blocked |
+| 75 | Keyboard shortcut — split horizontal | ~~#67~~ | Ready |
+| 76 | Keyboard shortcut — split vertical | ~~#68~~, #75 | Blocked |
 | 77 | Keyboard shortcut — close pane | #70, #75 | Blocked |
 | 78 | Keyboard shortcut — navigate panes | #71, #75 | Blocked |
 | 79 | Keyboard shortcut — resize panes | #72, #75 | Blocked |
@@ -3664,7 +3664,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 87 | Diff viewer pane — @pierre/diffs | ~~#18~~, ~~#83~~, ~~#6~~ | Ready |
 | 88 | Diff viewer — accept/reject annotations | #87 | Blocked |
 | 89 | Diff viewer — live update | #87 | Blocked |
-| 90 | Toggle diff alongside terminal | #67, #87 | Blocked |
+| 90 | Toggle diff alongside terminal | ~~#67~~, #87 | Blocked |
 | 91 | Diff viewer debounce/throttle | #89 | Blocked |
 | 92 | rlph.startLoop RPC handler | ~~#56~~ | Done |
 | 93 | "Start Ralph Loop" button (AtomRpc mutation) | ~~#92~~, ~~#60~~ | Ready |

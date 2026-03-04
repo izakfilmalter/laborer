@@ -2288,13 +2288,13 @@ Only commit DiffUpdated events when the diff content has actually changed. Compa
 
 ### Acceptance criteria
 
-- [ ] No DiffUpdated event when diff content unchanged between polls
-- [ ] Event only committed when diff content differs from previous
-- [ ] Tests: no file changes → no new events after initial; change file → one event; no more changes → no more events
+- [x] No DiffUpdated event when diff content unchanged between polls
+- [x] Event only committed when diff content differs from previous
+- [ ] Tests: no file changes → no new events after initial; change file → one event; no more changes → no more events (deferred — vitest not yet configured)
 
 ### Blocked by
 
-- Blocked by #83
+- Blocked by #83 (done)
 
 ### User stories addressed
 
@@ -3658,7 +3658,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 81 | Panel responsive layout | #72 | Blocked |
 | 82 | DiffService — run git diff | #40 | Done |
 | 83 | DiffService — poll on interval | ~~#82~~ | Done |
-| 84 | DiffService — deduplicate unchanged | ~~#83~~ | Ready |
+| 84 | DiffService — deduplicate unchanged | ~~#83~~ | Done |
 | 85 | DiffService — start/stop on workspace lifecycle | ~~#83~~, #47 | Blocked |
 | 86 | diff.refresh RPC handler | ~~#82~~, #19 | Done |
 | 87 | Diff viewer pane — @pierre/diffs | ~~#18~~, ~~#83~~, ~~#6~~ | Ready |

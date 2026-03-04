@@ -1949,3 +1949,38 @@ Date: 2026-03-04
 - `biome check` passes with zero issues on laborer-store.ts
 - After server restart: both `./data/laborer/` (LiveStore) and `./data/sync-laborer.db` (sync backend) are recreated
 - Events committed by server services now flow through the sync backend to connected browser clients
+
+## Issue 84: DiffService — deduplicate unchanged diffs — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Extended the `DiffService` Effect service in `packages/server/src/services/diff-service.ts` with diff content deduplication.
+- Added a `previousDiffs` cache using `Effect.Ref<Map<string, string>>` — stores the last committed diff content per workspace for comparison.
+- Updated the `getDiff` method to compare the new combined diff against the cached version before committing to LiveStore:
+  1. After computing `combinedDiff`, atomically reads the previous cached content and updates the cache with the new content via `Ref.modify` (fiber-safe).
+  2. If `previousContent !== combinedDiff`, commits the `DiffUpdated` event to LiveStore (content changed).
+  3. If `previousContent === combinedDiff`, skips the commit entirely (no change — avoids spurious events).
+  4. Always returns the `DiffResult` regardless of whether an event was committed — callers still get the current diff content.
+- Updated `stopPolling` to clear the cached diff for the workspace being stopped. This ensures a fresh first-poll commit when polling resumes.
+- Updated `stopAllPolling` to clear the entire cache via `Ref.set(previousDiffs, new Map())`. Used during graceful shutdown.
+- Updated module JSDoc to reference Issue #84.
+- Verified: `tsc --noEmit` passes for server package (only pre-existing Effect plugin informational messages — no errors), `biome check` passes with zero issues on diff-service.ts.
+
+### Acceptance criteria status
+- [x] No DiffUpdated event when diff content unchanged between polls (previousContent === combinedDiff → skip commit)
+- [x] Event only committed when diff content differs from previous (previousContent !== combinedDiff → commit)
+- [ ] Tests: no file changes → no new events after initial; change file → one event; no more changes → no more events (deferred — vitest not yet configured)
+
+### Design decisions
+- Used `Ref<Map<string, string>>` for the cache, consistent with the existing `Ref<Map<...>>` patterns for `pollingFibers` in the same service. `Ref.modify` provides atomic read-modify-write semantics, ensuring fiber-safe deduplication even under concurrent polling.
+- The cache stores raw diff content strings. For typical diffs (< 100KB), string equality comparison (`!==`) is fast and sufficient. If diffs become very large, a content hash could be used instead, but that's premature optimization for v1.
+- On the first call for a workspace (no cached entry), `previousContent` is `undefined`, so `undefined !== combinedDiff` is always `true` — the first diff is always committed. This is correct behavior: the initial diff should always be emitted.
+- Cache is cleared on `stopPolling`/`stopAllPolling` to prevent stale entries. When a workspace is destroyed and later re-created, the first poll after re-creation should always emit (even if the diff happens to be the same as the destroyed workspace).
+- The deduplication happens at the service level (inside `getDiff`), not at the polling level. This means on-demand `diff.refresh` RPC calls also benefit from deduplication — a manual refresh that produces the same content as the last poll won't emit a redundant event.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #84. However, deduplication improves the quality of:
+  - Issue #87: Diff viewer pane (fewer unnecessary re-renders)
+  - Issue #89: Diff viewer live update (only updates on actual changes)
+  - Issue #91: Diff viewer debounce/throttle (less pressure on the debounce mechanism)

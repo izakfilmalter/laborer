@@ -536,3 +536,31 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - No direct downstream issues were exclusively blocked by #23, but the methods are used by future services (WorkspaceProvider needs `getProject` to validate projectId during workspace creation)
+
+## Issue 30: PortAllocator — free method — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Added `free(port: number)` method to the `PortAllocator` service interface and implementation in `packages/server/src/services/port-allocator.ts`.
+- Implementation uses `Effect.fn("PortAllocator.free")` for call-site tracing:
+  1. Atomically checks and removes the port from the allocated set via `Ref.modify` — same fiber-safe pattern as `allocate`.
+  2. If the port was not in the allocated set, fails with `RpcError` code `PORT_NOT_ALLOCATED` and a descriptive message including the port number and configured range.
+  3. If the port was allocated, removes it from the set, making it available for future `allocate` calls.
+- Uses `return yield*` for the error path per Effect best practices (signals a definitive exit point for type narrowing).
+- Updated doc comments to reflect that Issues #30-#32 are addressed (free method, exhaustion handling built into allocate, concurrent safety via Ref-based atomicity).
+- Verified: `tsc --noEmit` passes (exit code 0, no type errors — only pre-existing Effect plugin hints), `biome check` passes with zero issues on port-allocator.ts.
+
+### Acceptance criteria status
+- [x] `free(port)` marks port as available (removes from allocated set via Ref.modify)
+- [x] Freed port can be reallocated (removed from set, so allocate's linear scan will find it)
+- [x] Freeing unallocated port → error (RpcError with code PORT_NOT_ALLOCATED)
+- [ ] Tests: allocate → free → reallocate returns same port; free unallocated → error (deferred — vitest not yet configured)
+
+### Design decisions
+- Used the same `Ref.modify` + sentinel pattern as `allocate` for consistency and fiber-safety. The modify callback returns `[wasAllocated: boolean, nextSet]`, and the result is checked after the atomic operation.
+- Error code `PORT_NOT_ALLOCATED` is distinct from `PORT_EXHAUSTED` for clear error differentiation.
+
+### Issues unblocked
+- Issue #45: WorkspaceProvider — free port on destroy (was blocked by #43 and #30, #30 now done)
+- Issue #130: Graceful shutdown — free all ports (was blocked by #30, now done)

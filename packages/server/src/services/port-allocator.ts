@@ -20,9 +20,9 @@
  * ```
  *
  * Issue #29: allocate method
- * Issue #30: free method (future)
- * Issue #31: exhaustion handling (future)
- * Issue #32: concurrent allocation safety (future)
+ * Issue #30: free method
+ * Issue #31: exhaustion handling (built into allocate)
+ * Issue #32: concurrent allocation safety (Ref-based atomicity)
  */
 
 import { RpcError } from "@laborer/shared/rpc";
@@ -43,6 +43,11 @@ class PortAllocator extends Context.Tag("@laborer/PortAllocator")<
 		 * Fails with RpcError if all ports are exhausted.
 		 */
 		readonly allocate: () => Effect.Effect<number, RpcError>;
+		/**
+		 * Free a previously allocated port, making it available for reallocation.
+		 * Fails with RpcError if the port was not allocated.
+		 */
+		readonly free: (port: number) => Effect.Effect<void, RpcError>;
 	}
 >() {
 	/**
@@ -84,7 +89,26 @@ class PortAllocator extends Context.Tag("@laborer/PortAllocator")<
 					);
 				});
 
-				return PortAllocator.of({ allocate });
+				const free = Effect.fn("PortAllocator.free")(function* (port: number) {
+					// Atomically check and remove the port from the allocated set
+					const wasAllocated = yield* Ref.modify(allocatedRef, (allocated) => {
+						if (!allocated.has(port)) {
+							return [false, allocated] as const;
+						}
+						const next = new Set(allocated);
+						next.delete(port);
+						return [true, next] as const;
+					});
+
+					if (!wasAllocated) {
+						return yield* new RpcError({
+							message: `Port ${port} is not currently allocated (range: ${rangeStart}-${rangeEnd})`,
+							code: "PORT_NOT_ALLOCATED",
+						});
+					}
+				});
+
+				return PortAllocator.of({ allocate, free });
 			})
 		);
 

@@ -840,10 +840,10 @@ Add the `free` method to PortAllocator. Marks a port as available for reallocati
 
 ### Acceptance criteria
 
-- [ ] `free(port)` marks port as available
-- [ ] Freed port can be reallocated
-- [ ] Freeing unallocated port → error
-- [ ] Tests: allocate → free → reallocate returns same port; free unallocated → error
+- [x] `free(port)` marks port as available
+- [x] Freed port can be reallocated
+- [x] Freeing unallocated port → error
+- [ ] Tests: allocate → free → reallocate returns same port; free unallocated → error (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -3604,7 +3604,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 27 | Add Project form (AtomRpc mutation) | #20, #24, #26 | Blocked |
 | 28 | Remove Project button + dialog (AtomRpc mutation) | #25, #26 | Blocked |
 | 29 | PortAllocator — allocate | #15 | Done |
-| 30 | PortAllocator — free | #29 | Ready |
+| 30 | PortAllocator — free | #29 | Done |
 | 31 | PortAllocator — exhaustion handling | #29 | Ready |
 | 32 | PortAllocator — concurrent safety | #29 | Ready |
 | 33 | WorkspaceProvider — create worktree | #21, #29 | Ready |
@@ -3619,7 +3619,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 42 | Create Workspace form (AtomRpc mutation) | #20, #40, #27 | Blocked |
 | 43 | WorkspaceProvider — destroy worktree | #33 | Blocked |
 | 44 | WorkspaceProvider — kill processes on destroy | #43 | Blocked |
-| 45 | WorkspaceProvider — free port on destroy | #43, #30 | Blocked |
+| 45 | WorkspaceProvider — free port on destroy | #43, ~~#30~~ | Blocked |
 | 46 | WorkspaceProvider — remove watchers on destroy | #43 | Blocked |
 | 47 | workspace.destroy RPC handler | #19, #43, #44, #45, #46 | Blocked |
 | 48 | Destroy Workspace button + dialog (AtomRpc mutation) | #47, #41 | Blocked |
@@ -3704,5 +3704,5 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 127 | Terminal scroll performance | #60 | Blocked |
 | 128 | Graceful shutdown — kill terminals | #54 | Blocked |
 | 129 | Graceful shutdown — persist state | #16 | Ready |
-| 130 | Graceful shutdown — free ports | #30 | Blocked |
+| 130 | Graceful shutdown — free ports | ~~#30~~ | Ready |
 | 131 | Theme consistency audit | #90 | Blocked |

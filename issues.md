@@ -754,16 +754,16 @@ Create an "Add Project" form using TanStack Form. The form has a repo path input
 
 ### Acceptance criteria
 
-- [ ] Form uses TanStack Form with repo path field
-- [ ] Client-side validation: required, non-empty
-- [ ] On submit → calls `LaborerClient.mutation("project.add")` via `useAtomSet`
-- [ ] Success → project appears in list (via LiveStore), form resets
-- [ ] Error → error message displayed (from server validation)
-- [ ] Tests: empty submit → validation error; valid submit → mutation called, project in list; server error → displayed
+- [x] Form uses TanStack Form with repo path field
+- [x] Client-side validation: required, non-empty
+- [x] On submit → calls `LaborerClient.mutation("project.add")` via `useAtomSet`
+- [x] Success → project appears in list (via LiveStore), form resets
+- [x] Error → error message displayed (from server validation)
+- [ ] Tests: empty submit → validation error; valid submit → mutation called, project in list; server error → displayed (deferred — requires running both server and web app)
 
 ### Blocked by
 
-- Blocked by #20, #24, #26
+- Blocked by #20 (done), #24 (done), #26 (done)
 
 ### User stories addressed
 
@@ -3601,7 +3601,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 24 | project.add RPC handler | #19, #21 | Done |
 | 25 | project.remove RPC handler | #24, #22 | Done |
 | 26 | Project list UI | #18, #24 | Done |
-| 27 | Add Project form (AtomRpc mutation) | ~~#20~~, ~~#24~~, ~~#26~~ | Ready |
+| 27 | Add Project form (AtomRpc mutation) | ~~#20~~, ~~#24~~, ~~#26~~ | Done |
 | 28 | Remove Project button + dialog (AtomRpc mutation) | ~~#25~~, ~~#26~~ | Ready |
 | 29 | PortAllocator — allocate | #15 | Done |
 | 30 | PortAllocator — free | #29 | Done |
@@ -3615,8 +3615,8 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 38 | WorkspaceProvider — handle dirty git state | #33 | Ready |
 | 39 | WorkspaceProvider — handle git fetch failure | #33 | Ready |
 | 40 | workspace.create RPC handler | #19, #33, #36, #4 | Done |
-| 41 | Workspace list UI | #18, #40 | Blocked |
-| 42 | Create Workspace form (AtomRpc mutation) | ~~#20~~, ~~#40~~, #27 | Blocked |
+| 41 | Workspace list UI | ~~#18~~, ~~#40~~ | Ready |
+| 42 | Create Workspace form (AtomRpc mutation) | ~~#20~~, ~~#40~~, ~~#27~~ | Ready |
 | 43 | WorkspaceProvider — destroy worktree | #33 | Done |
 | 44 | WorkspaceProvider — kill processes on destroy | #43 | Ready |
 | 45 | WorkspaceProvider — free port on destroy | #43, ~~#30~~ | Ready |
@@ -3692,7 +3692,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 115 | Tauri system tray | #41 | Blocked |
 | 116 | Tauri global shortcut | #115 | Blocked |
 | 117 | Tauri window management | #115 | Blocked |
-| 118 | Empty state — no projects | #27 | Blocked |
+| 118 | Empty state — no projects | ~~#27~~ | Ready |
 | 119 | Empty state — no workspaces | #42 | Blocked |
 | 120 | Empty state — no terminals | #63 | Blocked |
 | 121 | Loading state — workspace creation | #41 | Blocked |

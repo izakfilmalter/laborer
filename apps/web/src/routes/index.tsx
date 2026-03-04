@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect-atom/atom-react/Hooks";
 import { createFileRoute } from "@tanstack/react-router";
 import { Suspense } from "react";
 import { LaborerClient } from "@/atoms/laborer-client";
+import { AddProjectForm } from "@/components/add-project-form";
 import { ProjectList } from "@/components/project-list";
 
 export const Route = createFileRoute("/")({
@@ -45,7 +46,10 @@ function HomeComponent() {
 			<pre className="overflow-x-auto font-mono text-sm">{TITLE_TEXT}</pre>
 			<div className="grid gap-6">
 				<section>
-					<h2 className="mb-2 font-medium">Projects</h2>
+					<div className="mb-2 flex items-center justify-between">
+						<h2 className="font-medium">Projects</h2>
+						<AddProjectForm />
+					</div>
 					<ProjectList />
 				</section>
 				<section className="rounded-lg border p-4">

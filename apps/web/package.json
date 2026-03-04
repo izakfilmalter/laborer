@@ -29,6 +29,7 @@
     "@livestore/react": "0.4.0-dev.22",
     "@livestore/sync-cf": "0.4.0-dev.22",
     "@tailwindcss/vite": "^4.0.15",
+    "@tanstack/react-form": "^1.28.4",
     "@tanstack/react-router": "^1.141.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

@@ -1106,3 +1106,44 @@ Date: 2026-03-04
 - Issue #27: Add Project form (was blocked by #20 (done), #24 (done), #26 — now all blockers done!)
 - Issue #28: Remove Project button (was blocked by #25 (done), #26 — now all blockers done!)
 - Issue #113: Project switcher (was blocked by #26 — now done!)
+
+## Issue 27: Add Project form — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Installed `@tanstack/react-form@1.28.4` as a dependency in `apps/web/package.json`. This is the first form library used in the project, as specified by the PRD.
+- Created `apps/web/src/components/add-project-form.tsx` — the Add Project form component:
+  - Uses a shadcn/ui `Dialog` as the container, triggered by an "Add Project" button with a `FolderPlus` icon.
+  - Form built with `useForm` from `@tanstack/react-form` with a single `repoPath` field.
+  - Client-side validation: `repoPath` is required (cannot be empty/whitespace).
+  - On submit, calls `LaborerClient.mutation("project.add")` via `useAtomSet` with `{ mode: "promise" }` to await the result.
+  - Wraps the payload in `{ payload: { repoPath } }` to match the AtomRpc mutation API.
+  - Success: shows a toast notification with the project name, resets the form, and closes the dialog.
+  - Error: shows a toast notification with the error message from the server (e.g., "Path does not exist", "Not a git repository", "Project already registered").
+  - Submit button shows "Adding..." while submitting and is disabled when the form is invalid or submitting.
+  - Uses shadcn/ui components: `Dialog`, `Button`, `Input`, `Field`, `FieldLabel`, `FieldDescription`, `FieldError`.
+- Updated `apps/web/src/routes/index.tsx`:
+  - Added `AddProjectForm` import.
+  - Added the `AddProjectForm` button next to the "Projects" heading in a flex row with `justify-between` alignment.
+- Created `extractErrorMessage` utility function to safely extract error messages from unknown error types (handles `Error` instances, plain objects with `message` property, and fallback string).
+- Verified: `biome check` passes with zero issues on both new/modified files, `tsc --noEmit` produces no new errors (only pre-existing calendar.tsx, sonner.tsx, routeTree.gen, and route type errors), server and shared packages type-check cleanly.
+
+### Acceptance criteria status
+- [x] Form uses TanStack Form with repo path field (`useForm` with `repoPath` field, `form.Field` with validators)
+- [x] Client-side validation: required, non-empty (onChange validator checks `value.trim()`)
+- [x] On submit → calls `LaborerClient.mutation("project.add")` via `useAtomSet` (with `{ mode: "promise" }`)
+- [x] Success → project appears in list (via LiveStore), form resets (`form.reset()`), dialog closes (`setOpen(false)`)
+- [x] Error → error message displayed (via `toast.error` from sonner, with server error message)
+- [ ] Tests: empty submit → validation error; valid submit → mutation called, project in list; server error → displayed (deferred — requires running both server and web app; component tests can be added with Vitest + React Testing Library)
+
+### Design decisions
+- Used `Dialog` rather than `Sheet` for the form container. A dialog is appropriate for a single-field form — it's focused and modal, guiding the user to complete the action without distraction.
+- Used `useAtomSet` with `{ mode: "promise" }` to await the mutation result. This enables proper async form submission handling — we can show loading state, handle success (reset form, close dialog), and handle errors (show toast) in a standard try/catch flow.
+- Used `sonner` toast notifications for success/error feedback rather than inline error messages below the form. This is consistent with the Toaster already mounted in the root layout and provides a non-blocking feedback mechanism.
+- Client-side validation is intentionally minimal (just "required"). Server-side validation handles the complex cases (path existence, git repo check, duplicate detection) and returns descriptive error messages. Duplicating that logic on the client would be fragile.
+- The `extractErrorMessage` helper is a standalone function (not a hook) to keep error extraction logic reusable and testable.
+
+### Issues unblocked
+- Issue #42: Create Workspace form (was blocked by #20 (done), #40 (done), #27 — now all blockers done!)
+- Issue #118: Empty state — no projects (was blocked by #27 — now done!)

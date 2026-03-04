@@ -132,7 +132,7 @@ function SplitChild({
 	return (
 		<>
 			{index > 0 && <ResizableHandle />}
-			<ResizablePanel defaultSize={defaultSize} minSize={5}>
+			<ResizablePanel defaultSize={`${defaultSize}%`} minSize="5%">
 				<PanelRenderer node={child} />
 			</ResizablePanel>
 		</>

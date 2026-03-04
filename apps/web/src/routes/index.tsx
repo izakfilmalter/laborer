@@ -120,7 +120,7 @@ function HomeComponent() {
 	return (
 		<ResizablePanelGroup orientation="horizontal">
 			{/* Sidebar — project list, workspace list, health check */}
-			<ResizablePanel defaultSize={25} maxSize={40} minSize={15}>
+			<ResizablePanel defaultSize="25%" maxSize="40%" minSize="15%">
 				<ScrollArea className="h-full">
 					<div className="grid gap-4 p-3">
 						<section>
@@ -156,7 +156,7 @@ function HomeComponent() {
 			<ResizableHandle withHandle />
 
 			{/* Main content — Panel system */}
-			<ResizablePanel defaultSize={75} minSize={40}>
+			<ResizablePanel defaultSize="75%" minSize="40%">
 				<PanelManager layout={layout} />
 			</ResizablePanel>
 		</ResizablePanelGroup>

@@ -1550,3 +1550,20 @@ Date: 2026-03-04
   - Issue #69: PanelManager — recursive splits (splits trigger resize events on child panes)
   - Issue #72: PanelManager — drag-to-resize (drag resize triggers ResizeObserver)
   - Issue #81: Panel responsive layout (window resize triggers ResizeObserver)
+
+## Fix: ResizablePanel size props — pixels to percentages
+
+Date: 2026-03-04
+
+### What was done
+- Fixed all `ResizablePanel` size props across the app to use percentage strings instead of bare numbers.
+- The `react-resizable-panels` v4 library treats **bare numbers as pixels** (not percentages). String values with a `%` suffix are treated as percentages. The previous code used bare numbers (e.g., `defaultSize={25}`, `maxSize={40}`, `minSize={15}`), which meant the sidebar was constrained to 40 **pixels** max width instead of 40% of the viewport.
+- Updated `apps/web/src/routes/index.tsx`:
+  - Sidebar panel: `defaultSize="25%"`, `maxSize="40%"`, `minSize="15%"` (was `defaultSize={25}`, `maxSize={40}`, `minSize={15}`)
+  - Main content panel: `defaultSize="75%"`, `minSize="40%"` (was `defaultSize={75}`, `minSize={40}`)
+- Updated `apps/web/src/panels/panel-manager.tsx`:
+  - `SplitChild` panel: `defaultSize={\`${defaultSize}%\`}`, `minSize="5%"` (was `defaultSize={defaultSize}`, `minSize={5}`)
+
+### Files changed
+- `apps/web/src/routes/index.tsx` — sidebar and main panel size props
+- `apps/web/src/panels/panel-manager.tsx` — split child panel size props

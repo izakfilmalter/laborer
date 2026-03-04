@@ -897,3 +897,55 @@ Date: 2026-03-04
 - Issue #60: xterm.js render output (all blockers done: #18 ✓, #56 ✓)
 - Issue #87: Diff viewer pane (#18 ✓, still needs #83)
 - Issue #104: Task list UI (#18 ✓, still needs #102)
+
+## Issue 82: DiffService — run `git diff` for a workspace — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `packages/server/src/services/diff-service.ts` with the `DiffService` Effect service using `Context.Tag("@laborer/DiffService")`.
+- Implemented `getDiff(workspaceId)` method using `Effect.fn("DiffService.getDiff")` for call-site tracing:
+  1. Looks up the workspace in LiveStore's `workspaces` table using `Array.findFirst` and `pipe`.
+  2. If no workspace found, returns `RpcError` with code `NOT_FOUND`.
+  3. Validates the workspace is in an active state ("running" or "creating"). Inactive workspaces return `RpcError` with code `INVALID_STATE`.
+  4. Runs `git diff` via `Bun.spawn` in the workspace's worktree directory to get unstaged changes.
+  5. Runs `git diff --staged` via `Bun.spawn` in the same directory to get staged changes.
+  6. Combines both outputs (filtering empty strings) into a single diff string.
+  7. Commits a `DiffUpdated` event to LiveStore with the combined diff content and a timestamp.
+  8. Returns a `DiffResult` matching the `DiffResponse` RPC schema.
+- Created `DiffService.layer` as a `Layer.effect` that depends on `LaborerStore`.
+- Updated `packages/server/src/rpc/handlers.ts`:
+  - Replaced the `diff.refresh` stub with a real handler that delegates to `DiffService.getDiff(workspaceId)`.
+  - Added `DiffService` import.
+  - Updated doc comment to list `diff.refresh` as an implemented handler.
+- Updated `packages/server/src/main.ts`:
+  - Added `DiffService.layer` to the `RpcLive` layer composition.
+  - Added import for `DiffService`.
+  - `DiffService.layer` depends on `LaborerStore`, which is already provided at the `HttpLive` level.
+- Verified: `tsc --noEmit` passes for both server and shared packages (only pre-existing Effect plugin informational messages), `ultracite check` passes with zero issues on all 3 new/modified files.
+
+### Acceptance criteria status
+- [x] DiffService is a tagged Effect service
+- [x] `getDiff(workspaceId)` runs `git diff` in the worktree directory
+- [x] Returns raw diff output string (combined unstaged + staged)
+- [x] No changes → returns empty string
+- [ ] Tests: modify file in workspace → diff output returned; no changes → empty string (deferred — vitest not yet configured)
+
+### Design decisions
+- Runs both `git diff` (unstaged) and `git diff --staged` (staged) to capture all pending changes. This is important because agents may stage files as part of their workflow, and the user needs to see all changes.
+- Combined output filters empty strings to avoid a stray newline when only one type of diff has content.
+- Validates workspace state before running git commands — no point running `git diff` on a destroyed or stopped workspace.
+- Commits `DiffUpdated` event to LiveStore on every `getDiff` call. This means the diff viewer pane (Issue #87) will reactively update when `diff.refresh` is called. Future Issue #84 (deduplication) will add logic to skip the commit if content hasn't changed.
+- The service only depends on `LaborerStore` (not `WorkspaceProvider` or `ProjectRegistry`) because it only needs the workspace's `worktreePath` from the LiveStore table. This keeps the dependency graph minimal.
+
+### Issues unblocked
+- Issue #83: DiffService — poll on interval (was blocked by #82, now done)
+- Issue #86: diff.refresh RPC handler (was blocked by #82 and #19 — both now done)
+
+### Note: All 5 server Effect services from the PRD are now implemented
+With DiffService complete, all 5 server-side Effect services described in the PRD are implemented:
+1. ProjectRegistry (Issues #21-#25)
+2. PortAllocator (Issues #29-#30)
+3. WorkspaceProvider (Issues #33, #36, #43)
+4. TerminalManager (Issues #50-#55)
+5. DiffService (Issue #82)

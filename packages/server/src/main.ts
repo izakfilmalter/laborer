@@ -30,6 +30,7 @@ import { env } from "@laborer/env/server";
 import { LaborerRpcs } from "@laborer/shared/rpc";
 import { Effect, Layer } from "effect";
 import { LaborerRpcsLive } from "./rpc/handlers.js";
+import { DiffService } from "./services/diff-service.js";
 import { LaborerStoreLive } from "./services/laborer-store.js";
 import { PortAllocator } from "./services/port-allocator.js";
 import { ProjectRegistry } from "./services/project-registry.js";
@@ -68,9 +69,11 @@ const CustomRoutesLive = HttpRouter.Default.use((router) =>
  * - PortAllocator (Issue #29)
  * - WorkspaceProvider (Issue #33)
  * - TerminalManager (Issue #50)
+ * - DiffService (Issue #82)
  */
 const RpcLive = RpcServer.layer(LaborerRpcs).pipe(
 	Layer.provide(LaborerRpcsLive),
+	Layer.provide(DiffService.layer),
 	Layer.provide(TerminalManager.layer),
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ProjectRegistry.layer),

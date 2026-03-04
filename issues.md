@@ -2234,11 +2234,11 @@ Create the DiffService Effect service in `packages/server/src/services/DiffServi
 
 ### Acceptance criteria
 
-- [ ] DiffService is a tagged Effect service
-- [ ] `getDiff(workspaceId)` runs `git diff` in the worktree directory
-- [ ] Returns raw diff output string
-- [ ] No changes → returns empty string
-- [ ] Tests: modify file in workspace → diff output returned; no changes → empty string
+- [x] DiffService is a tagged Effect service
+- [x] `getDiff(workspaceId)` runs `git diff` in the worktree directory
+- [x] Returns raw diff output string
+- [x] No changes → returns empty string
+- [ ] Tests: modify file in workspace → diff output returned; no changes → empty string (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -2341,15 +2341,15 @@ Implement the `diff.refresh` handler via `RpcGroup.toHandlers`. Triggers an imme
 
 ### Acceptance criteria
 
-- [ ] `diff.refresh` handler accepts workspaceId
-- [ ] Triggers immediate `git diff` execution
-- [ ] Returns fresh diff content
-- [ ] Updates LiveStore if content changed
-- [ ] Tests: call refresh → get current diff immediately; LiveStore updated
+- [x] `diff.refresh` handler accepts workspaceId
+- [x] Triggers immediate `git diff` execution
+- [x] Returns fresh diff content
+- [x] Updates LiveStore if content changed
+- [ ] Tests: call refresh → get current diff immediately; LiveStore updated (deferred — vitest not yet configured)
 
 ### Blocked by
 
-- Blocked by #82, #19
+- Blocked by #82 (done), #19 (done)
 
 ### User stories addressed
 
@@ -3656,11 +3656,11 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 79 | Keyboard shortcut — resize panes | #72, #75 | Blocked |
 | 80 | Keyboard shortcut scope isolation | #75, #61 | Blocked |
 | 81 | Panel responsive layout | #72 | Blocked |
-| 82 | DiffService — run git diff | #40 | Ready |
-| 83 | DiffService — poll on interval | #82 | Blocked |
+| 82 | DiffService — run git diff | #40 | Done |
+| 83 | DiffService — poll on interval | ~~#82~~ | Ready |
 | 84 | DiffService — deduplicate unchanged | #83 | Blocked |
 | 85 | DiffService — start/stop on workspace lifecycle | #83, #47 | Blocked |
-| 86 | diff.refresh RPC handler | #82, #19 | Blocked |
+| 86 | diff.refresh RPC handler | ~~#82~~, #19 | Done |
 | 87 | Diff viewer pane — @pierre/diffs | #18, #83, #6 | Blocked |
 | 88 | Diff viewer — accept/reject annotations | #87 | Blocked |
 | 89 | Diff viewer — live update | #87 | Blocked |

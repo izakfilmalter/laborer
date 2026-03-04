@@ -8,6 +8,7 @@
 
 import { LaborerRpcs, RpcError } from "@laborer/shared/rpc";
 import { Effect } from "effect";
+import { DiffService } from "../services/diff-service.js";
 import { ProjectRegistry } from "../services/project-registry.js";
 import { TerminalManager } from "../services/terminal-manager.js";
 import { WorkspaceProvider } from "../services/workspace-provider.js";
@@ -33,6 +34,7 @@ const notImplemented = (method: string) =>
  * - terminal.write: delegates to TerminalManager.write (Issue #52)
  * - terminal.resize: delegates to TerminalManager.resize (Issue #53)
  * - terminal.kill: delegates to TerminalManager.kill (Issue #54)
+ * - diff.refresh: delegates to DiffService.getDiff (Issue #82)
  *
  * All other handlers are stubs that will be replaced as
  * their backing services are implemented.
@@ -124,9 +126,13 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 			}),
 
 		// -------------------------------------------------------------------
-		// Diff RPCs (stubs — Issue #82-86)
+		// Diff RPCs (Issue #82-86)
 		// -------------------------------------------------------------------
-		"diff.refresh": () => Effect.fail(notImplemented("diff.refresh")),
+		"diff.refresh": ({ workspaceId }) =>
+			Effect.gen(function* () {
+				const diffService = yield* DiffService;
+				return yield* diffService.getDiff(workspaceId);
+			}),
 
 		// -------------------------------------------------------------------
 		// Editor RPCs (stubs — Issue #111)

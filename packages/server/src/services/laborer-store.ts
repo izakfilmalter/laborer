@@ -2,13 +2,21 @@
  * LaborerStore — LiveStore server adapter as an Effect Service
  *
  * Initializes LiveStore with the @livestore/adapter-node adapter using
- * filesystem-backed SQLite persistence. The store is created as an Effect
- * Layer that provides the LiveStore context to all server services.
+ * filesystem-backed SQLite persistence and WebSocket sync to the server's
+ * own sync backend. The store is created as an Effect Layer that provides
+ * the LiveStore context to all server services.
  *
  * The store persists events to `./data/<storeId>/` by default, ensuring
  * state survives server restarts. All 6 LiveStore tables (projects,
  * workspaces, terminals, diffs, tasks, panelLayout) are available for
  * querying and event commits.
+ *
+ * Sync: The server-side store connects to the sync backend (SyncRpcLive)
+ * via WebSocket at `ws://localhost:PORT/rpc`, following the canonical
+ * LiveStore "server-side client" pattern. This ensures events committed
+ * by server services are propagated to all connected browser clients,
+ * and vice versa. The `makeWsSync` client handles reconnection
+ * automatically with a 1-second retry interval.
  *
  * Usage in other services:
  * ```ts
@@ -28,8 +36,10 @@
  * loaded when the Effect layer is constructed, not at module evaluation.
  */
 
+import { env } from "@laborer/env/server";
 import { schema } from "@laborer/shared/schema";
 import { createStore, provideOtel } from "@livestore/livestore";
+import { makeWsSync } from "@livestore/sync-cf/client";
 import { Context, Effect, Layer } from "effect";
 
 /**
@@ -65,6 +75,14 @@ class LaborerStore extends Context.Tag("LaborerStore")<
 const DATA_DIRECTORY = "./data";
 
 /**
+ * WebSocket URL for the server-side store to connect to its own sync
+ * backend. Uses the same `/rpc` endpoint that browser clients connect to.
+ * The `makeWsSync` client handles reconnection automatically, so the
+ * store can start connecting before the HTTP server is fully ready.
+ */
+const syncUrl = `ws://localhost:${env.PORT}/rpc`;
+
+/**
  * Effect that creates the LiveStore instance.
  *
  * Uses dynamic import for @livestore/adapter-node to avoid eager loading
@@ -79,6 +97,11 @@ const DATA_DIRECTORY = "./data";
  * The `batchUpdates` callback is a no-op identity function on the server
  * since there's no React batching needed. In browser contexts this would
  * be `ReactDOM.unstable_batchedUpdates`.
+ *
+ * Sync is configured via `makeWsSync` to connect to the server's own
+ * sync backend at `ws://localhost:PORT/rpc`. This follows the canonical
+ * LiveStore "server-side client" pattern where the server store is just
+ * another sync participant alongside browser clients.
  */
 const makeStore = Effect.gen(function* () {
 	const { makeAdapter } = yield* Effect.promise(
@@ -87,6 +110,10 @@ const makeStore = Effect.gen(function* () {
 
 	const adapter = makeAdapter({
 		storage: { type: "fs", baseDirectory: DATA_DIRECTORY },
+		sync: {
+			backend: makeWsSync({ url: syncUrl }),
+			onSyncError: "ignore",
+		},
 	});
 
 	const store = yield* createStore({
@@ -107,6 +134,9 @@ const makeStore = Effect.gen(function* () {
  * automatically when the layer's scope is closed (server shutdown).
  * SQLite databases are flushed and closed on scope finalization.
  */
-const LaborerStoreLive = Layer.scoped(LaborerStore, makeStore);
+const LaborerStoreLive: Layer.Layer<LaborerStore> = Layer.scoped(
+	LaborerStore,
+	makeStore
+).pipe(Layer.orDie);
 
 export { LaborerStore, LaborerStoreLive };

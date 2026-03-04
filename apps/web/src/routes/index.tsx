@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect-atom/atom-react/Hooks";
 import {
+	layoutPaneAssigned,
 	layoutPaneClosed,
 	layoutRestored,
 	layoutSplit,
@@ -23,7 +24,13 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkspaceList } from "@/components/workspace-list";
 import { useLaborerStore } from "@/livestore/store";
-import { closePane, splitPane } from "@/panels/layout-utils";
+import {
+	closePane,
+	generateId,
+	getLeafIds,
+	replaceNode,
+	splitPane,
+} from "@/panels/layout-utils";
 import { PanelActionsProvider } from "@/panels/panel-context";
 import { PanelManager } from "@/panels/panel-manager";
 
@@ -241,12 +248,123 @@ function usePanelLayout() {
 		[persistedLayoutTree, initialLayout, persistedActivePaneId, store]
 	);
 
+	const handleAssignTerminalToPane = useCallback(
+		(terminalId: string, workspaceId: string, paneId?: string) => {
+			const base = persistedLayoutTree ?? initialLayout;
+			if (!base) {
+				// No layout at all — create a new single-pane layout for this terminal
+				const newLeaf: LeafNode = {
+					_tag: "LeafNode" as const,
+					id: generateId("pane"),
+					paneType: "terminal" as const,
+					terminalId,
+					workspaceId,
+				};
+				store.commit(
+					layoutPaneAssigned({
+						id: LAYOUT_SESSION_ID,
+						layoutTree: newLeaf,
+						activePaneId: newLeaf.id,
+					})
+				);
+				return;
+			}
+
+			// If a specific pane ID is given, replace that pane's content
+			if (paneId) {
+				const targetLeaf: LeafNode = {
+					_tag: "LeafNode" as const,
+					id: paneId,
+					paneType: "terminal" as const,
+					terminalId,
+					workspaceId,
+				};
+				const newTree = replaceNode(base, paneId, targetLeaf);
+				store.commit(
+					layoutPaneAssigned({
+						id: LAYOUT_SESSION_ID,
+						layoutTree: newTree,
+						activePaneId: paneId,
+					})
+				);
+				return;
+			}
+
+			// No specific pane — find an empty terminal pane or the first pane
+			const leafIds = getLeafIds(base);
+			const findEmptyTerminalPane = (node: PanelNode): LeafNode | undefined => {
+				if (
+					node._tag === "LeafNode" &&
+					node.paneType === "terminal" &&
+					!node.terminalId
+				) {
+					return node;
+				}
+				if (node._tag === "SplitNode") {
+					for (const child of node.children) {
+						const found = findEmptyTerminalPane(child);
+						if (found) {
+							return found;
+						}
+					}
+				}
+				return undefined;
+			};
+
+			const emptyPane = findEmptyTerminalPane(base);
+			if (emptyPane) {
+				// Assign to the empty pane
+				const updatedLeaf: LeafNode = {
+					_tag: "LeafNode" as const,
+					id: emptyPane.id,
+					paneType: "terminal" as const,
+					terminalId,
+					workspaceId,
+				};
+				const newTree = replaceNode(base, emptyPane.id, updatedLeaf);
+				store.commit(
+					layoutPaneAssigned({
+						id: LAYOUT_SESSION_ID,
+						layoutTree: newTree,
+						activePaneId: emptyPane.id,
+					})
+				);
+				return;
+			}
+
+			// No empty pane — split the first leaf and assign to the new pane
+			const firstLeafId = leafIds[0];
+			if (firstLeafId) {
+				const newPaneContent: Partial<LeafNode> = {
+					paneType: "terminal" as const,
+					terminalId,
+					workspaceId,
+				};
+				const newTree = splitPane(
+					base,
+					firstLeafId,
+					"horizontal",
+					newPaneContent
+				);
+				store.commit(
+					layoutPaneAssigned({
+						id: LAYOUT_SESSION_ID,
+						layoutTree: newTree,
+						activePaneId: persistedActivePaneId,
+					})
+				);
+			}
+		},
+		[persistedLayoutTree, initialLayout, persistedActivePaneId, store]
+	);
+
 	const panelActions = useMemo(
 		() => ({
+			assignTerminalToPane: handleAssignTerminalToPane,
 			splitPane: handleSplitPane,
 			closePane: handleClosePane,
 		}),
-		[handleSplitPane, handleClosePane]
+		[handleAssignTerminalToPane, handleSplitPane, handleClosePane]
 	);
 
 	return { layout, panelActions };

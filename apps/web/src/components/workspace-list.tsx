@@ -12,8 +12,11 @@
 
 import { projects, workspaces } from "@laborer/shared/schema";
 import { queryDb } from "@livestore/livestore";
-import { GitBranch, Layers } from "lucide-react";
+import { ChevronDown, GitBranch, Layers } from "lucide-react";
+import { useState } from "react";
+import { TerminalList } from "@/components/terminal-list";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
 	Card,
 	CardContent,
@@ -21,6 +24,11 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
 	Empty,
 	EmptyDescription,
@@ -100,39 +108,72 @@ interface WorkspaceItemProps {
 }
 
 function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
+	const [isOpen, setIsOpen] = useState(false);
+	const isActive =
+		workspace.status === "running" || workspace.status === "creating";
+
 	return (
 		<Card size="sm">
-			<CardHeader>
-				<div className="flex items-start justify-between gap-2">
-					<div className="min-w-0">
-						<CardTitle className="flex items-center gap-2">
-							<GitBranch className="size-4 shrink-0 text-muted-foreground" />
-							<span className="truncate font-mono text-sm">
-								{workspace.branchName}
-							</span>
-						</CardTitle>
-						<CardDescription>{projectName}</CardDescription>
+			<Collapsible onOpenChange={setIsOpen} open={isOpen}>
+				<CardHeader>
+					<div className="flex items-start justify-between gap-2">
+						<div className="min-w-0">
+							<CardTitle className="flex items-center gap-2">
+								<GitBranch className="size-4 shrink-0 text-muted-foreground" />
+								<span className="truncate font-mono text-sm">
+									{workspace.branchName}
+								</span>
+							</CardTitle>
+							<CardDescription>{projectName}</CardDescription>
+						</div>
+						<div className="flex items-center gap-1">
+							<Badge
+								className={cn(
+									"shrink-0 border",
+									getStatusClasses(workspace.status)
+								)}
+								variant="outline"
+							>
+								<StatusDot status={workspace.status} />
+								{workspace.status}
+							</Badge>
+							{isActive && (
+								<CollapsibleTrigger
+									render={
+										<Button
+											aria-label={isOpen ? "Hide terminals" : "Show terminals"}
+											size="icon-xs"
+											variant="ghost"
+										/>
+									}
+								>
+									<ChevronDown
+										className={cn(
+											"size-3.5 transition-transform",
+											isOpen && "rotate-180"
+										)}
+									/>
+								</CollapsibleTrigger>
+							)}
+						</div>
 					</div>
-					<Badge
-						className={cn(
-							"shrink-0 border",
-							getStatusClasses(workspace.status)
-						)}
-						variant="outline"
-					>
-						<StatusDot status={workspace.status} />
-						{workspace.status}
-					</Badge>
-				</div>
-			</CardHeader>
-			<CardContent>
-				<div className="flex items-center gap-3 text-muted-foreground text-xs">
-					<span>
-						Port: <span className="font-mono">{workspace.port}</span>
-					</span>
-					<span className="truncate font-mono">{workspace.worktreePath}</span>
-				</div>
-			</CardContent>
+				</CardHeader>
+				<CardContent>
+					<div className="flex items-center gap-3 text-muted-foreground text-xs">
+						<span>
+							Port: <span className="font-mono">{workspace.port}</span>
+						</span>
+						<span className="truncate font-mono">{workspace.worktreePath}</span>
+					</div>
+					{isActive && (
+						<CollapsibleContent>
+							<div className="mt-2 border-t pt-2">
+								<TerminalList workspaceId={workspace.id} />
+							</div>
+						</CollapsibleContent>
+					)}
+				</CardContent>
+			</Collapsible>
 		</Card>
 	);
 }

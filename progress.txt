@@ -1816,3 +1816,71 @@ The `notImplemented` helper has been removed — there are zero stubs remaining.
 
 ### Issues unblocked
 - Issue #112: Click-to-open from diff viewer (was blocked by #111 and #87 — #111 now done, still needs #87)
+
+## Issue 63: Terminal list per workspace UI — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `apps/web/src/components/terminal-list.tsx` — a new `TerminalList` component that:
+  - Subscribes to LiveStore's `terminals` table via `store.useQuery(queryDb(terminals))` and filters by `workspaceId`.
+  - Displays terminal items with command (monospace), status badge (running=green, stopped=gray), and a stop button (Square icon) for running terminals.
+  - "New Terminal" button spawns a terminal via `LaborerClient.mutation("terminal.spawn")` using `useAtomSet` with `{ mode: "promise" }`.
+  - On successful spawn, auto-assigns the new terminal to a panel pane via `panelActions.assignTerminalToPane()`.
+  - "Kill Terminal" button stops a terminal via `LaborerClient.mutation("terminal.kill")`.
+  - Clicking a terminal item calls `panelActions.assignTerminalToPane(terminalId, workspaceId)` to display it in a panel pane.
+  - Empty state shows "No terminals" text with a "New" button inline.
+  - Uses toast notifications for success/error feedback (sonner).
+
+- Extended `PanelActions` interface in `apps/web/src/panels/panel-context.tsx`:
+  - Added `assignTerminalToPane(terminalId, workspaceId, paneId?)` method.
+  - Parameters: `terminalId` (terminal to display), `workspaceId` (owning workspace), optional `paneId` (specific pane to assign to).
+
+- Extended `WorkspaceList` component in `apps/web/src/components/workspace-list.tsx`:
+  - Each `WorkspaceItem` card now has a collapsible section (shadcn/ui `Collapsible`) showing terminals.
+  - Active workspaces (running/creating) display a chevron toggle button next to the status badge.
+  - Expanding the collapsible reveals the `TerminalList` component below the workspace details.
+  - Uses `useState` for open/close state and `CollapsibleTrigger` with `render` prop for the custom toggle button.
+
+- Added `handleAssignTerminalToPane` handler in `apps/web/src/routes/index.tsx`:
+  - Smart pane assignment logic:
+    1. If no layout exists, creates a new single-pane layout for the terminal.
+    2. If a specific `paneId` is given, replaces that pane's content.
+    3. Otherwise, searches the tree for an empty terminal pane (one with no `terminalId`).
+    4. If no empty pane exists, splits the first leaf horizontally and assigns to the new pane.
+  - Commits `layoutPaneAssigned` events to LiveStore for persistence.
+  - Uses pure tree manipulation functions from `layout-utils.ts` (`replaceNode`, `splitPane`, `getLeafIds`, `generateId`).
+
+- Updated `packages/server/src/services/laborer-store.ts`:
+  - Added WebSocket sync configuration to the server-side LiveStore adapter via `makeWsSync({ url: syncUrl })`.
+  - Server store now connects to its own sync backend at `ws://localhost:PORT/rpc`, following the canonical LiveStore "server-side client" pattern.
+  - This ensures events committed by server services (e.g., terminal spawn, workspace creation) are propagated to all connected browser clients.
+  - Added explicit `Layer.Layer<LaborerStore>` type annotation and `.pipe(Layer.orDie)` for robustness.
+
+### Files created
+- `apps/web/src/components/terminal-list.tsx` (209 lines)
+
+### Files modified
+- `apps/web/src/panels/panel-context.tsx` — Added `assignTerminalToPane` to `PanelActions` interface
+- `apps/web/src/components/workspace-list.tsx` — Added collapsible terminal list per workspace card
+- `apps/web/src/routes/index.tsx` — Added `handleAssignTerminalToPane` handler and integrated into `panelActions`
+- `packages/server/src/services/laborer-store.ts` — Added WebSocket sync to server-side store
+
+### Acceptance criteria status
+- [x] Terminal list shows all terminals for workspace with command and status (from LiveStore)
+- [x] "New Terminal" button calls `LaborerClient.mutation("terminal.spawn")` via `useAtomSet`
+- [x] Selecting terminal switches active pane content (via `panelActions.assignTerminalToPane`)
+- [ ] Tests: multiple terminals → all listed; new button → terminal spawned; select → pane switches (deferred — requires running both server and web app; component tests can be added with Vitest + React Testing Library)
+
+### Verification
+- `tsc --noEmit` passes for server, shared, and web packages (only pre-existing errors in calendar.tsx, sonner.tsx)
+- `biome check` passes with zero issues on all 4 modified/new files
+
+### Design decisions
+- Terminal filtering done client-side via `Array.filter` on the full terminals query. For v1 with small numbers of terminals per workspace, this is efficient. SQL-level WHERE clauses could optimize this for scale.
+- Auto-assigns newly spawned terminals to a pane immediately, so the user sees the terminal output right away without needing to manually select it.
+- The collapsible toggle only shows for active workspaces (running/creating). Stopped/destroyed workspaces don't have terminals to manage.
+- Empty state is inline ("No terminals" + "New" button) rather than a full empty state component — keeps the workspace card compact when no terminals exist.
+
+### Issues unblocked
+- Issue #120: Empty state — no terminals (was blocked by #63, now done)

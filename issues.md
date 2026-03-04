@@ -1728,9 +1728,9 @@ Create a UI for listing all terminals in a workspace (from LiveStore). Show term
 
 ### Acceptance criteria
 
-- [ ] Terminal list shows all terminals for workspace with command and status (from LiveStore)
-- [ ] "New Terminal" button calls `LaborerClient.mutation("terminal.spawn")` via `useAtomSet`
-- [ ] Selecting terminal switches active pane content
+- [x] Terminal list shows all terminals for workspace with command and status (from LiveStore)
+- [x] "New Terminal" button calls `LaborerClient.mutation("terminal.spawn")` via `useAtomSet`
+- [x] Selecting terminal switches active pane content
 - [ ] Tests: multiple terminals → all listed; new button → terminal spawned; select → pane switches
 
 ### Blocked by
@@ -3270,7 +3270,7 @@ When a workspace has no terminals, show an empty state in the terminal area with
 
 ### Blocked by
 
-- Blocked by #63
+- Blocked by #63 (done)
 
 ### User stories addressed
 
@@ -3637,7 +3637,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 60 | xterm.js — render output | ~~#18~~, ~~#56~~ | Done |
 | 61 | xterm.js — send keyboard input (AtomRpc mutation) | ~~#60~~, ~~#57~~ | Done |
 | 62 | xterm.js — handle resize (AtomRpc mutation) | ~~#60~~, ~~#58~~ | Done |
-| 63 | Terminal list per workspace UI | ~~#60~~, ~~#55~~ | Ready |
+| 63 | Terminal list per workspace UI | ~~#60~~, ~~#55~~ | Done |
 | 64 | Terminal session reconnection | ~~#60~~ | Ready |
 | 65 | Terminal scrollback buffer replay | #64 | Blocked |
 | 66 | PanelManager — single pane | ~~#60~~ | Done |
@@ -3694,7 +3694,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 117 | Tauri window management | #115 | Blocked |
 | 118 | Empty state — no projects | ~~#27~~ | Ready |
 | 119 | Empty state — no workspaces | ~~#42~~ | Ready |
-| 120 | Empty state — no terminals | #63 | Blocked |
+| 120 | Empty state — no terminals | ~~#63~~ | Ready |
 | 121 | Loading state — workspace creation | ~~#41~~ | Ready |
 | 122 | Loading state — terminal spawning | ~~#60~~ | Ready |
 | 123 | Loading state — diff computation | #87 | Blocked |

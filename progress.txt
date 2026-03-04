@@ -40,3 +40,30 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #9: Effect RPC contract types
+
+## Issue 3: LiveStore schema — Projects table + events + materializer — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Defined `projects` table using `State.SQLite.table` with columns: `id` (text, primary key), `repoPath` (text), `name` (text), `rlphConfig` (text, nullable).
+- Defined `projectCreated` event using `Events.synced` with schema: `{ id, repoPath, name, rlphConfig }`. Event name: `v1.ProjectCreated`.
+- Defined `projectRemoved` event using `Events.synced` with schema: `{ id }`. Event name: `v1.ProjectRemoved`.
+- Defined materializers: `v1.ProjectCreated` inserts a row into the projects table; `v1.ProjectRemoved` deletes the row by id.
+- Created `events` and `tables` exports for use by other schema files and application code.
+- Created `state` via `State.SQLite.makeState` and `schema` via `makeSchema`, both exported.
+- Verified: `tsc --noEmit` passes (no type errors), `ultracite check` passes on schema.ts (no lint issues).
+
+### Acceptance criteria status
+- [x] Projects table defined with correct columns (id, repoPath, name, rlphConfig)
+- [x] Events defined: ProjectCreated, ProjectRemoved
+- [x] Materializer correctly updates table state from events
+- [ ] Tests: commit ProjectCreated -> verify project in table; commit ProjectRemoved -> verify project removed (tests deferred — LiveStore store/adapter setup not yet available; will be testable after Issue #16)
+
+### Issues unblocked
+- Issue #4: LiveStore schema — Workspaces table
+- Issue #5: LiveStore schema — Terminals table
+- Issue #6: LiveStore schema — Diffs table
+- Issue #7: LiveStore schema — PanelLayout table
+- Issue #8: LiveStore schema — Tasks table
+- Issue #17: LiveStore client adapter setup (partially — still needs other deps)

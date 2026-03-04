@@ -3542,12 +3542,12 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 |---|-------|-----------|--------|
 | 1 | Initialize `packages/shared` package | None | Done |
 | 2 | Shared domain types | #1 | Done |
-| 3 | LiveStore schema — Projects table | #1 | Ready |
-| 4 | LiveStore schema — Workspaces table | #3 | Blocked |
-| 5 | LiveStore schema — Terminals table | #3 | Blocked |
-| 6 | LiveStore schema — Diffs table | #3 | Blocked |
-| 7 | LiveStore schema — PanelLayout table | #3 | Blocked |
-| 8 | LiveStore schema — Tasks table | #3 | Blocked |
+| 3 | LiveStore schema — Projects table | #1 | Done |
+| 4 | LiveStore schema — Workspaces table | #3 | Ready |
+| 5 | LiveStore schema — Terminals table | #3 | Ready |
+| 6 | LiveStore schema — Diffs table | #3 | Ready |
+| 7 | LiveStore schema — PanelLayout table | #3 | Ready |
+| 8 | LiveStore schema — Tasks table | #3 | Ready |
 | 9 | Effect RPC contract types | #2 | Ready |
 | 10 | Initialize `packages/server` package | #1 | Ready |
 | 11 | Effect TS application bootstrap | #10 | Blocked |
@@ -3556,7 +3556,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 14 | Server env validation | #10 | Blocked |
 | 15 | Server consumes env validation | #14, #11 | Blocked |
 | 16 | LiveStore server adapter setup | #3, #11 | Blocked |
-| 17 | LiveStore client adapter setup | #3 | Blocked |
+| 17 | LiveStore client adapter setup | #3 | Ready |
 | 18 | LiveStore server-to-client sync | #16, #17 | Blocked |
 | 19 | Effect RPC server router setup | #12 | Blocked |
 | 20 | Effect RPC client setup | #19, #9 | Blocked |

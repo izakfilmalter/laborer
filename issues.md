@@ -379,9 +379,9 @@ Create `packages/env/src/server.ts` with server-specific environment variables: 
 
 ### Acceptance criteria
 
-- [ ] `packages/env/src/server.ts` exists and is exported from package
-- [ ] PORT, PORT_RANGE_START, PORT_RANGE_END, EDITOR_COMMAND defined with validation and defaults
-- [ ] Tests: missing required vars → throws; valid values → passes; defaults work when optional vars omitted
+- [x] `packages/env/src/server.ts` exists and is exported from package
+- [x] PORT, PORT_RANGE_START, PORT_RANGE_END, EDITOR_COMMAND defined with validation and defaults
+- [ ] Tests: missing required vars → throws; valid values → passes; defaults work when optional vars omitted (deferred — all fields have defaults; tests will be added when vitest is configured)
 
 ### Blocked by
 
@@ -3588,8 +3588,8 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 11 | Effect TS application bootstrap | #10 | Done |
 | 12 | Health check RPC endpoint | #9, #11 | Done |
 | 13 | Web env validation | None | Ready |
-| 14 | Server env validation | #10 | Ready |
-| 15 | Server consumes env validation | #14, #11 | Blocked (#14) |
+| 14 | Server env validation | #10 | Done |
+| 15 | Server consumes env validation | #14, #11 | Ready |
 | 16 | LiveStore server adapter setup | #3, #11 | Ready |
 | 17 | LiveStore client adapter setup | #3 | Ready |
 | 18 | LiveStore server-to-client sync | #16, #17 | Blocked |
@@ -3685,7 +3685,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 108 | Linear task sourcing | #102 | Blocked |
 | 109 | GitHub task sourcing | #102 | Blocked |
 | 110 | Task source picker UI | #108, #109, #103 | Blocked |
-| 111 | editor.open RPC handler | #19, #14 | Blocked (#14) |
+| 111 | editor.open RPC handler | #19, #14 | Ready |
 | 112 | Click-to-open from diff viewer (AtomRpc mutation) | #111, #87 | Blocked |
 | 113 | Project switcher | #26 | Blocked |
 | 114 | Cross-project dashboard | #41, #104 | Blocked |

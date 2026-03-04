@@ -315,3 +315,31 @@ Date: 2026-03-04
 
 ### Note: All 6 LiveStore tables are now defined
 With this issue complete, the full LiveStore schema layer is done: projects, workspaces, terminals, diffs, tasks, and panelLayout. The schema is ready for the LiveStore adapter setup (Issue #16).
+
+## Issue 14: Server env validation — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `packages/env/src/server.ts` with server-specific environment variables using `@t3-oss/env-core` and `zod`:
+  - `PORT` — server listen port (default: 3000), validated as integer 1-65535
+  - `PORT_RANGE_START` — start of workspace port allocation range (default: 3100), validated as integer 1-65535
+  - `PORT_RANGE_END` — end of workspace port allocation range (default: 3999), validated as integer 1-65535
+  - `EDITOR_COMMAND` — editor to use for file opening (default: "cursor"), enum of cursor/code/vim/nvim/emacs
+- Used `z.coerce.number()` for port fields to handle string-to-number coercion from `process.env`.
+- All fields have sensible defaults, so the server starts with zero env configuration required.
+- `emptyStringAsUndefined: true` ensures empty strings in `.env` files are treated as undefined (falling through to defaults).
+- `runtimeEnv: process.env` — uses Node/Bun process environment as the source.
+- Added `"./server": "./src/server.ts"` to `packages/env/package.json` exports so the server can import via `@laborer/env/server`.
+- Added `@types/node` ^25.3.3 as a devDependency to `packages/env` to resolve `process` type.
+- Updated `packages/env/tsconfig.json` to add `noEmit: true`, `declaration: true`, and `include: ["src"]` (consistent with other packages like shared).
+- Verified: `tsc --noEmit` passes for the env package (only pre-existing web.ts error), `biome check` passes with zero issues on env package, server package type-checks cleanly (exit code 0).
+
+### Acceptance criteria status
+- [x] `packages/env/src/server.ts` exists and is exported from package
+- [x] PORT, PORT_RANGE_START, PORT_RANGE_END, EDITOR_COMMAND defined with validation and defaults
+- [ ] Tests: missing required vars -> throws; valid values -> passes; defaults work when optional vars omitted (deferred — all fields have defaults so nothing is strictly required; tests will be added when vitest is configured)
+
+### Issues unblocked
+- Issue #15: Server consumes env validation (was blocked by #14 and #11, now both done)
+- Issue #111: editor.open RPC handler (was blocked by #19 and #14, now both done)

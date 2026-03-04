@@ -83,15 +83,8 @@ Write code that is **accessible, performant, type-safe, and maintainable**. Focu
 - Use top-level regex literals instead of creating them in loops
 - Prefer specific imports over namespace imports
 - Avoid barrel files (index files that re-export everything)
-- Use proper image components (e.g., Next.js `<Image>`) over `<img>` tags
 
 ### Framework-Specific Guidance
-
-**Next.js:**
-
-- Use Next.js `<Image>` component for images
-- Use `next/head` or App Router metadata API for head elements
-- Use Server Components for async data fetching instead of async Client Components
 
 **React 19+:**
 
@@ -125,48 +118,32 @@ Biome's linter will catch most issues automatically. Focus your attention on:
 
 Most formatting and common issues are automatically fixed by Biome. Run `bun x ultracite fix` before committing to ensure compliance.
 
+## Source References
+
+The `.reference/` directory contains shallow clones of key dependency repositories. Search these for real implementations, type definitions, API usage examples, and patterns when documentation isn't enough.
+
+- `.reference/effect/` — [Effect](https://github.com/Effect-TS/effect) monorepo (core, platform, cli, schema, sql, etc.)
+- `.reference/livestore/` — [LiveStore](https://github.com/livestorejs/livestore) local-first reactive data store
+
 <!-- effect-solutions:start -->
+## Effect Best Practices
 
-## Effect v4 Best Practices
-
-This project uses **Effect v4** (from [effect-smol](https://github.com/Effect-TS/effect-smol)). Effect v4 has significant API changes from v3.
-
-**IMPORTANT:** Always consult the Effect v4 reference before writing Effect code.
-
-### Quick Reference
+**IMPORTANT:** Always consult effect-solutions before writing Effect code.
 
 1. Run `effect-solutions list` to see available guides
 2. Run `effect-solutions show <topic>...` for relevant patterns (supports multiple topics)
-3. Search `.reference/effect-smol/` for real implementations and AI docs
+3. Search `.reference/effect/` for real implementations (run `effect-solutions setup` first)
 
 Topics: quick-start, project-setup, tsconfig, basics, services-and-layers, data-modeling, error-handling, config, testing, cli.
 
-### Key v4 Changes (Do NOT Use v3 Patterns)
-
-- **Services:** Use `ServiceMap.Service` instead of `Context.Tag`
-- **References:** Use `ServiceMap.Reference` instead of `FiberRef`
-- **Functions:** Use `Effect.fn("name")` instead of raw `Effect.gen` for named functions
-- **Errors:** Use `Schema.TaggedErrorClass` for custom errors
-- **Error handling:** `Effect.catch` replaces `Effect.catchAll`, `Effect.catchTag` accepts arrays
-- **Imports:** Many packages consolidated into `effect` — platform, rpc, cluster modules live under `effect/unstable/*`
-- **Schema:** Import from `effect/Schema` (not `@effect/schema`)
-- **Runtime:** `Runtime<R>` is removed; use `ManagedRuntime` for non-Effect entry points
-
-### Catalog Dependencies
-
-Effect packages are in the Bun workspace catalog. To use in a workspace package:
-
-```json
-{
-  "dependencies": {
-    "effect": "catalog:"
-  },
-  "devDependencies": {
-    "@effect/vitest": "catalog:"
-  }
-}
-```
-
-Never guess at Effect v4 patterns — check the reference first.
-
+Never guess at Effect patterns - check the guide first.
 <!-- effect-solutions:end -->
+
+## LiveStore
+
+When working with LiveStore, search `.reference/livestore/` for schema definitions, store setup patterns, and React integration examples. Key areas to explore:
+
+- `packages/@livestore/livestore/` — core library (schema, store, events)
+- `packages/@livestore/react/` — React bindings and hooks
+- `packages/@livestore/wa-sqlite/` — SQLite adapter for web
+- Look at the examples in the repo for full integration patterns

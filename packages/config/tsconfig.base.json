@@ -1,9 +1,11 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
+    "incremental": true,
     "target": "ES2022",
     "module": "NodeNext",
     "moduleDetection": "force",
+    "rewriteRelativeImportExtensions": true,
     "lib": ["ESNext"],
     "verbatimModuleSyntax": true,
     "erasableSyntaxOnly": true,

@@ -63,7 +63,7 @@ Laborer is a local-first, API-first application for orchestrating multiple AI co
 
 Once the core user stories are implemented, the following checks should be made:
 
-1. **Keyboard shortcut consistency.** All panel operations (split, close, navigate, resize) should have consistent, discoverable keyboard shortcuts that follow tmux conventions where applicable.
+1. **Keyboard shortcut consistency.** All panel operations (split, close, navigate, resize) should have consistent, discoverable keyboard shortcuts (managed via TanStack Hotkeys) that follow tmux conventions where applicable.
 2. **Terminal rendering fidelity.** Verify that xterm.js correctly renders the TUI output of all supported agents (opencode, claude, codex) including colors, Unicode, cursor positioning, and interactive prompts.
 3. **Diff viewer performance.** Ensure the live diff viewer doesn't degrade performance when the agent is making rapid changes. Debounce/throttle appropriately.
 4. **Layout edge cases.** Verify panel layout persistence handles edge cases: closing the last pane in a split, deeply nested splits (5+ levels), very small pane sizes, window resizing.
@@ -82,8 +82,8 @@ Once the core user stories are implemented, the following checks should be made:
 ### Architecture: Two-Process Model
 
 Laborer runs as two processes:
-- **Laborer Server**: A standalone Bun process running Effect TS (v4, from effect-smol). Manages all side effects: process spawning, PTY management, git operations, file system access, port allocation. Exposes an Effect RPC API for actions and serves as the LiveStore sync backend.
-- **Laborer App** (`apps/web`): A React 19 + TypeScript frontend using Vite, TanStack Router, and Tailwind v4. Uses shadcn/ui (base-lyra style, backed by Base UI) for components. Includes an embedded Tauri 2 shell (`apps/web/src-tauri/`) for optional native desktop mode. Connects to the server via LiveStore for reactive state and Effect RPC for actions.
+- **Laborer Server**: A standalone Bun process running Effect TS v3. Manages all side effects: process spawning, PTY management, git operations, file system access, port allocation. Exposes an Effect RPC API for actions and serves as the LiveStore sync backend.
+- **Laborer App** (`apps/web`): A React 19 + TypeScript frontend using Vite, TanStack Router, TanStack Form, TanStack Hotkeys, and Tailwind v4. Uses shadcn/ui (base-lyra style, backed by Base UI) for components. TanStack Form handles all user input forms (project registration, workspace config, PRD writing). TanStack Hotkeys provides declarative keyboard shortcut management for tmux-style panel operations. Includes an embedded Tauri 2 shell (`apps/web/src-tauri/`) for optional native desktop mode. Connects to the server via LiveStore for reactive state and Effect RPC for actions.
 
 The Tauri 2 desktop shell is embedded directly in `apps/web/src-tauri/`. It opens a webview to the local Vite dev server (port 3001 in dev). It adds native features (system tray, global shortcuts) but the core experience is identical in a browser. Run via `bun run desktop:dev` in the web app.
 
@@ -154,21 +154,23 @@ The Effect RPC router that exposes all side-effect operations. Thin layer that d
 Responsibilities: RPC method definitions, request validation, delegation to services, error handling.
 
 **7. PanelManager (React, App)**
-The tmux-style panel system in the React frontend. Built on allotment for recursive split/resize. Each pane can display an xterm.js terminal or a @pierre/diffs diff viewer. Layout state is persisted via LiveStore. All UI components use shadcn/ui (backed by Base UI) for consistent styling.
+The tmux-style panel system in the React frontend. Built on allotment for recursive split/resize. Each pane can display an xterm.js terminal or a @pierre/diffs diff viewer. Layout state is persisted via LiveStore. Keyboard shortcuts use TanStack Hotkeys for declarative, composable hotkey bindings with scope isolation (so terminal panes don't intercept panel-level shortcuts). All UI components use shadcn/ui (backed by Base UI) for consistent styling.
 
-Responsibilities: panel splitting/resizing/closing, pane type management (terminal/diff), keyboard shortcuts, layout serialization/deserialization, xterm.js integration, @pierre/diffs integration.
+Responsibilities: panel splitting/resizing/closing, pane type management (terminal/diff), keyboard shortcuts (via TanStack Hotkeys), layout serialization/deserialization, xterm.js integration, @pierre/diffs integration.
 
 ### Technology Stack
 
 | Component | Technology | Version/Source |
 |-----------|-----------|----------------|
 | Runtime | Bun | Latest stable |
-| Core framework | Effect TS v4 | effect-smol |
+| Core framework | Effect TS v3 | effect |
 | Reactive state | LiveStore | v0.3+ |
-| RPC | Effect RPC | From effect-smol |
+| RPC | Effect RPC | @effect/rpc |
 | App framework | Vite + React 19 | React 19.2, Vite 6 |
 | React compiler | React Compiler | Latest |
 | Routing | TanStack Router | v1.141+ |
+| Forms | TanStack Form | v1 |
+| Keyboard shortcuts | TanStack Hotkeys | v0 (alpha) |
 | Component library | shadcn/ui (base-lyra, Base UI) | v3.6+ |
 | Styling | Tailwind CSS v4 | v4.0+ |
 | TypeScript | tsgo (TypeScript Go) | Latest |
@@ -237,7 +239,7 @@ laborer/
 ├── e2e/                     # Playwright E2E tests
 │   ├── tests/
 │   └── playwright.config.ts
-├── AGENTS.md                # Ultracite + Effect v4 agent rules
+├── AGENTS.md                # Ultracite + Effect v3 agent rules
 ├── package.json             # Bun workspace root
 └── bun.lock
 ```
@@ -271,7 +273,7 @@ The `editor.open` RPC method executes `cursor <path>` or `code <path>` (configur
 **What makes a good test:** Tests should verify external behavior through the public interface of each module. They should not test implementation details, internal state, or private methods. Tests should be deterministic and not depend on network, timing, or OS-specific behavior (except integration tests explicitly designed for that).
 
 **Testing frameworks:**
-- **Vitest** via @effect/vitest from effect-smol for unit and integration tests of Effect services.
+- **Vitest** via @effect/vitest for unit and integration tests of Effect services.
 - **Playwright** for E2E tests of the full app (server + web UI). E2E tests live in `e2e/` at the repo root and test real user flows against the running app.
 
 ### Unit / Integration tests (Vitest)
@@ -347,7 +349,7 @@ Laborer is a UI and orchestration shell for rlph, not a replacement. rlph remain
 
 - **rlph** (https://github.com/hsubra89/rlph) — The ralph loop CLI that laborer wraps.
 - **gtr / git-worktree-runner** (https://github.com/coderabbitai/git-worktree-runner) — Reference for worktree lifecycle management patterns.
-- **effect-smol** (https://github.com/Effect-TS/effect-smol) — Effect TS v4, the core framework.
+- **Effect** (https://github.com/Effect-TS/effect) — Effect TS v3, the core framework.
 - **LiveStore** (https://livestore.dev) — Reactive SQLite sync engine.
 - **@pierre/diffs** (https://diffs.com) — Diff rendering library.
 - **allotment** (https://github.com/johnwalley/allotment) — React split pane component.
@@ -361,6 +363,6 @@ Laborer is a UI and orchestration shell for rlph, not a replacement. rlph remain
 
 2. **Local-first, API-first.** Everything runs on the developer's machine. The server is headless-capable. The API is the primary interface; the UI is a client. This enables future Slack bots, CLI wrappers, and CI integrations without architectural changes.
 
-3. **Effect all the way down.** The server is Effect TS v4. Services are Effect services with tag-based DI. RPC is Effect RPC. Testing uses @effect/vitest. The shared schema uses Effect Schema (via LiveStore). This provides type safety, composability, and testability throughout.
+3. **Effect all the way down.** The server is Effect TS v3. Services are Effect services with tag-based DI. RPC is Effect RPC. Testing uses @effect/vitest. The shared schema uses Effect Schema (via LiveStore). This provides type safety, composability, and testability throughout.
 
 4. **Progressive complexity.** A developer can start by just creating a workspace and opening a terminal. They don't need to know about ralph loops, PRDs, or Linear integration. Those features are discoverable but not required.

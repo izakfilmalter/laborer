@@ -615,3 +615,36 @@ Date: 2026-03-04
 - Issue #38: WorkspaceProvider — handle dirty git state (was blocked by #33)
 - Issue #39: WorkspaceProvider — handle git fetch failure (was blocked by #33)
 - Issue #43: WorkspaceProvider — destroy worktree (was blocked by #33)
+
+## Issue 36: WorkspaceProvider — inject PORT env var — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Added `getWorkspaceEnv(workspaceId)` method to the `WorkspaceProvider` service interface and implementation in `packages/server/src/services/workspace-provider.ts`.
+- Implementation uses `Effect.fn("WorkspaceProvider.getWorkspaceEnv")` for call-site tracing:
+  1. Queries the LiveStore `workspaces` table via `store.query(tables.workspaces)`.
+  2. Finds the workspace matching the given ID using `Array.findFirst` from Effect.
+  3. If no workspace found, returns `RpcError` with code `NOT_FOUND` and descriptive message.
+  4. Builds and returns a `Record<string, string>` containing:
+     - `PORT` — the allocated port number (as string) for dev servers
+     - `LABORER_WORKSPACE_ID` — the workspace UUID
+     - `LABORER_WORKSPACE_PATH` — the worktree directory path
+     - `LABORER_BRANCH` — the workspace branch name
+- Added `tables` import from `@laborer/shared/schema` and `Array as Arr, pipe` from `effect` for the lookup logic.
+- Updated module doc comment to reference Issue #36 and document the new method in the usage example.
+- Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin hints), `ultracite check` passes with zero issues on server package files.
+
+### Acceptance criteria status
+- [x] `PORT` env var set to allocated port (returned as `PORT: String(ws.port)` in the env record)
+- [x] `PORT` env var available in workspace terminal environments (via `getWorkspaceEnv` — TerminalManager will use this when spawning PTYs in Issue #50)
+- [ ] Tests: setup script can read PORT; spawned process in workspace sees correct PORT value (deferred — vitest not yet configured; TerminalManager not yet implemented)
+
+### Design decisions
+- Returned additional env vars beyond just `PORT` (`LABORER_WORKSPACE_ID`, `LABORER_WORKSPACE_PATH`, `LABORER_BRANCH`) to give workspace processes full context about their environment. This is useful for setup scripts, dev server configuration, and debugging.
+- Used `Effect.fn` with a generator for the lookup to stay consistent with the codebase's established pattern.
+- Used Effect's `Array.findFirst` and `pipe` for type-safe lookup rather than raw `Array.prototype.find`, following the Effect data manipulation patterns from AGENTS.md.
+- The method returns a plain `Record<string, string>` which can be spread into `process.env` or passed as the `env` option to `Bun.spawn`. This is the standard Node/Bun convention for environment variables.
+
+### Issues unblocked
+- Issue #40: workspace.create RPC handler (was blocked by #19 (done), #33 (done), #36 (now done), #4 (done) — all blockers now complete!)

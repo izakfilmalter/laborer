@@ -12,22 +12,26 @@
  * - Project validation via ProjectRegistry
  * - Workspace state tracking via LiveStore
  * - Branch management and naming
+ * - Environment variable injection (PORT, etc.) for workspace processes
  *
  * Usage:
  * ```ts
  * const program = Effect.gen(function* () {
  *   const provider = yield* WorkspaceProvider
  *   const workspace = yield* provider.createWorktree("project-id", "feature/my-branch")
+ *   const env = yield* provider.getWorkspaceEnv("workspace-id")
+ *   // env.PORT === "3142"
  * })
  * ```
  *
  * Issue #33: createWorktree method
+ * Issue #36: inject PORT env var
  */
 
 import { join, resolve } from "node:path";
 import { RpcError } from "@laborer/shared/rpc";
-import { events } from "@laborer/shared/schema";
-import { Context, Effect, Layer } from "effect";
+import { events, tables } from "@laborer/shared/schema";
+import { Array as Arr, Context, Effect, Layer, pipe } from "effect";
 import { LaborerStore } from "./laborer-store.js";
 import { PortAllocator } from "./port-allocator.js";
 import { ProjectRegistry } from "./project-registry.js";
@@ -85,6 +89,23 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 			branchName?: string,
 			taskId?: string
 		) => Effect.Effect<WorkspaceRecord, RpcError>;
+
+		/**
+		 * Get environment variables for a workspace.
+		 *
+		 * Returns a Record of env vars that should be injected into all
+		 * processes running in the workspace (setup scripts, terminals,
+		 * dev servers). Includes:
+		 * - PORT: the allocated port for dev servers
+		 * - LABORER_WORKSPACE_ID: the workspace ID
+		 * - LABORER_WORKSPACE_PATH: the worktree directory path
+		 * - LABORER_BRANCH: the workspace branch name
+		 *
+		 * @param workspaceId - ID of the workspace
+		 */
+		readonly getWorkspaceEnv: (
+			workspaceId: string
+		) => Effect.Effect<Record<string, string>, RpcError>;
 	}
 >() {
 	static readonly layer = Layer.effect(
@@ -254,7 +275,35 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 				}
 			);
 
-			return WorkspaceProvider.of({ createWorktree });
+			const getWorkspaceEnv = Effect.fn("WorkspaceProvider.getWorkspaceEnv")(
+				function* (workspaceId: string) {
+					// Look up the workspace from LiveStore
+					const allWorkspaces = store.query(tables.workspaces);
+					const workspace = pipe(
+						allWorkspaces,
+						Arr.findFirst((w) => w.id === workspaceId)
+					);
+
+					if (workspace._tag === "None") {
+						return yield* new RpcError({
+							message: `Workspace not found: ${workspaceId}`,
+							code: "NOT_FOUND",
+						});
+					}
+
+					const ws = workspace.value;
+
+					// Build the environment variables for this workspace
+					return {
+						PORT: String(ws.port),
+						LABORER_WORKSPACE_ID: ws.id,
+						LABORER_WORKSPACE_PATH: ws.worktreePath,
+						LABORER_BRANCH: ws.branchName,
+					} as Record<string, string>;
+				}
+			);
+
+			return WorkspaceProvider.of({ createWorktree, getWorkspaceEnv });
 		})
 	);
 }

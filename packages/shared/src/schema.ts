@@ -39,6 +39,15 @@ export const terminals = State.SQLite.table({
 	},
 });
 
+export const diffs = State.SQLite.table({
+	name: "diffs",
+	columns: {
+		workspaceId: State.SQLite.text({ primaryKey: true }),
+		diffContent: State.SQLite.text({ default: "" }),
+		lastUpdated: State.SQLite.text(),
+	},
+});
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -123,6 +132,22 @@ export const terminalKilled = Events.synced({
 	}),
 });
 
+export const diffUpdated = Events.synced({
+	name: "v1.DiffUpdated",
+	schema: Schema.Struct({
+		workspaceId: Schema.String,
+		diffContent: Schema.String,
+		lastUpdated: Schema.String,
+	}),
+});
+
+export const diffCleared = Events.synced({
+	name: "v1.DiffCleared",
+	schema: Schema.Struct({
+		workspaceId: Schema.String,
+	}),
+});
+
 export const events = {
 	projectCreated,
 	projectRemoved,
@@ -133,6 +158,8 @@ export const events = {
 	terminalOutput,
 	terminalStatusChanged,
 	terminalKilled,
+	diffUpdated,
+	diffCleared,
 };
 
 // ---------------------------------------------------------------------------
@@ -172,13 +199,18 @@ const materializers = State.SQLite.materializers(events, {
 	"v1.TerminalStatusChanged": ({ id, status }) =>
 		terminals.update({ status }).where({ id }),
 	"v1.TerminalKilled": ({ id }) => terminals.delete().where({ id }),
+	"v1.DiffUpdated": ({ workspaceId, diffContent, lastUpdated }) =>
+		diffs
+			.insert({ workspaceId, diffContent, lastUpdated })
+			.onConflict("workspaceId", "replace"),
+	"v1.DiffCleared": ({ workspaceId }) => diffs.delete().where({ workspaceId }),
 });
 
 // ---------------------------------------------------------------------------
 // Tables export
 // ---------------------------------------------------------------------------
 
-export const tables = { projects, workspaces, terminals };
+export const tables = { projects, workspaces, terminals, diffs };
 
 // ---------------------------------------------------------------------------
 // State & Schema

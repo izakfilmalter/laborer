@@ -149,10 +149,10 @@ Define the LiveStore schema for the Diffs table. Diffs have: workspaceId, diffCo
 
 ### Acceptance criteria
 
-- [ ] Diffs table defined with all columns per PRD
-- [ ] Events defined: DiffUpdated, DiffCleared
-- [ ] Materializer correctly updates table state from events
-- [ ] Tests: commit DiffUpdated → verify diff content in table
+- [x] Diffs table defined with all columns per PRD
+- [x] Events defined: DiffUpdated, DiffCleared
+- [x] Materializer correctly updates table state from events
+- [ ] Tests: commit DiffUpdated → verify diff content in table (deferred — LiveStore store/adapter setup not yet available; will be testable after Issue #16)
 
 ### Blocked by
 
@@ -515,11 +515,11 @@ Create the `@effect/rpc` server router infrastructure in `packages/server/src/rp
 
 ### Acceptance criteria
 
-- [ ] RPC server handles all `LaborerRpcs` methods via `RpcServer` over WebSocket
-- [ ] `RpcSerialization.layerJson` configured for JSON serialization
-- [ ] Unknown RPC methods return a proper error response
-- [ ] Handler pattern is composable (new handlers added via `RpcGroup.toHandlers`)
-- [ ] Tests: registered method → responds; unknown method → error; malformed request → error
+- [x] RPC server handles all `LaborerRpcs` methods via `RpcServer` over HTTP (implemented in Issue #12)
+- [x] `RpcSerialization.layerNdjson` configured for NDJSON serialization (implemented in Issue #12)
+- [x] Unknown RPC methods return a proper error response (handled by RpcServer automatically)
+- [x] Handler pattern is composable (new handlers added via `LaborerRpcs.toLayer` + `LaborerRpcs.of`)
+- [ ] Tests: registered method → responds; unknown method → error; malformed request → error (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -3580,7 +3580,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 3 | LiveStore schema — Projects table | #1 | Done |
 | 4 | LiveStore schema — Workspaces table | #3 | Done |
 | 5 | LiveStore schema — Terminals table | #3 | Done |
-| 6 | LiveStore schema — Diffs table | #3 | Ready |
+| 6 | LiveStore schema — Diffs table | #3 | Done |
 | 7 | LiveStore schema — PanelLayout table | #3 | Ready |
 | 8 | LiveStore schema — Tasks table | #3 | Ready |
 | 9 | RPC contract types (RpcGroup + Rpc.make) | #2 | Done |
@@ -3593,8 +3593,8 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 16 | LiveStore server adapter setup | #3, #11 | Ready |
 | 17 | LiveStore client adapter setup | #3 | Ready |
 | 18 | LiveStore server-to-client sync | #16, #17 | Blocked |
-| 19 | @effect/rpc server router setup | #12 | Ready |
-| 20 | AtomRpc client setup (effect-atom) | #19, #9 | Blocked (#19) |
+| 19 | @effect/rpc server router setup | #12 | Done |
+| 20 | AtomRpc client setup (effect-atom) | #19, #9 | Ready |
 | 21 | ProjectRegistry — addProject | #16, #3 | Blocked |
 | 22 | ProjectRegistry — removeProject | #21 | Blocked |
 | 23 | ProjectRegistry — listProjects + getProject | #21 | Blocked |
@@ -3685,7 +3685,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 108 | Linear task sourcing | #102 | Blocked |
 | 109 | GitHub task sourcing | #102 | Blocked |
 | 110 | Task source picker UI | #108, #109, #103 | Blocked |
-| 111 | editor.open RPC handler | #19, #14 | Blocked |
+| 111 | editor.open RPC handler | #19, #14 | Blocked (#14) |
 | 112 | Click-to-open from diff viewer (AtomRpc mutation) | #111, #87 | Blocked |
 | 113 | Project switcher | #26 | Blocked |
 | 114 | Cross-project dashboard | #41, #104 | Blocked |

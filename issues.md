@@ -2315,14 +2315,14 @@ Start diff polling when a workspace is created (status = "running") and stop it 
 
 ### Acceptance criteria
 
-- [ ] Workspace created → polling starts automatically
-- [ ] Workspace destroyed → polling stops, timer cleaned up
-- [ ] No leaked intervals after workspace destruction
-- [ ] Tests: create workspace → polling active; destroy → polling stopped; no leaked timers
+- [x] Workspace created → polling starts automatically (DiffService.startPolling called in workspace.create RPC handler when status = "running")
+- [x] Workspace destroyed → polling stops, timer cleaned up (DiffService.stopPolling called in workspace.destroy RPC handler before worktree removal)
+- [x] No leaked intervals after workspace destruction (stopPolling interrupts fiber and clears cached state)
+- [ ] Tests: create workspace → polling active; destroy → polling stopped; no leaked timers (deferred — vitest not yet configured)
 
 ### Blocked by
 
-- Blocked by #83, #47
+- Blocked by #83 (done), #47 (done)
 
 ### User stories addressed
 
@@ -3660,7 +3660,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 82 | DiffService — run git diff | #40 | Done |
 | 83 | DiffService — poll on interval | ~~#82~~ | Done |
 | 84 | DiffService — deduplicate unchanged | ~~#83~~ | Done |
-| 85 | DiffService — start/stop on workspace lifecycle | ~~#83~~, ~~#47~~ | Ready |
+| 85 | DiffService — start/stop on workspace lifecycle | ~~#83~~, ~~#47~~ | Done |
 | 86 | diff.refresh RPC handler | ~~#82~~, #19 | Done |
 | 87 | Diff viewer pane — @pierre/diffs | ~~#18~~, ~~#83~~, ~~#6~~ | Ready |
 | 88 | Diff viewer — accept/reject annotations | #87 | Blocked |

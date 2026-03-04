@@ -31,6 +31,7 @@
  * Issue #82: getDiff method — run `git diff` for a workspace
  * Issue #83: startPolling/stopPolling — poll on interval
  * Issue #84: deduplicate unchanged diffs — only commit DiffUpdated when content changes
+ * Issue #85: start/stop polling on workspace lifecycle — integrated via RPC handlers
  */
 
 import { RpcError } from "@laborer/shared/rpc";

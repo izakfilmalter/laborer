@@ -25,8 +25,8 @@ const startTime = Date.now();
  * - health.check: returns server uptime (Issue #12)
  * - project.add: delegates to ProjectRegistry.addProject (Issue #21)
  * - project.remove: delegates to ProjectRegistry.removeProject (Issue #22)
- * - workspace.create: delegates to WorkspaceProvider.createWorktree (Issue #33/#40)
- * - workspace.destroy: delegates to WorkspaceProvider.destroyWorktree (Issue #43)
+ * - workspace.create: delegates to WorkspaceProvider.createWorktree + DiffService.startPolling (Issue #33/#40/#85)
+ * - workspace.destroy: delegates to DiffService.stopPolling + TerminalManager.killAllForWorkspace + WorkspaceProvider.destroyWorktree (Issue #43/#44/#85)
  * - terminal.spawn: delegates to TerminalManager.spawn (Issue #50)
  * - terminal.write: delegates to TerminalManager.write (Issue #52)
  * - terminal.resize: delegates to TerminalManager.resize (Issue #53)
@@ -80,6 +80,15 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 					branchName,
 					taskId
 				);
+
+				// Issue #85: Auto-start diff polling when workspace is created
+				// with "running" status. Polling runs in the background and commits
+				// DiffUpdated events to LiveStore on each interval.
+				if (workspace.status === "running") {
+					const diffService = yield* DiffService;
+					yield* diffService.startPolling(workspace.id);
+				}
+
 				return {
 					id: workspace.id,
 					projectId: workspace.projectId,
@@ -96,6 +105,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 			}),
 		"workspace.destroy": ({ workspaceId }) =>
 			Effect.gen(function* () {
+				// Issue #85: Stop diff polling before destroying the workspace.
+				// This prevents polling errors when the worktree directory is removed
+				// and ensures no leaked polling fibers.
+				const diffService = yield* DiffService;
+				yield* diffService.stopPolling(workspaceId);
+
 				// Issue #44: Kill all workspace processes before removing the worktree.
 				// This prevents orphan PTY processes that would keep running after
 				// the workspace directory is removed.

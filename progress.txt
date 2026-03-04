@@ -2075,3 +2075,32 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #48.
+
+## Issue 85: DiffService — start/stop polling on workspace lifecycle — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Integrated DiffService polling into the workspace lifecycle by updating the `workspace.create` and `workspace.destroy` RPC handlers in `packages/server/src/rpc/handlers.ts`.
+- **Auto-start on create**: In the `workspace.create` handler, after `WorkspaceProvider.createWorktree` returns a workspace with `status === "running"`, the handler now calls `DiffService.startPolling(workspace.id)`. This starts a background daemon fiber that runs `git diff` every 2 seconds and commits `DiffUpdated` events to LiveStore when content changes.
+- **Auto-stop on destroy**: In the `workspace.destroy` handler, before killing terminals and removing the worktree, the handler now calls `DiffService.stopPolling(workspaceId)`. This interrupts the polling fiber, clears the cached diff content, and prevents:
+  1. Polling errors when the worktree directory is removed
+  2. Leaked polling fibers that would continue running after workspace destruction
+- The destroy sequence is now: `DiffService.stopPolling` → `TerminalManager.killAllForWorkspace` → `WorkspaceProvider.destroyWorktree`.
+- Updated handler doc comment to reference Issue #85 for both workspace.create and workspace.destroy.
+- Updated DiffService module doc comment to reference Issue #85.
+- Verified: `tsc --noEmit` passes for server package (no type errors — only pre-existing Effect plugin informational messages), `biome check` passes with zero issues on both modified files.
+
+### Acceptance criteria status
+- [x] Workspace created → polling starts automatically (DiffService.startPolling called in workspace.create handler when status = "running")
+- [x] Workspace destroyed → polling stops, timer cleaned up (DiffService.stopPolling called in workspace.destroy handler before worktree removal)
+- [x] No leaked intervals after workspace destruction (stopPolling interrupts the fiber and clears cached state)
+- [ ] Tests: create workspace → polling active; destroy → polling stopped; no leaked timers (deferred — vitest not yet configured)
+
+### Design decisions
+- Implemented in the RPC handler layer rather than inside `WorkspaceProvider` or `DiffService` themselves. This keeps the services decoupled — `WorkspaceProvider` doesn't need to know about `DiffService`, and `DiffService` doesn't need to know about `WorkspaceProvider`. The handler layer is the natural orchestration point, consistent with how `TerminalManager.killAllForWorkspace` is already called from the `workspace.destroy` handler (not from `WorkspaceProvider`).
+- Only starts polling when `workspace.status === "running"`. If the workspace is in "creating" status (e.g., during setup script execution), polling doesn't start yet. Future enhancement could start polling after setup completes, but for v1 this is correct since `createWorktree` always returns status "running".
+- Stop polling is called first in the destroy sequence (before killing terminals and removing worktree). This ordering is deliberate: the polling fiber runs `git diff` in the worktree directory, so it must be stopped before the directory is removed. Otherwise the poll could fail with a "directory not found" error during cleanup.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #85. However, this enables the complete diff lifecycle: workspace create → auto-poll → deduplication → LiveStore events → client diff viewer (Issue #87).

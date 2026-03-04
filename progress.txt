@@ -279,3 +279,39 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #100: Task CRUD — create manual task (partially — still needs #16)
+
+## Issue 7: LiveStore schema — PanelLayout table + events + materializer — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Defined `panelLayout` table using `State.SQLite.table` with columns: `id` (text, primary key), `layoutTree` (json, backed by `PanelNodeSchema` from types.ts for automatic JSON serialization/deserialization), `activePaneId` (text, nullable).
+- Used `State.SQLite.json({ schema: PanelNodeSchema })` which leverages LiveStore's first-class JSON column support — the underlying SQLite column is text, but `Schema.parseJson(PanelNodeSchema)` is applied automatically for encode/decode. This means the recursive `PanelNode` tree (with `LeafNode` and `SplitNode` variants) is stored as JSON text and validated on read.
+- Defined 4 synced events using `Events.synced` with a shared `layoutEventSchema` containing `{ id, layoutTree: PanelNodeSchema, activePaneId: NullOr(String) }`:
+  - `layoutSplit` (name: `v1.LayoutSplit`) — emitted when a pane is split
+  - `layoutPaneClosed` (name: `v1.LayoutPaneClosed`) — emitted when a pane is closed
+  - `layoutPaneAssigned` (name: `v1.LayoutPaneAssigned`) — emitted when pane content changes
+  - `layoutRestored` (name: `v1.LayoutRestored`) — emitted when full layout is set/restored
+- All 4 events carry the complete updated layout tree (not diffs). Tree manipulation logic will live in the React app; materializers simply persist the result. Each event type exists for auditability of user actions.
+- Defined materializers for all 4 events using `panelLayout.insert({ id, layoutTree, activePaneId }).onConflict("id", "replace")` — upsert pattern ensures a single row per session is maintained.
+- Added `panelLayout` to the `tables` export and all 4 events to the `events` export.
+- Updated `state` and `schema` exports to include the new table and events.
+- Imported `PanelNodeSchema` from `./types.js` — the `Schema` from `@livestore/livestore` is a re-export of `effect`'s `Schema`, so the types are fully compatible.
+- Verified: `tsc --noEmit` passes (no type errors — only pre-existing warnings from Effect language service plugin about duplicate `@effect/platform` versions), `biome check` passes on schema.ts (no lint issues), server package type-checks cleanly.
+
+### Acceptance criteria status
+- [x] PanelLayout table defined with tree structure column (JSON column with `PanelNodeSchema`)
+- [x] Events defined: LayoutSplit, LayoutPaneClosed, LayoutPaneAssigned, LayoutRestored
+- [x] Materializer correctly updates layout tree from events (upsert via `onConflict("id", "replace")`)
+- [ ] Tests: commit split event → verify tree structure updated (deferred — LiveStore store/adapter setup not yet available; will be testable after Issue #16)
+
+### Issues unblocked
+- Issue #73: PanelManager — serialize layout to LiveStore (partially — still needs #69)
+
+### Design decisions
+- Used `State.SQLite.json({ schema: PanelNodeSchema })` instead of plain `text` column with manual JSON.stringify/parse. This is the idiomatic LiveStore approach — the json column type automatically wraps with `Schema.parseJson()` for type-safe serialization.
+- All layout events carry the full tree rather than incremental diffs. This keeps materializers simple (just upsert the whole row) and avoids complex tree-diffing in SQLite. The tradeoff is slightly larger event payloads, but panel layout trees are small (even deeply nested layouts are <10KB).
+- Events are `synced` (not `clientOnly`) so layout state can be synced between server and client via LiveStore's sync mechanism, enabling session persistence across server restarts.
+
+### Note: All 6 LiveStore tables are now defined
+With this issue complete, the full LiveStore schema layer is done: projects, workspaces, terminals, diffs, tasks, and panelLayout. The schema is ready for the LiveStore adapter setup (Issue #16).

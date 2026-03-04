@@ -1,4 +1,5 @@
 import { Events, makeSchema, Schema, State } from "@livestore/livestore";
+import { PanelNodeSchema } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Tables
@@ -57,6 +58,25 @@ export const tasks = State.SQLite.table({
 		externalId: State.SQLite.text({ nullable: true }),
 		title: State.SQLite.text(),
 		status: State.SQLite.text({ default: "pending" }),
+	},
+});
+
+/**
+ * PanelLayout stores the recursive tree structure of splits and panes.
+ * Uses a single row per session (keyed by `id`) with the full tree serialized
+ * as JSON. The `activePaneId` tracks which pane currently has focus.
+ *
+ * The `layoutTree` column uses `State.SQLite.json` which automatically handles
+ * JSON serialization/deserialization via Effect Schema's `parseJson`.
+ */
+export const panelLayout = State.SQLite.table({
+	name: "panel_layout",
+	columns: {
+		id: State.SQLite.text({ primaryKey: true }),
+		layoutTree: State.SQLite.json({
+			schema: PanelNodeSchema,
+		}),
+		activePaneId: State.SQLite.text({ nullable: true }),
 	},
 });
 
@@ -187,6 +207,40 @@ export const taskRemoved = Events.synced({
 	}),
 });
 
+// -- Panel Layout events ----------------------------------------------------
+
+/**
+ * All panel layout events carry the full updated layout tree and active pane.
+ * Tree manipulation logic lives in the app; the materializer simply persists
+ * the result. Each event represents a different user action for auditability.
+ */
+
+const layoutEventSchema = Schema.Struct({
+	id: Schema.String,
+	layoutTree: PanelNodeSchema,
+	activePaneId: Schema.NullOr(Schema.String),
+});
+
+export const layoutSplit = Events.synced({
+	name: "v1.LayoutSplit",
+	schema: layoutEventSchema,
+});
+
+export const layoutPaneClosed = Events.synced({
+	name: "v1.LayoutPaneClosed",
+	schema: layoutEventSchema,
+});
+
+export const layoutPaneAssigned = Events.synced({
+	name: "v1.LayoutPaneAssigned",
+	schema: layoutEventSchema,
+});
+
+export const layoutRestored = Events.synced({
+	name: "v1.LayoutRestored",
+	schema: layoutEventSchema,
+});
+
 export const events = {
 	projectCreated,
 	projectRemoved,
@@ -202,6 +256,10 @@ export const events = {
 	taskCreated,
 	taskStatusChanged,
 	taskRemoved,
+	layoutSplit,
+	layoutPaneClosed,
+	layoutPaneAssigned,
+	layoutRestored,
 };
 
 // ---------------------------------------------------------------------------
@@ -251,13 +309,36 @@ const materializers = State.SQLite.materializers(events, {
 	"v1.TaskStatusChanged": ({ id, status }) =>
 		tasks.update({ status }).where({ id }),
 	"v1.TaskRemoved": ({ id }) => tasks.delete().where({ id }),
+	"v1.LayoutSplit": ({ id, layoutTree, activePaneId }) =>
+		panelLayout
+			.insert({ id, layoutTree, activePaneId })
+			.onConflict("id", "replace"),
+	"v1.LayoutPaneClosed": ({ id, layoutTree, activePaneId }) =>
+		panelLayout
+			.insert({ id, layoutTree, activePaneId })
+			.onConflict("id", "replace"),
+	"v1.LayoutPaneAssigned": ({ id, layoutTree, activePaneId }) =>
+		panelLayout
+			.insert({ id, layoutTree, activePaneId })
+			.onConflict("id", "replace"),
+	"v1.LayoutRestored": ({ id, layoutTree, activePaneId }) =>
+		panelLayout
+			.insert({ id, layoutTree, activePaneId })
+			.onConflict("id", "replace"),
 });
 
 // ---------------------------------------------------------------------------
 // Tables export
 // ---------------------------------------------------------------------------
 
-export const tables = { projects, workspaces, terminals, diffs, tasks };
+export const tables = {
+	projects,
+	workspaces,
+	terminals,
+	diffs,
+	tasks,
+	panelLayout,
+};
 
 // ---------------------------------------------------------------------------
 // State & Schema

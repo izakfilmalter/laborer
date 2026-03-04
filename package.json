@@ -8,8 +8,21 @@
     ],
     "catalog": {
       "dotenv": "^17.2.2",
-      "effect": "^3.19.19",
-      "@effect/vitest": "^0.27.0",
+      "effect": "3.19.12",
+      "@effect/cli": "0.72.1",
+      "@effect/cluster": "0.55.0",
+      "@effect/experimental": "0.57.11",
+      "@effect/opentelemetry": "0.59.3",
+      "@effect/platform": "0.93.8",
+      "@effect/platform-browser": "0.73.0",
+      "@effect/platform-bun": "0.86.0",
+      "@effect/platform-node": "0.103.0",
+      "@effect/printer": "0.47.0",
+      "@effect/printer-ansi": "0.47.0",
+      "@effect/rpc": "0.72.2",
+      "@effect/sql": "0.48.6",
+      "@effect/typeclass": "0.38.0",
+      "@effect/vitest": "0.27.0",
       "zod": "^4.1.13",
       "typescript": "^5"
     }
@@ -39,7 +52,20 @@
     "ultracite": "7.2.4"
   },
   "packageManager": "bun@1.3.5",
-  "patchedDependencies": {
-    "@effect/platform-node@0.81.5": "patches/@effect%2Fplatform-node@0.81.5.patch"
+  "overrides": {
+    "effect": "3.19.12",
+    "@effect/cli": "0.72.1",
+    "@effect/cluster": "0.55.0",
+    "@effect/experimental": "0.57.11",
+    "@effect/opentelemetry": "0.59.3",
+    "@effect/platform": "0.93.8",
+    "@effect/platform-browser": "0.73.0",
+    "@effect/platform-bun": "0.86.0",
+    "@effect/platform-node": "0.103.0",
+    "@effect/printer": "0.47.0",
+    "@effect/printer-ansi": "0.47.0",
+    "@effect/rpc": "0.72.2",
+    "@effect/sql": "0.48.6",
+    "@effect/typeclass": "0.38.0"
   }
 }

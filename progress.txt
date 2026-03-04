@@ -399,3 +399,16 @@ Date: 2026-03-04
 - Issue #100: Task CRUD — create manual task (was blocked by #16 and #8, #8 is done)
 - Issue #129: Graceful shutdown — persist state (was blocked by #16)
 - Issue #18: LiveStore server-to-client sync (partially — still needs #17)
+
+## Pin Effect and LiveStore versions to resolve dependency conflicts
+
+Date: 2026-03-04
+
+### What was done
+- **Bumped LiveStore** from `0.3.1` to `0.4.0-dev.22` across all packages. The published `@livestore/*@0.3.1` required the old Effect ~3.15.x line, which was fundamentally incompatible with our Effect 3.19.x packages. LiveStore `0.4.0-dev.22` targets Effect 3.19.x.
+- **Pinned all Effect packages** in the root `catalog` to exact versions from `@livestore/peer-deps@0.4.0-dev.22`:
+  - `effect@3.19.12`, `@effect/platform@0.93.8`, `@effect/platform-node@0.103.0`, `@effect/platform-bun@0.86.0`, `@effect/rpc@0.72.2`, `@effect/sql@0.48.6`, `@effect/cluster@0.55.0`, `@effect/experimental@0.57.11`, `@effect/opentelemetry@0.59.3`, `@effect/cli@0.72.1`, `@effect/platform-browser@0.73.0`, `@effect/printer@0.47.0`, `@effect/printer-ansi@0.47.0`, `@effect/typeclass@0.38.0`, `@effect/vitest@0.27.0`
+- **Added `overrides`** to root `package.json` to force all transitive dependencies onto the same pinned versions, eliminating duplicate nested Effect packages.
+- **Removed the `@effect/platform-node@0.81.5` patch** (`patches/@effect%2Fplatform-node@0.81.5.patch` and `patchedDependencies` config). No longer needed since `@effect/platform-node@0.103.0` is compatible with `@effect/cluster@0.55.0`.
+- **Updated workspace packages** to use `catalog:` references for Effect deps instead of hardcoded version ranges.
+- Verified: clean `bun install` (no warnings), single copy of every Effect package in lockfile, `tsc --noEmit` passes for server and shared, `bun x ultracite check` shows only pre-existing web UI lint issues.

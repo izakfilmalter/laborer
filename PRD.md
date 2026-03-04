@@ -215,7 +215,7 @@ Responsibilities: panel splitting/resizing/closing, pane type management (termin
 |-----------|-----------|----------------|
 | Runtime | Bun | Latest stable |
 | Core framework | Effect TS v3 | effect |
-| Reactive state | LiveStore | v0.3+ |
+| Reactive state | LiveStore | v0.4.0-dev.22 |
 | RPC | Effect RPC + effect-atom | @effect/rpc, @effect-atom/atom-react (AtomRpc) |
 | App framework | Vite + React 19 | React 19.2, Vite 6 |
 | React compiler | React Compiler | Latest |

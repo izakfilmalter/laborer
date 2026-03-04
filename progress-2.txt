@@ -70,3 +70,43 @@ The public interface of `TerminalManager` is **unchanged** — all existing RPC 
 ### Status
 Issue #3: Done
 Next unblocked: Issues #4, #5, #8 (all were blocked by #3)
+
+---
+
+## Session: Issue #4 — Stale terminal cleanup on server startup
+
+### Task selected
+Issue #4: Stale terminal cleanup on server startup.
+Priority rationale: Issue #4 is a correctness requirement that directly impacts user experience. Without it, server crashes leave ghost "running" terminals in LiveStore that confuse users. It also handles PTY Host crashes gracefully (marking all terminals as stopped). This is the most impactful remaining task for end-to-end reliability.
+
+### What was built
+Added two pieces of cleanup logic to the `TerminalManager` layer construction in `packages/server/src/services/terminal-manager.ts`:
+
+1. **Stale terminal cleanup on startup**: During layer construction (before the service starts accepting requests), queries LiveStore for all terminals with status `"running"` and commits `v1.TerminalStatusChanged { status: "stopped" }` for each. These are orphans from a previous server crash — the PTY processes are long gone. Logs the count of cleaned-up terminals via `Effect.log` for observability.
+
+2. **PTY Host crash handler**: Registers an `onCrash` callback with `PtyHostClient`. When the PTY Host process exits unexpectedly, the callback:
+   - Reads all terminal IDs from the in-memory `terminalsRef` map
+   - Commits `v1.TerminalStatusChanged { status: "stopped" }` for each
+   - Clears the in-memory map (all terminals are dead)
+   - Logs the event via `Effect.log` for observability
+
+Both use `Effect.log` with `Effect.annotateLogs("module", "TerminalManager")` for structured logging. The crash handler uses `Runtime.runSync` (already extracted during layer construction) since it runs in a plain JS callback context.
+
+### Files changed
+- `packages/server/src/services/terminal-manager.ts` — Added stale cleanup + crash handler (~50 lines of new logic)
+
+### Acceptance criteria verification
+- [x] On `TerminalManager` layer construction, queries LiveStore for terminals with status `"running"` ✓
+- [x] Commits `v1.TerminalStatusChanged { status: "stopped" }` for each orphaned terminal found ✓
+- [x] When `PtyHostClient` reports a PTY Host crash, all in-memory tracked terminals are marked as stopped in LiveStore ✓
+- [x] Orphan cleanup happens before the service starts accepting new spawn requests ✓ (runs during `Layer.effect` construction, before the service value is returned)
+- [x] Cleanup is logged for observability ✓ (Effect.log with module annotation)
+
+### Verification
+- `bun run check-types` passes (no new errors, only pre-existing advisory warnings)
+- `bun x biome check packages/server/src/services/terminal-manager.ts` — no lint issues
+- `bun x ultracite check` — all errors are pre-existing in `apps/web/`, none in server package
+
+### Status
+Issue #4: Done
+Next: Issues #5, #6, #7 remain (Issue #8 is blocked by #7)

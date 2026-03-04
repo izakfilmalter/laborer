@@ -45,6 +45,10 @@ import {
 	Ref,
 	Runtime,
 } from "effect";
+
+/** Logger tag used for structured Effect.log output in this module. */
+const logPrefix = "TerminalManager";
+
 import { LaborerStore } from "./laborer-store.js";
 import { PtyHostClient } from "./pty-host-client.js";
 import { WorkspaceProvider } from "./workspace-provider.js";
@@ -167,6 +171,62 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 			// In-memory map of terminal ID → ManagedTerminal.
 			// Uses Effect.Ref for fiber-safe concurrent access.
 			const terminalsRef = yield* Ref.make(new Map<string, ManagedTerminal>());
+
+			// ---------------------------------------------------------------
+			// Stale terminal cleanup on startup (Issue #4)
+			// ---------------------------------------------------------------
+			// Any terminals with status "running" in LiveStore are orphans from
+			// a previous server crash — the PTY processes are long gone. Mark
+			// them as "stopped" so the UI doesn't show ghost terminals.
+			const staleTerminals = pipe(
+				store.query(tables.terminals),
+				Arr.filter((t) => t.status === "running")
+			);
+
+			if (staleTerminals.length > 0) {
+				for (const terminal of staleTerminals) {
+					store.commit(
+						events.terminalStatusChanged({
+							id: terminal.id,
+							status: "stopped",
+						})
+					);
+				}
+				yield* Effect.log(
+					`Cleaned up ${staleTerminals.length} stale terminal(s) from previous session`
+				).pipe(Effect.annotateLogs("module", logPrefix));
+			}
+
+			// ---------------------------------------------------------------
+			// PTY Host crash handler (Issue #4)
+			// ---------------------------------------------------------------
+			// When the PTY Host process crashes, all PTY instances are lost.
+			// Mark every in-memory tracked terminal as stopped in LiveStore.
+			ptyHostClient.onCrash(() => {
+				runSync(
+					Effect.gen(function* () {
+						const map = yield* Ref.get(terminalsRef);
+						const terminalIds = [...map.keys()];
+
+						if (terminalIds.length === 0) {
+							return;
+						}
+
+						for (const id of terminalIds) {
+							store.commit(
+								events.terminalStatusChanged({ id, status: "stopped" })
+							);
+						}
+
+						// Clear the in-memory map — all terminals are dead
+						yield* Ref.set(terminalsRef, new Map<string, ManagedTerminal>());
+
+						yield* Effect.log(
+							`PTY Host crashed — marked ${terminalIds.length} terminal(s) as stopped`
+						).pipe(Effect.annotateLogs("module", logPrefix));
+					})
+				);
+			});
 
 			/**
 			 * Detect the user's default shell.

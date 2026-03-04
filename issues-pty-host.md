@@ -292,7 +292,7 @@ See PRD-pty-host.md sections: "TerminalManager + PtyHostClient (Integration test
 | 1 | PTY Host script — spawn and echo | None | Done |
 | 2 | PtyHostClient Effect service | #1 | Done |
 | 3 | TerminalManager refactor | #2 | Done |
-| 4 | Stale terminal cleanup | #3 | Ready |
+| 4 | Stale terminal cleanup | #3 | Done |
 | 5 | LiveStore sync verification | #3 | Ready |
 | 6 | Remove postinstall + cleanup | #1 | Ready |
 | 7 | PTY Host integration tests | #1 | Ready |

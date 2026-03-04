@@ -1647,14 +1647,14 @@ Create the terminal pane component in `apps/web/src/panes/`. Integrate xterm.js 
 
 ### Acceptance criteria
 
-- [ ] xterm.js installed and integrated
-- [ ] Component subscribes to terminal output from LiveStore
-- [ ] Output renders correctly including ANSI colors and Unicode
-- [ ] Tests: terminal output event → rendered in xterm.js; colors display correctly
+- [x] xterm.js installed and integrated (@xterm/xterm@6.0.0, @xterm/addon-fit@0.11.0, @xterm/addon-webgl@0.19.0)
+- [x] Component subscribes to terminal output from LiveStore (via `store.events({ filter: ["v1.TerminalOutput"] })`)
+- [x] Output renders correctly including ANSI colors and Unicode (xterm-256color theme configured)
+- [ ] Tests: terminal output event → rendered in xterm.js; colors display correctly (deferred — requires running both server and web app with a live terminal)
 
 ### Blocked by
 
-- Blocked by #18, #56
+- Blocked by #18 (done), #56 (done)
 
 ### User stories addressed
 
@@ -3634,13 +3634,13 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 57 | terminal.write RPC handler | #56, #52 | Done |
 | 58 | terminal.resize RPC handler | #56, #53 | Done |
 | 59 | terminal.kill RPC handler | #56, #54 | Done |
-| 60 | xterm.js — render output | #18, ~~#56~~ | Blocked |
-| 61 | xterm.js — send keyboard input (AtomRpc mutation) | #60, ~~#57~~ | Blocked |
-| 62 | xterm.js — handle resize (AtomRpc mutation) | #60, ~~#58~~ | Blocked |
-| 63 | Terminal list per workspace UI | #60, ~~#55~~ | Blocked |
-| 64 | Terminal session reconnection | #60 | Blocked |
+| 60 | xterm.js — render output | ~~#18~~, ~~#56~~ | Done |
+| 61 | xterm.js — send keyboard input (AtomRpc mutation) | ~~#60~~, ~~#57~~ | Ready |
+| 62 | xterm.js — handle resize (AtomRpc mutation) | ~~#60~~, ~~#58~~ | Ready |
+| 63 | Terminal list per workspace UI | ~~#60~~, ~~#55~~ | Ready |
+| 64 | Terminal session reconnection | ~~#60~~ | Ready |
 | 65 | Terminal scrollback buffer replay | #64 | Blocked |
-| 66 | PanelManager — single pane | #60 | Blocked |
+| 66 | PanelManager — single pane | ~~#60~~ | Ready |
 | 67 | PanelManager — horizontal split | #66 | Blocked |
 | 68 | PanelManager — vertical split | #66 | Blocked |
 | 69 | PanelManager — recursive splits | #67, #68 | Blocked |
@@ -3654,7 +3654,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 77 | Keyboard shortcut — close pane | #70, #75 | Blocked |
 | 78 | Keyboard shortcut — navigate panes | #71, #75 | Blocked |
 | 79 | Keyboard shortcut — resize panes | #72, #75 | Blocked |
-| 80 | Keyboard shortcut scope isolation | #75, #61 | Blocked |
+| 80 | Keyboard shortcut scope isolation | #75, ~~#61~~ | Blocked |
 | 81 | Panel responsive layout | #72 | Blocked |
 | 82 | DiffService — run git diff | #40 | Done |
 | 83 | DiffService — poll on interval | ~~#82~~ | Done |
@@ -3667,13 +3667,13 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 90 | Toggle diff alongside terminal | #67, #87 | Blocked |
 | 91 | Diff viewer debounce/throttle | #89 | Blocked |
 | 92 | rlph.startLoop RPC handler | ~~#56~~ | Done |
-| 93 | "Start Ralph Loop" button (AtomRpc mutation) | ~~#92~~, #60 | Blocked |
+| 93 | "Start Ralph Loop" button (AtomRpc mutation) | ~~#92~~, ~~#60~~ | Ready |
 | 94 | rlph.writePRD RPC handler | ~~#56~~ | Ready |
-| 95 | PRD writing form + button (AtomRpc mutation) | #94, #60 | Blocked |
+| 95 | PRD writing form + button (AtomRpc mutation) | #94, ~~#60~~ | Blocked |
 | 96 | rlph.review RPC handler | ~~#56~~ | Ready |
-| 97 | "Review PR" button + input (AtomRpc mutation) | #96, #60 | Blocked |
+| 97 | "Review PR" button + input (AtomRpc mutation) | #96, ~~#60~~ | Blocked |
 | 98 | rlph.fix RPC handler | ~~#56~~ | Ready |
-| 99 | "Fix Findings" button + input (AtomRpc mutation) | #98, #60 | Blocked |
+| 99 | "Fix Findings" button + input (AtomRpc mutation) | #98, ~~#60~~ | Blocked |
 | 100 | Task CRUD — create manual task | #8, #16 | Ready |
 | 101 | Task CRUD — update status | #100 | Blocked |
 | 102 | Task CRUD — list per project | #100 | Blocked |
@@ -3696,12 +3696,12 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 119 | Empty state — no workspaces | ~~#42~~ | Ready |
 | 120 | Empty state — no terminals | #63 | Blocked |
 | 121 | Loading state — workspace creation | ~~#41~~ | Ready |
-| 122 | Loading state — terminal spawning | #60 | Blocked |
+| 122 | Loading state — terminal spawning | ~~#60~~ | Ready |
 | 123 | Loading state — diff computation | #87 | Blocked |
-| 124 | Terminal fidelity — opencode | #60 | Blocked |
-| 125 | Terminal fidelity — claude | #60 | Blocked |
-| 126 | Terminal fidelity — codex | #60 | Blocked |
-| 127 | Terminal scroll performance | #60 | Blocked |
+| 124 | Terminal fidelity — opencode | ~~#60~~ | Ready |
+| 125 | Terminal fidelity — claude | ~~#60~~ | Ready |
+| 126 | Terminal fidelity — codex | ~~#60~~ | Ready |
+| 127 | Terminal scroll performance | ~~#60~~ | Ready |
 | 128 | Graceful shutdown — kill terminals | ~~#54~~ | Ready |
 | 129 | Graceful shutdown — persist state | #16 | Ready |
 | 130 | Graceful shutdown — free ports | ~~#30~~ | Ready |

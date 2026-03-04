@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Suspense } from "react";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
+import { CreateWorkspaceForm } from "@/components/create-workspace-form";
 import { ProjectList } from "@/components/project-list";
 import { WorkspaceList } from "@/components/workspace-list";
 
@@ -54,7 +55,10 @@ function HomeComponent() {
 					<ProjectList />
 				</section>
 				<section>
-					<h2 className="mb-2 font-medium">Workspaces</h2>
+					<div className="mb-2 flex items-center justify-between">
+						<h2 className="font-medium">Workspaces</h2>
+						<CreateWorkspaceForm />
+					</div>
 					<WorkspaceList />
 				</section>
 				<section className="rounded-lg border p-4">

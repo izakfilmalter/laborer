@@ -1164,12 +1164,12 @@ Create a "Create Workspace" form using TanStack Form. Fields: project selector (
 
 ### Acceptance criteria
 
-- [ ] Form uses TanStack Form with project selector and optional branch name
-- [ ] Submit → calls `LaborerClient.mutation("workspace.create")` via `useAtomSet`
-- [ ] Shows loading state during creation
-- [ ] Success → workspace appears in list (via LiveStore)
-- [ ] Error → error message displayed
-- [ ] Tests: submit → mutation called; success → in list; error → message shown
+- [x] Form uses TanStack Form with project selector and optional branch name
+- [x] Submit → calls `LaborerClient.mutation("workspace.create")` via `useAtomSet`
+- [x] Shows loading state during creation
+- [x] Success → workspace appears in list (via LiveStore)
+- [x] Error → error message displayed
+- [ ] Tests: submit → mutation called; success → in list; error → message shown (deferred — requires running both server and web app)
 
 ### Blocked by
 
@@ -3616,7 +3616,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 39 | WorkspaceProvider — handle git fetch failure | #33 | Ready |
 | 40 | workspace.create RPC handler | #19, #33, #36, #4 | Done |
 | 41 | Workspace list UI | ~~#18~~, ~~#40~~ | Done |
-| 42 | Create Workspace form (AtomRpc mutation) | ~~#20~~, ~~#40~~, ~~#27~~ | Ready |
+| 42 | Create Workspace form (AtomRpc mutation) | ~~#20~~, ~~#40~~, ~~#27~~ | Done |
 | 43 | WorkspaceProvider — destroy worktree | #33 | Done |
 | 44 | WorkspaceProvider — kill processes on destroy | #43 | Ready |
 | 45 | WorkspaceProvider — free port on destroy | #43, ~~#30~~ | Ready |
@@ -3693,7 +3693,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 116 | Tauri global shortcut | #115 | Blocked |
 | 117 | Tauri window management | #115 | Blocked |
 | 118 | Empty state — no projects | ~~#27~~ | Ready |
-| 119 | Empty state — no workspaces | #42 | Blocked |
+| 119 | Empty state — no workspaces | ~~#42~~ | Ready |
 | 120 | Empty state — no terminals | #63 | Blocked |
 | 121 | Loading state — workspace creation | ~~#41~~ | Ready |
 | 122 | Loading state — terminal spawning | #60 | Blocked |

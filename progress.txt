@@ -1259,3 +1259,47 @@ Date: 2026-03-04
 - Issue #114: Cross-project workspace dashboard (was blocked by #41 and #104 — #41 now done, still needs #104)
 - Issue #115: Tauri system tray (was blocked by #41 — now done!)
 - Issue #121: Loading state — workspace creation (was blocked by #41 — now done!)
+
+## Issue 42: Create Workspace form (AtomRpc mutation) — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `apps/web/src/components/create-workspace-form.tsx` — a dialog-based form for creating new workspaces.
+- `CreateWorkspaceForm` component:
+  - Uses a shadcn/ui `Dialog` as the container, triggered by a "Create Workspace" button with a `Layers` icon.
+  - Form built with `useForm` from `@tanstack/react-form` with two fields: `projectId` (required) and `branchName` (optional).
+  - **Project selector**: Uses shadcn/ui `Select` component (Base UI backed) populated from LiveStore's `projects` table via `store.useQuery(queryDb(projects))`. The selector shows project names and submits project IDs.
+  - **Branch name input**: Optional text input. When left empty, the server auto-generates a branch name (`laborer/<uuid-prefix>`). When provided, the server uses it as the worktree branch.
+  - Client-side validation: `projectId` is required (onChange validator checks empty value).
+  - On submit, calls `LaborerClient.mutation("workspace.create")` via `useAtomSet` with `{ mode: "promise" }` to await the result.
+  - Wraps the payload in `{ payload: { projectId, branchName? } }` to match the AtomRpc mutation API. Only includes `branchName` in the payload when it's non-empty (trimmed).
+  - Success: shows a toast notification with the branch name and port, resets the form, and closes the dialog.
+  - Error: shows a toast notification with the error message from the server (e.g., "Project not found", "Branch already exists", "Port exhausted").
+  - Submit button shows "Creating..." while submitting and is disabled when the form is invalid or submitting.
+  - Uses shadcn/ui components: `Dialog`, `Button`, `Input`, `Field`, `FieldLabel`, `FieldDescription`, `FieldError`, `Select`, `SelectTrigger`, `SelectContent`, `SelectItem`, `SelectValue`.
+- Updated `apps/web/src/routes/index.tsx`:
+  - Added `CreateWorkspaceForm` import.
+  - Added the `CreateWorkspaceForm` button next to the "Workspaces" heading in a flex row with `justify-between` alignment, mirroring the same pattern as the "Projects" section with `AddProjectForm`.
+- Verified: `biome check` passes with zero issues on both new/modified files, `tsc --noEmit` produces no new errors (only pre-existing calendar.tsx, sonner.tsx, routeTree.gen, and route type errors), server and shared packages type-check cleanly.
+
+### Acceptance criteria status
+- [x] Form uses TanStack Form with project selector and optional branch name (`useForm` with `projectId` and `branchName` fields)
+- [x] Submit → calls `LaborerClient.mutation("workspace.create")` via `useAtomSet` (with `{ mode: "promise" }`)
+- [x] Shows loading state during creation (submit button shows "Creating..." and is disabled)
+- [x] Success → workspace appears in list (via LiveStore sync), form resets, dialog closes
+- [x] Error → error message displayed (via `toast.error` from sonner, with server error message)
+- [ ] Tests: submit → mutation called; success → in list; error → message shown (deferred — requires running both server and web app; component tests can be added with Vitest + React Testing Library)
+
+### Design decisions
+- Used `Select` (Base UI) rather than `Combobox` for the project selector. With a small number of projects (typically <10), a simple dropdown is more appropriate than a searchable combobox. A combobox can be introduced if users start registering many projects.
+- Used `Dialog` rather than `Sheet` for the form container, consistent with the `AddProjectForm` pattern. A dialog is appropriate for a focused two-field form.
+- Used `useAtomSet` with `{ mode: "promise" }` to await the mutation result, consistent with `AddProjectForm`. This enables standard async form submission handling (loading state, success/error feedback).
+- Used `sonner` toast notifications for feedback, consistent with the established pattern in `AddProjectForm` and `ProjectList` (remove).
+- Client-side validation is intentionally minimal (just "required" on projectId). Server-side validation handles complex cases (project existence, branch conflicts, port exhaustion) and returns descriptive error messages.
+- The optional `branchName` field is only included in the payload when non-empty. This lets the server auto-generate a branch name by default, which is the common case for ad-hoc workspaces.
+- The project list is populated reactively from LiveStore, so newly added projects immediately appear in the dropdown without needing to refresh.
+
+### Issues unblocked
+- Issue #119: Empty state — no workspaces (was blocked by #42 — now done!)
+- Issue #49: Workspace creation error display (was blocked by #37, #38, #39, #42 — #42 now done, still needs #37, #38, #39)

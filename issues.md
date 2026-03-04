@@ -218,7 +218,7 @@ Define the LiveStore schema for the Tasks table. Tasks have: id, projectId, sour
 
 ---
 
-## Issue 9: Effect RPC contract types
+## Issue 9: Effect RPC contract types (RpcGroup + Rpc.make)
 
 ### Parent PRD
 
@@ -226,12 +226,25 @@ PRD.md
 
 ### What to build
 
-Define the Effect RPC request/response schemas for all RPC methods listed in the PRD's "Action Layer: Effect RPC" section in `packages/shared/src/rpc.ts`. This includes schemas for: workspace.create, workspace.destroy, terminal.spawn, terminal.write, terminal.resize, terminal.kill, diff.refresh, editor.open, rlph.startLoop, rlph.writePRD, rlph.review, rlph.fix, project.add, project.remove, and a health check.
+Define the RPC contract in `packages/shared/src/rpc.ts` using `RpcGroup.make` and `Rpc.make` from `@effect/rpc`. Create a `LaborerRpcs` class that extends `RpcGroup.make(...)` with all RPC methods listed in the PRD's "Action Layer" section: workspace.create, workspace.destroy, terminal.spawn, terminal.write, terminal.resize, terminal.kill, diff.refresh, editor.open, rlph.startLoop, rlph.writePRD, rlph.review, rlph.fix, project.add, project.remove, and health. Each `Rpc.make` call defines `payload` and optional `success` schemas using Effect Schema.
+
+Example pattern:
+```ts
+import { Rpc, RpcGroup } from "@effect/rpc"
+import { Schema } from "effect"
+
+class LaborerRpcs extends RpcGroup.make(
+  Rpc.make("health", { success: HealthResult }),
+  Rpc.make("workspace.create", { payload: WorkspaceCreatePayload }),
+  // ... all other RPCs
+) {}
+```
 
 ### Acceptance criteria
 
-- [ ] All RPC request/response schemas defined using Effect Schema
-- [ ] Schemas are exported from `packages/shared`
+- [ ] `LaborerRpcs` class defined using `RpcGroup.make` with all RPC methods as `Rpc.make` entries
+- [ ] Each RPC has `payload` and/or `success` schemas defined using Effect Schema
+- [ ] `LaborerRpcs` is exported from `packages/shared`
 - [ ] Type compilation succeeds
 - [ ] Schema validation tests: valid inputs pass, invalid inputs fail with correct errors
 
@@ -308,7 +321,7 @@ PRD.md
 
 ### What to build
 
-Create the first Effect RPC endpoint: a health check that returns server status. Set up the RPC router infrastructure on the server side that all future RPC methods will use. Wire it to the Bun HTTP server.
+Create the first `@effect/rpc` endpoint: a health check that returns server status. Implement the `health` handler from the `LaborerRpcs` group on the server side using `RpcGroup.toHandlers`. Set up the RPC server router infrastructure (via `RpcServer`) that all future RPC method handlers will use. Wire it to the Bun HTTP server with WebSocket support for `RpcClient.layerProtocolSocket`.
 
 ### Acceptance criteria
 
@@ -490,7 +503,7 @@ Establish real-time sync between the server and client LiveStore instances over 
 
 ---
 
-## Issue 19: Effect RPC server router setup
+## Issue 19: @effect/rpc server router setup
 
 ### Parent PRD
 
@@ -498,13 +511,14 @@ PRD.md
 
 ### What to build
 
-Create the Effect RPC router infrastructure in `packages/server/src/rpc/`. Mount it on the Bun HTTP server alongside the health check. Establish the pattern for adding new RPC methods: each method delegates to an Effect service and commits state changes to LiveStore.
+Create the `@effect/rpc` server router infrastructure in `packages/server/src/rpc/`. Use `RpcServer` to handle the `LaborerRpcs` group from `packages/shared`. Mount it on the Bun HTTP server with WebSocket support (for `RpcClient.layerProtocolSocket` on the client) and `RpcSerialization.layerJson`. Establish the pattern for adding new RPC handlers: each handler is implemented via `RpcGroup.toHandlers` and delegates to an Effect service, committing state changes to LiveStore.
 
 ### Acceptance criteria
 
-- [ ] RPC router serves all registered methods via Bun HTTP
+- [ ] RPC server handles all `LaborerRpcs` methods via `RpcServer` over WebSocket
+- [ ] `RpcSerialization.layerJson` configured for JSON serialization
 - [ ] Unknown RPC methods return a proper error response
-- [ ] Router pattern is composable (new methods can be added by importing and registering)
+- [ ] Handler pattern is composable (new handlers added via `RpcGroup.toHandlers`)
 - [ ] Tests: registered method → responds; unknown method → error; malformed request → error
 
 ### Blocked by
@@ -517,7 +531,7 @@ Create the Effect RPC router infrastructure in `packages/server/src/rpc/`. Mount
 
 ---
 
-## Issue 20: Effect RPC client setup
+## Issue 20: AtomRpc client setup (effect-atom)
 
 ### Parent PRD
 
@@ -525,14 +539,35 @@ PRD.md
 
 ### What to build
 
-Configure the Effect RPC client in `apps/web` to connect to the server. Create a React hook or provider that makes the RPC client available to components. Verify end-to-end by calling the health check from the UI.
+Set up the `@effect-atom/atom-react` RPC client in `apps/web/src/atoms/`. Create a `LaborerClient` class using `AtomRpc.Tag` that wraps the `LaborerRpcs` group from `packages/shared`. Configure it with `RpcClient.layerProtocolSocket` over `BrowserSocket.layerWebSocket` pointing to the server URL (from env). Components can then use `LaborerClient.mutation("rpcName")` with `useAtomSet` for actions, and `LaborerClient.query("rpcName", payload)` with `useAtomValue` for queries.
+
+Example:
+```ts
+import { AtomRpc } from "@effect-atom/atom-react"
+import { BrowserSocket } from "@effect/platform-browser"
+import { RpcClient, RpcSerialization } from "@effect/rpc"
+import { LaborerRpcs } from "@laborer/shared/rpc"
+
+class LaborerClient extends AtomRpc.Tag<LaborerClient>()("LaborerClient", {
+  group: LaborerRpcs,
+  protocol: RpcClient.layerProtocolSocket({
+    retryTransientErrors: true,
+  }).pipe(
+    Layer.provide(BrowserSocket.layerWebSocket(env.VITE_SERVER_URL)),
+    Layer.provide(RpcSerialization.layerJson),
+  ),
+}) {}
+```
+
+Verify end-to-end by querying the health check from the UI using `useAtomValue(LaborerClient.query("health", void 0))`.
 
 ### Acceptance criteria
 
-- [ ] RPC client configured with server URL from env
-- [ ] React hook/provider makes RPC client accessible
-- [ ] Health check call from web app succeeds
-- [ ] Tests: client calls health check → receives response; server down → error handled gracefully
+- [ ] `LaborerClient` defined using `AtomRpc.Tag` with `LaborerRpcs` group
+- [ ] WebSocket protocol configured with server URL from env
+- [ ] `LaborerClient.mutation` and `LaborerClient.query` work from React components via `useAtomSet`/`useAtomValue`
+- [ ] Health check query from web app succeeds
+- [ ] Tests: client queries health check → receives response; server down → error handled gracefully
 
 ### Blocked by
 
@@ -626,7 +661,7 @@ Add `listProjects` and `getProject(id)` methods to the ProjectRegistry service. 
 
 ---
 
-## Issue 24: project.add RPC method
+## Issue 24: project.add RPC handler
 
 ### Parent PRD
 
@@ -634,11 +669,11 @@ PRD.md
 
 ### What to build
 
-Wire the `project.add` RPC method in the server RPC router. It delegates to `ProjectRegistry.addProject` and returns the created project or an error.
+Implement the `project.add` handler in the server RPC router via `RpcGroup.toHandlers` for the `LaborerRpcs` group. It delegates to `ProjectRegistry.addProject` and returns the created project or an error.
 
 ### Acceptance criteria
 
-- [ ] `project.add` RPC method registered in router
+- [ ] `project.add` handler implemented via `RpcGroup.toHandlers`
 - [ ] Accepts repo path, returns created project
 - [ ] Invalid path → error response with message
 - [ ] Tests: RPC call with valid path → project in LiveStore + success response; invalid path → error response
@@ -653,7 +688,7 @@ Wire the `project.add` RPC method in the server RPC router. It delegates to `Pro
 
 ---
 
-## Issue 25: project.remove RPC method
+## Issue 25: project.remove RPC handler
 
 ### Parent PRD
 
@@ -661,11 +696,11 @@ PRD.md
 
 ### What to build
 
-Wire the `project.remove` RPC method in the server RPC router. It delegates to `ProjectRegistry.removeProject`.
+Implement the `project.remove` handler in the server RPC router via `RpcGroup.toHandlers`. It delegates to `ProjectRegistry.removeProject`.
 
 ### Acceptance criteria
 
-- [ ] `project.remove` RPC method registered in router
+- [ ] `project.remove` handler implemented via `RpcGroup.toHandlers`
 - [ ] Accepts project ID, returns success
 - [ ] Nonexistent ID → error response
 - [ ] Tests: RPC call → project removed from LiveStore; nonexistent → error response
@@ -715,16 +750,16 @@ PRD.md
 
 ### What to build
 
-Create an "Add Project" form using TanStack Form. The form has a repo path input with validation (required, valid path format). On submit, it calls the `project.add` RPC method. Shows success or error feedback.
+Create an "Add Project" form using TanStack Form. The form has a repo path input with validation (required, valid path format). On submit, it calls the `project.add` mutation via `useAtomSet(LaborerClient.mutation("project.add"))`. Shows success or error feedback.
 
 ### Acceptance criteria
 
 - [ ] Form uses TanStack Form with repo path field
 - [ ] Client-side validation: required, non-empty
-- [ ] On submit → calls project.add RPC
-- [ ] Success → project appears in list, form resets
+- [ ] On submit → calls `LaborerClient.mutation("project.add")` via `useAtomSet`
+- [ ] Success → project appears in list (via LiveStore), form resets
 - [ ] Error → error message displayed (from server validation)
-- [ ] Tests: empty submit → validation error; valid submit → RPC called, project in list; server error → displayed
+- [ ] Tests: empty submit → validation error; valid submit → mutation called, project in list; server error → displayed
 
 ### Blocked by
 
@@ -744,16 +779,16 @@ PRD.md
 
 ### What to build
 
-Add a delete button to each project in the project list. Clicking it shows a shadcn/ui AlertDialog confirmation. On confirm, calls `project.remove` RPC. Project disappears from the list on success.
+Add a delete button to each project in the project list. Clicking it shows a shadcn/ui AlertDialog confirmation. On confirm, calls the `project.remove` mutation via `useAtomSet(LaborerClient.mutation("project.remove"))`. Project disappears from the list on success (via LiveStore sync).
 
 ### Acceptance criteria
 
 - [ ] Delete button visible per project in list
 - [ ] Click → shadcn/ui AlertDialog with confirmation message
-- [ ] Confirm → calls project.remove RPC
-- [ ] Success → project removed from list
+- [ ] Confirm → calls `LaborerClient.mutation("project.remove")` via `useAtomSet`
+- [ ] Success → project removed from list (via LiveStore)
 - [ ] Cancel → dialog closes, no action
-- [ ] Tests: click delete → dialog appears; confirm → RPC called, project removed; cancel → no change
+- [ ] Tests: click delete → dialog appears; confirm → mutation called, project removed; cancel → no change
 
 ### Blocked by
 
@@ -1061,7 +1096,7 @@ Handle network failures during git operations (fetch, remote updates). Return a 
 
 ---
 
-## Issue 40: workspace.create RPC method
+## Issue 40: workspace.create RPC handler
 
 ### Parent PRD
 
@@ -1069,11 +1104,11 @@ PRD.md
 
 ### What to build
 
-Wire the `workspace.create` RPC method in the server RPC router. It orchestrates PortAllocator (allocate port) + WorkspaceProvider (create worktree, run setup) and commits a WorkspaceCreated event to LiveStore with "running" status.
+Implement the `workspace.create` handler via `RpcGroup.toHandlers` for the `LaborerRpcs` group. It orchestrates PortAllocator (allocate port) + WorkspaceProvider (create worktree, run setup) and commits a WorkspaceCreated event to LiveStore with "running" status.
 
 ### Acceptance criteria
 
-- [ ] `workspace.create` RPC accepts projectId and optional taskConfig
+- [ ] `workspace.create` handler accepts projectId and optional taskConfig
 - [ ] Creates worktree, allocates port, runs setup scripts
 - [ ] Commits WorkspaceCreated to LiveStore with status = "running"
 - [ ] Returns created workspace info (id, path, port, branch)
@@ -1125,16 +1160,16 @@ PRD.md
 
 ### What to build
 
-Create a "Create Workspace" form using TanStack Form. Fields: project selector (from registered projects), optional branch name (auto-generated if empty). On submit, calls `workspace.create` RPC. Shows creation progress and result.
+Create a "Create Workspace" form using TanStack Form. Fields: project selector (from registered projects), optional branch name (auto-generated if empty). On submit, calls the `workspace.create` mutation via `useAtomSet(LaborerClient.mutation("workspace.create"))`. Shows creation progress and result.
 
 ### Acceptance criteria
 
 - [ ] Form uses TanStack Form with project selector and optional branch name
-- [ ] Submit → calls workspace.create RPC
+- [ ] Submit → calls `LaborerClient.mutation("workspace.create")` via `useAtomSet`
 - [ ] Shows loading state during creation
-- [ ] Success → workspace appears in list
+- [ ] Success → workspace appears in list (via LiveStore)
 - [ ] Error → error message displayed
-- [ ] Tests: submit → RPC called; success → in list; error → message shown
+- [ ] Tests: submit → mutation called; success → in list; error → message shown
 
 ### Blocked by
 
@@ -1251,7 +1286,7 @@ On workspace destruction, stop and remove any file watchers scoped to the worksp
 
 ---
 
-## Issue 47: workspace.destroy RPC method
+## Issue 47: workspace.destroy RPC handler
 
 ### Parent PRD
 
@@ -1259,11 +1294,11 @@ PRD.md
 
 ### What to build
 
-Wire the `workspace.destroy` RPC method. It orchestrates the full cleanup: kill processes, remove watchers, remove worktree, free port. Updates LiveStore workspace status to "destroyed".
+Implement the `workspace.destroy` handler via `RpcGroup.toHandlers`. It orchestrates the full cleanup: kill processes, remove watchers, remove worktree, free port. Updates LiveStore workspace status to "destroyed".
 
 ### Acceptance criteria
 
-- [ ] `workspace.destroy` RPC accepts workspaceId
+- [ ] `workspace.destroy` handler accepts workspaceId
 - [ ] Kills processes, removes watchers, removes worktree, frees port
 - [ ] Commits WorkspaceDestroyed event to LiveStore (status = "destroyed")
 - [ ] Tests: RPC call → all resources cleaned up, LiveStore status = "destroyed"
@@ -1286,15 +1321,15 @@ PRD.md
 
 ### What to build
 
-Add a destroy button to each workspace in the workspace list. Shows a shadcn/ui AlertDialog confirmation (warns about process termination and data loss). On confirm, calls `workspace.destroy` RPC.
+Add a destroy button to each workspace in the workspace list. Shows a shadcn/ui AlertDialog confirmation (warns about process termination and data loss). On confirm, calls the `workspace.destroy` mutation via `useAtomSet(LaborerClient.mutation("workspace.destroy"))`.
 
 ### Acceptance criteria
 
 - [ ] Destroy button visible per workspace
 - [ ] Click → AlertDialog with warning message
-- [ ] Confirm → calls workspace.destroy RPC
-- [ ] Success → workspace status updates in list (destroyed)
-- [ ] Tests: click → dialog; confirm → RPC called; cancel → no action
+- [ ] Confirm → calls `LaborerClient.mutation("workspace.destroy")` via `useAtomSet`
+- [ ] Success → workspace status updates in list (destroyed, via LiveStore)
+- [ ] Tests: click → dialog; confirm → mutation called; cancel → no action
 
 ### Blocked by
 
@@ -1494,7 +1529,7 @@ Support spawning and tracking multiple independent terminals per workspace. Each
 
 ---
 
-## Issue 56: terminal.spawn RPC method
+## Issue 56: terminal.spawn RPC handler
 
 ### Parent PRD
 
@@ -1502,11 +1537,11 @@ PRD.md
 
 ### What to build
 
-Wire the `terminal.spawn` RPC method. Delegates to TerminalManager.spawn. Returns terminal ID and initial status.
+Implement the `terminal.spawn` handler via `RpcGroup.toHandlers`. Delegates to TerminalManager.spawn. Returns terminal ID and initial status.
 
 ### Acceptance criteria
 
-- [ ] `terminal.spawn` RPC accepts workspaceId and optional command
+- [ ] `terminal.spawn` handler accepts workspaceId and optional command
 - [ ] Returns terminal ID
 - [ ] Terminal appears in LiveStore with "running" status
 - [ ] Tests: RPC call → terminal in LiveStore, PTY running
@@ -1521,7 +1556,7 @@ Wire the `terminal.spawn` RPC method. Delegates to TerminalManager.spawn. Return
 
 ---
 
-## Issue 57: terminal.write RPC method
+## Issue 57: terminal.write RPC handler
 
 ### Parent PRD
 
@@ -1529,11 +1564,11 @@ PRD.md
 
 ### What to build
 
-Wire the `terminal.write` RPC method. Sends input data to a PTY via TerminalManager.
+Implement the `terminal.write` handler via `RpcGroup.toHandlers`. Sends input data to a PTY via TerminalManager.
 
 ### Acceptance criteria
 
-- [ ] `terminal.write` RPC accepts terminalId and data
+- [ ] `terminal.write` handler accepts terminalId and data
 - [ ] Data reaches the PTY process
 - [ ] Tests: RPC call → input reaches process → output appears in LiveStore
 
@@ -1547,7 +1582,7 @@ Wire the `terminal.write` RPC method. Sends input data to a PTY via TerminalMana
 
 ---
 
-## Issue 58: terminal.resize RPC method
+## Issue 58: terminal.resize RPC handler
 
 ### Parent PRD
 
@@ -1555,11 +1590,11 @@ PRD.md
 
 ### What to build
 
-Wire the `terminal.resize` RPC method. Updates PTY dimensions via TerminalManager.
+Implement the `terminal.resize` handler via `RpcGroup.toHandlers`. Updates PTY dimensions via TerminalManager.
 
 ### Acceptance criteria
 
-- [ ] `terminal.resize` RPC accepts terminalId, cols, rows
+- [ ] `terminal.resize` handler accepts terminalId, cols, rows
 - [ ] PTY dimensions updated
 - [ ] Tests: RPC call → PTY resized
 
@@ -1573,7 +1608,7 @@ Wire the `terminal.resize` RPC method. Updates PTY dimensions via TerminalManage
 
 ---
 
-## Issue 59: terminal.kill RPC method
+## Issue 59: terminal.kill RPC handler
 
 ### Parent PRD
 
@@ -1581,11 +1616,11 @@ PRD.md
 
 ### What to build
 
-Wire the `terminal.kill` RPC method. Kills the PTY process via TerminalManager and updates LiveStore status.
+Implement the `terminal.kill` handler via `RpcGroup.toHandlers`. Kills the PTY process via TerminalManager and updates LiveStore status.
 
 ### Acceptance criteria
 
-- [ ] `terminal.kill` RPC accepts terminalId
+- [ ] `terminal.kill` handler accepts terminalId
 - [ ] Process terminated, resources freed
 - [ ] LiveStore terminal status = "stopped"
 - [ ] Tests: RPC call → process killed, status updated
@@ -1635,11 +1670,11 @@ PRD.md
 
 ### What to build
 
-Wire xterm.js keyboard input to the `terminal.write` RPC. When the user types in the terminal pane, keystrokes are sent to the server PTY.
+Wire xterm.js keyboard input to the `terminal.write` mutation via `useAtomSet(LaborerClient.mutation("terminal.write"))`. When the user types in the terminal pane, keystrokes are sent to the server PTY.
 
 ### Acceptance criteria
 
-- [ ] Keystrokes in xterm.js sent via terminal.write RPC
+- [ ] Keystrokes in xterm.js sent via `LaborerClient.mutation("terminal.write")`
 - [ ] Character echoes back from PTY through LiveStore → xterm.js
 - [ ] Special keys (enter, backspace, ctrl-c, arrows) work correctly
 - [ ] Tests: type character → appears in terminal; special keys produce expected behavior
@@ -1662,14 +1697,14 @@ PRD.md
 
 ### What to build
 
-When the terminal pane is resized (by allotment or window resize), detect the new dimensions and call `terminal.resize` RPC to update the PTY. xterm.js should also resize its internal viewport.
+When the terminal pane is resized (by allotment or window resize), detect the new dimensions and call the `terminal.resize` mutation via `LaborerClient.mutation("terminal.resize")` to update the PTY. xterm.js should also resize its internal viewport.
 
 ### Acceptance criteria
 
 - [ ] Pane resize → xterm.js fit addon recalculates cols/rows
-- [ ] New dimensions sent via terminal.resize RPC
+- [ ] New dimensions sent via `LaborerClient.mutation("terminal.resize")`
 - [ ] PTY output reflows correctly after resize
-- [ ] Tests: resize pane → RPC called with new dimensions; terminal output reflows
+- [ ] Tests: resize pane → mutation called with new dimensions; terminal output reflows
 
 ### Blocked by
 
@@ -1689,12 +1724,12 @@ PRD.md
 
 ### What to build
 
-Create a UI for listing all terminals in a workspace. Show terminal command and status. Add a "New Terminal" button that spawns a new terminal. Selecting a terminal switches the active pane to display it.
+Create a UI for listing all terminals in a workspace (from LiveStore). Show terminal command and status. Add a "New Terminal" button that spawns a new terminal via `useAtomSet(LaborerClient.mutation("terminal.spawn"))`. Selecting a terminal switches the active pane to display it.
 
 ### Acceptance criteria
 
-- [ ] Terminal list shows all terminals for workspace with command and status
-- [ ] "New Terminal" button calls terminal.spawn RPC
+- [ ] Terminal list shows all terminals for workspace with command and status (from LiveStore)
+- [ ] "New Terminal" button calls `LaborerClient.mutation("terminal.spawn")` via `useAtomSet`
 - [ ] Selecting terminal switches active pane content
 - [ ] Tests: multiple terminals → all listed; new button → terminal spawned; select → pane switches
 
@@ -2294,7 +2329,7 @@ Start diff polling when a workspace is created (status = "running") and stop it 
 
 ---
 
-## Issue 86: diff.refresh RPC method
+## Issue 86: diff.refresh RPC handler
 
 ### Parent PRD
 
@@ -2302,11 +2337,11 @@ PRD.md
 
 ### What to build
 
-Wire the `diff.refresh` RPC method. Triggers an immediate diff recalculation (bypasses the poll interval) and returns the updated diff.
+Implement the `diff.refresh` handler via `RpcGroup.toHandlers`. Triggers an immediate diff recalculation (bypasses the poll interval) and returns the updated diff.
 
 ### Acceptance criteria
 
-- [ ] `diff.refresh` RPC accepts workspaceId
+- [ ] `diff.refresh` handler accepts workspaceId
 - [ ] Triggers immediate `git diff` execution
 - [ ] Returns fresh diff content
 - [ ] Updates LiveStore if content changed
@@ -2457,7 +2492,7 @@ When an agent is making rapid file changes, the diff viewer may receive many upd
 
 ---
 
-## Issue 92: rlph.startLoop RPC method
+## Issue 92: rlph.startLoop RPC handler
 
 ### Parent PRD
 
@@ -2465,11 +2500,11 @@ PRD.md
 
 ### What to build
 
-Wire the `rlph.startLoop` RPC method. It spawns a terminal in the workspace running `rlph --once`. This is a convenience wrapper around terminal.spawn with a specific command. Reference the PRD's "rlph Integration" section.
+Implement the `rlph.startLoop` handler via `RpcGroup.toHandlers`. It spawns a terminal in the workspace running `rlph --once`. This is a convenience wrapper around terminal.spawn with a specific command. Reference the PRD's "rlph Integration" section.
 
 ### Acceptance criteria
 
-- [ ] `rlph.startLoop` RPC accepts workspaceId and options
+- [ ] `rlph.startLoop` handler accepts workspaceId and options
 - [ ] Spawns terminal with `rlph --once` command
 - [ ] Returns terminal ID
 - [ ] Tests: RPC call → terminal spawned running `rlph --once`
@@ -2492,14 +2527,14 @@ PRD.md
 
 ### What to build
 
-Add a "Start Ralph Loop" button per workspace that calls `rlph.startLoop` RPC. After clicking, the user is taken to the terminal pane showing the rlph output.
+Add a "Start Ralph Loop" button per workspace that calls the `rlph.startLoop` mutation via `useAtomSet(LaborerClient.mutation("rlph.startLoop"))`. After clicking, the user is taken to the terminal pane showing the rlph output.
 
 ### Acceptance criteria
 
 - [ ] Button visible per workspace in workspace actions
-- [ ] Click → calls rlph.startLoop RPC
+- [ ] Click → calls `LaborerClient.mutation("rlph.startLoop")` via `useAtomSet`
 - [ ] Terminal pane shows rlph TUI output
-- [ ] Tests: click button → RPC called; terminal output visible in pane
+- [ ] Tests: click button → mutation called; terminal output visible in pane
 
 ### Blocked by
 
@@ -2511,7 +2546,7 @@ Add a "Start Ralph Loop" button per workspace that calls `rlph.startLoop` RPC. A
 
 ---
 
-## Issue 94: rlph.writePRD RPC method
+## Issue 94: rlph.writePRD RPC handler
 
 ### Parent PRD
 
@@ -2519,11 +2554,11 @@ PRD.md
 
 ### What to build
 
-Wire the `rlph.writePRD` RPC method. Spawns a terminal running `rlph prd [description]` in the workspace.
+Implement the `rlph.writePRD` handler via `RpcGroup.toHandlers`. Spawns a terminal running `rlph prd [description]` in the workspace.
 
 ### Acceptance criteria
 
-- [ ] `rlph.writePRD` RPC accepts workspaceId and optional description
+- [ ] `rlph.writePRD` handler accepts workspaceId and optional description
 - [ ] Spawns terminal with `rlph prd [description]`
 - [ ] Returns terminal ID
 - [ ] Tests: RPC call → terminal spawned with correct rlph prd command
@@ -2546,15 +2581,15 @@ PRD.md
 
 ### What to build
 
-Create a PRD writing form using TanStack Form with a description textarea. On submit, calls `rlph.writePRD` RPC. Shows the resulting terminal pane with rlph prd output.
+Create a PRD writing form using TanStack Form with a description textarea. On submit, calls the `rlph.writePRD` mutation via `useAtomSet(LaborerClient.mutation("rlph.writePRD"))`. Shows the resulting terminal pane with rlph prd output.
 
 ### Acceptance criteria
 
 - [ ] Form with description textarea using TanStack Form
-- [ ] Submit → calls rlph.writePRD RPC
+- [ ] Submit → calls `LaborerClient.mutation("rlph.writePRD")` via `useAtomSet`
 - [ ] Terminal pane shows rlph prd output
 - [ ] Form validates (description required)
-- [ ] Tests: submit form → RPC called; output visible; empty description → validation error
+- [ ] Tests: submit form → mutation called; output visible; empty description → validation error
 
 ### Blocked by
 
@@ -2566,7 +2601,7 @@ Create a PRD writing form using TanStack Form with a description textarea. On su
 
 ---
 
-## Issue 96: rlph.review RPC method
+## Issue 96: rlph.review RPC handler
 
 ### Parent PRD
 
@@ -2574,11 +2609,11 @@ PRD.md
 
 ### What to build
 
-Wire the `rlph.review` RPC method. Spawns a terminal running `rlph review <prNumber>` in the workspace.
+Implement the `rlph.review` handler via `RpcGroup.toHandlers`. Spawns a terminal running `rlph review <prNumber>` in the workspace.
 
 ### Acceptance criteria
 
-- [ ] `rlph.review` RPC accepts workspaceId and prNumber
+- [ ] `rlph.review` handler accepts workspaceId and prNumber
 - [ ] Spawns terminal with `rlph review <prNumber>`
 - [ ] Returns terminal ID
 - [ ] Tests: RPC call → terminal spawned with `rlph review <pr>`
@@ -2601,14 +2636,14 @@ PRD.md
 
 ### What to build
 
-Add a "Review PR" action per workspace with a PR number input field. On submit, calls `rlph.review` RPC and shows the terminal pane.
+Add a "Review PR" action per workspace with a PR number input field. On submit, calls the `rlph.review` mutation via `useAtomSet(LaborerClient.mutation("rlph.review"))` and shows the terminal pane.
 
 ### Acceptance criteria
 
 - [ ] PR number input field with validation (numeric, required)
-- [ ] Submit → calls rlph.review RPC
+- [ ] Submit → calls `LaborerClient.mutation("rlph.review")` via `useAtomSet`
 - [ ] Terminal pane shows review output
-- [ ] Tests: valid PR → RPC called; invalid → validation error
+- [ ] Tests: valid PR → mutation called; invalid → validation error
 
 ### Blocked by
 
@@ -2620,7 +2655,7 @@ Add a "Review PR" action per workspace with a PR number input field. On submit, 
 
 ---
 
-## Issue 98: rlph.fix RPC method
+## Issue 98: rlph.fix RPC handler
 
 ### Parent PRD
 
@@ -2628,11 +2663,11 @@ PRD.md
 
 ### What to build
 
-Wire the `rlph.fix` RPC method. Spawns a terminal running `rlph fix <prNumber>` in the workspace.
+Implement the `rlph.fix` handler via `RpcGroup.toHandlers`. Spawns a terminal running `rlph fix <prNumber>` in the workspace.
 
 ### Acceptance criteria
 
-- [ ] `rlph.fix` RPC accepts workspaceId and prNumber
+- [ ] `rlph.fix` handler accepts workspaceId and prNumber
 - [ ] Spawns terminal with `rlph fix <prNumber>`
 - [ ] Returns terminal ID
 - [ ] Tests: RPC call → terminal spawned with `rlph fix <pr>`
@@ -2655,14 +2690,14 @@ PRD.md
 
 ### What to build
 
-Add a "Fix Findings" action per workspace with a PR number input field. On submit, calls `rlph.fix` RPC and shows the terminal pane.
+Add a "Fix Findings" action per workspace with a PR number input field. On submit, calls the `rlph.fix` mutation via `useAtomSet(LaborerClient.mutation("rlph.fix"))` and shows the terminal pane.
 
 ### Acceptance criteria
 
 - [ ] PR number input field with validation (numeric, required)
-- [ ] Submit → calls rlph.fix RPC
+- [ ] Submit → calls `LaborerClient.mutation("rlph.fix")` via `useAtomSet`
 - [ ] Terminal pane shows fix output
-- [ ] Tests: valid PR → RPC called; invalid → validation error
+- [ ] Tests: valid PR → mutation called; invalid → validation error
 
 ### Blocked by
 
@@ -2971,7 +3006,7 @@ Create a UI component to select the task source: Linear, GitHub, or Manual. Sele
 
 ---
 
-## Issue 111: editor.open RPC method
+## Issue 111: editor.open RPC handler
 
 ### Parent PRD
 
@@ -2979,11 +3014,11 @@ PRD.md
 
 ### What to build
 
-Wire the `editor.open` RPC method. Executes the configured editor command (`cursor <path>` or `code <path>`) to open a file. Editor command comes from env/project config.
+Implement the `editor.open` handler via `RpcGroup.toHandlers`. Executes the configured editor command (`cursor <path>` or `code <path>`) to open a file. Editor command comes from env/project config.
 
 ### Acceptance criteria
 
-- [ ] `editor.open` RPC accepts workspaceId and filePath
+- [ ] `editor.open` handler accepts workspaceId and filePath
 - [ ] Executes `<editor> <workspace-path>/<filePath>`
 - [ ] Editor command configurable (default from EDITOR_COMMAND env)
 - [ ] Missing editor → clear error message
@@ -3007,14 +3042,14 @@ PRD.md
 
 ### What to build
 
-Make file paths in the diff viewer clickable. Clicking a file path calls `editor.open` RPC to open that file in the user's editor.
+Make file paths in the diff viewer clickable. Clicking a file path calls the `editor.open` mutation via `useAtomSet(LaborerClient.mutation("editor.open"))` to open that file in the user's editor.
 
 ### Acceptance criteria
 
 - [ ] File paths in diff viewer are clickable
-- [ ] Click → calls editor.open RPC with correct workspace and file path
+- [ ] Click → calls `LaborerClient.mutation("editor.open")` with correct workspace and file path
 - [ ] Visual affordance (underline, cursor change) on hover
-- [ ] Tests: click file path → RPC called with correct args
+- [ ] Tests: click file path → mutation called with correct args
 
 ### Blocked by
 
@@ -3548,7 +3583,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 6 | LiveStore schema — Diffs table | #3 | Ready |
 | 7 | LiveStore schema — PanelLayout table | #3 | Ready |
 | 8 | LiveStore schema — Tasks table | #3 | Ready |
-| 9 | Effect RPC contract types | #2 | Done |
+| 9 | RPC contract types (RpcGroup + Rpc.make) | #2 | Done |
 | 10 | Initialize `packages/server` package | #1 | Done |
 | 11 | Effect TS application bootstrap | #10 | Done |
 | 12 | Health check RPC endpoint | #9, #11 | Done |
@@ -3558,16 +3593,16 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 16 | LiveStore server adapter setup | #3, #11 | Blocked (#3) |
 | 17 | LiveStore client adapter setup | #3 | Ready |
 | 18 | LiveStore server-to-client sync | #16, #17 | Blocked |
-| 19 | Effect RPC server router setup | #12 | Ready |
-| 20 | Effect RPC client setup | #19, #9 | Blocked (#19) |
+| 19 | @effect/rpc server router setup | #12 | Ready |
+| 20 | AtomRpc client setup (effect-atom) | #19, #9 | Blocked (#19) |
 | 21 | ProjectRegistry — addProject | #16, #3 | Blocked |
 | 22 | ProjectRegistry — removeProject | #21 | Blocked |
 | 23 | ProjectRegistry — listProjects + getProject | #21 | Blocked |
-| 24 | project.add RPC | #19, #21 | Blocked |
-| 25 | project.remove RPC | #24, #22 | Blocked |
+| 24 | project.add RPC handler | #19, #21 | Blocked |
+| 25 | project.remove RPC handler | #24, #22 | Blocked |
 | 26 | Project list UI | #18, #24 | Blocked |
-| 27 | Add Project form | #20, #24, #26 | Blocked |
-| 28 | Remove Project button + dialog | #25, #26 | Blocked |
+| 27 | Add Project form (AtomRpc mutation) | #20, #24, #26 | Blocked |
+| 28 | Remove Project button + dialog (AtomRpc mutation) | #25, #26 | Blocked |
 | 29 | PortAllocator — allocate | #15 | Blocked |
 | 30 | PortAllocator — free | #29 | Blocked |
 | 31 | PortAllocator — exhaustion handling | #29 | Blocked |
@@ -3579,15 +3614,15 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 37 | WorkspaceProvider — handle setup failure | #35 | Blocked |
 | 38 | WorkspaceProvider — handle dirty git state | #33 | Blocked |
 | 39 | WorkspaceProvider — handle git fetch failure | #33 | Blocked |
-| 40 | workspace.create RPC | #19, #33, #36, #4 | Blocked |
+| 40 | workspace.create RPC handler | #19, #33, #36, #4 | Blocked |
 | 41 | Workspace list UI | #18, #40 | Blocked |
-| 42 | Create Workspace form | #20, #40, #27 | Blocked |
+| 42 | Create Workspace form (AtomRpc mutation) | #20, #40, #27 | Blocked |
 | 43 | WorkspaceProvider — destroy worktree | #33 | Blocked |
 | 44 | WorkspaceProvider — kill processes on destroy | #43 | Blocked |
 | 45 | WorkspaceProvider — free port on destroy | #43, #30 | Blocked |
 | 46 | WorkspaceProvider — remove watchers on destroy | #43 | Blocked |
-| 47 | workspace.destroy RPC | #19, #43, #44, #45, #46 | Blocked |
-| 48 | Destroy Workspace button + dialog | #47, #41 | Blocked |
+| 47 | workspace.destroy RPC handler | #19, #43, #44, #45, #46 | Blocked |
+| 48 | Destroy Workspace button + dialog (AtomRpc mutation) | #47, #41 | Blocked |
 | 49 | Workspace creation error display | #37, #38, #39, #42 | Blocked |
 | 50 | TerminalManager — spawn PTY | #40, #5 | Blocked |
 | 51 | TerminalManager — stream stdout to LiveStore | #50 | Blocked |
@@ -3595,13 +3630,13 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 53 | TerminalManager — resize PTY | #50 | Blocked |
 | 54 | TerminalManager — kill PTY | #50 | Blocked |
 | 55 | TerminalManager — multiple terminals per workspace | #50 | Blocked |
-| 56 | terminal.spawn RPC | #19, #50 | Blocked |
-| 57 | terminal.write RPC | #56, #52 | Blocked |
-| 58 | terminal.resize RPC | #56, #53 | Blocked |
-| 59 | terminal.kill RPC | #56, #54 | Blocked |
+| 56 | terminal.spawn RPC handler | #19, #50 | Blocked |
+| 57 | terminal.write RPC handler | #56, #52 | Blocked |
+| 58 | terminal.resize RPC handler | #56, #53 | Blocked |
+| 59 | terminal.kill RPC handler | #56, #54 | Blocked |
 | 60 | xterm.js — render output | #18, #56 | Blocked |
-| 61 | xterm.js — send keyboard input | #60, #57 | Blocked |
-| 62 | xterm.js — handle resize | #60, #58 | Blocked |
+| 61 | xterm.js — send keyboard input (AtomRpc mutation) | #60, #57 | Blocked |
+| 62 | xterm.js — handle resize (AtomRpc mutation) | #60, #58 | Blocked |
 | 63 | Terminal list per workspace UI | #60, #55 | Blocked |
 | 64 | Terminal session reconnection | #60 | Blocked |
 | 65 | Terminal scrollback buffer replay | #64 | Blocked |
@@ -3625,20 +3660,20 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 83 | DiffService — poll on interval | #82 | Blocked |
 | 84 | DiffService — deduplicate unchanged | #83 | Blocked |
 | 85 | DiffService — start/stop on workspace lifecycle | #83, #47 | Blocked |
-| 86 | diff.refresh RPC | #82, #19 | Blocked |
+| 86 | diff.refresh RPC handler | #82, #19 | Blocked |
 | 87 | Diff viewer pane — @pierre/diffs | #18, #83, #6 | Blocked |
 | 88 | Diff viewer — accept/reject annotations | #87 | Blocked |
 | 89 | Diff viewer — live update | #87 | Blocked |
 | 90 | Toggle diff alongside terminal | #67, #87 | Blocked |
 | 91 | Diff viewer debounce/throttle | #89 | Blocked |
-| 92 | rlph.startLoop RPC | #56 | Blocked |
-| 93 | "Start Ralph Loop" button | #92, #60 | Blocked |
-| 94 | rlph.writePRD RPC | #56 | Blocked |
-| 95 | PRD writing form + button | #94, #60 | Blocked |
-| 96 | rlph.review RPC | #56 | Blocked |
-| 97 | "Review PR" button + input | #96, #60 | Blocked |
-| 98 | rlph.fix RPC | #56 | Blocked |
-| 99 | "Fix Findings" button + input | #98, #60 | Blocked |
+| 92 | rlph.startLoop RPC handler | #56 | Blocked |
+| 93 | "Start Ralph Loop" button (AtomRpc mutation) | #92, #60 | Blocked |
+| 94 | rlph.writePRD RPC handler | #56 | Blocked |
+| 95 | PRD writing form + button (AtomRpc mutation) | #94, #60 | Blocked |
+| 96 | rlph.review RPC handler | #56 | Blocked |
+| 97 | "Review PR" button + input (AtomRpc mutation) | #96, #60 | Blocked |
+| 98 | rlph.fix RPC handler | #56 | Blocked |
+| 99 | "Fix Findings" button + input (AtomRpc mutation) | #98, #60 | Blocked |
 | 100 | Task CRUD — create manual task | #8, #16 | Blocked |
 | 101 | Task CRUD — update status | #100 | Blocked |
 | 102 | Task CRUD — list per project | #100 | Blocked |
@@ -3650,8 +3685,8 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 108 | Linear task sourcing | #102 | Blocked |
 | 109 | GitHub task sourcing | #102 | Blocked |
 | 110 | Task source picker UI | #108, #109, #103 | Blocked |
-| 111 | editor.open RPC | #19, #14 | Blocked |
-| 112 | Click-to-open from diff viewer | #111, #87 | Blocked |
+| 111 | editor.open RPC handler | #19, #14 | Blocked |
+| 112 | Click-to-open from diff viewer (AtomRpc mutation) | #111, #87 | Blocked |
 | 113 | Project switcher | #26 | Blocked |
 | 114 | Cross-project dashboard | #41, #104 | Blocked |
 | 115 | Tauri system tray | #41 | Blocked |

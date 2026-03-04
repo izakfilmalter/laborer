@@ -22,7 +22,7 @@ Laborer is a local-first, API-first application for orchestrating multiple AI co
 - **Automated workspace isolation** via git worktrees (v1) with a pluggable provider interface for future Docker/Daytona support. Each workspace gets its own branch, port allocation, file watcher scope, and setup script execution.
 - **Task-driven lifecycle** where workspaces are created from Linear tickets or GitHub issues, and cleaned up when PRs merge or tasks close.
 - A **standalone Bun server** running Effect TS services, separate from the app. The server manages all side effects (process spawning, git operations, file system). The app can run in a browser or a Tauri desktop shell.
-- **LiveStore** for reactive state sync (workspaces, terminals, sessions, layout, diffs) between server and app, with **Effect RPC** for triggering side effects.
+- **LiveStore** for reactive state sync (workspaces, terminals, sessions, layout, diffs) between server and app, with **effect-atom (`@effect-atom/atom-react`) + `@effect/rpc`** for triggering side effects via `AtomRpc` mutations.
 - The **full rlph workflow** accessible via the app: PRD writing, issue creation, ralph loop execution, review, and fix cycles.
 
 ## User Stories
@@ -83,7 +83,7 @@ Once the core user stories are implemented, the following checks should be made:
 
 Laborer runs as two processes:
 - **Laborer Server**: A standalone Bun process running Effect TS v3. Manages all side effects: process spawning, PTY management, git operations, file system access, port allocation. Exposes an Effect RPC API for actions and serves as the LiveStore sync backend.
-- **Laborer App** (`apps/web`): A React 19 + TypeScript frontend using Vite, TanStack Router, TanStack Form, TanStack Hotkeys, and Tailwind v4. Uses shadcn/ui (base-lyra style, backed by Base UI) for components. TanStack Form handles all user input forms (project registration, workspace config, PRD writing). TanStack Hotkeys provides declarative keyboard shortcut management for tmux-style panel operations. Includes an embedded Tauri 2 shell (`apps/web/src-tauri/`) for optional native desktop mode. Connects to the server via LiveStore for reactive state and Effect RPC for actions.
+- **Laborer App** (`apps/web`): A React 19 + TypeScript frontend using Vite, TanStack Router, TanStack Form, TanStack Hotkeys, and Tailwind v4. Uses shadcn/ui (base-lyra style, backed by Base UI) for components. TanStack Form handles all user input forms (project registration, workspace config, PRD writing). TanStack Hotkeys provides declarative keyboard shortcut management for tmux-style panel operations. Includes an embedded Tauri 2 shell (`apps/web/src-tauri/`) for optional native desktop mode. Connects to the server via LiveStore for reactive state and **effect-atom (`@effect-atom/atom-react`) with `AtomRpc`** for triggering server-side actions (mutations).
 
 The Tauri 2 desktop shell is embedded directly in `apps/web/src-tauri/`. It opens a webview to the local Vite dev server (port 3001 in dev). It adds native features (system tray, global shortcuts) but the core experience is identical in a browser. Run via `bun run desktop:dev` in the web app.
 
@@ -99,11 +99,61 @@ All application state lives in LiveStore:
 
 Events are committed by both client and server. The server commits events for state changes resulting from side effects (workspace created, terminal output, diff updated). The client commits events for app state (layout changes, task selection).
 
-### Action Layer: Effect RPC
+### Action Layer: effect-atom + @effect/rpc
 
-Effect RPC handles all side-effect-producing operations. The app calls RPC methods; the server executes them and commits resulting state changes to LiveStore.
+Server-side actions are defined as `@effect/rpc` endpoints using `Rpc.make` and `RpcGroup.make`. On the client, **`@effect-atom/atom-react`** provides the `AtomRpc` module to create a typed RPC client with built-in React integration. Actions are invoked from components as **mutations** via `AtomRpc.Tag` and `useAtomSet`. The server executes them and commits resulting state changes to LiveStore.
 
-Key RPC methods:
+The RPC contract is defined in `packages/shared/src/rpc.ts` using `RpcGroup.make` and `Rpc.make` from `@effect/rpc`:
+
+```ts
+import { Rpc, RpcGroup } from "@effect/rpc"
+import { Schema } from "effect"
+
+class LaborerRpcs extends RpcGroup.make(
+  Rpc.make("workspace.create", { payload: WorkspaceCreatePayload }),
+  Rpc.make("workspace.destroy", { payload: WorkspaceDestroyPayload }),
+  Rpc.make("terminal.spawn", { payload: TerminalSpawnPayload, success: TerminalSpawnResult }),
+  Rpc.make("terminal.write", { payload: TerminalWritePayload }),
+  Rpc.make("terminal.resize", { payload: TerminalResizePayload }),
+  Rpc.make("terminal.kill", { payload: TerminalKillPayload }),
+  Rpc.make("diff.refresh", { payload: DiffRefreshPayload }),
+  Rpc.make("editor.open", { payload: EditorOpenPayload }),
+  Rpc.make("rlph.startLoop", { payload: RlphStartLoopPayload, success: TerminalSpawnResult }),
+  Rpc.make("rlph.writePRD", { payload: RlphWritePRDPayload, success: TerminalSpawnResult }),
+  Rpc.make("rlph.review", { payload: RlphReviewPayload, success: TerminalSpawnResult }),
+  Rpc.make("rlph.fix", { payload: RlphFixPayload, success: TerminalSpawnResult }),
+  Rpc.make("project.add", { payload: ProjectAddPayload, success: ProjectResult }),
+  Rpc.make("project.remove", { payload: ProjectRemovePayload }),
+  Rpc.make("health", { success: HealthResult }),
+) {}
+```
+
+On the client, an `AtomRpc.Tag` wraps the RPC group and provides the WebSocket protocol layer:
+
+```ts
+import { AtomRpc } from "@effect-atom/atom-react"
+import { BrowserSocket } from "@effect/platform-browser"
+import { RpcClient, RpcSerialization } from "@effect/rpc"
+
+class LaborerClient extends AtomRpc.Tag<LaborerClient>()("LaborerClient", {
+  group: LaborerRpcs,
+  protocol: RpcClient.layerProtocolSocket({
+    retryTransientErrors: true,
+  }).pipe(
+    Layer.provide(BrowserSocket.layerWebSocket("ws://localhost:3000/rpc")),
+    Layer.provide(RpcSerialization.layerJson),
+  ),
+}) {}
+```
+
+Components invoke actions as mutations:
+
+```tsx
+const destroyWorkspace = useAtomSet(LaborerClient.mutation("workspace.destroy"))
+// onClick={() => destroyWorkspace({ payload: { workspaceId } })}
+```
+
+Key RPC methods (all mutations unless noted):
 - `workspace.create(projectId, taskConfig?)` — creates worktree, allocates port, runs setup
 - `workspace.destroy(workspaceId)` — tears down worktree, kills processes, frees port
 - `terminal.spawn(workspaceId, command?)` — creates PTY in workspace directory
@@ -118,6 +168,7 @@ Key RPC methods:
 - `rlph.fix(workspaceId, prNumber)` — convenience for spawning `rlph fix` in a terminal
 - `project.add(repoPath)` — registers a project
 - `project.remove(projectId)` — unregisters a project
+- `health` — returns server status (query, not mutation)
 
 ### Modules
 
@@ -148,15 +199,15 @@ The LiveStore schema, events, materializers, and sync configuration. Defines all
 
 Responsibilities: schema definition, event definitions, materializers, sync setup, persistence.
 
-**6. ActionAPI (Effect RPC)**
-The Effect RPC router that exposes all side-effect operations. Thin layer that delegates to the appropriate Effect services (WorkspaceProvider, TerminalManager, DiffService, etc.) and commits resulting state to LiveStore.
+**6. ActionAPI (@effect/rpc + effect-atom)**
+The `@effect/rpc` server router that exposes all side-effect operations as RPC handlers. The RPC group contract (`LaborerRpcs`) is defined in `packages/shared` using `RpcGroup.make` and `Rpc.make`. The server implements handlers that delegate to the appropriate Effect services (WorkspaceProvider, TerminalManager, DiffService, etc.) and commit resulting state to LiveStore. On the client, `AtomRpc.Tag` from `@effect-atom/atom-react` creates a typed client (`LaborerClient`) with `mutation` and `query` helpers for React components.
 
-Responsibilities: RPC method definitions, request validation, delegation to services, error handling.
+Responsibilities: RPC group + schema definitions (shared), server-side handler implementations, client-side `AtomRpc.Tag` setup, request validation via Effect Schema, delegation to services, error handling.
 
 **7. PanelManager (React, App)**
-The tmux-style panel system in the React frontend. Built on allotment for recursive split/resize. Each pane can display an xterm.js terminal or a @pierre/diffs diff viewer. Layout state is persisted via LiveStore. Keyboard shortcuts use TanStack Hotkeys for declarative, composable hotkey bindings with scope isolation (so terminal panes don't intercept panel-level shortcuts). All UI components use shadcn/ui (backed by Base UI) for consistent styling.
+The tmux-style panel system in the React frontend. Built on allotment for recursive split/resize. Each pane can display an xterm.js terminal or a @pierre/diffs diff viewer. Layout state is persisted via LiveStore. Keyboard shortcuts use TanStack Hotkeys for declarative, composable hotkey bindings with scope isolation (so terminal panes don't intercept panel-level shortcuts). Action buttons (spawn terminal, start rlph, etc.) invoke server-side mutations via the `LaborerClient` AtomRpc tag. All UI components use shadcn/ui (backed by Base UI) for consistent styling.
 
-Responsibilities: panel splitting/resizing/closing, pane type management (terminal/diff), keyboard shortcuts (via TanStack Hotkeys), layout serialization/deserialization, xterm.js integration, @pierre/diffs integration.
+Responsibilities: panel splitting/resizing/closing, pane type management (terminal/diff), keyboard shortcuts (via TanStack Hotkeys), layout serialization/deserialization, xterm.js integration, @pierre/diffs integration, action invocation via AtomRpc mutations.
 
 ### Technology Stack
 
@@ -165,7 +216,7 @@ Responsibilities: panel splitting/resizing/closing, pane type management (termin
 | Runtime | Bun | Latest stable |
 | Core framework | Effect TS v3 | effect |
 | Reactive state | LiveStore | v0.3+ |
-| RPC | Effect RPC | @effect/rpc |
+| RPC | Effect RPC + effect-atom | @effect/rpc, @effect-atom/atom-react (AtomRpc) |
 | App framework | Vite + React 19 | React 19.2, Vite 6 |
 | React compiler | React Compiler | Latest |
 | Routing | TanStack Router | v1.141+ |
@@ -192,6 +243,7 @@ laborer/
 ├── apps/
 │   └── web/                 # React 19 frontend (Vite + TanStack Router)
 │       ├── src/
+│       │   ├── atoms/       # AtomRpc client tag (LaborerClient), action atoms
 │       │   ├── components/  # shadcn/ui (base-lyra) components
 │       │   │   └── ui/      # Generated shadcn/ui primitives
 │       │   ├── panels/      # Panel system (allotment)
@@ -229,7 +281,7 @@ laborer/
 │   └── shared/              # Shared types, LiveStore schema, RPC contract (to be created)
 │       ├── src/
 │       │   ├── schema.ts    # LiveStore tables, events, materializers
-│       │   ├── rpc.ts       # Effect RPC type definitions
+│       │   ├── rpc.ts       # @effect/rpc group + schema definitions (RpcGroup, Rpc.make)
 │       │   └── types.ts     # Shared domain types
 │       └── package.json
 │
@@ -350,6 +402,7 @@ Laborer is a UI and orchestration shell for rlph, not a replacement. rlph remain
 - **rlph** (https://github.com/hsubra89/rlph) — The ralph loop CLI that laborer wraps.
 - **gtr / git-worktree-runner** (https://github.com/coderabbitai/git-worktree-runner) — Reference for worktree lifecycle management patterns.
 - **Effect** (https://github.com/Effect-TS/effect) — Effect TS v3, the core framework.
+- **effect-atom** (https://github.com/tim-smart/effect-atom) — Reactive state management for Effect with React integration. Provides `AtomRpc` for typed RPC client mutations/queries in React components.
 - **LiveStore** (https://livestore.dev) — Reactive SQLite sync engine.
 - **@pierre/diffs** (https://diffs.com) — Diff rendering library.
 - **allotment** (https://github.com/johnwalley/allotment) — React split pane component.
@@ -363,6 +416,6 @@ Laborer is a UI and orchestration shell for rlph, not a replacement. rlph remain
 
 2. **Local-first, API-first.** Everything runs on the developer's machine. The server is headless-capable. The API is the primary interface; the UI is a client. This enables future Slack bots, CLI wrappers, and CI integrations without architectural changes.
 
-3. **Effect all the way down.** The server is Effect TS v3. Services are Effect services with tag-based DI. RPC is Effect RPC. Testing uses @effect/vitest. The shared schema uses Effect Schema (via LiveStore). This provides type safety, composability, and testability throughout.
+3. **Effect all the way down.** The server is Effect TS v3. Services are Effect services with tag-based DI. RPC is `@effect/rpc` with `effect-atom`'s `AtomRpc` on the client for typed mutations. Testing uses @effect/vitest. The shared schema uses Effect Schema (via LiveStore). This provides type safety, composability, and testability throughout.
 
 4. **Progressive complexity.** A developer can start by just creating a workspace and opening a terminal. They don't need to know about ralph loops, PRDs, or Linear integration. Those features are discoverable but not required.

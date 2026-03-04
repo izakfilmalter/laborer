@@ -30,3 +30,43 @@ Also wired `PtyHostClient.layer` into `main.ts` layer graph alongside `TerminalM
 ### Status
 Issue #2: Done
 Next unblocked: Issues #3, #6, #7 (all were blocked only by #1 and #2)
+
+---
+
+## Session: Issue #3 — TerminalManager refactor to use PtyHostClient
+
+### Task selected
+Issue #3: TerminalManager refactor — use PtyHostClient instead of node-pty.
+Priority rationale: Issue #3 is the critical-path blocker — it unblocks Issues #4, #5, and #8. It is the core integration that makes the terminal feature actually work end-to-end through the PTY Host architecture. Without this, terminals still fail due to the SIGHUP issue in the main server process.
+
+### What was built
+Refactored `packages/server/src/services/terminal-manager.ts` to delegate all PTY operations to `PtyHostClient` instead of importing and calling node-pty directly.
+
+Key changes:
+
+1. **Removed node-pty dependency**: Removed `import("node-pty")` lazy import and `type { IPty }` import. TerminalManager no longer references node-pty in any way.
+2. **Added PtyHostClient dependency**: TerminalManager now `yield* PtyHostClient` during layer construction, accessing the IPC client for all PTY operations.
+3. **Simplified ManagedTerminal interface**: Removed the `pty: IPty` field. ManagedTerminal now only holds metadata (`id`, `workspaceId`, `command`), since the actual PTY instance lives in the PTY Host child process.
+4. **Refactored spawn()**: Uses `ptyHostClient.spawn()` with data and exit callbacks instead of `nodePty.spawn()`. Data callback decodes base64 from the PTY Host before committing `terminalOutput` events to LiveStore. Exit callback updates LiveStore status and cleans up in-memory state, same as before.
+5. **Refactored write()**: Delegates to `ptyHostClient.write(id, data)` instead of `terminal.pty.write(data)`.
+6. **Refactored resize()**: Delegates to `ptyHostClient.resize(id, cols, rows)` instead of `terminal.pty.resize(cols, rows)`.
+7. **Refactored kill()**: Delegates to `ptyHostClient.kill(id)` instead of `terminal.pty.kill()`.
+8. **Refactored killAllForWorkspace()**: Uses `ptyHostClient.kill()` for each terminal instead of `terminal.pty.kill()`.
+9. **Removed debug PTY spawn block**: Deleted the entire `require("node-pty")` debug comparison spawn (lines 259-287 of original) which was a debugging artifact.
+10. **Base64 decoding**: Added `Buffer.from(base64Data, "base64").toString("utf-8")` in the data callback to decode PTY Host output before committing to LiveStore, since xterm.js expects raw terminal output strings.
+11. **ptySessionRef**: Changed from `String(pty.pid)` (which required a local IPty reference) to the terminal `id` string, since the PID is only known inside the PTY Host process.
+
+### Files changed
+- `packages/server/src/services/terminal-manager.ts` — REFACTORED (537 → ~460 lines)
+
+### Public interface
+The public interface of `TerminalManager` is **unchanged** — all existing RPC handlers (`terminal.spawn`, `terminal.write`, `terminal.resize`, `terminal.kill`, `rlph.*`) continue working without modification.
+
+### Verification
+- `bun run check-types` passes for `@laborer/server` (no new errors)
+- `bun x biome check packages/server/src/services/terminal-manager.ts` shows no lint issues
+- `bun x ultracite check` shows only pre-existing web package issues (no server issues)
+
+### Status
+Issue #3: Done
+Next unblocked: Issues #4, #5, #8 (all were blocked by #3)

@@ -1,13 +1,13 @@
 /**
  * TerminalManager — Effect Service
  *
- * Manages PTY (pseudo-terminal) instances scoped to workspaces. Spawns
- * processes via node-pty, streams I/O, handles resize, and tracks terminal
- * lifecycle. The fundamental primitive — an "agent" is just a terminal
- * running `opencode` or `rlph`.
+ * Manages terminal instances scoped to workspaces. Delegates PTY operations
+ * to the PtyHostClient service, which communicates with an isolated PTY Host
+ * child process. This architecture avoids SIGHUP issues that occur when
+ * node-pty runs inside the Bun HTTP server process.
  *
  * Responsibilities:
- * - PTY spawning via node-pty in workspace directories
+ * - Terminal spawning via PtyHostClient in workspace directories
  * - I/O streaming: stdout → LiveStore events, stdin ← RPC writes
  * - Terminal resize (cols, rows) with SIGWINCH propagation
  * - Terminal kill + resource cleanup
@@ -45,18 +45,18 @@ import {
 	Ref,
 	Runtime,
 } from "effect";
-import type { IPty } from "node-pty";
 import { LaborerStore } from "./laborer-store.js";
+import { PtyHostClient } from "./pty-host-client.js";
 import { WorkspaceProvider } from "./workspace-provider.js";
 
 /**
  * Internal representation of a managed terminal.
- * Tracks the PTY instance and associated metadata.
+ * Tracks metadata for the terminal — the actual PTY instance lives
+ * in the PTY Host child process, accessed via PtyHostClient by ID.
  */
 interface ManagedTerminal {
 	readonly command: string;
 	readonly id: string;
-	readonly pty: IPty;
 	readonly workspaceId: string;
 }
 
@@ -79,7 +79,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 		 *
 		 * 1. Validates the workspace exists in LiveStore
 		 * 2. Gets workspace env vars (PORT, LABORER_*)
-		 * 3. Spawns a PTY via node-pty in the worktree directory
+		 * 3. Spawns a PTY via PtyHostClient in the worktree directory
 		 * 4. Wires stdout to LiveStore TerminalOutput events
 		 * 5. Commits TerminalSpawned event to LiveStore
 		 *
@@ -156,9 +156,10 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 		Effect.gen(function* () {
 			const { store } = yield* LaborerStore;
 			const workspaceProvider = yield* WorkspaceProvider;
+			const ptyHostClient = yield* PtyHostClient;
 
 			// Extract the runtime so we can run Effects from plain JS callbacks
-			// (e.g., node-pty onExit/onData handlers). This avoids the
+			// (e.g., PtyHostClient onExit/onData callbacks). This avoids the
 			// Effect.runSync-inside-Effect anti-pattern.
 			const runtime = yield* Effect.runtime<never>();
 			const runSync = Runtime.runSync(runtime);
@@ -166,13 +167,6 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 			// In-memory map of terminal ID → ManagedTerminal.
 			// Uses Effect.Ref for fiber-safe concurrent access.
 			const terminalsRef = yield* Ref.make(new Map<string, ManagedTerminal>());
-
-			// Lazily import node-pty to avoid native module load at import time.
-			// node-pty includes native bindings that should only load when the
-			// layer is actually constructed (not during module evaluation).
-			const nodePty = yield* Effect.promise(
-				() => import("node-pty") as Promise<typeof import("node-pty")>
-			);
 
 			/**
 			 * Detect the user's default shell.
@@ -221,7 +215,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				// 3. Determine the command to run
 				const resolvedCommand = command ?? defaultShell;
 
-				// Parse command into shell + args for node-pty.
+				// Parse command into shell + args for PTY Host.
 				// If a custom command is provided, run it via the shell with -c
 				// so that pipes, redirects, etc. work. If no command is provided,
 				// spawn the shell directly (interactive mode).
@@ -231,99 +225,12 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				// 4. Generate terminal ID
 				const id = crypto.randomUUID();
 
-				const spawnTime = Date.now();
-
-				// 5. Spawn PTY via node-pty
-				//
-				// IMPORTANT: We use Effect.sync instead of Effect.try here because
-				// Bun has a runtime bug where wrapping node-pty's spawn in a
-				// try/catch block causes the child process to receive SIGHUP
-				// immediately, killing the PTY before it can start. Effect.try
-				// uses try/catch internally, which triggers this bug. Effect.sync
-				// does not wrap in try/catch, so the PTY stays alive.
-				const pty = yield* Effect.sync(() =>
-					nodePty.spawn(shellPath, shellArgs, {
-						name: "xterm-256color",
-						cols: 80,
-						rows: 24,
-						cwd: workspace.worktreePath,
-						env: {
-							...process.env,
-							...workspaceEnv,
-							TERM: "xterm-256color",
-						} as Record<string, string>,
-					})
-				);
-				console.log("[TM.spawn] pty pid=%d", pty.pid);
-
-				// DEBUG: Also spawn via require to compare behavior
-				// biome-ignore lint/style/noNonNullAssertion: debug
-				const directNodePty = require("node-pty") as typeof import("node-pty");
-				const debugPty = directNodePty.spawn(shellPath, shellArgs, {
-					name: "xterm-256color",
-					cols: 80,
-					rows: 24,
-					cwd: workspace.worktreePath,
-					env: {
-						...process.env,
-						...workspaceEnv,
-						TERM: "xterm-256color",
-					} as Record<string, string>,
-				});
-				console.log("[TM.spawn] DEBUG require() pty pid=%d", debugPty.pid);
-				debugPty.onData(() => {});
-				debugPty.onExit(({ exitCode, signal }) => {
-					console.log(
-						"[TM.DEBUG] require() pty EXIT code=%d signal=%d elapsed=%dms",
-						exitCode,
-						signal,
-						Date.now() - spawnTime
-					);
-				});
-				// Kill debug PTY after 10 seconds
-				setTimeout(() => {
-					console.log("[TM.DEBUG] killing debug pty after 10s");
-					debugPty.kill();
-				}, 10_000);
-
-				// 6. Wire stdout to LiveStore TerminalOutput events
-				pty.onData((data: string) => {
-					console.log("[TM.onData] id=%s len=%d", id, data.length);
-					store.commit(events.terminalOutput({ id, data }));
-				});
-
-				// 7. Handle PTY exit — update status in LiveStore and clean up
-				pty.onExit(({ exitCode, signal }) => {
-					console.log(
-						"[TM.onExit] id=%s pid=%d code=%d signal=%d elapsed=%dms",
-						id,
-						pty.pid,
-						exitCode,
-						signal,
-						Date.now() - spawnTime
-					);
-					// Update LiveStore status to "stopped"
-					store.commit(events.terminalStatusChanged({ id, status: "stopped" }));
-
-					// Remove from in-memory map.
-					// We use runSync (extracted from the Effect runtime) because
-					// this is a plain JS callback from node-pty, not inside an
-					// Effect pipeline. Ref.update is synchronous in nature.
-					runSync(
-						Ref.update(terminalsRef, (map) => {
-							const next = new Map(map);
-							next.delete(id);
-							return next;
-						})
-					);
-				});
-
-				// 8. Store in our in-memory map
+				// 5. Store in our in-memory map (before spawning to ensure
+				// callbacks can find the terminal)
 				const managedTerminal: ManagedTerminal = {
 					id,
 					workspaceId,
 					command: resolvedCommand,
-					pty,
 				};
 
 				yield* Ref.update(terminalsRef, (map) => {
@@ -332,14 +239,64 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 					return next;
 				});
 
-				// 9. Commit TerminalSpawned event to LiveStore
+				// 6. Spawn PTY via PtyHostClient with data/exit callbacks
+				ptyHostClient.spawn(
+					{
+						id,
+						shell: shellPath,
+						args: shellArgs,
+						cwd: workspace.worktreePath,
+						env: {
+							...process.env,
+							...workspaceEnv,
+							TERM: "xterm-256color",
+						} as Record<string, string>,
+						cols: 80,
+						rows: 24,
+					},
+					// Data callback: decode base64 and commit to LiveStore
+					(base64Data: string) => {
+						const data = Buffer.from(base64Data, "base64").toString("utf-8");
+						console.log("[TM.onData] id=%s len=%d", id, data.length);
+						store.commit(events.terminalOutput({ id, data }));
+					},
+					// Exit callback: update LiveStore status and clean up
+					(exitCode: number, signal: number) => {
+						console.log(
+							"[TM.onExit] id=%s code=%d signal=%d",
+							id,
+							exitCode,
+							signal
+						);
+						// Update LiveStore status to "stopped"
+						store.commit(
+							events.terminalStatusChanged({ id, status: "stopped" })
+						);
+
+						// Remove from in-memory map.
+						// We use runSync (extracted from the Effect runtime) because
+						// this is a plain JS callback from PtyHostClient, not inside an
+						// Effect pipeline. Ref.update is synchronous in nature.
+						runSync(
+							Ref.update(terminalsRef, (map) => {
+								const next = new Map(map);
+								next.delete(id);
+								return next;
+							})
+						);
+					}
+				);
+
+				console.log("[TM.spawn] pty spawned via PtyHostClient id=%s", id);
+
+				// 7. Commit TerminalSpawned event to LiveStore
 				store.commit(
 					events.terminalSpawned({
 						id,
 						workspaceId,
 						command: resolvedCommand,
 						status: "running",
-						ptySessionRef: String(pty.pid),
+						ptySessionRef: id,
 					})
 				);
 
@@ -365,14 +322,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 					});
 				}
 
-				yield* Effect.try({
-					try: () => terminal.pty.write(data),
-					catch: (error) =>
-						new RpcError({
-							message: `Failed to write to terminal ${terminalId}: ${String(error)}`,
-							code: "PTY_WRITE_FAILED",
-						}),
-				});
+				ptyHostClient.write(terminalId, data);
 			});
 
 			const resize = Effect.fn("TerminalManager.resize")(function* (
@@ -390,14 +340,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 					});
 				}
 
-				yield* Effect.try({
-					try: () => terminal.pty.resize(cols, rows),
-					catch: (error) =>
-						new RpcError({
-							message: `Failed to resize terminal ${terminalId}: ${String(error)}`,
-							code: "PTY_RESIZE_FAILED",
-						}),
-				});
+				ptyHostClient.resize(terminalId, cols, rows);
 			});
 
 			const kill = Effect.fn("TerminalManager.kill")(function* (
@@ -413,15 +356,8 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 					});
 				}
 
-				// Kill the PTY process
-				yield* Effect.try({
-					try: () => terminal.pty.kill(),
-					catch: (error) =>
-						new RpcError({
-							message: `Failed to kill terminal ${terminalId}: ${String(error)}`,
-							code: "PTY_KILL_FAILED",
-						}),
-				});
+				// Send kill command to PTY Host
+				ptyHostClient.kill(terminalId);
 
 				// Remove from in-memory map
 				yield* Ref.update(terminalsRef, (m) => {
@@ -473,21 +409,14 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 					return 0;
 				}
 
-				// 3. Kill each terminal, catching individual errors to ensure
-				//    best-effort cleanup (one failure doesn't stop the rest)
+				// 3. Kill each terminal via PtyHostClient, catching individual
+				//    errors to ensure best-effort cleanup
 				let killedCount = 0;
 				yield* Effect.forEach(
 					workspaceTerminals,
 					(terminal) =>
 						pipe(
-							Effect.try({
-								try: () => terminal.pty.kill(),
-								catch: (error) =>
-									new RpcError({
-										message: `Failed to kill terminal ${terminal.id}: ${String(error)}`,
-										code: "PTY_KILL_FAILED",
-									}),
-							}),
+							Effect.sync(() => ptyHostClient.kill(terminal.id)),
 							Effect.tap(() =>
 								Ref.update(terminalsRef, (m) => {
 									const next = new Map(m);
@@ -508,7 +437,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 							),
 							Effect.catchAll((err) =>
 								Effect.logWarning(
-									`Failed to kill terminal ${terminal.id} during workspace cleanup: ${err.message}`
+									`Failed to kill terminal ${terminal.id} during workspace cleanup: ${String(err)}`
 								)
 							)
 						),

@@ -53,7 +53,11 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 					rlphConfig: project.rlphConfig ?? undefined,
 				};
 			}),
-		"project.remove": () => Effect.fail(notImplemented("project.remove")),
+		"project.remove": ({ projectId }) =>
+			Effect.gen(function* () {
+				const registry = yield* ProjectRegistry;
+				yield* registry.removeProject(projectId);
+			}),
 
 		// -------------------------------------------------------------------
 		// Workspace RPCs (stubs — Issue #33-47)

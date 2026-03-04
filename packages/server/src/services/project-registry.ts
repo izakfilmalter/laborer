@@ -14,7 +14,7 @@
  * ```
  *
  * Issue #21: addProject method
- * Issue #22: removeProject method (future)
+ * Issue #22: removeProject method
  * Issue #23: listProjects + getProject methods (future)
  */
 
@@ -43,6 +43,9 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 			},
 			RpcError
 		>;
+		readonly removeProject: (
+			projectId: string
+		) => Effect.Effect<void, RpcError>;
 	}
 >() {
 	static readonly layer = Layer.effect(
@@ -136,7 +139,26 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 				return project;
 			});
 
-			return ProjectRegistry.of({ addProject });
+			const removeProject = Effect.fn("ProjectRegistry.removeProject")(
+				function* (projectId: string) {
+					// 1. Validate the project exists
+					const existingProjects = store.query(
+						tables.projects.where("id", projectId)
+					);
+
+					if (existingProjects.length === 0) {
+						return yield* new RpcError({
+							message: `Project not found: ${projectId}`,
+							code: "NOT_FOUND",
+						});
+					}
+
+					// 2. Commit ProjectRemoved event to LiveStore
+					store.commit(events.projectRemoved({ id: projectId }));
+				}
+			);
+
+			return ProjectRegistry.of({ addProject, removeProject });
 		})
 	);
 }

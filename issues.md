@@ -620,9 +620,9 @@ Add the `removeProject` method to the ProjectRegistry service. Removes a project
 
 ### Acceptance criteria
 
-- [ ] `removeProject(projectId)` commits ProjectRemoved event to LiveStore
-- [ ] Removing nonexistent project → returns descriptive error
-- [ ] Tests: add then remove → project gone from LiveStore; remove nonexistent → error
+- [x] `removeProject(projectId)` commits ProjectRemoved event to LiveStore
+- [x] Removing nonexistent project → returns descriptive error
+- [ ] Tests: add then remove → project gone from LiveStore; remove nonexistent → error (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -700,10 +700,10 @@ Implement the `project.remove` handler in the server RPC router via `RpcGroup.to
 
 ### Acceptance criteria
 
-- [ ] `project.remove` handler implemented via `RpcGroup.toHandlers`
-- [ ] Accepts project ID, returns success
-- [ ] Nonexistent ID → error response
-- [ ] Tests: RPC call → project removed from LiveStore; nonexistent → error response
+- [x] `project.remove` handler implemented via `RpcGroup.toHandlers`
+- [x] Accepts project ID, returns success
+- [x] Nonexistent ID → error response
+- [ ] Tests: RPC call → project removed from LiveStore; nonexistent → error response (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -3596,10 +3596,10 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 19 | @effect/rpc server router setup | #12 | Done |
 | 20 | AtomRpc client setup (effect-atom) | #19, #9 | Ready |
 | 21 | ProjectRegistry — addProject | #16, #3 | Done |
-| 22 | ProjectRegistry — removeProject | #21 | Ready |
+| 22 | ProjectRegistry — removeProject | #21 | Done |
 | 23 | ProjectRegistry — listProjects + getProject | #21 | Ready |
 | 24 | project.add RPC handler | #19, #21 | Done |
-| 25 | project.remove RPC handler | #24, #22 | Blocked |
+| 25 | project.remove RPC handler | #24, #22 | Done |
 | 26 | Project list UI | #18, #24 | Blocked |
 | 27 | Add Project form (AtomRpc mutation) | #20, #24, #26 | Blocked |
 | 28 | Remove Project button + dialog (AtomRpc mutation) | #25, #26 | Blocked |

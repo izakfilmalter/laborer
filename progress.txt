@@ -486,3 +486,25 @@ Date: 2026-03-04
 - Issue #31: PortAllocator — exhaustion handling (was blocked by #29)
 - Issue #32: PortAllocator — concurrent safety (was blocked by #29)
 - Issue #33: WorkspaceProvider — create worktree (was blocked by #21 and #29, now both done)
+
+## Issue 22: ProjectRegistry — removeProject method — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Added `removeProject(projectId: string)` method to the `ProjectRegistry` service interface and implementation in `packages/server/src/services/project-registry.ts`.
+- Implementation uses `Effect.fn("ProjectRegistry.removeProject")` for call-site tracing:
+  1. Queries the LiveStore `projects` table with `.where("id", projectId)` to validate the project exists.
+  2. If no project found, returns `RpcError` with code `NOT_FOUND` and descriptive message.
+  3. Commits `projectRemoved({ id: projectId })` event to LiveStore on success.
+- Updated `packages/server/src/rpc/handlers.ts`: replaced the `project.remove` stub with a real handler that delegates to `ProjectRegistry.removeProject(projectId)`.
+- Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin hints), `biome check` passes with zero issues on both modified files.
+
+### Acceptance criteria status
+- [x] `removeProject(projectId)` commits ProjectRemoved event to LiveStore
+- [x] Removing nonexistent project → returns descriptive error (NOT_FOUND)
+- [ ] Tests: add then remove → project gone from LiveStore; remove nonexistent → error (deferred — vitest not yet configured)
+
+### Issues unblocked
+- Issue #25: project.remove RPC handler (was blocked by #24 and #22, now both done)
+- Issue #23: ProjectRegistry — listProjects + getProject (was already unblocked by #21)

@@ -256,3 +256,26 @@ Date: 2026-03-04
 ### Additional finding: Issue #19 is already complete
 - Issue #19 (@effect/rpc server router setup) was effectively implemented as part of Issue #12 (Health check RPC endpoint). The RPC server infrastructure — `RpcServer.layer`, `RpcServer.layerProtocolHttp`, `RpcSerialization.layerNdjson`, `LaborerRpcs.toLayer` handler pattern — was all set up in Issue #12. Marked Issue #19 as Done.
 - This unblocks Issue #20 (AtomRpc client setup) which was previously blocked on #19.
+
+## Issue 8: LiveStore schema — Tasks table + events + materializer — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Defined `tasks` table using `State.SQLite.table` with columns: `id` (text, primary key), `projectId` (text), `source` (text), `externalId` (text, nullable), `title` (text), `status` (text, default "pending").
+- Defined `taskCreated` event using `Events.synced` with schema: `{ id, projectId, source, externalId, title, status }`. Event name: `v1.TaskCreated`.
+- Defined `taskStatusChanged` event using `Events.synced` with schema: `{ id, status }`. Event name: `v1.TaskStatusChanged`.
+- Defined `taskRemoved` event using `Events.synced` with schema: `{ id }`. Event name: `v1.TaskRemoved`.
+- Defined materializers: `v1.TaskCreated` inserts a row into the tasks table; `v1.TaskStatusChanged` updates the status column by id; `v1.TaskRemoved` deletes the row by id.
+- Added `tasks` to the `tables` export and all three events to the `events` export.
+- Updated `state` and `schema` exports to include the new table and events.
+- Verified: `tsc --noEmit` passes for both shared and server packages (no type errors), `biome check` passes on schema.ts (no lint issues).
+
+### Acceptance criteria status
+- [x] Tasks table defined with all columns per PRD (id, projectId, source, externalId, title, status)
+- [x] Events defined: TaskCreated, TaskStatusChanged, TaskRemoved
+- [x] Materializer correctly updates table state from events
+- [ ] Tests: commit events → verify table state transitions (deferred — LiveStore store/adapter setup not yet available; will be testable after Issue #16)
+
+### Issues unblocked
+- Issue #100: Task CRUD — create manual task (partially — still needs #16)

@@ -48,6 +48,18 @@ export const diffs = State.SQLite.table({
 	},
 });
 
+export const tasks = State.SQLite.table({
+	name: "tasks",
+	columns: {
+		id: State.SQLite.text({ primaryKey: true }),
+		projectId: State.SQLite.text(),
+		source: State.SQLite.text(),
+		externalId: State.SQLite.text({ nullable: true }),
+		title: State.SQLite.text(),
+		status: State.SQLite.text({ default: "pending" }),
+	},
+});
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -148,6 +160,33 @@ export const diffCleared = Events.synced({
 	}),
 });
 
+export const taskCreated = Events.synced({
+	name: "v1.TaskCreated",
+	schema: Schema.Struct({
+		id: Schema.String,
+		projectId: Schema.String,
+		source: Schema.String,
+		externalId: Schema.NullOr(Schema.String),
+		title: Schema.String,
+		status: Schema.String,
+	}),
+});
+
+export const taskStatusChanged = Events.synced({
+	name: "v1.TaskStatusChanged",
+	schema: Schema.Struct({
+		id: Schema.String,
+		status: Schema.String,
+	}),
+});
+
+export const taskRemoved = Events.synced({
+	name: "v1.TaskRemoved",
+	schema: Schema.Struct({
+		id: Schema.String,
+	}),
+});
+
 export const events = {
 	projectCreated,
 	projectRemoved,
@@ -160,6 +199,9 @@ export const events = {
 	terminalKilled,
 	diffUpdated,
 	diffCleared,
+	taskCreated,
+	taskStatusChanged,
+	taskRemoved,
 };
 
 // ---------------------------------------------------------------------------
@@ -204,13 +246,18 @@ const materializers = State.SQLite.materializers(events, {
 			.insert({ workspaceId, diffContent, lastUpdated })
 			.onConflict("workspaceId", "replace"),
 	"v1.DiffCleared": ({ workspaceId }) => diffs.delete().where({ workspaceId }),
+	"v1.TaskCreated": ({ id, projectId, source, externalId, title, status }) =>
+		tasks.insert({ id, projectId, source, externalId, title, status }),
+	"v1.TaskStatusChanged": ({ id, status }) =>
+		tasks.update({ status }).where({ id }),
+	"v1.TaskRemoved": ({ id }) => tasks.delete().where({ id }),
 });
 
 // ---------------------------------------------------------------------------
 // Tables export
 // ---------------------------------------------------------------------------
 
-export const tables = { projects, workspaces, terminals, diffs };
+export const tables = { projects, workspaces, terminals, diffs, tasks };
 
 // ---------------------------------------------------------------------------
 // State & Schema

@@ -2613,14 +2613,14 @@ Implement the `rlph.review` handler via `RpcGroup.toHandlers`. Spawns a terminal
 
 ### Acceptance criteria
 
-- [ ] `rlph.review` handler accepts workspaceId and prNumber
-- [ ] Spawns terminal with `rlph review <prNumber>`
-- [ ] Returns terminal ID
-- [ ] Tests: RPC call → terminal spawned with `rlph review <pr>`
+- [x] `rlph.review` handler accepts workspaceId and prNumber
+- [x] Spawns terminal with `rlph review <prNumber>`
+- [x] Returns terminal ID
+- [ ] Tests: RPC call → terminal spawned with `rlph review <pr>` (deferred — vitest not yet configured)
 
 ### Blocked by
 
-- Blocked by #56
+- Blocked by #56 (done)
 
 ### User stories addressed
 
@@ -3670,8 +3670,8 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 93 | "Start Ralph Loop" button (AtomRpc mutation) | ~~#92~~, ~~#60~~ | Ready |
 | 94 | rlph.writePRD RPC handler | ~~#56~~ | Done |
 | 95 | PRD writing form + button (AtomRpc mutation) | ~~#94~~, ~~#60~~ | Ready |
-| 96 | rlph.review RPC handler | ~~#56~~ | Ready |
-| 97 | "Review PR" button + input (AtomRpc mutation) | #96, ~~#60~~ | Blocked |
+| 96 | rlph.review RPC handler | ~~#56~~ | Done |
+| 97 | "Review PR" button + input (AtomRpc mutation) | ~~#96~~, ~~#60~~ | Ready |
 | 98 | rlph.fix RPC handler | ~~#56~~ | Ready |
 | 99 | "Fix Findings" button + input (AtomRpc mutation) | #98, ~~#60~~ | Blocked |
 | 100 | Task CRUD — create manual task | #8, #16 | Ready |

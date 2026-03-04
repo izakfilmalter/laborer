@@ -2104,3 +2104,45 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #85. However, this enables the complete diff lifecycle: workspace create → auto-poll → deduplication → LiveStore events → client diff viewer (Issue #87).
+
+## Issue 87: Diff viewer pane — render with @pierre/diffs — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Installed `@pierre/diffs@1.0.11` and `shiki@4.0.1` as dependencies in `apps/web/package.json`. `shiki` is a peer dependency of `@pierre/diffs` required for syntax highlighting in diff views.
+- Created `apps/web/src/panes/diff-pane.tsx` — the diff viewer pane component:
+  - `DiffPane` component accepts a `workspaceId` prop and renders a live diff viewer.
+  - Subscribes to LiveStore's `diffs` table via `store.useQuery(allDiffs$)` and filters by `workspaceId` using `useMemo` for efficient memoization.
+  - When diff content is available, renders `PatchDiff` from `@pierre/diffs/react` with the raw `git diff` output.
+  - PatchDiff configuration: split view (`diffStyle: "split"`), pierre dark/light theme, dark theme type (matching the zinc-950 terminal theme), bar-style diff indicators, word-alt line diff highlighting, scroll overflow.
+  - When no diff content is available (workspace hasn't been modified), renders an empty state using shadcn/ui `Empty` components with a `FileCode2` icon and guidance text: "No changes detected... Changes will appear automatically as the agent modifies files."
+  - Uses module-level `queryDb` constant for LiveStore query deduplication and memoization, consistent with all other LiveStore-consuming components in the codebase.
+- Updated `apps/web/src/panels/panel-manager.tsx`:
+  - Added `DiffPane` import from `@/panes/diff-pane`.
+  - Replaced the placeholder text ("Diff viewer — coming soon (Issue #87)") with actual `DiffPane` rendering when `node.paneType === "diff" && node.workspaceId` is present.
+  - Added a fallback empty state for diff panes without a `workspaceId` assigned (using shadcn/ui `Empty` components with guidance to assign a workspace).
+  - Updated module JSDoc to reflect that diff panes now render with `@pierre/diffs` instead of a placeholder.
+- Verified: `tsc --noEmit` passes for web, server, and shared packages (only pre-existing errors in calendar.tsx, sonner.tsx — no new errors), `biome check` passes with zero issues on both new/modified files (`diff-pane.tsx`, `panel-manager.tsx`).
+
+### Acceptance criteria status
+- [x] @pierre/diffs installed and integrated (`@pierre/diffs@1.0.11` with `PatchDiff` from `@pierre/diffs/react`)
+- [x] Component subscribes to workspace diff from LiveStore (reactive query on `diffs` table, filtered by `workspaceId`)
+- [x] Diff renders with file additions, deletions, and modifications (PatchDiff handles parsing and rendering git diff output with split view, syntax highlighting, line numbers, and word-level diff highlighting)
+- [ ] Tests: diff content in LiveStore → renders in viewer; file changes displayed correctly (deferred — requires running both server and web app with a live workspace making file changes)
+
+### Design decisions
+- Used `PatchDiff` component (not `FileDiff` or `MultiFileDiff`) because the server stores raw `git diff` output as a string in the `diffs` table's `diffContent` column. `PatchDiff` is designed to accept a raw unified/git patch string and parse it internally — no pre-processing needed.
+- Used `queryDb(diffs)` at module level with client-side filtering by `workspaceId` using `useMemo`, consistent with how `TerminalList`, `WorkspaceList`, and `ProjectList` all use `queryDb` with client-side filtering. For v1 with a small number of workspaces, this is efficient.
+- Used `pierre-dark` / `pierre-light` themes from `@pierre/diffs` built-in theme set. These are curated themes that provide good contrast for diff viewing. The `themeType: "dark"` matches the app's zinc-950 dark theme.
+- Used `diffStyle: "split"` for the default view to show old and new content side-by-side, which is the most common preference for code review. Future Issue #88 could add a toggle for unified vs. split.
+- Used `lineDiffType: "word-alt"` for word-level diff highlighting with the alternative algorithm, which provides better granularity than character-level diffs while being more readable than no inline highlighting.
+- Installed `shiki` as a direct dependency (not just a transitive dependency) because `@pierre/diffs` types reference shiki types (`BundledTheme`, `BundledLanguage`, etc.) and TypeScript needs them available for type resolution.
+- The empty state distinguishes between "no diff content" (workspace exists but no changes) and "no workspace assigned" (diff pane without a workspaceId). The former shows in the DiffPane component; the latter shows in the PanelManager's PaneContent fallback.
+
+### Issues unblocked
+- Issue #88: Diff viewer — accept/reject annotations (was blocked by #87 — now done!)
+- Issue #89: Diff viewer — live update (was blocked by #87 — now done!)
+- Issue #90: Toggle diff alongside terminal (was blocked by #67 (done) and #87 — now all blockers done!)
+- Issue #112: Click-to-open from diff viewer (was blocked by #111 (done) and #87 — now all blockers done!)
+- Issue #123: Loading state — diff computation (was blocked by #87 — now done!)

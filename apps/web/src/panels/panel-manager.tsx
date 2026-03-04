@@ -11,7 +11,7 @@
  * The PanelManager fills its parent container and renders pane content
  * based on the pane type:
  * - "terminal" → renders a TerminalPane with xterm.js
- * - "diff" → placeholder for future DiffPane component
+ * - "diff" → renders a DiffPane with @pierre/diffs
  *
  * Split panes are rendered using react-resizable-panels (via shadcn/ui's
  * resizable wrapper) with drag-to-resize handles between each child.
@@ -51,6 +51,7 @@ import {
 	ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { usePanelActions } from "@/panels/panel-context";
+import { DiffPane } from "@/panes/diff-pane";
 import { TerminalPane } from "@/panes/terminal-pane";
 
 interface PaneContentProps {
@@ -66,10 +67,24 @@ function PaneContent({ node }: PaneContentProps) {
 		return <TerminalPane terminalId={node.terminalId} />;
 	}
 
+	if (node.paneType === "diff" && node.workspaceId) {
+		return <DiffPane workspaceId={node.workspaceId} />;
+	}
+
 	if (node.paneType === "diff") {
 		return (
-			<div className="flex h-full w-full items-center justify-center bg-background text-muted-foreground">
-				<p className="text-sm">Diff viewer — coming soon (Issue #87)</p>
+			<div className="flex h-full w-full items-center justify-center bg-background">
+				<Empty>
+					<EmptyHeader>
+						<EmptyMedia variant="icon">
+							<Layers />
+						</EmptyMedia>
+						<EmptyTitle>No workspace</EmptyTitle>
+						<EmptyDescription>
+							Assign a workspace to this pane to view its diff.
+						</EmptyDescription>
+					</EmptyHeader>
+				</Empty>
 			</div>
 		);
 	}

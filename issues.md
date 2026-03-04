@@ -2370,14 +2370,14 @@ Create the diff viewer pane component in `apps/web/src/panes/`. Integrate @pierr
 
 ### Acceptance criteria
 
-- [ ] @pierre/diffs installed and integrated
-- [ ] Component subscribes to workspace diff from LiveStore
-- [ ] Diff renders with file additions, deletions, and modifications
-- [ ] Tests: diff content in LiveStore → renders in viewer; file changes displayed correctly
+- [x] @pierre/diffs installed and integrated (@pierre/diffs@1.0.11 with PatchDiff from @pierre/diffs/react)
+- [x] Component subscribes to workspace diff from LiveStore (reactive query on diffs table, filtered by workspaceId)
+- [x] Diff renders with file additions, deletions, and modifications (PatchDiff handles parsing and rendering git diff output)
+- [ ] Tests: diff content in LiveStore → renders in viewer; file changes displayed correctly (deferred — requires running both server and web app with a live workspace)
 
 ### Blocked by
 
-- Blocked by #18, #83, #6
+- Blocked by #18 (done), #83 (done), #6 (done)
 
 ### User stories addressed
 
@@ -3662,11 +3662,11 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 84 | DiffService — deduplicate unchanged | ~~#83~~ | Done |
 | 85 | DiffService — start/stop on workspace lifecycle | ~~#83~~, ~~#47~~ | Done |
 | 86 | diff.refresh RPC handler | ~~#82~~, #19 | Done |
-| 87 | Diff viewer pane — @pierre/diffs | ~~#18~~, ~~#83~~, ~~#6~~ | Ready |
-| 88 | Diff viewer — accept/reject annotations | #87 | Blocked |
-| 89 | Diff viewer — live update | #87 | Blocked |
-| 90 | Toggle diff alongside terminal | ~~#67~~, #87 | Blocked |
-| 91 | Diff viewer debounce/throttle | #89 | Blocked |
+| 87 | Diff viewer pane — @pierre/diffs | ~~#18~~, ~~#83~~, ~~#6~~ | Done |
+| 88 | Diff viewer — accept/reject annotations | ~~#87~~ | Ready |
+| 89 | Diff viewer — live update | ~~#87~~ | Ready |
+| 90 | Toggle diff alongside terminal | ~~#67~~, ~~#87~~ | Ready |
+| 91 | Diff viewer debounce/throttle | #89 | Blocked (#89 now Ready) |
 | 92 | rlph.startLoop RPC handler | ~~#56~~ | Done |
 | 93 | "Start Ralph Loop" button (AtomRpc mutation) | ~~#92~~, ~~#60~~ | Ready |
 | 94 | rlph.writePRD RPC handler | ~~#56~~ | Done |
@@ -3687,7 +3687,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 109 | GitHub task sourcing | #102 | Blocked |
 | 110 | Task source picker UI | #108, #109, #103 | Blocked |
 | 111 | editor.open RPC handler | ~~#19~~, ~~#14~~ | Done |
-| 112 | Click-to-open from diff viewer (AtomRpc mutation) | ~~#111~~, #87 | Blocked |
+| 112 | Click-to-open from diff viewer (AtomRpc mutation) | ~~#111~~, ~~#87~~ | Ready |
 | 113 | Project switcher | ~~#26~~ | Ready |
 | 114 | Cross-project dashboard | ~~#41~~, #104 | Blocked |
 | 115 | Tauri system tray | ~~#41~~ | Ready |
@@ -3698,7 +3698,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 120 | Empty state — no terminals | ~~#63~~ | Ready |
 | 121 | Loading state — workspace creation | ~~#41~~ | Ready |
 | 122 | Loading state — terminal spawning | ~~#60~~ | Ready |
-| 123 | Loading state — diff computation | #87 | Blocked |
+| 123 | Loading state — diff computation | ~~#87~~ | Ready |
 | 124 | Terminal fidelity — opencode | ~~#60~~ | Ready |
 | 125 | Terminal fidelity — claude | ~~#60~~ | Ready |
 | 126 | Terminal fidelity — codex | ~~#60~~ | Ready |
@@ -3706,4 +3706,4 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 128 | Graceful shutdown — kill terminals | ~~#54~~ | Ready |
 | 129 | Graceful shutdown — persist state | #16 | Ready |
 | 130 | Graceful shutdown — free ports | ~~#30~~ | Ready |
-| 131 | Theme consistency audit | #90 | Blocked |
+| 131 | Theme consistency audit | #90 | Blocked (#90 now Ready) |

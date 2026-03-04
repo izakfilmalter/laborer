@@ -28,6 +28,17 @@ export const workspaces = State.SQLite.table({
 	},
 });
 
+export const terminals = State.SQLite.table({
+	name: "terminals",
+	columns: {
+		id: State.SQLite.text({ primaryKey: true }),
+		workspaceId: State.SQLite.text(),
+		command: State.SQLite.text(),
+		status: State.SQLite.text({ default: "running" }),
+		ptySessionRef: State.SQLite.text({ nullable: true }),
+	},
+});
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -78,12 +89,50 @@ export const workspaceDestroyed = Events.synced({
 	}),
 });
 
+export const terminalSpawned = Events.synced({
+	name: "v1.TerminalSpawned",
+	schema: Schema.Struct({
+		id: Schema.String,
+		workspaceId: Schema.String,
+		command: Schema.String,
+		status: Schema.String,
+		ptySessionRef: Schema.NullOr(Schema.String),
+	}),
+});
+
+export const terminalOutput = Events.synced({
+	name: "v1.TerminalOutput",
+	schema: Schema.Struct({
+		id: Schema.String,
+		data: Schema.String,
+	}),
+});
+
+export const terminalStatusChanged = Events.synced({
+	name: "v1.TerminalStatusChanged",
+	schema: Schema.Struct({
+		id: Schema.String,
+		status: Schema.String,
+	}),
+});
+
+export const terminalKilled = Events.synced({
+	name: "v1.TerminalKilled",
+	schema: Schema.Struct({
+		id: Schema.String,
+	}),
+});
+
 export const events = {
 	projectCreated,
 	projectRemoved,
 	workspaceCreated,
 	workspaceStatusChanged,
 	workspaceDestroyed,
+	terminalSpawned,
+	terminalOutput,
+	terminalStatusChanged,
+	terminalKilled,
 };
 
 // ---------------------------------------------------------------------------
@@ -117,13 +166,19 @@ const materializers = State.SQLite.materializers(events, {
 	"v1.WorkspaceStatusChanged": ({ id, status }) =>
 		workspaces.update({ status }).where({ id }),
 	"v1.WorkspaceDestroyed": ({ id }) => workspaces.delete().where({ id }),
+	"v1.TerminalSpawned": ({ id, workspaceId, command, status, ptySessionRef }) =>
+		terminals.insert({ id, workspaceId, command, status, ptySessionRef }),
+	"v1.TerminalOutput": () => [],
+	"v1.TerminalStatusChanged": ({ id, status }) =>
+		terminals.update({ status }).where({ id }),
+	"v1.TerminalKilled": ({ id }) => terminals.delete().where({ id }),
 });
 
 // ---------------------------------------------------------------------------
 // Tables export
 // ---------------------------------------------------------------------------
 
-export const tables = { projects, workspaces };
+export const tables = { projects, workspaces, terminals };
 
 // ---------------------------------------------------------------------------
 // State & Schema

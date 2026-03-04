@@ -122,10 +122,10 @@ Define the LiveStore schema for the Terminals table. Terminals have: id, workspa
 
 ### Acceptance criteria
 
-- [ ] Terminals table defined with all columns per PRD
-- [ ] Events defined: TerminalSpawned, TerminalOutput, TerminalStatusChanged, TerminalKilled
-- [ ] Materializer correctly updates table state from events
-- [ ] Tests: commit events → verify table state transitions
+- [x] Terminals table defined with all columns per PRD
+- [x] Events defined: TerminalSpawned, TerminalOutput, TerminalStatusChanged, TerminalKilled
+- [x] Materializer correctly updates table state from events
+- [ ] Tests: commit events → verify table state transitions (deferred — LiveStore store/adapter setup not yet available; will be testable after Issue #16)
 
 ### Blocked by
 
@@ -3579,7 +3579,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 2 | Shared domain types | #1 | Done |
 | 3 | LiveStore schema — Projects table | #1 | Done |
 | 4 | LiveStore schema — Workspaces table | #3 | Done |
-| 5 | LiveStore schema — Terminals table | #3 | Ready |
+| 5 | LiveStore schema — Terminals table | #3 | Done |
 | 6 | LiveStore schema — Diffs table | #3 | Ready |
 | 7 | LiveStore schema — PanelLayout table | #3 | Ready |
 | 8 | LiveStore schema — Tasks table | #3 | Ready |

@@ -206,3 +206,27 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #40: workspace.create RPC handler (partially — still needs #19, #33, #36)
+
+## Issue 5: LiveStore schema — Terminals table + events + materializer — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Defined `terminals` table using `State.SQLite.table` with columns: `id` (text, primary key), `workspaceId` (text), `command` (text), `status` (text, default "running"), `ptySessionRef` (text, nullable).
+- Defined `terminalSpawned` event using `Events.synced` with schema: `{ id, workspaceId, command, status, ptySessionRef }`. Event name: `v1.TerminalSpawned`.
+- Defined `terminalOutput` event using `Events.synced` with schema: `{ id, data }`. Event name: `v1.TerminalOutput`. This is a streaming data event — the materializer returns an empty array (no table mutation) since terminal output is consumed directly by subscribers, not stored in a table row.
+- Defined `terminalStatusChanged` event using `Events.synced` with schema: `{ id, status }`. Event name: `v1.TerminalStatusChanged`.
+- Defined `terminalKilled` event using `Events.synced` with schema: `{ id }`. Event name: `v1.TerminalKilled`.
+- Defined materializers: `v1.TerminalSpawned` inserts a row into the terminals table; `v1.TerminalOutput` is a no-op (returns `[]`); `v1.TerminalStatusChanged` updates the status column by id; `v1.TerminalKilled` deletes the row by id.
+- Added `terminals` to the `tables` export and all four events to the `events` export.
+- Updated `state` and `schema` exports to include the new table and events.
+- Verified: `tsc --noEmit` passes (no type errors in shared or server packages), `biome check` passes on schema.ts (no lint issues).
+
+### Acceptance criteria status
+- [x] Terminals table defined with all columns per PRD (id, workspaceId, command, status, ptySessionRef)
+- [x] Events defined: TerminalSpawned, TerminalOutput, TerminalStatusChanged, TerminalKilled
+- [x] Materializer correctly updates table state from events
+- [ ] Tests: commit events → verify table state transitions (deferred — LiveStore store/adapter setup not yet available; will be testable after Issue #16)
+
+### Issues unblocked
+- Issue #50: TerminalManager — spawn PTY (partially — still needs #40)

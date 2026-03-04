@@ -1182,3 +1182,28 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #28 (the summary table already reflects this).
+
+## Issue 92: rlph.startLoop RPC handler — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Replaced the `rlph.startLoop` stub in `packages/server/src/rpc/handlers.ts` with a real handler that delegates to `TerminalManager.spawn(workspaceId, "rlph --once")`.
+- The handler accepts a `workspaceId` payload, spawns a PTY terminal running `rlph --once` in the workspace's worktree directory, and returns the terminal record (id, workspaceId, command, status).
+- This is a convenience wrapper around the existing `terminal.spawn` infrastructure — `TerminalManager.spawn` handles workspace validation, env var injection (PORT, LABORER_*), PTY spawning via node-pty, stdout streaming to LiveStore, and lifecycle management.
+- The `rlph --once` command starts a single ralph loop iteration — it fetches a task, runs an agent, and submits a PR. The user sees the rlph TUI output in real-time via xterm.js (once Issue #60 is implemented on the client).
+- Updated the handler doc comment to list `rlph.startLoop` as implemented.
+- Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin informational messages), `ultracite check` passes with only pre-existing web app lint issues (no new issues).
+
+### Acceptance criteria status
+- [x] `rlph.startLoop` handler accepts workspaceId and options (workspaceId accepted; no additional options needed for v1)
+- [x] Spawns terminal with `rlph --once` command (via TerminalManager.spawn)
+- [x] Returns terminal ID (along with workspaceId, command, status in TerminalResponse)
+- [ ] Tests: RPC call → terminal spawned running `rlph --once` (deferred — vitest not yet configured)
+
+### Design decisions
+- Used the existing `TerminalManager.spawn` method rather than duplicating PTY logic. The rlph RPC handlers are thin wrappers that compose the correct command string and delegate to the terminal infrastructure. This keeps the code DRY and ensures all terminals (agent, rlph, shell) share the same lifecycle management.
+- The command `rlph --once` is the standard single-iteration ralph loop command per the PRD's "rlph Integration" section. The `--once` flag ensures the loop runs exactly one task and exits, which is appropriate for a button-triggered action.
+
+### Issues unblocked
+- Issue #93: "Start Ralph Loop" button UI (was blocked by #92 and #60 — #92 now done, still needs #60 for xterm.js rendering)

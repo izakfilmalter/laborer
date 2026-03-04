@@ -118,3 +118,40 @@ Date: 2026-03-04
 - Issue #12: Health check RPC endpoint
 - Issue #15: Server consumes env validation
 - Issue #16: LiveStore server adapter setup
+
+## Issue 9: Effect RPC contract types — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Added `@effect/rpc` ^0.73.2 as a dependency to `packages/shared/package.json`.
+- Defined `RpcError` tagged error class using `Schema.TaggedError` as the shared error type for all RPC methods.
+- Defined shared response schemas: `HealthCheckResponse`, `ProjectResponse`, `WorkspaceResponse`, `TerminalResponse`, `DiffResponse`.
+- Defined all 15 RPC methods in a single `LaborerRpcs` group using `RpcGroup.make` with dot-prefixed tags for automatic client-side namespace nesting:
+  - `health.check` — returns server status and uptime
+  - `project.add` — accepts repoPath, returns ProjectResponse
+  - `project.remove` — accepts projectId
+  - `workspace.create` — accepts projectId + optional branchName/taskId, returns WorkspaceResponse
+  - `workspace.destroy` — accepts workspaceId
+  - `terminal.spawn` — accepts workspaceId + optional command, returns TerminalResponse
+  - `terminal.write` — accepts terminalId + data
+  - `terminal.resize` — accepts terminalId + cols/rows
+  - `terminal.kill` — accepts terminalId
+  - `diff.refresh` — accepts workspaceId, returns DiffResponse
+  - `editor.open` — accepts workspaceId + optional filePath
+  - `rlph.startLoop` — accepts workspaceId, returns TerminalResponse
+  - `rlph.writePRD` — accepts workspaceId + optional description, returns TerminalResponse
+  - `rlph.review` — accepts workspaceId + prNumber, returns TerminalResponse
+  - `rlph.fix` — accepts workspaceId + prNumber, returns TerminalResponse
+- Used `Rpc.make` with dot-prefixed tags (e.g., `"workspace.create"`) which enables automatic client-side nesting (`client.workspace.create(...)`) via Effect RPC's built-in prefix splitting.
+- All RPC methods that can fail include `error: RpcError` for consistent error handling.
+- Verified: `tsc --noEmit` passes (no type errors), `biome check` passes on rpc.ts (no lint issues).
+
+### Acceptance criteria status
+- [x] All RPC request/response schemas defined using Effect Schema
+- [x] Schemas are exported from `packages/shared` (via `@laborer/shared/rpc`)
+- [x] Type compilation succeeds
+- [ ] Schema validation tests: valid inputs pass, invalid inputs fail with correct errors (deferred — will be testable when server implementation begins in Issue #12)
+
+### Issues unblocked
+- Issue #12: Health check RPC endpoint (was blocked by #9 and #11, now both done)

@@ -103,6 +103,7 @@
       "name": "@laborer/shared",
       "version": "0.0.0",
       "dependencies": {
+        "@effect/rpc": "^0.73.2",
         "@livestore/livestore": "^0.3.1",
         "effect": "catalog:",
       },

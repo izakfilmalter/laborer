@@ -3548,10 +3548,10 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 6 | LiveStore schema — Diffs table | #3 | Ready |
 | 7 | LiveStore schema — PanelLayout table | #3 | Ready |
 | 8 | LiveStore schema — Tasks table | #3 | Ready |
-| 9 | Effect RPC contract types | #2 | Ready |
+| 9 | Effect RPC contract types | #2 | Done |
 | 10 | Initialize `packages/server` package | #1 | Done |
 | 11 | Effect TS application bootstrap | #10 | Done |
-| 12 | Health check RPC endpoint | #9, #11 | Blocked (#9) |
+| 12 | Health check RPC endpoint | #9, #11 | Ready |
 | 13 | Web env validation | None | Ready |
 | 14 | Server env validation | #10 | Ready |
 | 15 | Server consumes env validation | #14, #11 | Blocked (#14) |
@@ -3559,7 +3559,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 17 | LiveStore client adapter setup | #3 | Ready |
 | 18 | LiveStore server-to-client sync | #16, #17 | Blocked |
 | 19 | Effect RPC server router setup | #12 | Blocked |
-| 20 | Effect RPC client setup | #19, #9 | Blocked |
+| 20 | Effect RPC client setup | #19, #9 | Blocked (#19) |
 | 21 | ProjectRegistry — addProject | #16, #3 | Blocked |
 | 22 | ProjectRegistry — removeProject | #21 | Blocked |
 | 23 | ProjectRegistry — listProjects + getProject | #21 | Blocked |

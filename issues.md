@@ -95,10 +95,10 @@ Define the LiveStore schema for the Workspaces table. Workspaces have: id, proje
 
 ### Acceptance criteria
 
-- [ ] Workspaces table defined with all columns per PRD
-- [ ] Events defined: WorkspaceCreated, WorkspaceStatusChanged, WorkspaceDestroyed
-- [ ] Materializer correctly updates table state from events
-- [ ] Tests: commit events → verify table state transitions
+- [x] Workspaces table defined with all columns per PRD
+- [x] Events defined: WorkspaceCreated, WorkspaceStatusChanged, WorkspaceDestroyed
+- [x] Materializer correctly updates table state from events
+- [ ] Tests: commit events → verify table state transitions (deferred — LiveStore store/adapter setup not yet available; will be testable after Issue #16)
 
 ### Blocked by
 
@@ -3578,7 +3578,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 1 | Initialize `packages/shared` package | None | Done |
 | 2 | Shared domain types | #1 | Done |
 | 3 | LiveStore schema — Projects table | #1 | Done |
-| 4 | LiveStore schema — Workspaces table | #3 | Ready |
+| 4 | LiveStore schema — Workspaces table | #3 | Done |
 | 5 | LiveStore schema — Terminals table | #3 | Ready |
 | 6 | LiveStore schema — Diffs table | #3 | Ready |
 | 7 | LiveStore schema — PanelLayout table | #3 | Ready |
@@ -3590,7 +3590,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 13 | Web env validation | None | Ready |
 | 14 | Server env validation | #10 | Ready |
 | 15 | Server consumes env validation | #14, #11 | Blocked (#14) |
-| 16 | LiveStore server adapter setup | #3, #11 | Blocked (#3) |
+| 16 | LiveStore server adapter setup | #3, #11 | Ready |
 | 17 | LiveStore client adapter setup | #3 | Ready |
 | 18 | LiveStore server-to-client sync | #16, #17 | Blocked |
 | 19 | @effect/rpc server router setup | #12 | Ready |

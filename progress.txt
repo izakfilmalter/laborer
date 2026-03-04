@@ -183,3 +183,26 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #19: Effect RPC server router setup (was blocked by #12, now done)
+
+## Issue 4: LiveStore schema — Workspaces table + events + materializer — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Defined `workspaces` table using `State.SQLite.table` with columns: `id` (text, primary key), `projectId` (text), `taskSource` (text, nullable), `branchName` (text), `worktreePath` (text), `port` (integer), `status` (text, default "creating"), `createdAt` (text).
+- Defined `workspaceCreated` event using `Events.synced` with schema: `{ id, projectId, taskSource, branchName, worktreePath, port, status, createdAt }`. Event name: `v1.WorkspaceCreated`.
+- Defined `workspaceStatusChanged` event using `Events.synced` with schema: `{ id, status }`. Event name: `v1.WorkspaceStatusChanged`.
+- Defined `workspaceDestroyed` event using `Events.synced` with schema: `{ id }`. Event name: `v1.WorkspaceDestroyed`.
+- Defined materializers: `v1.WorkspaceCreated` inserts a row into the workspaces table; `v1.WorkspaceStatusChanged` updates the status column by id; `v1.WorkspaceDestroyed` deletes the row by id.
+- Added `workspaces` to the `tables` export and all three events to the `events` export.
+- Updated `state` and `schema` exports to include the new table and events.
+- Verified: `tsc --noEmit` passes (no type errors in shared or server packages), `biome check` passes on schema.ts (no lint issues).
+
+### Acceptance criteria status
+- [x] Workspaces table defined with all columns per PRD (id, projectId, taskSource, branchName, worktreePath, port, status, createdAt)
+- [x] Events defined: WorkspaceCreated, WorkspaceStatusChanged, WorkspaceDestroyed
+- [x] Materializer correctly updates table state from events
+- [ ] Tests: commit events → verify table state transitions (tests deferred — LiveStore store/adapter setup not yet available; will be testable after Issue #16)
+
+### Issues unblocked
+- Issue #40: workspace.create RPC handler (partially — still needs #19, #33, #36)

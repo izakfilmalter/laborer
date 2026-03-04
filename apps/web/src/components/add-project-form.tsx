@@ -32,25 +32,7 @@ import {
 	FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-
-/**
- * Extract a human-readable error message from an unknown error.
- * Handles Error instances and plain objects with a `message` property.
- */
-function extractErrorMessage(error: unknown): string {
-	if (error instanceof Error) {
-		return error.message;
-	}
-	if (
-		typeof error === "object" &&
-		error !== null &&
-		"message" in error &&
-		typeof (error as Record<string, unknown>).message === "string"
-	) {
-		return String((error as Record<string, unknown>).message);
-	}
-	return "Failed to add project";
-}
+import { extractErrorMessage } from "@/lib/utils";
 
 const addProjectMutation = LaborerClient.mutation("project.add");
 

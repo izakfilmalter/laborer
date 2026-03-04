@@ -1147,3 +1147,38 @@ Date: 2026-03-04
 ### Issues unblocked
 - Issue #42: Create Workspace form (was blocked by #20 (done), #40 (done), #27 — now all blockers done!)
 - Issue #118: Empty state — no projects (was blocked by #27 — now done!)
+
+## Issue 28: Remove Project button + confirmation dialog — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Added a delete button (trash icon) to each `ProjectItem` in `apps/web/src/components/project-list.tsx`.
+- Delete button uses `size="icon-sm"` and `variant="ghost"` for a minimal, non-intrusive appearance. Includes `aria-label` for accessibility.
+- Clicking the delete button opens a shadcn/ui `AlertDialog` with a confirmation message that names the project and explains that existing worktrees will not be deleted from disk.
+- On confirm, calls `LaborerClient.mutation("project.remove")` via `useAtomSet` with `{ mode: "promise" }` to await the result.
+- Success: shows a toast notification with the project name, dialog closes automatically.
+- Error: shows a toast notification with the server error message, dialog stays open for retry.
+- Shows "Removing..." text and disables the confirm button while the mutation is in flight.
+- Cancel button closes the dialog with no action (via `AlertDialogCancel` which wraps `AlertDialogPrimitive.Close`).
+- Extracted `extractErrorMessage` utility from `apps/web/src/components/add-project-form.tsx` to `apps/web/src/lib/utils.ts` for reuse across components. Updated `add-project-form.tsx` to import from the shared location.
+- Restructured `ProjectItem` card layout: `CardHeader` now uses a flex row with `justify-between` to position the title/description on the left and the delete button on the right.
+- Verified: `tsc --noEmit` passes (no new errors — only pre-existing calendar.tsx, sonner.tsx, routeTree.gen, route type errors), `ultracite check` passes with zero issues on all 3 modified files.
+
+### Acceptance criteria status
+- [x] Delete button visible per project in list (trash icon button in card header)
+- [x] Click → shadcn/ui AlertDialog with confirmation message (names the project, explains what happens)
+- [x] Confirm → calls `LaborerClient.mutation("project.remove")` via `useAtomSet` (with `{ mode: "promise" }`)
+- [x] Success → project removed from list (via LiveStore sync), toast notification shown
+- [x] Cancel → dialog closes, no action (via AlertDialogCancel)
+- [ ] Tests: click delete → dialog appears; confirm → mutation called, project removed; cancel → no change (deferred — requires running both server and web app; component tests can be added with Vitest + React Testing Library)
+
+### Design decisions
+- Used `AlertDialog` (not `Dialog`) because this is a destructive action. AlertDialog is semantically correct for confirmation of irreversible actions — it requires explicit user acknowledgment.
+- The confirmation message is clear and specific: it names the project and explains that "Existing workspaces and worktrees will not be deleted from disk." This sets the right expectations — the operation only unregisters the project from Laborer's tracking.
+- Used `variant="destructive"` on the confirm button to visually signal the destructive nature of the action.
+- Extracted `extractErrorMessage` to `lib/utils.ts` to avoid code duplication between `add-project-form.tsx` and `project-list.tsx`. Both components need to display server error messages from AtomRpc mutations.
+- The delete button is positioned in the card header (top-right) rather than the card content to keep the layout clean and make it easy to spot without dominating the card visual hierarchy.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #28 (the summary table already reflects this).

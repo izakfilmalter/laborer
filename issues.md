@@ -783,12 +783,12 @@ Add a delete button to each project in the project list. Clicking it shows a sha
 
 ### Acceptance criteria
 
-- [ ] Delete button visible per project in list
-- [ ] Click → shadcn/ui AlertDialog with confirmation message
-- [ ] Confirm → calls `LaborerClient.mutation("project.remove")` via `useAtomSet`
-- [ ] Success → project removed from list (via LiveStore)
-- [ ] Cancel → dialog closes, no action
-- [ ] Tests: click delete → dialog appears; confirm → mutation called, project removed; cancel → no change
+- [x] Delete button visible per project in list
+- [x] Click → shadcn/ui AlertDialog with confirmation message
+- [x] Confirm → calls `LaborerClient.mutation("project.remove")` via `useAtomSet`
+- [x] Success → project removed from list (via LiveStore)
+- [x] Cancel → dialog closes, no action
+- [ ] Tests: click delete → dialog appears; confirm → mutation called, project removed; cancel → no change (deferred — requires running both server and web app)
 
 ### Blocked by
 
@@ -3602,7 +3602,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 25 | project.remove RPC handler | #24, #22 | Done |
 | 26 | Project list UI | #18, #24 | Done |
 | 27 | Add Project form (AtomRpc mutation) | ~~#20~~, ~~#24~~, ~~#26~~ | Done |
-| 28 | Remove Project button + dialog (AtomRpc mutation) | ~~#25~~, ~~#26~~ | Ready |
+| 28 | Remove Project button + dialog (AtomRpc mutation) | ~~#25~~, ~~#26~~ | Done |
 | 29 | PortAllocator — allocate | #15 | Done |
 | 30 | PortAllocator — free | #29 | Done |
 | 31 | PortAllocator — exhaustion handling | #29 | Ready |

@@ -6,15 +6,31 @@
  * badges: creating=yellow, running=green, stopped=gray, errored=red,
  * destroyed=dim.
  * Updates reactively when workspace state changes.
+ * Includes a destroy button with confirmation dialog per workspace.
  *
  * @see Issue #41: Workspace list UI component
+ * @see Issue #48: Destroy Workspace button + confirmation dialog
  */
 
+import { useAtomSet } from "@effect-atom/atom-react/Hooks";
 import { projects, workspaces } from "@laborer/shared/schema";
 import { queryDb } from "@livestore/livestore";
-import { ChevronDown, GitBranch, Layers } from "lucide-react";
+import { ChevronDown, GitBranch, Layers, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
+import { LaborerClient } from "@/atoms/laborer-client";
 import { TerminalList } from "@/components/terminal-list";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+	AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,11 +52,13 @@ import {
 	EmptyMedia,
 	EmptyTitle,
 } from "@/components/ui/empty";
-import { cn } from "@/lib/utils";
+import { cn, extractErrorMessage } from "@/lib/utils";
 import { useLaborerStore } from "@/livestore/store";
 
 const allWorkspaces$ = queryDb(workspaces, { label: "workspaceList" });
 const allProjects$ = queryDb(projects, { label: "workspaceListProjects" });
+
+const destroyWorkspaceMutation = LaborerClient.mutation("workspace.destroy");
 
 type WorkspaceStatus =
 	| "creating"
@@ -109,8 +127,30 @@ interface WorkspaceItemProps {
 
 function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 	const [isOpen, setIsOpen] = useState(false);
+	const [dialogOpen, setDialogOpen] = useState(false);
+	const [isDestroying, setIsDestroying] = useState(false);
+	const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
+		mode: "promise",
+	});
 	const isActive =
 		workspace.status === "running" || workspace.status === "creating";
+
+	const handleDestroy = async () => {
+		setIsDestroying(true);
+		try {
+			await destroyWorkspace({
+				payload: { workspaceId: workspace.id },
+			});
+			toast.success(
+				`Workspace "${workspace.branchName}" destroyed successfully`
+			);
+			setDialogOpen(false);
+		} catch (error: unknown) {
+			const message = extractErrorMessage(error);
+			toast.error(message);
+			setIsDestroying(false);
+		}
+	};
 
 	return (
 		<Card size="sm">
@@ -155,6 +195,44 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 									/>
 								</CollapsibleTrigger>
 							)}
+							<AlertDialog onOpenChange={setDialogOpen} open={dialogOpen}>
+								<AlertDialogTrigger
+									render={
+										<Button
+											aria-label={`Destroy workspace ${workspace.branchName}`}
+											size="icon-xs"
+											variant="ghost"
+										/>
+									}
+								>
+									<Trash2 className="size-3.5 text-muted-foreground" />
+								</AlertDialogTrigger>
+								<AlertDialogContent>
+									<AlertDialogHeader>
+										<AlertDialogTitle>Destroy workspace?</AlertDialogTitle>
+										<AlertDialogDescription>
+											This will permanently destroy workspace{" "}
+											<strong className="font-mono text-foreground">
+												{workspace.branchName}
+											</strong>
+											. All running processes (terminals, dev servers, agents)
+											will be killed, the git worktree will be removed, and the
+											allocated port will be freed. This action cannot be
+											undone.
+										</AlertDialogDescription>
+									</AlertDialogHeader>
+									<AlertDialogFooter>
+										<AlertDialogCancel>Cancel</AlertDialogCancel>
+										<AlertDialogAction
+											disabled={isDestroying}
+											onClick={handleDestroy}
+											variant="destructive"
+										>
+											{isDestroying ? "Destroying..." : "Destroy"}
+										</AlertDialogAction>
+									</AlertDialogFooter>
+								</AlertDialogContent>
+							</AlertDialog>
 						</div>
 					</div>
 				</CardHeader>

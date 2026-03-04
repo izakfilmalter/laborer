@@ -1984,3 +1984,94 @@ Date: 2026-03-04
   - Issue #87: Diff viewer pane (fewer unnecessary re-renders)
   - Issue #89: Diff viewer live update (only updates on actual changes)
   - Issue #91: Diff viewer debounce/throttle (less pressure on the debounce mechanism)
+
+## Issue 45: WorkspaceProvider — free port on destroy — COMPLETED (already implemented)
+
+Date: 2026-03-04
+
+### What was done
+- This issue was already fully implemented as part of Issue #43 (WorkspaceProvider — destroy worktree). The `destroyWorktree` method in `packages/server/src/services/workspace-provider.ts` calls `portAllocator.free(workspace.port)` as step 6 of the cleanup pipeline. Errors are caught and logged as warnings but do not abort cleanup.
+
+### Acceptance criteria status
+- [x] Port freed on workspace destruction (via `PortAllocator.free()` in `destroyWorktree`)
+- [x] Freed port available for new workspace allocation (removed from allocated set)
+- [ ] Tests: create workspace → destroy → port reallocatable (deferred — vitest not yet configured)
+
+## Issue 46: WorkspaceProvider — remove file watchers on destroy — COMPLETED (N/A)
+
+Date: 2026-03-04
+
+### What was done
+- The DiffService uses polling (`git diff` on a 2-second interval via `Effect.repeat(Schedule.spaced(...))`) rather than OS file watchers. There are no file watchers to clean up. Diff polling fibers are managed separately by `DiffService.stopPolling(workspaceId)` and will be integrated into the workspace destroy lifecycle in Issue #85.
+- No code changes required — this issue is N/A for the current architecture.
+
+### Acceptance criteria status
+- [x] File watchers for workspace stopped on destroy (N/A — no file watchers in v1; DiffService uses polling)
+- [x] OS file handle count doesn't grow across create/destroy cycles (N/A — polling fibers don't hold file handles)
+
+## Issue 47: workspace.destroy RPC handler — COMPLETED (already implemented)
+
+Date: 2026-03-04
+
+### What was done
+- This issue was already fully implemented across Issues #43 and #44. The `workspace.destroy` handler in `packages/server/src/rpc/handlers.ts` orchestrates two steps:
+  1. `TerminalManager.killAllForWorkspace(workspaceId)` — kills all PTY processes (Issue #44)
+  2. `WorkspaceProvider.destroyWorktree(workspaceId)` — removes worktree, deletes branch, frees port, updates LiveStore (Issue #43)
+- All blockers (#19, #43, #44, #45, #46) are now resolved.
+
+### Acceptance criteria status
+- [x] `workspace.destroy` handler accepts workspaceId
+- [x] Kills processes (via TerminalManager.killAllForWorkspace)
+- [x] Removes worktree (via git worktree remove --force)
+- [x] Frees port (via PortAllocator.free)
+- [x] Commits WorkspaceDestroyed event to LiveStore (status = "destroyed")
+- [ ] Tests: RPC call → all resources cleaned up, LiveStore status = "destroyed" (deferred — vitest not yet configured)
+
+### Issues unblocked
+- Issue #48: Destroy Workspace button + dialog (was blocked by #47 and #41 — now all blockers done!)
+- Issue #85: DiffService — start/stop on workspace lifecycle (was blocked by #83 (done) and #47 — now all blockers done!)
+- Issue #106: Task-driven workspace auto-cleanup (was blocked by #105 and #47 — #47 now done)
+
+## Issue 48: Destroy Workspace button + confirmation dialog — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Added a destroy button (trash icon) to each `WorkspaceItem` in `apps/web/src/components/workspace-list.tsx`.
+- Destroy button uses `size="icon-xs"` and `variant="ghost"` for a minimal, non-intrusive appearance. Includes `aria-label` for accessibility ("Destroy workspace <branchName>").
+- Clicking the destroy button opens a shadcn/ui `AlertDialog` with a detailed confirmation message that:
+  - Names the workspace by branch name (in monospace font)
+  - Warns that all running processes (terminals, dev servers, agents) will be killed
+  - Warns that the git worktree will be removed
+  - Warns that the allocated port will be freed
+  - States the action cannot be undone
+- On confirm, calls `LaborerClient.mutation("workspace.destroy")` via `useAtomSet` with `{ mode: "promise" }` to await the result.
+- Success: shows a toast notification with the branch name, dialog closes automatically.
+- Error: shows a toast notification with the server error message, dialog stays open for retry. The "Destroying..." loading state resets so the user can try again.
+- Shows "Destroying..." text and disables the confirm button while the mutation is in flight.
+- Cancel button closes the dialog with no action (via `AlertDialogCancel`).
+- Used `variant="destructive"` on the confirm button to visually signal the destructive nature.
+- Added module-level `destroyWorkspaceMutation` atom via `LaborerClient.mutation("workspace.destroy")` — shared across all WorkspaceItem instances.
+- Added imports: `useAtomSet`, `LaborerClient`, `AlertDialog*`, `Trash2`, `toast`, `extractErrorMessage`.
+- Follows the exact same pattern as the "Remove Project" button in `project-list.tsx` (Issue #28).
+- Verified: `tsc --noEmit` passes (no new errors — only pre-existing calendar.tsx, sonner.tsx errors), `biome check` passes with zero issues on workspace-list.tsx.
+
+### Acceptance criteria status
+- [x] Destroy button visible per workspace (trash icon button in card header actions area)
+- [x] Click → AlertDialog with warning message (detailed: names workspace, lists consequences)
+- [x] Confirm → calls `LaborerClient.mutation("workspace.destroy")` via `useAtomSet` (with `{ mode: "promise" }`)
+- [x] Success → workspace status updates in list (destroyed, via LiveStore sync), toast notification shown
+- [x] Cancel → dialog closes, no action (via AlertDialogCancel)
+- [ ] Tests: click delete → dialog appears; confirm → mutation called, project removed; cancel → no change (deferred — requires running both server and web app; component tests can be added with Vitest + React Testing Library)
+
+### Design decisions
+- Used `AlertDialog` (not `Dialog`) because this is a destructive action that requires explicit confirmation.
+- The confirmation message is comprehensive — it lists all three consequences (process kill, worktree removal, port freeing) so the user understands the full impact before confirming.
+- Used `variant="destructive"` on the confirm button, consistent with the project remove button pattern.
+- Positioned the destroy button in the card header's action row alongside the status badge and collapsible trigger. This keeps workspace management actions grouped together.
+- The destroy button is always visible (not just for active workspaces), so users can clean up stopped/errored workspaces too.
+- Reused the `extractErrorMessage` utility from `@/lib/utils` for consistent error message extraction across components.
+- Used the module-level atom pattern (consistent with all other AtomRpc mutations in the codebase) for efficient deduplication across component instances.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #48.

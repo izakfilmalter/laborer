@@ -12,9 +12,9 @@
  * - All services compose via Effect Layers
  * - HttpRouter.Default.serve() creates the HTTP handler from the Default router tag
  * - RpcServer.layerProtocolHttp mounts RPC at /rpc on the Default router
+ * - Environment variables validated at import time via @laborer/env/server
  *
  * Future issues will add:
- * - Environment validation (Issue #15)
  * - LiveStore server adapter (Issue #16)
  * - Full RPC router with real service implementations (Issue #19+)
  */
@@ -27,6 +27,7 @@ import {
 } from "@effect/platform";
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
 import { RpcSerialization, RpcServer } from "@effect/rpc";
+import { env } from "@laborer/env/server";
 import { LaborerRpcs } from "@laborer/shared/rpc";
 import { Effect, Layer } from "effect";
 import { LaborerRpcsLive } from "./rpc/handlers.js";
@@ -65,10 +66,11 @@ const RpcLive = RpcServer.layer(LaborerRpcs).pipe(
  * Server Layer
  *
  * Provides the Bun HTTP server on the configured port.
- * Port will be sourced from env validation in Issue #15.
+ * Port is sourced from env validation (@laborer/env/server).
+ * If the PORT env var is invalid, the server fails to start
+ * at import time with a descriptive error.
  */
-const PORT = 3000;
-const ServerLive = BunHttpServer.layer({ port: PORT });
+const ServerLive = BunHttpServer.layer({ port: env.PORT });
 
 /**
  * Application Layer

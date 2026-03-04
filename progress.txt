@@ -343,3 +343,24 @@ Date: 2026-03-04
 ### Issues unblocked
 - Issue #15: Server consumes env validation (was blocked by #14 and #11, now both done)
 - Issue #111: editor.open RPC handler (was blocked by #19 and #14, now both done)
+
+## Issue 15: Server consumes env validation — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Added `@laborer/env` as a workspace dependency in `packages/server/package.json`.
+- Imported `env` from `@laborer/env/server` in `packages/server/src/main.ts`.
+- Replaced the hardcoded `const PORT = 3000` with `env.PORT` from the validated environment.
+- The env validation runs at import time — if any env var is invalid, the server fails to start immediately with a descriptive error message (e.g., `"Invalid input: expected number, received NaN"` for `PORT=invalid`).
+- Updated comments to reflect that env validation is now wired in.
+- Verified: server starts on default port 3000 with no env vars set, server starts on custom port when `PORT=3456` is set, server fails fast with descriptive error when `PORT=invalid` is set, `tsc --noEmit` passes, `biome check` passes on changed files.
+
+### Acceptance criteria status
+- [x] Server imports env from `packages/env/server`
+- [x] Invalid env → server fails to start with descriptive error
+- [x] Valid env → server starts normally
+- [x] Tests: invalid env → startup failure with message; valid env → startup succeeds (verified manually — `PORT=invalid` → error with message; `PORT=3456` → starts on port 3456; no env → defaults to port 3000)
+
+### Issues unblocked
+- Issue #29: PortAllocator — allocate (was blocked by #15, now done)

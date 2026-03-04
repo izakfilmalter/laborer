@@ -405,10 +405,10 @@ Wire the server env validation into `packages/server/src/main.ts`. Import and va
 
 ### Acceptance criteria
 
-- [ ] Server imports env from `packages/env/server`
-- [ ] Invalid env → server fails to start with descriptive error
-- [ ] Valid env → server starts normally
-- [ ] Tests: invalid env → startup failure with message; valid env → startup succeeds
+- [x] Server imports env from `packages/env/server`
+- [x] Invalid env → server fails to start with descriptive error
+- [x] Valid env → server starts normally
+- [x] Tests: invalid env → startup failure with message; valid env → startup succeeds (verified manually)
 
 ### Blocked by
 
@@ -3589,7 +3589,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 12 | Health check RPC endpoint | #9, #11 | Done |
 | 13 | Web env validation | None | Ready |
 | 14 | Server env validation | #10 | Done |
-| 15 | Server consumes env validation | #14, #11 | Ready |
+| 15 | Server consumes env validation | #14, #11 | Done |
 | 16 | LiveStore server adapter setup | #3, #11 | Ready |
 | 17 | LiveStore client adapter setup | #3 | Ready |
 | 18 | LiveStore server-to-client sync | #16, #17 | Blocked |
@@ -3603,7 +3603,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 26 | Project list UI | #18, #24 | Blocked |
 | 27 | Add Project form (AtomRpc mutation) | #20, #24, #26 | Blocked |
 | 28 | Remove Project button + dialog (AtomRpc mutation) | #25, #26 | Blocked |
-| 29 | PortAllocator — allocate | #15 | Blocked |
+| 29 | PortAllocator — allocate | #15 | Ready |
 | 30 | PortAllocator — free | #29 | Blocked |
 | 31 | PortAllocator — exhaustion handling | #29 | Blocked |
 | 32 | PortAllocator — concurrent safety | #29 | Blocked |

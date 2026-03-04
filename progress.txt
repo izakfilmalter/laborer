@@ -1391,3 +1391,27 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #80: Keyboard shortcut scope isolation (was blocked by #75 and #61 — #61 now done, still needs #75)
+
+## Fix: LiveStore WebSocket sync — split RPC protocol layers
+
+Date: 2026-03-04
+
+### What was done
+- Diagnosed why the LiveStore sync client couldn't connect to the server: the browser's `makeWsSync` client connects via WebSocket (GET upgrade request), but the server only registered a POST handler at `/rpc` via `RpcServer.layerProtocolHttp`.
+- Root cause: `RpcServer.layerProtocolHttp({ path: "/rpc" })` calls `router.post(path, httpApp)` internally — it only handles POST requests. WebSocket connections start with a GET request for the HTTP upgrade, so they received a 404 `RouteNotFound`.
+- Both `RpcLive` (business RPCs) and `SyncRpcLive` (LiveStore sync) shared a single `Protocol` layer. Since `Protocol` is a singleton `Context.Tag`, only one protocol can be provided per `RpcServer.layer` call.
+- Fix: gave each RPC group its own protocol layer:
+  - `RpcLive` (LaborerRpcs) → `RpcServer.layerProtocolHttp({ path: "/rpc" })` — registers POST `/rpc` for HTTP RPC (matches client's `RpcClient.layerProtocolHttp`)
+  - `SyncRpcLive` (SyncWsRpc) → `RpcServer.layerProtocolWebsocket({ path: "/rpc" })` — registers GET `/rpc` for WebSocket upgrade (matches client's `makeWsSync` which uses `RpcClient.layerProtocolSocketWithIsConnected`)
+- Both coexist on the same `/rpc` path because `HttpRouter.Default` dispatches by HTTP method (GET vs POST).
+- Removed the shared `RpcServer.layerProtocolHttp({ path: "/rpc" })` from the `HttpLive` composition since each group now bundles its own.
+
+### Files changed
+- `packages/server/src/main.ts` — moved `layerProtocolHttp` into `RpcLive`, removed shared protocol from `HttpLive`, updated comments
+- `packages/server/src/services/sync-backend.ts` — added `layerProtocolWebsocket` to `SyncRpcLive`
+
+### Verification
+- `tsc --noEmit` passes (no type errors)
+- POST `/rpc` returns RPC framework response (200, business RPCs work)
+- GET `/rpc` returns 400 Bad Request (WebSocket handler active, rejects non-upgrade GET)
+- GET `/rpc` with WebSocket upgrade headers returns 101 Switching Protocols (WebSocket connection established)

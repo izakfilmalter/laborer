@@ -554,9 +554,15 @@ const SyncBackendServiceLive = Layer.scoped(
  * The complete sync RPC server layer.
  *
  * Handles `SyncWsRpc.Pull` and `SyncWsRpc.Push` RPC methods over
- * WebSocket. Mount at `/sync` via `RpcServer.layerProtocolHttp`.
+ * WebSocket. Uses layerProtocolWebsocket to register a GET /rpc handler
+ * for WebSocket upgrade, matching the client's makeWsSync which connects
+ * via RpcClient.layerProtocolSocketWithIsConnected (WebSocket).
+ *
+ * The business RPCs (LaborerRpcs) use layerProtocolHttp on POST /rpc,
+ * so both coexist on the same /rpc path with different HTTP methods.
  */
 const SyncRpcLive = RpcServer.layer(SyncWsRpc).pipe(
+	Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" })),
 	Layer.provide(SyncRpcHandlersLive),
 	Layer.provide(SyncBackendServiceLive)
 );

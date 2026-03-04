@@ -11,7 +11,8 @@
  * - Layer.launch keeps the server running until interrupted
  * - All services compose via Effect Layers
  * - HttpRouter.Default.serve() creates the HTTP handler from the Default router tag
- * - RpcServer.layerProtocolHttp mounts RPC at /rpc on the Default router
+ * - LaborerRpcs uses layerProtocolHttp (POST /rpc) for HTTP RPC
+ * - SyncWsRpc uses layerProtocolWebsocket (GET /rpc) for WebSocket sync
  * - Environment variables validated at import time via @laborer/env/server
  *
  * Future issues will add:
@@ -58,11 +59,15 @@ const CustomRoutesLive = HttpRouter.Default.use((router) =>
 );
 
 /**
- * RPC Layer
+ * RPC Layer — Business RPCs over HTTP (POST /rpc)
  *
  * Creates the Effect RPC server from the LaborerRpcs group and wires
- * it to the handler implementations. RpcServer.layer creates a fiber
- * that processes incoming RPC requests and dispatches them to handlers.
+ * it to the handler implementations. Uses HTTP protocol (POST) which
+ * matches the client's RpcClient.layerProtocolHttp.
+ *
+ * Each RPC group gets its own Protocol layer because Protocol is a
+ * singleton Context.Tag — the HTTP protocol registers POST /rpc and
+ * the WebSocket protocol (for sync) registers GET /rpc on the same path.
  *
  * Services required by RPC handlers are provided here:
  * - ProjectRegistry (Issue #21)
@@ -72,6 +77,7 @@ const CustomRoutesLive = HttpRouter.Default.use((router) =>
  * - DiffService (Issue #82)
  */
 const RpcLive = RpcServer.layer(LaborerRpcs).pipe(
+	Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
 	Layer.provide(LaborerRpcsLive),
 	Layer.provide(DiffService.layer),
 	Layer.provide(TerminalManager.layer),
@@ -95,28 +101,26 @@ const ServerLive = BunHttpServer.layer({ port: env.PORT });
  *
  * Composes all service layers into a single application layer.
  * The HTTP server serves both the plain HTTP routes and the RPC
- * endpoint mounted at /rpc.
+ * endpoints mounted at /rpc.
  *
  * Layer composition:
  *   HttpRouter.Default.serve() — serves the Default router with logging middleware
  *   + CustomRoutesLive — adds GET / to the router
- *   + RpcLive — Laborer RPC request handling
- *   + SyncRpcLive — LiveStore sync RPC handler (Issue #18)
- *   + RpcServer.layerProtocolHttp — mounts both RPC groups on the Default router
+ *   + RpcLive — Laborer RPC handling (POST /rpc via layerProtocolHttp)
+ *   + SyncRpcLive — LiveStore sync RPC handler (GET /rpc via layerProtocolWebsocket)
  *   + RpcSerialization.layerJson — wire format for RPC messages (JSON for sync compat)
  *   + LaborerStoreLive — LiveStore with SQLite persistence (Issue #16)
  *   + ServerLive — Bun HTTP server
  *
- * Note: Both LaborerRpcs and SyncWsRpc share a single protocol layer at /rpc.
- * The sync client from @livestore/sync-cf/client connects via WebSocket to /rpc.
- * Effect RPC routes each request to the correct handler based on the RPC tag name.
+ * Each RPC group has its own Protocol layer: LaborerRpcs uses HTTP (POST)
+ * and SyncWsRpc uses WebSocket (GET). Both register on /rpc but with
+ * different HTTP methods, so they coexist on the Default router.
  */
 const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	HttpServer.withLogAddress,
 	Layer.provide(CustomRoutesLive),
 	Layer.provide(RpcLive),
 	Layer.provide(SyncRpcLive),
-	Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
 	Layer.provide(RpcSerialization.layerJson),
 	Layer.provide(LaborerStoreLive),
 	Layer.provide(ServerLive)

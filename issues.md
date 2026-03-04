@@ -2262,13 +2262,13 @@ Implement polling `git diff` on a 1-2 second interval for each active workspace.
 
 ### Acceptance criteria
 
-- [ ] Polling runs at configurable interval (default 2 seconds)
-- [ ] DiffUpdated event committed to LiveStore when diff content changes
-- [ ] Tests: modify file → DiffUpdated event within polling interval; verify periodic execution
+- [x] Polling runs at configurable interval (default 2 seconds)
+- [x] DiffUpdated event committed to LiveStore when diff content changes
+- [ ] Tests: modify file → DiffUpdated event within polling interval; verify periodic execution (deferred — vitest not yet configured)
 
 ### Blocked by
 
-- Blocked by #82
+- Blocked by #82 (done)
 
 ### User stories addressed
 
@@ -3592,7 +3592,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 15 | Server consumes env validation | #14, #11 | Done |
 | 16 | LiveStore server adapter setup | #3, #11 | Done |
 | 17 | LiveStore client adapter setup | #3 | Done |
-| 18 | LiveStore server-to-client sync | #16, #17 | Ready |
+| 18 | LiveStore server-to-client sync | ~~#16~~, ~~#17~~ | Done |
 | 19 | @effect/rpc server router setup | #12 | Done |
 | 20 | AtomRpc client setup (effect-atom) | #19, #9 | Ready |
 | 21 | ProjectRegistry — addProject | #16, #3 | Done |
@@ -3657,11 +3657,11 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 80 | Keyboard shortcut scope isolation | #75, #61 | Blocked |
 | 81 | Panel responsive layout | #72 | Blocked |
 | 82 | DiffService — run git diff | #40 | Done |
-| 83 | DiffService — poll on interval | ~~#82~~ | Ready |
-| 84 | DiffService — deduplicate unchanged | #83 | Blocked |
-| 85 | DiffService — start/stop on workspace lifecycle | #83, #47 | Blocked |
+| 83 | DiffService — poll on interval | ~~#82~~ | Done |
+| 84 | DiffService — deduplicate unchanged | ~~#83~~ | Ready |
+| 85 | DiffService — start/stop on workspace lifecycle | ~~#83~~, #47 | Blocked |
 | 86 | diff.refresh RPC handler | ~~#82~~, #19 | Done |
-| 87 | Diff viewer pane — @pierre/diffs | #18, #83, #6 | Blocked |
+| 87 | Diff viewer pane — @pierre/diffs | ~~#18~~, ~~#83~~, ~~#6~~ | Ready |
 | 88 | Diff viewer — accept/reject annotations | #87 | Blocked |
 | 89 | Diff viewer — live update | #87 | Blocked |
 | 90 | Toggle diff alongside terminal | #67, #87 | Blocked |

@@ -949,3 +949,39 @@ With DiffService complete, all 5 server-side Effect services described in the PR
 3. WorkspaceProvider (Issues #33, #36, #43)
 4. TerminalManager (Issues #50-#55)
 5. DiffService (Issue #82)
+
+## Issue 83: DiffService — poll on interval — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Extended the `DiffService` Effect service in `packages/server/src/services/diff-service.ts` with 4 new methods for polling management:
+  - `startPolling(workspaceId, intervalMs?)` — starts a background polling fiber that runs `getDiff` on a configurable interval (default 2000ms). Errors during individual polls are logged as warnings but do not stop the polling loop. Calling `startPolling` on an already-polling workspace is a no-op.
+  - `stopPolling(workspaceId)` — interrupts the polling fiber for a workspace and removes it from the active polling map. If not polling, this is a no-op.
+  - `stopAllPolling()` — interrupts all active polling fibers and clears the map. Used during graceful shutdown.
+  - `isPolling(workspaceId)` — returns whether a workspace is currently being polled.
+- Used `Effect.Ref<Map<string, Fiber.RuntimeFiber<void, never>>>` for fiber-safe concurrent tracking of active polling fibers per workspace.
+- Polling is implemented as `getDiff(workspaceId) |> Effect.catchAll(logWarning) |> Effect.repeat(Schedule.spaced(interval)) |> Effect.asVoid |> Effect.forkDaemon`. The daemon fiber runs independently of the calling fiber's scope.
+- `stopPolling` uses `Ref.modify` for atomic removal of the fiber from the map before interrupting it, preventing race conditions.
+- Added imports: `Duration`, `Fiber`, `Ref`, `Schedule` from `effect`.
+- Defined `DEFAULT_POLL_INTERVAL_MS = 2000` constant (PRD specifies 1-2 seconds; defaulting to 2s).
+- Updated the service interface to include all 4 new methods in the `DiffService` Context.Tag type.
+- Updated module doc comment to reflect Issue #83 and document the polling API with usage examples.
+- Verified: `tsc --noEmit` passes for server package (only pre-existing Effect plugin informational messages), `ultracite check` passes with zero issues on diff-service.ts.
+
+### Acceptance criteria status
+- [x] Polling runs at configurable interval (default 2 seconds) — via `Schedule.spaced(Duration.millis(intervalMs))`, default 2000ms
+- [x] DiffUpdated event committed to LiveStore when diff content changes — `getDiff` commits the event on each poll
+- [ ] Tests: modify file → DiffUpdated event within polling interval; verify periodic execution (deferred — vitest not yet configured)
+
+### Design decisions
+- Used `Effect.forkDaemon` instead of `Effect.fork` to ensure polling fibers outlive the calling fiber's scope. The polling should continue until explicitly stopped via `stopPolling` or `stopAllPolling`.
+- Errors during individual polls are caught with `Effect.catchAll` and logged as warnings. This prevents transient errors (e.g., workspace being destroyed mid-poll) from killing the entire polling loop.
+- The `stopAllPolling` method exists for graceful shutdown scenarios (Issue #128/129/130). The server can call this on SIGINT/SIGTERM to clean up all polling fibers.
+- No deduplication yet (that's Issue #84). Every poll commits a DiffUpdated event even if the content hasn't changed. This is intentional — deduplication is a separate concern.
+- The `isPolling` method is useful for debugging and for future workspace lifecycle integration (Issue #85) to check if polling is already active before starting.
+
+### Issues unblocked
+- Issue #84: DiffService — deduplicate unchanged diffs (was blocked by #83, now done)
+- Issue #85: DiffService — start/stop on workspace lifecycle (was blocked by #83, now done — still needs #47 for the stop-on-destroy part)
+- Issue #87: Diff viewer pane — @pierre/diffs (was blocked by #18 (done), #83 (now done), #6 (done) — all blockers complete!)

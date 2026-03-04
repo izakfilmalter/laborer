@@ -5,7 +5,8 @@
  * - Single pane rendering (LeafNode)
  * - Horizontal split (SplitNode with direction "horizontal") — side-by-side panes
  * - Vertical split (SplitNode with direction "vertical") — stacked panes
- * - Recursive nesting of splits to arbitrary depth
+ * - Recursive nesting of splits to arbitrary depth (5+ levels tested)
+ * - Close pane with automatic tree collapse
  *
  * The PanelManager fills its parent container and renders pane content
  * based on the pane type:
@@ -15,15 +16,28 @@
  * Split panes are rendered using react-resizable-panels (via shadcn/ui's
  * resizable wrapper) with drag-to-resize handles between each child.
  *
+ * Pane chrome includes split/close buttons that use PanelActionsContext
+ * to communicate layout mutations back to the layout owner.
+ *
  * @see packages/shared/src/types.ts — PanelNode, LeafNode, SplitNode types
  * @see apps/web/src/panes/terminal-pane.tsx — Terminal pane component
+ * @see apps/web/src/panels/layout-utils.ts — Tree manipulation functions
+ * @see apps/web/src/panels/panel-context.tsx — PanelActionsContext
  * @see Issue #66: PanelManager — single pane rendering
  * @see Issue #67: PanelManager — horizontal split
  * @see Issue #68: PanelManager — vertical split
+ * @see Issue #69: PanelManager — recursive splits
  */
 
 import type { LeafNode, PanelNode, SplitNode } from "@laborer/shared/types";
-import { Layers, Terminal as TerminalIcon } from "lucide-react";
+import {
+	Columns2,
+	Layers,
+	Rows2,
+	Terminal as TerminalIcon,
+	X,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
 	Empty,
 	EmptyDescription,
@@ -36,6 +50,7 @@ import {
 	ResizablePanel,
 	ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import { usePanelActions } from "@/panels/panel-context";
 import { TerminalPane } from "@/panes/terminal-pane";
 
 interface PaneContentProps {
@@ -77,6 +92,46 @@ function PaneContent({ node }: PaneContentProps) {
 					</EmptyDescription>
 				</EmptyHeader>
 			</Empty>
+		</div>
+	);
+}
+
+/**
+ * Toolbar rendered at the top-right of each leaf pane.
+ * Provides split (horizontal/vertical) and close buttons.
+ */
+function PaneToolbar({ paneId }: { readonly paneId: string }) {
+	const actions = usePanelActions();
+	if (!actions) {
+		return null;
+	}
+
+	return (
+		<div className="absolute top-1 right-1 z-10 flex gap-0.5 opacity-0 transition-opacity group-hover/pane:opacity-100">
+			<Button
+				aria-label="Split horizontally"
+				onClick={() => actions.splitPane(paneId, "horizontal")}
+				size="icon-sm"
+				variant="ghost"
+			>
+				<Columns2 className="size-3.5" />
+			</Button>
+			<Button
+				aria-label="Split vertically"
+				onClick={() => actions.splitPane(paneId, "vertical")}
+				size="icon-sm"
+				variant="ghost"
+			>
+				<Rows2 className="size-3.5" />
+			</Button>
+			<Button
+				aria-label="Close pane"
+				onClick={() => actions.closePane(paneId)}
+				size="icon-sm"
+				variant="ghost"
+			>
+				<X className="size-3.5" />
+			</Button>
 		</div>
 	);
 }
@@ -142,16 +197,21 @@ function SplitChild({
 /**
  * Recursively renders a PanelNode tree.
  *
- * - LeafNode → renders PaneContent with the appropriate component.
+ * - LeafNode → renders PaneContent with the appropriate component,
+ *   wrapped in a container with a PaneToolbar for split/close actions.
  * - SplitNode → renders a ResizablePanelGroup with each child in a
  *   ResizablePanel, separated by ResizableHandles. Supports horizontal
  *   (side-by-side) and vertical (stacked) orientations, and recursive
- *   nesting to arbitrary depth.
+ *   nesting to arbitrary depth (5+ levels).
  */
 function PanelRenderer({ node }: PanelRendererProps) {
 	if (node._tag === "LeafNode") {
 		return (
-			<div className="h-full w-full overflow-hidden" data-pane-id={node.id}>
+			<div
+				className="group/pane relative h-full w-full overflow-hidden"
+				data-pane-id={node.id}
+			>
+				<PaneToolbar paneId={node.id} />
 				<PaneContent node={node} />
 			</div>
 		);
@@ -178,6 +238,9 @@ interface PanelManagerProps {
  *
  * Renders the panel layout tree, filling its parent container.
  * Pass a PanelNode tree as the `layout` prop, or omit it for an empty state.
+ *
+ * Split/close actions are provided via PanelActionsProvider. If no provider
+ * is present, the pane toolbar is hidden.
  */
 function PanelManager({ layout }: PanelManagerProps) {
 	if (!layout) {

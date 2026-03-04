@@ -3,7 +3,7 @@ import { terminals, workspaces } from "@laborer/shared/schema";
 import type { LeafNode, PanelNode, SplitNode } from "@laborer/shared/types";
 import { queryDb } from "@livestore/livestore";
 import { createFileRoute } from "@tanstack/react-router";
-import { Suspense, useMemo } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
 import { CreateWorkspaceForm } from "@/components/create-workspace-form";
@@ -16,6 +16,8 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkspaceList } from "@/components/workspace-list";
 import { useLaborerStore } from "@/livestore/store";
+import { closePane, splitPane } from "@/panels/layout-utils";
+import { PanelActionsProvider } from "@/panels/panel-context";
 import { PanelManager } from "@/panels/panel-manager";
 
 export const Route = createFileRoute("/")({
@@ -49,14 +51,16 @@ function HealthCheckStatus() {
 }
 
 /**
- * Builds a default panel layout from the current LiveStore state.
+ * Computes an initial panel layout from the current LiveStore state.
+ *
+ * This is used to seed the layout when there's no persisted layout yet.
  *
  * - Multiple running terminals → horizontal SplitNode (side-by-side panes)
  * - Single running terminal → LeafNode
  * - Active workspaces but no terminals → empty terminal pane
  * - No workspaces → undefined (PanelManager shows empty state)
  */
-function usePanelLayout(): PanelNode | undefined {
+function useInitialLayout(): PanelNode | undefined {
 	const store = useLaborerStore();
 	const terminalList = store.useQuery(allTerminals$);
 	const workspaceList = store.useQuery(allWorkspaces$);
@@ -114,8 +118,63 @@ function usePanelLayout(): PanelNode | undefined {
 	}, [terminalList, workspaceList]);
 }
 
+/**
+ * Manages the panel layout state, providing split and close actions
+ * that mutate the tree and trigger re-renders.
+ *
+ * The layout state is initialized from LiveStore data (terminals/workspaces)
+ * and then managed in local React state for interactive splitting/closing.
+ * Future Issue #73 will persist layout changes to LiveStore.
+ */
+function usePanelLayout() {
+	const initialLayout = useInitialLayout();
+	const [layoutOverride, setLayoutOverride] = useState<
+		PanelNode | undefined | null
+	>(null);
+
+	// Use the override if the user has interacted (split/close),
+	// otherwise fall back to the auto-generated layout from LiveStore.
+	const layout = layoutOverride !== null ? layoutOverride : initialLayout;
+
+	const handleSplitPane = useCallback(
+		(paneId: string, direction: "horizontal" | "vertical") => {
+			setLayoutOverride((current) => {
+				const base = current !== null ? current : initialLayout;
+				if (!base) {
+					return base;
+				}
+				return splitPane(base, paneId, direction);
+			});
+		},
+		[initialLayout]
+	);
+
+	const handleClosePane = useCallback(
+		(paneId: string) => {
+			setLayoutOverride((current) => {
+				const base = current !== null ? current : initialLayout;
+				if (!base) {
+					return base;
+				}
+				return closePane(base, paneId) ?? undefined;
+			});
+		},
+		[initialLayout]
+	);
+
+	const panelActions = useMemo(
+		() => ({
+			splitPane: handleSplitPane,
+			closePane: handleClosePane,
+		}),
+		[handleSplitPane, handleClosePane]
+	);
+
+	return { layout, panelActions };
+}
+
 function HomeComponent() {
-	const layout = usePanelLayout();
+	const { layout, panelActions } = usePanelLayout();
 
 	return (
 		<ResizablePanelGroup orientation="horizontal">
@@ -157,7 +216,9 @@ function HomeComponent() {
 
 			{/* Main content — Panel system */}
 			<ResizablePanel defaultSize="75%" minSize="40%">
-				<PanelManager layout={layout} />
+				<PanelActionsProvider value={panelActions}>
+					<PanelManager layout={layout} />
+				</PanelActionsProvider>
 			</ResizablePanel>
 		</ResizablePanelGroup>
 	);

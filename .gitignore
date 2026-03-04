@@ -43,6 +43,9 @@ lerna-debug.log*
 coverage
 .nyc_output
 
+# Effect reference
+.reference/
+
 # Misc
 *.tgz
 .cache

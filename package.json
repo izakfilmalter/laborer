@@ -8,6 +8,8 @@
     ],
     "catalog": {
       "dotenv": "^17.2.2",
+      "effect": "4.0.0-beta.25",
+      "@effect/vitest": "4.0.0-beta.25",
       "zod": "^4.1.13",
       "typescript": "^5"
     }
@@ -20,7 +22,8 @@
     "dev:native": "turbo -F native dev",
     "dev:web": "turbo -F web dev",
     "check": "ultracite check",
-    "fix": "ultracite fix"
+    "fix": "ultracite fix",
+    "prepare": "effect-language-service patch"
   },
   "dependencies": {
     "@my-better-t-app/env": "workspace:*",
@@ -29,6 +32,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.0",
+    "@effect/language-service": "^0.77.0",
     "@my-better-t-app/config": "workspace:*",
     "turbo": "^2.8.12",
     "typescript": "catalog:",

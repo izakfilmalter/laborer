@@ -124,3 +124,49 @@ Biome's linter will catch most issues automatically. Focus your attention on:
 ---
 
 Most formatting and common issues are automatically fixed by Biome. Run `bun x ultracite fix` before committing to ensure compliance.
+
+<!-- effect-solutions:start -->
+
+## Effect v4 Best Practices
+
+This project uses **Effect v4** (from [effect-smol](https://github.com/Effect-TS/effect-smol)). Effect v4 has significant API changes from v3.
+
+**IMPORTANT:** Always consult the Effect v4 reference before writing Effect code.
+
+### Quick Reference
+
+1. Run `effect-solutions list` to see available guides
+2. Run `effect-solutions show <topic>...` for relevant patterns (supports multiple topics)
+3. Search `.reference/effect-smol/` for real implementations and AI docs
+
+Topics: quick-start, project-setup, tsconfig, basics, services-and-layers, data-modeling, error-handling, config, testing, cli.
+
+### Key v4 Changes (Do NOT Use v3 Patterns)
+
+- **Services:** Use `ServiceMap.Service` instead of `Context.Tag`
+- **References:** Use `ServiceMap.Reference` instead of `FiberRef`
+- **Functions:** Use `Effect.fn("name")` instead of raw `Effect.gen` for named functions
+- **Errors:** Use `Schema.TaggedErrorClass` for custom errors
+- **Error handling:** `Effect.catch` replaces `Effect.catchAll`, `Effect.catchTag` accepts arrays
+- **Imports:** Many packages consolidated into `effect` — platform, rpc, cluster modules live under `effect/unstable/*`
+- **Schema:** Import from `effect/Schema` (not `@effect/schema`)
+- **Runtime:** `Runtime<R>` is removed; use `ManagedRuntime` for non-Effect entry points
+
+### Catalog Dependencies
+
+Effect packages are in the Bun workspace catalog. To use in a workspace package:
+
+```json
+{
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:"
+  }
+}
+```
+
+Never guess at Effect v4 patterns — check the reference first.
+
+<!-- effect-solutions:end -->

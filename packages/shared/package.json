@@ -1,5 +1,5 @@
 {
-  "name": "@my-better-t-app/shared",
+  "name": "@laborer/shared",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -18,7 +18,7 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@my-better-t-app/config": "workspace:*",
+    "@laborer/config": "workspace:*",
     "@types/node": "^25.3.3",
     "typescript": "catalog:"
   }

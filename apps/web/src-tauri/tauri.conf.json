@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "my-better-t-app",
+  "productName": "laborer",
   "version": "0.1.0",
   "identifier": "com.tauri.dev",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "my-better-t-app",
+        "title": "laborer",
         "width": 800,
         "height": 600,
         "resizable": true,

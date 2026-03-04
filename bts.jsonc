@@ -13,7 +13,7 @@
   "$schema": "https://r2.better-t-stack.dev/schema.json",
   "version": "3.22.1",
   "createdAt": "2026-03-03T22:53:17.942Z",
-  "reproducibleCommand": "bun create better-t-stack@latest my-better-t-app --frontend tanstack-router --backend none --runtime none --database none --orm none --api none --auth none --payments none --addons biome tauri turborepo ultracite --examples none --db-setup none --web-deploy none --server-deploy none --no-git --package-manager bun --install",
+  "reproducibleCommand": "bun create better-t-stack@latest laborer --frontend tanstack-router --backend none --runtime none --database none --orm none --api none --auth none --payments none --addons biome tauri turborepo ultracite --examples none --db-setup none --web-deploy none --server-deploy none --no-git --package-manager bun --install",
   "database": "none",
   "orm": "none",
   "backend": "none",

@@ -1,5 +1,5 @@
 {
-  "name": "my-better-t-app",
+  "name": "laborer",
   "private": true,
   "workspaces": {
     "packages": [
@@ -26,14 +26,14 @@
     "prepare": "effect-language-service patch"
   },
   "dependencies": {
-    "@my-better-t-app/env": "workspace:*",
+    "@laborer/env": "workspace:*",
     "dotenv": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.0",
     "@effect/language-service": "^0.77.0",
-    "@my-better-t-app/config": "workspace:*",
+    "@laborer/config": "workspace:*",
     "turbo": "^2.8.12",
     "typescript": "catalog:",
     "ultracite": "7.2.4"

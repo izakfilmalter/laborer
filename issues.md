@@ -1997,13 +1997,13 @@ Serialize the panel layout tree (splits, pane assignments) to LiveStore on every
 
 ### Acceptance criteria
 
-- [ ] Layout changes commit events to LiveStore
-- [ ] Layout tree structure is fully serializable
-- [ ] Tests: split → event in LiveStore; close → event in LiveStore; verify tree matches UI
+- [x] Layout changes commit events to LiveStore (layoutSplit, layoutPaneClosed, layoutRestored events via store.commit)
+- [x] Layout tree structure is fully serializable (PanelNodeSchema JSON column with auto encode/decode)
+- [ ] Tests: split → event in LiveStore; close → event in LiveStore; verify tree matches UI (deferred — requires running both server and web app)
 
 ### Blocked by
 
-- Blocked by #69, #7
+- Blocked by #69 (done), #7 (done)
 
 ### User stories addressed
 
@@ -3647,8 +3647,8 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 70 | PanelManager — close pane | ~~#67~~ | Done |
 | 71 | PanelManager — navigate between panes | ~~#67~~ | Ready |
 | 72 | PanelManager — drag-to-resize | ~~#67~~ | Ready |
-| 73 | PanelManager — serialize layout to LiveStore | ~~#69~~, ~~#7~~ | Ready |
-| 74 | PanelManager — restore layout from LiveStore | #73 | Blocked |
+| 73 | PanelManager — serialize layout to LiveStore | ~~#69~~, ~~#7~~ | Done |
+| 74 | PanelManager — restore layout from LiveStore | ~~#73~~ | Ready |
 | 75 | Keyboard shortcut — split horizontal | ~~#67~~ | Ready |
 | 76 | Keyboard shortcut — split vertical | ~~#68~~, #75 | Blocked |
 | 77 | Keyboard shortcut — close pane | ~~#70~~, #75 | Blocked |

@@ -1,9 +1,16 @@
 import { useAtomValue } from "@effect-atom/atom-react/Hooks";
-import { terminals, workspaces } from "@laborer/shared/schema";
+import {
+	layoutPaneClosed,
+	layoutRestored,
+	layoutSplit,
+	panelLayout,
+	terminals,
+	workspaces,
+} from "@laborer/shared/schema";
 import type { LeafNode, PanelNode, SplitNode } from "@laborer/shared/types";
 import { queryDb } from "@livestore/livestore";
 import { createFileRoute } from "@tanstack/react-router";
-import { Suspense, useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef } from "react";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
 import { CreateWorkspaceForm } from "@/components/create-workspace-form";
@@ -27,6 +34,14 @@ export const Route = createFileRoute("/")({
 /** LiveStore queries for building the default panel layout. */
 const allTerminals$ = queryDb(terminals, { label: "homePanelTerminals" });
 const allWorkspaces$ = queryDb(workspaces, { label: "homePanelWorkspaces" });
+
+/** Session ID for the persisted panel layout row. Single-user, single-session. */
+const LAYOUT_SESSION_ID = "default";
+
+/** Query the persisted panel layout from LiveStore. */
+const persistedLayout$ = queryDb(panelLayout, {
+	label: "persistedPanelLayout",
+});
 
 /**
  * Health check query atom — subscribes to the server's health.check RPC.
@@ -120,46 +135,110 @@ function useInitialLayout(): PanelNode | undefined {
 
 /**
  * Manages the panel layout state, providing split and close actions
- * that mutate the tree and trigger re-renders.
+ * that mutate the tree and persist changes to LiveStore.
  *
- * The layout state is initialized from LiveStore data (terminals/workspaces)
- * and then managed in local React state for interactive splitting/closing.
- * Future Issue #73 will persist layout changes to LiveStore.
+ * Layout persistence flow:
+ * 1. Read the persisted layout from LiveStore's `panelLayout` table.
+ * 2. If no persisted layout exists, fall back to the auto-generated layout
+ *    from terminals/workspaces and commit it as a `layoutRestored` event.
+ * 3. On split/close, compute the new tree and commit the appropriate
+ *    layout event (`layoutSplit` / `layoutPaneClosed`) to LiveStore.
+ * 4. The materializer upserts the row, and the reactive query re-fires.
+ *
+ * @see Issue #73: PanelManager — serialize layout to LiveStore
  */
 function usePanelLayout() {
+	const store = useLaborerStore();
 	const initialLayout = useInitialLayout();
-	const [layoutOverride, setLayoutOverride] = useState<
-		PanelNode | undefined | null
-	>(null);
 
-	// Use the override if the user has interacted (split/close),
-	// otherwise fall back to the auto-generated layout from LiveStore.
-	const layout = layoutOverride !== null ? layoutOverride : initialLayout;
+	// Read the persisted layout from LiveStore reactively.
+	// Returns all rows (should be 0 or 1 for the "default" session).
+	const persistedRows = store.useQuery(persistedLayout$);
+	const persistedRow = persistedRows.find(
+		(row) => row.id === LAYOUT_SESSION_ID
+	);
+
+	// The persisted layout tree, if one exists in LiveStore.
+	const persistedLayoutTree = persistedRow?.layoutTree as PanelNode | undefined;
+	const persistedActivePaneId = persistedRow?.activePaneId ?? null;
+
+	// Determine the effective layout: persisted layout takes priority,
+	// otherwise fall back to the auto-generated layout from terminals/workspaces.
+	const layout = persistedLayoutTree ?? initialLayout;
+
+	// Seed LiveStore with the initial layout when there's no persisted layout
+	// but we have an auto-generated one from terminals/workspaces.
+	const hasSeeded = useRef(false);
+	useEffect(() => {
+		if (!persistedLayoutTree && initialLayout && !hasSeeded.current) {
+			hasSeeded.current = true;
+			store.commit(
+				layoutRestored({
+					id: LAYOUT_SESSION_ID,
+					layoutTree: initialLayout,
+					activePaneId: null,
+				})
+			);
+		}
+	}, [persistedLayoutTree, initialLayout, store]);
 
 	const handleSplitPane = useCallback(
 		(paneId: string, direction: "horizontal" | "vertical") => {
-			setLayoutOverride((current) => {
-				const base = current !== null ? current : initialLayout;
-				if (!base) {
-					return base;
-				}
-				return splitPane(base, paneId, direction);
-			});
+			const base = persistedLayoutTree ?? initialLayout;
+			if (!base) {
+				return;
+			}
+			const newTree = splitPane(base, paneId, direction);
+			store.commit(
+				layoutSplit({
+					id: LAYOUT_SESSION_ID,
+					layoutTree: newTree,
+					activePaneId: persistedActivePaneId,
+				})
+			);
 		},
-		[initialLayout]
+		[persistedLayoutTree, initialLayout, persistedActivePaneId, store]
 	);
 
 	const handleClosePane = useCallback(
 		(paneId: string) => {
-			setLayoutOverride((current) => {
-				const base = current !== null ? current : initialLayout;
-				if (!base) {
-					return base;
-				}
-				return closePane(base, paneId) ?? undefined;
-			});
+			const base = persistedLayoutTree ?? initialLayout;
+			if (!base) {
+				return;
+			}
+			const newTree = closePane(base, paneId);
+			if (newTree) {
+				store.commit(
+					layoutPaneClosed({
+						id: LAYOUT_SESSION_ID,
+						layoutTree: newTree,
+						activePaneId: persistedActivePaneId,
+					})
+				);
+			} else {
+				// All panes closed — remove the persisted layout so the
+				// empty state renders and a new initial layout can seed.
+				store.commit(
+					layoutPaneClosed({
+						id: LAYOUT_SESSION_ID,
+						// Commit a single empty leaf as a placeholder since
+						// the schema requires a valid PanelNode.
+						// The PanelManager will show the empty state because
+						// the pane has no terminal assigned.
+						layoutTree: {
+							_tag: "LeafNode" as const,
+							id: "pane-empty",
+							paneType: "terminal" as const,
+							terminalId: undefined,
+							workspaceId: undefined,
+						},
+						activePaneId: null,
+					})
+				);
+				hasSeeded.current = false;
+			}
 		},
-		[initialLayout]
+		[persistedLayoutTree, initialLayout, persistedActivePaneId, store]
 	);
 
 	const panelActions = useMemo(

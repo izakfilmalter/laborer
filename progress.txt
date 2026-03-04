@@ -1924,3 +1924,28 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #47: workspace.destroy RPC handler (was blocked by #19 (done), #43 (done), #44 (now done), #45, #46 — still needs #45 and #46)
+
+## Fix: LiveStore server-to-client sync — server store not connected to sync backend
+
+Date: 2026-03-04
+
+### What was done
+- Diagnosed that projects added via the web UI appeared in the server's LiveStore (duplicate detection worked) but never showed in the client's ProjectList (empty state persisted).
+- **Root cause**: The server had two completely disconnected data stores:
+  1. `LaborerStore` (`laborer-store.ts`) — used `@livestore/adapter-node` with filesystem SQLite at `./data/laborer/`. Server services (ProjectRegistry, WorkspaceProvider, etc.) committed events here. Server-side queries worked.
+  2. `SyncBackendService` (`sync-backend.ts`) — maintained a separate SQLite database at `./data/sync-laborer.db`. Browser clients connected to this via WebSocket for pull/push sync. This database was always empty because no events were ever forwarded from the server's LiveStore.
+- When a server service called `store.commit(events.projectCreated(...))`, the event was written to the server's local eventlog and materialized into its state DB. But it was never forwarded to the sync backend's eventlog, so clients pulling from the sync backend received zero events.
+- **Fix**: Added `makeWsSync({ url: syncUrl })` as the `sync.backend` option to `makeAdapter()` in `laborer-store.ts`. This follows the canonical LiveStore "server-side client" pattern documented in the LiveStore reference (`examples/node-todomvc-sync-cf`, docs "Server-side clients" page). The server-side store is architecturally just another sync client that connects to the sync backend over WebSocket.
+- The `makeWsSync` client handles reconnection automatically with `retryTransientErrors: Schedule.fixed(1000)`, so the store can start connecting before the HTTP server is fully listening. The WebSocket connection retries until the sync backend is ready.
+- Added `env` import from `@laborer/env/server` to construct the WebSocket URL (`ws://localhost:${env.PORT}/rpc`).
+- Added explicit `Layer.Layer<LaborerStore>` type annotation on `LaborerStoreLive` with `Layer.orDie` to handle the `UnknownError` channel introduced by the sync backend constructor.
+- Cleared stale data (`./data/laborer/` and `./data/sync-laborer.db`) since the two stores were out of sync and would cause backendId/sequence number conflicts on restart.
+
+### Files changed
+- `packages/server/src/services/laborer-store.ts` — Added `makeWsSync` sync backend to `makeAdapter()`, added `env` and `makeWsSync` imports, added type annotation with `Layer.orDie`
+
+### Verification
+- `tsc --noEmit` passes (no type errors)
+- `biome check` passes with zero issues on laborer-store.ts
+- After server restart: both `./data/laborer/` (LiveStore) and `./data/sync-laborer.db` (sync backend) are recreated
+- Events committed by server services now flow through the sync backend to connected browser clients

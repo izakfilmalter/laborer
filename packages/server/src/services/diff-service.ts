@@ -30,6 +30,7 @@
  *
  * Issue #82: getDiff method — run `git diff` for a workspace
  * Issue #83: startPolling/stopPolling — poll on interval
+ * Issue #84: deduplicate unchanged diffs — only commit DiffUpdated when content changes
  */
 
 import { RpcError } from "@laborer/shared/rpc";
@@ -71,7 +72,8 @@ class DiffService extends Context.Tag("@laborer/DiffService")<
 		 *
 		 * Runs `git diff` (unstaged) and `git diff --staged` (staged)
 		 * in the workspace's worktree directory and combines the output.
-		 * Commits a DiffUpdated event to LiveStore with the result.
+		 * Only commits a DiffUpdated event to LiveStore when the diff
+		 * content has changed compared to the previous call (Issue #84).
 		 *
 		 * @param workspaceId - ID of the workspace to diff
 		 * @returns DiffResult with the combined diff content and timestamp
@@ -136,6 +138,10 @@ class DiffService extends Context.Tag("@laborer/DiffService")<
 			const pollingFibers = yield* Ref.make<
 				Map<string, Fiber.RuntimeFiber<void, never>>
 			>(new Map());
+
+			// Cache of previous diff content per workspace for deduplication (Issue #84).
+			// Only commit DiffUpdated events when content actually changes.
+			const previousDiffs = yield* Ref.make<Map<string, string>>(new Map());
 
 			const getDiff = Effect.fn("DiffService.getDiff")(function* (
 				workspaceId: string
@@ -225,14 +231,23 @@ class DiffService extends Context.Tag("@laborer/DiffService")<
 
 				const lastUpdated = new Date().toISOString();
 
-				// 6. Commit DiffUpdated event to LiveStore
-				store.commit(
-					events.diffUpdated({
-						workspaceId,
-						diffContent: combinedDiff,
-						lastUpdated,
-					})
-				);
+				// 6. Deduplicate: only commit DiffUpdated if content changed (Issue #84)
+				const previousContent = yield* Ref.modify(previousDiffs, (cache) => {
+					const prev = cache.get(workspaceId);
+					const next = new Map(cache);
+					next.set(workspaceId, combinedDiff);
+					return [prev, next] as const;
+				});
+
+				if (previousContent !== combinedDiff) {
+					store.commit(
+						events.diffUpdated({
+							workspaceId,
+							diffContent: combinedDiff,
+							lastUpdated,
+						})
+					);
+				}
 
 				return {
 					workspaceId,
@@ -303,6 +318,13 @@ class DiffService extends Context.Tag("@laborer/DiffService")<
 				// Interrupt the polling fiber
 				yield* Fiber.interrupt(fiber);
 
+				// Clear the cached diff content for this workspace (Issue #84)
+				yield* Ref.update(previousDiffs, (cache) => {
+					const next = new Map(cache);
+					next.delete(workspaceId);
+					return next;
+				});
+
 				yield* Effect.log(
 					`DiffService: stopped polling for workspace ${workspaceId}`
 				);
@@ -317,6 +339,9 @@ class DiffService extends Context.Tag("@laborer/DiffService")<
 						(fiber) => Fiber.interrupt(fiber),
 						{ discard: true }
 					);
+
+					// Clear all cached diff content (Issue #84)
+					yield* Ref.set(previousDiffs, new Map());
 
 					yield* Effect.log(
 						`DiffService: stopped all polling (${fibers.size} workspaces)`

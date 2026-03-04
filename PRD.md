@@ -83,9 +83,9 @@ Once the core user stories are implemented, the following checks should be made:
 
 Laborer runs as two processes:
 - **Laborer Server**: A standalone Bun process running Effect TS (v4, from effect-smol). Manages all side effects: process spawning, PTY management, git operations, file system access, port allocation. Exposes an Effect RPC API for actions and serves as the LiveStore sync backend.
-- **Laborer App**: A React + TypeScript frontend built on TanStack Start (with TanStack Router) that runs in a browser or Tauri shell. Uses shadcn/ui (backed by Base UI) for components. Connects to the server via LiveStore for reactive state and Effect RPC for actions.
+- **Laborer App** (`apps/web`): A React 19 + TypeScript frontend using Vite, TanStack Router, and Tailwind v4. Uses shadcn/ui (base-lyra style, backed by Base UI) for components. Includes an embedded Tauri 2 shell (`apps/web/src-tauri/`) for optional native desktop mode. Connects to the server via LiveStore for reactive state and Effect RPC for actions.
 
-The Tauri desktop shell is a thin wrapper that opens a webview to the local server. It adds native features (system tray, global shortcuts) but the core experience is identical in a browser.
+The Tauri 2 desktop shell is embedded directly in `apps/web/src-tauri/`. It opens a webview to the local Vite dev server (port 3001 in dev). It adds native features (system tray, global shortcuts) but the core experience is identical in a browser. Run via `bun run desktop:dev` in the web app.
 
 ### State Management: LiveStore
 
@@ -144,7 +144,7 @@ Manages the set of projects (repos) the user is working with. Stores repo paths,
 Responsibilities: project registration/removal, repo validation, config reading.
 
 **5. SyncEngine (LiveStore)**
-The LiveStore schema, events, materializers, and sync configuration. Defines all tables and events. Runs on both server (Node/Bun adapter) and client (browser/Tauri adapter). Handles persistence to SQLite and real-time sync between server and UI.
+The LiveStore schema, events, materializers, and sync configuration. Defines all tables and events. Runs on both server (Node/Bun adapter) and client (browser/Tauri adapter). Handles persistence to SQLite and real-time sync between server and app.
 
 Responsibilities: schema definition, event definitions, materializers, sync setup, persistence.
 
@@ -166,26 +166,53 @@ Responsibilities: panel splitting/resizing/closing, pane type management (termin
 | Core framework | Effect TS v4 | effect-smol |
 | Reactive state | LiveStore | v0.3+ |
 | RPC | Effect RPC | From effect-smol |
-| App framework | TanStack Start + React | Latest |
+| App framework | Vite + React 19 | React 19.2, Vite 6 |
 | React compiler | React Compiler | Latest |
-| Routing | TanStack Router | Via TanStack Start |
-| Component library | shadcn/ui (Base UI) | Latest |
+| Routing | TanStack Router | v1.141+ |
+| Component library | shadcn/ui (base-lyra, Base UI) | v3.6+ |
+| Styling | Tailwind CSS v4 | v4.0+ |
 | TypeScript | tsgo (TypeScript Go) | Latest |
 | Panel system | allotment | Latest |
 | Terminal emulator | xterm.js | Latest |
 | Diff viewer | @pierre/diffs | v1.x |
-| Desktop shell | Tauri 2 | Optional |
+| Desktop shell | Tauri 2 | v2.4+ (embedded in apps/web) |
 | Persistence | SQLite (via LiveStore) | |
-| Monorepo | Turborepo + Bun | Latest |
-| Linting / Formatting | Ultracite (Biome) | Latest |
-| Testing | Vitest (via @effect/vitest) | |
+| Monorepo | Turborepo + Bun workspaces | Turbo v2.8+, Bun v1.3+ |
+| Linting / Formatting | Ultracite (Biome v2) | Ultracite v7.2+, Biome v2.4+ |
+| Env validation | @t3-oss/env-core | v0.13+ |
+| Unit / Integration testing | Vitest (via @effect/vitest) | |
+| E2E testing | Playwright | Latest |
 
 ### Project Structure
 
 ```
 laborer/
+├── apps/
+│   └── web/                 # React 19 frontend (Vite + TanStack Router)
+│       ├── src/
+│       │   ├── components/  # shadcn/ui (base-lyra) components
+│       │   │   └── ui/      # Generated shadcn/ui primitives
+│       │   ├── panels/      # Panel system (allotment)
+│       │   ├── panes/       # Pane types (terminal, diff)
+│       │   ├── routes/      # TanStack Router file-based routes
+│       │   ├── lib/         # Utilities (cn, etc.)
+│       │   ├── index.css    # Tailwind v4 entry
+│       │   └── main.tsx     # App entry point
+│       ├── src-tauri/       # Tauri 2 desktop shell (embedded)
+│       ├── components.json  # shadcn/ui config (base-lyra style)
+│       ├── vite.config.ts
+│       └── package.json
+│
 ├── packages/
-│   ├── server/              # Bun server, Effect TS services
+│   ├── config/              # Shared tsconfig base
+│   │   ├── tsconfig.base.json
+│   │   └── package.json
+│   │
+│   ├── env/                 # Environment validation (@t3-oss/env-core)
+│   │   ├── src/
+│   │   └── package.json
+│   │
+│   ├── server/              # Bun server, Effect TS services (to be created)
 │   │   ├── src/
 │   │   │   ├── services/
 │   │   │   │   ├── WorkspaceProvider.ts
@@ -197,30 +224,22 @@ laborer/
 │   │   │   └── main.ts      # Server entry point
 │   │   └── package.json
 │   │
-│   ├── app/                 # TanStack Start + React (shadcn/ui + Base UI)
-│   │   ├── src/
-│   │   │   ├── panels/      # Panel system (allotment)
-│   │   │   ├── panes/       # Pane types (terminal, diff)
-│   │   │   ├── components/  # shadcn/ui components
-│   │   │   ├── routes/      # TanStack Router file-based routes
-│   │   │   └── main.tsx     # App entry point
-│   │   └── package.json
-│   │
-│   ├── shared/              # Shared types, LiveStore schema, RPC contract
-│   │   ├── src/
-│   │   │   ├── schema.ts    # LiveStore tables, events, materializers
-│   │   │   ├── rpc.ts       # Effect RPC type definitions
-│   │   │   └── types.ts     # Shared domain types
-│   │   └── package.json
-│   │
-│   └── desktop/             # Tauri shell (optional)
-│       ├── src-tauri/
+│   └── shared/              # Shared types, LiveStore schema, RPC contract (to be created)
+│       ├── src/
+│       │   ├── schema.ts    # LiveStore tables, events, materializers
+│       │   ├── rpc.ts       # Effect RPC type definitions
+│       │   └── types.ts     # Shared domain types
 │       └── package.json
 │
 ├── turbo.json               # Turborepo pipeline config
-├── biome.jsonc              # Ultracite / Biome config
+├── biome.json               # Ultracite / Biome config
+├── tsconfig.json            # Root tsconfig (extends packages/config)
+├── e2e/                     # Playwright E2E tests
+│   ├── tests/
+│   └── playwright.config.ts
+├── AGENTS.md                # Ultracite + Effect v4 agent rules
 ├── package.json             # Bun workspace root
-└── bun.lockb
+└── bun.lock
 ```
 
 ### Diff Detection Strategy
@@ -251,9 +270,11 @@ The `editor.open` RPC method executes `cursor <path>` or `code <path>` (configur
 
 **What makes a good test:** Tests should verify external behavior through the public interface of each module. They should not test implementation details, internal state, or private methods. Tests should be deterministic and not depend on network, timing, or OS-specific behavior (except integration tests explicitly designed for that).
 
-**Testing framework:** Vitest via @effect/vitest from effect-smol. This provides Effect-aware test utilities.
+**Testing frameworks:**
+- **Vitest** via @effect/vitest from effect-smol for unit and integration tests of Effect services.
+- **Playwright** for E2E tests of the full app (server + web UI). E2E tests live in `e2e/` at the repo root and test real user flows against the running app.
 
-### Modules to test
+### Unit / Integration tests (Vitest)
 
 **WorkspaceProvider (Integration tests)**
 - Test worktree creation: verify branch created, directory exists, setup script executed.
@@ -292,6 +313,20 @@ The `editor.open` RPC method executes `cursor <path>` or `code <path>` (configur
 - Test keyboard shortcuts: verify split/close/navigate actions.
 - Test edge cases: close last pane, deeply nested splits, minimum pane size.
 
+### E2E tests (Playwright)
+
+Playwright tests run against the full stack (server + web app). They spin up the server and app, then drive a real browser. Tests live in `e2e/tests/` at the repo root.
+
+**Core user flows to cover:**
+- Add a project, create a workspace, verify it appears in the panel layout.
+- Split panes, resize, close — verify layout changes persist after page reload.
+- Spawn a terminal in a workspace, type a command, verify output appears in the xterm.js pane.
+- Toggle the diff viewer alongside a terminal pane, verify diff content renders.
+- Open multiple workspaces across multiple projects, verify all are visible and navigable.
+- Keyboard shortcuts for panel operations (split, navigate, close) work correctly.
+- Session persistence: create layout with workspaces and terminals, reload the page, verify everything restores.
+- Empty state: first launch with no projects shows onboarding guidance.
+
 ## Out of Scope
 
 - **Slack bot integration.** Remote task triggering via Slack is a future phase. The API-first architecture accommodates it, but v1 is local-only.
@@ -316,6 +351,9 @@ Laborer is a UI and orchestration shell for rlph, not a replacement. rlph remain
 - **LiveStore** (https://livestore.dev) — Reactive SQLite sync engine.
 - **@pierre/diffs** (https://diffs.com) — Diff rendering library.
 - **allotment** (https://github.com/johnwalley/allotment) — React split pane component.
+- **Better-T-Stack** (https://www.better-t-stack.dev/) — Project scaffolded from this template (TanStack Router, Tauri, Turborepo, Ultracite, Biome).
+- **Ultracite** (https://www.ultracite.ai/) — Zero-config Biome preset with agent rule generation.
+- **tsgo** (https://github.com/microsoft/typescript-go) — Native Go port of TypeScript for fast type checking.
 
 ### Design Philosophy
 

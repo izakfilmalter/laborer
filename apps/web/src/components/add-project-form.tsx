@@ -1,135 +1,66 @@
 /**
- * Add Project form component.
+ * Add Project button component.
  *
- * A dialog with a TanStack Form for adding a new project by its repo path.
- * On submit, calls the `project.add` mutation via AtomRpc.
- * Success: project appears in the list (via LiveStore), form resets, dialog closes.
- * Error: server validation error displayed inline.
+ * Opens the native OS folder picker (via Tauri dialog plugin), then calls the
+ * `project.add` mutation with the selected directory path.
+ *
+ * Success: project appears in the list (via LiveStore), toast shown.
+ * Error: server validation error displayed in a toast.
  *
  * @see Issue #27: Add Project form
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
-import { useForm } from "@tanstack/react-form";
+import { open } from "@tauri-apps/plugin-dialog";
 import { FolderPlus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { Button } from "@/components/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-	DialogTrigger,
-} from "@/components/ui/dialog";
-import {
-	Field,
-	FieldDescription,
-	FieldError,
-	FieldLabel,
-} from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { extractErrorMessage } from "@/lib/utils";
 
 const addProjectMutation = LaborerClient.mutation("project.add");
 
 function AddProjectForm() {
-	const [open, setOpen] = useState(false);
+	const [isAdding, setIsAdding] = useState(false);
 	const addProject = useAtomSet(addProjectMutation, { mode: "promise" });
 
-	const form = useForm({
-		defaultValues: {
-			repoPath: "",
-		},
-		onSubmit: async ({ value }) => {
-			try {
-				const result = await addProject({
-					payload: { repoPath: value.repoPath },
-				});
-				toast.success(`Project "${result.name}" added`);
-				form.reset();
-				setOpen(false);
-			} catch (error: unknown) {
-				const message = extractErrorMessage(error);
-				toast.error(message);
+	const handleClick = async () => {
+		try {
+			const selected = await open({
+				directory: true,
+				multiple: false,
+				title: "Select a git repository",
+			});
+
+			if (!selected) {
+				return;
 			}
-		},
-	});
+
+			setIsAdding(true);
+
+			const result = await addProject({
+				payload: { repoPath: selected },
+			});
+			toast.success(`Project "${result.name}" added`);
+		} catch (error: unknown) {
+			const message = extractErrorMessage(error);
+			toast.error(message);
+		} finally {
+			setIsAdding(false);
+		}
+	};
 
 	return (
-		<Dialog onOpenChange={setOpen} open={open}>
-			<DialogTrigger render={<Button size="sm" variant="outline" />}>
-				<FolderPlus className="size-3.5" />
-				Add Project
-			</DialogTrigger>
-			<DialogContent>
-				<DialogHeader>
-					<DialogTitle>Add Project</DialogTitle>
-					<DialogDescription>
-						Register a git repository as a project. Laborer will create isolated
-						workspaces in this repo for your agents.
-					</DialogDescription>
-				</DialogHeader>
-				<form
-					onSubmit={(e) => {
-						e.preventDefault();
-						e.stopPropagation();
-						form.handleSubmit();
-					}}
-				>
-					<div className="grid gap-4 py-2">
-						<form.Field
-							name="repoPath"
-							validators={{
-								onChange: ({ value }) => {
-									if (!value.trim()) {
-										return "Repository path is required";
-									}
-									return undefined;
-								},
-							}}
-						>
-							{(field) => (
-								<Field data-invalid={field.state.meta.errors.length > 0}>
-									<FieldLabel htmlFor="repoPath">Repository Path</FieldLabel>
-									<Input
-										id="repoPath"
-										name={field.name}
-										onBlur={field.handleBlur}
-										onChange={(e) => field.handleChange(e.target.value)}
-										placeholder="/path/to/your/repo"
-										value={field.state.value}
-									/>
-									<FieldDescription>
-										Absolute path to a local git repository.
-									</FieldDescription>
-									{field.state.meta.isTouched &&
-										field.state.meta.errors.length > 0 && (
-											<FieldError>
-												{field.state.meta.errors.join(", ")}
-											</FieldError>
-										)}
-								</Field>
-							)}
-						</form.Field>
-					</div>
-					<DialogFooter>
-						<form.Subscribe
-							selector={(state) => [state.canSubmit, state.isSubmitting]}
-						>
-							{([canSubmit, isSubmitting]) => (
-								<Button disabled={!canSubmit || isSubmitting} type="submit">
-									{isSubmitting ? "Adding..." : "Add Project"}
-								</Button>
-							)}
-						</form.Subscribe>
-					</DialogFooter>
-				</form>
-			</DialogContent>
-		</Dialog>
+		<Button
+			disabled={isAdding}
+			onClick={handleClick}
+			size="sm"
+			variant="outline"
+		>
+			<FolderPlus className="size-3.5" />
+			{isAdding ? "Adding..." : "Add Project"}
+		</Button>
 	);
 }
 

@@ -1567,3 +1567,20 @@ Date: 2026-03-04
 ### Files changed
 - `apps/web/src/routes/index.tsx` — sidebar and main panel size props
 - `apps/web/src/panels/panel-manager.tsx` — split child panel size props
+
+## Tauri desktop dev workflow — make `bun dev` launch Tauri
+
+Date: 2026-03-04
+
+### What was done
+- Changed `apps/web/package.json` `dev` script from `vite dev` to `tauri dev` — the desktop Tauri app is now the primary dev experience.
+- Changed `apps/web/package.json` `build` script from `vite build` to `tauri build` — production builds produce the native Tauri binary.
+- Removed redundant `desktop:dev` and `desktop:build` scripts since `dev` and `build` now do the same thing.
+- Updated `apps/web/src-tauri/tauri.conf.json` `beforeDevCommand` from `bun run dev` to `bun x vite dev` — avoids a recursive loop since `dev` is now `tauri dev`. Similarly changed `beforeBuildCommand` from `bun run build` to `bun x vite build`.
+- Removed `dev:web` script from root `package.json` since `turbo dev` (i.e., `bun dev`) now launches Tauri for the web app automatically.
+- Updated Rust toolchain from 1.83.0 to 1.93.1 via `rustup update stable` — required because Tauri's transitive dependency `time-core@0.1.8` uses Rust edition 2024 which requires Rust 1.85+.
+
+### Files changed
+- `apps/web/package.json` — `dev`, `build` scripts changed; `desktop:dev`, `desktop:build` removed
+- `apps/web/src-tauri/tauri.conf.json` — `beforeDevCommand`, `beforeBuildCommand` updated
+- `package.json` (root) — `dev:web` script removed

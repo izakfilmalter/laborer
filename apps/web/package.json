@@ -4,14 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
+    "dev": "tauri dev",
+    "build": "tauri build",
     "serve": "vite preview",
     "start": "vite",
     "check-types": "tsc --noEmit",
-    "tauri": "tauri",
-    "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "tauri": "tauri"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",
@@ -31,6 +29,7 @@
     "@tailwindcss/vite": "^4.0.15",
     "@tanstack/react-form": "^1.28.4",
     "@tanstack/react-router": "^1.141.1",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",

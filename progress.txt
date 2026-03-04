@@ -90,3 +90,31 @@ Date: 2026-03-04
 ### Issues unblocked
 - Issue #11: Effect TS application bootstrap
 - Issue #14: Server env validation
+
+## Issue 11: Effect TS application bootstrap — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Replaced the minimal `Bun.serve` HTTP server with a full Effect TS v3 runtime using `@effect/platform-bun`.
+- Installed `@effect/platform`, `@effect/platform-bun`, `@effect/cluster`, `@effect/rpc`, and `@effect/sql` as dependencies in `packages/server` (cluster, rpc, sql are peer dependencies of platform-bun).
+- Rewrote `packages/server/src/main.ts` to use:
+  - `BunHttpServer.layer({ port: 3000 })` for the HTTP server layer
+  - `HttpRouter.empty` + `HttpRouter.get` for route definitions
+  - `HttpServer.serve(HttpMiddleware.logger)` for request logging middleware
+  - `HttpServer.withLogAddress` to log the listen address on startup
+  - `Layer.launch` to keep the server running until interrupted
+  - `BunRuntime.runMain` for the entry point with automatic SIGINT/SIGTERM handling
+- Established the Effect Layer composition pattern: Router → serve with middleware → provide ServerLive → launch via BunRuntime.runMain. Future services will be merged into the layer composition.
+- Verified: server starts and logs `Listening on http://localhost:3000`, responds with `{"status":"ok","name":"laborer-server"}` at `/`, HTTP middleware logger produces structured logs for each request, SIGINT causes clean shutdown (process exits cleanly), SIGTERM causes clean shutdown (process exits cleanly), `tsc --noEmit` passes, `biome check` passes on main.ts.
+
+### Acceptance criteria status
+- [x] Effect runtime initializes on server start
+- [x] Clean shutdown on SIGINT/SIGTERM (logs shutdown, exits cleanly)
+- [x] Effect Layer composition pattern established for future services
+- [x] Tests: runtime initializes successfully; shutdown handler fires on signal (verified manually — SIGINT and SIGTERM both cause clean exit)
+
+### Issues unblocked
+- Issue #12: Health check RPC endpoint
+- Issue #15: Server consumes env validation
+- Issue #16: LiveStore server adapter setup

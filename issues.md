@@ -3550,12 +3550,12 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 8 | LiveStore schema — Tasks table | #3 | Ready |
 | 9 | Effect RPC contract types | #2 | Ready |
 | 10 | Initialize `packages/server` package | #1 | Done |
-| 11 | Effect TS application bootstrap | #10 | Ready |
-| 12 | Health check RPC endpoint | #9, #11 | Blocked |
+| 11 | Effect TS application bootstrap | #10 | Done |
+| 12 | Health check RPC endpoint | #9, #11 | Blocked (#9) |
 | 13 | Web env validation | None | Ready |
 | 14 | Server env validation | #10 | Ready |
-| 15 | Server consumes env validation | #14, #11 | Blocked |
-| 16 | LiveStore server adapter setup | #3, #11 | Blocked |
+| 15 | Server consumes env validation | #14, #11 | Blocked (#14) |
+| 16 | LiveStore server adapter setup | #3, #11 | Blocked (#3) |
 | 17 | LiveStore client adapter setup | #3 | Ready |
 | 18 | LiveStore server-to-client sync | #16, #17 | Blocked |
 | 19 | Effect RPC server router setup | #12 | Blocked |

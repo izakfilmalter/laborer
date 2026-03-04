@@ -13,6 +13,11 @@
     ".": "./src/main.ts"
   },
   "dependencies": {
+    "@effect/cluster": "^0.56.4",
+    "@effect/platform": "^0.94.5",
+    "@effect/platform-bun": "^0.87.1",
+    "@effect/rpc": "^0.73.2",
+    "@effect/sql": "^0.49.0",
     "@laborer/shared": "workspace:*",
     "effect": "catalog:"
   },

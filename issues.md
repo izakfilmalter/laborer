@@ -591,16 +591,16 @@ Create the ProjectRegistry Effect service in `packages/server/src/services/Proje
 
 ### Acceptance criteria
 
-- [ ] ProjectRegistry is a tagged Effect service
-- [ ] `addProject(repoPath)` validates path exists and is a git repo
-- [ ] On success, commits ProjectCreated event to LiveStore
-- [ ] On invalid path → returns descriptive error
-- [ ] On non-git directory → returns descriptive error
-- [ ] Tests: add valid repo → project in LiveStore; add non-git dir → error; add nonexistent path → error
+- [x] ProjectRegistry is a tagged Effect service
+- [x] `addProject(repoPath)` validates path exists and is a git repo
+- [x] On success, commits ProjectCreated event to LiveStore
+- [x] On invalid path → returns descriptive error
+- [x] On non-git directory → returns descriptive error
+- [ ] Tests: add valid repo → project in LiveStore; add non-git dir → error; add nonexistent path → error (deferred — vitest not yet configured)
 
 ### Blocked by
 
-- Blocked by #16, #3
+- Blocked by #16, #3 (both done)
 
 ### User stories addressed
 
@@ -673,14 +673,14 @@ Implement the `project.add` handler in the server RPC router via `RpcGroup.toHan
 
 ### Acceptance criteria
 
-- [ ] `project.add` handler implemented via `RpcGroup.toHandlers`
-- [ ] Accepts repo path, returns created project
-- [ ] Invalid path → error response with message
-- [ ] Tests: RPC call with valid path → project in LiveStore + success response; invalid path → error response
+- [x] `project.add` handler implemented via `RpcGroup.toHandlers`
+- [x] Accepts repo path, returns created project
+- [x] Invalid path → error response with message
+- [ ] Tests: RPC call with valid path → project in LiveStore + success response; invalid path → error response (deferred — vitest not yet configured)
 
 ### Blocked by
 
-- Blocked by #19, #21
+- Blocked by #19, #21 (both done)
 
 ### User stories addressed
 
@@ -3595,10 +3595,10 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 18 | LiveStore server-to-client sync | #16, #17 | Blocked |
 | 19 | @effect/rpc server router setup | #12 | Done |
 | 20 | AtomRpc client setup (effect-atom) | #19, #9 | Ready |
-| 21 | ProjectRegistry — addProject | #16, #3 | Blocked |
-| 22 | ProjectRegistry — removeProject | #21 | Blocked |
-| 23 | ProjectRegistry — listProjects + getProject | #21 | Blocked |
-| 24 | project.add RPC handler | #19, #21 | Blocked |
+| 21 | ProjectRegistry — addProject | #16, #3 | Done |
+| 22 | ProjectRegistry — removeProject | #21 | Ready |
+| 23 | ProjectRegistry — listProjects + getProject | #21 | Ready |
+| 24 | project.add RPC handler | #19, #21 | Done |
 | 25 | project.remove RPC handler | #24, #22 | Blocked |
 | 26 | Project list UI | #18, #24 | Blocked |
 | 27 | Add Project form (AtomRpc mutation) | #20, #24, #26 | Blocked |

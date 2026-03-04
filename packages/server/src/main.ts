@@ -31,6 +31,7 @@ import { LaborerRpcs } from "@laborer/shared/rpc";
 import { Effect, Layer } from "effect";
 import { LaborerRpcsLive } from "./rpc/handlers.js";
 import { LaborerStoreLive } from "./services/laborer-store.js";
+import { ProjectRegistry } from "./services/project-registry.js";
 
 /**
  * Custom HTTP Routes
@@ -57,9 +58,13 @@ const CustomRoutesLive = HttpRouter.Default.use((router) =>
  * Creates the Effect RPC server from the LaborerRpcs group and wires
  * it to the handler implementations. RpcServer.layer creates a fiber
  * that processes incoming RPC requests and dispatches them to handlers.
+ *
+ * Services required by RPC handlers are provided here:
+ * - ProjectRegistry (Issue #21)
  */
 const RpcLive = RpcServer.layer(LaborerRpcs).pipe(
-	Layer.provide(LaborerRpcsLive)
+	Layer.provide(LaborerRpcsLive),
+	Layer.provide(ProjectRegistry.layer)
 );
 
 /**

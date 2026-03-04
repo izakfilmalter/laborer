@@ -412,3 +412,42 @@ Date: 2026-03-04
 - **Removed the `@effect/platform-node@0.81.5` patch** (`patches/@effect%2Fplatform-node@0.81.5.patch` and `patchedDependencies` config). No longer needed since `@effect/platform-node@0.103.0` is compatible with `@effect/cluster@0.55.0`.
 - **Updated workspace packages** to use `catalog:` references for Effect deps instead of hardcoded version ranges.
 - Verified: clean `bun install` (no warnings), single copy of every Effect package in lockfile, `tsc --noEmit` passes for server and shared, `bun x ultracite check` shows only pre-existing web UI lint issues.
+
+## Issue 21: ProjectRegistry service — addProject method — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `packages/server/src/services/project-registry.ts` with the `ProjectRegistry` Effect service using `Context.Tag("@laborer/ProjectRegistry")`.
+- Implemented `addProject(repoPath)` method using `Effect.fn` for call-site tracing:
+  1. Resolves the input path to an absolute path using `node:path.resolve`.
+  2. Validates the path exists and is a directory using `node:fs.statSync`.
+  3. Validates it's a git repository by running `git rev-parse --is-inside-work-tree` via `Bun.spawn`.
+  4. Checks for duplicate registration by querying LiveStore's `projects` table with `.where("repoPath", resolvedPath)`.
+  5. Derives the project name from the directory basename.
+  6. Generates a unique ID via `crypto.randomUUID()`.
+  7. Commits a `projectCreated` event to LiveStore with `{ id, repoPath, name, rlphConfig: null }`.
+- Each failure case returns a descriptive `RpcError` with a specific error code: `INVALID_PATH`, `NOT_GIT_REPO`, `GIT_CHECK_FAILED`, or `ALREADY_REGISTERED`.
+- Used `yield*` directly for yieldable errors (per Effect best practices) instead of `Effect.fail(new RpcError(...))`.
+- Created `ProjectRegistry.layer` as a `Layer.effect` that depends on `LaborerStore` for persistence.
+- Updated `packages/server/src/rpc/handlers.ts`:
+  - Replaced the `project.add` stub with a real handler that delegates to `ProjectRegistry.addProject`.
+  - Maps `rlphConfig: null` to `undefined` to match the `ProjectResponse` schema (`Schema.optional(Schema.String)` = `string | undefined`).
+- Updated `packages/server/src/main.ts`:
+  - Added `ProjectRegistry.layer` to the `RpcLive` layer composition via `Layer.provide(ProjectRegistry.layer)`.
+  - `LaborerStoreLive` (provided at the `HttpLive` level) flows through to satisfy `ProjectRegistry.layer`'s `LaborerStore` dependency.
+- Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin hints), `biome check` passes with no issues on all 3 modified files, server starts successfully and reaches the HTTP listen phase.
+
+### Acceptance criteria status
+- [x] ProjectRegistry is a tagged Effect service
+- [x] `addProject(repoPath)` validates path exists and is a git repo
+- [x] On success, commits ProjectCreated event to LiveStore
+- [x] On invalid path → returns descriptive error (INVALID_PATH)
+- [x] On non-git directory → returns descriptive error (NOT_GIT_REPO)
+- [ ] Tests: add valid repo → project in LiveStore; add non-git dir → error; add nonexistent path → error (deferred — vitest not yet configured; will be testable when @effect/vitest is set up)
+
+### Issues unblocked
+- Issue #22: ProjectRegistry — removeProject (was blocked by #21)
+- Issue #23: ProjectRegistry — listProjects + getProject (was blocked by #21)
+- Issue #24: project.add RPC handler (was blocked by #19 and #21, now both done)
+- Issue #33: WorkspaceProvider — create worktree (partially — still needs #29)

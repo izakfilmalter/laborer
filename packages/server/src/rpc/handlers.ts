@@ -2,13 +2,13 @@
  * RPC Handlers
  *
  * Implements handler logic for the LaborerRpcs group.
- * Currently only health.check is implemented; all other methods
- * return "not implemented" errors and will be wired to real
- * services as those services are built (Issue #19+).
+ * Handlers delegate to Effect services for real work.
+ * Services that aren't yet implemented return "not implemented" errors.
  */
 
 import { LaborerRpcs, RpcError } from "@laborer/shared/rpc";
 import { Effect } from "effect";
+import { ProjectRegistry } from "../services/project-registry.js";
 
 const startTime = Date.now();
 
@@ -21,7 +21,10 @@ const notImplemented = (method: string) =>
 /**
  * RPC handler layer for the LaborerRpcs group.
  *
- * The health.check handler returns the server uptime.
+ * Implemented handlers:
+ * - health.check: returns server uptime
+ * - project.add: delegates to ProjectRegistry.addProject (Issue #21)
+ *
  * All other handlers are stubs that will be replaced as
  * their backing services are implemented.
  */
@@ -37,9 +40,19 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 			}),
 
 		// -------------------------------------------------------------------
-		// Project RPCs (stubs — Issue #21-25)
+		// Project RPCs (Issue #21-25)
 		// -------------------------------------------------------------------
-		"project.add": () => Effect.fail(notImplemented("project.add")),
+		"project.add": ({ repoPath }) =>
+			Effect.gen(function* () {
+				const registry = yield* ProjectRegistry;
+				const project = yield* registry.addProject(repoPath);
+				return {
+					id: project.id,
+					repoPath: project.repoPath,
+					name: project.name,
+					rlphConfig: project.rlphConfig ?? undefined,
+				};
+			}),
 		"project.remove": () => Effect.fail(notImplemented("project.remove")),
 
 		// -------------------------------------------------------------------

@@ -1,0 +1,9 @@
+{
+  "extends": "@laborer/config/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": true,
+    "types": ["bun", "node"]
+  },
+  "include": ["src"]
+}

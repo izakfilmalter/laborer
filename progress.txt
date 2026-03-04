@@ -67,3 +67,26 @@ Date: 2026-03-04
 - Issue #7: LiveStore schema — PanelLayout table
 - Issue #8: LiveStore schema — Tasks table
 - Issue #17: LiveStore client adapter setup (partially — still needs other deps)
+
+## Issue 10: Initialize `packages/server` package — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `packages/server/package.json` with name `@laborer/server`, correct exports (`.`), dependencies (`effect` via catalog, `@laborer/shared` workspace), and devDependencies (`@laborer/config`, `@types/bun`, `@types/node`, `typescript`).
+- Added scripts: `dev` (bun run --watch src/main.ts), `build` (tsc --noEmit), `check-types` (tsc --noEmit), `start` (bun run src/main.ts).
+- Created `packages/server/tsconfig.json` extending `@laborer/config/tsconfig.base.json` with `noEmit: true`, `declaration: true`, and bun+node types.
+- Created `packages/server/src/main.ts` as the entry point — a minimal Bun.serve HTTP server on port 3000 that responds with a status message. Includes documentation comments mapping future work to specific issues.
+- Added `Bun` to `biome.json` javascript.globals to resolve Biome's `noUndeclaredVariables` lint error for the Bun global.
+- Verified: `bun run start` starts the server and responds at http://localhost:3000, `tsc --noEmit` passes with no errors, `ultracite check` passes with no lint issues, `turbo build --filter=@laborer/server` succeeds, `turbo dev --filter=@laborer/server` starts the dev server with file watching.
+
+### Acceptance criteria status
+- [x] `packages/server/package.json` exists with correct name, dependencies (effect, bun), and scripts
+- [x] `packages/server/tsconfig.json` extends `packages/config/tsconfig.base.json`
+- [x] `src/main.ts` exists as entry point
+- [x] `bun run` in server package starts without error
+- [x] Turborepo pipeline includes server `dev` and `build` tasks
+
+### Issues unblocked
+- Issue #11: Effect TS application bootstrap
+- Issue #14: Server env validation

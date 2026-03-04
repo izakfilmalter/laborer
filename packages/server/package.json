@@ -1,0 +1,25 @@
+{
+  "name": "@laborer/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/main.ts",
+    "build": "tsc --noEmit",
+    "check-types": "tsc --noEmit",
+    "start": "bun run src/main.ts"
+  },
+  "exports": {
+    ".": "./src/main.ts"
+  },
+  "dependencies": {
+    "@laborer/shared": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@laborer/config": "workspace:*",
+    "@types/bun": "^1.2.14",
+    "@types/node": "^25.3.3",
+    "typescript": "catalog:"
+  }
+}

@@ -1,6 +1,150 @@
-/**
- * Shared domain types for Laborer.
- *
- * These types are referenced by both the server and web app.
- * Full definitions will be added in Issue #2.
- */
+import { Schema } from "effect";
+
+// ---------------------------------------------------------------------------
+// Branded IDs
+// ---------------------------------------------------------------------------
+
+export const ProjectId = Schema.String.pipe(Schema.brand("ProjectId"));
+export type ProjectId = typeof ProjectId.Type;
+
+export const WorkspaceId = Schema.String.pipe(Schema.brand("WorkspaceId"));
+export type WorkspaceId = typeof WorkspaceId.Type;
+
+export const TerminalId = Schema.String.pipe(Schema.brand("TerminalId"));
+export type TerminalId = typeof TerminalId.Type;
+
+export const TaskId = Schema.String.pipe(Schema.brand("TaskId"));
+export type TaskId = typeof TaskId.Type;
+
+// ---------------------------------------------------------------------------
+// Enums (Variants)
+// ---------------------------------------------------------------------------
+
+export const WorkspaceStatus = Schema.Literal(
+	"creating",
+	"running",
+	"stopped",
+	"errored",
+	"destroyed"
+);
+export type WorkspaceStatus = typeof WorkspaceStatus.Type;
+
+export const TerminalStatus = Schema.Literal("running", "stopped");
+export type TerminalStatus = typeof TerminalStatus.Type;
+
+export const TaskSource = Schema.Literal("linear", "github", "manual", "prd");
+export type TaskSource = typeof TaskSource.Type;
+
+export const TaskStatus = Schema.Literal(
+	"pending",
+	"in_progress",
+	"completed",
+	"cancelled"
+);
+export type TaskStatus = typeof TaskStatus.Type;
+
+export const PaneType = Schema.Literal("terminal", "diff");
+export type PaneType = typeof PaneType.Type;
+
+export const SplitDirection = Schema.Literal("horizontal", "vertical");
+export type SplitDirection = typeof SplitDirection.Type;
+
+// ---------------------------------------------------------------------------
+// Domain Models
+// ---------------------------------------------------------------------------
+
+export class Project extends Schema.Class<Project>("Project")({
+	id: ProjectId,
+	repoPath: Schema.String,
+	name: Schema.String,
+	rlphConfig: Schema.optional(Schema.String),
+}) {}
+
+export class Workspace extends Schema.Class<Workspace>("Workspace")({
+	id: WorkspaceId,
+	projectId: ProjectId,
+	taskSource: Schema.optional(Schema.String),
+	branchName: Schema.String,
+	worktreePath: Schema.String,
+	port: Schema.Int,
+	status: WorkspaceStatus,
+	createdAt: Schema.Date,
+}) {}
+
+export class Terminal extends Schema.Class<Terminal>("Terminal")({
+	id: TerminalId,
+	workspaceId: WorkspaceId,
+	command: Schema.String,
+	status: TerminalStatus,
+	ptySessionRef: Schema.optional(Schema.String),
+}) {}
+
+export class Task extends Schema.Class<Task>("Task")({
+	id: TaskId,
+	projectId: ProjectId,
+	source: TaskSource,
+	externalId: Schema.optional(Schema.String),
+	title: Schema.String,
+	status: TaskStatus,
+}) {}
+
+export class Diff extends Schema.Class<Diff>("Diff")({
+	workspaceId: WorkspaceId,
+	diffContent: Schema.String,
+	lastUpdated: Schema.Date,
+}) {}
+
+// ---------------------------------------------------------------------------
+// Panel Layout Tree
+// ---------------------------------------------------------------------------
+
+export interface LeafNode {
+	readonly _tag: "LeafNode";
+	readonly id: string;
+	readonly paneType: PaneType;
+	readonly terminalId?: string | undefined;
+	readonly workspaceId?: string | undefined;
+}
+
+export interface SplitNode {
+	readonly _tag: "SplitNode";
+	readonly children: readonly PanelNode[];
+	readonly direction: SplitDirection;
+	readonly id: string;
+	readonly sizes: readonly number[];
+}
+
+export type PanelNode = LeafNode | SplitNode;
+
+export const LeafNodeSchema: Schema.Schema<LeafNode> = Schema.Struct({
+	_tag: Schema.Literal("LeafNode"),
+	id: Schema.String,
+	paneType: PaneType,
+	terminalId: Schema.optional(Schema.String),
+	workspaceId: Schema.optional(Schema.String),
+});
+
+export const SplitNodeSchema: Schema.Schema<SplitNode> = Schema.Struct({
+	_tag: Schema.Literal("SplitNode"),
+	id: Schema.String,
+	direction: SplitDirection,
+	children: Schema.Array(
+		Schema.suspend((): Schema.Schema<PanelNode> => PanelNodeSchema)
+	),
+	sizes: Schema.Array(Schema.Number),
+});
+
+export const PanelNodeSchema: Schema.Schema<PanelNode> = Schema.Union(
+	LeafNodeSchema,
+	SplitNodeSchema
+);
+
+export interface PanelLayout {
+	readonly activePaneId?: string | undefined;
+	readonly root: PanelNode;
+}
+
+export const PanelLayoutSchema: Schema.Schema<PanelLayout> = Schema.Struct({
+	root: PanelNodeSchema,
+	activePaneId: Schema.optional(Schema.String),
+});

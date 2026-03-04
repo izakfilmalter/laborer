@@ -3541,14 +3541,14 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
 | 1 | Initialize `packages/shared` package | None | Done |
-| 2 | Shared domain types | #1 | Ready |
+| 2 | Shared domain types | #1 | Done |
 | 3 | LiveStore schema — Projects table | #1 | Ready |
 | 4 | LiveStore schema — Workspaces table | #3 | Blocked |
 | 5 | LiveStore schema — Terminals table | #3 | Blocked |
 | 6 | LiveStore schema — Diffs table | #3 | Blocked |
 | 7 | LiveStore schema — PanelLayout table | #3 | Blocked |
 | 8 | LiveStore schema — Tasks table | #3 | Blocked |
-| 9 | Effect RPC contract types | #2 | Blocked |
+| 9 | Effect RPC contract types | #2 | Ready |
 | 10 | Initialize `packages/server` package | #1 | Ready |
 | 11 | Effect TS application bootstrap | #10 | Blocked |
 | 12 | Health check RPC endpoint | #9, #11 | Blocked |

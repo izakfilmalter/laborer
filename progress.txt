@@ -20,3 +20,23 @@ Date: 2026-03-04
 - Issue #2: Shared domain types
 - Issue #3: LiveStore schema — Projects table
 - Issue #10: Initialize `packages/server` package
+
+## Issue 2: Shared domain types — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Defined branded IDs using `Schema.brand`: `ProjectId`, `WorkspaceId`, `TerminalId`, `TaskId` — prevents accidental mixing of ID types.
+- Defined enum variants using `Schema.Literal`: `WorkspaceStatus` (creating/running/stopped/errored/destroyed), `TerminalStatus` (running/stopped), `TaskSource` (linear/github/manual/prd), `TaskStatus` (pending/in_progress/completed/cancelled), `PaneType` (terminal/diff), `SplitDirection` (horizontal/vertical).
+- Defined domain model classes using `Schema.Class`: `Project`, `Workspace`, `Terminal`, `Task`, `Diff` — each with all fields specified in the PRD's LiveStore state section.
+- Defined recursive panel layout tree types: `LeafNode` and `SplitNode` interfaces with `PanelNode` union, plus corresponding `Schema.Schema` definitions using `Schema.suspend` for recursion, and `PanelLayout`/`PanelLayoutSchema`.
+- All types exported from `packages/shared/src/types.ts` (accessible via `@laborer/shared/types`).
+- Verified: `tsc --noEmit` passes (no errors), `ultracite check` passes on types.ts (no lint issues).
+
+### Acceptance criteria status
+- [x] All domain types defined with proper TypeScript types and enums
+- [x] Types compile without errors
+- [x] Types are exported from `packages/shared`
+
+### Issues unblocked
+- Issue #9: Effect RPC contract types

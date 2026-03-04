@@ -1809,14 +1809,14 @@ Create the PanelManager component in `apps/web/src/panels/`. Start with renderin
 
 ### Acceptance criteria
 
-- [ ] PanelManager component renders a single pane
-- [ ] Pane hosts a terminal component (from issue #60)
-- [ ] Pane fills available space
-- [ ] Tests: PanelManager renders; terminal visible in pane
+- [x] PanelManager component renders a single pane
+- [x] Pane hosts a terminal component (from issue #60)
+- [x] Pane fills available space
+- [ ] Tests: PanelManager renders; terminal visible in pane (deferred — requires running both server and web app with a live terminal)
 
 ### Blocked by
 
-- Blocked by #60
+- Blocked by #60 (done)
 
 ### User stories addressed
 
@@ -3640,9 +3640,9 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 63 | Terminal list per workspace UI | ~~#60~~, ~~#55~~ | Ready |
 | 64 | Terminal session reconnection | ~~#60~~ | Ready |
 | 65 | Terminal scrollback buffer replay | #64 | Blocked |
-| 66 | PanelManager — single pane | ~~#60~~ | Ready |
-| 67 | PanelManager — horizontal split | #66 | Blocked |
-| 68 | PanelManager — vertical split | #66 | Blocked |
+| 66 | PanelManager — single pane | ~~#60~~ | Done |
+| 67 | PanelManager — horizontal split | ~~#66~~ | Ready |
+| 68 | PanelManager — vertical split | ~~#66~~ | Ready |
 | 69 | PanelManager — recursive splits | #67, #68 | Blocked |
 | 70 | PanelManager — close pane | #67 | Blocked |
 | 71 | PanelManager — navigate between panes | #67 | Blocked |

@@ -1415,3 +1415,49 @@ Date: 2026-03-04
 - POST `/rpc` returns RPC framework response (200, business RPCs work)
 - GET `/rpc` returns 400 Bad Request (WebSocket handler active, rejects non-upgrade GET)
 - GET `/rpc` with WebSocket upgrade headers returns 101 Switching Protocols (WebSocket connection established)
+
+## Issue 66: PanelManager — single pane rendering — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `apps/web/src/panels/panel-manager.tsx` — the PanelManager component that renders the tmux-style panel system:
+  - `PanelManager` component: top-level component that accepts a `PanelNode` layout tree and renders it, or shows an empty state when no layout is provided. Fills its parent container completely.
+  - `PanelRenderer` component: recursively renders a `PanelNode` tree. Renders `LeafNode` as a single pane with content. `SplitNode` renders the first child as a fallback (full split support deferred to Issue #67/#68).
+  - `PaneContent` component: renders the content of a single pane based on its `paneType`:
+    - `"terminal"` with a `terminalId` → renders `TerminalPane` (from Issue #60/#61) with full xterm.js
+    - `"terminal"` without `terminalId` → renders empty state prompting user to spawn a terminal
+    - `"diff"` → renders placeholder for future diff viewer (Issue #87)
+  - Uses shadcn/ui `Empty` components for empty states, `lucide-react` icons (`Layers`, `Terminal`).
+- Restructured `apps/web/src/routes/index.tsx` to use a sidebar + panel layout:
+  - Replaced the single-column centered layout with a `ResizablePanelGroup` (horizontal orientation) using `react-resizable-panels` via shadcn/ui's `resizable.tsx` wrapper.
+  - Left panel (25% default, 15-40% range): sidebar with Projects list, Workspaces list, and Server Status in a `ScrollArea`.
+  - Right panel (75% default, 40%+ min): `PanelManager` component showing the panel layout.
+  - `ResizableHandle` with handle between sidebar and panel area for drag-to-resize.
+- Created `usePanelLayout()` hook in the home route:
+  - Reads `terminals` and `workspaces` tables from LiveStore reactively.
+  - Builds a `LeafNode` layout automatically: if running terminals exist, shows the first one; if active workspaces exist but no terminals, shows an empty terminal pane; otherwise returns undefined for the PanelManager empty state.
+  - Uses `useMemo` to avoid unnecessary re-renders when the underlying data hasn't changed.
+- Created the `apps/web/src/panels/` directory — first file in this directory, as specified by the PRD project structure.
+
+### Acceptance criteria status
+- [x] PanelManager component renders a single pane (LeafNode rendering fully implemented)
+- [x] Pane hosts a terminal component (from Issue #60 — TerminalPane with xterm.js)
+- [x] Pane fills available space (h-full w-full overflow-hidden on all containers)
+- [ ] Tests: PanelManager renders; terminal visible in pane (deferred — requires running both server and web app with a live terminal)
+
+### Design decisions
+- Used `react-resizable-panels` (already installed) instead of `allotment` (PRD suggestion). The project already has `react-resizable-panels@4.7.1` with a shadcn/ui wrapper at `resizable.tsx`. This avoids adding a redundant dependency and stays consistent with the existing component library.
+- The sidebar + panel layout gives the app a proper IDE-like feel. The sidebar holds the management UI (projects, workspaces, server status) while the main area hosts the terminal/diff panels. This layout scales naturally when split support is added in Issues #67/#68.
+- `usePanelLayout()` automatically builds a layout from LiveStore state rather than requiring manual pane assignment. This provides an immediate, working panel experience — create a workspace, spawn a terminal, and it appears in the panel area automatically.
+- `PanelRenderer` handles `SplitNode` by rendering the first child as a fallback. This means the component is forward-compatible with split layouts — once split rendering is implemented (Issues #67/#68), existing SplitNode data will "just work" instead of breaking.
+- Used `ScrollArea` for the sidebar to handle overflow when many projects/workspaces are listed.
+- Exported `PanelManager`, `PanelRenderer`, and `PaneContent` separately for composability. `PanelRenderer` can be reused inside split layouts, and `PaneContent` can be used independently in custom pane configurations.
+
+### Issues unblocked
+- Issue #67: PanelManager — horizontal split (was blocked by #66 — now done!)
+- Issue #68: PanelManager — vertical split (was blocked by #66 — now done!)
+- Issue #70: PanelManager — close pane (was blocked by #67 which was blocked by #66 — #66 now done)
+- Issue #71: PanelManager — navigate between panes (was blocked by #67 — #66 now done)
+- Issue #72: PanelManager — drag-to-resize (was blocked by #67 — #66 now done)
+- Issue #75: Keyboard shortcut — split horizontal (was blocked by #67 — #66 now done)

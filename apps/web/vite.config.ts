@@ -13,5 +13,12 @@ export default defineConfig({
 	},
 	server: {
 		port: 3001,
+		fs: { strict: false },
+	},
+	worker: {
+		format: "es",
+	},
+	optimizeDeps: {
+		exclude: ["@livestore/adapter-web"],
 	},
 });

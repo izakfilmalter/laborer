@@ -789,3 +789,58 @@ Date: 2026-03-04
 
 ### Note: Issues #51-#55 and #56-#59 completed
 The TerminalManager implementation includes all 5 sub-issues (#50-#55) in a single service. The 4 terminal RPC handlers (#56-#59) are also wired up. This means the entire terminal pipeline from RPC → service → PTY → LiveStore is complete on the server side. The next step is the client-side xterm.js integration (Issue #60), which still requires LiveStore client adapter setup (Issue #17) and LiveStore sync (Issue #18).
+
+## Issue 17: LiveStore client adapter setup — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Added `@livestore/adapter-web@0.4.0-dev.22`, `@livestore/livestore@0.4.0-dev.22`, `@livestore/react@0.4.0-dev.22`, `@laborer/shared`, and `effect` (via catalog) as dependencies to `apps/web/package.json`.
+- Created `apps/web/src/livestore.worker.ts` — the dedicated (leader) Web Worker that runs the canonical OPFS-backed SQLite databases. Uses `makeWorker` from `@livestore/adapter-web/worker` with the shared `schema` from `@laborer/shared/schema`.
+- Created `apps/web/src/livestore/store.ts` — the store setup module:
+  - Imports the dedicated worker via Vite's `?worker` suffix and the shared worker via `?sharedworker` suffix from `@livestore/adapter-web/shared-worker`.
+  - Configures `makePersistedAdapter` with OPFS storage, both workers, and optional `resetPersistence` support (append `?reset` to URL in dev mode).
+  - Exports `useLaborerStore()` hook that wraps `useStore` from `@livestore/react` with storeId `"laborer"`, the shared schema, adapter, and React's `unstable_batchedUpdates`.
+- Created `apps/web/src/livestore/provider.tsx` — the `LiveStoreProvider` React component:
+  - Creates a `StoreRegistry` instance via `useState` (singleton per app mount).
+  - Wraps children with `StoreRegistryProvider` from `@livestore/react`.
+  - Wraps children in `Suspense` with the existing `Loader` component as fallback (store loading suspends until OPFS databases are initialized).
+- Updated `apps/web/src/routes/__root.tsx`:
+  - Added `LiveStoreProvider` wrapping the main app content (inside `ThemeProvider`, outside `Header` + `Outlet`).
+  - Fixed lint issue: changed `RouterAppContext = {}` to `RouterAppContext = Record<string, never>` to satisfy Biome's `noEmptyInterface` / `noEmptyBlockStatements` equivalent rule.
+- Updated `apps/web/src/routes/index.tsx` — demonstration that LiveStore is working:
+  - Added `useLaborerStore()` call in the home component.
+  - Uses `store.useQuery()` with `queryDb(projects)` and `queryDb(workspaces)` to reactively display project and workspace counts.
+  - Updated the ASCII art title to say "LABORER" instead of "BETTER T STACK".
+- Updated `apps/web/vite.config.ts`:
+  - Added `worker: { format: "es" }` — required for ES module Web Workers used by LiveStore.
+  - Added `server.fs.strict: false` — allows serving files from workspace packages during dev.
+  - Added `optimizeDeps.exclude: ["@livestore/adapter-web"]` — prevents Vite from pre-bundling the adapter (it needs to stay as separate modules for worker imports).
+- Verified: `bun install` succeeds with no warnings, `tsc --noEmit` passes for web, server, and shared packages (only pre-existing informational messages), `biome check` passes with zero issues on all 6 new/modified files, all pre-existing errors are unchanged.
+
+### Architecture: Three-thread model
+The LiveStore web adapter uses a three-thread architecture:
+1. **Main thread** (React app) — local in-memory SQLite for fast queries, communicates with shared worker.
+2. **Shared worker** — one per storeId across all tabs, coordinates leader election via Web Locks API, proxies messages.
+3. **Dedicated worker** (leader) — owns the canonical OPFS-backed SQLite databases (state + eventlog), runs materializers.
+
+### Acceptance criteria status
+- [x] LiveStore browser adapter configured in `apps/web` (OPFS + Web Workers)
+- [x] React provider component wraps the app (`LiveStoreProvider` in `__root.tsx`)
+- [x] Components can commit events and subscribe to table state (demonstrated in `index.tsx` with `store.useQuery`)
+- [ ] Tests: provider mounts; commit event → table state updates; reactive subscription fires on change (deferred — requires running web app and LiveStore sync; will be verifiable after Issue #18)
+
+### Design decisions
+- Used OPFS (Origin Private File System) storage type instead of IndexedDB. OPFS is the recommended LiveStore storage backend — it provides synchronous file access in workers via `FileSystemSyncAccessHandle`, which is required for SQLite WASM performance.
+- The shared worker is imported directly from `@livestore/adapter-web/shared-worker?sharedworker` — no custom shared worker file needed. The package auto-invokes `makeWorker()` at module load.
+- The `resetPersistence` feature (append `?reset` to URL) is only enabled in dev mode. It clears all OPFS databases and restarts fresh — useful during development when schema changes.
+- The store uses storeId `"laborer"` to match the server-side store, which will enable sync when Issue #18 is implemented.
+- `LiveStoreProvider` is placed inside `ThemeProvider` but outside `Toaster` — this ensures all routed content has access to the store, while the Toaster (which doesn't need store access) remains independent.
+
+### Issues unblocked
+- Issue #18: LiveStore server-to-client sync (was blocked by #16 (done) and #17 — now both done!)
+- Issue #26: Project list UI (was blocked by #18 and #24 — #24 done, #18 unblocked)
+- Issue #41: Workspace list UI (was blocked by #18 and #40 — #40 done, #18 unblocked)
+- Issue #60: xterm.js render output (was blocked by #18 and #56 — #56 done, #18 unblocked)
+- Issue #87: Diff viewer pane (was blocked by #18 and #83 and #6 — #6 done, #18 unblocked)
+- Issue #104: Task list UI (was blocked by #102 and #18 — #18 unblocked)

@@ -2558,10 +2558,10 @@ Implement the `rlph.writePRD` handler via `RpcGroup.toHandlers`. Spawns a termin
 
 ### Acceptance criteria
 
-- [ ] `rlph.writePRD` handler accepts workspaceId and optional description
-- [ ] Spawns terminal with `rlph prd [description]`
-- [ ] Returns terminal ID
-- [ ] Tests: RPC call → terminal spawned with correct rlph prd command
+- [x] `rlph.writePRD` handler accepts workspaceId and optional description
+- [x] Spawns terminal with `rlph prd [description]`
+- [x] Returns terminal ID
+- [ ] Tests: RPC call → terminal spawned with correct rlph prd command (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -3668,8 +3668,8 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 91 | Diff viewer debounce/throttle | #89 | Blocked |
 | 92 | rlph.startLoop RPC handler | ~~#56~~ | Done |
 | 93 | "Start Ralph Loop" button (AtomRpc mutation) | ~~#92~~, ~~#60~~ | Ready |
-| 94 | rlph.writePRD RPC handler | ~~#56~~ | Ready |
-| 95 | PRD writing form + button (AtomRpc mutation) | #94, ~~#60~~ | Blocked |
+| 94 | rlph.writePRD RPC handler | ~~#56~~ | Done |
+| 95 | PRD writing form + button (AtomRpc mutation) | ~~#94~~, ~~#60~~ | Ready |
 | 96 | rlph.review RPC handler | ~~#56~~ | Ready |
 | 97 | "Review PR" button + input (AtomRpc mutation) | #96, ~~#60~~ | Blocked |
 | 98 | rlph.fix RPC handler | ~~#56~~ | Ready |

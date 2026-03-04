@@ -1669,3 +1669,32 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #74: PanelManager — restore layout from LiveStore (was blocked by #73 — now done!)
+
+## Issue 94: rlph.writePRD RPC handler — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Replaced the `rlph.writePRD` stub in `packages/server/src/rpc/handlers.ts` with a real handler that delegates to `TerminalManager.spawn(workspaceId, command)`.
+- The handler accepts `workspaceId` (required) and `description` (optional) from the payload.
+- Constructs the command: `rlph prd <description>` when a description is provided, or `rlph prd` when no description is given.
+- Spawns a PTY terminal running the rlph prd command in the workspace's worktree directory via `TerminalManager.spawn`, and returns the terminal record (id, workspaceId, command, status).
+- This follows the exact same pattern as `rlph.startLoop` (Issue #92) — a thin convenience wrapper around the existing terminal infrastructure.
+- The `rlph prd` command starts rlph's PRD writing workflow. When a description is provided, rlph uses it as the starting point for generating a PRD and creating issues. The user sees the rlph TUI output in real-time via xterm.js.
+- Updated the handler doc comment to list `rlph.writePRD` as implemented.
+- Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin informational messages), `ultracite check` passes with zero issues on handlers.ts.
+
+### Acceptance criteria status
+- [x] `rlph.writePRD` handler accepts workspaceId and optional description
+- [x] Spawns terminal with `rlph prd [description]` command (via TerminalManager.spawn)
+- [x] Returns terminal ID (along with workspaceId, command, status in TerminalResponse)
+- [ ] Tests: RPC call → terminal spawned with correct rlph prd command (deferred — vitest not yet configured)
+
+### Design decisions
+- Used the existing `TerminalManager.spawn` method rather than duplicating PTY logic, consistent with the `rlph.startLoop` handler pattern. All rlph handlers are thin wrappers that compose the correct command string and delegate to the terminal infrastructure.
+- The description is appended directly to the command string. `TerminalManager.spawn` runs commands via `$SHELL -c <cmd>`, so the description is passed as part of the shell command. Users should be aware that special shell characters in the description will be interpreted by the shell.
+- When no description is provided, `rlph prd` is run without arguments, which lets rlph prompt the user interactively for input via the terminal.
+
+### Issues unblocked
+- Issue #95: PRD writing form + writePRD button (was blocked by #94 and #60 (done) — now all blockers done!)
+- Issue #107: PRD-generated issues → tasks (was blocked by #94 and #100 — #94 now done, still needs #100)

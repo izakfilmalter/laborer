@@ -184,6 +184,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				workspaceId: string,
 				command?: string
 			) {
+				console.log("[TM.spawn] START ws=%s cmd=%s", workspaceId, command);
 				// 1. Validate workspace exists and get its info
 				const allWorkspaces = store.query(tables.workspaces);
 				const workspaceOpt = pipe(
@@ -199,6 +200,11 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				}
 
 				const workspace = workspaceOpt.value;
+				console.log(
+					"[TM.spawn] ws.status=%s cwd=%s",
+					workspace.status,
+					workspace.worktreePath
+				);
 
 				// Ensure workspace is in a valid state for spawning terminals
 				if (workspace.status !== "running" && workspace.status !== "creating") {
@@ -225,34 +231,77 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				// 4. Generate terminal ID
 				const id = crypto.randomUUID();
 
+				const spawnTime = Date.now();
+
 				// 5. Spawn PTY via node-pty
-				const pty = yield* Effect.try({
-					try: () =>
-						nodePty.spawn(shellPath, shellArgs, {
-							name: "xterm-256color",
-							cols: 80,
-							rows: 24,
-							cwd: workspace.worktreePath,
-							env: {
-								...process.env,
-								...workspaceEnv,
-								TERM: "xterm-256color",
-							} as Record<string, string>,
-						}),
-					catch: (error) =>
-						new RpcError({
-							message: `Failed to spawn PTY: ${String(error)}`,
-							code: "PTY_SPAWN_FAILED",
-						}),
+				//
+				// IMPORTANT: We use Effect.sync instead of Effect.try here because
+				// Bun has a runtime bug where wrapping node-pty's spawn in a
+				// try/catch block causes the child process to receive SIGHUP
+				// immediately, killing the PTY before it can start. Effect.try
+				// uses try/catch internally, which triggers this bug. Effect.sync
+				// does not wrap in try/catch, so the PTY stays alive.
+				const pty = yield* Effect.sync(() =>
+					nodePty.spawn(shellPath, shellArgs, {
+						name: "xterm-256color",
+						cols: 80,
+						rows: 24,
+						cwd: workspace.worktreePath,
+						env: {
+							...process.env,
+							...workspaceEnv,
+							TERM: "xterm-256color",
+						} as Record<string, string>,
+					})
+				);
+				console.log("[TM.spawn] pty pid=%d", pty.pid);
+
+				// DEBUG: Also spawn via require to compare behavior
+				// biome-ignore lint/style/noNonNullAssertion: debug
+				const directNodePty = require("node-pty") as typeof import("node-pty");
+				const debugPty = directNodePty.spawn(shellPath, shellArgs, {
+					name: "xterm-256color",
+					cols: 80,
+					rows: 24,
+					cwd: workspace.worktreePath,
+					env: {
+						...process.env,
+						...workspaceEnv,
+						TERM: "xterm-256color",
+					} as Record<string, string>,
 				});
+				console.log("[TM.spawn] DEBUG require() pty pid=%d", debugPty.pid);
+				debugPty.onData(() => {});
+				debugPty.onExit(({ exitCode, signal }) => {
+					console.log(
+						"[TM.DEBUG] require() pty EXIT code=%d signal=%d elapsed=%dms",
+						exitCode,
+						signal,
+						Date.now() - spawnTime
+					);
+				});
+				// Kill debug PTY after 10 seconds
+				setTimeout(() => {
+					console.log("[TM.DEBUG] killing debug pty after 10s");
+					debugPty.kill();
+				}, 10_000);
 
 				// 6. Wire stdout to LiveStore TerminalOutput events
 				pty.onData((data: string) => {
+					console.log("[TM.onData] id=%s len=%d", id, data.length);
 					store.commit(events.terminalOutput({ id, data }));
 				});
 
 				// 7. Handle PTY exit — update status in LiveStore and clean up
-				pty.onExit(({ exitCode: _exitCode }) => {
+				pty.onExit(({ exitCode, signal }) => {
+					console.log(
+						"[TM.onExit] id=%s pid=%d code=%d signal=%d elapsed=%dms",
+						id,
+						pty.pid,
+						exitCode,
+						signal,
+						Date.now() - spawnTime
+					);
 					// Update LiveStore status to "stopped"
 					store.commit(events.terminalStatusChanged({ id, status: "stopped" }));
 

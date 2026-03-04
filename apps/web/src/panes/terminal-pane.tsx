@@ -10,6 +10,19 @@
  * to the server PTY using the `terminal.write` RPC mutation. This enables
  * full human-in-the-loop interaction with agents and regular terminal usage.
  *
+ * Session reconnection (Issue #64):
+ * - On page reload, LiveStore's `store.events()` replays all historical
+ *   `v1.TerminalOutput` events from the persisted eventlog (OPFS/SQLite).
+ *   This means terminal output is fully restored on reconnect — the user
+ *   sees all previous output in the scrollback buffer.
+ * - The component checks the terminal's status from the `terminals` table.
+ *   If the terminal is "stopped", keyboard input is disabled and a visual
+ *   banner is shown. If still "running", input is re-enabled and a resize
+ *   is sent to re-sync PTY dimensions.
+ * - The panel layout persistence (Issue #73) stores terminal-to-pane
+ *   assignments in LiveStore, so the layout is restored on reload with
+ *   the correct terminal IDs.
+ *
  * Architecture:
  * - Server spawns a PTY via node-pty (TerminalManager service)
  * - PTY stdout emits `v1.TerminalOutput` events to LiveStore
@@ -22,14 +35,17 @@
  * @see Issue #60: xterm.js terminal pane — render output
  * @see Issue #61: xterm.js terminal pane — send keyboard input
  * @see Issue #62: xterm.js terminal pane — handle resize
+ * @see Issue #64: Terminal session reconnection
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
+import { terminals } from "@laborer/shared/schema";
+import { queryDb } from "@livestore/livestore";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { useLaborerStore } from "@/livestore/store";
 
@@ -38,6 +54,9 @@ const terminalWriteMutation = LaborerClient.mutation("terminal.write");
 
 /** Module-level mutation atom for terminal.resize — shared across all TerminalPane instances. */
 const terminalResizeMutation = LaborerClient.mutation("terminal.resize");
+
+/** Query all terminals from LiveStore for status checking. */
+const allTerminals$ = queryDb(terminals, { label: "terminalPaneStatus" });
 
 interface TerminalPaneProps {
 	/** The terminal ID to subscribe to for output events. */
@@ -50,6 +69,11 @@ interface TerminalPaneProps {
  * It initializes an xterm.js Terminal, subscribes to the LiveStore
  * event log for `v1.TerminalOutput` events matching the terminal ID,
  * and writes output data to xterm.js as it arrives.
+ *
+ * On reconnection (page reload), `store.events()` replays all historical
+ * `v1.TerminalOutput` events from the persisted eventlog, restoring the
+ * terminal's scrollback buffer. The component also checks the terminal's
+ * current status and disables input if the terminal has stopped.
  *
  * Keyboard input is captured via xterm.js's `onData` callback and
  * sent to the server PTY using the `terminal.write` RPC mutation.
@@ -66,6 +90,7 @@ interface TerminalPaneProps {
  * The component also handles:
  * - Responsive sizing via the xterm.js fit addon
  * - WebGL rendering for performance (falls back to canvas if unavailable)
+ * - Terminal status tracking (running/stopped) from LiveStore
  * - Cleanup on unmount (disposes xterm.js instance, stops event stream)
  */
 function TerminalPane({ terminalId }: TerminalPaneProps) {
@@ -76,6 +101,17 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 	const terminalRef = useRef<Terminal | null>(null);
 	const fitAddonRef = useRef<FitAddon | null>(null);
 	const abortRef = useRef<AbortController | null>(null);
+
+	// Track the terminal's current status from LiveStore reactively.
+	// When the terminal stops (process exits), the status changes to "stopped"
+	// and we disable keyboard input + show a status banner.
+	const allTerminalRows = store.useQuery(allTerminals$);
+	const terminalStatus = useMemo(() => {
+		const row = allTerminalRows.find((t) => t.id === terminalId);
+		return row?.status ?? "stopped";
+	}, [allTerminalRows, terminalId]);
+
+	const isRunning = terminalStatus === "running";
 
 	/**
 	 * Ref to hold the latest writeTerminal function so the xterm.js
@@ -92,6 +128,10 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 	const resizeTerminalRef = useRef(resizeTerminal);
 	resizeTerminalRef.current = resizeTerminal;
 
+	/** Ref for isRunning so the xterm.js onData callback can check it. */
+	const isRunningRef = useRef(isRunning);
+	isRunningRef.current = isRunning;
+
 	/**
 	 * Initialize xterm.js and subscribe to terminal output events.
 	 *
@@ -100,6 +140,7 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 	 * 2. Attaches the fit and WebGL addons
 	 * 3. Opens the terminal in the container div
 	 * 4. Starts streaming v1.TerminalOutput events from LiveStore
+	 *    (replays historical events on reconnection, then streams live)
 	 * 5. Cleans up on unmount
 	 */
 	useEffect(() => {
@@ -165,8 +206,9 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 		}
 
 		// Initial fit — also send dimensions to server PTY so it starts
-		// with the correct size (default node-pty is 80x24, which may not
-		// match the actual container dimensions)
+		// with the correct size (or re-syncs on reconnection). This is
+		// important for reconnection: the PTY may have different dimensions
+		// than the last session, so we always send the current container size.
 		try {
 			fitAddon.fit();
 			const { cols, rows } = terminal;
@@ -189,13 +231,26 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 		// each keystroke is sent immediately without waiting for a response.
 		// The character echoes back from the PTY via LiveStore TerminalOutput
 		// events, completing the input → output loop.
+		//
+		// Keyboard input is only sent when the terminal is running.
+		// When the terminal has stopped, keystrokes are silently dropped
+		// to prevent sending data to a dead PTY.
 		const onDataDisposable = terminal.onData((data: string) => {
+			if (!isRunningRef.current) {
+				return;
+			}
 			writeTerminalRef.current({
 				payload: { terminalId, data },
 			});
 		});
 
-		// Subscribe to terminal output events from LiveStore event log
+		// Subscribe to terminal output events from LiveStore event log.
+		//
+		// store.events() replays ALL historical events from the persisted
+		// eventlog (starting from ROOT) before streaming new live events.
+		// This means on page reload / reconnection, the terminal's entire
+		// output history is replayed into xterm.js, restoring the scrollback
+		// buffer so the user sees all previous output.
 		const abortController = new AbortController();
 		abortRef.current = abortController;
 
@@ -291,10 +346,19 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 
 	return (
 		<div
-			className="h-full w-full overflow-hidden"
+			className="relative h-full w-full overflow-hidden"
 			data-terminal-id={terminalId}
-			ref={containerRef}
-		/>
+		>
+			{/* xterm.js container */}
+			<div className="h-full w-full" ref={containerRef} />
+
+			{/* Status banner — shown when terminal process has exited */}
+			{!isRunning && (
+				<div className="absolute inset-x-0 bottom-0 border-border/50 border-t bg-muted/90 px-3 py-1.5 text-center text-muted-foreground text-xs backdrop-blur-sm">
+					Process exited — terminal output preserved (read-only)
+				</div>
+			)}
+		</div>
 	);
 }
 

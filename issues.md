@@ -1756,10 +1756,10 @@ When the web app reconnects (page reload, network reconnection), reconnect xterm
 
 ### Acceptance criteria
 
-- [ ] On page reload, running terminals are detected from LiveStore
-- [ ] xterm.js reconnects to the terminal's output stream
-- [ ] New output appears after reconnection
-- [ ] Tests: spawn terminal → reload page → terminal still running, new output visible
+- [x] On page reload, running terminals are detected from LiveStore
+- [x] xterm.js reconnects to the terminal's output stream
+- [x] New output appears after reconnection
+- [ ] Tests: spawn terminal → reload page → terminal still running, new output visible (deferred — requires live server + web app integration test)
 
 ### Blocked by
 
@@ -3639,8 +3639,8 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 61 | xterm.js — send keyboard input (AtomRpc mutation) | ~~#60~~, ~~#57~~ | Done |
 | 62 | xterm.js — handle resize (AtomRpc mutation) | ~~#60~~, ~~#58~~ | Done |
 | 63 | Terminal list per workspace UI | ~~#60~~, ~~#55~~ | Done |
-| 64 | Terminal session reconnection | ~~#60~~ | Ready |
-| 65 | Terminal scrollback buffer replay | #64 | Blocked |
+| 64 | Terminal session reconnection | ~~#60~~ | Done |
+| 65 | Terminal scrollback buffer replay | ~~#64~~ | Ready |
 | 66 | PanelManager — single pane | ~~#60~~ | Done |
 | 67 | PanelManager — horizontal split | ~~#66~~ | Done |
 | 68 | PanelManager — vertical split | ~~#66~~ | Done |

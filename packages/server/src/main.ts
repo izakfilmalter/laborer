@@ -35,6 +35,7 @@ import { DiffService } from "./services/diff-service.js";
 import { LaborerStoreLive } from "./services/laborer-store.js";
 import { PortAllocator } from "./services/port-allocator.js";
 import { ProjectRegistry } from "./services/project-registry.js";
+import { PtyHostClient } from "./services/pty-host-client.js";
 import { SyncRpcLive } from "./services/sync-backend.js";
 import { TerminalManager } from "./services/terminal-manager.js";
 import { WorkspaceProvider } from "./services/workspace-provider.js";
@@ -81,6 +82,7 @@ const RpcLive = RpcServer.layer(LaborerRpcs).pipe(
 	Layer.provide(LaborerRpcsLive),
 	Layer.provide(DiffService.layer),
 	Layer.provide(TerminalManager.layer),
+	Layer.provide(PtyHostClient.layer),
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ProjectRegistry.layer),
 	Layer.provide(PortAllocator.layer)

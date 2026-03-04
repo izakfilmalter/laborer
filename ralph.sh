@@ -12,13 +12,13 @@ fi
 # This prompt is basic, we'll expand it later.
 for ((i=1; i<=$1; i++)); do
   result=$(opencode --model anthropic/claude-opus-4-6 run \
-"@PRD.md @issues.md @progress.txt \
-1. Decide which task to work on next from issues.md. \
+"@PRD-pty-host.md @issues-pty-host.md @progress-2.txt \
+1. Decide which task to work on next from issues-pty-host.md. \
 This should be the one YOU decide has the highest priority, \
 - not necessarily the first in the list. \
 2. Check any feedback loops, such as types and tests. \
-3. Append your progress to the progress.txt file. \
-4. Update status of tasks in issues.md \
+3. Append your progress to the progress-2.txt file. \
+4. Update status of tasks in issues-pty-host.md \
 5. Make a git commit of that feature. \
 ONLY WORK ON A SINGLE TASK / FEATURE. \
 If, while implementing the feature, you notice that all work \

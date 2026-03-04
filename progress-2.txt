@@ -1,0 +1,32 @@
+## Session: Issue #2 — PtyHostClient Effect service
+
+### Task selected
+Issue #2: PtyHostClient Effect service — spawn and route events.
+Priority rationale: Issue #1 (PTY Host script) is already complete. Issue #2 is the critical-path blocker — it unblocks Issues #3, #4, #5, #6, #7, and #8. Without PtyHostClient, no other issue can proceed.
+
+### What was built
+Created `packages/server/src/services/pty-host-client.ts` — a new Effect service that:
+
+1. **Spawns the PTY Host** as a Bun child process during layer construction (`Bun.spawn` with stdin/stdout pipes).
+2. **Waits for the `ready` event** using an Effect `Deferred` before the layer is considered constructed.
+3. **Provides typed methods**: `spawn()`, `write()`, `resize()`, `kill()` — each sends a JSON command to the PTY Host via stdin.
+4. **Implements a line-based JSON parser** on stdout via an async `ReadableStream` reader with a line buffer.
+5. **Routes `data` events** to per-terminal data callbacks (registered during `spawn()`).
+6. **Routes `exit` events** to per-terminal exit callbacks and cleans up callback maps.
+7. **Monitors the PTY Host process** for crashes and invokes registered crash callbacks.
+8. **Registers a finalizer** that kills the PTY Host child process on layer teardown.
+
+Also wired `PtyHostClient.layer` into `main.ts` layer graph alongside `TerminalManager.layer`.
+
+### Files changed
+- `packages/server/src/services/pty-host-client.ts` — NEW (350 lines)
+- `packages/server/src/main.ts` — Added PtyHostClient import and layer provision
+
+### Verification
+- `bun run check-types` passes (no new errors)
+- `bun x ultracite check` shows no lint errors in changed files
+- All pre-existing advisory warnings remain unchanged
+
+### Status
+Issue #2: Done
+Next unblocked: Issues #3, #6, #7 (all were blocked only by #1 and #2)

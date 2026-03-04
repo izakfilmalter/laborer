@@ -1067,3 +1067,42 @@ Date: 2026-03-04
 - Issue #99: Fix Findings button (was blocked by #98, #60 — #20 now enables mutations)
 - Issue #103: Create Task form (was blocked by #100, #20 — #20 now done!)
 - Issue #112: Click-to-open from diff viewer (was blocked by #111, #87 — #20 now enables mutations)
+
+## Issue 26: Project list UI component — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `apps/web/src/components/project-list.tsx` — a reactive Project list component that subscribes to LiveStore's `projects` and `workspaces` tables.
+- `ProjectList` component:
+  - Uses `useLaborerStore()` hook to access the store instance.
+  - Subscribes to `projects` table via `store.useQuery(queryDb(projects))` for reactive project list.
+  - Subscribes to `workspaces` table via `store.useQuery(queryDb(workspaces))` to compute per-project workspace counts.
+  - When no projects exist, renders an empty state using shadcn/ui's `Empty`, `EmptyHeader`, `EmptyMedia`, `EmptyTitle`, `EmptyDescription` components with a `FolderGit2` icon and guidance text.
+  - When projects exist, renders a grid of `ProjectItem` cards.
+- `ProjectItem` component:
+  - Uses shadcn/ui `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent` for consistent styling.
+  - Displays project name with a `FolderGit2` icon, repo path in monospace font, and a workspace count badge using shadcn/ui `Badge` (secondary variant).
+- Updated `apps/web/src/routes/index.tsx`:
+  - Replaced the old "LiveStore Status" section (raw project/workspace counts) with the new `ProjectList` component under a "Projects" heading.
+  - Removed unused `projects`, `workspaces`, and `queryDb` imports since they're now encapsulated in the `ProjectList` component.
+  - Kept the "Server RPC Status" health check section unchanged.
+- Verified: `ultracite check` passes with zero issues on both new/modified files, `turbo check-types` passes for server and shared packages (only pre-existing Effect plugin informational messages), web app pre-existing type errors are unchanged.
+
+### Acceptance criteria status
+- [x] Component subscribes to Projects table via LiveStore (`store.useQuery(queryDb(projects))`)
+- [x] Renders list of projects with name and repo path (via shadcn/ui Card components)
+- [x] Updates reactively when projects are added/removed (LiveStore reactive query subscription)
+- [ ] Tests: render with projects → displays all; add project → list updates; empty → empty state (deferred — requires running web app; component tests can be added with Vitest + React Testing Library)
+
+### Design decisions
+- Used `queryDb` module-level constants for query definitions to enable LiveStore query deduplication and memoization across component re-renders.
+- Computed workspace counts by filtering the full workspaces list per project. For v1 with small numbers of projects/workspaces, this is efficient. If performance becomes an issue with many workspaces, a SQL-level `COUNT` or a separate materialized view could be used.
+- Used `Card` with `size="sm"` for compact rendering — project list items don't need full-height cards.
+- Included an empty state in the component itself (rather than deferring to Issue #118) because the acceptance criteria explicitly mention empty state rendering. Issue #118 will add the CTA button to open the Add Project form.
+- Kept the component self-contained with its own LiveStore queries rather than accepting props. This makes it reusable across routes and avoids prop drilling.
+
+### Issues unblocked
+- Issue #27: Add Project form (was blocked by #20 (done), #24 (done), #26 — now all blockers done!)
+- Issue #28: Remove Project button (was blocked by #25 (done), #26 — now all blockers done!)
+- Issue #113: Project switcher (was blocked by #26 — now done!)

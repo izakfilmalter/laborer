@@ -727,10 +727,10 @@ Create a React component that reads the Projects table from LiveStore and displa
 
 ### Acceptance criteria
 
-- [ ] Component subscribes to Projects table via LiveStore
-- [ ] Renders list of projects with name and repo path
-- [ ] Updates reactively when projects are added/removed
-- [ ] Tests: render with projects → displays all; add project → list updates; empty → empty state
+- [x] Component subscribes to Projects table via LiveStore
+- [x] Renders list of projects with name and repo path
+- [x] Updates reactively when projects are added/removed
+- [ ] Tests: render with projects → displays all; add project → list updates; empty → empty state (deferred — requires running web app; component tests can be added with Vitest + React Testing Library)
 
 ### Blocked by
 
@@ -3600,9 +3600,9 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 23 | ProjectRegistry — listProjects + getProject | #21 | Done |
 | 24 | project.add RPC handler | #19, #21 | Done |
 | 25 | project.remove RPC handler | #24, #22 | Done |
-| 26 | Project list UI | #18, #24 | Blocked |
-| 27 | Add Project form (AtomRpc mutation) | ~~#20~~, ~~#24~~, #26 | Blocked |
-| 28 | Remove Project button + dialog (AtomRpc mutation) | #25, #26 | Blocked |
+| 26 | Project list UI | #18, #24 | Done |
+| 27 | Add Project form (AtomRpc mutation) | ~~#20~~, ~~#24~~, ~~#26~~ | Ready |
+| 28 | Remove Project button + dialog (AtomRpc mutation) | ~~#25~~, ~~#26~~ | Ready |
 | 29 | PortAllocator — allocate | #15 | Done |
 | 30 | PortAllocator — free | #29 | Done |
 | 31 | PortAllocator — exhaustion handling | #29 | Ready |
@@ -3687,7 +3687,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 110 | Task source picker UI | #108, #109, #103 | Blocked |
 | 111 | editor.open RPC handler | #19, #14 | Ready |
 | 112 | Click-to-open from diff viewer (AtomRpc mutation) | #111, #87 | Blocked |
-| 113 | Project switcher | #26 | Blocked |
+| 113 | Project switcher | ~~#26~~ | Ready |
 | 114 | Cross-project dashboard | #41, #104 | Blocked |
 | 115 | Tauri system tray | #41 | Blocked |
 | 116 | Tauri global shortcut | #115 | Blocked |

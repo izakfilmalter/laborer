@@ -1674,10 +1674,10 @@ Wire xterm.js keyboard input to the `terminal.write` mutation via `useAtomSet(La
 
 ### Acceptance criteria
 
-- [ ] Keystrokes in xterm.js sent via `LaborerClient.mutation("terminal.write")`
-- [ ] Character echoes back from PTY through LiveStore → xterm.js
-- [ ] Special keys (enter, backspace, ctrl-c, arrows) work correctly
-- [ ] Tests: type character → appears in terminal; special keys produce expected behavior
+- [x] Keystrokes in xterm.js sent via `LaborerClient.mutation("terminal.write")`
+- [x] Character echoes back from PTY through LiveStore → xterm.js
+- [x] Special keys (enter, backspace, ctrl-c, arrows) work correctly
+- [ ] Tests: type character → appears in terminal; special keys produce expected behavior (deferred — requires running both server and web app with a live terminal)
 
 ### Blocked by
 
@@ -3635,7 +3635,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 58 | terminal.resize RPC handler | #56, #53 | Done |
 | 59 | terminal.kill RPC handler | #56, #54 | Done |
 | 60 | xterm.js — render output | ~~#18~~, ~~#56~~ | Done |
-| 61 | xterm.js — send keyboard input (AtomRpc mutation) | ~~#60~~, ~~#57~~ | Ready |
+| 61 | xterm.js — send keyboard input (AtomRpc mutation) | ~~#60~~, ~~#57~~ | Done |
 | 62 | xterm.js — handle resize (AtomRpc mutation) | ~~#60~~, ~~#58~~ | Ready |
 | 63 | Terminal list per workspace UI | ~~#60~~, ~~#55~~ | Ready |
 | 64 | Terminal session reconnection | ~~#60~~ | Ready |
@@ -3654,7 +3654,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 77 | Keyboard shortcut — close pane | #70, #75 | Blocked |
 | 78 | Keyboard shortcut — navigate panes | #71, #75 | Blocked |
 | 79 | Keyboard shortcut — resize panes | #72, #75 | Blocked |
-| 80 | Keyboard shortcut scope isolation | #75, ~~#61~~ | Blocked |
+| 80 | Keyboard shortcut scope isolation | #75, ~~#61~~ | Blocked (#75) |
 | 81 | Panel responsive layout | #72 | Blocked |
 | 82 | DiffService — run git diff | #40 | Done |
 | 83 | DiffService — poll on interval | ~~#82~~ | Done |

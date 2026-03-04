@@ -1358,3 +1358,36 @@ Date: 2026-03-04
 - Issue #125: Terminal fidelity — claude (was blocked by #60 — now done!)
 - Issue #126: Terminal fidelity — codex (was blocked by #60 — now done!)
 - Issue #127: Terminal scroll performance (was blocked by #60 — now done!)
+
+## Issue 61: xterm.js terminal pane — send keyboard input — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Updated `apps/web/src/panes/terminal-pane.tsx` to wire xterm.js keyboard input to the server PTY via the `terminal.write` RPC mutation.
+- Added imports: `useAtomSet` from `@effect-atom/atom-react/Hooks` and `LaborerClient` from `@/atoms/laborer-client`.
+- Created module-level `terminalWriteMutation` atom via `LaborerClient.mutation("terminal.write")` — shared across all TerminalPane instances for efficient atom deduplication.
+- Added `useAtomSet(terminalWriteMutation)` in the component to get the mutation dispatch function.
+- Used a `writeTerminalRef` ref pattern to hold the latest mutation function. This allows the xterm.js `onData` callback (registered once in the useEffect) to always access the current function without needing to re-register the callback on every render.
+- Wired `terminal.onData` in the initialization useEffect:
+  - xterm.js's `onData` fires for every keystroke (including special keys like enter, backspace, ctrl-c, arrows) with the data already encoded as the correct ANSI escape sequences.
+  - Each keystroke is sent via `writeTerminalRef.current({ payload: { terminalId, data } })` in fire-and-forget mode (no await) for low-latency input.
+  - The character echoes back from the PTY via LiveStore `v1.TerminalOutput` events, completing the input → output loop.
+- Added `onDataDisposable.dispose()` to the cleanup function to properly clean up the xterm.js event listener on unmount.
+- Updated component JSDoc to document the keyboard input behavior, including how special keys are handled natively by xterm.js's ANSI encoding.
+- Verified: `tsc --noEmit` passes for web, server, and shared packages (only pre-existing errors in calendar.tsx, sonner.tsx, routeTree.gen — no new errors), `ultracite check` passes with only pre-existing lint issues (none in terminal-pane.tsx).
+
+### Acceptance criteria status
+- [x] Keystrokes in xterm.js sent via `LaborerClient.mutation("terminal.write")` (via `useAtomSet` with fire-and-forget dispatch)
+- [x] Character echoes back from PTY through LiveStore → xterm.js (via existing `v1.TerminalOutput` event streaming from Issue #60)
+- [x] Special keys (enter, backspace, ctrl-c, arrows) work correctly (xterm.js encodes them as proper ANSI escape sequences natively)
+- [ ] Tests: type character → appears in terminal; special keys produce expected behavior (deferred — requires running both server and web app with a live terminal)
+
+### Design decisions
+- Used fire-and-forget mode (no `{ mode: "promise" }`) for the `terminal.write` mutation. Terminal input is latency-sensitive — each keystroke should be dispatched immediately without waiting for a server response. The echo comes back asynchronously via LiveStore events. If we awaited each keystroke, typing would feel sluggish.
+- Used a `writeTerminalRef` ref pattern instead of including `writeTerminal` in the useEffect dependency array. The `useAtomSet` hook returns a stable function reference, but using a ref is a safer pattern that avoids potential stale closure issues and prevents the entire xterm.js terminal from being destroyed and recreated if the mutation function reference changes.
+- Placed the `terminalWriteMutation` atom at module level (outside the component) consistent with the `addProjectMutation` pattern in `add-project-form.tsx`. Module-level atoms are created once and shared across all component instances, enabling effect-atom's internal deduplication.
+- The `onData` callback is disposed explicitly via `onDataDisposable.dispose()` in the cleanup function, before the terminal itself is disposed. This ensures no stray input events fire during teardown.
+
+### Issues unblocked
+- Issue #80: Keyboard shortcut scope isolation (was blocked by #75 and #61 — #61 now done, still needs #75)

@@ -75,6 +75,7 @@ interface WorkspaceRecord {
 	readonly branchName: string;
 	readonly createdAt: string;
 	readonly id: string;
+	readonly origin: "laborer" | "external";
 	readonly port: number;
 	readonly projectId: string;
 	readonly status: string;
@@ -1038,6 +1039,7 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 								worktreePath,
 								port,
 								status: "errored",
+								origin: "laborer",
 								createdAt,
 								baseSha,
 							})
@@ -1071,6 +1073,7 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 						worktreePath,
 						port,
 						status: "running",
+						origin: "laborer",
 						createdAt,
 						baseSha,
 					};
@@ -1084,6 +1087,7 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 							worktreePath: workspace.worktreePath,
 							port: workspace.port,
 							status: workspace.status,
+							origin: workspace.origin,
 							createdAt: workspace.createdAt,
 							baseSha: workspace.baseSha,
 						})

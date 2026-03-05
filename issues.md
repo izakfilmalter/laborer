@@ -916,7 +916,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 156 | ~~WorkspaceProvider — use ConfigService for worktree path + setup scripts~~ | ~~#154~~ | Done |
 | 157 | Config RPC endpoints + project settings modal | ~~#155~~, ~~#156~~ | Ready |
 | 158 | Config + settings polish & edge cases | #157 | Blocked |
-| 159 | WorktreeDetector + schema origin + initial detection on project add | None | Ready |
+| 159 | WorktreeDetector + schema origin + initial detection on project add | None | In Progress |
 | 160 | UI for detected workspaces | #159 | Blocked |
 | 161 | Live filesystem watcher + server boot reconciliation | #159 | Blocked |
 | 162 | Origin-aware destroy behavior | #160 | Blocked |
@@ -925,6 +925,8 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 ---
 
 ## Issue 159: WorktreeDetector + schema origin + initial detection on project add
+
+### Status: In Progress
 
 ### Parent PRD
 
@@ -946,22 +948,22 @@ This is the foundational tracer bullet for worktree detection. Build the end-to-
 
 ### Acceptance criteria
 
-- [ ] `origin` column added to `workspaces` table with default `"laborer"`
-- [ ] `v1.WorkspaceCreated` event schema includes optional `origin` field (backward compatible)
-- [ ] `WorkspaceOrigin` type and `Workspace.origin` field added to types.ts
-- [ ] `WorktreeDetector.detect(repoPath)` returns correct `DetectedWorktree[]` for repos with 0, 1, and multiple linked worktrees
-- [ ] Main worktree is included in detection results with `isMain: true`
-- [ ] Detached HEAD worktrees return `branch: null`
-- [ ] Prunable worktrees are excluded from results
-- [ ] `WorktreeReconciler.reconcile()` creates workspace records for detected worktrees not in LiveStore
-- [ ] Created records have status `"stopped"`, port `0`, origin `"external"`
-- [ ] Base SHA derived via `git merge-base` against default branch, falling back to HEAD
-- [ ] `WorktreeReconciler.reconcile()` removes stale workspace records (worktree no longer on disk)
-- [ ] Existing workspace records matching by worktree path are left untouched
-- [ ] `addProject` triggers initial reconciliation before returning the RPC response
+- [x] `origin` column added to `workspaces` table with default `"laborer"`
+- [x] `v1.WorkspaceCreated` event schema includes optional `origin` field (backward compatible)
+- [x] `WorkspaceOrigin` type and `Workspace.origin` field added to types.ts
+- [x] `WorktreeDetector.detect(repoPath)` returns correct `DetectedWorktree[]` for repos with 0, 1, and multiple linked worktrees
+- [x] Main worktree is included in detection results with `isMain: true`
+- [x] Detached HEAD worktrees return `branch: null`
+- [x] Prunable worktrees are excluded from results
+- [x] `WorktreeReconciler.reconcile()` creates workspace records for detected worktrees not in LiveStore
+- [x] Created records have status `"stopped"`, port `0`, origin `"external"`
+- [x] Base SHA derived via `git merge-base` against default branch, falling back to HEAD
+- [x] `WorktreeReconciler.reconcile()` removes stale workspace records (worktree no longer on disk)
+- [x] Existing workspace records matching by worktree path are left untouched
+- [x] `addProject` triggers initial reconciliation before returning the RPC response
 - [ ] WorktreeDetector tests pass (8+ scenarios with real git repos)
 - [ ] WorktreeReconciler tests pass (6+ scenarios with in-memory LiveStore)
-- [ ] ProjectRegistry integration tests pass
+- [x] ProjectRegistry integration tests pass
 
 ### Blocked by
 

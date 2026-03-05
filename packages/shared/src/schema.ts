@@ -25,6 +25,7 @@ export const workspaces = State.SQLite.table({
 		worktreePath: State.SQLite.text(),
 		port: State.SQLite.integer(),
 		status: State.SQLite.text({ default: "creating" }),
+		origin: State.SQLite.text({ default: "laborer" }),
 		createdAt: State.SQLite.text(),
 		/** SHA of the parent branch HEAD when the worktree was created. Used by DiffService as the base for `git diff`. */
 		baseSha: State.SQLite.text({ nullable: true }),
@@ -113,6 +114,9 @@ export const workspaceCreated = Events.synced({
 		worktreePath: Schema.String,
 		port: Schema.Number,
 		status: Schema.String,
+		origin: Schema.optionalWith(Schema.String, {
+			default: () => "laborer",
+		}),
 		createdAt: Schema.String,
 		/** SHA of the parent branch HEAD when the worktree was created. Null for workspaces created before this field existed. */
 		baseSha: Schema.optionalWith(Schema.NullOr(Schema.String), {
@@ -307,6 +311,7 @@ const materializers = State.SQLite.materializers(events, {
 		worktreePath,
 		port,
 		status,
+		origin,
 		createdAt,
 		baseSha,
 	}) =>
@@ -318,6 +323,7 @@ const materializers = State.SQLite.materializers(events, {
 			worktreePath,
 			port,
 			status,
+			origin,
 			createdAt,
 			baseSha,
 		}),

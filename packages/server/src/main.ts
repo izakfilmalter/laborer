@@ -37,6 +37,8 @@ import { SyncRpcLive } from "./services/sync-backend.js";
 import { TaskManager } from "./services/task-manager.js";
 import { TerminalClient } from "./services/terminal-client.js";
 import { WorkspaceProvider } from "./services/workspace-provider.js";
+import { WorktreeDetector } from "./services/worktree-detector.js";
+import { WorktreeReconciler } from "./services/worktree-reconciler.js";
 
 /**
  * Custom HTTP Routes
@@ -107,6 +109,8 @@ const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ConfigService.layer),
 	Layer.provide(ProjectRegistry.layer),
+	Layer.provide(WorktreeReconciler.layer),
+	Layer.provide(WorktreeDetector.layer),
 	Layer.provide(PortAllocator.layer),
 	// --- Infrastructure layers ---
 	Layer.provide(RpcSerialization.layerJson),

@@ -136,6 +136,7 @@ const seedWorkspace = async () => {
 					worktreePath: TEST_WORKSPACE_PATH,
 					port: 9999,
 					status: "running",
+					origin: "laborer",
 					createdAt: new Date().toISOString(),
 					baseSha: null,
 				})
@@ -357,6 +358,7 @@ describe("TerminalManager + PtyHostClient", { timeout: 30_000 }, () => {
 							worktreePath: TEST_WORKSPACE_PATH,
 							port: 9999,
 							status: "running",
+							origin: "laborer",
 							createdAt: new Date().toISOString(),
 							baseSha: null,
 						})
@@ -433,6 +435,7 @@ describe("TerminalManager + PtyHostClient", { timeout: 30_000 }, () => {
 							worktreePath: TEST_WORKSPACE_PATH,
 							port: 9999,
 							status: "running",
+							origin: "laborer",
 							createdAt: new Date().toISOString(),
 							baseSha: null,
 						})

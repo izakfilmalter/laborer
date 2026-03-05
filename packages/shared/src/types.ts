@@ -29,6 +29,9 @@ export const WorkspaceStatus = Schema.Literal(
 );
 export type WorkspaceStatus = typeof WorkspaceStatus.Type;
 
+export const WorkspaceOrigin = Schema.Literal("laborer", "external");
+export type WorkspaceOrigin = typeof WorkspaceOrigin.Type;
+
 export const TerminalStatus = Schema.Literal("running", "stopped");
 export type TerminalStatus = typeof TerminalStatus.Type;
 
@@ -68,6 +71,7 @@ export class Workspace extends Schema.Class<Workspace>("Workspace")({
 	worktreePath: Schema.String,
 	port: Schema.Int,
 	status: WorkspaceStatus,
+	origin: WorkspaceOrigin,
 	createdAt: Schema.Date,
 }) {}
 

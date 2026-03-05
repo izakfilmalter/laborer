@@ -18,12 +18,14 @@
  * Issue #23: listProjects + getProject methods
  */
 
+import { execFile } from "node:child_process";
 import { statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { RpcError } from "@laborer/shared/rpc";
 import { events, tables } from "@laborer/shared/schema";
 import { Context, Effect, Layer } from "effect";
 import { LaborerStore } from "./laborer-store.js";
+import { WorktreeReconciler } from "./worktree-reconciler.js";
 
 /**
  * ProjectRegistry Effect Context Tag
@@ -61,6 +63,7 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 		ProjectRegistry,
 		Effect.gen(function* () {
 			const { store } = yield* LaborerStore;
+			const worktreeReconciler = yield* WorktreeReconciler;
 
 			const addProject = Effect.fn("ProjectRegistry.addProject")(function* (
 				repoPath: string
@@ -91,18 +94,17 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 				// 3. Validate it's a git repo by running
 				// `git rev-parse --is-inside-work-tree`
 				const isGitRepo = yield* Effect.tryPromise({
-					try: async () => {
-						const proc = Bun.spawn(
-							["git", "rev-parse", "--is-inside-work-tree"],
-							{
-								cwd: resolvedPath,
-								stdout: "pipe",
-								stderr: "pipe",
-							}
-						);
-						const exitCode = await proc.exited;
-						return exitCode === 0;
-					},
+					try: () =>
+						new Promise<boolean>((resolve) => {
+							execFile(
+								"git",
+								["rev-parse", "--is-inside-work-tree"],
+								{ cwd: resolvedPath },
+								(error) => {
+									resolve(error === null);
+								}
+							);
+						}),
 					catch: () =>
 						new RpcError({
 							message: `Failed to check git status for: ${resolvedPath}`,
@@ -144,6 +146,16 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 				};
 
 				store.commit(events.projectCreated(project));
+
+				yield* worktreeReconciler
+					.reconcile(id, resolvedPath)
+					.pipe(
+						Effect.catchAll((error) =>
+							Effect.logWarning(
+								`Initial worktree reconciliation failed for project ${resolvedPath}: ${error.message}`
+							)
+						)
+					);
 
 				return project;
 			});

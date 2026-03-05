@@ -3188,3 +3188,66 @@ Completed the ConfigService migration in `WorkspaceProvider`: worktree paths and
 
 ### Issues unblocked
 - Issue #157 (`Config RPC endpoints + project settings modal`) is now Ready.
+
+---
+
+## Issue #159: WorktreeDetector + schema origin + initial detection on project add
+
+### Summary
+Implemented the foundational worktree-detection backend slice: workspace origin is now modeled in shared types/schema, worktrees can be detected from git porcelain output, reconciliation creates/removes workspace records by `worktreePath`, and `ProjectRegistry.addProject()` now triggers initial reconciliation before returning.
+
+### Changes
+
+**Added:**
+- `packages/server/src/services/worktree-detector.ts`
+  - New `WorktreeDetector` Effect service with `detect(repoPath)`.
+  - Runs `git worktree list --porcelain`, parses detached/branch worktrees, marks `isMain`, excludes prunable entries.
+  - Exports `parsePorcelainOutput` helper for parser-focused tests.
+
+- `packages/server/src/services/worktree-reconciler.ts`
+  - New `WorktreeReconciler` Effect service with `reconcile(projectId, repoPath)`.
+  - Diffs detected worktrees against existing workspace records by `worktreePath`.
+  - Creates missing records as `status: "stopped"`, `port: 0`, `origin: "external"`.
+  - Derives `baseSha` via `git merge-base <default-branch> <head>` with fallback to `git rev-parse <head>`.
+  - Removes stale records and best-effort frees allocated ports.
+
+- `packages/server/test/worktree-detector.test.ts`
+  - Real git repo coverage for: main-only detection, linked worktree detection, detached HEAD, prunable exclusion.
+  - Added parser test for branch ref normalization + prunable marker parsing.
+
+- `packages/server/test/worktree-reconciler.test.ts`
+  - In-memory LiveStore integration tests for add/remove reconciliation behavior.
+  - Verifies created records are external/stopped/port-0.
+
+- `packages/server/test/project-registry.worktree-detection.test.ts`
+  - Integration test verifying `addProject()` triggers initial reconciliation and creates workspace records for detected worktrees.
+
+**Modified:**
+- `packages/shared/src/types.ts`
+  - Added `WorkspaceOrigin` (`"laborer" | "external"`) and `Workspace.origin`.
+
+- `packages/shared/src/schema.ts`
+  - Added `origin` column on `workspaces` table with default `"laborer"`.
+  - Added backward-compatible optional `origin` field on `v1.WorkspaceCreated` event schema.
+  - Updated workspace materializer insert path to persist `origin`.
+
+- `packages/server/src/services/workspace-provider.ts`
+  - Workspace creation commits now explicitly include `origin: "laborer"`.
+
+- `packages/server/src/services/project-registry.ts`
+  - Injected `WorktreeReconciler` and trigger `reconcile()` after `projectCreated` commit.
+
+- `packages/server/src/main.ts`
+  - Added `WorktreeDetector.layer` + `WorktreeReconciler.layer` to the server layer graph.
+
+- `issues.md`
+  - Updated Issue #159 status to **In Progress**.
+  - Marked implemented acceptance criteria as complete.
+
+### Verification
+- `bun run -F @laborer/server test test/worktree-detector.test.ts test/worktree-reconciler.test.ts test/project-registry.worktree-detection.test.ts`: pass (7 tests)
+- `bun x ultracite check` on all modified files: clean (no fixes applied)
+- `bun run -F @laborer/server check-types`: exits non-zero due pre-existing Effect plugin warnings/messages in untouched files (no new type errors from this slice)
+
+### Notes
+- Acceptance criteria for test breadth (`8+` detector scenarios and `6+` reconciler scenarios) remains open; core behavior is implemented and covered by initial integration tests.

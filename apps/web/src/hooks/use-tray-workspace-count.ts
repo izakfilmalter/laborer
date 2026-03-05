@@ -13,9 +13,10 @@
 
 import { workspaces } from "@laborer/shared/schema";
 import { queryDb } from "@livestore/livestore";
-import { useQuery } from "@livestore/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef } from "react";
+
+import { useLaborerStore } from "@/livestore/store";
 
 /** LiveStore query for all non-destroyed workspaces with "running" status. */
 const runningWorkspaces$ = queryDb(workspaces.where({ status: "running" }), {
@@ -35,7 +36,8 @@ function isTauri(): boolean {
  * Rust command `update_tray_workspace_count` when the count changes.
  */
 function useTrayWorkspaceCount(): void {
-	const runningWs = useQuery(runningWorkspaces$);
+	const store = useLaborerStore();
+	const runningWs = store.useQuery(runningWorkspaces$);
 	const count = runningWs.length;
 	const prevCountRef = useRef<number>(-1);
 

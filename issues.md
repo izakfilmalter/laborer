@@ -646,7 +646,7 @@ Implemented direct Cmd+W close-pane behavior in the panel hotkey layer using `Me
 
 ---
 
-## Issue 152: Cmd+W close-app confirmation dialog
+## ~~Issue 152: Cmd+W close-app confirmation dialog~~ ✅ DONE
 
 ### Parent PRD
 
@@ -656,15 +656,17 @@ PRD-cmd-w-close-panel.md
 
 When Cmd+W is pressed and no panes exist, show an AlertDialog asking "Close Laborer?" instead of silently doing nothing. The dialog uses the existing `alert-dialog.tsx` component with controlled `open` state (no trigger button — opened programmatically from the Cmd+W handler). Title: "Close Laborer?". Description: "The window will be hidden to the system tray. Your workspaces will continue running." Actions: "Cancel" (dismisses dialog) and "Close" (hides window to tray via Tauri window API). Follow the existing destructive confirmation pattern used by project removal, workspace destruction, and task removal dialogs.
 
+Added a controlled close-app `AlertDialog` opened programmatically from the Cmd+W hotkey path when no active pane exists. The dialog uses the exact copy from the PRD, supports Escape and Cancel dismissal, and the Close action hides the Tauri window to the system tray via `@tauri-apps/api/window`. Ctrl+B, X behavior is unchanged and does not trigger the dialog.
+
 ### Acceptance criteria
 
-- [ ] Cmd+W with no panes opens the close-app AlertDialog
-- [ ] Dialog shows title "Close Laborer?" and descriptive text about tray behavior
-- [ ] "Cancel" button dismisses the dialog without hiding the window
-- [ ] "Close" button hides the window to the system tray
-- [ ] Escape key dismisses the dialog
-- [ ] Dialog does not appear when at least one pane exists
-- [ ] Ctrl+B, X with no panes does NOT trigger the dialog (only Cmd+W does)
+- [x] Cmd+W with no panes opens the close-app AlertDialog
+- [x] Dialog shows title "Close Laborer?" and descriptive text about tray behavior
+- [x] "Cancel" button dismisses the dialog without hiding the window
+- [x] "Close" button hides the window to the system tray
+- [x] Escape key dismisses the dialog
+- [x] Dialog does not appear when at least one pane exists
+- [x] Ctrl+B, X with no panes does NOT trigger the dialog (only Cmd+W does)
 
 ### Blocked by
 
@@ -701,7 +703,7 @@ End-to-end verification and polish pass for the full Cmd+W close panel feature. 
 
 ### Blocked by
 
-- Blocked by ~~#148~~, ~~#149~~, ~~#150~~, ~~#151~~, #152
+- Blocked by ~~#148~~, ~~#149~~, ~~#150~~, ~~#151~~, ~~#152~~
 
 ### User stories addressed
 
@@ -904,8 +906,8 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 149 | ~~Focus auto-transfer on pane close~~ | ~~None~~ | Done |
 | 150 | ~~Guaranteed active pane invariant~~ | ~~#149~~ | Done |
 | 151 | ~~Cmd+W shortcut — close active pane~~ | ~~#149~~ | Done |
-| 152 | Cmd+W close-app confirmation dialog | ~~#151~~ | Ready |
-| 153 | Cmd+W close panel — polish & verification | ~~#148~~, ~~#149~~, ~~#150~~, ~~#151~~, #152 | Blocked |
+| 152 | ~~Cmd+W close-app confirmation dialog~~ | ~~#151~~ | Done |
+| 153 | Cmd+W close panel — polish & verification | ~~#148~~, ~~#149~~, ~~#150~~, ~~#151~~, ~~#152~~ | Ready |
 | 154 | ~~Config Service — resolve config with walk-up + global default~~ | ~~None~~ | Done |
 | 155 | ~~Config Service — write project config~~ | ~~#154~~ | Done |
 | 156 | ~~WorkspaceProvider — use ConfigService for worktree path + setup scripts~~ | ~~#154~~ | Done |

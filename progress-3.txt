@@ -3410,6 +3410,39 @@ Implemented direct Cmd+W pane closing in the web app. `Meta+W` now closes the cu
 
 ### Verification
 - `bun run test` (apps/web): passes (31/31)
+
+## Issue #152: Cmd+W close-app confirmation dialog — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented the Cmd+W no-pane confirmation flow so pressing Cmd+W without an active pane opens a controlled `AlertDialog` instead of silently doing nothing. The dialog uses the required copy, supports Cancel/Escape dismissal, and the Close action hides the Tauri window to the system tray.
+
+### What was done
+
+1. **Updated `apps/web/src/panels/panel-hotkeys.tsx`**
+   - Added optional `onMetaWWithoutPane` prop.
+   - Updated the `Meta+W` hotkey handler to:
+     - close the active pane when one exists, or
+     - call `onMetaWWithoutPane` when no active pane exists.
+   - Left `Ctrl+B, X` behavior unchanged.
+
+2. **Updated `apps/web/src/routes/index.tsx`**
+   - Added a reusable `CloseAppDialog` component using the existing `alert-dialog` primitives.
+   - Added dialog state in `HomeComponent` and opened it from the Cmd+W no-pane callback.
+   - Implemented the Close action with Tauri window API (`@tauri-apps/api/window`) to hide the main window to tray.
+   - Wired `PanelHotkeys` to pass the no-pane Cmd+W callback.
+
+3. **Updated issue tracking (`issues.md`)**
+   - Marked Issue #152 done, checked all acceptance criteria, and added completion notes.
+   - Updated summary table: #152 -> Done.
+   - Marked #152 as struck in Issue #153 blockers and updated summary row for #153 to Ready.
+
+### Verification
+- `bun run test` (apps/web): passes (31/31)
+- `bun x ultracite check src/routes/index.tsx src/panels/panel-hotkeys.tsx` (apps/web): passes
+- `bun run check-types` (apps/web): still fails due pre-existing unrelated errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new errors from Issue #152 work
 - `bun x ultracite check apps/web/src/panels/panel-hotkeys.tsx apps/web/src/panes/terminal-pane.tsx`: passes
 - `bun run check-types` (apps/web): fails due pre-existing unrelated type errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new type errors from this change
 

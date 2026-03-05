@@ -38,6 +38,16 @@ import { CreateWorkspaceForm } from "@/components/create-workspace-form";
 import { ProjectList } from "@/components/project-list";
 import { ProjectSwitcher } from "@/components/project-switcher";
 import { TaskList } from "@/components/task-list";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
 	Empty,
@@ -794,6 +804,52 @@ function WelcomeEmptyState() {
 	);
 }
 
+function isTauri(): boolean {
+	return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function CloseAppDialog({
+	open,
+	onOpenChange,
+}: {
+	readonly open: boolean;
+	readonly onOpenChange: (open: boolean) => void;
+}) {
+	const handleCloseToTray = useCallback(async () => {
+		if (isTauri()) {
+			const { getCurrentWindow } = await import("@tauri-apps/api/window");
+			await getCurrentWindow().hide();
+		}
+		onOpenChange(false);
+	}, [onOpenChange]);
+
+	const handleCloseClick = useCallback(() => {
+		handleCloseToTray().catch(() => {
+			onOpenChange(false);
+		});
+	}, [handleCloseToTray, onOpenChange]);
+
+	return (
+		<AlertDialog onOpenChange={onOpenChange} open={open}>
+			<AlertDialogContent>
+				<AlertDialogHeader>
+					<AlertDialogTitle>Close Laborer?</AlertDialogTitle>
+					<AlertDialogDescription>
+						The window will be hidden to the system tray. Your workspaces will
+						continue running.
+					</AlertDialogDescription>
+				</AlertDialogHeader>
+				<AlertDialogFooter>
+					<AlertDialogCancel>Cancel</AlertDialogCancel>
+					<AlertDialogAction onClick={handleCloseClick}>
+						Close
+					</AlertDialogAction>
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
+	);
+}
+
 function HomeComponent() {
 	const { layout, panelActions, activePaneId, leafPaneIds } = usePanelLayout();
 	const store = useLaborerStore();
@@ -811,6 +867,7 @@ function HomeComponent() {
 
 	// Main content view toggle — panels (terminal panes) or dashboard
 	const [mainView, setMainView] = useState<MainView>("panels");
+	const [isCloseAppDialogOpen, setIsCloseAppDialogOpen] = useState(false);
 
 	// Sidebar collapse via imperative panel ref
 	const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
@@ -835,6 +892,12 @@ function HomeComponent() {
 		}
 	}, []);
 
+	const handleMetaWWithoutPane = useCallback(() => {
+		if (mainView === "panels") {
+			setIsCloseAppDialogOpen(true);
+		}
+	}, [mainView]);
+
 	// Clear the active project filter if the selected project is removed
 	useEffect(() => {
 		if (activeProjectId && !projectList.some((p) => p.id === activeProjectId)) {
@@ -844,6 +907,10 @@ function HomeComponent() {
 
 	return (
 		<PanelActionsProvider activePaneId={activePaneId} value={panelActions}>
+			<CloseAppDialog
+				onOpenChange={setIsCloseAppDialogOpen}
+				open={isCloseAppDialogOpen}
+			/>
 			<ResizablePanelGroup orientation="horizontal">
 				{/* Sidebar — project switcher, project list, workspace list, health check */}
 				<ResizablePanel
@@ -918,7 +985,11 @@ function HomeComponent() {
 							/>
 							{mainView === "panels" && (
 								<>
-									<PanelHotkeys layout={layout} leafPaneIds={leafPaneIds} />
+									<PanelHotkeys
+										layout={layout}
+										leafPaneIds={leafPaneIds}
+										onMetaWWithoutPane={handleMetaWWithoutPane}
+									/>
 									<div className="min-h-0 flex-1">
 										<PanelManager layout={layout} />
 									</div>

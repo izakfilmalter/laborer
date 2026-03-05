@@ -54,6 +54,11 @@ interface PanelHotkeysProps {
 	 * Passed from the layout owner which has access to the full tree.
 	 */
 	readonly leafPaneIds: readonly string[];
+	/**
+	 * Called when Cmd+W is pressed while no active pane exists.
+	 * Used to show the close-app confirmation dialog.
+	 */
+	readonly onMetaWWithoutPane?: (() => void) | undefined;
 }
 
 /**
@@ -62,7 +67,11 @@ interface PanelHotkeysProps {
  * Must be rendered inside a PanelActionsProvider and HotkeysProvider.
  * This component renders nothing — it only registers event handlers.
  */
-function PanelHotkeys({ layout, leafPaneIds }: PanelHotkeysProps) {
+function PanelHotkeys({
+	layout,
+	leafPaneIds,
+	onMetaWWithoutPane,
+}: PanelHotkeysProps) {
 	const actions = usePanelActions();
 	const activePaneId = useActivePaneId();
 
@@ -127,7 +136,9 @@ function PanelHotkeys({ layout, leafPaneIds }: PanelHotkeysProps) {
 		event.preventDefault();
 		if (actions && activePaneId) {
 			actions.closePane(activePaneId);
+			return;
 		}
+		onMetaWWithoutPane?.();
 	});
 
 	// Ctrl+b then o → cycle focus to next pane

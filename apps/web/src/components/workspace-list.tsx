@@ -15,6 +15,7 @@
  * @see Issue #93: "Start Ralph Loop" button UI
  * @see Issue #95: PRD writing form + writePRD button
  * @see Issue #97: "Review PR" button + PR number input
+ * @see Issue #99: "Fix Findings" button + PR number input
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -24,6 +25,7 @@ import { ChevronDown, GitBranch, Layers, Play, Trash2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
+import { FixFindingsForm } from "@/components/fix-findings-form";
 import { ReviewPrForm } from "@/components/review-pr-form";
 import { TerminalList } from "@/components/terminal-list";
 import {
@@ -238,6 +240,12 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 							)}
 							{isActive && (
 								<ReviewPrForm
+									onTerminalSpawned={() => setIsOpen(true)}
+									workspaceId={workspace.id}
+								/>
+							)}
+							{isActive && (
+								<FixFindingsForm
 									onTerminalSpawned={() => setIsOpen(true)}
 									workspaceId={workspace.id}
 								/>

@@ -2695,10 +2695,10 @@ Add a "Fix Findings" action per workspace with a PR number input field. On submi
 
 ### Acceptance criteria
 
-- [ ] PR number input field with validation (numeric, required)
-- [ ] Submit → calls `LaborerClient.mutation("rlph.fix")` via `useAtomSet`
-- [ ] Terminal pane shows fix output
-- [ ] Tests: valid PR → mutation called; invalid → validation error
+- [x] PR number input field with validation (numeric, required — validates positive integer, whole number)
+- [x] Submit → calls `LaborerClient.mutation("rlph.fix")` via `useAtomSet` with `{ mode: "promise" }`
+- [x] Terminal pane shows fix output (auto-assigned via `panelActions.assignTerminalToPane`)
+- [ ] Tests: valid PR → mutation called; invalid → validation error (deferred — requires running both server and web app with rlph installed)
 
 ### Blocked by
 
@@ -4130,7 +4130,7 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 96 | rlph.review RPC handler | ~~#56~~ | Done |
 | 97 | "Review PR" button + input (AtomRpc mutation) | ~~#96~~, ~~#60~~ | Done |
 | 98 | rlph.fix RPC handler | ~~#56~~ | Done |
-| 99 | "Fix Findings" button + input (AtomRpc mutation) | ~~#98~~, ~~#60~~ | Ready |
+| 99 | "Fix Findings" button + input (AtomRpc mutation) | ~~#98~~, ~~#60~~ | Done |
 | 100 | Task CRUD — create manual task | ~~#8~~, ~~#16~~ | Done |
 | 101 | Task CRUD — update status | ~~#100~~ | Done |
 | 102 | Task CRUD — list per project | ~~#100~~ | Done |

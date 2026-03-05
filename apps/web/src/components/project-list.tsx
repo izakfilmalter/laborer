@@ -6,8 +6,12 @@
  * delete button with a confirmation dialog.
  * Updates reactively when projects are added or removed.
  *
+ * When no projects are registered, shows an empty state with a CTA button
+ * to add the first project (via Tauri's native folder picker).
+ *
  * @see Issue #26: Project list UI component
  * @see Issue #28: Remove Project button + confirmation dialog
+ * @see Issue #118: Empty state — no projects
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -17,6 +21,7 @@ import { FolderGit2, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
+import { AddProjectForm } from "@/components/add-project-form";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -39,6 +44,7 @@ import {
 } from "@/components/ui/card";
 import {
 	Empty,
+	EmptyContent,
 	EmptyDescription,
 	EmptyHeader,
 	EmptyMedia,
@@ -162,6 +168,9 @@ function ProjectList() {
 						laborer will create isolated workspaces for your agents.
 					</EmptyDescription>
 				</EmptyHeader>
+				<EmptyContent>
+					<AddProjectForm />
+				</EmptyContent>
 			</Empty>
 		);
 	}

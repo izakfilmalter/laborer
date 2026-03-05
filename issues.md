@@ -464,30 +464,9 @@ Implement minimize-to-tray behavior. Closing the window minimizes to system tray
 
 ---
 
-## Issue 118: Empty state — no projects
+## ~~Issue 118: Empty state — no projects~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-When the app launches with no registered projects, show an empty state that guides the user to add their first project. Include a CTA button that opens the Add Project form.
-
-### Acceptance criteria
-
-- [ ] No projects → empty state with welcome message and guidance
-- [ ] CTA button opens Add Project form
-- [ ] After adding a project → empty state disappears
-- [ ] Tests: no projects → empty state renders; CTA → form opens; add project → empty state gone
-
-### Blocked by
-
-- Blocked by #27
-
-### User stories addressed
-
-- Polishing requirement 13
+Added first-launch empty state experience. Two complementary changes: (1) sidebar ProjectList empty state enhanced with `<AddProjectForm />` CTA button inside `EmptyContent`, (2) main content area shows `WelcomeEmptyState` component (full-height centered, FolderGit2 icon, "Welcome to Laborer" title, guidance text, AddProjectForm CTA) instead of the panel system when no projects exist. Both disappear reactively via LiveStore query when a project is added.
 
 ---
 
@@ -806,7 +785,7 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 115 | Tauri system tray | ~~#41~~ | Ready |
 | 116 | Tauri global shortcut | #115 | Blocked |
 | 117 | Tauri window management | #115 | Blocked |
-| 118 | Empty state — no projects | ~~#27~~ | Ready |
+| 118 | ~~Empty state — no projects~~ | ~~#27~~ | Done |
 | 119 | Empty state — no workspaces | ~~#42~~ | Ready |
 | 120 | ~~Empty state — no terminals~~ | ~~#63~~ | Done |
 | 121 | Loading state — workspace creation | ~~#41~~ | Ready |

@@ -902,3 +902,58 @@ Modified `packages/server/src/services/workspace-provider.ts`:
 ### Issues unblocked
 - Issue #49: Workspace creation error display — now has the `DIRTY_WORKING_TREE` error code to match on for UI display. Together with `SETUP_SCRIPT_FAILED` (Issue #37, done) and the pending `GIT_FETCH_FAILED` (Issue #39), #49 is getting closer to unblocked.
 
+## Issue #118: Empty state — no projects — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Added a first-launch empty state experience for when no projects are registered. Two complementary changes ensure new users are guided to add their first project:
+
+1. **Sidebar ProjectList empty state enhanced with CTA**: The existing empty state in `ProjectList` (which showed icon + title + description) now includes an `EmptyContent` section containing the `<AddProjectForm />` button. Users can add a project directly from the empty state without needing to find the button in the section header.
+
+2. **Main content area welcome state**: When no projects exist, the main content area (normally showing the panel system with terminals and diffs) instead renders a `WelcomeEmptyState` component — a centered, full-height empty state with `FolderGit2` icon, "Welcome to Laborer" title, descriptive guidance text, and an `<AddProjectForm />` CTA button. The panel system (header bar, hotkeys, panel manager) is hidden since it's non-functional without projects.
+
+Both empty states disappear reactively when a project is added — the LiveStore reactive query (`sidebarProjects$` / `allProjects$`) re-evaluates, `hasProjects` becomes true, and the normal UI renders.
+
+### What was done
+
+1. **Modified `apps/web/src/components/project-list.tsx`**:
+   - Added `EmptyContent` to the `@/components/ui/empty` import
+   - Added `AddProjectForm` import from `@/components/add-project-form`
+   - Added `<EmptyContent><AddProjectForm /></EmptyContent>` inside the existing empty state block (after `EmptyHeader`)
+   - Updated module JSDoc to reference Issue #118
+
+2. **Modified `apps/web/src/routes/index.tsx`**:
+   - Added `FolderGit2` to lucide-react imports
+   - Added `Empty`, `EmptyContent`, `EmptyDescription`, `EmptyHeader`, `EmptyMedia`, `EmptyTitle` imports from `@/components/ui/empty`
+   - Added `sidebarProjects$` query (`queryDb(projects, { label: "sidebarProjects" })`) at module level
+   - Created `WelcomeEmptyState` component: full-height centered empty state with FolderGit2 icon, "Welcome to Laborer" title, descriptive text, and `<AddProjectForm />` CTA
+   - Updated `HomeComponent` to query projects via `sidebarProjects$`, derive `hasProjects` boolean
+   - Conditionally renders main content panel: `hasProjects` → normal panel system (header + hotkeys + PanelManager); `!hasProjects` → `<WelcomeEmptyState />`
+   - Sidebar always renders (Projects, Workspaces, Tasks, Server Status sections remain visible regardless of project count)
+
+### Files modified
+- `apps/web/src/components/project-list.tsx` — Added EmptyContent CTA with AddProjectForm, added imports, updated JSDoc
+- `apps/web/src/routes/index.tsx` — Added WelcomeEmptyState component, sidebarProjects$ query, conditional rendering in HomeComponent, new imports
+
+### Acceptance criteria status
+- [x] No projects → empty state with welcome message and guidance (WelcomeEmptyState in main content area + enhanced ProjectList empty state in sidebar)
+- [x] CTA button opens Add Project form (AddProjectForm renders in both empty states — triggers Tauri's native OS folder picker on click)
+- [x] After adding a project → empty state disappears (LiveStore reactive query re-evaluates, `hasProjects` becomes true, panel system renders)
+- [ ] Tests: no projects → empty state renders; CTA → form opens; add project → empty state gone (deferred — web app has no component test infrastructure)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `tsc --noEmit` passes for server package (only pre-existing informational messages — no new errors)
+- `ultracite check` passes on both modified files with zero issues (`Checked 2 files in 9ms. No fixes applied.`)
+- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Two empty states, not one**: The sidebar ProjectList empty state and the main content WelcomeEmptyState serve different purposes. The sidebar CTA is a contextual "add project here" action adjacent to where projects will appear. The main content welcome state is a prominent, full-page onboarding experience that communicates "this is the starting point." Both contain the AddProjectForm button so the user can take action from whichever area they notice first.
+- **Sidebar always visible**: The sidebar sections (Projects, Workspaces, Tasks, Server Status) are always rendered even when there are no projects. This ensures the user can see the health check status (confirming the server is connected) and discover the app's organizational model (projects → workspaces → tasks) even before adding their first project. Hiding the sidebar would make the app feel like a blank page with no structure.
+- **Panel system hidden when no projects**: The PanelHeaderBar, PanelHotkeys, and PanelManager are all hidden when `!hasProjects`. These components are non-functional without projects — there are no workspaces, terminals, or diffs to show. Rendering them would show a confusing empty panel with split/close buttons that do nothing. The WelcomeEmptyState is a more appropriate use of the space.
+- **Reuse of AddProjectForm**: Rather than duplicating the folder-picker logic, both empty states render the existing `<AddProjectForm />` component directly. This ensures consistent behavior (same Tauri dialog, same mutation, same toast notifications) and avoids code duplication.
+- **Separate LiveStore query label**: Used `sidebarProjects` as the query label (distinct from `projectList` and `headerProjects`) to avoid potential subscription conflicts and to make debugging clearer in LiveStore's internal logs.
+- **Reactive disappearance**: No explicit state management is needed to hide the empty state after adding a project. The LiveStore `projects` table is reactively queried; when a `projectCreated` event is committed, the query re-evaluates, `projectList.length > 0` becomes true, and React re-renders the normal panel system. This is the same reactive pattern used throughout the app.
+

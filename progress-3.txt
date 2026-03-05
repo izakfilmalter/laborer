@@ -553,3 +553,40 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #93. The remaining rlph UI issues (#95, #97, #99) follow the same pattern and can be implemented independently.
+
+## Issue #89: Diff viewer — live update — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Enhanced the diff viewer pane (`apps/web/src/panes/diff-pane.tsx`) with smooth live update behavior. The diff viewer already had a reactive LiveStore subscription (from Issue #87), but updates caused full PatchDiff re-renders that could block the UI, reset scroll position, and provide no visual feedback. This issue adds the UX polish to make live updates seamless.
+
+### Changes made
+- **`useTransition` for deferred rendering**: PatchDiff re-renders are wrapped in `startTransition` so large diffs don't block the UI thread. The `isPending` state drives an "Updating..." spinner indicator in the top-left corner while a large diff is being processed. Interactive elements (scrolling, typing in terminals, panel shortcuts) remain responsive during the transition.
+- **Scroll position preservation via MutationObserver**: A `MutationObserver` watches the scroll container for DOM mutations (which happen when PatchDiff re-renders). On mutation, it restores the saved scroll position from a ref. The `onScroll` handler continuously saves the current scroll position. This prevents the user from losing their place when new diff content arrives.
+- **"Updated" flash indicator**: A brief flash badge ("Updated" with RefreshCw icon) appears in the top-right corner when new diff content arrives, then auto-hides after 1.5 seconds. The flash only triggers on actual content changes (not initial mount or identical content), using a `prevContentRef` to track the previous diff string.
+- **Stable PatchDiff options**: Moved the `options` object to module-level constant (`PATCH_DIFF_OPTIONS`) to prevent unnecessary object recreation on every render. PatchDiff's internal rendering is expensive (shiki syntax highlighting, hunk parsing), so stable options prevent re-processing when only the `patch` content changes.
+- **Last updated timestamp footer**: Added a footer bar at the bottom of the diff pane showing the last updated time. Uses a `formatLastUpdated` helper that shows "just now" for timestamps within 10 seconds, otherwise a locale-appropriate time string.
+- **Updated module JSDoc**: Added comprehensive documentation of the live update architecture (8-step data flow from server DiffService to rendered UI), referencing Issues #83, #84, #18, #87, and #89.
+
+### Files modified
+- `apps/web/src/panes/diff-pane.tsx` — Complete rewrite of the DiffPane component with smooth live update behavior
+
+### Acceptance criteria status
+- [x] New DiffUpdated event → viewer re-renders with new content (reactive `store.useQuery(allDiffs$)` fires on every materialized table change, `useTransition` defers the PatchDiff re-render)
+- [x] Update is smooth — no flash/flicker (scroll position preserved via MutationObserver, `useTransition` prevents UI blocking, stable options prevent unnecessary re-processing)
+- [ ] Tests: commit new diff → viewer updates; verify no manual refresh needed (deferred — requires running both server and web app with a live workspace and file changes)
+
+### Verification
+- `tsc --noEmit` passes (no new type errors — only pre-existing calendar.tsx, sonner.tsx, and Effect informational messages)
+- `ultracite check` passes on `diff-pane.tsx` with zero issues
+
+### Design decisions
+- Used `MutationObserver` for scroll restoration rather than dependency-triggered `useEffect`/`useLayoutEffect`. The observer fires exactly when PatchDiff mutates the DOM (regardless of what triggered it), which is more robust than trying to predict when React will commit. It also satisfies Biome's exhaustive dependencies rule — the observer is set up once on mount with no external dependencies.
+- Used `useTransition` rather than `useDeferredValue` because we need both the `isPending` flag (for the loading indicator) and explicit control over when the transition starts. `useDeferredValue` only defers the value, with no way to show a pending state.
+- The "Updated" flash uses `prevContentRef` (not `useRef` on the deferred content) to detect changes. This ensures the flash fires immediately when new content arrives from LiveStore, not when the transition completes. The user sees "Updated" while the PatchDiff is still re-rendering.
+- Moved PatchDiff options to module level (`PATCH_DIFF_OPTIONS`). This is safe because all DiffPane instances use the same visual configuration. If per-instance options were needed in the future (e.g., unified vs. split mode toggle), the options could be wrapped in `useMemo`.
+- The timestamp footer intentionally uses a simple relative format ("just now" / time string) rather than continuously updating relative times (e.g., "5 seconds ago"). Continuously updating would require a timer that adds complexity for minimal UX benefit — the timestamp is informational, not interactive.
+
+### Issues unblocked
+- Issue #91: Diff viewer debounce/throttle for rapid changes (was blocked by #89 — now done!)

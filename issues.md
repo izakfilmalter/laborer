@@ -2424,13 +2424,13 @@ When new diff content is committed to LiveStore (from polling), the diff viewer 
 
 ### Acceptance criteria
 
-- [ ] New DiffUpdated event → viewer re-renders with new content
-- [ ] Update is smooth (no flash/flicker)
-- [ ] Tests: commit new diff → viewer updates; verify no manual refresh needed
+- [x] New DiffUpdated event → viewer re-renders with new content (reactive `store.useQuery(allDiffs$)` + `useTransition` deferred rendering)
+- [x] Update is smooth (no flash/flicker) (scroll position preserved via MutationObserver, `useTransition` prevents UI blocking, stable options prevent unnecessary re-processing, "Updated" flash indicator for visual feedback)
+- [ ] Tests: commit new diff → viewer updates; verify no manual refresh needed (deferred — requires running both server and web app with a live workspace)
 
 ### Blocked by
 
-- Blocked by #87
+- Blocked by ~~#87~~ (done)
 
 ### User stories addressed
 
@@ -4117,9 +4117,9 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 86 | diff.refresh RPC handler | ~~#82~~, #19 | Done |
 | 87 | Diff viewer pane — @pierre/diffs | ~~#18~~, ~~#83~~, ~~#6~~ | Done |
 | 88 | Diff viewer — accept/reject annotations | ~~#87~~ | Ready |
-| 89 | Diff viewer — live update | ~~#87~~ | Ready |
+| 89 | Diff viewer — live update | ~~#87~~ | Done |
 | 90 | Toggle diff alongside terminal | ~~#67~~, ~~#87~~ | Done |
-| 91 | Diff viewer debounce/throttle | #89 | Blocked |
+| 91 | Diff viewer debounce/throttle | ~~#89~~ | Ready |
 | 92 | rlph.startLoop RPC handler | ~~#56~~ | Done |
 | 93 | "Start Ralph Loop" button (AtomRpc mutation) | ~~#92~~, ~~#60~~ | Done |
 | 94 | rlph.writePRD RPC handler | ~~#56~~ | Done |

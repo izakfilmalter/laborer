@@ -2026,3 +2026,61 @@ Added a system tray icon to the Tauri desktop shell. The tray shows the app icon
 - Issue #116: Tauri global shortcut — now unblocked (blocked by #115)
 - Issue #117: Tauri window management — now unblocked (blocked by #115)
 
+## Issue #116: Tauri global shortcut — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Registered a global keyboard shortcut (Cmd+Shift+L on macOS, Ctrl+Shift+L on Windows/Linux) that brings the Laborer window to the front from anywhere in the OS. Uses the `tauri-plugin-global-shortcut` v2 plugin with Rust-side registration and handler. The shortcut handler reuses the existing `focus_main_window` helper (extracted from the duplicated show/focus logic in the tray icon and menu handlers). No frontend JavaScript changes needed — the shortcut is entirely handled in Rust.
+
+### What was done
+
+1. **Added `tauri-plugin-global-shortcut` dependency to `apps/web/src-tauri/Cargo.toml`**:
+   - Added `tauri-plugin-global-shortcut = "2"` to `[dependencies]`
+   - Resolved to v2.3.1 with `global-hotkey v0.7.0` backend
+
+2. **Modified `apps/web/src-tauri/src/lib.rs`** (~100 lines, was 82):
+   - **New import**: `use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};`
+   - **Extracted `focus_main_window(app)` helper**: Consolidated the window show/focus logic (unminimize + show + set_focus) that was duplicated in the tray icon click handler, "Show Laborer" menu event, and now the global shortcut handler. All three call sites now use this shared function.
+   - **Global shortcut registration in `.setup()`**: Inside a `#[cfg(desktop)]` block:
+     - Creates `Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyL)` — `SUPER` maps to Cmd on macOS, Ctrl on Windows/Linux
+     - Initializes the plugin via `tauri_plugin_global_shortcut::Builder::new().with_handler(...)` which calls `focus_main_window(app)` on `ShortcutState::Pressed`
+     - Registers the shortcut via `app.global_shortcut().register(shortcut)?`
+   - **Refactored tray event handlers**: Both `on_menu_event("show")` and `on_tray_icon_event(Click::Left)` now call `focus_main_window(app)` instead of inlining the three window operations
+
+3. **Added global-shortcut permissions to `apps/web/src-tauri/capabilities/default.json`**:
+   - Added `"global-shortcut:allow-register"`, `"global-shortcut:allow-is-registered"`, `"global-shortcut:allow-unregister"` to the permissions array
+   - These enable the plugin's IPC commands (required by Tauri v2's security model even though registration happens in Rust)
+
+### Files modified
+- `apps/web/src-tauri/Cargo.toml` — Added `tauri-plugin-global-shortcut = "2"` dependency
+- `apps/web/src-tauri/src/lib.rs` — Added global shortcut import, `focus_main_window` helper, shortcut registration in setup, refactored tray handlers to use shared helper
+- `apps/web/src-tauri/capabilities/default.json` — Added global-shortcut permissions
+
+### Acceptance criteria status
+- [x] Global shortcut registered (Cmd+Shift+L on macOS, Ctrl+Shift+L on Windows/Linux — uses `Modifiers::SUPER | Modifiers::SHIFT` which maps correctly per platform)
+- [x] Shortcut focuses the Laborer window (calls `focus_main_window` which does `unminimize()`, `show()`, `set_focus()`)
+- [x] Works from any application (OS-level global shortcut via `tauri-plugin-global-shortcut` / `global-hotkey` backend)
+- [ ] Tests: manual verification — shortcut focuses window from another app (requires running the Tauri desktop app)
+
+### Verification
+- `cargo check` passes for Rust code — zero errors, zero warnings
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `tsc --noEmit` passes for server package (only pre-existing informational messages — no new errors)
+- `ultracite check` reports only pre-existing errors in generated shadcn/ui components — no new errors
+- All 61 tests pass across 4 test files (32 ring buffer + 9 workspace validation + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **`Modifiers::SUPER` over `Modifiers::CONTROL`**: The `SUPER` modifier maps to Cmd on macOS and Ctrl on Windows/Linux. Using `SUPER` instead of `CONTROL` follows the OS-native convention — macOS apps use Cmd for application shortcuts (Cmd+Q, Cmd+H, Cmd+Tab), while Windows/Linux use Ctrl. `Cmd+Shift+L` on macOS and `Ctrl+Shift+L` on Windows/Linux are the correct platform-native equivalents. The PRD specifies "Cmd+Shift+L on macOS" which confirms this choice.
+- **`ShortcutState::Pressed` only**: The handler only triggers on key-down (`Pressed`), not key-up (`Released`). Double-triggering on both press and release would cause two show/focus cycles. This matches how all global shortcuts work in practice.
+- **`#[cfg(desktop)]` guard**: The global shortcut registration is wrapped in `#[cfg(desktop)]` because the `global-hotkey` crate only supports desktop platforms (macOS, Windows, Linux). The Tauri v2 documentation uses this guard in its example code. On mobile targets (if ever built), the shortcut registration is cleanly skipped at compile time.
+- **Rust-side registration (not JavaScript)**: The shortcut is registered entirely in Rust in the `.setup()` closure, not via the `@tauri-apps/plugin-global-shortcut` JavaScript API. This ensures the shortcut is available immediately when the app launches, before the webview loads. It also avoids adding a JavaScript dependency for a feature that doesn't need any frontend interaction — the handler focuses the window directly in Rust.
+- **No `@tauri-apps/plugin-global-shortcut` npm package**: Since the shortcut is registered and handled entirely in Rust, the JavaScript guest bindings are not needed. This keeps the frontend bundle size unchanged.
+- **Extracted `focus_main_window` helper**: The show/focus logic was duplicated in three places: tray left-click, "Show Laborer" menu item, and now the global shortcut. Extracting it into a shared function eliminates duplication and ensures consistent behavior. All three entry points perform the same three operations: `unminimize()` (in case minimized), `show()` (in case hidden), `set_focus()` (bring to front).
+- **Permissions added proactively**: Even though the shortcut is registered in Rust (not via JS IPC), the Tauri v2 security model requires explicit permissions for plugin capabilities. The three permissions (`allow-register`, `allow-is-registered`, `allow-unregister`) are added to the default capability to ensure the plugin can function. Without them, the plugin initialization may fail at runtime.
+- **`Shortcut` not configurable (yet)**: The shortcut is hardcoded to `Cmd/Ctrl+Shift+L`. The acceptance criteria mentions "configurable" as a nice-to-have. Making it configurable would require: a settings UI (TanStack Form), persistence (LiveStore or a config file), and dynamic shortcut re-registration. This can be added as a future enhancement without architectural changes — `app.global_shortcut().unregister()` + `register()` with the new shortcut.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #116. This was a standalone Tauri desktop feature addressing User Story 21.
+

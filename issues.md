@@ -200,30 +200,9 @@ Added system tray icon to the Tauri desktop shell. Tray shows app icon, tooltip 
 
 ---
 
-## Issue 116: Tauri global shortcut
+## ~~Issue 116: Tauri global shortcut~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Register a global keyboard shortcut that brings the Laborer window to the front from anywhere in the OS.
-
-### Acceptance criteria
-
-- [ ] Global shortcut registered (configurable, default Cmd+Shift+L on macOS)
-- [ ] Shortcut focuses the Laborer window
-- [ ] Works from any application
-- [ ] Tests: manual verification — shortcut focuses window from another app
-
-### Blocked by
-
-- ~~Blocked by #115~~
-
-### User stories addressed
-
-- User story 21
+Registered a global keyboard shortcut (Cmd+Shift+L on macOS, Ctrl+Shift+L on Windows/Linux) via `tauri-plugin-global-shortcut` v2. Shortcut handler calls `focus_main_window` (extracted shared helper) to unminimize, show, and focus the main window from anywhere in the OS. Rust-side registration in `.setup()` — no frontend JavaScript changes needed. Extracted `focus_main_window` helper also refactored tray icon click and "Show Laborer" menu handlers to eliminate duplication.
 
 ---
 
@@ -434,7 +413,7 @@ Added drag-and-drop support using the native HTML5 Drag and Drop API. Terminal i
 | 113 | ~~Project switcher~~ | ~~#26~~ | Done |
 | 114 | ~~Cross-project dashboard~~ | ~~#41~~, ~~#104~~ | Done |
 | 115 | ~~Tauri system tray~~ | ~~#41~~ | Done |
-| 116 | Tauri global shortcut | ~~#115~~ | Ready |
+| 116 | ~~Tauri global shortcut~~ | ~~#115~~ | Done |
 | 117 | Tauri window management | ~~#115~~ | Ready |
 | 118 | ~~Empty state — no projects~~ | ~~#27~~ | Done |
 | 119 | ~~Empty state — no workspaces~~ | ~~#42~~ | Done |

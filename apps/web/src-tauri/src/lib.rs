@@ -3,6 +3,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
 };
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 /// Update the tray tooltip to reflect the current workspace count.
 /// Called from the frontend when the workspace count changes.
@@ -20,6 +21,16 @@ fn update_tray_workspace_count(app: tauri::AppHandle, count: u32) {
     }
 }
 
+/// Focus the main Laborer window: unminimize, show, and set focus.
+/// Shared by the tray icon click, "Show Laborer" menu item, and global shortcut.
+fn focus_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -32,6 +43,24 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+            }
+
+            // Register global shortcut: Cmd+Shift+L (macOS) / Ctrl+Shift+L (Windows/Linux)
+            // Brings the Laborer window to the front from anywhere in the OS.
+            // See Issue #116: Tauri global shortcut.
+            #[cfg(desktop)]
+            {
+                let shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyL);
+                app.handle().plugin(
+                    tauri_plugin_global_shortcut::Builder::new()
+                        .with_handler(move |app, _shortcut, event| {
+                            if event.state() == ShortcutState::Pressed {
+                                focus_main_window(app);
+                            }
+                        })
+                        .build(),
+                )?;
+                app.global_shortcut().register(shortcut)?;
             }
 
             // Build system tray menu
@@ -47,11 +76,7 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.unminimize();
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        focus_main_window(app);
                     }
                     "quit" => {
                         app.exit(0);
@@ -66,11 +91,7 @@ pub fn run() {
                     } = event
                     {
                         let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.unminimize();
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        focus_main_window(app);
                     }
                 })
                 .build(app)?;

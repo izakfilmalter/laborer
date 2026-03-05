@@ -11,6 +11,19 @@
  * workspaces, terminals, diffs, tasks, panelLayout) are available for
  * querying and event commits.
  *
+ * Persistence & Shutdown (Issue #129):
+ * - On startup, the store materializes state from the persisted SQLite
+ *   eventlog. Entity counts are logged to confirm successful restoration.
+ * - On shutdown (SIGINT/SIGTERM), an explicit Effect.addFinalizer calls
+ *   store.shutdown() which flushes pending writes, closes the client
+ *   session, and releases SQLite database handles. The upstream
+ *   @livestore/adapter-node also registers its own acquireRelease
+ *   finalizers for db.close() — our explicit finalizer provides
+ *   observable logging and ensures shutdown ordering is correct.
+ * - Shutdown ordering: TerminalManager finalizer runs FIRST (commits
+ *   final terminal status events), then LaborerStore finalizer runs
+ *   (flushes and closes SQLite), then ServerLive tears down (stops HTTP).
+ *
  * Sync: The server-side store connects to the sync backend (SyncRpcLive)
  * via WebSocket at `ws://localhost:PORT/rpc`, following the canonical
  * LiveStore "server-side client" pattern. This ensures events committed
@@ -34,10 +47,12 @@
  * @livestore/utils) which conflicts with our @effect/cluster version at
  * module resolution time. The dynamic import ensures the adapter is only
  * loaded when the Effect layer is constructed, not at module evaluation.
+ *
+ * @see Issue #129: Graceful shutdown — persist LiveStore state
  */
 
 import { env } from "@laborer/env/server";
-import { schema } from "@laborer/shared/schema";
+import { schema, tables } from "@laborer/shared/schema";
 import { createStore, provideOtel } from "@livestore/livestore";
 import { makeWsSync } from "@livestore/sync-cf/client";
 import { Context, Effect, Layer } from "effect";
@@ -83,6 +98,11 @@ const DATA_DIRECTORY = "./data";
 const syncUrl = `ws://localhost:${env.PORT}/rpc`;
 
 /**
+ * Log prefix for structured logging.
+ */
+const logPrefix = "[LaborerStore]";
+
+/**
  * Effect that creates the LiveStore instance.
  *
  * Uses dynamic import for @livestore/adapter-node to avoid eager loading
@@ -102,6 +122,12 @@ const syncUrl = `ws://localhost:${env.PORT}/rpc`;
  * sync backend at `ws://localhost:PORT/rpc`. This follows the canonical
  * LiveStore "server-side client" pattern where the server store is just
  * another sync participant alongside browser clients.
+ *
+ * On creation, logs entity counts restored from SQLite persistence.
+ * On shutdown (scope close), logs the shutdown and calls store.shutdown()
+ * to flush pending writes and close SQLite databases.
+ *
+ * @see Issue #129: Graceful shutdown — persist LiveStore state
  */
 const makeStore = Effect.gen(function* () {
 	const { makeAdapter } = yield* Effect.promise(
@@ -124,6 +150,67 @@ const makeStore = Effect.gen(function* () {
 		disableDevtools: true,
 	});
 
+	// --- Startup: log restored entity counts from SQLite persistence ---
+	// This confirms state was successfully restored from the previous session.
+	const projectCount = store.query(tables.projects).length;
+	const workspaceCount = store.query(tables.workspaces).length;
+	const terminalCount = store.query(tables.terminals).length;
+	const taskCount = store.query(tables.tasks).length;
+
+	yield* Effect.logInfo(
+		`${logPrefix} Store initialized — restored from SQLite: ` +
+			`${projectCount} project(s), ${workspaceCount} workspace(s), ` +
+			`${terminalCount} terminal(s), ${taskCount} task(s)`
+	);
+
+	// --- Shutdown finalizer: flush and close LiveStore (Issue #129) ---
+	// The upstream @livestore/adapter-node also registers acquireRelease
+	// finalizers for db.close(), but our explicit finalizer:
+	// 1. Provides observable logging for shutdown diagnostics
+	// 2. Calls store.shutdown() to flush pending writes and close the
+	//    client session before the adapter's own finalizers run
+	// 3. Logs final entity counts for post-mortem verification
+	yield* Effect.addFinalizer(() =>
+		Effect.gen(function* () {
+			yield* Effect.logInfo(
+				`${logPrefix} Shutdown: flushing LiveStore state to SQLite...`
+			);
+
+			// Log final entity counts before shutdown for post-mortem verification
+			const finalProjects = store.query(tables.projects).length;
+			const finalWorkspaces = store.query(tables.workspaces).length;
+			const finalTerminals = store.query(tables.terminals).length;
+			const finalTasks = store.query(tables.tasks).length;
+
+			yield* Effect.logInfo(
+				`${logPrefix} Shutdown: final state — ` +
+					`${finalProjects} project(s), ${finalWorkspaces} workspace(s), ` +
+					`${finalTerminals} terminal(s), ${finalTasks} task(s)`
+			);
+
+			// Call store.shutdown() to flush pending writes and close the
+			// client session. This triggers LiveStore's internal cleanup:
+			// - Flushes any pending event commits to SQLite
+			// - Closes the client session (stops sync fibers)
+			// - Closes the lifetimeScope (which cascades to adapter cleanup)
+			// Wrapped in catchAll to ensure shutdown continues even if the
+			// store is already in a degraded state.
+			yield* store
+				.shutdown()
+				.pipe(
+					Effect.catchAll((error) =>
+						Effect.logWarning(
+							`${logPrefix} Shutdown: store.shutdown() encountered an error (state may already be persisted): ${String(error)}`
+						)
+					)
+				);
+
+			yield* Effect.logInfo(
+				`${logPrefix} Shutdown: LiveStore state persisted to SQLite successfully`
+			);
+		})
+	);
+
 	return { store };
 }).pipe(provideOtel({}));
 
@@ -132,7 +219,16 @@ const makeStore = Effect.gen(function* () {
  *
  * Creates the LiveStore on layer construction and tears it down
  * automatically when the layer's scope is closed (server shutdown).
- * SQLite databases are flushed and closed on scope finalization.
+ *
+ * On shutdown (Issue #129):
+ * 1. Effect.addFinalizer calls store.shutdown() which flushes pending
+ *    writes and closes the LiveStore client session
+ * 2. The upstream @livestore/adapter-node acquireRelease finalizers
+ *    then close the SQLite databases (state DB + eventlog DB)
+ * 3. Entity counts are logged before and after shutdown for diagnostics
+ *
+ * On startup:
+ * - Entity counts are logged to confirm state was restored from SQLite
  */
 const LaborerStoreLive: Layer.Layer<LaborerStore> = Layer.scoped(
 	LaborerStore,

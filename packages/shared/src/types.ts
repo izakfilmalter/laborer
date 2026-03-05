@@ -100,6 +100,8 @@ export class Diff extends Schema.Class<Diff>("Diff")({
 
 export interface LeafNode {
 	readonly _tag: "LeafNode";
+	/** Whether the integrated diff sidebar is open for this pane. */
+	readonly diffOpen?: boolean | undefined;
 	readonly id: string;
 	readonly paneType: PaneType;
 	readonly terminalId?: string | undefined;
@@ -118,6 +120,7 @@ export type PanelNode = LeafNode | SplitNode;
 
 export const LeafNodeSchema: Schema.Schema<LeafNode> = Schema.Struct({
 	_tag: Schema.Literal("LeafNode"),
+	diffOpen: Schema.optional(Schema.Boolean),
 	id: Schema.String,
 	paneType: PaneType,
 	terminalId: Schema.optional(Schema.String),

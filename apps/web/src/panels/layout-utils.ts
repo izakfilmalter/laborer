@@ -343,52 +343,11 @@ function findParent(
 	return undefined;
 }
 
-/**
- * Find a sibling diff pane for a given terminal pane.
- *
- * Checks if the terminal pane is in a SplitNode that also contains
- * a diff pane with the same workspaceId. This is used by the toggle
- * diff feature to detect whether a diff pane is already shown.
- *
- * @param root - The root PanelNode tree
- * @param terminalPaneId - The ID of the terminal LeafNode
- * @returns The sibling diff LeafNode if found, or undefined
- */
-function findSiblingDiffPane(
-	root: PanelNode,
-	terminalPaneId: string
-): LeafNode | undefined {
-	const parentResult = findParent(root, terminalPaneId);
-	if (!parentResult) {
-		return undefined;
-	}
-
-	const terminalNode = parentResult.parent.children[parentResult.index];
-	if (!terminalNode || terminalNode._tag !== "LeafNode") {
-		return undefined;
-	}
-
-	// Look for a sibling diff pane with the same workspaceId
-	for (const child of parentResult.parent.children) {
-		if (
-			child._tag === "LeafNode" &&
-			child.id !== terminalPaneId &&
-			child.paneType === "diff" &&
-			child.workspaceId === terminalNode.workspaceId
-		) {
-			return child;
-		}
-	}
-
-	return undefined;
-}
-
 export {
 	closePane,
 	countLeaves,
 	findNodeById,
 	findParent,
-	findSiblingDiffPane,
 	generateId,
 	getLeafIds,
 	getTreeDepth,

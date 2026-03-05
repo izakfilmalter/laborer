@@ -44,6 +44,8 @@ import { ProjectRegistry } from "./project-registry.js";
  * Matches the LiveStore workspaces table columns.
  */
 interface WorkspaceRecord {
+	/** SHA of the parent branch HEAD when the worktree was created. Used by DiffService as the diff base. */
+	readonly baseSha: string | null;
 	readonly branchName: string;
 	readonly createdAt: string;
 	readonly id: string;
@@ -232,6 +234,32 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 						});
 					}
 
+					// 7b. Capture the base SHA — the commit the worktree was branched from.
+					// `git worktree add -b <branch> <path>` creates the new branch at HEAD of
+					// the main repo, so `git rev-parse HEAD` in the project repo gives us the
+					// exact commit the worktree diverged from. This is stored in LiveStore and
+					// used by DiffService as the base for `git diff <baseSha>`.
+					const baseSha = yield* Effect.tryPromise({
+						try: async () => {
+							const proc = Bun.spawn(["git", "rev-parse", "HEAD"], {
+								cwd: project.repoPath,
+								stdout: "pipe",
+								stderr: "pipe",
+							});
+							const exitCode = await proc.exited;
+							const stdout = await new Response(proc.stdout).text();
+							if (exitCode === 0) {
+								return stdout.trim();
+							}
+							return null;
+						},
+						catch: () =>
+							new RpcError({
+								message: "Failed to capture base SHA for worktree",
+								code: "GIT_REV_PARSE_FAILED",
+							}),
+					});
+
 					// 8. Verify the worktree was created
 					const verifyResult = yield* Effect.tryPromise({
 						try: async () => {
@@ -278,6 +306,7 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 						port,
 						status: "running",
 						createdAt,
+						baseSha,
 					};
 
 					store.commit(
@@ -290,6 +319,7 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 							port: workspace.port,
 							status: workspace.status,
 							createdAt: workspace.createdAt,
+							baseSha: workspace.baseSha,
 						})
 					);
 

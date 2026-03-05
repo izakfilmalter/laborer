@@ -137,6 +137,7 @@ const seedWorkspace = async () => {
 					port: 9999,
 					status: "running",
 					createdAt: new Date().toISOString(),
+					baseSha: null,
 				})
 			);
 		})
@@ -357,6 +358,7 @@ describe("TerminalManager + PtyHostClient", { timeout: 30_000 }, () => {
 							port: 9999,
 							status: "running",
 							createdAt: new Date().toISOString(),
+							baseSha: null,
 						})
 					);
 
@@ -432,6 +434,7 @@ describe("TerminalManager + PtyHostClient", { timeout: 30_000 }, () => {
 							port: 9999,
 							status: "running",
 							createdAt: new Date().toISOString(),
+							baseSha: null,
 						})
 					);
 

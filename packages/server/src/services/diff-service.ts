@@ -191,38 +191,51 @@ class DiffService extends Context.Tag("@laborer/DiffService")<
 					});
 				}
 
-				// 3. Find the merge-base to diff against.
-				// `git diff <merge-base>` compares the merge-base commit against the
-				// current working tree, which captures committed + staged + unstaged
-				// changes in a single command. This is critical because AI agents
-				// (like opencode) typically commit their changes, making `git diff`
+				// 3. Determine the base commit to diff against.
+				//
+				// Priority:
+				// a) Use workspace.baseSha — the exact commit recorded when the
+				//    worktree was created. This gives the most accurate diff, showing
+				//    only changes made in this worktree.
+				// b) Fall back to computing a merge-base against well-known default
+				//    branches. This handles legacy workspaces created before baseSha
+				//    was tracked.
+				//
+				// `git diff <base>` compares the base commit against the current
+				// working tree, which captures committed + staged + unstaged changes
+				// in a single command. This is critical because AI agents (like
+				// opencode) typically commit their changes, making `git diff`
 				// (working tree vs index) and `git diff --staged` (index vs HEAD)
 				// both return empty output.
-				const mergeBase = yield* Effect.tryPromise({
-					try: async () => {
-						for (const candidate of [
-							"main",
-							"master",
-							"develop",
-							"origin/main",
-							"origin/master",
-						]) {
-							const res = await spawnGit(
-								["merge-base", candidate, "HEAD"],
-								workspace.worktreePath
-							);
-							if (res.exitCode === 0) {
-								return res.stdout.trim();
-							}
-						}
-						return undefined;
-					},
-					catch: () =>
-						new RpcError({
-							message: "Failed to compute merge-base",
-							code: "GIT_DIFF_FAILED",
-						}),
-				});
+				const baseSha = workspace.baseSha;
+
+				const mergeBase = baseSha
+					? baseSha
+					: yield* Effect.tryPromise({
+							try: async () => {
+								for (const candidate of [
+									"main",
+									"master",
+									"develop",
+									"origin/main",
+									"origin/master",
+								]) {
+									const res = await spawnGit(
+										["merge-base", candidate, "HEAD"],
+										workspace.worktreePath
+									);
+									if (res.exitCode === 0) {
+										return res.stdout.trim();
+									}
+								}
+								return undefined;
+							},
+							catch: () =>
+								new RpcError({
+									message: "Failed to compute merge-base",
+									code: "GIT_DIFF_FAILED",
+								}),
+						});
 
 				let combinedDiff: string;
 
@@ -249,7 +262,7 @@ class DiffService extends Context.Tag("@laborer/DiffService")<
 					combinedDiff = fullDiffResult.stdout;
 
 					yield* Effect.log(
-						`[DiffService] workspace=${workspaceId} mergeBase=${mergeBase.slice(0, 8)} diffLen=${combinedDiff.length}`
+						`[DiffService] workspace=${workspaceId} base=${mergeBase.slice(0, 8)}${baseSha ? " (baseSha)" : " (merge-base fallback)"} diffLen=${combinedDiff.length}`
 					);
 				} else {
 					// 4b. Fallback: no merge-base found (branch may be the default

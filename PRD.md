@@ -204,6 +204,8 @@ Manages the set of projects (repos) the user is working with. Stores repo paths,
 
 Responsibilities: project registration/removal, repo validation, config reading.
 
+> **See [PRD-global-worktree-config.md](./PRD-global-worktree-config.md)** for the global worktree directory and project settings design. Worktrees are moved out of the repo to a global location (`~/.config/laborer/<projectName>/`) by default, with a layered `laborer.json` config system (walk-up directory resolution + global default). A new ConfigService handles config resolution, and a project settings modal provides a UI for editing worktree directory, setup scripts, and rlph config per project.
+
 **5. SyncEngine (LiveStore)**
 The LiveStore schema, events, materializers, and sync configuration. Defines all tables and events. Runs on both server (Node/Bun adapter) and client (browser/Tauri adapter). Handles persistence to SQLite and real-time sync between server and app.
 
@@ -218,6 +220,8 @@ Responsibilities: RPC group + schema definitions (shared), server-side handler i
 The tmux-style panel system in the React frontend. Built on allotment for recursive split/resize. Each pane can display an xterm.js terminal or a @pierre/diffs diff viewer. Layout state is persisted via LiveStore. Keyboard shortcuts use TanStack Hotkeys for declarative, composable hotkey bindings with scope isolation (so terminal panes don't intercept panel-level shortcuts). Action buttons (spawn terminal, start rlph, etc.) invoke server-side mutations via the `LaborerClient` AtomRpc tag. All UI components use shadcn/ui (backed by Base UI) for consistent styling.
 
 Responsibilities: panel splitting/resizing/closing, pane type management (terminal/diff), keyboard shortcuts (via TanStack Hotkeys), layout serialization/deserialization, xterm.js integration, @pierre/diffs integration, action invocation via AtomRpc mutations.
+
+> **See [PRD-cmd-w-close-panel.md](./PRD-cmd-w-close-panel.md)** for the Cmd+W close panel and focused pane border design. Adds Cmd+W as a direct shortcut to close the active pane (alongside the existing Ctrl+B, X tmux-style sequence), replaces the glitched ring indicator with a solid border on the focused pane, adds focus auto-transfer to the nearest sibling on close, and shows a close-app confirmation dialog when no panes remain.
 
 ### Technology Stack
 

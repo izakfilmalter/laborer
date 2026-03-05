@@ -647,34 +647,9 @@ None - can start immediately
 
 ---
 
-## Issue 149: Focus auto-transfer on pane close
+## ~~Issue 149: Focus auto-transfer on pane close~~ ✅ DONE
 
-### Parent PRD
-
-PRD-cmd-w-close-panel.md
-
-### What to build
-
-When a pane is closed, automatically transfer focus to the nearest sibling pane in the same parent split. Add a new `findSiblingPaneId(root, paneId)` utility function in `layout-utils.ts` that resolves the target pane ID before the close operation mutates the tree. Update `handleClosePane` in the route component to compute the sibling before calling `closePane()`, then set `activePaneId` to that sibling. If the closing pane is the first child, focus the next sibling. If it's the last or middle child, focus the previous sibling. If no siblings exist (closing the last pane), set `activePaneId` to `null`. Add unit tests for `findSiblingPaneId` following the existing `layout-utils.test.ts` patterns.
-
-### Acceptance criteria
-
-- [ ] `findSiblingPaneId(root, paneId)` returns the correct sibling leaf ID for various tree configurations
-- [ ] Closing first child focuses next sibling
-- [ ] Closing last child focuses previous sibling
-- [ ] Closing middle child focuses previous sibling
-- [ ] Closing deeply nested pane focuses nearest sibling in parent split
-- [ ] Closing the last pane sets `activePaneId` to `null`
-- [ ] Focus transfer works with the existing Ctrl+B, X shortcut
-- [ ] Unit tests for `findSiblingPaneId` pass (edge cases: single leaf root, nested splits, flat splits with 3+ children)
-
-### Blocked by
-
-None - can start immediately
-
-### User stories addressed
-
-- User story 4, 5
+Added `findSiblingPaneId(root, paneId)` utility to `layout-utils.ts` that resolves the nearest sibling leaf before `closePane()` mutates the tree. Uses existing `findParent` and `getEdgeLeaf` helpers. Updated `handleClosePane` in `routes/index.tsx` to compute the sibling before closing, then set `activePaneId` to the sibling (or null if last pane). Only transfers focus when the closing pane IS the active pane. Created web app test infrastructure (vitest.config.ts, test/ directory) with 17 unit tests covering all edge cases.
 
 ---
 
@@ -1057,13 +1032,229 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 146 | Grace period reconnection + orphan detection | #140 | Blocked |
 | 147 | Terminal extraction polish + integration verification | #144, #145, #146 | Blocked |
 | 148 | Focused pane border fix | None | Ready |
-| 149 | Focus auto-transfer on pane close | None | Ready |
-| 150 | Guaranteed active pane invariant | #149 | Blocked |
-| 151 | Cmd+W shortcut — close active pane | #149 | Blocked |
+| 149 | ~~Focus auto-transfer on pane close~~ | ~~None~~ | Done |
+| 150 | Guaranteed active pane invariant | ~~#149~~ | Ready |
+| 151 | Cmd+W shortcut — close active pane | ~~#149~~ | Ready |
 | 152 | Cmd+W close-app confirmation dialog | #151 | Blocked |
-| 153 | Cmd+W close panel — polish & verification | #148, #149, #150, #151, #152 | Blocked |
+| 153 | Cmd+W close panel — polish & verification | #148, ~~#149~~, #150, #151, #152 | Blocked |
 | 154 | Config Service — resolve config with walk-up + global default | None | Ready |
 | 155 | Config Service — write project config | #154 | Blocked |
 | 156 | WorkspaceProvider — use ConfigService for worktree path + setup scripts | #154 | Blocked |
 | 157 | Config RPC endpoints + project settings modal | #155, #156 | Blocked |
 | 158 | Config + settings polish & edge cases | #157 | Blocked |
+| 159 | WorktreeDetector + schema origin + initial detection on project add | None | Ready |
+| 160 | UI for detected workspaces | #159 | Blocked |
+| 161 | Live filesystem watcher + server boot reconciliation | #159 | Blocked |
+| 162 | Origin-aware destroy behavior | #160 | Blocked |
+| 163 | Worktree detection polish & edge cases | #160, #161, #162 | Blocked |
+
+---
+
+## Issue 159: WorktreeDetector + schema origin + initial detection on project add
+
+### Parent PRD
+
+PRD-worktree-detection.md
+
+### What to build
+
+This is the foundational tracer bullet for worktree detection. Build the end-to-end path from adding a project to having workspace records appear in LiveStore for all existing git worktrees.
+
+**Schema changes**: Add an `origin` column (text, default `"laborer"`) to the `workspaces` table. Add `origin` as an optional field on the `v1.WorkspaceCreated` event schema with `Schema.optionalWith(Schema.String, { default: () => "laborer" })` for backward compatibility. Add `WorkspaceOrigin` literal type (`"laborer" | "external"`) to `types.ts` and add `origin: WorkspaceOrigin` to the `Workspace` class.
+
+**WorktreeDetector service**: New Effect tagged service (`@laborer/WorktreeDetector`) with a single `detect(repoPath)` method. Runs `git worktree list --porcelain`, parses the output into `DetectedWorktree[]` records (path, head, branch, isMain). Handles detached HEAD (branch = null), excludes prunable worktrees. No LiveStore dependency — pure git interaction. See "WorktreeDetector service" section in PRD for full parsing details.
+
+**WorktreeReconciler service**: New Effect tagged service (`@laborer/WorktreeReconciler`) with a `reconcile(projectId, repoPath)` method. Calls WorktreeDetector.detect, queries existing workspace records from LiveStore, diffs by worktreePath. Creates `workspaceCreated` events for new worktrees (status `"stopped"`, port `0`, origin `"external"`, base SHA derived via `git merge-base`). Removes stale workspace records via `workspaceDestroyed` (freeing ports if allocated). Determines default branch via `git symbolic-ref refs/remotes/origin/HEAD` with fallback to main/master. See "WorktreeReconciler service" section in PRD for full reconciliation logic.
+
+**ProjectRegistry integration**: After `addProject` commits the `projectCreated` event, call `WorktreeReconciler.reconcile()` so that by the time the RPC response is returned, all existing worktrees have workspace records.
+
+**Tests**: WorktreeDetector tests with real temporary git repos (no linked worktrees, one linked, multiple linked, detached HEAD, prunable exclusion). WorktreeReconciler tests with in-memory LiveStore (fresh project creates records, existing records matched by path, stale records removed, mixed scenario, base SHA derivation, port=0 for detected). ProjectRegistry integration tests (addProject with worktrees creates records, addProject with no worktrees creates main worktree record). Follow existing test patterns from `workspace-validation.test.ts` and `terminal-manager.test.ts`.
+
+### Acceptance criteria
+
+- [ ] `origin` column added to `workspaces` table with default `"laborer"`
+- [ ] `v1.WorkspaceCreated` event schema includes optional `origin` field (backward compatible)
+- [ ] `WorkspaceOrigin` type and `Workspace.origin` field added to types.ts
+- [ ] `WorktreeDetector.detect(repoPath)` returns correct `DetectedWorktree[]` for repos with 0, 1, and multiple linked worktrees
+- [ ] Main worktree is included in detection results with `isMain: true`
+- [ ] Detached HEAD worktrees return `branch: null`
+- [ ] Prunable worktrees are excluded from results
+- [ ] `WorktreeReconciler.reconcile()` creates workspace records for detected worktrees not in LiveStore
+- [ ] Created records have status `"stopped"`, port `0`, origin `"external"`
+- [ ] Base SHA derived via `git merge-base` against default branch, falling back to HEAD
+- [ ] `WorktreeReconciler.reconcile()` removes stale workspace records (worktree no longer on disk)
+- [ ] Existing workspace records matching by worktree path are left untouched
+- [ ] `addProject` triggers initial reconciliation before returning the RPC response
+- [ ] WorktreeDetector tests pass (8+ scenarios with real git repos)
+- [ ] WorktreeReconciler tests pass (6+ scenarios with in-memory LiveStore)
+- [ ] ProjectRegistry integration tests pass
+
+### Blocked by
+
+None - can start immediately
+
+### User stories addressed
+
+- User story 1, 2, 3, 7, 8, 12, 13, 15
+
+---
+
+## Issue 160: UI for detected workspaces
+
+### Parent PRD
+
+PRD-worktree-detection.md
+
+### What to build
+
+Update the frontend workspace list and project cards to render detected (external) workspaces correctly. This slice makes the backend work from Issue #159 visible to the user.
+
+**Workspace card changes**: When a workspace has `origin: "external"`, display a subtle "Detected" badge or secondary label on the card (similar visual weight to how branch names are displayed — monospace, muted color). When `port` is `0`, hide the port display entirely rather than showing "Port: 0". The existing status badge system already handles `"stopped"` status — verify it renders correctly for detected workspaces.
+
+**Project card workspace count**: The workspace count badge on project cards in the sidebar should include detected workspaces in the count. Verify the existing LiveStore query already counts them (it should, since they're in the same `workspaces` table).
+
+**Workspace dashboard**: The cross-project dashboard should include detected workspaces in its per-project workspace rows. Verify port display is hidden when port is `0`.
+
+**Types**: Import and use the new `WorkspaceOrigin` type from `@laborer/shared/types` in frontend components.
+
+### Acceptance criteria
+
+- [ ] Workspace cards for `origin: "external"` display a "Detected" indicator (badge or secondary text)
+- [ ] Workspace cards for `origin: "laborer"` do not display any origin indicator (it's the default)
+- [ ] Port display is hidden when port is `0`
+- [ ] Workspace count badge on project cards includes detected workspaces
+- [ ] Cross-project dashboard shows detected workspaces in workspace rows
+- [ ] Dashboard hides port when port is `0`
+- [ ] Stopped status badge renders correctly for detected workspaces
+- [ ] No visual regression for existing Laborer-created workspaces
+
+### Blocked by
+
+- Blocked by #159
+
+### User stories addressed
+
+- User story 3, 9
+
+---
+
+## Issue 161: Live filesystem watcher + server boot reconciliation
+
+### Parent PRD
+
+PRD-worktree-detection.md
+
+### What to build
+
+Build the WorktreeWatcher service that keeps workspace records in sync with actual worktrees on disk, and wire it into the server boot sequence.
+
+**WorktreeWatcher service**: New Effect tagged service (`@laborer/WorktreeWatcher`) with three methods: `watchProject(projectId, repoPath)`, `unwatchProject(projectId)`, and `watchAll()`. Uses Bun/Node `fs.watch` on `.git/worktrees/` for each project. Debounces filesystem events with 500ms delay to coalesce rapid changes. On each debounced trigger, calls `WorktreeReconciler.reconcile()`. Handles `.git/worktrees/` not existing yet by watching `.git/` for creation of the `worktrees` subdirectory. Wraps watchers in Effect `Scope` for automatic teardown. Logs warnings on watcher errors but continues monitoring. See "WorktreeWatcher service" section in PRD for full details.
+
+**ProjectRegistry integration**: After `addProject` completes initial detection (Issue #159), call `WorktreeWatcher.watchProject()` to start live watching. Before `removeProject` commits `projectRemoved`, call `WorktreeWatcher.unwatchProject()` to stop the watcher. Add `WorktreeWatcher` as a dependency of `ProjectRegistry`.
+
+**Server boot integration**: On server startup after LaborerStore is built, call `WorktreeWatcher.watchAll()` which queries all registered projects and starts watching each one. This also runs an initial reconciliation pass per project to catch worktree changes that happened while the server was offline.
+
+**Auto-removal**: When a worktree disappears from `git worktree list` output, the reconciler (from Issue #159) already handles removal. Verify that port is freed and workspace record is destroyed for auto-removed worktrees.
+
+**Tests**: WorktreeWatcher tests with real git repos (watch + add worktree triggers reconciliation, watch + remove worktree triggers reconciliation, unwatch stops further reconciliation, watchAll starts watchers for all projects, debounce coalesces rapid changes, handles missing .git/worktrees/ directory). Follow `terminal-manager.test.ts` patterns for Effect scope cleanup.
+
+### Acceptance criteria
+
+- [ ] `WorktreeWatcher.watchProject()` starts filesystem watching on `.git/worktrees/`
+- [ ] Adding a worktree via `git worktree add` triggers reconciliation and creates a workspace record
+- [ ] Removing a worktree via `git worktree remove` triggers reconciliation and removes the workspace record
+- [ ] Port is freed when auto-removing a workspace that had a port allocated
+- [ ] `WorktreeWatcher.unwatchProject()` stops the watcher — no further reconciliation occurs
+- [ ] `WorktreeWatcher.watchAll()` starts watchers for all registered projects
+- [ ] Server boot runs `watchAll()` with initial reconciliation for all projects
+- [ ] Rapid filesystem changes (e.g., 5 worktree adds in 1 second) are debounced into fewer reconciliation calls
+- [ ] Watcher handles `.git/worktrees/` not existing initially, then being created when first worktree is added
+- [ ] Watcher survives transient filesystem errors and continues monitoring
+- [ ] `addProject` starts watching after initial detection
+- [ ] `removeProject` stops watching before removing the project
+- [ ] WorktreeWatcher tests pass (7+ scenarios)
+
+### Blocked by
+
+- Blocked by #159
+
+### User stories addressed
+
+- User story 5, 6, 10, 11, 14, 16, 17
+
+---
+
+## Issue 162: Origin-aware destroy behavior
+
+### Parent PRD
+
+PRD-worktree-detection.md
+
+### What to build
+
+Modify workspace destruction to behave differently based on the workspace's `origin` field, and update the frontend confirmation dialog to reflect this.
+
+**WorkspaceProvider changes**: In the `destroyWorktree` method, check the workspace's `origin` field. When `origin` is `"external"`: skip `git worktree remove --force` and `git branch -D` steps — only free the port (if allocated, i.e., port > 0), stop running terminals, and commit `workspaceDestroyed`. When `origin` is `"laborer"`: behavior is unchanged (remove worktree, delete branch, free port, destroy record).
+
+**Frontend confirmation dialog**: Update the workspace destroy confirmation dialog in `workspace-list.tsx` to show different text based on origin. For Laborer-created workspaces: current text (mentions removing the git worktree and branch). For external/detected workspaces: text should clarify that only the Laborer record will be removed, not the actual git worktree on disk (e.g., "This will remove the workspace from Laborer. The git worktree at <path> will not be affected.").
+
+### Acceptance criteria
+
+- [ ] Destroying an external workspace does NOT run `git worktree remove` or `git branch -D`
+- [ ] Destroying an external workspace frees port if port > 0
+- [ ] Destroying an external workspace commits `workspaceDestroyed` event
+- [ ] Destroying a Laborer-created workspace still removes the git worktree and branch (no regression)
+- [ ] Confirmation dialog for external workspaces says the git worktree will not be affected
+- [ ] Confirmation dialog for Laborer-created workspaces shows existing text (mentions worktree/branch removal)
+- [ ] Tests verify origin-aware destroy behavior for both origins
+
+### Blocked by
+
+- Blocked by #160
+
+### User stories addressed
+
+- User story 9, 14
+
+---
+
+## Issue 163: Worktree detection polish & edge cases
+
+### Parent PRD
+
+PRD-worktree-detection.md
+
+### What to build
+
+End-to-end polish and verification pass for the complete worktree detection feature. Address all polishing requirements from the PRD and verify edge cases across the full integration.
+
+**Visual polish**: Verify detected workspaces render consistently with Laborer-created workspaces (same card layout, status badge positioning, action button placement). Ensure the "Detected" origin indicator is visually subtle. Verify the "stopped" badge for detected workspaces is distinguishable from manually-stopped workspaces (consider a tooltip like "Never activated — detected from existing git worktree"). Verify workspace count badges accurately reflect detected workspaces.
+
+**Rapid change handling**: Verify rapid worktree creation/removal (e.g., a script creating 10 worktrees) results in smooth, non-flickering UI updates. The debouncing in the watcher (Issue #161) handles the server side — verify the LiveStore sync propagation to the frontend is also smooth.
+
+**Error handling**: Ensure detection failures (git not found, corrupt `.git/worktrees/`, permission errors) surface as informative but non-blocking warnings. They should not prevent project add or other features from working. Verify watcher teardown on project removal is clean (no lingering file descriptors).
+
+**Diff service**: Verify the diff service handles detected workspaces with derived base SHAs correctly — diffs should show changes since the merge-base, not since the beginning of time.
+
+**Edge cases**: Verify behavior when activating a detected workspace whose worktree was removed between detection and activation (should show a clear error). Verify stale worktree references (prunable entries) are excluded. Verify detection works with worktrees in various locations (`.worktrees/`, `~/.config/laborer/`, arbitrary paths).
+
+### Acceptance criteria
+
+- [ ] Detected workspaces render consistently with Laborer-created workspaces (card layout, badge positioning)
+- [ ] "Detected" indicator is visually subtle (secondary text, not prominent badge)
+- [ ] "Stopped" badge for never-activated workspaces has distinguishing tooltip or secondary text
+- [ ] Rapid worktree creation/removal results in smooth UI updates (no flicker)
+- [ ] Detection failures surface as non-blocking warnings (project add still succeeds)
+- [ ] Watcher teardown on project removal is clean (no lingering file descriptors or listeners)
+- [ ] Diff service correctly shows diffs from merge-base for detected workspaces
+- [ ] Workspace count badges accurately include detected workspaces
+- [ ] Detection works with worktrees in various filesystem locations
+- [ ] Error when activating a workspace whose worktree was removed shows clear message
+
+### Blocked by
+
+- Blocked by #160, #161, #162
+
+### User stories addressed
+
+- Polishing requirements 1-10

@@ -2609,3 +2609,75 @@ Implemented RPC handlers for the standalone terminal service (`@laborer/terminal
 - Issue #140: Move terminal WebSocket route to terminal package — was blocked by #139 (now done). Ready to implement.
 - Issue #142: Terminal event stream RPC — was blocked by #139 (now done). Ready to implement.
 
+## Issue #149: Focus auto-transfer on pane close — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented automatic focus transfer when a pane is closed. Added `findSiblingPaneId(root, paneId)` utility function to `layout-utils.ts` that resolves the nearest sibling leaf ID before the close operation mutates the tree. Updated `handleClosePane` in `routes/index.tsx` to compute the sibling before calling `closePane()`, then set `activePaneId` to that sibling. Only transfers focus when the closing pane IS the currently active pane — otherwise preserves the current focus. Created web app test infrastructure (vitest, test directory) and wrote 17 unit tests.
+
+### What was done
+
+1. **Added `findSiblingPaneId` function to `apps/web/src/panels/layout-utils.ts`** (~55 lines):
+   - Uses existing `findParent` to locate the parent SplitNode of the closing pane
+   - Determines the index of the closing pane within the parent's children
+   - First child → focus next sibling; otherwise focus previous sibling
+   - For SplitNode siblings, drills into the subtree via existing `getEdgeLeaf` to find the nearest leaf
+   - Returns `null` for root leaf (no siblings) or non-existent pane IDs
+   - Exported from the module
+
+2. **Created web app test infrastructure**:
+   - Installed `vitest` as devDependency in `apps/web`
+   - Created `apps/web/vitest.config.ts` with TypeScript path alias resolution matching the Vite config
+   - Added `"test": "vitest run"` script to `apps/web/package.json`
+   - Created `apps/web/test/layout-utils.test.ts` with **17 tests**:
+     - 13 tests for `findSiblingPaneId` (single leaf root, two-leaf horizontal/vertical splits, three-leaf splits closing first/middle/last, nested splits, deeply nested panes, non-existent pane IDs)
+     - 4 tests for `getLeafIds` fixture verification (ensuring test fixtures are valid)
+
+3. **Updated `handleClosePane` in `apps/web/src/routes/index.tsx`**:
+   - Added `findSiblingPaneId` import
+   - Computes sibling BEFORE `closePane` mutates the tree (critical — tree structure changes after close)
+   - Only transfers focus when closing the currently active pane (`persistedActivePaneId === paneId`)
+   - If closing pane is active: sets `activePaneId` to sibling (or null if last pane)
+   - If closing pane is NOT active: preserves current `activePaneId` unchanged
+
+### Files created
+- `apps/web/vitest.config.ts` — Vitest config for web app (new test infrastructure)
+- `apps/web/test/layout-utils.test.ts` — 17 unit tests for `findSiblingPaneId` and `getLeafIds`
+
+### Files modified
+- `apps/web/src/panels/layout-utils.ts` — Added `findSiblingPaneId` function (~55 lines), exported
+- `apps/web/src/routes/index.tsx` — Added `findSiblingPaneId` import, updated `handleClosePane` to compute sibling before close and transfer focus
+- `apps/web/package.json` — Added `vitest` devDependency, added `"test"` script
+
+### Acceptance criteria status
+- [x] `findSiblingPaneId(root, paneId)` returns the correct sibling leaf ID for various tree configurations
+- [x] Closing first child focuses next sibling
+- [x] Closing last child focuses previous sibling
+- [x] Closing middle child focuses previous sibling
+- [x] Closing deeply nested pane focuses nearest sibling in parent split
+- [x] Closing the last pane sets `activePaneId` to `null`
+- [x] Focus transfer works with the existing Ctrl+B, X shortcut (handleClosePane is the shared handler)
+- [x] Unit tests for `findSiblingPaneId` pass (17 tests covering edge cases: single leaf root, nested splits, flat splits with 3+ children)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `tsc --noEmit` passes for server package (only pre-existing Effect plugin informational messages — no new errors)
+- Web app tests: **17 pass** (all new)
+- Server tests: **61 pass** (no regressions)
+- Terminal tests: **55 pass** (no regressions)
+- `ultracite check` passes on all 4 modified/created files with zero issues
+
+### Design decisions
+- **Compute sibling BEFORE close**: The `closePane` function mutates the tree (removes the pane, collapses parent if needed). If we computed the sibling after close, the tree structure would be different and the pane ID wouldn't exist. Computing before close ensures correct sibling resolution.
+- **Only transfer focus for active pane**: If the user closes a non-active pane (e.g., via the close button on a pane that doesn't have focus), the focus should stay where it is. The condition `persistedActivePaneId === paneId` ensures focus only transfers when the closing pane IS the focused pane.
+- **Reuse of existing utilities**: `findSiblingPaneId` composes `findParent` (to find the parent split) and `getEdgeLeaf` (to drill into SplitNode siblings). This keeps the new function focused on sibling resolution logic without duplicating tree traversal code.
+- **Previous sibling preference**: For middle and last children, the previous sibling is chosen. This matches the tmux convention and provides predictable left/up-ward focus movement. For first children, the next sibling is the only option.
+- **`getEdgeLeaf` for SplitNode siblings**: When the sibling is itself a SplitNode (nested split), `getEdgeLeaf` finds the nearest leaf at the entering edge. First-child-closing → enters next sibling from "first" edge. Last/middle-child-closing → enters previous sibling from "last" edge. This ensures focus lands on the spatially closest leaf.
+- **Web app test infrastructure**: The web app previously had no tests. Added vitest with path alias resolution matching the Vite config's `@/` → `src/` mapping. This enables testing pure utility functions (like layout-utils) without needing a browser environment.
+
+### Issues unblocked
+- Issue #150: Guaranteed active pane invariant — was blocked by #149 (now done). Ready to implement.
+- Issue #151: Cmd+W shortcut — close active pane — was blocked by #149 (now done). Ready to implement.
+

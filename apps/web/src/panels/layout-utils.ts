@@ -641,6 +641,61 @@ function applyResizeDelta(
 	return { splitNodeId: ancestor.id, newSizes };
 }
 
+/**
+ * Find the sibling pane ID that should receive focus when a pane is closed.
+ *
+ * Resolution strategy:
+ * 1. Find the parent SplitNode containing the pane being closed.
+ * 2. If the pane is the first child → focus the next sibling.
+ * 3. If the pane is the last or middle child → focus the previous sibling.
+ * 4. The sibling may be a SplitNode, in which case we drill into it to
+ *    find the nearest leaf (first leaf for next-sibling, last leaf for
+ *    previous-sibling).
+ * 5. If no parent exists (pane is the root) → return null (no panes remain).
+ *
+ * This function must be called BEFORE `closePane` mutates the tree, since
+ * the pane being closed needs to be present to locate its parent and siblings.
+ *
+ * @param root - The root PanelNode tree (before close mutation)
+ * @param paneId - The ID of the pane about to be closed
+ * @returns The leaf ID to focus, or null if no sibling exists
+ *
+ * @see Issue #149: Focus auto-transfer on pane close
+ */
+function findSiblingPaneId(root: PanelNode, paneId: string): string | null {
+	// Root leaf → no siblings
+	if (root._tag === "LeafNode") {
+		return null;
+	}
+
+	const parentInfo = findParent(root, paneId);
+	if (!parentInfo) {
+		return null;
+	}
+
+	const { parent, index } = parentInfo;
+	const siblingCount = parent.children.length;
+
+	// Only child → no sibling (parent will collapse)
+	if (siblingCount <= 1) {
+		return null;
+	}
+
+	// First child → focus next sibling; otherwise focus previous sibling
+	const siblingIndex = index === 0 ? 1 : index - 1;
+	const sibling = parent.children[siblingIndex];
+	if (!sibling) {
+		return null;
+	}
+
+	// If the sibling is a leaf, return its ID directly.
+	// If it's a split, drill into it to find the nearest edge leaf.
+	// When focusing the next sibling (index === 0), enter from the left/top edge (first).
+	// When focusing the previous sibling (index > 0), enter from the right/bottom edge (last).
+	const edge = index === 0 ? "first" : "last";
+	return getEdgeLeaf(sibling, edge).id;
+}
+
 export {
 	closePane,
 	computeResize,
@@ -648,6 +703,7 @@ export {
 	findNodeById,
 	findPaneInDirection,
 	findParent,
+	findSiblingPaneId,
 	generateId,
 	getLeafIds,
 	getTreeDepth,

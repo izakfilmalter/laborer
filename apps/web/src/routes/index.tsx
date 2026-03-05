@@ -64,6 +64,7 @@ import {
 	closePane,
 	computeResize,
 	findNodeById,
+	findSiblingPaneId,
 	generateId,
 	getLeafIds,
 	replaceNode,
@@ -460,13 +461,23 @@ function usePanelLayout() {
 			if (!base) {
 				return;
 			}
+
+			// Compute the sibling BEFORE the close mutation removes the pane.
+			// This ensures we can find the correct sibling in the original tree.
+			// If the closing pane is the currently active pane, transfer focus
+			// to its sibling. Otherwise, keep the current active pane.
+			const nextActivePaneId =
+				persistedActivePaneId === paneId
+					? findSiblingPaneId(base, paneId)
+					: persistedActivePaneId;
+
 			const newTree = closePane(base, paneId);
 			if (newTree) {
 				store.commit(
 					layoutPaneClosed({
 						id: LAYOUT_SESSION_ID,
 						layoutTree: newTree,
-						activePaneId: persistedActivePaneId,
+						activePaneId: nextActivePaneId,
 					})
 				);
 			} else {

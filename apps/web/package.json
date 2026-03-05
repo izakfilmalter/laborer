@@ -9,6 +9,7 @@
     "serve": "vite preview",
     "start": "vite",
     "check-types": "tsc --noEmit",
+    "test": "vitest run",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -73,6 +74,7 @@
     "postcss": "^8.5.3",
     "tailwindcss": "^4.0.15",
     "typescript": "catalog:",
-    "vite": "^6.2.2"
+    "vite": "^6.2.2",
+    "vitest": "^4.0.18"
   }
 }

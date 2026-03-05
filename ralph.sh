@@ -22,7 +22,7 @@ This should be the one YOU decide has the highest priority, \
 5. Make a git commit of that feature. \
 ONLY WORK ON A SINGLE TASK / FEATURE. \
 If, while implementing the feature, you notice that all work \
-is complete, output <promise>COMPLETE</promise>. \
+is complete in issues.md, output <promise>COMPLETE</promise>. \
 ")
 
   echo "$result"

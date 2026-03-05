@@ -1003,3 +1003,43 @@ Implemented character-count flow control on the server side to prevent fast-runn
 ### Issues unblocked
 - Issue #142: Client-side flow control acks — was blocked by #141. **Now unblocked!**
 - Issue #144: Resize flushes coalesced buffer + flow control reset — still blocked by #142.
+
+---
+
+## Issue #142: Client-side flow control acks
+
+**Status:** Done
+**Priority:** Critical (terminal performance pipeline)
+
+### Summary
+Implemented client-side character counting and ack frame sending in the `useTerminalWebSocket` hook. The client tracks total characters received from the WebSocket and sends an ack frame (`{"type":"ack","chars":<count>}`) every 5,000 characters. This completes the flow control loop: PTY host → server → WebSocket → client → ack → server → PTY host.
+
+### Files modified
+
+1. **`apps/web/src/hooks/use-terminal-websocket.ts`** (+31 lines):
+   - Added `CHAR_COUNT_ACK_SIZE = 5_000` constant matching the server-side `LOW_WATERMARK_CHARS` / VS Code `CharCountAckSize`.
+   - Added `unackedCharsRef` (`useRef<number>(0)`) to track characters received since the last ack.
+   - Updated `ws.onmessage` handler: after forwarding data to the `onData` callback, increments `unackedCharsRef` by `event.data.length`. When the accumulated count reaches or exceeds 5,000, sends an ack JSON text frame and resets the counter to 0.
+   - Updated `ws.onopen` handler: resets `unackedCharsRef` to 0 on new/reconnected WebSocket to prevent stale counts from a previous session.
+   - Updated module JSDoc to document flow control behavior and reference Issues #141, #142.
+
+### Verification
+- `ultracite check` passes on the modified file with zero issues
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors)
+- Server-side tests still pass (52/52) — no regressions
+- No frontend test infrastructure exists in the project; the flow control protocol is verified end-to-end by Issue #141's server-side tests (fast output → paused event, ack → resumed event)
+
+### Acceptance criteria status
+- [x] TerminalPane tracks characters received from WebSocket (`unackedCharsRef` in `useTerminalWebSocket`)
+- [x] Ack frame sent every 5,000 characters: `{"type":"ack","chars":<count>}`
+- [x] Acks sent as JSON text frames distinguishable from regular input (server already parses JSON frames with `type === "ack"`)
+- [x] Flow control loop complete end-to-end: PTY host pauses at 100K unacked → client sends acks every 5K → server forwards → PTY host decrements and resumes below 5K
+- [x] Tests: server-side tests (Issue #141) verify the protocol; no frontend test framework exists yet
+
+### Design decisions
+- The ack sends the *actual* accumulated character count rather than a fixed 5,000. If a single WebSocket message contains 8,000 characters, the ack will be `{"chars":8000}`. This ensures the server-side counter is decremented by the correct amount, avoiding permanent drift between client and server counts.
+- The counter resets to 0 (not the remainder) after sending an ack. This is safe because the ack contains the actual accumulated count. If there's a remainder (e.g., 5,500 chars → ack 5,500, reset to 0 instead of 500), the next ack will simply be delayed by at most one `CHAR_COUNT_ACK_SIZE` worth of characters — negligible given the 100K high watermark.
+- No separate `useEffect` cleanup is needed for the flow control counter — it's a simple `useRef` that resets on `ws.onopen` and is garbage-collected with the component.
+
+### Issues unblocked
+- Issue #144: Resize flushes coalesced buffer + flow control reset — was blocked by #141 and #142. **Now unblocked!**

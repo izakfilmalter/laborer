@@ -19,9 +19,18 @@
  * The `terminal.resize` RPC is NOT replaced — resize remains an RPC call
  * since it's low-frequency and needs to reach the TerminalManager service.
  *
+ * Character-count flow control:
+ * The hook tracks total characters received from the WebSocket and sends
+ * an ack frame (`{"type":"ack","chars":5000}`) every `CHAR_COUNT_ACK_SIZE`
+ * characters. This allows the server-side PTY host to pause fast-running
+ * commands when the client falls behind and resume when acks are received.
+ * See PRD-terminal-perf.md "Character-Count Flow Control" for the full
+ * protocol specification.
+ *
  * @see packages/server/src/routes/terminal-ws.ts — server endpoint
+ * @see packages/server/src/pty-host.ts — PTY host flow control
  * @see PRD-terminal-perf.md — "Web Client Terminal Pane Update"
- * @see Issue #140
+ * @see Issue #140, Issue #141, Issue #142
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -33,6 +42,13 @@ type ConnectionStatus = "connecting" | "connected" | "disconnected";
 const INITIAL_RECONNECT_DELAY_MS = 500;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const RECONNECT_BACKOFF_FACTOR = 2;
+
+/**
+ * Number of characters between ack frames sent to the server.
+ * Matches the server-side LOW_WATERMARK_CHARS / CharCountAckSize (5,000).
+ * @see PRD-terminal-perf.md "Character-Count Flow Control"
+ */
+const CHAR_COUNT_ACK_SIZE = 5000;
 
 interface UseTerminalWebSocketOptions {
 	/** Whether the terminal is running (controls reconnection behavior). */
@@ -71,6 +87,9 @@ function useTerminalWebSocket({
 	const reconnectDelayRef = useRef(INITIAL_RECONNECT_DELAY_MS);
 	const mountedRef = useRef(true);
 
+	/** Characters received since the last ack was sent (flow control). */
+	const unackedCharsRef = useRef(0);
+
 	// Refs for latest callback/state to avoid stale closures in WebSocket handlers
 	const onDataRef = useRef(onData);
 	onDataRef.current = onData;
@@ -106,11 +125,23 @@ function useTerminalWebSocket({
 			setStatus("connected");
 			// Reset backoff on successful connection
 			reconnectDelayRef.current = INITIAL_RECONNECT_DELAY_MS;
+			// Reset flow control counter on new/reconnected WebSocket
+			unackedCharsRef.current = 0;
 		};
 
 		ws.onmessage = (event: MessageEvent) => {
 			if (typeof event.data === "string") {
 				onDataRef.current(event.data);
+
+				// Flow control: count received characters and send ack frames
+				unackedCharsRef.current += event.data.length;
+				if (unackedCharsRef.current >= CHAR_COUNT_ACK_SIZE) {
+					const chars = unackedCharsRef.current;
+					unackedCharsRef.current = 0;
+					if (ws.readyState === WebSocket.OPEN) {
+						ws.send(JSON.stringify({ type: "ack", chars }));
+					}
+				}
 			}
 		};
 

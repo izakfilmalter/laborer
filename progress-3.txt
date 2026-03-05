@@ -2904,3 +2904,75 @@ Created a new `ConfigService` Effect tagged service in the server package that r
 - Issue #155: Config Service — write project config (blocked by #154 ✅)
 - Issue #156: WorkspaceProvider — use ConfigService for worktree path + setup scripts (blocked by #154 ✅)
 
+## Issue #141: Update Vite proxy + web app WebSocket hook — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Updated the web app to connect terminal WebSockets directly to the terminal service (port 3001) instead of the main server (port 3000). Updated the `useTerminalWebSocket` hook to parse incoming JSON status control messages (`{"type":"status",...}`) and expose terminal process status (`running`/`stopped`/`restarted`). Updated `terminal-pane.tsx` to use the WebSocket-derived terminal status instead of LiveStore `queryDb(terminals)` for UI decisions (isRunning, exit banner, restart buffer clear), and replaced the LiveStore `v1.TerminalRestarted` event subscription with WebSocket control message handling.
+
+### What was done
+
+1. **Modified `apps/web/vite.config.ts`** — Updated Vite proxy target:
+   - Changed `/terminal` proxy target from `http://localhost:3000` (main server) to `http://localhost:3001` (terminal service)
+   - The `/rpc` proxy remains pointed at `http://localhost:3000` (main server) — terminal RPC will be routed separately in a future issue
+   - This makes terminal WebSocket connections go directly to the standalone terminal service
+
+2. **Modified `apps/web/src/hooks/use-terminal-websocket.ts`** — Added status control message parsing:
+   - **`TerminalStatus` type**: `"running" | "stopped" | "restarted"` — represents terminal process state derived from WebSocket control messages
+   - **`StatusControlMessage` interface**: Typed shape of parsed control messages with `type`, `status`, and optional `exitCode`
+   - **`parseStatusMessage(data)` function**: Detects and parses JSON control messages. Uses the same heuristic as the server: text frames starting with `{` containing `"type":"status"` are control messages, all others are raw PTY output. Returns `undefined` for non-control messages.
+   - **`onStatus` callback option**: New optional callback in `UseTerminalWebSocketOptions` invoked when a status control message is received. Used by `terminal-pane.tsx` to handle restart (clear buffer) and stopped (show exit banner) events.
+   - **`terminalStatus` state**: New React state tracking terminal process status, exposed in the hook's return value. Initialized as `"running"` (optimistic — the server sends `{"type":"status","status":"running"}` on connect to confirm).
+   - **Updated `onmessage` handler**: Now checks each incoming message via `parseStatusMessage` first. Control messages are routed to `onStatus` callback and update `terminalStatus` state. Raw PTY output is routed to `onData` callback (unchanged). Flow control ack counting only applies to PTY output data, not control messages.
+   - **Updated reconnection logic**: Reconnects based on `terminalStatusRef.current !== "stopped"` instead of the old `isRunningRef.current`. The `isRunning` prop has been removed — terminal status is now fully derived from WebSocket control messages.
+   - **Renamed internal state**: `status` → `connectionStatus` for clarity (distinguishes WebSocket connection state from terminal process state).
+   - **Updated JSDoc**: Added documentation for status control messages, `TerminalStatus` type, and Issue #141 references.
+
+3. **Modified `apps/web/src/panes/terminal-pane.tsx`** — Replaced LiveStore-based status with WebSocket-derived status:
+   - **Removed LiveStore imports**: Removed `terminals` from `@laborer/shared/schema`, `queryDb` from `@livestore/livestore`, `useLaborerStore` from `@/livestore/store`
+   - **Removed LiveStore queries**: Removed `allTerminals$` query, `store.useQuery(allTerminals$)`, and `terminalStatus` memo that derived status from LiveStore
+   - **Removed LiveStore event subscription**: Removed the `v1.TerminalRestarted` event stream subscription and `streamRestartEvents` async function. Terminal restart is now handled via WebSocket control messages.
+   - **Removed `store` usage**: The component no longer depends on `useLaborerStore()` — all terminal state comes from the WebSocket hook
+   - **Added `TerminalStatus` type import**: From `@/hooks/use-terminal-websocket`
+   - **Added `handleTerminalStatus` callback**: Handles WebSocket status control messages. On `"restarted"` status, calls `terminal.clear()` to clear xterm.js scrollback buffer — directly replacing the LiveStore event subscription.
+   - **Added `onStatus` prop to `useTerminalWebSocket`**: Passes `handleTerminalStatus` so the hook invokes it on status control messages.
+   - **Derives `isRunning` from `terminalStatus`**: `const isRunning = terminalStatus !== "stopped"` — replaces the LiveStore-based `isRunning = terminalStatus === "running"`
+   - **Updated JSDoc**: Comprehensive documentation update describing the WebSocket-derived status architecture, removed references to LiveStore terminal queries, added Issue #141 references.
+
+### Files modified
+- `apps/web/vite.config.ts` — Changed `/terminal` proxy target from port 3000 to port 3001
+- `apps/web/src/hooks/use-terminal-websocket.ts` — Added `TerminalStatus` type, `StatusControlMessage` interface, `parseStatusMessage` function, `onStatus` callback, `terminalStatus` state, removed `isRunning` prop, updated reconnection logic
+- `apps/web/src/panes/terminal-pane.tsx` — Removed LiveStore imports/queries/event subscription, added WebSocket-derived status, added `handleTerminalStatus` callback, updated JSDoc
+
+### Acceptance criteria status
+- [x] Vite proxy routes `/terminal` WebSocket to `TERMINAL_PORT` (3001)
+- [x] `use-terminal-websocket.ts` parses `{"type":"status",...}` control messages
+- [x] Hook exposes `terminalStatus: "running" | "stopped" | "restarted"` alongside connection status
+- [x] `terminal-pane.tsx` uses WebSocket-derived status for isRunning, exit banner, restart buffer clear
+- [x] Terminal pane connects directly to terminal service (verified via Vite proxy target)
+- [x] Flow control ack frames still work correctly (only applied to PTY output data, not control messages)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `tsc --noEmit` passes for server package (only pre-existing informational messages — no new errors)
+- `tsc --noEmit` passes for terminal package (only pre-existing informational messages — no new errors)
+- `ultracite check` passes on all 3 modified files with zero issues (`Checked 3 files in 6ms. No fixes applied.`)
+- All 55 terminal tests pass (32 ring buffer + 14 PTY host + 9 terminal manager — no regressions)
+- All 89 server tests pass (32 ring buffer + 28 config service + 9 workspace validation + 14 PTY host + 6 terminal manager — no regressions)
+- All 31 web app tests pass (layout utils — no regressions)
+
+### Design decisions
+- **Status control message detection heuristic**: Reuses the same heuristic as the server's `handleClientMessage` — text frames starting with `{` are tentatively parsed as JSON. If they contain `"type":"status"`, they're treated as control messages. If JSON parsing fails or the shape doesn't match, the frame is treated as raw PTY output. This is the same heuristic described in PRD-terminal-extraction.md.
+- **`parseStatusMessage` as a standalone function**: Extracted outside the hook for testability and reuse. The function is pure (no side effects, no React dependencies) and can be unit tested independently.
+- **`onStatus` callback over `useEffect` on `terminalStatus`**: The restart handling needs to call `terminal.clear()` at the exact moment the status changes, not on a subsequent render. A callback provides synchronous notification within the same message handler tick. A `useEffect` watching `terminalStatus` would fire after the render cycle, potentially allowing a brief flash of old content before the clear.
+- **Removed `isRunning` prop**: The hook no longer accepts an `isRunning` prop from the consumer. Instead, it derives "should reconnect" from its own `terminalStatus` state. This eliminates the circular dependency where terminal-pane.tsx read status from LiveStore and passed it to the hook, while the hook also needed status to decide on reconnection. Now the hook is self-contained — it knows the terminal status from control messages and makes reconnection decisions independently.
+- **`terminalStatus !== "stopped"` for reconnection**: The hook reconnects when the terminal is not stopped (i.e., running or restarted). The "restarted" status is transient — the server sends `{"type":"status","status":"restarted"}` followed by a reconnection that yields `{"type":"status","status":"running"}`. Both states should trigger reconnection.
+- **Flow control only on PTY data**: The character count for flow control ack frames (`CHAR_COUNT_ACK_SIZE`) is only incremented for raw PTY output data, not for control messages. Control messages are small JSON strings (<100 chars) that don't represent PTY throughput. Including them in the count would send premature acks that don't accurately reflect the client's processing of actual terminal output.
+- **Optimistic initial `terminalStatus`**: The hook initializes `terminalStatus` as `"running"`. The server immediately sends `{"type":"status","status":"running"}` on WebSocket connect, confirming this. If the terminal has already stopped, the server sends `{"type":"status","status":"stopped"}` instead, which updates the state correctly. The optimistic default ensures the UI doesn't briefly flash a "stopped" state before the first control message arrives.
+- **LiveStore `terminals` table still exists**: The `terminals` table and its events remain in the LiveStore schema for now. They are still used by other components (`terminal-list.tsx`, `workspace-dashboard.tsx`, `panel-manager.tsx`) that list terminals and show terminal counts. These will be migrated to terminal service RPC in Issue #144. The `terminal-pane.tsx` was the primary consumer of terminal status for UI state decisions, and that dependency is now removed.
+
+### Issues unblocked
+- Issue #144: Web app LiveStore terminal query replacement — was blocked by #141 ✅ and #143. Now only blocked by #143.
+

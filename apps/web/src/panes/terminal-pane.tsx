@@ -3,7 +3,7 @@
  * dedicated WebSocket connection for terminal data.
  *
  * Data flow (Issue #140 — WebSocket data path):
- * 1. Server PTY emits output via node-pty `onData`
+ * 1. Terminal service PTY emits output via node-pty `onData`
  * 2. TerminalManager writes to per-terminal ring buffer + notifies subscribers
  * 3. Terminal WebSocket route forwards data as text frames to connected clients
  * 4. This component receives text frames via `useTerminalWebSocket` hook
@@ -12,7 +12,25 @@
  * Input flow:
  * - Keystrokes captured by xterm.js `onData` callback
  * - Sent as raw WebSocket text frames (NOT via terminal.write RPC)
- * - Server WebSocket route forwards to PTY via PtyHostClient.write()
+ * - Terminal service WebSocket route forwards to PTY via PtyHostClient.write()
+ *
+ * Terminal status (Issue #141 — WebSocket-derived status):
+ * Terminal status is now derived from WebSocket control messages sent by
+ * the terminal service, NOT from LiveStore `queryDb(terminals)`. The
+ * terminal service sends JSON control messages:
+ * - `{"type":"status","status":"running"}` — on initial connection
+ * - `{"type":"status","status":"stopped","exitCode":N}` — PTY process exited
+ * - `{"type":"status","status":"restarted"}` — terminal was restarted
+ *
+ * The `useTerminalWebSocket` hook parses these messages and exposes
+ * `terminalStatus` for UI decisions (isRunning, exit banner, restart
+ * buffer clear). The LiveStore `terminals` query is no longer used.
+ *
+ * Terminal restart handling (Issue #141):
+ * Previously subscribed to LiveStore `v1.TerminalRestarted` events.
+ * Now handled via the WebSocket `{"type":"status","status":"restarted"}`
+ * control message. The `onStatus` callback clears the xterm.js buffer
+ * when a restart is detected.
  *
  * Keyboard shortcut scope isolation (Issue #80):
  * - xterm.js greedily captures all keyboard events within its canvas.
@@ -36,21 +54,22 @@
  * - New live output continues streaming after scrollback
  *
  * What stays on LiveStore (lifecycle events):
- * - Terminal status (running/stopped) — read from `terminals` table
- * - Terminal restart events — used to clear xterm.js scrollback
  * - Panel layout persistence — terminal-to-pane assignments
  *
- * What moved to WebSocket (Issue #140):
+ * What moved to WebSocket (Issues #140, #141):
  * - Terminal output data — was LiveStore `v1.TerminalOutput` events
  * - Terminal keyboard input — was `terminal.write` RPC mutation
+ * - Terminal status — was LiveStore `queryDb(terminals)` for running/stopped
+ * - Terminal restart detection — was LiveStore `v1.TerminalRestarted` events
  *
  * What remains as RPC:
  * - `terminal.resize` — low-frequency, needs TerminalManager service
  *
- * @see packages/server/src/routes/terminal-ws.ts — WebSocket endpoint
- * @see packages/server/src/services/terminal-manager.ts — ring buffer + subscribers
+ * @see packages/terminal/src/routes/terminal-ws.ts — WebSocket endpoint
+ * @see packages/terminal/src/services/terminal-manager.ts — ring buffer + subscribers
  * @see apps/web/src/hooks/use-terminal-websocket.ts — WebSocket hook
  * @see PRD-terminal-perf.md — "Web Client Terminal Pane Update"
+ * @see PRD-terminal-extraction.md — "WebSocket Control Messages"
  * Loading state (Issue #122):
  * When a terminal pane first mounts, xterm.js is initialized but no output
  * has arrived yet. A loading overlay (spinner + "Starting terminal...")
@@ -67,6 +86,7 @@
  * @see Issue #80: Keyboard shortcut scope isolation
  * @see Issue #122: Loading state — terminal spawning
  * @see Issue #140: Web client terminal pane — WebSocket data path
+ * @see Issue #141: Update Vite proxy + web app WebSocket hook
  *
  * Scroll performance (Issue #127):
  * - Scrollback buffer set to 100,000 lines to handle long-running agent sessions
@@ -79,18 +99,18 @@
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
-import { terminals } from "@laborer/shared/schema";
-import { queryDb } from "@livestore/livestore";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { Spinner } from "@/components/ui/spinner";
-import { useTerminalWebSocket } from "@/hooks/use-terminal-websocket";
-import { useLaborerStore } from "@/livestore/store";
+import {
+	type TerminalStatus,
+	useTerminalWebSocket,
+} from "@/hooks/use-terminal-websocket";
 
 /** Module-level mutation atom for terminal.resize — shared across all TerminalPane instances. */
 const terminalResizeMutation = LaborerClient.mutation("terminal.resize");
@@ -102,9 +122,6 @@ const terminalResizeMutation = LaborerClient.mutation("terminal.resize");
  */
 const PREFIX_MODE_TIMEOUT = 1500;
 
-/** Query all terminals from LiveStore for status checking. */
-const allTerminals$ = queryDb(terminals, { label: "terminalPaneStatus" });
-
 interface TerminalPaneProps {
 	/** The terminal ID to subscribe to for output events. */
 	readonly terminalId: string;
@@ -113,17 +130,20 @@ interface TerminalPaneProps {
 /**
  * TerminalPane renders a live terminal view for a given terminal ID.
  *
- * It initializes an xterm.js Terminal, connects to the server via a
- * dedicated WebSocket (`/terminal?id=<terminalId>`), and pipes output
- * directly to xterm.js. Keyboard input is sent as WebSocket text frames.
+ * It initializes an xterm.js Terminal, connects to the terminal service
+ * via a dedicated WebSocket (`/terminal?id=<terminalId>`), and pipes
+ * output directly to xterm.js. Keyboard input is sent as WebSocket text
+ * frames.
  *
  * On reconnection (page reload), the server sends ring buffer scrollback
- * (up to 1MB) as initial text frames, restoring the terminal's recent
+ * (up to 5MB) as initial text frames, restoring the terminal's recent
  * output history.
  *
- * The component also checks the terminal's current status from LiveStore.
- * If the terminal is "stopped", keyboard input is disabled and a visual
- * banner is shown. If still "running", input flows via WebSocket.
+ * Terminal status is derived from WebSocket control messages. When the
+ * terminal process exits, a `{"type":"status","status":"stopped"}` message
+ * is received and keyboard input is disabled. When the terminal is
+ * restarted, a `{"type":"status","status":"restarted"}` message triggers
+ * an xterm.js buffer clear.
  *
  * When the container is resized (by panel splits, window resize, etc.),
  * the fit addon recalculates cols/rows and the new dimensions are sent
@@ -131,22 +151,10 @@ interface TerminalPaneProps {
  * the PTY sends SIGWINCH to the running process so it can reflow output.
  */
 function TerminalPane({ terminalId }: TerminalPaneProps) {
-	const store = useLaborerStore();
 	const resizeTerminal = useAtomSet(terminalResizeMutation);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const terminalRef = useRef<Terminal | null>(null);
 	const fitAddonRef = useRef<FitAddon | null>(null);
-
-	// Track the terminal's current status from LiveStore reactively.
-	// When the terminal stops (process exits), the status changes to "stopped"
-	// and we disable keyboard input + show a status banner.
-	const allTerminalRows = store.useQuery(allTerminals$);
-	const terminalStatus = useMemo(() => {
-		const row = allTerminalRows.find((t) => t.id === terminalId);
-		return row?.status ?? "stopped";
-	}, [allTerminalRows, terminalId]);
-
-	const isRunning = terminalStatus === "running";
 
 	/**
 	 * Ref to hold the latest resizeTerminal function so the ResizeObserver
@@ -154,10 +162,6 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 	 */
 	const resizeTerminalRef = useRef(resizeTerminal);
 	resizeTerminalRef.current = resizeTerminal;
-
-	/** Ref for isRunning so the xterm.js onData callback can check it. */
-	const isRunningRef = useRef(isRunning);
-	isRunningRef.current = isRunning;
 
 	/**
 	 * Prefix mode state for keyboard shortcut scope isolation (Issue #80).
@@ -204,14 +208,47 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 	}, []);
 
 	/**
-	 * WebSocket connection to the terminal output endpoint.
-	 * Provides: scrollback on connect, live output streaming, input via send().
+	 * Callback for terminal status control messages received via WebSocket.
+	 * Handles "restarted" status by clearing the xterm.js buffer, replacing
+	 * the previous LiveStore `v1.TerminalRestarted` event subscription.
+	 *
+	 * @see Issue #141: WebSocket-derived terminal status
 	 */
-	const { send: wsSend, status: wsStatus } = useTerminalWebSocket({
+	const handleTerminalStatus = useCallback(
+		(status: TerminalStatus, _exitCode: number | undefined) => {
+			if (status === "restarted") {
+				const terminal = terminalRef.current;
+				if (terminal) {
+					terminal.clear();
+				}
+			}
+		},
+		[]
+	);
+
+	/**
+	 * WebSocket connection to the terminal output endpoint.
+	 * Provides: scrollback on connect, live output streaming, input via send(),
+	 * terminal status via control messages.
+	 *
+	 * `terminalStatus` replaces the LiveStore `queryDb(terminals)` query
+	 * for determining whether the terminal is running or stopped.
+	 */
+	const {
+		send: wsSend,
+		status: wsStatus,
+		terminalStatus,
+	} = useTerminalWebSocket({
 		terminalId,
 		onData: handleTerminalData,
-		isRunning,
+		onStatus: handleTerminalStatus,
 	});
+
+	const isRunning = terminalStatus !== "stopped";
+
+	/** Ref for isRunning so the xterm.js onData callback can check it. */
+	const isRunningRef = useRef(isRunning);
+	isRunningRef.current = isRunning;
 
 	// Ref to hold latest wsSend for the xterm.js onData callback
 	const wsSendRef = useRef(wsSend);
@@ -221,8 +258,10 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 	 * Initialize xterm.js instance.
 	 *
 	 * Creates the Terminal, attaches addons (fit, WebGL), opens in the
-	 * container, wires keyboard input to WebSocket, and subscribes to
-	 * TerminalRestarted lifecycle events from LiveStore.
+	 * container, and wires keyboard input to WebSocket.
+	 *
+	 * Terminal restart is handled via WebSocket control messages (Issue #141)
+	 * — no LiveStore event subscription needed.
 	 */
 	useEffect(() => {
 		const container = containerRef.current;
@@ -421,39 +460,9 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 			wsSendRef.current(data);
 		});
 
-		// Subscribe to terminal restart events from LiveStore (Issue #133).
-		// When a TerminalRestarted event is committed for this terminal,
-		// clear the xterm.js scrollback buffer so old output from the
-		// previous process doesn't mix with the new process output.
-		// Terminal lifecycle events stay on LiveStore — only output data
-		// moved to the WebSocket channel.
-		const abortController = new AbortController();
-
-		const streamRestartEvents = async () => {
-			try {
-				for await (const event of store.events({
-					filter: ["v1.TerminalRestarted"],
-				})) {
-					if (abortController.signal.aborted) {
-						break;
-					}
-
-					const args = event.args as { id: string };
-					if (args.id === terminalId) {
-						terminal.clear();
-					}
-				}
-			} catch {
-				// Stream ended or aborted — expected on unmount
-			}
-		};
-
-		streamRestartEvents();
-
 		// Cleanup on unmount
 		return () => {
 			onDataDisposable.dispose();
-			abortController.abort();
 			terminal.dispose();
 			terminalRef.current = null;
 			fitAddonRef.current = null;
@@ -464,7 +473,7 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 			}
 			prefixModeRef.current = false;
 		};
-	}, [terminalId, store]);
+	}, [terminalId]);
 
 	/**
 	 * Handle container resize — re-fit the terminal when the

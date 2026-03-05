@@ -394,12 +394,12 @@ Update the web app to connect terminal WebSockets directly to the terminal servi
 
 ### Acceptance criteria
 
-- [ ] Vite proxy routes `/terminal` WebSocket to `TERMINAL_PORT`
-- [ ] `use-terminal-websocket.ts` parses `{"type":"status",...}` control messages
-- [ ] Hook exposes `terminalStatus: "running" | "stopped" | "restarted"` alongside connection status
-- [ ] `terminal-pane.tsx` uses WebSocket-derived status for isRunning, exit banner, restart buffer clear
-- [ ] Terminal pane connects directly to terminal service (verified via network inspector)
-- [ ] Flow control ack frames still work correctly
+- [x] Vite proxy routes `/terminal` WebSocket to `TERMINAL_PORT`
+- [x] `use-terminal-websocket.ts` parses `{"type":"status",...}` control messages
+- [x] Hook exposes `terminalStatus: "running" | "stopped" | "restarted"` alongside connection status
+- [x] `terminal-pane.tsx` uses WebSocket-derived status for isRunning, exit banner, restart buffer clear
+- [x] Terminal pane connects directly to terminal service (verified via network inspector)
+- [x] Flow control ack frames still work correctly
 
 ### Blocked by
 
@@ -408,6 +408,10 @@ Update the web app to connect terminal WebSockets directly to the terminal servi
 ### User stories addressed
 
 - User story 6, 15, 21
+
+### Status: Done
+
+Updated `vite.config.ts` to proxy `/terminal` to `localhost:3001` (terminal service). Rewrote `use-terminal-websocket.ts` to parse JSON status control messages and expose `terminalStatus` state, removing the `isRunning` prop. Updated `terminal-pane.tsx` to derive `isRunning` from WebSocket-derived status and removed LiveStore `queryDb(terminals)` dependency for terminal status decisions.
 
 ---
 
@@ -494,7 +498,7 @@ Replace all LiveStore `queryDb(terminals, ...)` subscriptions in the web app wit
 
 ### Blocked by
 
-- Blocked by #141, #143
+- ~~Blocked by #141~~, Blocked by #143
 
 ### User stories addressed
 
@@ -937,10 +941,10 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 138 | ~~Move + simplify TerminalManager~~ | ~~#136~~ | Done |
 | 139 | ~~Terminal RPC handlers~~ | ~~#137~~, ~~#138~~ | Done |
 | 140 | ~~Move terminal WebSocket route to terminal package~~ | ~~#139~~ | Done |
-| 141 | Update Vite proxy + web app WebSocket hook | ~~#140~~ | Ready |
+| 141 | ~~Update Vite proxy + web app WebSocket hook~~ | ~~#140~~ | Done |
 | 142 | Terminal event stream RPC | ~~#139~~ | Ready |
 | 143 | Server TerminalClient + remove server terminal modules | #142 | Blocked |
-| 144 | Web app LiveStore terminal query replacement | #141, #143 | Blocked |
+| 144 | Web app LiveStore terminal query replacement | ~~#141~~, #143 | Blocked |
 | 145 | LiveStore terminal schema deprecation | #144 | Blocked |
 | 146 | Grace period reconnection + orphan detection | ~~#140~~ | Ready |
 | 147 | Terminal extraction polish + integration verification | #144, #145, #146 | Blocked |

@@ -15,6 +15,7 @@
  * - Scrollback replay from the server's ring buffer on connect
  * - Sending keyboard input as text frames (replaces terminal.write RPC)
  * - Connection status tracking for UI indicators
+ * - Parsing JSON status control messages from the terminal service
  *
  * The `terminal.resize` RPC is NOT replaced — resize remains an RPC call
  * since it's low-frequency and needs to reach the TerminalManager service.
@@ -27,9 +28,21 @@
  * See PRD-terminal-perf.md "Character-Count Flow Control" for the full
  * protocol specification.
  *
- * @see packages/server/src/routes/terminal-ws.ts — server endpoint
- * @see packages/server/src/pty-host.ts — PTY host flow control
+ * Terminal status control messages (Issue #141):
+ * The terminal service sends JSON control messages to inform the client
+ * about terminal lifecycle events. These are parsed and separated from
+ * raw PTY output data:
+ * - `{"type":"status","status":"running"}` — sent on initial connection
+ * - `{"type":"status","status":"stopped","exitCode":N}` — PTY process exited
+ * - `{"type":"status","status":"restarted"}` — terminal was restarted
+ *
+ * The hook exposes `terminalStatus` so consumers can derive UI state from
+ * the WebSocket control messages instead of polling LiveStore.
+ *
+ * @see packages/terminal/src/routes/terminal-ws.ts — WebSocket endpoint
+ * @see packages/terminal/src/pty-host.ts — PTY host flow control
  * @see PRD-terminal-perf.md — "Web Client Terminal Pane Update"
+ * @see PRD-terminal-extraction.md — "WebSocket Control Messages"
  * @see Issue #140, Issue #141, Issue #142
  */
 
@@ -37,6 +50,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 /** WebSocket connection state for UI indicators. */
 type ConnectionStatus = "connecting" | "connected" | "disconnected";
+
+/**
+ * Terminal process status derived from WebSocket control messages.
+ * Replaces LiveStore `queryDb(terminals)` for determining terminal state.
+ *
+ * - "running" — PTY process is alive (received on connect or after restart)
+ * - "stopped" — PTY process has exited (includes exit code)
+ * - "restarted" — terminal was restarted (transient, immediately transitions to "running")
+ */
+type TerminalStatus = "running" | "stopped" | "restarted";
 
 /** Configuration for exponential backoff reconnection. */
 const INITIAL_RECONNECT_DELAY_MS = 500;
@@ -50,12 +73,56 @@ const RECONNECT_BACKOFF_FACTOR = 2;
  */
 const CHAR_COUNT_ACK_SIZE = 5000;
 
-interface UseTerminalWebSocketOptions {
-	/** Whether the terminal is running (controls reconnection behavior). */
-	readonly isRunning: boolean;
+/** Shape of a parsed status control message from the terminal service. */
+interface StatusControlMessage {
+	readonly exitCode?: number | undefined;
+	readonly status: string;
+	readonly type: "status";
+}
 
+/**
+ * Attempt to parse a WebSocket text frame as a JSON status control message.
+ * Returns the parsed message if valid, or undefined if the frame is raw
+ * PTY output data.
+ *
+ * Detection heuristic: text frames starting with `{` that contain
+ * `"type":"status"` are control messages. All others are PTY data.
+ * This matches the server-side sendStatusMessage format.
+ */
+function parseStatusMessage(data: string): StatusControlMessage | undefined {
+	if (data.length === 0 || data[0] !== "{") {
+		return undefined;
+	}
+	try {
+		const parsed = JSON.parse(data) as Record<string, unknown>;
+		if (parsed.type === "status" && typeof parsed.status === "string") {
+			return {
+				type: "status",
+				status: parsed.status,
+				exitCode:
+					typeof parsed.exitCode === "number" ? parsed.exitCode : undefined,
+			};
+		}
+	} catch {
+		// Not valid JSON — treat as terminal output
+	}
+	return undefined;
+}
+
+interface UseTerminalWebSocketOptions {
 	/** Callback invoked with terminal output data (raw UTF-8). */
 	readonly onData: (data: string) => void;
+
+	/**
+	 * Callback invoked when a status control message is received.
+	 * Used by terminal-pane.tsx to handle restart (clear buffer) and
+	 * stopped (show exit banner) events.
+	 */
+	readonly onStatus?: (
+		status: TerminalStatus,
+		exitCode: number | undefined
+	) => void;
+
 	/** The terminal ID to connect to. */
 	readonly terminalId: string;
 }
@@ -66,6 +133,12 @@ interface UseTerminalWebSocketResult {
 
 	/** Current WebSocket connection status. */
 	readonly status: ConnectionStatus;
+
+	/**
+	 * Terminal process status derived from WebSocket control messages.
+	 * Replaces LiveStore-based terminal status for UI decisions.
+	 */
+	readonly terminalStatus: TerminalStatus;
 }
 
 /**
@@ -73,15 +146,23 @@ interface UseTerminalWebSocketResult {
  * endpoint. Output data is delivered via the `onData` callback. Input
  * is sent via the returned `send` function.
  *
+ * Status control messages from the terminal service are parsed and
+ * exposed via `terminalStatus`. The optional `onStatus` callback
+ * notifies consumers of status transitions for side effects (e.g.,
+ * clearing xterm.js buffer on restart).
+ *
  * Reconnects with exponential backoff on disconnect. Stops reconnecting
- * when the terminal is no longer running (process exited).
+ * when the terminal process has stopped (status = "stopped").
  */
 function useTerminalWebSocket({
 	terminalId,
 	onData,
-	isRunning,
+	onStatus,
 }: UseTerminalWebSocketOptions): UseTerminalWebSocketResult {
-	const [status, setStatus] = useState<ConnectionStatus>("connecting");
+	const [connectionStatus, setConnectionStatus] =
+		useState<ConnectionStatus>("connecting");
+	const [terminalStatus, setTerminalStatus] =
+		useState<TerminalStatus>("running");
 	const wsRef = useRef<WebSocket | null>(null);
 	const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const reconnectDelayRef = useRef(INITIAL_RECONNECT_DELAY_MS);
@@ -93,8 +174,10 @@ function useTerminalWebSocket({
 	// Refs for latest callback/state to avoid stale closures in WebSocket handlers
 	const onDataRef = useRef(onData);
 	onDataRef.current = onData;
-	const isRunningRef = useRef(isRunning);
-	isRunningRef.current = isRunning;
+	const onStatusRef = useRef(onStatus);
+	onStatusRef.current = onStatus;
+	const terminalStatusRef = useRef(terminalStatus);
+	terminalStatusRef.current = terminalStatus;
 
 	const clearReconnectTimer = useCallback(() => {
 		if (reconnectTimerRef.current !== null) {
@@ -112,7 +195,7 @@ function useTerminalWebSocket({
 		const protocol = globalThis.location.protocol === "https:" ? "wss:" : "ws:";
 		const wsUrl = `${protocol}//${globalThis.location.host}/terminal?id=${encodeURIComponent(terminalId)}`;
 
-		setStatus("connecting");
+		setConnectionStatus("connecting");
 
 		const ws = new WebSocket(wsUrl);
 		wsRef.current = ws;
@@ -122,7 +205,7 @@ function useTerminalWebSocket({
 				ws.close();
 				return;
 			}
-			setStatus("connected");
+			setConnectionStatus("connected");
 			// Reset backoff on successful connection
 			reconnectDelayRef.current = INITIAL_RECONNECT_DELAY_MS;
 			// Reset flow control counter on new/reconnected WebSocket
@@ -130,17 +213,29 @@ function useTerminalWebSocket({
 		};
 
 		ws.onmessage = (event: MessageEvent) => {
-			if (typeof event.data === "string") {
-				onDataRef.current(event.data);
+			if (typeof event.data !== "string") {
+				return;
+			}
 
-				// Flow control: count received characters and send ack frames
-				unackedCharsRef.current += event.data.length;
-				if (unackedCharsRef.current >= CHAR_COUNT_ACK_SIZE) {
-					const chars = unackedCharsRef.current;
-					unackedCharsRef.current = 0;
-					if (ws.readyState === WebSocket.OPEN) {
-						ws.send(JSON.stringify({ type: "ack", chars }));
-					}
+			// Check if this is a status control message from the terminal service
+			const statusMsg = parseStatusMessage(event.data);
+			if (statusMsg !== undefined) {
+				const newStatus = statusMsg.status as TerminalStatus;
+				setTerminalStatus(newStatus);
+				onStatusRef.current?.(newStatus, statusMsg.exitCode);
+				return;
+			}
+
+			// Raw PTY output data
+			onDataRef.current(event.data);
+
+			// Flow control: count received characters and send ack frames
+			unackedCharsRef.current += event.data.length;
+			if (unackedCharsRef.current >= CHAR_COUNT_ACK_SIZE) {
+				const chars = unackedCharsRef.current;
+				unackedCharsRef.current = 0;
+				if (ws.readyState === WebSocket.OPEN) {
+					ws.send(JSON.stringify({ type: "ack", chars }));
 				}
 			}
 		};
@@ -150,10 +245,10 @@ function useTerminalWebSocket({
 				return;
 			}
 			wsRef.current = null;
-			setStatus("disconnected");
+			setConnectionStatus("disconnected");
 
 			// Only reconnect if the terminal is still running
-			if (isRunningRef.current) {
+			if (terminalStatusRef.current !== "stopped") {
 				const delay = reconnectDelayRef.current;
 				reconnectDelayRef.current = Math.min(
 					delay * RECONNECT_BACKOFF_FACTOR,
@@ -188,15 +283,19 @@ function useTerminalWebSocket({
 		};
 	}, [connect, clearReconnectTimer]);
 
-	// When the terminal stops running, close the WebSocket cleanly.
-	// When it starts running again (e.g., after restart), reconnect.
+	// When the terminal restarts (status transitions to "running" or "restarted"),
+	// and the WebSocket is disconnected, reconnect.
 	useEffect(() => {
-		if (isRunning && wsRef.current === null && status === "disconnected") {
+		if (
+			terminalStatus !== "stopped" &&
+			wsRef.current === null &&
+			connectionStatus === "disconnected"
+		) {
 			// Terminal restarted — reconnect
 			reconnectDelayRef.current = INITIAL_RECONNECT_DELAY_MS;
 			connect();
 		}
-	}, [isRunning, status, connect]);
+	}, [terminalStatus, connectionStatus, connect]);
 
 	const send = useCallback((data: string) => {
 		const ws = wsRef.current;
@@ -205,8 +304,8 @@ function useTerminalWebSocket({
 		}
 	}, []);
 
-	return { send, status };
+	return { send, status: connectionStatus, terminalStatus };
 }
 
 export { useTerminalWebSocket };
-export type { ConnectionStatus, UseTerminalWebSocketResult };
+export type { ConnectionStatus, TerminalStatus, UseTerminalWebSocketResult };

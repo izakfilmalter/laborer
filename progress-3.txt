@@ -793,3 +793,64 @@ Modified `packages/server/src/services/workspace-provider.ts`:
 ### Issues unblocked
 - Issue #49: Workspace creation error display — now has all error types implemented (#37 setup failure done, #38 dirty git state and #39 git fetch failure still pending but #37 was the dependency for #49)
 
+## Issue #120: Empty state — no terminals — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Enhanced the empty terminal pane state with a guided CTA that lets users spawn a terminal directly from the empty pane. Previously, empty terminal panes showed only informational text ("Spawn a terminal in a workspace to see output here.") with no actionable element — users had to navigate to the sidebar terminal list to spawn. Now, the empty state includes a "Spawn Terminal" button that spawns a terminal and assigns it to the specific pane it was spawned from. When multiple workspaces are active, a dropdown lets the user pick which workspace to spawn in. When no workspaces exist, the guidance text adapts to say "Create a workspace first."
+
+### What was done
+
+Modified `apps/web/src/panels/panel-manager.tsx`:
+
+1. **Added new imports**: `useAtomSet` (AtomRpc hooks), `workspaces` (LiveStore schema), `queryDb` (LiveStore), `Plus` (lucide-react), `useCallback`/`useState` (React), `toast` (sonner), `LaborerClient` (AtomRpc client), `Button` (UI), `EmptyContent` (empty state CTA slot), `Select`/`SelectContent`/`SelectItem`/`SelectTrigger`/`SelectValue` (workspace picker), `extractErrorMessage` (error handling), `useLaborerStore` (LiveStore hook).
+
+2. **Added module-level declarations**:
+   - `allWorkspaces$` — LiveStore query for all workspaces (used to find active workspaces for the spawn CTA)
+   - `spawnTerminalMutation` — `LaborerClient.mutation("terminal.spawn")` for spawning terminals
+
+3. **Created `EmptyTerminalPane` component** (~110 lines):
+   - **Props**: `paneId` (string, required) — the ID of this specific pane, used to assign the spawned terminal to this exact pane; `workspaceId` (string, optional) — pre-assigned workspace from the pane node
+   - **Workspace resolution logic** (three cases):
+     - If the pane already has a `workspaceId` → use it directly (one-click spawn)
+     - If there's exactly one active workspace → use it automatically (one-click spawn)
+     - If there are multiple active workspaces → show a `Select` dropdown to pick a workspace
+   - **CTA section** (via `EmptyContent`): renders a "Spawn Terminal" button (with `Plus` icon) that:
+     - Calls `terminal.spawn` RPC mutation with the resolved workspace ID
+     - On success: shows a toast and calls `panelActions.assignTerminalToPane(result.id, workspaceId, paneId)` — the `paneId` parameter ensures the terminal is assigned to THIS specific pane, not just any empty pane
+     - On error: shows an error toast with the extracted error message
+     - Shows "Spawning..." text while the mutation is in flight
+     - Disabled when no workspace is resolved or when already spawning
+   - **No workspaces case**: When `activeWorkspaces.length === 0`, the CTA section is hidden entirely and the description changes to "Create a workspace first, then spawn a terminal to see output here."
+   - **Multiple workspaces case**: When there are 2+ active workspaces and no pre-assigned `workspaceId`, a `Select` component appears above the button to let the user pick a workspace (shows branch names). The spawn button is disabled until a workspace is selected.
+
+4. **Updated `PaneContent` to use `EmptyTerminalPane`**: The previous inline empty state for terminal panes (static text, no CTA) is replaced with `<EmptyTerminalPane paneId={node.id} workspaceId={node.workspaceId} />`. Non-terminal empty panes retain the generic "Empty pane" / "Assign content to this pane." text.
+
+5. **Updated JSDoc**: Added Issue #120 reference and description of the empty state behavior in the module doc comment.
+
+### Files modified
+- `apps/web/src/panels/panel-manager.tsx` — Added `EmptyTerminalPane` component with spawn CTA, updated imports, updated `PaneContent` to delegate to `EmptyTerminalPane`, updated JSDoc
+
+### Acceptance criteria status
+- [x] No terminals → empty state with guidance (EmptyTerminalPane renders Terminal icon, "No terminal" title, contextual description, and CTA)
+- [x] CTA spawns a terminal (Button calls `terminal.spawn` RPC → auto-assigns to this specific pane via `assignTerminalToPane(terminalId, workspaceId, paneId)`)
+- [x] After spawning → empty state disappears (terminal is assigned to the pane, `PaneContent` now renders `TerminalPane` instead of `EmptyTerminalPane`)
+- [ ] Tests: no terminals → empty state renders; CTA → terminal spawned; gone (deferred — web app has no component test infrastructure)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on `panel-manager.tsx` with zero issues (`Checked 1 file in 6ms. No fixes applied.`)
+- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Component extraction over inline logic**: Created a dedicated `EmptyTerminalPane` component rather than adding hooks and state management inline in `PaneContent`. This keeps `PaneContent` clean (pure rendering logic) and isolates the spawn interaction complexity. The component uses hooks (`useAtomSet`, `useState`, `useCallback`, `useLaborerStore`) which would have made `PaneContent` harder to reason about if inlined.
+- **Three-case workspace resolution**: The resolution strategy (pre-assigned > single-active > user-selected) provides the best UX for each scenario: when there's only one possible workspace, the user doesn't need to make a choice. When there are multiple, they get an explicit picker. This avoids both "which workspace?" ambiguity and unnecessary clicks.
+- **`paneId` for targeted assignment**: The spawn handler passes `paneId` as the third argument to `assignTerminalToPane`, ensuring the terminal fills THIS specific empty pane rather than any arbitrary empty pane in the layout. This is critical for multi-pane layouts where the user clicks "Spawn Terminal" in a specific empty pane and expects the terminal to appear there.
+- **Select for workspace picker**: Used the existing `Select` component (Base UI-backed) rather than a DropdownMenu because it provides a cleaner form-like experience with a trigger showing the selected value. The branch name is displayed as the option label since workspaces don't have a separate "name" field.
+- **`EmptyContent` for CTA area**: Used the `EmptyContent` component from the empty state system (previously unused in the codebase) to place the CTA button and optional dropdown below the header. This follows the design of the empty state component system and maintains visual consistency.
+- **No workspaces = guidance only**: When there are no active workspaces, showing a spawn button that can't work would be misleading. Instead, the description text adapts to guide the user to create a workspace first. The CTA section is hidden entirely.
+- **Consistent mutation pattern**: Follows the exact same pattern used across the codebase: module-level mutation atom → `useAtomSet(mutation, { mode: "promise" })` → try/catch with toast notifications → loading state via `useState`.
+- **`onValueChange` null handling**: Base UI's Select can pass `null` on deselection. The handler wraps with `(value) => setSelectedWorkspaceId(value ?? "")` to safely coerce to empty string, which keeps the type as `string` and the button disabled state working correctly (empty string is falsy).
+

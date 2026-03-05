@@ -539,30 +539,9 @@ When a project has no workspaces, show an empty state in the workspace list area
 
 ---
 
-## Issue 120: Empty state — no terminals
+## ~~Issue 120: Empty state — no terminals~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-When a workspace has no terminals, show an empty state in the terminal area with guidance to spawn a terminal.
-
-### Acceptance criteria
-
-- [ ] No terminals → empty state with guidance
-- [ ] CTA spawns a terminal
-- [ ] After spawning → empty state disappears
-- [ ] Tests: no terminals → empty state; CTA → terminal spawned; gone
-
-### Blocked by
-
-- Blocked by #63 (done)
-
-### User stories addressed
-
-- Polishing requirement 13
+Enhanced empty terminal pane with guided CTA. Empty panes show a "Spawn Terminal" button that spawns a terminal and assigns it to the specific pane. Workspace resolution: pre-assigned > single-active > user-selected dropdown. No workspaces → guidance-only text. Uses `EmptyContent` component for CTA area, consistent mutation pattern with `terminal.spawn` RPC.
 
 ---
 
@@ -850,7 +829,7 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 117 | Tauri window management | #115 | Blocked |
 | 118 | Empty state — no projects | ~~#27~~ | Ready |
 | 119 | Empty state — no workspaces | ~~#42~~ | Ready |
-| 120 | Empty state — no terminals | ~~#63~~ | Ready |
+| 120 | ~~Empty state — no terminals~~ | ~~#63~~ | Done |
 | 121 | Loading state — workspace creation | ~~#41~~ | Ready |
 | 122 | Loading state — terminal spawning | ~~#60~~ | Ready |
 | 123 | Loading state — diff computation | ~~#87~~ | Ready |

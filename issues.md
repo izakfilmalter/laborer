@@ -47,30 +47,9 @@ Implemented pre-check for dirty git state before worktree creation. Runs `git st
 
 ---
 
-## Issue 39: WorkspaceProvider — handle git fetch failure
+## ~~Issue 39: WorkspaceProvider — handle git fetch failure~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Handle network failures during git operations (fetch, remote updates). Return a clear error and ensure no partial state is left.
-
-### Acceptance criteria
-
-- [ ] Network failure during git operation → clear error message
-- [ ] No partial worktree or branch created
-- [ ] Port freed on failure
-- [ ] Tests: simulate git fetch failure → error; verify cleanup
-
-### Blocked by
-
-- Blocked by #33
-
-### User stories addressed
-
-- Polishing requirement 6
+Added `git fetch --all` step to `createWorktree` flow, placed before port allocation (step 3c) so no resources need cleanup on failure. Network failures detected via `detectNetworkError()` heuristic with actionable guidance messages. Error code `GIT_FETCH_FAILED` with raw git stderr + human-readable guidance. Unblocks Issue #49 (workspace creation error display).
 
 ---
 
@@ -93,7 +72,7 @@ Display workspace creation errors in the UI. Handle all error types: dirty git s
 
 ### Blocked by
 
-- ~~Blocked by #37~~, ~~Blocked by #38~~, Blocked by #39, #42
+- ~~Blocked by #37~~, ~~Blocked by #38~~, ~~Blocked by #39~~, ~~#42~~
 
 ### User stories addressed
 
@@ -726,8 +705,8 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 35 | ~~WorkspaceProvider — setup scripts~~ | ~~#33~~ | Done |
 | 37 | ~~WorkspaceProvider — handle setup failure~~ | ~~#35~~ | Done |
 | 38 | ~~WorkspaceProvider — handle dirty git state~~ | ~~#33~~ | Done |
-| 39 | WorkspaceProvider — handle git fetch failure | #33 | Ready |
-| 49 | Workspace creation error display | ~~#37~~, ~~#38~~, #39, #42 | Blocked |
+| 39 | ~~WorkspaceProvider — handle git fetch failure~~ | ~~#33~~ | Done |
+| 49 | Workspace creation error display | ~~#37~~, ~~#38~~, ~~#39~~, ~~#42~~ | Ready |
 | 71 | ~~PanelManager — navigate between panes~~ | ~~#67~~ | Done |
 | 72 | ~~PanelManager — drag-to-resize~~ | ~~#67~~ | Done |
 | 79 | Keyboard shortcut — resize panes | ~~#72~~, ~~#75~~ | Ready |

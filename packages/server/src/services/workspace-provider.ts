@@ -16,6 +16,7 @@
  * - Environment variable injection (PORT, etc.) for workspace processes
  * - Setup script execution after worktree creation (Issue #35)
  * - Full rollback on setup script failure (Issue #37)
+ * - Git fetch failure handling (Issue #39)
  *
  * Setup scripts are defined in a `.laborer.json` file at the project root:
  * ```json
@@ -46,6 +47,7 @@
  * Issue #36: inject PORT env var
  * Issue #37: handle setup script failure (rollback)
  * Issue #38: handle dirty git state error
+ * Issue #39: handle git fetch failure
  * Issue #43: destroyWorktree method
  */
 
@@ -553,6 +555,88 @@ const checkDirtyState = (
 		return { isDirty: true, summary: buildDirtySummary(lines) };
 	});
 
+/**
+ * Fetch the latest remote refs before worktree creation. Runs `git fetch --all`
+ * to ensure all remote branches are up-to-date. This is important because
+ * `git worktree add` creates a branch from the current HEAD — if the local
+ * repo is stale, the worktree starts from an outdated commit.
+ *
+ * Network failures (DNS resolution, SSH auth, remote unreachable) are caught
+ * and returned as a clear `GIT_FETCH_FAILED` error. The error message includes
+ * the git stderr output for diagnosis (e.g., "Could not resolve host" or
+ * "Permission denied").
+ *
+ * This step is placed before port allocation so no resources need cleanup
+ * on failure — matching the design of the dirty state check (Issue #38).
+ *
+ * @param repoPath - Path to the git repository to fetch in
+ */
+const fetchRemote = (repoPath: string): Effect.Effect<void, RpcError> =>
+	Effect.gen(function* () {
+		yield* Effect.logDebug("Fetching latest remote refs...").pipe(
+			Effect.annotateLogs("module", logPrefix)
+		);
+
+		const result = yield* Effect.tryPromise({
+			try: async () => {
+				const proc = Bun.spawn(["git", "fetch", "--all"], {
+					cwd: repoPath,
+					stdout: "pipe",
+					stderr: "pipe",
+				});
+				const exitCode = await proc.exited;
+				const stdout = await new Response(proc.stdout).text();
+				const stderr = await new Response(proc.stderr).text();
+				return { exitCode, stdout, stderr };
+			},
+			catch: (error) =>
+				new RpcError({
+					message: `Failed to spawn git fetch: ${String(error)}`,
+					code: "GIT_FETCH_FAILED",
+				}),
+		});
+
+		if (result.exitCode !== 0) {
+			const stderrTrimmed = result.stderr.trim();
+			const isNetworkError = detectNetworkError(stderrTrimmed);
+			const guidance = isNetworkError
+				? "Check your network connection and try again."
+				: "Verify the remote is accessible and your credentials are valid.";
+
+			yield* Effect.logWarning(
+				`git fetch failed (exit ${result.exitCode}): ${stderrTrimmed}`
+			).pipe(Effect.annotateLogs("module", logPrefix));
+
+			return yield* new RpcError({
+				message: `Failed to fetch remote updates (exit ${result.exitCode}): ${stderrTrimmed}. ${guidance}`,
+				code: "GIT_FETCH_FAILED",
+			});
+		}
+
+		yield* Effect.logDebug("Remote refs fetched successfully").pipe(
+			Effect.annotateLogs("module", logPrefix)
+		);
+	});
+
+/**
+ * Detect whether a git stderr message indicates a network-related failure.
+ * Used to provide more specific guidance in error messages.
+ */
+const detectNetworkError = (stderr: string): boolean => {
+	const lowerStderr = stderr.toLowerCase();
+	return (
+		lowerStderr.includes("could not resolve host") ||
+		lowerStderr.includes("unable to access") ||
+		lowerStderr.includes("connection refused") ||
+		lowerStderr.includes("connection timed out") ||
+		lowerStderr.includes("network is unreachable") ||
+		lowerStderr.includes("no route to host") ||
+		lowerStderr.includes("ssh_exchange_identification") ||
+		lowerStderr.includes("could not read from remote repository") ||
+		lowerStderr.includes("the requested url returned error")
+	);
+};
+
 class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 	WorkspaceProvider,
 	{
@@ -673,6 +757,12 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 							code: "DIRTY_WORKING_TREE",
 						});
 					}
+
+					// 3c. Fetch latest remote refs (Issue #39)
+					// Ensures the local repo has the latest remote state before
+					// creating a worktree. Runs before port allocation so no
+					// resources need cleanup on failure.
+					yield* fetchRemote(project.repoPath);
 
 					// 4. Allocate a port for this workspace
 					const port = yield* portAllocator.allocate();

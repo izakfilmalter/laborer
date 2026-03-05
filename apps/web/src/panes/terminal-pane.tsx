@@ -32,7 +32,7 @@
  * Reconnection:
  * - On page reload or network disruption, the WebSocket reconnects with
  *   exponential backoff
- * - Server sends ring buffer scrollback (1MB) as initial text frames
+ * - Server sends ring buffer scrollback (5MB) as initial text frames
  * - New live output continues streaming after scrollback
  *
  * What stays on LiveStore (lifecycle events):
@@ -67,12 +67,22 @@
  * @see Issue #80: Keyboard shortcut scope isolation
  * @see Issue #122: Loading state — terminal spawning
  * @see Issue #140: Web client terminal pane — WebSocket data path
+ *
+ * Scroll performance (Issue #127):
+ * - Scrollback buffer set to 100,000 lines to handle long-running agent sessions
+ * - WebGL renderer (GPU-accelerated) used by default, canvas fallback on context loss
+ * - Unicode11 addon loaded for correct Unicode character width calculation
+ * - xterm.js virtualizes the viewport (only visible rows are in the DOM) so
+ *   large scrollback doesn't impact rendering performance
+ * - Fast scroll sensitivity increased for quicker navigation through large buffers
+ * - Alt+scroll modifier enables accelerated scrolling (5x speed)
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
 import { terminals } from "@laborer/shared/schema";
 import { queryDb } from "@livestore/livestore";
 import { FitAddon } from "@xterm/addon-fit";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -250,9 +260,11 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 				brightCyan: "#22d3ee",
 				brightWhite: "#ffffff",
 			},
-			scrollback: 10_000,
+			scrollback: 100_000,
 			convertEol: false,
 			allowProposedApi: true,
+			fastScrollSensitivity: 5,
+			scrollSensitivity: 3,
 		});
 
 		terminalRef.current = terminal;
@@ -265,7 +277,9 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 		// Open terminal in the container
 		terminal.open(container);
 
-		// Attempt WebGL rendering for better performance
+		// Attempt WebGL rendering for better performance (GPU-accelerated).
+		// Critical for scroll performance with 100k+ lines — WebGL renders
+		// only visible rows via the GPU, avoiding DOM reflow on scroll.
 		try {
 			const webglAddon = new WebglAddon();
 			webglAddon.onContextLoss(() => {
@@ -274,6 +288,19 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 			terminal.loadAddon(webglAddon);
 		} catch {
 			// WebGL not available — fall back to canvas renderer (default)
+		}
+
+		// Load Unicode 11 addon for correct character width calculation.
+		// Without this, CJK characters, emoji, and other wide Unicode
+		// characters may be measured incorrectly, causing cursor misalignment
+		// and rendering glitches — especially problematic in long terminal
+		// output from AI agents that may include Unicode in their responses.
+		try {
+			const unicode11Addon = new Unicode11Addon();
+			terminal.loadAddon(unicode11Addon);
+			terminal.unicode.activeVersion = "11";
+		} catch {
+			// Unicode11 addon failed to load — default width calculation used
 		}
 
 		// Initial fit — also send dimensions to server PTY so it starts

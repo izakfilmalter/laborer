@@ -38,8 +38,13 @@ import { TerminalManager } from "../services/terminal-manager.js";
  * Maximum size (in characters) for a single scrollback text frame.
  * Large scrollback buffers are split into chunks to avoid overwhelming
  * the WebSocket send buffer.
+ *
+ * Increased from 64KB to 128KB to reduce the number of frames needed
+ * when sending the 5MB ring buffer on reconnection (~40 frames vs ~80).
+ *
+ * @see Issue #127: Terminal scroll performance (100k+ lines)
  */
-const SCROLLBACK_CHUNK_SIZE = 64_000;
+const SCROLLBACK_CHUNK_SIZE = 131_072;
 
 /**
  * Handle incoming WebSocket messages from the client.

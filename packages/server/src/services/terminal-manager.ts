@@ -53,7 +53,6 @@ import {
 	Ref,
 	Runtime,
 } from "effect";
-// biome-ignore lint/style/useImportType: RingBuffer is used as a value (new RingBuffer())
 import { RingBuffer } from "../lib/ring-buffer.js";
 import { LaborerStore } from "./laborer-store.js";
 import { PtyHostClient } from "./pty-host-client.js";
@@ -62,8 +61,20 @@ import { WorkspaceProvider } from "./workspace-provider.js";
 /** Logger tag used for structured Effect.log output in this module. */
 const logPrefix = "TerminalManager";
 
-/** Default ring buffer capacity: 1MB per terminal for scrollback. */
-const RING_BUFFER_CAPACITY = 1_048_576;
+/**
+ * Default ring buffer capacity: 5MB per terminal for scrollback.
+ *
+ * At ~80 chars/line, 5MB holds ~62,500 lines of raw text output.
+ * Combined with xterm.js's 100,000-line client-side scrollback buffer,
+ * this ensures reconnection restores a substantial portion of terminal
+ * history for long-running AI agent sessions.
+ *
+ * Memory impact: 5MB × number of terminals. With 10 concurrent terminals,
+ * this is ~50MB — acceptable for a developer's local machine.
+ *
+ * @see Issue #127: Terminal scroll performance (100k+ lines)
+ */
+const RING_BUFFER_CAPACITY = 5_242_880;
 
 /** UTF-8 text encoder shared across all terminal data callbacks. */
 const textEncoder = new TextEncoder();

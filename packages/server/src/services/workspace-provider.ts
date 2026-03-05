@@ -14,6 +14,18 @@
  * - Workspace state tracking via LiveStore
  * - Branch management and naming
  * - Environment variable injection (PORT, etc.) for workspace processes
+ * - Setup script execution after worktree creation (Issue #35)
+ *
+ * Setup scripts are defined in a `.laborer.json` file at the project root:
+ * ```json
+ * {
+ *   "setupScripts": ["bun install", "cp .env.example .env"]
+ * }
+ * ```
+ *
+ * Each script is executed in the worktree directory with the workspace
+ * environment variables (PORT, etc.) injected. Scripts run sequentially
+ * and any non-zero exit code aborts the remaining scripts.
  *
  * Usage:
  * ```ts
@@ -27,10 +39,12 @@
  * ```
  *
  * Issue #33: createWorktree method
+ * Issue #35: run setup scripts in worktree
  * Issue #36: inject PORT env var
  * Issue #43: destroyWorktree method
  */
 
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { RpcError } from "@laborer/shared/rpc";
 import { events, tables } from "@laborer/shared/schema";
@@ -72,6 +86,165 @@ const slugify = (branchName: string): string =>
 		.replace(/[^a-zA-Z0-9-]/g, "-")
 		.replace(/-+/g, "-")
 		.replace(/^-|-$/g, "");
+
+/**
+ * Configuration file name for project-specific settings.
+ * Located at the project root (e.g., `/path/to/repo/.laborer.json`).
+ */
+const CONFIG_FILE = ".laborer.json";
+
+/**
+ * Module-level log annotation for structured logging.
+ */
+const logPrefix = "WorkspaceProvider";
+
+/**
+ * Shape of the `.laborer.json` project configuration file.
+ * Currently only supports `setupScripts` — an array of shell commands
+ * to execute in the worktree after creation.
+ */
+interface LaborerConfig {
+	readonly setupScripts?: readonly string[];
+}
+
+/**
+ * Read and parse the `.laborer.json` config file from a project root.
+ * Returns an empty config if the file doesn't exist or is invalid JSON.
+ * Logs a warning if the file exists but can't be parsed.
+ */
+const readProjectConfig = (
+	repoPath: string
+): Effect.Effect<LaborerConfig, never> => {
+	const configPath = join(repoPath, CONFIG_FILE);
+
+	return Effect.gen(function* () {
+		if (!existsSync(configPath)) {
+			return {} as LaborerConfig;
+		}
+
+		const content = yield* Effect.try({
+			try: () => readFileSync(configPath, "utf-8"),
+			catch: (error) => error,
+		}).pipe(
+			Effect.catchAll((error) =>
+				Effect.gen(function* () {
+					yield* Effect.logWarning(
+						`Failed to read ${CONFIG_FILE}: ${String(error)}`
+					).pipe(Effect.annotateLogs("module", logPrefix));
+					return "" as string;
+				})
+			)
+		);
+
+		if (content.length === 0) {
+			return {} as LaborerConfig;
+		}
+
+		const parsed = yield* Effect.try({
+			try: () => JSON.parse(content) as LaborerConfig,
+			catch: (error) => error,
+		}).pipe(
+			Effect.catchAll((error) =>
+				Effect.gen(function* () {
+					yield* Effect.logWarning(
+						`Failed to parse ${CONFIG_FILE}: ${String(error)}`
+					).pipe(Effect.annotateLogs("module", logPrefix));
+					return {} as LaborerConfig;
+				})
+			)
+		);
+
+		return parsed;
+	});
+};
+
+/**
+ * Result of running a single setup script.
+ */
+interface SetupScriptResult {
+	readonly command: string;
+	readonly exitCode: number;
+	readonly stderr: string;
+	readonly stdout: string;
+}
+
+/**
+ * Execute a single shell command in a given directory with the provided
+ * environment variables. Captures stdout and stderr for logging.
+ */
+const runSetupScript = (
+	command: string,
+	cwd: string,
+	env: Record<string, string>
+): Effect.Effect<SetupScriptResult, RpcError> =>
+	Effect.tryPromise({
+		try: async () => {
+			const proc = Bun.spawn(["sh", "-c", command], {
+				cwd,
+				stdout: "pipe",
+				stderr: "pipe",
+				env: { ...process.env, ...env },
+			});
+			const exitCode = await proc.exited;
+			const stdout = await new Response(proc.stdout).text();
+			const stderr = await new Response(proc.stderr).text();
+			return { command, exitCode, stdout, stderr };
+		},
+		catch: (error) =>
+			new RpcError({
+				message: `Failed to spawn setup script '${command}': ${String(error)}`,
+				code: "SETUP_SCRIPT_FAILED",
+			}),
+	});
+
+/**
+ * Execute all setup scripts from the project config in the worktree directory.
+ * Scripts run sequentially. Captures stdout/stderr for each script.
+ * Returns an array of results. If any script has a non-zero exit code,
+ * execution stops and the remaining scripts are skipped.
+ *
+ * @param scripts - Array of shell commands to execute
+ * @param worktreePath - Directory to execute scripts in
+ * @param env - Environment variables to inject (PORT, etc.)
+ * @returns Array of results for each executed script
+ */
+const executeSetupScripts = (
+	scripts: readonly string[],
+	worktreePath: string,
+	env: Record<string, string>
+): Effect.Effect<readonly SetupScriptResult[], RpcError> =>
+	Effect.gen(function* () {
+		const results: SetupScriptResult[] = [];
+
+		for (const script of scripts) {
+			yield* Effect.logInfo(`Running setup script: ${script}`).pipe(
+				Effect.annotateLogs("module", logPrefix)
+			);
+
+			const result = yield* runSetupScript(script, worktreePath, env);
+			results.push(result);
+
+			if (result.stdout.length > 0) {
+				yield* Effect.logDebug(
+					`Setup script stdout: ${result.stdout.trim()}`
+				).pipe(Effect.annotateLogs("module", logPrefix));
+			}
+
+			if (result.exitCode !== 0) {
+				yield* Effect.logWarning(
+					`Setup script failed (exit ${result.exitCode}): ${script}\nstderr: ${result.stderr.trim()}`
+				).pipe(Effect.annotateLogs("module", logPrefix));
+				// Stop executing remaining scripts — the caller will handle rollback
+				break;
+			}
+
+			yield* Effect.logInfo(
+				`Setup script completed successfully: ${script}`
+			).pipe(Effect.annotateLogs("module", logPrefix));
+		}
+
+		return results;
+	});
 
 class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 	WorkspaceProvider,
@@ -293,9 +466,54 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 						});
 					}
 
-					// 9. Generate workspace ID and commit to LiveStore
+					// 9. Generate workspace ID early (needed for env var injection)
 					const id = crypto.randomUUID();
 					const createdAt = new Date().toISOString();
+
+					// 10. Run setup scripts from .laborer.json (Issue #35)
+					// Scripts run in the worktree directory with workspace env vars
+					// injected. If any script fails, the workspace is still created
+					// but with status "errored" (Issue #37 will add full rollback).
+					const config = yield* readProjectConfig(project.repoPath);
+					let workspaceStatus = "running";
+
+					if (
+						config.setupScripts !== undefined &&
+						config.setupScripts.length > 0
+					) {
+						// Build workspace env vars for script execution
+						const scriptEnv = {
+							PORT: String(port),
+							LABORER_WORKSPACE_ID: id,
+							LABORER_WORKSPACE_PATH: worktreePath,
+							LABORER_BRANCH: resolvedBranch,
+						};
+
+						const scriptResults = yield* executeSetupScripts(
+							config.setupScripts,
+							worktreePath,
+							scriptEnv
+						);
+
+						// Check if any script failed
+						const failedScript = pipe(
+							scriptResults,
+							Arr.findFirst((r) => r.exitCode !== 0)
+						);
+
+						if (failedScript._tag === "Some") {
+							workspaceStatus = "errored";
+							yield* Effect.logWarning(
+								`Workspace setup failed: script '${failedScript.value.command}' exited with code ${failedScript.value.exitCode}`
+							).pipe(Effect.annotateLogs("module", logPrefix));
+						} else {
+							yield* Effect.logInfo(
+								`All ${config.setupScripts.length} setup script(s) completed successfully`
+							).pipe(Effect.annotateLogs("module", logPrefix));
+						}
+					}
+
+					// 11. Commit to LiveStore
 
 					const workspace: WorkspaceRecord = {
 						id,
@@ -304,7 +522,7 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 						branchName: resolvedBranch,
 						worktreePath,
 						port,
-						status: "running",
+						status: workspaceStatus,
 						createdAt,
 						baseSha,
 					};

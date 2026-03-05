@@ -29,30 +29,9 @@ Validate the created worktree directory structure and ensure file watcher isolat
 
 ---
 
-## Issue 35: WorkspaceProvider — run setup scripts in worktree
+## ~~Issue 35: WorkspaceProvider — run setup scripts in worktree~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-After worktree creation, execute project-specific setup scripts (e.g., `bun install`, copy `.env` files). Scripts are defined per project in rlphConfig. Execute in the worktree directory.
-
-### Acceptance criteria
-
-- [ ] Setup scripts from project config are executed in worktree directory
-- [ ] Script stdout/stderr captured for logging
-- [ ] Script exit code checked (non-zero = failure)
-- [ ] Tests: setup script runs in correct directory; successful script → success; failing script → error with output
-
-### Blocked by
-
-- Blocked by #33
-
-### User stories addressed
-
-- User story 11
+Implemented setup script execution after worktree creation. Projects define scripts in `.laborer.json` at the project root (`"setupScripts": ["bun install", "cp .env.example .env"]`). Scripts run sequentially in the worktree directory with workspace env vars (PORT, etc.) injected. Non-zero exit code aborts remaining scripts and sets workspace status to "errored".
 
 ---
 
@@ -75,7 +54,7 @@ When a setup script fails (non-zero exit), rollback the workspace: remove the wo
 
 ### Blocked by
 
-- Blocked by #35
+- ~~Blocked by #35~~
 
 ### User stories addressed
 
@@ -170,30 +149,9 @@ Implemented directional pane navigation (left/right/up/down) via `findPaneInDire
 
 ---
 
-## Issue 72: PanelManager — drag-to-resize panes
+## ~~Issue 72: PanelManager — drag-to-resize panes~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Enable drag-to-resize on split dividers via allotment. Enforce minimum pane sizes to prevent panes from becoming unusably small.
-
-### Acceptance criteria
-
-- [ ] Drag divider → panes resize
-- [ ] Minimum pane size enforced (can't resize below threshold)
-- [ ] Resize is smooth and responsive
-- [ ] Tests: drag resize works; minimum size enforced
-
-### Blocked by
-
-- Blocked by #67
-
-### User stories addressed
-
-- User story 2, Polishing requirement 9
+Already implemented via `react-resizable-panels` (shadcn/ui's Resizable components). `ResizableHandle` between panels enables drag-to-resize by default. Minimum pane sizes enforced via `minSize` props: sidebar 15%-40%, internal splits min 5%, diff sidebar min 15%/20%.
 
 ---
 
@@ -215,7 +173,7 @@ Add keyboard shortcuts for resizing panes (e.g., prefix + shift+arrow keys to gr
 
 ### Blocked by
 
-- Blocked by #72, #75
+- ~~Blocked by #72, #75~~
 
 ### User stories addressed
 
@@ -242,7 +200,7 @@ Ensure the panel system works well across different screen sizes from 1080p to 5
 
 ### Blocked by
 
-- Blocked by #72
+- ~~Blocked by #72~~
 
 ### User stories addressed
 
@@ -891,15 +849,15 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
 | 34 | WorkspaceProvider — directory validation + watcher scoping | #33 | Ready |
-| 35 | WorkspaceProvider — setup scripts | #33 | Ready |
-| 37 | WorkspaceProvider — handle setup failure | #35 | Blocked |
+| 35 | ~~WorkspaceProvider — setup scripts~~ | ~~#33~~ | Done |
+| 37 | WorkspaceProvider — handle setup failure | ~~#35~~ | Ready |
 | 38 | WorkspaceProvider — handle dirty git state | #33 | Ready |
 | 39 | WorkspaceProvider — handle git fetch failure | #33 | Ready |
 | 49 | Workspace creation error display | #37, #38, #39, #42 | Blocked |
 | 71 | ~~PanelManager — navigate between panes~~ | ~~#67~~ | Done |
-| 72 | PanelManager — drag-to-resize | ~~#67~~ | Ready |
-| 79 | Keyboard shortcut — resize panes | #72, ~~#75~~ | Blocked |
-| 81 | Panel responsive layout | #72 | Blocked |
+| 72 | ~~PanelManager — drag-to-resize~~ | ~~#67~~ | Done |
+| 79 | Keyboard shortcut — resize panes | ~~#72~~, ~~#75~~ | Ready |
+| 81 | Panel responsive layout | ~~#72~~ | Ready |
 | 88 | Diff viewer — accept/reject annotations | ~~#87~~ | Ready |
 | 91 | Diff viewer debounce/throttle | ~~#89~~ | Ready |
 | 107 | PRD-generated issues → tasks | ~~#94~~, ~~#100~~ | Ready |

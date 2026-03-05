@@ -3997,3 +3997,49 @@ Restructured the workspace card header into a two-row layout so metadata and con
 - `bun x ultracite check apps/web/src/components/workspace-list.tsx` passes.
 - `bun --filter web test` passes (3 files, 41 tests).
 - `bun --filter web check-types` still fails with pre-existing errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new errors from this change.
+
+## Issue #166: Detected worktree feature parity — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Why this next
+Picked Issue #166 as the highest-priority ready task because it unblocks the remaining sidebar polish pass (#167) and closes a functional gap where detected workspaces showed controls but failed when spawning terminals from the default stopped state.
+
+### Summary
+Completed detected-worktree feature parity by enabling terminal spawns from stopped workspaces and updating issue tracking to mark the feature done. This makes the detected workspace action row and terminal section functionally equivalent to Laborer-created workspaces.
+
+### What was done
+
+1. **Enabled spawn for stopped workspaces in active terminal path**
+   - Updated `packages/server/src/services/terminal-client.ts` so `spawnInWorkspace` allows `workspace.status === "stopped"` in addition to `"creating"` and `"running"`.
+   - This directly fixes `+ New` terminal spawn and all workflow buttons (`Write PRD`, `Ralph Loop`, `Review`, `Fix`) for detected workspaces, which are created in `"stopped"` status.
+
+2. **Kept legacy server module behavior aligned**
+   - Updated `packages/server/src/services/terminal-manager.ts` with the same stopped-status allowance to preserve parity in the legacy fallback module and avoid inconsistent semantics.
+
+3. **Updated issue tracking**
+   - Marked Issue #166 done in `issues.md` (title, acceptance checklist, status blurb, and summary table row).
+   - Updated Issue #167 blocked-by references to strike through `#166`.
+
+### Files modified
+- `packages/server/src/services/terminal-client.ts`
+- `packages/server/src/services/terminal-manager.ts`
+- `issues.md`
+
+### Verification
+- `bun --filter @laborer/server check-types` still exits non-zero due to pre-existing Effect diagnostics in unrelated files; no new diagnostics introduced by this change.
+- `bun --filter @laborer/server test` passes (14 files, 121 passed, 6 skipped).
+- `bun x ultracite check packages/server/src/services/terminal-client.ts packages/server/src/services/terminal-manager.ts` passes.
+
+### Acceptance criteria status
+- [x] Detected worktrees show the expand/collapse chevron
+- [x] Detected worktrees can be expanded to reveal the terminal list with "+ New" button
+- [x] Clicking "+ New" on a detected worktree spawns a terminal in the correct worktree directory
+- [x] WritePRD button appears on detected worktrees
+- [x] Ralph Loop button appears on detected worktrees
+- [x] Review PR button appears on detected worktrees
+- [x] Fix Findings button appears on detected worktrees
+- [x] "Detected" label still displays on external worktrees
+- [x] Destroy confirmation still uses the softer message for detected worktrees
+- [x] No regression for Laborer-created workspaces (active workspaces still work as before)

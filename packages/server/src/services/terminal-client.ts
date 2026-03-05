@@ -203,7 +203,8 @@ class TerminalClient extends Context.Tag("@laborer/TerminalClient")<
 
 					if (
 						workspace.status !== "running" &&
-						workspace.status !== "creating"
+						workspace.status !== "creating" &&
+						workspace.status !== "stopped"
 					) {
 						return yield* new RpcError({
 							message: `Workspace ${workspaceId} is in status "${workspace.status}" — cannot spawn terminal`,

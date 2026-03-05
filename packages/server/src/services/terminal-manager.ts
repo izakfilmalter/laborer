@@ -384,8 +384,14 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 
 				const workspace = workspaceOpt.value;
 
-				// Ensure workspace is in a valid state for spawning terminals
-				if (workspace.status !== "running" && workspace.status !== "creating") {
+				// Ensure workspace is in a valid state for spawning terminals.
+				// "stopped" is allowed so externally detected workspaces can spawn
+				// their first terminal without an explicit activation step.
+				if (
+					workspace.status !== "running" &&
+					workspace.status !== "creating" &&
+					workspace.status !== "stopped"
+				) {
 					return yield* new RpcError({
 						message: `Workspace ${workspaceId} is in status "${workspace.status}" — cannot spawn terminal`,
 						code: "INVALID_STATE",

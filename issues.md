@@ -921,8 +921,8 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 163 | Worktree detection polish & edge cases | #161, #162 | Blocked |
 | 164 | Sidebar max-width removal | None | Ready |
 | 165 | ~~Workspace card two-row header + text clamping~~ | ~~None~~ | Done |
-| 166 | Detected worktree feature parity | None | Ready |
-| 167 | Sidebar & workspace card polish | #164, #165, #166 | Blocked |
+| 166 | ~~Detected worktree feature parity~~ | ~~None~~ | Done |
+| 167 | Sidebar & workspace card polish | #164, ~~#165~~, ~~#166~~ | Blocked |
 
 ---
 
@@ -1219,7 +1219,7 @@ Reworked each workspace card header into an info row and action row. The info ro
 
 ---
 
-## Issue 166: Detected worktree feature parity
+## ~~Issue 166: Detected worktree feature parity~~ ✅ DONE
 
 ### Parent PRD
 
@@ -1240,16 +1240,16 @@ The `isActive` variable may be retained for other purposes (e.g., the "creating"
 
 ### Acceptance criteria
 
-- [ ] Detected worktrees show the expand/collapse chevron
-- [ ] Detected worktrees can be expanded to reveal the terminal list with "+ New" button
-- [ ] Clicking "+ New" on a detected worktree spawns a terminal in the correct worktree directory
-- [ ] WritePRD button appears on detected worktrees
-- [ ] Ralph Loop button appears on detected worktrees
-- [ ] Review PR button appears on detected worktrees
-- [ ] Fix Findings button appears on detected worktrees
-- [ ] "Detected" label still displays on external worktrees
-- [ ] Destroy confirmation still uses the softer message for detected worktrees
-- [ ] No regression for Laborer-created workspaces (active workspaces still work as before)
+- [x] Detected worktrees show the expand/collapse chevron
+- [x] Detected worktrees can be expanded to reveal the terminal list with "+ New" button
+- [x] Clicking "+ New" on a detected worktree spawns a terminal in the correct worktree directory
+- [x] WritePRD button appears on detected worktrees
+- [x] Ralph Loop button appears on detected worktrees
+- [x] Review PR button appears on detected worktrees
+- [x] Fix Findings button appears on detected worktrees
+- [x] "Detected" label still displays on external worktrees
+- [x] Destroy confirmation still uses the softer message for detected worktrees
+- [x] No regression for Laborer-created workspaces (active workspaces still work as before)
 
 ### Blocked by
 
@@ -1258,6 +1258,10 @@ None — can start immediately
 ### User stories addressed
 
 - User story 9, 10, 11, 12, 13, 14, 15, 16, 17
+
+### Status: Done
+
+Detected workspaces now have full sidebar feature parity with Laborer-created workspaces. The workspace card already renders the full action row and terminal collapsible for all non-destroyed workspaces, and terminal spawning from stopped detected workspaces now works end-to-end by allowing terminal spawns when workspace status is `"stopped"`.
 
 ---
 
@@ -1286,7 +1290,7 @@ End-to-end verification and polish pass for the sidebar max-width removal, works
 
 ### Blocked by
 
-- Blocked by #164, ~~#165~~, #166
+- Blocked by #164, ~~#165~~, ~~#166~~
 
 ### User stories addressed
 

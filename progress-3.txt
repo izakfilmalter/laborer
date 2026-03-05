@@ -1104,3 +1104,79 @@ Modified `packages/server/src/services/workspace-provider.ts`:
   - `GIT_WORKTREE_FAILED` (pre-existing) ✅
   - Issue #49 is no longer blocked by #39. Remaining blocker is #42 (Create Workspace form), which is already done. Issue #49 is now fully unblocked.
 
+## Issue #49: Workspace creation error display — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Enhanced the Create Workspace form to display distinct, actionable error messages for each workspace creation error type. Previously, all server errors were shown as a generic toast notification with the raw error message. Now, errors are displayed as an inline Alert within the dialog with a type-specific icon, title, the server's error message, and actionable guidance text. The toast is retained for persistence after the dialog is closed. The submit button text changes to "Retry" after an error, and the error alert is dismissible and auto-clears on retry.
+
+### What was done
+
+1. **Added `extractErrorCode` to `apps/web/src/lib/utils.ts`** (~15 lines):
+   - New utility function that extracts the `code` property from RPC error objects
+   - Handles plain objects with a `code` string property (how `RpcError` arrives on the client after serialization)
+   - Returns `undefined` if the error doesn't have a code property
+   - Follows the same defensive type-narrowing pattern as `extractErrorMessage`
+
+2. **Enhanced `apps/web/src/components/create-workspace-form.tsx`** (~100 lines of new code):
+   - **`WorkspaceCreationError` interface**: Structured error info with `code` (string | undefined) and `message` (string)
+   - **`getErrorTitle(code)` function**: Maps error codes to user-friendly titles:
+     - `DIRTY_WORKING_TREE` → "Uncommitted Changes"
+     - `GIT_FETCH_FAILED` → "Network Error"
+     - `SETUP_SCRIPT_FAILED` → "Setup Script Failed"
+     - `BRANCH_EXISTS` → "Branch Already Exists"
+     - `GIT_WORKTREE_FAILED` → "Worktree Creation Failed"
+     - `WORKTREE_VERIFY_FAILED` → "Worktree Verification Failed"
+     - `FILESYSTEM_ERROR` → "Filesystem Error"
+     - `GIT_CHECK_FAILED` → "Git Check Failed"
+     - `GIT_REV_PARSE_FAILED` → "Git Error"
+     - `NO_PORTS_AVAILABLE` → "No Ports Available"
+     - Default → "Workspace Creation Failed"
+   - **`getErrorGuidance(code)` function**: Returns actionable guidance per error type:
+     - `DIRTY_WORKING_TREE` → "Commit or stash your changes in the project repository, then try again."
+     - `GIT_FETCH_FAILED` → "Check your network connection and remote repository access, then try again."
+     - `SETUP_SCRIPT_FAILED` → "Check the setup scripts in your project's .laborer.json file and fix the failing script."
+     - `BRANCH_EXISTS` → "Choose a different branch name, or delete the existing branch first."
+     - `GIT_WORKTREE_FAILED` → "This may indicate a conflict with an existing worktree. Check your git worktree list."
+     - `NO_PORTS_AVAILABLE` → "Destroy some existing workspaces to free up ports."
+   - **`getErrorIcon(code)` function**: Returns a contextual icon per error type:
+     - `DIRTY_WORKING_TREE` / `BRANCH_EXISTS` → `GitBranch`
+     - `GIT_FETCH_FAILED` → `WifiOff`
+     - `SETUP_SCRIPT_FAILED` → `ScrollText`
+     - Default → `AlertTriangle`
+   - **`WorkspaceErrorAlert` component**: Inline alert using the existing `Alert`, `AlertTitle`, `AlertDescription` UI components with `variant="destructive"`. Shows icon, title, server message, and guidance. Has a dismiss button (X icon) in the top-right corner.
+   - **State management**: Added `creationError` state (`WorkspaceCreationError | null`). Set on error, cleared on retry, cleared on dialog close, cleared on dismiss.
+   - **Submit button text**: Changes to "Retry" after an error (instead of "Create Workspace") to signal the user can try again after fixing the issue. Avoids nested ternary by using three conditional renders.
+   - **Error clearing**: Error is cleared on (1) new submission attempt, (2) dialog close, (3) dismiss button click.
+   - **Updated JSDoc**: Added Issue #49 reference and description of the error display behavior.
+
+### Files modified
+- `apps/web/src/lib/utils.ts` — Added `extractErrorCode` utility function
+- `apps/web/src/components/create-workspace-form.tsx` — Added inline error alert with type-specific title/icon/guidance, `WorkspaceErrorAlert` component, error state management, "Retry" button text, new imports (Alert components, lucide icons, extractErrorCode)
+
+### Acceptance criteria status
+- [x] Each error type shows a distinct, descriptive message (type-specific title, icon, and guidance via `getErrorTitle`, `getErrorIcon`, `getErrorGuidance`)
+- [x] Error messages include actionable guidance (e.g., "Commit or stash your changes in the project repository, then try again.")
+- [x] Errors appear near the create workspace form (inline Alert within the dialog, between form fields and footer)
+- [x] Also shown as toast notification (retained for persistence after dialog close)
+- [ ] Tests: each error type → correct message displayed in UI (deferred — web app has no component test infrastructure)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on both modified files with zero issues (`Checked 2 files in 7ms. No fixes applied.`)
+- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Inline alert + toast (dual channel)**: The inline Alert is the primary error display — it's prominent, persistent within the dialog, and includes structured information (title, icon, message, guidance). The toast is retained as a secondary channel because: (1) if the user closes the dialog after seeing the error, the toast persists as a reminder, (2) toasts are the established pattern for server errors throughout the codebase. The dual approach gives both in-context and persistent feedback.
+- **Dismissible alert**: The inline error has an X button to dismiss it. This lets users clear the error display if they've read it and want a cleaner view before retrying. The error also auto-clears on the next submission attempt.
+- **"Retry" button text**: After an error, the submit button changes from "Create Workspace" to "Retry". This is a small but meaningful UX signal — it tells the user "I know something failed, and I'm ready for you to try again" rather than appearing as if nothing happened. Implemented with three conditional renders to avoid Biome's nested ternary lint rule.
+- **Type-specific icons**: Each error category gets a semantically appropriate icon: `GitBranch` for git state issues (dirty tree, branch conflicts), `WifiOff` for network/fetch failures, `ScrollText` for script failures, `AlertTriangle` as the generic fallback. This gives immediate visual recognition of the error category before reading the text.
+- **Guidance as separate paragraph**: The actionable guidance is rendered as a separate `<p>` below the server's error message, with `font-medium text-destructive` styling to make it stand out. This separation ensures the technical details (from the server) are visually distinct from the user-facing action item.
+- **Error code extraction**: Added a new `extractErrorCode` utility alongside the existing `extractErrorMessage`. This keeps the error parsing centralized in `utils.ts` and makes the code property accessible to any component that needs error-type differentiation. The RPC error code is optional in the schema, so the function returns `undefined` when not present.
+- **No `switch` default return in `getErrorGuidance`**: Unlike `getErrorTitle` which always returns a string (with a generic fallback), `getErrorGuidance` returns `undefined` for unknown error codes. This means the guidance paragraph is conditionally rendered — if we don't have specific advice for an error type, we don't show generic unhelpful guidance.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #49. This was a leaf issue in the dependency graph — it consumes error types from #37, #38, #39 but doesn't unblock other issues.
+

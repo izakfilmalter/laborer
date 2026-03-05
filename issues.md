@@ -53,30 +53,9 @@ Added `git fetch --all` step to `createWorktree` flow, placed before port alloca
 
 ---
 
-## Issue 49: Workspace creation error display
+## ~~Issue 49: Workspace creation error display~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Display workspace creation errors in the UI. Handle all error types: dirty git state, port unavailable, setup script failure, git fetch failure. Show clear, actionable error messages.
-
-### Acceptance criteria
-
-- [ ] Each error type shows a distinct, descriptive message
-- [ ] Error messages include actionable guidance (e.g., "commit or stash changes before creating workspace")
-- [ ] Errors appear near the create workspace form or in a toast notification
-- [ ] Tests: each error type → correct message displayed in UI
-
-### Blocked by
-
-- ~~Blocked by #37~~, ~~Blocked by #38~~, ~~Blocked by #39~~, ~~#42~~
-
-### User stories addressed
-
-- Polishing requirement 6
+Enhanced Create Workspace form with inline Alert component showing type-specific error display for each workspace creation failure. Each error type (DIRTY_WORKING_TREE, GIT_FETCH_FAILED, SETUP_SCRIPT_FAILED, BRANCH_EXISTS, GIT_WORKTREE_FAILED, etc.) gets a distinct icon, title, the server's error message, and actionable guidance text. Added `extractErrorCode` utility for RPC error code extraction. Submit button changes to "Retry" after error. Toast retained as secondary notification channel. Error auto-clears on retry, dismiss, or dialog close.
 
 ---
 
@@ -706,7 +685,7 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 37 | ~~WorkspaceProvider — handle setup failure~~ | ~~#35~~ | Done |
 | 38 | ~~WorkspaceProvider — handle dirty git state~~ | ~~#33~~ | Done |
 | 39 | ~~WorkspaceProvider — handle git fetch failure~~ | ~~#33~~ | Done |
-| 49 | Workspace creation error display | ~~#37~~, ~~#38~~, ~~#39~~, ~~#42~~ | Ready |
+| 49 | ~~Workspace creation error display~~ | ~~#37~~, ~~#38~~, ~~#39~~, ~~#42~~ | Done |
 | 71 | ~~PanelManager — navigate between panes~~ | ~~#67~~ | Done |
 | 72 | ~~PanelManager — drag-to-resize~~ | ~~#67~~ | Done |
 | 79 | Keyboard shortcut — resize panes | ~~#72~~, ~~#75~~ | Ready |

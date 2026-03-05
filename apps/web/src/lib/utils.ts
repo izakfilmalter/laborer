@@ -23,3 +23,21 @@ export function extractErrorMessage(error: unknown): string {
 	}
 	return "An unexpected error occurred";
 }
+
+/**
+ * Extract the error code from an RPC error.
+ * Returns undefined if the error doesn't have a code property.
+ *
+ * @see Issue #49: Workspace creation error display
+ */
+export function extractErrorCode(error: unknown): string | undefined {
+	if (
+		typeof error === "object" &&
+		error !== null &&
+		"code" in error &&
+		typeof (error as Record<string, unknown>).code === "string"
+	) {
+		return String((error as Record<string, unknown>).code);
+	}
+	return undefined;
+}

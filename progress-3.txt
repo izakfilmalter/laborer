@@ -643,3 +643,62 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #139: Terminal WebSocket endpoint + server ring buffer integration (was blocked by #135 and #138 — #135 now done!)
+
+## Issue #138: Ring buffer data structure + unit tests — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `packages/server/src/lib/ring-buffer.ts` — a standalone ring buffer (circular buffer) data structure for terminal scrollback, as specified in PRD-terminal-perf.md "Server-Side Ring Buffer for Scrollback" section.
+- The ring buffer uses a `Uint8Array` with a configurable capacity (default 1MB) and a write cursor that wraps around when full.
+- Created `packages/server/test/ring-buffer.test.ts` — 32 comprehensive unit tests covering all acceptance criteria from PRD-terminal-perf.md "Ring Buffer Unit Tests" section.
+
+### Implementation details
+- **`RingBuffer` class** with the following API:
+  - `constructor(capacity?: number)` — default 1MB, validates positive capacity
+  - `write(data: Uint8Array)` — appends bytes, wrapping when full. Handles: data smaller than capacity (no wrap), data exactly at capacity boundary (wrap), data larger than capacity (keeps only last `capacity` bytes), zero-length data (no-op)
+  - `read(): Uint8Array` — returns a copy of current contents from oldest to newest, correctly handling wrap-around. Two cases: no wrap (slice `[0..cursor]`), wrapped (concat `[cursor..capacity] + [0..cursor]`)
+  - `readString(): string` — convenience method using `TextDecoder` for UTF-8 terminal output
+  - `clear()` — resets cursor and wrapped flag without zeroing the backing array
+  - `size: number` — current byte count (capacity when wrapped, cursor when not)
+  - `maxCapacity: number` — the fixed capacity in bytes
+
+### Test coverage (32 tests)
+- **Constructor**: specified capacity, default 1MB, zero/negative capacity throws
+- **Write < capacity**: single write, multiple writes, correct size
+- **Write > capacity (wrap-around)**: single large write, sequential writes causing wrap, double capacity, much larger than capacity
+- **Write = capacity**: exact fit at once, exact fit with multiple writes
+- **Write zero bytes**: no-op on empty buffer, no-op on existing data
+- **Read empty buffer**: returns empty Uint8Array
+- **Read returns a copy**: mutation of returned array doesn't affect buffer
+- **Sequential operations**: complex multi-step write/read sequences, alternating small writes
+- **Clear**: resets size, read returns empty, allows re-use, works after wrap-around
+- **readString**: empty, ASCII, Unicode (emoji + diacritics), after wrap-around
+- **Binary data**: null bytes, ANSI escape sequences
+- **Capacity of 1**: edge case with single-byte buffer
+- **Stress test**: 1000 single-character writes into 100-byte buffer, verify correctness
+
+### Verification
+- `tsc --noEmit` passes (no new type errors — only pre-existing Effect plugin informational messages)
+- `ultracite check` passes on all 19 files with zero issues
+- All 46 tests pass across 3 test files: 32 ring buffer + 8 PTY host + 6 terminal manager (no regressions)
+
+### Files created
+- `packages/server/src/lib/ring-buffer.ts` — Ring buffer implementation
+- `packages/server/test/ring-buffer.test.ts` — 32 unit tests
+
+### Acceptance criteria status
+- [x] Ring buffer module exported from server package (`packages/server/src/lib/ring-buffer.ts`)
+- [x] `write(data: Uint8Array)` appends data, wrapping when capacity is reached
+- [x] `read(): Uint8Array` returns current contents from oldest to newest
+- [x] `clear()` resets the buffer
+- [x] `size` property returns current byte count (capped at capacity)
+- [x] Tests: write less than capacity → read returns written data
+- [x] Tests: write more than capacity → read returns only the last `capacity` bytes (correct wrap-around)
+- [x] Tests: write exactly capacity → read returns all data
+- [x] Tests: write zero bytes → no-op
+- [x] Tests: empty buffer → read returns empty Uint8Array
+- [x] Tests: sequential writes and reads produce correct results
+
+### Issues unblocked
+- Issue #139: Terminal WebSocket endpoint + server ring buffer integration (was blocked by #135 (done) and #138 — now both done!)

@@ -3791,17 +3791,17 @@ The ring buffer uses a `Uint8Array` with a configurable capacity (default 1MB) a
 
 ### Acceptance criteria
 
-- [ ] Ring buffer module exported from server package (e.g., `packages/server/src/lib/ring-buffer.ts`)
-- [ ] `write(data: Uint8Array)` appends data, wrapping when capacity is reached
-- [ ] `read(): Uint8Array` returns current contents from oldest to newest
-- [ ] `clear()` resets the buffer
-- [ ] `size` property returns current byte count (capped at capacity)
-- [ ] Tests: write less than capacity → read returns written data
-- [ ] Tests: write more than capacity → read returns only the last `capacity` bytes (correct wrap-around)
-- [ ] Tests: write exactly capacity → read returns all data
-- [ ] Tests: write zero bytes → no-op
-- [ ] Tests: empty buffer → read returns empty Uint8Array
-- [ ] Tests: sequential writes and reads produce correct results
+- [x] Ring buffer module exported from server package (`packages/server/src/lib/ring-buffer.ts`)
+- [x] `write(data: Uint8Array)` appends data, wrapping when capacity is reached
+- [x] `read(): Uint8Array` returns current contents from oldest to newest
+- [x] `clear()` resets the buffer
+- [x] `size` property returns current byte count (capped at capacity)
+- [x] Tests: write less than capacity → read returns written data (32 tests total)
+- [x] Tests: write more than capacity → read returns only the last `capacity` bytes (correct wrap-around)
+- [x] Tests: write exactly capacity → read returns all data
+- [x] Tests: write zero bytes → no-op
+- [x] Tests: empty buffer → read returns empty Uint8Array
+- [x] Tests: sequential writes and reads produce correct results
 
 ### Blocked by
 
@@ -3844,7 +3844,7 @@ Update the Vite dev proxy in `apps/web/vite.config.ts` to route `/terminal` WebS
 
 ### Blocked by
 
-- Blocked by #135, #138
+- Blocked by ~~#135~~ (done), ~~#138~~ (done)
 
 ### User stories addressed
 
@@ -4166,8 +4166,8 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 135 | Remove base64 encoding from PTY IPC | None | Done |
 | 136 | IPC buffer optimization (O(n²) → array) | None | Ready |
 | 137 | PTY data coalescing (5ms timer) | None | Ready |
-| 138 | Ring buffer data structure + unit tests | None | Ready |
-| 139 | Terminal WebSocket endpoint + ring buffer | ~~#135~~, #138 | Blocked |
+| 138 | Ring buffer data structure + unit tests | None | Done |
+| 139 | Terminal WebSocket endpoint + ring buffer | ~~#135~~, ~~#138~~ | Ready |
 | 140 | Web client terminal pane: WebSocket data path | #139 | Blocked |
 | 141 | Character-count flow control (server side) | #137, #139 | Blocked |
 | 142 | Client-side flow control acks | #140, #141 | Blocked |

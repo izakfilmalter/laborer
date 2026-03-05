@@ -29,6 +29,8 @@ import {
 } from "./project-settings-modal.helpers";
 
 const updateConfigMutation = LaborerClient.mutation("config.update");
+const provenanceClassName =
+	"text-[11px] leading-tight text-muted-foreground/70";
 
 interface ProjectSettingsModalProps {
 	readonly projectId: string;
@@ -170,8 +172,8 @@ function ProjectSettingsForm({
 							placeholder={`~/.config/laborer/${projectName}`}
 							value={worktreeDir}
 						/>
-						<FieldDescription className="text-xs">
-							Resolved from: {resolvedConfig.worktreeDir.source}
+						<FieldDescription className={provenanceClassName}>
+							Source: {resolvedConfig.worktreeDir.source}
 						</FieldDescription>
 					</Field>
 
@@ -222,9 +224,9 @@ function ProjectSettingsForm({
 								</div>
 							))}
 						</div>
-						<div className="flex items-center justify-between">
-							<FieldDescription className="text-xs">
-								Resolved from: {resolvedConfig.setupScripts.source}
+						<div className="flex items-center justify-between gap-2">
+							<FieldDescription className={provenanceClassName}>
+								Source: {resolvedConfig.setupScripts.source}
 							</FieldDescription>
 							<Button
 								aria-label="Add setup script"
@@ -254,8 +256,8 @@ function ProjectSettingsForm({
 							placeholder=".rlph/config.json"
 							value={rlphConfig}
 						/>
-						<FieldDescription className="text-xs">
-							Resolved from: {resolvedConfig.rlphConfig.source}
+						<FieldDescription className={provenanceClassName}>
+							Source: {resolvedConfig.rlphConfig.source}
 						</FieldDescription>
 					</Field>
 				</FieldSet>
@@ -282,6 +284,7 @@ function ProjectSettingsModal({
 				render={
 					<Button
 						aria-label={`Open settings for ${projectName}`}
+						className="h-7 w-7"
 						size="icon-sm"
 						variant="ghost"
 					/>

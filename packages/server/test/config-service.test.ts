@@ -371,6 +371,27 @@ describe("mergeConfigs", () => {
 
 describe("ConfigService", () => {
 	describe("resolveConfig", () => {
+		it("should re-read config file on each resolve call", async () => {
+			const projectDir = join(testRoot, "no-cache-between-calls");
+			mkdirSync(projectDir, { recursive: true });
+
+			const configPath = writeConfig(projectDir, {
+				worktreeDir: "/tmp/first-worktrees",
+			});
+
+			const first = await runResolveConfig(projectDir, "cache-test-project");
+			expect(first.worktreeDir.value).toBe("/tmp/first-worktrees");
+			expect(first.worktreeDir.source).toBe(configPath);
+
+			writeConfig(projectDir, {
+				worktreeDir: "/tmp/second-worktrees",
+			});
+
+			const second = await runResolveConfig(projectDir, "cache-test-project");
+			expect(second.worktreeDir.value).toBe("/tmp/second-worktrees");
+			expect(second.worktreeDir.source).toBe(configPath);
+		});
+
 		it("should return defaults when no config files exist", async () => {
 			const projectDir = join(testRoot, "no-config-project");
 			mkdirSync(projectDir, { recursive: true });

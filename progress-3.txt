@@ -4159,3 +4159,46 @@ Added frontend component tests for the Project Settings modal to cover open/disp
 - `bun run --cwd apps/web test` ✅ (44 tests passing)
 - `bun run --cwd apps/web check-types` ⚠️ still fails due to pre-existing type errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new type errors introduced by this change.
 - `bun x ultracite check apps/web/vitest.config.ts apps/web/test/project-settings-modal.test.tsx` ✅
+
+## Issue #158: Config + settings polish & edge cases — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Why this next
+Picked Issue #158 as the highest-priority task because it was already in progress and had the most immediate UX quality gaps still open in the project settings flow.
+
+### Summary
+Completed the remaining config/settings polish items by making provenance metadata visually subtler, balancing the project card settings/delete icon chrome, and adding regression coverage that verifies config resolution is re-read on every call (no stale cache behavior).
+
+### What was done
+
+1. **Subtle provenance UI in project settings**
+   - Updated `apps/web/src/components/project-settings-modal.tsx` to render provenance copy as low-emphasis metadata (`text-[11px]`, reduced contrast, tighter leading).
+   - Changed wording from `Resolved from:` to `Source:` to keep the line shorter and less visually dominant.
+
+2. **Balanced settings/delete action chrome on project cards**
+   - Updated `apps/web/src/components/project-list.tsx` action area to use a shared bordered/muted icon group container.
+   - Aligned icon button hit areas by setting both settings and delete triggers to the same dimensions (`h-7 w-7`) for consistent spacing and visual weight.
+
+3. **Added no-cache regression test for config resolution**
+   - Added `should re-read config file on each resolve call` test in `packages/server/test/config-service.test.ts`.
+   - The test mutates `laborer.json` between two `resolveConfig` calls and verifies the second call sees the new value, confirming fresh reads per call.
+
+4. **Updated issue tracking**
+   - Marked Issue #158 as Done in `issues.md`.
+   - Checked off remaining criteria: global config dir auto-creation, tilde expansion, no-cache behavior, icon balance, and subtle provenance text.
+   - Updated the summary table row for #158 to Done.
+
+### Files modified
+- `apps/web/src/components/project-settings-modal.tsx`
+- `apps/web/src/components/project-list.tsx`
+- `packages/server/test/config-service.test.ts`
+- `issues.md`
+
+### Verification
+- `bun x vitest run test/config-service.test.ts` (in `packages/server`) ✅ (33 passed)
+- `bun x vitest run test/project-settings-modal.test.tsx test/project-settings-modal.helpers.test.ts` (in `apps/web`) ✅ (9 passed)
+- `bun run check-types` (in `packages/server`) ✅ (pre-existing Effect diagnostics only)
+- `bun run check-types` (in `apps/web`) ⚠️ fails on pre-existing errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new type errors introduced
+- `bun x ultracite check apps/web/src/components/project-settings-modal.tsx apps/web/src/components/project-list.tsx packages/server/test/config-service.test.ts` ✅

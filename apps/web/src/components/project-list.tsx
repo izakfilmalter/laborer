@@ -104,7 +104,7 @@ function ProjectItem({ project, workspaceCount }: ProjectItemProps) {
 							{project.repoPath}
 						</CardDescription>
 					</div>
-					<div className="flex items-center gap-1">
+					<div className="flex items-center gap-0.5 rounded-md border bg-muted/20 p-0.5">
 						<ProjectSettingsModal
 							projectId={project.id}
 							projectName={project.name}
@@ -114,6 +114,7 @@ function ProjectItem({ project, workspaceCount }: ProjectItemProps) {
 								render={
 									<Button
 										aria-label={`Remove project ${project.name}`}
+										className="h-7 w-7"
 										size="icon-sm"
 										variant="ghost"
 									/>

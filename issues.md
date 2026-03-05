@@ -807,7 +807,7 @@ Save button calls `config.update` mutation with only changed fields. Toast notif
 
 ## Issue 158: Config + settings polish & edge cases
 
-### Status: In Progress
+### Status: Done
 
 ### Parent PRD
 
@@ -831,13 +831,13 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 
 ### Acceptance criteria
 
-- [ ] Auto-creation of `~/.config/laborer/` works on clean machine (no prior config)
-- [ ] `~` expansion produces correct absolute path on macOS and Linux
-- [ ] Config is not cached between worktree creations (fresh read each time)
+- [x] Auto-creation of `~/.config/laborer/` works on clean machine (no prior config)
+- [x] `~` expansion produces correct absolute path on macOS and Linux
+- [x] Config is not cached between worktree creations (fresh read each time)
 - [x] Modal form fields have proper labels and ARIA attributes
 - [x] Keyboard navigation works: Tab between fields, Enter to save, Escape to cancel
-- [ ] Gear icon spacing and alignment is visually balanced with delete icon
-- [ ] Provenance text is visually subtle (secondary color, smaller text)
+- [x] Gear icon spacing and alignment is visually balanced with delete icon
+- [x] Provenance text is visually subtle (secondary color, smaller text)
 - [x] Setup scripts: empty list saves correctly, special characters preserved, long commands don't break layout
 - [x] Malformed config file shows user-friendly error message in toast
 - [x] RPC handler tests cover error paths (non-existent project, malformed input)
@@ -913,7 +913,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 155 | ~~Config Service — write project config~~ | ~~#154~~ | Done |
 | 156 | ~~WorkspaceProvider — use ConfigService for worktree path + setup scripts~~ | ~~#154~~ | Done |
 | 157 | ~~Config RPC endpoints + project settings modal~~ | ~~#155~~, ~~#156~~ | Done |
-| 158 | Config + settings polish & edge cases | ~~#157~~ | In Progress |
+| 158 | ~~Config + settings polish & edge cases~~ | ~~#157~~ | Done |
 | 159 | ~~WorktreeDetector + schema origin + initial detection on project add~~ | ~~None~~ | Done |
 | 160 | ~~UI for detected workspaces~~ | ~~#159~~ | Done |
 | 161 | ~~Live filesystem watcher + server boot reconciliation~~ | ~~#159~~ | Done |

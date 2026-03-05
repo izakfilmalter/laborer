@@ -544,6 +544,8 @@ Added grace-period lifecycle management to `TerminalManager`: orphan timers now 
 
 ## Issue 147: Terminal extraction polish + integration verification
 
+### Status: In Progress
+
 ### Parent PRD
 
 PRD-terminal-extraction.md
@@ -558,7 +560,7 @@ End-to-end verification and polish pass for the full terminal service extraction
 - [ ] `turbo dev` starts both services; server restart does not restart terminal service
 - [ ] Terminal service `--watch` only triggers on terminal package file changes
 - [ ] Graceful shutdown kills all PTYs without orphans
-- [ ] Web app shows "Terminal service unavailable" when terminal service is down
+- [x] Web app shows "Terminal service unavailable" when terminal service is down
 - [ ] Multiple browser tabs show consistent terminal state
 - [ ] `.env.local` loads correctly for both server and terminal service
 - [ ] Ring buffer replay on reconnection works correctly (no missing output)
@@ -571,6 +573,10 @@ End-to-end verification and polish pass for the full terminal service extraction
 ### User stories addressed
 
 - Polishing requirements 1-12
+
+### Progress update (2026-03-05)
+
+Added explicit terminal-service availability handling in the web app terminal list. When polling `/terminal-rpc` fails, the UI now shows a destructive "Terminal service unavailable" alert with recovery guidance (`turbo dev`), and terminal spawn actions are disabled until the service is reachable again.
 
 ---
 
@@ -902,7 +908,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 144 | ~~Web app LiveStore terminal query replacement~~ | ~~#141~~, ~~#143~~ | Done |
 | 145 | ~~LiveStore terminal schema deprecation~~ | ~~#144~~ | Done |
 | 146 | ~~Grace period reconnection + orphan detection~~ | ~~#140~~ | Done |
-| 147 | Terminal extraction polish + integration verification | ~~#144~~, ~~#145~~, ~~#146~~ | Ready |
+| 147 | Terminal extraction polish + integration verification | ~~#144~~, ~~#145~~, ~~#146~~ | In Progress |
 | 148 | ~~Focused pane border fix~~ | ~~None~~ | Done |
 | 149 | ~~Focus auto-transfer on pane close~~ | ~~None~~ | Done |
 | 150 | ~~Guaranteed active pane invariant~~ | ~~#149~~ | Done |

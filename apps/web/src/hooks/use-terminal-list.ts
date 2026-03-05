@@ -27,8 +27,40 @@ interface TerminalInfo {
 	readonly workspaceId: string;
 }
 
+type TerminalServiceStatus = "checking" | "available" | "unavailable";
+
 /** Default polling interval in milliseconds. */
 const DEFAULT_POLL_INTERVAL_MS = 2000;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null;
+
+const tryExtractTerminalList = (
+	envelope: unknown
+): readonly TerminalInfo[] | undefined => {
+	if (Array.isArray(envelope)) {
+		return envelope as readonly TerminalInfo[];
+	}
+
+	if (!isRecord(envelope)) {
+		return undefined;
+	}
+
+	if (envelope._tag === "Success" && Array.isArray(envelope.value)) {
+		return envelope.value as readonly TerminalInfo[];
+	}
+
+	if (envelope._tag !== "Exit" || !isRecord(envelope.value)) {
+		return undefined;
+	}
+
+	const nested = envelope.value;
+	if (nested._tag === "Success" && Array.isArray(nested.value)) {
+		return nested.value as readonly TerminalInfo[];
+	}
+
+	return undefined;
+};
 
 /**
  * Fetch the terminal list from the terminal service via Effect RPC JSON protocol.
@@ -62,32 +94,13 @@ async function fetchTerminalList(): Promise<readonly TerminalInfo[]> {
 			continue;
 		}
 		const parsed = JSON.parse(line);
-		// Effect RPC response format: [requestId, responseEnvelope]
-		if (Array.isArray(parsed) && parsed.length === 2) {
-			const envelope = parsed[1];
-			// Success response: { _tag: "Success", value: [...] }
-			if (envelope && typeof envelope === "object" && "_tag" in envelope) {
-				if (envelope._tag === "Success" && Array.isArray(envelope.value)) {
-					return envelope.value as readonly TerminalInfo[];
-				}
-				// Exit response wrapping Success
-				if (envelope._tag === "Exit") {
-					const exit = envelope;
-					if (
-						exit.value &&
-						typeof exit.value === "object" &&
-						"_tag" in exit.value &&
-						exit.value._tag === "Success" &&
-						Array.isArray(exit.value.value)
-					) {
-						return exit.value.value as readonly TerminalInfo[];
-					}
-				}
-			}
-			// Direct array response (no envelope)
-			if (Array.isArray(envelope)) {
-				return envelope as readonly TerminalInfo[];
-			}
+		if (!Array.isArray(parsed) || parsed.length !== 2) {
+			continue;
+		}
+
+		const terminals = tryExtractTerminalList(parsed[1]);
+		if (terminals) {
+			return terminals;
 		}
 	}
 
@@ -104,11 +117,17 @@ async function fetchTerminalList(): Promise<readonly TerminalInfo[]> {
  * @returns Object with `terminals` array and `isLoading` flag.
  */
 function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
+	readonly errorMessage: string | null;
+	readonly isServiceAvailable: boolean;
 	readonly terminals: readonly TerminalInfo[];
 	readonly isLoading: boolean;
+	readonly serviceStatus: TerminalServiceStatus;
 } {
 	const [terminals, setTerminals] = useState<readonly TerminalInfo[]>([]);
 	const [isLoading, setIsLoading] = useState(true);
+	const [serviceStatus, setServiceStatus] =
+		useState<TerminalServiceStatus>("checking");
+	const [errorMessage, setErrorMessage] = useState<string | null>(null);
 	const mountedRef = useRef(true);
 
 	const fetchAndUpdate = useCallback(async () => {
@@ -117,12 +136,20 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
 			if (mountedRef.current) {
 				setTerminals(result);
 				setIsLoading(false);
+				setServiceStatus("available");
+				setErrorMessage(null);
 			}
-		} catch {
-			// Silently ignore errors — terminal service may be restarting.
-			// Keep the last known terminal list.
+		} catch (error) {
+			// Keep the last known terminal list, but surface service availability
+			// so the UI can show a clear "Terminal service unavailable" warning.
 			if (mountedRef.current) {
 				setIsLoading(false);
+				setServiceStatus("unavailable");
+				const message =
+					error instanceof Error
+						? error.message
+						: "Unknown terminal service error";
+				setErrorMessage(message);
 			}
 		}
 	}, []);
@@ -144,8 +171,14 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
 		};
 	}, [fetchAndUpdate, pollIntervalMs]);
 
-	return { terminals, isLoading };
+	return {
+		errorMessage,
+		isServiceAvailable: serviceStatus === "available",
+		terminals,
+		isLoading,
+		serviceStatus,
+	};
 }
 
 export { useTerminalList };
-export type { TerminalInfo };
+export type { TerminalInfo, TerminalServiceStatus };

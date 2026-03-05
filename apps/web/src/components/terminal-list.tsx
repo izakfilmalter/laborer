@@ -19,6 +19,7 @@
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
 import {
+	AlertTriangle,
 	Plus,
 	RotateCw,
 	Square,
@@ -29,6 +30,7 @@ import type React from "react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useTerminalList } from "@/hooks/use-terminal-list";
@@ -52,7 +54,11 @@ interface TerminalListProps {
  * button and click-to-select behavior for switching the active panel pane.
  */
 function TerminalList({ workspaceId }: TerminalListProps) {
-	const { terminals: terminalList } = useTerminalList();
+	const {
+		errorMessage,
+		isServiceAvailable,
+		terminals: terminalList,
+	} = useTerminalList();
 	const panelActions = usePanelActions();
 	const spawnTerminal = useAtomSet(spawnTerminalMutation, {
 		mode: "promise",
@@ -74,6 +80,10 @@ function TerminalList({ workspaceId }: TerminalListProps) {
 	);
 
 	const handleSpawnTerminal = useCallback(async () => {
+		if (!isServiceAvailable) {
+			toast.error("Terminal service unavailable");
+			return;
+		}
 		setIsSpawning(true);
 		try {
 			const result = await spawnTerminal({
@@ -89,7 +99,7 @@ function TerminalList({ workspaceId }: TerminalListProps) {
 		} finally {
 			setIsSpawning(false);
 		}
-	}, [spawnTerminal, workspaceId, panelActions]);
+	}, [isServiceAvailable, spawnTerminal, workspaceId, panelActions]);
 
 	const handleKillTerminal = useCallback(
 		async (terminalId: string) => {
@@ -144,33 +154,49 @@ function TerminalList({ workspaceId }: TerminalListProps) {
 		[panelActions, workspaceId]
 	);
 
+	const unavailableMessage = errorMessage
+		? `${errorMessage}. Start terminal service with turbo dev.`
+		: "Start terminal service with turbo dev.";
+
+	const unavailableAlert = isServiceAvailable ? null : (
+		<Alert className="rounded-md" variant="destructive">
+			<AlertTriangle className="size-3.5" />
+			<AlertTitle>Terminal service unavailable</AlertTitle>
+			<AlertDescription>{unavailableMessage}</AlertDescription>
+		</Alert>
+	);
+
 	if (workspaceTerminals.length === 0) {
 		return (
-			<div className="flex items-center justify-between gap-2 py-1">
-				<span className="text-muted-foreground text-xs">No terminals</span>
-				<Button
-					aria-label="New terminal"
-					disabled={isSpawning}
-					onClick={handleSpawnTerminal}
-					size="xs"
-					variant="outline"
-				>
-					<Plus className="size-3" />
-					{isSpawning ? "Spawning..." : "New"}
-				</Button>
+			<div className="grid gap-2 py-1">
+				{unavailableAlert}
+				<div className="flex items-center justify-between gap-2">
+					<span className="text-muted-foreground text-xs">No terminals</span>
+					<Button
+						aria-label="New terminal"
+						disabled={isSpawning || !isServiceAvailable}
+						onClick={handleSpawnTerminal}
+						size="xs"
+						variant="outline"
+					>
+						<Plus className="size-3" />
+						{isSpawning ? "Spawning..." : "New"}
+					</Button>
+				</div>
 			</div>
 		);
 	}
 
 	return (
 		<div className="grid gap-1">
+			{unavailableAlert}
 			<div className="flex items-center justify-between gap-2">
 				<span className="font-medium text-muted-foreground text-xs">
 					Terminals ({workspaceTerminals.length})
 				</span>
 				<Button
 					aria-label="New terminal"
-					disabled={isSpawning}
+					disabled={isSpawning || !isServiceAvailable}
 					onClick={handleSpawnTerminal}
 					size="xs"
 					variant="outline"

@@ -4202,3 +4202,43 @@ Completed the remaining config/settings polish items by making provenance metada
 - `bun run check-types` (in `packages/server`) ✅ (pre-existing Effect diagnostics only)
 - `bun run check-types` (in `apps/web`) ⚠️ fails on pre-existing errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new type errors introduced
 - `bun x ultracite check apps/web/src/components/project-settings-modal.tsx apps/web/src/components/project-list.tsx packages/server/test/config-service.test.ts` ✅
+
+## Issue #147 (partial): Terminal service unavailable UI feedback — COMPLETED
+
+**Status:** In Progress (Issue #147)
+**Date:** 2026-03-05
+
+### Why this next
+Picked Issue #147 as the highest-priority ready item because it is the main post-extraction reliability polish pass, and clear degraded-state feedback for terminal service outages is a critical UX/safety gap.
+
+### Summary
+Implemented a clear "Terminal service unavailable" feedback loop in the sidebar terminal list. The app now detects `/terminal-rpc` polling failures, surfaces a destructive alert with recovery guidance, and disables terminal spawning while the service is unreachable.
+
+### What was done
+
+1. **Extended terminal service availability state in `useTerminalList`**
+   - Added `serviceStatus` (`"checking" | "available" | "unavailable"`), `isServiceAvailable`, and `errorMessage` return values.
+   - On successful `terminal.list` polling, status is set to `available` and any prior error is cleared.
+   - On polling failure, status is set to `unavailable`, the previous terminal list is preserved, and a user-facing error message is captured.
+   - Refactored response parsing into `tryExtractTerminalList` to stay within lint complexity limits.
+
+2. **Added explicit unavailable UI in `TerminalList`**
+   - Rendered a destructive `Alert` (`AlertTriangle` icon + title/description) when terminal service is unavailable.
+   - Added recovery guidance text: start terminal service via `turbo dev`.
+   - Disabled "New" terminal buttons while service is unavailable.
+   - Guarded spawn action with an immediate toast (`"Terminal service unavailable"`) when attempted during outage.
+
+3. **Updated issue tracking**
+   - Marked Issue #147 as **In Progress** in `issues.md`.
+   - Checked off acceptance criterion: `Web app shows "Terminal service unavailable" when terminal service is down`.
+   - Added a dated progress note under Issue #147.
+
+### Files modified
+- `apps/web/src/hooks/use-terminal-list.ts`
+- `apps/web/src/components/terminal-list.tsx`
+- `issues.md`
+
+### Verification
+- `bun x ultracite check apps/web/src/hooks/use-terminal-list.ts apps/web/src/components/terminal-list.tsx` ✅
+- `bun run --cwd apps/web test` ✅ (4 files, 44 tests passed)
+- `bun run --cwd apps/web check-types` ⚠️ fails on pre-existing type errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new type errors from this change

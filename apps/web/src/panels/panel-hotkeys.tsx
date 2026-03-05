@@ -10,6 +10,7 @@
  * - Ctrl+b then x → close active pane
  * - Ctrl+b then o → cycle focus to next pane
  * - Ctrl+b then p → cycle focus to previous pane
+ * - Ctrl+b then d → toggle diff viewer alongside active terminal pane
  *
  * All shortcuts operate on the currently active (focused) pane.
  * The active pane is tracked via PanelActionsContext.
@@ -18,6 +19,7 @@
  * @see Issue #76: Keyboard shortcut — split vertical (also done here)
  * @see Issue #77: Keyboard shortcut — close pane (also done here)
  * @see Issue #78: Keyboard shortcut — navigate panes (also done here)
+ * @see Issue #90: Toggle diff alongside terminal
  */
 
 import { useHotkeySequence } from "@tanstack/react-hotkeys";
@@ -114,6 +116,18 @@ function PanelHotkeys({ leafPaneIds }: PanelHotkeysProps) {
 			const prevPaneId = leafPaneIds[prevIndex];
 			if (prevPaneId) {
 				actions.setActivePaneId(prevPaneId);
+			}
+		},
+		{ timeout: SEQUENCE_TIMEOUT }
+	);
+
+	// Ctrl+b then d → toggle diff viewer alongside active terminal pane
+	useHotkeySequence(
+		["Control+B", "D"],
+		(event) => {
+			event.preventDefault();
+			if (actions && activePaneId) {
+				actions.toggleDiffPane(activePaneId);
 			}
 		},
 		{ timeout: SEQUENCE_TIMEOUT }

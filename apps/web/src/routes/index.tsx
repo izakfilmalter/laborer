@@ -26,6 +26,8 @@ import { WorkspaceList } from "@/components/workspace-list";
 import { useLaborerStore } from "@/livestore/store";
 import {
 	closePane,
+	findNodeById,
+	findSiblingDiffPane,
 	generateId,
 	getLeafIds,
 	replaceNode,
@@ -376,18 +378,80 @@ function usePanelLayout() {
 		[persistedLayoutTree, initialLayout, persistedActivePaneId, store]
 	);
 
+	/**
+	 * Toggle a diff viewer alongside a terminal pane.
+	 *
+	 * When toggling ON: splits the terminal pane horizontally, placing a diff
+	 * pane showing the same workspace's changes to the right of the terminal.
+	 * When toggling OFF: finds the sibling diff pane and closes it, so the
+	 * terminal expands to fill the space.
+	 *
+	 * @see Issue #90: Toggle diff alongside terminal
+	 */
+	const handleToggleDiffPane = useCallback(
+		(paneId: string): boolean => {
+			const base = persistedLayoutTree ?? initialLayout;
+			if (!base) {
+				return false;
+			}
+
+			// Check if there's already a sibling diff pane (toggle OFF)
+			const siblingDiff = findSiblingDiffPane(base, paneId);
+			if (siblingDiff) {
+				// Close the sibling diff pane
+				const newTree = closePane(base, siblingDiff.id);
+				if (newTree) {
+					store.commit(
+						layoutPaneClosed({
+							id: LAYOUT_SESSION_ID,
+							layoutTree: newTree,
+							activePaneId: paneId,
+						})
+					);
+				}
+				return false;
+			}
+
+			// No sibling diff pane — toggle ON by splitting with a diff pane
+			const targetNode = findNodeById(base, paneId);
+			if (
+				!targetNode ||
+				targetNode._tag !== "LeafNode" ||
+				!targetNode.workspaceId
+			) {
+				return false;
+			}
+
+			const newTree = splitPane(base, paneId, "horizontal", {
+				paneType: "diff" as const,
+				workspaceId: targetNode.workspaceId,
+			});
+			store.commit(
+				layoutSplit({
+					id: LAYOUT_SESSION_ID,
+					layoutTree: newTree,
+					activePaneId: paneId,
+				})
+			);
+			return true;
+		},
+		[persistedLayoutTree, initialLayout, store]
+	);
+
 	const panelActions = useMemo(
 		() => ({
 			assignTerminalToPane: handleAssignTerminalToPane,
 			splitPane: handleSplitPane,
 			closePane: handleClosePane,
 			setActivePaneId: handleSetActivePaneId,
+			toggleDiffPane: handleToggleDiffPane,
 		}),
 		[
 			handleAssignTerminalToPane,
 			handleSplitPane,
 			handleClosePane,
 			handleSetActivePaneId,
+			handleToggleDiffPane,
 		]
 	);
 

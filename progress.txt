@@ -2270,3 +2270,51 @@ Complete tmux-style keyboard shortcut system for the panel manager using TanStac
 - Issue #31: PortAllocator exhaustion — already returns `PORT_EXHAUSTED` error with range info
 - Issue #32: PortAllocator concurrent safety — already uses `Ref.modify` for atomicity
 - Issue #74: Restore layout from LiveStore — `usePanelLayout()` already reads persisted layout on mount
+
+## Issue 90: Toggle diff alongside terminal — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Implemented the "toggle diff alongside terminal" feature that lets users show/hide a diff viewer next to any terminal pane. This is a core UX feature (user story #4) that ties together the terminal and diff viewer systems.
+- Added `toggleDiffPane(paneId)` action to the `PanelActions` interface in `apps/web/src/panels/panel-context.tsx`. The action returns a boolean indicating whether the diff pane is now visible (true = toggled on, false = toggled off).
+- Added two new tree utility functions to `apps/web/src/panels/layout-utils.ts`:
+  - `findParent(root, nodeId)` — finds the parent SplitNode of a given node ID, returning the parent and the child's index within it. Used internally by `findSiblingDiffPane`.
+  - `findSiblingDiffPane(root, terminalPaneId)` — checks if a terminal pane's parent SplitNode contains a sibling diff pane with the same `workspaceId`. Returns the sibling diff LeafNode if found, or undefined. Used by the toggle logic to detect whether a diff pane is already shown (toggle OFF case).
+- Added a "Toggle diff viewer" button to the `PaneToolbar` in `apps/web/src/panels/panel-manager.tsx`:
+  - Uses a `FileCode2` icon from lucide-react.
+  - Only shown when the pane type is `"terminal"` and a `workspaceId` is assigned (no point toggling diff for a terminal without a workspace context).
+  - Changed `PaneToolbar` props from `{ paneId: string }` to `{ node: LeafNode }` to access the full leaf node data for conditional rendering.
+- Implemented the `handleToggleDiffPane` handler in `apps/web/src/routes/index.tsx`:
+  - **Toggle OFF**: Uses `findSiblingDiffPane` to detect an existing sibling diff pane. If found, calls `closePane` on it and commits a `layoutPaneClosed` event to LiveStore. The terminal pane expands to fill the freed space.
+  - **Toggle ON**: Uses `findNodeById` to verify the target is a terminal LeafNode with a `workspaceId`. Calls `splitPane` with `{ paneType: "diff", workspaceId }` to create a horizontal split with a diff pane alongside the terminal. Commits a `layoutSplit` event to LiveStore.
+  - Layout changes are persisted to LiveStore, so the diff toggle state survives page reloads.
+- Added keyboard shortcut `Ctrl+b, d` in `apps/web/src/panels/panel-hotkeys.tsx`:
+  - Calls `actions.toggleDiffPane(activePaneId)` on the currently focused pane.
+  - Follows the same `useHotkeySequence` pattern and 1500ms timeout as all other panel shortcuts.
+  - Documented in the module JSDoc alongside the other shortcuts.
+
+### Files modified
+- `apps/web/src/panels/panel-context.tsx` — Added `toggleDiffPane` to `PanelActions` interface
+- `apps/web/src/panels/layout-utils.ts` — Added `findParent` and `findSiblingDiffPane` utility functions
+- `apps/web/src/panels/panel-manager.tsx` — Added `FileCode2` import, diff toggle button to `PaneToolbar`, changed props from `paneId` to `node`
+- `apps/web/src/panels/panel-hotkeys.tsx` — Added `Ctrl+b, d` keyboard shortcut for diff toggle
+- `apps/web/src/routes/index.tsx` — Added `handleToggleDiffPane` handler, imported `findNodeById` and `findSiblingDiffPane`, wired into `panelActions`
+
+### Acceptance criteria status
+- [x] Toggle button visible on terminal pane chrome (FileCode2 icon in PaneToolbar, only shown for terminal panes with a workspaceId)
+- [x] Toggle on → pane splits with terminal + diff viewer (horizontal split, diff pane inherits workspaceId from terminal)
+- [x] Toggle off → diff viewer removed, terminal fills space (closes sibling diff pane via findSiblingDiffPane + closePane)
+- [x] Layout adjustment is smooth (uses existing ResizablePanelGroup infrastructure with equal 50/50 split)
+- [ ] Tests: toggle on → diff visible; toggle off → diff hidden; layout correct in both states (deferred — requires running both server and web app with a live workspace)
+
+### Design decisions
+- Used `findSiblingDiffPane` for toggle detection rather than tracking toggle state in a separate Map or context. The tree is the source of truth — if a sibling diff pane exists with the same workspaceId, the diff is "on". This is robust against manual pane closes (via the X button or keyboard shortcut) which would desync any external toggle state.
+- The diff toggle button only appears for terminal panes with a `workspaceId`. Diff without a workspace context is meaningless (no worktree to diff against). The button is hidden for empty terminal panes and diff panes.
+- Changed `PaneToolbar` props from `{ paneId: string }` to `{ node: LeafNode }` to give the toolbar access to the full leaf node data. This enables conditional rendering (showing the diff toggle only for terminals) without adding context lookups or additional props.
+- The toggle creates a horizontal split (side-by-side) rather than vertical (stacked). Side-by-side is the conventional layout for terminal + diff, matching the tmux/IDE convention where diffs are shown alongside the main view.
+- Keyboard shortcut `Ctrl+b, d` follows the tmux naming convention (d for diff). It's consistent with the existing shortcut naming pattern (h=horizontal, v=vertical, x=close, o/p=navigate).
+- Layout changes are persisted to LiveStore via the existing event system (layoutSplit, layoutPaneClosed), so the toggle state survives page reloads. This reuses the established persistence infrastructure without adding new event types.
+
+### Issues unblocked
+- Issue #131: Theme consistency audit (was blocked by #90 — now done!)

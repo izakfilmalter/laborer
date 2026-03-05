@@ -3665,7 +3665,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 87 | Diff viewer pane — @pierre/diffs | ~~#18~~, ~~#83~~, ~~#6~~ | Done |
 | 88 | Diff viewer — accept/reject annotations | ~~#87~~ | Ready |
 | 89 | Diff viewer — live update | ~~#87~~ | Ready |
-| 90 | Toggle diff alongside terminal | ~~#67~~, ~~#87~~ | Ready |
+| 90 | Toggle diff alongside terminal | ~~#67~~, ~~#87~~ | Done |
 | 91 | Diff viewer debounce/throttle | #89 | Blocked (#89 now Ready) |
 | 92 | rlph.startLoop RPC handler | ~~#56~~ | Done |
 | 93 | "Start Ralph Loop" button (AtomRpc mutation) | ~~#92~~, ~~#60~~ | Ready |

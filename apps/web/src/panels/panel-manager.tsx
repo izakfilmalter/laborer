@@ -32,6 +32,7 @@
 import type { LeafNode, PanelNode, SplitNode } from "@laborer/shared/types";
 import {
 	Columns2,
+	FileCode2,
 	Layers,
 	Rows2,
 	Terminal as TerminalIcon,
@@ -113,19 +114,38 @@ function PaneContent({ node }: PaneContentProps) {
 
 /**
  * Toolbar rendered at the top-right of each leaf pane.
- * Provides split (horizontal/vertical) and close buttons.
+ * Provides split (horizontal/vertical), diff toggle, and close buttons.
+ *
+ * The diff toggle button is only shown for terminal panes that have a
+ * workspaceId assigned. It splits the pane with a diff viewer showing
+ * the workspace's changes alongside the terminal.
+ *
+ * @see Issue #90: Toggle diff alongside terminal
  */
-function PaneToolbar({ paneId }: { readonly paneId: string }) {
+function PaneToolbar({ node }: { readonly node: LeafNode }) {
 	const actions = usePanelActions();
 	if (!actions) {
 		return null;
 	}
 
+	const showDiffToggle =
+		node.paneType === "terminal" && node.workspaceId !== undefined;
+
 	return (
 		<div className="absolute top-1 right-1 z-10 flex gap-0.5 opacity-0 transition-opacity group-hover/pane:opacity-100">
+			{showDiffToggle && (
+				<Button
+					aria-label="Toggle diff viewer"
+					onClick={() => actions.toggleDiffPane(node.id)}
+					size="icon-sm"
+					variant="ghost"
+				>
+					<FileCode2 className="size-3.5" />
+				</Button>
+			)}
 			<Button
 				aria-label="Split horizontally"
-				onClick={() => actions.splitPane(paneId, "horizontal")}
+				onClick={() => actions.splitPane(node.id, "horizontal")}
 				size="icon-sm"
 				variant="ghost"
 			>
@@ -133,7 +153,7 @@ function PaneToolbar({ paneId }: { readonly paneId: string }) {
 			</Button>
 			<Button
 				aria-label="Split vertically"
-				onClick={() => actions.splitPane(paneId, "vertical")}
+				onClick={() => actions.splitPane(node.id, "vertical")}
 				size="icon-sm"
 				variant="ghost"
 			>
@@ -141,7 +161,7 @@ function PaneToolbar({ paneId }: { readonly paneId: string }) {
 			</Button>
 			<Button
 				aria-label="Close pane"
-				onClick={() => actions.closePane(paneId)}
+				onClick={() => actions.closePane(node.id)}
 				size="icon-sm"
 				variant="ghost"
 			>
@@ -234,7 +254,7 @@ function PanelRenderer({ node }: PanelRendererProps) {
 				onFocusCapture={() => actions?.setActivePaneId(node.id)}
 				onMouseDownCapture={() => actions?.setActivePaneId(node.id)}
 			>
-				<PaneToolbar paneId={node.id} />
+				<PaneToolbar node={node} />
 				<PaneContent node={node} />
 			</div>
 		);

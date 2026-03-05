@@ -55,6 +55,18 @@ interface PanelActions {
 		direction: SplitDirection,
 		newPaneContent?: Partial<LeafNode>
 	) => void;
+	/**
+	 * Toggle a diff viewer alongside a terminal pane.
+	 *
+	 * When toggled ON: splits the terminal pane horizontally with a diff
+	 * pane showing the same workspace's changes.
+	 * When toggled OFF: closes the sibling diff pane, expanding the
+	 * terminal to fill the space.
+	 *
+	 * @param paneId - The ID of the terminal LeafNode to toggle diff for
+	 * @returns Whether the diff pane is now visible (true = toggled on)
+	 */
+	readonly toggleDiffPane: (paneId: string) => boolean;
 }
 
 const PanelActionsContext = createContext<PanelActions | null>(null);

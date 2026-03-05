@@ -364,33 +364,9 @@ Defined `TerminalRpcs` RPC group in `@laborer/shared/rpc` with 7 endpoints (spaw
 
 ---
 
-## Issue 138: Move + simplify TerminalManager
+## ~~Issue 138: Move + simplify TerminalManager~~ ✅ DONE
 
-### Parent PRD
-
-PRD-terminal-extraction.md
-
-### What to build
-
-Move `TerminalManager` from `@laborer/server` to `@laborer/terminal` and simplify it per the PRD's "Modified Module: TerminalManager" section. Remove all LiveStore dependencies (event commits and table reads). Remove the `WorkspaceProvider` dependency — env vars and cwd are now passed at spawn time via the RPC payload. Add stopped terminal retention: when a PTY exits, keep the terminal entry in the in-memory map with status "stopped" (preserving command and config so restart works). Add lifecycle event emission via Effect `PubSub` — emit events for spawned, status changed, exited, removed, restarted. Update the spawn interface to accept the full spawn payload (command, args, cwd, env, cols, rows, workspaceId) instead of just workspaceId. Port `terminal-manager.test.ts` with updated assertions (no LiveStore, test event emission and stopped retention).
-
-### Acceptance criteria
-
-- [ ] TerminalManager has no dependency on `LaborerStore` or `WorkspaceProvider`
-- [ ] `spawn()` accepts full payload: command, args, cwd, env, cols, rows, workspaceId
-- [ ] Stopped terminals remain in memory with their config (command, env, cwd)
-- [ ] `restart()` works for stopped terminals using retained config
-- [ ] Lifecycle events are emitted via PubSub (spawned, statusChanged, exited, removed, restarted)
-- [ ] `terminal-manager.test.ts` passes in the new package with updated assertions
-- [ ] `listTerminals()` returns both running and stopped terminals
-
-### Blocked by
-
-- Blocked by ~~#136~~
-
-### User stories addressed
-
-- User story 5, 12, 13
+Moved TerminalManager from `@laborer/server` to `@laborer/terminal` with significant simplifications. Removed all LiveStore and WorkspaceProvider dependencies. `spawn()` accepts full payload (command, args, cwd, env, cols, rows, workspaceId). Stopped terminals retained in memory with config for restart. Lifecycle events emitted via `PubSub.unbounded<TerminalLifecycleEvent>()` (Spawned, StatusChanged, Exited, Removed, Restarted). All state in-memory via `Ref<Map<string, ManagedTerminal>>`. 9 integration tests, 55 total terminal package tests pass.
 
 ---
 
@@ -415,7 +391,7 @@ Implement RPC handlers in `packages/terminal/src/rpc/handlers.ts` for all termin
 
 ### Blocked by
 
-- Blocked by ~~#137~~, #138
+- Blocked by ~~#137~~, ~~#138~~
 
 ### User stories addressed
 
@@ -856,6 +832,203 @@ End-to-end verification and polish pass for the full Cmd+W close panel feature. 
 
 ---
 
+## Issue 154: Config Service — resolve config with walk-up + global default
+
+### Parent PRD
+
+PRD-global-worktree-config.md
+
+### What to build
+
+Create a new `ConfigService` Effect tagged service in the server package that reads and resolves `laborer.json` config files using a walk-up directory resolution strategy. The service provides a `resolveConfig(projectRepoPath, projectName)` method that:
+
+1. Looks for `laborer.json` at the project root directory
+2. Walks up parent directories looking for `laborer.json` files
+3. Falls back to the global config at `~/.config/laborer/laborer.json`
+4. Applies hardcoded defaults (`worktreeDir` = `~/.config/laborer/<projectName>`)
+
+Config values merge with closest-to-project-root winning. Each resolved value carries provenance metadata (the file path it came from, or "default"). Supports `~` expansion in `worktreeDir` paths. Also provides a `readGlobalConfig()` method for reading just the global config.
+
+The config schema is: `{ worktreeDir?: string, setupScripts?: string[], rlphConfig?: string }`.
+
+Auto-creates `~/.config/laborer/` directory if it doesn't exist when reading the global config.
+
+### Acceptance criteria
+
+- [ ] `ConfigService` is an Effect tagged service with `resolveConfig` and `readGlobalConfig` methods
+- [ ] Walk-up resolution finds `laborer.json` in ancestor directories (project root checked first)
+- [ ] Project-root config overrides ancestor config (closest-wins merging)
+- [ ] Global config at `~/.config/laborer/laborer.json` is used as fallback
+- [ ] Hardcoded default `worktreeDir` = `~/.config/laborer/<projectName>` when no config files set it
+- [ ] `~` in `worktreeDir` is expanded to the home directory
+- [ ] Provenance metadata indicates the source file path for each resolved value
+- [ ] Malformed JSON in config files is handled gracefully (logged, skipped)
+- [ ] Missing config files are handled gracefully (not an error)
+- [ ] `~/.config/laborer/` directory is auto-created if it doesn't exist
+- [ ] Integration tests with real temp directories cover all resolution scenarios
+
+### Blocked by
+
+None - can start immediately
+
+### User stories addressed
+
+- User story 2, 3, 4, 5, 6, 14, 16, 17
+
+---
+
+## Issue 155: Config Service — write project config
+
+### Parent PRD
+
+PRD-global-worktree-config.md
+
+### What to build
+
+Add a `writeProjectConfig(projectRepoPath, updates)` method to the `ConfigService` (Issue #154). This method reads the existing `laborer.json` at the project root, merges the provided partial updates, and writes the result back. If no `laborer.json` exists at the project root, creates one. Only writes fields that are explicitly provided in the updates — does not write `undefined` or default values. Preserves unknown fields in the existing file (round-trip safe). Uses atomic write (write to temp file, rename) to avoid partial writes.
+
+### Acceptance criteria
+
+- [ ] `writeProjectConfig` creates `laborer.json` at project root if it doesn't exist
+- [ ] `writeProjectConfig` merges updates with existing config (doesn't clobber unrelated fields)
+- [ ] Only explicitly provided fields are written (no default values injected)
+- [ ] Unknown fields in the existing file are preserved after write
+- [ ] Atomic write prevents partial/corrupt files
+- [ ] Tests verify creation, merge, and field preservation behaviors
+
+### Blocked by
+
+- Blocked by #154
+
+### User stories addressed
+
+- User story 12, 15
+
+---
+
+## Issue 156: WorkspaceProvider — use ConfigService for worktree path + setup scripts
+
+### Parent PRD
+
+PRD-global-worktree-config.md
+
+### What to build
+
+Wire the `ConfigService` (Issue #154) into `WorkspaceProvider` to replace the hardcoded worktree directory and the old config reader. Remove the `WORKTREE_DIR` constant (currently `.worktrees`), the `readProjectConfig` function, the `LaborerConfig` interface, and the `CONFIG_FILE` constant from `workspace-provider.ts`. The worktree path computation changes from `resolve(project.repoPath, ".worktrees", slug)` to `resolve(resolvedConfig.worktreeDir, slug)` where `resolvedConfig.worktreeDir` is an absolute path with `~` already expanded. Setup scripts are read from the resolved config's `setupScripts` field. Rename all remaining `.laborer.json` references in the codebase to `laborer.json`.
+
+### Acceptance criteria
+
+- [ ] `WORKTREE_DIR` constant, `readProjectConfig`, `LaborerConfig`, and `CONFIG_FILE` are removed from workspace-provider.ts
+- [ ] WorkspaceProvider depends on ConfigService for worktree directory resolution
+- [ ] Worktree path is `<resolvedConfig.worktreeDir>/<branchSlug>` (not `<repoPath>/.worktrees/<branchSlug>`)
+- [ ] Setup scripts are read from ConfigService resolved config
+- [ ] All `.laborer.json` references in the codebase are renamed to `laborer.json`
+- [ ] ConfigService is added to WorkspaceProvider's layer dependencies
+- [ ] Tests verify worktree creation uses the resolved config path
+- [ ] Tests verify setup scripts come from the resolved config
+
+### Blocked by
+
+- Blocked by #154
+
+### User stories addressed
+
+- User story 1, 2, 5, 11, 13
+
+---
+
+## Issue 157: Config RPC endpoints + project settings modal
+
+### Parent PRD
+
+PRD-global-worktree-config.md
+
+### What to build
+
+Add two new RPC endpoints to the `LaborerRpcs` group and build a project settings modal in the frontend.
+
+**RPC layer**: Add `config.get` (payload: `{ projectId: string }`, returns resolved config with provenance) and `config.update` (payload: `{ projectId: string, config: { worktreeDir?: string, setupScripts?: string[], rlphConfig?: string } }`) to the shared RPC definitions. Implement server handlers that look up the project via `ProjectRegistry.getProject`, then delegate to `ConfigService.resolveConfig` and `ConfigService.writeProjectConfig` respectively.
+
+**Frontend**: Build a `ProjectSettingsModal` component using the existing `Dialog` primitive. Entry point is a gear icon (`Settings` from lucide-react) on each project card in `ProjectList`, placed next to the existing delete icon. On open, fetches resolved config via `config.get` RPC query. Form fields:
+- **Worktree directory**: text input with resolved path, placeholder showing default, helper text showing provenance
+- **Setup scripts**: editable list of strings with add/remove buttons per entry
+- **rlph config**: text input
+
+Save button calls `config.update` mutation with only changed fields. Toast notification on success/failure. Uses the standard `LaborerClient.mutation` / `useAtomSet` pattern.
+
+### Acceptance criteria
+
+- [ ] `config.get` RPC defined in shared contract with provenance in response schema
+- [ ] `config.update` RPC defined in shared contract with partial config payload
+- [ ] Server handlers for both RPCs delegate to ConfigService via ProjectRegistry
+- [ ] `config.get` returns error for non-existent project
+- [ ] `config.update` returns error for non-existent project
+- [ ] Gear icon appears on each project card next to the delete icon
+- [ ] Clicking gear icon opens the settings modal
+- [ ] Modal displays resolved config values fetched via `config.get`
+- [ ] Provenance labels show which file each value comes from
+- [ ] Worktree directory field is editable with placeholder showing default
+- [ ] Setup scripts field is an editable list with add/remove functionality
+- [ ] rlph config field is editable
+- [ ] Save writes changed fields via `config.update` RPC
+- [ ] Toast confirms successful save or shows error
+
+### Blocked by
+
+- Blocked by #155, #156
+
+### User stories addressed
+
+- User story 7, 8, 9, 10, 11, 12
+
+---
+
+## Issue 158: Config + settings polish & edge cases
+
+### Parent PRD
+
+PRD-global-worktree-config.md
+
+### What to build
+
+Polish pass and edge case handling for the full config system and settings modal. Verify and fix:
+
+- `~/.config/laborer/` auto-creation works on first launch (no prior config exists)
+- Tilde expansion works correctly on macOS and Linux
+- Config is re-read on each worktree creation (not cached between creates)
+- Settings modal has proper ARIA attributes and keyboard navigation (tab between fields, Enter to save, Escape to cancel)
+- Gear icon visual balance with existing delete icon (spacing, alignment, visual weight)
+- Provenance display is subtle (secondary text or tooltip, not prominent)
+- Setup scripts editor handles edge cases: empty list, scripts with special characters, very long commands
+- Error messages from config parse failures are user-friendly
+- Name collision scenario: two projects with same name share worktree base dir gracefully
+
+Add tests: RPC handler tests for `config.get` and `config.update` error paths. Frontend component tests for the settings modal (opens on click, displays values, save triggers RPC, toasts on success/failure).
+
+### Acceptance criteria
+
+- [ ] Auto-creation of `~/.config/laborer/` works on clean machine (no prior config)
+- [ ] `~` expansion produces correct absolute path on macOS and Linux
+- [ ] Config is not cached between worktree creations (fresh read each time)
+- [ ] Modal form fields have proper labels and ARIA attributes
+- [ ] Keyboard navigation works: Tab between fields, Enter to save, Escape to cancel
+- [ ] Gear icon spacing and alignment is visually balanced with delete icon
+- [ ] Provenance text is visually subtle (secondary color, smaller text)
+- [ ] Setup scripts: empty list saves correctly, special characters preserved, long commands don't break layout
+- [ ] Malformed config file shows user-friendly error message in toast
+- [ ] RPC handler tests cover error paths (non-existent project, malformed input)
+- [ ] Frontend component tests cover modal open, display, save, and toast behaviors
+
+### Blocked by
+
+- Blocked by #157
+
+### User stories addressed
+
+- User story 6, 16, 17, 18
+
+---
+
 ## Summary
 
 | # | Title | Blocked by | Status |
@@ -896,8 +1069,8 @@ End-to-end verification and polish pass for the full Cmd+W close panel feature. 
 | 135 | ~~Terminal package scaffold~~ | ~~None~~ | Done |
 | 136 | ~~Move PTY Host + PtyHostClient to terminal package~~ | ~~#135~~ | Done |
 | 137 | ~~Terminal RPC contract~~ | ~~None~~ | Done |
-| 138 | Move + simplify TerminalManager | ~~#136~~ | Ready |
-| 139 | Terminal RPC handlers | ~~#137~~, #138 | Blocked |
+| 138 | ~~Move + simplify TerminalManager~~ | ~~#136~~ | Done |
+| 139 | Terminal RPC handlers | ~~#137~~, ~~#138~~ | Ready |
 | 140 | Move terminal WebSocket route to terminal package | #139 | Blocked |
 | 141 | Update Vite proxy + web app WebSocket hook | #140 | Blocked |
 | 142 | Terminal event stream RPC | #139 | Blocked |
@@ -912,3 +1085,8 @@ End-to-end verification and polish pass for the full Cmd+W close panel feature. 
 | 151 | Cmd+W shortcut — close active pane | #149 | Blocked |
 | 152 | Cmd+W close-app confirmation dialog | #151 | Blocked |
 | 153 | Cmd+W close panel — polish & verification | #148, #149, #150, #151, #152 | Blocked |
+| 154 | Config Service — resolve config with walk-up + global default | None | Ready |
+| 155 | Config Service — write project config | #154 | Blocked |
+| 156 | WorkspaceProvider — use ConfigService for worktree path + setup scripts | #154 | Blocked |
+| 157 | Config RPC endpoints + project settings modal | #155, #156 | Blocked |
+| 158 | Config + settings polish & edge cases | #157 | Blocked |

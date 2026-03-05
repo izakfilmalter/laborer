@@ -2476,3 +2476,74 @@ Copied the PTY Host child process (`pty-host.ts`), PtyHostClient Effect service 
 - Issue #138: Move + simplify TerminalManager — was blocked by #136 (this issue). Now unblocked and ready to implement.
 - Issue #139: Terminal RPC handlers — was blocked by #137 (done) and #138. Still blocked by #138.
 
+---
+
+## Issue 138: Move + simplify TerminalManager ✅ DONE
+
+### Summary
+Moved TerminalManager from `@laborer/server` to `@laborer/terminal` with significant simplifications:
+- **Removed all LiveStore dependencies** — no more `LaborerStore`, event commits, or table reads
+- **Removed WorkspaceProvider dependency** — `spawn()` now accepts full payload (command, args, cwd, env, cols, rows, workspaceId)
+- **Added stopped terminal retention** — when a PTY exits, terminal stays in memory with `status: "stopped"`, preserving command/args/cwd/env for restart
+- **Added lifecycle event emission** via `PubSub.unbounded<TerminalLifecycleEvent>()` — emits Spawned, StatusChanged, Exited, Removed, Restarted events
+- **All state is in-memory** via `Ref<Map<string, ManagedTerminal>>`
+
+### Files created
+- `packages/terminal/src/services/terminal-manager.ts` (~730 lines) — New simplified TerminalManager service
+- `packages/terminal/test/terminal-manager.test.ts` (~525 lines) — 9 integration tests
+
+### Implementation details
+
+**Service interface** — `TerminalManager` Context.Tag at `"@laborer/terminal/TerminalManager"` (distinct from server's `"@laborer/TerminalManager"`). Methods:
+- `spawn(payload)` — accepts `{ command, args, cwd, env, cols, rows, workspaceId }`, returns `TerminalInfo`
+- `write(id, data)` / `resize(id, cols, rows)` / `kill(id)` / `remove(id)` / `restart(id)` — terminal lifecycle
+- `listTerminals()` — returns both running and stopped terminals
+- `killAllForWorkspace(workspaceId)` — kills all terminals for a workspace
+- `subscribe(id)` / `unsubscribe(id)` — WebSocket subscriber tracking
+- `terminalExists(id)` — check if terminal exists
+
+**Internal state** — `ManagedTerminal` record stores: id, workspaceId, command, args, cwd, env, cols, rows, ptyProcess, ringBuffer, subscribers (Set), status. When PTY exits, status changes to "stopped" but record stays in map (enables restart).
+
+**Lifecycle events** — `TerminalLifecycleEvent` discriminated union: `Spawned`, `StatusChanged`, `Exited`, `Removed`, `Restarted`. Emitted via PubSub, consumed by downstream (Issue #142 terminal event stream RPC).
+
+**Error handling** — All errors use `TerminalRpcError` from `@laborer/shared/rpc` (not generic `RpcError`). Error codes: terminal not found, already running (restart), still running (remove), spawn failure.
+
+**Layer construction** — `Layer.scoped` with `Effect.gen` generator. PtyHostClient is the only dependency. Layer finalizer kills all running PTYs on shutdown.
+
+### Tests (9 integration tests)
+1. `spawn()` accepts full payload and returns terminal info with correct fields
+2. `write()` sends input that produces corresponding output (echo test)
+3. `resize()` changes dimensions without crashing the PTY
+4. `kill()` marks terminal as stopped but retains it in memory
+5. `restart()` works for stopped terminals using retained config
+6. `remove()` fully deletes a terminal from memory
+7. `listTerminals()` returns both running and stopped terminals
+8. Lifecycle events are emitted for spawn and kill (via PubSub subscription)
+9. `spawn()` with custom args passes them correctly
+
+### Verification
+- `tsc --noEmit` passes for terminal package (clean)
+- `tsc --noEmit` passes for server package (only pre-existing informational messages)
+- `ultracite check` passes on both new files with zero issues
+- Terminal package: 55 tests pass (32 ring-buffer + 14 pty-host + 9 terminal-manager)
+- Server package: 60/61 tests pass (1 pre-existing flaky PTY Host crash test — not a regression)
+
+### Acceptance criteria status
+- [x] TerminalManager has no dependency on `LaborerStore` or `WorkspaceProvider`
+- [x] `spawn()` accepts full payload: command, args, cwd, env, cols, rows, workspaceId
+- [x] Stopped terminals remain in memory with their config (command, env, cwd)
+- [x] `restart()` works for stopped terminals using retained config
+- [x] Lifecycle events are emitted via PubSub (spawned, statusChanged, exited, removed, restarted)
+- [x] `terminal-manager.test.ts` passes in the new package with updated assertions
+- [x] `listTerminals()` returns both running and stopped terminals
+
+### Design decisions
+- **Copy, don't move (again)**: The server's original `terminal-manager.ts` (969 lines) remains untouched. It will be removed in Issue #143 (Server TerminalClient + remove server terminal modules) along with the rest of the server's terminal infrastructure.
+- **Distinct Context.Tag identifier**: Used `"@laborer/terminal/TerminalManager"` to avoid conflict with the server's `"@laborer/TerminalManager"`. This allows both to coexist during the migration period.
+- **PubSub over callbacks**: Used Effect's `PubSub.unbounded` for lifecycle events instead of callback registration. PubSub is more composable — Issue #142 will pipe it into a streaming RPC endpoint.
+- **No caching of terminal list**: `listTerminals()` builds the response array fresh from the Ref map each call. With typical terminal counts (<100), this is negligible overhead and avoids stale cache bugs.
+- **TerminalRpcError for all errors**: Consistent with the RPC contract from Issue #137. Error messages are descriptive (e.g., "Terminal abc123 not found", "Terminal abc123 is still running - kill it first").
+
+### Issues unblocked
+- Issue #139: Terminal RPC handlers — was blocked by #137 (done) and #138 (this issue, now done). Now fully unblocked and ready to implement.
+

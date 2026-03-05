@@ -216,3 +216,63 @@ This is the actual root cause of why the tests were failing (7 of 8 failed). The
 ### Status
 Issue #7: Done
 Next: Issue #5 (LiveStore sync verification) and Issue #8 (TerminalManager + PtyHostClient integration tests, now unblocked) remain.
+
+---
+
+## Session: Issue #8 — TerminalManager + PtyHostClient integration tests
+
+### Task selected
+Issue #8: TerminalManager + PtyHostClient integration tests.
+Priority rationale: Issue #8 validates the full server-side integration stack (TerminalManager → PtyHostClient → PTY Host child process) with automated tests. This is more impactful than Issue #5 (LiveStore sync verification, which is primarily a manual verification task). The tests catch regressions in the core terminal architecture and provide confidence that the PTY Host process isolation works correctly end-to-end.
+
+### What was built
+Created `packages/server/test/terminal-manager.test.ts` — integration tests through the `TerminalManager` Effect service interface with a real `PtyHostClient` (spawning the actual PTY Host process). Tests use an in-memory LiveStore (via `@livestore/adapter-node` with `{ storage: { type: 'in-memory' } }`) and a mock `WorkspaceProvider`.
+
+#### Test architecture
+- **Real PtyHostClient**: Spawns the actual PTY Host child process under Node.js
+- **Real LiveStore**: In-memory SQLite via `@livestore/adapter-node` (no filesystem, no WebSocket sync)
+- **Mock WorkspaceProvider**: Returns hardcoded env vars for a test workspace
+- **Shared scope**: Test layer built once in `beforeAll`, torn down in `afterAll`
+- **Isolated scopes**: Stale cleanup and crash tests use separate scopes with fresh stores
+
+#### Tests written (6 total)
+1. **spawn()** returns a terminal response and produces output events in LiveStore
+2. **write()** sends input that produces corresponding output
+3. **resize()** changes dimensions without crashing the PTY
+4. **kill()** terminates the PTY and updates terminal status to "stopped" in LiveStore
+5. **Stale terminal cleanup** on startup marks orphaned terminals as stopped (builds a fresh layer with a pre-seeded stale terminal)
+6. **PTY Host crash** triggers marking all tracked terminals as stopped (kills the PTY Host process via `pgrep`/`SIGKILL` and verifies crash callbacks fire)
+
+### Critical fix: PtyHostClient cross-runtime compatibility
+The `PtyHostClient` service used Bun-specific APIs (`Bun.spawn`, `import.meta.dir`, `ReadableStream.getReader()`, `child.exited`) which don't work under vitest (which runs under Node.js). Refactored to use standard Node.js APIs:
+
+1. **`Bun.spawn` → `node:child_process.spawn`**: Uses `spawn` from `node:child_process` instead of `Bun.spawn`. Both Bun and Node.js support the `node:child_process` API.
+2. **`import.meta.dir` → `dirname(fileURLToPath(import.meta.url))`**: `import.meta.dir` is Bun-only. Replaced with the standard Node.js pattern.
+3. **`child.stdout.getReader()` → `child.stdout.on("data")`**: Replaced the Web Streams API (`ReadableStream.getReader()`) with Node.js Readable stream callbacks. The line-buffering and `drainLines` logic is unchanged.
+4. **`child.exited` → `child.on("exit")`**: Replaced the Bun-specific `exited` promise with the standard Node.js `exit` event listener.
+
+These changes make `PtyHostClient` work under both Bun (production server) and Node.js (vitest tests) without any behavioral changes.
+
+### Files changed
+- `packages/server/test/terminal-manager.test.ts` — NEW (523 lines)
+- `packages/server/src/services/pty-host-client.ts` — Refactored for cross-runtime compatibility (~15 lines changed)
+
+### Acceptance criteria verification
+- [x] Test: `spawn()` returns a terminal response and the terminal produces output events in LiveStore ✓
+- [x] Test: `write()` sends input that produces corresponding output ✓
+- [x] Test: `resize()` changes dimensions without crashing the PTY ✓
+- [x] Test: `kill()` terminates the PTY and updates terminal status in LiveStore to `"stopped"` ✓
+- [x] Test: stale terminal cleanup on startup marks orphaned terminals as stopped ✓
+- [x] Test: PTY Host crash triggers marking all tracked terminals as stopped ✓
+- [x] Tests use `@effect/vitest` patterns (vitest with Effect layers) and the test infrastructure from #7 ✓
+- [x] Tests are deterministic and clean up spawned processes and LiveStore state ✓
+
+### Verification
+- `bun run test` — 14/14 tests pass (8 from pty-host.test.ts + 6 from terminal-manager.test.ts, ~10s)
+- `bun run check-types` — passes (only pre-existing advisory warnings)
+- `bun x biome check` on both changed files — no lint issues
+- `bun x ultracite check` — all errors are pre-existing in `apps/web/`, none in server package
+
+### Status
+Issue #8: Done
+Next: Issue #5 (LiveStore sync verification) is the only remaining issue.

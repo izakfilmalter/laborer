@@ -33,7 +33,9 @@
  * ```
  */
 
-import { join } from "node:path";
+import { spawn as spawnChild } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Context, Deferred, Effect, Layer, Runtime } from "effect";
 
 // ---------------------------------------------------------------------------
@@ -123,7 +125,9 @@ class PtyHostClient extends Context.Tag("@laborer/PtyHostClient")<
 			// Resolve the PTY Host script path relative to this file.
 			// This file: packages/server/src/services/pty-host-client.ts
 			// PTY Host:  packages/server/src/pty-host.ts
-			const ptyHostPath = join(import.meta.dir, "..", "pty-host.ts");
+			// Uses fileURLToPath for Node.js compatibility (import.meta.dir is Bun-only).
+			const currentDir = dirname(fileURLToPath(import.meta.url));
+			const ptyHostPath = join(currentDir, "..", "pty-host.ts");
 
 			// Per-terminal callbacks
 			const dataCallbacks = new Map<string, DataCallback>();
@@ -139,20 +143,20 @@ class PtyHostClient extends Context.Tag("@laborer/PtyHostClient")<
 			const runtime = yield* Effect.runtime<never>();
 			const runFork = Runtime.runFork(runtime);
 
-			// Spawn the PTY Host as a Node.js child process.
-			// Node.js is used instead of Bun because Bun's tty.ReadStream does
+			// Spawn the PTY Host as a Node.js child process via node:child_process.
+			// Uses Node.js instead of Bun because Bun's tty.ReadStream does
 			// not fire data events for PTY master file descriptors, preventing
 			// node-pty's onData callback from working.
-			const child = Bun.spawn(["node", ptyHostPath], {
-				stdin: "pipe",
-				stdout: "pipe",
-				stderr: "inherit", // PTY Host debug logs go to our stderr
+			// Uses node:child_process (not Bun.spawn) for cross-runtime compatibility
+			// so that vitest tests (which run under Node.js) can construct this layer.
+			const child = spawnChild("node", [ptyHostPath], {
+				stdio: ["pipe", "pipe", "inherit"], // PTY Host debug logs go to our stderr
 			});
 
 			/** Send a JSON command to the PTY Host via stdin. */
 			const sendCommand = (command: Record<string, unknown>): void => {
 				const line = `${JSON.stringify(command)}\n`;
-				child.stdin.write(line);
+				child.stdin?.write(line);
 			};
 
 			/** Route a `data` event to the registered callback. */
@@ -225,34 +229,25 @@ class PtyHostClient extends Context.Tag("@laborer/PtyHostClient")<
 
 			/**
 			 * Read stdout from the PTY Host as newline-delimited text.
-			 * Runs as a background async loop for the lifetime of the service.
+			 * Uses Node.js Readable stream callbacks for cross-runtime compatibility.
 			 */
-			const readStdout = async (): Promise<void> => {
-				const reader = child.stdout.getReader();
-				const decoder = new TextDecoder();
-				let buffer = "";
+			let stdoutBuffer = "";
 
-				try {
-					while (true) {
-						const { done, value } = await reader.read();
-						if (done) {
-							break;
-						}
+			child.stdout?.on("data", (chunk: Buffer) => {
+				stdoutBuffer += chunk.toString("utf-8");
+				stdoutBuffer = drainLines(stdoutBuffer);
+			});
 
-						buffer += decoder.decode(value, { stream: true });
-						buffer = drainLines(buffer);
-					}
-				} catch (error) {
-					console.error(
-						`[PtyHostClient] stdout reader error: ${String(error)}`
-					);
-				}
-
+			child.stdout?.on("end", () => {
 				// Process any remaining data
-				if (buffer.trim() !== "") {
-					processLine(buffer);
+				if (stdoutBuffer.trim() !== "") {
+					processLine(stdoutBuffer);
 				}
-			};
+			});
+
+			child.stdout?.on("error", (error: Error) => {
+				console.error(`[PtyHostClient] stdout reader error: ${String(error)}`);
+			});
 
 			/** Extract and process complete lines from the buffer, return the remainder. */
 			const drainLines = (buffer: string): string => {
@@ -267,12 +262,8 @@ class PtyHostClient extends Context.Tag("@laborer/PtyHostClient")<
 				return remaining;
 			};
 
-			// Start the background stdout reader (fire and forget)
-			readStdout();
-
-			// Monitor PTY Host process for crashes
-			const monitorProcess = async (): Promise<void> => {
-				const exitCode = await child.exited;
+			// Monitor PTY Host process for crashes via the 'exit' event.
+			child.on("exit", (exitCode) => {
 				console.error(
 					`[PtyHostClient] PTY Host process exited with code ${exitCode}`
 				);
@@ -292,8 +283,7 @@ class PtyHostClient extends Context.Tag("@laborer/PtyHostClient")<
 						);
 					}
 				}
-			};
-			monitorProcess();
+			});
 
 			// Wait for the PTY Host to emit the `ready` event
 			yield* Deferred.await(readyDeferred).pipe(

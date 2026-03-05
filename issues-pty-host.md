@@ -296,4 +296,4 @@ See PRD-pty-host.md sections: "TerminalManager + PtyHostClient (Integration test
 | 5 | LiveStore sync verification | #3 | Ready |
 | 6 | Remove postinstall + cleanup | #1 | Done |
 | 7 | PTY Host integration tests | #1 | Done |
-| 8 | TerminalManager + PtyHostClient integration tests | #3, #7 | Ready |
+| 8 | TerminalManager + PtyHostClient integration tests | #3, #7 | Done |

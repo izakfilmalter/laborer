@@ -3686,6 +3686,345 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 
 ---
 
+## Issue 135: Remove base64 encoding from PTY IPC
+
+### Parent PRD
+
+PRD-terminal-perf.md
+
+### What to build
+
+Remove the unnecessary base64 encoding layer from the PTY host IPC protocol. The PTY host currently base64-encodes every output chunk before wrapping it in JSON, and the server decodes it on the other side. Since node-pty's `onData` produces UTF-8 strings and JSON natively supports UTF-8 with proper escaping, the base64 step is unnecessary and inflates data by 33%. Reference PRD-terminal-perf.md "Remove Base64 Encoding from IPC" section.
+
+In the PTY host script (`pty-host.ts`), change the `data` event emission from `Buffer.from(data, "utf-8").toString("base64")` to emitting the raw UTF-8 string directly in the JSON `data` field. In `PtyHostClient`, remove the corresponding `Buffer.from(base64Data, "base64").toString("utf-8")` decode step from the data callback routing. In `TerminalManager`, the data callback now receives plain UTF-8 strings — update any consumers accordingly.
+
+### Acceptance criteria
+
+- [ ] PTY host emits raw UTF-8 strings in the `data` field of IPC `data` events (no base64)
+- [ ] PtyHostClient no longer base64-decodes incoming data events
+- [ ] TerminalManager data callback receives plain UTF-8 strings
+- [ ] Existing PTY host integration tests pass with the new encoding (update assertions)
+- [ ] Terminal output fidelity unchanged: ANSI escape sequences, Unicode, and control characters transport correctly via JSON escaping
+- [ ] Tests: spawn a process that outputs colors + Unicode → verify output arrives correctly without base64
+
+### Blocked by
+
+None — can start immediately
+
+### User stories addressed
+
+- User story 1, 6
+
+---
+
+## Issue 136: IPC buffer optimization (O(n²) → array accumulator)
+
+### Parent PRD
+
+PRD-terminal-perf.md
+
+### What to build
+
+Replace the O(n²) string concatenation pattern in both the PTY host's stdin line reader and the PtyHostClient's stdout line reader with an array-based accumulator. Reference PRD-terminal-perf.md "Buffer Optimization" section.
+
+Both readers currently use `buffer += chunk` followed by repeated `.indexOf('\n')` and `.slice()` calls. Under high throughput, this creates significant garbage collection pressure because each concatenation copies the entire accumulated string. Replace with: push incoming chunks onto an array, join only when scanning for newlines or draining, and keep the remainder as a single-element array.
+
+### Acceptance criteria
+
+- [ ] PTY host stdin reader uses array-based accumulator instead of `buffer += chunk`
+- [ ] PtyHostClient stdout reader uses array-based accumulator instead of `buffer += chunk`
+- [ ] No behavioral change — line-delimited JSON parsing works identically
+- [ ] Existing tests pass without modification
+- [ ] Tests: high-throughput scenario (e.g., `seq 1 10000`) completes without excessive GC pauses
+
+### Blocked by
+
+None — can start immediately
+
+### User stories addressed
+
+- User story 2, 3
+
+---
+
+## Issue 137: PTY data coalescing (5ms timer)
+
+### Parent PRD
+
+PRD-terminal-perf.md
+
+### What to build
+
+Add a 5ms coalescing timer per PTY instance in the PTY host, matching VS Code's `TerminalDataBufferer` pattern. Reference PRD-terminal-perf.md "Data Coalescing in the PTY Host" section.
+
+When `pty.onData` fires: if no buffer exists for that PTY, create one (an array of strings) and start a 5ms `setTimeout`. If a buffer already exists, push the data onto it. When the timer fires, join all buffered strings, emit a single `data` event, and delete the buffer. This reduces the number of IPC messages by an order of magnitude for burst output while adding imperceptible latency for interactive typing.
+
+### Acceptance criteria
+
+- [ ] Each PTY instance in the PTY host has an independent coalescing buffer
+- [ ] Rapid output (multiple `onData` calls within 5ms) produces a single coalesced IPC `data` event
+- [ ] Interactive typing (single characters > 5ms apart) still produces individual events after a 5ms delay
+- [ ] Tests: run `seq 1 1000` → count `data` events received, verify significantly fewer than 1000 (proving coalescing)
+- [ ] Tests: verify single character input still arrives within ~10ms
+
+### Blocked by
+
+None — can start immediately
+
+### User stories addressed
+
+- User story 2, 3
+
+---
+
+## Issue 138: Ring buffer data structure + unit tests
+
+### Parent PRD
+
+PRD-terminal-perf.md
+
+### What to build
+
+Implement a ring buffer (circular buffer) data structure as a standalone module in the server package. Reference PRD-terminal-perf.md "Server-Side Ring Buffer for Scrollback" section.
+
+The ring buffer uses a `Uint8Array` with a configurable capacity (default 1MB) and a write cursor that wraps around when full. It supports writing UTF-8 encoded bytes and reading the current contents (from oldest to newest, handling the wrap-around correctly). This module is used by TerminalManager to provide scrollback on WebSocket reconnection.
+
+### Acceptance criteria
+
+- [ ] Ring buffer module exported from server package (e.g., `packages/server/src/lib/ring-buffer.ts`)
+- [ ] `write(data: Uint8Array)` appends data, wrapping when capacity is reached
+- [ ] `read(): Uint8Array` returns current contents from oldest to newest
+- [ ] `clear()` resets the buffer
+- [ ] `size` property returns current byte count (capped at capacity)
+- [ ] Tests: write less than capacity → read returns written data
+- [ ] Tests: write more than capacity → read returns only the last `capacity` bytes (correct wrap-around)
+- [ ] Tests: write exactly capacity → read returns all data
+- [ ] Tests: write zero bytes → no-op
+- [ ] Tests: empty buffer → read returns empty Uint8Array
+- [ ] Tests: sequential writes and reads produce correct results
+
+### Blocked by
+
+None — can start immediately
+
+### User stories addressed
+
+- User story 4
+
+---
+
+## Issue 139: Terminal WebSocket endpoint + server ring buffer integration
+
+### Parent PRD
+
+PRD-terminal-perf.md
+
+### What to build
+
+Create the dedicated terminal WebSocket endpoint and integrate the ring buffer into TerminalManager. Reference PRD-terminal-perf.md "Dedicated Terminal WebSocket Endpoint" and "Server-Side Ring Buffer for Scrollback" sections.
+
+Add a new HTTP route at `GET /terminal?id=<terminalId>` that upgrades to a WebSocket connection. TerminalManager gains a 1MB ring buffer per active terminal and a subscriber management system. When a WebSocket client connects: validate the terminal exists, send ring buffer contents as scrollback, then subscribe to live output. When the client sends text frames, forward to PTY as input (non-JSON text) or handle ack messages (JSON with `type: "ack"`). When the client disconnects, unsubscribe. When the terminal exits, send final output and close the WebSocket with status 1000.
+
+Update the Vite dev proxy in `apps/web/vite.config.ts` to route `/terminal` WebSocket connections to the backend.
+
+### Acceptance criteria
+
+- [ ] `GET /terminal?id=<terminalId>` upgrades to WebSocket
+- [ ] Connecting to a valid, running terminal succeeds
+- [ ] Connecting to a nonexistent terminal ID → WebSocket closes with error
+- [ ] On connect, ring buffer contents (scrollback) sent as text frames
+- [ ] Live terminal output forwarded as text frames to all connected WebSocket clients
+- [ ] Text frames from client forwarded to PTY as input via PtyHostClient.write()
+- [ ] Client disconnect → unsubscribe from output, no resource leak
+- [ ] Terminal exit → final output sent, WebSocket closed with 1000
+- [ ] Ring buffer retained after terminal exit (until terminal is removed)
+- [ ] Multiple simultaneous WebSocket connections to the same terminal work independently
+- [ ] Vite proxy routes `/terminal` to backend with WebSocket support
+- [ ] Tests: connect → receive scrollback + live output; send input → echoed back; disconnect → clean; reconnect → scrollback replayed
+
+### Blocked by
+
+- Blocked by #135, #138
+
+### User stories addressed
+
+- User story 1, 2, 4, 7, 9
+
+---
+
+## Issue 140: Web client terminal pane: WebSocket data path
+
+### Parent PRD
+
+PRD-terminal-perf.md
+
+### What to build
+
+Replace the TerminalPane's LiveStore event subscription with a direct WebSocket connection to the new `/terminal` endpoint. Reference PRD-terminal-perf.md "Web Client Terminal Pane Update" section.
+
+On mount (when a terminal ID is available), open a WebSocket to `/terminal?id=<terminalId>`. On message, write data directly to xterm.js via `terminal.write(event.data)`. On keypress, send the keystroke as a WebSocket text frame (replaces `terminal.write` RPC call for interactive input). On unmount, close the WebSocket cleanly. On WebSocket error/close, display a disconnection indicator and attempt reconnection with exponential backoff.
+
+The `terminal.write` RPC continues to work alongside WebSocket for programmatic input (e.g., agent automation). `terminal.resize` remains an RPC call.
+
+### Acceptance criteria
+
+- [ ] TerminalPane opens WebSocket to `/terminal?id=<terminalId>` on mount
+- [ ] Terminal output received via WebSocket is written directly to xterm.js
+- [ ] Keystrokes sent as WebSocket text frames (not RPC)
+- [ ] Page reload → WebSocket reconnects, scrollback from ring buffer displayed
+- [ ] WebSocket disconnect → visual indicator shown in terminal pane
+- [ ] Reconnection with exponential backoff on WebSocket close/error
+- [ ] `terminal.write` RPC still works for programmatic input (verified)
+- [ ] `terminal.resize` RPC still works for resize (verified)
+- [ ] Remove or disable the LiveStore `store.events()` subscription for terminal output
+- [ ] Tests: type in terminal → output appears (end-to-end); reload page → scrollback visible; disconnect → indicator shown
+
+### Blocked by
+
+- Blocked by #139
+
+### User stories addressed
+
+- User story 1, 2, 3, 4, 5, 9
+
+---
+
+## Issue 141: Character-count flow control (server side)
+
+### Parent PRD
+
+PRD-terminal-perf.md
+
+### What to build
+
+Implement VS Code's character-count flow control model in the PTY host and wire it through PtyHostClient. Reference PRD-terminal-perf.md "Character-Count Flow Control" section.
+
+In the PTY host: track `unacknowledgedCharCount` per PTY. Each emitted `data` event increases it by the character count. When it exceeds `HighWatermarkChars` (100,000), call `pty.pause()`. Add a new `{ type: "ack", id, chars }` IPC command that decrements `unacknowledgedCharCount`. When it drops below `LowWatermarkChars` (5,000), call `pty.resume()`. Emit `{ type: "paused", id }` and `{ type: "resumed", id }` debug events.
+
+In PtyHostClient: add an `ack(id: string, chars: number)` method that sends the ack command to the PTY host.
+
+In the terminal WebSocket endpoint: when a client sends an ack JSON frame, forward it to PtyHostClient.ack(). When a client disconnects, reset flow control state (resume PTY if paused, clear unacknowledged count) to prevent stuck PTYs.
+
+### Acceptance criteria
+
+- [ ] PTY host tracks `unacknowledgedCharCount` per PTY
+- [ ] PTY paused when unacknowledged chars exceed 100,000
+- [ ] PTY resumed when unacknowledged chars drop below 5,000 (after ack)
+- [ ] `{ type: "ack", id, chars }` IPC command implemented and handled
+- [ ] PtyHostClient exposes `ack(id, chars)` method
+- [ ] `paused` and `resumed` debug events emitted for observability
+- [ ] WebSocket endpoint forwards ack frames to PtyHostClient
+- [ ] Client disconnect → PTY resumed, ack count cleared
+- [ ] Tests: produce fast output without acks → PTY pauses (output rate plateaus or `paused` event observed)
+- [ ] Tests: send acks → PTY resumes, output continues
+- [ ] Tests: disconnect client → PTY not stuck in paused state
+
+### Blocked by
+
+- Blocked by #137, #139
+
+### User stories addressed
+
+- User story 2, 8, 10
+
+---
+
+## Issue 142: Client-side flow control acks
+
+### Parent PRD
+
+PRD-terminal-perf.md
+
+### What to build
+
+Implement client-side character counting and ack frame sending in the TerminalPane WebSocket connection. Reference PRD-terminal-perf.md "Web Client Terminal Pane Update" section (point 4).
+
+The client tracks total characters received from the WebSocket. Every `CharCountAckSize` (5,000) characters processed, it sends an ack text frame: `{"type":"ack","chars":5000}`. This completes the flow control loop: PTY host → server → client → ack → server → PTY host.
+
+### Acceptance criteria
+
+- [ ] TerminalPane tracks characters received from WebSocket
+- [ ] Ack frame sent every 5,000 characters: `{"type":"ack","chars":5000}`
+- [ ] Acks sent as JSON text frames distinguishable from regular input
+- [ ] Flow control loop works end-to-end: fast output → PTY pauses → client processes + sends acks → PTY resumes
+- [ ] Tests: produce continuous output → verify ack frames sent at regular intervals; verify output is not permanently blocked
+
+### Blocked by
+
+- Blocked by #140, #141
+
+### User stories addressed
+
+- User story 2, 8
+
+---
+
+## Issue 143: Deprecate terminalOutput from LiveStore hot path
+
+### Parent PRD
+
+PRD-terminal-perf.md
+
+### What to build
+
+Stop committing `v1.TerminalOutput` events to LiveStore on the server's terminal data path. Reference PRD-terminal-perf.md "LiveStore Schema Changes" section.
+
+In TerminalManager, remove the `store.commit(events.terminalOutput(...))` call from the PTY data callback. Terminal output now flows exclusively through the dedicated WebSocket. Keep the `terminalOutput` event definition and materializer in the schema for backward compatibility with any existing eventlog data (it already has a no-op materializer: `() => []`).
+
+Terminal lifecycle events (`terminalSpawned`, `terminalStatusChanged`, `terminalKilled`, `terminalRemoved`, `terminalRestarted`) remain as synced events in LiveStore.
+
+### Acceptance criteria
+
+- [ ] TerminalManager no longer commits `terminalOutput` events to LiveStore
+- [ ] `terminalOutput` event definition kept in schema (marked as deprecated via comment)
+- [ ] Terminal lifecycle events still committed to LiveStore and synced correctly
+- [ ] LiveStore sync initialization does not break when `terminalOutput` events stop appearing
+- [ ] Server memory usage lower under sustained terminal output (no SQLite writes per output chunk)
+- [ ] Tests: spawn terminal, produce output → no `terminalOutput` events in LiveStore eventlog; lifecycle events still present
+
+### Blocked by
+
+- Blocked by #140
+
+### User stories addressed
+
+- User story 11, 12
+
+---
+
+## Issue 144: Resize flushes coalesced buffer + flow control reset on disconnect
+
+### Parent PRD
+
+PRD-terminal-perf.md
+
+### What to build
+
+Handle two edge cases in the coalescing and flow control systems. Reference PRD-terminal-perf.md "Data Coalescing in the PTY Host" (resize flush) and "Dedicated Terminal WebSocket Endpoint" (connection lifecycle point 6) sections.
+
+**Resize flush**: When the PTY host receives a `resize` command, immediately flush any pending coalesced buffer for that PTY before applying the resize. This ensures output is associated with the correct terminal dimensions, matching VS Code's behavior.
+
+**Disconnect flow control reset**: When a WebSocket client disconnects, the server must reset flow control state for that terminal: resume the PTY if paused and clear the `unacknowledgedCharCount`. This prevents the PTY from getting stuck in a paused state when there are no consumers. If other WebSocket clients are still connected, flow control continues with them.
+
+### Acceptance criteria
+
+- [ ] Resize command in PTY host flushes pending coalesced buffer for that PTY immediately
+- [ ] Flushed data emitted as a `data` event before the resize is applied
+- [ ] WebSocket disconnect → PTY resumed if paused, unacknowledged count cleared
+- [ ] If multiple clients connected, disconnect of one does not reset flow control (other clients still consuming)
+- [ ] Tests: buffer data via coalescing, send resize → buffered data emitted before resize takes effect
+- [ ] Tests: pause PTY via flow control, disconnect client → PTY resumes; reconnect → output flows again
+
+### Blocked by
+
+- Blocked by #141, #142
+
+### User stories addressed
+
+- User story 9, 10
+
+---
+
 ## Summary
 
 | # | Title | Blocked by | Status |

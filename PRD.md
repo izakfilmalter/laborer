@@ -189,6 +189,8 @@ Manages PTY instances scoped to workspaces. Spawns processes, streams I/O, handl
 Responsibilities: PTY spawning (via PTY Host child process), I/O streaming to LiveStore, terminal lifecycle (start, stop, reconnect), multiple terminals per workspace.
 
 > **See [PRD-pty-host.md](./PRD-pty-host.md)** for the detailed design of the PTY Host process isolation architecture. Due to a Bun runtime incompatibility with `node-pty` in the HTTP server process, all PTY operations are delegated to an isolated child process via a JSON-over-stdio IPC protocol. The TerminalManager's public interface is unchanged; the PTY Host is an internal implementation detail.
+>
+> **See [PRD-terminal-perf.md](./PRD-terminal-perf.md)** for the terminal performance optimization design. Terminal output is moved from LiveStore to a dedicated WebSocket channel with raw text frames, 5ms data coalescing, character-count flow control (matching VS Code's model), and a 1MB ring buffer for reconnection scrollback. This eliminates base64 encoding, LiveStore overhead on the hot path, and unbounded buffering.
 
 **3. DiffService (Effect Service)**
 Monitors active workspaces for file changes and produces diffs. V1 uses polling (`git diff` on an interval, likely 1-2 seconds). Future optimization: agent-event-driven (hook into agent lifecycle to trigger diff on file write events). Publishes diff data through LiveStore.

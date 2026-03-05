@@ -45,6 +45,7 @@
  * Issue #35: run setup scripts in worktree
  * Issue #36: inject PORT env var
  * Issue #37: handle setup script failure (rollback)
+ * Issue #38: handle dirty git state error
  * Issue #43: destroyWorktree method
  */
 
@@ -455,6 +456,103 @@ const rollbackWorktree = (
 		).pipe(Effect.annotateLogs("module", logPrefix));
 	});
 
+/**
+ * Categorize a `git status --porcelain` line by its two-character status code.
+ * Returns a category string used for building a human-readable summary.
+ */
+const categorizeStatusLine = (line: string): string => {
+	const code = line.slice(0, 2);
+	if (code.includes("M")) {
+		return "modified";
+	}
+	if (code.includes("A")) {
+		return "added";
+	}
+	if (code.includes("D")) {
+		return "deleted";
+	}
+	if (code === "??") {
+		return "untracked";
+	}
+	return "other";
+};
+
+/**
+ * Build a human-readable summary from an array of `git status --porcelain` lines.
+ * Groups by category and returns e.g. "3 modified, 1 untracked".
+ */
+const buildDirtySummary = (lines: readonly string[]): string => {
+	const counts: Record<string, number> = {};
+	for (const line of lines) {
+		const category = categorizeStatusLine(line);
+		counts[category] = (counts[category] ?? 0) + 1;
+	}
+	const parts: string[] = [];
+	for (const cat of ["modified", "added", "deleted", "untracked", "other"]) {
+		const count = counts[cat];
+		if (count !== undefined && count > 0) {
+			parts.push(`${count} ${cat}`);
+		}
+	}
+	return parts.join(", ");
+};
+
+/**
+ * Check if the git working directory has uncommitted changes (dirty state).
+ * Runs `git status --porcelain` in the repo directory. If the output is
+ * non-empty, the working tree or index has modifications.
+ *
+ * Returns an object with:
+ * - `isDirty`: whether there are uncommitted changes
+ * - `summary`: a human-readable summary of what's dirty (e.g., "3 modified, 1 untracked")
+ *
+ * @param repoPath - Path to the git repository to check
+ */
+const checkDirtyState = (
+	repoPath: string
+): Effect.Effect<
+	{ readonly isDirty: boolean; readonly summary: string },
+	RpcError
+> =>
+	Effect.gen(function* () {
+		const result = yield* Effect.tryPromise({
+			try: async () => {
+				const proc = Bun.spawn(["git", "status", "--porcelain"], {
+					cwd: repoPath,
+					stdout: "pipe",
+					stderr: "pipe",
+				});
+				const exitCode = await proc.exited;
+				const stdout = await new Response(proc.stdout).text();
+				const stderr = await new Response(proc.stderr).text();
+				return { exitCode, stdout, stderr };
+			},
+			catch: (error) =>
+				new RpcError({
+					message: `Failed to check git status: ${String(error)}`,
+					code: "GIT_CHECK_FAILED",
+				}),
+		});
+
+		if (result.exitCode !== 0) {
+			return yield* new RpcError({
+				message: `git status failed (exit ${result.exitCode}): ${result.stderr.trim()}`,
+				code: "GIT_CHECK_FAILED",
+			});
+		}
+
+		const lines = result.stdout
+			.trim()
+			.split("\n")
+			.filter((line) => line.length > 0);
+
+		if (lines.length === 0) {
+			return { isDirty: false, summary: "" };
+		}
+
+		return { isDirty: true, summary: buildDirtySummary(lines) };
+	});
+
 class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 	WorkspaceProvider,
 	{
@@ -555,6 +653,24 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 						return yield* new RpcError({
 							message: `Branch already exists: ${resolvedBranch}. Choose a different branch name.`,
 							code: "BRANCH_EXISTS",
+						});
+					}
+
+					// 3b. Check for dirty git state (Issue #38)
+					// Detect uncommitted changes before creating the worktree.
+					// While `git worktree add` can succeed with a dirty working tree
+					// in some cases, dirty state can cause unexpected behavior:
+					// the worktree may inherit stale or inconsistent state.
+					// We check proactively and return a clear, actionable error.
+					const dirtyState = yield* checkDirtyState(project.repoPath);
+					if (dirtyState.isDirty) {
+						yield* Effect.logWarning(
+							`Dirty git state detected in ${project.repoPath}: ${dirtyState.summary}`
+						).pipe(Effect.annotateLogs("module", logPrefix));
+
+						return yield* new RpcError({
+							message: `Uncommitted changes prevent worktree creation (${dirtyState.summary}). Commit or stash your changes before creating a workspace.`,
+							code: "DIRTY_WORKING_TREE",
 						});
 					}
 

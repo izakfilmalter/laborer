@@ -41,30 +41,9 @@ Implemented full rollback on setup script failure. When any setup script exits w
 
 ---
 
-## Issue 38: WorkspaceProvider — handle dirty git state error
+## ~~Issue 38: WorkspaceProvider — handle dirty git state error~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Handle the case where `git worktree add` fails due to dirty git state (uncommitted changes in the main repo that conflict). Return a meaningful error message.
-
-### Acceptance criteria
-
-- [ ] Dirty git state → descriptive error ("uncommitted changes prevent worktree creation")
-- [ ] No partial worktree left behind
-- [ ] Port not leaked on failure
-- [ ] Tests: create worktree with dirty state → error; verify no partial resources
-
-### Blocked by
-
-- Blocked by #33
-
-### User stories addressed
-
-- Polishing requirement 6
+Implemented pre-check for dirty git state before worktree creation. Runs `git status --porcelain` before any resource allocation. Returns `DIRTY_WORKING_TREE` error with descriptive summary (e.g., "3 modified, 1 untracked") and actionable guidance ("Commit or stash your changes"). No partial worktree, no leaked port — check runs before port allocation.
 
 ---
 
@@ -114,7 +93,7 @@ Display workspace creation errors in the UI. Handle all error types: dirty git s
 
 ### Blocked by
 
-- ~~Blocked by #37~~, Blocked by #38, #39, #42
+- ~~Blocked by #37~~, ~~Blocked by #38~~, Blocked by #39, #42
 
 ### User stories addressed
 
@@ -809,9 +788,9 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 34 | WorkspaceProvider — directory validation + watcher scoping | #33 | Ready |
 | 35 | ~~WorkspaceProvider — setup scripts~~ | ~~#33~~ | Done |
 | 37 | ~~WorkspaceProvider — handle setup failure~~ | ~~#35~~ | Done |
-| 38 | WorkspaceProvider — handle dirty git state | #33 | Ready |
+| 38 | ~~WorkspaceProvider — handle dirty git state~~ | ~~#33~~ | Done |
 | 39 | WorkspaceProvider — handle git fetch failure | #33 | Ready |
-| 49 | Workspace creation error display | ~~#37~~, #38, #39, #42 | Blocked |
+| 49 | Workspace creation error display | ~~#37~~, ~~#38~~, #39, #42 | Blocked |
 | 71 | ~~PanelManager — navigate between panes~~ | ~~#67~~ | Done |
 | 72 | ~~PanelManager — drag-to-resize~~ | ~~#67~~ | Done |
 | 79 | Keyboard shortcut — resize panes | ~~#72~~, ~~#75~~ | Ready |

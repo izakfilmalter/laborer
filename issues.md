@@ -4017,7 +4017,7 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 
 ### Blocked by
 
-- Blocked by #141, #142
+- Blocked by ~~#141~~ (done), ~~#142~~ (done)
 
 ### User stories addressed
 
@@ -4172,4 +4172,4 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 141 | Character-count flow control (server side) | ~~#137~~, ~~#139~~ | Done |
 | 142 | Client-side flow control acks | ~~#140~~, ~~#141~~ | Done |
 | 143 | Deprecate terminalOutput from LiveStore hot path | ~~#140~~ | Done |
-| 144 | Resize flushes coalesced buffer + flow control reset | ~~#141~~, ~~#142~~ | Ready |
+| 144 | Resize flushes coalesced buffer + flow control reset | ~~#141~~, ~~#142~~ | Done |

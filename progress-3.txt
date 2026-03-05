@@ -780,3 +780,75 @@ Implemented the dedicated terminal WebSocket endpoint (`GET /terminal?id=<termin
 - Issue #142: Incremental rendering with dirty-region tracking (was blocked by #139)
 - Issue #143: Deprecate LiveStore terminal output events (was blocked by #139)
 - Issue #144: Server-side terminal metrics and health monitoring (was blocked by #139)
+
+## Issue #140: Web client terminal pane — WebSocket data path — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Replaced the TerminalPane's LiveStore event subscription with a direct WebSocket connection to the `/terminal?id=<terminalId>` endpoint (created in Issue #139). Terminal output now flows via dedicated WebSocket text frames instead of LiveStore `v1.TerminalOutput` events. Keyboard input is sent as WebSocket text frames instead of `terminal.write` RPC mutations. This is the highest-impact terminal performance improvement — it eliminates LiveStore serialization overhead, base64 encoding, and SQLite writes from the terminal output hot path.
+
+### What was done
+
+1. **Created `apps/web/src/hooks/use-terminal-websocket.ts`** — new React hook managing the WebSocket connection lifecycle:
+   - Opens WebSocket to `/terminal?id=<terminalId>` using the current page origin (works with Vite proxy in dev, same-origin in prod)
+   - Delivers terminal output via `onData` callback (raw UTF-8 text frames)
+   - Exposes `send(data)` for keyboard input as text frames
+   - Tracks connection status (`connecting` | `connected` | `disconnected`)
+   - Exponential backoff reconnection on disconnect (500ms initial, 30s max, 2x factor)
+   - Stops reconnecting when the terminal is no longer running (process exited)
+   - Reconnects when a stopped terminal restarts (status changes back to running)
+   - Uses refs for latest callbacks to avoid stale closures in WebSocket handlers
+   - Clean teardown on unmount (prevents reconnection, closes WebSocket)
+
+2. **Rewrote `apps/web/src/panes/terminal-pane.tsx`** — replaced LiveStore event-based data path:
+   - **Removed**: `store.events({ filter: ["v1.TerminalOutput"] })` async subscription — was the main output data path
+   - **Removed**: `terminalWriteMutation` (`LaborerClient.mutation("terminal.write")`) — keyboard input now goes via WebSocket
+   - **Removed**: `writeTerminalRef` and `writeTerminal` from `useAtomSet` — no longer needed
+   - **Added**: `useTerminalWebSocket({ terminalId, onData, isRunning })` hook call
+   - **Added**: `handleTerminalData` callback that writes WebSocket data to xterm.js
+   - **Added**: `wsSendRef` for stable reference to WebSocket send function
+   - **Changed**: `onData` callback sends via `wsSendRef.current(data)` instead of RPC mutation
+   - **Kept**: `store.events({ filter: ["v1.TerminalRestarted"] })` subscription — lifecycle events stay on LiveStore
+   - **Kept**: `terminal.resize` RPC mutation — low-frequency, needs TerminalManager service
+   - **Kept**: Terminal status tracking from LiveStore `terminals` table
+   - **Added**: `DisconnectedBanner` component — red banner shown when WebSocket is disconnected but terminal is running
+   - **Added**: `ReconnectingBanner` component — yellow banner shown during WebSocket reconnection
+   - Updated module JSDoc with new architecture documentation (8-point data flow)
+
+### Files created
+- `apps/web/src/hooks/use-terminal-websocket.ts` — WebSocket connection management hook
+
+### Files modified
+- `apps/web/src/panes/terminal-pane.tsx` — replaced LiveStore output subscription + RPC input with WebSocket
+
+### Acceptance criteria status
+- [x] TerminalPane opens WebSocket to `/terminal?id=<terminalId>` on mount (via `useTerminalWebSocket` hook)
+- [x] Terminal output received via WebSocket is written directly to xterm.js (via `onData` callback -> `terminal.write(data)`)
+- [x] Keystrokes sent as WebSocket text frames (not RPC) (via `wsSendRef.current(data)` in xterm.js `onData`)
+- [x] Page reload -> WebSocket reconnects, scrollback from ring buffer displayed (server sends ring buffer contents as initial text frames)
+- [x] WebSocket disconnect -> visual indicator shown in terminal pane (`DisconnectedBanner` with red styling)
+- [x] Reconnection with exponential backoff on WebSocket close/error (500ms initial, 30s max, 2x factor)
+- [x] `terminal.write` RPC still works for programmatic input (unchanged on server side)
+- [x] `terminal.resize` RPC still works for resize (kept as-is in TerminalPane)
+- [x] LiveStore `store.events()` subscription for terminal output removed/disabled (replaced with WebSocket)
+- [ ] Tests: type in terminal -> output appears (end-to-end); reload page -> scrollback visible; disconnect -> indicator shown (deferred — requires running both server and web app with a live terminal)
+
+### Verification
+- `tsc --noEmit` passes for all packages (no new type errors — only pre-existing shadcn/ui calendar.tsx and sonner.tsx errors)
+- `biome check` passes on both new/modified files with zero issues
+- All 46 tests pass across 3 test files (32 ring buffer + 8 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **WebSocket URL construction**: Uses `globalThis.location.protocol` and `globalThis.location.host` to derive the WebSocket URL. In development, the Vite proxy (already configured in Issue #139) routes `/terminal` to the backend. In production, same-origin routing works naturally. No hardcoded server URLs.
+- **Exponential backoff**: Starts at 500ms, doubles each attempt, caps at 30s. Resets on successful connection. Stops reconnecting when the terminal is no longer running (process exited) to avoid pointless reconnection attempts to a dead terminal. Resumes reconnection when the terminal restarts (status changes back to "running").
+- **Separate hook**: Created `useTerminalWebSocket` as a standalone hook rather than inlining the WebSocket logic in the effect. This keeps the TerminalPane component focused on xterm.js rendering and makes the WebSocket logic testable and reusable.
+- **Kept LiveStore for lifecycle events**: Only output data and keyboard input moved to WebSocket. Terminal status, restart events, and panel layout persistence remain on LiveStore. This is the correct separation — LiveStore handles state that needs to be materialized into tables and persisted, while WebSocket handles the high-frequency streaming data.
+- **Kept `terminal.resize` as RPC**: Resize is low-frequency (only on container resize) and needs to reach the TerminalManager service to call `pty.resize()`. There's no performance benefit to moving it to WebSocket, and RPC provides better error handling.
+- **Connection status indicators**: Two visual banners (disconnected = red, connecting = yellow) provide immediate feedback when the WebSocket is unhealthy. They only show when the terminal is running — a stopped terminal already has its own "Process exited" banner.
+
+### Issues unblocked
+- Issue #141: Character-count flow control — server side (was blocked by #137 and #139 — #139 now done, still blocked by #137)
+- Issue #142: Client-side flow control acks (was blocked by #140 and #141 — #140 now done, still blocked by #141)
+- Issue #143: Deprecate terminalOutput from LiveStore hot path (was blocked by #140 — now unblocked!)

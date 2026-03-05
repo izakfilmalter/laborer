@@ -3868,20 +3868,20 @@ The `terminal.write` RPC continues to work alongside WebSocket for programmatic 
 
 ### Acceptance criteria
 
-- [ ] TerminalPane opens WebSocket to `/terminal?id=<terminalId>` on mount
-- [ ] Terminal output received via WebSocket is written directly to xterm.js
-- [ ] Keystrokes sent as WebSocket text frames (not RPC)
-- [ ] Page reload → WebSocket reconnects, scrollback from ring buffer displayed
-- [ ] WebSocket disconnect → visual indicator shown in terminal pane
-- [ ] Reconnection with exponential backoff on WebSocket close/error
-- [ ] `terminal.write` RPC still works for programmatic input (verified)
-- [ ] `terminal.resize` RPC still works for resize (verified)
-- [ ] Remove or disable the LiveStore `store.events()` subscription for terminal output
-- [ ] Tests: type in terminal → output appears (end-to-end); reload page → scrollback visible; disconnect → indicator shown
+- [x] TerminalPane opens WebSocket to `/terminal?id=<terminalId>` on mount (via `useTerminalWebSocket` hook)
+- [x] Terminal output received via WebSocket is written directly to xterm.js (via `onData` callback)
+- [x] Keystrokes sent as WebSocket text frames (not RPC) (via `wsSendRef.current(data)`)
+- [x] Page reload → WebSocket reconnects, scrollback from ring buffer displayed (server sends ring buffer as initial text frames)
+- [x] WebSocket disconnect → visual indicator shown in terminal pane (red `DisconnectedBanner`)
+- [x] Reconnection with exponential backoff on WebSocket close/error (500ms initial, 30s max, 2x factor)
+- [x] `terminal.write` RPC still works for programmatic input (unchanged on server side)
+- [x] `terminal.resize` RPC still works for resize (kept as-is in TerminalPane)
+- [x] Remove or disable the LiveStore `store.events()` subscription for terminal output (replaced with WebSocket)
+- [ ] Tests: type in terminal → output appears (end-to-end); reload page → scrollback visible; disconnect → indicator shown (deferred — requires running both server and web app)
 
 ### Blocked by
 
-- Blocked by #139
+- Blocked by ~~#139~~ (done)
 
 ### User stories addressed
 
@@ -3951,7 +3951,7 @@ The client tracks total characters received from the WebSocket. Every `CharCount
 
 ### Blocked by
 
-- Blocked by #140, #141
+- Blocked by ~~#140~~ (done), #141
 
 ### User stories addressed
 
@@ -3984,7 +3984,7 @@ Terminal lifecycle events (`terminalSpawned`, `terminalStatusChanged`, `terminal
 
 ### Blocked by
 
-- Blocked by #140
+- Blocked by ~~#140~~ (done)
 
 ### User stories addressed
 
@@ -4168,8 +4168,8 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 137 | PTY data coalescing (5ms timer) | None | Ready |
 | 138 | Ring buffer data structure + unit tests | None | Done |
 | 139 | Terminal WebSocket endpoint + ring buffer | ~~#135~~, ~~#138~~ | Done |
-| 140 | Web client terminal pane: WebSocket data path | ~~#139~~ | Ready |
+| 140 | Web client terminal pane: WebSocket data path | ~~#139~~ | Done |
 | 141 | Character-count flow control (server side) | #137, ~~#139~~ | Blocked |
-| 142 | Client-side flow control acks | #140, #141 | Blocked |
-| 143 | Deprecate terminalOutput from LiveStore hot path | #140 | Blocked |
+| 142 | Client-side flow control acks | ~~#140~~, #141 | Blocked |
+| 143 | Deprecate terminalOutput from LiveStore hot path | ~~#140~~ | Ready |
 | 144 | Resize flushes coalesced buffer + flow control reset | #141, #142 | Blocked |

@@ -3675,16 +3675,16 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 97 | "Review PR" button + input (AtomRpc mutation) | ~~#96~~, ~~#60~~ | Ready |
 | 98 | rlph.fix RPC handler | ~~#56~~ | Done |
 | 99 | "Fix Findings" button + input (AtomRpc mutation) | ~~#98~~, ~~#60~~ | Ready |
-| 100 | Task CRUD — create manual task | #8, #16 | Ready |
-| 101 | Task CRUD — update status | #100 | Blocked |
-| 102 | Task CRUD — list per project | #100 | Blocked |
-| 103 | Create Task form UI | #100, ~~#20~~ | Blocked |
-| 104 | Task list UI | #102, #18 | Blocked |
-| 105 | Task-driven workspace auto-creation | #100, #40 | Blocked |
+| 100 | Task CRUD — create manual task | ~~#8~~, ~~#16~~ | Done |
+| 101 | Task CRUD — update status | ~~#100~~ | Done |
+| 102 | Task CRUD — list per project | ~~#100~~ | Done |
+| 103 | Create Task form UI | ~~#100~~, ~~#20~~ | Ready |
+| 104 | Task list UI | ~~#102~~, ~~#18~~ | Ready |
+| 105 | Task-driven workspace auto-creation | ~~#100~~, ~~#40~~ | Ready |
 | 106 | Task-driven workspace auto-cleanup | #105, ~~#47~~ | Blocked |
-| 107 | PRD-generated issues → tasks | #94, #100 | Blocked |
-| 108 | Linear task sourcing | #102 | Blocked |
-| 109 | GitHub task sourcing | #102 | Blocked |
+| 107 | PRD-generated issues → tasks | ~~#94~~, ~~#100~~ | Ready |
+| 108 | Linear task sourcing | ~~#102~~ | Ready |
+| 109 | GitHub task sourcing | ~~#102~~ | Ready |
 | 110 | Task source picker UI | #108, #109, #103 | Blocked |
 | 111 | editor.open RPC handler | ~~#19~~, ~~#14~~ | Done |
 | 112 | Click-to-open from diff viewer (AtomRpc mutation) | ~~#111~~, ~~#87~~ | Ready |

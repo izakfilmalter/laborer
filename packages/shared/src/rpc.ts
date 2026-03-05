@@ -30,6 +30,15 @@ const ProjectResponse = Schema.Struct({
 	rlphConfig: Schema.optional(Schema.String),
 });
 
+const TaskResponse = Schema.Struct({
+	id: Schema.String,
+	projectId: Schema.String,
+	source: Schema.String,
+	externalId: Schema.optional(Schema.String),
+	title: Schema.String,
+	status: Schema.String,
+});
+
 const WorkspaceResponse = Schema.Struct({
 	id: Schema.String,
 	projectId: Schema.String,
@@ -195,6 +204,34 @@ export class LaborerRpcs extends RpcGroup.make(
 		payload: {
 			workspaceId: Schema.String,
 			prNumber: Schema.Int,
+		},
+	}),
+
+	// -----------------------------------------------------------------------
+	// Task RPCs
+	// -----------------------------------------------------------------------
+	Rpc.make("task.create", {
+		success: TaskResponse,
+		error: RpcError,
+		payload: {
+			projectId: Schema.String,
+			title: Schema.String,
+			description: Schema.optional(Schema.String),
+		},
+	}),
+
+	Rpc.make("task.updateStatus", {
+		error: RpcError,
+		payload: {
+			taskId: Schema.String,
+			status: Schema.String,
+		},
+	}),
+
+	Rpc.make("task.remove", {
+		error: RpcError,
+		payload: {
+			taskId: Schema.String,
 		},
 	})
 ) {}

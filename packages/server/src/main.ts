@@ -37,6 +37,7 @@ import { PortAllocator } from "./services/port-allocator.js";
 import { ProjectRegistry } from "./services/project-registry.js";
 import { PtyHostClient } from "./services/pty-host-client.js";
 import { SyncRpcLive } from "./services/sync-backend.js";
+import { TaskManager } from "./services/task-manager.js";
 import { TerminalManager } from "./services/terminal-manager.js";
 import { WorkspaceProvider } from "./services/workspace-provider.js";
 
@@ -80,6 +81,7 @@ const CustomRoutesLive = HttpRouter.Default.use((router) =>
 const RpcLive = RpcServer.layer(LaborerRpcs).pipe(
 	Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
 	Layer.provide(LaborerRpcsLive),
+	Layer.provide(TaskManager.layer),
 	Layer.provide(DiffService.layer),
 	Layer.provide(TerminalManager.layer),
 	Layer.provide(PtyHostClient.layer),

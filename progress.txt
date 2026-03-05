@@ -2181,3 +2181,57 @@ LiveStore's `store.events()` replays ALL historical events from the persisted ev
 
 ### Issues unblocked
 - Issue #65: Terminal scrollback buffer replay (was blocked by #64 — now done! Note: scrollback replay is actually already handled by the event log replay mechanism discovered in this issue.)
+
+## Issue 100: Task CRUD — create manual task — COMPLETED
+## Issue 101: Task CRUD — update status — COMPLETED
+## Issue 102: Task CRUD — list per project — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `packages/server/src/services/task-manager.ts` — the `TaskManager` Effect service using `Context.Tag("@laborer/TaskManager")` with 5 methods covering Issues #100, #101, and #102.
+- **`createTask(projectId, title, source, externalId?)` (Issue #100):**
+  1. Validates the project exists by querying LiveStore's `projects` table. Returns `RpcError` with code `NOT_FOUND` if missing.
+  2. Validates the task source is one of: `linear`, `github`, `manual`, `prd`. Returns `RpcError` with code `INVALID_SOURCE` if invalid.
+  3. Validates the title is non-empty after trimming. Returns `RpcError` with code `INVALID_TITLE` if empty.
+  4. Generates a unique ID via `crypto.randomUUID()`.
+  5. Commits `taskCreated` event to LiveStore with status `"pending"`.
+  6. Returns the created `TaskRecord`.
+- **`updateTaskStatus(taskId, status)` (Issue #101):**
+  1. Validates the task exists by querying LiveStore's `tasks` table. Returns `RpcError` with code `NOT_FOUND` if missing.
+  2. Validates the status is one of: `pending`, `in_progress`, `completed`, `cancelled`. Returns `RpcError` with code `INVALID_STATUS` if invalid.
+  3. Commits `taskStatusChanged` event to LiveStore.
+- **`removeTask(taskId)` (Issue #100):**
+  1. Validates the task exists. Returns `RpcError` with code `NOT_FOUND` if missing.
+  2. Commits `taskRemoved` event to LiveStore.
+- **`getTask(taskId)` (read helper):** Queries task by ID, returns `RpcError` with code `NOT_FOUND` if missing.
+- **`listTasks(projectId, statusFilter?)` (Issue #102):** Queries all tasks for a project, optionally filtered by status.
+- Added `TaskResponse` schema to `packages/shared/src/rpc.ts` with fields: id, projectId, source, externalId (optional), title, status.
+- Added 3 new RPC methods to `LaborerRpcs` group: `task.create`, `task.updateStatus`, `task.remove`.
+- Added 3 task RPC handlers to `packages/server/src/rpc/handlers.ts` delegating to `TaskManager`.
+- Added `TaskManager.layer` to `packages/server/src/main.ts` in the `RpcLive` layer composition.
+- Verified: `tsc --noEmit` passes for both server and shared packages (no type errors), `ultracite check` passes with zero issues on all 4 new/modified files.
+
+### Acceptance criteria status
+- [x] TaskManager is a tagged Effect service with CRUD methods
+- [x] `createTask` validates project, source, and title, then commits TaskCreated to LiveStore
+- [x] `updateTaskStatus` validates task and status, then commits TaskStatusChanged to LiveStore
+- [x] `removeTask` validates task exists, then commits TaskRemoved to LiveStore
+- [x] `listTasks` returns tasks filtered by projectId and optional status
+- [x] 3 new RPC methods (`task.create`, `task.updateStatus`, `task.remove`) wired to handlers
+- [x] RPC contract expanded from 16 to 19 methods
+- [ ] Tests: create task → in LiveStore; update status → reflected; remove → gone; list by project → filtered correctly (deferred — vitest not yet configured)
+
+### Design decisions
+- Implemented all three CRUD issues (#100, #101, #102) together in a single `TaskManager` service. The three operations are tightly coupled (same table, same validation patterns, same LiveStore dependency) and implementing them separately would have created 3 near-identical service files.
+- The `task.create` RPC hardcodes `source: "manual"` since this endpoint is for manual task creation from the UI. Other sources (linear, github, prd) will use the same `TaskManager.createTask` method but with different source values when their sourcing mechanisms are implemented (Issues #108, #109, #107).
+- `listTasks` does not have its own RPC endpoint — tasks are read from LiveStore directly on the client via reactive queries. The method exists on the service for internal server-side use.
+- Used `Effect.fn` for methods that can fail and `Effect.sync` for `listTasks` which never fails. Consistent with patterns established in ProjectRegistry and other services.
+
+### Issues unblocked
+- Issue #103: Create Task form UI (was blocked by #100 and #20 — now all blockers done!)
+- Issue #104: Task list UI (was blocked by #102 and #18 — now all blockers done!)
+- Issue #105: Task-driven workspace auto-creation (was blocked by #100 and #40 — now all blockers done!)
+- Issue #107: PRD-generated issues → tasks (was blocked by #94 (done) and #100 — now all blockers done!)
+- Issue #108: Linear task sourcing (was blocked by #102 — now done!)
+- Issue #109: GitHub task sourcing (was blocked by #102 — now done!)

@@ -13,6 +13,7 @@ import { Array as Arr, Effect, pipe } from "effect";
 import { DiffService } from "../services/diff-service.js";
 import { LaborerStore } from "../services/laborer-store.js";
 import { ProjectRegistry } from "../services/project-registry.js";
+import { TaskManager } from "../services/task-manager.js";
 import { TerminalManager } from "../services/terminal-manager.js";
 import { WorkspaceProvider } from "../services/workspace-provider.js";
 
@@ -21,7 +22,7 @@ const startTime = Date.now();
 /**
  * RPC handler layer for the LaborerRpcs group.
  *
- * All 16 RPC methods are fully implemented:
+ * All 19 RPC methods are fully implemented:
  * - health.check: returns server uptime (Issue #12)
  * - project.add: delegates to ProjectRegistry.addProject (Issue #21)
  * - project.remove: delegates to ProjectRegistry.removeProject (Issue #22)
@@ -37,6 +38,9 @@ const startTime = Date.now();
  * - rlph.writePRD: delegates to TerminalManager.spawn with `rlph prd [description]` (Issue #94)
  * - rlph.review: delegates to TerminalManager.spawn with `rlph review <prNumber>` (Issue #96)
  * - rlph.fix: delegates to TerminalManager.spawn with `rlph fix <prNumber>` (Issue #98)
+ * - task.create: delegates to TaskManager.createTask (Issue #100)
+ * - task.updateStatus: delegates to TaskManager.updateTaskStatus (Issue #101)
+ * - task.remove: delegates to TaskManager.removeTask (Issue #100)
  */
 export const LaborerRpcsLive = LaborerRpcs.toLayer(
 	LaborerRpcs.of({
@@ -237,6 +241,33 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 			Effect.gen(function* () {
 				const tm = yield* TerminalManager;
 				return yield* tm.spawn(workspaceId, `rlph fix ${prNumber}`);
+			}),
+
+		// -------------------------------------------------------------------
+		// Task RPCs (Issue #100-102)
+		// -------------------------------------------------------------------
+		"task.create": ({ projectId, title }) =>
+			Effect.gen(function* () {
+				const taskManager = yield* TaskManager;
+				const task = yield* taskManager.createTask(projectId, title, "manual");
+				return {
+					id: task.id,
+					projectId: task.projectId,
+					source: task.source,
+					externalId: task.externalId ?? undefined,
+					title: task.title,
+					status: task.status,
+				};
+			}),
+		"task.updateStatus": ({ taskId, status }) =>
+			Effect.gen(function* () {
+				const taskManager = yield* TaskManager;
+				yield* taskManager.updateTaskStatus(taskId, status);
+			}),
+		"task.remove": ({ taskId }) =>
+			Effect.gen(function* () {
+				const taskManager = yield* TaskManager;
+				yield* taskManager.removeTask(taskId);
 			}),
 	})
 );

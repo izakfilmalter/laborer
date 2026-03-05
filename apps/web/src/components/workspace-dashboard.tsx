@@ -12,13 +12,14 @@
  * - All workspaces for that project with status badges, branch names,
  *   ports, and terminal counts
  *
- * All data is reactive via LiveStore queries — the dashboard updates
- * automatically as workspace/task state changes.
+ * Workspace and task data comes from LiveStore queries. Terminal counts
+ * come from the terminal service via the `useTerminalList` polling hook.
  *
  * @see Issue #114: Cross-project workspace dashboard
+ * @see Issue #144: Web app LiveStore terminal query replacement
  */
 
-import { projects, tasks, terminals, workspaces } from "@laborer/shared/schema";
+import { projects, tasks, workspaces } from "@laborer/shared/schema";
 import { queryDb } from "@livestore/livestore";
 import {
 	CheckCircle2,
@@ -42,6 +43,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
+import { useTerminalList } from "@/hooks/use-terminal-list";
 import { cn } from "@/lib/utils";
 import { useLaborerStore } from "@/livestore/store";
 
@@ -51,9 +53,6 @@ const dashboardWorkspaces$ = queryDb(workspaces, {
 	label: "dashboardWorkspaces",
 });
 const dashboardTasks$ = queryDb(tasks, { label: "dashboardTasks" });
-const dashboardTerminals$ = queryDb(terminals, {
-	label: "dashboardTerminals",
-});
 
 type WorkspaceStatus =
 	| "creating"
@@ -295,7 +294,7 @@ function WorkspaceDashboard() {
 	const projectList = store.useQuery(dashboardProjects$);
 	const workspaceList = store.useQuery(dashboardWorkspaces$);
 	const taskList = store.useQuery(dashboardTasks$);
-	const terminalList = store.useQuery(dashboardTerminals$);
+	const { terminals: terminalList } = useTerminalList();
 
 	// Build per-project dashboard sections
 	const sections: readonly ProjectSection[] = useMemo(() => {

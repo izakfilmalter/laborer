@@ -4,6 +4,9 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
+/** Regex for stripping the /terminal-rpc prefix when proxying to the terminal service. */
+const TERMINAL_RPC_PREFIX = /^\/terminal-rpc/;
+
 export default defineConfig({
 	plugins: [tailwindcss(), tanstackRouter({}), react()],
 	resolve: {
@@ -18,6 +21,10 @@ export default defineConfig({
 			"/rpc": {
 				target: "http://localhost:3000",
 				ws: true,
+			},
+			"/terminal-rpc": {
+				target: "http://localhost:3001",
+				rewrite: (p) => p.replace(TERMINAL_RPC_PREFIX, "/rpc"),
 			},
 			"/terminal": {
 				target: "http://localhost:3001",

@@ -1,10 +1,11 @@
 /**
  * Terminal list UI component per workspace.
  *
- * Displays all terminals for a given workspace from LiveStore. Each terminal
- * shows its command and status. Includes a "New Terminal" button that spawns
- * a new terminal via the terminal.spawn RPC mutation. Selecting a terminal
- * switches the active pane to display it.
+ * Displays all terminals for a given workspace from the terminal service
+ * (via the `useTerminalList` polling hook). Each terminal shows its command
+ * and status. Includes a "New Terminal" button that spawns a new terminal
+ * via the terminal.spawn RPC mutation. Selecting a terminal switches the
+ * active pane to display it.
  *
  * Terminal items are draggable — users can drag a terminal from the sidebar
  * and drop it onto an empty panel pane to assign it to that specific pane.
@@ -13,11 +14,10 @@
  *
  * @see Issue #63: Terminal list per workspace UI
  * @see Issue #134: Drag terminal from sidebar onto empty panel pane
+ * @see Issue #144: Web app LiveStore terminal query replacement
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
-import { terminals } from "@laborer/shared/schema";
-import { queryDb } from "@livestore/livestore";
 import {
 	Plus,
 	RotateCw,
@@ -31,11 +31,9 @@ import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useTerminalList } from "@/hooks/use-terminal-list";
 import { cn, extractErrorMessage } from "@/lib/utils";
-import { useLaborerStore } from "@/livestore/store";
 import { usePanelActions } from "@/panels/panel-context";
-
-const allTerminals$ = queryDb(terminals, { label: "terminalList" });
 
 const spawnTerminalMutation = LaborerClient.mutation("terminal.spawn");
 const killTerminalMutation = LaborerClient.mutation("terminal.kill");
@@ -54,8 +52,7 @@ interface TerminalListProps {
  * button and click-to-select behavior for switching the active panel pane.
  */
 function TerminalList({ workspaceId }: TerminalListProps) {
-	const store = useLaborerStore();
-	const terminalList = store.useQuery(allTerminals$);
+	const { terminals: terminalList } = useTerminalList();
 	const panelActions = usePanelActions();
 	const spawnTerminal = useAtomSet(spawnTerminalMutation, {
 		mode: "promise",
@@ -206,7 +203,6 @@ interface TerminalItemProps {
 		readonly workspaceId: string;
 		readonly command: string;
 		readonly status: string;
-		readonly ptySessionRef: string | null;
 	};
 }
 

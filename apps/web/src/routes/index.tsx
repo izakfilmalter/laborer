@@ -6,7 +6,6 @@ import {
 	layoutSplit,
 	panelLayout,
 	projects,
-	terminals,
 	workspaces,
 } from "@laborer/shared/schema";
 import type { LeafNode, PanelNode, SplitNode } from "@laborer/shared/types";
@@ -57,6 +56,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkspaceDashboard } from "@/components/workspace-dashboard";
 import { WorkspaceList } from "@/components/workspace-list";
 import { useResponsiveLayout } from "@/hooks/use-responsive-layout";
+import { useTerminalList } from "@/hooks/use-terminal-list";
 import { useTrayWorkspaceCount } from "@/hooks/use-tray-workspace-count";
 import { useLaborerStore } from "@/livestore/store";
 import type { NavigationDirection } from "@/panels/layout-utils";
@@ -102,8 +102,7 @@ export const Route = createFileRoute("/")({
 	component: HomeRoute,
 });
 
-/** LiveStore queries for building the default panel layout. */
-const allTerminals$ = queryDb(terminals, { label: "homePanelTerminals" });
+/** LiveStore query for building the default panel layout. */
 const allWorkspaces$ = queryDb(workspaces, { label: "homePanelWorkspaces" });
 
 /** Session ID for the persisted panel layout row. Single-user, single-session. */
@@ -333,7 +332,7 @@ function PanelHeaderBar({
  */
 function useInitialLayout(): PanelNode | undefined {
 	const store = useLaborerStore();
-	const terminalList = store.useQuery(allTerminals$);
+	const { terminals: terminalList } = useTerminalList();
 	const workspaceList = store.useQuery(allWorkspaces$);
 
 	return useMemo(() => {

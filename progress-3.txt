@@ -3085,3 +3085,38 @@ Replaced the server's in-process terminal management (TerminalManager, PtyHostCl
 ### Issues unblocked
 - Issue #144: Web app LiveStore terminal query replacement — was blocked by #143 ✅. Now ready.
 
+---
+
+## Issue #144: Web app LiveStore terminal query replacement
+
+### Summary
+Replaced all `queryDb(terminals)` LiveStore subscriptions in the web app with the pre-existing `useTerminalList()` polling hook, which fetches terminal data from the terminal service via `terminal.list` RPC (proxied through `/terminal-rpc`). Added the Vite proxy rule for `/terminal-rpc` → terminal service port 3001. No `queryDb(terminals, ...)` calls remain in active code.
+
+### Changes
+
+**Modified:**
+- `apps/web/src/components/terminal-list.tsx` — Removed `terminals` schema import, `queryDb` import, `allTerminals$` query, and `useLaborerStore` usage. Added `useTerminalList` import. Updated `TerminalList` component to destructure `{ terminals: terminalList }` from the hook. Removed `ptySessionRef` from `TerminalItemProps` (field not present in `TerminalInfo` type from hook).
+- `apps/web/src/components/workspace-dashboard.tsx` — Removed `terminals` from schema import and `dashboardTerminals$` query. Added `useTerminalList` import. Updated `WorkspaceDashboard` to use `useTerminalList()` instead of `store.useQuery(dashboardTerminals$)`.
+- `apps/web/src/routes/index.tsx` — Removed `terminals` from schema import and `allTerminals$` query. Added `useTerminalList` import. Updated `useInitialLayout()` to use `useTerminalList()` instead of `store.useQuery(allTerminals$)`.
+- `apps/web/vite.config.ts` — Added `/terminal-rpc` proxy rule that rewrites to `/rpc` and forwards to `http://localhost:3001` (terminal service port). Extracted `TERMINAL_RPC_PREFIX` regex constant.
+
+**Pre-existing (unmodified, used as-is):**
+- `apps/web/src/hooks/use-terminal-list.ts` — Polling hook that fetches `terminal.list` RPC every 2 seconds. Returns `{ terminals, isLoading, error }`. Already existed but was unused until this issue.
+- `apps/web/src/atoms/terminal-service-client.ts` — AtomRpc client for terminal service. Exists but was not chosen for this issue (simpler polling hook was preferred).
+
+### Verification
+- `ultracite check` on all 3 modified component files: zero issues
+- `tsc --noEmit` on web app: passes (only pre-existing errors in calendar.tsx and sonner.tsx, unrelated)
+- `bun test`: 176 tests pass, 0 failures across all packages
+- `npx vitest run` (web app): 31 tests pass
+- Grep confirms no `queryDb(terminals` calls remain in active code (only in comments)
+
+### Design decisions
+- **`useTerminalList` hook over `TerminalServiceClient` AtomRpc**: The polling hook was simpler to integrate — direct drop-in replacement for the LiveStore query pattern. The AtomRpc client would require additional wiring (provider setup, atom subscriptions) for no clear benefit at this stage.
+- **2-second polling interval**: Matches the existing hook's default. Acceptable latency for terminal list updates; push-based updates can be added later via WebSocket events if needed.
+- **`ptySessionRef` removed from `TerminalItemProps`**: The `TerminalInfo` type from the hook doesn't include this field (it was a LiveStore schema artifact). The field was never used in rendering logic.
+- **Vite proxy rewrite**: `/terminal-rpc/foo` → `/rpc/foo` on port 3001. This keeps the terminal service's internal routes clean while giving the web app a distinct namespace to avoid collisions with the main server's `/rpc` endpoint.
+
+### Issues unblocked
+- Issue #145: LiveStore terminal schema deprecation — was blocked by #144 ✅. Now ready.
+

@@ -476,33 +476,9 @@ Add a `TerminalClient` Effect service to `@laborer/server` that acts as an RPC c
 
 ---
 
-## Issue 144: Web app LiveStore terminal query replacement
+## ~~Issue 144: Web app LiveStore terminal query replacement~~ ✅ DONE
 
-### Parent PRD
-
-PRD-terminal-extraction.md
-
-### What to build
-
-Replace all LiveStore `queryDb(terminals, ...)` subscriptions in the web app with RPC calls to the terminal service. Update `terminal-list.tsx` to fetch terminal list via `terminal.list()` RPC (through a Vite proxy rule for the terminal RPC endpoint) instead of LiveStore. Use React Query, SWR, or polling for reactivity. Update `workspace-dashboard.tsx` terminal counts to use the same RPC data source. Update `routes/index.tsx` initial panel layout generation to query running terminals via RPC instead of LiveStore. Remove the `v1.TerminalRestarted` event stream listener from `terminal-pane.tsx` (replaced by WebSocket control messages in Issue #141). Add a Vite proxy rule for the terminal service's RPC endpoint if not already present.
-
-### Acceptance criteria
-
-- [ ] `terminal-list.tsx` fetches terminal list from terminal service RPC, not LiveStore
-- [ ] `workspace-dashboard.tsx` gets terminal counts from terminal service RPC
-- [ ] `routes/index.tsx` queries running terminals from terminal service RPC for layout generation
-- [ ] `terminal-pane.tsx` no longer listens to `v1.TerminalRestarted` LiveStore event stream
-- [ ] No `queryDb(terminals, ...)` calls remain in the web app
-- [ ] Terminal list updates reactively when terminals are spawned or killed (via polling or push)
-- [ ] Vite proxy routes terminal RPC requests to TERMINAL_PORT
-
-### Blocked by
-
-- ~~Blocked by #141~~, ~~Blocked by #143~~
-
-### User stories addressed
-
-- User story 7, 14, 16, 22, 23, 24
+Replaced all `queryDb(terminals, ...)` LiveStore subscriptions in `terminal-list.tsx`, `workspace-dashboard.tsx`, and `routes/index.tsx` with the `useTerminalList()` polling hook that fetches from the terminal service via `terminal.list` RPC. Added `/terminal-rpc` Vite proxy rule rewriting to `/rpc` on port 3001. Removed `ptySessionRef` from `TerminalItemProps` (not in `TerminalInfo` type). `terminal-pane.tsx` `v1.TerminalRestarted` listener was already removed in Issue #141. Terminal list updates reactively via 2-second polling.
 
 ---
 
@@ -527,7 +503,7 @@ Deprecate all terminal-related events and remove the `terminals` table from the 
 
 ### Blocked by
 
-- Blocked by #144
+- ~~Blocked by #144~~
 
 ### User stories addressed
 
@@ -944,10 +920,10 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 141 | ~~Update Vite proxy + web app WebSocket hook~~ | ~~#140~~ | Done |
 | 142 | ~~Terminal event stream RPC~~ | ~~#139~~ | Done |
 | 143 | ~~Server TerminalClient + remove server terminal modules~~ | ~~#142~~ | Done |
-| 144 | Web app LiveStore terminal query replacement | ~~#141~~, ~~#143~~ | Ready |
-| 145 | LiveStore terminal schema deprecation | #144 | Blocked |
+| 144 | ~~Web app LiveStore terminal query replacement~~ | ~~#141~~, ~~#143~~ | Done |
+| 145 | LiveStore terminal schema deprecation | ~~#144~~ | Ready |
 | 146 | Grace period reconnection + orphan detection | ~~#140~~ | Ready |
-| 147 | Terminal extraction polish + integration verification | #144, #145, #146 | Blocked |
+| 147 | Terminal extraction polish + integration verification | ~~#144~~, #145, #146 | Blocked |
 | 148 | ~~Focused pane border fix~~ | ~~None~~ | Done |
 | 149 | ~~Focus auto-transfer on pane close~~ | ~~None~~ | Done |
 | 150 | ~~Guaranteed active pane invariant~~ | ~~#149~~ | Done |

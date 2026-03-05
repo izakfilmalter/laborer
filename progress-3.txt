@@ -1402,3 +1402,57 @@ yield* router.addRoute(HttpRouter.makeRoute("GET", "/terminal", handler));
 ### Verification
 - After the fix, `curl 'http://localhost:3000/terminal?id=test'` returns `{"error":"Terminal not found: test"}` with `Content-Type: application/json` — the route handler's 404 with JSON body, confirming the route is now registered and the handler is executing
 - Before the fix, the same request returned an empty 404 (`Content-Length: 0`) — the router's generic `RouteNotFound` response
+
+## Issue #80: Keyboard shortcut scope isolation — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented keyboard shortcut scope isolation so that panel shortcuts (Ctrl+B prefix sequences) work correctly when a terminal pane has focus. Previously, xterm.js greedily captured all keyboard events within its canvas, preventing panel shortcuts from firing. Now, when Ctrl+B is pressed inside a terminal, xterm.js passes the event through to the document where TanStack Hotkeys catches it, and enters "prefix mode" where the next key is also passed through as the action key.
+
+### What was done
+
+Modified `apps/web/src/panes/terminal-pane.tsx`:
+
+1. **`attachCustomKeyEventHandler`**: Added a custom keyboard event handler to the xterm.js Terminal instance that intercepts `KeyboardEvent` objects before xterm.js processes them:
+   - **Ctrl+B detection**: When `event.key === "b" && event.ctrlKey` (exactly Ctrl+B, no Shift/Alt/Meta modifiers), enters prefix mode and returns `false` to let the event bubble to `document`.
+   - **Prefix mode action key**: When in prefix mode, the next keydown also returns `false`, letting the action key (H, V, X, O, P, D) bubble to TanStack Hotkeys to complete the sequence.
+   - **Normal keys**: All other keys return `true`, letting xterm.js handle them normally.
+   - Only intercepts `keydown` events — `keyup` passes through to avoid breaking browser key state tracking.
+
+2. **Prefix mode state**: Added `prefixMode` (React state for visual indicator), `prefixModeRef` (ref for synchronous access in the handler), and `prefixTimeoutRef` (ref for the auto-exit timer):
+   - Prefix mode auto-exits after 1500ms (matching `SEQUENCE_TIMEOUT` in `panel-hotkeys.tsx`). If the user presses Ctrl+B but doesn't follow up with an action key, the terminal resumes normal input.
+   - Prefix mode exits immediately after the action key is consumed.
+   - Timeout is cleared on component unmount to prevent stale state updates.
+
+3. **Visual indicator**: Added a `Ctrl+B` badge at the top-left corner of the terminal pane that appears when prefix mode is active. Uses `bg-primary/90` with backdrop blur for visibility against the terminal background. Positioned to avoid overlapping the PaneToolbar (top-right) and status banners (bottom).
+
+4. **Updated module JSDoc**: Added documentation explaining the scope isolation architecture, the `attachCustomKeyEventHandler` mechanism, and references to Issue #80.
+
+### Files modified
+- `apps/web/src/panes/terminal-pane.tsx` — Added `useState` import, `PREFIX_MODE_TIMEOUT` constant, prefix mode state/refs, `attachCustomKeyEventHandler` with Ctrl+B detection, prefix mode indicator in render, cleanup in unmount handler, updated JSDoc
+
+### Acceptance criteria status
+- [x] Panel shortcuts don't fire when terminal has keyboard focus (keys return `true` to xterm.js, which consumes them before they reach TanStack Hotkeys on `document`)
+- [x] Prefix key (Ctrl+B) escapes terminal focus to panel scope (returns `false`, letting the event bubble to `document` where TanStack Hotkeys catches it)
+- [x] After prefix, next key is intercepted for panel action (not sent to terminal) (prefix mode returns `false` for the action key, xterm.js skips it, it bubbles to TanStack Hotkeys)
+- [x] Visual indicator shown during prefix mode ("Ctrl+B" badge at top-left of terminal)
+- [x] Prefix mode auto-exits after 1500ms timeout (matches panel-hotkeys.tsx SEQUENCE_TIMEOUT)
+- [ ] Tests: focus terminal → panel shortcut doesn't fire; prefix → shortcut works (deferred — requires running both server and web app with a live terminal)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on `terminal-pane.tsx` with zero issues
+- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **`attachCustomKeyEventHandler` over event listeners**: xterm.js provides this API specifically for intercepting keyboard events before its internal processing. Using a DOM `addEventListener` on the xterm.js container would race with xterm.js's own handlers. The custom handler API guarantees our logic runs first.
+- **Ref + state for prefix mode**: Used `prefixModeRef` (ref) for the synchronous check inside the `attachCustomKeyEventHandler` callback (which is registered once during the effect and needs the latest value), and `prefixMode` (state) for the visual indicator in the render output. This dual-tracking pattern is the same as `isRunningRef`/`isRunning` used elsewhere in the component.
+- **Exact Ctrl+B match**: The handler checks `!event.shiftKey && !event.altKey && !event.metaKey` to ensure only the exact Ctrl+B combination activates prefix mode. Ctrl+Shift+B, Ctrl+Alt+B, etc. are passed through to xterm.js normally (they may have different terminal-specific meanings).
+- **Timeout matches SEQUENCE_TIMEOUT**: The 1500ms prefix mode timeout matches the `SEQUENCE_TIMEOUT` constant in `panel-hotkeys.tsx`. This ensures both the terminal-side prefix mode and the TanStack Hotkeys sequence timeout expire at the same time. If the user presses Ctrl+B but doesn't follow up, both systems reset.
+- **Only keydown intercepted**: The handler returns `true` for `keyup` events. This is important because browsers track key state (Ctrl held down, etc.) via keyup events. Swallowing keyup events can leave the browser thinking a key is still held, causing subtle bugs.
+- **onData not affected**: Keys that return `false` from `attachCustomKeyEventHandler` do NOT trigger xterm.js's `onData` callback. This means Ctrl+B and the action key are never sent to the PTY via WebSocket — they exist only in the panel shortcut domain. The comment in the `onData` section documents this behavior.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #80. This is a polishing/UX improvement that makes the existing panel shortcuts (Issues #75-#78, #90) work correctly when terminals have focus.

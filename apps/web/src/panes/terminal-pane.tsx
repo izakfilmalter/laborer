@@ -14,6 +14,21 @@
  * - Sent as raw WebSocket text frames (NOT via terminal.write RPC)
  * - Server WebSocket route forwards to PTY via PtyHostClient.write()
  *
+ * Keyboard shortcut scope isolation (Issue #80):
+ * - xterm.js greedily captures all keyboard events within its canvas.
+ * - Panel shortcuts (Ctrl+B prefix sequences) must still work when a
+ *   terminal has focus.
+ * - `attachCustomKeyEventHandler` intercepts keyboard events before
+ *   xterm.js processes them. When Ctrl+B is pressed, the handler
+ *   returns `false` (letting the event bubble to `document` where
+ *   TanStack Hotkeys catches it) and enters "prefix mode".
+ * - In prefix mode, the next keydown is also returned `false` so the
+ *   action key (H, V, X, O, P, D) reaches TanStack Hotkeys.
+ * - After the action key (or a 1500ms timeout matching SEQUENCE_TIMEOUT),
+ *   prefix mode exits and all keys go to the terminal again.
+ * - This gives the same UX as tmux: Ctrl+B escapes the terminal to the
+ *   panel shortcut layer, then the next key is the panel action.
+ *
  * Reconnection:
  * - On page reload or network disruption, the WebSocket reconnects with
  *   exponential backoff
@@ -40,6 +55,7 @@
  * @see Issue #61: xterm.js terminal pane — send keyboard input
  * @see Issue #62: xterm.js terminal pane — handle resize
  * @see Issue #64: Terminal session reconnection
+ * @see Issue #80: Keyboard shortcut scope isolation
  * @see Issue #140: Web client terminal pane — WebSocket data path
  */
 
@@ -50,13 +66,20 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { useTerminalWebSocket } from "@/hooks/use-terminal-websocket";
 import { useLaborerStore } from "@/livestore/store";
 
 /** Module-level mutation atom for terminal.resize — shared across all TerminalPane instances. */
 const terminalResizeMutation = LaborerClient.mutation("terminal.resize");
+
+/**
+ * Timeout for prefix mode (ms). Matches the SEQUENCE_TIMEOUT in panel-hotkeys.tsx
+ * so that if the user presses Ctrl+B but doesn't follow up with an action key
+ * within this window, prefix mode exits and the terminal resumes normal input.
+ */
+const PREFIX_MODE_TIMEOUT = 1500;
 
 /** Query all terminals from LiveStore for status checking. */
 const allTerminals$ = queryDb(terminals, { label: "terminalPaneStatus" });
@@ -114,6 +137,19 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 	/** Ref for isRunning so the xterm.js onData callback can check it. */
 	const isRunningRef = useRef(isRunning);
 	isRunningRef.current = isRunning;
+
+	/**
+	 * Prefix mode state for keyboard shortcut scope isolation (Issue #80).
+	 *
+	 * When Ctrl+B is pressed inside the terminal, prefix mode activates.
+	 * The next keypress is suppressed from the terminal and bubbles to
+	 * document where TanStack Hotkeys catches it as the action key.
+	 * Prefix mode auto-exits after PREFIX_MODE_TIMEOUT or after the
+	 * action key is consumed.
+	 */
+	const [prefixMode, setPrefixMode] = useState(false);
+	const prefixModeRef = useRef(false);
+	const prefixTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	/**
 	 * Callback for terminal output data received via WebSocket.
@@ -223,6 +259,86 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 			// Container may not have dimensions yet
 		}
 
+		// Keyboard shortcut scope isolation (Issue #80).
+		//
+		// xterm.js greedily captures all keyboard events within its canvas.
+		// Panel shortcuts (Ctrl+B prefix sequences registered via TanStack
+		// Hotkeys on `document`) would never fire because xterm.js consumes
+		// the events before they bubble.
+		//
+		// `attachCustomKeyEventHandler` intercepts KeyboardEvent objects
+		// before xterm.js processes them:
+		// - Return `true` → xterm.js handles the key (normal terminal input)
+		// - Return `false` → xterm.js ignores the key (it bubbles to document)
+		//
+		// When Ctrl+B is detected:
+		// 1. Enter prefix mode (next key will also be passed through)
+		// 2. Return `false` so Ctrl+B bubbles to TanStack Hotkeys as the
+		//    first key of the sequence
+		//
+		// When in prefix mode and the next key arrives:
+		// 1. Exit prefix mode
+		// 2. Return `false` so the action key (H, V, X, O, P, D) bubbles
+		//    to TanStack Hotkeys as the second key of the sequence
+		//
+		// After the action key (or PREFIX_MODE_TIMEOUT), all keys go to
+		// the terminal again.
+		terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+			// Only intercept keydown events — keyup should pass through
+			// to avoid breaking key state tracking in the browser.
+			if (event.type !== "keydown") {
+				return true;
+			}
+
+			// Check for Ctrl+B (the panel prefix key).
+			// Must be exactly Ctrl+B — not Ctrl+Shift+B, not Ctrl+Alt+B.
+			if (
+				event.key === "b" &&
+				event.ctrlKey &&
+				!event.shiftKey &&
+				!event.altKey &&
+				!event.metaKey
+			) {
+				// Enter prefix mode: the next keydown will also be passed
+				// through to TanStack Hotkeys.
+				prefixModeRef.current = true;
+				setPrefixMode(true);
+
+				// Auto-exit prefix mode after timeout (matches SEQUENCE_TIMEOUT
+				// in panel-hotkeys.tsx). If the user presses Ctrl+B but doesn't
+				// follow up with an action key, the terminal resumes normal input.
+				if (prefixTimeoutRef.current !== null) {
+					clearTimeout(prefixTimeoutRef.current);
+				}
+				prefixTimeoutRef.current = setTimeout(() => {
+					prefixModeRef.current = false;
+					setPrefixMode(false);
+					prefixTimeoutRef.current = null;
+				}, PREFIX_MODE_TIMEOUT);
+
+				// Let Ctrl+B bubble to document for TanStack Hotkeys
+				return false;
+			}
+
+			// In prefix mode: pass the action key through to TanStack Hotkeys.
+			// This is the second key in the Ctrl+B -> action sequence.
+			if (prefixModeRef.current) {
+				// Exit prefix mode — the action key has been consumed.
+				prefixModeRef.current = false;
+				setPrefixMode(false);
+				if (prefixTimeoutRef.current !== null) {
+					clearTimeout(prefixTimeoutRef.current);
+					prefixTimeoutRef.current = null;
+				}
+
+				// Let the action key bubble to document
+				return false;
+			}
+
+			// Normal key — let xterm.js handle it
+			return true;
+		});
+
 		// Wire keyboard input to server PTY via WebSocket text frames.
 		// xterm.js's onData fires for every keystroke (including special keys
 		// like enter, backspace, ctrl-c, arrows) with the data already encoded
@@ -236,6 +352,10 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 		//
 		// Keyboard input is only sent when the terminal is running.
 		// When the terminal has stopped, keystrokes are silently dropped.
+		//
+		// Note: Keys that were passed through to TanStack Hotkeys via the
+		// custom key event handler (Ctrl+B and action keys) do NOT trigger
+		// onData because xterm.js skips them when the handler returns false.
 		const onDataDisposable = terminal.onData((data: string) => {
 			if (!isRunningRef.current) {
 				return;
@@ -279,6 +399,12 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 			terminal.dispose();
 			terminalRef.current = null;
 			fitAddonRef.current = null;
+			// Clear prefix mode timeout to prevent stale state updates
+			if (prefixTimeoutRef.current !== null) {
+				clearTimeout(prefixTimeoutRef.current);
+				prefixTimeoutRef.current = null;
+			}
+			prefixModeRef.current = false;
 		};
 	}, [terminalId, store]);
 
@@ -343,6 +469,16 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 		>
 			{/* xterm.js container */}
 			<div className="h-full w-full" ref={containerRef} />
+
+			{/* Prefix mode indicator (Issue #80) — shown when Ctrl+B was pressed
+			    and the terminal is waiting for the next key to complete a panel
+			    shortcut sequence. Positioned at top-left to avoid overlapping with
+			    the PaneToolbar (top-right) and status banners (bottom). */}
+			{prefixMode && (
+				<div className="absolute top-1 left-1 z-20 rounded bg-primary/90 px-2 py-0.5 font-mono text-primary-foreground text-xs backdrop-blur-sm">
+					Ctrl+B
+				</div>
+			)}
 
 			{/* WebSocket disconnection indicator */}
 			{wsStatus === "disconnected" && isRunning && <DisconnectedBanner />}

@@ -2181,14 +2181,14 @@ Use TanStack Hotkeys scope isolation to prevent panel keyboard shortcuts from fi
 
 ### Acceptance criteria
 
-- [ ] Panel shortcuts don't fire when terminal has keyboard focus
-- [ ] Prefix key escapes terminal focus to panel scope
-- [ ] After prefix, next key is intercepted for panel action (not sent to terminal)
-- [ ] Tests: focus terminal → panel shortcut doesn't fire; prefix → shortcut works
+- [x] Panel shortcuts don't fire when terminal has keyboard focus
+- [x] Prefix key escapes terminal focus to panel scope
+- [x] After prefix, next key is intercepted for panel action (not sent to terminal)
+- [ ] Tests: focus terminal → panel shortcut doesn't fire; prefix → shortcut works (deferred — requires running both server and web app with a live terminal)
 
 ### Blocked by
 
-- Blocked by #75, #61
+- Blocked by ~~#75~~, ~~#61~~ (both done)
 
 ### User stories addressed
 
@@ -4111,7 +4111,7 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 77 | Keyboard shortcut — close pane | ~~#70~~, ~~#75~~ | Done |
 | 78 | Keyboard shortcut — navigate panes | ~~#71~~, ~~#75~~ | Done |
 | 79 | Keyboard shortcut — resize panes | #72, ~~#75~~ | Blocked |
-| 80 | Keyboard shortcut scope isolation | ~~#75~~, ~~#61~~ | Ready |
+| 80 | Keyboard shortcut scope isolation | ~~#75~~, ~~#61~~ | Done |
 | 81 | Panel responsive layout | #72 | Blocked |
 | 82 | DiffService — run git diff | #40 | Done |
 | 83 | DiffService — poll on interval | ~~#82~~ | Done |

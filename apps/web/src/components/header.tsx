@@ -1,6 +1,25 @@
 import { Link } from "@tanstack/react-router";
+import { RotateCcw } from "lucide-react";
+import { useCallback } from "react";
+
+import { Button } from "@/components/ui/button";
 
 import { ModeToggle } from "./mode-toggle";
+
+function ResetButton() {
+	const handleReset = useCallback(() => {
+		const url = new URL(globalThis.location.href);
+		url.searchParams.set("reset", "");
+		globalThis.location.href = url.toString();
+	}, []);
+
+	return (
+		<Button onClick={handleReset} size="icon" variant="outline">
+			<RotateCcw className="h-[1.2rem] w-[1.2rem]" />
+			<span className="sr-only">Reset persistence</span>
+		</Button>
+	);
+}
 
 export default function Header() {
 	const links = [{ to: "/", label: "Home" }] as const;
@@ -18,6 +37,7 @@ export default function Header() {
 					})}
 				</nav>
 				<div className="flex items-center gap-2">
+					<ResetButton />
 					<ModeToggle />
 				</div>
 			</div>

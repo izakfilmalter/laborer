@@ -346,34 +346,9 @@ Added drag-and-drop support using the native HTML5 Drag and Drop API. Terminal i
 
 ---
 
-## Issue 135: Terminal package scaffold
+## ~~Issue 135: Terminal package scaffold~~ ✅ DONE
 
-### Parent PRD
-
-PRD-terminal-extraction.md
-
-### What to build
-
-Create the new `@laborer/terminal` workspace package at `packages/terminal/` with a minimal Bun HTTP server entry point. This is the foundational tracer bullet — a running process on its own port that proves the package structure, env loading, and turbo dev integration work end-to-end.
-
-Create `package.json` (following the same patterns as `@laborer/server`: `"type": "module"`, exports pointing to TypeScript source, Bun runtime), `tsconfig.json` (extending `@laborer/config/tsconfig.base.json`), and `vitest.config.ts`. The entry point (`src/main.ts`) launches a Bun HTTP server on `TERMINAL_PORT` (read from env, default 3001) with a single `GET /` health check route. Add `TERMINAL_PORT` to `@laborer/env` for validation. Use the `dotenv -e ../../.env.local` pattern for env loading in package scripts. Update `turbo.json` to include the terminal package's `dev` task as persistent.
-
-### Acceptance criteria
-
-- [ ] `packages/terminal/` exists with package.json, tsconfig.json, vitest.config.ts
-- [ ] `bun run dev` in packages/terminal starts a Bun HTTP server on TERMINAL_PORT
-- [ ] `GET /` returns a health check response
-- [ ] `TERMINAL_PORT` is validated in `@laborer/env`
-- [ ] `turbo dev` starts both server and terminal service as independent persistent tasks
-- [ ] Terminal service logs its port on startup
-
-### Blocked by
-
-None - can start immediately
-
-### User stories addressed
-
-- User story 2, 3, 4
+Created `@laborer/terminal` workspace package at `packages/terminal/` with Bun HTTP server entry point on `TERMINAL_PORT` (default 3001). Package includes `package.json`, `tsconfig.json`, `vitest.config.ts`, and `src/main.ts` with health check route. Added `TERMINAL_PORT` to `@laborer/env/server`. `turbo dev` discovers both server and terminal service as independent persistent tasks.
 
 ---
 
@@ -772,8 +747,8 @@ End-to-end verification and polish pass for the full terminal service extraction
 | 127 | ~~Terminal scroll performance~~ | ~~#60~~ | Done |
 | 131 | ~~Theme consistency audit~~ | ~~#90~~ | Done |
 | 134 | ~~Drag terminal from sidebar onto empty panel~~ | ~~#63~~, ~~#66~~ | Done |
-| 135 | Terminal package scaffold | None | Ready |
-| 136 | Move PTY Host + PtyHostClient to terminal package | #135 | Blocked |
+| 135 | ~~Terminal package scaffold~~ | ~~None~~ | Done |
+| 136 | Move PTY Host + PtyHostClient to terminal package | ~~#135~~ | Ready |
 | 137 | Terminal RPC contract | None | Ready |
 | 138 | Move + simplify TerminalManager | #136 | Blocked |
 | 139 | Terminal RPC handlers | #137, #138 | Blocked |

@@ -2265,3 +2265,83 @@ Audited all custom components across the frontend and replaced hard-coded Tailwi
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #131. This was a standalone polishing task addressing Polishing requirement 11 (theme consistency).
 
+## Issue #135: Terminal package scaffold — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Created the `@laborer/terminal` workspace package at `packages/terminal/` with a minimal Bun HTTP server entry point. This is the foundational tracer bullet for the terminal extraction feature (PRD-terminal-extraction.md) — a running process on its own port that proves the package structure, env loading, and turbo dev integration work end-to-end. The terminal service starts on `TERMINAL_PORT` (default 3001, configurable via env) and responds to a `GET /` health check with `{"status":"ok","name":"laborer-terminal","port":3001}`.
+
+### What was done
+
+1. **Created `packages/terminal/package.json`** — Package manifest following `@laborer/server` patterns:
+   - Name: `@laborer/terminal`, version `0.0.0`, `"private": true`, `"type": "module"`
+   - Scripts: `dev` (`bun run --watch src/main.ts`), `build`/`check-types` (`tsc --noEmit`), `start` (`bun run src/main.ts`), `test` (`vitest run`)
+   - Exports: `{ ".": "./src/main.ts" }` — direct TypeScript source, no build step
+   - Dependencies: `@effect/platform`, `@effect/platform-bun`, `@effect/rpc`, `@laborer/env`, `effect` (all using `catalog:` or `workspace:*`)
+   - DevDependencies: `@effect/vitest`, `@laborer/config`, `@types/bun`, `@types/node`, `typescript`, `vitest`
+
+2. **Created `packages/terminal/tsconfig.json`** — Extends `@laborer/config/tsconfig.base.json`:
+   - `noEmit: true`, `declaration: true`, `types: ["bun", "node"]`
+   - Includes `["src", "test"]`
+
+3. **Created `packages/terminal/vitest.config.ts`** — Vitest configuration matching `@laborer/server`:
+   - Includes `test/**/*.test.ts`, 30s test/hook timeouts
+   - Inlines `@effect/vitest` dependency
+
+4. **Created `packages/terminal/src/main.ts`** — Bun HTTP server entry point (~90 lines):
+   - Uses `@effect/platform-bun` (`BunHttpServer`, `BunRuntime`) for the HTTP server and runtime
+   - `HealthRouteLive`: `GET /` returns `{ status: "ok", name: "laborer-terminal", port: TERMINAL_PORT }`
+   - `ServerLive`: `BunHttpServer.layer({ port: env.TERMINAL_PORT })`
+   - `HttpLive`: Composes `HttpRouter.Default.serve(HttpMiddleware.logger)` with health route and server layer
+   - `main`: `HttpLive.pipe(Layer.launch, Effect.scoped)` — runs until interrupted
+   - `BunRuntime.runMain(main)` — handles SIGINT/SIGTERM graceful shutdown
+   - Comprehensive JSDoc documenting the architecture, future issues, and references
+
+5. **Modified `packages/env/src/server.ts`** — Added `TERMINAL_PORT` to env validation:
+   - `TERMINAL_PORT: port.default(3001)` — validated as `z.coerce.number().int().min(1).max(65_535)` with default 3001
+   - Placed after `PORT` (3000) and before `PORT_RANGE_START` (3100)
+   - Both `@laborer/server` and `@laborer/terminal` import from `@laborer/env/server`, so the env is validated consistently
+
+6. **Created `packages/terminal/src/` and `packages/terminal/test/` directories** — Empty test directory ready for Issue #136 (PTY Host tests).
+
+### Files created
+- `packages/terminal/package.json` — Package manifest
+- `packages/terminal/tsconfig.json` — TypeScript configuration
+- `packages/terminal/vitest.config.ts` — Vitest test configuration
+- `packages/terminal/src/main.ts` — Bun HTTP server entry point with health check
+
+### Files modified
+- `packages/env/src/server.ts` — Added `TERMINAL_PORT` env var with default 3001
+
+### Acceptance criteria status
+- [x] `packages/terminal/` exists with package.json, tsconfig.json, vitest.config.ts
+- [x] `bun run dev` in packages/terminal starts a Bun HTTP server on TERMINAL_PORT (verified: starts on port 3001)
+- [x] `GET /` returns a health check response (`{"status":"ok","name":"laborer-terminal","port":3001}`)
+- [x] `TERMINAL_PORT` is validated in `@laborer/env` (added to `packages/env/src/server.ts` with default 3001)
+- [x] `turbo dev` starts both server and terminal service as independent persistent tasks (verified via `turbo run dev --dry-run` — both packages' `dev` scripts are discovered)
+- [x] Terminal service logs its port on startup (Effect logger outputs `Listening on http://localhost:3001`)
+
+### Verification
+- `tsc --noEmit` passes for terminal package (zero errors)
+- `tsc --noEmit` passes for server package (only pre-existing informational messages — no new errors)
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on both new/modified files with zero issues (`Checked 2 files in 4ms. No fixes applied.`)
+- All 61 tests pass across 4 test files (32 ring buffer + 9 workspace validation + 14 PTY host + 6 terminal manager — no regressions)
+- Terminal service starts successfully: `bun run start` → `Listening on http://localhost:3001` → `GET /` returns health check JSON
+- `bun install` resolves cleanly — new package discovered by workspace glob `packages/*`
+
+### Design decisions
+- **Same structure as `@laborer/server`**: The terminal package follows the exact same conventions — `bun run --watch` for dev, `tsc --noEmit` for types, `vitest run` for tests, direct TypeScript source exports (no build step). This consistency makes the codebase predictable and reduces cognitive overhead.
+- **`TERMINAL_PORT` default 3001**: Port 3001 is the next port after the server (3000). The port range for workspace dev servers starts at 3100, so 3001 is safely outside that range. The PRD-terminal-extraction.md specifies 3001 as the default.
+- **Env validation in `@laborer/env/server`**: Rather than creating a separate `@laborer/env/terminal` export, `TERMINAL_PORT` is added to the existing `server` env. Both the server and terminal service import from `@laborer/env/server`, ensuring consistent env validation and defaults. The server will eventually need `TERMINAL_PORT` too (Issue #143 — to connect to the terminal service as an RPC client).
+- **No `node-pty` dependency yet**: The terminal package currently has no `node-pty` dependency. That will be added in Issue #136 when PTY Host + PtyHostClient are moved. This keeps the scaffold minimal and avoids native dependency compilation during this foundational step.
+- **No RPC endpoints yet**: The entry point only has a health check route. RPC handlers (Issue #139) and WebSocket routes (Issue #140) will be added in subsequent issues. This tracer bullet proves the infrastructure works before layering on complexity.
+- **Health check includes port**: The health check response includes the `port` field so callers can verify they're talking to the expected service instance. This is useful for debugging port conflicts in development.
+- **`turbo.json` unchanged**: The existing `dev` task configuration (`{ "cache": false, "persistent": true }`) applies to all packages with a `dev` script. No turbo.json changes needed — the new package is automatically discovered via the workspace glob.
+- **`@effect/rpc` included proactively**: Even though no RPC endpoints exist yet, `@effect/rpc` is included in dependencies because Issue #139 (Terminal RPC handlers) is the immediate next step after Issue #136. This avoids a follow-up dependency addition.
+
+### Issues unblocked
+- Issue #136: Move PTY Host + PtyHostClient to terminal package — now unblocked (was blocked by #135)
+

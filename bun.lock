@@ -144,6 +144,25 @@
         "typescript": "catalog:",
       },
     },
+    "packages/terminal": {
+      "name": "@laborer/terminal",
+      "version": "0.0.0",
+      "dependencies": {
+        "@effect/platform": "catalog:",
+        "@effect/platform-bun": "catalog:",
+        "@effect/rpc": "catalog:",
+        "@laborer/env": "workspace:*",
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@effect/vitest": "catalog:",
+        "@laborer/config": "workspace:*",
+        "@types/bun": "^1.2.14",
+        "@types/node": "^25.3.3",
+        "typescript": "catalog:",
+        "vitest": "^3.2.4",
+      },
+    },
   },
   "overrides": {
     "@effect/cli": "0.72.1",
@@ -411,6 +430,8 @@
     "@laborer/server": ["@laborer/server@workspace:packages/server"],
 
     "@laborer/shared": ["@laborer/shared@workspace:packages/shared"],
+
+    "@laborer/terminal": ["@laborer/terminal@workspace:packages/terminal"],
 
     "@livestore/adapter-node": ["@livestore/adapter-node@0.4.0-dev.22", "", { "dependencies": { "@livestore/common": "0.4.0-dev.22", "@livestore/devtools-vite": "0.4.0-dev.22", "@livestore/sqlite-wasm": "0.4.0-dev.22", "@livestore/utils": "0.4.0-dev.22", "@livestore/webmesh": "0.4.0-dev.22", "@opentelemetry/api": "1.9.0", "vite": "7.2.4" } }, "sha512-++EwvHnvOpJOzqxKfLdom111uCK9fHcS4dGutm/qnCyKOL0nXFFH9yuHUrLAlprJ+soyZ/N1NVajEJdmL2culA=="],
 

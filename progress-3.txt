@@ -3584,3 +3584,36 @@ Implemented the frontend visibility pass for detected workspaces (`origin: "exte
 - `bun run --filter web check-types`: fails due pre-existing unrelated TypeScript errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx` (no new errors from this issue)
 - `bun run --filter web test`: passes (31/31)
 - `bun x ultracite check apps/web/src/components/workspace-list.tsx apps/web/src/components/workspace-dashboard.tsx`: passes
+
+## Issue #162: Origin-aware destroy behavior — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented origin-aware workspace destruction across server and UI. External (detected) workspaces now remove only the Laborer record while preserving the underlying git worktree/branch on disk. Laborer-created workspaces keep the existing destructive cleanup behavior.
+
+### What was done
+
+1. **Server-side origin-aware destroy logic** (`packages/server/src/services/workspace-provider.ts`)
+   - Added `origin` check in `destroyWorktree`.
+   - For `origin: "external"`: skips `git worktree remove --force` and `git branch -D`.
+   - For `origin: "laborer"`: keeps existing git cleanup flow unchanged.
+   - Port freeing now runs only when `workspace.port > 0`.
+   - `workspaceDestroyed` event commit remains common to both flows.
+
+2. **Destroy confirmation copy by origin** (`apps/web/src/components/workspace-list.tsx`)
+   - External workspace dialog now states that the workspace is removed from Laborer only and the on-disk git worktree path is not modified.
+   - Laborer-origin dialog keeps the existing warning language about removing the git worktree/branch.
+
+3. **Integration tests for both origin paths** (`packages/server/test/workspace-destroy-origin.test.ts`)
+   - Added test proving external workspace destroy preserves worktree directory and branch, removes LiveStore row, and frees allocated port.
+   - Added test proving Laborer workspace destroy removes worktree directory and branch, and removes LiveStore row.
+
+4. **Issue tracking updates** (`issues.md`)
+   - Marked Issue #162 as Done and checked all acceptance criteria.
+   - Updated summary table row for #162 to Done.
+
+### Verification
+- `bun run --filter @laborer/server test -- workspace-destroy-origin.test.ts`: passes (2/2)
+- `bun x ultracite check packages/server/src/services/workspace-provider.ts packages/server/test/workspace-destroy-origin.test.ts apps/web/src/components/workspace-list.tsx`: passes

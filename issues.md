@@ -920,7 +920,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 159 | ~~WorktreeDetector + schema origin + initial detection on project add~~ | ~~None~~ | Done |
 | 160 | ~~UI for detected workspaces~~ | ~~#159~~ | Done |
 | 161 | Live filesystem watcher + server boot reconciliation | ~~#159~~ | Ready |
-| 162 | Origin-aware destroy behavior | ~~#160~~ | Ready |
+| 162 | ~~Origin-aware destroy behavior~~ | ~~#160~~ | Done |
 | 163 | Worktree detection polish & edge cases | #161, #162 | Blocked |
 
 ---
@@ -1065,7 +1065,7 @@ Build the WorktreeWatcher service that keeps workspace records in sync with actu
 
 ---
 
-## Issue 162: Origin-aware destroy behavior
+## ~~Issue 162: Origin-aware destroy behavior~~ ✅ DONE
 
 ### Parent PRD
 
@@ -1081,13 +1081,13 @@ Modify workspace destruction to behave differently based on the workspace's `ori
 
 ### Acceptance criteria
 
-- [ ] Destroying an external workspace does NOT run `git worktree remove` or `git branch -D`
-- [ ] Destroying an external workspace frees port if port > 0
-- [ ] Destroying an external workspace commits `workspaceDestroyed` event
-- [ ] Destroying a Laborer-created workspace still removes the git worktree and branch (no regression)
-- [ ] Confirmation dialog for external workspaces says the git worktree will not be affected
-- [ ] Confirmation dialog for Laborer-created workspaces shows existing text (mentions worktree/branch removal)
-- [ ] Tests verify origin-aware destroy behavior for both origins
+- [x] Destroying an external workspace does NOT run `git worktree remove` or `git branch -D`
+- [x] Destroying an external workspace frees port if port > 0
+- [x] Destroying an external workspace commits `workspaceDestroyed` event
+- [x] Destroying a Laborer-created workspace still removes the git worktree and branch (no regression)
+- [x] Confirmation dialog for external workspaces says the git worktree will not be affected
+- [x] Confirmation dialog for Laborer-created workspaces shows existing text (mentions worktree/branch removal)
+- [x] Tests verify origin-aware destroy behavior for both origins
 
 ### Blocked by
 
@@ -1096,6 +1096,10 @@ Modify workspace destruction to behave differently based on the workspace's `ori
 ### User stories addressed
 
 - User story 9, 14
+
+### Status: Done
+
+Workspace destruction is now origin-aware. External workspaces skip git worktree/branch deletion and only remove the Laborer record while still freeing any allocated port. Laborer-created workspaces keep the existing destructive cleanup flow. Added integration tests for both origin paths and updated the workspace destroy confirmation copy so detected workspaces clearly state that on-disk worktrees are untouched.
 
 ---
 

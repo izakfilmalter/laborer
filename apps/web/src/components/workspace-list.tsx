@@ -313,14 +313,32 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 									<AlertDialogHeader>
 										<AlertDialogTitle>Destroy workspace?</AlertDialogTitle>
 										<AlertDialogDescription>
-											This will permanently destroy workspace{" "}
-											<strong className="font-mono text-foreground">
-												{workspace.branchName}
-											</strong>
-											. All running processes (terminals, dev servers, agents)
-											will be killed, the git worktree will be removed, and the
-											allocated port will be freed. This action cannot be
-											undone.
+											{isDetectedWorkspace ? (
+												<>
+													This will remove workspace{" "}
+													<strong className="font-mono text-foreground">
+														{workspace.branchName}
+													</strong>{" "}
+													from Laborer. Running processes in this workspace will
+													be stopped and any allocated port will be freed, but
+													the git worktree on disk at{" "}
+													<strong className="font-mono text-foreground">
+														{workspace.worktreePath}
+													</strong>{" "}
+													will not be changed.
+												</>
+											) : (
+												<>
+													This will permanently destroy workspace{" "}
+													<strong className="font-mono text-foreground">
+														{workspace.branchName}
+													</strong>
+													. All running processes (terminals, dev servers,
+													agents) will be killed, the git worktree will be
+													removed, and the allocated port will be freed. This
+													action cannot be undone.
+												</>
+											)}
 										</AlertDialogDescription>
 									</AlertDialogHeader>
 									<AlertDialogFooter>

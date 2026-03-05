@@ -16,6 +16,7 @@ import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
 import { CreateWorkspaceForm } from "@/components/create-workspace-form";
 import { ProjectList } from "@/components/project-list";
+import { TaskList } from "@/components/task-list";
 import {
 	ResizableHandle,
 	ResizablePanel,
@@ -492,6 +493,12 @@ function HomeComponent() {
 									<CreateWorkspaceForm />
 								</div>
 								<WorkspaceList />
+							</section>
+							<section>
+								<div className="mb-2">
+									<h2 className="font-medium text-sm">Tasks</h2>
+								</div>
+								<TaskList />
 							</section>
 							<section className="rounded-lg border p-3">
 								<h2 className="mb-1 font-medium text-sm">Server Status</h2>

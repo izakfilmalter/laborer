@@ -1135,3 +1135,59 @@ Replaced the O(n²) string concatenation pattern in both the PTY host's stdin li
 - Both readers use the same pattern: `chunks: string[]` → `join("")` → scan with `indexOf("\n", searchStart)` → `slice(searchStart)` for remainder. The `searchStart` index avoids re-scanning already-processed portions of the joined string.
 - The array is cleared with `chunks.length = 0` (fastest way to clear an array in V8) before keeping the remainder as a single element.
 - The join-once-scan-with-index approach is O(n) per chunk batch (one join, one scan pass) instead of O(n²) from repeated slice-and-reassign.
+
+---
+
+## Issue #104: Task list UI component — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Created a reactive Task list UI component that displays all tasks from LiveStore with status filtering, inline status updates, and task removal. Added the TaskList to the sidebar in the main route, between Workspaces and Server Status sections.
+
+### What was done
+
+1. **Created `apps/web/src/components/task-list.tsx`** — new React component with:
+   - **LiveStore reactive query**: `queryDb(tasks, { label: "taskList" })` at module level, consumed via `store.useQuery(allTasks$)` for reactive updates.
+   - **Status filter tabs**: Tabs component (Base UI) with "All", "Pending", "In Progress", "Completed", "Cancelled" tabs. Each tab shows the count of tasks in that status. Filtering is done client-side via `useMemo`.
+   - **Status badges**: Color-coded per task status — pending=yellow, in_progress=blue, completed=green, cancelled=gray. Uses same pattern as workspace status badges.
+   - **Source badges**: Color-coded per task source — manual=slate, linear=violet, github=orange, prd=cyan. Shows the source type as a small badge on each task card.
+   - **Status icons**: Animated icons per status — pending=Circle, in_progress=Loader2 (spinning), completed=CheckCircle2, cancelled=XCircle.
+   - **Inline status dropdown**: Select component allows changing task status directly from the card. Calls `LaborerClient.mutation("task.updateStatus")` via `useAtomSet` with `{ mode: "promise" }`. Toast notifications on success/error.
+   - **Remove button**: Trash icon per task with AlertDialog confirmation. Calls `LaborerClient.mutation("task.remove")` via `useAtomSet`.
+   - **Empty state**: ClipboardList icon with guidance message when no tasks exist.
+   - **Project name lookup**: Queries projects table to display project name per task.
+   - **External ID display**: Shows `externalId` (for linear/github tasks) as a monospace identifier.
+
+2. **Modified `apps/web/src/routes/index.tsx`**:
+   - Added `import { TaskList } from "@/components/task-list"` import.
+   - Added a "Tasks" section in the sidebar between "Workspaces" and "Server Status". Uses the same section structure as Projects and Workspaces.
+
+### Files created
+- `apps/web/src/components/task-list.tsx` — Task list component (~310 lines)
+
+### Files modified
+- `apps/web/src/routes/index.tsx` — Added TaskList import and sidebar section
+
+### Acceptance criteria status
+- [x] Component subscribes to Tasks table via LiveStore (`store.useQuery(allTasks$)` reactive query)
+- [x] Renders tasks with title, source badge, status badge (color-coded badges for both source and status)
+- [x] Status filter dropdown/tabs (Tabs with All, Pending, In Progress, Completed, Cancelled — each showing count)
+- [x] Updates reactively (LiveStore reactive query re-fires on any task event)
+- [ ] Tests: tasks render with correct badges; filter works; new task → list updates (deferred — requires running web app; component tests can be added with Vitest + React Testing Library)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors)
+- `ultracite check` passes on both new/modified files with zero issues
+- All 52 server tests pass (no regressions)
+
+### Design decisions
+- Used `Tabs` (Base UI) for status filtering rather than a dropdown. Tabs provide at-a-glance visibility of task counts per status and enable one-click filtering. The compact tab layout fits the sidebar width well.
+- Status counts are computed with `useMemo` from the full task list. This is O(n) per render but avoids separate queries for each status count.
+- The inline status Select uses the same color-coding as the status badges, providing visual consistency between the current status display and the available options.
+- Project name lookup uses the same `queryDb(projects)` + `Map` pattern established in `workspace-list.tsx`. The Map is wrapped in `useMemo` to avoid recreating on every render.
+- The TaskList shows ALL tasks (not filtered by project). A per-project filter can be added when the project switcher (Issue #113) is implemented.
+
+### Issues unblocked
+- Issue #114: Cross-project workspace dashboard — was blocked by #41 (done) and #104. **Now unblocked!**

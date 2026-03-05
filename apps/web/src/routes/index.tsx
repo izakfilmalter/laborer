@@ -639,7 +639,7 @@ function HomeComponent() {
 				<ResizablePanel defaultSize="75%" minSize="40%">
 					<div className="flex h-full flex-col">
 						<PanelHeaderBar layout={layout} />
-						<PanelHotkeys leafPaneIds={leafPaneIds} />
+						<PanelHotkeys layout={layout} leafPaneIds={leafPaneIds} />
 						<div className="min-h-0 flex-1">
 							<PanelManager layout={layout} />
 						</div>

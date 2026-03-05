@@ -11,10 +11,15 @@
  * - Ctrl+b then o → cycle focus to next pane
  * - Ctrl+b then p → cycle focus to previous pane
  * - Ctrl+b then d → toggle diff viewer alongside active terminal pane
+ * - Ctrl+b then ArrowLeft → move focus left
+ * - Ctrl+b then ArrowRight → move focus right
+ * - Ctrl+b then ArrowUp → move focus up
+ * - Ctrl+b then ArrowDown → move focus down
  *
  * All shortcuts operate on the currently active (focused) pane.
  * The active pane is tracked via PanelActionsContext.
  *
+ * @see Issue #71: PanelManager — navigate between panes (directional navigation)
  * @see Issue #75: Keyboard shortcut — split horizontal
  * @see Issue #76: Keyboard shortcut — split vertical (also done here)
  * @see Issue #77: Keyboard shortcut — close pane (also done here)
@@ -22,13 +27,22 @@
  * @see Issue #90: Toggle diff alongside terminal
  */
 
+import type { PanelNode } from "@laborer/shared/types";
 import { useHotkeySequence } from "@tanstack/react-hotkeys";
+import type { NavigationDirection } from "@/panels/layout-utils";
+import { findPaneInDirection } from "@/panels/layout-utils";
 import { useActivePaneId, usePanelActions } from "@/panels/panel-context";
 
 /** Timeout for the prefix key sequence (ms). */
 const SEQUENCE_TIMEOUT = 1500;
 
 interface PanelHotkeysProps {
+	/**
+	 * The root panel layout tree, used for directional navigation
+	 * (arrow key shortcuts). Needed to resolve spatial relationships
+	 * between panes based on split orientations.
+	 */
+	readonly layout?: PanelNode | undefined;
 	/**
 	 * All leaf pane IDs in order, used for cycling focus between panes.
 	 * Passed from the layout owner which has access to the full tree.
@@ -42,7 +56,7 @@ interface PanelHotkeysProps {
  * Must be rendered inside a PanelActionsProvider and HotkeysProvider.
  * This component renders nothing — it only registers event handlers.
  */
-function PanelHotkeys({ leafPaneIds }: PanelHotkeysProps) {
+function PanelHotkeys({ layout, leafPaneIds }: PanelHotkeysProps) {
 	const actions = usePanelActions();
 	const activePaneId = useActivePaneId();
 
@@ -130,6 +144,51 @@ function PanelHotkeys({ leafPaneIds }: PanelHotkeysProps) {
 				actions.toggleDiffPane(activePaneId);
 			}
 		},
+		{ timeout: SEQUENCE_TIMEOUT }
+	);
+
+	// --- Directional navigation (Ctrl+b then arrow key) ---
+	// Navigate to the pane in the given direction based on the layout
+	// tree's spatial structure (split orientations).
+	const navigateDirection = (
+		event: KeyboardEvent,
+		direction: NavigationDirection
+	) => {
+		event.preventDefault();
+		if (!(actions && activePaneId && layout)) {
+			return;
+		}
+		const targetId = findPaneInDirection(layout, activePaneId, direction);
+		if (targetId) {
+			actions.setActivePaneId(targetId);
+		}
+	};
+
+	// Ctrl+b then ArrowLeft → move focus to the pane on the left
+	useHotkeySequence(
+		["Control+B", "ArrowLeft"],
+		(event) => navigateDirection(event, "left"),
+		{ timeout: SEQUENCE_TIMEOUT }
+	);
+
+	// Ctrl+b then ArrowRight → move focus to the pane on the right
+	useHotkeySequence(
+		["Control+B", "ArrowRight"],
+		(event) => navigateDirection(event, "right"),
+		{ timeout: SEQUENCE_TIMEOUT }
+	);
+
+	// Ctrl+b then ArrowUp → move focus to the pane above
+	useHotkeySequence(
+		["Control+B", "ArrowUp"],
+		(event) => navigateDirection(event, "up"),
+		{ timeout: SEQUENCE_TIMEOUT }
+	);
+
+	// Ctrl+b then ArrowDown → move focus to the pane below
+	useHotkeySequence(
+		["Control+B", "ArrowDown"],
+		(event) => navigateDirection(event, "down"),
 		{ timeout: SEQUENCE_TIMEOUT }
 	);
 

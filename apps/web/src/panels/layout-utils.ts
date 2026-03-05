@@ -343,10 +343,146 @@ function findParent(
 	return undefined;
 }
 
+/**
+ * Direction type for directional pane navigation.
+ *
+ * Maps to split orientations:
+ * - "left" / "right" → navigate within "horizontal" splits (side-by-side)
+ * - "up" / "down" → navigate within "vertical" splits (stacked)
+ */
+type NavigationDirection = "left" | "right" | "up" | "down";
+
+/**
+ * Build the path from the root to a target node.
+ * Returns an array of PanelNode from root to target (inclusive), or
+ * undefined if the target is not found.
+ */
+function buildPath(root: PanelNode, targetId: string): PanelNode[] | undefined {
+	if (root.id === targetId) {
+		return [root];
+	}
+	if (root._tag === "SplitNode") {
+		for (const child of root.children) {
+			const childPath = buildPath(child, targetId);
+			if (childPath) {
+				return [root, ...childPath];
+			}
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Get the first leaf node in a subtree, preferring a specific edge.
+ *
+ * - "first" → leftmost / topmost leaf (DFS, always pick first child)
+ * - "last" → rightmost / bottommost leaf (DFS, always pick last child)
+ *
+ * When entering a subtree from a directional navigation, we want:
+ * - Moving right → enter the left edge of the new subtree (first)
+ * - Moving left → enter the right edge of the new subtree (last)
+ * - Moving down → enter the top edge of the new subtree (first)
+ * - Moving up → enter the bottom edge of the new subtree (last)
+ */
+function getEdgeLeaf(node: PanelNode, edge: "first" | "last"): LeafNode {
+	if (node._tag === "LeafNode") {
+		return node;
+	}
+	const child = edge === "first" ? node.children[0] : node.children.at(-1);
+	// Safety: SplitNode always has at least one child in valid trees
+	if (!child) {
+		// Unreachable in valid trees — SplitNodes always have children
+		return node as unknown as LeafNode;
+	}
+	return getEdgeLeaf(child, edge);
+}
+
+/**
+ * Try to navigate from a specific path index in the given direction.
+ * Returns the target leaf ID if a neighbor is found at this ancestor, or
+ * undefined to signal the caller to continue walking up.
+ */
+function tryNavigateAtAncestor(
+	path: PanelNode[],
+	index: number,
+	targetOrientation: "horizontal" | "vertical",
+	delta: number
+): string | undefined {
+	const ancestor = path[index];
+	if (!ancestor || ancestor._tag !== "SplitNode") {
+		return undefined;
+	}
+	if (ancestor.direction !== targetOrientation) {
+		return undefined;
+	}
+
+	const childInPath = path[index + 1];
+	if (!childInPath) {
+		return undefined;
+	}
+	const childIndex = ancestor.children.findIndex(
+		(c) => c.id === childInPath.id
+	);
+	if (childIndex === -1) {
+		return undefined;
+	}
+
+	const neighborIndex = childIndex + delta;
+	const neighbor = ancestor.children[neighborIndex];
+	if (!neighbor) {
+		return undefined;
+	}
+
+	const edge = delta > 0 ? "first" : "last";
+	return getEdgeLeaf(neighbor, edge).id;
+}
+
+/**
+ * Find the pane to navigate to from the active pane in a given direction.
+ *
+ * The algorithm:
+ * 1. Build the path from root to the active pane.
+ * 2. Walk up the path to find the nearest ancestor SplitNode whose
+ *    orientation matches the navigation direction.
+ *    - horizontal splits handle left/right
+ *    - vertical splits handle up/down
+ * 3. In that split, find the adjacent child in the requested direction.
+ * 4. Drill into the adjacent subtree to find the nearest leaf on the
+ *    entering edge (e.g., moving right enters from the left edge).
+ *
+ * Returns the target leaf ID, or undefined if navigation is not possible
+ * (at the edge of the layout in that direction).
+ */
+function findPaneInDirection(
+	root: PanelNode,
+	activePaneId: string,
+	direction: NavigationDirection
+): string | undefined {
+	const path = buildPath(root, activePaneId);
+	if (!path || path.length < 2) {
+		return undefined;
+	}
+
+	const targetOrientation: "horizontal" | "vertical" =
+		direction === "left" || direction === "right" ? "horizontal" : "vertical";
+	const delta = direction === "left" || direction === "up" ? -1 : 1;
+
+	// Walk up from the active pane's parent toward the root
+	for (let i = path.length - 2; i >= 0; i--) {
+		const result = tryNavigateAtAncestor(path, i, targetOrientation, delta);
+		if (result) {
+			return result;
+		}
+	}
+
+	return undefined;
+}
+
 export {
 	closePane,
 	countLeaves,
 	findNodeById,
+	findPaneInDirection,
 	findParent,
 	generateId,
 	getLeafIds,
@@ -354,3 +490,4 @@ export {
 	replaceNode,
 	splitPane,
 };
+export type { NavigationDirection };

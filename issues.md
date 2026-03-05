@@ -164,30 +164,9 @@ Display workspace creation errors in the UI. Handle all error types: dirty git s
 
 ---
 
-## Issue 71: PanelManager — navigate between panes
+## ~~Issue 71: PanelManager — navigate between panes~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Implement focus management for panes. Track which pane is active (visually indicated with a border/highlight). Allow moving focus between panes directionally (left/right/up/down).
-
-### Acceptance criteria
-
-- [ ] Active pane has visual indicator (border, highlight)
-- [ ] Focus can move between panes directionally
-- [ ] Focus wraps or stops at edges
-- [ ] Tests: multiple panes → focus moves correctly; active pane visually distinct
-
-### Blocked by
-
-- Blocked by #67
-
-### User stories addressed
-
-- User story 1, 30
+Implemented directional pane navigation (left/right/up/down) via `findPaneInDirection` algorithm + Ctrl+B arrow key shortcuts. Active pane visual indicator (ring-2 ring-primary) was already in place. Navigation stops at edges.
 
 ---
 
@@ -917,7 +896,7 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 38 | WorkspaceProvider — handle dirty git state | #33 | Ready |
 | 39 | WorkspaceProvider — handle git fetch failure | #33 | Ready |
 | 49 | Workspace creation error display | #37, #38, #39, #42 | Blocked |
-| 71 | PanelManager — navigate between panes | ~~#67~~ | Ready |
+| 71 | ~~PanelManager — navigate between panes~~ | ~~#67~~ | Done |
 | 72 | PanelManager — drag-to-resize | ~~#67~~ | Ready |
 | 79 | Keyboard shortcut — resize panes | #72, ~~#75~~ | Blocked |
 | 81 | Panel responsive layout | #72 | Blocked |

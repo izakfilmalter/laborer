@@ -559,3 +559,79 @@ With Issue #130 done, all three graceful shutdown tasks for Polishing requiremen
 - Issue #129: Persist LiveStore state on shutdown ✅
 - Issue #130: Free all allocated ports on shutdown ✅
 
+## Issue #71: PanelManager — navigate between panes — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented directional pane navigation for the tmux-style panel system. Users can now move focus between panes spatially (left/right/up/down) based on the layout tree's split orientations, in addition to the existing linear next/previous cycling (Ctrl+B,O / Ctrl+B,P). The navigation algorithm walks up the layout tree from the active pane to find the nearest ancestor split matching the requested direction, then drills into the adjacent subtree to land on the nearest leaf at the entering edge.
+
+### What was done
+
+1. **Added `findPaneInDirection` to `apps/web/src/panels/layout-utils.ts`** — Pure tree navigation algorithm (~130 lines, 4 functions):
+   - **`NavigationDirection` type**: `"left" | "right" | "up" | "down"` — maps to split orientations (left/right → horizontal, up/down → vertical)
+   - **`buildPath(root, targetId)`**: Builds the complete path from root to a target node via DFS. Returns an array of PanelNode from root to target (inclusive).
+   - **`getEdgeLeaf(node, edge)`**: Finds the first or last leaf in a subtree. When navigating right, we enter the new subtree from the left edge ("first"); when navigating left, from the right edge ("last"). Same for up/down with top/bottom.
+   - **`tryNavigateAtAncestor(path, index, orientation, delta)`**: Extracted helper that checks a single ancestor in the path for a navigable neighbor. Returns the target leaf ID if found, or undefined to signal "continue walking up". This extraction keeps `findPaneInDirection` below the complexity limit (max 20).
+   - **`findPaneInDirection(root, activePaneId, direction)`**: Main entry point. Builds the path, determines target orientation and delta from the direction, then walks up from the active pane's parent toward the root trying each ancestor. Stops at edges (returns undefined when no neighbor exists in the requested direction).
+
+2. **Added directional keyboard shortcuts to `apps/web/src/panels/panel-hotkeys.tsx`** (~55 new lines):
+   - **New props**: `layout?: PanelNode` — the root layout tree, needed by `findPaneInDirection`
+   - **New imports**: `PanelNode` type, `findPaneInDirection`, `NavigationDirection` type
+   - **`navigateDirection` helper**: Shared callback that calls `findPaneInDirection` and `setActivePaneId`
+   - **4 new hotkey sequences**:
+     - `Ctrl+B, ArrowLeft` → move focus to the pane on the left
+     - `Ctrl+B, ArrowRight` → move focus to the pane on the right
+     - `Ctrl+B, ArrowUp` → move focus to the pane above
+     - `Ctrl+B, ArrowDown` → move focus to the pane below
+   - Updated module JSDoc to document the new shortcuts and reference Issue #71
+
+3. **Updated `apps/web/src/routes/index.tsx`**:
+   - Passed `layout={layout}` prop to `<PanelHotkeys>` component (1 line change)
+
+### How directional navigation works
+
+The layout tree encodes spatial relationships through split orientations:
+- **Horizontal splits** lay children out left-to-right → navigated with ArrowLeft/ArrowRight
+- **Vertical splits** lay children out top-to-bottom → navigated with ArrowUp/ArrowDown
+
+Algorithm example with a layout like:
+```
+┌─────┬───────────┐
+│     │     B     │
+│  A  ├─────┬─────┤
+│     │  C  │  D  │
+└─────┴─────┴─────┘
+```
+Tree: `H-Split(A, V-Split(B, H-Split(C, D)))`
+
+- From A, pressing Right → enters the right subtree from the left edge → B
+- From B, pressing Down → C (first child of the horizontal split below)
+- From D, pressing Left → C (adjacent in horizontal split)
+- From C, pressing Up → B (adjacent in vertical split)
+- From A, pressing Left → nothing (at the left edge, stops)
+
+### Files modified
+- `apps/web/src/panels/layout-utils.ts` — Added `NavigationDirection` type, `buildPath`, `getEdgeLeaf`, `tryNavigateAtAncestor`, `findPaneInDirection` functions. Exported `findPaneInDirection` and `NavigationDirection`.
+- `apps/web/src/panels/panel-hotkeys.tsx` — Added `layout` prop, directional navigation shortcuts (ArrowLeft/Right/Up/Down), `navigateDirection` helper, new imports, updated JSDoc.
+- `apps/web/src/routes/index.tsx` — Passed `layout` prop to `PanelHotkeys`.
+
+### Acceptance criteria status
+- [x] Active pane has visual indicator (border, highlight) — `ring-2 ring-primary ring-inset` (pre-existing from Issue #66)
+- [x] Focus can move between panes directionally — `findPaneInDirection` + arrow key shortcuts
+- [x] Focus stops at edges — returns undefined when no neighbor exists, no-op
+- [ ] Tests: multiple panes → focus moves correctly; active pane visually distinct (deferred — web app has no test infrastructure; pure `findPaneInDirection` function could be unit tested if vitest is added to the web app)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on all 3 modified files with zero issues (`Checked 3 files in 10ms. No fixes applied.`)
+- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Stops at edges, doesn't wrap**: Unlike Ctrl+B,O/P which cycle through panes wrapping at the ends, directional navigation stops at edges. This matches the spatial mental model — pressing Left when there's nothing to the left should do nothing, not jump to the rightmost pane. This is also how tmux handles directional navigation.
+- **Walks up the tree**: When the active pane's immediate parent split doesn't match the requested direction, the algorithm walks up to higher-level ancestors. This handles nested layouts correctly — e.g., from a pane deep in a vertical split, pressing Left will skip past vertical ancestors until it finds a horizontal ancestor with a left neighbor.
+- **Edge entry**: When navigating into a subtree, the algorithm enters from the appropriate edge. Moving right enters the leftmost (first) leaf of the new subtree. Moving left enters the rightmost (last) leaf. This gives predictable, consistent navigation.
+- **Extracted `tryNavigateAtAncestor`**: The original `findPaneInDirection` function exceeded Biome's complexity limit (max 20). Extracting the per-ancestor logic into a helper brought it under the limit while improving readability.
+- **Arrow keys in prefix mode**: The existing keyboard scope isolation (Issue #80) in `terminal-pane.tsx` already passes through ALL keys when in prefix mode (after Ctrl+B). No changes were needed to the terminal's `attachCustomKeyEventHandler` — arrow keys naturally bubble to TanStack Hotkeys when the prefix is active.
+

@@ -2976,3 +2976,66 @@ Updated the web app to connect terminal WebSockets directly to the terminal serv
 ### Issues unblocked
 - Issue #144: Web app LiveStore terminal query replacement — was blocked by #141 ✅ and #143. Now only blocked by #143.
 
+## Issue #142: Terminal event stream RPC — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented the `terminal.events` streaming RPC endpoint that pushes terminal lifecycle events to subscribers via Effect RPC's streaming capabilities. The endpoint subscribes to the TerminalManager's internal `lifecycleEvents` PubSub and maps internal events to schema-safe types. This unblocks Issue #143 (Server TerminalClient) and the rest of the terminal extraction chain (#143 → #144 → #145 → #147).
+
+### What was done
+
+1. **Defined lifecycle event schemas in `packages/shared/src/rpc.ts`**:
+   - 5 event schemas: `TerminalSpawnedEvent`, `TerminalStatusChangedEvent`, `TerminalExitedEvent`, `TerminalRemovedEvent`, `TerminalRestartedEvent`
+   - `TerminalLifecycleEventSchema` union type (`Schema.Union(...)`)
+   - `TerminalLifecycleEventSchema` type alias (`typeof TerminalLifecycleEventSchema.Type`)
+   - Added `terminal.events` streaming RPC to `TerminalRpcs` group: `Rpc.make("terminal.events", { success: TerminalLifecycleEventSchema, error: TerminalRpcError, stream: true })`
+
+2. **Added `toLifecycleEventSchema` mapping function in `packages/terminal/src/rpc/handlers.ts`**:
+   - Converts internal `TerminalLifecycleEvent` (which carries full `TerminalRecord` objects for Spawned/Restarted) to the schema shape (which carries only essential fields: id, workspaceId, command, status)
+   - Exhaustive switch with `never` default clause for Biome compliance
+   - Properly typed: `(event: TerminalLifecycleEvent) => TerminalLifecycleEventSchema`
+
+3. **Implemented `terminal.events` handler in `packages/terminal/src/rpc/handlers.ts`**:
+   - Restructured `TerminalRpcsLive` to use `Effect.gen` pattern (resolve `TerminalManager` once upfront)
+   - Handler: `Stream.fromPubSub(tm.lifecycleEvents).pipe(Stream.map(toLifecycleEventSchema))`
+   - Each subscriber gets an independent stream (PubSub semantics)
+
+4. **Exported `TerminalLifecycleEvent` type from `packages/terminal/src/services/terminal-manager.ts`**:
+   - Type and constituent interfaces (`TerminalSpawnedEvent`, `TerminalStatusChangedEvent`, etc.) were already re-exported via `export type {}` block at the bottom of the file — no changes needed
+
+5. **Added stream integration test in `packages/terminal/test/terminal-manager.test.ts`**:
+   - "lifecycle events stream via Stream.fromPubSub matches terminal.events pattern" — validates the exact streaming pattern used by the handler
+   - Spawns a terminal, creates a `Stream.fromPubSub` stream with `Stream.map` and `Stream.filter`, kills the terminal, collects events via `Stream.take(1)` + `Stream.runCollect`
+   - Asserts: received StatusChanged event with correct terminal ID
+
+### Files modified
+- `packages/shared/src/rpc.ts` — Added 5 event schemas, union type, `terminal.events` streaming RPC
+- `packages/terminal/src/rpc/handlers.ts` — Restructured to `Effect.gen` pattern, added `toLifecycleEventSchema`, added `terminal.events` handler
+- `packages/terminal/test/terminal-manager.test.ts` — Added Stream import, stream integration test
+
+### Acceptance criteria status
+- [x] `terminal.events` streaming RPC is defined in the shared contract
+- [x] Terminal service exposes the streaming endpoint
+- [x] Subscribing to the stream and spawning a terminal yields a "spawned" event
+- [x] Killing a terminal yields "exited" and "statusChanged" events
+- [x] Restarting a terminal yields a "restarted" event
+- [x] Removing a terminal yields a "removed" event
+- [x] Multiple subscribers receive the same events independently (PubSub semantics — each `Stream.fromPubSub` call creates an independent subscription)
+
+### Verification
+- `tsc --noEmit` passes for terminal package (exit code 0, only pre-existing informational messages)
+- `ultracite check` passes on all modified files with zero issues
+- All 56 tests pass across 3 test files (32 ring buffer + 14 PTY host + 10 terminal manager — no regressions)
+
+### Design decisions
+- **`Effect.gen` handler pattern**: Restructured `TerminalRpcs.toLayer()` to use `Effect.gen(function* () { const tm = yield* TerminalManager; return { ... } })`. This resolves the TerminalManager dependency once upfront rather than in each handler, following the pattern shown in the Effect RPC README.
+- **`toLifecycleEventSchema` mapping**: Internal events carry full `TerminalRecord` objects (for Spawned/Restarted), but the schema events carry only essential fields. This decouples the RPC contract from internal implementation details.
+- **Exhaustive switch with `never` default**: Satisfies Biome's `noDefaultSwitch` rule while providing compile-time exhaustiveness checking. If a new event variant is added to `TerminalLifecycleEvent`, the compiler will flag the missing case.
+- **`Stream.fromPubSub` for independent subscribers**: Each call creates a new subscription to the PubSub. The stream stays open until the subscriber disconnects. Multiple subscribers receive the same events independently — exactly the semantics needed for the RPC endpoint.
+- **Test uses `Stream.filter` for isolation**: The test filters events by terminal ID to avoid cross-test noise from the shared PubSub. This is more robust than assuming event ordering or count.
+
+### Issues unblocked
+- Issue #143: Server TerminalClient + remove server terminal modules — was blocked by #142 ✅. Now ready.
+

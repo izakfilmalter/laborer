@@ -427,13 +427,13 @@ Add a streaming RPC endpoint `terminal.events()` to the terminal service that pu
 
 ### Acceptance criteria
 
-- [ ] `terminal.events` streaming RPC is defined in the shared contract
-- [ ] Terminal service exposes the streaming endpoint
-- [ ] Subscribing to the stream and spawning a terminal yields a "spawned" event
-- [ ] Killing a terminal yields "exited" and "statusChanged" events
-- [ ] Restarting a terminal yields a "restarted" event
-- [ ] Removing a terminal yields a "removed" event
-- [ ] Multiple subscribers receive the same events independently
+- [x] `terminal.events` streaming RPC is defined in the shared contract
+- [x] Terminal service exposes the streaming endpoint
+- [x] Subscribing to the stream and spawning a terminal yields a "spawned" event
+- [x] Killing a terminal yields "exited" and "statusChanged" events
+- [x] Restarting a terminal yields a "restarted" event
+- [x] Removing a terminal yields a "removed" event
+- [x] Multiple subscribers receive the same events independently
 
 ### Blocked by
 
@@ -468,7 +468,7 @@ Add a `TerminalClient` Effect service to `@laborer/server` that acts as an RPC c
 
 ### Blocked by
 
-- Blocked by #142
+- Blocked by ~~#142~~
 
 ### User stories addressed
 
@@ -942,8 +942,8 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 139 | ~~Terminal RPC handlers~~ | ~~#137~~, ~~#138~~ | Done |
 | 140 | ~~Move terminal WebSocket route to terminal package~~ | ~~#139~~ | Done |
 | 141 | ~~Update Vite proxy + web app WebSocket hook~~ | ~~#140~~ | Done |
-| 142 | Terminal event stream RPC | ~~#139~~ | Ready |
-| 143 | Server TerminalClient + remove server terminal modules | #142 | Blocked |
+| 142 | ~~Terminal event stream RPC~~ | ~~#139~~ | Done |
+| 143 | Server TerminalClient + remove server terminal modules | ~~#142~~ | Ready |
 | 144 | Web app LiveStore terminal query replacement | ~~#141~~, #143 | Blocked |
 | 145 | LiveStore terminal schema deprecation | #144 | Blocked |
 | 146 | Grace period reconnection + orphan detection | ~~#140~~ | Ready |

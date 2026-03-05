@@ -20,7 +20,16 @@
  * @see Issue #138: Move + simplify TerminalManager
  */
 
-import { type Context, Effect, Exit, Fiber, Layer, Queue, Scope } from "effect";
+import {
+	type Context,
+	Effect,
+	Exit,
+	Fiber,
+	Layer,
+	Queue,
+	Scope,
+	Stream,
+} from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PtyHostClient } from "../src/services/pty-host-client.js";
@@ -487,6 +496,63 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 				e.status === "stopped"
 		);
 		expect(statusEvent).toBeDefined();
+	});
+
+	it("lifecycle events stream via Stream.fromPubSub matches terminal.events pattern", async () => {
+		// This test validates the exact streaming pattern used by the
+		// terminal.events RPC handler: Stream.fromPubSub(tm.lifecycleEvents)
+		// piped through Stream.map to transform events.
+		const result = await runEffect(
+			Effect.scoped(
+				Effect.gen(function* () {
+					const tm = yield* TerminalManager;
+
+					// Spawn first so we know the terminal ID for filtering
+					const terminal = yield* tm.spawn({
+						command: "cat",
+						cwd: TEST_CWD,
+						cols: 80,
+						rows: 24,
+						workspaceId: TEST_WORKSPACE_ID,
+					});
+
+					// Create a stream from the PubSub — same as terminal.events handler
+					// Filter to only events for our terminal to avoid cross-test noise
+					const eventStream = Stream.fromPubSub(tm.lifecycleEvents).pipe(
+						Stream.map((event) => ({
+							_tag: event._tag,
+							id:
+								event._tag === "Spawned" || event._tag === "Restarted"
+									? event.terminal.id
+									: event.id,
+						})),
+						Stream.filter((event) => event.id === terminal.id)
+					);
+
+					// Collect 1 event (StatusChanged from kill) in the background
+					const collectFiber = yield* eventStream.pipe(
+						Stream.take(1),
+						Stream.runCollect,
+						Effect.fork
+					);
+
+					// Give a moment for the subscriber to be established
+					yield* Effect.sleep(200);
+
+					// Kill it (produces StatusChanged event)
+					yield* tm.kill(terminal.id);
+
+					// Wait for the collector to receive the event
+					const chunk = yield* Fiber.join(collectFiber);
+					return { terminalId: terminal.id, events: [...chunk] };
+				})
+			)
+		);
+
+		// Should have captured the StatusChanged event for our terminal
+		expect(result.events.length).toBe(1);
+		expect(result.events[0]?._tag).toBe("StatusChanged");
+		expect(result.events[0]?.id).toBe(result.terminalId);
 	});
 
 	it("spawn() with custom args passes them correctly", async () => {

@@ -3,6 +3,66 @@ import { Schema } from "effect";
 import { TerminalStatus, WorkspaceStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
+// Terminal Lifecycle Event Schemas
+// ---------------------------------------------------------------------------
+// These schemas model the discriminated union of lifecycle events emitted by
+// the TerminalManager's PubSub. They are used as the success schema for the
+// streaming `terminal.events` RPC endpoint.
+//
+// @see Issue #142: Terminal event stream RPC
+// ---------------------------------------------------------------------------
+
+export const TerminalSpawnedEvent = Schema.Struct({
+	_tag: Schema.Literal("Spawned"),
+	id: Schema.String,
+	workspaceId: Schema.String,
+	command: Schema.String,
+	status: TerminalStatus,
+});
+
+export const TerminalStatusChangedEvent = Schema.Struct({
+	_tag: Schema.Literal("StatusChanged"),
+	id: Schema.String,
+	status: TerminalStatus,
+});
+
+export const TerminalExitedEvent = Schema.Struct({
+	_tag: Schema.Literal("Exited"),
+	id: Schema.String,
+	exitCode: Schema.Int,
+	signal: Schema.Int,
+});
+
+export const TerminalRemovedEvent = Schema.Struct({
+	_tag: Schema.Literal("Removed"),
+	id: Schema.String,
+});
+
+export const TerminalRestartedEvent = Schema.Struct({
+	_tag: Schema.Literal("Restarted"),
+	id: Schema.String,
+	workspaceId: Schema.String,
+	command: Schema.String,
+	status: TerminalStatus,
+});
+
+/**
+ * Union of all terminal lifecycle events for the `terminal.events` stream.
+ *
+ * @see Issue #142: Terminal event stream RPC
+ */
+export const TerminalLifecycleEventSchema = Schema.Union(
+	TerminalSpawnedEvent,
+	TerminalStatusChangedEvent,
+	TerminalExitedEvent,
+	TerminalRemovedEvent,
+	TerminalRestartedEvent
+);
+
+export type TerminalLifecycleEventSchema =
+	typeof TerminalLifecycleEventSchema.Type;
+
+// ---------------------------------------------------------------------------
 // Error Types
 // ---------------------------------------------------------------------------
 
@@ -314,9 +374,11 @@ export type TerminalInfo = typeof TerminalInfo.Type;
  * - `terminal.remove` — kill (if running) and fully remove a terminal
  * - `terminal.restart` — kill and respawn with the same command/config
  * - `terminal.list` — return all terminals (running and stopped)
+ * - `terminal.events` — streaming endpoint pushing lifecycle events
  *
  * @see PRD-terminal-extraction.md
  * @see Issue #137: Terminal RPC contract
+ * @see Issue #142: Terminal event stream RPC
  */
 export class TerminalRpcs extends RpcGroup.make(
 	// -----------------------------------------------------------------------
@@ -408,5 +470,23 @@ export class TerminalRpcs extends RpcGroup.make(
 	Rpc.make("terminal.list", {
 		success: Schema.Array(TerminalInfo),
 		error: TerminalRpcError,
+	}),
+
+	// -----------------------------------------------------------------------
+	// terminal.events — streaming lifecycle events
+	// -----------------------------------------------------------------------
+	/**
+	 * Streaming RPC that pushes terminal lifecycle events as they occur.
+	 *
+	 * Events include: Spawned, StatusChanged, Exited, Removed, Restarted.
+	 * The stream stays open until the client disconnects. Multiple
+	 * subscribers receive the same events independently.
+	 *
+	 * @see Issue #142: Terminal event stream RPC
+	 */
+	Rpc.make("terminal.events", {
+		success: TerminalLifecycleEventSchema,
+		error: TerminalRpcError,
+		stream: true,
 	})
 ) {}

@@ -2681,3 +2681,53 @@ Implemented automatic focus transfer when a pane is closed. Added `findSiblingPa
 - Issue #150: Guaranteed active pane invariant — was blocked by #149 (now done). Ready to implement.
 - Issue #151: Cmd+W shortcut — close active pane — was blocked by #149 (now done). Ready to implement.
 
+## Issue #148: Focused pane border fix — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Replaced the glitched `ring-2 ring-primary ring-inset` active pane indicator with a solid `border-2 border-primary` on the focused pane. Non-active panes now get `border-2 border-transparent` to maintain consistent sizing and prevent layout shift when focus changes. The drag-over drop target highlight was also updated to use border instead of ring for consistency.
+
+### What was done
+
+Modified `apps/web/src/panels/panel-manager.tsx`:
+
+1. **Replaced ring classes with border classes in `LeafPaneRenderer`**:
+   - Active pane: `ring-2 ring-primary ring-inset` → `border-2 border-primary`
+   - Non-active pane: no border class → `border-2 border-transparent` (prevents layout shift)
+   - Drag-over drop target: `ring-2 ring-primary ring-inset bg-primary/5` → `border-2 border-primary bg-primary/5`
+
+2. **Extracted border class computation**: Replaced the nested ternary (which Biome rejects) with a `let borderClass` variable computed via `if/else if` chain. Three states: `isDragOver` → primary border + tinted background, `isActive` → primary border, default → transparent border. This keeps the JSX clean and satisfies Biome's `noNestedTernary` rule.
+
+3. **All panes always have `border-2`**: The transparent border on non-active panes ensures that switching focus between panes causes zero layout shift — the border width is always 2px, only the color changes.
+
+4. **Updated JSDoc**: Added Issue #148 reference to both the module header and the `LeafPaneRenderer` component, describing the border behavior for active, non-active, and drag-over states.
+
+### Files modified
+- `apps/web/src/panels/panel-manager.tsx` — Replaced ring with border on active pane, added transparent border on non-active panes, updated drag-over highlight, extracted border class computation, updated JSDoc
+
+### Acceptance criteria status
+- [x] Active pane shows `border-2 border-primary` on all four edges
+- [x] Non-active panes show `border-2 border-transparent` (no layout shift on focus change)
+- [x] Border renders correctly at all split nesting depths (1 through 5+) — border is applied to `LeafPaneRenderer` which is always the innermost rendering unit regardless of nesting
+- [x] Border does not overlap or conflict with ResizableHandle drag handles — border is inside the `ResizablePanel` content, not on the panel boundary
+- [x] Drag-over drop target highlight uses border instead of ring — `border-primary bg-primary/5`
+- [x] Border is consistent across all pane types (terminal, diff, empty) — applied uniformly in `LeafPaneRenderer` which wraps all pane types
+- [x] Border disappears when no panes exist (empty layout state) — `PanelManager` shows the empty state component with no border, and `LeafPaneRenderer` is never rendered
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on `panel-manager.tsx` with zero issues (`Checked 1 file in 8ms. No fixes applied.`)
+- All 133 tests pass across 8 test files (no regressions)
+- All 17 web app layout-utils tests pass (no regressions)
+
+### Design decisions
+- **`border-2` over `ring-2`**: CSS `ring` uses `box-shadow` which renders on a separate layer and can cause visual glitches — it doesn't participate in the box model, can bleed into adjacent elements, and doesn't interact correctly with `overflow: hidden`. CSS `border` is part of the box model, renders predictably on all edges, and respects clipping boundaries. The `ring-inset` variant was especially problematic as it could overlap with content.
+- **Transparent border on non-active panes**: Without a border on non-active panes, changing focus would cause a 2px layout shift (the active pane would suddenly have a border, pushing content inward). Using `border-transparent` reserves the 2px space on all panes at all times, so focus changes only change border color — not size.
+- **`let` variable over ternary**: Biome's `noNestedTernary` rule rejects nested ternary expressions. The `if/else if/else` chain with a `let borderClass` variable is equally clear and more maintainable. Priority order: drag-over (highest visual priority) > active focus > default transparent.
+- **Drag-over takes precedence over active**: If a pane is both active AND has a drag-over, the drag-over styling wins. This is correct because the drag interaction is transient and more visually urgent than the static focus indicator.
+
+### Issues unblocked
+- Issue #153: Cmd+W close panel — polish & verification — was partially blocked by #148 (among others #149, #150, #151, #152). One fewer blocker.
+

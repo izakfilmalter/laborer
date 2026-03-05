@@ -205,6 +205,8 @@ Manages the set of projects (repos) the user is working with. Stores repo paths,
 Responsibilities: project registration/removal, repo validation, config reading.
 
 > **See [PRD-global-worktree-config.md](./PRD-global-worktree-config.md)** for the global worktree directory and project settings design. Worktrees are moved out of the repo to a global location (`~/.config/laborer/<projectName>/`) by default, with a layered `laborer.json` config system (walk-up directory resolution + global default). A new ConfigService handles config resolution, and a project settings modal provides a UI for editing worktree directory, setup scripts, and rlph config per project.
+>
+> **See [PRD-worktree-detection.md](./PRD-worktree-detection.md)** for the auto-detect worktrees design. When a project is added, Laborer detects all existing git worktrees (including the main worktree) via `git worktree list --porcelain` and creates workspace records in a "stopped" state. A filesystem watcher on `.git/worktrees/` keeps the list live — worktrees created or removed outside the app are automatically reconciled. A new `origin` column (`"laborer"` | `"external"`) on workspaces distinguishes provenance and drives origin-aware destroy behavior.
 
 **5. SyncEngine (LiveStore)**
 The LiveStore schema, events, materializers, and sync configuration. Defines all tables and events. Runs on both server (Node/Bun adapter) and client (browser/Tauri adapter). Handles persistence to SQLite and real-time sync between server and app.

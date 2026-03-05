@@ -617,33 +617,9 @@ End-to-end verification and polish pass for the full terminal service extraction
 
 ---
 
-## Issue 148: Focused pane border fix
+## ~~Issue 148: Focused pane border fix~~ ✅ DONE
 
-### Parent PRD
-
-PRD-cmd-w-close-panel.md
-
-### What to build
-
-Replace the glitched `ring-2 ring-primary ring-inset` active pane indicator with a solid `border-2 border-primary` on the focused pane. Non-active panes get `border-2 border-transparent` to maintain consistent sizing and prevent layout shift when focus changes. Update the drag-over drop target highlight to use border instead of ring for consistency. The change is in `LeafPaneRenderer` in `panel-manager.tsx`.
-
-### Acceptance criteria
-
-- [ ] Active pane shows `border-2 border-primary` on all four edges
-- [ ] Non-active panes show `border-2 border-transparent` (no layout shift on focus change)
-- [ ] Border renders correctly at all split nesting depths (1 through 5+)
-- [ ] Border does not overlap or conflict with ResizableHandle drag handles
-- [ ] Drag-over drop target highlight uses border instead of ring
-- [ ] Border is consistent across all pane types (terminal, diff, empty)
-- [ ] Border disappears when no panes exist (empty layout state)
-
-### Blocked by
-
-None - can start immediately
-
-### User stories addressed
-
-- User story 2, 3, 12, 13
+Replaced the glitched `ring-2 ring-primary ring-inset` active pane indicator with a solid `border-2 border-primary` on the focused pane. Non-active panes get `border-2 border-transparent` to maintain consistent sizing and prevent layout shift when focus changes. Drag-over drop target highlight also uses border instead of ring. Extracted border class computation via `if/else if` to satisfy Biome's `noNestedTernary` rule.
 
 ---
 
@@ -776,7 +752,7 @@ End-to-end verification and polish pass for the full Cmd+W close panel feature. 
 
 ### Blocked by
 
-- Blocked by #148, #149, #150, #151, #152
+- Blocked by ~~#148~~, ~~#149~~, #150, #151, #152
 
 ### User stories addressed
 
@@ -1031,12 +1007,12 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 145 | LiveStore terminal schema deprecation | #144 | Blocked |
 | 146 | Grace period reconnection + orphan detection | #140 | Blocked |
 | 147 | Terminal extraction polish + integration verification | #144, #145, #146 | Blocked |
-| 148 | Focused pane border fix | None | Ready |
+| 148 | ~~Focused pane border fix~~ | ~~None~~ | Done |
 | 149 | ~~Focus auto-transfer on pane close~~ | ~~None~~ | Done |
 | 150 | Guaranteed active pane invariant | ~~#149~~ | Ready |
 | 151 | Cmd+W shortcut — close active pane | ~~#149~~ | Ready |
 | 152 | Cmd+W close-app confirmation dialog | #151 | Blocked |
-| 153 | Cmd+W close panel — polish & verification | #148, ~~#149~~, #150, #151, #152 | Blocked |
+| 153 | Cmd+W close panel — polish & verification | ~~#148~~, ~~#149~~, #150, #151, #152 | Blocked |
 | 154 | Config Service — resolve config with walk-up + global default | None | Ready |
 | 155 | Config Service — write project config | #154 | Blocked |
 | 156 | WorkspaceProvider — use ConfigService for worktree path + setup scripts | #154 | Blocked |

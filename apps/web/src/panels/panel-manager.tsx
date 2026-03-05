@@ -40,6 +40,7 @@
  * @see Issue #69: PanelManager — recursive splits
  * @see Issue #120: Empty state — no terminals
  * @see Issue #134: Drag terminal from sidebar onto empty panel pane
+ * @see Issue #148: Focused pane border fix — replaced ring with border
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -404,6 +405,11 @@ function SplitChild({
 /**
  * Renders a LeafNode pane with drop target support for terminal drag-and-drop.
  *
+ * Active pane shows `border-2 border-primary` on all four edges.
+ * Non-active panes show `border-2 border-transparent` to maintain
+ * consistent sizing and prevent layout shift when focus changes.
+ * Drag-over drop target uses `border-primary bg-primary/5` for consistency.
+ *
  * Empty terminal panes (no terminalId assigned) accept drops from the
  * sidebar terminal list. On drag-over, a visual highlight border appears.
  * On drop, the terminal is assigned to this specific pane via
@@ -413,6 +419,7 @@ function SplitChild({
  * the drag cursor shows "not allowed".
  *
  * @see Issue #134: Drag terminal from sidebar onto empty panel pane
+ * @see Issue #148: Focused pane border fix
  */
 function LeafPaneRenderer({
 	isActive,
@@ -476,13 +483,18 @@ function LeafPaneRenderer({
 		[isEmptyTerminalPane, actions, node.id]
 	);
 
+	let borderClass = "border-transparent";
+	if (isDragOver) {
+		borderClass = "border-primary bg-primary/5";
+	} else if (isActive) {
+		borderClass = "border-primary";
+	}
+
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: Panel pane container requires drag-and-drop target behavior
 		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: Drag-and-drop handlers on pane container are essential for terminal assignment
 		<div
-			className={`group/pane relative h-full w-full overflow-hidden ${
-				isActive ? "ring-2 ring-primary ring-inset" : ""
-			} ${isDragOver ? "bg-primary/5 ring-2 ring-primary ring-inset" : ""}`}
+			className={`group/pane relative h-full w-full overflow-hidden border-2 ${borderClass}`}
 			data-pane-id={node.id}
 			onDragEnter={handleDragEnter}
 			onDragLeave={handleDragLeave}

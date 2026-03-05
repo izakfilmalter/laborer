@@ -696,15 +696,64 @@ function findSiblingPaneId(root: PanelNode, paneId: string): string | null {
 	return getEdgeLeaf(sibling, edge).id;
 }
 
+/**
+ * Get the first leaf ID in a layout tree (DFS order).
+ * Returns undefined if the tree has no leaves (should not happen for valid trees).
+ */
+function getFirstLeafId(root: PanelNode): string | undefined {
+	if (root._tag === "LeafNode") {
+		return root.id;
+	}
+	for (const child of root.children) {
+		const leafId = getFirstLeafId(child);
+		if (leafId) {
+			return leafId;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Validate that an activePaneId references an existing leaf node in the
+ * layout tree. If it does not (stale reference, null when panes exist),
+ * falls back to the first leaf in the tree.
+ *
+ * Enforces the invariant: "there is always exactly one focused pane when
+ * at least one pane exists."
+ *
+ * @param root - The current layout tree
+ * @param activePaneId - The current activePaneId (may be null or stale)
+ * @returns A valid leaf ID, or null only when the tree has no leaves
+ *
+ * @see Issue #150: Guaranteed active pane invariant
+ */
+function ensureValidActivePaneId(
+	root: PanelNode,
+	activePaneId: string | null
+): string | null {
+	// If activePaneId is set, check it references an existing leaf
+	if (activePaneId) {
+		const node = findNodeById(root, activePaneId);
+		if (node && node._tag === "LeafNode") {
+			return activePaneId;
+		}
+	}
+
+	// activePaneId is null or stale — fall back to first leaf
+	return getFirstLeafId(root) ?? null;
+}
+
 export {
 	closePane,
 	computeResize,
 	countLeaves,
+	ensureValidActivePaneId,
 	findNodeById,
 	findPaneInDirection,
 	findParent,
 	findSiblingPaneId,
 	generateId,
+	getFirstLeafId,
 	getLeafIds,
 	getTreeDepth,
 	replaceNode,

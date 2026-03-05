@@ -2794,3 +2794,41 @@ Moved the terminal WebSocket route (`GET /terminal?id=...`) from `@laborer/serve
 - Issue #141: Update Vite proxy + web app WebSocket hook — can now update the web app to connect terminal WebSockets directly to the terminal service port and parse the new status control messages
 - Issue #146: Grace period reconnection + orphan detection — can now implement grace period timers in the terminal service's TerminalManager, since the WebSocket route is in the same package
 
+## Issue #150: Guaranteed active pane invariant
+
+### Summary
+Ensured `activePaneId` always references a valid leaf pane in the layout tree. Previously, `activePaneId` was `null` on initial layout seed and was not validated when restoring from LiveStore, causing keyboard shortcuts (Cmd+1/2/3, arrow navigation) to be no-ops until the user clicked a pane.
+
+### Changes made
+
+**`apps/web/src/panels/layout-utils.ts`**
+- Added `getFirstLeafId(node)` — DFS traversal that returns the first `LeafNode.id` from a layout tree, or `null` for empty trees
+- Added `ensureValidActivePaneId(layout, activePaneId)` — validates that `activePaneId` references an existing leaf; falls back to `getFirstLeafId(layout)` if null, stale, or pointing at a SplitNode
+
+**`apps/web/src/routes/index.tsx`**
+- Fixed layout seed: `activePaneId` now set to `getFirstLeafId(initialLayout)` instead of `null`
+- Fixed layout restore: `persistedActivePaneId` validated through `ensureValidActivePaneId(layout, rawPersistedActivePaneId)` on every render
+- Defense-in-depth in `handleClosePane`: after removing a pane, validates `candidateActivePaneId` through `ensureValidActivePaneId(newTree, ...)` to handle edge cases
+- Fixed `handleSetActivePaneId`: validates through `ensureValidActivePaneId` so null is rejected when panes exist
+
+**`apps/web/test/layout-utils.test.ts`**
+- Added 14 new unit tests:
+  - `getFirstLeafId` (5 tests): single leaf, split with two leaves, deeply nested layout, returns leftmost leaf, null for null input
+  - `ensureValidActivePaneId` (9 tests): valid leaf passthrough, null fallback to first leaf, stale ID fallback, SplitNode ID rejection, single leaf valid, single leaf with bad ID, null layout returns null, deeply nested valid, deeply nested stale
+
+### Verification
+- [x] `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- [x] `ultracite check` passes on all 3 modified files with zero issues
+- [x] All 31 web app tests pass (17 existing + 14 new — no regressions)
+- [x] All 61 server tests pass (no regressions)
+- [x] All 55 terminal tests pass (no regressions)
+
+### Design decisions
+- **Validation on every render, not just once**: `ensureValidActivePaneId` runs on every render via the `activePaneId` derivation. This is intentional — layout can change from LiveStore sync (e.g., another tab), and we need to catch stale references immediately rather than only on mount.
+- **DFS leftmost leaf as fallback**: When the active pane ID is invalid, we fall back to the leftmost (first) leaf in the tree via DFS. This is deterministic and predictable — the user always knows which pane will be focused. It also matches the natural reading order (left-to-right, top-to-bottom).
+- **Defense-in-depth in handleClosePane**: Even though the render-level validation would catch stale IDs on the next frame, we also validate in `handleClosePane` to avoid a single frame where `activePaneId` is stale. This prevents potential flicker in the focused pane border.
+- **No changes to PanelManager or PanelHotkeys**: The fix is entirely in the data layer (layout-utils + index.tsx). PanelManager and PanelHotkeys already work correctly when given a valid `activePaneId` — the bug was that they were given `null`.
+
+### Issues unblocked
+- Issue #153: Cmd+W close panel — polish & verification — #150 dependency now resolved
+

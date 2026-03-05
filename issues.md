@@ -728,7 +728,7 @@ End-to-end verification and polish pass for the full Cmd+W close panel feature. 
 
 ### Blocked by
 
-- Blocked by ~~#148~~, ~~#149~~, #150, #151, #152
+- Blocked by ~~#148~~, ~~#149~~, ~~#150~~, #151, #152
 
 ### User stories addressed
 
@@ -985,10 +985,10 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 147 | Terminal extraction polish + integration verification | #144, #145, #146 | Blocked |
 | 148 | ~~Focused pane border fix~~ | ~~None~~ | Done |
 | 149 | ~~Focus auto-transfer on pane close~~ | ~~None~~ | Done |
-| 150 | Guaranteed active pane invariant | ~~#149~~ | Ready |
+| 150 | ~~Guaranteed active pane invariant~~ | ~~#149~~ | Done |
 | 151 | Cmd+W shortcut — close active pane | ~~#149~~ | Ready |
 | 152 | Cmd+W close-app confirmation dialog | #151 | Blocked |
-| 153 | Cmd+W close panel — polish & verification | ~~#148~~, ~~#149~~, #150, #151, #152 | Blocked |
+| 153 | Cmd+W close panel — polish & verification | ~~#148~~, ~~#149~~, ~~#150~~, #151, #152 | Blocked |
 | 154 | Config Service — resolve config with walk-up + global default | None | Ready |
 | 155 | Config Service — write project config | #154 | Blocked |
 | 156 | WorkspaceProvider — use ConfigService for worktree path + setup scripts | #154 | Blocked |

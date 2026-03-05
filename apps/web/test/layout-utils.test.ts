@@ -7,11 +7,17 @@
  *
  * @see apps/web/src/panels/layout-utils.ts
  * @see Issue #149: Focus auto-transfer on pane close
+ * @see Issue #150: Guaranteed active pane invariant
  */
 
 import type { LeafNode, SplitNode } from "@laborer/shared/types";
 import { describe, expect, it } from "vitest";
-import { findSiblingPaneId, getLeafIds } from "../src/panels/layout-utils";
+import {
+	ensureValidActivePaneId,
+	findSiblingPaneId,
+	getFirstLeafId,
+	getLeafIds,
+} from "../src/panels/layout-utils";
 
 // ---------------------------------------------------------------------------
 // Test fixtures — reusable layout tree configurations
@@ -258,5 +264,85 @@ describe("getLeafIds", () => {
 			"pane-D",
 			"pane-E",
 		]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: getFirstLeafId
+// @see Issue #150: Guaranteed active pane invariant
+// ---------------------------------------------------------------------------
+
+describe("getFirstLeafId", () => {
+	it("returns the leaf ID for a single leaf", () => {
+		expect(getFirstLeafId(singleLeaf)).toBe("pane-A");
+	});
+
+	it("returns the first child for a flat split", () => {
+		expect(getFirstLeafId(twoChildSplit)).toBe("pane-A");
+	});
+
+	it("returns the first child for a 3-child split", () => {
+		expect(getFirstLeafId(threeChildSplit)).toBe("pane-A");
+	});
+
+	it("returns the DFS-first leaf for a nested layout", () => {
+		expect(getFirstLeafId(nestedLayout)).toBe("pane-A");
+	});
+
+	it("returns the DFS-first leaf for a deeply nested layout", () => {
+		expect(getFirstLeafId(deeplyNested)).toBe("pane-A");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: ensureValidActivePaneId
+// @see Issue #150: Guaranteed active pane invariant
+// ---------------------------------------------------------------------------
+
+describe("ensureValidActivePaneId", () => {
+	it("returns the activePaneId when it references a valid leaf", () => {
+		expect(ensureValidActivePaneId(twoChildSplit, "pane-A")).toBe("pane-A");
+		expect(ensureValidActivePaneId(twoChildSplit, "pane-B")).toBe("pane-B");
+	});
+
+	it("falls back to first leaf when activePaneId is null", () => {
+		expect(ensureValidActivePaneId(twoChildSplit, null)).toBe("pane-A");
+	});
+
+	it("falls back to first leaf when activePaneId references a non-existent node", () => {
+		expect(ensureValidActivePaneId(twoChildSplit, "nonexistent")).toBe(
+			"pane-A"
+		);
+	});
+
+	it("falls back to first leaf when activePaneId references a SplitNode (not a leaf)", () => {
+		expect(ensureValidActivePaneId(twoChildSplit, "split-root")).toBe("pane-A");
+	});
+
+	it("works with a single leaf layout", () => {
+		expect(ensureValidActivePaneId(singleLeaf, null)).toBe("pane-A");
+		expect(ensureValidActivePaneId(singleLeaf, "pane-A")).toBe("pane-A");
+		expect(ensureValidActivePaneId(singleLeaf, "stale-id")).toBe("pane-A");
+	});
+
+	it("falls back to DFS-first leaf for nested layouts with null", () => {
+		expect(ensureValidActivePaneId(nestedLayout, null)).toBe("pane-A");
+	});
+
+	it("falls back to DFS-first leaf for nested layouts with stale ID", () => {
+		expect(ensureValidActivePaneId(nestedLayout, "pane-removed")).toBe(
+			"pane-A"
+		);
+	});
+
+	it("preserves valid activePaneId in nested layouts", () => {
+		expect(ensureValidActivePaneId(nestedLayout, "pane-C")).toBe("pane-C");
+		expect(ensureValidActivePaneId(nestedLayout, "pane-D")).toBe("pane-D");
+	});
+
+	it("falls back correctly for deeply nested layouts", () => {
+		expect(ensureValidActivePaneId(deeplyNested, null)).toBe("pane-A");
+		expect(ensureValidActivePaneId(deeplyNested, "stale")).toBe("pane-A");
+		expect(ensureValidActivePaneId(deeplyNested, "pane-E")).toBe("pane-E");
 	});
 });

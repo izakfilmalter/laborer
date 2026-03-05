@@ -63,9 +63,11 @@ import type { NavigationDirection } from "@/panels/layout-utils";
 import {
 	closePane,
 	computeResize,
+	ensureValidActivePaneId,
 	findNodeById,
 	findSiblingPaneId,
 	generateId,
+	getFirstLeafId,
 	getLeafIds,
 	replaceNode,
 	splitPane,
@@ -415,14 +417,24 @@ function usePanelLayout() {
 
 	// The persisted layout tree, if one exists in LiveStore.
 	const persistedLayoutTree = persistedRow?.layoutTree as PanelNode | undefined;
-	const persistedActivePaneId = persistedRow?.activePaneId ?? null;
+	const rawPersistedActivePaneId = persistedRow?.activePaneId ?? null;
 
 	// Determine the effective layout: persisted layout takes priority,
 	// otherwise fall back to the auto-generated layout from terminals/workspaces.
 	const layout = persistedLayoutTree ?? initialLayout;
 
+	// Enforce the guaranteed active pane invariant: when a layout exists,
+	// activePaneId must reference a valid leaf node. If it's null or stale
+	// (pointing to a removed pane), fall back to the first leaf.
+	// @see Issue #150: Guaranteed active pane invariant
+	const persistedActivePaneId = layout
+		? ensureValidActivePaneId(layout, rawPersistedActivePaneId)
+		: null;
+
 	// Seed LiveStore with the initial layout when there's no persisted layout
 	// but we have an auto-generated one from terminals/workspaces.
+	// Sets activePaneId to the first leaf so keyboard shortcuts work immediately.
+	// @see Issue #150: Guaranteed active pane invariant
 	const hasSeeded = useRef(false);
 	useEffect(() => {
 		if (!persistedLayoutTree && initialLayout && !hasSeeded.current) {
@@ -431,7 +443,7 @@ function usePanelLayout() {
 				layoutRestored({
 					id: LAYOUT_SESSION_ID,
 					layoutTree: initialLayout,
-					activePaneId: null,
+					activePaneId: getFirstLeafId(initialLayout) ?? null,
 				})
 			);
 		}
@@ -466,13 +478,22 @@ function usePanelLayout() {
 			// This ensures we can find the correct sibling in the original tree.
 			// If the closing pane is the currently active pane, transfer focus
 			// to its sibling. Otherwise, keep the current active pane.
-			const nextActivePaneId =
+			const candidateActivePaneId =
 				persistedActivePaneId === paneId
 					? findSiblingPaneId(base, paneId)
 					: persistedActivePaneId;
 
 			const newTree = closePane(base, paneId);
 			if (newTree) {
+				// Defense-in-depth: validate the candidate activePaneId is a valid
+				// leaf in the post-close tree. Handles edge cases where the active
+				// pane reference becomes stale after tree mutations.
+				// @see Issue #150: Guaranteed active pane invariant
+				const nextActivePaneId = ensureValidActivePaneId(
+					newTree,
+					candidateActivePaneId
+				);
+
 				store.commit(
 					layoutPaneClosed({
 						id: LAYOUT_SESSION_ID,
@@ -512,11 +533,15 @@ function usePanelLayout() {
 			if (!base) {
 				return;
 			}
+			// Enforce the invariant: do not accept null when panes exist.
+			// If null is passed (e.g., by legacy code), fall back to the first leaf.
+			// @see Issue #150: Guaranteed active pane invariant
+			const validatedPaneId = ensureValidActivePaneId(base, paneId);
 			store.commit(
 				layoutPaneAssigned({
 					id: LAYOUT_SESSION_ID,
 					layoutTree: base,
-					activePaneId: paneId,
+					activePaneId: validatedPaneId,
 				})
 			);
 		},

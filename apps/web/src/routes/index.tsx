@@ -14,6 +14,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Suspense, useCallback, useEffect, useMemo, useRef } from "react";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
+import { CreateTaskForm } from "@/components/create-task-form";
 import { CreateWorkspaceForm } from "@/components/create-workspace-form";
 import { ProjectList } from "@/components/project-list";
 import { TaskList } from "@/components/task-list";
@@ -495,8 +496,9 @@ function HomeComponent() {
 								<WorkspaceList />
 							</section>
 							<section>
-								<div className="mb-2">
+								<div className="mb-2 flex items-center justify-between">
 									<h2 className="font-medium text-sm">Tasks</h2>
+									<CreateTaskForm />
 								</div>
 								<TaskList />
 							</section>

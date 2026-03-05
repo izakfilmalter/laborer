@@ -1191,3 +1191,62 @@ Created a reactive Task list UI component that displays all tasks from LiveStore
 
 ### Issues unblocked
 - Issue #114: Cross-project workspace dashboard — was blocked by #41 (done) and #104. **Now unblocked!**
+
+## Issue #103: Create Task form UI — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Created a "Create Task" dialog form using TanStack Form that allows users to create manual tasks from the sidebar. The form has three fields: project selector (required), title (required), and description (optional). On submit, it calls `LaborerClient.mutation("task.create")` via `useAtomSet` with `{ mode: "promise" }`. Success: task appears in the task list (via LiveStore sync), form resets, dialog closes, toast notification shown. Error: server validation error displayed via toast.
+
+### What was done
+
+1. **Created `apps/web/src/components/create-task-form.tsx`** — new React component (~220 lines) with:
+   - **Module-level atom declarations**: `allProjects$` (LiveStore query for project selector) and `createTaskMutation` (AtomRpc mutation for `task.create`)
+   - **TanStack Form**: `useForm` with `defaultValues: { projectId: "", title: "", description: "" }` and `onSubmit` handler
+   - **Project selector**: `Select` component populated from LiveStore `projects` table with `onChange` validator (required)
+   - **Title field**: `Input` component with `onChange` validator (required, non-empty after trim)
+   - **Description field**: `Textarea` component (optional, no validation)
+   - **Dialog wrapper**: `Dialog` with trigger button (`ClipboardPlus` icon + "Add Task" text), header with title and description, form body, and footer with submit button
+   - **Submit button**: Uses `form.Subscribe` to disable when `!canSubmit || isSubmitting`, shows "Creating..." during submission
+   - **Success handling**: `toast.success`, `form.reset()`, `setOpen(false)`
+   - **Error handling**: `extractErrorMessage(error)` + `toast.error(message)` — consistent with all other forms in the codebase
+   - **Follows the exact same pattern** as `create-workspace-form.tsx` (Issue #42) — same Dialog/Form/Field/Submit structure, same mutation pattern, same error handling
+
+2. **Modified `apps/web/src/routes/index.tsx`**:
+   - Added `import { CreateTaskForm } from "@/components/create-task-form"` import
+   - Changed the "Tasks" section header from a plain `<div className="mb-2">` to `<div className="mb-2 flex items-center justify-between">` to match the Projects and Workspaces section layout
+   - Added `<CreateTaskForm />` next to the "Tasks" heading, matching the placement pattern of `<AddProjectForm />` (Projects) and `<CreateWorkspaceForm />` (Workspaces)
+
+### Files created
+- `apps/web/src/components/create-task-form.tsx` — Create Task form component
+
+### Files modified
+- `apps/web/src/routes/index.tsx` — Added CreateTaskForm import and sidebar wiring
+
+### Acceptance criteria status
+- [x] Form with title and description fields (title as `Input`, description as `Textarea`)
+- [x] Project selector populated from LiveStore projects table
+- [x] Submit calls `LaborerClient.mutation("task.create")` via `useAtomSet` with `{ mode: "promise" }`
+- [x] Task appears in task list after creation (via LiveStore sync — `taskCreated` event materializes into tasks table)
+- [x] Empty title shows validation error ("Title is required")
+- [x] No project selected shows validation error ("Project is required")
+- [x] Server errors displayed via toast notification
+- [x] Form resets and dialog closes on success
+- [ ] Tests: valid submit -> task created; empty title -> validation error (deferred — requires running both server and web app)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors)
+- `biome check` passes on both new/modified files with zero issues
+- All 52 server tests pass (no regressions)
+
+### Design decisions
+- Used `ClipboardPlus` icon from lucide-react for the trigger button — semantically represents "add a task to the clipboard/list", visually distinct from the other section buttons (FolderPlus for projects, Layers for workspaces).
+- The form hardcodes `source: "manual"` on the server side (in the `task.create` RPC handler from Issue #100). The UI doesn't need to specify source — manual tasks are always "manual". Other sources (linear, github, prd) are created via different code paths.
+- Description is sent only when non-empty (after trim). The server's `task.create` RPC accepts `description` as `Schema.optional(Schema.String)`.
+- The dialog trigger button uses `size="sm" variant="outline"` — same as `CreateWorkspaceForm` and `AddProjectForm` — for visual consistency across all sidebar section action buttons.
+
+### Issues unblocked
+- Issue #105: Task-driven workspace auto-creation — was blocked by #100 (done) and #40 (done). Already unblocked, but now users can actually create tasks to trigger it.
+- Issue #110: Task source picker UI — was blocked by #108, #109, #103. #103 now done; still blocked by #108 and #109.

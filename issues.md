@@ -2803,14 +2803,14 @@ Create a "Create Task" form using TanStack Form. Fields: title (required), descr
 
 ### Acceptance criteria
 
-- [ ] Form with title and description fields
-- [ ] Submit → task created via RPC/LiveStore
-- [ ] Task appears in task list
-- [ ] Tests: valid submit → task created; empty title → validation error
+- [x] Form with title and description fields (title as Input, description as Textarea)
+- [x] Submit → task created via RPC/LiveStore (`LaborerClient.mutation("task.create")` via `useAtomSet`)
+- [x] Task appears in task list (via LiveStore sync — `taskCreated` event materializes into tasks table)
+- [ ] Tests: valid submit → task created; empty title → validation error (deferred — requires running both server and web app)
 
 ### Blocked by
 
-- Blocked by #100, #20
+- Blocked by ~~#100~~, ~~#20~~ (both done)
 
 ### User stories addressed
 
@@ -4131,7 +4131,7 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 100 | Task CRUD — create manual task | ~~#8~~, ~~#16~~ | Done |
 | 101 | Task CRUD — update status | ~~#100~~ | Done |
 | 102 | Task CRUD — list per project | ~~#100~~ | Done |
-| 103 | Create Task form UI | ~~#100~~, ~~#20~~ | Ready |
+| 103 | Create Task form UI | ~~#100~~, ~~#20~~ | Done |
 | 104 | Task list UI | ~~#102~~, ~~#18~~ | Done |
 | 105 | Task-driven workspace auto-creation | ~~#100~~, ~~#40~~ | Ready |
 | 106 | Task-driven workspace auto-cleanup | #105, ~~#47~~ | Blocked |

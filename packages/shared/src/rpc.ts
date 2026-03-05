@@ -1,6 +1,6 @@
 import { Rpc, RpcGroup } from "@effect/rpc";
 import { Schema } from "effect";
-import { WorkspaceStatus } from "./types.js";
+import { TerminalStatus, WorkspaceStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Error Types
@@ -13,6 +13,26 @@ export class RpcError extends Schema.TaggedError<RpcError>("RpcError")(
 		code: Schema.optional(Schema.String),
 	}
 ) {}
+
+/**
+ * Tagged error type for terminal service RPC operations.
+ *
+ * Distinct from `RpcError` (used by the main server) so that terminal service
+ * errors are distinguishable at the type level. Error codes identify the
+ * specific failure:
+ * - `TERMINAL_NOT_FOUND` — no terminal with the given ID exists
+ * - `TERMINAL_ALREADY_STOPPED` — kill/write/resize on a stopped terminal
+ * - `SPAWN_FAILED` — PTY spawn failed (e.g., invalid command)
+ * - `INTERNAL_ERROR` — unexpected internal failure
+ *
+ * @see Issue #137: Terminal RPC contract
+ */
+export class TerminalRpcError extends Schema.TaggedError<TerminalRpcError>(
+	"TerminalRpcError"
+)("TerminalRpcError", {
+	message: Schema.String,
+	code: Schema.optional(Schema.String),
+}) {}
 
 // ---------------------------------------------------------------------------
 // Shared Response Schemas
@@ -248,5 +268,145 @@ export class LaborerRpcs extends RpcGroup.make(
 		payload: {
 			taskId: Schema.String,
 		},
+	})
+) {}
+
+// ---------------------------------------------------------------------------
+// Terminal Service RPC Contract
+// ---------------------------------------------------------------------------
+// The terminal service runs as a separate Bun HTTP server process. These RPCs
+// define the contract between the server (or any client) and the terminal
+// service. Defined here in @laborer/shared so both @laborer/server and
+// @laborer/terminal can import the same types.
+//
+// @see PRD-terminal-extraction.md — Terminal RPC Contract section
+// @see Issue #137: Terminal RPC contract
+// ---------------------------------------------------------------------------
+
+/**
+ * Information about a single terminal instance, returned by spawn, restart,
+ * and list operations. Includes the opaque `workspaceId` metadata that the
+ * caller passed at spawn time.
+ */
+export const TerminalInfo = Schema.Struct({
+	id: Schema.String,
+	workspaceId: Schema.String,
+	command: Schema.String,
+	args: Schema.Array(Schema.String),
+	cwd: Schema.String,
+	status: TerminalStatus,
+});
+
+export type TerminalInfo = typeof TerminalInfo.Type;
+
+/**
+ * RPC group for the standalone terminal service (`@laborer/terminal`).
+ *
+ * All 7 endpoints operate on terminal instances managed by the terminal
+ * service. The `workspaceId` is opaque metadata passed at spawn time —
+ * the terminal service stores it but does not interpret it.
+ *
+ * Endpoints:
+ * - `terminal.spawn` — create a new terminal with command, cwd, env, dimensions
+ * - `terminal.write` — send input data to a terminal's PTY
+ * - `terminal.resize` — resize a terminal's PTY dimensions
+ * - `terminal.kill` — kill the PTY process (terminal kept in memory as stopped)
+ * - `terminal.remove` — kill (if running) and fully remove a terminal
+ * - `terminal.restart` — kill and respawn with the same command/config
+ * - `terminal.list` — return all terminals (running and stopped)
+ *
+ * @see PRD-terminal-extraction.md
+ * @see Issue #137: Terminal RPC contract
+ */
+export class TerminalRpcs extends RpcGroup.make(
+	// -----------------------------------------------------------------------
+	// terminal.spawn — create a new terminal
+	// -----------------------------------------------------------------------
+	Rpc.make("terminal.spawn", {
+		success: TerminalInfo,
+		error: TerminalRpcError,
+		payload: {
+			/** Shell command to execute (e.g., "bash", "opencode", "rlph --once"). */
+			command: Schema.String,
+			/** Command arguments (optional, default []). */
+			args: Schema.optional(Schema.Array(Schema.String)),
+			/** Working directory for the PTY process. */
+			cwd: Schema.String,
+			/** Environment variables to inject into the PTY process. */
+			env: Schema.optional(
+				Schema.Record({ key: Schema.String, value: Schema.String })
+			),
+			/** Initial terminal column count. */
+			cols: Schema.Int,
+			/** Initial terminal row count. */
+			rows: Schema.Int,
+			/**
+			 * Opaque workspace identifier — stored alongside the terminal for
+			 * caller-side bookkeeping. The terminal service does not interpret it.
+			 */
+			workspaceId: Schema.String,
+		},
+	}),
+
+	// -----------------------------------------------------------------------
+	// terminal.write — send input to a terminal
+	// -----------------------------------------------------------------------
+	Rpc.make("terminal.write", {
+		error: TerminalRpcError,
+		payload: {
+			id: Schema.String,
+			data: Schema.String,
+		},
+	}),
+
+	// -----------------------------------------------------------------------
+	// terminal.resize — resize a terminal's PTY
+	// -----------------------------------------------------------------------
+	Rpc.make("terminal.resize", {
+		error: TerminalRpcError,
+		payload: {
+			id: Schema.String,
+			cols: Schema.Int,
+			rows: Schema.Int,
+		},
+	}),
+
+	// -----------------------------------------------------------------------
+	// terminal.kill — stop the PTY (terminal retained in memory)
+	// -----------------------------------------------------------------------
+	Rpc.make("terminal.kill", {
+		error: TerminalRpcError,
+		payload: {
+			id: Schema.String,
+		},
+	}),
+
+	// -----------------------------------------------------------------------
+	// terminal.remove — kill (if running) and fully remove from memory
+	// -----------------------------------------------------------------------
+	Rpc.make("terminal.remove", {
+		error: TerminalRpcError,
+		payload: {
+			id: Schema.String,
+		},
+	}),
+
+	// -----------------------------------------------------------------------
+	// terminal.restart — kill and respawn with same command/config
+	// -----------------------------------------------------------------------
+	Rpc.make("terminal.restart", {
+		success: TerminalInfo,
+		error: TerminalRpcError,
+		payload: {
+			id: Schema.String,
+		},
+	}),
+
+	// -----------------------------------------------------------------------
+	// terminal.list — return all terminals (running + stopped)
+	// -----------------------------------------------------------------------
+	Rpc.make("terminal.list", {
+		success: Schema.Array(TerminalInfo),
+		error: TerminalRpcError,
 	})
 ) {}

@@ -381,32 +381,9 @@ Move the PTY Host child process (`pty-host.ts`), the IPC client (`services/pty-h
 
 ---
 
-## Issue 137: Terminal RPC contract
+## ~~Issue 137: Terminal RPC contract~~ ✅ DONE
 
-### Parent PRD
-
-PRD-terminal-extraction.md
-
-### What to build
-
-Define a new `TerminalRpcs` RPC group in `@laborer/shared` using the `@effect/rpc` pattern (matching the existing `LaborerRpcs` pattern). Define RPCs for: `terminal.spawn` (accepts command, args, cwd, env, cols, rows; returns id), `terminal.write`, `terminal.resize`, `terminal.kill`, `terminal.remove`, `terminal.restart`, and `terminal.list` (returns array of terminal state objects). Define request/response schemas using Effect Schema. The `workspaceId` is passed as opaque metadata at spawn time. No streaming endpoint yet (that's Issue #142).
-
-### Acceptance criteria
-
-- [ ] `TerminalRpcs` RPC group is defined in `@laborer/shared`
-- [ ] All 7 RPC endpoints have typed payload and response schemas
-- [ ] `TerminalSpawnPayload` includes command, args, cwd, env, cols, rows, workspaceId
-- [ ] `TerminalInfo` response schema includes id, workspaceId, command, status
-- [ ] Types compile and are importable from both `@laborer/server` and `@laborer/terminal`
-- [ ] Shared `TerminalRpcError` tagged error class defined
-
-### Blocked by
-
-None - can start immediately
-
-### User stories addressed
-
-- User story 5, 7
+Defined `TerminalRpcs` RPC group in `@laborer/shared/rpc` with 7 endpoints (spawn, write, resize, kill, remove, restart, list). `TerminalInfo` response schema includes id, workspaceId, command, args, cwd, status. `TerminalRpcError` tagged error class for terminal-service-specific errors. All types compile and are importable from `@laborer/server` and `@laborer/terminal`.
 
 ---
 
@@ -461,7 +438,7 @@ Implement RPC handlers in `packages/terminal/src/rpc/handlers.ts` for all termin
 
 ### Blocked by
 
-- Blocked by #137, #138
+- Blocked by ~~#137~~, #138
 
 ### User stories addressed
 
@@ -749,9 +726,9 @@ End-to-end verification and polish pass for the full terminal service extraction
 | 134 | ~~Drag terminal from sidebar onto empty panel~~ | ~~#63~~, ~~#66~~ | Done |
 | 135 | ~~Terminal package scaffold~~ | ~~None~~ | Done |
 | 136 | Move PTY Host + PtyHostClient to terminal package | ~~#135~~ | Ready |
-| 137 | Terminal RPC contract | None | Ready |
+| 137 | ~~Terminal RPC contract~~ | ~~None~~ | Done |
 | 138 | Move + simplify TerminalManager | #136 | Blocked |
-| 139 | Terminal RPC handlers | #137, #138 | Blocked |
+| 139 | Terminal RPC handlers | ~~#137~~, #138 | Blocked |
 | 140 | Move terminal WebSocket route to terminal package | #139 | Blocked |
 | 141 | Update Vite proxy + web app WebSocket hook | #140 | Blocked |
 | 142 | Terminal event stream RPC | #139 | Blocked |

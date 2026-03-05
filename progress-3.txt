@@ -2345,3 +2345,69 @@ Created the `@laborer/terminal` workspace package at `packages/terminal/` with a
 ### Issues unblocked
 - Issue #136: Move PTY Host + PtyHostClient to terminal package — now unblocked (was blocked by #135)
 
+## Issue #137: Terminal RPC contract — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Defined the `TerminalRpcs` RPC group in `@laborer/shared/rpc` for the standalone terminal service (`@laborer/terminal`). The contract includes 7 RPC endpoints (spawn, write, resize, kill, remove, restart, list) with typed payload and response schemas using Effect Schema. A dedicated `TerminalRpcError` tagged error class and `TerminalInfo` response schema are also defined. The terminal package now depends on `@laborer/shared` to import the shared types.
+
+### What was done
+
+1. **Added `TerminalRpcError` tagged error class** to `packages/shared/src/rpc.ts`:
+   - Extends `Schema.TaggedError` with `_tag: "TerminalRpcError"`
+   - Same shape as `RpcError` (`message: String`, `code: optional(String)`) but distinct at the type level
+   - Documented error codes: `TERMINAL_NOT_FOUND`, `TERMINAL_ALREADY_STOPPED`, `SPAWN_FAILED`, `INTERNAL_ERROR`
+
+2. **Added `TerminalInfo` response schema** to `packages/shared/src/rpc.ts`:
+   - Fields: `id` (String), `workspaceId` (String), `command` (String), `args` (Array of String), `cwd` (String), `status` (TerminalStatus — "running" | "stopped")
+   - Exported as both a schema (`TerminalInfo`) and a type (`TerminalInfo` type alias)
+   - Used as the success response for spawn, restart, and list endpoints
+
+3. **Defined `TerminalRpcs` RPC group** with 7 endpoints:
+   - **`terminal.spawn`**: Payload includes `command`, `args` (optional), `cwd`, `env` (optional Record), `cols`, `rows`, `workspaceId`. Returns `TerminalInfo`.
+   - **`terminal.write`**: Payload `id`, `data`. No success response (void).
+   - **`terminal.resize`**: Payload `id`, `cols`, `rows`. No success response (void).
+   - **`terminal.kill`**: Payload `id`. No success response (void).
+   - **`terminal.remove`**: Payload `id`. No success response (void).
+   - **`terminal.restart`**: Payload `id`. Returns `TerminalInfo`.
+   - **`terminal.list`**: No payload. Returns `Array(TerminalInfo)`.
+   - All endpoints use `TerminalRpcError` as the error type.
+
+4. **Added `TerminalStatus` import** from `./types.js` — reuses the existing `Schema.Literal("running", "stopped")` for the `status` field in `TerminalInfo`.
+
+5. **Added `@laborer/shared` dependency** to `packages/terminal/package.json` — enables the terminal package to import the shared RPC contract.
+
+### Files modified
+- `packages/shared/src/rpc.ts` — Added `TerminalRpcError`, `TerminalInfo`, `TerminalRpcs` exports; added `TerminalStatus` import
+- `packages/terminal/package.json` — Added `@laborer/shared: "workspace:*"` dependency
+
+### Acceptance criteria status
+- [x] `TerminalRpcs` RPC group is defined in `@laborer/shared`
+- [x] All 7 RPC endpoints have typed payload and response schemas
+- [x] `TerminalSpawnPayload` includes command, args, cwd, env, cols, rows, workspaceId
+- [x] `TerminalInfo` response schema includes id, workspaceId, command, status (plus args, cwd)
+- [x] Types compile and are importable from both `@laborer/server` and `@laborer/terminal`
+- [x] Shared `TerminalRpcError` tagged error class defined
+
+### Verification
+- `tsc --noEmit` passes for shared package (only pre-existing Effect informational messages — no errors)
+- `tsc --noEmit` passes for server package (only pre-existing informational messages — no new errors)
+- `tsc --noEmit` passes for terminal package (zero errors)
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on `rpc.ts` with zero issues
+- All 61 tests pass across 4 test files (32 ring buffer + 9 workspace validation + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Separate `TerminalRpcError` over reusing `RpcError`**: The terminal service is a separate process with its own error domain. Using a distinct tagged error class means terminal service errors are distinguishable from main server errors at the type level. A consumer receiving a `TerminalRpcError` knows it came from the terminal service. This follows Effect's convention of using tagged errors for domain separation.
+- **`TerminalInfo` includes `args` and `cwd`**: The PRD issue says `TerminalInfo` should include `id, workspaceId, command, status`. Adding `args` and `cwd` provides enough information for the caller to understand what the terminal is running and where — useful for display in the sidebar terminal list and for restart operations. These are stored at spawn time and don't change.
+- **`env` as optional `Record<string, string>`**: Environment variables are optional at spawn time (some callers may not need custom env). Using `Schema.Record({ key: Schema.String, value: Schema.String })` provides type-safe key-value pairs that serialize cleanly over JSON RPC.
+- **`workspaceId` as opaque String**: The terminal service stores `workspaceId` but does not interpret it. It's passed at spawn time and returned in `TerminalInfo` for the caller's bookkeeping. This keeps the terminal service workspace-agnostic — it has no dependency on workspace concepts.
+- **No streaming `terminal.events` endpoint**: The issue scope covers only the 7 CRUD endpoints. The streaming `terminal.events()` endpoint is defined in Issue #142 (Terminal event stream RPC) which depends on Issue #139 (RPC handlers). Adding it to the contract now would be premature — the PubSub infrastructure in TerminalManager (Issue #138) needs to exist first.
+- **`terminal.list` has no payload**: List returns all terminals — no filtering by workspace or status. Filtering is the caller's responsibility. This keeps the terminal service simple. The server tracks workspace-to-terminal mappings in its own in-memory map.
+- **Dot-namespaced RPC tags**: Following the existing `LaborerRpcs` convention, all terminal RPCs use dot-namespaced tags (`terminal.spawn`, `terminal.write`, etc.). This provides clear semantic grouping and avoids tag collisions when the terminal RPC group is used alongside the server's RPC group.
+
+### Issues unblocked
+- Issue #139: Terminal RPC handlers — was blocked by #137 (this issue) and #138. Now only blocked by #138.
+

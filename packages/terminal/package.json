@@ -18,6 +18,7 @@
     "@effect/platform-bun": "catalog:",
     "@effect/rpc": "catalog:",
     "@laborer/env": "workspace:*",
+    "@laborer/shared": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

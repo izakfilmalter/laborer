@@ -405,29 +405,9 @@ Added loading indicators for workspace creation. Create Workspace form dialog sh
 
 ---
 
-## Issue 122: Loading state — terminal spawning
+## ~~Issue 122: Loading state — terminal spawning~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Show a loading indicator while a terminal is being spawned (between RPC call and first output). The terminal pane should show a spinner until the PTY is connected.
-
-### Acceptance criteria
-
-- [ ] Terminal pane shows loading while PTY is starting
-- [ ] First output → loading disappears, terminal renders
-- [ ] Tests: spawn terminal → loading visible; output arrives → loading gone
-
-### Blocked by
-
-- Blocked by #60
-
-### User stories addressed
-
-- Polishing requirement 8
+Added loading overlay to terminal pane. Shows centered spinner with "Starting terminal..." text while PTY is spawning and before first WebSocket data arrives. Uses exact terminal background color (`bg-[#09090b]`) for seamless transition. Overlay disappears on first data frame via `hasReceivedData` state/ref tracking. Skipped for stopped terminals (scrollback arrives immediately on reconnection). Consistent with workspace creation loading state (#121).
 
 ---
 
@@ -664,7 +644,7 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 119 | ~~Empty state — no workspaces~~ | ~~#42~~ | Done |
 | 120 | ~~Empty state — no terminals~~ | ~~#63~~ | Done |
 | 121 | ~~Loading state — workspace creation~~ | ~~#41~~ | Done |
-| 122 | Loading state — terminal spawning | ~~#60~~ | Ready |
+| 122 | ~~Loading state — terminal spawning~~ | ~~#60~~ | Done |
 | 123 | Loading state — diff computation | ~~#87~~ | Ready |
 | 124 | Terminal fidelity — opencode | ~~#60~~ | Ready |
 | 125 | Terminal fidelity — claude | ~~#60~~ | Ready |

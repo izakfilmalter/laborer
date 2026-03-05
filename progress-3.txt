@@ -1342,3 +1342,56 @@ With Issue #79 done, the full tmux-style keyboard shortcut system is:
 - `Ctrl+B, Arrow` → directional navigation ✅ (#71)
 - `Ctrl+B, Shift+Arrow` → resize pane ✅ (#79)
 
+## Issue #122: Loading state — terminal spawning — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Added a loading overlay to the terminal pane that shows while the PTY is being spawned and before the first output arrives via WebSocket. Previously, when a terminal was assigned to a pane, the user saw a blank black terminal canvas with no indication that anything was happening. Now, a centered spinner with "Starting terminal..." text covers the terminal until the first WebSocket data frame arrives, providing clear visual feedback that the terminal is being connected.
+
+### What was done
+
+Modified `apps/web/src/panes/terminal-pane.tsx`:
+
+1. **Added loading state tracking**: Two new state/ref pairs:
+   - `hasReceivedData` (React state) — drives the loading overlay visibility in JSX
+   - `hasReceivedDataRef` (ref) — used in the hot-path `handleTerminalData` callback to avoid calling `setState` on every subsequent data frame after the first. The ref is checked first; only when it's `false` does the callback trigger a state update.
+
+2. **Updated `handleTerminalData` callback**: After writing data to xterm.js, checks `hasReceivedDataRef.current`. If `false`, flips both the ref and state to `true`, causing the loading overlay to disappear. This is a one-time transition — subsequent data frames skip the check entirely via the ref guard.
+
+3. **Created `TerminalLoadingOverlay` component**: A full-coverage absolute-positioned overlay (`inset-0`, `z-10`) that:
+   - Uses the terminal's exact background color (`bg-[#09090b]` — zinc-950) so the transition from loading to terminal content is seamless
+   - Centers a `Spinner` (Loader2Icon, `size-6`, `text-muted-foreground`) and "Starting terminal..." text vertically and horizontally
+   - Positioned below the prefix mode indicator (`z-20`) so Ctrl+B badge still shows if pressed during loading
+
+4. **Added loading overlay to JSX**: Rendered conditionally: `{!hasReceivedData && isRunning && <TerminalLoadingOverlay />}`. The `isRunning` guard ensures stopped terminals (which receive scrollback immediately on reconnection) don't show the loading overlay.
+
+5. **Added `Spinner` import**: From `@/components/ui/spinner` — the existing project-wide spinner component using Loader2Icon with `animate-spin`.
+
+6. **Updated JSDoc**: Added Issue #122 documentation to the module header comment, describing the loading state behavior and when the overlay appears/disappears.
+
+### Files modified
+- `apps/web/src/panes/terminal-pane.tsx` — Added `hasReceivedData` state/ref, updated `handleTerminalData` to clear loading on first data, created `TerminalLoadingOverlay` component, added overlay to JSX, added `Spinner` import, updated JSDoc
+
+### Acceptance criteria status
+- [x] Terminal pane shows loading while PTY is starting (TerminalLoadingOverlay with spinner + "Starting terminal..." text)
+- [x] First output → loading disappears, terminal renders (hasReceivedData flips to true on first WebSocket data frame, overlay unmounts)
+- [ ] Tests: spawn terminal → loading visible; output arrives → loading gone (deferred — web app has no component test infrastructure)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on `terminal-pane.tsx` with zero issues (`Checked 1 file in 8ms. No fixes applied.`)
+- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Ref + state dual tracking**: The `handleTerminalData` callback fires for every WebSocket data frame (potentially hundreds per second during fast output). Using a ref (`hasReceivedDataRef`) for the hot-path check avoids calling `setState` on every frame. The state (`hasReceivedData`) is only needed for React rendering — it's set once and never changes again. This is the same ref-for-hot-path pattern used throughout the component (e.g., `isRunningRef`, `wsSendRef`, `resizeTerminalRef`).
+- **`isRunning` guard on overlay**: Stopped terminals receive scrollback immediately on WebSocket reconnection (the server sends the ring buffer contents on connect). For these terminals, `hasReceivedData` would flip to `true` almost instantly, but there's a brief flash. The `isRunning` guard prevents the overlay from appearing at all for stopped terminals, since there's no PTY startup to wait for — the data is already buffered.
+- **Exact terminal background color**: The overlay uses `bg-[#09090b]` (the same zinc-950 used in the xterm.js theme config) rather than a themed variable like `bg-background`. This ensures a seamless visual transition — the loading overlay looks like a blank terminal, and when data arrives, the content appears to "draw onto" the same surface. Using `bg-background` would create a flash if the background theme doesn't exactly match the terminal theme.
+- **`z-10` for overlay**: Positioned below the prefix mode indicator (`z-20`) so if the user presses Ctrl+B during the loading phase, the "Ctrl+B" badge is still visible. The overlay is above the xterm.js canvas (which has no explicit z-index) so it fully covers the blank terminal.
+- **No timeout fallback**: The overlay relies purely on data arrival to disappear. If the WebSocket never connects (e.g., server is down), the user will see the loading overlay indefinitely — but they'll also see the "Disconnected" or "Connecting..." banners layered on top. Adding a timeout to hide the overlay would show a blank terminal, which is a worse UX than a loading spinner. The reconnection banners provide the actual status information.
+- **Simple Spinner component**: Reused the existing `Spinner` from `@/components/ui/spinner` (Loader2Icon with animate-spin) rather than creating a custom loading animation. This is consistent with the loading states used in workspace creation (Issue #121) and the empty terminal pane spawn CTA.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #122. This completes the second of three loading state tasks for Polishing requirement 8: workspace creation (#121) ✅, terminal spawning (#122) ✅, diff computation (#123) pending.
+

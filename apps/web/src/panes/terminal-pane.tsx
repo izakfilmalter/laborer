@@ -51,11 +51,21 @@
  * @see packages/server/src/services/terminal-manager.ts — ring buffer + subscribers
  * @see apps/web/src/hooks/use-terminal-websocket.ts — WebSocket hook
  * @see PRD-terminal-perf.md — "Web Client Terminal Pane Update"
+ * Loading state (Issue #122):
+ * When a terminal pane first mounts, xterm.js is initialized but no output
+ * has arrived yet. A loading overlay (spinner + "Starting terminal...")
+ * covers the blank terminal canvas until the first data arrives via
+ * WebSocket. This provides visual feedback that the PTY is being spawned
+ * and connected. The overlay fades out on first data receipt. For stopped
+ * terminals (reconnection), the overlay is skipped since scrollback data
+ * arrives immediately on WebSocket connect.
+ *
  * @see Issue #60: xterm.js terminal pane — render output
  * @see Issue #61: xterm.js terminal pane — send keyboard input
  * @see Issue #62: xterm.js terminal pane — handle resize
  * @see Issue #64: Terminal session reconnection
  * @see Issue #80: Keyboard shortcut scope isolation
+ * @see Issue #122: Loading state — terminal spawning
  * @see Issue #140: Web client terminal pane — WebSocket data path
  */
 
@@ -68,6 +78,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LaborerClient } from "@/atoms/laborer-client";
+import { Spinner } from "@/components/ui/spinner";
 import { useTerminalWebSocket } from "@/hooks/use-terminal-websocket";
 import { useLaborerStore } from "@/livestore/store";
 
@@ -152,13 +163,33 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 	const prefixTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	/**
+	 * Loading state tracking (Issue #122).
+	 *
+	 * When the terminal pane first mounts, no output has arrived yet.
+	 * `hasReceivedData` starts as `false` and flips to `true` on the
+	 * first WebSocket data frame. A loading overlay is shown while false.
+	 * Uses a ref for the hot-path check (every data frame) and state
+	 * for React rendering.
+	 */
+	const [hasReceivedData, setHasReceivedData] = useState(false);
+	const hasReceivedDataRef = useRef(false);
+
+	/**
 	 * Callback for terminal output data received via WebSocket.
 	 * Writes raw UTF-8 data directly to xterm.js.
+	 * On first data receipt, clears the loading overlay.
 	 */
 	const handleTerminalData = useCallback((data: string) => {
 		const terminal = terminalRef.current;
 		if (terminal) {
 			terminal.write(data);
+		}
+
+		// Clear loading overlay on first data (Issue #122).
+		// Ref check avoids calling setState on every subsequent data frame.
+		if (!hasReceivedDataRef.current) {
+			hasReceivedDataRef.current = true;
+			setHasReceivedData(true);
 		}
 	}, []);
 
@@ -470,6 +501,13 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 			{/* xterm.js container */}
 			<div className="h-full w-full" ref={containerRef} />
 
+			{/* Loading overlay (Issue #122) — shown while the PTY is spawning
+			    and no output has arrived yet. Covers the blank terminal canvas
+			    with a spinner and message. Disappears on first WebSocket data frame.
+			    Only shown for running terminals (stopped terminals get immediate
+			    scrollback on reconnection). */}
+			{!hasReceivedData && isRunning && <TerminalLoadingOverlay />}
+
 			{/* Prefix mode indicator (Issue #80) — shown when Ctrl+B was pressed
 			    and the terminal is waiting for the next key to complete a panel
 			    shortcut sequence. Positioned at top-left to avoid overlapping with
@@ -492,6 +530,22 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 					Process exited — terminal output preserved (read-only)
 				</div>
 			)}
+		</div>
+	);
+}
+
+/**
+ * Loading overlay shown while waiting for the first terminal output data.
+ * Covers the blank terminal canvas with a centered spinner and status message.
+ * Uses the terminal's background color (zinc-950) to blend seamlessly.
+ *
+ * @see Issue #122: Loading state — terminal spawning
+ */
+function TerminalLoadingOverlay() {
+	return (
+		<div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#09090b]">
+			<Spinner className="size-6 text-muted-foreground" />
+			<p className="text-muted-foreground text-sm">Starting terminal...</p>
 		</div>
 	);
 }

@@ -372,6 +372,14 @@ export class LaborerRpcs extends RpcGroup.make(
 		},
 	}),
 
+	Rpc.make("task.importLinear", {
+		success: TaskImportResponse,
+		error: RpcError,
+		payload: {
+			projectId: Schema.String,
+		},
+	}),
+
 	Rpc.make("task.updateStatus", {
 		error: RpcError,
 		payload: {

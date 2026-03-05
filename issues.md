@@ -96,7 +96,7 @@ Watched `rlph prd` terminals from the server after spawn, waited for terminal co
 
 ---
 
-## Issue 108: Linear task sourcing
+## ~~Issue 108: Linear task sourcing~~ ✅ DONE
 
 ### Parent PRD
 
@@ -106,16 +106,18 @@ PRD.md
 
 Implement fetching tasks from Linear's API based on the project's rlph configuration. Import Linear issues as tasks in LiveStore with source = "linear".
 
+Added `LinearTaskImporter` on the server plus a new `task.importLinear` RPC endpoint. The importer resolves the project's Laborer config, reads the configured rlph TOML file (defaulting to `.rlph/config.toml`), extracts the Linear team/project/label settings, fetches eligible issues from Linear's GraphQL API, dedupes against existing Linear-sourced tasks, and creates new LiveStore tasks with `source = "linear"` and `externalId = identifier` (for example `ENG-123`). Missing config, missing API key, and Linear API failures all surface as typed `RpcError`s. Added integration tests covering successful import with duplicate skipping and Linear API error handling.
+
 ### Acceptance criteria
 
-- [ ] Fetch tasks from Linear API using project's rlph config
-- [ ] Tasks created in LiveStore with source = "linear" and externalId
-- [ ] Handle API errors gracefully
-- [ ] Tests: mock Linear API → tasks imported; API error → handled
+- [x] Fetch tasks from Linear API using project's rlph config
+- [x] Tasks created in LiveStore with source = "linear" and externalId
+- [x] Handle API errors gracefully
+- [x] Tests: mock Linear API → tasks imported; API error → handled
 
 ### Blocked by
 
-- Blocked by #102
+- Blocked by ~~#102~~
 
 ### User stories addressed
 
@@ -165,7 +167,7 @@ Create a UI component to select the task source: Linear, GitHub, or Manual. Sele
 
 ### Blocked by
 
-- Blocked by #108, #109, #103
+- Blocked by ~~#108~~, ~~#109~~, ~~#103~~
 
 ### User stories addressed
 
@@ -864,9 +866,9 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 88 | ~~Diff viewer — accept/reject annotations~~ | ~~#87~~ | Done |
 | 91 | ~~Diff viewer debounce/throttle~~ | ~~#89~~ | Done |
 | 107 | ~~PRD-generated issues → tasks~~ | ~~#94~~, ~~#100~~ | Done |
-| 108 | Linear task sourcing | ~~#102~~ | Ready |
+| 108 | ~~Linear task sourcing~~ | ~~#102~~ | Done |
 | 109 | ~~GitHub task sourcing~~ | ~~#102~~ | Done |
-| 110 | Task source picker UI | #108, #109, #103 | Blocked |
+| 110 | Task source picker UI | ~~#108~~, ~~#109~~, ~~#103~~ | Ready |
 | 113 | ~~Project switcher~~ | ~~#26~~ | Done |
 | 114 | ~~Cross-project dashboard~~ | ~~#41~~, ~~#104~~ | Done |
 | 115 | ~~Tauri system tray~~ | ~~#41~~ | Done |

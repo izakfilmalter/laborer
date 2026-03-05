@@ -561,6 +561,58 @@ With Issue #130 done, all three graceful shutdown tasks for Polishing requiremen
 
 ## Issue #71: PanelManager — navigate between panes — COMPLETED
 
+## Issue #108: Linear task sourcing — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Why this next
+Picked Issue #108 as the highest-priority remaining task because it completes the second backend task-ingestion path (after GitHub), unlocks Issue #110's task-source picker UI, and directly advances the core task-driven workspace flow from user story 7.
+
+### Summary
+Implemented Linear task import on the server. Laborer can now read a project's rlph config, query Linear's GraphQL API for eligible issues, and import them into LiveStore as `source = "linear"` tasks with stable `externalId`s.
+
+### What was done
+
+1. **Created `packages/server/src/services/linear-task-importer.ts`**
+   - Added a new `LinearTaskImporter` Effect service with `importProjectIssues(projectId)`.
+   - Resolved the project's effective Laborer config via `ConfigService`, then located the rlph config file using `rlphConfig` from `laborer.json` or the default `.rlph/config.toml` path.
+   - Parsed the rlph TOML needed for Linear sourcing (`label`, `[linear].team`, optional project, API key env, and workflow state names) with a focused parser for the subset Laborer needs.
+   - Queried `https://api.linear.app/graphql` with the rlph-derived team/project/label filters and excluded in-progress / in-review / done / completed / canceled issues to match rlph task-selection semantics.
+   - Deduped against existing `linear` tasks by `externalId` and created new LiveStore tasks through `TaskManager.createTask(..., "linear", identifier)`.
+   - Returned typed `RpcError`s for missing project, unreadable config, missing `[linear]` config, missing API key env var, invalid response bodies, and Linear API failures.
+
+2. **Extended the shared/server RPC layer**
+   - Added `task.importLinear` to `packages/shared/src/rpc.ts` using the existing `TaskImportResponse` shape.
+   - Wired the new handler in `packages/server/src/rpc/handlers.ts`.
+   - Added `LinearTaskImporter.layer` to the server composition in `packages/server/src/main.ts`.
+
+3. **Added integration tests in `packages/server/test/linear-task-importer.test.ts`**
+   - Covered successful Linear import with duplicate skipping.
+   - Covered graceful handling of a non-OK Linear API response.
+   - Verified the outgoing GraphQL filter includes the expected label/team/project/state constraints derived from rlph config.
+
+### Files created
+- `packages/server/src/services/linear-task-importer.ts`
+- `packages/server/test/linear-task-importer.test.ts`
+
+### Files modified
+- `packages/shared/src/rpc.ts`
+- `packages/server/src/rpc/handlers.ts`
+- `packages/server/src/main.ts`
+- `issues.md`
+
+### Verification
+- `bun x vitest run test/linear-task-importer.test.ts` (in `packages/server`) ✅
+- `bun run check-types` (in `packages/server`) ✅ — passes with only pre-existing Effect plugin warnings/messages elsewhere in the package
+- `bun x ultracite check packages/shared/src/rpc.ts packages/server/src/rpc/handlers.ts packages/server/src/main.ts packages/server/src/services/linear-task-importer.ts packages/server/test/linear-task-importer.test.ts` ✅
+
+### Acceptance criteria status
+- [x] Fetch tasks from Linear API using project's rlph config
+- [x] Tasks created in LiveStore with source = `"linear"` and externalId
+- [x] Handle API errors gracefully
+- [x] Tests: mock Linear API -> tasks imported; API error -> handled
+
 ## Issue #109: GitHub task sourcing — COMPLETED
 
 **Status:** Done

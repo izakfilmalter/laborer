@@ -17,6 +17,8 @@ import {
 	FileCode2,
 	FolderGit2,
 	LayoutDashboard,
+	PanelLeftClose,
+	PanelLeftOpen,
 	Rows2,
 	Terminal,
 	X,
@@ -29,6 +31,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import type { PanelImperativeHandle } from "react-resizable-panels";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
 import { CreateTaskForm } from "@/components/create-task-form";
@@ -53,6 +56,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkspaceDashboard } from "@/components/workspace-dashboard";
 import { WorkspaceList } from "@/components/workspace-list";
+import { useResponsiveLayout } from "@/hooks/use-responsive-layout";
 import { useLaborerStore } from "@/livestore/store";
 import type { NavigationDirection } from "@/panels/layout-utils";
 import {
@@ -151,10 +155,14 @@ function PanelHeaderBar({
 	layout,
 	mainView,
 	onViewChange,
+	onToggleSidebar,
+	sidebarCollapsed,
 }: {
 	readonly layout?: PanelNode | undefined;
 	readonly mainView: MainView;
 	readonly onViewChange: (view: MainView) => void;
+	readonly onToggleSidebar?: (() => void) | undefined;
+	readonly sidebarCollapsed?: boolean;
 }) {
 	const store = useLaborerStore();
 	const activePaneId = useActivePaneId();
@@ -202,8 +210,25 @@ function PanelHeaderBar({
 
 	return (
 		<div className="flex h-8 shrink-0 items-center justify-between border-b px-2">
-			{/* Left: view toggle + project / branch context */}
+			{/* Left: sidebar toggle + view toggle + project / branch context */}
 			<div className="flex items-center gap-2">
+				{onToggleSidebar && (
+					<Button
+						aria-label={
+							sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+						}
+						onClick={onToggleSidebar}
+						size="icon-sm"
+						title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+						variant="ghost"
+					>
+						{sidebarCollapsed ? (
+							<PanelLeftOpen className="size-3.5" />
+						) : (
+							<PanelLeftClose className="size-3.5" />
+						)}
+					</Button>
+				)}
 				<div className="flex gap-0.5">
 					<Button
 						aria-label="Terminal panels"
@@ -739,11 +764,37 @@ function HomeComponent() {
 	const projectList = store.useQuery(sidebarProjects$);
 	const hasProjects = projectList.length > 0;
 
+	// Responsive sizing — adapts sidebar and pane sizes to viewport width
+	const responsiveSizes = useResponsiveLayout();
+
 	// Project switcher state — null means "All Projects" (no filter)
 	const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
 	// Main content view toggle — panels (terminal panes) or dashboard
 	const [mainView, setMainView] = useState<MainView>("panels");
+
+	// Sidebar collapse via imperative panel ref
+	const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
+	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+	const handleSidebarResize = useCallback(() => {
+		const panel = sidebarPanelRef.current;
+		if (panel) {
+			setSidebarCollapsed(panel.isCollapsed());
+		}
+	}, []);
+
+	const toggleSidebar = useCallback(() => {
+		const panel = sidebarPanelRef.current;
+		if (!panel) {
+			return;
+		}
+		if (panel.isCollapsed()) {
+			panel.expand();
+		} else {
+			panel.collapse();
+		}
+	}, []);
 
 	// Clear the active project filter if the selected project is removed
 	useEffect(() => {
@@ -756,7 +807,15 @@ function HomeComponent() {
 		<PanelActionsProvider activePaneId={activePaneId} value={panelActions}>
 			<ResizablePanelGroup orientation="horizontal">
 				{/* Sidebar — project switcher, project list, workspace list, health check */}
-				<ResizablePanel defaultSize="25%" maxSize="40%" minSize="15%">
+				<ResizablePanel
+					collapsedSize="0%"
+					collapsible={responsiveSizes.canCollapseSidebar}
+					defaultSize={responsiveSizes.sidebarDefault}
+					maxSize={responsiveSizes.sidebarMax}
+					minSize={responsiveSizes.sidebarMin}
+					onResize={handleSidebarResize}
+					panelRef={sidebarPanelRef}
+				>
 					<ScrollArea className="h-full">
 						<div className="grid gap-4 p-3">
 							{/* Project switcher — filter sidebar by project */}
@@ -812,7 +871,11 @@ function HomeComponent() {
 							<PanelHeaderBar
 								layout={layout}
 								mainView={mainView}
+								onToggleSidebar={
+									responsiveSizes.canCollapseSidebar ? toggleSidebar : undefined
+								}
 								onViewChange={setMainView}
+								sidebarCollapsed={sidebarCollapsed}
 							/>
 							{mainView === "panels" && (
 								<>

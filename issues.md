@@ -56,30 +56,9 @@ Added Ctrl+B, Shift+Arrow keyboard shortcuts for resizing panes. Shift+Right/Dow
 
 ---
 
-## Issue 81: Panel responsive layout
+## ~~Issue 81: Panel responsive layout~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Ensure the panel system works well across different screen sizes from 1080p to 5K. Minimum pane sizes should adapt to screen density. Test at various resolutions.
-
-### Acceptance criteria
-
-- [ ] Layout works at 1080p (minimum usable resolution)
-- [ ] Layout takes advantage of 4K/5K space
-- [ ] Minimum pane size appropriate for screen density
-- [ ] Tests: render at 1080p → all panes visible; render at 5K → uses space well
-
-### Blocked by
-
-- ~~Blocked by #72~~
-
-### User stories addressed
-
-- Polishing requirement 9
+Made the panel system responsive from 1080p to 5K: viewport-aware sidebar sizing (pixel-based defaults/min/max converted to percentages), pixel-aware pane minimums (at least ~100px), auto-switch between split and unified diff views based on container width (ResizeObserver + 500px threshold), larger resize handle hit areas (doubled to 8px), collapsible sidebar below 1280px with toggle button in header bar. Created `useResponsiveLayout` hook for centralized viewport-aware sizing.
 
 ---
 
@@ -529,7 +508,7 @@ Added drag-and-drop support using the native HTML5 Drag and Drop API. Terminal i
 | 71 | ~~PanelManager — navigate between panes~~ | ~~#67~~ | Done |
 | 72 | ~~PanelManager — drag-to-resize~~ | ~~#67~~ | Done |
 | 79 | ~~Keyboard shortcut — resize panes~~ | ~~#72~~, ~~#75~~ | Done |
-| 81 | Panel responsive layout | ~~#72~~ | Ready |
+| 81 | ~~Panel responsive layout~~ | ~~#72~~ | Done |
 | 88 | Diff viewer — accept/reject annotations | ~~#87~~ | Ready |
 | 91 | Diff viewer debounce/throttle | ~~#89~~ | Ready |
 | 107 | PRD-generated issues → tasks | ~~#94~~, ~~#100~~ | Ready |

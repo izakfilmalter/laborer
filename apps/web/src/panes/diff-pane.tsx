@@ -71,12 +71,10 @@ const allDiffs$ = queryDb(diffs, { label: "diffPane" });
 const editorOpenMutation = LaborerClient.mutation("editor.open");
 
 /**
- * Stable FileDiff options object — defined at module level to avoid
- * recreating on every render. FileDiff's internal rendering is expensive
- * (shiki syntax highlighting, hunk parsing), so stable options prevent
- * unnecessary re-processing.
+ * FileDiff options for split (side-by-side) diff view.
+ * Used when the diff pane has enough width (>= 500px).
  */
-const FILE_DIFF_OPTIONS = {
+const FILE_DIFF_OPTIONS_SPLIT = {
 	diffStyle: "split" as const,
 	theme: { dark: "pierre-dark" as const, light: "pierre-light" as const },
 	themeType: "dark" as const,
@@ -84,6 +82,24 @@ const FILE_DIFF_OPTIONS = {
 	lineDiffType: "word-alt" as const,
 	overflow: "scroll" as const,
 };
+
+/**
+ * FileDiff options for unified (single-column) diff view.
+ * Used when the diff pane is narrow (< 500px) to improve readability.
+ *
+ * @see Issue #81: Panel responsive layout
+ */
+const FILE_DIFF_OPTIONS_UNIFIED = {
+	diffStyle: "unified" as const,
+	theme: { dark: "pierre-dark" as const, light: "pierre-light" as const },
+	themeType: "dark" as const,
+	diffIndicators: "bars" as const,
+	lineDiffType: "word-alt" as const,
+	overflow: "scroll" as const,
+};
+
+/** Width threshold (px) below which diff view switches to unified. */
+const UNIFIED_DIFF_THRESHOLD = 500;
 
 /** Duration (ms) to show the "Updated" flash indicator. */
 const UPDATE_FLASH_DURATION = 1500;
@@ -128,6 +144,29 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 	const store = useLaborerStore();
 	const diffRows = store.useQuery(allDiffs$);
 	const openEditor = useAtomSet(editorOpenMutation, { mode: "promise" });
+
+	// --- Responsive diff style: split vs unified based on pane width ---
+	const containerRef = useRef<HTMLDivElement>(null);
+	const [useUnified, setUseUnified] = useState(false);
+
+	useEffect(() => {
+		const container = containerRef.current;
+		if (!container) {
+			return;
+		}
+		const observer = new ResizeObserver((entries) => {
+			const entry = entries[0];
+			if (entry) {
+				setUseUnified(entry.contentRect.width < UNIFIED_DIFF_THRESHOLD);
+			}
+		});
+		observer.observe(container);
+		return () => observer.disconnect();
+	}, []);
+
+	const diffOptions = useUnified
+		? FILE_DIFF_OPTIONS_UNIFIED
+		: FILE_DIFF_OPTIONS_SPLIT;
 
 	// --- Derive diff content and metadata from the reactive query ---
 	const diffRow = useMemo(() => {
@@ -308,7 +347,10 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 	}
 
 	return (
-		<div className="relative flex h-full w-full flex-col bg-background">
+		<div
+			className="relative flex h-full w-full flex-col bg-background"
+			ref={containerRef}
+		>
 			{/* Update flash indicator — fades in/out when new diff content arrives */}
 			{showUpdateFlash && (
 				<div className="fade-in absolute top-2 right-2 z-10 flex animate-in items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-primary text-xs duration-200">
@@ -335,7 +377,7 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 					<FileDiff
 						fileDiff={fileDiffMeta}
 						key={fileDiffMeta.name ?? index}
-						options={FILE_DIFF_OPTIONS}
+						options={diffOptions}
 						renderHeaderMetadata={renderHeaderMetadata}
 					/>
 				))}

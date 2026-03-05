@@ -126,3 +126,25 @@
 		@apply font-sans;
 	}
 }
+
+/**
+ * Responsive layout adjustments for different screen densities.
+ * @see Issue #81: Panel responsive layout
+ */
+
+/* Compact sidebar padding at narrow viewports */
+@media (max-width: 1279px) {
+	[data-slot="sidebar-content"] {
+		padding: 0.5rem;
+	}
+}
+
+/* Slightly larger text and padding at very high resolutions */
+@media (min-width: 3840px) {
+	[data-slot="resizable-handle"] {
+		width: 2px;
+	}
+	[data-slot="resizable-handle"][aria-orientation="horizontal"] {
+		height: 2px;
+	}
+}

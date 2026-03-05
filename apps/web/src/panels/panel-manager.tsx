@@ -72,6 +72,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { useResponsiveLayout } from "@/hooks/use-responsive-layout";
 import { extractErrorMessage } from "@/lib/utils";
 import { useLaborerStore } from "@/livestore/store";
 import { useActivePaneId, usePanelActions } from "@/panels/panel-context";
@@ -257,16 +258,18 @@ interface PaneContentProps {
  * This keeps the diff visually coupled to its terminal.
  */
 function PaneContent({ node }: PaneContentProps) {
+	const { paneMin } = useResponsiveLayout();
+
 	if (node.paneType === "terminal" && node.terminalId) {
 		// Terminal with integrated diff sidebar
 		if (node.diffOpen && node.workspaceId) {
 			return (
 				<ResizablePanelGroup orientation="horizontal">
-					<ResizablePanel defaultSize="60%" minSize="20%">
+					<ResizablePanel defaultSize="60%" minSize={paneMin}>
 						<TerminalPane terminalId={node.terminalId} />
 					</ResizablePanel>
 					<ResizableHandle />
-					<ResizablePanel defaultSize="40%" minSize="15%">
+					<ResizablePanel defaultSize="40%" minSize={paneMin}>
 						<DiffPane workspaceId={node.workspaceId} />
 					</ResizablePanel>
 				</ResizablePanelGroup>
@@ -368,7 +371,11 @@ function SplitPanelRenderer({ node }: { readonly node: SplitNode }) {
  * Each ResizablePanel has an `id` matching its PanelNode ID, enabling
  * programmatic resize via the GroupImperativeHandle's `setLayout()` API.
  *
+ * The minimum pane size adapts to viewport width to ensure panes remain
+ * usable (at least ~100px) at any resolution from 1080p to 5K.
+ *
  * @see Issue #79: Keyboard shortcut — resize panes
+ * @see Issue #81: Panel responsive layout
  */
 function SplitChild({
 	child,
@@ -379,13 +386,14 @@ function SplitChild({
 	readonly defaultSize: number;
 	readonly index: number;
 }) {
+	const { paneMin } = useResponsiveLayout();
 	return (
 		<>
 			{index > 0 && <ResizableHandle />}
 			<ResizablePanel
 				defaultSize={`${defaultSize}%`}
 				id={child.id}
-				minSize="5%"
+				minSize={paneMin}
 			>
 				<PanelRenderer node={child} />
 			</ResizablePanel>

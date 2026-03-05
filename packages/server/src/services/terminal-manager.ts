@@ -13,6 +13,7 @@
  * - Terminal kill + resource cleanup
  * - Multiple terminals per workspace, each tracked by unique ID
  * - Workspace env var injection (PORT, LABORER_* vars)
+ * - Graceful shutdown: kills all terminals on layer teardown (Issue #128)
  *
  * Usage:
  * ```ts
@@ -32,6 +33,7 @@
  * Issue #53: resize PTY (included — resize method updates PTY dimensions)
  * Issue #54: kill PTY (included — kill method terminates process and cleans up)
  * Issue #55: multiple terminals per workspace (included — Map tracks all terminals)
+ * Issue #128: graceful shutdown — kills all terminals on SIGINT/SIGTERM
  */
 
 import { RpcError } from "@laborer/shared/rpc";
@@ -155,7 +157,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 		) => Effect.Effect<number, never>;
 	}
 >() {
-	static readonly layer = Layer.effect(
+	static readonly layer = Layer.scoped(
 		TerminalManager,
 		Effect.gen(function* () {
 			const { store } = yield* LaborerStore;
@@ -495,6 +497,68 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 
 				return killedCount;
 			});
+
+			// ---------------------------------------------------------------
+			// Graceful shutdown finalizer (Issue #128)
+			// ---------------------------------------------------------------
+			// When the server shuts down (SIGINT/SIGTERM), Effect tears down
+			// all layer scopes. This finalizer iterates all in-memory terminals,
+			// kills each PTY via PtyHostClient, and updates LiveStore status to
+			// "stopped". This ensures:
+			// 1. No orphan PTY processes remain after shutdown
+			// 2. LiveStore state is consistent (no ghost "running" terminals)
+			// 3. The stale terminal cleanup on next startup (above) handles
+			//    any edge cases where the finalizer didn't complete
+			yield* Effect.addFinalizer(() =>
+				Effect.gen(function* () {
+					const map = yield* Ref.get(terminalsRef);
+					const allTerminals = [...map.values()];
+
+					if (allTerminals.length === 0) {
+						yield* Effect.log("Shutdown: no active terminals to clean up").pipe(
+							Effect.annotateLogs("module", logPrefix)
+						);
+						return;
+					}
+
+					yield* Effect.log(
+						`Shutdown: killing ${allTerminals.length} active terminal(s)...`
+					).pipe(Effect.annotateLogs("module", logPrefix));
+
+					let killedCount = 0;
+					yield* Effect.forEach(
+						allTerminals,
+						(terminal) =>
+							pipe(
+								Effect.sync(() => ptyHostClient.kill(terminal.id)),
+								Effect.tap(() =>
+									Effect.sync(() => {
+										store.commit(
+											events.terminalStatusChanged({
+												id: terminal.id,
+												status: "stopped",
+											})
+										);
+										killedCount += 1;
+									})
+								),
+								Effect.catchAll((err) =>
+									Effect.logWarning(
+										`Shutdown: failed to kill terminal ${terminal.id}: ${String(err)}`
+									).pipe(Effect.annotateLogs("module", logPrefix))
+								)
+							),
+						{ discard: true }
+					);
+
+					// Clear the in-memory map
+					yield* Ref.set(terminalsRef, new Map<string, ManagedTerminal>());
+
+					yield* Effect.log(
+						`Shutdown: killed ${killedCount}/${allTerminals.length} terminal(s)`
+					).pipe(Effect.annotateLogs("module", logPrefix));
+				})
+			);
 
 			return TerminalManager.of({
 				spawn,

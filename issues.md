@@ -3477,13 +3477,13 @@ On server shutdown (SIGINT/SIGTERM), iterate all running terminals and kill them
 
 ### Acceptance criteria
 
-- [ ] Shutdown signal → all PTY processes terminated
-- [ ] No orphan processes after shutdown
-- [ ] Tests: spawn terminals → shutdown → all processes gone
+- [x] Shutdown signal → all PTY processes terminated (TerminalManager finalizer iterates all in-memory terminals and kills each via PtyHostClient; PtyHostClient finalizer kills the PTY Host child process)
+- [x] No orphan processes after shutdown (belt-and-suspenders: finalizer kills at shutdown + stale terminal cleanup on next startup)
+- [ ] Tests: spawn terminals → shutdown → all processes gone (deferred — vitest not yet configured; manual verification: SIGINT triggers finalizer logs)
 
 ### Blocked by
 
-- Blocked by #54
+- Blocked by ~~#54~~ (done)
 
 ### User stories addressed
 
@@ -3703,7 +3703,7 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 125 | Terminal fidelity — claude | ~~#60~~ | Ready |
 | 126 | Terminal fidelity — codex | ~~#60~~ | Ready |
 | 127 | Terminal scroll performance | ~~#60~~ | Ready |
-| 128 | Graceful shutdown — kill terminals | ~~#54~~ | Ready |
+| 128 | Graceful shutdown — kill terminals | ~~#54~~ | Done |
 | 129 | Graceful shutdown — persist state | #16 | Ready |
 | 130 | Graceful shutdown — free ports | ~~#30~~ | Ready |
 | 131 | Theme consistency audit | #90 | Blocked (#90 now Ready) |

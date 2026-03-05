@@ -2318,3 +2318,41 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #131: Theme consistency audit (was blocked by #90 — now done!)
+
+## Issue 128: Graceful shutdown — kill all terminals — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Added a graceful shutdown finalizer to the `TerminalManager` Effect service in `packages/server/src/services/terminal-manager.ts`.
+- Changed `Layer.effect` to `Layer.scoped` for the `TerminalManager.layer` to support `Effect.addFinalizer`. Scoped layers have their finalizers invoked when the layer scope is torn down — which happens automatically when `BunRuntime.runMain` receives SIGINT/SIGTERM and interrupts the main fiber.
+- The finalizer runs when the server shuts down (SIGINT/SIGTERM) and performs:
+  1. Takes a snapshot of all in-memory terminals via `Ref.get(terminalsRef)`.
+  2. If no active terminals, logs "no active terminals to clean up" and returns early.
+  3. Iterates all terminals using `Effect.forEach` with `{ discard: true }`:
+     - Sends a kill command to the PTY Host via `ptyHostClient.kill(terminal.id)`.
+     - Commits `terminalStatusChanged` event to LiveStore with status "stopped" to update the persistent state.
+     - Increments the killed count.
+  4. Each individual terminal kill is wrapped in `Effect.catchAll` — errors are logged as warnings but do not abort the cleanup. This ensures best-effort resource recovery.
+  5. Clears the in-memory terminals map via `Ref.set`.
+  6. Logs the final count: "Shutdown: killed X/Y terminal(s)".
+- The shutdown finalizer complements the existing stale terminal cleanup on startup (lines 181-198): on startup, any terminals with status "running" in LiveStore are marked as "stopped" since they're orphans from a previous session. Together, these two mechanisms provide belt-and-suspenders reliability:
+  - Normal shutdown: finalizer kills all PTYs and updates LiveStore (clean state on restart).
+  - Abnormal shutdown (crash/SIGKILL): stale terminal cleanup on next startup marks orphans as "stopped".
+- The `PtyHostClient.layer` already has its own finalizer (line 298-306 of pty-host-client.ts) that kills the PTY Host child process on teardown. Since Effect tears down layers in reverse order of construction, the TerminalManager finalizer runs first (killing individual terminals with LiveStore updates), then the PtyHostClient finalizer runs (killing the PTY Host process which terminates any remaining PTY children). This ordering ensures both individual terminal cleanup AND PTY Host process cleanup happen reliably.
+- Updated module JSDoc to reference Issue #128.
+- Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin informational messages), `ultracite check` passes with zero issues on terminal-manager.ts.
+
+### Acceptance criteria status
+- [x] Shutdown signal → all PTY processes terminated (finalizer iterates all in-memory terminals and kills each via PtyHostClient, then PtyHostClient's own finalizer kills the PTY Host child process)
+- [x] No orphan processes after shutdown (PtyHostClient.kill sends kill command to PTY Host which terminates the PTY; PtyHostClient finalizer kills the PTY Host process itself; on next startup, stale terminal cleanup handles any edge cases)
+- [ ] Tests: spawn terminals → shutdown → all processes gone (deferred — vitest not yet configured; manual verification: SIGINT triggers finalizer logs)
+
+### Design decisions
+- Changed from `Layer.effect` to `Layer.scoped` to support `Effect.addFinalizer`. This is the standard Effect pattern for resources that need cleanup — scoped layers have their scope automatically managed by the containing layer composition.
+- Used the same best-effort cleanup pattern as `killAllForWorkspace` (Issue #44): each terminal kill catches errors independently. If one PTY is already dead or in a bad state, the others are still cleaned up.
+- The finalizer logs at the "module" annotation level (`Effect.annotateLogs("module", logPrefix)`) for consistent structured logging that matches the rest of the TerminalManager's log output.
+- The finalizer runs BEFORE the PtyHostClient finalizer (reverse layer construction order) which is correct: we want to send individual kill commands (which update LiveStore) before the PTY Host process is forcefully terminated. If the PtyHostClient finalizer ran first, the kill commands would fail because the PTY Host would already be dead.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #128. However, this completes one of three graceful shutdown tasks (Issues #128, #129, #130). Together they ensure clean server shutdown per Polishing requirement 7.

@@ -62,6 +62,43 @@ const runEffect = <A, E>(
 ): Promise<A> =>
 	Effect.runPromise(Effect.provide(effect, Layer.succeedContext(testContext)));
 
+const withGracePeriod = async <A>(
+	gracePeriodMs: number,
+	run: (
+		runLocalEffect: <T, E>(
+			effect: Effect.Effect<T, E, TerminalManager>
+		) => Promise<T>
+	) => Promise<A>
+): Promise<A> => {
+	const previousGracePeriod = process.env.TERMINAL_GRACE_PERIOD_MS;
+	process.env.TERMINAL_GRACE_PERIOD_MS = String(gracePeriodMs);
+
+	const localScope = Effect.runSync(Scope.make());
+
+	try {
+		const localContext = await Effect.runPromise(
+			Layer.buildWithScope(TestLayer, localScope)
+		);
+
+		const runLocalEffect = <T, E>(
+			effect: Effect.Effect<T, E, TerminalManager>
+		): Promise<T> =>
+			Effect.runPromise(
+				Effect.provide(effect, Layer.succeedContext(localContext))
+			);
+
+		return await run(runLocalEffect);
+	} finally {
+		await Effect.runPromise(Scope.close(localScope, Exit.void));
+
+		if (previousGracePeriod === undefined) {
+			process.env.TERMINAL_GRACE_PERIOD_MS = undefined;
+		} else {
+			process.env.TERMINAL_GRACE_PERIOD_MS = previousGracePeriod;
+		}
+	}
+};
+
 beforeAll(async () => {
 	scope = Effect.runSync(Scope.make());
 
@@ -74,6 +111,7 @@ afterAll(async () => {
 
 const TEST_WORKSPACE_ID = "test-workspace-1";
 const TEST_CWD = "/tmp";
+const noopSubscriber = (_data: string): undefined => undefined;
 
 /** Small delay to allow async PTY events to propagate through IPC. */
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -586,5 +624,143 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 		const terminal = terminals.find((t) => t.id === result.id);
 		expect(terminal?.status).toBe("stopped");
 		expect(terminal?.args).toEqual(["hello", "world"]);
+	});
+
+	it("kills orphaned spawned terminals after grace period expires", async () => {
+		await withGracePeriod(300, async (runLocalEffect) => {
+			const terminal = await runLocalEffect(
+				Effect.gen(function* () {
+					const tm = yield* TerminalManager;
+					return yield* tm.spawn({
+						command: "cat",
+						cwd: TEST_CWD,
+						cols: 80,
+						rows: 24,
+						workspaceId: TEST_WORKSPACE_ID,
+					});
+				})
+			);
+
+			await delay(700);
+
+			const terminals = await runLocalEffect(
+				Effect.gen(function* () {
+					const tm = yield* TerminalManager;
+					return yield* tm.listTerminals();
+				})
+			);
+
+			expect(terminals.find((t) => t.id === terminal.id)?.status).toBe(
+				"stopped"
+			);
+		});
+	});
+
+	it("reconnecting within grace period keeps terminal running", async () => {
+		await withGracePeriod(400, async (runLocalEffect) => {
+			const terminal = await runLocalEffect(
+				Effect.gen(function* () {
+					const tm = yield* TerminalManager;
+					return yield* tm.spawn({
+						command: "cat",
+						cwd: TEST_CWD,
+						cols: 80,
+						rows: 24,
+						workspaceId: TEST_WORKSPACE_ID,
+					});
+				})
+			);
+
+			const firstSubscriberId = await runLocalEffect(
+				Effect.gen(function* () {
+					const tm = yield* TerminalManager;
+					const result = yield* tm.subscribe(terminal.id, noopSubscriber);
+					return result.subscriberId;
+				})
+			);
+
+			await runLocalEffect(
+				Effect.gen(function* () {
+					const tm = yield* TerminalManager;
+					yield* tm.unsubscribe(terminal.id, firstSubscriberId);
+				})
+			);
+
+			await delay(150);
+
+			const secondSubscriberId = await runLocalEffect(
+				Effect.gen(function* () {
+					const tm = yield* TerminalManager;
+					const result = yield* tm.subscribe(terminal.id, noopSubscriber);
+					return result.subscriberId;
+				})
+			);
+
+			await delay(450);
+
+			const terminals = await runLocalEffect(
+				Effect.gen(function* () {
+					const tm = yield* TerminalManager;
+					return yield* tm.listTerminals();
+				})
+			);
+
+			expect(terminals.find((t) => t.id === terminal.id)?.status).toBe(
+				"running"
+			);
+
+			await runLocalEffect(
+				Effect.gen(function* () {
+					const tm = yield* TerminalManager;
+					yield* tm.unsubscribe(terminal.id, secondSubscriberId);
+					yield* tm.kill(terminal.id);
+				})
+			);
+		});
+	});
+
+	it("kills terminal after last subscriber disconnects and grace expires", async () => {
+		await withGracePeriod(300, async (runLocalEffect) => {
+			const terminal = await runLocalEffect(
+				Effect.gen(function* () {
+					const tm = yield* TerminalManager;
+					return yield* tm.spawn({
+						command: "cat",
+						cwd: TEST_CWD,
+						cols: 80,
+						rows: 24,
+						workspaceId: TEST_WORKSPACE_ID,
+					});
+				})
+			);
+
+			const subscriberId = await runLocalEffect(
+				Effect.gen(function* () {
+					const tm = yield* TerminalManager;
+					const result = yield* tm.subscribe(terminal.id, noopSubscriber);
+					return result.subscriberId;
+				})
+			);
+
+			await runLocalEffect(
+				Effect.gen(function* () {
+					const tm = yield* TerminalManager;
+					yield* tm.unsubscribe(terminal.id, subscriberId);
+				})
+			);
+
+			await delay(700);
+
+			const terminals = await runLocalEffect(
+				Effect.gen(function* () {
+					const tm = yield* TerminalManager;
+					return yield* tm.listTerminals();
+				})
+			);
+
+			expect(terminals.find((t) => t.id === terminal.id)?.status).toBe(
+				"stopped"
+			);
+		});
 	});
 });

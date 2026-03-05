@@ -3515,3 +3515,41 @@ Implemented Issue #157 as the highest-priority ready item in the config track. A
 - `bun x ultracite check packages/shared/src/rpc.ts packages/server/src/rpc/handlers.ts apps/web/src/components/project-settings-modal.tsx apps/web/src/components/project-list.tsx`: passes
 - `bun run test` (packages/server): passes (103 passed, 6 skipped)
 - `bun run test` (apps/web): passes (31/31)
+
+## Issue #146: Grace period reconnection + orphan detection — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented grace-period lifecycle management in the terminal service so running terminals are automatically cleaned up when no WebSocket clients remain, while still surviving short reconnect windows. Added orphan cleanup for terminals that are spawned but never subscribed, and added integration tests that validate both survival-within-window and cleanup-after-expiry behavior.
+
+### What was done
+
+1. **Terminal grace-period logic** (`packages/terminal/src/services/terminal-manager.ts`)
+   - Added `TERMINAL_GRACE_PERIOD_MS` parsing with a default of 60,000ms.
+   - Added per-terminal grace timeout tracking.
+   - Start orphan timer on `spawn()` (no initial subscribers).
+   - Start disconnect timer when the last subscriber unsubscribes.
+   - Cancel pending timer on subscribe/reconnect.
+   - On timer expiry, kill only terminals that are still running and still have zero subscribers.
+   - Clear timers during remove/kill/restart/shutdown/PTy-host-crash paths.
+
+2. **Environment validation** (`packages/env/src/server.ts`)
+   - Added `TERMINAL_GRACE_PERIOD_MS` to server env schema as a positive integer with default `60000`.
+
+3. **Integration tests** (`packages/terminal/test/terminal-manager.test.ts`)
+   - Added test helper to run `TerminalManager` with a temporary grace-period env override.
+   - Added test: orphaned spawned terminal is killed after grace timeout.
+   - Added test: reconnecting within grace keeps the terminal running.
+   - Added test: last-subscriber disconnect kills the terminal after grace timeout.
+
+4. **Issue tracking updates** (`issues.md`)
+   - Marked Issue #146 as Done and checked all acceptance criteria.
+   - Updated summary table row for #146 to Done.
+   - Updated #147 dependency state so it is now Ready.
+
+### Verification
+- `bun run --filter @laborer/terminal check-types`: passes
+- `bun run --filter @laborer/terminal test`: passes (59/59)
+- `bun x ultracite check packages/terminal/src/services/terminal-manager.ts packages/terminal/test/terminal-manager.test.ts packages/env/src/server.ts`: passes

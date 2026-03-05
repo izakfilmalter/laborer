@@ -515,6 +515,8 @@ Removed remaining terminal event commits from legacy server modules and tests (`
 
 ## Issue 146: Grace period reconnection + orphan detection
 
+### Status: Done
+
 ### Parent PRD
 
 PRD-terminal-extraction.md
@@ -525,13 +527,13 @@ Add a configurable grace period timer to the terminal service's `TerminalManager
 
 ### Acceptance criteria
 
-- [ ] Grace period timer starts when last WebSocket subscriber disconnects
-- [ ] Reconnecting within the grace period cancels the timer and replays ring buffer
-- [ ] Terminal is killed after grace period expires with no subscribers
-- [ ] Spawned terminals with no WebSocket subscriber within grace period are killed
-- [ ] Grace period is configurable via `TERMINAL_GRACE_PERIOD_MS` env var (default 60s)
-- [ ] Terminals survive server restarts during development (grace period covers the restart window)
-- [ ] Grace period tests pass (survive within window, cleanup after expiry)
+- [x] Grace period timer starts when last WebSocket subscriber disconnects
+- [x] Reconnecting within the grace period cancels the timer and replays ring buffer
+- [x] Terminal is killed after grace period expires with no subscribers
+- [x] Spawned terminals with no WebSocket subscriber within grace period are killed
+- [x] Grace period is configurable via `TERMINAL_GRACE_PERIOD_MS` env var (default 60s)
+- [x] Terminals survive server restarts during development (grace period covers the restart window)
+- [x] Grace period tests pass (survive within window, cleanup after expiry)
 
 ### Blocked by
 
@@ -540,6 +542,8 @@ Add a configurable grace period timer to the terminal service's `TerminalManager
 ### User stories addressed
 
 - User story 1, 9, 10
+
+Added grace-period lifecycle management to `TerminalManager`: orphan timers now start on spawn, disconnect timers start when the last WebSocket subscriber leaves, reconnects cancel pending timers, and expired timers kill still-running terminals with no subscribers. Added `TERMINAL_GRACE_PERIOD_MS` env validation (default `60000`) and three integration tests covering orphan cleanup, reconnect-within-window survival, and disconnect-expiry cleanup.
 
 ---
 
@@ -567,7 +571,7 @@ End-to-end verification and polish pass for the full terminal service extraction
 
 ### Blocked by
 
-- Blocked by #144, #145, #146
+- ~~Blocked by #144, #145, #146~~
 
 ### User stories addressed
 
@@ -900,8 +904,8 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 143 | ~~Server TerminalClient + remove server terminal modules~~ | ~~#142~~ | Done |
 | 144 | ~~Web app LiveStore terminal query replacement~~ | ~~#141~~, ~~#143~~ | Done |
 | 145 | ~~LiveStore terminal schema deprecation~~ | ~~#144~~ | Done |
-| 146 | Grace period reconnection + orphan detection | ~~#140~~ | Ready |
-| 147 | Terminal extraction polish + integration verification | ~~#144~~, ~~#145~~, #146 | Blocked |
+| 146 | ~~Grace period reconnection + orphan detection~~ | ~~#140~~ | Done |
+| 147 | Terminal extraction polish + integration verification | ~~#144~~, ~~#145~~, ~~#146~~ | Ready |
 | 148 | ~~Focused pane border fix~~ | ~~None~~ | Done |
 | 149 | ~~Focus auto-transfer on pane close~~ | ~~None~~ | Done |
 | 150 | ~~Guaranteed active pane invariant~~ | ~~#149~~ | Done |

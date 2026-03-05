@@ -36,8 +36,25 @@ const logPrefix = "TerminalManager";
  */
 const RING_BUFFER_CAPACITY = 5_242_880;
 
+/** Default grace period for disconnected/orphaned terminals (60 seconds). */
+const DEFAULT_TERMINAL_GRACE_PERIOD_MS = 60_000;
+
 /** UTF-8 text encoder shared across all terminal data callbacks. */
 const textEncoder = new TextEncoder();
+
+const parseGracePeriodMs = (): number => {
+	const raw = process.env.TERMINAL_GRACE_PERIOD_MS;
+	if (raw === undefined || raw === "") {
+		return DEFAULT_TERMINAL_GRACE_PERIOD_MS;
+	}
+
+	const parsed = Number.parseInt(raw, 10);
+	if (!Number.isFinite(parsed) || parsed <= 0) {
+		return DEFAULT_TERMINAL_GRACE_PERIOD_MS;
+	}
+
+	return parsed;
+};
 
 /**
  * Callback type for WebSocket subscribers to terminal output.
@@ -223,6 +240,7 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 		TerminalManager,
 		Effect.gen(function* () {
 			const ptyHostClient = yield* PtyHostClient;
+			const gracePeriodMs = parseGracePeriodMs();
 
 			const runtime = yield* Effect.runtime<never>();
 			const runSync = Runtime.runSync(runtime);
@@ -234,6 +252,7 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 
 			// Per-terminal ring buffer and subscriber state.
 			const bufferStates = new Map<string, TerminalBufferState>();
+			const graceTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
 			// Lifecycle event PubSub — unbounded so publishers never block.
 			const lifecyclePubSub = yield* PubSub.unbounded<TerminalLifecycleEvent>();
@@ -255,6 +274,71 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 					bufferStates.set(terminalId, state);
 				}
 				return state;
+			};
+
+			const clearGraceTimeout = (terminalId: string): void => {
+				const timeoutId = graceTimeouts.get(terminalId);
+				if (timeoutId !== undefined) {
+					clearTimeout(timeoutId);
+					graceTimeouts.delete(terminalId);
+				}
+			};
+
+			const scheduleGraceTimeout = (
+				terminalId: string,
+				reason: "orphan" | "disconnect" | "restart"
+			): void => {
+				clearGraceTimeout(terminalId);
+
+				const timeoutId = setTimeout(() => {
+					runFork(
+						Effect.gen(function* () {
+							const map = yield* Ref.get(terminalsRef);
+							const terminal = map.get(terminalId);
+
+							if (terminal === undefined || terminal.status !== "running") {
+								return;
+							}
+
+							const state = bufferStates.get(terminalId);
+							if ((state?.subscribers.size ?? 0) > 0) {
+								return;
+							}
+
+							ptyHostClient.kill(terminalId);
+
+							yield* Ref.update(terminalsRef, (existingMap) => {
+								const next = new Map(existingMap);
+								const existing = next.get(terminalId);
+								if (existing !== undefined) {
+									next.set(terminalId, {
+										...existing,
+										status: "stopped" as const,
+									});
+								}
+								return next;
+							});
+
+							emitEvent({
+								_tag: "StatusChanged",
+								id: terminalId,
+								status: "stopped",
+							});
+
+							yield* Effect.log(
+								`Grace period expired (${gracePeriodMs}ms, reason=${reason}) — killed terminal ${terminalId}`
+							).pipe(Effect.annotateLogs("module", logPrefix));
+						}).pipe(
+							Effect.catchAll((error) =>
+								Effect.logWarning(
+									`Failed grace-period cleanup for terminal ${terminalId}: ${String(error)}`
+								).pipe(Effect.annotateLogs("module", logPrefix))
+							)
+						)
+					);
+				}, gracePeriodMs);
+
+				graceTimeouts.set(terminalId, timeoutId);
 			};
 
 			// ---------------------------------------------------------------
@@ -289,6 +373,7 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 						});
 
 						for (const id of runningIds) {
+							clearGraceTimeout(id);
 							emitEvent({ _tag: "StatusChanged", id, status: "stopped" });
 						}
 
@@ -371,6 +456,8 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 					},
 					// Exit callback: mark as stopped (retain in memory)
 					(exitCode: number, signal: number) => {
+						clearGraceTimeout(id);
+
 						runSync(
 							Ref.update(terminalsRef, (map) => {
 								const next = new Map(map);
@@ -397,6 +484,7 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 				};
 
 				emitEvent({ _tag: "Spawned", terminal: record });
+				scheduleGraceTimeout(id, "orphan");
 
 				return record;
 			});
@@ -480,6 +568,7 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 				}
 
 				ptyHostClient.kill(terminalId);
+				clearGraceTimeout(terminalId);
 
 				// Retain terminal in memory as stopped
 				yield* Ref.update(terminalsRef, (m) => {
@@ -517,6 +606,7 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 				if (terminal.status === "running") {
 					ptyHostClient.kill(terminalId);
 				}
+				clearGraceTimeout(terminalId);
 
 				yield* Ref.update(terminalsRef, (m) => {
 					const next = new Map(m);
@@ -581,6 +671,7 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 				if (terminal.status === "running") {
 					ptyHostClient.kill(terminalId);
 				}
+				clearGraceTimeout(terminalId);
 
 				// Determine shell + args (same logic as spawn)
 				const shellPath =
@@ -633,6 +724,8 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 						}
 					},
 					(exitCode: number, signal: number) => {
+						clearGraceTimeout(terminalId);
+
 						runSync(
 							Ref.update(terminalsRef, (m) => {
 								const next = new Map(m);
@@ -666,6 +759,11 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 				};
 
 				emitEvent({ _tag: "Restarted", terminal: record });
+
+				const restartState = bufferStates.get(terminalId);
+				if ((restartState?.subscribers.size ?? 0) === 0) {
+					scheduleGraceTimeout(terminalId, "restart");
+				}
 
 				yield* Effect.log(`Restarted terminal ${terminalId}`).pipe(
 					Effect.annotateLogs("module", logPrefix)
@@ -720,6 +818,7 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 								id: terminal.id,
 								status: "stopped",
 							});
+							clearGraceTimeout(terminal.id);
 
 							killedCount += 1;
 						}).pipe(
@@ -783,6 +882,11 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 
 					yield* Ref.set(terminalsRef, new Map<string, ManagedTerminal>());
 
+					for (const timeoutId of graceTimeouts.values()) {
+						clearTimeout(timeoutId);
+					}
+					graceTimeouts.clear();
+
 					yield* Effect.log(
 						`Shutdown: killed ${killedCount}/${runningTerminals.length} terminal(s)`
 					).pipe(Effect.annotateLogs("module", logPrefix));
@@ -810,6 +914,7 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 				const state = getOrCreateBufferState(terminalId);
 				const subscriberId = crypto.randomUUID();
 				state.subscribers.set(subscriberId, callback);
+				clearGraceTimeout(terminalId);
 
 				const scrollback = state.ringBuffer.readString();
 
@@ -827,6 +932,9 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 				const state = bufferStates.get(terminalId);
 				if (state !== undefined) {
 					state.subscribers.delete(subscriberId);
+					if (state.subscribers.size === 0) {
+						scheduleGraceTimeout(terminalId, "disconnect");
+					}
 				}
 
 				yield* Effect.log(

@@ -16,8 +16,8 @@
  * Split panes are rendered using react-resizable-panels (via shadcn/ui's
  * resizable wrapper) with drag-to-resize handles between each child.
  *
- * Pane chrome includes split/close buttons that use PanelActionsContext
- * to communicate layout mutations back to the layout owner.
+ * Split/close/diff-toggle actions have moved to the PanelHeaderBar in the
+ * route component. PanelActionsContext is still used for active-pane tracking.
  *
  * @see packages/shared/src/types.ts — PanelNode, LeafNode, SplitNode types
  * @see apps/web/src/panes/terminal-pane.tsx — Terminal pane component
@@ -30,15 +30,7 @@
  */
 
 import type { LeafNode, PanelNode, SplitNode } from "@laborer/shared/types";
-import {
-	Columns2,
-	FileCode2,
-	Layers,
-	Rows2,
-	Terminal as TerminalIcon,
-	X,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Layers, Terminal as TerminalIcon } from "lucide-react";
 import {
 	Empty,
 	EmptyDescription,
@@ -62,35 +54,31 @@ interface PaneContentProps {
 
 /**
  * Renders the content of a single pane based on its type and assigned IDs.
+ *
+ * Terminal panes with `diffOpen: true` render the diff as an integrated
+ * sidebar (resizable) alongside the terminal within the same pane container.
+ * This keeps the diff visually coupled to its terminal.
  */
 function PaneContent({ node }: PaneContentProps) {
 	if (node.paneType === "terminal" && node.terminalId) {
+		// Terminal with integrated diff sidebar
+		if (node.diffOpen && node.workspaceId) {
+			return (
+				<ResizablePanelGroup orientation="horizontal">
+					<ResizablePanel defaultSize="60%" minSize="20%">
+						<TerminalPane terminalId={node.terminalId} />
+					</ResizablePanel>
+					<ResizableHandle />
+					<ResizablePanel defaultSize="40%" minSize="15%">
+						<DiffPane workspaceId={node.workspaceId} />
+					</ResizablePanel>
+				</ResizablePanelGroup>
+			);
+		}
 		return <TerminalPane terminalId={node.terminalId} />;
 	}
 
-	if (node.paneType === "diff" && node.workspaceId) {
-		return <DiffPane workspaceId={node.workspaceId} />;
-	}
-
-	if (node.paneType === "diff") {
-		return (
-			<div className="flex h-full w-full items-center justify-center bg-background">
-				<Empty>
-					<EmptyHeader>
-						<EmptyMedia variant="icon">
-							<Layers />
-						</EmptyMedia>
-						<EmptyTitle>No workspace</EmptyTitle>
-						<EmptyDescription>
-							Assign a workspace to this pane to view its diff.
-						</EmptyDescription>
-					</EmptyHeader>
-				</Empty>
-			</div>
-		);
-	}
-
-	// Empty pane — no terminal or diff assigned
+	// Empty pane — no terminal assigned
 	return (
 		<div className="flex h-full w-full items-center justify-center bg-background">
 			<Empty>
@@ -113,63 +101,10 @@ function PaneContent({ node }: PaneContentProps) {
 }
 
 /**
- * Toolbar rendered at the top-right of each leaf pane.
- * Provides split (horizontal/vertical), diff toggle, and close buttons.
- *
- * The diff toggle button is only shown for terminal panes that have a
- * workspaceId assigned. It splits the pane with a diff viewer showing
- * the workspace's changes alongside the terminal.
- *
- * @see Issue #90: Toggle diff alongside terminal
+ * Pane toolbar — currently empty since split/diff/close actions moved
+ * to the top-level PanelHeaderBar. Kept as a hook point in case
+ * per-pane controls are added later.
  */
-function PaneToolbar({ node }: { readonly node: LeafNode }) {
-	const actions = usePanelActions();
-	if (!actions) {
-		return null;
-	}
-
-	const showDiffToggle =
-		node.paneType === "terminal" && node.workspaceId !== undefined;
-
-	return (
-		<div className="absolute top-1 right-1 z-10 flex gap-0.5 opacity-0 transition-opacity group-hover/pane:opacity-100">
-			{showDiffToggle && (
-				<Button
-					aria-label="Toggle diff viewer"
-					onClick={() => actions.toggleDiffPane(node.id)}
-					size="icon-sm"
-					variant="ghost"
-				>
-					<FileCode2 className="size-3.5" />
-				</Button>
-			)}
-			<Button
-				aria-label="Split horizontally"
-				onClick={() => actions.splitPane(node.id, "horizontal")}
-				size="icon-sm"
-				variant="ghost"
-			>
-				<Columns2 className="size-3.5" />
-			</Button>
-			<Button
-				aria-label="Split vertically"
-				onClick={() => actions.splitPane(node.id, "vertical")}
-				size="icon-sm"
-				variant="ghost"
-			>
-				<Rows2 className="size-3.5" />
-			</Button>
-			<Button
-				aria-label="Close pane"
-				onClick={() => actions.closePane(node.id)}
-				size="icon-sm"
-				variant="ghost"
-			>
-				<X className="size-3.5" />
-			</Button>
-		</div>
-	);
-}
 
 interface PanelRendererProps {
 	/** The panel node tree to render. */
@@ -233,7 +168,7 @@ function SplitChild({
  * Recursively renders a PanelNode tree.
  *
  * - LeafNode → renders PaneContent with the appropriate component,
- *   wrapped in a container with a PaneToolbar for split/close actions.
+ *   wrapped in a container with active-pane highlighting.
  * - SplitNode → renders a ResizablePanelGroup with each child in a
  *   ResizablePanel, separated by ResizableHandles. Supports horizontal
  *   (side-by-side) and vertical (stacked) orientations, and recursive
@@ -254,7 +189,6 @@ function PanelRenderer({ node }: PanelRendererProps) {
 				onFocusCapture={() => actions?.setActivePaneId(node.id)}
 				onMouseDownCapture={() => actions?.setActivePaneId(node.id)}
 			>
-				<PaneToolbar node={node} />
 				<PaneContent node={node} />
 			</div>
 		);

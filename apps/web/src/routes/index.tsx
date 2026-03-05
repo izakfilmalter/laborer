@@ -5,12 +5,14 @@ import {
 	layoutRestored,
 	layoutSplit,
 	panelLayout,
+	projects,
 	terminals,
 	workspaces,
 } from "@laborer/shared/schema";
 import type { LeafNode, PanelNode, SplitNode } from "@laborer/shared/types";
 import { queryDb } from "@livestore/livestore";
 import { createFileRoute } from "@tanstack/react-router";
+import { Columns2, FileCode2, Rows2, X } from "lucide-react";
 import { Suspense, useCallback, useEffect, useMemo, useRef } from "react";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
@@ -18,6 +20,7 @@ import { CreateTaskForm } from "@/components/create-task-form";
 import { CreateWorkspaceForm } from "@/components/create-workspace-form";
 import { ProjectList } from "@/components/project-list";
 import { TaskList } from "@/components/task-list";
+import { Button } from "@/components/ui/button";
 import {
 	ResizableHandle,
 	ResizablePanel,
@@ -29,13 +32,16 @@ import { useLaborerStore } from "@/livestore/store";
 import {
 	closePane,
 	findNodeById,
-	findSiblingDiffPane,
 	generateId,
 	getLeafIds,
 	replaceNode,
 	splitPane,
 } from "@/panels/layout-utils";
-import { PanelActionsProvider } from "@/panels/panel-context";
+import {
+	PanelActionsProvider,
+	useActivePaneId,
+	usePanelActions,
+} from "@/panels/panel-context";
 import { PanelHotkeys } from "@/panels/panel-hotkeys";
 import { PanelManager } from "@/panels/panel-manager";
 
@@ -74,6 +80,131 @@ function HealthCheckStatus() {
 		<span className="text-green-500">
 			connected (uptime: {Math.round(result.value.uptime)}s)
 		</span>
+	);
+}
+
+/** LiveStore query for projects (used by PanelHeaderBar to resolve names). */
+const allProjects$ = queryDb(projects, { label: "headerProjects" });
+
+/**
+ * Thin header bar rendered above the PanelManager.
+ *
+ * - Left side: shows `project / branch` for the active pane's workspace.
+ * - Right side: split horizontal, split vertical, diff toggle, and close
+ *   buttons that operate on the active pane.
+ *
+ * Uses the PanelActionsContext so it must be rendered inside a
+ * PanelActionsProvider.
+ */
+function PanelHeaderBar({
+	layout,
+}: {
+	readonly layout?: PanelNode | undefined;
+}) {
+	const store = useLaborerStore();
+	const activePaneId = useActivePaneId();
+	const actions = usePanelActions();
+
+	const projectList = store.useQuery(allProjects$);
+	const workspaceList = store.useQuery(allWorkspaces$);
+
+	// Resolve the active leaf node from the layout tree
+	const activeLeaf = useMemo((): LeafNode | undefined => {
+		if (!(layout && activePaneId)) {
+			return undefined;
+		}
+		const node = findNodeById(layout, activePaneId);
+		if (node && node._tag === "LeafNode") {
+			return node;
+		}
+		return undefined;
+	}, [layout, activePaneId]);
+
+	// Resolve workspace and project names for the active pane
+	const { projectName, branchName } = useMemo(() => {
+		if (!activeLeaf?.workspaceId) {
+			return { projectName: undefined, branchName: undefined };
+		}
+		const workspace = workspaceList.find(
+			(ws) => ws.id === activeLeaf.workspaceId
+		);
+		if (!workspace) {
+			return { projectName: undefined, branchName: undefined };
+		}
+		const project = projectList.find((p) => p.id === workspace.projectId);
+		return {
+			projectName: project?.name,
+			branchName: workspace.branchName,
+		};
+	}, [activeLeaf, workspaceList, projectList]);
+
+	const showDiffToggle =
+		activeLeaf?.paneType === "terminal" && activeLeaf.workspaceId !== undefined;
+	const diffIsOpen = activeLeaf?.diffOpen === true;
+	const hasActivePane = !!activePaneId && !!activeLeaf;
+
+	return (
+		<div className="flex h-8 shrink-0 items-center justify-between border-b px-2">
+			{/* Left: project / branch */}
+			<div className="min-w-0 truncate text-muted-foreground text-xs">
+				{projectName && branchName ? (
+					<>
+						<span className="text-foreground">{projectName}</span>
+						<span className="mx-1">/</span>
+						<span>{branchName}</span>
+					</>
+				) : null}
+			</div>
+
+			{/* Right: pane actions */}
+			<div className="flex gap-0.5">
+				{showDiffToggle && (
+					<Button
+						aria-label={diffIsOpen ? "Close diff viewer" : "Open diff viewer"}
+						className={diffIsOpen ? "bg-accent" : ""}
+						disabled={!hasActivePane}
+						onClick={() =>
+							activePaneId && actions?.toggleDiffPane(activePaneId)
+						}
+						size="icon-sm"
+						variant="ghost"
+					>
+						<FileCode2 className="size-3.5" />
+					</Button>
+				)}
+				<Button
+					aria-label="Split horizontally"
+					disabled={!hasActivePane}
+					onClick={() =>
+						activePaneId && actions?.splitPane(activePaneId, "horizontal")
+					}
+					size="icon-sm"
+					variant="ghost"
+				>
+					<Columns2 className="size-3.5" />
+				</Button>
+				<Button
+					aria-label="Split vertically"
+					disabled={!hasActivePane}
+					onClick={() =>
+						activePaneId && actions?.splitPane(activePaneId, "vertical")
+					}
+					size="icon-sm"
+					variant="ghost"
+				>
+					<Rows2 className="size-3.5" />
+				</Button>
+				<Button
+					aria-label="Close pane"
+					disabled={!hasActivePane}
+					onClick={() => activePaneId && actions?.closePane(activePaneId)}
+					size="icon-sm"
+					variant="ghost"
+				>
+					<X className="size-3.5" />
+				</Button>
+			</div>
+		</div>
 	);
 }
 
@@ -381,12 +512,11 @@ function usePanelLayout() {
 	);
 
 	/**
-	 * Toggle a diff viewer alongside a terminal pane.
+	 * Toggle the integrated diff sidebar on a terminal pane.
 	 *
-	 * When toggling ON: splits the terminal pane horizontally, placing a diff
-	 * pane showing the same workspace's changes to the right of the terminal.
-	 * When toggling OFF: finds the sibling diff pane and closes it, so the
-	 * terminal expands to fill the space.
+	 * Flips the `diffOpen` flag on the target LeafNode and persists the
+	 * updated tree. The diff sidebar is rendered inside the terminal pane
+	 * container (not as a separate pane in the layout tree).
 	 *
 	 * @see Issue #90: Toggle diff alongside terminal
 	 */
@@ -397,47 +527,32 @@ function usePanelLayout() {
 				return false;
 			}
 
-			// Check if there's already a sibling diff pane (toggle OFF)
-			const siblingDiff = findSiblingDiffPane(base, paneId);
-			if (siblingDiff) {
-				// Close the sibling diff pane
-				const newTree = closePane(base, siblingDiff.id);
-				if (newTree) {
-					store.commit(
-						layoutPaneClosed({
-							id: LAYOUT_SESSION_ID,
-							layoutTree: newTree,
-							activePaneId: paneId,
-						})
-					);
-				}
-				return false;
-			}
-
-			// No sibling diff pane — toggle ON by splitting with a diff pane
 			const targetNode = findNodeById(base, paneId);
 			if (
 				!targetNode ||
 				targetNode._tag !== "LeafNode" ||
+				targetNode.paneType !== "terminal" ||
 				!targetNode.workspaceId
 			) {
 				return false;
 			}
 
-			const newTree = splitPane(base, paneId, "horizontal", {
-				paneType: "diff" as const,
-				workspaceId: targetNode.workspaceId,
-			});
+			const nowOpen = !targetNode.diffOpen;
+			const updatedLeaf: LeafNode = {
+				...targetNode,
+				diffOpen: nowOpen,
+			};
+			const newTree = replaceNode(base, paneId, updatedLeaf);
 			store.commit(
-				layoutSplit({
+				layoutPaneAssigned({
 					id: LAYOUT_SESSION_ID,
 					layoutTree: newTree,
-					activePaneId: paneId,
+					activePaneId: persistedActivePaneId,
 				})
 			);
-			return true;
+			return nowOpen;
 		},
-		[persistedLayoutTree, initialLayout, store]
+		[persistedLayoutTree, initialLayout, persistedActivePaneId, store]
 	);
 
 	const panelActions = useMemo(
@@ -522,8 +637,13 @@ function HomeComponent() {
 
 				{/* Main content — Panel system */}
 				<ResizablePanel defaultSize="75%" minSize="40%">
-					<PanelHotkeys leafPaneIds={leafPaneIds} />
-					<PanelManager layout={layout} />
+					<div className="flex h-full flex-col">
+						<PanelHeaderBar layout={layout} />
+						<PanelHotkeys leafPaneIds={leafPaneIds} />
+						<div className="min-h-0 flex-1">
+							<PanelManager layout={layout} />
+						</div>
+					</div>
 				</ResizablePanel>
 			</ResizablePanelGroup>
 		</PanelActionsProvider>

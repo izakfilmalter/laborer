@@ -458,3 +458,45 @@ This ordering is critical: TerminalManager needs the store to be alive when it c
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #129. This completes one of three graceful shutdown tasks (Issues #128 kill terminals ✅, #129 persist state ✅, #130 free ports). Together with #128 (already done), two of three graceful shutdown tasks are now complete per Polishing requirement 7.
 
+## Panel header bar — move pane chrome to a thin top-level header
+
+**Date:** 2026-03-05
+
+### Summary
+Replaced the per-pane floating hover toolbar (PaneToolbar) with a thin header bar that spans the top of the main content area. The header shows `project name / branch name` on the left (derived from the active pane's workspace) and split/diff-toggle/close buttons on the right, all operating on the currently active pane.
+
+### What was done
+
+1. **Created `PanelHeaderBar` component in `apps/web/src/routes/index.tsx`**:
+   - **Left side**: Resolves active pane → workspace → project via LiveStore queries. Displays `projectName / branchName` using the same client-side join pattern as `workspace-list.tsx`. Empty when no pane is active or has no workspace.
+   - **Right side**: Diff toggle (conditional on terminal pane with workspace), split horizontal, split vertical, and close buttons. All use `usePanelActions()` and operate on the active pane ID from `useActivePaneId()`. Buttons are disabled when no pane is active.
+   - **Styling**: `h-8 shrink-0 border-b` — a compact 32px chrome bar that doesn't compete with terminal content.
+   - Added `allProjects$` query (`queryDb(projects, { label: "headerProjects" })`) at module level for project name resolution.
+
+2. **Wired into `HomeComponent`**: The main content `ResizablePanel` now uses a flex column layout:
+   - `PanelHeaderBar` (fixed height, `shrink-0`)
+   - `PanelHotkeys` (invisible keyboard handler)
+   - `PanelManager` (fills remaining space via `min-h-0 flex-1`)
+
+3. **Removed `PaneToolbar` from `apps/web/src/panels/panel-manager.tsx`**:
+   - Deleted the entire `PaneToolbar` component (was ~50 lines with split/diff/close buttons)
+   - Removed unused imports: `Button`, `Columns2`, `FileCode2`, `Rows2`, `X`
+   - Removed `<PaneToolbar node={node} />` from `PanelRenderer`'s LeafNode branch
+   - Updated doc comments to reflect the architectural change
+
+### Files modified
+- `apps/web/src/routes/index.tsx` — Added `PanelHeaderBar` component, `allProjects$` query, new imports (`projects`, `Button`, lucide icons, `useActivePaneId`, `usePanelActions`), flex column wrapper in main panel
+- `apps/web/src/panels/panel-manager.tsx` — Removed `PaneToolbar` component, removed unused imports, updated doc comments
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` reports zero issues on both modified files
+- All 52 tests pass (no regressions)
+
+### Design decisions
+- **Header operates on active pane**: Since buttons moved from per-pane hover to a single header, they target `activePaneId` from context. This matches the tmux mental model where commands apply to the focused pane.
+- **Disabled state when no active pane**: Buttons show as disabled (not hidden) so the user always sees the available actions. This avoids layout shift.
+- **Diff toggle conditional**: Only rendered when the active pane is a terminal with a workspace — same condition as the old PaneToolbar.
+- **Active pane highlighting preserved**: The `ring-2 ring-primary ring-inset` visual indicator on leaf panes remains, making it clear which pane the header actions target.
+- **Project / branch format**: Uses `project.name` and `workspace.branchName` since workspaces don't have a name field. The branch name is the most meaningful workspace identifier.
+

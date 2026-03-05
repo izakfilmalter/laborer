@@ -1095,3 +1095,43 @@ All acceptance criteria were already implemented as part of the terminal perform
 - **Client replay**: The `useTerminalWebSocket` hook receives scrollback data via `ws.onmessage` and writes it to xterm.js via `terminal.write(data)`, making previous output visible in the scrollback.
 
 No files modified — all work done in Issues #138 and #139.
+
+---
+
+## Issue #136: IPC buffer optimization (O(n²) → array accumulator)
+
+**Status:** Done
+**Priority:** Medium (performance optimization)
+
+### Summary
+Replaced the O(n²) string concatenation pattern in both the PTY host's stdin line reader and the PtyHostClient's stdout line reader with array-based accumulators. Under high throughput, the previous `buffer += chunk` pattern copies the entire accumulated string on every concatenation, creating GC pressure. The new pattern pushes chunks onto an array and joins only when scanning for newlines, keeping the remainder as a single-element array.
+
+### Files modified
+
+1. **`packages/server/src/pty-host.ts`** (stdin reader, `readStdin` function):
+   - Replaced `let buffer = ""` + `buffer += chunk` with `const bufferChunks: string[]` array accumulator.
+   - On each chunk: push to array, join once to scan for newlines, use `searchStart` index to avoid re-scanning already-processed portions.
+   - After draining all complete lines, keep the remainder (after the last newline) as a single element in `bufferChunks`.
+   - On stdin close: join remaining chunks and process.
+
+2. **`packages/server/src/services/pty-host-client.ts`** (stdout reader, `drainLines` function):
+   - Replaced `let stdoutBuffer = ""` + `stdoutBuffer += chunk.toString()` with `const stdoutChunks: string[]` array accumulator.
+   - `drainLines()` now takes no arguments: joins `stdoutChunks`, clears the array, scans for newlines with `searchStart` index, and keeps the remainder.
+   - `on("end")` handler joins and processes any remaining data.
+
+### Verification
+- `tsc --noEmit` passes (only pre-existing informational messages)
+- `ultracite check` passes on both modified files with zero issues
+- **All 52 tests pass** (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
+
+### Acceptance criteria status
+- [x] PTY host stdin reader uses array-based accumulator instead of `buffer += chunk`
+- [x] PtyHostClient stdout reader uses array-based accumulator instead of `buffer += chunk`
+- [x] No behavioral change — line-delimited JSON parsing works identically (verified by all 52 tests passing)
+- [x] Existing tests pass without modification
+- [x] Tests: high-throughput scenario (`seq 1 1000` in existing coalescing test) completes without issues
+
+### Design decisions
+- Both readers use the same pattern: `chunks: string[]` → `join("")` → scan with `indexOf("\n", searchStart)` → `slice(searchStart)` for remainder. The `searchStart` index avoids re-scanning already-processed portions of the joined string.
+- The array is cleared with `chunks.length = 0` (fastest way to clear an array in V8) before keeping the remainder as a single element.
+- The join-once-scan-with-index approach is O(n) per chunk batch (one join, one scan pass) instead of O(n²) from repeated slice-and-reassign.

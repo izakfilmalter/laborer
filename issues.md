@@ -4164,7 +4164,7 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 133 | terminal.restart RPC handler + restart UI | ~~#59~~, ~~#63~~, ~~#5~~ | Done |
 | 134 | Drag terminal from sidebar onto empty panel | ~~#63~~, ~~#66~~ | Ready |
 | 135 | Remove base64 encoding from PTY IPC | None | Done |
-| 136 | IPC buffer optimization (O(n²) → array) | None | Ready |
+| 136 | IPC buffer optimization (O(n²) → array) | None | Done |
 | 137 | PTY data coalescing (5ms timer) | None | Done |
 | 138 | Ring buffer data structure + unit tests | None | Done |
 | 139 | Terminal WebSocket endpoint + ring buffer | ~~#135~~, ~~#138~~ | Done |

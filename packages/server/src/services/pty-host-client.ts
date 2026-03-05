@@ -238,18 +238,24 @@ class PtyHostClient extends Context.Tag("@laborer/PtyHostClient")<
 			/**
 			 * Read stdout from the PTY Host as newline-delimited text.
 			 * Uses Node.js Readable stream callbacks for cross-runtime compatibility.
+			 *
+			 * Uses an array-based accumulator to avoid O(n²) string copying from
+			 * repeated `buffer += chunk` concatenation under high throughput (Issue #136).
+			 * Chunks are pushed onto an array and only joined when scanning for newlines.
 			 */
-			let stdoutBuffer = "";
+			const stdoutChunks: string[] = [];
 
 			child.stdout?.on("data", (chunk: Buffer) => {
-				stdoutBuffer += chunk.toString("utf-8");
-				stdoutBuffer = drainLines(stdoutBuffer);
+				stdoutChunks.push(chunk.toString("utf-8"));
+				drainLines();
 			});
 
 			child.stdout?.on("end", () => {
 				// Process any remaining data
-				if (stdoutBuffer.trim() !== "") {
-					processLine(stdoutBuffer);
+				const remaining = stdoutChunks.join("").trim();
+				stdoutChunks.length = 0;
+				if (remaining !== "") {
+					processLine(remaining);
 				}
 			});
 
@@ -257,17 +263,27 @@ class PtyHostClient extends Context.Tag("@laborer/PtyHostClient")<
 				console.error(`[PtyHostClient] stdout reader error: ${String(error)}`);
 			});
 
-			/** Extract and process complete lines from the buffer, return the remainder. */
-			const drainLines = (buffer: string): string => {
-				let remaining = buffer;
-				let idx = remaining.indexOf("\n");
+			/**
+			 * Join accumulated chunks, extract complete lines, and keep
+			 * the remainder (after the last newline) for the next chunk.
+			 */
+			const drainLines = (): void => {
+				const joined = stdoutChunks.join("");
+				stdoutChunks.length = 0;
+
+				let searchStart = 0;
+				let idx = joined.indexOf("\n", searchStart);
 				while (idx !== -1) {
-					const line = remaining.slice(0, idx);
-					remaining = remaining.slice(idx + 1);
+					const line = joined.slice(searchStart, idx);
 					processLine(line);
-					idx = remaining.indexOf("\n");
+					searchStart = idx + 1;
+					idx = joined.indexOf("\n", searchStart);
 				}
-				return remaining;
+
+				// Keep the remainder for the next chunk
+				if (searchStart < joined.length) {
+					stdoutChunks.push(joined.slice(searchStart));
+				}
 			};
 
 			// Monitor PTY Host process for crashes via the 'exit' event.

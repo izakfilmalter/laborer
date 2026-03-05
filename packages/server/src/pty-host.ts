@@ -615,26 +615,44 @@ function processLine(line: string): void {
 /**
  * Read stdin as newline-delimited text and process each line as a command.
  * Uses Node.js process.stdin stream (compatible with Node.js runtime).
+ *
+ * Uses an array-based accumulator to avoid O(n²) string copying from
+ * repeated `buffer += chunk` concatenation under high throughput (Issue #136).
+ * Incoming chunks are pushed onto an array and only joined when scanning
+ * for newlines. The remainder after draining is kept as a single-element
+ * array for the next iteration.
  */
 async function readStdin(): Promise<void> {
-	let buffer = "";
+	const bufferChunks: string[] = [];
 
 	for await (const chunk of process.stdin) {
-		buffer +=
-			typeof chunk === "string" ? chunk : (chunk as Buffer).toString("utf-8");
+		bufferChunks.push(
+			typeof chunk === "string" ? chunk : (chunk as Buffer).toString("utf-8")
+		);
 
-		let newlineIdx = buffer.indexOf("\n");
+		// Join accumulated chunks to scan for newlines
+		const joined = bufferChunks.join("");
+		bufferChunks.length = 0;
+
+		let searchStart = 0;
+		let newlineIdx = joined.indexOf("\n", searchStart);
 		while (newlineIdx !== -1) {
-			const line = buffer.slice(0, newlineIdx);
-			buffer = buffer.slice(newlineIdx + 1);
+			const line = joined.slice(searchStart, newlineIdx);
 			processLine(line);
-			newlineIdx = buffer.indexOf("\n");
+			searchStart = newlineIdx + 1;
+			newlineIdx = joined.indexOf("\n", searchStart);
+		}
+
+		// Keep the remainder (after the last newline) for the next chunk
+		if (searchStart < joined.length) {
+			bufferChunks.push(joined.slice(searchStart));
 		}
 	}
 
 	// Process any remaining data after stdin closes
-	if (buffer.trim() !== "") {
-		processLine(buffer);
+	const remaining = bufferChunks.join("").trim();
+	if (remaining !== "") {
+		processLine(remaining);
 	}
 
 	debug("stdin closed, shutting down");

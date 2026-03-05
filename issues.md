@@ -807,6 +807,8 @@ Save button calls `config.update` mutation with only changed fields. Toast notif
 
 ## Issue 158: Config + settings polish & edge cases
 
+### Status: In Progress
+
 ### Parent PRD
 
 PRD-global-worktree-config.md
@@ -832,11 +834,11 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 - [ ] Auto-creation of `~/.config/laborer/` works on clean machine (no prior config)
 - [ ] `~` expansion produces correct absolute path on macOS and Linux
 - [ ] Config is not cached between worktree creations (fresh read each time)
-- [ ] Modal form fields have proper labels and ARIA attributes
-- [ ] Keyboard navigation works: Tab between fields, Enter to save, Escape to cancel
+- [x] Modal form fields have proper labels and ARIA attributes
+- [x] Keyboard navigation works: Tab between fields, Enter to save, Escape to cancel
 - [ ] Gear icon spacing and alignment is visually balanced with delete icon
 - [ ] Provenance text is visually subtle (secondary color, smaller text)
-- [ ] Setup scripts: empty list saves correctly, special characters preserved, long commands don't break layout
+- [x] Setup scripts: empty list saves correctly, special characters preserved, long commands don't break layout
 - [ ] Malformed config file shows user-friendly error message in toast
 - [ ] RPC handler tests cover error paths (non-existent project, malformed input)
 - [ ] Frontend component tests cover modal open, display, save, and toast behaviors
@@ -911,12 +913,16 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 155 | ~~Config Service — write project config~~ | ~~#154~~ | Done |
 | 156 | ~~WorkspaceProvider — use ConfigService for worktree path + setup scripts~~ | ~~#154~~ | Done |
 | 157 | ~~Config RPC endpoints + project settings modal~~ | ~~#155~~, ~~#156~~ | Done |
-| 158 | Config + settings polish & edge cases | ~~#157~~ | Ready |
+| 158 | Config + settings polish & edge cases | ~~#157~~ | In Progress |
 | 159 | ~~WorktreeDetector + schema origin + initial detection on project add~~ | ~~None~~ | Done |
 | 160 | ~~UI for detected workspaces~~ | ~~#159~~ | Done |
 | 161 | ~~Live filesystem watcher + server boot reconciliation~~ | ~~#159~~ | Done |
 | 162 | ~~Origin-aware destroy behavior~~ | ~~#160~~ | Done |
 | 163 | Worktree detection polish & edge cases | #161, #162 | Blocked |
+| 164 | Sidebar max-width removal | None | Ready |
+| 165 | Workspace card two-row header + text clamping | None | Ready |
+| 166 | Detected worktree feature parity | None | Ready |
+| 167 | Sidebar & workspace card polish | #164, #165, #166 | Blocked |
 
 ---
 
@@ -1138,6 +1144,143 @@ End-to-end polish and verification pass for the complete worktree detection feat
 ### Blocked by
 
 - Blocked by ~~#160~~, #161, #162
+
+### User stories addressed
+
+- Polishing requirements 1-10
+
+---
+
+## Issue 164: Sidebar max-width removal
+
+### Parent PRD
+
+PRD-sidebar-workspace-ux.md
+
+### What to build
+
+Remove the sidebar's restrictive max-width cap and allow users to resize it up to 90% of the viewport width. Change the `useResponsiveLayout` hook so that `sidebarMax` returns a flat `"90%"` string instead of computing a pixel-to-percent value capped at 760px. Remove the absolute pixel cap from `computeSidebarPx`. Keep the current minimum (~220px at 1080p) and default (~280px at 1080p) unchanged. The remaining 10% ensures the main content panel always has some visible width.
+
+### Acceptance criteria
+
+- [ ] Sidebar `maxSize` is `"90%"` at all viewport widths
+- [ ] The 760px absolute cap in `computeSidebarPx` is removed
+- [ ] Sidebar minimum and default sizes are unchanged
+- [ ] Sidebar can be resized smoothly from minimum to 90% without layout jank
+- [ ] ResizableHandle drag handle works correctly at the new maximum width
+- [ ] Main content panel maintains a usable minimum width when sidebar is at 90%
+
+### Blocked by
+
+None — can start immediately
+
+### User stories addressed
+
+- User story 1, 2, 3
+
+---
+
+## Issue 165: Workspace card two-row header + text clamping
+
+### Parent PRD
+
+PRD-sidebar-workspace-ux.md
+
+### What to build
+
+Restructure the `WorkspaceItem` card header from a single-row layout (branch name + all buttons competing for space) into a two-row layout. Row 1 (info row): GitBranch icon + branch name (line-clamped to 2 lines via Tailwind v4 `line-clamp-2`) + optional "Detected" badge + status badge pushed right. Row 2 (action row): all action buttons (WritePRD, Ralph Loop, Review PR, Fix Findings, expand/collapse, destroy) with `flex-wrap` so buttons wrap naturally at narrow widths. Replace `truncate` with `line-clamp-2` on the branch name span and the worktree path span in `CardContent`. The `CardDescription` (project name) remains below Row 1. Add `overflow-wrap: anywhere` or `break-all` for monospace text that lacks natural break points (e.g., branch names with `/` separators).
+
+### Acceptance criteria
+
+- [ ] Card header is split into two distinct rows: info row and action row
+- [ ] Row 1 contains GitBranch icon, branch name, optional "Detected" badge, and status badge
+- [ ] Status badge is right-aligned on Row 1
+- [ ] Row 2 contains all action buttons with `flex-wrap`
+- [ ] Branch name uses `line-clamp-2` instead of `truncate` — wraps up to 2 lines before ellipsis
+- [ ] Worktree path uses `line-clamp-2` instead of `truncate` — wraps up to 2 lines before ellipsis
+- [ ] Branch names with `/` separators wrap at reasonable break points
+- [ ] Card layout looks correct at minimum sidebar width (~220px) and wide sidebar (800px+)
+- [ ] Short branch names render without unnecessary clamping
+- [ ] Action buttons wrap naturally at narrow widths without overflowing the card
+
+### Blocked by
+
+None — can start immediately
+
+### User stories addressed
+
+- User story 4, 5, 6, 7, 8, 18
+
+---
+
+## Issue 166: Detected worktree feature parity
+
+### Parent PRD
+
+PRD-sidebar-workspace-ux.md
+
+### What to build
+
+Remove the `isActive` conditional gate on all six elements in the `WorkspaceItem` component so that detected (external) worktrees get the same UI as created workspaces. The following elements are currently wrapped in `{isActive && ...}` and should render unconditionally for all non-destroyed workspaces:
+
+1. `WritePrdForm`
+2. Start Ralph Loop button
+3. `ReviewPrForm`
+4. `FixFindingsForm`
+5. `CollapsibleTrigger` (expand/collapse chevron)
+6. `CollapsibleContent` (terminal list section)
+
+The `isActive` variable may be retained for other purposes (e.g., the "creating" spinner) but should no longer gate these UI elements. The "Detected" label and origin-aware destroy confirmation message remain unchanged. Server-side RPC handlers may reject actions on stopped workspaces — those errors will surface via existing toast error handling with no client-side changes needed.
+
+### Acceptance criteria
+
+- [ ] Detected worktrees show the expand/collapse chevron
+- [ ] Detected worktrees can be expanded to reveal the terminal list with "+ New" button
+- [ ] Clicking "+ New" on a detected worktree spawns a terminal in the correct worktree directory
+- [ ] WritePRD button appears on detected worktrees
+- [ ] Ralph Loop button appears on detected worktrees
+- [ ] Review PR button appears on detected worktrees
+- [ ] Fix Findings button appears on detected worktrees
+- [ ] "Detected" label still displays on external worktrees
+- [ ] Destroy confirmation still uses the softer message for detected worktrees
+- [ ] No regression for Laborer-created workspaces (active workspaces still work as before)
+
+### Blocked by
+
+None — can start immediately
+
+### User stories addressed
+
+- User story 9, 10, 11, 12, 13, 14, 15, 16, 17
+
+---
+
+## Issue 167: Sidebar & workspace card polish
+
+### Parent PRD
+
+PRD-sidebar-workspace-ux.md
+
+### What to build
+
+End-to-end verification and polish pass for the sidebar max-width removal, workspace card two-row header restructure, and detected worktree feature parity. Verify all polishing requirements from the PRD across the complete integration.
+
+### Acceptance criteria
+
+- [ ] Sidebar resizes smoothly from minimum to 90% without layout jank or content shifting
+- [ ] ResizableHandle drag handle works correctly at the new maximum width
+- [ ] Main content panel maintains a usable minimum width when sidebar is at 90%
+- [ ] Branch names with `/` separators wrap at reasonable break points (monospace text)
+- [ ] 2-line clamp ellipsis renders correctly for short names (no clamp) and very long names (3+ lines)
+- [ ] Action buttons on Row 2 are correctly spaced and aligned across cards of varying content lengths
+- [ ] Detected worktree terminal spawning works end-to-end (terminal opens in correct directory)
+- [ ] Agent workflow buttons function correctly for detected worktrees in "stopped" state
+- [ ] Card layout looks correct at minimum sidebar width (~220px) and very wide sidebar (800px+)
+- [ ] "Detected" badge and status badge don't overflow or stack awkwardly at narrow widths
+
+### Blocked by
+
+- Blocked by #164, #165, #166
 
 ### User stories addressed
 

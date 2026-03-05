@@ -3890,3 +3890,41 @@ Implemented automatic PRD task importing on the server. After `rlph.writePRD` sp
 - **Wait for terminal completion, then read scrollback**: Reading the final ring-buffer scrollback avoids racing live terminal output frame-by-frame and reuses the terminal service's existing reconnection buffer.
 - **Conservative parsing**: The importer only creates tasks from strong identifiers (GitHub issue URLs and Linear keys), avoiding brittle heuristics that could turn arbitrary terminal text into tasks.
 - **Duplicate protection in importer**: Deduping by `(projectId, source="prd", externalId)` prevents re-importing the same issue if the watcher reconnects or the PRD command is rerun.
+
+## Issue #158: Config + settings polish & edge cases — IN PROGRESS
+
+**Status:** In Progress
+**Date:** 2026-03-05
+
+### Summary
+Started Issue #158 with a focused pass on project settings UX/accessibility and setup script edge-case handling. Added a dedicated helper module for config update normalization + error message mapping, wired it into `ProjectSettingsModal`, enabled Enter-to-save form submission, and added targeted tests for script normalization and malformed-config messaging.
+
+### What was done
+
+1. **Created `apps/web/src/components/project-settings-modal.helpers.ts`**
+   - Extracted `buildConfigUpdates` to compute partial update payloads from current form state vs resolved config.
+   - Added `normalizeSetupScripts` for trimming, empty-row removal, and preserving command text.
+   - Added `getSettingsLoadErrorMessage` to convert parse-related `laborer.json` errors into user-friendly copy.
+
+2. **Updated `apps/web/src/components/project-settings-modal.tsx`**
+   - Switched save payload construction to `buildConfigUpdates` helper.
+   - Replaced generic load failure text with helper-driven friendly error messaging.
+   - Wrapped modal fields in a `<form>` and moved save action to `type="submit"` for keyboard Enter submission.
+   - Added explicit setup-script input IDs/labels and `aria-label` on setup script controls.
+   - Added truncation class to setup script inputs to avoid long-command layout blowout.
+
+3. **Added tests in `apps/web/test/project-settings-modal.helpers.test.ts`**
+   - Covers setup script normalization (trim/drop empty).
+   - Covers special characters and long commands preservation.
+   - Covers minimal-diff config update payload generation.
+   - Covers malformed `laborer.json` parse error message mapping.
+
+4. **Updated issue tracking**
+   - Marked Issue #158 status as **In Progress** in `issues.md`.
+   - Checked completed acceptance items for ARIA/keyboard and setup script edge cases.
+   - Updated summary table row from `Ready` to `In Progress`.
+
+### Verification
+- `bun run test` (in `apps/web`) passes: 3 test files, 41 tests.
+- `bun x ultracite check src/components/project-settings-modal.tsx src/components/project-settings-modal.helpers.ts test/project-settings-modal.helpers.test.ts` (in `apps/web`) passes.
+- `bun run check-types` (in `apps/web`) still reports pre-existing errors in `src/components/ui/calendar.tsx` and `src/components/ui/sonner.tsx`; no new type errors introduced by this change.

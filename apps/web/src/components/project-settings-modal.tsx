@@ -1,6 +1,6 @@
 import { useAtomSet, useAtomValue } from "@effect-atom/atom-react/Hooks";
 import { Plus, Settings, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { extractErrorMessage } from "@/lib/utils";
+import {
+	buildConfigUpdates,
+	getSettingsLoadErrorMessage,
+	type SetupScriptItem,
+} from "./project-settings-modal.helpers";
 
 const updateConfigMutation = LaborerClient.mutation("config.update");
 
@@ -30,33 +35,11 @@ interface ProjectSettingsModalProps {
 	readonly projectName: string;
 }
 
-interface SetupScriptItem {
-	readonly id: string;
-	readonly value: string;
-}
-
 const toSetupScriptItems = (scripts: readonly string[]): SetupScriptItem[] =>
 	scripts.map((script) => ({
 		id: globalThis.crypto.randomUUID(),
 		value: script,
 	}));
-
-function areStringArraysEqual(
-	a: readonly string[],
-	b: readonly string[]
-): boolean {
-	if (a.length !== b.length) {
-		return false;
-	}
-
-	for (let i = 0; i < a.length; i++) {
-		if (a[i] !== b[i]) {
-			return false;
-		}
-	}
-
-	return true;
-}
 
 function ProjectSettingsForm({
 	projectId,
@@ -104,10 +87,11 @@ function ProjectSettingsForm({
 	}
 
 	if (configResult._tag === "Failure") {
+		const loadErrorMessage = getSettingsLoadErrorMessage(
+			extractErrorMessage(configResult.cause)
+		);
 		return (
-			<div className="py-4 text-destructive text-sm">
-				Failed to load settings.
-			</div>
+			<div className="py-4 text-destructive text-sm">{loadErrorMessage}</div>
 		);
 	}
 
@@ -118,40 +102,16 @@ function ProjectSettingsForm({
 	const resolvedConfig = configResult.value;
 
 	const handleSave = async () => {
-		const updates: {
-			rlphConfig?: string;
-			setupScripts?: string[];
-			worktreeDir?: string;
-		} = {};
-
-		const normalizedWorktreeDir = worktreeDir.trim();
-		const normalizedSetupScripts = setupScripts
-			.map((script) => script.value.trim())
-			.filter((script) => script.length > 0);
-		const normalizedRlphConfig = rlphConfig.trim();
-
-		if (
-			normalizedWorktreeDir.length > 0 &&
-			normalizedWorktreeDir !== resolvedConfig.worktreeDir.value
-		) {
-			updates.worktreeDir = normalizedWorktreeDir;
-		}
-
-		if (
-			!areStringArraysEqual(
-				normalizedSetupScripts,
-				resolvedConfig.setupScripts.value
-			)
-		) {
-			updates.setupScripts = normalizedSetupScripts;
-		}
-
-		if (
-			normalizedRlphConfig.length > 0 &&
-			normalizedRlphConfig !== (resolvedConfig.rlphConfig.value ?? "")
-		) {
-			updates.rlphConfig = normalizedRlphConfig;
-		}
+		const updates = buildConfigUpdates({
+			rlphConfig,
+			resolvedConfig: {
+				rlphConfig: resolvedConfig.rlphConfig.value,
+				setupScripts: resolvedConfig.setupScripts.value,
+				worktreeDir: resolvedConfig.worktreeDir.value,
+			},
+			setupScripts,
+			worktreeDir,
+		});
 
 		if (Object.keys(updates).length === 0) {
 			toast.message("No config changes to save");
@@ -174,8 +134,13 @@ function ProjectSettingsForm({
 		}
 	};
 
+	const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		await handleSave();
+	};
+
 	return (
-		<>
+		<form className="contents" onSubmit={handleSubmit}>
 			<div className="grid gap-4 py-2">
 				<FieldSet>
 					<Field>
@@ -204,6 +169,9 @@ function ProjectSettingsForm({
 							{setupScripts.map((script) => (
 								<div className="flex items-center gap-2" key={script.id}>
 									<Input
+										aria-label="Setup script"
+										className="truncate"
+										id={`setup-script-${projectId}-${script.id}`}
 										onChange={(event) => {
 											setSetupScripts((prev) => {
 												return prev.map((item) => {
@@ -242,6 +210,7 @@ function ProjectSettingsForm({
 								Resolved from: {resolvedConfig.setupScripts.source}
 							</FieldDescription>
 							<Button
+								aria-label="Add setup script"
 								onClick={() => {
 									setSetupScripts((prev) => [
 										...prev,
@@ -275,12 +244,12 @@ function ProjectSettingsForm({
 				</FieldSet>
 			</div>
 			<DialogFooter>
-				<Button disabled={isSaving} onClick={handleSave} type="button">
+				<Button disabled={isSaving} type="submit">
 					{isSaving && <Spinner className="size-3.5" />}
 					{isSaving ? "Saving..." : "Save"}
 				</Button>
 			</DialogFooter>
-		</>
+		</form>
 	);
 }
 

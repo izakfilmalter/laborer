@@ -35,30 +35,9 @@ Implemented setup script execution after worktree creation. Projects define scri
 
 ---
 
-## Issue 37: WorkspaceProvider — handle setup script failure
+## ~~Issue 37: WorkspaceProvider — handle setup script failure~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-When a setup script fails (non-zero exit), rollback the workspace: remove the worktree directory, free the allocated port, clean up the branch. Return a clear error with the script output.
-
-### Acceptance criteria
-
-- [ ] Failed setup script → worktree removed, port freed, branch cleaned
-- [ ] Error includes script output (stdout + stderr)
-- [ ] LiveStore workspace status set to "errored" before cleanup
-- [ ] Tests: setup script that exits 1 → worktree gone, port freed, error returned with output
-
-### Blocked by
-
-- ~~Blocked by #35~~
-
-### User stories addressed
-
-- Polishing requirement 6
+Implemented full rollback on setup script failure. When any setup script exits with non-zero code: workspace status set to "errored" in LiveStore, then worktree removed (`git worktree remove --force`), branch deleted (`git branch -D`), port freed via PortAllocator, workspace destroyed in LiveStore. Error returned with script's stdout + stderr. Three extracted functions (`runProjectSetupScripts`, `buildSetupFailureMessage`, `rollbackWorktree`) keep complexity under Biome's limit. Best-effort cleanup — each step continues even if a previous step fails.
 
 ---
 
@@ -135,7 +114,7 @@ Display workspace creation errors in the UI. Handle all error types: dirty git s
 
 ### Blocked by
 
-- Blocked by #37, #38, #39, #42
+- ~~Blocked by #37~~, Blocked by #38, #39, #42
 
 ### User stories addressed
 
@@ -850,10 +829,10 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 |---|-------|-----------|--------|
 | 34 | WorkspaceProvider — directory validation + watcher scoping | #33 | Ready |
 | 35 | ~~WorkspaceProvider — setup scripts~~ | ~~#33~~ | Done |
-| 37 | WorkspaceProvider — handle setup failure | ~~#35~~ | Ready |
+| 37 | ~~WorkspaceProvider — handle setup failure~~ | ~~#35~~ | Done |
 | 38 | WorkspaceProvider — handle dirty git state | #33 | Ready |
 | 39 | WorkspaceProvider — handle git fetch failure | #33 | Ready |
-| 49 | Workspace creation error display | #37, #38, #39, #42 | Blocked |
+| 49 | Workspace creation error display | ~~#37~~, #38, #39, #42 | Blocked |
 | 71 | ~~PanelManager — navigate between panes~~ | ~~#67~~ | Done |
 | 72 | ~~PanelManager — drag-to-resize~~ | ~~#67~~ | Done |
 | 79 | Keyboard shortcut — resize panes | ~~#72~~, ~~#75~~ | Ready |

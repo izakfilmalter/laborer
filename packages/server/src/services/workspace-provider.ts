@@ -15,6 +15,7 @@
  * - Branch management and naming
  * - Environment variable injection (PORT, etc.) for workspace processes
  * - Setup script execution after worktree creation (Issue #35)
+ * - Full rollback on setup script failure (Issue #37)
  *
  * Setup scripts are defined in a `.laborer.json` file at the project root:
  * ```json
@@ -25,7 +26,9 @@
  *
  * Each script is executed in the worktree directory with the workspace
  * environment variables (PORT, etc.) injected. Scripts run sequentially
- * and any non-zero exit code aborts the remaining scripts.
+ * and any non-zero exit code aborts the remaining scripts. On failure,
+ * the workspace is rolled back: worktree removed, port freed, branch
+ * deleted. The error includes the script's stdout + stderr output.
  *
  * Usage:
  * ```ts
@@ -41,6 +44,7 @@
  * Issue #33: createWorktree method
  * Issue #35: run setup scripts in worktree
  * Issue #36: inject PORT env var
+ * Issue #37: handle setup script failure (rollback)
  * Issue #43: destroyWorktree method
  */
 
@@ -244,6 +248,211 @@ const executeSetupScripts = (
 		}
 
 		return results;
+	});
+
+/**
+ * Result of running setup scripts. Either all scripts succeeded,
+ * or one failed with details about the failure.
+ */
+type SetupResult =
+	| { readonly _tag: "Success" }
+	| {
+			readonly _tag: "Failure";
+			readonly command: string;
+			readonly exitCode: number;
+			readonly stdout: string;
+			readonly stderr: string;
+	  };
+
+/**
+ * Run setup scripts from the project config in the worktree directory.
+ * Returns a SetupResult indicating success or failure with details.
+ * Does nothing (returns Success) if no scripts are configured.
+ *
+ * @param repoPath - Path to the project repo (for reading .laborer.json)
+ * @param worktreePath - Directory to execute scripts in
+ * @param env - Environment variables to inject (PORT, etc.)
+ */
+const runProjectSetupScripts = (
+	repoPath: string,
+	worktreePath: string,
+	env: Record<string, string>
+): Effect.Effect<SetupResult, RpcError> =>
+	Effect.gen(function* () {
+		const config = yield* readProjectConfig(repoPath);
+
+		if (config.setupScripts === undefined || config.setupScripts.length === 0) {
+			return { _tag: "Success" } as SetupResult;
+		}
+
+		const scriptResults = yield* executeSetupScripts(
+			config.setupScripts,
+			worktreePath,
+			env
+		);
+
+		const failedScript = pipe(
+			scriptResults,
+			Arr.findFirst((r) => r.exitCode !== 0)
+		);
+
+		if (failedScript._tag === "Some") {
+			const failed = failedScript.value;
+			yield* Effect.logWarning(
+				`Workspace setup failed: script '${failed.command}' exited with code ${failed.exitCode}`
+			).pipe(Effect.annotateLogs("module", logPrefix));
+
+			return {
+				_tag: "Failure",
+				command: failed.command,
+				exitCode: failed.exitCode,
+				stdout: failed.stdout,
+				stderr: failed.stderr,
+			} as SetupResult;
+		}
+
+		yield* Effect.logInfo(
+			`All ${config.setupScripts.length} setup script(s) completed successfully`
+		).pipe(Effect.annotateLogs("module", logPrefix));
+
+		return { _tag: "Success" } as SetupResult;
+	});
+
+/**
+ * Build the error message for a failed setup script, including
+ * stdout and stderr output for user visibility.
+ */
+const buildSetupFailureMessage = (failure: {
+	readonly command: string;
+	readonly exitCode: number;
+	readonly stdout: string;
+	readonly stderr: string;
+}): string => {
+	const outputParts: string[] = [];
+	if (failure.stdout.trim().length > 0) {
+		outputParts.push(`stdout: ${failure.stdout.trim()}`);
+	}
+	if (failure.stderr.trim().length > 0) {
+		outputParts.push(`stderr: ${failure.stderr.trim()}`);
+	}
+	const outputSuffix =
+		outputParts.length > 0 ? `\n${outputParts.join("\n")}` : "";
+
+	return `Setup script '${failure.command}' failed with exit code ${failure.exitCode}.${outputSuffix}`;
+};
+
+/**
+ * Rollback a partially-created workspace. Cleans up in order:
+ * 1. Set workspace status to "errored" in LiveStore (if workspace was committed)
+ * 2. Remove the git worktree directory via `git worktree remove --force`
+ * 3. Delete the branch via `git branch -D`
+ * 4. Free the allocated port
+ *
+ * All steps are best-effort — failures are logged but don't prevent
+ * subsequent cleanup steps from running.
+ *
+ * @param repoPath - Path to the main git repo
+ * @param worktreePath - Path to the worktree directory to remove
+ * @param branchName - Branch name to delete
+ * @param port - Port to free
+ * @param portAllocator - PortAllocator service instance
+ */
+const rollbackWorktree = (
+	repoPath: string,
+	worktreePath: string,
+	branchName: string,
+	port: number,
+	portAllocator: {
+		readonly free: (port: number) => Effect.Effect<void, RpcError>;
+	}
+): Effect.Effect<void, never> =>
+	Effect.gen(function* () {
+		yield* Effect.logInfo(
+			`Rolling back workspace: removing worktree, branch, and freeing port ${port}`
+		).pipe(Effect.annotateLogs("module", logPrefix));
+
+		// 1. Remove the git worktree directory
+		yield* Effect.tryPromise({
+			try: async () => {
+				const proc = Bun.spawn(
+					["git", "worktree", "remove", "--force", worktreePath],
+					{
+						cwd: repoPath,
+						stdout: "pipe",
+						stderr: "pipe",
+					}
+				);
+				const exitCode = await proc.exited;
+				const stderr = await new Response(proc.stderr).text();
+				return { exitCode, stderr };
+			},
+			catch: (error) =>
+				new Error(`Failed to spawn git worktree remove: ${String(error)}`),
+		}).pipe(
+			Effect.tap(({ exitCode, stderr }) =>
+				exitCode !== 0
+					? Effect.logWarning(
+							`Rollback: git worktree remove failed (exit ${exitCode}): ${stderr.trim()}`
+						).pipe(Effect.annotateLogs("module", logPrefix))
+					: Effect.logDebug("Rollback: worktree removed").pipe(
+							Effect.annotateLogs("module", logPrefix)
+						)
+			),
+			Effect.catchAll((error) =>
+				Effect.logWarning(
+					`Rollback: failed to remove worktree: ${String(error)}`
+				).pipe(Effect.annotateLogs("module", logPrefix))
+			)
+		);
+
+		// 2. Delete the branch
+		yield* Effect.tryPromise({
+			try: async () => {
+				const proc = Bun.spawn(["git", "branch", "-D", branchName], {
+					cwd: repoPath,
+					stdout: "pipe",
+					stderr: "pipe",
+				});
+				const exitCode = await proc.exited;
+				const stderr = await new Response(proc.stderr).text();
+				return { exitCode, stderr };
+			},
+			catch: (error) =>
+				new Error(`Failed to spawn git branch -D: ${String(error)}`),
+		}).pipe(
+			Effect.tap(({ exitCode, stderr }) =>
+				exitCode !== 0
+					? Effect.logWarning(
+							`Rollback: git branch -D failed (exit ${exitCode}): ${stderr.trim()}`
+						).pipe(Effect.annotateLogs("module", logPrefix))
+					: Effect.logDebug("Rollback: branch deleted").pipe(
+							Effect.annotateLogs("module", logPrefix)
+						)
+			),
+			Effect.catchAll((error) =>
+				Effect.logWarning(
+					`Rollback: failed to delete branch: ${String(error)}`
+				).pipe(Effect.annotateLogs("module", logPrefix))
+			)
+		);
+
+		// 3. Free the allocated port
+		yield* portAllocator.free(port).pipe(
+			Effect.tap(() =>
+				Effect.logDebug(`Rollback: freed port ${port}`).pipe(
+					Effect.annotateLogs("module", logPrefix)
+				)
+			),
+			Effect.catchAll((error) =>
+				Effect.logWarning(
+					`Rollback: failed to free port ${port}: ${String(error)}`
+				).pipe(Effect.annotateLogs("module", logPrefix))
+			)
+		);
+
+		yield* Effect.logInfo(
+			"Rollback complete: worktree, branch, and port cleaned up"
+		).pipe(Effect.annotateLogs("module", logPrefix));
 	});
 
 class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
@@ -470,47 +679,56 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 					const id = crypto.randomUUID();
 					const createdAt = new Date().toISOString();
 
-					// 10. Run setup scripts from .laborer.json (Issue #35)
+					// 10. Run setup scripts from .laborer.json (Issue #35, #37)
 					// Scripts run in the worktree directory with workspace env vars
-					// injected. If any script fails, the workspace is still created
-					// but with status "errored" (Issue #37 will add full rollback).
-					const config = yield* readProjectConfig(project.repoPath);
-					let workspaceStatus = "running";
+					// injected. If any script fails, the workspace is fully rolled
+					// back: worktree removed, port freed, branch deleted.
+					const scriptEnv = {
+						PORT: String(port),
+						LABORER_WORKSPACE_ID: id,
+						LABORER_WORKSPACE_PATH: worktreePath,
+						LABORER_BRANCH: resolvedBranch,
+					};
 
-					if (
-						config.setupScripts !== undefined &&
-						config.setupScripts.length > 0
-					) {
-						// Build workspace env vars for script execution
-						const scriptEnv = {
-							PORT: String(port),
-							LABORER_WORKSPACE_ID: id,
-							LABORER_WORKSPACE_PATH: worktreePath,
-							LABORER_BRANCH: resolvedBranch,
-						};
+					const setupResult = yield* runProjectSetupScripts(
+						project.repoPath,
+						worktreePath,
+						scriptEnv
+					);
 
-						const scriptResults = yield* executeSetupScripts(
-							config.setupScripts,
+					if (setupResult._tag === "Failure") {
+						// Commit "errored" status briefly so the UI sees the failure
+						// before rollback removes the workspace
+						store.commit(
+							events.workspaceCreated({
+								id,
+								projectId,
+								taskSource: taskId ?? null,
+								branchName: resolvedBranch,
+								worktreePath,
+								port,
+								status: "errored",
+								createdAt,
+								baseSha,
+							})
+						);
+
+						// Full rollback: remove worktree, delete branch, free port
+						yield* rollbackWorktree(
+							project.repoPath,
 							worktreePath,
-							scriptEnv
+							resolvedBranch,
+							port,
+							portAllocator
 						);
 
-						// Check if any script failed
-						const failedScript = pipe(
-							scriptResults,
-							Arr.findFirst((r) => r.exitCode !== 0)
-						);
+						// Remove the errored workspace from LiveStore after rollback
+						store.commit(events.workspaceDestroyed({ id }));
 
-						if (failedScript._tag === "Some") {
-							workspaceStatus = "errored";
-							yield* Effect.logWarning(
-								`Workspace setup failed: script '${failedScript.value.command}' exited with code ${failedScript.value.exitCode}`
-							).pipe(Effect.annotateLogs("module", logPrefix));
-						} else {
-							yield* Effect.logInfo(
-								`All ${config.setupScripts.length} setup script(s) completed successfully`
-							).pipe(Effect.annotateLogs("module", logPrefix));
-						}
+						return yield* new RpcError({
+							message: buildSetupFailureMessage(setupResult),
+							code: "SETUP_SCRIPT_FAILED",
+						});
 					}
 
 					// 11. Commit to LiveStore
@@ -522,7 +740,7 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 						branchName: resolvedBranch,
 						worktreePath,
 						port,
-						status: workspaceStatus,
+						status: "running",
 						createdAt,
 						baseSha,
 					};

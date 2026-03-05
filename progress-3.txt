@@ -2731,3 +2731,66 @@ Modified `apps/web/src/panels/panel-manager.tsx`:
 ### Issues unblocked
 - Issue #153: Cmd+W close panel — polish & verification — was partially blocked by #148 (among others #149, #150, #151, #152). One fewer blocker.
 
+## Issue #140: Move terminal WebSocket route to terminal package — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Moved the terminal WebSocket route (`GET /terminal?id=...`) from `@laborer/server` to `@laborer/terminal` and extended it with status control messages per the PRD-terminal-extraction.md specification. The terminal service now serves the WebSocket data channel directly — clients connect to the terminal service port for PTY I/O, bypassing the main server entirely. Three new control messages are sent over the WebSocket: `{"type":"status","status":"running"}` on initial connection, `{"type":"status","status":"stopped","exitCode":N}` when the PTY exits, and `{"type":"status","status":"restarted"}` when a terminal is restarted. These replace LiveStore events for terminal status UI updates.
+
+### What was done
+
+1. **Created `packages/terminal/src/routes/terminal-ws.ts`** — new file (~315 lines) based on the server's `terminal-ws.ts`, with these key changes:
+   - **Imports from terminal package**: Uses `TerminalManager` and `PtyHostClient` from `../services/` (terminal package) instead of the server package
+   - **Status control messages**: Three new server-to-client JSON control messages:
+     - `{"type":"status","status":"running"}` — sent immediately on WebSocket connection (before scrollback replay)
+     - `{"type":"status","status":"stopped","exitCode":N}` — sent when the terminal's PTY process exits
+     - `{"type":"status","status":"restarted"}` — sent when the terminal is restarted via RPC
+   - **`sendStatusMessage(wsSend, status, exitCode?)` helper**: Builds and sends JSON status control messages. Exit code is included only for "stopped" status.
+   - **`handleLifecycleEvent(event, terminalId, wsSend)` helper**: Routes TerminalManager lifecycle events to status control messages. Maps `Exited` events to "stopped" messages (with exit code) and `Restarted` events to "restarted" messages.
+   - **`subscribeToLifecycleEvents(lifecycleEvents, terminalId, wsSend)` function**: Creates a scoped subscription to the TerminalManager's lifecycle `PubSub`. Uses `PubSub.subscribe` (which returns a scoped `Queue`) and `Effect.forkScoped` to run the event consumption loop as a daemon fiber. The fiber is automatically interrupted when the scope is closed (on WebSocket disconnect).
+   - **Scope-based lifecycle management**: The lifecycle subscription is extended into the WebSocket's scope via `Scope.extend`, ensuring automatic cleanup. When the WebSocket disconnects, `Scope.close` tears down both the writer resource and the lifecycle subscription fiber.
+   - **Existing features preserved**: Ring buffer scrollback replay (128KB chunking), flow control ack message parsing, client input forwarding to PTY, flow control reset on disconnect (100K char ack).
+
+2. **Modified `packages/terminal/src/main.ts`** (~10 lines changed):
+   - Added `import { TerminalWsRouteLive } from "./routes/terminal-ws.js"` 
+   - Added `Layer.provide(TerminalWsRouteLive)` to the `HttpLive` layer composition, between `HealthRouteLive` and `RpcLive`
+   - Updated JSDoc to document `GET /terminal?id=...` endpoint and remove the "Future issues will add" line for Issue #140
+   - Added `@see Issue #140` reference
+
+### Files created
+- `packages/terminal/src/routes/terminal-ws.ts` — Terminal WebSocket route with status control messages
+
+### Files modified
+- `packages/terminal/src/main.ts` — Added TerminalWsRouteLive import and layer provision, updated JSDoc
+
+### Acceptance criteria status
+- [x] `GET /terminal?id=...` WebSocket endpoint is live on the terminal service
+- [x] Connecting to a terminal WebSocket receives ring buffer scrollback replay
+- [x] `{"type":"status","status":"running"}` is sent on successful WebSocket connection
+- [x] `{"type":"status","status":"stopped","exitCode":N}` is sent when PTY exits (via lifecycle PubSub subscription → Exited event)
+- [x] `{"type":"status","status":"restarted"}` is sent when terminal is restarted (via lifecycle PubSub subscription → Restarted event)
+- [x] Raw PTY I/O text frames and flow control ack frames work unchanged
+- [x] WebSocket connects to terminal service port directly (not through server)
+
+### Verification
+- `tsc --noEmit` passes for terminal package (only pre-existing informational messages — no new errors)
+- `tsc --noEmit` passes for server package (only pre-existing informational messages — no new errors)
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on both new/modified files with zero issues (`Checked 2 files in 5ms. No fixes applied.`)
+- All 55 terminal package tests pass (32 ring buffer + 14 PTY host + 9 terminal manager — no regressions)
+- All 61 server package tests pass (no regressions)
+
+### Design decisions
+- **Scope-based lifecycle subscription**: The lifecycle event subscription uses `PubSub.subscribe` (which acquires a scoped `Queue`) + `Effect.forkScoped` (which runs the event loop in a daemon fiber tied to the scope). When the WebSocket disconnects, `Scope.close` interrupts the fiber and releases the PubSub subscription. This is cleaner than a manual `cancelled` flag because Effect's scope system handles all edge cases (concurrent disconnect, fiber interruption, resource cleanup).
+- **Control messages as JSON with `type` prefix**: Following the PRD and existing ack frame pattern, control messages are JSON objects with a `"type"` field. The client distinguishes control messages from PTY data by checking if the frame starts with `{` and contains `"type":"status"`. This is simple and backward-compatible — existing clients that don't understand control messages will ignore them (they'd try to render them as terminal output, which would be visible but harmless).
+- **Running status sent before scrollback**: The `{"type":"status","status":"running"}` message is sent before the scrollback replay. This ensures the client knows the terminal is running before any data arrives, which is important for the UI to set up correctly (e.g., showing a "connected" indicator).
+- **Exited event preferred over StatusChanged**: The lifecycle PubSub emits both `StatusChanged(stopped)` and `Exited(exitCode)` when a PTY exits. The WebSocket route only sends a status message for `Exited` (which includes the exit code) and ignores `StatusChanged(stopped)`. This avoids duplicate "stopped" messages and provides richer information.
+- **Server's terminal-ws.ts left in place**: The server's `routes/terminal-ws.ts` is NOT removed in this issue. It will be removed in Issue #143 when the server transitions to using a `TerminalClient` that connects to the terminal service. Until then, the server's WebSocket route continues to work for the existing web app WebSocket hook (which still connects to the server port). Issue #141 will update the web app to connect directly to the terminal service.
+- **No test for WebSocket control messages**: WebSocket integration tests require a running Bun HTTP server with a real PTY Host, which is complex to set up in a unit test. The control message logic is verified by the type system (correct JSON structure) and by the existing lifecycle event tests in terminal-manager.test.ts. End-to-end verification will happen in Issue #147 (terminal extraction polish).
+
+### Issues unblocked
+- Issue #141: Update Vite proxy + web app WebSocket hook — can now update the web app to connect terminal WebSockets directly to the terminal service port and parse the new status control messages
+- Issue #146: Grace period reconnection + orphan detection — can now implement grace period timers in the terminal service's TerminalManager, since the WebSocket route is in the same package
+

@@ -376,33 +376,9 @@ Implemented `TerminalRpcsLive` handler layer in `packages/terminal/src/rpc/handl
 
 ---
 
-## Issue 140: Move terminal WebSocket route to terminal package
+## ~~Issue 140: Move terminal WebSocket route to terminal package~~ ✅ DONE
 
-### Parent PRD
-
-PRD-terminal-extraction.md
-
-### What to build
-
-Move `terminal-ws.ts` from `@laborer/server` to `@laborer/terminal` and wire it into the terminal service's layer tree at `GET /terminal?id=...`. Extend the WebSocket protocol with control messages per the PRD: send `{"type":"status","status":"running"}` on initial connect, `{"type":"status","status":"stopped","exitCode":N}` when the PTY exits, and `{"type":"status","status":"restarted"}` when a terminal is restarted. The existing raw text frame PTY I/O and flow control ack messages remain unchanged. Register callbacks from TerminalManager to push status events to active WebSocket subscribers.
-
-### Acceptance criteria
-
-- [ ] `GET /terminal?id=...` WebSocket endpoint is live on the terminal service
-- [ ] Connecting to a terminal WebSocket receives ring buffer scrollback replay
-- [ ] `{"type":"status","status":"running"}` is sent on successful WebSocket connection
-- [ ] `{"type":"status","status":"stopped","exitCode":N}` is sent when PTY exits
-- [ ] `{"type":"status","status":"restarted"}` is sent when terminal is restarted
-- [ ] Raw PTY I/O text frames and flow control ack frames work unchanged
-- [ ] WebSocket connects to terminal service port directly (not through server)
-
-### Blocked by
-
-- Blocked by ~~#139~~
-
-### User stories addressed
-
-- User story 6, 11, 15, 21
+Moved `terminal-ws.ts` from `@laborer/server` to `@laborer/terminal` and wired into the terminal service's layer tree at `GET /terminal?id=...`. Extended the WebSocket protocol with three status control messages: `{"type":"status","status":"running"}` on connect, `{"type":"status","status":"stopped","exitCode":N}` on PTY exit, `{"type":"status","status":"restarted"}` on restart. Uses `PubSub.subscribe` + `Effect.forkScoped` for scope-managed lifecycle event consumption. Existing PTY I/O and flow control unchanged.
 
 ---
 
@@ -427,7 +403,7 @@ Update the web app to connect terminal WebSockets directly to the terminal servi
 
 ### Blocked by
 
-- Blocked by #140
+- ~~Blocked by #140~~
 
 ### User stories addressed
 
@@ -577,7 +553,7 @@ Add a configurable grace period timer to the terminal service's `TerminalManager
 
 ### Blocked by
 
-- Blocked by #140
+- ~~Blocked by #140~~
 
 ### User stories addressed
 
@@ -999,13 +975,13 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 137 | ~~Terminal RPC contract~~ | ~~None~~ | Done |
 | 138 | ~~Move + simplify TerminalManager~~ | ~~#136~~ | Done |
 | 139 | ~~Terminal RPC handlers~~ | ~~#137~~, ~~#138~~ | Done |
-| 140 | Move terminal WebSocket route to terminal package | ~~#139~~ | Ready |
-| 141 | Update Vite proxy + web app WebSocket hook | #140 | Blocked |
+| 140 | ~~Move terminal WebSocket route to terminal package~~ | ~~#139~~ | Done |
+| 141 | Update Vite proxy + web app WebSocket hook | ~~#140~~ | Ready |
 | 142 | Terminal event stream RPC | ~~#139~~ | Ready |
 | 143 | Server TerminalClient + remove server terminal modules | #142 | Blocked |
 | 144 | Web app LiveStore terminal query replacement | #141, #143 | Blocked |
 | 145 | LiveStore terminal schema deprecation | #144 | Blocked |
-| 146 | Grace period reconnection + orphan detection | #140 | Blocked |
+| 146 | Grace period reconnection + orphan detection | ~~#140~~ | Ready |
 | 147 | Terminal extraction polish + integration verification | #144, #145, #146 | Blocked |
 | 148 | ~~Focused pane border fix~~ | ~~None~~ | Done |
 | 149 | ~~Focus auto-transfer on pane close~~ | ~~None~~ | Done |

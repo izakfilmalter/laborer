@@ -11,6 +11,7 @@
  * - Layer.launch keeps the server running until interrupted
  * - HttpRouter.Default.serve() creates the HTTP handler
  * - GET / returns a health check response
+ * - GET /terminal?id=... WebSocket endpoint for PTY I/O data channel
  * - POST /rpc serves TerminalRpcs via RpcServer.layerProtocolHttp
  * - PtyHostClient spawns and manages the PTY Host child process
  * - TerminalManager manages terminal instances in-memory
@@ -20,7 +21,6 @@
  * newline-delimited JSON over stdin/stdout.
  *
  * Future issues will add:
- * - Terminal WebSocket route at GET /terminal (Issue #140)
  * - Terminal event stream (Issue #142)
  * - Grace period reconnection (Issue #146)
  *
@@ -28,6 +28,7 @@
  * @see Issue #135: Terminal package scaffold
  * @see Issue #136: Move PTY Host + PtyHostClient to terminal package
  * @see Issue #139: Terminal RPC handlers
+ * @see Issue #140: Terminal WebSocket route
  */
 
 import {
@@ -41,6 +42,7 @@ import { RpcSerialization, RpcServer } from "@effect/rpc";
 import { env } from "@laborer/env/server";
 import { TerminalRpcs } from "@laborer/shared/rpc";
 import { Effect, Layer } from "effect";
+import { TerminalWsRouteLive } from "./routes/terminal-ws.js";
 import { TerminalRpcsLive } from "./rpc/handlers.js";
 import { PtyHostClient } from "./services/pty-host-client.js";
 import { TerminalManager } from "./services/terminal-manager.js";
@@ -95,6 +97,7 @@ const ServerLive = BunHttpServer.layer({ port: env.TERMINAL_PORT });
  * Layer composition:
  *   HttpRouter.Default.serve() — serves the Default router with logging
  *   + HealthRouteLive — adds GET / to the router
+ *   + TerminalWsRouteLive — adds GET /terminal WebSocket endpoint
  *   + RpcLive — Terminal RPC handling (POST /rpc via layerProtocolHttp)
  *   + RpcSerialization.layerJson — wire format for RPC messages
  *   + TerminalManager — in-memory terminal lifecycle management
@@ -102,11 +105,13 @@ const ServerLive = BunHttpServer.layer({ port: env.TERMINAL_PORT });
  *   + ServerLive — Bun HTTP server
  *
  * @see Issue #139: Terminal RPC handlers
+ * @see Issue #140: Terminal WebSocket route
  */
 const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	HttpServer.withLogAddress,
 	// --- Route layers (consume services from below) ---
 	Layer.provide(HealthRouteLive),
+	Layer.provide(TerminalWsRouteLive),
 	Layer.provide(RpcLive),
 	// --- Service layers ---
 	Layer.provide(TerminalManager.layer),

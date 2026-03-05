@@ -65,6 +65,26 @@ interface DiffResult {
  */
 const DEFAULT_POLL_INTERVAL_MS = 2000;
 
+/**
+ * Helper: spawn a git command in a worktree and capture stdout/stderr.
+ * Returns exit code, stdout text, and stderr text.
+ */
+const spawnGit = (
+	args: readonly string[],
+	cwd: string
+): Promise<{ exitCode: number; stdout: string; stderr: string }> =>
+	(async () => {
+		const proc = Bun.spawn(["git", ...args], {
+			cwd,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const exitCode = await proc.exited;
+		const stdout = await new Response(proc.stdout).text();
+		const stderr = await new Response(proc.stderr).text();
+		return { exitCode, stdout, stderr };
+	})();
+
 class DiffService extends Context.Tag("@laborer/DiffService")<
 	DiffService,
 	{
@@ -171,68 +191,118 @@ class DiffService extends Context.Tag("@laborer/DiffService")<
 					});
 				}
 
-				// 3. Run `git diff` for unstaged changes
-				const unstagedResult = yield* Effect.tryPromise({
+				// 3. Find the merge-base to diff against.
+				// `git diff <merge-base>` compares the merge-base commit against the
+				// current working tree, which captures committed + staged + unstaged
+				// changes in a single command. This is critical because AI agents
+				// (like opencode) typically commit their changes, making `git diff`
+				// (working tree vs index) and `git diff --staged` (index vs HEAD)
+				// both return empty output.
+				const mergeBase = yield* Effect.tryPromise({
 					try: async () => {
-						const proc = Bun.spawn(["git", "diff"], {
-							cwd: workspace.worktreePath,
-							stdout: "pipe",
-							stderr: "pipe",
-						});
-						const exitCode = await proc.exited;
-						const stdout = await new Response(proc.stdout).text();
-						const stderr = await new Response(proc.stderr).text();
-						return { exitCode, stdout, stderr };
+						for (const candidate of [
+							"main",
+							"master",
+							"develop",
+							"origin/main",
+							"origin/master",
+						]) {
+							const res = await spawnGit(
+								["merge-base", candidate, "HEAD"],
+								workspace.worktreePath
+							);
+							if (res.exitCode === 0) {
+								return res.stdout.trim();
+							}
+						}
+						return undefined;
 					},
-					catch: (error) =>
+					catch: () =>
 						new RpcError({
-							message: `Failed to spawn git diff: ${String(error)}`,
+							message: "Failed to compute merge-base",
 							code: "GIT_DIFF_FAILED",
 						}),
 				});
 
-				if (unstagedResult.exitCode !== 0) {
-					return yield* new RpcError({
-						message: `git diff failed (exit ${unstagedResult.exitCode}): ${unstagedResult.stderr.trim()}`,
-						code: "GIT_DIFF_FAILED",
-					});
-				}
+				let combinedDiff: string;
 
-				// 4. Run `git diff --staged` for staged changes
-				const stagedResult = yield* Effect.tryPromise({
-					try: async () => {
-						const proc = Bun.spawn(["git", "diff", "--staged"], {
-							cwd: workspace.worktreePath,
-							stdout: "pipe",
-							stderr: "pipe",
-						});
-						const exitCode = await proc.exited;
-						const stdout = await new Response(proc.stdout).text();
-						const stderr = await new Response(proc.stderr).text();
-						return { exitCode, stdout, stderr };
-					},
-					catch: (error) =>
-						new RpcError({
-							message: `Failed to spawn git diff --staged: ${String(error)}`,
+				if (mergeBase) {
+					// 4a. Diff the working tree against the merge-base.
+					// This single command captures ALL changes on the branch:
+					// committed changes + staged changes + unstaged changes.
+					const fullDiffResult = yield* Effect.tryPromise({
+						try: () => spawnGit(["diff", mergeBase], workspace.worktreePath),
+						catch: (error) =>
+							new RpcError({
+								message: `Failed to spawn git diff ${mergeBase}: ${String(error)}`,
+								code: "GIT_DIFF_FAILED",
+							}),
+					});
+
+					if (fullDiffResult.exitCode !== 0) {
+						return yield* new RpcError({
+							message: `git diff ${mergeBase} failed (exit ${fullDiffResult.exitCode}): ${fullDiffResult.stderr.trim()}`,
 							code: "GIT_DIFF_FAILED",
-						}),
-				});
+						});
+					}
 
-				if (stagedResult.exitCode !== 0) {
-					return yield* new RpcError({
-						message: `git diff --staged failed (exit ${stagedResult.exitCode}): ${stagedResult.stderr.trim()}`,
-						code: "GIT_DIFF_FAILED",
+					combinedDiff = fullDiffResult.stdout;
+
+					yield* Effect.log(
+						`[DiffService] workspace=${workspaceId} mergeBase=${mergeBase.slice(0, 8)} diffLen=${combinedDiff.length}`
+					);
+				} else {
+					// 4b. Fallback: no merge-base found (branch may be the default
+					// branch itself, or the repo has no common ancestors with the
+					// candidates). Fall back to unstaged + staged diffs.
+					yield* Effect.log(
+						`[DiffService] workspace=${workspaceId} no merge-base found, falling back to unstaged+staged diff`
+					);
+
+					const unstagedResult = yield* Effect.tryPromise({
+						try: () => spawnGit(["diff"], workspace.worktreePath),
+						catch: (error) =>
+							new RpcError({
+								message: `Failed to spawn git diff: ${String(error)}`,
+								code: "GIT_DIFF_FAILED",
+							}),
 					});
-				}
 
-				// 5. Combine unstaged + staged diff output
-				const combinedDiff = [unstagedResult.stdout, stagedResult.stdout]
-					.filter((s) => s.length > 0)
-					.join("\n");
+					if (unstagedResult.exitCode !== 0) {
+						return yield* new RpcError({
+							message: `git diff failed (exit ${unstagedResult.exitCode}): ${unstagedResult.stderr.trim()}`,
+							code: "GIT_DIFF_FAILED",
+						});
+					}
+
+					const stagedResult = yield* Effect.tryPromise({
+						try: () => spawnGit(["diff", "--staged"], workspace.worktreePath),
+						catch: (error) =>
+							new RpcError({
+								message: `Failed to spawn git diff --staged: ${String(error)}`,
+								code: "GIT_DIFF_FAILED",
+							}),
+					});
+
+					if (stagedResult.exitCode !== 0) {
+						return yield* new RpcError({
+							message: `git diff --staged failed (exit ${stagedResult.exitCode}): ${stagedResult.stderr.trim()}`,
+							code: "GIT_DIFF_FAILED",
+						});
+					}
+
+					combinedDiff = [unstagedResult.stdout, stagedResult.stdout]
+						.filter((s) => s.length > 0)
+						.join("\n");
+
+					yield* Effect.log(
+						`[DiffService] workspace=${workspaceId} fallback diffLen=${combinedDiff.length}`
+					);
+				}
 
 				const lastUpdated = new Date().toISOString();
 
-				// 6. Deduplicate: only commit DiffUpdated if content changed (Issue #84)
+				// 5. Deduplicate: only commit DiffUpdated if content changed (Issue #84)
 				const previousContent = yield* Ref.modify(previousDiffs, (cache) => {
 					const prev = cache.get(workspaceId);
 					const next = new Map(cache);

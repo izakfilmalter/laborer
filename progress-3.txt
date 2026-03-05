@@ -1625,3 +1625,46 @@ With Issue #99 done, the entire rlph workflow is now accessible from the workspa
 
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #99. This completes the rlph UI integration — all four rlph commands are accessible from the workspace card.
+
+## Bug fix: Diff pane shows "No changes" for committed changes + PatchDiff crashes on multi-file diffs
+
+**Date:** 2026-03-05
+
+### Root cause (two bugs)
+
+**Bug 1 — Committed changes invisible:** The DiffService only ran `git diff` (unstaged) and `git diff --staged` (staged). When the AI agent (opencode) commits its changes — which is normal behavior — both commands return empty output. Server logs confirmed: `combinedDiffLen=262` (tiny unstaged change) but `committedDiffLen=28330` (28KB of committed changes across 16 commits on the branch).
+
+**Bug 2 — PatchDiff crashes on multi-file diffs:** `PatchDiff` from `@pierre/diffs/react` throws `"FileDiff: Provided patch must contain exactly 1 file diff"` when the raw git diff contains changes to multiple files. With committed changes now included, the diff output is always multi-file.
+
+### Diagnosis
+
+Added comprehensive diagnostic logging to `DiffService.getDiff` that revealed:
+- `git diff`: stdoutLen=262 (small unstaged change)
+- `git diff --staged`: stdoutLen=0 (nothing staged)
+- DIAGNOSTIC: `branch=Test`, `commitsOnBranch=16`, `committedDiffLen=28330`
+- `combinedDiffLen=262` — the service was blind to 28KB of committed changes
+
+### Fix
+
+**DiffService (`packages/server/src/services/diff-service.ts`):**
+- Changed diff strategy from `git diff` + `git diff --staged` to `git diff <merge-base>`.
+- The service now computes the merge-base between the worktree branch and the default branch (tries main, master, develop, origin/main, origin/master in order).
+- `git diff <merge-base>` compares the merge-base commit against the **working tree**, capturing committed + staged + unstaged changes in a single command.
+- Falls back to the old unstaged+staged approach when no merge-base is found (e.g., if the worktree branch IS the default branch).
+- Extracted `spawnGit()` helper to reduce code duplication across git commands.
+- Replaced verbose diagnostic logging with lean production-quality log lines.
+
+**DiffPane (`apps/web/src/panes/diff-pane.tsx`):**
+- Replaced `PatchDiff` (single-file only) with `parsePatchFiles()` + `FileDiff` (per-file rendering).
+- `parsePatchFiles(diffContent)` from `@pierre/diffs` parses the raw multi-file git diff into an array of `FileDiffMetadata` objects.
+- Each file is rendered with `<FileDiff fileDiff={...} options={...} />` from `@pierre/diffs/react`.
+- All existing UX features preserved: `useTransition` for deferred rendering, MutationObserver for scroll position preservation, "Updated" flash indicator, last updated timestamp footer.
+
+### Files modified
+- `packages/server/src/services/diff-service.ts` — Rewrote `getDiff` to use merge-base diffing, extracted `spawnGit` helper, replaced diagnostic logging with lean production logs
+- `apps/web/src/panes/diff-pane.tsx` — Replaced `PatchDiff` with `parsePatchFiles` + `FileDiff` for multi-file diff rendering
+
+### Verification
+- `tsc --noEmit` passes for both server and web packages (no new errors — only pre-existing calendar.tsx, sonner.tsx, Effect plugin messages)
+- `ultracite check` passes on both modified files with zero issues
+- All 52 tests pass (no regressions)

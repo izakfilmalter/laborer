@@ -31,7 +31,8 @@
 
 import { diffs } from "@laborer/shared/schema";
 import { queryDb } from "@livestore/livestore";
-import { PatchDiff } from "@pierre/diffs/react";
+import { parsePatchFiles } from "@pierre/diffs";
+import { FileDiff } from "@pierre/diffs/react";
 import { FileCode2, RefreshCw } from "lucide-react";
 import {
 	useCallback,
@@ -54,12 +55,12 @@ import { useLaborerStore } from "@/livestore/store";
 const allDiffs$ = queryDb(diffs, { label: "diffPane" });
 
 /**
- * Stable PatchDiff options object — defined at module level to avoid
- * recreating on every render. PatchDiff's internal rendering is expensive
+ * Stable FileDiff options object — defined at module level to avoid
+ * recreating on every render. FileDiff's internal rendering is expensive
  * (shiki syntax highlighting, hunk parsing), so stable options prevent
  * unnecessary re-processing.
  */
-const PATCH_DIFF_OPTIONS = {
+const FILE_DIFF_OPTIONS = {
 	diffStyle: "split" as const,
 	theme: { dark: "pierre-dark" as const, light: "pierre-light" as const },
 	themeType: "dark" as const,
@@ -99,9 +100,9 @@ function formatLastUpdated(isoTimestamp: string): string {
  * it commits DiffUpdated events which sync to the client and trigger a
  * re-render with the new diff content.
  *
- * The @pierre/diffs PatchDiff component handles parsing and rendering the
- * raw git diff output with syntax highlighting, split/unified views,
- * line numbers, and word-level diff highlighting.
+ * The raw git diff is parsed via `parsePatchFiles` into per-file metadata,
+ * then each file is rendered with `FileDiff` from @pierre/diffs. This
+ * supports multi-file diffs (PatchDiff only handles single-file patches).
  *
  * Live updates are smooth: `useTransition` prevents UI blocking during
  * large diff re-renders, scroll position is preserved across updates,
@@ -123,18 +124,30 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 	const diffContent = diffRow?.diffContent ?? "";
 	const lastUpdated = diffRow?.lastUpdated ?? "";
 
+	// --- Parse the raw git diff into per-file diff metadata ---
+	// parsePatchFiles handles multi-file diffs correctly, returning an array
+	// of ParsedPatch objects, each with a .files array of FileDiffMetadata.
+	// PatchDiff only supports single-file patches and throws on multi-file input.
+	const fileDiffs = useMemo(() => {
+		if (!diffContent) {
+			return [];
+		}
+		const parsed = parsePatchFiles(diffContent);
+		return parsed.flatMap((p) => p.files);
+	}, [diffContent]);
+
 	// --- Deferred rendering via useTransition ---
-	// PatchDiff can be expensive to re-render for large diffs (shiki highlighting,
+	// FileDiff can be expensive to re-render for large diffs (shiki highlighting,
 	// hunk parsing, DOM diffing). useTransition marks the re-render as non-urgent
 	// so it doesn't block user interactions (scrolling, typing in terminals, etc.).
 	const [isPending, startTransition] = useTransition();
-	const [deferredContent, setDeferredContent] = useState(diffContent);
+	const [deferredFileDiffs, setDeferredFileDiffs] = useState(fileDiffs);
 
 	useEffect(() => {
 		startTransition(() => {
-			setDeferredContent(diffContent);
+			setDeferredFileDiffs(fileDiffs);
 		});
-	}, [diffContent]);
+	}, [fileDiffs]);
 
 	// --- Scroll position preservation ---
 	// The onScroll handler (below) continuously saves the current scroll position
@@ -252,7 +265,13 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 				onScroll={handleScroll}
 				ref={scrollContainerRef}
 			>
-				<PatchDiff options={PATCH_DIFF_OPTIONS} patch={deferredContent} />
+				{deferredFileDiffs.map((fileDiffMeta, index) => (
+					<FileDiff
+						fileDiff={fileDiffMeta}
+						key={fileDiffMeta.name ?? index}
+						options={FILE_DIFF_OPTIONS}
+					/>
+				))}
 			</div>
 
 			{/* Last updated timestamp footer */}

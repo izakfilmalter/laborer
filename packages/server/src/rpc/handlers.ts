@@ -28,6 +28,54 @@ import { WorkspaceProvider } from "../services/workspace-provider.js";
 
 const startTime = Date.now();
 
+export const handleConfigGet = ({ projectId }: { projectId: string }) =>
+	Effect.gen(function* () {
+		const registry = yield* ProjectRegistry;
+		const configService = yield* ConfigService;
+
+		const project = yield* registry.getProject(projectId);
+		return yield* configService.resolveConfig(project.repoPath, project.name);
+	});
+
+export const handleConfigUpdate = ({
+	projectId,
+	config,
+}: {
+	projectId: string;
+	config: {
+		rlphConfig?: string | undefined;
+		setupScripts?: readonly string[] | undefined;
+		worktreeDir?: string | undefined;
+	};
+}) =>
+	Effect.gen(function* () {
+		const isValidSetupScripts =
+			config.setupScripts === undefined ||
+			(config.setupScripts.every((script) => typeof script === "string") &&
+				Array.isArray(config.setupScripts));
+
+		const isValidConfig =
+			(config.worktreeDir === undefined ||
+				typeof config.worktreeDir === "string") &&
+			(config.rlphConfig === undefined ||
+				typeof config.rlphConfig === "string") &&
+			isValidSetupScripts;
+
+		if (!isValidConfig) {
+			return yield* new RpcError({
+				code: "INVALID_INPUT",
+				message:
+					"Invalid config payload. Expected optional string fields and setupScripts as string array.",
+			});
+		}
+
+		const registry = yield* ProjectRegistry;
+		const configService = yield* ConfigService;
+
+		const project = yield* registry.getProject(projectId);
+		yield* configService.writeProjectConfig(project.repoPath, config);
+	});
+
 /**
  * RPC handler layer for the LaborerRpcs group.
  *
@@ -84,25 +132,8 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 		// -------------------------------------------------------------------
 		// Config RPCs (Issue #157)
 		// -------------------------------------------------------------------
-		"config.get": ({ projectId }) =>
-			Effect.gen(function* () {
-				const registry = yield* ProjectRegistry;
-				const configService = yield* ConfigService;
-
-				const project = yield* registry.getProject(projectId);
-				return yield* configService.resolveConfig(
-					project.repoPath,
-					project.name
-				);
-			}),
-		"config.update": ({ projectId, config }) =>
-			Effect.gen(function* () {
-				const registry = yield* ProjectRegistry;
-				const configService = yield* ConfigService;
-
-				const project = yield* registry.getProject(projectId);
-				yield* configService.writeProjectConfig(project.repoPath, config);
-			}),
+		"config.get": handleConfigGet,
+		"config.update": handleConfigUpdate,
 
 		// -------------------------------------------------------------------
 		// Workspace RPCs (Issue #33-47)

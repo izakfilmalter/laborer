@@ -3928,3 +3928,35 @@ Started Issue #158 with a focused pass on project settings UX/accessibility and 
 - `bun run test` (in `apps/web`) passes: 3 test files, 41 tests.
 - `bun x ultracite check src/components/project-settings-modal.tsx src/components/project-settings-modal.helpers.ts test/project-settings-modal.helpers.test.ts` (in `apps/web`) passes.
 - `bun run check-types` (in `apps/web`) still reports pre-existing errors in `src/components/ui/calendar.tsx` and `src/components/ui/sonner.tsx`; no new type errors introduced by this change.
+
+## Issue #158: Config RPC handler error-path tests — COMPLETED (sub-task)
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented and validated server-side RPC handler tests for `config.get` and `config.update` error paths, including non-existent project handling and malformed config payload rejection. This closes the unchecked Issue #158 acceptance criterion for RPC handler error-path coverage.
+
+### What was done
+
+1. **Refactored config RPC handlers for direct testability** in `packages/server/src/rpc/handlers.ts`
+   - Extracted and exported `handleConfigGet` and `handleConfigUpdate`.
+   - Kept `LaborerRpcsLive` wiring unchanged by delegating `"config.get"` / `"config.update"` to the extracted handlers.
+
+2. **Added runtime input guard for `config.update`**
+   - Added defensive validation in `handleConfigUpdate` for config payload shape.
+   - Invalid payloads now fail with `RpcError` code `INVALID_INPUT` and do not hit project lookup or config writes.
+
+3. **Added targeted server tests** in `packages/server/test/rpc-config-handlers.test.ts`
+   - `config.get` returns `NOT_FOUND` when project is missing.
+   - `config.update` returns `NOT_FOUND` when project is missing and skips `writeProjectConfig`.
+   - `config.update` returns `INVALID_INPUT` for malformed payload and skips downstream calls.
+   - Happy-path sanity check: `config.update` calls `writeProjectConfig` with resolved repo path for existing projects.
+
+4. **Updated issue tracking**
+   - Checked Issue #158 acceptance criterion: `RPC handler tests cover error paths (non-existent project, malformed input)` in `issues.md`.
+
+### Verification
+- `bun test packages/server/test/rpc-config-handlers.test.ts` passes (4 tests).
+- `bun run --cwd packages/server test` passes (14 files, 121 passed, 6 skipped).
+- `bun x ultracite check packages/server/src/rpc/handlers.ts packages/server/test/rpc-config-handlers.test.ts` passes.

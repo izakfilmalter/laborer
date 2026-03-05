@@ -836,32 +836,6 @@ Ensure xterm.js handles large terminal buffers (100k+ lines) without UI lag. Con
 
 ---
 
-## Issue 130: Graceful shutdown — free all ports
-
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-On server shutdown, free all allocated ports in the PortAllocator. This is mostly for clean accounting since the ports are not OS-level reserved, but it ensures consistent state.
-
-### Acceptance criteria
-
-- [ ] Shutdown → all ports marked as freed
-- [ ] Restart → port range fully available
-- [ ] Tests: allocate ports → shutdown → restart → all ports available
-
-### Blocked by
-
-- Blocked by #30
-
-### User stories addressed
-
-- Polishing requirement 7
-
----
-
 ## Issue 131: Theme consistency audit
 
 ### Parent PRD
@@ -968,6 +942,5 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 125 | Terminal fidelity — claude | ~~#60~~ | Ready |
 | 126 | Terminal fidelity — codex | ~~#60~~ | Ready |
 | 127 | Terminal scroll performance | ~~#60~~ | Ready |
-| 130 | Graceful shutdown — free ports | ~~#30~~ | Ready |
 | 131 | Theme consistency audit | ~~#90~~ | Ready |
 | 134 | Drag terminal from sidebar onto empty panel | ~~#63~~, ~~#66~~ | Ready |

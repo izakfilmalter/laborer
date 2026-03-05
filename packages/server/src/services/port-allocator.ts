@@ -9,6 +9,13 @@
  * allocated ports set. This prevents race conditions when multiple
  * workspaces are created simultaneously.
  *
+ * Graceful shutdown (Issue #130):
+ * On server shutdown (SIGINT/SIGTERM), the layer finalizer clears all
+ * allocated ports and logs the count. This ensures consistent state on
+ * restart — the full port range is available. While ports are in-memory
+ * only (not OS-level reserved), clean accounting prevents potential
+ * issues if port state is ever persisted.
+ *
  * Usage:
  * ```ts
  * const program = Effect.gen(function* () {
@@ -23,10 +30,14 @@
  * Issue #30: free method
  * Issue #31: exhaustion handling (built into allocate)
  * Issue #32: concurrent allocation safety (Ref-based atomicity)
+ * Issue #130: graceful shutdown — free all ports
  */
 
 import { RpcError } from "@laborer/shared/rpc";
 import { Context, Effect, Layer, Ref } from "effect";
+
+/** Logger tag used for structured Effect.log output in this module. */
+const logPrefix = "PortAllocator";
 
 /**
  * PortAllocator Effect Context Tag
@@ -53,11 +64,14 @@ class PortAllocator extends Context.Tag("@laborer/PortAllocator")<
 	/**
 	 * Create a PortAllocator layer with a specific port range.
 	 *
+	 * Uses Layer.scoped to support Effect.addFinalizer for graceful shutdown.
+	 * On shutdown, all allocated ports are freed and the count is logged.
+	 *
 	 * @param rangeStart - First port in the allocation range (inclusive)
 	 * @param rangeEnd - Last port in the allocation range (inclusive)
 	 */
 	static readonly make = (rangeStart: number, rangeEnd: number) =>
-		Layer.effect(
+		Layer.scoped(
 			PortAllocator,
 			Effect.gen(function* () {
 				// Track allocated ports in a Ref (fiber-safe mutable state)
@@ -107,6 +121,37 @@ class PortAllocator extends Context.Tag("@laborer/PortAllocator")<
 						});
 					}
 				});
+
+				// -----------------------------------------------------------
+				// Graceful shutdown finalizer (Issue #130)
+				// -----------------------------------------------------------
+				// When the server shuts down (SIGINT/SIGTERM), Effect tears
+				// down all layer scopes. This finalizer clears the allocated
+				// ports set and logs the count for observability. This ensures:
+				// 1. Clean accounting — all ports are marked as freed
+				// 2. On restart, the full port range is available
+				// 3. Shutdown progress is observable in server output
+				yield* Effect.addFinalizer(() =>
+					Effect.gen(function* () {
+						const allocated = yield* Ref.get(allocatedRef);
+
+						if (allocated.size === 0) {
+							yield* Effect.log(
+								`Shutdown: no allocated ports to free (range ${rangeStart}-${rangeEnd})`
+							).pipe(Effect.annotateLogs("module", logPrefix));
+							return;
+						}
+
+						const portList = [...allocated].sort((a, b) => a - b).join(", ");
+
+						// Clear all allocated ports
+						yield* Ref.set(allocatedRef, new Set<number>());
+
+						yield* Effect.log(
+							`Shutdown: freed ${allocated.size} allocated port(s): [${portList}] (range ${rangeStart}-${rangeEnd})`
+						).pipe(Effect.annotateLogs("module", logPrefix));
+					})
+				);
 
 				return PortAllocator.of({ allocate, free });
 			})

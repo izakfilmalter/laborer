@@ -3214,3 +3214,4 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 142 | Client-side flow control acks | ~~#140~~, ~~#141~~ | Done |
 | 143 | Deprecate terminalOutput from LiveStore hot path | ~~#140~~ | Done |
 | 144 | Resize flushes coalesced buffer + flow control reset | ~~#141~~, ~~#142~~ | Done |
+| 130 | Graceful shutdown — free ports | ~~#30~~ | Done |

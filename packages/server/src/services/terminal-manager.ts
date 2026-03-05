@@ -43,7 +43,7 @@
  */
 
 import { RpcError } from "@laborer/shared/rpc";
-import { events, tables } from "@laborer/shared/schema";
+import { tables } from "@laborer/shared/schema";
 import {
 	Array as Arr,
 	Context,
@@ -303,6 +303,19 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				return state;
 			};
 
+			const queryLegacyTerminals = (): ReadonlyArray<{
+				readonly command: string;
+				readonly id: string;
+				readonly status: string;
+				readonly workspaceId: string;
+			}> => {
+				try {
+					return store.query(tables.terminals);
+				} catch {
+					return [];
+				}
+			};
+
 			// ---------------------------------------------------------------
 			// Stale terminal cleanup on startup (Issue #4)
 			// ---------------------------------------------------------------
@@ -310,21 +323,13 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 			// a previous server crash — the PTY processes are long gone. Mark
 			// them as "stopped" so the UI doesn't show ghost terminals.
 			const staleTerminals = pipe(
-				store.query(tables.terminals),
+				queryLegacyTerminals(),
 				Arr.filter((t) => t.status === "running")
 			);
 
 			if (staleTerminals.length > 0) {
-				for (const terminal of staleTerminals) {
-					store.commit(
-						events.terminalStatusChanged({
-							id: terminal.id,
-							status: "stopped",
-						})
-					);
-				}
 				yield* Effect.log(
-					`Cleaned up ${staleTerminals.length} stale terminal(s) from previous session`
+					`Detected ${staleTerminals.length} stale terminal(s) from previous session`
 				).pipe(Effect.annotateLogs("module", logPrefix));
 			}
 
@@ -341,12 +346,6 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 
 						if (terminalIds.length === 0) {
 							return;
-						}
-
-						for (const id of terminalIds) {
-							store.commit(
-								events.terminalStatusChanged({ id, status: "stopped" })
-							);
 						}
 
 						// Clear the in-memory map — all terminals are dead
@@ -460,13 +459,8 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 							}
 						}
 					},
-					// Exit callback: update LiveStore status and clean up
+					// Exit callback: clean up in-memory tracking
 					(_exitCode: number, _signal: number) => {
-						// Update LiveStore status to "stopped"
-						store.commit(
-							events.terminalStatusChanged({ id, status: "stopped" })
-						);
-
 						// Remove from in-memory map.
 						// We use runSync (extracted from the Effect runtime) because
 						// this is a plain JS callback from PtyHostClient, not inside an
@@ -482,17 +476,6 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 						// Note: ring buffer is NOT cleared on exit — retained until
 						// terminal.remove so reconnecting clients can see output.
 					}
-				);
-
-				// 7. Commit TerminalSpawned event to LiveStore
-				store.commit(
-					events.terminalSpawned({
-						id,
-						workspaceId,
-						command: resolvedCommand,
-						status: "running",
-						ptySessionRef: id,
-					})
 				);
 
 				return {
@@ -561,12 +544,8 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 					return next;
 				});
 
-				// Update LiveStore status to "stopped"
-				store.commit(
-					events.terminalStatusChanged({
-						id: terminalId,
-						status: "stopped",
-					})
+				yield* Effect.log(`Killed terminal ${terminalId}`).pipe(
+					Effect.annotateLogs("module", logPrefix)
 				);
 			});
 
@@ -574,7 +553,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				terminalId: string
 			) {
 				// 1. Check if the terminal exists in LiveStore
-				const allTerminals = store.query(tables.terminals);
+				const allTerminals = queryLegacyTerminals();
 				const terminalOpt = pipe(
 					allTerminals,
 					Arr.findFirst((t) => t.id === terminalId)
@@ -599,10 +578,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 					});
 				}
 
-				// 3. Delete the terminal row from LiveStore
-				store.commit(events.terminalRemoved({ id: terminalId }));
-
-				// 4. Clean up ring buffer and subscriber state
+				// 3. Clean up ring buffer and subscriber state
 				bufferStates.delete(terminalId);
 
 				yield* Effect.log(`Removed terminal ${terminalId}`).pipe(
@@ -612,7 +588,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 
 			const listTerminals = Effect.fn("TerminalManager.listTerminals")(
 				function* (workspaceId: string) {
-					const allTerminals = store.query(tables.terminals);
+					const allTerminals = queryLegacyTerminals();
 					return pipe(
 						allTerminals,
 						Arr.filter((t) => t.workspaceId === workspaceId),
@@ -632,7 +608,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				terminalId: string
 			) {
 				// 1. Look up the terminal in LiveStore to get its metadata
-				const allTerminals = store.query(tables.terminals);
+				const allTerminals = queryLegacyTerminals();
 				const terminalOpt = pipe(
 					allTerminals,
 					Arr.findFirst((t) => t.id === terminalId)
@@ -736,13 +712,6 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 					},
 					// Exit callback
 					(_exitCode: number, _signal: number) => {
-						store.commit(
-							events.terminalStatusChanged({
-								id: terminalId,
-								status: "stopped",
-							})
-						);
-
 						runSync(
 							Ref.update(terminalsRef, (m) => {
 								const next = new Map(m);
@@ -752,9 +721,6 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 						);
 					}
 				);
-
-				// 8. Commit TerminalRestarted event (resets status to "running")
-				store.commit(events.terminalRestarted({ id: terminalId }));
 
 				yield* Effect.log(`Restarted terminal ${terminalId}`).pipe(
 					Effect.annotateLogs("module", logPrefix)
@@ -801,12 +767,6 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 							),
 							Effect.tap(() =>
 								Effect.sync(() => {
-									store.commit(
-										events.terminalStatusChanged({
-											id: terminal.id,
-											status: "stopped",
-										})
-									);
 									killedCount += 1;
 								})
 							),
@@ -861,12 +821,6 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 								Effect.sync(() => ptyHostClient.kill(terminal.id)),
 								Effect.tap(() =>
 									Effect.sync(() => {
-										store.commit(
-											events.terminalStatusChanged({
-												id: terminal.id,
-												status: "stopped",
-											})
-										);
 										killedCount += 1;
 									})
 								),
@@ -897,7 +851,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				callback: (data: string) => void
 			) {
 				// Validate terminal exists in LiveStore (running OR stopped)
-				const allTerminals = store.query(tables.terminals);
+				const allTerminals = queryLegacyTerminals();
 				const terminalOpt = pipe(
 					allTerminals,
 					Arr.findFirst((t) => t.id === terminalId)
@@ -940,7 +894,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 
 			const terminalExists = Effect.fn("TerminalManager.terminalExists")(
 				function* (terminalId: string) {
-					const allTerminals = store.query(tables.terminals);
+					const allTerminals = queryLegacyTerminals();
 					const found = pipe(
 						allTerminals,
 						Arr.findFirst((t) => t.id === terminalId)

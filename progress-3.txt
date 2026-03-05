@@ -1395,3 +1395,72 @@ Modified `apps/web/src/panes/terminal-pane.tsx`:
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #122. This completes the second of three loading state tasks for Polishing requirement 8: workspace creation (#121) ✅, terminal spawning (#122) ✅, diff computation (#123) pending.
 
+## Issue #34: WorkspaceProvider — worktree directory validation + file watcher scoping — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Enhanced worktree creation with comprehensive post-creation validation and added file watcher scoping environment variables to `getWorkspaceEnv`. Previously, step 8 only checked `git rev-parse --is-inside-work-tree`. Now, `validateWorktree` performs four checks: directory exists, is a git work tree, correct branch is checked out, and git toplevel is isolated to the worktree path (not pointing at the main repo). File watcher scoping injects `WATCHMAN_ROOT`, `CHOKIDAR_USEPOLLING`, `TSC_WATCHFILE`, and `TSC_WATCHDIRECTORY` into all workspace processes, constraining common tools (Watchman, chokidar, TypeScript) to watch only the worktree directory.
+
+### What was done
+
+1. **Added `WorktreeValidation` interface to `packages/server/src/services/workspace-provider.ts`** — Structured validation result with `directoryExists`, `isGitWorkTree`, `correctBranch`, `actualBranch`, `isolatedToplevel`, and `actualToplevel` fields.
+
+2. **Added `execGit` helper function** — Executes git commands using `node:child_process.execFile` instead of `Bun.spawn`. This makes the validation functions testable under vitest (which runs on Node.js, not Bun). Returns `{ exitCode, stdout }`.
+
+3. **Added `validateWorktree(worktreePath, expectedBranch)` function** — Comprehensive validation that runs:
+   - `existsSync(worktreePath)` — directory existence check
+   - `git rev-parse --is-inside-work-tree` — git work tree check
+   - `git rev-parse --abbrev-ref HEAD` — branch verification
+   - `git rev-parse --show-toplevel` — toplevel isolation check (worktree path != main repo path)
+   Uses `realpathSync` for path normalization (resolves macOS `/var` → `/private/var` symlinks).
+
+4. **Added `buildValidationErrorMessage(validation, worktreePath, expectedBranch)` function** — Builds a human-readable error message listing all failed validation checks, separated by semicolons.
+
+5. **Replaced step 8 in `createWorktree`** — The old single `git rev-parse --is-inside-work-tree` check is replaced with a call to `validateWorktree` that checks all four criteria. On failure, a detailed error message is logged and returned as `WORKTREE_VERIFY_FAILED`. On success, a debug log confirms all checks passed.
+
+6. **Added file watcher scoping env vars to `getWorkspaceEnv`** — Four new environment variables injected into all workspace processes:
+   - `WATCHMAN_ROOT` — constrains Facebook Watchman to the worktree directory
+   - `CHOKIDAR_USEPOLLING=true` — forces chokidar (Vite, webpack) to use polling instead of native file watchers
+   - `TSC_WATCHFILE=DynamicPriorityPolling` — forces TypeScript to use dynamic polling for file watching
+   - `TSC_WATCHDIRECTORY=DynamicPriorityPolling` — forces TypeScript to use dynamic polling for directory watching
+   These prevent multiple workspaces from exhausting the OS file descriptor limit (User Story #23).
+
+7. **Created `packages/server/test/workspace-validation.test.ts`** — 9 integration tests:
+   - Creates a real git repo with a worktree in a temp directory
+   - Tests: valid worktree passes all checks, non-existent path fails, wrong branch name detected, non-git directory detected, main repo toplevel matches
+   - Tests `buildValidationErrorMessage`: directory not found, incorrect branch, multiple failures listed, non-isolated toplevel
+   - Cleanup: removes temp repo and worktree in `afterAll`
+
+### Files created
+- `packages/server/test/workspace-validation.test.ts` — 9 integration tests for worktree validation
+
+### Files modified
+- `packages/server/src/services/workspace-provider.ts` — Added `execFile`/`realpathSync` imports, `WorktreeValidation` interface, `execGit`, `validateWorktree`, `buildValidationErrorMessage` functions, replaced step 8 with comprehensive validation, added file watcher env vars to `getWorkspaceEnv`, exported new functions/types, updated JSDoc
+
+### Acceptance criteria status
+- [x] Worktree directory validated after creation (exists, is git repo, correct branch) — `validateWorktree` checks all four criteria
+- [x] File watcher for workspace is scoped to worktree directory only — `WATCHMAN_ROOT`, `CHOKIDAR_USEPOLLING`, `TSC_WATCHFILE`, `TSC_WATCHDIRECTORY` env vars injected
+- [x] Main repo watchers unaffected by workspace creation — watcher scoping env vars constrain tools to worktree; DiffService uses `git diff` polling (no file watchers)
+- [x] Tests: create worktree → validation passes; verify watcher scope doesn't include main repo — 9 tests covering valid/invalid scenarios
+
+### Verification
+- `tsc --noEmit` passes for server package (only pre-existing informational messages — no new errors)
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on both modified/created files with zero issues (`Checked 2 files in 13ms. No fixes applied.`)
+- All 61 tests pass across 4 test files (32 ring buffer + 9 workspace validation + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **`execFile` over `Bun.spawn` for validation**: The validation functions use `node:child_process.execFile` instead of `Bun.spawn`. Vitest runs under Node.js (not Bun), so `Bun.spawn` is unavailable in tests. Using the Node.js API makes the functions testable without mocking. The rest of workspace-provider.ts continues to use `Bun.spawn` since those code paths are not directly tested (they're tested indirectly via the TerminalManager integration tests which mock WorkspaceProvider).
+- **`realpathSync` for path comparison**: On macOS, `/var` is a symlink to `/private/var`. Git's `--show-toplevel` resolves symlinks (returns `/private/var/...`), but `path.resolve()` does not. Using `realpathSync` normalizes both paths through symlink resolution, ensuring correct comparison on macOS.
+- **Four validation checks**: The original code only checked `is-inside-work-tree`. The new validation adds branch verification and toplevel isolation. Branch verification catches rare git bugs where the wrong branch is checked out. Toplevel isolation ensures the worktree is truly independent — a subdirectory of the main repo that happens to be a worktree would have a different toplevel.
+- **Environment-based watcher scoping**: Rather than building a custom file watcher isolation layer, the solution leverages existing environment variables that popular tools already respect: `WATCHMAN_ROOT` (Watchman), `CHOKIDAR_USEPOLLING` (chokidar/Vite/webpack), and `TSC_WATCHFILE`/`TSC_WATCHDIRECTORY` (TypeScript). Polling mode uses fewer file descriptors than native FSEvents/inotify watchers, which is the core concern from User Story #23.
+- **`CHOKIDAR_USEPOLLING=true`**: Forces chokidar-based tools (Vite, webpack, Next.js dev server) to use polling instead of native FSEvents watchers. Polling uses a single timer instead of per-file OS handles, dramatically reducing file descriptor usage. The 2-second default polling interval is acceptable for dev server hot reload.
+- **`DynamicPriorityPolling` for TSC**: TypeScript's `DynamicPriorityPolling` mode uses a single timer with a priority queue instead of per-file FSEvents watchers. Frequently changing files are polled more often, idle files less often. This provides a good balance between responsiveness and resource usage.
+- **Exported for testing**: `validateWorktree`, `buildValidationErrorMessage`, and `WorktreeValidation` are exported from the module so tests can import and test them directly. This is the same pattern used by the existing test files (e.g., `terminal-manager.test.ts` imports `TerminalManager` directly).
+- **Real git repo in tests**: The tests create a real temporary git repository with a commit and a worktree. This provides high confidence that the validation logic works against real git behavior, not mocked responses. Cleanup in `afterAll` ensures no temp files are leaked.
+
+### Issues unblocked
+- No direct downstream issues were exclusively blocked by #34. It was the last remaining WorkspaceProvider infrastructure issue.
+

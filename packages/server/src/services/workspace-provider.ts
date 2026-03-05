@@ -13,7 +13,9 @@
  * - Project validation via ProjectRegistry
  * - Workspace state tracking via LiveStore
  * - Branch management and naming
- * - Environment variable injection (PORT, etc.) for workspace processes
+ * - Worktree directory validation after creation (Issue #34)
+ * - File watcher scoping via environment variables (Issue #34)
+ * - Environment variable injection (PORT, watcher scoping, etc.) for workspace processes
  * - Setup script execution after worktree creation (Issue #35)
  * - Full rollback on setup script failure (Issue #37)
  * - Git fetch failure handling (Issue #39)
@@ -43,6 +45,7 @@
  * ```
  *
  * Issue #33: createWorktree method
+ * Issue #34: worktree directory validation + file watcher scoping
  * Issue #35: run setup scripts in worktree
  * Issue #36: inject PORT env var
  * Issue #37: handle setup script failure (rollback)
@@ -51,7 +54,8 @@
  * Issue #43: destroyWorktree method
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { RpcError } from "@laborer/shared/rpc";
 import { events, tables } from "@laborer/shared/schema";
@@ -619,6 +623,184 @@ const fetchRemote = (repoPath: string): Effect.Effect<void, RpcError> =>
 	});
 
 /**
+ * Result of validating a worktree after creation. Contains detailed
+ * validation checks for directory existence, git working tree status,
+ * correct branch, and git toplevel isolation.
+ *
+ * Issue #34: worktree directory validation
+ */
+interface WorktreeValidation {
+	/** The actual branch name found in the worktree (for error messages) */
+	readonly actualBranch: string | null;
+	/** The actual toplevel path (for error messages) */
+	readonly actualToplevel: string | null;
+	/** Whether the checked-out branch matches the expected branch name */
+	readonly correctBranch: boolean;
+	/** Whether the directory exists on disk */
+	readonly directoryExists: boolean;
+	/** Whether `git rev-parse --is-inside-work-tree` returns true */
+	readonly isGitWorkTree: boolean;
+	/** Whether the git toplevel path matches the worktree path (not the main repo) */
+	readonly isolatedToplevel: boolean;
+}
+
+/**
+ * Validate a created worktree directory. Runs three git commands to verify:
+ * 1. The directory is inside a git work tree (`git rev-parse --is-inside-work-tree`)
+ * 2. The correct branch is checked out (`git rev-parse --abbrev-ref HEAD`)
+ * 3. The git toplevel points to the worktree (not the main repo) (`git rev-parse --show-toplevel`)
+ *
+ * Also checks that the directory exists on disk before running git commands.
+ *
+ * @param worktreePath - Absolute path to the worktree directory
+ * @param expectedBranch - The branch name that should be checked out
+ * @returns WorktreeValidation with detailed results
+ *
+ * Issue #34: worktree directory validation
+ */
+/**
+ * Execute a git command using node:child_process (works in both Bun and Node.js).
+ * This is used by `validateWorktree` instead of `Bun.spawn` so the validation
+ * logic can be tested under vitest (which runs on Node.js, not Bun).
+ *
+ * @param args - Git subcommand and arguments (without "git" prefix)
+ * @param cwd - Working directory to run the command in
+ * @returns Promise of { exitCode, stdout }
+ */
+const execGit = (
+	args: readonly string[],
+	cwd: string
+): Promise<{ exitCode: number; stdout: string }> =>
+	new Promise((resolvePromise) => {
+		execFile("git", [...args], { cwd }, (error, stdout) => {
+			if (error) {
+				// execFile returns an error for non-zero exit codes
+				const exitCode = error.code !== undefined ? Number(error.code) : 1;
+				resolvePromise({ exitCode, stdout: stdout ?? "" });
+				return;
+			}
+			resolvePromise({ exitCode: 0, stdout: stdout ?? "" });
+		});
+	});
+
+const validateWorktree = (
+	worktreePath: string,
+	expectedBranch: string
+): Effect.Effect<WorktreeValidation, RpcError> =>
+	Effect.gen(function* () {
+		// 1. Check directory exists
+		const directoryExists = existsSync(worktreePath);
+		if (!directoryExists) {
+			return {
+				directoryExists: false,
+				isGitWorkTree: false,
+				correctBranch: false,
+				actualBranch: null,
+				isolatedToplevel: false,
+				actualToplevel: null,
+			} satisfies WorktreeValidation;
+		}
+
+		// 2. Check it's a git work tree
+		const workTreeResult = yield* Effect.tryPromise({
+			try: async () => {
+				const result = await execGit(
+					["rev-parse", "--is-inside-work-tree"],
+					worktreePath
+				);
+				return result.exitCode === 0;
+			},
+			catch: () =>
+				new RpcError({
+					message: `Failed to verify worktree at: ${worktreePath}`,
+					code: "WORKTREE_VERIFY_FAILED",
+				}),
+		});
+
+		// 3. Check the correct branch is checked out
+		const branchResult = yield* Effect.tryPromise({
+			try: async () => {
+				const result = await execGit(
+					["rev-parse", "--abbrev-ref", "HEAD"],
+					worktreePath
+				);
+				return result.exitCode === 0 ? result.stdout.trim() : null;
+			},
+			catch: () =>
+				new RpcError({
+					message: `Failed to check branch in worktree: ${worktreePath}`,
+					code: "WORKTREE_VERIFY_FAILED",
+				}),
+		});
+
+		// 4. Check git toplevel points to the worktree directory (not the main repo)
+		const toplevelResult = yield* Effect.tryPromise({
+			try: async () => {
+				const result = await execGit(
+					["rev-parse", "--show-toplevel"],
+					worktreePath
+				);
+				return result.exitCode === 0 ? result.stdout.trim() : null;
+			},
+			catch: () =>
+				new RpcError({
+					message: `Failed to check git toplevel for worktree: ${worktreePath}`,
+					code: "WORKTREE_VERIFY_FAILED",
+				}),
+		});
+		// Normalize paths for comparison using realpathSync to resolve symlinks.
+		// On macOS, /var is a symlink to /private/var — git resolves the symlink
+		// but Node.js path.resolve() does not. realpathSync handles this.
+		const normalizedWorktree = realpathSync(worktreePath);
+		const normalizedToplevel = toplevelResult
+			? realpathSync(toplevelResult)
+			: null;
+		return {
+			directoryExists: true,
+			isGitWorkTree: workTreeResult,
+			correctBranch: branchResult === expectedBranch,
+			actualBranch: branchResult,
+			isolatedToplevel:
+				normalizedToplevel !== null &&
+				normalizedToplevel === normalizedWorktree,
+			actualToplevel: toplevelResult,
+		} satisfies WorktreeValidation;
+	});
+
+/**
+ * Build a human-readable error message from a failed worktree validation.
+ * Lists all failed checks so the user can diagnose the issue.
+ *
+ * Issue #34: worktree directory validation
+ */
+const buildValidationErrorMessage = (
+	validation: WorktreeValidation,
+	worktreePath: string,
+	expectedBranch: string
+): string => {
+	const failures: string[] = [];
+
+	if (!validation.directoryExists) {
+		failures.push(`directory does not exist: ${worktreePath}`);
+	}
+	if (!validation.isGitWorkTree) {
+		failures.push("not a valid git working tree");
+	}
+	if (!validation.correctBranch) {
+		failures.push(
+			`expected branch "${expectedBranch}" but found "${validation.actualBranch ?? "unknown"}"`
+		);
+	}
+	if (!validation.isolatedToplevel) {
+		failures.push(
+			`git toplevel "${validation.actualToplevel ?? "unknown"}" does not match worktree path "${worktreePath}"`
+		);
+	}
+
+	return `Worktree validation failed: ${failures.join("; ")}`;
+};
+
+/**
  * Detect whether a git stderr message indicates a network-related failure.
  * Used to provide more specific guidance in error messages.
  */
@@ -848,38 +1030,46 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 							}),
 					});
 
-					// 8. Verify the worktree was created
-					const verifyResult = yield* Effect.tryPromise({
-						try: async () => {
-							const proc = Bun.spawn(
-								["git", "rev-parse", "--is-inside-work-tree"],
-								{
-									cwd: worktreePath,
-									stdout: "pipe",
-									stderr: "pipe",
-								}
-							);
-							const exitCode = await proc.exited;
-							return exitCode === 0;
-						},
-						catch: () =>
-							new RpcError({
-								message: `Failed to verify worktree at: ${worktreePath}`,
-								code: "WORKTREE_VERIFY_FAILED",
-							}),
-					});
+					// 8. Validate the worktree (Issue #34)
+					// Comprehensive validation: directory exists, is a git work tree,
+					// correct branch is checked out, and git toplevel is isolated to
+					// the worktree path (not pointing at the main repo).
+					const validation = yield* validateWorktree(
+						worktreePath,
+						resolvedBranch
+					);
 
-					if (!verifyResult) {
+					const isValid =
+						validation.directoryExists &&
+						validation.isGitWorkTree &&
+						validation.correctBranch &&
+						validation.isolatedToplevel;
+
+					if (!isValid) {
 						// Clean up: free port
 						yield* portAllocator
 							.free(port)
 							.pipe(Effect.catchAll(() => Effect.void));
 
+						const errorMsg = buildValidationErrorMessage(
+							validation,
+							worktreePath,
+							resolvedBranch
+						);
+
+						yield* Effect.logWarning(errorMsg).pipe(
+							Effect.annotateLogs("module", logPrefix)
+						);
+
 						return yield* new RpcError({
-							message: `Worktree verification failed: ${worktreePath} is not a valid git working tree`,
+							message: errorMsg,
 							code: "WORKTREE_VERIFY_FAILED",
 						});
 					}
+
+					yield* Effect.logDebug(
+						`Worktree validated: directory exists, git work tree, branch=${resolvedBranch}, toplevel=${worktreePath}`
+					).pipe(Effect.annotateLogs("module", logPrefix));
 
 					// 9. Generate workspace ID early (needed for env var injection)
 					const id = crypto.randomUUID();
@@ -1099,12 +1289,28 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 
 					const ws = workspace.value;
 
-					// Build the environment variables for this workspace
+					// Build the environment variables for this workspace.
+					// Includes file watcher scoping vars that constrain common tools
+					// (Watchman, chokidar, TypeScript) to watch only the worktree
+					// directory, preventing multiple workspaces from exhausting the
+					// OS file descriptor limit (Issue #34, User Story #23).
 					return {
+						// Core workspace identification
 						PORT: String(ws.port),
 						LABORER_WORKSPACE_ID: ws.id,
 						LABORER_WORKSPACE_PATH: ws.worktreePath,
 						LABORER_BRANCH: ws.branchName,
+
+						// File watcher scoping (Issue #34)
+						// Watchman: constrain root to worktree directory
+						WATCHMAN_ROOT: ws.worktreePath,
+						// chokidar (Vite, webpack, etc.): use polling instead of
+						// native watchers to avoid exhausting OS file descriptors
+						CHOKIDAR_USEPOLLING: "true",
+						// TypeScript: use dynamic priority polling for file watching
+						// instead of native FS events (lower file descriptor usage)
+						TSC_WATCHFILE: "DynamicPriorityPolling",
+						TSC_WATCHDIRECTORY: "DynamicPriorityPolling",
 					} as Record<string, string>;
 				}
 			);
@@ -1118,4 +1324,5 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 	);
 }
 
-export { WorkspaceProvider };
+export { buildValidationErrorMessage, validateWorktree, WorkspaceProvider };
+export type { WorktreeValidation };

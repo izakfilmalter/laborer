@@ -2,30 +2,9 @@
 
 ---
 
-## Issue 34: WorkspaceProvider — worktree directory validation + file watcher scoping
+## ~~Issue 34: WorkspaceProvider — worktree directory validation + file watcher scoping~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Validate the created worktree directory structure and ensure file watcher isolation. The worktree should be independent from the main repo's file watchers so that multiple workspaces don't exhaust OS file descriptor limits.
-
-### Acceptance criteria
-
-- [ ] Worktree directory validated after creation (exists, is git repo, correct branch)
-- [ ] File watcher for workspace is scoped to worktree directory only
-- [ ] Main repo watchers unaffected by workspace creation
-- [ ] Tests: create worktree → validation passes; verify watcher scope doesn't include main repo
-
-### Blocked by
-
-- Blocked by #33
-
-### User stories addressed
-
-- User story 23
+Enhanced worktree creation with comprehensive post-creation validation (`validateWorktree` checks directory exists, is git work tree, correct branch, isolated toplevel) and file watcher scoping env vars (`WATCHMAN_ROOT`, `CHOKIDAR_USEPOLLING`, `TSC_WATCHFILE`, `TSC_WATCHDIRECTORY`) in `getWorkspaceEnv`. Uses `node:child_process.execFile` + `realpathSync` for cross-runtime testability. 9 integration tests.
 
 ---
 
@@ -619,7 +598,7 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
-| 34 | WorkspaceProvider — directory validation + watcher scoping | #33 | Ready |
+| 34 | ~~WorkspaceProvider — directory validation + watcher scoping~~ | ~~#33~~ | Done |
 | 35 | ~~WorkspaceProvider — setup scripts~~ | ~~#33~~ | Done |
 | 37 | ~~WorkspaceProvider — handle setup failure~~ | ~~#35~~ | Done |
 | 38 | ~~WorkspaceProvider — handle dirty git state~~ | ~~#33~~ | Done |

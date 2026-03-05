@@ -50,7 +50,7 @@ import {
 	ResizablePanel,
 	ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { usePanelActions } from "@/panels/panel-context";
+import { useActivePaneId, usePanelActions } from "@/panels/panel-context";
 import { DiffPane } from "@/panes/diff-pane";
 import { TerminalPane } from "@/panes/terminal-pane";
 
@@ -220,11 +220,19 @@ function SplitChild({
  *   nesting to arbitrary depth (5+ levels).
  */
 function PanelRenderer({ node }: PanelRendererProps) {
+	const activePaneId = useActivePaneId();
+	const actions = usePanelActions();
+	const isActive = activePaneId === node.id;
+
 	if (node._tag === "LeafNode") {
 		return (
 			<div
-				className="group/pane relative h-full w-full overflow-hidden"
+				className={`group/pane relative h-full w-full overflow-hidden ${
+					isActive ? "ring-2 ring-primary ring-inset" : ""
+				}`}
 				data-pane-id={node.id}
+				onFocusCapture={() => actions?.setActivePaneId(node.id)}
+				onMouseDownCapture={() => actions?.setActivePaneId(node.id)}
 			>
 				<PaneToolbar paneId={node.id} />
 				<PaneContent node={node} />

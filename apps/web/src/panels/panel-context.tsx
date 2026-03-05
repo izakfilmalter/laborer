@@ -1,12 +1,14 @@
 /**
- * PanelContext — React context for panel layout actions.
+ * PanelContext — React context for panel layout actions and active pane state.
  *
- * Provides split/close actions to pane components deep in the tree.
- * The layout owner (e.g., the route component that manages the PanelNode
- * state) provides the action implementations via PanelActionsProvider.
- * Pane components consume them via usePanelActions().
+ * Provides split/close actions and active pane tracking to pane components
+ * deep in the tree. The layout owner (e.g., the route component that manages
+ * the PanelNode state) provides the action implementations and active pane
+ * state via PanelActionsProvider.
+ * Pane components consume them via usePanelActions() and useActivePaneId().
  *
  * @see Issue #69: PanelManager — recursive splits
+ * @see Issue #75: Keyboard shortcut — split horizontal
  */
 
 import type { LeafNode, SplitDirection } from "@laborer/shared/types";
@@ -35,6 +37,12 @@ interface PanelActions {
 	 */
 	readonly closePane: (paneId: string) => void;
 	/**
+	 * Set the active (focused) pane.
+	 *
+	 * @param paneId - The ID of the pane to focus, or null to clear focus
+	 */
+	readonly setActivePaneId: (paneId: string | null) => void;
+	/**
 	 * Split a pane into two. The original pane stays; a new sibling pane
 	 * is added in the given direction.
 	 *
@@ -50,32 +58,45 @@ interface PanelActions {
 }
 
 const PanelActionsContext = createContext<PanelActions | null>(null);
+const ActivePaneIdContext = createContext<string | null>(null);
 
 /**
- * Provider component that makes panel actions available to all pane
- * components in the tree.
+ * Provider component that makes panel actions and active pane state
+ * available to all pane components in the tree.
  */
 function PanelActionsProvider({
+	activePaneId,
 	children,
 	value,
 }: {
+	readonly activePaneId: string | null;
 	readonly children: React.ReactNode;
 	readonly value: PanelActions;
 }) {
 	return (
 		<PanelActionsContext.Provider value={value}>
-			{children}
+			<ActivePaneIdContext.Provider value={activePaneId}>
+				{children}
+			</ActivePaneIdContext.Provider>
 		</PanelActionsContext.Provider>
 	);
 }
 
 /**
- * Hook to access panel layout actions (split, close) from a pane component.
- * Returns null if no PanelActionsProvider is present.
+ * Hook to access panel layout actions (split, close, setActivePaneId)
+ * from a pane component. Returns null if no PanelActionsProvider is present.
  */
 function usePanelActions(): PanelActions | null {
 	return useContext(PanelActionsContext);
 }
 
-export { PanelActionsProvider, usePanelActions };
+/**
+ * Hook to read the currently active (focused) pane ID.
+ * Returns null if no pane is active or no provider is present.
+ */
+function useActivePaneId(): string | null {
+	return useContext(ActivePaneIdContext);
+}
+
+export { PanelActionsProvider, useActivePaneId, usePanelActions };
 export type { PanelActions };

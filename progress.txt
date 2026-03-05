@@ -2235,3 +2235,38 @@ Date: 2026-03-04
 - Issue #107: PRD-generated issues → tasks (was blocked by #94 (done) and #100 — now all blockers done!)
 - Issue #108: Linear task sourcing (was blocked by #102 — now done!)
 - Issue #109: GitHub task sourcing (was blocked by #102 — now done!)
+
+## Issue #75, #76, #77, #78: Keyboard shortcuts — tmux-style panel operations
+**Status: Done**
+
+### What was implemented
+Complete tmux-style keyboard shortcut system for the panel manager using TanStack Hotkeys (`@tanstack/react-hotkeys`).
+
+### Keyboard shortcuts (prefix key: Ctrl+B)
+- `Ctrl+B → H` — split active pane horizontally (side-by-side)
+- `Ctrl+B → V` — split active pane vertically (stacked)
+- `Ctrl+B → X` — close active pane
+- `Ctrl+B → O` — cycle focus to next pane
+- `Ctrl+B → P` — cycle focus to previous pane
+
+### Files created
+- `apps/web/src/panels/panel-hotkeys.tsx` — PanelHotkeys component with all tmux-style keyboard sequences using `useHotkeySequence` from TanStack Hotkeys
+
+### Files modified
+- `apps/web/package.json` — added `@tanstack/react-hotkeys@0.3.1` dependency
+- `apps/web/src/routes/__root.tsx` — wrapped app in `HotkeysProvider` from TanStack Hotkeys
+- `apps/web/src/panels/panel-context.tsx` — added `setActivePaneId` to PanelActions interface, added `ActivePaneIdContext` and `useActivePaneId()` hook, updated `PanelActionsProvider` to accept `activePaneId` prop
+- `apps/web/src/routes/index.tsx` — added `handleSetActivePaneId` callback that persists active pane to LiveStore, added `leafPaneIds` computation, wired `PanelActionsProvider` with `activePaneId`, rendered `PanelHotkeys` component
+- `apps/web/src/panels/panel-manager.tsx` — added active pane visual indicator (ring-2 ring-primary ring-inset), added click/focus-to-activate behavior using `onFocusCapture` and `onMouseDownCapture` on leaf pane containers
+
+### Architecture
+- Active pane state is persisted to LiveStore (not local React state) via the existing `activePaneId` column in the `panelLayout` table
+- Focus changes commit a `layoutPaneAssigned` event with the same layout tree but updated `activePaneId`
+- All shortcuts are no-ops when no pane is active (graceful degradation)
+- Pane cycling uses the ordered `leafPaneIds` array from `getLeafIds()`, wrapping around at boundaries
+- Sequence timeout is 1500ms (configurable via `SEQUENCE_TIMEOUT` constant)
+
+### Also marked as Done (already implemented in codebase)
+- Issue #31: PortAllocator exhaustion — already returns `PORT_EXHAUSTED` error with range info
+- Issue #32: PortAllocator concurrent safety — already uses `Ref.modify` for atomicity
+- Issue #74: Restore layout from LiveStore — `usePanelLayout()` already reads persisted layout on mount

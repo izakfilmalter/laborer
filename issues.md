@@ -3606,8 +3606,8 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 28 | Remove Project button + dialog (AtomRpc mutation) | ~~#25~~, ~~#26~~ | Done |
 | 29 | PortAllocator — allocate | #15 | Done |
 | 30 | PortAllocator — free | #29 | Done |
-| 31 | PortAllocator — exhaustion handling | #29 | Ready |
-| 32 | PortAllocator — concurrent safety | #29 | Ready |
+| 31 | PortAllocator — exhaustion handling | ~~#29~~ | Done |
+| 32 | PortAllocator — concurrent safety | ~~#29~~ | Done |
 | 33 | WorkspaceProvider — create worktree | #21, #29 | Done |
 | 34 | WorkspaceProvider — directory validation + watcher scoping | #33 | Ready |
 | 35 | WorkspaceProvider — setup scripts | #33 | Ready |
@@ -3649,13 +3649,13 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 71 | PanelManager — navigate between panes | ~~#67~~ | Ready |
 | 72 | PanelManager — drag-to-resize | ~~#67~~ | Ready |
 | 73 | PanelManager — serialize layout to LiveStore | ~~#69~~, ~~#7~~ | Done |
-| 74 | PanelManager — restore layout from LiveStore | ~~#73~~ | Ready |
-| 75 | Keyboard shortcut — split horizontal | ~~#67~~ | Ready |
-| 76 | Keyboard shortcut — split vertical | ~~#68~~, #75 | Blocked |
-| 77 | Keyboard shortcut — close pane | ~~#70~~, #75 | Blocked |
-| 78 | Keyboard shortcut — navigate panes | #71, #75 | Blocked |
-| 79 | Keyboard shortcut — resize panes | #72, #75 | Blocked |
-| 80 | Keyboard shortcut scope isolation | #75, ~~#61~~ | Blocked (#75) |
+| 74 | PanelManager — restore layout from LiveStore | ~~#73~~ | Done |
+| 75 | Keyboard shortcut — split horizontal | ~~#67~~ | Done |
+| 76 | Keyboard shortcut — split vertical | ~~#68~~, ~~#75~~ | Done |
+| 77 | Keyboard shortcut — close pane | ~~#70~~, ~~#75~~ | Done |
+| 78 | Keyboard shortcut — navigate panes | ~~#71~~, ~~#75~~ | Done |
+| 79 | Keyboard shortcut — resize panes | #72, ~~#75~~ | Blocked |
+| 80 | Keyboard shortcut scope isolation | ~~#75~~, ~~#61~~ | Ready |
 | 81 | Panel responsive layout | #72 | Blocked |
 | 82 | DiffService — run git diff | #40 | Done |
 | 83 | DiffService — poll on interval | ~~#82~~ | Done |

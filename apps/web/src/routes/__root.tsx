@@ -1,3 +1,4 @@
+import { HotkeysProvider } from "@tanstack/react-hotkeys";
 import {
 	createRootRouteWithContext,
 	HeadContent,
@@ -45,15 +46,17 @@ function RootComponent() {
 				disableTransitionOnChange
 				storageKey="vite-ui-theme"
 			>
-				<AtomRegistryProvider>
-					<LiveStoreProvider>
-						<div className="grid h-svh grid-rows-[auto_1fr]">
-							<Header />
-							<Outlet />
-						</div>
-					</LiveStoreProvider>
-				</AtomRegistryProvider>
-				<Toaster richColors />
+				<HotkeysProvider>
+					<AtomRegistryProvider>
+						<LiveStoreProvider>
+							<div className="grid h-svh grid-rows-[auto_1fr]">
+								<Header />
+								<Outlet />
+							</div>
+						</LiveStoreProvider>
+					</AtomRegistryProvider>
+					<Toaster richColors />
+				</HotkeysProvider>
 			</ThemeProvider>
 			<TanStackRouterDevtools position="bottom-left" />
 		</>

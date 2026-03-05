@@ -32,6 +32,7 @@ import {
 	splitPane,
 } from "@/panels/layout-utils";
 import { PanelActionsProvider } from "@/panels/panel-context";
+import { PanelHotkeys } from "@/panels/panel-hotkeys";
 import { PanelManager } from "@/panels/panel-manager";
 
 export const Route = createFileRoute("/")({
@@ -248,6 +249,23 @@ function usePanelLayout() {
 		[persistedLayoutTree, initialLayout, persistedActivePaneId, store]
 	);
 
+	const handleSetActivePaneId = useCallback(
+		(paneId: string | null) => {
+			const base = persistedLayoutTree ?? initialLayout;
+			if (!base) {
+				return;
+			}
+			store.commit(
+				layoutPaneAssigned({
+					id: LAYOUT_SESSION_ID,
+					layoutTree: base,
+					activePaneId: paneId,
+				})
+			);
+		},
+		[persistedLayoutTree, initialLayout, store]
+	);
+
 	const handleAssignTerminalToPane = useCallback(
 		(terminalId: string, workspaceId: string, paneId?: string) => {
 			const base = persistedLayoutTree ?? initialLayout;
@@ -363,15 +381,32 @@ function usePanelLayout() {
 			assignTerminalToPane: handleAssignTerminalToPane,
 			splitPane: handleSplitPane,
 			closePane: handleClosePane,
+			setActivePaneId: handleSetActivePaneId,
 		}),
-		[handleAssignTerminalToPane, handleSplitPane, handleClosePane]
+		[
+			handleAssignTerminalToPane,
+			handleSplitPane,
+			handleClosePane,
+			handleSetActivePaneId,
+		]
 	);
 
-	return { layout, panelActions };
+	// Compute leaf pane IDs for keyboard navigation
+	const leafPaneIds = useMemo(
+		() => (layout ? getLeafIds(layout) : []),
+		[layout]
+	);
+
+	return {
+		layout,
+		panelActions,
+		activePaneId: persistedActivePaneId,
+		leafPaneIds,
+	};
 }
 
 function HomeComponent() {
-	const { layout, panelActions } = usePanelLayout();
+	const { layout, panelActions, activePaneId, leafPaneIds } = usePanelLayout();
 
 	return (
 		<ResizablePanelGroup orientation="horizontal">
@@ -413,7 +448,8 @@ function HomeComponent() {
 
 			{/* Main content — Panel system */}
 			<ResizablePanel defaultSize="75%" minSize="40%">
-				<PanelActionsProvider value={panelActions}>
+				<PanelActionsProvider activePaneId={activePaneId} value={panelActions}>
+					<PanelHotkeys leafPaneIds={leafPaneIds} />
 					<PanelManager layout={layout} />
 				</PanelActionsProvider>
 			</ResizablePanel>

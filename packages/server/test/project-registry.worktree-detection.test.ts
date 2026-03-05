@@ -12,6 +12,7 @@ import { PortAllocator } from "../src/services/port-allocator.js";
 import { ProjectRegistry } from "../src/services/project-registry.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
+import { WorktreeWatcher } from "../src/services/worktree-watcher.js";
 
 const tempRoots: string[] = [];
 
@@ -56,9 +57,10 @@ const TestLaborerStore = Layer.scoped(LaborerStore, makeTestStore).pipe(
 );
 
 const TestLayer = ProjectRegistry.layer.pipe(
-	Layer.provideMerge(WorktreeReconciler.layer),
-	Layer.provideMerge(WorktreeDetector.layer),
-	Layer.provideMerge(PortAllocator.make(4200, 4210)),
+	Layer.provide(WorktreeWatcher.layer),
+	Layer.provide(WorktreeReconciler.layer),
+	Layer.provide(WorktreeDetector.layer),
+	Layer.provide(PortAllocator.make(4200, 4210)),
 	Layer.provideMerge(TestLaborerStore)
 );
 

@@ -14,6 +14,7 @@ import { ProjectRegistry } from "../src/services/project-registry.js";
 import { WorkspaceProvider } from "../src/services/workspace-provider.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
+import { WorktreeWatcher } from "../src/services/worktree-watcher.js";
 
 const tempRoots: string[] = [];
 
@@ -59,6 +60,7 @@ const TestLaborerStore = Layer.scoped(LaborerStore, makeTestStore).pipe(
 
 const TestLayer = WorkspaceProvider.layer.pipe(
 	Layer.provideMerge(ProjectRegistry.layer),
+	Layer.provideMerge(WorktreeWatcher.layer),
 	Layer.provideMerge(WorktreeReconciler.layer),
 	Layer.provideMerge(WorktreeDetector.layer),
 	Layer.provideMerge(ConfigService.layer),

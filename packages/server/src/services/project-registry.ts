@@ -26,6 +26,7 @@ import { events, tables } from "@laborer/shared/schema";
 import { Context, Effect, Layer } from "effect";
 import { LaborerStore } from "./laborer-store.js";
 import { WorktreeReconciler } from "./worktree-reconciler.js";
+import { WorktreeWatcher } from "./worktree-watcher.js";
 
 /**
  * ProjectRegistry Effect Context Tag
@@ -64,6 +65,7 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 		Effect.gen(function* () {
 			const { store } = yield* LaborerStore;
 			const worktreeReconciler = yield* WorktreeReconciler;
+			const worktreeWatcher = yield* WorktreeWatcher;
 
 			const addProject = Effect.fn("ProjectRegistry.addProject")(function* (
 				repoPath: string
@@ -157,6 +159,8 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 						)
 					);
 
+				yield* worktreeWatcher.watchProject(id, resolvedPath);
+
 				return project;
 			});
 
@@ -173,6 +177,8 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 							code: "NOT_FOUND",
 						});
 					}
+
+					yield* worktreeWatcher.unwatchProject(projectId);
 
 					// 2. Commit ProjectRemoved event to LiveStore
 					store.commit(events.projectRemoved({ id: projectId }));

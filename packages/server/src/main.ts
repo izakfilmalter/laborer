@@ -39,6 +39,7 @@ import { TerminalClient } from "./services/terminal-client.js";
 import { WorkspaceProvider } from "./services/workspace-provider.js";
 import { WorktreeDetector } from "./services/worktree-detector.js";
 import { WorktreeReconciler } from "./services/worktree-reconciler.js";
+import { WorktreeWatcher } from "./services/worktree-watcher.js";
 
 /**
  * Custom HTTP Routes
@@ -109,6 +110,7 @@ const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ConfigService.layer),
 	Layer.provide(ProjectRegistry.layer),
+	Layer.provide(WorktreeWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),
 	Layer.provide(PortAllocator.layer),

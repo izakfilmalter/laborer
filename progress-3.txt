@@ -3617,3 +3617,47 @@ Implemented origin-aware workspace destruction across server and UI. External (d
 ### Verification
 - `bun run --filter @laborer/server test -- workspace-destroy-origin.test.ts`: passes (2/2)
 - `bun x ultracite check packages/server/src/services/workspace-provider.ts packages/server/test/workspace-destroy-origin.test.ts apps/web/src/components/workspace-list.tsx`: passes
+
+## Issue #161: Live filesystem watcher + server boot reconciliation — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented live worktree watching and boot-time reconciliation. The server now watches each project's git worktree metadata directory, debounces filesystem bursts, reconciles workspace records automatically on add/remove events, and starts watchers for restored projects on startup.
+
+### What was done
+
+1. **Created `WorktreeWatcher` service** (`packages/server/src/services/worktree-watcher.ts`)
+   - Added a new scoped Effect service with methods: `watchProject`, `unwatchProject`, and `watchAll`.
+   - Uses `git rev-parse --git-common-dir` to resolve the git metadata root robustly.
+   - Watches `.git/worktrees/` when present, otherwise watches `.git/` until `worktrees` appears.
+   - Debounces event bursts by 500ms before calling `WorktreeReconciler.reconcile`.
+   - Stores watcher handles/timers per project and cleans everything up via scope finalizer.
+
+2. **Integrated watcher lifecycle into project registry** (`packages/server/src/services/project-registry.ts`)
+   - `addProject` now calls `worktreeWatcher.watchProject` after initial reconcile.
+   - `removeProject` now calls `worktreeWatcher.unwatchProject` before `projectRemoved` commit.
+
+3. **Wired watcher layer into server boot** (`packages/server/src/main.ts`)
+   - Added `WorktreeWatcher.layer` to the main server layer composition.
+   - `WorktreeWatcher.layer` performs startup `watchAll()` so restored projects are reconciled and watched on boot.
+
+4. **Added integration tests for watcher behavior** (`packages/server/test/worktree-watcher.test.ts`)
+   - Watch add/remove flow creates/removes workspace records.
+   - `unwatchProject` prevents further reconciliation.
+   - `watchAll` reconciles existing projects and starts ongoing watchers.
+   - Missing `.git/worktrees` bootstrap case is covered (directory created later by first linked worktree).
+
+5. **Updated existing tests for new dependency**
+   - Added `WorktreeWatcher` to test layer wiring in `packages/server/test/project-registry.worktree-detection.test.ts`.
+   - Added `WorktreeWatcher` to layer wiring in `packages/server/test/workspace-destroy-origin.test.ts`.
+
+6. **Updated issue tracking** (`issues.md`)
+   - Marked Issue #161 as Done.
+   - Checked acceptance criteria and updated summary table row.
+
+### Verification
+- `bun run test -- test/worktree-watcher.test.ts test/project-registry.worktree-detection.test.ts test/workspace-destroy-origin.test.ts` (in `packages/server`): passes (7/7)
+- `bun run check-types` (in `packages/server`): passes (pre-existing Effect plugin warnings remain)
+- `bun x ultracite check src/services/worktree-watcher.ts src/services/project-registry.ts src/main.ts test/worktree-watcher.test.ts test/project-registry.worktree-detection.test.ts test/workspace-destroy-origin.test.ts` (in `packages/server`): passes

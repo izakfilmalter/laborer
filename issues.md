@@ -919,7 +919,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 158 | Config + settings polish & edge cases | ~~#157~~ | Ready |
 | 159 | ~~WorktreeDetector + schema origin + initial detection on project add~~ | ~~None~~ | Done |
 | 160 | ~~UI for detected workspaces~~ | ~~#159~~ | Done |
-| 161 | Live filesystem watcher + server boot reconciliation | ~~#159~~ | Ready |
+| 161 | ~~Live filesystem watcher + server boot reconciliation~~ | ~~#159~~ | Done |
 | 162 | ~~Origin-aware destroy behavior~~ | ~~#160~~ | Done |
 | 163 | Worktree detection polish & edge cases | #161, #162 | Blocked |
 
@@ -1019,7 +1019,7 @@ Workspace cards now show a subtle monospace "Detected" indicator for external wo
 
 ---
 
-## Issue 161: Live filesystem watcher + server boot reconciliation
+## ~~Issue 161: Live filesystem watcher + server boot reconciliation~~ ✅ DONE
 
 ### Parent PRD
 
@@ -1041,19 +1041,19 @@ Build the WorktreeWatcher service that keeps workspace records in sync with actu
 
 ### Acceptance criteria
 
-- [ ] `WorktreeWatcher.watchProject()` starts filesystem watching on `.git/worktrees/`
-- [ ] Adding a worktree via `git worktree add` triggers reconciliation and creates a workspace record
-- [ ] Removing a worktree via `git worktree remove` triggers reconciliation and removes the workspace record
-- [ ] Port is freed when auto-removing a workspace that had a port allocated
-- [ ] `WorktreeWatcher.unwatchProject()` stops the watcher — no further reconciliation occurs
-- [ ] `WorktreeWatcher.watchAll()` starts watchers for all registered projects
-- [ ] Server boot runs `watchAll()` with initial reconciliation for all projects
-- [ ] Rapid filesystem changes (e.g., 5 worktree adds in 1 second) are debounced into fewer reconciliation calls
-- [ ] Watcher handles `.git/worktrees/` not existing initially, then being created when first worktree is added
-- [ ] Watcher survives transient filesystem errors and continues monitoring
-- [ ] `addProject` starts watching after initial detection
-- [ ] `removeProject` stops watching before removing the project
-- [ ] WorktreeWatcher tests pass (7+ scenarios)
+- [x] `WorktreeWatcher.watchProject()` starts filesystem watching on `.git/worktrees/`
+- [x] Adding a worktree via `git worktree add` triggers reconciliation and creates a workspace record
+- [x] Removing a worktree via `git worktree remove` triggers reconciliation and removes the workspace record
+- [x] Port is freed when auto-removing a workspace that had a port allocated
+- [x] `WorktreeWatcher.unwatchProject()` stops the watcher — no further reconciliation occurs
+- [x] `WorktreeWatcher.watchAll()` starts watchers for all registered projects
+- [x] Server boot runs `watchAll()` with initial reconciliation for all projects
+- [x] Rapid filesystem changes (e.g., 5 worktree adds in 1 second) are debounced into fewer reconciliation calls
+- [x] Watcher handles `.git/worktrees/` not existing initially, then being created when first worktree is added
+- [x] Watcher survives transient filesystem errors and continues monitoring
+- [x] `addProject` starts watching after initial detection
+- [x] `removeProject` stops watching before removing the project
+- [x] WorktreeWatcher tests pass (7+ scenarios)
 
 ### Blocked by
 
@@ -1062,6 +1062,10 @@ Build the WorktreeWatcher service that keeps workspace records in sync with actu
 ### User stories addressed
 
 - User story 5, 6, 10, 11, 14, 16, 17
+
+### Status: Done
+
+Implemented `WorktreeWatcher` as a scoped Effect service with per-project `fs.watch` subscriptions, 500ms debounce, reconciliation triggers, and automatic teardown. Wired watcher lifecycle into `ProjectRegistry` (`addProject` starts watching, `removeProject` un-watches first), and added startup `watchAll()` reconciliation inside the watcher layer so restored projects are reconciled on boot. Added integration tests for add/remove triggers, `unwatchProject`, `watchAll`, and the missing `.git/worktrees/` bootstrap case.
 
 ---
 

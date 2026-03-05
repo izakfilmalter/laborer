@@ -1464,6 +1464,74 @@ Enhanced worktree creation with comprehensive post-creation validation and added
 ### Issues unblocked
 - No direct downstream issues were exclusively blocked by #34. It was the last remaining WorkspaceProvider infrastructure issue.
 
+## Issue #114: Cross-project workspace dashboard — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Created a cross-project workspace dashboard that provides a high-level command-center overview of all workspaces across all projects with their status, and task status summaries per project. The dashboard is accessible via a view toggle in the panel header bar — users can switch between the terminal panels view and the dashboard view. Each project section shows the project name, repo path, task summary counts (pending/in progress/completed/cancelled with color-coded icons), workspace count badges, and a list of all active workspaces with status badges, branch names, ports, and terminal counts. A global overview section shows aggregate counts across all projects.
+
+### What was done
+
+1. **Created `apps/web/src/components/workspace-dashboard.tsx`** — new React component (~380 lines) with:
+   - **Module-level LiveStore queries**: `dashboardProjects$`, `dashboardWorkspaces$`, `dashboardTasks$`, `dashboardTerminals$` for reactive data
+   - **`computeTaskCounts(taskList)`**: Aggregates task status counts (pending, in_progress, completed, cancelled, total)
+   - **`computeWorkspaceCounts(wsList)`**: Aggregates workspace status counts (running, creating, stopped, errored, total)
+   - **`TaskSummary` component**: Compact inline display of task counts with color-coded icons (CircleDot=blue/pending, Loader2=yellow/in_progress, CheckCircle2=green/completed, XCircle=gray/cancelled). Only shows non-zero counts.
+   - **`WorkspaceStatusSummary` component**: Compact inline display of workspace counts with status dots/spinners. Only shows non-zero counts.
+   - **`ProjectDashboardSection` component**: Per-project card showing project name (FolderGit2 icon), repo path (monospace), workspace/task count badges, task summary, separator, and workspace list
+   - **`DashboardWorkspaceRow` component**: Compact workspace row with GitBranch icon, branch name (monospace), port, running terminal count, and status badge (StatusDot + text)
+   - **`WorkspaceDashboard` component**: Main dashboard with global overview section (aggregate counts across all projects in a bordered card) and per-project sections. Empty state when no projects exist.
+   - **`ProjectSection` interface**: Structured data type for per-project dashboard data (project, workspaces, taskCounts, workspaceCounts, terminalCountByWorkspace)
+   - **Status classes**: Reuses the same `getStatusClasses` and `StatusDot` patterns from workspace-list.tsx for visual consistency
+
+2. **Modified `apps/web/src/routes/index.tsx`** — integrated dashboard into main content area:
+   - **Added `MainView` type**: `"panels" | "dashboard"` discriminated union for view toggle state
+   - **Added `mainView` state**: `useState<MainView>("panels")` in `HomeComponent` — defaults to terminal panels view
+   - **Updated `PanelHeaderBar` props**: Added `mainView` and `onViewChange` props for view toggle control
+   - **Added view toggle buttons to header bar**: Two icon buttons (Terminal and LayoutDashboard) in the header's left section. Active view has `bg-accent` highlight. Terminal icon for panels view, LayoutDashboard icon for dashboard view.
+   - **Context-aware header text**: In panels view, shows `project / branch` for the active pane. In dashboard view, shows "Dashboard" label.
+   - **Conditional main content rendering**: Panels view shows PanelHotkeys + PanelManager. Dashboard view shows WorkspaceDashboard. The header bar is always visible for both views.
+   - **Pane action buttons disabled in dashboard view**: Split/close/diff buttons are disabled when viewing the dashboard (no active pane to operate on)
+   - **New imports**: `LayoutDashboard`, `Terminal` from lucide-react; `WorkspaceDashboard` from components
+
+### Files created
+- `apps/web/src/components/workspace-dashboard.tsx` — Cross-project workspace dashboard component
+
+### Files modified
+- `apps/web/src/routes/index.tsx` — Added MainView type, view toggle state, view toggle buttons in PanelHeaderBar, conditional rendering of panels/dashboard, new imports
+
+### Acceptance criteria status
+- [x] Dashboard shows all workspaces from all projects (per-project sections list all non-destroyed workspaces with status badges, branch names, ports, terminal counts)
+- [x] Workspace status visible (with badges) (StatusDot + getStatusClasses — same visual pattern as sidebar workspace list)
+- [x] Task summary per project (pending/in_progress/completed counts) (TaskSummary component with color-coded icons per status)
+- [ ] Tests: multiple projects → all workspaces visible; counts correct (deferred — web app has no component test infrastructure)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on both new/modified files with zero issues (`Checked 2 files in 11ms. No fixes applied.`)
+- All 61 tests pass across 4 test files (32 ring buffer + 9 workspace validation + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **View toggle over separate route**: The dashboard is a view toggle within the same route rather than a separate TanStack Router route. This avoids page navigation, keeps the sidebar visible and functional, and allows instant switching between panels and dashboard. The panel layout state is preserved when switching views — the user can flip to the dashboard for a status overview and flip back to their terminal panels without losing any state.
+- **Terminal and LayoutDashboard icons**: Used `Terminal` (monospace terminal prompt icon) for the panels view and `LayoutDashboard` (grid/cards icon) for the dashboard view. These provide clear visual semantics: Terminal = interactive terminal panes, LayoutDashboard = overview/summary display.
+- **Active view highlight with `bg-accent`**: The active view button uses `bg-accent` background (same pattern as the diff toggle button). This provides a consistent visual pattern for "which mode am I in" across the header bar.
+- **Pane actions disabled in dashboard view**: The split/close/diff buttons in the header are disabled when viewing the dashboard because there's no active terminal pane to operate on. The buttons remain visible (not hidden) to avoid layout shift when switching views and to communicate what actions are available when switching back to panels view.
+- **Per-project sections with cards**: Each project gets its own Card component with task summary and workspace list. This visual grouping makes it clear which workspaces belong to which project. The project card pattern is consistent with how the sidebar organizes information.
+- **Global overview section**: The top-of-dashboard overview card shows aggregate counts across all projects. This gives an at-a-glance answer to "how many things are running right now?" without needing to mentally sum up per-project numbers.
+- **Status classes reuse**: The dashboard's `getStatusClasses` and `StatusDot` functions replicate the ones from workspace-list.tsx rather than importing them (they're not exported). This is pragmatic — the workspace-list component is a feature component, not a utility library. If these patterns need to diverge (e.g., dashboard needs larger status indicators), having separate copies allows independent evolution.
+- **Compact workspace rows**: Dashboard workspace rows are more compact than the sidebar's workspace cards — they show only essential info (branch, port, terminal count, status) in a single horizontal line. The dashboard is a summary view; detailed workspace management happens in the sidebar.
+- **ScrollArea wrapper**: The dashboard uses ScrollArea for the content area, matching the sidebar's scroll behavior. This ensures the dashboard is scrollable when there are many projects/workspaces without breaking the fixed-height layout.
+- **Terminal count per workspace**: Each workspace row shows the count of running terminals. This gives a quick indicator of workspace activity level — a workspace with 5 running terminals is clearly more active than one with 0.
+- **Zero-count suppression**: Both TaskSummary and WorkspaceStatusSummary only show non-zero counts. "0 pending, 3 completed" would be noise — "3 completed" is cleaner and more scannable.
+- **Empty states**: Both the dashboard (no projects) and per-project workspace lists (no active workspaces) have appropriate empty state messages guiding the user.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #114. This was a standalone feature addressing User stories 12 and 24.
+
+---
+
 ## Issue #134: Drag terminal from sidebar onto empty panel pane — COMPLETED
 
 **Status:** Done

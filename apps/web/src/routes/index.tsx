@@ -12,7 +12,15 @@ import {
 import type { LeafNode, PanelNode, SplitNode } from "@laborer/shared/types";
 import { queryDb } from "@livestore/livestore";
 import { createFileRoute } from "@tanstack/react-router";
-import { Columns2, FileCode2, FolderGit2, Rows2, X } from "lucide-react";
+import {
+	Columns2,
+	FileCode2,
+	FolderGit2,
+	LayoutDashboard,
+	Rows2,
+	Terminal,
+	X,
+} from "lucide-react";
 import {
 	Suspense,
 	useCallback,
@@ -43,6 +51,7 @@ import {
 	ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { WorkspaceDashboard } from "@/components/workspace-dashboard";
 import { WorkspaceList } from "@/components/workspace-list";
 import { useLaborerStore } from "@/livestore/store";
 import type { NavigationDirection } from "@/panels/layout-utils";
@@ -122,20 +131,30 @@ function HealthCheckStatus() {
 /** LiveStore query for projects (used by PanelHeaderBar to resolve names). */
 const allProjects$ = queryDb(projects, { label: "headerProjects" });
 
+/** The two main content views: terminal panels or cross-project dashboard. */
+type MainView = "panels" | "dashboard";
+
 /**
  * Thin header bar rendered above the PanelManager.
  *
- * - Left side: shows `project / branch` for the active pane's workspace.
+ * - Left side: view toggle (panels / dashboard) + `project / branch`
+ *   context for the active pane's workspace (in panels view).
  * - Right side: split horizontal, split vertical, diff toggle, and close
- *   buttons that operate on the active pane.
+ *   buttons that operate on the active pane (disabled in dashboard view).
  *
  * Uses the PanelActionsContext so it must be rendered inside a
  * PanelActionsProvider.
+ *
+ * @see Issue #114: Cross-project workspace dashboard
  */
 function PanelHeaderBar({
 	layout,
+	mainView,
+	onViewChange,
 }: {
 	readonly layout?: PanelNode | undefined;
+	readonly mainView: MainView;
+	readonly onViewChange: (view: MainView) => void;
 }) {
 	const store = useLaborerStore();
 	const activePaneId = useActivePaneId();
@@ -175,21 +194,50 @@ function PanelHeaderBar({
 	}, [activeLeaf, workspaceList, projectList]);
 
 	const showDiffToggle =
-		activeLeaf?.paneType === "terminal" && activeLeaf.workspaceId !== undefined;
+		mainView === "panels" &&
+		activeLeaf?.paneType === "terminal" &&
+		activeLeaf.workspaceId !== undefined;
 	const diffIsOpen = activeLeaf?.diffOpen === true;
-	const hasActivePane = !!activePaneId && !!activeLeaf;
+	const hasActivePane = mainView === "panels" && !!activePaneId && !!activeLeaf;
 
 	return (
 		<div className="flex h-8 shrink-0 items-center justify-between border-b px-2">
-			{/* Left: project / branch */}
-			<div className="min-w-0 truncate text-muted-foreground text-xs">
-				{projectName && branchName ? (
-					<>
-						<span className="text-foreground">{projectName}</span>
-						<span className="mx-1">/</span>
-						<span>{branchName}</span>
-					</>
-				) : null}
+			{/* Left: view toggle + project / branch context */}
+			<div className="flex items-center gap-2">
+				<div className="flex gap-0.5">
+					<Button
+						aria-label="Terminal panels"
+						className={mainView === "panels" ? "bg-accent" : ""}
+						onClick={() => onViewChange("panels")}
+						size="icon-sm"
+						title="Terminal panels"
+						variant="ghost"
+					>
+						<Terminal className="size-3.5" />
+					</Button>
+					<Button
+						aria-label="Dashboard"
+						className={mainView === "dashboard" ? "bg-accent" : ""}
+						onClick={() => onViewChange("dashboard")}
+						size="icon-sm"
+						title="Cross-project dashboard"
+						variant="ghost"
+					>
+						<LayoutDashboard className="size-3.5" />
+					</Button>
+				</div>
+				<div className="min-w-0 truncate text-muted-foreground text-xs">
+					{mainView === "panels" && projectName && branchName ? (
+						<>
+							<span className="text-foreground">{projectName}</span>
+							<span className="mx-1">/</span>
+							<span>{branchName}</span>
+						</>
+					) : null}
+					{mainView === "dashboard" && (
+						<span className="text-foreground">Dashboard</span>
+					)}
+				</div>
 			</div>
 
 			{/* Right: pane actions */}
@@ -694,6 +742,9 @@ function HomeComponent() {
 	// Project switcher state — null means "All Projects" (no filter)
 	const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
+	// Main content view toggle — panels (terminal panes) or dashboard
+	const [mainView, setMainView] = useState<MainView>("panels");
+
 	// Clear the active project filter if the selected project is removed
 	useEffect(() => {
 		if (activeProjectId && !projectList.some((p) => p.id === activeProjectId)) {
@@ -754,15 +805,28 @@ function HomeComponent() {
 
 				<ResizableHandle withHandle />
 
-				{/* Main content — Panel system or welcome empty state */}
+				{/* Main content — Panel system, dashboard, or welcome empty state */}
 				<ResizablePanel defaultSize="75%" minSize="40%">
 					{hasProjects ? (
 						<div className="flex h-full flex-col">
-							<PanelHeaderBar layout={layout} />
-							<PanelHotkeys layout={layout} leafPaneIds={leafPaneIds} />
-							<div className="min-h-0 flex-1">
-								<PanelManager layout={layout} />
-							</div>
+							<PanelHeaderBar
+								layout={layout}
+								mainView={mainView}
+								onViewChange={setMainView}
+							/>
+							{mainView === "panels" && (
+								<>
+									<PanelHotkeys layout={layout} leafPaneIds={leafPaneIds} />
+									<div className="min-h-0 flex-1">
+										<PanelManager layout={layout} />
+									</div>
+								</>
+							)}
+							{mainView === "dashboard" && (
+								<div className="min-h-0 flex-1">
+									<WorkspaceDashboard />
+								</div>
+							)}
 						</div>
 					) : (
 						<WelcomeEmptyState />

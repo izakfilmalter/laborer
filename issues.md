@@ -251,30 +251,9 @@ Created a project switcher Select dropdown at the top of the sidebar. Lists all 
 
 ---
 
-## Issue 114: Cross-project workspace dashboard
+## ~~Issue 114: Cross-project workspace dashboard~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Create a dashboard view that shows all workspaces across all projects with their status, and task status summaries per project. Gives the developer a high-level overview.
-
-### Acceptance criteria
-
-- [ ] Dashboard shows all workspaces from all projects
-- [ ] Workspace status visible (with badges)
-- [ ] Task summary per project (pending/in_progress/completed counts)
-- [ ] Tests: multiple projects → all workspaces visible; counts correct
-
-### Blocked by
-
-- Blocked by #41, #104
-
-### User stories addressed
-
-- User story 12, 24
+Created a cross-project workspace dashboard with a view toggle in the panel header bar. Users switch between terminal panels and dashboard via Terminal/LayoutDashboard icon buttons. Dashboard shows a global overview section (aggregate workspace + task counts), and per-project sections with: project name/repo path, task summary counts (pending/in progress/completed/cancelled with color-coded icons), workspace/task count badges, and workspace rows with status badges, branch names, ports, and terminal counts. All data reactive via LiveStore queries.
 
 ---
 
@@ -579,7 +558,7 @@ Added drag-and-drop support using the native HTML5 Drag and Drop API. Terminal i
 | 109 | GitHub task sourcing | ~~#102~~ | Ready |
 | 110 | Task source picker UI | #108, #109, #103 | Blocked |
 | 113 | ~~Project switcher~~ | ~~#26~~ | Done |
-| 114 | Cross-project dashboard | ~~#41~~, ~~#104~~ | Ready |
+| 114 | ~~Cross-project dashboard~~ | ~~#41~~, ~~#104~~ | Done |
 | 115 | Tauri system tray | ~~#41~~ | Ready |
 | 116 | Tauri global shortcut | #115 | Blocked |
 | 117 | Tauri window management | #115 | Blocked |

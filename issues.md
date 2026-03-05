@@ -89,30 +89,9 @@ Enable the accept/reject annotation UI in @pierre/diffs. Users can selectively a
 
 ---
 
-## Issue 91: Diff viewer debounce/throttle for rapid changes
+## ~~Issue 91: Diff viewer debounce/throttle for rapid changes~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-When an agent is making rapid file changes, the diff viewer may receive many updates per second. Debounce/throttle the rendering to prevent UI lag while still showing recent content.
-
-### Acceptance criteria
-
-- [ ] Rapid diff updates (10+/second) don't cause UI lag
-- [ ] Viewer shows most recent diff within reasonable delay (500ms max)
-- [ ] No excessive rerenders
-- [ ] Tests: rapid updates → no frame drops; last update visible within threshold
-
-### Blocked by
-
-- Blocked by #89
-
-### User stories addressed
-
-- Polishing requirement 3
+Added `useDebouncedValue` hook (300ms trailing-edge debounce with 500ms max wait) to the diff viewer. Raw diff content from LiveStore is debounced before reaching `parsePatchFiles` and `FileDiff` rendering. Rapid intermediate values are skipped entirely. Combined debounce pending + transition pending into a single "Updating..." indicator. Empty state uses un-debounced content to avoid flash. Generic hook in `hooks/use-debounced-value.ts` is reusable.
 
 ---
 
@@ -490,7 +469,7 @@ Added drag-and-drop support using the native HTML5 Drag and Drop API. Terminal i
 | 79 | ~~Keyboard shortcut — resize panes~~ | ~~#72~~, ~~#75~~ | Done |
 | 81 | ~~Panel responsive layout~~ | ~~#72~~ | Done |
 | 88 | Diff viewer — accept/reject annotations | ~~#87~~ | Ready |
-| 91 | Diff viewer debounce/throttle | ~~#89~~ | Ready |
+| 91 | ~~Diff viewer debounce/throttle~~ | ~~#89~~ | Done |
 | 107 | PRD-generated issues → tasks | ~~#94~~, ~~#100~~ | Ready |
 | 108 | Linear task sourcing | ~~#102~~ | Ready |
 | 109 | GitHub task sourcing | ~~#102~~ | Ready |

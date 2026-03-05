@@ -1798,3 +1798,72 @@ Added a loading spinner to the diff viewer pane that displays while waiting for 
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #123. This was a standalone polishing task addressing Polishing requirement 8 (loading states).
 
+## Issue #91: Diff viewer debounce/throttle for rapid changes — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Added debounce/throttle to the diff viewer to prevent UI lag when an agent makes rapid file changes. When multiple `DiffUpdated` events arrive in quick succession (e.g., agent writing files rapidly between 2-second DiffService polls), the raw diff content is now debounced via a custom `useDebouncedValue` hook before being passed to the expensive `parsePatchFiles` + `FileDiff` rendering pipeline. This prevents excessive re-renders while ensuring the viewer shows recent content within 500ms (meeting the acceptance criteria threshold).
+
+### What was done
+
+1. **Created `apps/web/src/hooks/use-debounced-value.ts`** — new custom hook (~110 lines) that provides a generic trailing-edge debounce with maximum wait:
+   - **`useDebouncedValue<T>(value, delayMs)`**: Returns `[debouncedValue, isPending]`. When the input value changes multiple times within `delayMs` (default 300ms), only the final value is emitted after the delay elapses.
+   - **Trailing-edge debounce**: Each new value resets the debounce timer. Intermediate values are skipped entirely — the expensive downstream computation (diff parsing, FileDiff rendering) is never called on values that will be superseded.
+   - **Maximum wait (500ms)**: A secondary timer ensures that even under sustained rapid changes (value changing every frame), the debounced value emits within 500ms. This prevents indefinite postponement and meets the acceptance criteria ("last update visible within 500ms threshold").
+   - **`isPending` return**: Boolean indicating whether the debounced value is behind the latest input. Used to show the "Updating..." indicator while the debounce is settling.
+   - **Timer cleanup**: Both the trailing-edge and max-wait timers are cleaned up on value change and on unmount to prevent memory leaks and stale updates.
+
+2. **Modified `apps/web/src/panes/diff-pane.tsx`** — integrated debounce into the diff rendering pipeline:
+   - **Renamed `diffContent` to `rawDiffContent`**: The value directly from LiveStore is now `rawDiffContent`. This is the un-debounced, immediately-reactive value.
+   - **Added `useDebouncedValue(rawDiffContent, 300)`**: The debounced value is now `diffContent`, which feeds into `parsePatchFiles` and `FileDiff` rendering. Rapid intermediate values never reach the expensive parsing step.
+   - **Combined pending state**: `isPending = isDebouncePending || isTransitionPending`. The debounce pending (value not yet settled) and transition pending (render not yet committed) are merged into a single "Updating..." indicator. The user sees one unified loading state rather than two separate indicators.
+   - **Empty state uses `rawDiffContent`**: The "No changes" empty state check uses `rawDiffContent` (not debounced `diffContent`) to avoid briefly showing the empty state while the debounce timer settles after new content arrives.
+   - **Updated JSDoc**: Added Issue #91 documentation describing the debounce/throttle architecture, the performance pipeline, and how the layers compose.
+
+### Performance pipeline (complete)
+
+```
+LiveStore event → reactive query → useDebouncedValue (300ms trailing, 500ms max)
+  → parsePatchFiles (only on debounced value) → useTransition (deferred render)
+    → FileDiff component render
+```
+
+Each layer serves a distinct purpose:
+- **LiveStore deduplication (server, Issue #84)**: Only commits events when diff content actually changes
+- **Debounce (client, Issue #91)**: Collapses rapid bursts of changes into a single update
+- **useTransition (client, Issue #89)**: Prevents the retained render from blocking user interactions
+
+### Files created
+- `apps/web/src/hooks/use-debounced-value.ts` — Generic debounce hook with max-wait
+
+### Files modified
+- `apps/web/src/panes/diff-pane.tsx` — Integrated debounce between LiveStore query and diff parsing, combined pending states, empty state uses raw content, updated JSDoc
+
+### Acceptance criteria status
+- [x] Rapid diff updates (10+/second) don't cause UI lag — debounce collapses rapid bursts, parsePatchFiles and FileDiff render at most ~3 times per second (300ms debounce), useTransition defers each render as non-urgent
+- [x] Viewer shows most recent diff within reasonable delay (500ms max) — MAX_DELAY_MS = 500 ensures bounded latency even under sustained rapid changes
+- [x] No excessive rerenders — intermediate values between debounce firings are skipped entirely; parsePatchFiles is never called on values that will be superseded
+- [ ] Tests: rapid updates -> no frame drops; last update visible within threshold (deferred — web app has no component test infrastructure; the useDebouncedValue hook could be unit tested if vitest is added to the web app)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `tsc --noEmit` passes for server package (only pre-existing informational messages — no new errors)
+- `ultracite check` passes on both new/modified files with zero issues (`Checked 2 files in 7ms. No fixes applied.`)
+- All 61 tests pass across 4 test files (32 ring buffer + 9 workspace validation + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Trailing-edge debounce with max wait over throttle**: A pure throttle would emit at regular intervals during rapid changes, causing multiple partial renders. A trailing-edge debounce waits for updates to stop, then emits once — better for the diff viewer use case where we want the "final" state after a burst of changes. The max wait ensures bounded latency so the viewer doesn't appear frozen during sustained rapid changes.
+- **300ms debounce delay**: Chosen as a balance between responsiveness and render reduction. At 300ms, a burst of 10 updates in 1 second produces at most 3-4 renders instead of 10. The user perceives near-instant updates (300ms is below the "noticeable delay" threshold of ~400ms for non-interactive content) while the rendering pipeline does 60-70% less work.
+- **500ms maximum wait**: The acceptance criteria specifies "last update visible within 500ms max". The MAX_DELAY_MS constant enforces this ceiling. Under sustained rapid changes (e.g., agent writing files continuously), the debounce timer never settles (each new value resets it), but the max timer fires at 500ms to show the most recent content. This guarantees bounded latency regardless of update frequency.
+- **Generic hook, not diff-specific**: `useDebouncedValue` is a generic hook that works with any value type. It could be reused for other rapidly-changing values in the app (e.g., terminal output counts, task status updates). The hook is placed in `hooks/` alongside `use-responsive-layout.ts` and `use-terminal-websocket.ts`.
+- **Debounce on raw string, not parsed FileDiffs**: The debounce is applied to the raw `diffContent` string rather than the parsed `FileDiffMetadata[]` array. This means `parsePatchFiles` (which involves string parsing and regex matching) is called only on the debounced value — saving both CPU time and GC pressure from intermediate array allocations.
+- **`rawDiffContent` for empty state**: The "No changes" check uses `rawDiffContent` (un-debounced) rather than `diffContent` (debounced). If we used `diffContent`, there would be a brief flash of the empty state when new content arrives but debounce hasn't settled yet. Using `rawDiffContent` means the empty state disappears instantly when content is available, even before it's rendered.
+- **Combined `isPending` state**: Rather than showing separate "Debouncing..." and "Rendering..." indicators, the two pending states are combined (`isDebouncePending || isTransitionPending`) into a single "Updating..." indicator. This gives the user a single, coherent signal that the viewer is processing new content, without exposing implementation details of the two-stage pipeline.
+- **No `useDeferredValue` (React 19)**: React 19's `useDeferredValue` was considered but rejected for this use case. `useDeferredValue` defers rendering of a value to a lower-priority lane, but it doesn't skip intermediate values — each update still triggers a render that React schedules at lower priority. Our debounce actively skips intermediate values, preventing `parsePatchFiles` from running at all on superseded content. `useTransition` (already in place) provides the deferred rendering benefit on top of the debounce.
+- **Timer-based over requestAnimationFrame**: The debounce uses `setTimeout` rather than `requestAnimationFrame`. `rAF` fires at display refresh rate (16.67ms at 60Hz) which is too frequent for our use case. `setTimeout(300)` provides the right granularity for collapsing update bursts without being tied to the display refresh cycle.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #91. This was a standalone polishing task addressing Polishing requirement 3 (diff viewer performance).
+

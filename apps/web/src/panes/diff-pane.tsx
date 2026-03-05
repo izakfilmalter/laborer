@@ -23,6 +23,24 @@
  *    new diff content arrives, then fades out after 1.5 seconds
  * 8. The `lastUpdated` timestamp is displayed at the bottom of the diff
  *
+ * ## Debounce/throttle for rapid changes (Issue #91)
+ *
+ * When an agent makes rapid file changes, the DiffService may commit
+ * multiple `DiffUpdated` events in quick succession. To prevent excessive
+ * re-renders and UI lag, the diff content is debounced via `useDebouncedValue`:
+ *
+ * - Trailing-edge debounce with 300ms delay: intermediate values are skipped,
+ *   only the latest value is rendered after updates settle
+ * - Maximum wait of 500ms: even under sustained rapid changes, the viewer
+ *   shows recent content within 500ms (meeting the acceptance criteria)
+ * - `useTransition` is layered on top: after debounce emits, the expensive
+ *   FileDiff re-render is deferred so it doesn't block user interactions
+ * - The "debounce pending" and "transition pending" states are combined into
+ *   a single "Updating..." indicator for a clean UX
+ *
+ * Performance pipeline: LiveStore event → reactive query → debounce (300ms)
+ * → parsePatchFiles → useTransition (deferred) → FileDiff render
+ *
  * ## Click-to-open file (Issue #112)
  *
  * Each file in the diff viewer has a clickable "Open" button in its header.
@@ -34,6 +52,7 @@
  * @see packages/shared/src/schema.ts (diffs table, DiffUpdated event)
  * @see Issue #87: Diff viewer pane — render with @pierre/diffs
  * @see Issue #89: Diff viewer — live update
+ * @see Issue #91: Diff viewer debounce/throttle for rapid changes
  * @see Issue #112: Click-to-open file from diff viewer
  */
 
@@ -62,6 +81,7 @@ import {
 	EmptyTitle,
 } from "@/components/ui/empty";
 import { Spinner } from "@/components/ui/spinner";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { extractErrorMessage } from "@/lib/utils";
 import { useLaborerStore } from "@/livestore/store";
 
@@ -178,13 +198,28 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 		);
 	}, [diffRows, workspaceId]);
 
-	const diffContent = diffRow?.diffContent ?? "";
+	const rawDiffContent = diffRow?.diffContent ?? "";
 	const lastUpdated = diffRow?.lastUpdated ?? "";
+
+	// --- Debounce diff content for rapid changes (Issue #91) ---
+	// When the DiffService commits multiple DiffUpdated events in quick
+	// succession (agent making rapid file changes between 2-second polls),
+	// debounce the raw diff content to prevent excessive parsePatchFiles
+	// calls and FileDiff re-renders. Trailing-edge debounce with 300ms
+	// delay and 500ms max wait ensures the viewer shows recent content
+	// within the acceptance criteria threshold.
+	const [diffContent, isDebouncePending] = useDebouncedValue(
+		rawDiffContent,
+		300
+	);
 
 	// --- Parse the raw git diff into per-file diff metadata ---
 	// parsePatchFiles handles multi-file diffs correctly, returning an array
 	// of ParsedPatch objects, each with a .files array of FileDiffMetadata.
 	// PatchDiff only supports single-file patches and throws on multi-file input.
+	// Parsing runs on the debounced content, so rapid intermediate values
+	// are skipped entirely — parsePatchFiles is never called on values that
+	// will be superseded within 300ms.
 	const fileDiffs = useMemo(() => {
 		if (!diffContent) {
 			return [];
@@ -197,8 +232,14 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 	// FileDiff can be expensive to re-render for large diffs (shiki highlighting,
 	// hunk parsing, DOM diffing). useTransition marks the re-render as non-urgent
 	// so it doesn't block user interactions (scrolling, typing in terminals, etc.).
-	const [isPending, startTransition] = useTransition();
+	// This is layered on top of the debounce: debounce prevents redundant parsing,
+	// useTransition prevents the retained render from blocking the UI thread.
+	const [isTransitionPending, startTransition] = useTransition();
 	const [deferredFileDiffs, setDeferredFileDiffs] = useState(fileDiffs);
+
+	// Combined pending state: either debounce hasn't settled or transition
+	// hasn't committed. Shown as a single "Updating..." indicator.
+	const isPending = isDebouncePending || isTransitionPending;
 
 	useEffect(() => {
 		startTransition(() => {
@@ -348,9 +389,11 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 	}
 
 	// --- Empty state ---
-	// When diffRow exists but diffContent is empty, the DiffService polled
+	// When diffRow exists but rawDiffContent is empty, the DiffService polled
 	// and found no changes — genuinely no file modifications in this workspace.
-	if (!diffContent) {
+	// Uses rawDiffContent (not debounced diffContent) to avoid briefly showing
+	// the empty state while the debounce timer settles after new content arrives.
+	if (!rawDiffContent) {
 		return (
 			<div className="flex h-full w-full items-center justify-center bg-background">
 				<Empty>

@@ -920,7 +920,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 162 | ~~Origin-aware destroy behavior~~ | ~~#160~~ | Done |
 | 163 | Worktree detection polish & edge cases | #161, #162 | Blocked |
 | 164 | Sidebar max-width removal | None | Ready |
-| 165 | Workspace card two-row header + text clamping | None | Ready |
+| 165 | ~~Workspace card two-row header + text clamping~~ | ~~None~~ | Done |
 | 166 | Detected worktree feature parity | None | Ready |
 | 167 | Sidebar & workspace card polish | #164, #165, #166 | Blocked |
 
@@ -1180,7 +1180,9 @@ None — can start immediately
 
 ---
 
-## Issue 165: Workspace card two-row header + text clamping
+## ~~Issue 165: Workspace card two-row header + text clamping~~ ✅ DONE
+
+### Status: Done
 
 ### Parent PRD
 
@@ -1192,24 +1194,28 @@ Restructure the `WorkspaceItem` card header from a single-row layout (branch nam
 
 ### Acceptance criteria
 
-- [ ] Card header is split into two distinct rows: info row and action row
-- [ ] Row 1 contains GitBranch icon, branch name, optional "Detected" badge, and status badge
-- [ ] Status badge is right-aligned on Row 1
-- [ ] Row 2 contains all action buttons with `flex-wrap`
-- [ ] Branch name uses `line-clamp-2` instead of `truncate` — wraps up to 2 lines before ellipsis
-- [ ] Worktree path uses `line-clamp-2` instead of `truncate` — wraps up to 2 lines before ellipsis
-- [ ] Branch names with `/` separators wrap at reasonable break points
-- [ ] Card layout looks correct at minimum sidebar width (~220px) and wide sidebar (800px+)
-- [ ] Short branch names render without unnecessary clamping
-- [ ] Action buttons wrap naturally at narrow widths without overflowing the card
+- [x] Card header is split into two distinct rows: info row and action row
+- [x] Row 1 contains GitBranch icon, branch name, optional "Detected" badge, and status badge
+- [x] Status badge is right-aligned on Row 1
+- [x] Row 2 contains all action buttons with `flex-wrap`
+- [x] Branch name uses `line-clamp-2` instead of `truncate` — wraps up to 2 lines before ellipsis
+- [x] Worktree path uses `line-clamp-2` instead of `truncate` — wraps up to 2 lines before ellipsis
+- [x] Branch names with `/` separators wrap at reasonable break points
+- [x] Card layout looks correct at minimum sidebar width (~220px) and wide sidebar (800px+)
+- [x] Short branch names render without unnecessary clamping
+- [x] Action buttons wrap naturally at narrow widths without overflowing the card
 
 ### Blocked by
 
-None — can start immediately
+~~None — can start immediately~~
 
 ### User stories addressed
 
 - User story 4, 5, 6, 7, 8, 18
+
+### Status: Done
+
+Reworked each workspace card header into an info row and action row. The info row now keeps branch identity, optional "Detected" label, and status badge aligned without button crowding. The action row now wraps all workflow and terminal controls naturally at narrow sidebar widths. Branch name and worktree path text were upgraded from single-line truncation to 2-line clamping with `break-all` to handle slash-heavy branch names cleanly.
 
 ---
 
@@ -1280,7 +1286,7 @@ End-to-end verification and polish pass for the sidebar max-width removal, works
 
 ### Blocked by
 
-- Blocked by #164, #165, #166
+- Blocked by #164, ~~#165~~, #166
 
 ### User stories addressed
 

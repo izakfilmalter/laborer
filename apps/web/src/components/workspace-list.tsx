@@ -11,7 +11,8 @@
  * Updates reactively when workspace state changes.
  * Includes a destroy button with confirmation dialog per workspace.
  * Includes rlph action buttons (Start Ralph Loop, Write PRD, Review PR,
- * Fix Findings) per active workspace for triggering agent workflows.
+ * Fix Findings) on every non-destroyed workspace for triggering agent
+ * workflows.
  *
  * When no workspaces exist (all destroyed or none created), shows an empty
  * state with guidance text and a CTA button to create the first workspace.
@@ -170,8 +171,6 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 		mode: "promise",
 	});
 	const panelActions = usePanelActions();
-	const isActive =
-		workspace.status === "running" || workspace.status === "creating";
 	const isDetectedWorkspace =
 		(workspace.origin as WorkspaceOrigin) === "external";
 
@@ -215,155 +214,147 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 	return (
 		<Card size="sm">
 			<Collapsible onOpenChange={setIsOpen} open={isOpen}>
-				<CardHeader>
+				<CardHeader className="gap-2">
 					<div className="flex items-start justify-between gap-2">
-						<div className="min-w-0">
-							<CardTitle className="flex items-center gap-2">
-								<GitBranch className="size-4 shrink-0 text-muted-foreground" />
-								<span className="truncate font-mono text-sm">
+						<div className="flex min-w-0 items-start gap-2">
+							<GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+							<CardTitle className="min-w-0">
+								<span className="line-clamp-2 break-all font-mono text-sm">
 									{workspace.branchName}
 								</span>
-								{isDetectedWorkspace && (
-									<span className="font-mono text-[10px] text-muted-foreground uppercase">
-										Detected
-									</span>
-								)}
 							</CardTitle>
-							<CardDescription>{projectName}</CardDescription>
+							{isDetectedWorkspace && (
+								<span className="shrink-0 pt-0.5 font-mono text-[10px] text-muted-foreground uppercase">
+									Detected
+								</span>
+							)}
 						</div>
-						<div className="flex items-center gap-1">
-							<Badge
+						<Badge
+							className={cn(
+								"shrink-0 border",
+								getStatusClasses(workspace.status)
+							)}
+							variant="outline"
+						>
+							<StatusDot status={workspace.status} />
+							{workspace.status}
+						</Badge>
+					</div>
+					<CardDescription>{projectName}</CardDescription>
+					<div className="flex flex-wrap items-center gap-1">
+						<WritePrdForm
+							onTerminalSpawned={() => setIsOpen(true)}
+							workspaceId={workspace.id}
+						/>
+						<Button
+							aria-label="Start ralph loop"
+							disabled={isStartingLoop}
+							onClick={handleStartLoop}
+							size="icon-xs"
+							title="Start Ralph Loop (rlph --once)"
+							variant="ghost"
+						>
+							<Play
 								className={cn(
-									"shrink-0 border",
-									getStatusClasses(workspace.status)
+									"size-3.5",
+									isStartingLoop
+										? "animate-pulse text-muted-foreground"
+										: "text-success"
 								)}
-								variant="outline"
-							>
-								<StatusDot status={workspace.status} />
-								{workspace.status}
-							</Badge>
-							{isActive && (
-								<WritePrdForm
-									onTerminalSpawned={() => setIsOpen(true)}
-									workspaceId={workspace.id}
-								/>
-							)}
-							{isActive && (
+							/>
+						</Button>
+						<ReviewPrForm
+							onTerminalSpawned={() => setIsOpen(true)}
+							workspaceId={workspace.id}
+						/>
+						<FixFindingsForm
+							onTerminalSpawned={() => setIsOpen(true)}
+							workspaceId={workspace.id}
+						/>
+						<CollapsibleTrigger
+							render={
 								<Button
-									aria-label="Start ralph loop"
-									disabled={isStartingLoop}
-									onClick={handleStartLoop}
+									aria-label={isOpen ? "Hide terminals" : "Show terminals"}
 									size="icon-xs"
-									title="Start Ralph Loop (rlph --once)"
 									variant="ghost"
-								>
-									<Play
-										className={cn(
-											"size-3.5",
-											isStartingLoop
-												? "animate-pulse text-muted-foreground"
-												: "text-success"
-										)}
-									/>
-								</Button>
-							)}
-							{isActive && (
-								<ReviewPrForm
-									onTerminalSpawned={() => setIsOpen(true)}
-									workspaceId={workspace.id}
 								/>
-							)}
-							{isActive && (
-								<FixFindingsForm
-									onTerminalSpawned={() => setIsOpen(true)}
-									workspaceId={workspace.id}
-								/>
-							)}
-							{isActive && (
-								<CollapsibleTrigger
-									render={
-										<Button
-											aria-label={isOpen ? "Hide terminals" : "Show terminals"}
-											size="icon-xs"
-											variant="ghost"
-										/>
-									}
-								>
-									<ChevronDown
-										className={cn(
-											"size-3.5 transition-transform",
-											isOpen && "rotate-180"
-										)}
+							}
+						>
+							<ChevronDown
+								className={cn(
+									"size-3.5 transition-transform",
+									isOpen && "rotate-180"
+								)}
+							/>
+						</CollapsibleTrigger>
+						<AlertDialog onOpenChange={setDialogOpen} open={dialogOpen}>
+							<AlertDialogTrigger
+								render={
+									<Button
+										aria-label={`Destroy workspace ${workspace.branchName}`}
+										size="icon-xs"
+										variant="ghost"
 									/>
-								</CollapsibleTrigger>
-							)}
-							<AlertDialog onOpenChange={setDialogOpen} open={dialogOpen}>
-								<AlertDialogTrigger
-									render={
-										<Button
-											aria-label={`Destroy workspace ${workspace.branchName}`}
-											size="icon-xs"
-											variant="ghost"
-										/>
-									}
-								>
-									<Trash2 className="size-3.5 text-muted-foreground" />
-								</AlertDialogTrigger>
-								<AlertDialogContent>
-									<AlertDialogHeader>
-										<AlertDialogTitle>Destroy workspace?</AlertDialogTitle>
-										<AlertDialogDescription>
-											{isDetectedWorkspace ? (
-												<>
-													This will remove workspace{" "}
-													<strong className="font-mono text-foreground">
-														{workspace.branchName}
-													</strong>{" "}
-													from Laborer. Running processes in this workspace will
-													be stopped and any allocated port will be freed, but
-													the git worktree on disk at{" "}
-													<strong className="font-mono text-foreground">
-														{workspace.worktreePath}
-													</strong>{" "}
-													will not be changed.
-												</>
-											) : (
-												<>
-													This will permanently destroy workspace{" "}
-													<strong className="font-mono text-foreground">
-														{workspace.branchName}
-													</strong>
-													. All running processes (terminals, dev servers,
-													agents) will be killed, the git worktree will be
-													removed, and the allocated port will be freed. This
-													action cannot be undone.
-												</>
-											)}
-										</AlertDialogDescription>
-									</AlertDialogHeader>
-									<AlertDialogFooter>
-										<AlertDialogCancel>Cancel</AlertDialogCancel>
-										<AlertDialogAction
-											disabled={isDestroying}
-											onClick={handleDestroy}
-											variant="destructive"
-										>
-											{isDestroying ? "Destroying..." : "Destroy"}
-										</AlertDialogAction>
-									</AlertDialogFooter>
-								</AlertDialogContent>
-							</AlertDialog>
-						</div>
+								}
+							>
+								<Trash2 className="size-3.5 text-muted-foreground" />
+							</AlertDialogTrigger>
+							<AlertDialogContent>
+								<AlertDialogHeader>
+									<AlertDialogTitle>Destroy workspace?</AlertDialogTitle>
+									<AlertDialogDescription>
+										{isDetectedWorkspace ? (
+											<>
+												This will remove workspace{" "}
+												<strong className="font-mono text-foreground">
+													{workspace.branchName}
+												</strong>{" "}
+												from Laborer. Running processes in this workspace will
+												be stopped and any allocated port will be freed, but the
+												git worktree on disk at{" "}
+												<strong className="font-mono text-foreground">
+													{workspace.worktreePath}
+												</strong>{" "}
+												will not be changed.
+											</>
+										) : (
+											<>
+												This will permanently destroy workspace{" "}
+												<strong className="font-mono text-foreground">
+													{workspace.branchName}
+												</strong>
+												. All running processes (terminals, dev servers, agents)
+												will be killed, the git worktree will be removed, and
+												the allocated port will be freed. This action cannot be
+												undone.
+											</>
+										)}
+									</AlertDialogDescription>
+								</AlertDialogHeader>
+								<AlertDialogFooter>
+									<AlertDialogCancel>Cancel</AlertDialogCancel>
+									<AlertDialogAction
+										disabled={isDestroying}
+										onClick={handleDestroy}
+										variant="destructive"
+									>
+										{isDestroying ? "Destroying..." : "Destroy"}
+									</AlertDialogAction>
+								</AlertDialogFooter>
+							</AlertDialogContent>
+						</AlertDialog>
 					</div>
 				</CardHeader>
 				<CardContent>
-					<div className="flex items-center gap-3 text-muted-foreground text-xs">
+					<div className="flex items-start gap-3 text-muted-foreground text-xs">
 						{workspace.port > 0 && (
 							<span>
 								Port: <span className="font-mono">{workspace.port}</span>
 							</span>
 						)}
-						<span className="truncate font-mono">{workspace.worktreePath}</span>
+						<span className="line-clamp-2 break-all font-mono">
+							{workspace.worktreePath}
+						</span>
 					</div>
 					{workspace.status === "creating" && (
 						<div className="mt-2 flex items-center gap-2 text-warning text-xs">
@@ -371,13 +362,11 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 							Setting up workspace...
 						</div>
 					)}
-					{isActive && (
-						<CollapsibleContent>
-							<div className="mt-2 border-t pt-2">
-								<TerminalList workspaceId={workspace.id} />
-							</div>
-						</CollapsibleContent>
-					)}
+					<CollapsibleContent>
+						<div className="mt-2 border-t pt-2">
+							<TerminalList workspaceId={workspace.id} />
+						</div>
+					</CollapsibleContent>
 				</CardContent>
 			</Collapsible>
 		</Card>

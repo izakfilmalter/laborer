@@ -3960,3 +3960,40 @@ Implemented and validated server-side RPC handler tests for `config.get` and `co
 - `bun test packages/server/test/rpc-config-handlers.test.ts` passes (4 tests).
 - `bun run --cwd packages/server test` passes (14 files, 121 passed, 6 skipped).
 - `bun x ultracite check packages/server/src/rpc/handlers.ts packages/server/test/rpc-config-handlers.test.ts` passes.
+
+## Issue #165: Workspace card two-row header + text clamping — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Why this next
+Picked Issue #165 as the highest-priority ready UI task because it directly improves workspace card readability at narrow sidebar widths and unblocks the final sidebar polish pass (#167) without depending on backend changes.
+
+### Summary
+Restructured the workspace card header into a two-row layout so metadata and controls no longer compete for horizontal space. Branch/worktree text now uses two-line clamping with hard-wrap support for slash-heavy monospace strings, and action controls wrap cleanly on small widths.
+
+### What was done
+
+1. **Reworked workspace header layout** in `apps/web/src/components/workspace-list.tsx`
+   - Split header into an info row and action row.
+   - Info row now contains branch icon, branch name, optional `Detected` label, and right-aligned status badge.
+   - Kept project name (`CardDescription`) directly below the info row.
+
+2. **Moved all controls into a wrapping action row**
+   - Action row uses `flex flex-wrap` and includes: Write PRD, Start Ralph Loop, Review PR, Fix Findings, terminal expand/collapse, and destroy.
+   - Preserved existing handlers, toasts, and behavior; only layout changed.
+
+3. **Upgraded text overflow handling for branch/path**
+   - Replaced single-line truncation with `line-clamp-2` for branch name and worktree path.
+   - Added `break-all` for slash-dense branch names and long filesystem paths to prevent overflow.
+   - Updated path metadata row to `items-start` so multi-line clamped text renders cleanly.
+
+4. **Updated issue tracking in `issues.md`**
+   - Marked Issue #165 as done in the section and summary table.
+   - Checked all acceptance criteria.
+   - Updated Issue #167 blocked-by list to strike through `#165`.
+
+### Verification
+- `bun x ultracite check apps/web/src/components/workspace-list.tsx` passes.
+- `bun --filter web test` passes (3 files, 41 tests).
+- `bun --filter web check-types` still fails with pre-existing errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new errors from this change.

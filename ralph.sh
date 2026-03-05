@@ -11,7 +11,7 @@ fi
 # For each iteration, run Claude Code with the following prompt.
 # This prompt is basic, we'll expand it later.
 for ((i=1; i<=$1; i++)); do
-  result=$(opencode --model anthropic/claude-opus-4-6 run \
+  result=$(opencode --model openai/gpt-5.3-codex run \
 "@PRD.md @issues.md @progress-3.txt \
 1. Decide which task to work on next from issues.md. \
 This should be the one YOU decide has the highest priority, \

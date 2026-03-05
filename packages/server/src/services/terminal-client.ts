@@ -20,7 +20,7 @@
 import { FetchHttpClient } from "@effect/platform";
 import { RpcClient, RpcSerialization } from "@effect/rpc";
 import { RpcError, TerminalRpcs } from "@laborer/shared/rpc";
-import { events, tables } from "@laborer/shared/schema";
+import { tables } from "@laborer/shared/schema";
 import {
 	Array as Arr,
 	Context,
@@ -129,7 +129,7 @@ class TerminalClient extends Context.Tag("@laborer/TerminalClient")<
 			// Subscribe to terminal lifecycle events from the terminal service.
 			// This stream runs as a background daemon fiber for the lifetime
 			// of this layer's scope. It keeps the workspace→terminal map in
-			// sync and also commits LiveStore events so the UI stays reactive.
+			// sync.
 			yield* rpcClient.terminal.events().pipe(
 				Stream.tap((event) =>
 					Effect.gen(function* () {
@@ -139,38 +139,12 @@ class TerminalClient extends Context.Tag("@laborer/TerminalClient")<
 								next.set(event.id, event.workspaceId);
 								return next;
 							});
-							store.commit(
-								events.terminalSpawned({
-									id: event.id,
-									workspaceId: event.workspaceId,
-									command: event.command,
-									status: event.status,
-									ptySessionRef: event.id,
-								})
-							);
-						} else if (event._tag === "StatusChanged") {
-							store.commit(
-								events.terminalStatusChanged({
-									id: event.id,
-									status: event.status,
-								})
-							);
-						} else if (event._tag === "Exited") {
-							store.commit(
-								events.terminalStatusChanged({
-									id: event.id,
-									status: "stopped",
-								})
-							);
 						} else if (event._tag === "Removed") {
 							yield* Ref.update(terminalMapRef, (map) => {
 								const next = new Map(map);
 								next.delete(event.id);
 								return next;
 							});
-							store.commit(events.terminalRemoved({ id: event.id }));
-						} else if (event._tag === "Restarted") {
-							store.commit(events.terminalRestarted({ id: event.id }));
 						}
 					})
 				),
@@ -192,49 +166,6 @@ class TerminalClient extends Context.Tag("@laborer/TerminalClient")<
 			yield* Effect.log(
 				`Connected to terminal service at ${terminalServiceUrl}`
 			).pipe(Effect.annotateLogs("module", logPrefix));
-
-			// Stale terminal cleanup on startup — mark orphaned "running"
-			// terminals in LiveStore as "stopped".
-			const staleTerminals = pipe(
-				store.query(tables.terminals),
-				Arr.filter((t) => t.status === "running")
-			);
-			if (staleTerminals.length > 0) {
-				const actualTerminals = yield* rpcClient.terminal
-					.list()
-					.pipe(
-						Effect.catchAll(() =>
-							Effect.succeed(
-								[] as ReadonlyArray<{ id: string; status: string }>
-							)
-						)
-					);
-				const actualRunningIds = new Set(
-					pipe(
-						[...actualTerminals],
-						Arr.filter((t) => t.status === "running"),
-						Arr.map((t) => t.id)
-					)
-				);
-
-				let cleanedCount = 0;
-				for (const terminal of staleTerminals) {
-					if (!actualRunningIds.has(terminal.id)) {
-						store.commit(
-							events.terminalStatusChanged({
-								id: terminal.id,
-								status: "stopped",
-							})
-						);
-						cleanedCount += 1;
-					}
-				}
-				if (cleanedCount > 0) {
-					yield* Effect.log(
-						`Cleaned up ${cleanedCount} stale terminal(s) from previous session`
-					).pipe(Effect.annotateLogs("module", logPrefix));
-				}
-			}
 
 			const defaultShell = process.env.SHELL ?? "/bin/sh";
 

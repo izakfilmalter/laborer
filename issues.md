@@ -484,6 +484,8 @@ Replaced all `queryDb(terminals, ...)` LiveStore subscriptions in `terminal-list
 
 ## Issue 145: LiveStore terminal schema deprecation
 
+### Status: In Progress
+
 ### Parent PRD
 
 PRD-terminal-extraction.md
@@ -494,12 +496,18 @@ Deprecate all terminal-related events and remove the `terminals` table from the 
 
 ### Acceptance criteria
 
-- [ ] All terminal event materializers are no-ops (return empty arrays)
-- [ ] `terminals` table is removed from the active schema state
+- [x] All terminal event materializers are no-ops (return empty arrays)
+- [x] `terminals` table is removed from the active schema state
 - [ ] No code commits terminal events to LiveStore anywhere in the codebase
 - [ ] App starts cleanly with existing eventlogs that contain old terminal events
 - [ ] No `queryDb(terminals, ...)` calls exist anywhere in the codebase
 - [ ] `v1.TerminalOutput` no-op pattern is followed for all deprecated events
+
+### Progress update (2026-03-05)
+
+- [x] All terminal event materializers are now no-ops in `packages/shared/src/schema.ts`
+- [x] Active LiveStore state now excludes the terminal table (`activeTables` used for `makeState`)
+- [ ] Remaining: remove deprecated terminal event commits from legacy server terminal modules and verify clean startup against existing eventlogs
 
 ### Blocked by
 
@@ -902,7 +910,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 142 | ~~Terminal event stream RPC~~ | ~~#139~~ | Done |
 | 143 | ~~Server TerminalClient + remove server terminal modules~~ | ~~#142~~ | Done |
 | 144 | ~~Web app LiveStore terminal query replacement~~ | ~~#141~~, ~~#143~~ | Done |
-| 145 | LiveStore terminal schema deprecation | ~~#144~~ | Ready |
+| 145 | LiveStore terminal schema deprecation | ~~#144~~ | In Progress |
 | 146 | Grace period reconnection + orphan detection | ~~#140~~ | Ready |
 | 147 | Terminal extraction polish + integration verification | ~~#144~~, #145, #146 | Blocked |
 | 148 | ~~Focused pane border fix~~ | ~~None~~ | Done |

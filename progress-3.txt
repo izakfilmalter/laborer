@@ -3296,3 +3296,49 @@ Finished the remaining acceptance criteria for Issue #159 by expanding the serve
 ### Verification
 - `bun test packages/server/test/worktree-detector.test.ts packages/server/test/worktree-reconciler.test.ts packages/server/test/project-registry.worktree-detection.test.ts`: pass (16 tests)
 - `bun run check-types` in `packages/server`: passes with pre-existing Effect plugin warnings/messages only; no new type errors from this change
+
+## Issue #145: LiveStore terminal schema deprecation — IN PROGRESS
+
+**Status:** In Progress
+**Date:** 2026-03-05
+
+### Summary
+Started Issue #145 as the highest-priority ready dependency for terminal extraction polish (#147). This slice moves terminal lifecycle state out of LiveStore's active materialized state while preserving backward compatibility for older eventlogs.
+
+### What was done
+
+1. **Deprecated terminal materializers in shared schema** (`packages/shared/src/schema.ts`)
+   - Converted these materializers to no-ops (`() => []`):
+     - `v1.TerminalSpawned`
+     - `v1.TerminalStatusChanged`
+     - `v1.TerminalKilled`
+     - `v1.TerminalRemoved`
+     - `v1.TerminalRestarted`
+   - `v1.TerminalOutput` was already no-op from prior work and remains unchanged.
+
+2. **Removed terminal table from active LiveStore state** (`packages/shared/src/schema.ts`)
+   - Introduced `activeTables` and wired `State.SQLite.makeState({ tables: activeTables, materializers })`.
+   - `activeTables` includes: `projects`, `workspaces`, `diffs`, `tasks`, `panelLayout`.
+   - Kept the legacy `terminals` table definition/export for compatibility with older modules/tests, but it is no longer part of active materialization.
+
+3. **Stopped terminal event commits in active server terminal path** (`packages/server/src/services/terminal-client.ts`)
+   - Removed LiveStore commits for terminal lifecycle events from the `terminal.events()` subscriber.
+   - Subscriber now only maintains the in-memory terminal→workspace map used by `killAllForWorkspace`.
+   - Removed stale-terminal LiveStore reconciliation block that queried `tables.terminals`.
+
+4. **Updated server store startup/shutdown diagnostics** (`packages/server/src/services/laborer-store.ts`)
+   - Removed terminal-row counting from startup and shutdown log summaries to align with terminal schema deprecation.
+
+5. **Updated issue tracking** (`issues.md`)
+   - Issue #145 marked **In Progress**.
+   - Summary table row for #145 updated from Ready → In Progress.
+   - Added progress bullets reflecting completed vs remaining acceptance criteria.
+
+### Verification
+- `bun run -F @laborer/shared check-types`: passes (exit 0; only pre-existing Effect plugin informational messages)
+- `bun run -F @laborer/server check-types`: exits non-zero due pre-existing Effect plugin warnings/messages in untouched files; no new terminal-schema-specific type errors introduced by this slice
+- `bun x ultracite check packages/shared/src/schema.ts packages/server/src/services/terminal-client.ts packages/server/src/services/laborer-store.ts`: clean
+
+### Remaining for Issue #145
+- Remove deprecated terminal event commits from legacy server terminal modules (`terminal-manager.ts`) so no terminal event commits remain anywhere in server code.
+- Verify startup against an existing eventlog containing historical terminal events after this schema change.

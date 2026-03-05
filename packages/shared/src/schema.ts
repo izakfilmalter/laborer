@@ -330,15 +330,12 @@ const materializers = State.SQLite.materializers(events, {
 	"v1.WorkspaceStatusChanged": ({ id, status }) =>
 		workspaces.update({ status }).where({ id }),
 	"v1.WorkspaceDestroyed": ({ id }) => workspaces.delete().where({ id }),
-	"v1.TerminalSpawned": ({ id, workspaceId, command, status, ptySessionRef }) =>
-		terminals.insert({ id, workspaceId, command, status, ptySessionRef }),
+	"v1.TerminalSpawned": () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)
 	"v1.TerminalOutput": () => [], // @deprecated — no-op materializer retained for backward compat (Issue #143)
-	"v1.TerminalStatusChanged": ({ id, status }) =>
-		terminals.update({ status }).where({ id }),
-	"v1.TerminalKilled": ({ id }) => terminals.delete().where({ id }),
-	"v1.TerminalRemoved": ({ id }) => terminals.delete().where({ id }),
-	"v1.TerminalRestarted": ({ id }) =>
-		terminals.update({ status: "running" }).where({ id }),
+	"v1.TerminalStatusChanged": () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)
+	"v1.TerminalKilled": () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)
+	"v1.TerminalRemoved": () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)
+	"v1.TerminalRestarted": () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)
 	"v1.DiffUpdated": ({ workspaceId, diffContent, lastUpdated }) =>
 		diffs
 			.insert({ workspaceId, diffContent, lastUpdated })
@@ -380,10 +377,24 @@ export const tables = {
 	panelLayout,
 };
 
+/**
+ * Active schema tables (Issue #145): terminal state moved out of LiveStore.
+ * Keep the legacy `terminals` table definition exported for backward
+ * compatibility in tests/older modules, but do not register it in the active
+ * LiveStore state.
+ */
+const activeTables = {
+	projects,
+	workspaces,
+	diffs,
+	tasks,
+	panelLayout,
+};
+
 // ---------------------------------------------------------------------------
 // State & Schema
 // ---------------------------------------------------------------------------
 
-const state = State.SQLite.makeState({ tables, materializers });
+const state = State.SQLite.makeState({ tables: activeTables, materializers });
 
 export const schema = makeSchema({ events, state });

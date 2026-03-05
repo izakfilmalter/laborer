@@ -7,8 +7,8 @@
  * the LiveStore context to all server services.
  *
  * The store persists events to `./data/<storeId>/` by default, ensuring
- * state survives server restarts. All 6 LiveStore tables (projects,
- * workspaces, terminals, diffs, tasks, panelLayout) are available for
+ * state survives server restarts. LiveStore tables (projects,
+ * workspaces, diffs, tasks, panelLayout) are available for
  * querying and event commits.
  *
  * Persistence & Shutdown (Issue #129):
@@ -154,13 +154,12 @@ const makeStore = Effect.gen(function* () {
 	// This confirms state was successfully restored from the previous session.
 	const projectCount = store.query(tables.projects).length;
 	const workspaceCount = store.query(tables.workspaces).length;
-	const terminalCount = store.query(tables.terminals).length;
 	const taskCount = store.query(tables.tasks).length;
 
 	yield* Effect.logInfo(
 		`${logPrefix} Store initialized — restored from SQLite: ` +
 			`${projectCount} project(s), ${workspaceCount} workspace(s), ` +
-			`${terminalCount} terminal(s), ${taskCount} task(s)`
+			`${taskCount} task(s)`
 	);
 
 	// --- Shutdown finalizer: flush and close LiveStore (Issue #129) ---
@@ -179,13 +178,12 @@ const makeStore = Effect.gen(function* () {
 			// Log final entity counts before shutdown for post-mortem verification
 			const finalProjects = store.query(tables.projects).length;
 			const finalWorkspaces = store.query(tables.workspaces).length;
-			const finalTerminals = store.query(tables.terminals).length;
 			const finalTasks = store.query(tables.tasks).length;
 
 			yield* Effect.logInfo(
 				`${logPrefix} Shutdown: final state — ` +
 					`${finalProjects} project(s), ${finalWorkspaces} workspace(s), ` +
-					`${finalTerminals} terminal(s), ${finalTasks} task(s)`
+					`${finalTasks} task(s)`
 			);
 
 			// Call store.shutdown() to flush pending writes and close the

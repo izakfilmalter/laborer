@@ -852,3 +852,50 @@ Replaced the TerminalPane's LiveStore event subscription with a direct WebSocket
 - Issue #141: Character-count flow control — server side (was blocked by #137 and #139 — #139 now done, still blocked by #137)
 - Issue #142: Client-side flow control acks (was blocked by #140 and #141 — #140 now done, still blocked by #141)
 - Issue #143: Deprecate terminalOutput from LiveStore hot path (was blocked by #140 — now unblocked!)
+
+## Issue #143: Deprecate terminalOutput from LiveStore hot path — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Removed `store.commit(events.terminalOutput(...))` calls from TerminalManager's PTY data callbacks (both `spawn` and `restart` methods). Terminal output now flows exclusively through the dedicated WebSocket channel (Issue #139/#140). The `terminalOutput` event definition and its no-op materializer are retained in the LiveStore schema for backward compatibility with existing eventlog data.
+
+### What was done
+
+1. **`packages/server/src/services/terminal-manager.ts`**:
+   - Removed `store.commit(events.terminalOutput({ id, data }))` from the `spawn` method's data callback (was line 451). The callback now only writes to the ring buffer and notifies WebSocket subscribers.
+   - Removed `store.commit(events.terminalOutput({ id: terminalId, data }))` from the `restart` method's data callback (was line 725). Same two-path data flow as spawn.
+   - Updated data callback comments to document that terminal output flows exclusively through the WebSocket channel per Issue #143.
+   - Updated module JSDoc: changed "stdout → LiveStore events + ring buffer + WebSocket subscribers" to "stdout → ring buffer + WebSocket subscribers (LiveStore deprecated, Issue #143)".
+   - Updated Issue #51 JSDoc reference to note LiveStore deprecation.
+
+2. **`packages/shared/src/schema.ts`**:
+   - Added `@deprecated` JSDoc comment to the `terminalOutput` event definition explaining that it is no longer committed by TerminalManager, and is retained only for backward compatibility with existing eventlog data.
+   - Added inline deprecation comment to the `"v1.TerminalOutput": () => []` materializer line.
+
+### Performance impact
+- **Eliminated SQLite writes per PTY data chunk**: Every byte of terminal output was previously serialized, committed to LiveStore's event log, and persisted to SQLite. For a terminal producing 1MB of output, this meant thousands of SQLite INSERT operations. Now zero.
+- **Eliminated LiveStore sync overhead**: Terminal output events were synced from server to client via WebSocket LiveStore sync, adding serialization/deserialization overhead on the sync path. Now terminal data goes directly via the dedicated WebSocket channel with no intermediary.
+- **Reduced eventlog size**: The eventlog no longer grows proportionally to terminal output volume. Over a session with multiple active terminals, this could save hundreds of MB in the SQLite database.
+
+### Verification
+- `tsc --noEmit` passes for both server and shared packages (no new type errors — only pre-existing Effect plugin informational messages)
+- `ultracite check` passes on both modified files with zero errors (one pre-existing biome-ignore suppression warning)
+- All 46 tests pass across 3 test files (32 ring buffer + 8 PTY host + 6 terminal manager — no regressions)
+
+### Acceptance criteria status
+- [x] TerminalManager no longer commits `terminalOutput` events to LiveStore (removed from both `spawn` and `restart` data callbacks)
+- [x] `terminalOutput` event definition kept in schema (marked as @deprecated via JSDoc comment)
+- [x] Terminal lifecycle events still committed to LiveStore and synced correctly (`terminalSpawned`, `terminalStatusChanged`, `terminalKilled`, `terminalRemoved`, `terminalRestarted` unchanged)
+- [x] LiveStore sync initialization does not break when `terminalOutput` events stop appearing (no-op materializer handles old events; new sessions simply won't produce them)
+- [x] Server memory usage lower under sustained terminal output (no SQLite writes per output chunk)
+- [x] Tests: all 46 existing tests pass without modification
+
+### Design decisions
+- Kept the `terminalOutput` event definition and its `() => []` no-op materializer in the schema rather than removing them entirely. Removing them would break materialization of any existing eventlog that contains historical `v1.TerminalOutput` events — LiveStore would encounter an unknown event type on startup. The no-op materializer is zero-cost (returns empty array, no SQL operations).
+- Did not need to update the web app's `terminal-pane.tsx` — it already uses WebSocket exclusively for terminal output (Issue #140). The only reference to `v1.TerminalOutput` in the web app is a documentation comment explaining the architecture evolution.
+- The `events` namespace import in `terminal-manager.ts` still imports the full `events` object which includes `terminalOutput`, but since it's a namespace import and `terminalOutput` is no longer called, there's no dead code issue — it's just an unused property on the imported object.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #143. This was the last issue in the "deprecate LiveStore terminal output" chain (#135 → #138 → #139 → #140 → #143).

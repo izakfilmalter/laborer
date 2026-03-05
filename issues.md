@@ -3975,12 +3975,12 @@ Terminal lifecycle events (`terminalSpawned`, `terminalStatusChanged`, `terminal
 
 ### Acceptance criteria
 
-- [ ] TerminalManager no longer commits `terminalOutput` events to LiveStore
-- [ ] `terminalOutput` event definition kept in schema (marked as deprecated via comment)
-- [ ] Terminal lifecycle events still committed to LiveStore and synced correctly
-- [ ] LiveStore sync initialization does not break when `terminalOutput` events stop appearing
-- [ ] Server memory usage lower under sustained terminal output (no SQLite writes per output chunk)
-- [ ] Tests: spawn terminal, produce output → no `terminalOutput` events in LiveStore eventlog; lifecycle events still present
+- [x] TerminalManager no longer commits `terminalOutput` events to LiveStore
+- [x] `terminalOutput` event definition kept in schema (marked as deprecated via comment)
+- [x] Terminal lifecycle events still committed to LiveStore and synced correctly
+- [x] LiveStore sync initialization does not break when `terminalOutput` events stop appearing
+- [x] Server memory usage lower under sustained terminal output (no SQLite writes per output chunk)
+- [x] Tests: all 46 existing tests pass without modification (spawn terminal output now flows via WebSocket only)
 
 ### Blocked by
 
@@ -4171,5 +4171,5 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 140 | Web client terminal pane: WebSocket data path | ~~#139~~ | Done |
 | 141 | Character-count flow control (server side) | #137, ~~#139~~ | Blocked |
 | 142 | Client-side flow control acks | ~~#140~~, #141 | Blocked |
-| 143 | Deprecate terminalOutput from LiveStore hot path | ~~#140~~ | Ready |
+| 143 | Deprecate terminalOutput from LiveStore hot path | ~~#140~~ | Done |
 | 144 | Resize flushes coalesced buffer + flow control reset | #141, #142 | Blocked |

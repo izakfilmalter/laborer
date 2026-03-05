@@ -141,6 +141,13 @@ export const terminalSpawned = Events.synced({
 	}),
 });
 
+/**
+ * @deprecated Issue #143 — Terminal output now flows exclusively through the
+ * dedicated WebSocket channel (Issue #139/#140). This event is no longer
+ * committed by TerminalManager. The definition is retained for backward
+ * compatibility with existing eventlog data (the no-op materializer `() => []`
+ * ensures old events don't break materialization).
+ */
 export const terminalOutput = Events.synced({
 	name: "v1.TerminalOutput",
 	schema: Schema.Struct({
@@ -311,7 +318,7 @@ const materializers = State.SQLite.materializers(events, {
 	"v1.WorkspaceDestroyed": ({ id }) => workspaces.delete().where({ id }),
 	"v1.TerminalSpawned": ({ id, workspaceId, command, status, ptySessionRef }) =>
 		terminals.insert({ id, workspaceId, command, status, ptySessionRef }),
-	"v1.TerminalOutput": () => [],
+	"v1.TerminalOutput": () => [], // @deprecated — no-op materializer retained for backward compat (Issue #143)
 	"v1.TerminalStatusChanged": ({ id, status }) =>
 		terminals.update({ status }).where({ id }),
 	"v1.TerminalKilled": ({ id }) => terminals.delete().where({ id }),

@@ -8,7 +8,7 @@
  *
  * Responsibilities:
  * - Terminal spawning via PtyHostClient in workspace directories
- * - I/O streaming: stdout → LiveStore events + ring buffer + WebSocket subscribers
+ * - I/O streaming: stdout → ring buffer + WebSocket subscribers (LiveStore deprecated, Issue #143)
  * - Terminal resize (cols, rows) with SIGWINCH propagation
  * - Terminal kill + resource cleanup
  * - Terminal removal (kill if running + delete from LiveStore)
@@ -31,7 +31,7 @@
  *
  * Issue #44: kill all workspace processes on destroy (killAllForWorkspace method)
  * Issue #50: spawn PTY
- * Issue #51: stream stdout to LiveStore (included — output events emitted on data)
+ * Issue #51: stream stdout (included — output via ring buffer + WebSocket subscribers; LiveStore deprecated per Issue #143)
  * Issue #52: write to stdin (included — write method sends data to PTY)
  * Issue #53: resize PTY (included — resize method updates PTY dimensions)
  * Issue #54: kill PTY (included — kill method terminates process and cleans up)
@@ -431,8 +431,10 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 						cols: 80,
 						rows: 24,
 					},
-					// Data callback: write to ring buffer, notify WebSocket subscribers,
-					// and commit to LiveStore (LiveStore commit will be removed in Issue #143)
+					// Data callback: write to ring buffer and notify WebSocket subscribers.
+					// Terminal output flows exclusively through the dedicated WebSocket
+					// channel (Issue #139/#140). LiveStore terminalOutput events are
+					// deprecated (Issue #143) — no longer committed here.
 					(data: string) => {
 						// Write to ring buffer for scrollback replay
 						bufferState.ringBuffer.write(textEncoder.encode(data));
@@ -446,9 +448,6 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 								// ignored. The subscriber will be removed via unsubscribe.
 							}
 						}
-
-						// Commit to LiveStore (still needed until Issue #143 deprecates it)
-						store.commit(events.terminalOutput({ id, data }));
 					},
 					// Exit callback: update LiveStore status and clean up
 					(_exitCode: number, _signal: number) => {
@@ -709,8 +708,10 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 						cols: 80,
 						rows: 24,
 					},
-					// Data callback: write to ring buffer, notify WebSocket subscribers,
-					// and commit to LiveStore (still needed until Issue #143)
+					// Data callback: write to ring buffer and notify WebSocket subscribers.
+					// Terminal output flows exclusively through the dedicated WebSocket
+					// channel (Issue #139/#140). LiveStore terminalOutput events are
+					// deprecated (Issue #143) — no longer committed here.
 					(data: string) => {
 						restartBufferState.ringBuffer.write(textEncoder.encode(data));
 
@@ -721,8 +722,6 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 								// Subscriber errors silently ignored
 							}
 						}
-
-						store.commit(events.terminalOutput({ id: terminalId, data }));
 					},
 					// Exit callback
 					(_exitCode: number, _signal: number) => {

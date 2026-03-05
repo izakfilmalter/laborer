@@ -5,17 +5,17 @@
  * to ensure the layout works well from 1080p to 5K displays.
  *
  * At 1080p (1920px):
- * - Sidebar: 220px min, 280px default, 480px max
+ * - Sidebar: 220px min, 280px default, 90% max
  * - Pane minimum: ~100px (usable terminal with ~12 columns)
  *
  * At 1440p (2560px):
- * - Sidebar: 240px min, 320px default, 560px max
+ * - Sidebar: 240px min, 320px default, 90% max
  *
  * At 4K (3840px):
- * - Sidebar: 280px min, 400px default, 680px max
+ * - Sidebar: 280px min, 400px default, 90% max
  *
  * At 5K (5120px):
- * - Sidebar: 300px min, 440px default, 760px max
+ * - Sidebar: 300px min, 440px default, 90% max
  *
  * Pixel values are converted to percentages because react-resizable-panels
  * uses percentage-based sizing.
@@ -78,7 +78,6 @@ function pxToPercent(px: number, viewportWidth: number): string {
 function computeSidebarPx(viewportWidth: number): {
 	defaultPx: number;
 	minPx: number;
-	maxPx: number;
 } {
 	const extraKPx = Math.max(0, viewportWidth - 1920) / 1000;
 	const scale = extraKPx * SIDEBAR_CONFIG.scalePerKPx;
@@ -94,7 +93,6 @@ function computeSidebarPx(viewportWidth: number): {
 			SIDEBAR_CONFIG.minPx,
 			SIDEBAR_CONFIG.maxPx
 		),
-		maxPx: clamp(SIDEBAR_CONFIG.maxPx + scale * 0.6, SIDEBAR_CONFIG.minPx, 760),
 	};
 }
 
@@ -117,7 +115,7 @@ function useResponsiveLayout(): ResponsiveLayoutSizes {
 		return {
 			sidebarDefault: pxToPercent(sidebar.defaultPx, vw),
 			sidebarMin: pxToPercent(sidebar.minPx, vw),
-			sidebarMax: pxToPercent(sidebar.maxPx, vw),
+			sidebarMax: "90%",
 			paneMin: `${Math.round(paneMinPercent)}%`,
 			canCollapseSidebar: vw < 1280,
 			viewportWidth: vw,

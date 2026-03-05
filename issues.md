@@ -919,10 +919,10 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 161 | ~~Live filesystem watcher + server boot reconciliation~~ | ~~#159~~ | Done |
 | 162 | ~~Origin-aware destroy behavior~~ | ~~#160~~ | Done |
 | 163 | Worktree detection polish & edge cases | #161, #162 | Blocked |
-| 164 | Sidebar max-width removal | None | Ready |
+| 164 | ~~Sidebar max-width removal~~ | ~~None~~ | Done |
 | 165 | ~~Workspace card two-row header + text clamping~~ | ~~None~~ | Done |
 | 166 | ~~Detected worktree feature parity~~ | ~~None~~ | Done |
-| 167 | Sidebar & workspace card polish | #164, ~~#165~~, ~~#166~~ | Blocked |
+| 167 | Sidebar & workspace card polish | ~~#164~~, ~~#165~~, ~~#166~~ | Ready |
 
 ---
 
@@ -1151,7 +1151,7 @@ End-to-end polish and verification pass for the complete worktree detection feat
 
 ---
 
-## Issue 164: Sidebar max-width removal
+## ~~Issue 164: Sidebar max-width removal~~ ✅ DONE
 
 ### Parent PRD
 
@@ -1163,20 +1163,24 @@ Remove the sidebar's restrictive max-width cap and allow users to resize it up t
 
 ### Acceptance criteria
 
-- [ ] Sidebar `maxSize` is `"90%"` at all viewport widths
-- [ ] The 760px absolute cap in `computeSidebarPx` is removed
-- [ ] Sidebar minimum and default sizes are unchanged
+- [x] Sidebar `maxSize` is `"90%"` at all viewport widths
+- [x] The 760px absolute cap in `computeSidebarPx` is removed
+- [x] Sidebar minimum and default sizes are unchanged
 - [ ] Sidebar can be resized smoothly from minimum to 90% without layout jank
 - [ ] ResizableHandle drag handle works correctly at the new maximum width
 - [ ] Main content panel maintains a usable minimum width when sidebar is at 90%
 
 ### Blocked by
 
-None — can start immediately
+~~None — can start immediately~~
 
 ### User stories addressed
 
 - User story 1, 2, 3
+
+### Status: Done
+
+Updated `useResponsiveLayout` so the sidebar's `maxSize` is now a flat `"90%"` at every viewport width. Removed the old absolute 760px cap path from `computeSidebarPx` by dropping computed max pixel sizing entirely, while preserving the existing responsive minimum and default sidebar sizing behavior.
 
 ---
 

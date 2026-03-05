@@ -4043,3 +4043,45 @@ Completed detected-worktree feature parity by enabling terminal spawns from stop
 - [x] "Detected" label still displays on external worktrees
 - [x] Destroy confirmation still uses the softer message for detected worktrees
 - [x] No regression for Laborer-created workspaces (active workspaces still work as before)
+
+## Issue #164: Sidebar max-width removal — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Why this next
+Picked Issue #164 as the highest-priority ready task because it is the only remaining direct blocker for the sidebar polish pass (#167), and it unlocks the full-width workspace-card UX improvements from PRD-sidebar-workspace-ux.
+
+### Summary
+Removed the sidebar's restrictive pixel-based maximum and set a flat 90% resize ceiling across all viewport sizes, while preserving existing responsive minimum and default sidebar sizing behavior.
+
+### What was done
+
+1. **Updated responsive sidebar sizing logic**
+   - Modified `apps/web/src/hooks/use-responsive-layout.ts` so `sidebarMax` always returns `"90%"`.
+   - Removed computed max-pixel output from `computeSidebarPx`, eliminating the previous absolute-cap path.
+
+2. **Removed the 760px max-cap behavior**
+   - Deleted the old `clamp(..., 760)`-based max sizing branch.
+   - Kept `sidebarMin` and `sidebarDefault` calculation logic unchanged so existing baseline behavior at common widths remains stable.
+
+3. **Updated issue tracking**
+   - Marked Issue #164 done in `issues.md` (title, checklist, status blurb, summary table).
+   - Updated Issue #167 blocked-by references so #167 is now Ready.
+
+### Files modified
+- `apps/web/src/hooks/use-responsive-layout.ts`
+- `issues.md`
+
+### Verification
+- `bun --filter web check-types` still fails with pre-existing type issues in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new errors introduced by this change.
+- `bun --filter web test` passes (3 files, 41 tests).
+- `bun x ultracite check apps/web/src/hooks/use-responsive-layout.ts` passes.
+
+### Acceptance criteria status
+- [x] Sidebar `maxSize` is `"90%"` at all viewport widths
+- [x] The 760px absolute cap in `computeSidebarPx` is removed
+- [x] Sidebar minimum and default sizes are unchanged
+- [ ] Sidebar can be resized smoothly from minimum to 90% without layout jank (manual UX verification pending)
+- [ ] ResizableHandle drag handle works correctly at the new maximum width (manual UX verification pending)
+- [ ] Main content panel maintains a usable minimum width when sidebar is at 90% (manual UX verification pending)

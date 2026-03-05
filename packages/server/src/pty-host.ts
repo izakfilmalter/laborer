@@ -1,14 +1,20 @@
 /**
  * PTY Host — Isolated child process for managing node-pty instances.
  *
- * This script runs as a standalone Bun subprocess, completely isolated from
- * the main HTTP server process. It communicates via newline-delimited JSON
- * over stdin (commands) and stdout (events). stderr is used for debug logging.
+ * This script runs as a standalone Node.js subprocess, completely isolated
+ * from the main Bun HTTP server process. It communicates via newline-delimited
+ * JSON over stdin (commands) and stdout (events). stderr is used for debug
+ * logging.
  *
- * Architecture rationale: node-pty creates tty.ReadStream on PTY master file
- * descriptors. When run inside the Bun HTTP server, the server's event loop
- * and signal handling interfere, causing SIGHUP to kill interactive shells
- * within milliseconds. Process isolation eliminates this entirely.
+ * Why Node.js instead of Bun: node-pty creates tty.ReadStream on PTY master
+ * file descriptors. Bun's tty.ReadStream implementation does not fire data
+ * events for these streams, so `onData` never fires — even in an isolated
+ * subprocess. Node.js handles tty.ReadStream correctly, so the PTY Host runs
+ * under Node.js while the main server continues to run under Bun.
+ *
+ * Architecture rationale: Running node-pty inside the main HTTP server process
+ * causes SIGHUP to kill interactive shells within milliseconds due to event
+ * loop and signal handling interference. Process isolation eliminates this.
  *
  * See PRD-pty-host.md for full design details.
  *
@@ -27,7 +33,12 @@
  *   { type: "error", id?, message }
  */
 
+import { createRequire } from "node:module";
 import type { IPty } from "node-pty";
+
+// createRequire is needed because this script runs under Node.js as ESM
+// (the package has "type": "module"), where bare `require()` is unavailable.
+const require_ = createRequire(import.meta.url);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -123,10 +134,8 @@ function debug(message: string, ...args: unknown[]): void {
 async function fixSpawnHelperPermissions(): Promise<void> {
 	const { readdir, chmod, stat } = await import("node:fs/promises");
 	const { join, dirname } = await import("node:path");
-	const { createRequire } = await import("node:module");
 
-	// Resolve the node-pty package directory
-	const require_ = createRequire(import.meta.url);
+	// Resolve the node-pty package directory using the top-level require_
 	let nodePtyDir: string;
 	try {
 		const nodePtyMain = require_.resolve("node-pty");
@@ -181,9 +190,9 @@ function handleSpawn(cmd: SpawnCommand): void {
 	}
 
 	try {
-		// Import node-pty synchronously via require (this script is a standalone
-		// Bun process, not the HTTP server, so require works fine here)
-		const nodePty = require("node-pty") as typeof import("node-pty");
+		// Import node-pty synchronously via createRequire (this script runs as
+		// ESM under Node.js, so bare require() is not available)
+		const nodePty = require_("node-pty") as typeof import("node-pty");
 
 		const pty = nodePty.spawn(cmd.shell, cmd.args as string[], {
 			name: "xterm-256color",
@@ -384,14 +393,14 @@ function processLine(line: string): void {
 
 /**
  * Read stdin as newline-delimited text and process each line as a command.
- * Uses Bun's streaming API for efficient line-based reading.
+ * Uses Node.js process.stdin stream (compatible with Node.js runtime).
  */
 async function readStdin(): Promise<void> {
-	const decoder = new TextDecoder();
 	let buffer = "";
 
-	for await (const chunk of Bun.stdin.stream()) {
-		buffer += decoder.decode(chunk, { stream: true });
+	for await (const chunk of process.stdin) {
+		buffer +=
+			typeof chunk === "string" ? chunk : (chunk as Buffer).toString("utf-8");
 
 		let newlineIdx = buffer.indexOf("\n");
 		while (newlineIdx !== -1) {

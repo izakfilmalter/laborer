@@ -2,11 +2,15 @@
  * PtyHostClient — Effect Service
  *
  * Manages communication with the PTY Host child process. The PTY Host is
- * a standalone Bun script (pty-host.ts) that runs node-pty in an isolated
- * process to avoid SIGHUP issues in the main HTTP server.
+ * a standalone script (pty-host.ts) that runs node-pty in an isolated
+ * Node.js process to avoid SIGHUP issues in the main HTTP server.
+ *
+ * The PTY Host runs under Node.js (not Bun) because Bun's tty.ReadStream
+ * implementation does not fire data events for PTY master file descriptors,
+ * which prevents node-pty's onData from working.
  *
  * Responsibilities:
- * - Spawning the PTY Host as a Bun child process during layer construction
+ * - Spawning the PTY Host as a Node.js child process during layer construction
  * - Waiting for the `ready` event before accepting commands
  * - Sending JSON commands to the PTY Host via stdin
  * - Parsing JSON events from the PTY Host via stdout (line-based)
@@ -135,8 +139,11 @@ class PtyHostClient extends Context.Tag("@laborer/PtyHostClient")<
 			const runtime = yield* Effect.runtime<never>();
 			const runFork = Runtime.runFork(runtime);
 
-			// Spawn the PTY Host child process
-			const child = Bun.spawn(["bun", "run", ptyHostPath], {
+			// Spawn the PTY Host as a Node.js child process.
+			// Node.js is used instead of Bun because Bun's tty.ReadStream does
+			// not fire data events for PTY master file descriptors, preventing
+			// node-pty's onData callback from working.
+			const child = Bun.spawn(["node", ptyHostPath], {
 				stdin: "pipe",
 				stdout: "pipe",
 				stderr: "inherit", // PTY Host debug logs go to our stderr

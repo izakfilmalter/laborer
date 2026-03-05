@@ -158,3 +158,61 @@ Verified and cleaned up the server package after the PTY Host refactor:
 ### Status
 Issue #6: Done
 Next: Issues #5, #7 remain as Ready. Issue #8 is blocked by #7.
+
+---
+
+## Session: Issue #7 — PTY Host integration tests (+ Node.js runtime fix)
+
+### Task selected
+Issue #7: PTY Host integration tests.
+Priority rationale: Issue #7 unblocks Issue #8 (TerminalManager + PtyHostClient integration tests) and provides a safety net for the entire PTY Host architecture. Tests validate that the foundational IPC protocol works correctly. Chose this over Issue #5 (LiveStore sync verification) because tests are more impactful for reliability and unblock further work.
+
+### Critical discovery: Bun tty.ReadStream is broken for node-pty
+While making the tests pass, discovered that **Bun's `tty.ReadStream` implementation does not fire data events for PTY master file descriptors**. This means `node-pty`'s `onData` callback never fires when the PTY Host runs under Bun — even in an isolated child process. The PTY is spawned successfully (PID is assigned), but no output data is ever delivered.
+
+Node.js handles `tty.ReadStream` correctly for PTY master FDs. Running the same PTY Host script under Node.js produces data events immediately.
+
+This is the actual root cause of why the tests were failing (7 of 8 failed). The PRD noted Node.js as a fallback option; this session activates that fallback.
+
+### What was done
+
+1. **Switched PTY Host runtime from Bun to Node.js**:
+   - `packages/server/src/pty-host.ts`: Replaced `Bun.stdin.stream()` with `process.stdin` (Node.js compatible). Added top-level `createRequire(import.meta.url)` for ESM-compatible `require()` calls (since `"type": "module"` in package.json makes Node run .ts files as ESM with type stripping). Updated comments to reflect Node.js runtime.
+   - `packages/server/src/services/pty-host-client.ts`: Changed spawn from `Bun.spawn(["bun", "run", ptyHostPath])` to `Bun.spawn(["node", ptyHostPath])`. Updated docstring.
+
+2. **Fixed test infrastructure (async generator `.return()` bug)**:
+   - The existing test helpers used an async generator (`readEvents`) consumed via `for await` in `waitForEvent`/`collectEventsUntil`. When `for await` breaks out of the loop (e.g., after finding a matching event), it implicitly calls `.return()` on the generator, which terminates it permanently. Subsequent calls to the generator always return `{ done: true }`.
+   - Replaced the async generator with a push-based `EventQueue` class that:
+     - Receives events from `child.stdout` via `data` callbacks
+     - Queues events in memory
+     - Provides a `next()` method that returns a promise resolving to the next event (or waits for one)
+     - Properly handles stream end
+   - Updated all test helpers (`waitForEvent`, `collectEventsUntil`, `waitForReady`) to use `EventQueue` instead of `AsyncGenerator`.
+
+3. **Updated test spawn command**: Changed from `spawn("bun", ["run", PTY_HOST_PATH])` to `spawn("node", [PTY_HOST_PATH])`.
+
+### Files changed
+- `packages/server/src/pty-host.ts` — Runtime: Bun → Node.js (replaced `Bun.stdin.stream()` with `process.stdin`, added top-level `createRequire`, consolidated duplicate `createRequire` usage)
+- `packages/server/src/services/pty-host-client.ts` — Spawn: `["bun", "run", path]` → `["node", path]`, updated docs
+- `packages/server/test/pty-host.test.ts` — Rewrote test infrastructure: async generator → push-based EventQueue, spawn: `"bun"` → `"node"`
+
+### Acceptance criteria verification
+- [x] vitest is configured for `packages/server/` with `@effect/vitest` ✓ (already existed)
+- [x] Test: PTY Host emits `ready` event on startup ✓
+- [x] Test: `spawn` command creates a working PTY that produces `data` events with output ✓
+- [x] Test: `write` command sends input that the PTY process receives and echoes ✓
+- [x] Test: `resize` command changes PTY dimensions without crashing ✓
+- [x] Test: `kill` command terminates the PTY and produces an `exit` event ✓
+- [x] Test: multiple concurrent PTYs work independently ✓
+- [x] Test: invalid/malformed commands produce `error` events, not crashes ✓
+- [x] Tests are deterministic and clean up spawned processes ✓
+
+### Verification
+- `bun run test` — 8/8 tests pass (2.0s)
+- `bun run check-types` — passes (only pre-existing advisory messages)
+- `bun x ultracite check` — no lint issues
+- `bun x biome check` on all 3 changed files — no issues
+
+### Status
+Issue #7: Done
+Next: Issue #5 (LiveStore sync verification) and Issue #8 (TerminalManager + PtyHostClient integration tests, now unblocked) remain.

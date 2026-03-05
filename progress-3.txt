@@ -1081,3 +1081,17 @@ With Issue #144 done, the entire terminal performance optimization pipeline from
 - Issue #142: Client-side flow control acks ✅
 - Issue #143: Deprecate LiveStore terminal output ✅
 - Issue #144: Resize flush + disconnect reset ✅
+
+---
+
+## Issue #65: Terminal session scrollback buffer replay
+
+**Status:** Done (already implemented by Issues #138 and #139)
+
+### Summary
+All acceptance criteria were already implemented as part of the terminal performance optimization pipeline:
+- **Ring buffer** (Issue #138): `RingBuffer` data structure stores recent terminal output (1MB default).
+- **WebSocket endpoint** (Issue #139): On connection, `terminalManager.subscribe()` returns the ring buffer's `scrollback` string, which is sent to the client via `sendScrollback()` at `terminal-ws.ts:77-99`. Large scrollback is chunked into 64KB frames.
+- **Client replay**: The `useTerminalWebSocket` hook receives scrollback data via `ws.onmessage` and writes it to xterm.js via `terminal.write(data)`, making previous output visible in the scrollback.
+
+No files modified — all work done in Issues #138 and #139.

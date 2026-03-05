@@ -4093,7 +4093,7 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 62 | xterm.js — handle resize (AtomRpc mutation) | ~~#60~~, ~~#58~~ | Done |
 | 63 | Terminal list per workspace UI | ~~#60~~, ~~#55~~ | Done |
 | 64 | Terminal session reconnection | ~~#60~~ | Done |
-| 65 | Terminal scrollback buffer replay | ~~#64~~ | Ready |
+| 65 | Terminal scrollback buffer replay | ~~#64~~ | Done |
 | 66 | PanelManager — single pane | ~~#60~~ | Done |
 | 67 | PanelManager — horizontal split | ~~#66~~ | Done |
 | 68 | PanelManager — vertical split | ~~#66~~ | Done |

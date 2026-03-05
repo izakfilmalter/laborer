@@ -35,6 +35,10 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
 import {
+	filterTasksByProjectAndSource,
+	type TaskSourceFilter,
+} from "@/components/task-source-picker.helpers";
+import {
 	AlertDialog,
 	AlertDialogAction,
 	AlertDialogCancel,
@@ -306,9 +310,10 @@ type FilterTab = "all" | TaskStatus;
 interface TaskListProps {
 	/** When set, only tasks belonging to this project are shown. */
 	readonly activeProjectId?: string | null;
+	readonly sourceFilter?: TaskSourceFilter;
 }
 
-function TaskList({ activeProjectId }: TaskListProps) {
+function TaskList({ activeProjectId, sourceFilter }: TaskListProps) {
 	const store = useLaborerStore();
 	const allTaskList = store.useQuery(allTasks$);
 	const projectList = store.useQuery(allProjects$);
@@ -321,12 +326,11 @@ function TaskList({ activeProjectId }: TaskListProps) {
 	);
 
 	// Filter tasks by project if an active project is set
-	const taskList = useMemo(() => {
-		if (!activeProjectId) {
-			return allTaskList;
-		}
-		return allTaskList.filter((t) => t.projectId === activeProjectId);
-	}, [allTaskList, activeProjectId]);
+	const taskList = useMemo(
+		() =>
+			filterTasksByProjectAndSource(allTaskList, activeProjectId, sourceFilter),
+		[allTaskList, activeProjectId, sourceFilter]
+	);
 
 	// Filter tasks by status if a filter is active
 	const filteredTasks = useMemo(() => {
@@ -349,6 +353,10 @@ function TaskList({ activeProjectId }: TaskListProps) {
 	}, [taskList]);
 
 	if (taskList.length === 0) {
+		const emptyDescription = sourceFilter
+			? `No ${sourceFilter === "github" ? "GitHub" : sourceFilter} tasks yet.`
+			: "Create a task to track work across your workspaces. Tasks can be created manually or sourced from Linear, GitHub, or PRDs.";
+
 		return (
 			<Empty className="border">
 				<EmptyHeader>
@@ -356,10 +364,7 @@ function TaskList({ activeProjectId }: TaskListProps) {
 						<ClipboardList />
 					</EmptyMedia>
 					<EmptyTitle>No tasks</EmptyTitle>
-					<EmptyDescription>
-						Create a task to track work across your workspaces. Tasks can be
-						created manually or sourced from Linear, GitHub, or PRDs.
-					</EmptyDescription>
+					<EmptyDescription>{emptyDescription}</EmptyDescription>
 				</EmptyHeader>
 			</Empty>
 		);

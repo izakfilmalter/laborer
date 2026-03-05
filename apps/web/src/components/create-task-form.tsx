@@ -50,7 +50,11 @@ const allProjects$ = queryDb(projects, { label: "createTaskProjects" });
 
 const createTaskMutation = LaborerClient.mutation("task.create");
 
-function CreateTaskForm() {
+interface CreateTaskFormProps {
+	readonly defaultProjectId?: string | null | undefined;
+}
+
+function CreateTaskForm({ defaultProjectId }: CreateTaskFormProps) {
 	const [open, setOpen] = useState(false);
 	const createTask = useAtomSet(createTaskMutation, {
 		mode: "promise",
@@ -60,7 +64,7 @@ function CreateTaskForm() {
 
 	const form = useForm({
 		defaultValues: {
-			projectId: "",
+			projectId: defaultProjectId ?? "",
 			title: "",
 			description: "",
 		},

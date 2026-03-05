@@ -147,7 +147,7 @@ Added `GithubTaskImporter` on the server plus a new `task.importGithub` RPC endp
 
 ---
 
-## Issue 110: Task source picker UI
+## ~~Issue 110: Task source picker UI~~ ✅ DONE
 
 ### Parent PRD
 
@@ -157,13 +157,15 @@ PRD.md
 
 Create a UI component to select the task source: Linear, GitHub, or Manual. Selecting Linear or GitHub triggers a fetch from that source. Manual shows the create task form.
 
+Added a task source picker above the task list with Manual, Linear, and GitHub tabs. Manual keeps the create-task dialog available, while Linear/GitHub selections auto-import tasks for the active project, expose a manual Sync action, and filter the task list to the selected source. Added helper tests covering source filtering and import gating.
+
 ### Acceptance criteria
 
-- [ ] Dropdown or tabs for source selection
-- [ ] Linear → fetches and displays Linear tasks
-- [ ] GitHub → fetches and displays GitHub issues
-- [ ] Manual → shows create task form
-- [ ] Tests: select source → correct tasks displayed; switch source → list updates
+- [x] Dropdown or tabs for source selection
+- [x] Linear → fetches and displays Linear tasks
+- [x] GitHub → fetches and displays GitHub issues
+- [x] Manual → shows create task form
+- [x] Tests: select source → correct tasks displayed; switch source → list updates
 
 ### Blocked by
 
@@ -868,7 +870,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 107 | ~~PRD-generated issues → tasks~~ | ~~#94~~, ~~#100~~ | Done |
 | 108 | ~~Linear task sourcing~~ | ~~#102~~ | Done |
 | 109 | ~~GitHub task sourcing~~ | ~~#102~~ | Done |
-| 110 | Task source picker UI | ~~#108~~, ~~#109~~, ~~#103~~ | Ready |
+| 110 | ~~Task source picker UI~~ | ~~#108~~, ~~#109~~, ~~#103~~ | Done |
 | 113 | ~~Project switcher~~ | ~~#26~~ | Done |
 | 114 | ~~Cross-project dashboard~~ | ~~#41~~, ~~#104~~ | Done |
 | 115 | ~~Tauri system tray~~ | ~~#41~~ | Done |

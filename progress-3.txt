@@ -732,6 +732,66 @@ Tree: `H-Split(A, V-Split(B, H-Split(C, D)))`
 - [x] Focus stops at edges — returns undefined when no neighbor exists, no-op
 - [ ] Tests: multiple panes → focus moves correctly; active pane visually distinct (deferred — web app has no test infrastructure; pure `findPaneInDirection` function could be unit tested if vitest is added to the web app)
 
+## Issue #110: Task source picker UI — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Why this next
+Picked Issue #110 as the highest-priority remaining task because it turns the already-built Linear and GitHub import RPCs into a usable task-ingestion workflow in the app, directly advancing the PRD's task-driven workspace flow.
+
+### Summary
+Added a task source picker to the sidebar with Manual, Linear, and GitHub tabs. Manual keeps the create-task flow available, while Linear and GitHub selections automatically import tasks for the active project, expose a Sync button, and filter the task list to the selected source.
+
+### What was done
+
+1. **Created `apps/web/src/components/task-source-picker.tsx`**
+   - Added source tabs for `manual`, `linear`, and `github`.
+   - Wired `task.importLinear` and `task.importGithub` mutations through `LaborerClient`.
+   - Auto-imports when the user switches to Linear or GitHub with a concrete project selected.
+   - Shows a `Sync` button for repeated imports and a guidance message when the user is on "All Projects" and external import is unavailable.
+
+2. **Created `apps/web/src/components/task-source-picker.helpers.ts`**
+   - Extracted pure helpers for source filtering and import gating.
+   - Keeps the UI component small and gives the feature lightweight test coverage without adding a DOM test stack.
+
+3. **Updated task creation and task list wiring**
+   - `apps/web/src/components/create-task-form.tsx` now accepts an optional `defaultProjectId` so manual creation respects the currently selected project.
+   - `apps/web/src/components/task-list.tsx` now accepts `sourceFilter` and filters tasks by both project and selected source before applying the existing status tabs.
+   - Empty-state copy now reflects the currently selected source.
+
+4. **Updated `apps/web/src/routes/index.tsx`**
+   - Replaced the always-visible `CreateTaskForm` action in the Tasks header with the new `TaskSourcePicker`.
+   - Lifted the active task-source state into `HomeComponent` and passed it down to both the picker and the list.
+
+5. **Added tests in `apps/web/test/task-source-picker.test.ts`**
+   - Verified filtering by source across all projects.
+   - Verified combined project + source filtering.
+   - Verified external imports are blocked without a specific project and never triggered for the manual tab.
+
+### Files created
+- `apps/web/src/components/task-source-picker.tsx`
+- `apps/web/src/components/task-source-picker.helpers.ts`
+- `apps/web/test/task-source-picker.test.ts`
+
+### Files modified
+- `apps/web/src/components/create-task-form.tsx`
+- `apps/web/src/components/task-list.tsx`
+- `apps/web/src/routes/index.tsx`
+- `issues.md`
+
+### Acceptance criteria status
+- [x] Dropdown or tabs for source selection
+- [x] Linear -> fetches and displays Linear tasks
+- [x] GitHub -> fetches and displays GitHub issues
+- [x] Manual -> shows create task form
+- [x] Tests: select source -> correct tasks displayed; switch source -> list updates
+
+### Verification
+- `bun run test` in `apps/web` ✅ (35 tests passed)
+- `bun x ultracite check apps/web/src/components/create-task-form.tsx apps/web/src/components/task-list.tsx apps/web/src/components/task-source-picker.helpers.ts apps/web/src/components/task-source-picker.tsx apps/web/src/routes/index.tsx apps/web/test/task-source-picker.test.ts` ✅
+- `bun run check-types` in `apps/web` ⚠️ still reports the same pre-existing `exactOptionalPropertyTypes` errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new task-source type errors were introduced
+
 ### Verification
 - `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
 - `ultracite check` passes on all 3 modified files with zero issues (`Checked 3 files in 10ms. No fixes applied.`)

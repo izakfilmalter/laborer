@@ -33,11 +33,12 @@ import {
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
-import { CreateTaskForm } from "@/components/create-task-form";
 import { CreateWorkspaceForm } from "@/components/create-workspace-form";
 import { ProjectList } from "@/components/project-list";
 import { ProjectSwitcher } from "@/components/project-switcher";
 import { TaskList } from "@/components/task-list";
+import { TaskSourcePicker } from "@/components/task-source-picker";
+import type { TaskSourceFilter } from "@/components/task-source-picker.helpers";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -864,6 +865,8 @@ function HomeComponent() {
 
 	// Project switcher state — null means "All Projects" (no filter)
 	const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+	const [activeTaskSource, setActiveTaskSource] =
+		useState<TaskSourceFilter>("manual");
 
 	// Main content view toggle — panels (terminal panes) or dashboard
 	const [mainView, setMainView] = useState<MainView>("panels");
@@ -948,9 +951,16 @@ function HomeComponent() {
 							<section>
 								<div className="mb-2 flex items-center justify-between">
 									<h2 className="font-medium text-sm">Tasks</h2>
-									<CreateTaskForm />
 								</div>
-								<TaskList activeProjectId={activeProjectId} />
+								<TaskSourcePicker
+									activeProjectId={activeProjectId}
+									activeSource={activeTaskSource}
+									onSourceChange={setActiveTaskSource}
+								/>
+								<TaskList
+									activeProjectId={activeProjectId}
+									sourceFilter={activeTaskSource}
+								/>
 							</section>
 							<section className="rounded-lg border p-3">
 								<h2 className="mb-1 font-medium text-sm">Server Status</h2>

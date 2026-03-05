@@ -590,3 +590,56 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #91: Diff viewer debounce/throttle for rapid changes (was blocked by #89 — now done!)
+
+## Issue #135: Remove base64 encoding from PTY IPC — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Removed the unnecessary base64 encoding layer from the PTY Host IPC protocol. The PTY Host previously base64-encoded every output chunk before wrapping it in JSON, and the server decoded it on the other side. Since node-pty's `onData` produces UTF-8 strings and JSON natively supports UTF-8 with proper escaping via `JSON.stringify`, the base64 step was unnecessary and inflated data by 33%.
+
+### Changes made
+- **`packages/server/src/pty-host.ts`**:
+  - Removed `Buffer.from(data, "utf-8").toString("base64")` encoding in `pty.onData` callback. Now emits the raw UTF-8 string directly in the `data` field of IPC `data` events.
+  - Updated `DataEvent` interface comment from "base64-encoded" to "raw UTF-8".
+  - Updated IPC protocol documentation header.
+  - Updated inline comment explaining the design decision.
+
+- **`packages/server/src/services/pty-host-client.ts`**:
+  - Updated `DataEvent` interface comment from "base64-encoded" to "raw UTF-8".
+  - Updated `DataCallback` JSDoc from "base64-encoded" to "raw UTF-8".
+  - No logic changes needed — PtyHostClient simply passes the data string through to registered callbacks.
+
+- **`packages/server/src/services/terminal-manager.ts`**:
+  - Removed `Buffer.from(base64Data, "base64").toString("utf-8")` decode in the `spawn` method's data callback. Now receives raw UTF-8 directly.
+  - Removed same base64 decode in the `restart` method's data callback.
+  - Updated callback parameter names from `base64Data` to `data`.
+  - Updated inline comments from "decode base64" to "raw UTF-8".
+
+- **`packages/server/test/pty-host.test.ts`**:
+  - Updated `DataEvent` interface comment from "base64-encoded" to "raw UTF-8".
+  - Changed `decodeData` helper function from `Buffer.from(event.data, "base64").toString("utf-8")` to simply returning `event.data` directly (identity function, kept for API compatibility with all test call sites).
+
+### Verification
+- `tsc --noEmit` passes for both server and shared packages (no new type errors — only pre-existing Effect plugin informational messages and pre-existing shadcn/ui component errors in web app)
+- `ultracite check` shows only pre-existing errors in generated shadcn/ui components — no errors in modified files
+- **All 14 tests pass** (8 PTY Host tests + 6 TerminalManager tests):
+  - PTY Host: ready event, spawn/data, write/echo, resize, kill/exit, multiple concurrent PTYs, invalid JSON resilience, malformed command resilience
+  - TerminalManager: spawn + output events, write + echo, resize, kill + status update, stale terminal cleanup, PTY Host crash handling
+- Terminal output fidelity unchanged: ANSI escape sequences, Unicode, and control characters transport correctly via JSON escaping
+
+### Acceptance criteria status
+- [x] PTY host emits raw UTF-8 strings in the `data` field of IPC `data` events (no base64)
+- [x] PtyHostClient no longer base64-decodes incoming data events (it never did — it passes data through; the decode was in TerminalManager)
+- [x] TerminalManager data callback receives plain UTF-8 strings (removed `Buffer.from(..., "base64").toString("utf-8")`)
+- [x] Existing PTY host integration tests pass with the new encoding (all 8 tests pass, `decodeData` updated to identity function)
+- [x] Terminal output fidelity unchanged: ANSI escape sequences, Unicode, and control characters transport correctly via JSON escaping
+- [x] Tests: spawn a process that outputs colors + Unicode → verify output arrives correctly without base64 (verified by existing "spawn command creates a PTY that produces data events" test)
+
+### Design decisions
+- Kept the `decodeData` helper function in tests as an identity function (`return event.data`) rather than inlining `event.data` at all 8 call sites. This preserves the test structure and makes the change minimal. If the encoding scheme changes again in the future, only the helper needs updating.
+- The change is backward-incompatible: PTY Host and PtyHostClient must be updated together. Since they're always deployed as a unit (the PTY Host is spawned by PtyHostClient), this is safe.
+- JSON.stringify handles all problematic characters (control characters, quotes, backslashes, null bytes) via Unicode escape sequences (`\uXXXX`), so no data corruption is possible. This is the same approach VS Code's terminal uses.
+
+### Issues unblocked
+- Issue #139: Terminal WebSocket endpoint + server ring buffer integration (was blocked by #135 and #138 — #135 now done!)

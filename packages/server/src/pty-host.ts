@@ -28,7 +28,7 @@
  *
  * Events (stdout, PTY Host -> server):
  *   { type: "ready" }
- *   { type: "data", id, data }  — data is base64-encoded
+ *   { type: "data", id, data }  — data is raw UTF-8
  *   { type: "exit", id, exitCode, signal }
  *   { type: "error", id?, message }
  */
@@ -80,7 +80,7 @@ interface ReadyEvent {
 }
 
 interface DataEvent {
-	readonly data: string; // base64-encoded
+	readonly data: string; // raw UTF-8
 	readonly id: string;
 	readonly type: "data";
 }
@@ -204,11 +204,12 @@ function handleSpawn(cmd: SpawnCommand): void {
 
 		ptys.set(cmd.id, pty);
 
-		// Forward PTY output as base64-encoded data events
+		// Forward PTY output as raw UTF-8 data events.
+		// node-pty's onData produces UTF-8 strings, and JSON natively supports
+		// UTF-8 with proper escaping via JSON.stringify, so no base64 encoding
+		// is needed. This avoids the 33% data inflation of base64.
 		pty.onData((data: string) => {
-			// Encode as base64 to safely transport arbitrary bytes over JSON
-			const encoded = Buffer.from(data, "utf-8").toString("base64");
-			emit({ type: "data", id: cmd.id, data: encoded });
+			emit({ type: "data", id: cmd.id, data });
 		});
 
 		// Forward PTY exit

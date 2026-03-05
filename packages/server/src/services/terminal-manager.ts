@@ -338,9 +338,8 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 						cols: 80,
 						rows: 24,
 					},
-					// Data callback: decode base64 and commit to LiveStore
-					(base64Data: string) => {
-						const data = Buffer.from(base64Data, "base64").toString("utf-8");
+					// Data callback: commit raw UTF-8 output to LiveStore
+					(data: string) => {
 						store.commit(events.terminalOutput({ id, data }));
 					},
 					// Exit callback: update LiveStore status and clean up
@@ -592,9 +591,8 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 						cols: 80,
 						rows: 24,
 					},
-					// Data callback
-					(base64Data: string) => {
-						const data = Buffer.from(base64Data, "base64").toString("utf-8");
+					// Data callback: commit raw UTF-8 output to LiveStore
+					(data: string) => {
 						store.commit(events.terminalOutput({ id: terminalId, data }));
 					},
 					// Exit callback

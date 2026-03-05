@@ -53,7 +53,7 @@ interface SpawnParams {
 }
 
 interface DataEvent {
-	readonly data: string; // base64-encoded
+	readonly data: string; // raw UTF-8
 	readonly id: string;
 	readonly type: "data";
 }
@@ -77,7 +77,7 @@ interface ReadyEvent {
 
 type PtyEvent = ReadyEvent | DataEvent | ExitEvent | ErrorEvent;
 
-/** Callback invoked when a PTY produces output (base64-encoded). */
+/** Callback invoked when a PTY produces output (raw UTF-8). */
 type DataCallback = (data: string) => void;
 
 /** Callback invoked when a PTY process exits. */

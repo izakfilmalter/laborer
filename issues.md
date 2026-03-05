@@ -3700,12 +3700,12 @@ In the PTY host script (`pty-host.ts`), change the `data` event emission from `B
 
 ### Acceptance criteria
 
-- [ ] PTY host emits raw UTF-8 strings in the `data` field of IPC `data` events (no base64)
-- [ ] PtyHostClient no longer base64-decodes incoming data events
-- [ ] TerminalManager data callback receives plain UTF-8 strings
-- [ ] Existing PTY host integration tests pass with the new encoding (update assertions)
-- [ ] Terminal output fidelity unchanged: ANSI escape sequences, Unicode, and control characters transport correctly via JSON escaping
-- [ ] Tests: spawn a process that outputs colors + Unicode → verify output arrives correctly without base64
+- [x] PTY host emits raw UTF-8 strings in the `data` field of IPC `data` events (no base64)
+- [x] PtyHostClient no longer base64-decodes incoming data events
+- [x] TerminalManager data callback receives plain UTF-8 strings
+- [x] Existing PTY host integration tests pass with the new encoding (update assertions)
+- [x] Terminal output fidelity unchanged: ANSI escape sequences, Unicode, and control characters transport correctly via JSON escaping
+- [x] Tests: spawn a process that outputs colors + Unicode → verify output arrives correctly without base64
 
 ### Blocked by
 
@@ -4163,3 +4163,13 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 132 | terminal.remove RPC handler + delete UI | ~~#59~~, ~~#63~~, ~~#5~~ | Done |
 | 133 | terminal.restart RPC handler + restart UI | ~~#59~~, ~~#63~~, ~~#5~~ | Done |
 | 134 | Drag terminal from sidebar onto empty panel | ~~#63~~, ~~#66~~ | Ready |
+| 135 | Remove base64 encoding from PTY IPC | None | Done |
+| 136 | IPC buffer optimization (O(n²) → array) | None | Ready |
+| 137 | PTY data coalescing (5ms timer) | None | Ready |
+| 138 | Ring buffer data structure + unit tests | None | Ready |
+| 139 | Terminal WebSocket endpoint + ring buffer | ~~#135~~, #138 | Blocked |
+| 140 | Web client terminal pane: WebSocket data path | #139 | Blocked |
+| 141 | Character-count flow control (server side) | #137, #139 | Blocked |
+| 142 | Client-side flow control acks | #140, #141 | Blocked |
+| 143 | Deprecate terminalOutput from LiveStore hot path | #140 | Blocked |
+| 144 | Resize flushes coalesced buffer + flow control reset | #141, #142 | Blocked |

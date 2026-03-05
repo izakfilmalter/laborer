@@ -23,7 +23,7 @@ interface ReadyEvent {
 }
 
 interface DataEvent {
-	readonly data: string; // base64-encoded
+	readonly data: string; // raw UTF-8
 	readonly id: string;
 	readonly type: "data";
 }
@@ -251,9 +251,9 @@ async function waitForReady(queue: EventQueue): Promise<void> {
 	await waitForEvent(queue, (e) => e.type === "ready");
 }
 
-/** Decode base64 data from a DataEvent. */
+/** Extract the raw UTF-8 data string from a DataEvent. */
 function decodeData(event: DataEvent): string {
-	return Buffer.from(event.data, "base64").toString("utf-8");
+	return event.data;
 }
 
 // ---------------------------------------------------------------------------

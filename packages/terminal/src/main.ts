@@ -2,7 +2,7 @@
  * Laborer Terminal Service — Entry Point
  *
  * Standalone Bun server for terminal management. Runs as its own
- * long-lived process on TERMINAL_PORT (default 3001), separate from
+ * long-lived process on TERMINAL_PORT (default 3002), separate from
  * the main laborer server. This architectural separation ensures
  * terminals survive server restarts during development.
  *

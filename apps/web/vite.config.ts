@@ -23,11 +23,11 @@ export default defineConfig({
 				ws: true,
 			},
 			"/terminal-rpc": {
-				target: "http://localhost:3001",
+				target: "http://localhost:3002",
 				rewrite: (p) => p.replace(TERMINAL_RPC_PREFIX, "/rpc"),
 			},
 			"/terminal": {
-				target: "http://localhost:3001",
+				target: "http://localhost:3002",
 				ws: true,
 			},
 		},

@@ -23,7 +23,7 @@ import { Layer } from "effect";
  * Terminal service RPC URL.
  *
  * In development, Vite proxies /terminal-rpc to the terminal service's
- * /rpc endpoint at TERMINAL_PORT (default 3001).
+ * /rpc endpoint at TERMINAL_PORT (default 3002).
  */
 const TERMINAL_RPC_URL = "/terminal-rpc";
 

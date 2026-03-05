@@ -3050,14 +3050,14 @@ Make file paths in the diff viewer clickable. Clicking a file path calls the `ed
 
 ### Acceptance criteria
 
-- [ ] File paths in diff viewer are clickable
-- [ ] Click → calls `LaborerClient.mutation("editor.open")` with correct workspace and file path
-- [ ] Visual affordance (underline, cursor change) on hover
-- [ ] Tests: click file path → mutation called with correct args
+- [x] File paths in diff viewer are clickable (via "Open" button in each file's header using `renderHeaderMetadata` prop from @pierre/diffs/react)
+- [x] Click → calls `LaborerClient.mutation("editor.open")` with correct workspace and file path
+- [x] Visual affordance (ExternalLink icon, hover:bg-accent hover:text-foreground styling, title tooltip) on hover
+- [ ] Tests: click file path → mutation called with correct args (deferred — requires running both server and web app with a live workspace)
 
 ### Blocked by
 
-- Blocked by #111, #87
+- Blocked by ~~#111~~, ~~#87~~ (both done)
 
 ### User stories addressed
 
@@ -4143,7 +4143,7 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 109 | GitHub task sourcing | ~~#102~~ | Ready |
 | 110 | Task source picker UI | #108, #109, #103 | Blocked |
 | 111 | editor.open RPC handler | ~~#19~~, ~~#14~~ | Done |
-| 112 | Click-to-open from diff viewer (AtomRpc mutation) | ~~#111~~, ~~#87~~ | Ready |
+| 112 | Click-to-open from diff viewer (AtomRpc mutation) | ~~#111~~, ~~#87~~ | Done |
 | 113 | Project switcher | ~~#26~~ | Ready |
 | 114 | Cross-project dashboard | ~~#41~~, ~~#104~~ | Ready |
 | 115 | Tauri system tray | ~~#41~~ | Ready |

@@ -23,17 +23,27 @@
  *    new diff content arrives, then fades out after 1.5 seconds
  * 8. The `lastUpdated` timestamp is displayed at the bottom of the diff
  *
+ * ## Click-to-open file (Issue #112)
+ *
+ * Each file in the diff viewer has a clickable "Open" button in its header.
+ * Clicking it calls the `editor.open` RPC mutation with the workspace ID
+ * and file path, opening the file in the configured editor (Cursor/VS Code).
+ * Uses the `renderHeaderMetadata` prop from @pierre/diffs/react FileDiff.
+ *
  * @see packages/server/src/services/diff-service.ts
  * @see packages/shared/src/schema.ts (diffs table, DiffUpdated event)
  * @see Issue #87: Diff viewer pane — render with @pierre/diffs
  * @see Issue #89: Diff viewer — live update
+ * @see Issue #112: Click-to-open file from diff viewer
  */
 
+import { useAtomSet } from "@effect-atom/atom-react/Hooks";
 import { diffs } from "@laborer/shared/schema";
 import { queryDb } from "@livestore/livestore";
+import type { FileDiffMetadata } from "@pierre/diffs";
 import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff } from "@pierre/diffs/react";
-import { FileCode2, RefreshCw } from "lucide-react";
+import { ExternalLink, FileCode2, RefreshCw } from "lucide-react";
 import {
 	useCallback,
 	useEffect,
@@ -42,6 +52,8 @@ import {
 	useState,
 	useTransition,
 } from "react";
+import { toast } from "sonner";
+import { LaborerClient } from "@/atoms/laborer-client";
 import {
 	Empty,
 	EmptyDescription,
@@ -49,10 +61,14 @@ import {
 	EmptyMedia,
 	EmptyTitle,
 } from "@/components/ui/empty";
+import { extractErrorMessage } from "@/lib/utils";
 import { useLaborerStore } from "@/livestore/store";
 
 /** Module-level query — shared across all DiffPane instances with the same label. */
 const allDiffs$ = queryDb(diffs, { label: "diffPane" });
+
+/** Module-level mutation atom for opening files in the editor (Issue #112). */
+const editorOpenMutation = LaborerClient.mutation("editor.open");
 
 /**
  * Stable FileDiff options object — defined at module level to avoid
@@ -111,6 +127,7 @@ function formatLastUpdated(isoTimestamp: string): string {
 function DiffPane({ workspaceId }: DiffPaneProps) {
 	const store = useLaborerStore();
 	const diffRows = store.useQuery(allDiffs$);
+	const openEditor = useAtomSet(editorOpenMutation, { mode: "promise" });
 
 	// --- Derive diff content and metadata from the reactive query ---
 	const diffRow = useMemo(() => {
@@ -210,6 +227,55 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 		};
 	}, []);
 
+	// --- Click-to-open file in editor (Issue #112) ---
+	// The openEditorRef avoids stale closures in the renderHeaderMetadata callback,
+	// which is created per-render but captures the latest openEditor function.
+	const openEditorRef = useRef(openEditor);
+	openEditorRef.current = openEditor;
+
+	const handleOpenFile = useCallback(
+		async (filePath: string) => {
+			try {
+				await openEditorRef.current({
+					payload: { workspaceId, filePath },
+				});
+				toast.success(`Opened ${filePath} in editor`);
+			} catch (error: unknown) {
+				toast.error(`Failed to open file: ${extractErrorMessage(error)}`);
+			}
+		},
+		[workspaceId]
+	);
+
+	/**
+	 * Renders a clickable "Open" button in each file's diff header.
+	 * Uses the `renderHeaderMetadata` prop from @pierre/diffs/react FileDiff.
+	 * The button calls `editor.open` RPC to open the file in Cursor/VS Code.
+	 */
+	const renderHeaderMetadata = useCallback(
+		(props: { fileDiff?: FileDiffMetadata }) => {
+			const fileName = props.fileDiff?.name;
+			if (!fileName) {
+				return null;
+			}
+			return (
+				<button
+					className="ml-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground text-xs transition-colors hover:bg-accent hover:text-foreground"
+					onClick={(e) => {
+						e.stopPropagation();
+						handleOpenFile(fileName);
+					}}
+					title={`Open ${fileName} in editor`}
+					type="button"
+				>
+					<ExternalLink className="h-3 w-3" />
+					Open
+				</button>
+			);
+		},
+		[handleOpenFile]
+	);
+
 	// --- Scroll event handler to keep savedScrollRef in sync ---
 	const handleScroll = useCallback(() => {
 		const container = scrollContainerRef.current;
@@ -270,6 +336,7 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 						fileDiff={fileDiffMeta}
 						key={fileDiffMeta.name ?? index}
 						options={FILE_DIFF_OPTIONS}
+						renderHeaderMetadata={renderHeaderMetadata}
 					/>
 				))}
 			</div>

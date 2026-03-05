@@ -5,6 +5,9 @@
  * Each workspace shows its branch name, port, and status with color-coded
  * badges: creating=yellow, running=green, stopped=gray, errored=red,
  * destroyed=dim.
+ * Workspaces with "creating" status show a spinner and progress description
+ * to indicate that worktree creation, port allocation, and setup scripts
+ * are in progress.
  * Updates reactively when workspace state changes.
  * Includes a destroy button with confirmation dialog per workspace.
  * Includes rlph action buttons (Start Ralph Loop, Write PRD, Review PR,
@@ -20,6 +23,7 @@
  * @see Issue #97: "Review PR" button + PR number input
  * @see Issue #99: "Fix Findings" button + PR number input
  * @see Issue #119: Empty state — no workspaces
+ * @see Issue #121: Loading state — workspace creation
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -66,6 +70,7 @@ import {
 	EmptyMedia,
 	EmptyTitle,
 } from "@/components/ui/empty";
+import { Spinner } from "@/components/ui/spinner";
 import { WritePrdForm } from "@/components/write-prd-form";
 import { cn, extractErrorMessage } from "@/lib/utils";
 import { useLaborerStore } from "@/livestore/store";
@@ -105,13 +110,17 @@ function getStatusClasses(status: string): string {
 }
 
 /**
- * Returns a small colored dot indicator for the workspace status.
+ * Returns a small colored status indicator for the workspace.
+ * Uses a spinning loader for "creating" status to emphasize the
+ * in-progress operation, and a colored dot for all other statuses.
  */
 function StatusDot({ status }: { readonly status: string }) {
+	if (status === "creating") {
+		return <Spinner className="size-3 text-yellow-600 dark:text-yellow-400" />;
+	}
+
 	const dotColor = (() => {
 		switch (status as WorkspaceStatus) {
-			case "creating":
-				return "bg-yellow-500 animate-pulse";
 			case "running":
 				return "bg-green-500";
 			case "stopped":
@@ -322,6 +331,12 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 						</span>
 						<span className="truncate font-mono">{workspace.worktreePath}</span>
 					</div>
+					{workspace.status === "creating" && (
+						<div className="mt-2 flex items-center gap-2 text-xs text-yellow-600 dark:text-yellow-400">
+							<Spinner className="size-3 text-yellow-600 dark:text-yellow-400" />
+							Setting up workspace...
+						</div>
+					)}
 					{isActive && (
 						<CollapsibleContent>
 							<div className="mt-2 border-t pt-2">

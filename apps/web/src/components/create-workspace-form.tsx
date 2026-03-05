@@ -4,10 +4,14 @@
  * A dialog with a TanStack Form for creating a new workspace.
  * Fields: project selector (required), optional branch name.
  * On submit, calls the `workspace.create` mutation via AtomRpc.
+ * Shows a loading state with spinner and indeterminate progress bar
+ * during workspace creation (worktree creation, port allocation,
+ * setup script execution). Dialog cannot be dismissed during submission.
  * Success: workspace appears in the list (via LiveStore), form resets, dialog closes.
  * Error: server validation error displayed via toast.
  *
  * @see Issue #42: Create Workspace form
+ * @see Issue #121: Loading state — workspace creation
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -35,6 +39,7 @@ import {
 	FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import {
 	Select,
 	SelectContent,
@@ -42,6 +47,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import { extractErrorMessage } from "@/lib/utils";
 import { useLaborerStore } from "@/livestore/store";
 
@@ -85,7 +91,15 @@ function CreateWorkspaceForm() {
 	});
 
 	return (
-		<Dialog onOpenChange={setOpen} open={open}>
+		<Dialog
+			onOpenChange={(value) => {
+				// Prevent closing dialog while workspace is being created
+				if (!form.state.isSubmitting) {
+					setOpen(value);
+				}
+			}}
+			open={open}
+		>
 			<DialogTrigger render={<Button size="sm" variant="outline" />}>
 				<Layers className="size-3.5" />
 				Create Workspace
@@ -121,6 +135,7 @@ function CreateWorkspaceForm() {
 								<Field data-invalid={field.state.meta.errors.length > 0}>
 									<FieldLabel>Project</FieldLabel>
 									<Select
+										disabled={form.state.isSubmitting}
 										onValueChange={(value) => {
 											if (value !== null) {
 												field.handleChange(value);
@@ -160,6 +175,7 @@ function CreateWorkspaceForm() {
 										Branch Name (optional)
 									</FieldLabel>
 									<Input
+										disabled={form.state.isSubmitting}
 										id="branchName"
 										name={field.name}
 										onBlur={field.handleBlur}
@@ -174,17 +190,36 @@ function CreateWorkspaceForm() {
 							)}
 						</form.Field>
 					</div>
-					<DialogFooter>
-						<form.Subscribe
-							selector={(state) => [state.canSubmit, state.isSubmitting]}
-						>
-							{([canSubmit, isSubmitting]) => (
-								<Button disabled={!canSubmit || isSubmitting} type="submit">
-									{isSubmitting ? "Creating..." : "Create Workspace"}
-								</Button>
-							)}
-						</form.Subscribe>
-					</DialogFooter>
+					<form.Subscribe
+						selector={(state) => [state.canSubmit, state.isSubmitting]}
+					>
+						{([canSubmit, isSubmitting]) => (
+							<>
+								{isSubmitting && (
+									<div className="space-y-2 px-1">
+										<Progress value={null} />
+										<p className="flex items-center gap-2 text-muted-foreground text-xs">
+											<Spinner className="size-3" />
+											Setting up workspace (creating worktree, allocating port,
+											running setup scripts)...
+										</p>
+									</div>
+								)}
+								<DialogFooter>
+									<Button disabled={!canSubmit || isSubmitting} type="submit">
+										{isSubmitting ? (
+											<>
+												<Spinner className="size-3.5" />
+												Creating...
+											</>
+										) : (
+											"Create Workspace"
+										)}
+									</Button>
+								</DialogFooter>
+							</>
+						)}
+					</form.Subscribe>
 				</form>
 			</DialogContent>
 		</Dialog>

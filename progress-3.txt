@@ -998,3 +998,52 @@ Both empty states disappear reactively when a project is added — the LiveStore
 - **Separate LiveStore query label**: Used `sidebarProjects` as the query label (distinct from `projectList` and `headerProjects`) to avoid potential subscription conflicts and to make debugging clearer in LiveStore's internal logs.
 - **Reactive disappearance**: No explicit state management is needed to hide the empty state after adding a project. The LiveStore `projects` table is reactively queried; when a `projectCreated` event is committed, the query re-evaluates, `projectList.length > 0` becomes true, and React re-renders the normal panel system. This is the same reactive pattern used throughout the app.
 
+## Issue #121: Loading state — workspace creation — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Added loading indicators for workspace creation across two components. The Create Workspace form dialog now shows a spinner on the submit button, an indeterminate progress bar, a descriptive status message during submission, disables all form inputs, and prevents the dialog from being dismissed while the RPC is in flight. The workspace list now uses a spinning Loader2 icon (instead of a pulsing dot) in the status badge for workspaces with "creating" status, and shows a descriptive "Setting up workspace..." message with a spinner in the card content.
+
+### What was done
+
+1. **Enhanced `apps/web/src/components/create-workspace-form.tsx`** (~30 lines changed):
+   - **Spinner on submit button**: Replaced "Creating..." text with `<Spinner />` icon + "Creating..." for visual prominence during submission.
+   - **Indeterminate progress bar**: Added `<Progress value={null} />` (Base UI indeterminate mode) that appears during submission, giving a visual "something is happening" indicator.
+   - **Status message**: Added descriptive text "Setting up workspace (creating worktree, allocating port, running setup scripts)..." with a small spinner, visible only during submission.
+   - **Dialog close prevention**: The `onOpenChange` handler now checks `form.state.isSubmitting` and prevents closing the dialog while the RPC is in flight. This prevents accidental dismissal during the multi-second workspace creation process.
+   - **Form input disabling**: Both the project `Select` and branch name `Input` now receive `disabled={form.state.isSubmitting}` to prevent editing during submission.
+   - **Moved `form.Subscribe`**: The `form.Subscribe` wrapper now encompasses both the progress area and the footer, so `isSubmitting` state is available for both the loading indicators and the button.
+   - **New imports**: `Progress` from `@/components/ui/progress`, `Spinner` from `@/components/ui/spinner`.
+   - **Updated JSDoc**: Added Issue #121 reference and loading state description.
+
+2. **Enhanced `apps/web/src/components/workspace-list.tsx`** (~20 lines changed):
+   - **Spinner in StatusDot for "creating"**: Replaced the `animate-pulse` yellow dot with `<Spinner className="size-3 text-yellow-600 dark:text-yellow-400" />` for the "creating" status. The spinning Loader2 icon is a stronger visual signal than a pulsing dot.
+   - **"Setting up workspace..." message**: Added a yellow-tinted inline message with spinner below the port/path metadata, visible only when `workspace.status === "creating"`.
+   - **New import**: `Spinner` from `@/components/ui/spinner`.
+   - **Updated JSDoc**: Added Issue #121 reference and loading state description.
+
+### Files modified
+- `apps/web/src/components/create-workspace-form.tsx` — Added loading indicators (spinner, progress bar, status message), dialog close prevention, form input disabling during submission, new imports, updated JSDoc
+- `apps/web/src/components/workspace-list.tsx` — Replaced StatusDot pulse with Spinner for "creating" status, added "Setting up workspace..." message, new import, updated JSDoc
+
+### Acceptance criteria status
+- [x] Workspace with "creating" status → spinner/progress indicator visible (Spinner in StatusDot badge + "Setting up workspace..." message in card content)
+- [x] Status changes to "running" → indicator disappears (reactive via LiveStore query — StatusDot renders green dot, message hidden)
+- [x] Form shows loading during submission (Spinner on button, indeterminate Progress bar, status message, disabled inputs, dialog close prevented)
+- [ ] Tests: creating status → loading visible; running → gone (deferred — web app has no component test infrastructure)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `biome check` passes on both modified files with zero issues (`Checked 2 files in 7ms. No fixes applied.`)
+- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Indeterminate progress bar**: Used `<Progress value={null} />` which renders an indeterminate (animated) progress indicator. Workspace creation involves multiple server-side steps (git operations, port allocation, setup scripts) with no granular progress reporting, so a determinate percentage bar would be misleading. The indeterminate animation communicates "work is happening" without false precision.
+- **Dialog close prevention**: The `onOpenChange` handler gates on `form.state.isSubmitting`. This prevents the user from accidentally closing the dialog (via Escape, clicking outside, or the X button) during the multi-second creation process. If they dismissed the dialog, the RPC would still complete on the server, but the user would lose the success/error feedback. Keeping the dialog open ensures they see the result.
+- **Form input disabling**: Both the project selector and branch name input are disabled during submission. This prevents the user from changing form values after the RPC is already in flight, which would be confusing (the submitted values can't change mid-request).
+- **Spinner over pulse**: Replaced the `animate-pulse` CSS animation on the StatusDot with a `Spinner` (Loader2Icon with `animate-spin`) for the "creating" status. A spinning icon is a universally recognized loading indicator, while a pulsing dot could be mistaken for a connectivity/status indicator. The Spinner provides clearer communication of "in progress".
+- **Yellow color for creating state**: Both the Spinner and "Setting up workspace..." message use `text-yellow-600 dark:text-yellow-400`, matching the existing yellow palette for the "creating" status badge. This keeps the color semantics consistent: yellow = in progress/creating.
+- **Descriptive status message**: The "Setting up workspace (creating worktree, allocating port, running setup scripts)..." message in both the form and workspace list tells the user exactly what's happening server-side. This reduces anxiety during the wait and sets expectations about what the operation involves.
+

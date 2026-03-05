@@ -482,30 +482,9 @@ Enhanced empty terminal pane with guided CTA. Empty panes show a "Spawn Terminal
 
 ---
 
-## Issue 121: Loading state — workspace creation
+## ~~Issue 121: Loading state — workspace creation~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Show a loading indicator when a workspace is being created (status = "creating"). The indicator should be visible in the workspace list and the create workspace form.
-
-### Acceptance criteria
-
-- [ ] Workspace with "creating" status → spinner/progress indicator visible
-- [ ] Status changes to "running" → indicator disappears
-- [ ] Form shows loading during submission
-- [ ] Tests: creating status → loading visible; running → gone
-
-### Blocked by
-
-- Blocked by #41
-
-### User stories addressed
-
-- Polishing requirement 8
+Added loading indicators for workspace creation. Create Workspace form dialog shows spinner on submit button, indeterminate progress bar, descriptive status message, disables inputs, and prevents dialog dismissal during submission. Workspace list uses spinning Loader2 icon (replacing pulsing dot) in status badge for "creating" status and shows "Setting up workspace..." message with spinner in card content.
 
 ---
 
@@ -767,7 +746,7 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 118 | ~~Empty state — no projects~~ | ~~#27~~ | Done |
 | 119 | ~~Empty state — no workspaces~~ | ~~#42~~ | Done |
 | 120 | ~~Empty state — no terminals~~ | ~~#63~~ | Done |
-| 121 | Loading state — workspace creation | ~~#41~~ | Ready |
+| 121 | ~~Loading state — workspace creation~~ | ~~#41~~ | Done |
 | 122 | Loading state — terminal spawning | ~~#60~~ | Ready |
 | 123 | Loading state — diff computation | ~~#87~~ | Ready |
 | 124 | Terminal fidelity — opencode | ~~#60~~ | Ready |

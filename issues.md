@@ -3572,6 +3572,120 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 
 ---
 
+## Issue 132: terminal.remove RPC handler + TerminalManager delete
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Add a `terminal.remove` RPC method to the `LaborerRpcs` contract and implement it on the server. When a terminal is in "stopped" status, this method removes it from the TerminalManager's in-memory tracking, commits a `TerminalRemoved` event to LiveStore (deleting the row from the Terminals table), and cleans up any panel pane references that pointed to that terminal. If the terminal is still running, it should be killed first before removal. This completes the terminal lifecycle: spawn -> (optionally kill/stop) -> remove.
+
+On the UI side, add a "Remove" / delete button to stopped terminals in the terminal list (Issue #63). Clicking it calls `LaborerClient.mutation("terminal.remove")` via `useAtomSet`. The terminal disappears from the list and any pane displaying it reverts to an empty state.
+
+### Acceptance criteria
+
+- [ ] `terminal.remove` added to `LaborerRpcs` in `packages/shared/src/rpc.ts` with `Rpc.make("terminal.remove", { payload: TerminalRemovePayload })`
+- [ ] `TerminalRemovePayload` schema defined with `terminalId` field
+- [ ] `TerminalManager.remove(terminalId)` method implemented — kills PTY if still running, removes from in-memory map
+- [ ] `TerminalRemoved` event added to LiveStore schema, materializer deletes terminal row from Terminals table
+- [ ] Server RPC handler delegates to TerminalManager.remove and commits TerminalRemoved event
+- [ ] Removing a nonexistent terminal returns a descriptive error
+- [ ] UI: delete/remove button visible on stopped terminals in the terminal list
+- [ ] UI: button calls `LaborerClient.mutation("terminal.remove")` via `useAtomSet`
+- [ ] UI: terminal disappears from list after removal (via LiveStore sync)
+- [ ] UI: any pane assigned to the removed terminal shows empty state
+- [ ] Tests: remove stopped terminal -> gone from LiveStore and in-memory map; remove running terminal -> killed then removed; remove nonexistent -> error; UI button -> mutation called, terminal gone from list
+
+### Blocked by
+
+- Blocked by #59, #63, #5
+
+### User stories addressed
+
+- User story 6
+
+---
+
+## Issue 133: terminal.restart RPC handler + TerminalManager restart
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Add a `terminal.restart` RPC method to the `LaborerRpcs` contract and implement it on the server. This method kills the existing PTY process for a terminal, then respawns it with the same command in the same workspace directory. The terminal ID remains the same (the LiveStore row is updated, not deleted and recreated), so any pane displaying the terminal continues to show it seamlessly. The terminal status transitions: running -> stopped -> running. A `TerminalRestarted` event is committed to LiveStore, and the scrollback buffer is cleared in xterm.js on the client side.
+
+On the UI side, add a "Restart" button to terminals in the terminal list (both running and stopped). Clicking it calls `LaborerClient.mutation("terminal.restart")` via `useAtomSet`. The xterm.js pane clears and shows the fresh terminal output.
+
+### Acceptance criteria
+
+- [ ] `terminal.restart` added to `LaborerRpcs` in `packages/shared/src/rpc.ts` with `Rpc.make("terminal.restart", { payload: TerminalRestartPayload })`
+- [ ] `TerminalRestartPayload` schema defined with `terminalId` field
+- [ ] `TerminalManager.restart(terminalId)` method implemented — kills existing PTY (if running), respawns with same command and workspace directory, reuses terminal ID
+- [ ] `TerminalRestarted` event added to LiveStore schema, materializer resets terminal status to "running"
+- [ ] Server RPC handler delegates to TerminalManager.restart and commits TerminalRestarted event
+- [ ] Restarting a nonexistent terminal returns a descriptive error
+- [ ] Restarting a stopped terminal respawns it (acts as a "start again")
+- [ ] UI: restart button visible on terminals in the terminal list (both running and stopped)
+- [ ] UI: button calls `LaborerClient.mutation("terminal.restart")` via `useAtomSet`
+- [ ] UI: xterm.js clears scrollback on restart and shows fresh output
+- [ ] Tests: restart running terminal -> killed then respawned, same ID, status = running; restart stopped terminal -> respawned; restart nonexistent -> error; UI button -> mutation called, terminal output refreshes
+
+### Blocked by
+
+- Blocked by #59, #63, #5
+
+### User stories addressed
+
+- User story 6, 28
+
+---
+
+## Issue 134: Drag terminal from sidebar onto empty panel pane
+
+### Parent PRD
+
+PRD.md
+
+### What to build
+
+Add drag-and-drop support so users can drag a terminal item from the sidebar terminal list onto an empty panel pane to assign that terminal to that pane. Currently, clicking a terminal in the sidebar auto-finds an empty pane or creates a new split — there is no way to target a specific pane. This feature gives users precise control over which pane displays which terminal.
+
+**Drag source**: Make each `TerminalItem` in the terminal list (`apps/web/src/components/terminal-list.tsx`) draggable, carrying `{ terminalId, workspaceId }` as drag data.
+
+**Drop target**: Make empty `LeafNode` panes in `PaneContent` (`apps/web/src/panels/panel-manager.tsx`) accept drops. An empty pane is a `LeafNode` with `paneType: "terminal"` and no `terminalId` set. When an empty pane receives a drop, it should fill the entire pane with that terminal — no splitting required.
+
+**Assignment action**: Use the existing `panelActions.assignTerminalToPane(terminalId, workspaceId, paneId)` which already supports targeted pane assignment via the `paneId` parameter. The plumbing exists; only the drag-and-drop UI needs to be built.
+
+**Visual feedback**: Show a visual drop indicator (highlight border, background tint) on valid drop targets when dragging. Show a "not allowed" indicator on panes that already have content assigned.
+
+A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the native HTML5 Drag and Drop API should be used. Prefer `@dnd-kit` for accessibility (keyboard-based drag) and better React integration.
+
+### Acceptance criteria
+
+- [ ] Terminal items in the sidebar terminal list are draggable (mouse and keyboard)
+- [ ] Empty panel panes (LeafNode with no terminalId) are valid drop targets
+- [ ] Dropping a terminal onto an empty pane calls `assignTerminalToPane(terminalId, workspaceId, paneId)` — terminal fills the pane
+- [ ] Panes that already have a terminal assigned are not valid drop targets (or show a "replace" indicator)
+- [ ] Visual drag feedback: dragged item has a drag preview, drop targets highlight on drag-over
+- [ ] Layout is persisted to LiveStore after drop (via existing `layoutPaneAssigned` event flow)
+- [ ] Dragging does not interfere with existing click-to-assign behavior in the sidebar
+- [ ] Keyboard accessibility: drag-and-drop can be performed via keyboard (if using @dnd-kit)
+- [ ] Tests: drag terminal onto empty pane → terminal renders in that pane; drag onto occupied pane → rejected or replaced; layout persisted after drop; click-to-assign still works
+
+### Blocked by
+
+- Blocked by #63 (done), #66 (done)
+
+### User stories addressed
+
+- User story 1, 6
+
+---
+
 ## Summary
 
 | # | Title | Blocked by | Status |
@@ -3707,3 +3821,6 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 | 129 | Graceful shutdown — persist state | #16 | Ready |
 | 130 | Graceful shutdown — free ports | ~~#30~~ | Ready |
 | 131 | Theme consistency audit | #90 | Blocked (#90 now Ready) |
+| 132 | terminal.remove RPC handler + delete UI | ~~#59~~, ~~#63~~, ~~#5~~ | Ready |
+| 133 | terminal.restart RPC handler + restart UI | ~~#59~~, ~~#63~~, ~~#5~~ | Ready |
+| 134 | Drag terminal from sidebar onto empty panel | ~~#63~~, ~~#66~~ | Ready |

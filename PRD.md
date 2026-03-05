@@ -116,6 +116,8 @@ class LaborerRpcs extends RpcGroup.make(
   Rpc.make("terminal.write", { payload: TerminalWritePayload }),
   Rpc.make("terminal.resize", { payload: TerminalResizePayload }),
   Rpc.make("terminal.kill", { payload: TerminalKillPayload }),
+  Rpc.make("terminal.remove", { payload: TerminalRemovePayload }),
+  Rpc.make("terminal.restart", { payload: TerminalRestartPayload }),
   Rpc.make("diff.refresh", { payload: DiffRefreshPayload }),
   Rpc.make("editor.open", { payload: EditorOpenPayload }),
   Rpc.make("rlph.startLoop", { payload: RlphStartLoopPayload, success: TerminalSpawnResult }),
@@ -160,6 +162,8 @@ Key RPC methods (all mutations unless noted):
 - `terminal.write(terminalId, data)` — sends input to PTY
 - `terminal.resize(terminalId, cols, rows)` — resizes PTY
 - `terminal.kill(terminalId)` — kills terminal process
+- `terminal.remove(terminalId)` — kills (if running) and removes terminal from LiveStore
+- `terminal.restart(terminalId)` — kills and respawns terminal with same command, preserving terminal ID
 - `diff.refresh(workspaceId)` — triggers immediate diff recalculation
 - `editor.open(workspaceId, filePath?)` — opens file in Cursor/VS Code
 - `rlph.startLoop(workspaceId, options)` — convenience for spawning `rlph --once` in a terminal

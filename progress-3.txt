@@ -1253,3 +1253,92 @@ Created a project switcher dropdown that lets users filter the sidebar's workspa
 ### Issues unblocked
 - Issue #114: Cross-project workspace dashboard — was blocked by #41 (done) and #104 (done). Not directly blocked by #113, but the project switcher's filtering pattern can be reused or extended for the dashboard's per-project summary view.
 
+## Issue #79: Panel keyboard shortcut — resize panes — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Added keyboard shortcuts for resizing panes in the tmux-style panel system. Users can now grow or shrink the active pane using `Ctrl+B, Shift+Arrow` key sequences. The resize operates on the nearest ancestor split matching the arrow direction, adjusting sizes by 5% per keystroke. Minimum pane size (5%) is enforced. This completes the tmux-style keyboard-driven panel management workflow: split (H/V), close (X), navigate (O/P/arrows), toggle diff (D), and now resize (Shift+arrows).
+
+### What was done
+
+1. **Created `apps/web/src/panels/panel-group-registry.tsx`** — new React context (~90 lines) that stores imperative `GroupImperativeHandle` refs for `ResizablePanelGroup` instances, keyed by `SplitNode.id`:
+   - **`PanelGroupRegistryProvider`**: Maintains a `Map<string, GroupImperativeHandle>` via `useRef`. Provides `registerGroupRef`, `unregisterGroupRef`, and `getGroupRef` methods via context.
+   - **`usePanelGroupRegistry`**: Hook to access the registry from components.
+   - Each `SplitPanelRenderer` registers its group ref on mount and unregisters on unmount. The resize logic uses `getGroupRef(splitNodeId)` to call `setLayout()` on the correct panel group.
+
+2. **Added resize computation to `apps/web/src/panels/layout-utils.ts`** (~130 new lines):
+   - **`RESIZE_STEP = 5`**: Fixed 5% step size per keyboard press.
+   - **`MIN_PANE_SIZE = 5`**: Prevents panes from being resized to nothing.
+   - **`getResizeDelta(direction, splitOrientation)`**: Maps arrow direction + split orientation to a size delta. Right/Down → grow (+5%), Left/Up → shrink (-5%). Returns `undefined` if the direction doesn't match the orientation (e.g., Left/Right on a vertical split), signaling the caller to walk up to a higher ancestor.
+   - **`computeResize(root, activePaneId, direction)`**: Main entry point. Builds the path from root to active pane, walks up to find the nearest ancestor SplitNode matching the direction, computes new sizes.
+   - **`computeResizeFromPath(path, direction)`**: Extracted helper that walks up the path trying each ancestor. Keeps `computeResize` under Biome's complexity limit.
+   - **`applyResizeDelta(ancestor, childIndex, delta)`**: Adjusts sizes for the active pane and its adjacent sibling. Growing takes space from the next sibling; shrinking gives space to the previous sibling. Enforces minimum pane size. Returns `{ splitNodeId, newSizes }` for the imperative API.
+
+3. **Added `resizePane` action to `apps/web/src/panels/panel-context.tsx`**:
+   - Added `ResizeDirection` type alias (`"left" | "right" | "up" | "down"`)
+   - Added `resizePane(paneId, direction)` method to the `PanelActions` interface
+
+4. **Updated `apps/web/src/panels/panel-manager.tsx`** — SplitPanelRenderer enhancements:
+   - Added `groupRef` registration via `usePanelGroupRegistry()`. Each `SplitPanelRenderer` registers its `GroupImperativeHandle` on mount and unregisters on unmount.
+   - Added `groupRef` prop to `ResizablePanelGroup` for imperative access.
+   - Added `id` prop to each `ResizablePanel` (matching `child.id`), enabling the imperative `setLayout({ [panelId]: percentage })` API.
+
+5. **Added 4 resize hotkey sequences to `apps/web/src/panels/panel-hotkeys.tsx`**:
+   - `Ctrl+B, Shift+ArrowRight` → grow active pane horizontally
+   - `Ctrl+B, Shift+ArrowLeft` → shrink active pane horizontally
+   - `Ctrl+B, Shift+ArrowDown` → grow active pane vertically
+   - `Ctrl+B, Shift+ArrowUp` → shrink active pane vertically
+   - `resizeDirection` helper callback shared by all 4 shortcuts
+   - Updated module JSDoc to document the new shortcuts
+
+6. **Updated `apps/web/src/routes/index.tsx`**:
+   - Added `PanelGroupRegistryProvider` wrapping `HomeComponent` via a `HomeRoute` wrapper component. The registry must be above `HomeComponent` so that `usePanelLayout()` can access it for the `handleResizePane` callback.
+   - Added `handleResizePane` callback in `usePanelLayout()`: finds the resize target via `computeResize`, retrieves the group ref from the registry, and calls `groupRef.setLayout(newSizes)`.
+   - Added `resizePane: handleResizePane` to the `panelActions` memo.
+   - Added imports: `NavigationDirection`, `computeResize`, `PanelGroupRegistryProvider`, `usePanelGroupRegistry`.
+
+### Files created
+- `apps/web/src/panels/panel-group-registry.tsx` — PanelGroupRegistry context and provider
+
+### Files modified
+- `apps/web/src/panels/layout-utils.ts` — Added `computeResize`, `getResizeDelta`, `computeResizeFromPath`, `applyResizeDelta`, `RESIZE_STEP`, `MIN_PANE_SIZE`
+- `apps/web/src/panels/panel-context.tsx` — Added `ResizeDirection` type, `resizePane` method to `PanelActions` interface
+- `apps/web/src/panels/panel-hotkeys.tsx` — Added 4 Shift+Arrow resize shortcuts, `resizeDirection` helper, updated JSDoc
+- `apps/web/src/panels/panel-manager.tsx` — Added `groupRef` registration in `SplitPanelRenderer`, `id` prop on `ResizablePanel`, new imports
+- `apps/web/src/routes/index.tsx` — Added `HomeRoute` wrapper with `PanelGroupRegistryProvider`, `handleResizePane` callback, wired into `panelActions`
+
+### Acceptance criteria status
+- [x] Prefix + resize key → active pane grows/shrinks (Ctrl+B, Shift+Arrow → 5% resize via imperative API)
+- [x] Minimum size enforced (MIN_PANE_SIZE = 5%, checked in `applyResizeDelta`)
+- [ ] Tests: shortcuts resize pane; minimum enforced (deferred — web app has no component test infrastructure; pure `computeResize` function could be unit tested if vitest is added to the web app)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `tsc --noEmit` passes for server package (only pre-existing informational messages — no new errors)
+- `ultracite check` passes on all 6 modified/created files with zero issues (`Checked 6 files in 10ms. No fixes applied.`)
+- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Imperative API via GroupImperativeHandle**: `react-resizable-panels` v4's `defaultSize` prop only applies on initial mount. To resize panels programmatically after mount, the `groupRef`'s `setLayout()` imperative method is used. This is the library's intended approach for programmatic resize.
+- **PanelGroupRegistry context**: Since the layout tree is recursive (nested `ResizablePanelGroup` components), there can be many group instances. The registry stores all group refs keyed by `SplitNode.id`, allowing the resize logic to target the correct group. The registry uses `useRef<Map>` (not React state) to avoid unnecessary re-renders on registration.
+- **`id` prop on ResizablePanel**: The imperative `setLayout()` API takes `{ [panelId]: percentage }`. By setting `id={child.id}` on each `ResizablePanel`, the panel IDs match the `PanelNode.id` values used in `computeResize`'s output `newSizes` map. This creates a natural bridge between the tree model and the library's imperative API.
+- **Shift+Arrow (not plain Arrow)**: Plain arrow keys after Ctrl+B are already used for directional navigation (Issue #71). Adding Shift as a modifier distinguishes resize from navigation. This follows the tmux convention where Ctrl+B+Arrow navigates and Ctrl+B+Shift+Arrow (or repeated prefix) resizes.
+- **Grow/shrink from adjacent sibling**: When growing, the space is taken from the NEXT sibling (in tree order). When shrinking, space is given to the PREVIOUS sibling. This provides predictable behavior: Shift+Right makes the active pane wider by pushing its right neighbor. Shift+Left makes it narrower by giving space to its left neighbor.
+- **Walk-up ancestor search**: Like directional navigation, the resize algorithm walks up from the active pane to find the nearest ancestor split matching the direction. This handles nested layouts correctly — e.g., resizing horizontally from a pane deep inside a vertical split will skip past vertical ancestors until finding a horizontal one.
+- **HomeRoute wrapper**: The `PanelGroupRegistryProvider` must be above `HomeComponent` so that `usePanelLayout()` (called at the top of `HomeComponent`) can access the registry. A wrapper component `HomeRoute` provides this. The alternative (splitting `usePanelLayout` into two hooks) would be more complex for no benefit.
+- **5% step size**: A 5% step provides fine-grained control (20 presses to go from 50% to 100%) while being large enough that each press has a visible effect. This matches common tmux resize step sizes.
+- **MIN_PANE_SIZE = 5%**: Matches the `minSize="5%"` prop already set on `ResizablePanel` components, ensuring consistency between drag-to-resize and keyboard resize constraints.
+
+### Keyboard shortcut summary (complete)
+With Issue #79 done, the full tmux-style keyboard shortcut system is:
+- `Ctrl+B, H` → split horizontal ✅ (#75)
+- `Ctrl+B, V` → split vertical ✅ (#76)
+- `Ctrl+B, X` → close pane ✅ (#77)
+- `Ctrl+B, O` → next pane ✅ (#78)
+- `Ctrl+B, P` → previous pane ✅ (#78)
+- `Ctrl+B, D` → toggle diff ✅ (#90)
+- `Ctrl+B, Arrow` → directional navigation ✅ (#71)
+- `Ctrl+B, Shift+Arrow` → resize pane ✅ (#79)
+

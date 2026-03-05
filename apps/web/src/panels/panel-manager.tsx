@@ -41,7 +41,8 @@ import { workspaces } from "@laborer/shared/schema";
 import type { LeafNode, PanelNode, SplitNode } from "@laborer/shared/types";
 import { queryDb } from "@livestore/livestore";
 import { Layers, Plus, Terminal as TerminalIcon } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { GroupImperativeHandle } from "react-resizable-panels";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { Button } from "@/components/ui/button";
@@ -68,6 +69,7 @@ import {
 import { extractErrorMessage } from "@/lib/utils";
 import { useLaborerStore } from "@/livestore/store";
 import { useActivePaneId, usePanelActions } from "@/panels/panel-context";
+import { usePanelGroupRegistry } from "@/panels/panel-group-registry";
 import { DiffPane } from "@/panes/diff-pane";
 import { TerminalPane } from "@/panes/terminal-pane";
 
@@ -261,10 +263,32 @@ interface PanelRendererProps {
  * Each child is rendered recursively via PanelRenderer, supporting
  * arbitrary nesting depth. Panel sizes are taken from the SplitNode's
  * sizes array (percentages that must sum to 100).
+ *
+ * Registers the ResizablePanelGroup's imperative handle with the
+ * PanelGroupRegistry so keyboard shortcuts can programmatically resize
+ * panels via `groupRef.setLayout()`.
+ *
+ * @see Issue #79: Keyboard shortcut — resize panes
  */
 function SplitPanelRenderer({ node }: { readonly node: SplitNode }) {
+	const registry = usePanelGroupRegistry();
+	const groupRef = useRef<GroupImperativeHandle | null>(null);
+
+	useEffect(() => {
+		if (registry && groupRef.current) {
+			registry.registerGroupRef(node.id, groupRef.current);
+		}
+		return () => {
+			registry?.unregisterGroupRef(node.id);
+		};
+	}, [registry, node.id]);
+
 	return (
-		<ResizablePanelGroup data-split-id={node.id} orientation={node.direction}>
+		<ResizablePanelGroup
+			data-split-id={node.id}
+			groupRef={groupRef}
+			orientation={node.direction}
+		>
 			{node.children.map((child, index) => {
 				const size = node.sizes[index] ?? 100 / node.children.length;
 				return (
@@ -284,6 +308,11 @@ function SplitPanelRenderer({ node }: { readonly node: SplitNode }) {
  * Renders a single child within a SplitNode, preceded by a ResizableHandle
  * if it is not the first child. Extracted to a separate component to keep
  * the SplitPanelRenderer map clean and to provide stable keys.
+ *
+ * Each ResizablePanel has an `id` matching its PanelNode ID, enabling
+ * programmatic resize via the GroupImperativeHandle's `setLayout()` API.
+ *
+ * @see Issue #79: Keyboard shortcut — resize panes
  */
 function SplitChild({
 	child,
@@ -297,7 +326,11 @@ function SplitChild({
 	return (
 		<>
 			{index > 0 && <ResizableHandle />}
-			<ResizablePanel defaultSize={`${defaultSize}%`} minSize="5%">
+			<ResizablePanel
+				defaultSize={`${defaultSize}%`}
+				id={child.id}
+				minSize="5%"
+			>
 				<PanelRenderer node={child} />
 			</ResizablePanel>
 		</>

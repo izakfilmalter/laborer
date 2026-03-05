@@ -14,6 +14,12 @@
 import type { LeafNode, SplitDirection } from "@laborer/shared/types";
 import { createContext, useContext } from "react";
 
+/**
+ * Direction for pane resize operations.
+ * Duplicated from layout-utils to avoid circular imports.
+ */
+type ResizeDirection = "left" | "right" | "up" | "down";
+
 interface PanelActions {
 	/**
 	 * Assign a terminal to an existing pane or the first available empty pane.
@@ -36,6 +42,22 @@ interface PanelActions {
 	 * @param paneId - The ID of the LeafNode to close
 	 */
 	readonly closePane: (paneId: string) => void;
+	/**
+	 * Resize the active pane in the given direction.
+	 *
+	 * Grows or shrinks the active pane by a fixed step (5%), taking from
+	 * or giving to the adjacent sibling in the parent split. The direction
+	 * determines both which axis to resize on and whether to grow or shrink:
+	 * - Right/Down → grow the active pane
+	 * - Left/Up → shrink the active pane
+	 *
+	 * Minimum pane size is enforced.
+	 *
+	 * @param paneId - The ID of the pane to resize
+	 * @param direction - The direction to resize in
+	 * @see Issue #79: Keyboard shortcut — resize panes
+	 */
+	readonly resizePane: (paneId: string, direction: ResizeDirection) => void;
 	/**
 	 * Set the active (focused) pane.
 	 *

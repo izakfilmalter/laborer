@@ -45,8 +45,10 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkspaceList } from "@/components/workspace-list";
 import { useLaborerStore } from "@/livestore/store";
+import type { NavigationDirection } from "@/panels/layout-utils";
 import {
 	closePane,
+	computeResize,
 	findNodeById,
 	generateId,
 	getLeafIds,
@@ -58,11 +60,29 @@ import {
 	useActivePaneId,
 	usePanelActions,
 } from "@/panels/panel-context";
+import {
+	PanelGroupRegistryProvider,
+	usePanelGroupRegistry,
+} from "@/panels/panel-group-registry";
 import { PanelHotkeys } from "@/panels/panel-hotkeys";
 import { PanelManager } from "@/panels/panel-manager";
 
+/**
+ * Route-level wrapper that provides PanelGroupRegistryProvider above
+ * HomeComponent so that usePanelLayout can access the registry.
+ *
+ * @see Issue #79: Keyboard shortcut — resize panes
+ */
+function HomeRoute() {
+	return (
+		<PanelGroupRegistryProvider>
+			<HomeComponent />
+		</PanelGroupRegistryProvider>
+	);
+}
+
 export const Route = createFileRoute("/")({
-	component: HomeComponent,
+	component: HomeRoute,
 });
 
 /** LiveStore queries for building the default panel layout. */
@@ -309,6 +329,7 @@ function useInitialLayout(): PanelNode | undefined {
 function usePanelLayout() {
 	const store = useLaborerStore();
 	const initialLayout = useInitialLayout();
+	const registry = usePanelGroupRegistry();
 
 	// Read the persisted layout from LiveStore reactively.
 	// Returns all rows (should be 0 or 1 for the "default" session).
@@ -528,6 +549,37 @@ function usePanelLayout() {
 	);
 
 	/**
+	 * Resize a pane in the given direction by adjusting the parent split's
+	 * sizes via the imperative GroupImperativeHandle API.
+	 *
+	 * Finds the nearest ancestor SplitNode matching the direction, computes
+	 * new sizes (+/- 5%), and calls `groupRef.setLayout()` to apply them.
+	 *
+	 * @see Issue #79: Keyboard shortcut — resize panes
+	 */
+	const handleResizePane = useCallback(
+		(paneId: string, direction: NavigationDirection) => {
+			const base = persistedLayoutTree ?? initialLayout;
+			if (!base) {
+				return;
+			}
+
+			const result = computeResize(base, paneId, direction);
+			if (!result) {
+				return;
+			}
+
+			const groupHandle = registry?.getGroupRef(result.splitNodeId);
+			if (!groupHandle) {
+				return;
+			}
+
+			groupHandle.setLayout(result.newSizes);
+		},
+		[persistedLayoutTree, initialLayout, registry]
+	);
+
+	/**
 	 * Toggle the integrated diff sidebar on a terminal pane.
 	 *
 	 * Flips the `diffOpen` flag on the target LeafNode and persists the
@@ -578,6 +630,7 @@ function usePanelLayout() {
 			closePane: handleClosePane,
 			setActivePaneId: handleSetActivePaneId,
 			toggleDiffPane: handleToggleDiffPane,
+			resizePane: handleResizePane,
 		}),
 		[
 			handleAssignTerminalToPane,
@@ -585,6 +638,7 @@ function usePanelLayout() {
 			handleClosePane,
 			handleSetActivePaneId,
 			handleToggleDiffPane,
+			handleResizePane,
 		]
 	);
 

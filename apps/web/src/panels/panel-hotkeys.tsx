@@ -15,6 +15,10 @@
  * - Ctrl+b then ArrowRight → move focus right
  * - Ctrl+b then ArrowUp → move focus up
  * - Ctrl+b then ArrowDown → move focus down
+ * - Ctrl+b then Shift+ArrowLeft → shrink active pane (horizontal)
+ * - Ctrl+b then Shift+ArrowRight → grow active pane (horizontal)
+ * - Ctrl+b then Shift+ArrowUp → shrink active pane (vertical)
+ * - Ctrl+b then Shift+ArrowDown → grow active pane (vertical)
  *
  * All shortcuts operate on the currently active (focused) pane.
  * The active pane is tracked via PanelActionsContext.
@@ -24,6 +28,7 @@
  * @see Issue #76: Keyboard shortcut — split vertical (also done here)
  * @see Issue #77: Keyboard shortcut — close pane (also done here)
  * @see Issue #78: Keyboard shortcut — navigate panes (also done here)
+ * @see Issue #79: Keyboard shortcut — resize panes
  * @see Issue #90: Toggle diff alongside terminal
  */
 
@@ -189,6 +194,47 @@ function PanelHotkeys({ layout, leafPaneIds }: PanelHotkeysProps) {
 	useHotkeySequence(
 		["Control+B", "ArrowDown"],
 		(event) => navigateDirection(event, "down"),
+		{ timeout: SEQUENCE_TIMEOUT }
+	);
+
+	// --- Resize shortcuts (Ctrl+b then Shift+arrow key) ---
+	// Resize the active pane by growing or shrinking it in the
+	// direction of the arrow key.
+	const resizeDirection = (
+		event: KeyboardEvent,
+		direction: NavigationDirection
+	) => {
+		event.preventDefault();
+		if (actions && activePaneId) {
+			actions.resizePane(activePaneId, direction);
+		}
+	};
+
+	// Ctrl+b then Shift+ArrowRight → grow active pane horizontally
+	useHotkeySequence(
+		["Control+B", "Shift+ArrowRight"],
+		(event) => resizeDirection(event, "right"),
+		{ timeout: SEQUENCE_TIMEOUT }
+	);
+
+	// Ctrl+b then Shift+ArrowLeft → shrink active pane horizontally
+	useHotkeySequence(
+		["Control+B", "Shift+ArrowLeft"],
+		(event) => resizeDirection(event, "left"),
+		{ timeout: SEQUENCE_TIMEOUT }
+	);
+
+	// Ctrl+b then Shift+ArrowDown → grow active pane vertically
+	useHotkeySequence(
+		["Control+B", "Shift+ArrowDown"],
+		(event) => resizeDirection(event, "down"),
+		{ timeout: SEQUENCE_TIMEOUT }
+	);
+
+	// Ctrl+b then Shift+ArrowUp → shrink active pane vertically
+	useHotkeySequence(
+		["Control+B", "Shift+ArrowUp"],
+		(event) => resizeDirection(event, "up"),
 		{ timeout: SEQUENCE_TIMEOUT }
 	);
 

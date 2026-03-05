@@ -478,8 +478,172 @@ function findPaneInDirection(
 	return undefined;
 }
 
+/**
+ * Resize step percentage — how much the active pane grows or shrinks
+ * per keyboard shortcut press (in percentage points).
+ */
+const RESIZE_STEP = 5;
+
+/**
+ * Compute the resize direction based on the keyboard arrow and the
+ * split's orientation.
+ *
+ * Returns a delta to apply to the active pane's size:
+ * - Positive delta → grow the active pane
+ * - Negative delta → shrink the active pane
+ * - undefined → the arrow direction doesn't match the split orientation
+ *
+ * Mapping:
+ * - Horizontal split + Shift+ArrowRight → grow (+RESIZE_STEP)
+ * - Horizontal split + Shift+ArrowLeft → shrink (-RESIZE_STEP)
+ * - Vertical split + Shift+ArrowDown → grow (+RESIZE_STEP)
+ * - Vertical split + Shift+ArrowUp → shrink (-RESIZE_STEP)
+ *
+ * Arrow keys that don't match the split orientation return undefined
+ * so the caller can walk up to a higher ancestor.
+ */
+function getResizeDelta(
+	direction: NavigationDirection,
+	splitOrientation: "horizontal" | "vertical"
+): number | undefined {
+	if (splitOrientation === "horizontal") {
+		if (direction === "right") {
+			return RESIZE_STEP;
+		}
+		if (direction === "left") {
+			return -RESIZE_STEP;
+		}
+		return undefined;
+	}
+	// vertical
+	if (direction === "down") {
+		return RESIZE_STEP;
+	}
+	if (direction === "up") {
+		return -RESIZE_STEP;
+	}
+	return undefined;
+}
+
+/**
+ * Find the parent SplitNode of the active pane that can be resized in the
+ * given direction, and compute the new sizes array.
+ *
+ * Walks up from the active pane's parent toward the root looking for a
+ * SplitNode whose orientation matches the resize direction. Once found,
+ * adjusts the sizes array by moving `RESIZE_STEP` percentage points from
+ * the adjacent sibling to the active pane (or vice versa).
+ *
+ * Returns the parent SplitNode ID and new sizes, or undefined if resize
+ * is not possible (e.g., no matching split orientation, at minimum size).
+ *
+ * @see Issue #79: Keyboard shortcut — resize panes
+ */
+function computeResize(
+	root: PanelNode,
+	activePaneId: string,
+	direction: NavigationDirection
+): { splitNodeId: string; newSizes: Record<string, number> } | undefined {
+	const path = buildPath(root, activePaneId);
+	if (!path || path.length < 2) {
+		return undefined;
+	}
+
+	return computeResizeFromPath(path, direction);
+}
+
+/** Minimum pane size percentage — prevents panes from being resized to nothing. */
+const MIN_PANE_SIZE = 5;
+
+/**
+ * Walk up the path from the active pane to find a resizable ancestor.
+ * Extracted from computeResize to keep complexity under Biome's limit.
+ */
+function computeResizeFromPath(
+	path: PanelNode[],
+	direction: NavigationDirection
+): { splitNodeId: string; newSizes: Record<string, number> } | undefined {
+	// Walk up from the active pane's parent toward the root
+	for (let i = path.length - 2; i >= 0; i--) {
+		const ancestor = path[i];
+		if (!ancestor || ancestor._tag !== "SplitNode") {
+			continue;
+		}
+
+		const delta = getResizeDelta(direction, ancestor.direction);
+		if (delta === undefined) {
+			continue;
+		}
+
+		const childInPath = path[i + 1];
+		if (!childInPath) {
+			continue;
+		}
+
+		const childIndex = ancestor.children.findIndex(
+			(c) => c.id === childInPath.id
+		);
+		if (childIndex === -1) {
+			continue;
+		}
+
+		return applyResizeDelta(ancestor, childIndex, delta);
+	}
+
+	return undefined;
+}
+
+/**
+ * Apply a resize delta to a SplitNode at a given child index.
+ * Returns the new layout or undefined if resize is not possible.
+ */
+function applyResizeDelta(
+	ancestor: SplitNode,
+	childIndex: number,
+	delta: number
+): { splitNodeId: string; newSizes: Record<string, number> } | undefined {
+	// Find the sibling to steal/give space from.
+	// Growing → take from the next sibling. Shrinking → give to the previous sibling.
+	const siblingIndex = delta > 0 ? childIndex + 1 : childIndex - 1;
+	const siblingExists =
+		siblingIndex >= 0 && siblingIndex < ancestor.children.length;
+	if (!siblingExists) {
+		return undefined;
+	}
+
+	const currentSize = ancestor.sizes[childIndex] ?? 50;
+	const siblingSize = ancestor.sizes[siblingIndex] ?? 50;
+
+	const newSize = currentSize + delta;
+	const newSiblingSize = siblingSize - delta;
+
+	// Enforce minimum size
+	if (newSize < MIN_PANE_SIZE || newSiblingSize < MIN_PANE_SIZE) {
+		return undefined;
+	}
+
+	// Build the new sizes map using child IDs as keys (for the imperative API)
+	const newSizes: Record<string, number> = {};
+	for (let j = 0; j < ancestor.children.length; j++) {
+		const child = ancestor.children[j];
+		if (!child) {
+			continue;
+		}
+		if (j === childIndex) {
+			newSizes[child.id] = newSize;
+		} else if (j === siblingIndex) {
+			newSizes[child.id] = newSiblingSize;
+		} else {
+			newSizes[child.id] = ancestor.sizes[j] ?? 100 / ancestor.children.length;
+		}
+	}
+
+	return { splitNodeId: ancestor.id, newSizes };
+}
+
 export {
 	closePane,
+	computeResize,
 	countLeaves,
 	findNodeById,
 	findPaneInDirection,

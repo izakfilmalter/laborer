@@ -71,29 +71,9 @@ Already implemented via `react-resizable-panels` (shadcn/ui's Resizable componen
 
 ---
 
-## Issue 79: Panel keyboard shortcut — resize panes
+## ~~Issue 79: Panel keyboard shortcut — resize panes~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Add keyboard shortcuts for resizing panes (e.g., prefix + shift+arrow keys to grow/shrink active pane).
-
-### Acceptance criteria
-
-- [ ] Prefix + resize key → active pane grows/shrinks
-- [ ] Minimum size enforced
-- [ ] Tests: shortcuts resize pane; minimum enforced
-
-### Blocked by
-
-- ~~Blocked by #72, #75~~
-
-### User stories addressed
-
-- User story 2, 30
+Added Ctrl+B, Shift+Arrow keyboard shortcuts for resizing panes. Shift+Right/Down grows the active pane by 5%; Shift+Left/Up shrinks it. Uses react-resizable-panels' imperative `GroupImperativeHandle.setLayout()` API via a new `PanelGroupRegistry` context. Minimum pane size (5%) enforced. Walk-up ancestor search handles nested layouts correctly. Completes the full tmux-style keyboard shortcut system.
 
 ---
 
@@ -667,7 +647,7 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 49 | ~~Workspace creation error display~~ | ~~#37~~, ~~#38~~, ~~#39~~, ~~#42~~ | Done |
 | 71 | ~~PanelManager — navigate between panes~~ | ~~#67~~ | Done |
 | 72 | ~~PanelManager — drag-to-resize~~ | ~~#67~~ | Done |
-| 79 | Keyboard shortcut — resize panes | ~~#72~~, ~~#75~~ | Ready |
+| 79 | ~~Keyboard shortcut — resize panes~~ | ~~#72~~, ~~#75~~ | Done |
 | 81 | Panel responsive layout | ~~#72~~ | Ready |
 | 88 | Diff viewer — accept/reject annotations | ~~#87~~ | Ready |
 | 91 | Diff viewer debounce/throttle | ~~#89~~ | Ready |

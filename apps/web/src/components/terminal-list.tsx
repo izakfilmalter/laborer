@@ -12,7 +12,13 @@
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
 import { terminals } from "@laborer/shared/schema";
 import { queryDb } from "@livestore/livestore";
-import { Plus, Square, Terminal as TerminalIcon, Trash2 } from "lucide-react";
+import {
+	Plus,
+	RotateCw,
+	Square,
+	Terminal as TerminalIcon,
+	Trash2,
+} from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
@@ -27,6 +33,7 @@ const allTerminals$ = queryDb(terminals, { label: "terminalList" });
 const spawnTerminalMutation = LaborerClient.mutation("terminal.spawn");
 const killTerminalMutation = LaborerClient.mutation("terminal.kill");
 const removeTerminalMutation = LaborerClient.mutation("terminal.remove");
+const restartTerminalMutation = LaborerClient.mutation("terminal.restart");
 
 interface TerminalListProps {
 	/** The workspace ID to filter terminals for. */
@@ -50,6 +57,9 @@ function TerminalList({ workspaceId }: TerminalListProps) {
 		mode: "promise",
 	});
 	const removeTerminal = useAtomSet(removeTerminalMutation, {
+		mode: "promise",
+	});
+	const restartTerminal = useAtomSet(restartTerminalMutation, {
 		mode: "promise",
 	});
 	const [isSpawning, setIsSpawning] = useState(false);
@@ -105,6 +115,22 @@ function TerminalList({ workspaceId }: TerminalListProps) {
 		[removeTerminal]
 	);
 
+	const handleRestartTerminal = useCallback(
+		async (terminalId: string) => {
+			try {
+				await restartTerminal({
+					payload: { terminalId },
+				});
+				toast.success("Terminal restarted");
+			} catch (error) {
+				toast.error(
+					`Failed to restart terminal: ${extractErrorMessage(error)}`
+				);
+			}
+		},
+		[restartTerminal]
+	);
+
 	const handleSelectTerminal = useCallback(
 		(terminalId: string) => {
 			if (panelActions) {
@@ -154,6 +180,7 @@ function TerminalList({ workspaceId }: TerminalListProps) {
 					key={terminal.id}
 					onKill={handleKillTerminal}
 					onRemove={handleRemoveTerminal}
+					onRestart={handleRestartTerminal}
 					onSelect={handleSelectTerminal}
 					terminal={terminal}
 				/>
@@ -165,6 +192,7 @@ function TerminalList({ workspaceId }: TerminalListProps) {
 interface TerminalItemProps {
 	readonly onKill: (terminalId: string) => void;
 	readonly onRemove: (terminalId: string) => void;
+	readonly onRestart: (terminalId: string) => void;
 	readonly onSelect: (terminalId: string) => void;
 	readonly terminal: {
 		readonly id: string;
@@ -180,6 +208,7 @@ function TerminalItem({
 	onSelect,
 	onKill,
 	onRemove,
+	onRestart,
 }: TerminalItemProps) {
 	const isRunning = terminal.status === "running";
 
@@ -213,6 +242,18 @@ function TerminalItem({
 			>
 				{terminal.status}
 			</Badge>
+			<Button
+				aria-label="Restart terminal"
+				className="size-5 shrink-0 text-muted-foreground hover:text-foreground"
+				onClick={(e) => {
+					e.stopPropagation();
+					onRestart(terminal.id);
+				}}
+				size="icon-sm"
+				variant="ghost"
+			>
+				<RotateCw className="size-2.5" />
+			</Button>
 			{isRunning && (
 				<Button
 					aria-label="Stop terminal"

@@ -276,6 +276,31 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 
 		streamEvents();
 
+		// Subscribe to terminal restart events (Issue #133).
+		// When a TerminalRestarted event is committed for this terminal,
+		// clear the xterm.js scrollback buffer so old output from the
+		// previous process doesn't mix with the new process output.
+		const streamRestartEvents = async () => {
+			try {
+				for await (const event of store.events({
+					filter: ["v1.TerminalRestarted"],
+				})) {
+					if (abortController.signal.aborted) {
+						break;
+					}
+
+					const args = event.args as { id: string };
+					if (args.id === terminalId) {
+						terminal.clear();
+					}
+				}
+			} catch {
+				// Stream ended or aborted — expected on unmount
+			}
+		};
+
+		streamRestartEvents();
+
 		// Cleanup on unmount
 		return () => {
 			onDataDisposable.dispose();

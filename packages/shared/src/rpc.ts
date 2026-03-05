@@ -154,6 +154,14 @@ export class LaborerRpcs extends RpcGroup.make(
 		},
 	}),
 
+	Rpc.make("terminal.restart", {
+		success: TerminalResponse,
+		error: RpcError,
+		payload: {
+			terminalId: Schema.String,
+		},
+	}),
+
 	// -----------------------------------------------------------------------
 	// Diff RPCs
 	// -----------------------------------------------------------------------

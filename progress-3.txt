@@ -445,3 +445,67 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #132. However, this completes one of two terminal lifecycle features (#132 remove, #133 restart).
+
+## Issue #133: terminal.restart RPC handler + TerminalManager restart + restart UI — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Implemented `terminal.restart` — a new RPC method that completes the terminal lifecycle (spawn → kill/stop → restart/remove). This enables re-entering agent sessions (user story 28) and restarting failed processes without losing the terminal pane assignment.
+- Added `terminalRestarted` event to `packages/shared/src/schema.ts` with a materializer that updates the terminal status to `"running"`. Semantically distinct from `terminalStatusChanged` — "restarted" indicates a full respawn cycle, not just a status change.
+- Added `terminal.restart` to the `LaborerRpcs` group in `packages/shared/src/rpc.ts` with `Rpc.make("terminal.restart", { success: TerminalResponse, error: RpcError, payload: { terminalId: Schema.String } })`.
+- Added `restart(terminalId)` method to the `TerminalManager` Effect service in `packages/server/src/services/terminal-manager.ts`:
+  1. Looks up terminal metadata (command, workspaceId) from LiveStore's `terminals` table.
+  2. Validates the workspace still exists (workspace may have been destroyed since the terminal was created).
+  3. If the terminal is still running (in-memory map), kills the PTY via `ptyHostClient.kill()` and removes from map.
+  4. Gets workspace env vars, determines shell/args (same logic as `spawn`).
+  5. Re-adds to in-memory map with same terminal ID.
+  6. Respawns PTY via `ptyHostClient.spawn()` with same ID, same command, same workspace directory.
+  7. Commits `terminalRestarted` event to LiveStore (resets status to "running").
+  8. Returns the `TerminalRecord` with status "running".
+- Added `terminal.restart` RPC handler in `packages/server/src/rpc/handlers.ts` delegating to `TerminalManager.restart(terminalId)`. Updated JSDoc (20 → 21 RPC methods).
+- Added restart button UI in `apps/web/src/components/terminal-list.tsx`:
+  - Added `restartTerminalMutation` using `LaborerClient.mutation("terminal.restart")`.
+  - Added `handleRestartTerminal` callback with toast notifications on success/error.
+  - Added `onRestart` prop to `TerminalItem` interface.
+  - Added `RotateCw` icon button that renders for ALL terminals (both running and stopped). Uses `text-muted-foreground hover:text-foreground` styling.
+  - `e.stopPropagation()` prevents the restart click from triggering the terminal select action.
+- Added xterm.js scrollback clear on restart in `apps/web/src/panes/terminal-pane.tsx`:
+  - Added a second async event stream subscription for `v1.TerminalRestarted` events.
+  - When a restart event is received for the current terminal, calls `terminal.clear()` to clear the xterm.js scrollback buffer so old output doesn't mix with new process output.
+  - Uses the same `abortController` for cleanup on unmount.
+
+### Files modified
+- `packages/shared/src/schema.ts` — Added `terminalRestarted` event, materializer, and events registry entry
+- `packages/shared/src/rpc.ts` — Added `terminal.restart` RPC definition with TerminalResponse success type
+- `packages/server/src/services/terminal-manager.ts` — Added `restart` method to interface and implementation, updated JSDoc
+- `packages/server/src/rpc/handlers.ts` — Added `terminal.restart` handler, updated JSDoc (20 → 21 RPC methods)
+- `apps/web/src/components/terminal-list.tsx` — Added restart mutation, handler, `onRestart` prop, and RotateCw button for all terminals
+- `apps/web/src/panes/terminal-pane.tsx` — Added `v1.TerminalRestarted` event stream subscription that clears xterm.js scrollback
+
+### Acceptance criteria status
+- [x] `terminal.restart` added to `LaborerRpcs` in `packages/shared/src/rpc.ts`
+- [x] `TerminalManager.restart(terminalId)` implemented — kills existing PTY (if running), respawns with same command and workspace directory, reuses terminal ID
+- [x] `TerminalRestarted` event added to LiveStore schema, materializer resets terminal status to "running"
+- [x] Server RPC handler delegates to TerminalManager.restart and commits TerminalRestarted event
+- [x] Restarting a nonexistent terminal returns a descriptive error (`NOT_FOUND`)
+- [x] Restarting a stopped terminal respawns it (acts as a "start again")
+- [x] UI: restart button visible on terminals in the terminal list (both running and stopped)
+- [x] UI: button calls `LaborerClient.mutation("terminal.restart")` via `useAtomSet` with `{ mode: "promise" }`
+- [x] UI: xterm.js clears scrollback on restart and shows fresh output
+- [ ] Tests: restart running terminal → killed then respawned, same ID, status = running; restart stopped terminal → respawned; restart nonexistent → error; UI button → mutation called, terminal output refreshes (deferred — vitest not yet configured)
+
+### Verification
+- `tsc --noEmit` passes on all three packages (shared, server, web) — no new type errors (only pre-existing shadcn/ui calendar.tsx and sonner.tsx errors)
+- `biome check` passes on all 6 modified files with zero issues
+- Pre-existing errors in generated shadcn/ui components are unrelated
+
+### Design decisions
+- The `restart` method looks up the terminal's original command and workspaceId from LiveStore (not the in-memory map). This is critical because stopped terminals are removed from the in-memory map when the PTY exit callback fires, but their metadata persists in LiveStore. Without this, restarting a stopped terminal would fail.
+- The restart button appears for ALL terminals (both running and stopped) using the `RotateCw` icon. For running terminals, restart = kill + respawn (useful when an agent gets stuck). For stopped terminals, restart = respawn (useful for re-entering an agent session). This gives users maximum flexibility.
+- Created a dedicated `terminalRestarted` event rather than reusing `terminalStatusChanged`. The restart event has distinct semantics — it indicates a full respawn cycle, not just a status toggle. This improves event log auditability and enables the xterm.js client to differentiate between a status change (don't clear) and a restart (clear scrollback).
+- The xterm.js scrollback clear uses a second async event stream subscription rather than trying to detect restart from status changes. This is cleaner because: (a) the TerminalRestarted event is unambiguous, and (b) the existing output stream continues to work correctly — new output from the respawned PTY flows through the same `v1.TerminalOutput` events.
+- The shell/args parsing in `restart` mirrors the `spawn` logic: if the command equals the default shell, spawn it directly (interactive mode); otherwise, run via shell with `-c` flag. This ensures pipes, redirects, etc. work correctly on restart.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #133. This completes the terminal lifecycle — all CRUD operations are now implemented: spawn (#50), kill (#54), remove (#132), restart (#133).

@@ -36,6 +36,7 @@
  * Issue #55: multiple terminals per workspace (included — Map tracks all terminals)
  * Issue #128: graceful shutdown — kills all terminals on SIGINT/SIGTERM
  * Issue #132: terminal.remove — kill (if running) + delete from LiveStore
+ * Issue #133: terminal.restart — kill (if running) + respawn with same command, preserving terminal ID
  */
 
 import { RpcError } from "@laborer/shared/rpc";
@@ -152,6 +153,19 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 		 * @param terminalId - ID of the terminal to remove
 		 */
 		readonly remove: (terminalId: string) => Effect.Effect<void, RpcError>;
+
+		/**
+		 * Restart a terminal — kills the existing PTY (if running) and respawns
+		 * it with the same command in the same workspace directory. The terminal
+		 * ID is preserved so any pane displaying the terminal continues seamlessly.
+		 *
+		 * If the terminal is stopped, it acts as a "start again" operation.
+		 *
+		 * @param terminalId - ID of the terminal to restart
+		 */
+		readonly restart: (
+			terminalId: string
+		) => Effect.Effect<TerminalRecord, RpcError>;
 
 		/**
 		 * Kill all terminals belonging to a workspace.
@@ -491,6 +505,132 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				}
 			);
 
+			const restart = Effect.fn("TerminalManager.restart")(function* (
+				terminalId: string
+			) {
+				// 1. Look up the terminal in LiveStore to get its metadata
+				const allTerminals = store.query(tables.terminals);
+				const terminalOpt = pipe(
+					allTerminals,
+					Arr.findFirst((t) => t.id === terminalId)
+				);
+
+				if (terminalOpt._tag === "None") {
+					return yield* new RpcError({
+						message: `Terminal not found: ${terminalId}`,
+						code: "NOT_FOUND",
+					});
+				}
+
+				const terminalRow = terminalOpt.value;
+
+				// 2. Validate workspace still exists
+				const allWorkspaces = store.query(tables.workspaces);
+				const workspaceOpt = pipe(
+					allWorkspaces,
+					Arr.findFirst((w) => w.id === terminalRow.workspaceId)
+				);
+
+				if (workspaceOpt._tag === "None") {
+					return yield* new RpcError({
+						message: `Workspace not found: ${terminalRow.workspaceId} — cannot restart terminal`,
+						code: "NOT_FOUND",
+					});
+				}
+
+				const workspace = workspaceOpt.value;
+
+				// 3. If the terminal is still running (in-memory map), kill it
+				const map = yield* Ref.get(terminalsRef);
+				if (map.has(terminalId)) {
+					ptyHostClient.kill(terminalId);
+
+					yield* Ref.update(terminalsRef, (m) => {
+						const next = new Map(m);
+						next.delete(terminalId);
+						return next;
+					});
+				}
+
+				// 4. Get workspace environment variables
+				const workspaceEnv = yield* workspaceProvider.getWorkspaceEnv(
+					terminalRow.workspaceId
+				);
+
+				// 5. Determine shell + args (same logic as spawn)
+				const resolvedCommand = terminalRow.command;
+				const shellPath =
+					resolvedCommand !== defaultShell ? defaultShell : resolvedCommand;
+				const shellArgs =
+					resolvedCommand !== defaultShell ? ["-c", resolvedCommand] : [];
+
+				// 6. Re-add to in-memory map before spawning
+				const managedTerminal: ManagedTerminal = {
+					id: terminalId,
+					workspaceId: terminalRow.workspaceId,
+					command: resolvedCommand,
+				};
+
+				yield* Ref.update(terminalsRef, (m) => {
+					const next = new Map(m);
+					next.set(terminalId, managedTerminal);
+					return next;
+				});
+
+				// 7. Respawn PTY via PtyHostClient with same ID
+				ptyHostClient.spawn(
+					{
+						id: terminalId,
+						shell: shellPath,
+						args: shellArgs,
+						cwd: workspace.worktreePath,
+						env: {
+							...process.env,
+							...workspaceEnv,
+							TERM: "xterm-256color",
+						} as Record<string, string>,
+						cols: 80,
+						rows: 24,
+					},
+					// Data callback
+					(base64Data: string) => {
+						const data = Buffer.from(base64Data, "base64").toString("utf-8");
+						store.commit(events.terminalOutput({ id: terminalId, data }));
+					},
+					// Exit callback
+					(_exitCode: number, _signal: number) => {
+						store.commit(
+							events.terminalStatusChanged({
+								id: terminalId,
+								status: "stopped",
+							})
+						);
+
+						runSync(
+							Ref.update(terminalsRef, (m) => {
+								const next = new Map(m);
+								next.delete(terminalId);
+								return next;
+							})
+						);
+					}
+				);
+
+				// 8. Commit TerminalRestarted event (resets status to "running")
+				store.commit(events.terminalRestarted({ id: terminalId }));
+
+				yield* Effect.log(`Restarted terminal ${terminalId}`).pipe(
+					Effect.annotateLogs("module", logPrefix)
+				);
+
+				return {
+					id: terminalId,
+					workspaceId: terminalRow.workspaceId,
+					command: resolvedCommand,
+					status: "running" as const,
+				};
+			});
+
 			const killAllForWorkspace = Effect.fn(
 				"TerminalManager.killAllForWorkspace"
 			)(function* (workspaceId: string) {
@@ -617,6 +757,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				resize,
 				kill,
 				remove,
+				restart,
 				listTerminals,
 				killAllForWorkspace,
 			});

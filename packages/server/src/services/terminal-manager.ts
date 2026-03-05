@@ -238,7 +238,6 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				workspaceId: string,
 				command?: string
 			) {
-				console.log("[TM.spawn] START ws=%s cmd=%s", workspaceId, command);
 				// 1. Validate workspace exists and get its info
 				const allWorkspaces = store.query(tables.workspaces);
 				const workspaceOpt = pipe(
@@ -254,11 +253,6 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				}
 
 				const workspace = workspaceOpt.value;
-				console.log(
-					"[TM.spawn] ws.status=%s cwd=%s",
-					workspace.status,
-					workspace.worktreePath
-				);
 
 				// Ensure workspace is in a valid state for spawning terminals
 				if (workspace.status !== "running" && workspace.status !== "creating") {
@@ -317,17 +311,10 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 					// Data callback: decode base64 and commit to LiveStore
 					(base64Data: string) => {
 						const data = Buffer.from(base64Data, "base64").toString("utf-8");
-						console.log("[TM.onData] id=%s len=%d", id, data.length);
 						store.commit(events.terminalOutput({ id, data }));
 					},
 					// Exit callback: update LiveStore status and clean up
-					(exitCode: number, signal: number) => {
-						console.log(
-							"[TM.onExit] id=%s code=%d signal=%d",
-							id,
-							exitCode,
-							signal
-						);
+					(_exitCode: number, _signal: number) => {
 						// Update LiveStore status to "stopped"
 						store.commit(
 							events.terminalStatusChanged({ id, status: "stopped" })
@@ -346,8 +333,6 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 						);
 					}
 				);
-
-				console.log("[TM.spawn] pty spawned via PtyHostClient id=%s", id);
 
 				// 7. Commit TerminalSpawned event to LiveStore
 				store.commit(

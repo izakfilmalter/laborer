@@ -352,32 +352,9 @@ Created `@laborer/terminal` workspace package at `packages/terminal/` with Bun H
 
 ---
 
-## Issue 136: Move PTY Host + PtyHostClient to terminal package
+## ~~Issue 136: Move PTY Host + PtyHostClient to terminal package~~ ✅ DONE
 
-### Parent PRD
-
-PRD-terminal-extraction.md
-
-### What to build
-
-Move the PTY Host child process (`pty-host.ts`), the IPC client (`services/pty-host-client.ts`), and the ring buffer (`lib/ring-buffer.ts`) from `@laborer/server` to `@laborer/terminal`. Wire `PtyHostClient` into the terminal service's Effect layer tree in `main.ts`. Move `node-pty` dependency to the terminal package's `package.json`. Port `pty-host.test.ts` and `ring-buffer.test.ts` to `packages/terminal/test/`. The moved modules should be largely unchanged — this is a mechanical extraction.
-
-### Acceptance criteria
-
-- [ ] `pty-host.ts`, `pty-host-client.ts`, `ring-buffer.ts` exist in `packages/terminal/src/`
-- [ ] `PtyHostClient.layer` is wired into the terminal service's layer tree
-- [ ] PTY Host child process spawns successfully when terminal service starts
-- [ ] `node-pty` is a dependency of `@laborer/terminal` (not `@laborer/server`)
-- [ ] `pty-host.test.ts` and `ring-buffer.test.ts` pass in the new package
-- [ ] Terminal service starts and PTY Host logs "ready" on startup
-
-### Blocked by
-
-- Blocked by #135
-
-### User stories addressed
-
-- User story 17, 18, 19
+Copied PTY Host (`pty-host.ts`), PtyHostClient (`services/pty-host-client.ts`), and RingBuffer (`lib/ring-buffer.ts`) from `@laborer/server` to `@laborer/terminal`. Wired `PtyHostClient.layer` into the terminal service's Effect layer tree. Added `node-pty` dependency to terminal package. Ported test files. Server originals remain until Issues #138-#143. Terminal: 46 tests pass. Server: 61 tests pass.
 
 ---
 
@@ -409,7 +386,7 @@ Move `TerminalManager` from `@laborer/server` to `@laborer/terminal` and simplif
 
 ### Blocked by
 
-- Blocked by #136
+- Blocked by ~~#136~~
 
 ### User stories addressed
 
@@ -687,6 +664,198 @@ End-to-end verification and polish pass for the full terminal service extraction
 
 ---
 
+## Issue 148: Focused pane border fix
+
+### Parent PRD
+
+PRD-cmd-w-close-panel.md
+
+### What to build
+
+Replace the glitched `ring-2 ring-primary ring-inset` active pane indicator with a solid `border-2 border-primary` on the focused pane. Non-active panes get `border-2 border-transparent` to maintain consistent sizing and prevent layout shift when focus changes. Update the drag-over drop target highlight to use border instead of ring for consistency. The change is in `LeafPaneRenderer` in `panel-manager.tsx`.
+
+### Acceptance criteria
+
+- [ ] Active pane shows `border-2 border-primary` on all four edges
+- [ ] Non-active panes show `border-2 border-transparent` (no layout shift on focus change)
+- [ ] Border renders correctly at all split nesting depths (1 through 5+)
+- [ ] Border does not overlap or conflict with ResizableHandle drag handles
+- [ ] Drag-over drop target highlight uses border instead of ring
+- [ ] Border is consistent across all pane types (terminal, diff, empty)
+- [ ] Border disappears when no panes exist (empty layout state)
+
+### Blocked by
+
+None - can start immediately
+
+### User stories addressed
+
+- User story 2, 3, 12, 13
+
+---
+
+## Issue 149: Focus auto-transfer on pane close
+
+### Parent PRD
+
+PRD-cmd-w-close-panel.md
+
+### What to build
+
+When a pane is closed, automatically transfer focus to the nearest sibling pane in the same parent split. Add a new `findSiblingPaneId(root, paneId)` utility function in `layout-utils.ts` that resolves the target pane ID before the close operation mutates the tree. Update `handleClosePane` in the route component to compute the sibling before calling `closePane()`, then set `activePaneId` to that sibling. If the closing pane is the first child, focus the next sibling. If it's the last or middle child, focus the previous sibling. If no siblings exist (closing the last pane), set `activePaneId` to `null`. Add unit tests for `findSiblingPaneId` following the existing `layout-utils.test.ts` patterns.
+
+### Acceptance criteria
+
+- [ ] `findSiblingPaneId(root, paneId)` returns the correct sibling leaf ID for various tree configurations
+- [ ] Closing first child focuses next sibling
+- [ ] Closing last child focuses previous sibling
+- [ ] Closing middle child focuses previous sibling
+- [ ] Closing deeply nested pane focuses nearest sibling in parent split
+- [ ] Closing the last pane sets `activePaneId` to `null`
+- [ ] Focus transfer works with the existing Ctrl+B, X shortcut
+- [ ] Unit tests for `findSiblingPaneId` pass (edge cases: single leaf root, nested splits, flat splits with 3+ children)
+
+### Blocked by
+
+None - can start immediately
+
+### User stories addressed
+
+- User story 4, 5
+
+---
+
+## Issue 150: Guaranteed active pane invariant
+
+### Parent PRD
+
+PRD-cmd-w-close-panel.md
+
+### What to build
+
+Enforce the invariant: "there is always exactly one focused pane when at least one pane exists." On initial layout seed, set `activePaneId` to the first leaf pane ID. On layout restore from LiveStore persistence, validate that `activePaneId` points to an existing leaf; if not, fall back to the first leaf. The `handleSetActivePaneId` function should not accept `null` when panes exist. After any close operation that leaves panes remaining, verify `activePaneId` is valid (defense-in-depth on top of Issue #149's auto-transfer).
+
+### Acceptance criteria
+
+- [ ] Initial layout seed sets `activePaneId` to the first leaf pane ID
+- [ ] Layout restore with stale `activePaneId` (pointing to removed pane) falls back to first leaf
+- [ ] Layout restore with valid `activePaneId` preserves it
+- [ ] After any close operation with remaining panes, `activePaneId` is a valid leaf ID
+- [ ] `activePaneId` is `null` only when zero panes exist
+- [ ] Tests: seed layout → activePaneId set; restore with stale ID → falls back
+
+### Blocked by
+
+- Blocked by #149
+
+### User stories addressed
+
+- User story 5
+
+---
+
+## Issue 151: Cmd+W shortcut — close active pane
+
+### Parent PRD
+
+PRD-cmd-w-close-panel.md
+
+### What to build
+
+Register Cmd+W (Meta+W) as a direct keyboard shortcut that closes the currently focused pane. Three layers of work:
+
+1. **Tauri interception**: Prevent Cmd+W from reaching the native `CloseRequested` handler. Try the web-layer approach first: add a `window.addEventListener("keydown")` listener that catches Meta+W and calls `event.preventDefault()`. If Tauri still fires `CloseRequested`, fall back to registering Cmd+W via `tauri-plugin-global-shortcut` on the Rust side and emitting a Tauri event to the webview.
+
+2. **React hotkey**: Register Meta+W using `@tanstack/react-hotkeys` (single-key shortcut, not prefix sequence). Handler calls `actions.closePane(activePaneId)` when a pane is focused.
+
+3. **xterm.js passthrough**: Update the terminal's `attachCustomKeyEventHandler` to detect Meta+W and return `false`, preventing xterm.js from consuming it so it bubbles to the document-level hotkey handler. Follow the existing pattern used for Ctrl+B prefix mode.
+
+The existing Ctrl+B, X shortcut remains unchanged.
+
+### Acceptance criteria
+
+- [ ] Cmd+W closes the active pane when a pane is focused
+- [ ] Cmd+W works when xterm.js terminal has focus
+- [ ] Cmd+W does not trigger native window close/hide when panes exist
+- [ ] Cmd+W closes empty panes (no terminal assigned)
+- [ ] Existing Ctrl+B, X shortcut still works
+- [ ] Cmd+W works after multiple rapid presses (closing several panes in succession)
+- [ ] Native window close button (red dot) still hides to tray as before
+- [ ] Cmd+Q still quits the app as before
+
+### Blocked by
+
+- Blocked by #149
+
+### User stories addressed
+
+- User story 1, 9, 10, 11
+
+---
+
+## Issue 152: Cmd+W close-app confirmation dialog
+
+### Parent PRD
+
+PRD-cmd-w-close-panel.md
+
+### What to build
+
+When Cmd+W is pressed and no panes exist, show an AlertDialog asking "Close Laborer?" instead of silently doing nothing. The dialog uses the existing `alert-dialog.tsx` component with controlled `open` state (no trigger button — opened programmatically from the Cmd+W handler). Title: "Close Laborer?". Description: "The window will be hidden to the system tray. Your workspaces will continue running." Actions: "Cancel" (dismisses dialog) and "Close" (hides window to tray via Tauri window API). Follow the existing destructive confirmation pattern used by project removal, workspace destruction, and task removal dialogs.
+
+### Acceptance criteria
+
+- [ ] Cmd+W with no panes opens the close-app AlertDialog
+- [ ] Dialog shows title "Close Laborer?" and descriptive text about tray behavior
+- [ ] "Cancel" button dismisses the dialog without hiding the window
+- [ ] "Close" button hides the window to the system tray
+- [ ] Escape key dismisses the dialog
+- [ ] Dialog does not appear when at least one pane exists
+- [ ] Ctrl+B, X with no panes does NOT trigger the dialog (only Cmd+W does)
+
+### Blocked by
+
+- Blocked by #151
+
+### User stories addressed
+
+- User story 6, 7, 8
+
+---
+
+## Issue 153: Cmd+W close panel — polish & verification
+
+### Parent PRD
+
+PRD-cmd-w-close-panel.md
+
+### What to build
+
+End-to-end verification and polish pass for the full Cmd+W close panel feature. Verify all polishing requirements from the PRD across the complete integration.
+
+### Acceptance criteria
+
+- [ ] Border renders correctly at all split nesting depths (1 through 5+)
+- [ ] Border does not overlap or conflict with ResizableHandle drag handles
+- [ ] Cmd+W works after multiple rapid presses (closing several panes in succession)
+- [ ] Close-app AlertDialog can be dismissed with Escape or clicking Cancel
+- [ ] Close-app AlertDialog does not appear when there is at least one pane
+- [ ] Focus auto-transfer works when closing the only child in a nested split (tree collapse scenario)
+- [ ] Border disappears when no panes exist (empty layout state)
+- [ ] Drag-over drop target highlight still works correctly on empty panes alongside the new border style
+- [ ] Cmd+W does not interfere with Cmd+W in web inspector or dev tools when they are focused
+- [ ] Active pane border does not flicker during layout transitions (split, close, resize)
+
+### Blocked by
+
+- Blocked by #148, #149, #150, #151, #152
+
+### User stories addressed
+
+- Polishing requirements 1-9
+
+---
+
 ## Summary
 
 | # | Title | Blocked by | Status |
@@ -725,9 +894,9 @@ End-to-end verification and polish pass for the full terminal service extraction
 | 131 | ~~Theme consistency audit~~ | ~~#90~~ | Done |
 | 134 | ~~Drag terminal from sidebar onto empty panel~~ | ~~#63~~, ~~#66~~ | Done |
 | 135 | ~~Terminal package scaffold~~ | ~~None~~ | Done |
-| 136 | Move PTY Host + PtyHostClient to terminal package | ~~#135~~ | Ready |
+| 136 | ~~Move PTY Host + PtyHostClient to terminal package~~ | ~~#135~~ | Done |
 | 137 | ~~Terminal RPC contract~~ | ~~None~~ | Done |
-| 138 | Move + simplify TerminalManager | #136 | Blocked |
+| 138 | Move + simplify TerminalManager | ~~#136~~ | Ready |
 | 139 | Terminal RPC handlers | ~~#137~~, #138 | Blocked |
 | 140 | Move terminal WebSocket route to terminal package | #139 | Blocked |
 | 141 | Update Vite proxy + web app WebSocket hook | #140 | Blocked |
@@ -737,3 +906,9 @@ End-to-end verification and polish pass for the full terminal service extraction
 | 145 | LiveStore terminal schema deprecation | #144 | Blocked |
 | 146 | Grace period reconnection + orphan detection | #140 | Blocked |
 | 147 | Terminal extraction polish + integration verification | #144, #145, #146 | Blocked |
+| 148 | Focused pane border fix | None | Ready |
+| 149 | Focus auto-transfer on pane close | None | Ready |
+| 150 | Guaranteed active pane invariant | #149 | Blocked |
+| 151 | Cmd+W shortcut — close active pane | #149 | Blocked |
+| 152 | Cmd+W close-app confirmation dialog | #151 | Blocked |
+| 153 | Cmd+W close panel — polish & verification | #148, #149, #150, #151, #152 | Blocked |

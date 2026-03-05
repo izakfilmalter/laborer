@@ -2411,3 +2411,68 @@ Defined the `TerminalRpcs` RPC group in `@laborer/shared/rpc` for the standalone
 ### Issues unblocked
 - Issue #139: Terminal RPC handlers — was blocked by #137 (this issue) and #138. Now only blocked by #138.
 
+## Issue #136: Move PTY Host + PtyHostClient to terminal package — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Copied the PTY Host child process (`pty-host.ts`), PtyHostClient Effect service (`services/pty-host-client.ts`), and RingBuffer data structure (`lib/ring-buffer.ts`) from `@laborer/server` to `@laborer/terminal`. Wired `PtyHostClient.layer` into the terminal service's Effect layer tree in `main.ts`. Added `node-pty` dependency to the terminal package. Ported `pty-host.test.ts` and `ring-buffer.test.ts` to `packages/terminal/test/`. The server originals remain in place because the server's TerminalManager, terminal-ws.ts, and main.ts still depend on them — they'll be removed in Issues #138-#143.
+
+### What was done
+
+1. **Copied `pty-host.ts` to `packages/terminal/src/pty-host.ts`** — The PTY Host child process that manages node-pty instances. No changes needed — the module is self-contained (imports only `node-pty` and `node:process`).
+
+2. **Copied `pty-host-client.ts` to `packages/terminal/src/services/pty-host-client.ts`** — The Effect service that spawns the PTY Host as a child process and communicates via newline-delimited JSON over stdin/stdout. No path changes needed — the relative path from `services/pty-host-client.ts` to `../pty-host.ts` is identical in both packages.
+
+3. **Copied `ring-buffer.ts` to `packages/terminal/src/lib/ring-buffer.ts`** — The ring buffer data structure used for terminal scrollback storage. No changes needed — the module is self-contained (no external imports).
+
+4. **Added `node-pty: "1.1.0"` to `packages/terminal/package.json`** — The PTY Host requires node-pty for pseudo-terminal management. The same version as in the server package.
+
+5. **Wired `PtyHostClient.layer` into `packages/terminal/src/main.ts`** — Added import of `PtyHostClient` from `./services/pty-host-client.js`. Inserted `Layer.provide(PtyHostClient.layer)` in the application layer composition between the health route and the server infrastructure layer. Updated the JSDoc to describe the PTY Host architecture.
+
+6. **Copied `pty-host.test.ts` to `packages/terminal/test/pty-host.test.ts`** — 14 integration tests for PTY Host IPC. No changes needed — the test imports `../src/services/pty-host-client.js` which resolves correctly in both packages.
+
+7. **Copied `ring-buffer.test.ts` to `packages/terminal/test/ring-buffer.test.ts`** — 32 unit tests for the RingBuffer class. No changes needed — the test imports `../src/lib/ring-buffer.js` which resolves correctly in both packages.
+
+8. **Ran `bun install`** — Resolved the new `node-pty` dependency for the terminal package. Updated `bun.lock`.
+
+### Files created
+- `packages/terminal/src/pty-host.ts` — PTY Host child process (copied from server)
+- `packages/terminal/src/services/pty-host-client.ts` — PtyHostClient Effect service (copied from server)
+- `packages/terminal/src/lib/ring-buffer.ts` — Ring buffer data structure (copied from server)
+- `packages/terminal/test/pty-host.test.ts` — PTY Host integration tests (copied from server)
+- `packages/terminal/test/ring-buffer.test.ts` — Ring buffer unit tests (copied from server)
+
+### Files modified
+- `packages/terminal/package.json` — Added `node-pty: "1.1.0"` dependency
+- `packages/terminal/src/main.ts` — Imported PtyHostClient, wired into layer tree, updated JSDoc
+- `bun.lock` — Updated by `bun install`
+
+### Acceptance criteria status
+- [x] `pty-host.ts`, `pty-host-client.ts`, `ring-buffer.ts` exist in `packages/terminal/src/`
+- [x] `PtyHostClient.layer` is wired into the terminal service's layer tree
+- [x] PTY Host child process spawns successfully when terminal service starts (verified via test suite — 14 PTY host tests pass)
+- [x] `node-pty` is a dependency of `@laborer/terminal` (added to package.json; NOT removed from server yet — server still needs it until Issues #138-#143)
+- [x] `pty-host.test.ts` and `ring-buffer.test.ts` pass in the new package (46 tests: 32 ring-buffer + 14 pty-host)
+- [x] Terminal service starts and PTY Host logs "ready" on startup (verified via test suite)
+
+### Verification
+- `tsc --noEmit` passes for terminal package (clean — zero errors)
+- `tsc --noEmit` passes for server package (only pre-existing informational messages — no new errors)
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- Terminal package: 46 tests pass (32 ring-buffer + 14 pty-host)
+- Server package: 61 tests pass (32 ring-buffer + 9 workspace-validation + 14 pty-host + 6 terminal-manager)
+- `ultracite check` passes on terminal package with zero issues
+
+### Design decisions
+- **Copy, don't move**: The server package still has TerminalManager, terminal-ws.ts, and main.ts that all import from the server's copies of PtyHostClient, pty-host.ts, and ring-buffer.ts. Moving (deleting originals) would break the server. The server copies will be removed incrementally as Issues #138-#143 migrate the remaining terminal modules.
+- **`node-pty` stays in both packages**: The server's TerminalManager and terminal-ws.ts still depend on the server's PtyHostClient, which spawns the server's pty-host.ts, which imports node-pty. Removing node-pty from the server would break it. It will be removed from the server in Issue #143 (Server TerminalClient + remove server terminal modules).
+- **No biome-ignore suppression needed**: The server's `main.ts` has a `biome-ignore` comment on the PtyHostClient import for `useImportType`. The terminal's `main.ts` uses PtyHostClient as a runtime value (calling `.layer`), so no suppression is needed — the import is correctly a value import.
+- **File paths are identical**: The relative path structure (`services/pty-host-client.ts` → `../pty-host.ts`) is the same in both `packages/server/src/` and `packages/terminal/src/`. This made the copy mechanical — no import path adjustments were needed in any of the copied files.
+- **Tests are exact copies**: The test files import from `../src/services/pty-host-client.js` and `../src/lib/ring-buffer.js` — these relative paths resolve correctly in both `packages/server/test/` and `packages/terminal/test/`. No test modifications were needed.
+
+### Issues unblocked
+- Issue #138: Move + simplify TerminalManager — was blocked by #136 (this issue). Now unblocked and ready to implement.
+- Issue #139: Terminal RPC handlers — was blocked by #137 (done) and #138. Still blocked by #138.
+

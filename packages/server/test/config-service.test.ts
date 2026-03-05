@@ -8,7 +8,13 @@
  * Issue #154: Config Service — resolve config with walk-up + global default
  */
 
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
@@ -72,6 +78,22 @@ const runReadGlobalConfig = (): Promise<LaborerConfig> =>
 		Effect.gen(function* () {
 			const service = yield* ConfigService;
 			return yield* service.readGlobalConfig();
+		}).pipe(Effect.provide(ConfigService.layer))
+	);
+
+/** Run ConfigService.writeProjectConfig via the layer. */
+const runWriteProjectConfig = (
+	projectRepoPath: string,
+	updates: {
+		rlphConfig?: string | undefined;
+		setupScripts?: readonly string[] | undefined;
+		worktreeDir?: string | undefined;
+	}
+): Promise<void> =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const service = yield* ConfigService;
+			yield* service.writeProjectConfig(projectRepoPath, updates);
 		}).pipe(Effect.provide(ConfigService.layer))
 	);
 
@@ -514,6 +536,114 @@ describe("ConfigService", () => {
 			// The GLOBAL_CONFIG_DIR should exist (it may have existed before)
 			const { existsSync } = await import("node:fs");
 			expect(existsSync(GLOBAL_CONFIG_DIR)).toBe(true);
+		});
+	});
+
+	describe("writeProjectConfig", () => {
+		it("should create laborer.json when missing", async () => {
+			const projectDir = join(testRoot, "write-create-missing");
+			mkdirSync(projectDir, { recursive: true });
+
+			await runWriteProjectConfig(projectDir, {
+				worktreeDir: "~/custom-worktrees",
+			});
+
+			const configPath = join(projectDir, CONFIG_FILE_NAME);
+			expect(existsSync(configPath)).toBe(true);
+
+			const written = JSON.parse(readFileSync(configPath, "utf-8")) as {
+				worktreeDir?: string;
+			};
+			expect(written.worktreeDir).toBe("~/custom-worktrees");
+		});
+
+		it("should merge updates without clobbering unrelated fields", async () => {
+			const projectDir = join(testRoot, "write-merge");
+			mkdirSync(projectDir, { recursive: true });
+
+			writeConfig(projectDir, {
+				worktreeDir: "/existing/worktrees",
+				rlphConfig: "rlph-existing.json",
+			});
+
+			await runWriteProjectConfig(projectDir, {
+				setupScripts: ["bun install", "bun test"],
+			});
+
+			const written = JSON.parse(
+				readFileSync(join(projectDir, CONFIG_FILE_NAME), "utf-8")
+			) as {
+				rlphConfig?: string;
+				setupScripts?: string[];
+				worktreeDir?: string;
+			};
+
+			expect(written.worktreeDir).toBe("/existing/worktrees");
+			expect(written.rlphConfig).toBe("rlph-existing.json");
+			expect(written.setupScripts).toEqual(["bun install", "bun test"]);
+		});
+
+		it("should preserve unknown fields in existing config", async () => {
+			const projectDir = join(testRoot, "write-preserve-unknown");
+			mkdirSync(projectDir, { recursive: true });
+
+			const configPath = join(projectDir, CONFIG_FILE_NAME);
+			writeFileSync(
+				configPath,
+				JSON.stringify(
+					{
+						worktreeDir: "/existing/worktrees",
+						customField: "preserve-me",
+						nested: { hello: "world" },
+					},
+					null,
+					2
+				)
+			);
+
+			await runWriteProjectConfig(projectDir, {
+				rlphConfig: "new-rlph.json",
+			});
+
+			const written = JSON.parse(readFileSync(configPath, "utf-8")) as {
+				customField?: string;
+				nested?: { hello?: string };
+				rlphConfig?: string;
+				worktreeDir?: string;
+			};
+
+			expect(written.customField).toBe("preserve-me");
+			expect(written.nested?.hello).toBe("world");
+			expect(written.worktreeDir).toBe("/existing/worktrees");
+			expect(written.rlphConfig).toBe("new-rlph.json");
+		});
+
+		it("should not write undefined fields", async () => {
+			const projectDir = join(testRoot, "write-ignore-undefined");
+			mkdirSync(projectDir, { recursive: true });
+
+			writeConfig(projectDir, {
+				setupScripts: ["existing-script"],
+				worktreeDir: "/existing/worktrees",
+			});
+
+			await runWriteProjectConfig(projectDir, {
+				rlphConfig: "updated-rlph.json",
+				setupScripts: undefined,
+				worktreeDir: undefined,
+			});
+
+			const written = JSON.parse(
+				readFileSync(join(projectDir, CONFIG_FILE_NAME), "utf-8")
+			) as {
+				rlphConfig?: string;
+				setupScripts?: string[];
+				worktreeDir?: string;
+			};
+
+			expect(written.rlphConfig).toBe("updated-rlph.json");
+			expect(written.setupScripts).toEqual(["existing-script"]);
+			expect(written.worktreeDir).toBe("/existing/worktrees");
 		});
 	});
 });

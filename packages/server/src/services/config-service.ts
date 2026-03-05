@@ -39,7 +39,13 @@
  * @see PRD-global-worktree-config.md
  */
 
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Context, Effect, Layer } from "effect";
@@ -69,6 +75,13 @@ interface LaborerConfig {
 	readonly rlphConfig?: string;
 	readonly setupScripts?: readonly string[];
 	readonly worktreeDir?: string;
+}
+
+/** Partial updates accepted by writeProjectConfig(). */
+interface ProjectConfigUpdates {
+	readonly rlphConfig?: string | undefined;
+	readonly setupScripts?: readonly string[] | undefined;
+	readonly worktreeDir?: string | undefined;
 }
 
 /**
@@ -158,6 +171,125 @@ const readConfigFile = (
 		);
 
 		return parsed;
+	});
+
+/**
+ * Read and parse a config file as a plain object.
+ * Used by writeProjectConfig to preserve unknown fields during round-trip writes.
+ */
+const readRawConfigObject = (
+	configPath: string
+): Effect.Effect<Record<string, unknown> | undefined, never> =>
+	Effect.gen(function* () {
+		if (!existsSync(configPath)) {
+			return undefined;
+		}
+
+		const content = yield* Effect.try({
+			try: () => readFileSync(configPath, "utf-8"),
+			catch: (error) => error,
+		}).pipe(
+			Effect.catchAll((error) =>
+				Effect.gen(function* () {
+					yield* Effect.logWarning(
+						`Failed to read ${configPath}: ${String(error)}`
+					).pipe(Effect.annotateLogs("module", logPrefix));
+					return "" as string;
+				})
+			)
+		);
+
+		if (content.length === 0) {
+			return {} as Record<string, unknown>;
+		}
+
+		const parsed = yield* Effect.try({
+			try: () => JSON.parse(content) as unknown,
+			catch: (error) => error,
+		}).pipe(
+			Effect.catchAll((error) =>
+				Effect.gen(function* () {
+					yield* Effect.logWarning(
+						`Failed to parse ${configPath}: ${String(error)}`
+					).pipe(Effect.annotateLogs("module", logPrefix));
+					return {} as unknown;
+				})
+			)
+		);
+
+		if (
+			parsed !== null &&
+			typeof parsed === "object" &&
+			!Array.isArray(parsed)
+		) {
+			return parsed as Record<string, unknown>;
+		}
+
+		yield* Effect.logWarning(
+			`Expected object in ${configPath}, got ${typeof parsed}`
+		).pipe(Effect.annotateLogs("module", logPrefix));
+		return {} as Record<string, unknown>;
+	});
+
+/**
+ * Apply explicit config updates to an existing config object.
+ * Undefined fields in updates are ignored (do not overwrite existing values).
+ */
+const applyConfigUpdates = (
+	existing: Record<string, unknown>,
+	updates: ProjectConfigUpdates
+): Record<string, unknown> => {
+	const next = { ...existing };
+
+	if (updates.worktreeDir !== undefined) {
+		next.worktreeDir = updates.worktreeDir;
+	}
+
+	if (updates.setupScripts !== undefined) {
+		next.setupScripts = [...updates.setupScripts];
+	}
+
+	if (updates.rlphConfig !== undefined) {
+		next.rlphConfig = updates.rlphConfig;
+	}
+
+	return next;
+};
+
+/**
+ * Atomically write JSON to a path by writing a temp file and renaming.
+ */
+const writeJsonAtomic = (
+	targetPath: string,
+	content: Record<string, unknown>
+): Effect.Effect<void, never> =>
+	Effect.gen(function* () {
+		const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+		yield* Effect.try({
+			try: () =>
+				writeFileSync(`${tempPath}`, `${JSON.stringify(content, null, 2)}\n`, {
+					encoding: "utf-8",
+				}),
+			catch: (error) => error,
+		}).pipe(
+			Effect.catchAll((error) =>
+				Effect.logWarning(
+					`Failed to write temp config file ${tempPath}: ${String(error)}`
+				).pipe(Effect.annotateLogs("module", logPrefix))
+			)
+		);
+
+		yield* Effect.try({
+			try: () => renameSync(tempPath, targetPath),
+			catch: (error) => error,
+		}).pipe(
+			Effect.catchAll((error) =>
+				Effect.logWarning(
+					`Failed to atomically move ${tempPath} to ${targetPath}: ${String(error)}`
+				).pipe(Effect.annotateLogs("module", logPrefix))
+			)
+		);
 	});
 
 /**
@@ -305,6 +437,16 @@ class ConfigService extends Context.Tag("@laborer/ConfigService")<
 		 * Returns an empty config if the file doesn't exist or is invalid.
 		 */
 		readonly readGlobalConfig: () => Effect.Effect<LaborerConfig, never>;
+
+		/**
+		 * Write project-level config updates to `<projectRepoPath>/laborer.json`.
+		 * Merges partial updates with existing file content, preserves unknown
+		 * fields, and uses an atomic temp-file + rename write strategy.
+		 */
+		readonly writeProjectConfig: (
+			projectRepoPath: string,
+			updates: ProjectConfigUpdates
+		) => Effect.Effect<void, never>;
 	}
 >() {
 	static readonly layer = Layer.succeed(
@@ -351,6 +493,26 @@ class ConfigService extends Context.Tag("@laborer/ConfigService")<
 					return config ?? ({} as LaborerConfig);
 				}
 			),
+
+			writeProjectConfig: Effect.fn("ConfigService.writeProjectConfig")(
+				function* (projectRepoPath: string, updates: ProjectConfigUpdates) {
+					const projectConfigPath = join(
+						resolve(projectRepoPath),
+						CONFIG_FILE_NAME
+					);
+
+					const existing =
+						(yield* readRawConfigObject(projectConfigPath)) ??
+						({} as Record<string, unknown>);
+					const next = applyConfigUpdates(existing, updates);
+
+					yield* writeJsonAtomic(projectConfigPath, next);
+
+					yield* Effect.logDebug(
+						`Wrote project config at ${projectConfigPath}`
+					).pipe(Effect.annotateLogs("module", logPrefix));
+				}
+			),
 		})
 	);
 }
@@ -364,7 +526,15 @@ export {
 	GLOBAL_CONFIG_PATH,
 	mergeConfigs,
 	readConfigFile,
+	readRawConfigObject,
 	walkUpForConfigs,
+	applyConfigUpdates,
+	writeJsonAtomic,
 };
 
-export type { LaborerConfig, ResolvedLaborerConfig, ResolvedValue };
+export type {
+	LaborerConfig,
+	ProjectConfigUpdates,
+	ResolvedLaborerConfig,
+	ResolvedValue,
+};

@@ -722,32 +722,13 @@ Created `ConfigService` Effect tagged service in `packages/server/src/services/c
 
 ---
 
-## Issue 155: Config Service — write project config
+## ~~Issue 155: Config Service — write project config~~ ✅ DONE
 
 ### Parent PRD
 
 PRD-global-worktree-config.md
 
-### What to build
-
-Add a `writeProjectConfig(projectRepoPath, updates)` method to the `ConfigService` (Issue #154). This method reads the existing `laborer.json` at the project root, merges the provided partial updates, and writes the result back. If no `laborer.json` exists at the project root, creates one. Only writes fields that are explicitly provided in the updates — does not write `undefined` or default values. Preserves unknown fields in the existing file (round-trip safe). Uses atomic write (write to temp file, rename) to avoid partial writes.
-
-### Acceptance criteria
-
-- [ ] `writeProjectConfig` creates `laborer.json` at project root if it doesn't exist
-- [ ] `writeProjectConfig` merges updates with existing config (doesn't clobber unrelated fields)
-- [ ] Only explicitly provided fields are written (no default values injected)
-- [ ] Unknown fields in the existing file are preserved after write
-- [ ] Atomic write prevents partial/corrupt files
-- [ ] Tests verify creation, merge, and field preservation behaviors
-
-### Blocked by
-
-- Blocked by #154
-
-### User stories addressed
-
-- User story 12, 15
+Added `writeProjectConfig(projectRepoPath, updates)` to `ConfigService`. The method reads existing project-level `laborer.json` as a raw object, merges only explicitly provided fields, preserves unknown fields for round-trip safety, and writes atomically via temp file + rename. Also added integration tests covering file creation, non-clobbering merge behavior, unknown field preservation, and explicit `undefined` update handling.
 
 ---
 
@@ -931,9 +912,9 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 152 | Cmd+W close-app confirmation dialog | #151 | Blocked |
 | 153 | Cmd+W close panel — polish & verification | ~~#148~~, ~~#149~~, ~~#150~~, #151, #152 | Blocked |
 | 154 | ~~Config Service — resolve config with walk-up + global default~~ | ~~None~~ | Done |
-| 155 | Config Service — write project config | ~~#154~~ | Ready |
+| 155 | ~~Config Service — write project config~~ | ~~#154~~ | Done |
 | 156 | WorkspaceProvider — use ConfigService for worktree path + setup scripts | ~~#154~~ | Ready |
-| 157 | Config RPC endpoints + project settings modal | #155, #156 | Blocked |
+| 157 | Config RPC endpoints + project settings modal | ~~#155~~, #156 | Blocked |
 | 158 | Config + settings polish & edge cases | #157 | Blocked |
 | 159 | WorktreeDetector + schema origin + initial detection on project add | None | Ready |
 | 160 | UI for detected workspaces | #159 | Blocked |

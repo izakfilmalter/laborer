@@ -3120,3 +3120,35 @@ Replaced all `queryDb(terminals)` LiveStore subscriptions in the web app with th
 ### Issues unblocked
 - Issue #145: LiveStore terminal schema deprecation — was blocked by #144 ✅. Now ready.
 
+---
+
+## Issue #155: Config Service — write project config
+
+### Summary
+Implemented `ConfigService.writeProjectConfig(projectRepoPath, updates)` to write project-level `laborer.json` with merge semantics. The method reads existing config as a raw object, applies only explicitly provided fields, preserves unknown keys, and writes atomically via temp file + rename.
+
+### Changes
+
+**Modified:**
+- `packages/server/src/services/config-service.ts`
+  - Added `ProjectConfigUpdates` type and new `writeProjectConfig` service method.
+  - Added `readRawConfigObject()` helper for round-trip-safe parsing that preserves unknown fields.
+  - Added `applyConfigUpdates()` helper to merge partial updates without clobbering unrelated keys.
+  - Added `writeJsonAtomic()` helper using temp-file write + `renameSync`.
+  - Exported new helper/type symbols for testing.
+
+- `packages/server/test/config-service.test.ts`
+  - Added `runWriteProjectConfig()` test helper.
+  - Added integration tests for:
+    - create `laborer.json` when missing
+    - merge updates without clobbering unrelated fields
+    - preserve unknown fields on write
+    - ignore explicit `undefined` updates
+
+### Verification
+- `bun test test/config-service.test.ts` (packages/server): 32 passing, 0 failing
+- `bun x ultracite check packages/server/src/services/config-service.ts packages/server/test/config-service.test.ts`: clean
+- `bun run check-types` (packages/server): passes with pre-existing Effect TS plugin warnings/messages only
+
+### Issues unblocked
+- Issue #157 remains blocked only by #156 (`WorkspaceProvider — use ConfigService for worktree path + setup scripts`).

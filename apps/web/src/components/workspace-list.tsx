@@ -10,12 +10,16 @@
  * Includes rlph action buttons (Start Ralph Loop, Write PRD, Review PR,
  * Fix Findings) per active workspace for triggering agent workflows.
  *
+ * When no workspaces exist (all destroyed or none created), shows an empty
+ * state with guidance text and a CTA button to create the first workspace.
+ *
  * @see Issue #41: Workspace list UI component
  * @see Issue #48: Destroy Workspace button + confirmation dialog
  * @see Issue #93: "Start Ralph Loop" button UI
  * @see Issue #95: PRD writing form + writePRD button
  * @see Issue #97: "Review PR" button + PR number input
  * @see Issue #99: "Fix Findings" button + PR number input
+ * @see Issue #119: Empty state — no workspaces
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -25,6 +29,7 @@ import { ChevronDown, GitBranch, Layers, Play, Trash2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
+import { CreateWorkspaceForm } from "@/components/create-workspace-form";
 import { FixFindingsForm } from "@/components/fix-findings-form";
 import { ReviewPrForm } from "@/components/review-pr-form";
 import { TerminalList } from "@/components/terminal-list";
@@ -55,6 +60,7 @@ import {
 } from "@/components/ui/collapsible";
 import {
 	Empty,
+	EmptyContent,
 	EmptyDescription,
 	EmptyHeader,
 	EmptyMedia,
@@ -357,6 +363,9 @@ function WorkspaceList() {
 						worktree with its own branch, port, and dev server.
 					</EmptyDescription>
 				</EmptyHeader>
+				<EmptyContent>
+					<CreateWorkspaceForm />
+				</EmptyContent>
 			</Empty>
 		);
 	}

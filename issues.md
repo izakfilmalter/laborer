@@ -470,30 +470,9 @@ Added first-launch empty state experience. Two complementary changes: (1) sideba
 
 ---
 
-## Issue 119: Empty state — no workspaces
+## ~~Issue 119: Empty state — no workspaces~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-When a project has no workspaces, show an empty state in the workspace list area with guidance to create a workspace. Include a CTA.
-
-### Acceptance criteria
-
-- [ ] No workspaces in project → empty state with guidance
-- [ ] CTA opens Create Workspace form
-- [ ] After creating workspace → empty state disappears
-- [ ] Tests: no workspaces → empty state; CTA → form; create → gone
-
-### Blocked by
-
-- Blocked by #42
-
-### User stories addressed
-
-- Polishing requirement 13
+Enhanced workspace list empty state with `CreateWorkspaceForm` CTA button inside `EmptyContent`. When no active workspaces exist, the empty state now includes a "Create Workspace" button (dialog trigger) in addition to the guidance text. Follows the exact same pattern as Issue #118 (no-projects empty state with `AddProjectForm` CTA). Empty state disappears reactively via LiveStore query when a workspace is created.
 
 ---
 
@@ -786,7 +765,7 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 116 | Tauri global shortcut | #115 | Blocked |
 | 117 | Tauri window management | #115 | Blocked |
 | 118 | ~~Empty state — no projects~~ | ~~#27~~ | Done |
-| 119 | Empty state — no workspaces | ~~#42~~ | Ready |
+| 119 | ~~Empty state — no workspaces~~ | ~~#42~~ | Done |
 | 120 | ~~Empty state — no terminals~~ | ~~#63~~ | Done |
 | 121 | Loading state — workspace creation | ~~#41~~ | Ready |
 | 122 | Loading state — terminal spawning | ~~#60~~ | Ready |

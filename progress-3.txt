@@ -902,6 +902,47 @@ Modified `packages/server/src/services/workspace-provider.ts`:
 ### Issues unblocked
 - Issue #49: Workspace creation error display — now has the `DIRTY_WORKING_TREE` error code to match on for UI display. Together with `SETUP_SCRIPT_FAILED` (Issue #37, done) and the pending `GIT_FETCH_FAILED` (Issue #39), #49 is getting closer to unblocked.
 
+## Issue #119: Empty state — no workspaces — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Enhanced the workspace list empty state with a CTA button to create the first workspace. Previously, when no active workspaces existed, the `WorkspaceList` component showed only informational text ("Create a workspace to get started...") with no actionable element — users had to find the "Create Workspace" button in the sidebar section header. Now, the empty state includes the `CreateWorkspaceForm` component inside an `EmptyContent` section, following the exact same pattern established by Issue #118 (no-projects empty state with `AddProjectForm` CTA).
+
+### What was done
+
+Modified `apps/web/src/components/workspace-list.tsx`:
+
+1. **Added `CreateWorkspaceForm` import**: Imported from `@/components/create-workspace-form` — the existing dialog component that handles project selection, optional branch name, and calls the `workspace.create` mutation.
+
+2. **Added `EmptyContent` import**: Added to the existing `@/components/ui/empty` import block alongside `Empty`, `EmptyDescription`, `EmptyHeader`, `EmptyMedia`, `EmptyTitle`.
+
+3. **Added CTA to empty state**: Inserted `<EmptyContent><CreateWorkspaceForm /></EmptyContent>` after the `EmptyHeader` block in the empty state render. The `CreateWorkspaceForm` renders a "Create Workspace" button that opens a dialog with project selector and optional branch name input.
+
+4. **Updated module JSDoc**: Added `@see Issue #119: Empty state — no workspaces` reference and updated the description to mention the empty state behavior.
+
+### Files modified
+- `apps/web/src/components/workspace-list.tsx` — Added `CreateWorkspaceForm` import, `EmptyContent` import, CTA in empty state, updated JSDoc
+
+### Acceptance criteria status
+- [x] No workspaces in project → empty state with guidance (EmptyHeader with Layers icon, "No workspaces" title, descriptive text)
+- [x] CTA opens Create Workspace form (CreateWorkspaceForm renders a dialog trigger button in EmptyContent)
+- [x] After creating workspace → empty state disappears (LiveStore reactive query re-evaluates, `activeWorkspaces.length > 0`, normal list renders)
+- [ ] Tests: no workspaces → empty state renders; CTA → form opens; create → empty state gone (deferred — web app has no component test infrastructure)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on `workspace-list.tsx` with zero issues (`Checked 1 file in 8ms. No fixes applied.`)
+- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Reuse of `CreateWorkspaceForm`**: Rather than building a new component, the existing `CreateWorkspaceForm` (dialog with project selector + branch name input) is rendered directly in the empty state. This ensures consistent behavior (same validation, same mutation, same toast notifications) and avoids code duplication. The same component is also available in the sidebar section header — having it in two places (header + empty state) is intentional, matching the pattern from Issue #118 where `AddProjectForm` appears in both the sidebar empty state and the main content welcome state.
+- **Follows Issue #118 pattern exactly**: The implementation is identical to how `project-list.tsx` adds `<EmptyContent><AddProjectForm /></EmptyContent>` to its no-projects empty state. This consistency makes the codebase predictable and maintainable.
+- **Reactive disappearance**: No explicit state management is needed. The LiveStore `workspaces` table is reactively queried; when a `workspaceCreated` event is committed, the query re-evaluates, `activeWorkspaces.length > 0` becomes true, and the workspace list renders.
+
+---
+
 ## Issue #118: Empty state — no projects — COMPLETED
 
 **Status:** Done

@@ -140,6 +140,11 @@ const TaskResponse = Schema.Struct({
 	status: Schema.String,
 });
 
+const TaskImportResponse = Schema.Struct({
+	importedCount: Schema.Int,
+	totalCount: Schema.Int,
+});
+
 const WorkspaceResponse = Schema.Struct({
 	id: Schema.String,
 	projectId: Schema.String,
@@ -356,6 +361,14 @@ export class LaborerRpcs extends RpcGroup.make(
 			projectId: Schema.String,
 			title: Schema.String,
 			description: Schema.optional(Schema.String),
+		},
+	}),
+
+	Rpc.make("task.importGithub", {
+		success: TaskImportResponse,
+		error: RpcError,
+		payload: {
+			projectId: Schema.String,
 		},
 	}),
 

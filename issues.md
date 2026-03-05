@@ -123,7 +123,7 @@ Implement fetching tasks from Linear's API based on the project's rlph configura
 
 ---
 
-## Issue 109: GitHub task sourcing
+## ~~Issue 109: GitHub task sourcing~~ ✅ DONE
 
 ### Parent PRD
 
@@ -133,12 +133,7 @@ PRD.md
 
 Implement fetching issues from GitHub's API for the project's repository. Import GitHub issues as tasks in LiveStore with source = "github".
 
-### Acceptance criteria
-
-- [ ] Fetch issues from GitHub API for project repo
-- [ ] Tasks created in LiveStore with source = "github" and externalId
-- [ ] Handle API errors gracefully
-- [ ] Tests: mock GitHub API → tasks imported; API error → handled
+Added `GithubTaskImporter` on the server plus a new `task.importGithub` RPC endpoint. The importer resolves the repo's `remote.origin.url`, validates GitHub remotes (`git@github.com:owner/repo.git` and `https://github.com/owner/repo.git`), fetches open issues from the GitHub REST API, skips pull requests, dedupes against existing GitHub-sourced tasks, and creates new LiveStore tasks with `source = "github"` and `externalId = html_url`. API/network/remote errors surface as typed `RpcError`s. Added integration tests covering successful import, duplicate skipping, pull request filtering, and GitHub API failure handling.
 
 ### Blocked by
 
@@ -870,7 +865,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 91 | ~~Diff viewer debounce/throttle~~ | ~~#89~~ | Done |
 | 107 | ~~PRD-generated issues → tasks~~ | ~~#94~~, ~~#100~~ | Done |
 | 108 | Linear task sourcing | ~~#102~~ | Ready |
-| 109 | GitHub task sourcing | ~~#102~~ | Ready |
+| 109 | ~~GitHub task sourcing~~ | ~~#102~~ | Done |
 | 110 | Task source picker UI | #108, #109, #103 | Blocked |
 | 113 | ~~Project switcher~~ | ~~#26~~ | Done |
 | 114 | ~~Cross-project dashboard~~ | ~~#41~~, ~~#104~~ | Done |

@@ -561,6 +561,63 @@ With Issue #130 done, all three graceful shutdown tasks for Polishing requiremen
 
 ## Issue #71: PanelManager — navigate between panes — COMPLETED
 
+## Issue #109: GitHub task sourcing — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Added server-side GitHub issue importing so projects can pull open GitHub issues into LiveStore tasks with `source = "github"`. The feature is exposed through a new `task.importGithub` RPC endpoint and handles duplicate imports, pull-request filtering, GitHub remote validation, and API failures gracefully.
+
+### What was done
+
+1. **Created `packages/server/src/services/github-task-importer.ts`**
+   - Added a new `GithubTaskImporter` Effect service with `importProjectIssues(projectId)`.
+   - Reads `git remote.origin.url` from the project's repo, supports both SSH and HTTPS GitHub remotes, and rejects non-GitHub remotes with typed `RpcError`s.
+   - Fetches up to 100 open issues from `https://api.github.com/repos/:owner/:repo/issues`.
+   - Sends GitHub-friendly headers and optionally uses `GITHUB_TOKEN` / `GH_TOKEN` when present.
+   - Skips pull requests (`pull_request` payloads), dedupes against existing `github` tasks by `externalId`, and creates new tasks through `TaskManager` with `externalId = html_url`.
+
+2. **Extended the shared/server RPC layer**
+   - Added `TaskImportResponse` and a new `task.importGithub` RPC definition in `packages/shared/src/rpc.ts`.
+   - Wired the new handler in `packages/server/src/rpc/handlers.ts`.
+   - Added `GithubTaskImporter.layer` to the server composition in `packages/server/src/main.ts`.
+
+3. **Added tests in `packages/server/test/github-task-importer.test.ts`**
+   - Uses real temporary git repos with configured GitHub remotes.
+   - Mocks `fetch` to verify successful import behavior and API failure behavior.
+   - Verifies duplicate skipping, pull request filtering, imported task shape, and graceful failure messaging.
+
+### Files created
+- `packages/server/src/services/github-task-importer.ts` — GitHub issue import service
+- `packages/server/test/github-task-importer.test.ts` — integration tests for GitHub task importing
+
+### Files modified
+- `packages/shared/src/rpc.ts` — added `task.importGithub` RPC + import response schema
+- `packages/server/src/rpc/handlers.ts` — wired the new RPC handler
+- `packages/server/src/main.ts` — provided `GithubTaskImporter.layer`
+- `issues.md` — marked Issue #109 done
+
+### Acceptance criteria status
+- [x] Fetch issues from GitHub API for project repo
+- [x] Tasks created in LiveStore with source = "github" and externalId
+- [x] Handle API errors gracefully
+- [x] Tests: mock GitHub API -> tasks imported; API error -> handled
+
+### Verification
+- `bun run --cwd packages/server test github-task-importer.test.ts` passes (2/2 tests)
+- `bun run --cwd packages/server test` passes (115 passed, 6 skipped)
+- `bun run --cwd packages/server check-types` passes; output still includes pre-existing Effect plugin warnings/messages in unrelated files
+- `bun x ultracite check packages/server/src/services/github-task-importer.ts packages/server/test/github-task-importer.test.ts packages/server/src/rpc/handlers.ts packages/server/src/main.ts packages/shared/src/rpc.ts` passes
+
+### Design decisions
+- **API-first delivery**: implemented as a server service + RPC endpoint first, which fits Laborer's local-first/API-first architecture and cleanly unblocks the later task-source picker UI.
+- **`externalId = html_url`**: uses the full GitHub issue URL as a globally unique external identifier, which also matches the existing PRD-task GitHub import pattern.
+- **Open issues only**: fetches `state=open` so imported tasks reflect actionable work rather than closed history.
+- **Real git repos in tests**: uses temporary repos with real `remote.origin.url` values instead of mocking child-process internals, which keeps the test closer to production behavior.
+
+## Issue #71: PanelManager — navigate between panes — COMPLETED
+
 **Status:** Done
 **Date:** 2026-03-05
 

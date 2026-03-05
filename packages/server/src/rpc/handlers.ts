@@ -17,6 +17,7 @@ import { tables } from "@laborer/shared/schema";
 import { Array as Arr, Effect, pipe } from "effect";
 import { ConfigService } from "../services/config-service.js";
 import { DiffService } from "../services/diff-service.js";
+import { GithubTaskImporter } from "../services/github-task-importer.js";
 import { LaborerStore } from "../services/laborer-store.js";
 import { PrdTaskImporter } from "../services/prd-task-importer.js";
 import { ProjectRegistry } from "../services/project-registry.js";
@@ -312,6 +313,11 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 					title: task.title,
 					status: task.status,
 				};
+			}),
+		"task.importGithub": ({ projectId }) =>
+			Effect.gen(function* () {
+				const githubTaskImporter = yield* GithubTaskImporter;
+				return yield* githubTaskImporter.importProjectIssues(projectId);
 			}),
 		"task.updateStatus": ({ taskId, status }) =>
 			Effect.gen(function* () {

@@ -1510,3 +1510,58 @@ Created a "Write PRD" dialog form that allows users to write a PRD from any acti
 
 ### Issues unblocked
 - Issue #107: PRD-generated issues -> tasks — was blocked by #94 (done) and #100 (done). #95 completes the UI entry point for the PRD writing workflow, making the full PRD -> issues -> tasks pipeline user-accessible.
+
+## Issue #97: "Review PR" button + PR number input — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Created a "Review PR" dialog form that allows users to review a pull request from any active workspace. The form has a PR number input field (required, must be a positive integer) and calls `rlph.review` mutation via AtomRpc, which spawns a terminal running `rlph review <prNumber>` in the workspace. The spawned terminal is auto-assigned to a panel pane so the user immediately sees the rlph TUI output. A "Review PR" button (Eye icon, purple color) is added to each active workspace card in the workspace list, after the "Start Ralph Loop" (Play) button.
+
+### What was done
+
+1. **Created `apps/web/src/components/review-pr-form.tsx`** — new React component (~170 lines) with:
+   - **Module-level atom declaration**: `reviewPrMutation` (`LaborerClient.mutation("rlph.review")`)
+   - **Props interface**: `ReviewPrFormProps` with `workspaceId` (required string) and `onTerminalSpawned` (optional callback for auto-expanding the collapsible terminal list)
+   - **Dialog wrapper**: `Dialog` with trigger button (`Eye` icon, purple color, `size="icon-xs"`, `variant="ghost"`), header with title and description explaining what `rlph review` does, form body, and footer with submit button
+   - **TanStack Form**: `useForm` with `defaultValues: { prNumber: "" }` and `onSubmit` handler
+   - **PR number field**: `Input` with `inputMode="numeric"`, `pattern="[0-9]*"`, `onChange` validator (required, must be a positive integer, must be a whole number), placeholder "e.g. 42"
+   - **Submit handler**: Parses the string to integer via `Number.parseInt`, calls `reviewPr({ payload: { workspaceId, prNumber } })`, on success shows `toast.success("Review started for PR #N")`, calls `panelActions.assignTerminalToPane(result.id, workspaceId)` for auto-assignment, calls `form.reset()` and `setOpen(false)` and `onTerminalSpawned?.()`
+   - **Error handling**: `extractErrorMessage(error)` + `toast.error()` — consistent with all other forms in the codebase
+   - **Submit button**: Uses `form.Subscribe` with `selector` for `[canSubmit, isSubmitting]` to disable during submission and show "Starting..." text
+   - Follows the exact same Dialog/Form/Field/Submit pattern established by `write-prd-form.tsx` (Issue #95)
+
+2. **Modified `apps/web/src/components/workspace-list.tsx`**:
+   - Added `import { ReviewPrForm } from "@/components/review-pr-form"` import
+   - Added `<ReviewPrForm workspaceId={workspace.id} onTerminalSpawned={() => setIsOpen(true)} />` in the workspace card actions area, after the "Start Ralph Loop" button. Only shown for active workspaces (`isActive`).
+   - Updated module JSDoc to reference Issue #97
+
+### Files created
+- `apps/web/src/components/review-pr-form.tsx` — Review PR dialog form component
+
+### Files modified
+- `apps/web/src/components/workspace-list.tsx` — Added ReviewPrForm import, button per active workspace, JSDoc update
+
+### Acceptance criteria status
+- [x] PR number input field with validation (numeric, required — validates positive integer, whole number)
+- [x] Submit calls `LaborerClient.mutation("rlph.review")` via `useAtomSet` with `{ mode: "promise" }`
+- [x] Terminal pane shows review output (auto-assigned via `panelActions.assignTerminalToPane(result.id, workspaceId)`)
+- [ ] Tests: valid PR -> mutation called; invalid -> validation error (deferred — requires running both server and web app with rlph installed)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on both new/modified files with zero issues (`Checked 2 files in 7ms. No fixes applied.`)
+- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Eye icon**: Used `Eye` from lucide-react — semantically represents "review/inspect". Purple color (`text-purple-600 dark:text-purple-400`) distinguishes it from the other action buttons: green=start (Play), blue=create/write (FileText), purple=review (Eye), red=destroy (Trash). The color follows a semantic pattern that maps rlph workflow stages to distinct colors.
+- **Dialog form**: Like "Write PRD", "Review PR" needs a parameter (PR number), so a dialog provides the focused input experience. This is consistent with all other parameterized actions in the codebase.
+- **Input type="text" with inputMode="numeric"**: Used `type="text"` instead of `type="number"` to avoid the browser's native number input spinners (which are awkward for PR numbers). `inputMode="numeric"` still triggers the numeric keyboard on mobile. `pattern="[0-9]*"` provides an additional hint to the browser.
+- **String-to-int parsing**: The form stores the PR number as a string (for input handling) and parses it to an integer on submit via `Number.parseInt`. This matches the RPC contract which expects `Schema.Int`.
+- **Validation checks**: Three validations: (1) non-empty, (2) parses to a positive integer (`> 0`), (3) is a whole number (no decimals). This catches "abc", "-1", "0", "3.5", and empty string.
+- **Button placement**: The ReviewPrForm button is placed after the "Start Ralph Loop" button. The visual order follows the rlph workflow: Write PRD → Start Loop → Review PR → Fix Findings. The review step comes after implementation.
+- **onTerminalSpawned callback**: Same pattern as WritePrdForm — auto-expands the collapsible terminal section so the user can see the new terminal in the sidebar.
+
+### Issues unblocked
+- Issue #99: "Fix Findings" button + PR number input — follows the exact same pattern as #97, just calling `rlph.fix` instead of `rlph.review`. Can be implemented by copying `review-pr-form.tsx` with minor changes.

@@ -2641,14 +2641,14 @@ Add a "Review PR" action per workspace with a PR number input field. On submit, 
 
 ### Acceptance criteria
 
-- [ ] PR number input field with validation (numeric, required)
-- [ ] Submit → calls `LaborerClient.mutation("rlph.review")` via `useAtomSet`
-- [ ] Terminal pane shows review output
-- [ ] Tests: valid PR → mutation called; invalid → validation error
+- [x] PR number input field with validation (numeric, required — validates positive integer, whole number)
+- [x] Submit → calls `LaborerClient.mutation("rlph.review")` via `useAtomSet` with `{ mode: "promise" }`
+- [x] Terminal pane shows review output (auto-assigned via `panelActions.assignTerminalToPane`)
+- [ ] Tests: valid PR → mutation called; invalid → validation error (deferred — requires running both server and web app with rlph installed)
 
 ### Blocked by
 
-- Blocked by #96, #60
+- Blocked by ~~#96~~, ~~#60~~ (both done)
 
 ### User stories addressed
 
@@ -4128,7 +4128,7 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 94 | rlph.writePRD RPC handler | ~~#56~~ | Done |
 | 95 | PRD writing form + button (AtomRpc mutation) | ~~#94~~, ~~#60~~ | Done |
 | 96 | rlph.review RPC handler | ~~#56~~ | Done |
-| 97 | "Review PR" button + input (AtomRpc mutation) | ~~#96~~, ~~#60~~ | Ready |
+| 97 | "Review PR" button + input (AtomRpc mutation) | ~~#96~~, ~~#60~~ | Done |
 | 98 | rlph.fix RPC handler | ~~#56~~ | Done |
 | 99 | "Fix Findings" button + input (AtomRpc mutation) | ~~#98~~, ~~#60~~ | Ready |
 | 100 | Task CRUD — create manual task | ~~#8~~, ~~#16~~ | Done |

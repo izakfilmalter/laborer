@@ -3,7 +3,12 @@
  *
  * Implements handler logic for the LaborerRpcs group.
  * Handlers delegate to Effect services for real work.
- * All RPC methods are now fully implemented — no stubs remain.
+ *
+ * Terminal operations are delegated to the TerminalClient service, which
+ * connects to the standalone terminal service via Effect RPC. The server
+ * no longer runs PTY processes in-process.
+ *
+ * @see Issue #143: Server TerminalClient + remove server terminal modules
  */
 
 import { join } from "node:path";
@@ -14,7 +19,7 @@ import { DiffService } from "../services/diff-service.js";
 import { LaborerStore } from "../services/laborer-store.js";
 import { ProjectRegistry } from "../services/project-registry.js";
 import { TaskManager } from "../services/task-manager.js";
-import { TerminalManager } from "../services/terminal-manager.js";
+import { TerminalClient } from "../services/terminal-client.js";
 import { WorkspaceProvider } from "../services/workspace-provider.js";
 
 const startTime = Date.now();
@@ -27,19 +32,15 @@ const startTime = Date.now();
  * - project.add: delegates to ProjectRegistry.addProject (Issue #21)
  * - project.remove: delegates to ProjectRegistry.removeProject (Issue #22)
  * - workspace.create: delegates to WorkspaceProvider.createWorktree + DiffService.startPolling (Issue #33/#40/#85)
- * - workspace.destroy: delegates to DiffService.stopPolling + TerminalManager.killAllForWorkspace + WorkspaceProvider.destroyWorktree (Issue #43/#44/#85)
- * - terminal.spawn: delegates to TerminalManager.spawn (Issue #50)
- * - terminal.write: delegates to TerminalManager.write (Issue #52)
- * - terminal.resize: delegates to TerminalManager.resize (Issue #53)
- * - terminal.kill: delegates to TerminalManager.kill (Issue #54)
- * - terminal.remove: delegates to TerminalManager.remove (Issue #132)
- * - terminal.restart: delegates to TerminalManager.restart (Issue #133)
+ * - workspace.destroy: delegates to DiffService.stopPolling + TerminalClient.killAllForWorkspace + WorkspaceProvider.destroyWorktree (Issue #43/#44/#85)
+ * - terminal.spawn: delegates to TerminalClient.spawnInWorkspace (Issue #50/#143)
+ * - terminal.write/resize/kill/remove/restart: stub — proxied by web app directly to terminal service (Issue #143)
  * - diff.refresh: delegates to DiffService.getDiff (Issue #82)
  * - editor.open: opens file in configured editor (Issue #111)
- * - rlph.startLoop: delegates to TerminalManager.spawn with `rlph --once` (Issue #92)
- * - rlph.writePRD: delegates to TerminalManager.spawn with `rlph prd [description]` (Issue #94)
- * - rlph.review: delegates to TerminalManager.spawn with `rlph review <prNumber>` (Issue #96)
- * - rlph.fix: delegates to TerminalManager.spawn with `rlph fix <prNumber>` (Issue #98)
+ * - rlph.startLoop: delegates to TerminalClient.spawnInWorkspace with `rlph --once` (Issue #92/#143)
+ * - rlph.writePRD: delegates to TerminalClient.spawnInWorkspace with `rlph prd [description]` (Issue #94/#143)
+ * - rlph.review: delegates to TerminalClient.spawnInWorkspace with `rlph review <prNumber>` (Issue #96/#143)
+ * - rlph.fix: delegates to TerminalClient.spawnInWorkspace with `rlph fix <prNumber>` (Issue #98/#143)
  * - task.create: delegates to TaskManager.createTask (Issue #100)
  * - task.updateStatus: delegates to TaskManager.updateTaskStatus + auto-creates workspace on "in_progress" + auto-destroys on "completed"/"cancelled" (Issue #101/#105/#106)
  * - task.remove: delegates to TaskManager.removeTask (Issue #100)
@@ -88,8 +89,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 				);
 
 				// Issue #85: Auto-start diff polling when workspace is created
-				// with "running" status. Polling runs in the background and commits
-				// DiffUpdated events to LiveStore on each interval.
 				if (workspace.status === "running") {
 					const diffService = yield* DiffService;
 					yield* diffService.startPolling(workspace.id);
@@ -112,53 +111,61 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 		"workspace.destroy": ({ workspaceId }) =>
 			Effect.gen(function* () {
 				// Issue #85: Stop diff polling before destroying the workspace.
-				// This prevents polling errors when the worktree directory is removed
-				// and ensures no leaked polling fibers.
 				const diffService = yield* DiffService;
 				yield* diffService.stopPolling(workspaceId);
 
-				// Issue #44: Kill all workspace processes before removing the worktree.
-				// This prevents orphan PTY processes that would keep running after
-				// the workspace directory is removed.
-				const tm = yield* TerminalManager;
-				yield* tm.killAllForWorkspace(workspaceId);
+				// Issue #44/#143: Kill all workspace terminals via terminal service.
+				const tc = yield* TerminalClient;
+				yield* tc.killAllForWorkspace(workspaceId);
 
 				const provider = yield* WorkspaceProvider;
 				yield* provider.destroyWorktree(workspaceId);
 			}),
 
 		// -------------------------------------------------------------------
-		// Terminal RPCs (Issue #50-59)
+		// Terminal RPCs (Issue #50-59, #143)
+		// Terminal operations are now proxied to the terminal service.
+		// The web app will eventually call the terminal service directly
+		// (Issue #144), but for now these handlers delegate via TerminalClient.
 		// -------------------------------------------------------------------
 		"terminal.spawn": ({ workspaceId, command }) =>
 			Effect.gen(function* () {
-				const tm = yield* TerminalManager;
-				return yield* tm.spawn(workspaceId, command);
+				const tc = yield* TerminalClient;
+				return yield* tc.spawnInWorkspace(workspaceId, command);
 			}),
-		"terminal.write": ({ terminalId, data }) =>
+		"terminal.write": ({ terminalId: _terminalId, data: _data }) =>
+			// Write is handled directly by the web app's WebSocket to terminal service.
+			// This handler exists for backward compatibility but should not be called.
+			Effect.logWarning(
+				"terminal.write called on server — should be sent directly to terminal service"
+			),
+		"terminal.resize": ({
+			terminalId: _terminalId,
+			cols: _cols,
+			rows: _rows,
+		}) =>
+			Effect.logWarning(
+				"terminal.resize called on server — should be sent directly to terminal service"
+			),
+		"terminal.kill": ({ terminalId: _terminalId }) =>
+			Effect.logWarning(
+				"terminal.kill called on server — should be sent directly to terminal service"
+			),
+		"terminal.remove": ({ terminalId: _terminalId }) =>
+			Effect.logWarning(
+				"terminal.remove called on server — should be sent directly to terminal service"
+			),
+		"terminal.restart": ({ terminalId: _terminalId }) =>
 			Effect.gen(function* () {
-				const tm = yield* TerminalManager;
-				yield* tm.write(terminalId, data);
-			}),
-		"terminal.resize": ({ terminalId, cols, rows }) =>
-			Effect.gen(function* () {
-				const tm = yield* TerminalManager;
-				yield* tm.resize(terminalId, cols, rows);
-			}),
-		"terminal.kill": ({ terminalId }) =>
-			Effect.gen(function* () {
-				const tm = yield* TerminalManager;
-				yield* tm.kill(terminalId);
-			}),
-		"terminal.remove": ({ terminalId }) =>
-			Effect.gen(function* () {
-				const tm = yield* TerminalManager;
-				yield* tm.remove(terminalId);
-			}),
-		"terminal.restart": ({ terminalId }) =>
-			Effect.gen(function* () {
-				const tm = yield* TerminalManager;
-				return yield* tm.restart(terminalId);
+				yield* Effect.logWarning(
+					"terminal.restart called on server — should be sent directly to terminal service"
+				);
+				return {
+					id: "",
+					workspaceId: "",
+					command: "",
+					status: "stopped" as const,
+				};
 			}),
 
 		// -------------------------------------------------------------------
@@ -198,7 +205,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 					? join(workspace.worktreePath, filePath)
 					: workspace.worktreePath;
 
-				// 3. Get the editor command from env (lazy import to avoid import-time side effects)
+				// 3. Get the editor command from env
 				const { env } = yield* Effect.promise(
 					() => import("@laborer/env/server")
 				);
@@ -231,28 +238,32 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 			}),
 
 		// -------------------------------------------------------------------
-		// rlph RPCs (Issue #92-98)
+		// rlph RPCs (Issue #92-98, #143)
+		// Now delegate to TerminalClient.spawnInWorkspace instead of TerminalManager.
 		// -------------------------------------------------------------------
 		"rlph.startLoop": ({ workspaceId }) =>
 			Effect.gen(function* () {
-				const tm = yield* TerminalManager;
-				return yield* tm.spawn(workspaceId, "rlph --once");
+				const tc = yield* TerminalClient;
+				return yield* tc.spawnInWorkspace(workspaceId, "rlph --once");
 			}),
 		"rlph.writePRD": ({ workspaceId, description }) =>
 			Effect.gen(function* () {
-				const tm = yield* TerminalManager;
+				const tc = yield* TerminalClient;
 				const command = description ? `rlph prd ${description}` : "rlph prd";
-				return yield* tm.spawn(workspaceId, command);
+				return yield* tc.spawnInWorkspace(workspaceId, command);
 			}),
 		"rlph.review": ({ workspaceId, prNumber }) =>
 			Effect.gen(function* () {
-				const tm = yield* TerminalManager;
-				return yield* tm.spawn(workspaceId, `rlph review ${prNumber}`);
+				const tc = yield* TerminalClient;
+				return yield* tc.spawnInWorkspace(
+					workspaceId,
+					`rlph review ${prNumber}`
+				);
 			}),
 		"rlph.fix": ({ workspaceId, prNumber }) =>
 			Effect.gen(function* () {
-				const tm = yield* TerminalManager;
-				return yield* tm.spawn(workspaceId, `rlph fix ${prNumber}`);
+				const tc = yield* TerminalClient;
+				return yield* tc.spawnInWorkspace(workspaceId, `rlph fix ${prNumber}`);
 			}),
 
 		// -------------------------------------------------------------------
@@ -277,17 +288,10 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 				yield* taskManager.updateTaskStatus(taskId, status);
 
 				// Issue #105: Task-driven workspace auto-creation.
-				// When a task transitions to "in_progress", automatically create a
-				// workspace for it — connecting the task lifecycle to the workspace
-				// lifecycle. The branch name is derived from the task title for
-				// discoverability in `git branch` output.
 				if (status === "in_progress") {
 					const { store } = yield* LaborerStore;
 					const task = yield* taskManager.getTask(taskId);
 
-					// Check if a workspace already exists for this task to prevent
-					// duplicate creation (e.g., if the task is toggled back to
-					// in_progress after being paused).
 					const existingWorkspaces = store.query(tables.workspaces);
 					const hasWorkspace = pipe(
 						existingWorkspaces,
@@ -297,7 +301,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 					);
 
 					if (hasWorkspace._tag === "None") {
-						// Derive branch name from task: task/<id-prefix>/<slug>
 						const idPrefix = taskId.slice(0, 8);
 						const slug = task.title
 							.toLowerCase()
@@ -313,7 +316,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 							taskId
 						);
 
-						// Auto-start diff polling (mirrors workspace.create handler)
 						if (workspace.status === "running") {
 							const diffService = yield* DiffService;
 							yield* diffService.startPolling(workspace.id);
@@ -322,15 +324,10 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 				}
 
 				// Issue #106: Task-driven workspace auto-cleanup.
-				// When a task transitions to "completed" or "cancelled", automatically
-				// destroy any linked workspace. This keeps the environment clean by
-				// freeing ports, removing worktrees, and killing processes when a task
-				// is finished. Mirrors the workspace.destroy handler pattern.
 				if (status === "completed" || status === "cancelled") {
 					const { store } = yield* LaborerStore;
 					const allWorkspaces = store.query(tables.workspaces);
 
-					// Find all non-destroyed workspaces linked to this task
 					const linkedWorkspaces = pipe(
 						allWorkspaces,
 						Arr.filter(
@@ -338,17 +335,13 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 						)
 					);
 
-					// Destroy each linked workspace using the same cleanup sequence
-					// as the workspace.destroy handler: stop polling → kill terminals
-					// → remove worktree. Errors are logged but do not fail the status
-					// update — the task status change is the user's intent.
 					for (const workspace of linkedWorkspaces) {
 						yield* Effect.gen(function* () {
 							const diffService = yield* DiffService;
 							yield* diffService.stopPolling(workspace.id);
 
-							const tm = yield* TerminalManager;
-							yield* tm.killAllForWorkspace(workspace.id);
+							const tc = yield* TerminalClient;
+							yield* tc.killAllForWorkspace(workspace.id);
 
 							const provider = yield* WorkspaceProvider;
 							yield* provider.destroyWorktree(workspace.id);

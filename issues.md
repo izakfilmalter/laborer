@@ -457,14 +457,14 @@ Add a `TerminalClient` Effect service to `@laborer/server` that acts as an RPC c
 
 ### Acceptance criteria
 
-- [ ] `TerminalClient` Effect service exists in the server package
-- [ ] Server connects to terminal service via Effect RPC HTTP client
-- [ ] Server subscribes to `terminal.events()` and tracks workspace->terminal mapping
-- [ ] Server `main.ts` no longer includes PtyHostClient, TerminalManager, or TerminalWsRoute layers
-- [ ] rlph commands (startLoop, writePRD, review, fix) spawn terminals through the terminal service
-- [ ] `killAllForWorkspace` kills terminals via TerminalClient
-- [ ] `node-pty` is removed from server's package.json
-- [ ] Server starts gracefully even if terminal service is temporarily unreachable
+- [x] `TerminalClient` Effect service exists in the server package
+- [x] Server connects to terminal service via Effect RPC HTTP client
+- [x] Server subscribes to `terminal.events()` and tracks workspace->terminal mapping
+- [x] Server `main.ts` no longer includes PtyHostClient, TerminalManager, or TerminalWsRoute layers
+- [x] rlph commands (startLoop, writePRD, review, fix) spawn terminals through the terminal service
+- [x] `killAllForWorkspace` kills terminals via TerminalClient
+- [x] `node-pty` is removed from server's package.json
+- [x] Server starts gracefully even if terminal service is temporarily unreachable
 
 ### Blocked by
 
@@ -498,7 +498,7 @@ Replace all LiveStore `queryDb(terminals, ...)` subscriptions in the web app wit
 
 ### Blocked by
 
-- ~~Blocked by #141~~, Blocked by #143
+- ~~Blocked by #141~~, ~~Blocked by #143~~
 
 ### User stories addressed
 
@@ -943,8 +943,8 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 140 | ~~Move terminal WebSocket route to terminal package~~ | ~~#139~~ | Done |
 | 141 | ~~Update Vite proxy + web app WebSocket hook~~ | ~~#140~~ | Done |
 | 142 | ~~Terminal event stream RPC~~ | ~~#139~~ | Done |
-| 143 | Server TerminalClient + remove server terminal modules | ~~#142~~ | Ready |
-| 144 | Web app LiveStore terminal query replacement | ~~#141~~, #143 | Blocked |
+| 143 | ~~Server TerminalClient + remove server terminal modules~~ | ~~#142~~ | Done |
+| 144 | Web app LiveStore terminal query replacement | ~~#141~~, ~~#143~~ | Ready |
 | 145 | LiveStore terminal schema deprecation | #144 | Blocked |
 | 146 | Grace period reconnection + orphan detection | ~~#140~~ | Ready |
 | 147 | Terminal extraction polish + integration verification | #144, #145, #146 | Blocked |

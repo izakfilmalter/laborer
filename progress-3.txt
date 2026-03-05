@@ -3039,3 +3039,49 @@ Implemented the `terminal.events` streaming RPC endpoint that pushes terminal li
 ### Issues unblocked
 - Issue #143: Server TerminalClient + remove server terminal modules — was blocked by #142 ✅. Now ready.
 
+---
+
+## Issue 143: Server TerminalClient + remove server terminal modules — DONE
+
+### Summary
+Replaced the server's in-process terminal management (TerminalManager, PtyHostClient, terminal WebSocket route) with a `TerminalClient` Effect service that delegates all terminal operations to the standalone terminal service (`@laborer/terminal`) via Effect RPC HTTP.
+
+### Changes
+
+**Created:**
+- `packages/server/src/services/terminal-client.ts` — New TerminalClient Effect tagged service:
+  - RPC client to terminal service via `RpcClient.make(TerminalRpcs)` + `RpcClient.layerProtocolHttp` + `FetchHttpClient.layer` + `RpcSerialization.layerJson`
+  - `spawnInWorkspace(workspaceId, command?)` — resolves workspace info from LiveStore, gets env vars from WorkspaceProvider, delegates spawn to terminal service RPC, commits LiveStore events
+  - `killAllForWorkspace(workspaceId)` — iterates tracked terminal map, kills each via terminal service RPC
+  - Event stream subscriber (`terminal.events()`) that maintains workspace→terminal ID mapping and commits LiveStore lifecycle events
+  - Startup seeding from `terminal.list()` for server restart resilience
+  - Stale terminal cleanup comparing LiveStore vs actual terminal service state
+  - Retry with exponential backoff on event stream disconnect
+  - Graceful shutdown finalizer
+
+**Modified:**
+- `packages/server/src/rpc/handlers.ts` — Replaced all `TerminalManager` references with `TerminalClient`:
+  - `terminal.spawn` → `TerminalClient.spawnInWorkspace()`
+  - `terminal.write/resize/kill/remove` → stub handlers with deprecation warnings (web app talks directly to terminal service)
+  - `terminal.restart` → stub with deprecation warning, returns dummy stopped response
+  - `rlph.*` handlers → `TerminalClient.spawnInWorkspace()` with command
+  - `workspace.destroy` → `TerminalClient.killAllForWorkspace()`
+  - `task.updateStatus` auto-cleanup → `TerminalClient.killAllForWorkspace()`
+- `packages/server/src/main.ts` — Removed `TerminalManager.layer`, `PtyHostClient.layer`, and `TerminalWsRouteLive` from layer composition; added `TerminalClient.layer`. Removed unnecessary biome-ignore suppression comments.
+- `packages/server/package.json` — Removed `node-pty` dependency
+
+### Verification
+- Type checks pass (`tsc --noEmit`) — no errors in our files
+- All 89 tests pass across 5 test files (32 ring buffer + 28 config service + 14 PTY host + 6 terminal manager + 9 workspace validation)
+- Lint clean (`ultracite check`) — only pre-existing diff-service complexity issue remains
+
+### Design decisions
+- **Stub handlers for write/resize/kill/remove**: The web app already connects directly to the terminal service's WebSocket for I/O (Issue #141). These server RPC handlers exist only for backward compatibility and log deprecation warnings.
+- **LiveStore event commits from TerminalClient**: The server still commits terminal lifecycle events to LiveStore so the web app's reactive UI stays in sync via LiveStore sync. This will be deprecated in Issue #145.
+- **In-memory workspace→terminal map**: Maintained by consuming the `terminal.events()` stream. Used by `killAllForWorkspace` and stale cleanup.
+- **Old modules kept on disk**: `terminal-manager.ts`, `pty-host-client.ts`, `routes/terminal-ws.ts`, `lib/ring-buffer.ts`, `pty-host.ts` are still on disk (existing tests import them) but no longer wired into `main.ts`. They can be deleted in a future cleanup.
+- **`Effect.logWarning` directly** instead of wrapping in `Effect.gen` for single-statement stub handlers (fixes unnecessaryEffectGen lint).
+
+### Issues unblocked
+- Issue #144: Web app LiveStore terminal query replacement — was blocked by #143 ✅. Now ready.
+

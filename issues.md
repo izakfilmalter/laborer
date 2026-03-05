@@ -736,48 +736,9 @@ End-to-end verification and polish pass for the full Cmd+W close panel feature. 
 
 ---
 
-## Issue 154: Config Service — resolve config with walk-up + global default
+## ~~Issue 154: Config Service — resolve config with walk-up + global default~~ ✅ DONE
 
-### Parent PRD
-
-PRD-global-worktree-config.md
-
-### What to build
-
-Create a new `ConfigService` Effect tagged service in the server package that reads and resolves `laborer.json` config files using a walk-up directory resolution strategy. The service provides a `resolveConfig(projectRepoPath, projectName)` method that:
-
-1. Looks for `laborer.json` at the project root directory
-2. Walks up parent directories looking for `laborer.json` files
-3. Falls back to the global config at `~/.config/laborer/laborer.json`
-4. Applies hardcoded defaults (`worktreeDir` = `~/.config/laborer/<projectName>`)
-
-Config values merge with closest-to-project-root winning. Each resolved value carries provenance metadata (the file path it came from, or "default"). Supports `~` expansion in `worktreeDir` paths. Also provides a `readGlobalConfig()` method for reading just the global config.
-
-The config schema is: `{ worktreeDir?: string, setupScripts?: string[], rlphConfig?: string }`.
-
-Auto-creates `~/.config/laborer/` directory if it doesn't exist when reading the global config.
-
-### Acceptance criteria
-
-- [ ] `ConfigService` is an Effect tagged service with `resolveConfig` and `readGlobalConfig` methods
-- [ ] Walk-up resolution finds `laborer.json` in ancestor directories (project root checked first)
-- [ ] Project-root config overrides ancestor config (closest-wins merging)
-- [ ] Global config at `~/.config/laborer/laborer.json` is used as fallback
-- [ ] Hardcoded default `worktreeDir` = `~/.config/laborer/<projectName>` when no config files set it
-- [ ] `~` in `worktreeDir` is expanded to the home directory
-- [ ] Provenance metadata indicates the source file path for each resolved value
-- [ ] Malformed JSON in config files is handled gracefully (logged, skipped)
-- [ ] Missing config files are handled gracefully (not an error)
-- [ ] `~/.config/laborer/` directory is auto-created if it doesn't exist
-- [ ] Integration tests with real temp directories cover all resolution scenarios
-
-### Blocked by
-
-None - can start immediately
-
-### User stories addressed
-
-- User story 2, 3, 4, 5, 6, 14, 16, 17
+Created `ConfigService` Effect tagged service in `packages/server/src/services/config-service.ts` with `resolveConfig(projectRepoPath, projectName)` and `readGlobalConfig()` methods. Walk-up directory resolution from project root through ancestors to global `~/.config/laborer/laborer.json`. Closest-wins merge with provenance metadata per field. Tilde expansion, malformed JSON handling (logged, skipped), auto-creation of `~/.config/laborer/`. 28 integration tests covering all resolution scenarios.
 
 ---
 
@@ -989,9 +950,9 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 151 | Cmd+W shortcut — close active pane | ~~#149~~ | Ready |
 | 152 | Cmd+W close-app confirmation dialog | #151 | Blocked |
 | 153 | Cmd+W close panel — polish & verification | ~~#148~~, ~~#149~~, ~~#150~~, #151, #152 | Blocked |
-| 154 | Config Service — resolve config with walk-up + global default | None | Ready |
-| 155 | Config Service — write project config | #154 | Blocked |
-| 156 | WorkspaceProvider — use ConfigService for worktree path + setup scripts | #154 | Blocked |
+| 154 | ~~Config Service — resolve config with walk-up + global default~~ | ~~None~~ | Done |
+| 155 | Config Service — write project config | ~~#154~~ | Ready |
+| 156 | WorkspaceProvider — use ConfigService for worktree path + setup scripts | ~~#154~~ | Ready |
 | 157 | Config RPC endpoints + project settings modal | #155, #156 | Blocked |
 | 158 | Config + settings polish & edge cases | #157 | Blocked |
 | 159 | WorktreeDetector + schema origin + initial detection on project add | None | Ready |

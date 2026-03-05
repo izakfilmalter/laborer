@@ -2832,3 +2832,75 @@ Ensured `activePaneId` always references a valid leaf pane in the layout tree. P
 ### Issues unblocked
 - Issue #153: Cmd+W close panel — polish & verification — #150 dependency now resolved
 
+## Issue #154: Config Service — resolve config with walk-up + global default — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Created a new `ConfigService` Effect tagged service in the server package that reads and resolves `laborer.json` config files using a walk-up directory resolution strategy. The service provides `resolveConfig(projectRepoPath, projectName)` which walks up from the project root, merges with the global config at `~/.config/laborer/laborer.json`, and applies hardcoded defaults. Each resolved value carries provenance metadata (the file path it came from, or "default"). Also provides `readGlobalConfig()` for reading the global config directly. Auto-creates `~/.config/laborer/` if it doesn't exist. Handles malformed JSON gracefully (logged, skipped). 28 integration tests.
+
+### What was done
+
+1. **Created `packages/server/src/services/config-service.ts`** — new Effect tagged service (~370 lines) with:
+   - **`LaborerConfig` interface**: `{ worktreeDir?: string, setupScripts?: readonly string[], rlphConfig?: string }` — shape of a `laborer.json` file
+   - **`ResolvedValue<T>` interface**: `{ value: T, source: string }` — resolved value with provenance (file path or "default")
+   - **`ResolvedLaborerConfig` interface**: All fields resolved with provenance — `worktreeDir: ResolvedValue<string>`, `setupScripts: ResolvedValue<readonly string[]>`, `rlphConfig: ResolvedValue<string | null>`
+   - **`CONFIG_FILE_NAME = "laborer.json"`**: Config file name constant (not `.laborer.json`)
+   - **`GLOBAL_CONFIG_DIR`**: `~/.config/laborer/` — global config directory
+   - **`GLOBAL_CONFIG_PATH`**: `~/.config/laborer/laborer.json` — global config file path
+   - **`expandTilde(filePath)`**: Expands `~` or `~/` prefix to home directory. Middle-of-path tilde left as-is.
+   - **`readConfigFile(configPath)`**: Reads and parses a `laborer.json` file. Returns `undefined` if file doesn't exist. Returns empty object `{}` for unreadable or malformed JSON (logs warning). Never fails.
+   - **`walkUpForConfigs(startDir)`**: Walks up from a directory collecting all `laborer.json` files found. Returns array of `{ config, path }` ordered closest-first (project root before ancestors). Stops at filesystem root.
+   - **`ensureGlobalConfigDir()`**: Creates `~/.config/laborer/` recursively if it doesn't exist. Logs warning on failure but doesn't fail.
+   - **`mergeConfigs(configLayers, projectName)`**: Pure function that merges config layers with closest-wins strategy. Iterates from farthest to closest, each closer layer overwrites. Applies tilde expansion and `resolve()` to worktreeDir. Returns `ResolvedLaborerConfig` with provenance.
+   - **`ConfigService` class**: `Context.Tag("@laborer/ConfigService")` with `resolveConfig` and `readGlobalConfig` methods
+   - **`ConfigService.layer`**: Uses `Layer.succeed` (no dependencies — stateless file I/O service). Methods defined with `Effect.fn` for tracing.
+   - **Exports**: `ConfigService`, `CONFIG_FILE_NAME`, `expandTilde`, `GLOBAL_CONFIG_DIR`, `GLOBAL_CONFIG_PATH`, `mergeConfigs`, `readConfigFile`, `walkUpForConfigs` + types `LaborerConfig`, `ResolvedLaborerConfig`, `ResolvedValue`
+
+2. **Created `packages/server/test/config-service.test.ts`** — 28 integration tests:
+   - **`expandTilde` tests (5)**: `~` → homedir, `~/path` → homedir/path, middle tilde unchanged, absolute paths unchanged, relative paths unchanged
+   - **`readConfigFile` tests (4)**: non-existent → undefined, valid JSON → parsed, malformed JSON → empty object, empty file → empty object
+   - **`walkUpForConfigs` tests (3)**: finds config at start dir, finds configs in ancestor dirs (child before parent ordering), empty when no configs
+   - **`mergeConfigs` tests (6)**: defaults with no configs, values from single config, closest-wins (project over ancestor), partial merge across levels, tilde expansion in worktreeDir, relative path resolved to absolute
+   - **`ConfigService` integration tests (10)**:
+     - `resolveConfig`: defaults when no config, reads project root, inherits from ancestor, overrides ancestor with project, tilde expansion, malformed gracefully handled, global fallback, provenance preserved per-field independently
+     - `readGlobalConfig`: returns empty for no global file, ensures directory exists
+
+### Files created
+- `packages/server/src/services/config-service.ts` — ConfigService Effect tagged service
+- `packages/server/test/config-service.test.ts` — 28 integration tests
+
+### Acceptance criteria status
+- [x] `ConfigService` is an Effect tagged service with `resolveConfig` and `readGlobalConfig` methods
+- [x] Walk-up resolution finds `laborer.json` in ancestor directories (project root checked first)
+- [x] Project-root config overrides ancestor config (closest-wins merging)
+- [x] Global config at `~/.config/laborer/laborer.json` is used as fallback
+- [x] Hardcoded default `worktreeDir` = `~/.config/laborer/<projectName>` when no config files set it
+- [x] `~` in `worktreeDir` is expanded to the home directory
+- [x] Provenance metadata indicates the source file path for each resolved value
+- [x] Malformed JSON in config files is handled gracefully (logged, skipped)
+- [x] Missing config files are handled gracefully (not an error)
+- [x] `~/.config/laborer/` directory is auto-created if it doesn't exist
+- [x] Integration tests with real temp directories cover all resolution scenarios (28 tests)
+
+### Verification
+- `tsc --noEmit` passes for server package (only pre-existing warnings — no new errors)
+- `ultracite check` passes on both new files with zero issues (`Checked 2 files in 11ms. No fixes applied.`)
+- All 89 tests pass across 5 test files (32 ring buffer + 28 config service + 9 workspace validation + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **`Layer.succeed` over `Layer.effect`**: ConfigService has no dependencies (doesn't depend on LaborerStore, ProjectRegistry, or any other service). It's a stateless file I/O service — methods are pure `Effect.fn` definitions that read files on each call. `Layer.succeed` avoids the `Effect.gen` wrapper that would need to yield dependencies.
+- **No caching**: Per the PRD requirement (User Story 16), config is re-read on each worktree creation, not cached. `readConfigFile` and `walkUpForConfigs` do fresh file I/O on every call. This ensures `laborer.json` changes take effect immediately without restarting the server.
+- **Closest-wins merge strategy**: The `mergeConfigs` function iterates from farthest (global) to closest (project root), with each closer layer overwriting. This gives a natural precedence: project root > ancestor directories > global config > hardcoded defaults. Fields are resolved independently — worktreeDir can come from the global config while setupScripts comes from the project root.
+- **`expandTilde` + `resolve()`**: The `worktreeDir` value goes through two transformations: tilde expansion (`~` → homedir) and `resolve()` (relative → absolute based on cwd). This ensures the returned path is always absolute, regardless of how it was specified in the config file.
+- **`undefined` vs empty object**: `readConfigFile` returns `undefined` for non-existent files and `{}` for unreadable/malformed files. This distinction matters for `walkUpForConfigs` — non-existent files are skipped entirely, while malformed files contribute an empty layer (so they don't break the walk-up chain).
+- **Config file name `laborer.json`**: Per the PRD, the config file name changes from `.laborer.json` to `laborer.json`. The old `readProjectConfig` in workspace-provider.ts still reads `.laborer.json` — it will be removed in Issue #156 when WorkspaceProvider is wired to use ConfigService.
+- **Exported helpers for testing**: `expandTilde`, `readConfigFile`, `walkUpForConfigs`, `mergeConfigs`, and constants are exported so tests can verify each function independently. This follows the pattern established by `workspace-provider.ts` (which exports `validateWorktree`, `buildValidationErrorMessage`).
+- **Test isolation via unique temp dirs**: Each test creates files in a unique temp directory under `~/.config/laborer-test/` (not the real global config dir). `afterAll` cleans up the test root. Tests don't interfere with each other or with the real user config.
+- **No Effect service layer in pure tests**: The `expandTilde`, `readConfigFile`, `walkUpForConfigs`, and `mergeConfigs` tests call the functions directly (or via `Effect.runPromise`). Only the `ConfigService` integration tests use the layer. This keeps unit tests simple and fast.
+
+### Issues unblocked
+- Issue #155: Config Service — write project config (blocked by #154 ✅)
+- Issue #156: WorkspaceProvider — use ConfigService for worktree path + setup scripts (blocked by #154 ✅)
+

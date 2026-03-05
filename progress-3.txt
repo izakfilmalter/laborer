@@ -4116,3 +4116,46 @@ Added user-friendly toast feedback when project settings fail to load due to mal
 - `bun run --cwd apps/web test` ✅
 - `bun run --cwd apps/web check-types` ⚠️ still fails due to pre-existing type errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new type errors introduced by this change.
 - `bun x ultracite check apps/web/src/components/project-settings-modal.tsx` ✅
+
+### Follow-up update (Issue #158)
+
+Added frontend component tests for the Project Settings modal to cover open/display/save/toast behavior.
+
+#### What was done
+
+1. **Added modal component test file**
+   - Created `apps/web/test/project-settings-modal.test.tsx` with three tests:
+     - opens modal and renders resolved config values
+     - submits save and calls `config.update` mutation + success toast
+     - surfaces save failure through error toast
+   - Mocked `LaborerClient`, `@effect-atom` hooks, and `sonner` toast APIs to keep tests deterministic and focused on UI behavior.
+
+2. **Updated test runner configuration for component tests**
+   - Updated `apps/web/vitest.config.ts` to:
+     - include `test/**/*.test.{ts,tsx}`
+     - run with `environment: "jsdom"`
+     - add `@` alias resolution for `src`
+
+3. **Added web test dependencies**
+   - Updated `apps/web/package.json` devDependencies with:
+     - `@testing-library/react`
+     - `@testing-library/user-event`
+     - `jsdom`
+   - Ran `bun install` to update the lockfile.
+
+4. **Updated issue tracking**
+   - Marked Issue #158 acceptance criterion "Frontend component tests cover modal open, display, save, and toast behaviors" as complete in `issues.md`.
+
+#### Files modified
+
+- `apps/web/test/project-settings-modal.test.tsx` (new)
+- `apps/web/vitest.config.ts`
+- `apps/web/package.json`
+- `bun.lock`
+- `issues.md`
+
+#### Verification
+
+- `bun run --cwd apps/web test` ✅ (44 tests passing)
+- `bun run --cwd apps/web check-types` ⚠️ still fails due to pre-existing type errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new type errors introduced by this change.
+- `bun x ultracite check apps/web/vitest.config.ts apps/web/test/project-settings-modal.test.tsx` ✅

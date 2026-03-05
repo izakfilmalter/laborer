@@ -48,9 +48,21 @@
  * and file path, opening the file in the configured editor (Cursor/VS Code).
  * Uses the `renderHeaderMetadata` prop from @pierre/diffs/react FileDiff.
  *
+ * ## Accept/reject annotations (Issue #88)
+ *
+ * Each hunk in the diff viewer has accept/reject buttons that appear when
+ * hovering over any line in the hunk. Clicking accept keeps the additions
+ * (new code), clicking reject keeps the deletions (old code). Uses
+ * `diffAcceptRejectHunk` from @pierre/diffs which transforms the
+ * `FileDiffMetadata` immutably. Annotation state is tracked per-file in
+ * component state and resets when the underlying diff content changes.
+ * The `enableHoverUtility` option enables the hover interaction, and the
+ * `renderHoverUtility` React prop renders the accept/reject buttons.
+ *
  * @see packages/server/src/services/diff-service.ts
  * @see packages/shared/src/schema.ts (diffs table, DiffUpdated event)
  * @see Issue #87: Diff viewer pane — render with @pierre/diffs
+ * @see Issue #88: Diff viewer — accept/reject annotations
  * @see Issue #89: Diff viewer — live update
  * @see Issue #91: Diff viewer debounce/throttle for rapid changes
  * @see Issue #112: Click-to-open file from diff viewer
@@ -59,10 +71,10 @@
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
 import { diffs } from "@laborer/shared/schema";
 import { queryDb } from "@livestore/livestore";
-import type { FileDiffMetadata } from "@pierre/diffs";
-import { parsePatchFiles } from "@pierre/diffs";
+import type { AnnotationSide, FileDiffMetadata, Hunk } from "@pierre/diffs";
+import { diffAcceptRejectHunk, parsePatchFiles } from "@pierre/diffs";
 import { FileDiff } from "@pierre/diffs/react";
-import { ExternalLink, FileCode2, RefreshCw } from "lucide-react";
+import { Check, ExternalLink, FileCode2, RefreshCw, X } from "lucide-react";
 import {
 	useCallback,
 	useEffect,
@@ -94,6 +106,7 @@ const editorOpenMutation = LaborerClient.mutation("editor.open");
 /**
  * FileDiff options for split (side-by-side) diff view.
  * Used when the diff pane has enough width (>= 500px).
+ * `enableHoverUtility` enables the hover interaction for accept/reject buttons (Issue #88).
  */
 const FILE_DIFF_OPTIONS_SPLIT = {
 	diffStyle: "split" as const,
@@ -102,11 +115,13 @@ const FILE_DIFF_OPTIONS_SPLIT = {
 	diffIndicators: "bars" as const,
 	lineDiffType: "word-alt" as const,
 	overflow: "scroll" as const,
+	enableHoverUtility: true,
 };
 
 /**
  * FileDiff options for unified (single-column) diff view.
  * Used when the diff pane is narrow (< 500px) to improve readability.
+ * `enableHoverUtility` enables the hover interaction for accept/reject buttons (Issue #88).
  *
  * @see Issue #81: Panel responsive layout
  */
@@ -117,6 +132,7 @@ const FILE_DIFF_OPTIONS_UNIFIED = {
 	diffIndicators: "bars" as const,
 	lineDiffType: "word-alt" as const,
 	overflow: "scroll" as const,
+	enableHoverUtility: true,
 };
 
 /** Width threshold (px) below which diff view switches to unified. */
@@ -143,6 +159,51 @@ function formatLastUpdated(isoTimestamp: string): string {
 		return "just now";
 	}
 	return date.toLocaleTimeString();
+}
+
+/**
+ * Finds the 0-based hunk index that contains a given line number on a given side.
+ * Used to determine which hunk the user is hovering over for accept/reject actions.
+ *
+ * For "additions" side: checks if lineNumber falls within [additionStart, additionStart + additionCount).
+ * For "deletions" side: checks if lineNumber falls within [deletionStart, deletionStart + deletionCount).
+ *
+ * Returns -1 if no hunk contains the given line number (e.g., context lines outside any hunk).
+ */
+function findHunkIndexForLine(
+	hunks: readonly Hunk[],
+	lineNumber: number,
+	side: AnnotationSide
+): number {
+	for (let i = 0; i < hunks.length; i++) {
+		const hunk = hunks[i];
+		if (!hunk) {
+			continue;
+		}
+		if (side === "additions") {
+			if (
+				lineNumber >= hunk.additionStart &&
+				lineNumber < hunk.additionStart + hunk.additionCount
+			) {
+				return i;
+			}
+		} else if (
+			lineNumber >= hunk.deletionStart &&
+			lineNumber < hunk.deletionStart + hunk.deletionCount
+		) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+/**
+ * Checks whether a hunk has any actual changes (additions or deletions).
+ * After accept/reject, a hunk is converted to all-context lines (additionLines=0, deletionLines=0).
+ * This function returns false for already-resolved hunks to avoid showing accept/reject buttons.
+ */
+function hunkHasChanges(hunk: Hunk): boolean {
+	return hunk.additionLines > 0 || hunk.deletionLines > 0;
 }
 
 /**
@@ -228,6 +289,57 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 		return parsed.flatMap((p) => p.files);
 	}, [diffContent]);
 
+	// --- Accept/reject annotation state (Issue #88) ---
+	// Tracks per-file accept/reject overrides. When a user accepts or rejects
+	// a hunk, the transformed FileDiffMetadata is stored here keyed by file name.
+	// Resets when the underlying diff content changes (agent makes more changes).
+	const [annotatedDiffs, setAnnotatedDiffs] = useState<
+		Map<string, FileDiffMetadata>
+	>(new Map());
+
+	// Reset annotation state when the base diff content changes
+	const prevDiffContentRef = useRef(diffContent);
+	useEffect(() => {
+		if (diffContent !== prevDiffContentRef.current) {
+			prevDiffContentRef.current = diffContent;
+			setAnnotatedDiffs(new Map());
+		}
+	}, [diffContent]);
+
+	// Merge base parsed diffs with annotation overrides
+	const effectiveFileDiffs = useMemo(() => {
+		if (annotatedDiffs.size === 0) {
+			return fileDiffs;
+		}
+		return fileDiffs.map((fd) => annotatedDiffs.get(fd.name) ?? fd);
+	}, [fileDiffs, annotatedDiffs]);
+
+	/**
+	 * Handles accept/reject action on a specific hunk of a specific file.
+	 * Uses `diffAcceptRejectHunk` from @pierre/diffs to produce a new
+	 * FileDiffMetadata with the hunk resolved, then stores it in annotatedDiffs.
+	 */
+	const handleHunkAction = useCallback(
+		(fileName: string, hunkIndex: number, action: "accept" | "reject") => {
+			setAnnotatedDiffs((prev) => {
+				const currentDiff =
+					prev.get(fileName) ?? fileDiffs.find((fd) => fd.name === fileName);
+				if (!currentDiff) {
+					return prev;
+				}
+				const updated = diffAcceptRejectHunk(currentDiff, hunkIndex, action);
+				const next = new Map(prev);
+				next.set(fileName, updated);
+				return next;
+			});
+		},
+		[fileDiffs]
+	);
+
+	// Ref to avoid stale closure in renderHoverUtility callback
+	const handleHunkActionRef = useRef(handleHunkAction);
+	handleHunkActionRef.current = handleHunkAction;
+
 	// --- Deferred rendering via useTransition ---
 	// FileDiff can be expensive to re-render for large diffs (shiki highlighting,
 	// hunk parsing, DOM diffing). useTransition marks the re-render as non-urgent
@@ -235,7 +347,8 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 	// This is layered on top of the debounce: debounce prevents redundant parsing,
 	// useTransition prevents the retained render from blocking the UI thread.
 	const [isTransitionPending, startTransition] = useTransition();
-	const [deferredFileDiffs, setDeferredFileDiffs] = useState(fileDiffs);
+	const [deferredFileDiffs, setDeferredFileDiffs] =
+		useState(effectiveFileDiffs);
 
 	// Combined pending state: either debounce hasn't settled or transition
 	// hasn't committed. Shown as a single "Updating..." indicator.
@@ -243,9 +356,9 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 
 	useEffect(() => {
 		startTransition(() => {
-			setDeferredFileDiffs(fileDiffs);
+			setDeferredFileDiffs(effectiveFileDiffs);
 		});
-	}, [fileDiffs]);
+	}, [effectiveFileDiffs]);
 
 	// --- Scroll position preservation ---
 	// The onScroll handler (below) continuously saves the current scroll position
@@ -357,6 +470,79 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 		[handleOpenFile]
 	);
 
+	/**
+	 * Creates a renderHoverUtility callback for a specific file.
+	 * When the user hovers over a line, this renders accept/reject buttons
+	 * if the hovered line belongs to a hunk that has changes (not yet resolved).
+	 *
+	 * @see Issue #88: Diff viewer — accept/reject annotations
+	 */
+	const createRenderHoverUtility = useCallback(
+		(fileDiffMeta: FileDiffMetadata) => {
+			return (
+				getHoveredLine: () =>
+					| { lineNumber: number; side: AnnotationSide }
+					| undefined
+			) => {
+				const hovered = getHoveredLine();
+				if (!hovered) {
+					return null;
+				}
+				const currentDiff =
+					annotatedDiffs.get(fileDiffMeta.name) ?? fileDiffMeta;
+				const hunkIndex = findHunkIndexForLine(
+					currentDiff.hunks,
+					hovered.lineNumber,
+					hovered.side
+				);
+				if (hunkIndex === -1) {
+					return null;
+				}
+				const hunk = currentDiff.hunks[hunkIndex];
+				if (!(hunk && hunkHasChanges(hunk))) {
+					return null;
+				}
+				return (
+					<div className="flex items-center gap-0.5">
+						<button
+							className="inline-flex items-center gap-0.5 rounded bg-green-600/15 px-1.5 py-0.5 text-green-500 text-xs transition-colors hover:bg-green-600/30 hover:text-green-400"
+							onClick={(e) => {
+								e.stopPropagation();
+								handleHunkActionRef.current(
+									fileDiffMeta.name,
+									hunkIndex,
+									"accept"
+								);
+							}}
+							title="Accept this change (keep additions)"
+							type="button"
+						>
+							<Check className="h-3 w-3" />
+							Accept
+						</button>
+						<button
+							className="inline-flex items-center gap-0.5 rounded bg-red-600/15 px-1.5 py-0.5 text-red-500 text-xs transition-colors hover:bg-red-600/30 hover:text-red-400"
+							onClick={(e) => {
+								e.stopPropagation();
+								handleHunkActionRef.current(
+									fileDiffMeta.name,
+									hunkIndex,
+									"reject"
+								);
+							}}
+							title="Reject this change (keep deletions)"
+							type="button"
+						>
+							<X className="h-3 w-3" />
+							Reject
+						</button>
+					</div>
+				);
+			};
+		},
+		[annotatedDiffs]
+	);
+
 	// --- Scroll event handler to keep savedScrollRef in sync ---
 	const handleScroll = useCallback(() => {
 		const container = scrollContainerRef.current;
@@ -445,6 +631,7 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 						key={fileDiffMeta.name ?? index}
 						options={diffOptions}
 						renderHeaderMetadata={renderHeaderMetadata}
+						renderHoverUtility={createRenderHoverUtility(fileDiffMeta)}
 					/>
 				))}
 			</div>

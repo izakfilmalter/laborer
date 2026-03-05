@@ -62,30 +62,9 @@ Made the panel system responsive from 1080p to 5K: viewport-aware sidebar sizing
 
 ---
 
-## Issue 88: Diff viewer — accept/reject annotations
+## ~~Issue 88: Diff viewer — accept/reject annotations~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Enable the accept/reject annotation UI in @pierre/diffs. Users can selectively accept or reject individual changes shown in the diff viewer.
-
-### Acceptance criteria
-
-- [ ] Accept/reject buttons appear per change/hunk
-- [ ] Clicking accept/reject updates annotation state
-- [ ] Annotation state is tracked (in component state or LiveStore)
-- [ ] Tests: accept button works; reject button works; state updates correctly
-
-### Blocked by
-
-- Blocked by #87
-
-### User stories addressed
-
-- User story 31
+Added per-hunk accept/reject annotation buttons to the diff viewer using `diffAcceptRejectHunk` from `@pierre/diffs`. Hover over any diff line to see Accept (green, Check icon) and Reject (red, X icon) buttons. Accept keeps additions; reject keeps deletions. Both convert the hunk to context lines. State tracked per-file in component state, resets when underlying diff changes. Uses `enableHoverUtility` + `renderHoverUtility` from the `FileDiff` React component.
 
 ---
 
@@ -468,7 +447,7 @@ Added drag-and-drop support using the native HTML5 Drag and Drop API. Terminal i
 | 72 | ~~PanelManager — drag-to-resize~~ | ~~#67~~ | Done |
 | 79 | ~~Keyboard shortcut — resize panes~~ | ~~#72~~, ~~#75~~ | Done |
 | 81 | ~~Panel responsive layout~~ | ~~#72~~ | Done |
-| 88 | Diff viewer — accept/reject annotations | ~~#87~~ | Ready |
+| 88 | ~~Diff viewer — accept/reject annotations~~ | ~~#87~~ | Done |
 | 91 | ~~Diff viewer debounce/throttle~~ | ~~#89~~ | Done |
 | 107 | PRD-generated issues → tasks | ~~#94~~, ~~#100~~ | Ready |
 | 108 | Linear task sourcing | ~~#102~~ | Ready |

@@ -2547,3 +2547,65 @@ Moved TerminalManager from `@laborer/server` to `@laborer/terminal` with signifi
 ### Issues unblocked
 - Issue #139: Terminal RPC handlers — was blocked by #137 (done) and #138 (this issue, now done). Now fully unblocked and ready to implement.
 
+## Issue #139: Terminal RPC handlers — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented RPC handlers for the standalone terminal service (`@laborer/terminal`). Created `TerminalRpcsLive` handler layer implementing all 7 `TerminalRpcs` endpoints (spawn, write, resize, kill, remove, restart, list). Each handler delegates to the `TerminalManager` Effect service. Wired the RPC server into the terminal service's `main.ts` at `POST /rpc` using `RpcServer.layer(TerminalRpcs)` with `RpcServer.layerProtocolHttp` and `RpcSerialization.layerJson`. Also added `TerminalManager.layer` to the layer tree so it's available to the RPC handlers.
+
+### What was done
+
+1. **Created `packages/terminal/src/rpc/handlers.ts`** — new file (~137 lines) with:
+   - **`toTerminalInfo` helper**: Converts a `TerminalRecord` (from TerminalManager) to the `TerminalInfo` shape expected by the RPC response schema. Explicit field spread ensures compile-time safety if schemas diverge.
+   - **`TerminalRpcsLive` handler layer**: `TerminalRpcs.toLayer(TerminalRpcs.of({...}))` implementing all 7 endpoints:
+     - `terminal.spawn` — destructures full payload (command, args, cwd, env, cols, rows, workspaceId), delegates to `tm.spawn()`, maps result through `toTerminalInfo`
+     - `terminal.write` — delegates `(id, data)` to `tm.write()`
+     - `terminal.resize` — delegates `(id, cols, rows)` to `tm.resize()`
+     - `terminal.kill` — delegates `(id)` to `tm.kill()`
+     - `terminal.remove` — delegates `(id)` to `tm.remove()`
+     - `terminal.restart` — delegates `(id)` to `tm.restart()`, maps result through `toTerminalInfo`
+     - `terminal.list` — delegates to `tm.listTerminals()`, maps all records through `toTerminalInfo`
+   - Follows the exact same pattern as `LaborerRpcsLive` in `packages/server/src/rpc/handlers.ts`: destructured payload → `yield* ServiceTag` → delegate to service method → return shaped response
+
+2. **Modified `packages/terminal/src/main.ts`** (~129 lines, was 101):
+   - **New imports**: `RpcSerialization`, `RpcServer` from `@effect/rpc`; `TerminalRpcs` from `@laborer/shared/rpc`; `TerminalRpcsLive` from `./rpc/handlers.js`; `TerminalManager` from `./services/terminal-manager.js`
+   - **Added `RpcLive` layer**: `RpcServer.layer(TerminalRpcs)` piped through `RpcServer.layerProtocolHttp({ path: "/rpc" })` and `TerminalRpcsLive`. Registers `POST /rpc` on the terminal service.
+   - **Updated `HttpLive` layer composition**: Now includes `RpcLive` (route layer), `TerminalManager.layer` (service layer), and `RpcSerialization.layerJson` (infrastructure layer) in addition to the existing `HealthRouteLive`, `PtyHostClient.layer`, and `ServerLive`.
+   - **Updated JSDoc**: Removed Issue #138 and #139 from "Future issues" list. Added POST /rpc and TerminalManager to architecture description. Added Issue #139 reference.
+
+### Files created
+- `packages/terminal/src/rpc/handlers.ts` — Terminal RPC handler layer
+
+### Files modified
+- `packages/terminal/src/main.ts` — Added RPC server endpoint, TerminalManager layer, new imports, updated JSDoc
+
+### Acceptance criteria status
+- [x] RPC handlers implemented for spawn, write, resize, kill, remove, restart, list
+- [x] `POST /rpc` endpoint is live on the terminal service (via `RpcServer.layerProtocolHttp({ path: "/rpc" })`)
+- [x] Can spawn a terminal via RPC and it appears in `terminal.list()` response (handlers delegate to TerminalManager which maintains in-memory state)
+- [x] Can write to, resize, kill, remove, and restart terminals via RPC (all handlers delegate to TerminalManager methods)
+- [x] Errors return typed `TerminalRpcError` responses (TerminalManager methods already return `TerminalRpcError`; the error propagates through the RPC layer)
+- [x] RPC serialization (JSON) is wired into the layer tree (via `RpcSerialization.layerJson`)
+
+### Verification
+- `tsc --noEmit` passes for terminal package (only pre-existing informational messages — no new errors)
+- `tsc --noEmit` passes for server package (only pre-existing informational messages — no new errors)
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on all terminal package files with zero issues (`Checked 12 files in 15ms. No fixes applied.`)
+- All 55 terminal package tests pass across 3 test files (32 ring buffer + 14 PTY host + 9 terminal manager — no regressions)
+- All 61 server package tests pass across 4 test files (32 ring buffer + 9 workspace validation + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **`toTerminalInfo` explicit mapping**: Rather than returning TerminalManager's `TerminalRecord` directly (which happens to match `TerminalInfo`), the handler explicitly maps fields through `toTerminalInfo`. This ensures compile-time safety — if the TerminalManager's internal type evolves differently from the RPC schema, the type checker will catch it. The `args` field is spread into a mutable array (`[...record.args]`) since TerminalRecord has `readonly string[]` but the Schema-derived type expects `string[]`.
+- **Handler pattern consistency**: Each handler follows the exact same `Effect.gen` + `yield* TerminalManager` + delegate pattern as the server's `LaborerRpcsLive`. This makes the codebase predictable and reduces cognitive overhead when switching between the two handler files.
+- **No `terminal.list` filtering at RPC level**: The `terminal.list` handler calls `tm.listTerminals()` without a workspaceId filter. The TerminalManager supports optional workspace filtering, but the RPC contract (`terminal.list` has no payload) returns all terminals. Client-side filtering is more flexible and avoids adding a filtered variant to the contract.
+- **`args` defaults to `[]`**: The spawn handler normalizes `args ?? []` before passing to TerminalManager, since the RPC schema defines `args` as optional but TerminalManager's SpawnPayload accepts `readonly string[] | undefined`. The explicit default ensures consistency.
+- **`env` defaults to `undefined`**: Unlike `args`, the `env` field passes `env ?? undefined` since TerminalManager treats `undefined` as "no additional env vars" (inherits process.env only).
+- **Layer ordering in HttpLive**: Route layers (HealthRouteLive, RpcLive) are provided first, then service layers (TerminalManager, PtyHostClient), then infrastructure (RpcSerialization, ServerLive). This follows the same composition pattern as the main server's `HttpLive` — routes consume services from below, services consume infrastructure from below.
+
+### Issues unblocked
+- Issue #140: Move terminal WebSocket route to terminal package — was blocked by #139 (now done). Ready to implement.
+- Issue #142: Terminal event stream RPC — was blocked by #139 (now done). Ready to implement.
+

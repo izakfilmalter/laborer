@@ -11,15 +11,15 @@
  * - Layer.launch keeps the server running until interrupted
  * - HttpRouter.Default.serve() creates the HTTP handler
  * - GET / returns a health check response
+ * - POST /rpc serves TerminalRpcs via RpcServer.layerProtocolHttp
  * - PtyHostClient spawns and manages the PTY Host child process
+ * - TerminalManager manages terminal instances in-memory
  *
  * The PTY Host (pty-host.ts) runs under Node.js as an isolated subprocess
  * that manages node-pty instances. PtyHostClient communicates with it via
  * newline-delimited JSON over stdin/stdout.
  *
  * Future issues will add:
- * - TerminalManager (Issue #138)
- * - Terminal RPC handlers at POST /rpc (Issue #139)
  * - Terminal WebSocket route at GET /terminal (Issue #140)
  * - Terminal event stream (Issue #142)
  * - Grace period reconnection (Issue #146)
@@ -27,6 +27,7 @@
  * @see PRD-terminal-extraction.md
  * @see Issue #135: Terminal package scaffold
  * @see Issue #136: Move PTY Host + PtyHostClient to terminal package
+ * @see Issue #139: Terminal RPC handlers
  */
 
 import {
@@ -36,9 +37,13 @@ import {
 	HttpServerResponse,
 } from "@effect/platform";
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
+import { RpcSerialization, RpcServer } from "@effect/rpc";
 import { env } from "@laborer/env/server";
+import { TerminalRpcs } from "@laborer/shared/rpc";
 import { Effect, Layer } from "effect";
+import { TerminalRpcsLive } from "./rpc/handlers.js";
 import { PtyHostClient } from "./services/pty-host-client.js";
+import { TerminalManager } from "./services/terminal-manager.js";
 
 /**
  * Health Check Route
@@ -62,6 +67,20 @@ const HealthRouteLive = HttpRouter.Default.use((router) =>
 );
 
 /**
+ * RPC Layer — Terminal RPCs over HTTP (POST /rpc)
+ *
+ * Creates the Effect RPC server from the TerminalRpcs group and wires
+ * it to the handler implementations. Uses HTTP protocol (POST) matching
+ * the same pattern as the main server's LaborerRpcs.
+ *
+ * @see Issue #139: Terminal RPC handlers
+ */
+const RpcLive = RpcServer.layer(TerminalRpcs).pipe(
+	Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
+	Layer.provide(TerminalRpcsLive)
+);
+
+/**
  * Server Layer
  *
  * Provides the Bun HTTP server on TERMINAL_PORT.
@@ -73,18 +92,27 @@ const ServerLive = BunHttpServer.layer({ port: env.TERMINAL_PORT });
  * Application Layer
  *
  * Composes all layers into the terminal service application.
- * PtyHostClient is wired into the layer tree so it spawns the PTY Host
- * child process on startup and kills it on shutdown.
+ * Layer composition:
+ *   HttpRouter.Default.serve() — serves the Default router with logging
+ *   + HealthRouteLive — adds GET / to the router
+ *   + RpcLive — Terminal RPC handling (POST /rpc via layerProtocolHttp)
+ *   + RpcSerialization.layerJson — wire format for RPC messages
+ *   + TerminalManager — in-memory terminal lifecycle management
+ *   + PtyHostClient — PTY Host child process management
+ *   + ServerLive — Bun HTTP server
  *
- * Future issues add TerminalManager, RPC handlers, and WebSocket routes
- * that depend on PtyHostClient.
+ * @see Issue #139: Terminal RPC handlers
  */
 const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	HttpServer.withLogAddress,
+	// --- Route layers (consume services from below) ---
 	Layer.provide(HealthRouteLive),
+	Layer.provide(RpcLive),
 	// --- Service layers ---
+	Layer.provide(TerminalManager.layer),
 	Layer.provide(PtyHostClient.layer),
 	// --- Infrastructure layers ---
+	Layer.provide(RpcSerialization.layerJson),
 	Layer.provide(ServerLive)
 );
 

@@ -370,32 +370,9 @@ Moved TerminalManager from `@laborer/server` to `@laborer/terminal` with signifi
 
 ---
 
-## Issue 139: Terminal RPC handlers
+## ~~Issue 139: Terminal RPC handlers~~ ✅ DONE
 
-### Parent PRD
-
-PRD-terminal-extraction.md
-
-### What to build
-
-Implement RPC handlers in `packages/terminal/src/rpc/handlers.ts` for all terminal operations defined in the `TerminalRpcs` contract (Issue #137). Each handler delegates to `TerminalManager`. Wire the RPC handlers into the terminal service's `main.ts` layer tree at `POST /rpc` using `RpcServer.layerProtocolHttp`. Follow the same handler pattern as the existing `LaborerRpcsLive` in the server package (destructured payload, `Effect.gen`, yield service tag).
-
-### Acceptance criteria
-
-- [ ] RPC handlers implemented for spawn, write, resize, kill, remove, restart, list
-- [ ] `POST /rpc` endpoint is live on the terminal service
-- [ ] Can spawn a terminal via RPC and it appears in `terminal.list()` response
-- [ ] Can write to, resize, kill, remove, and restart terminals via RPC
-- [ ] Errors return typed `TerminalRpcError` responses
-- [ ] RPC serialization (JSON) is wired into the layer tree
-
-### Blocked by
-
-- Blocked by ~~#137~~, ~~#138~~
-
-### User stories addressed
-
-- User story 5, 7, 12, 13
+Implemented `TerminalRpcsLive` handler layer in `packages/terminal/src/rpc/handlers.ts` for all 7 `TerminalRpcs` endpoints (spawn, write, resize, kill, remove, restart, list). Each handler delegates to `TerminalManager`. Wired into terminal service's `main.ts` at `POST /rpc` using `RpcServer.layerProtocolHttp` + `RpcSerialization.layerJson`. Added `TerminalManager.layer` to the layer tree. `toTerminalInfo` helper maps TerminalRecord to TerminalInfo schema. 55 terminal tests + 61 server tests pass.
 
 ---
 
@@ -421,7 +398,7 @@ Move `terminal-ws.ts` from `@laborer/server` to `@laborer/terminal` and wire it 
 
 ### Blocked by
 
-- Blocked by #139
+- Blocked by ~~#139~~
 
 ### User stories addressed
 
@@ -480,7 +457,7 @@ Add a streaming RPC endpoint `terminal.events()` to the terminal service that pu
 
 ### Blocked by
 
-- Blocked by #139
+- Blocked by ~~#139~~
 
 ### User stories addressed
 
@@ -1070,10 +1047,10 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 136 | ~~Move PTY Host + PtyHostClient to terminal package~~ | ~~#135~~ | Done |
 | 137 | ~~Terminal RPC contract~~ | ~~None~~ | Done |
 | 138 | ~~Move + simplify TerminalManager~~ | ~~#136~~ | Done |
-| 139 | Terminal RPC handlers | ~~#137~~, ~~#138~~ | Ready |
-| 140 | Move terminal WebSocket route to terminal package | #139 | Blocked |
+| 139 | ~~Terminal RPC handlers~~ | ~~#137~~, ~~#138~~ | Done |
+| 140 | Move terminal WebSocket route to terminal package | ~~#139~~ | Ready |
 | 141 | Update Vite proxy + web app WebSocket hook | #140 | Blocked |
-| 142 | Terminal event stream RPC | #139 | Blocked |
+| 142 | Terminal event stream RPC | ~~#139~~ | Ready |
 | 143 | Server TerminalClient + remove server terminal modules | #142 | Blocked |
 | 144 | Web app LiveStore terminal query replacement | #141, #143 | Blocked |
 | 145 | LiveStore terminal schema deprecation | #144 | Blocked |

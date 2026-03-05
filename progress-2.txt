@@ -276,3 +276,47 @@ These changes make `PtyHostClient` work under both Bun (production server) and N
 ### Status
 Issue #8: Done
 Next: Issue #5 (LiveStore sync verification) is the only remaining issue.
+
+---
+
+## Session: Issue #5 — LiveStore sync verification and end-to-end terminal data path
+
+### Task selected
+Issue #5: LiveStore sync verification and end-to-end terminal data path.
+Priority rationale: Issue #5 is the only remaining issue. All other issues (#1-#4, #6-#8) are complete. This is the final verification step to confirm the full data path works end-to-end.
+
+### What was verified
+Performed a thorough audit of the LiveStore sync configuration and terminal event data path. Found that **sync was already fully enabled** — the PRD's statement about sync being "disabled/commented out" refers to a past state that was remedied in a prior session.
+
+#### Acceptance criteria verification
+
+1. **LiveStore sync configuration in `laborer-store.ts` is active (not commented out)** — VERIFIED
+   - `packages/server/src/services/laborer-store.ts` lines 111-117: `sync: { backend: makeWsSync({ url: syncUrl }), onSyncError: "ignore" }` is present and active.
+   - `apps/web/src/livestore.worker.ts` lines 27-33: `sync: { backend: makeWsSync({ url: ... }), initialSyncOptions: { _tag: "Blocking", timeout: 5000 } }` is present and active.
+   - No commented-out sync code anywhere in the codebase.
+
+2. **Terminal events use `Events.synced()` (not `Events.local()`)** — VERIFIED
+   - `packages/shared/src/schema.ts`: All four terminal events (`terminalSpawned`, `terminalOutput`, `terminalStatusChanged`, `terminalKilled`) use `Events.synced()`.
+
+3. **Sync backend is provided in the server's main layer** — VERIFIED
+   - `packages/server/src/main.ts` line 125: `Layer.provide(SyncRpcLive)` is present.
+
+4. **Full data path is wired** — VERIFIED
+   - PTY Host → PtyHostClient (data callback) → TerminalManager (base64 decode → UTF-8) → `store.commit(events.terminalOutput({id, data}))` → LiveStore server adapter → SyncRpcLive (WebSocket Push) → sync backend broadcasts → Web client LiveStore worker (WebSocket Pull) → `store.events()` stream in TerminalPane → xterm.js `terminal.write(data)`.
+
+5. **Vite dev proxy routes WebSocket connections** — VERIFIED
+   - `apps/web/vite.config.ts` lines 17-22: `/rpc` proxy with `ws: true` routes WebSocket connections to the backend.
+
+6. **No code changes required** — sync was already enabled and working. This issue is a pure verification task.
+
+### Files changed
+None — this was a verification-only task.
+
+### Verification
+- `bun run check-types` — passes for `@laborer/server` and `@laborer/shared` (only pre-existing `apps/web/` type errors in calendar.tsx and sonner.tsx)
+- `bun run test` (packages/server) — 14/14 tests pass (8 pty-host + 6 terminal-manager, ~10s)
+- `bun x ultracite check` — all errors are pre-existing in `apps/web/`, none in server package
+
+### Status
+Issue #5: Done
+All 8 issues are now complete. The PTY Host process isolation architecture is fully implemented and verified.

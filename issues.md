@@ -839,7 +839,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 - [ ] Gear icon spacing and alignment is visually balanced with delete icon
 - [ ] Provenance text is visually subtle (secondary color, smaller text)
 - [x] Setup scripts: empty list saves correctly, special characters preserved, long commands don't break layout
-- [ ] Malformed config file shows user-friendly error message in toast
+- [x] Malformed config file shows user-friendly error message in toast
 - [x] RPC handler tests cover error paths (non-existent project, malformed input)
 - [ ] Frontend component tests cover modal open, display, save, and toast behaviors
 

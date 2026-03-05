@@ -1,6 +1,6 @@
 import { useAtomSet, useAtomValue } from "@effect-atom/atom-react/Hooks";
 import { Plus, Settings, Trash2 } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { Button } from "@/components/ui/button";
@@ -62,6 +62,12 @@ function ProjectSettingsForm({
 	const [rlphConfig, setRlphConfig] = useState("");
 	const [initialized, setInitialized] = useState(false);
 	const [isSaving, setIsSaving] = useState(false);
+	const lastLoadErrorMessageRef = useRef<string | null>(null);
+
+	const loadErrorMessage =
+		configResult._tag === "Failure"
+			? getSettingsLoadErrorMessage(extractErrorMessage(configResult.cause))
+			: null;
 
 	useEffect(() => {
 		if (configResult._tag !== "Success" || initialized) {
@@ -73,6 +79,20 @@ function ProjectSettingsForm({
 		setRlphConfig(configResult.value.rlphConfig.value ?? "");
 		setInitialized(true);
 	}, [configResult, initialized]);
+
+	useEffect(() => {
+		if (!loadErrorMessage) {
+			lastLoadErrorMessageRef.current = null;
+			return;
+		}
+
+		if (lastLoadErrorMessageRef.current === loadErrorMessage) {
+			return;
+		}
+
+		lastLoadErrorMessageRef.current = loadErrorMessage;
+		toast.error(loadErrorMessage);
+	}, [loadErrorMessage]);
 
 	if (
 		configResult._tag !== "Success" &&
@@ -87,9 +107,6 @@ function ProjectSettingsForm({
 	}
 
 	if (configResult._tag === "Failure") {
-		const loadErrorMessage = getSettingsLoadErrorMessage(
-			extractErrorMessage(configResult.cause)
-		);
 		return (
 			<div className="py-4 text-destructive text-sm">{loadErrorMessage}</div>
 		);

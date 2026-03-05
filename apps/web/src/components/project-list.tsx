@@ -22,6 +22,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
+import { ProjectSettingsModal } from "@/components/project-settings-modal";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -103,40 +104,46 @@ function ProjectItem({ project, workspaceCount }: ProjectItemProps) {
 							{project.repoPath}
 						</CardDescription>
 					</div>
-					<AlertDialog onOpenChange={setOpen} open={open}>
-						<AlertDialogTrigger
-							render={
-								<Button
-									aria-label={`Remove project ${project.name}`}
-									size="icon-sm"
-									variant="ghost"
-								/>
-							}
-						>
-							<Trash2 className="size-3.5 text-muted-foreground" />
-						</AlertDialogTrigger>
-						<AlertDialogContent>
-							<AlertDialogHeader>
-								<AlertDialogTitle>Remove project?</AlertDialogTitle>
-								<AlertDialogDescription>
-									This will unregister{" "}
-									<strong className="text-foreground">{project.name}</strong>{" "}
-									from Laborer. Existing workspaces and worktrees will not be
-									deleted from disk.
-								</AlertDialogDescription>
-							</AlertDialogHeader>
-							<AlertDialogFooter>
-								<AlertDialogCancel>Cancel</AlertDialogCancel>
-								<AlertDialogAction
-									disabled={isRemoving}
-									onClick={handleRemove}
-									variant="destructive"
-								>
-									{isRemoving ? "Removing..." : "Remove"}
-								</AlertDialogAction>
-							</AlertDialogFooter>
-						</AlertDialogContent>
-					</AlertDialog>
+					<div className="flex items-center gap-1">
+						<ProjectSettingsModal
+							projectId={project.id}
+							projectName={project.name}
+						/>
+						<AlertDialog onOpenChange={setOpen} open={open}>
+							<AlertDialogTrigger
+								render={
+									<Button
+										aria-label={`Remove project ${project.name}`}
+										size="icon-sm"
+										variant="ghost"
+									/>
+								}
+							>
+								<Trash2 className="size-3.5 text-muted-foreground" />
+							</AlertDialogTrigger>
+							<AlertDialogContent>
+								<AlertDialogHeader>
+									<AlertDialogTitle>Remove project?</AlertDialogTitle>
+									<AlertDialogDescription>
+										This will unregister{" "}
+										<strong className="text-foreground">{project.name}</strong>{" "}
+										from Laborer. Existing workspaces and worktrees will not be
+										deleted from disk.
+									</AlertDialogDescription>
+								</AlertDialogHeader>
+								<AlertDialogFooter>
+									<AlertDialogCancel>Cancel</AlertDialogCancel>
+									<AlertDialogAction
+										disabled={isRemoving}
+										onClick={handleRemove}
+										variant="destructive"
+									>
+										{isRemoving ? "Removing..." : "Remove"}
+									</AlertDialogAction>
+								</AlertDialogFooter>
+							</AlertDialogContent>
+						</AlertDialog>
+					</div>
 				</div>
 			</CardHeader>
 			<CardContent>

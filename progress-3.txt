@@ -3422,3 +3422,63 @@ Implemented direct Cmd+W pane closing in the web app. `Meta+W` now closes the cu
 - [ ] Cmd+W works after multiple rapid presses (closing several panes in succession) — not explicitly stress-tested in this slice
 - [ ] Native window close button (red dot) still hides to tray as before — not re-verified in this slice
 - [ ] Cmd+Q still quits the app as before — not re-verified in this slice
+
+## Issue #157: Config RPC endpoints + project settings modal — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented Issue #157 as the highest-priority ready item in the config track. Added `config.get` / `config.update` to the shared RPC contract and server handlers, then shipped a `ProjectSettingsModal` UI (gear button on project cards) that fetches resolved config with provenance and saves changed fields only.
+
+### What was done
+
+1. **Shared RPC contract updates** (`packages/shared/src/rpc.ts`)
+   - Added config response schemas with provenance (`{ value, source }`) for:
+     - `worktreeDir` (string)
+     - `setupScripts` (string[])
+     - `rlphConfig` (string | null)
+   - Added `config.get` RPC:
+     - payload: `{ projectId: string }`
+     - success: resolved config with provenance
+     - error: `RpcError`
+   - Added `config.update` RPC:
+     - payload: `{ projectId, config: { worktreeDir?, setupScripts?, rlphConfig? } }`
+     - error: `RpcError`
+
+2. **Server RPC handlers** (`packages/server/src/rpc/handlers.ts`)
+   - Added `config.get` handler:
+     - Resolves project via `ProjectRegistry.getProject(projectId)`
+     - Delegates to `ConfigService.resolveConfig(project.repoPath, project.name)`
+   - Added `config.update` handler:
+     - Resolves project via `ProjectRegistry.getProject(projectId)`
+     - Delegates to `ConfigService.writeProjectConfig(project.repoPath, config)`
+   - Updated handler docs to reflect 23 implemented RPC methods.
+
+3. **Project settings UI** (`apps/web/src/components/project-settings-modal.tsx`)
+   - Created new `ProjectSettingsModal` component using existing `Dialog` primitives.
+   - Added config query on modal open via `LaborerClient.query("config.get", { projectId })`.
+   - Built editable form fields:
+     - Worktree directory input (with placeholder and provenance helper)
+     - Setup scripts editable list (add/remove per entry)
+     - rlph config input
+   - Save path uses `LaborerClient.mutation("config.update")` and only submits changed fields.
+   - Added success/error toasts for save outcomes.
+
+4. **Project card integration** (`apps/web/src/components/project-list.tsx`)
+   - Added a gear icon button next to the existing delete button.
+   - Wired the gear icon to open `ProjectSettingsModal` for that project.
+
+5. **Issue tracking updates** (`issues.md`)
+   - Marked Issue #157 as done.
+   - Checked all acceptance criteria for #157.
+   - Updated summary row: #157 -> Done.
+   - Unblocked #158 and updated summary row: #158 -> Ready.
+
+### Verification
+- `bun run check-types` (packages/shared): passes (only pre-existing Effect TS plugin informational messages)
+- `bun run check-types` (packages/server): passes (only pre-existing warnings/messages)
+- `bun run check-types` (apps/web): still fails due pre-existing unrelated errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new errors from Issue #157 work
+- `bun x ultracite check packages/shared/src/rpc.ts packages/server/src/rpc/handlers.ts apps/web/src/components/project-settings-modal.tsx apps/web/src/components/project-list.tsx`: passes
+- `bun run test` (packages/server): passes (103 passed, 6 skipped)
+- `bun run test` (apps/web): passes (31/31)

@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { LaborerRpcs, RpcError } from "@laborer/shared/rpc";
 import { tables } from "@laborer/shared/schema";
 import { Array as Arr, Effect, pipe } from "effect";
+import { ConfigService } from "../services/config-service.js";
 import { DiffService } from "../services/diff-service.js";
 import { LaborerStore } from "../services/laborer-store.js";
 import { ProjectRegistry } from "../services/project-registry.js";
@@ -27,10 +28,11 @@ const startTime = Date.now();
 /**
  * RPC handler layer for the LaborerRpcs group.
  *
- * All 21 RPC methods are fully implemented:
+ * All 23 RPC methods are fully implemented:
  * - health.check: returns server uptime (Issue #12)
  * - project.add: delegates to ProjectRegistry.addProject (Issue #21)
  * - project.remove: delegates to ProjectRegistry.removeProject (Issue #22)
+ * - config.get/config.update: delegates to ConfigService via ProjectRegistry lookup (Issue #157)
  * - workspace.create: delegates to WorkspaceProvider.createWorktree + DiffService.startPolling (Issue #33/#40/#85)
  * - workspace.destroy: delegates to DiffService.stopPolling + TerminalClient.killAllForWorkspace + WorkspaceProvider.destroyWorktree (Issue #43/#44/#85)
  * - terminal.spawn: delegates to TerminalClient.spawnInWorkspace (Issue #50/#143)
@@ -74,6 +76,29 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 			Effect.gen(function* () {
 				const registry = yield* ProjectRegistry;
 				yield* registry.removeProject(projectId);
+			}),
+
+		// -------------------------------------------------------------------
+		// Config RPCs (Issue #157)
+		// -------------------------------------------------------------------
+		"config.get": ({ projectId }) =>
+			Effect.gen(function* () {
+				const registry = yield* ProjectRegistry;
+				const configService = yield* ConfigService;
+
+				const project = yield* registry.getProject(projectId);
+				return yield* configService.resolveConfig(
+					project.repoPath,
+					project.name
+				);
+			}),
+		"config.update": ({ projectId, config }) =>
+			Effect.gen(function* () {
+				const registry = yield* ProjectRegistry;
+				const configService = yield* ConfigService;
+
+				const project = yield* registry.getProject(projectId);
+				yield* configService.writeProjectConfig(project.repoPath, config);
 			}),
 
 		// -------------------------------------------------------------------

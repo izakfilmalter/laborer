@@ -110,6 +110,27 @@ const ProjectResponse = Schema.Struct({
 	rlphConfig: Schema.optional(Schema.String),
 });
 
+const ConfigResolvedValueString = Schema.Struct({
+	value: Schema.String,
+	source: Schema.String,
+});
+
+const ConfigResolvedValueStringArray = Schema.Struct({
+	value: Schema.Array(Schema.String),
+	source: Schema.String,
+});
+
+const ConfigResolvedValueNullableString = Schema.Struct({
+	value: Schema.NullOr(Schema.String),
+	source: Schema.String,
+});
+
+const ConfigResponse = Schema.Struct({
+	worktreeDir: ConfigResolvedValueString,
+	setupScripts: ConfigResolvedValueStringArray,
+	rlphConfig: ConfigResolvedValueNullableString,
+});
+
 const TaskResponse = Schema.Struct({
 	id: Schema.String,
 	projectId: Schema.String,
@@ -168,6 +189,29 @@ export class LaborerRpcs extends RpcGroup.make(
 		error: RpcError,
 		payload: {
 			projectId: Schema.String,
+		},
+	}),
+
+	// -----------------------------------------------------------------------
+	// Config RPCs
+	// -----------------------------------------------------------------------
+	Rpc.make("config.get", {
+		success: ConfigResponse,
+		error: RpcError,
+		payload: {
+			projectId: Schema.String,
+		},
+	}),
+
+	Rpc.make("config.update", {
+		error: RpcError,
+		payload: {
+			projectId: Schema.String,
+			config: Schema.Struct({
+				worktreeDir: Schema.optional(Schema.String),
+				setupScripts: Schema.optional(Schema.Array(Schema.String)),
+				rlphConfig: Schema.optional(Schema.String),
+			}),
 		},
 	}),
 

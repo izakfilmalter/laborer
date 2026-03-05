@@ -756,7 +756,9 @@ Wire the `ConfigService` (Issue #154) into `WorkspaceProvider` to replace the ha
 
 ---
 
-## Issue 157: Config RPC endpoints + project settings modal
+## ~~Issue 157: Config RPC endpoints + project settings modal~~ ✅ DONE
+
+Added `config.get` + `config.update` RPC methods (shared contract + server handlers) and shipped a new `ProjectSettingsModal` (gear icon on each project card) for editing worktree directory, setup scripts, and rlph config with per-field provenance labels and save toasts.
 
 ### Parent PRD
 
@@ -777,20 +779,20 @@ Save button calls `config.update` mutation with only changed fields. Toast notif
 
 ### Acceptance criteria
 
-- [ ] `config.get` RPC defined in shared contract with provenance in response schema
-- [ ] `config.update` RPC defined in shared contract with partial config payload
-- [ ] Server handlers for both RPCs delegate to ConfigService via ProjectRegistry
-- [ ] `config.get` returns error for non-existent project
-- [ ] `config.update` returns error for non-existent project
-- [ ] Gear icon appears on each project card next to the delete icon
-- [ ] Clicking gear icon opens the settings modal
-- [ ] Modal displays resolved config values fetched via `config.get`
-- [ ] Provenance labels show which file each value comes from
-- [ ] Worktree directory field is editable with placeholder showing default
-- [ ] Setup scripts field is an editable list with add/remove functionality
-- [ ] rlph config field is editable
-- [ ] Save writes changed fields via `config.update` RPC
-- [ ] Toast confirms successful save or shows error
+- [x] `config.get` RPC defined in shared contract with provenance in response schema
+- [x] `config.update` RPC defined in shared contract with partial config payload
+- [x] Server handlers for both RPCs delegate to ConfigService via ProjectRegistry
+- [x] `config.get` returns error for non-existent project
+- [x] `config.update` returns error for non-existent project
+- [x] Gear icon appears on each project card next to the delete icon
+- [x] Clicking gear icon opens the settings modal
+- [x] Modal displays resolved config values fetched via `config.get`
+- [x] Provenance labels show which file each value comes from
+- [x] Worktree directory field is editable with placeholder showing default
+- [x] Setup scripts field is an editable list with add/remove functionality
+- [x] rlph config field is editable
+- [x] Save writes changed fields via `config.update` RPC
+- [x] Toast confirms successful save or shows error
 
 ### Blocked by
 
@@ -840,7 +842,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 
 ### Blocked by
 
-- Blocked by #157
+- ~~Blocked by #157~~
 
 ### User stories addressed
 
@@ -907,8 +909,8 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 154 | ~~Config Service — resolve config with walk-up + global default~~ | ~~None~~ | Done |
 | 155 | ~~Config Service — write project config~~ | ~~#154~~ | Done |
 | 156 | ~~WorkspaceProvider — use ConfigService for worktree path + setup scripts~~ | ~~#154~~ | Done |
-| 157 | Config RPC endpoints + project settings modal | ~~#155~~, ~~#156~~ | Ready |
-| 158 | Config + settings polish & edge cases | #157 | Blocked |
+| 157 | ~~Config RPC endpoints + project settings modal~~ | ~~#155~~, ~~#156~~ | Done |
+| 158 | Config + settings polish & edge cases | ~~#157~~ | Ready |
 | 159 | ~~WorktreeDetector + schema origin + initial detection on project add~~ | ~~None~~ | Done |
 | 160 | UI for detected workspaces | ~~#159~~ | Ready |
 | 161 | Live filesystem watcher + server boot reconciliation | ~~#159~~ | Ready |

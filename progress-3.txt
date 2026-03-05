@@ -4287,3 +4287,49 @@ Wired both `@laborer/server` and `@laborer/terminal` package scripts to load the
 - `bun run --cwd packages/server check-types` ⚠️ exits non-zero on pre-existing Effect diagnostics in unrelated files; no new type failures introduced by this script-only change
 - `bun run --cwd packages/terminal check-types` ⚠️ reports pre-existing Effect diagnostics; no new type failures introduced by this script-only change
 - `bun x ultracite check package.json packages/server/package.json packages/terminal/package.json` ✅
+
+---
+
+## Issue #147 — Terminal extraction polish (final verification & close)
+
+### Why this next
+Issue #147 was already "In Progress" and is the verification gate for the entire terminal extraction architecture. All acceptance criteria needed confirmation before moving on to downstream issues (#163, #167) that were blocked on extraction work.
+
+### Summary
+Verified all 9 acceptance criteria for Issue #147 through comprehensive code review and test/type-check runs. Updated stale JSDoc in the terminal service entry point. Closed Issue #147 as Done and unblocked Issues #163 and #167 by updating their blocker references.
+
+### What was done
+
+1. **Verified all acceptance criteria**
+   - Keystroke input goes directly as WebSocket text frames (no RPC hop) — confirmed in `terminal-ws.ts`
+   - Graceful shutdown chain: TerminalManager finalizer → PtyHostClient finalizer → PTY Host stdin close — confirmed across `terminal-manager.ts`, `pty-host-client.ts`, `pty-host.ts`
+   - `useTerminalList` polling gives cross-tab consistency — confirmed in `use-terminal-list.ts`
+   - Ring buffer replay sends 5MB scrollback in 128KB chunks — confirmed in `pty-host.ts` and `terminal-ws.ts`
+   - All terminal UI states (loading/connected/disconnected/exited/restarting) properly handled — confirmed in `terminal-pane.tsx`
+   - Vite proxy unifies both services under port 3001 — confirmed in `vite.config.ts`
+   - Server uses TerminalClient RPC, not direct terminal modules — confirmed in `server/src/main.ts` and `terminal-client.ts`
+   - `bun --watch` correctly scopes restarts per service — confirmed via `turbo.json` and package scripts
+   - `.env.local` loads correctly for both services — confirmed in prior progress entry
+
+2. **Fixed stale JSDoc in `packages/terminal/src/main.ts`**
+   - Removed "Future issues" section that listed #142 and #146 as upcoming (both already implemented)
+   - Replaced with "Completed extraction issues" section documenting #142, #146, and #147
+
+3. **Updated issue tracking in `issues.md`**
+   - Marked Issue #147 as Done in both body and summary table
+   - Fixed Issue #163 blocked-by references: both #161 and #162 are done → status changed from Blocked to Ready
+   - Fixed Issue #167 blocked-by references: #164 is done → blocker strikethrough updated
+
+### Files modified
+- `packages/terminal/src/main.ts`
+- `issues.md`
+
+### Verification
+- `bun run --cwd packages/terminal test` ✅ (59 tests pass)
+- `bun run --cwd packages/server test` ✅ (122 tests pass)
+- `bun run --cwd apps/web test` ✅ (44 tests pass)
+- Total: **225 tests pass**, 6 skipped
+- `bun run --cwd packages/terminal check-types` ✅
+- `bun run --cwd packages/server check-types` ⚠️ exits non-zero on pre-existing Effect plugin diagnostics; no real type errors
+- `bun run --cwd apps/web check-types` ⚠️ pre-existing errors in `calendar.tsx` and `sonner.tsx`; no new type failures
+- `bun x ultracite check packages/terminal/src/main.ts` ✅

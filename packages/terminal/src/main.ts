@@ -20,15 +20,16 @@
  * that manages node-pty instances. PtyHostClient communicates with it via
  * newline-delimited JSON over stdin/stdout.
  *
- * Future issues will add:
- * - Terminal event stream (Issue #142)
- * - Grace period reconnection (Issue #146)
+ * Completed extraction issues:
+ * - Issue #135: Terminal package scaffold
+ * - Issue #136: Move PTY Host + PtyHostClient to terminal package
+ * - Issue #139: Terminal RPC handlers
+ * - Issue #140: Terminal WebSocket route
+ * - Issue #142: Terminal event stream RPC (streaming lifecycle events)
+ * - Issue #146: Grace period reconnection + orphan detection
+ * - Issue #147: Terminal extraction polish + integration verification
  *
  * @see PRD-terminal-extraction.md
- * @see Issue #135: Terminal package scaffold
- * @see Issue #136: Move PTY Host + PtyHostClient to terminal package
- * @see Issue #139: Terminal RPC handlers
- * @see Issue #140: Terminal WebSocket route
  */
 
 import {

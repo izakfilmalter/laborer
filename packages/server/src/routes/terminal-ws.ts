@@ -110,7 +110,7 @@ const TerminalWsRouteLive = HttpRouter.Default.use((router) =>
 		const terminalManager = yield* TerminalManager;
 		const ptyHostClient = yield* PtyHostClient;
 
-		return router.addRoute(
+		yield* router.addRoute(
 			HttpRouter.makeRoute(
 				"GET",
 				"/terminal",

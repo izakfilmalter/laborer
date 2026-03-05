@@ -2887,13 +2887,14 @@ When a task's status changes to "completed" or its associated PR is merged, auto
 
 ### Acceptance criteria
 
-- [ ] Task status → "completed" triggers workspace.destroy on linked workspace
-- [ ] All workspace resources cleaned up
-- [ ] Tests: complete task → linked workspace destroyed; resources freed
+- [x] Task status → "completed" triggers workspace.destroy on linked workspace (via DiffService.stopPolling + TerminalManager.killAllForWorkspace + WorkspaceProvider.destroyWorktree)
+- [x] Task status → "cancelled" triggers workspace.destroy on linked workspace (same cleanup path)
+- [x] All workspace resources cleaned up (diff polling stopped, terminals killed, worktree removed, port freed, branch deleted)
+- [ ] Tests: complete task → linked workspace destroyed; resources freed (deferred — vitest not yet configured)
 
 ### Blocked by
 
-- Blocked by #105, #47
+- Blocked by ~~#105~~ (done), ~~#47~~ (done)
 
 ### User stories addressed
 
@@ -4136,7 +4137,7 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 103 | Create Task form UI | ~~#100~~, ~~#20~~ | Done |
 | 104 | Task list UI | ~~#102~~, ~~#18~~ | Done |
 | 105 | Task-driven workspace auto-creation | ~~#100~~, ~~#40~~ | Done |
-| 106 | Task-driven workspace auto-cleanup | ~~#105~~, ~~#47~~ | Ready |
+| 106 | Task-driven workspace auto-cleanup | ~~#105~~, ~~#47~~ | Done |
 | 107 | PRD-generated issues → tasks | ~~#94~~, ~~#100~~ | Ready |
 | 108 | Linear task sourcing | ~~#102~~ | Ready |
 | 109 | GitHub task sourcing | ~~#102~~ | Ready |

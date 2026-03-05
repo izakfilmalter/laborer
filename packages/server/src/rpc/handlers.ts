@@ -41,7 +41,7 @@ const startTime = Date.now();
  * - rlph.review: delegates to TerminalManager.spawn with `rlph review <prNumber>` (Issue #96)
  * - rlph.fix: delegates to TerminalManager.spawn with `rlph fix <prNumber>` (Issue #98)
  * - task.create: delegates to TaskManager.createTask (Issue #100)
- * - task.updateStatus: delegates to TaskManager.updateTaskStatus + auto-creates workspace on "in_progress" (Issue #101/#105)
+ * - task.updateStatus: delegates to TaskManager.updateTaskStatus + auto-creates workspace on "in_progress" + auto-destroys on "completed"/"cancelled" (Issue #101/#105/#106)
  * - task.remove: delegates to TaskManager.removeTask (Issue #100)
  */
 export const LaborerRpcsLive = LaborerRpcs.toLayer(
@@ -318,6 +318,47 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 							const diffService = yield* DiffService;
 							yield* diffService.startPolling(workspace.id);
 						}
+					}
+				}
+
+				// Issue #106: Task-driven workspace auto-cleanup.
+				// When a task transitions to "completed" or "cancelled", automatically
+				// destroy any linked workspace. This keeps the environment clean by
+				// freeing ports, removing worktrees, and killing processes when a task
+				// is finished. Mirrors the workspace.destroy handler pattern.
+				if (status === "completed" || status === "cancelled") {
+					const { store } = yield* LaborerStore;
+					const allWorkspaces = store.query(tables.workspaces);
+
+					// Find all non-destroyed workspaces linked to this task
+					const linkedWorkspaces = pipe(
+						allWorkspaces,
+						Arr.filter(
+							(w) => w.taskSource === taskId && w.status !== "destroyed"
+						)
+					);
+
+					// Destroy each linked workspace using the same cleanup sequence
+					// as the workspace.destroy handler: stop polling → kill terminals
+					// → remove worktree. Errors are logged but do not fail the status
+					// update — the task status change is the user's intent.
+					for (const workspace of linkedWorkspaces) {
+						yield* Effect.gen(function* () {
+							const diffService = yield* DiffService;
+							yield* diffService.stopPolling(workspace.id);
+
+							const tm = yield* TerminalManager;
+							yield* tm.killAllForWorkspace(workspace.id);
+
+							const provider = yield* WorkspaceProvider;
+							yield* provider.destroyWorktree(workspace.id);
+						}).pipe(
+							Effect.catchAll((error) =>
+								Effect.logWarning(
+									`Failed to auto-destroy workspace ${workspace.id} for task ${taskId}: ${String(error)}`
+								)
+							)
+						);
 					}
 				}
 			}),

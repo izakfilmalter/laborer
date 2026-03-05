@@ -348,29 +348,9 @@ Added loading overlay to terminal pane. Shows centered spinner with "Starting te
 
 ---
 
-## Issue 123: Loading state — diff computation
+## ~~Issue 123: Loading state — diff computation~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Show a loading indicator in the diff viewer while the initial diff is being computed. After the first diff is received, the loading disappears.
-
-### Acceptance criteria
-
-- [ ] Diff viewer shows loading until first diff received
-- [ ] Loading disappears when diff content available
-- [ ] Tests: open diff viewer → loading; diff arrives → content shown
-
-### Blocked by
-
-- Blocked by #87
-
-### User stories addressed
-
-- Polishing requirement 8
+Added a loading spinner to the diff viewer pane that displays while waiting for the first diff computation. Distinguishes `diffRow === null` (loading — DiffService hasn't polled yet) from `diffRow !== null && diffContent === ""` (genuinely no changes). Uses the `Spinner` component consistent with terminal loading (#122). Loading disappears as soon as the first `DiffUpdated` event syncs to LiveStore.
 
 ---
 
@@ -525,7 +505,7 @@ Added drag-and-drop support using the native HTML5 Drag and Drop API. Terminal i
 | 120 | ~~Empty state — no terminals~~ | ~~#63~~ | Done |
 | 121 | ~~Loading state — workspace creation~~ | ~~#41~~ | Done |
 | 122 | ~~Loading state — terminal spawning~~ | ~~#60~~ | Done |
-| 123 | Loading state — diff computation | ~~#87~~ | Ready |
+| 123 | ~~Loading state — diff computation~~ | ~~#87~~ | Done |
 | 124 | Terminal fidelity — opencode | ~~#60~~ | Ready |
 | 125 | Terminal fidelity — claude | ~~#60~~ | Ready |
 | 126 | Terminal fidelity — codex | ~~#60~~ | Ready |

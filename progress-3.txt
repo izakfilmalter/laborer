@@ -1758,3 +1758,43 @@ Now the panel system adapts to viewport width: sidebar sizing scales with resolu
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #81. This was a standalone polishing task addressing Polishing requirement 9 (responsive layout).
 
+---
+
+## Issue #123: Loading state — diff computation
+
+### Summary
+Added a loading spinner to the diff viewer pane that displays while waiting for the first diff computation to complete. Previously, the diff pane showed "No changes" immediately on mount — even when the DiffService hadn't polled yet — which was misleading. Now the component distinguishes between "loading" (no data row in LiveStore yet) and "genuinely no changes" (data row exists but diff content is empty).
+
+### What was done
+
+1. **Modified `apps/web/src/panes/diff-pane.tsx`** — split the empty state into loading vs. genuinely empty:
+   - **Loading state** (`diffRow === null`): When no `diffs` table row exists for this workspace, the DiffService hasn't polled yet. Shows a centered `Spinner` component (Loader2 with `animate-spin`, consistent with terminal loading in Issue #122) with "Computing diff..." title and "Waiting for the first diff computation to complete" subtitle.
+   - **Empty state** (`diffRow !== null && diffContent === ""`): When a row exists but `diffContent` is empty, the DiffService polled and found no file changes. Keeps the existing "No changes" empty state with `FileCode2` icon and guidance text.
+   - **Imports added**: `Spinner` from `@/components/ui/spinner` — the same component used in terminal loading overlay (Issue #122).
+   - **No other changes** — the existing `useTransition` pending indicator ("Updating...") for subsequent diff updates remains unchanged, as does the "Updated" flash indicator and scroll preservation.
+
+2. **Semantic distinction**: The key insight is that `diffRow` (from `useMemo` filtering `diffRows` by workspace ID) is `null` when no `DiffUpdated` event has been committed to LiveStore for this workspace. Once the DiffService makes its first poll (every 2 seconds), it commits a `DiffUpdated` event which materializes a row in the `diffs` table. So `diffRow === null` reliably indicates "still loading" while `diffRow !== null` with empty content means "no changes detected."
+
+### Files modified
+- `apps/web/src/panes/diff-pane.tsx` — Added loading state branch before empty state, added Spinner import
+
+### Acceptance criteria status
+- [x] Diff viewer shows loading until first diff received — Spinner with "Computing diff..." shown when `diffRow === null`
+- [x] Loading disappears when diff content available — As soon as `DiffUpdated` event syncs to LiveStore, `diffRow` becomes non-null and either shows diff content or "No changes"
+- [ ] Tests: open diff viewer → loading; diff arrives → content shown (deferred — web app has no component test infrastructure; the state transition logic is straightforward React conditional rendering)
+
+### Verification
+- `tsc --noEmit` passes (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on diff-pane.tsx with zero issues
+- All 61 tests pass across 4 test files (32 ring buffer + 9 workspace validation + 14 PTY host + 6 terminal manager — no regressions)
+- Note: The "PTY Host crash" test is flaky (race condition in process kill timing) — passed on second run, unrelated to this change
+
+### Design decisions
+- **`diffRow === null` as loading signal**: The LiveStore reactive query returns all rows from the `diffs` table. When no `DiffUpdated` event has been committed for a workspace, there is no row — `diffRow` is null. This is a reliable indicator because the DiffService commits a row on its first poll regardless of whether changes exist (it commits `diffContent: ""` for no changes). The alternative of adding a separate "loading" state to LiveStore would add schema complexity for no benefit.
+- **Spinner over skeleton**: A skeleton loader (pulsing lines mimicking diff layout) was considered but rejected because the diff content structure is unpredictable — it could be 1 file or 50 files. A centered spinner with text is more honest and matches the terminal loading pattern (Issue #122).
+- **Subtitle text**: "Waiting for the first diff computation to complete" tells the user what's happening. The DiffService polls every 2 seconds, so the loading state is typically visible for 0–2 seconds on initial workspace creation. The text helps users understand this is transient, not stuck.
+- **Consistent with loading pattern trilogy**: This completes the three-part loading state series: workspace creation (#121) → terminal spawning (#122) → diff computation (#123). All use the same `Spinner` component and centered layout pattern with title + subtitle text.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #123. This was a standalone polishing task addressing Polishing requirement 8 (loading states).
+

@@ -61,6 +61,7 @@ import {
 	EmptyMedia,
 	EmptyTitle,
 } from "@/components/ui/empty";
+import { Spinner } from "@/components/ui/spinner";
 import { extractErrorMessage } from "@/lib/utils";
 import { useLaborerStore } from "@/livestore/store";
 
@@ -326,7 +327,29 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 		}
 	}, []);
 
+	// --- Loading state ---
+	// When diffRow is null, the DiffService hasn't polled yet for this workspace.
+	// Show a loading spinner instead of the "No changes" empty state so the user
+	// knows the diff is being computed rather than that there are genuinely no changes.
+	if (diffRow === null) {
+		return (
+			<div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-background">
+				<Spinner className="size-6 text-muted-foreground" />
+				<div className="flex flex-col items-center gap-1">
+					<p className="font-medium text-muted-foreground text-sm">
+						Computing diff...
+					</p>
+					<p className="text-muted-foreground/70 text-xs">
+						Waiting for the first diff computation to complete
+					</p>
+				</div>
+			</div>
+		);
+	}
+
 	// --- Empty state ---
+	// When diffRow exists but diffContent is empty, the DiffService polled
+	// and found no changes — genuinely no file modifications in this workspace.
 	if (!diffContent) {
 		return (
 			<div className="flex h-full w-full items-center justify-center bg-background">

@@ -916,9 +916,9 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 156 | ~~WorkspaceProvider — use ConfigService for worktree path + setup scripts~~ | ~~#154~~ | Done |
 | 157 | Config RPC endpoints + project settings modal | ~~#155~~, ~~#156~~ | Ready |
 | 158 | Config + settings polish & edge cases | #157 | Blocked |
-| 159 | WorktreeDetector + schema origin + initial detection on project add | None | In Progress |
-| 160 | UI for detected workspaces | #159 | Blocked |
-| 161 | Live filesystem watcher + server boot reconciliation | #159 | Blocked |
+| 159 | ~~WorktreeDetector + schema origin + initial detection on project add~~ | ~~None~~ | Done |
+| 160 | UI for detected workspaces | ~~#159~~ | Ready |
+| 161 | Live filesystem watcher + server boot reconciliation | ~~#159~~ | Ready |
 | 162 | Origin-aware destroy behavior | #160 | Blocked |
 | 163 | Worktree detection polish & edge cases | #160, #161, #162 | Blocked |
 
@@ -926,7 +926,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 
 ## Issue 159: WorktreeDetector + schema origin + initial detection on project add
 
-### Status: In Progress
+### Status: Done
 
 ### Parent PRD
 
@@ -961,8 +961,8 @@ This is the foundational tracer bullet for worktree detection. Build the end-to-
 - [x] `WorktreeReconciler.reconcile()` removes stale workspace records (worktree no longer on disk)
 - [x] Existing workspace records matching by worktree path are left untouched
 - [x] `addProject` triggers initial reconciliation before returning the RPC response
-- [ ] WorktreeDetector tests pass (8+ scenarios with real git repos)
-- [ ] WorktreeReconciler tests pass (6+ scenarios with in-memory LiveStore)
+- [x] WorktreeDetector tests pass (8+ scenarios with real git repos)
+- [x] WorktreeReconciler tests pass (6+ scenarios with in-memory LiveStore)
 - [x] ProjectRegistry integration tests pass
 
 ### Blocked by
@@ -1006,7 +1006,7 @@ Update the frontend workspace list and project cards to render detected (externa
 
 ### Blocked by
 
-- Blocked by #159
+- ~~Blocked by #159~~
 
 ### User stories addressed
 
@@ -1052,7 +1052,7 @@ Build the WorktreeWatcher service that keeps workspace records in sync with actu
 
 ### Blocked by
 
-- Blocked by #159
+- ~~Blocked by #159~~
 
 ### User stories addressed
 

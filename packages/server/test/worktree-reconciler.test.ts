@@ -38,6 +38,28 @@ const initRepo = (prefix: string): string => {
 	return repoPath;
 };
 
+const getDefaultBranchForTest = (repoPath: string): string => {
+	try {
+		git("rev-parse --verify refs/heads/main", repoPath);
+		return "main";
+	} catch {
+		// fall through
+	}
+
+	try {
+		git("rev-parse --verify refs/heads/master", repoPath);
+		return "master";
+	} catch {
+		return "HEAD";
+	}
+};
+
+const getDetectedWorktreePaths = (repoPath: string): string[] =>
+	git("worktree list --porcelain", repoPath)
+		.split("\n")
+		.filter((line) => line.startsWith("worktree "))
+		.map((line) => line.slice("worktree ".length));
+
 const makeTestStore = Effect.gen(function* () {
 	const adapter = makeAdapter({ storage: { type: "in-memory" } });
 	const store = yield* createStore({
@@ -62,7 +84,7 @@ const TestLayer = WorktreeReconciler.layer.pipe(
 
 let scope: Scope.CloseableScope;
 let runEffect: <A, E>(
-	effect: Effect.Effect<A, E, WorktreeReconciler | LaborerStore>
+	effect: Effect.Effect<A, E, WorktreeReconciler | LaborerStore | PortAllocator>
 ) => Promise<A>;
 
 beforeEach(async () => {
@@ -71,7 +93,11 @@ beforeEach(async () => {
 		Layer.buildWithScope(TestLayer, scope)
 	);
 	runEffect = <A, E>(
-		effect: Effect.Effect<A, E, WorktreeReconciler | LaborerStore>
+		effect: Effect.Effect<
+			A,
+			E,
+			WorktreeReconciler | LaborerStore | PortAllocator
+		>
 	) => Effect.runPromise(Effect.provide(effect, Layer.succeedContext(context)));
 });
 
@@ -119,6 +145,57 @@ describe("WorktreeReconciler", () => {
 		}
 	});
 
+	it("leaves matching existing workspace records untouched", async () => {
+		const repoPath = initRepo("reconciler-unchanged");
+		const [mainWorktreePath] = getDetectedWorktreePaths(repoPath);
+
+		await runEffect(
+			Effect.gen(function* () {
+				const { store } = yield* LaborerStore;
+				store.commit(
+					events.workspaceCreated({
+						id: "existing-main-workspace",
+						projectId: "project-unchanged",
+						taskSource: null,
+						branchName: "custom/main",
+						worktreePath: mainWorktreePath ?? repoPath,
+						port: 4321,
+						status: "running",
+						origin: "laborer",
+						createdAt: new Date().toISOString(),
+						baseSha: "custom-base-sha",
+					})
+				);
+			})
+		);
+
+		const result = await runEffect(
+			Effect.gen(function* () {
+				const reconciler = yield* WorktreeReconciler;
+				return yield* reconciler.reconcile("project-unchanged", repoPath);
+			})
+		);
+
+		expect(result.added).toBe(0);
+		expect(result.removed).toBe(0);
+		expect(result.unchanged).toBe(1);
+
+		const rows = await runEffect(
+			Effect.gen(function* () {
+				const { store } = yield* LaborerStore;
+				return store.query(
+					tables.workspaces.where("projectId", "project-unchanged")
+				);
+			})
+		);
+
+		expect(rows.length).toBe(1);
+		expect(rows[0]?.id).toBe("existing-main-workspace");
+		expect(rows[0]?.origin).toBe("laborer");
+		expect(rows[0]?.status).toBe("running");
+		expect(rows[0]?.port).toBe(4321);
+	});
+
 	it("removes stale workspace records not present on disk", async () => {
 		const repoPath = initRepo("reconciler-stale");
 		const stalePath = join(repoPath, ".worktrees", "missing");
@@ -160,5 +237,148 @@ describe("WorktreeReconciler", () => {
 		);
 
 		expect(rows.some((row) => row.id === "stale-workspace")).toBe(false);
+	});
+
+	it("handles mixed add, remove, and unchanged reconciliation", async () => {
+		const repoPath = initRepo("reconciler-mixed");
+		const linkedPath = join(repoPath, ".worktrees", "feature-mixed");
+		const stalePath = join(repoPath, ".worktrees", "missing-mixed");
+		git(`worktree add -b feature/mixed ${linkedPath}`, repoPath);
+		const [mainWorktreePath] = getDetectedWorktreePaths(repoPath);
+
+		await runEffect(
+			Effect.gen(function* () {
+				const { store } = yield* LaborerStore;
+				store.commit(
+					events.workspaceCreated({
+						id: "existing-main",
+						projectId: "project-mixed",
+						taskSource: null,
+						branchName: "main",
+						worktreePath: mainWorktreePath ?? repoPath,
+						port: 0,
+						status: "stopped",
+						origin: "external",
+						createdAt: new Date().toISOString(),
+						baseSha: null,
+					})
+				);
+				store.commit(
+					events.workspaceCreated({
+						id: "stale-workspace",
+						projectId: "project-mixed",
+						taskSource: null,
+						branchName: "feature/stale",
+						worktreePath: stalePath,
+						port: 0,
+						status: "stopped",
+						origin: "external",
+						createdAt: new Date().toISOString(),
+						baseSha: null,
+					})
+				);
+			})
+		);
+
+		const result = await runEffect(
+			Effect.gen(function* () {
+				const reconciler = yield* WorktreeReconciler;
+				return yield* reconciler.reconcile("project-mixed", repoPath);
+			})
+		);
+
+		expect(result.added).toBe(1);
+		expect(result.removed).toBe(1);
+		expect(result.unchanged).toBe(1);
+
+		const rows = await runEffect(
+			Effect.gen(function* () {
+				const { store } = yield* LaborerStore;
+				return store.query(
+					tables.workspaces.where("projectId", "project-mixed")
+				);
+			})
+		);
+
+		expect(rows.length).toBe(2);
+		expect(rows.some((row) => row.id === "existing-main")).toBe(true);
+		expect(rows.some((row) => row.branchName === "feature/mixed")).toBe(true);
+		expect(rows.some((row) => row.id === "stale-workspace")).toBe(false);
+	});
+
+	it("derives base SHA from merge-base for detected worktrees", async () => {
+		const repoPath = initRepo("reconciler-base-sha");
+		git("checkout -b feature/base-sha", repoPath);
+		writeFileSync(join(repoPath, "feature.txt"), "feature branch content\n");
+		git("add feature.txt", repoPath);
+		git('commit -m "feature commit"', repoPath);
+
+		const result = await runEffect(
+			Effect.gen(function* () {
+				const reconciler = yield* WorktreeReconciler;
+				return yield* reconciler.reconcile("project-base-sha", repoPath);
+			})
+		);
+
+		expect(result.added).toBe(1);
+
+		const defaultBranch = getDefaultBranchForTest(repoPath);
+		const expectedBaseSha = git(`merge-base ${defaultBranch} HEAD`, repoPath);
+		const rows = await runEffect(
+			Effect.gen(function* () {
+				const { store } = yield* LaborerStore;
+				return store.query(
+					tables.workspaces.where("projectId", "project-base-sha")
+				);
+			})
+		);
+
+		expect(rows.length).toBe(1);
+		expect(rows[0]?.baseSha).toBe(expectedBaseSha);
+	});
+
+	it("frees allocated port when removing stale workspace", async () => {
+		const repoPath = initRepo("reconciler-free-port");
+		const stalePath = join(repoPath, ".worktrees", "missing-port");
+
+		await runEffect(
+			Effect.gen(function* () {
+				const allocator = yield* PortAllocator;
+				const allocatedPort = yield* allocator.allocate();
+				const { store } = yield* LaborerStore;
+				store.commit(
+					events.workspaceCreated({
+						id: "stale-port-workspace",
+						projectId: "project-free-port",
+						taskSource: null,
+						branchName: "feature/stale-port",
+						worktreePath: stalePath,
+						port: allocatedPort,
+						status: "stopped",
+						origin: "external",
+						createdAt: new Date().toISOString(),
+						baseSha: null,
+					})
+				);
+			})
+		);
+
+		const result = await runEffect(
+			Effect.gen(function* () {
+				const reconciler = yield* WorktreeReconciler;
+				return yield* reconciler.reconcile("project-free-port", repoPath);
+			})
+		);
+
+		expect(result.removed).toBe(1);
+
+		const reusedPort = await runEffect(
+			Effect.gen(function* () {
+				const allocator = yield* PortAllocator;
+				return yield* allocator.allocate();
+			})
+		);
+
+		expect(reusedPort).toBe(4100);
 	});
 });

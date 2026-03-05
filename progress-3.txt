@@ -3251,3 +3251,48 @@ Implemented the foundational worktree-detection backend slice: workspace origin 
 
 ### Notes
 - Acceptance criteria for test breadth (`8+` detector scenarios and `6+` reconciler scenarios) remains open; core behavior is implemented and covered by initial integration tests.
+
+## Issue #159: Worktree detection test breadth completion — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Finished the remaining acceptance criteria for Issue #159 by expanding the server test coverage for WorktreeDetector and WorktreeReconciler. This closes the last open checklist items (detector `8+` scenarios and reconciler `6+` scenarios) and moves the issue from In Progress to Done.
+
+### What was done
+
+1. **Expanded `packages/server/test/worktree-detector.test.ts` to 9 detector scenarios total**
+   - Added real-repo scenarios for:
+     - one linked worktree with branch name detection
+     - multiple linked worktrees
+     - detached HEAD linked worktree (existing)
+     - prunable worktree exclusion (existing)
+     - main-worktree uniqueness (`isMain` true for exactly one entry)
+     - linked worktree located outside the repo directory
+     - non-git directory failure returning typed `WORKTREE_DETECT_FAILED`
+   - Kept existing parser unit coverage for `parsePorcelainOutput`.
+
+2. **Expanded `packages/server/test/worktree-reconciler.test.ts` to 6 reconciler scenarios total**
+   - Added scenarios for:
+     - existing matching workspace records remain untouched (no duplicate create)
+     - mixed reconciliation path (`added`, `removed`, `unchanged` in one run)
+     - base SHA derivation via merge-base behavior
+     - stale workspace removal frees previously allocated port
+   - Kept existing scenarios for fresh external workspace creation and stale record removal.
+
+3. **Updated issue tracking state**
+   - `issues.md`:
+     - Issue #159 status changed to **Done**
+     - Remaining test acceptance checkboxes marked complete
+     - Summary table updated (`#159 Done`)
+     - Dependent Issue #160 and #161 blockers struck through and statuses moved to **Ready**
+
+### Files modified
+- `packages/server/test/worktree-detector.test.ts`
+- `packages/server/test/worktree-reconciler.test.ts`
+- `issues.md`
+
+### Verification
+- `bun test packages/server/test/worktree-detector.test.ts packages/server/test/worktree-reconciler.test.ts packages/server/test/project-registry.worktree-detection.test.ts`: pass (16 tests)
+- `bun run check-types` in `packages/server`: passes with pre-existing Effect plugin warnings/messages only; no new type errors from this change

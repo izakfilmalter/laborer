@@ -427,3 +427,10 @@ Laborer is a UI and orchestration shell for rlph, not a replacement. rlph remain
 3. **Effect all the way down.** The server is Effect TS v3. Services are Effect services with tag-based DI. RPC is `@effect/rpc` with `effect-atom`'s `AtomRpc` on the client for typed mutations. Testing uses @effect/vitest. The shared schema uses Effect Schema (via LiveStore). This provides type safety, composability, and testability throughout.
 
 4. **Progressive complexity.** A developer can start by just creating a workspace and opening a terminal. They don't need to know about ralph loops, PRDs, or Linear integration. Those features are discoverable but not required.
+
+### Issue Tracking
+
+Implementation issues derived from this PRD are tracked in two files:
+
+- **[issues.md](./issues.md)** — Remaining issues (Ready / Blocked)
+- **[issues-done.md](./issues-done.md)** — Completed issues (Done)

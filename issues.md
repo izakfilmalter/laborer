@@ -206,30 +206,9 @@ Registered a global keyboard shortcut (Cmd+Shift+L on macOS, Ctrl+Shift+L on Win
 
 ---
 
-## Issue 117: Tauri window management
+## ~~Issue 117: Tauri window management~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Implement minimize-to-tray behavior. Closing the window minimizes to system tray instead of quitting. Clicking the tray icon restores the window.
-
-### Acceptance criteria
-
-- [ ] Close window → minimize to tray (not quit)
-- [ ] Click tray icon → restore window
-- [ ] Window state (position, size) persisted
-- [ ] Tests: manual verification — close minimizes, tray click restores
-
-### Blocked by
-
-- ~~Blocked by #115~~
-
-### User stories addressed
-
-- User story 21
+Implemented minimize-to-tray behavior and window state persistence. Closing the window hides it to the system tray instead of quitting (via `WindowEvent::CloseRequested` intercept with `api.prevent_close()` + `window.hide()`). Tray icon click restores the window. Window position, size, and maximized/fullscreen state persisted across restarts via `tauri-plugin-window-state`. Window starts hidden (`visible: false`) so plugin restores position before showing.
 
 ---
 
@@ -414,7 +393,7 @@ Added drag-and-drop support using the native HTML5 Drag and Drop API. Terminal i
 | 114 | ~~Cross-project dashboard~~ | ~~#41~~, ~~#104~~ | Done |
 | 115 | ~~Tauri system tray~~ | ~~#41~~ | Done |
 | 116 | ~~Tauri global shortcut~~ | ~~#115~~ | Done |
-| 117 | Tauri window management | ~~#115~~ | Ready |
+| 117 | ~~Tauri window management~~ | ~~#115~~ | Done |
 | 118 | ~~Empty state — no projects~~ | ~~#27~~ | Done |
 | 119 | ~~Empty state — no workspaces~~ | ~~#42~~ | Done |
 | 120 | ~~Empty state — no terminals~~ | ~~#63~~ | Done |

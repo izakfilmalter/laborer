@@ -35,6 +35,10 @@ fn focus_main_window(app: &tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Window state plugin: persists and restores window position, size,
+        // maximized/fullscreen state across app restarts.
+        // See Issue #117: Tauri window management.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .invoke_handler(tauri::generate_handler![update_tray_workspace_count])
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -95,6 +99,21 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Intercept the window close event to minimize to tray instead of quitting.
+            // The user can quit via the tray menu "Quit" item or Cmd+Q.
+            // See Issue #117: Tauri window management.
+            if let Some(window) = app.get_webview_window("main") {
+                let window_clone = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        // Prevent the window from actually closing
+                        api.prevent_close();
+                        // Hide the window instead (minimize to tray)
+                        let _ = window_clone.hide();
+                    }
+                });
+            }
 
             Ok(())
         })

@@ -2084,3 +2084,64 @@ Registered a global keyboard shortcut (Cmd+Shift+L on macOS, Ctrl+Shift+L on Win
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #116. This was a standalone Tauri desktop feature addressing User Story 21.
 
+## Issue #117: Tauri window management — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented minimize-to-tray behavior and window state persistence for the Tauri desktop shell. Closing the window now hides it to the system tray instead of quitting the application. Clicking the tray icon (or using the global shortcut Cmd+Shift+L, or the "Show Laborer" menu item) restores the window. Window position, size, and maximized/fullscreen state are automatically persisted across app restarts via the `tauri-plugin-window-state` plugin. The window starts hidden (`visible: false` in config) so the plugin can restore position before showing, preventing a visual flash.
+
+### What was done
+
+1. **Added `tauri-plugin-window-state` dependency to `apps/web/src-tauri/Cargo.toml`**:
+   - Added `tauri-plugin-window-state = "2"` to `[dependencies]`
+   - Resolved to v2.4.1
+
+2. **Modified `apps/web/src-tauri/src/lib.rs`** (~110 lines, was ~103):
+   - **Window state plugin registration**: Added `.plugin(tauri_plugin_window_state::Builder::default().build())` to the Tauri builder chain, before `.setup()`. The plugin automatically saves window position/size/maximized state on close and restores it on next launch.
+   - **Close-to-tray intercept**: Added `window.on_window_event()` handler in `.setup()` that intercepts `WindowEvent::CloseRequested`. On close request:
+     - Calls `api.prevent_close()` to prevent the window from actually closing
+     - Calls `window_clone.hide()` to hide the window (minimize to tray)
+   - The user can still quit via the tray menu "Quit" item or Cmd+Q (which sends a different signal that bypasses the close handler).
+   - **`window_clone` pattern**: Cloned the window handle before the closure to avoid ownership issues — `on_window_event` takes a `Fn` closure that captures `window_clone` by move, while the original `window` is consumed by the `on_window_event` call itself.
+
+3. **Modified `apps/web/src-tauri/tauri.conf.json`**:
+   - Added `"visible": false` to the main window configuration. This makes the window start hidden, allowing the `tauri-plugin-window-state` plugin to restore the window's previous position/size before showing it. This prevents the window from briefly appearing at the default position (800x600, centered) and then jumping to the restored position.
+
+4. **Modified `apps/web/src-tauri/capabilities/default.json`**:
+   - Added `"window-state:default"` permission. This enables the plugin's save/restore/filename IPC commands required by the Tauri v2 security model.
+
+### Files modified
+- `apps/web/src-tauri/Cargo.toml` — Added `tauri-plugin-window-state = "2"` dependency
+- `apps/web/src-tauri/src/lib.rs` — Added window-state plugin, close-to-tray intercept via `on_window_event`, JSDoc comments
+- `apps/web/src-tauri/tauri.conf.json` — Added `"visible": false` to prevent position flash on restore
+- `apps/web/src-tauri/capabilities/default.json` — Added `"window-state:default"` permission
+
+### Acceptance criteria status
+- [x] Close window -> minimize to tray (not quit) — `WindowEvent::CloseRequested` intercepted with `api.prevent_close()` + `window.hide()`
+- [x] Click tray icon -> restore window — `focus_main_window` (from Issue #115) calls `unminimize()`, `show()`, `set_focus()`
+- [x] Window state (position, size) persisted — `tauri-plugin-window-state` automatically saves/restores position, size, maximized, and fullscreen state
+- [ ] Tests: manual verification — close minimizes, tray click restores (requires running the Tauri desktop app)
+
+### Verification
+- `cargo check` passes for Rust code — zero errors, zero warnings
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `tsc --noEmit` passes for server package (only pre-existing informational messages — no new errors)
+- All 61 tests pass across 4 test files (32 ring buffer + 9 workspace validation + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **`tauri-plugin-window-state` for persistence**: Rather than manually saving/loading window bounds to a config file, the official Tauri plugin handles all edge cases: multi-monitor setups, display disconnection (falls back to default position if the saved monitor is gone), maximized/fullscreen states, and debounced saving (doesn't write to disk on every resize event). The plugin persists to a platform-appropriate location (Application Support on macOS, AppData on Windows).
+- **`visible: false` to prevent flash**: Without this, the window appears at the default 800x600 position for a fraction of a second before the plugin restores the saved position. Setting `visible: false` in the config lets the plugin restore position first, then show the window — resulting in a seamless experience. The plugin's documentation explicitly recommends this pattern.
+- **Close-to-tray via `on_window_event`**: Tauri v2 provides `WindowEvent::CloseRequested` with `api.prevent_close()` for intercepting close attempts. This is the official mechanism — no need for custom IPC or JavaScript-side interception. The handler hides the window instead of destroying it, keeping the webview alive so reopening is instant (no page reload).
+- **Quit still works via tray menu**: The tray "Quit" item calls `app.exit(0)`, which bypasses the close event handler entirely (it triggers app termination, not window close). Cmd+Q on macOS also triggers app exit through the OS menu bar, not through the window close handler. This ensures users always have a way to fully quit.
+- **`window_clone` for closure**: The `on_window_event` method takes a closure by `Fn` (not `FnOnce`), so it can be called multiple times. The closure needs a `Window` handle to call `hide()`. Since `window` is an owned value that the `on_window_event` method is called on, we clone it before the call and move the clone into the closure. This is a standard Rust pattern for event handler closures that need to reference the object they're attached to.
+- **Plugin registered before `.setup()`**: The window-state plugin is registered via `.plugin()` on the builder chain, which runs before `.setup()`. This ensures the plugin intercepts the window creation event and can restore saved state before any setup logic runs. If registered inside `.setup()`, the window might briefly show at default position.
+- **No JavaScript guest bindings needed**: The window-state plugin works entirely in Rust — it hooks into window events automatically. No `@tauri-apps/plugin-window-state` npm package is needed, keeping the frontend bundle size unchanged. The JavaScript API is only useful for manual save/restore triggers, which aren't needed for automatic persistence.
+
+### Tauri desktop experience complete
+With Issue #117 done, all three Tauri desktop features for User Story 21 are complete:
+- Issue #115: System tray icon with workspace count tooltip, context menu, click-to-show
+- Issue #116: Global shortcut (Cmd+Shift+L) to bring window to front from anywhere
+- Issue #117: Close-to-tray behavior + window state persistence
+

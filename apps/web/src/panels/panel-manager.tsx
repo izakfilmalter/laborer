@@ -19,6 +19,11 @@
  * multiple workspaces are active, a dropdown lets them pick which workspace
  * to spawn in. If no workspaces exist, guidance text points to the sidebar.
  *
+ * Empty panes are also drop targets for terminal drag-and-drop. Users can
+ * drag a terminal item from the sidebar terminal list onto an empty pane
+ * to assign that terminal to that specific pane. The drop target shows a
+ * visual highlight border on drag-over. Occupied panes reject drops.
+ *
  * Split panes are rendered using react-resizable-panels (via shadcn/ui's
  * resizable wrapper) with drag-to-resize handles between each child.
  *
@@ -34,6 +39,7 @@
  * @see Issue #68: PanelManager — vertical split
  * @see Issue #69: PanelManager — recursive splits
  * @see Issue #120: Empty state — no terminals
+ * @see Issue #134: Drag terminal from sidebar onto empty panel pane
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -75,6 +81,56 @@ import { TerminalPane } from "@/panes/terminal-pane";
 
 const allWorkspaces$ = queryDb(workspaces, { label: "paneWorkspaces" });
 const spawnTerminalMutation = LaborerClient.mutation("terminal.spawn");
+
+/**
+ * MIME type for terminal drag data. Must match the value used in
+ * terminal-list.tsx drag source.
+ */
+const TERMINAL_DRAG_MIME = "application/x-laborer-terminal";
+
+/** Parsed terminal drag data shape. */
+interface TerminalDragData {
+	readonly terminalId: string;
+	readonly workspaceId: string;
+}
+
+/**
+ * Parse terminal drag data from a DataTransfer object.
+ * Returns undefined if the data is missing or invalid.
+ */
+function parseTerminalDragData(
+	dataTransfer: DataTransfer
+): TerminalDragData | undefined {
+	const raw = dataTransfer.getData(TERMINAL_DRAG_MIME);
+	if (!raw) {
+		return undefined;
+	}
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			"terminalId" in parsed &&
+			"workspaceId" in parsed &&
+			typeof (parsed as TerminalDragData).terminalId === "string" &&
+			typeof (parsed as TerminalDragData).workspaceId === "string"
+		) {
+			return parsed as TerminalDragData;
+		}
+	} catch {
+		// Invalid JSON — ignore
+	}
+	return undefined;
+}
+
+/**
+ * Check whether a drag event contains terminal drag data.
+ * Uses the `types` array on DataTransfer (available during dragover)
+ * since `getData()` is only accessible during drop.
+ */
+function hasTerminalDragData(dataTransfer: DataTransfer): boolean {
+	return dataTransfer.types.includes(TERMINAL_DRAG_MIME);
+}
 
 interface EmptyTerminalPaneProps {
 	/** The pane ID, used to assign the spawned terminal to this specific pane. */
@@ -338,10 +394,107 @@ function SplitChild({
 }
 
 /**
+ * Renders a LeafNode pane with drop target support for terminal drag-and-drop.
+ *
+ * Empty terminal panes (no terminalId assigned) accept drops from the
+ * sidebar terminal list. On drag-over, a visual highlight border appears.
+ * On drop, the terminal is assigned to this specific pane via
+ * `assignTerminalToPane(terminalId, workspaceId, paneId)`.
+ *
+ * Occupied panes (with a terminalId already set) do not accept drops —
+ * the drag cursor shows "not allowed".
+ *
+ * @see Issue #134: Drag terminal from sidebar onto empty panel pane
+ */
+function LeafPaneRenderer({
+	isActive,
+	node,
+}: {
+	readonly isActive: boolean;
+	readonly node: LeafNode;
+}) {
+	const actions = usePanelActions();
+	const [isDragOver, setIsDragOver] = useState(false);
+
+	const isEmptyTerminalPane = node.paneType === "terminal" && !node.terminalId;
+
+	const handleDragOver = useCallback(
+		(e: React.DragEvent<HTMLDivElement>) => {
+			if (!(isEmptyTerminalPane && hasTerminalDragData(e.dataTransfer))) {
+				return;
+			}
+			e.preventDefault();
+			e.dataTransfer.dropEffect = "move";
+			setIsDragOver(true);
+		},
+		[isEmptyTerminalPane]
+	);
+
+	const handleDragEnter = useCallback(
+		(e: React.DragEvent<HTMLDivElement>) => {
+			if (!(isEmptyTerminalPane && hasTerminalDragData(e.dataTransfer))) {
+				return;
+			}
+			e.preventDefault();
+			setIsDragOver(true);
+		},
+		[isEmptyTerminalPane]
+	);
+
+	const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+		// Only clear when leaving the container, not when moving between children
+		if (e.currentTarget.contains(e.relatedTarget as Node)) {
+			return;
+		}
+		setIsDragOver(false);
+	}, []);
+
+	const handleDrop = useCallback(
+		(e: React.DragEvent<HTMLDivElement>) => {
+			e.preventDefault();
+			setIsDragOver(false);
+
+			if (!(isEmptyTerminalPane && actions)) {
+				return;
+			}
+
+			const data = parseTerminalDragData(e.dataTransfer);
+			if (!data) {
+				return;
+			}
+
+			actions.assignTerminalToPane(data.terminalId, data.workspaceId, node.id);
+		},
+		[isEmptyTerminalPane, actions, node.id]
+	);
+
+	return (
+		// biome-ignore lint/a11y/useSemanticElements: Panel pane container requires drag-and-drop target behavior
+		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: Drag-and-drop handlers on pane container are essential for terminal assignment
+		<div
+			className={`group/pane relative h-full w-full overflow-hidden ${
+				isActive ? "ring-2 ring-primary ring-inset" : ""
+			} ${isDragOver ? "bg-primary/5 ring-2 ring-primary ring-inset" : ""}`}
+			data-pane-id={node.id}
+			onDragEnter={handleDragEnter}
+			onDragLeave={handleDragLeave}
+			onDragOver={handleDragOver}
+			onDrop={handleDrop}
+			onFocusCapture={() => actions?.setActivePaneId(node.id)}
+			onMouseDownCapture={() => actions?.setActivePaneId(node.id)}
+			role="region"
+		>
+			<PaneContent node={node} />
+		</div>
+	);
+}
+
+/**
  * Recursively renders a PanelNode tree.
  *
  * - LeafNode → renders PaneContent with the appropriate component,
- *   wrapped in a container with active-pane highlighting.
+ *   wrapped in a container with active-pane highlighting and drop target
+ *   support for terminal drag-and-drop.
  * - SplitNode → renders a ResizablePanelGroup with each child in a
  *   ResizablePanel, separated by ResizableHandles. Supports horizontal
  *   (side-by-side) and vertical (stacked) orientations, and recursive
@@ -349,22 +502,10 @@ function SplitChild({
  */
 function PanelRenderer({ node }: PanelRendererProps) {
 	const activePaneId = useActivePaneId();
-	const actions = usePanelActions();
 	const isActive = activePaneId === node.id;
 
 	if (node._tag === "LeafNode") {
-		return (
-			<div
-				className={`group/pane relative h-full w-full overflow-hidden ${
-					isActive ? "ring-2 ring-primary ring-inset" : ""
-				}`}
-				data-pane-id={node.id}
-				onFocusCapture={() => actions?.setActivePaneId(node.id)}
-				onMouseDownCapture={() => actions?.setActivePaneId(node.id)}
-			>
-				<PaneContent node={node} />
-			</div>
-		);
+		return <LeafPaneRenderer isActive={isActive} node={node} />;
 	}
 
 	// SplitNode — render children in a resizable panel group

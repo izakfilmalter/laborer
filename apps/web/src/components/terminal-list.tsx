@@ -6,7 +6,13 @@
  * a new terminal via the terminal.spawn RPC mutation. Selecting a terminal
  * switches the active pane to display it.
  *
+ * Terminal items are draggable — users can drag a terminal from the sidebar
+ * and drop it onto an empty panel pane to assign it to that specific pane.
+ * The drag data carries `{ terminalId, workspaceId }` as JSON in the
+ * `application/x-laborer-terminal` MIME type.
+ *
  * @see Issue #63: Terminal list per workspace UI
+ * @see Issue #134: Drag terminal from sidebar onto empty panel pane
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -19,6 +25,7 @@ import {
 	Terminal as TerminalIcon,
 	Trash2,
 } from "lucide-react";
+import type React from "react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
@@ -203,6 +210,12 @@ interface TerminalItemProps {
 	};
 }
 
+/**
+ * MIME type for terminal drag data. Using a custom MIME type ensures
+ * only laborer drop targets accept the drag.
+ */
+const TERMINAL_DRAG_MIME = "application/x-laborer-terminal";
+
 function TerminalItem({
 	terminal,
 	onSelect,
@@ -212,14 +225,31 @@ function TerminalItem({
 }: TerminalItemProps) {
 	const isRunning = terminal.status === "running";
 
+	const handleDragStart = useCallback(
+		(e: React.DragEvent<HTMLButtonElement>) => {
+			e.dataTransfer.setData(
+				TERMINAL_DRAG_MIME,
+				JSON.stringify({
+					terminalId: terminal.id,
+					workspaceId: terminal.workspaceId,
+				})
+			);
+			e.dataTransfer.effectAllowed = "move";
+		},
+		[terminal.id, terminal.workspaceId]
+	);
+
 	return (
 		<button
 			className={cn(
 				"flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left text-xs transition-colors",
 				"hover:bg-accent hover:text-accent-foreground",
-				"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+				"cursor-grab active:cursor-grabbing"
 			)}
+			draggable
 			onClick={() => onSelect(terminal.id)}
+			onDragStart={handleDragStart}
 			type="button"
 		>
 			<TerminalIcon

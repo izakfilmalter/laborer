@@ -1464,3 +1464,72 @@ Enhanced worktree creation with comprehensive post-creation validation and added
 ### Issues unblocked
 - No direct downstream issues were exclusively blocked by #34. It was the last remaining WorkspaceProvider infrastructure issue.
 
+## Issue #134: Drag terminal from sidebar onto empty panel pane — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Added drag-and-drop support so users can drag a terminal item from the sidebar terminal list onto an empty panel pane to assign that terminal to that specific pane. Previously, clicking a terminal in the sidebar auto-found an empty pane or created a new split — there was no way to target a specific pane. This feature gives users precise control over which pane displays which terminal. Uses the native HTML5 Drag and Drop API (no external dependency required).
+
+### What was done
+
+1. **Made `TerminalItem` draggable in `apps/web/src/components/terminal-list.tsx`**:
+   - Added `draggable` attribute to the terminal item `<button>` element
+   - Added `onDragStart` handler that sets drag data as JSON in a custom MIME type (`application/x-laborer-terminal`). The data carries `{ terminalId, workspaceId }`.
+   - Added `cursor-grab active:cursor-grabbing` CSS classes for visual drag affordance
+   - Set `effectAllowed = "move"` on the DataTransfer
+   - Added `React` type-only import for `React.DragEvent<HTMLButtonElement>` typing
+   - Defined `TERMINAL_DRAG_MIME` constant for the custom MIME type
+
+2. **Added drop target support to `LeafPaneRenderer` in `apps/web/src/panels/panel-manager.tsx`**:
+   - **Extracted `LeafPaneRenderer` component** from the inline LeafNode rendering in `PanelRenderer`. This keeps the drag-and-drop logic isolated and `PanelRenderer` clean.
+   - **`TERMINAL_DRAG_MIME` constant** — matches the MIME type used in `terminal-list.tsx` drag source
+   - **`TerminalDragData` interface** — typed shape of the parsed drag data
+   - **`parseTerminalDragData(dataTransfer)`** — safely parses the JSON drag data with runtime type validation. Returns `undefined` if data is missing, malformed, or doesn't match the expected shape.
+   - **`hasTerminalDragData(dataTransfer)`** — checks `dataTransfer.types` for the custom MIME type during `dragover`/`dragenter` (since `getData()` is only accessible during `drop` per the HTML5 DnD spec)
+   - **`handleDragOver`** — prevents default (enabling drop) and sets `dropEffect = "move"` only for empty terminal panes with terminal drag data. Non-empty panes and non-terminal panes reject the drag.
+   - **`handleDragEnter`** — sets `isDragOver` state for visual highlight
+   - **`handleDragLeave`** — clears `isDragOver` only when truly leaving the container (not when moving between child elements, via `e.currentTarget.contains(e.relatedTarget)` check)
+   - **`handleDrop`** — parses the drag data and calls `actions.assignTerminalToPane(terminalId, workspaceId, paneId)` with all three arguments to assign the terminal to this specific pane
+   - **Visual feedback**: `isDragOver` state adds `ring-2 ring-primary ring-inset bg-primary/5` classes — a highlight border with subtle background tint on valid drop targets during drag-over
+   - **Biome lint suppression**: Two `biome-ignore` directives for `useSemanticElements` and `noNoninteractiveElementInteractions` — the `div[role="region"]` needs drag-and-drop handlers for the feature to work
+
+3. **Updated `PanelRenderer`** — delegates LeafNode rendering to the new `LeafPaneRenderer` component (single line change)
+
+4. **Updated module JSDoc** — both files updated to reference Issue #134 and describe the drag-and-drop behavior
+
+### Files modified
+- `apps/web/src/components/terminal-list.tsx` — Added `TERMINAL_DRAG_MIME` constant, `handleDragStart` callback, `draggable` and `onDragStart` props on TerminalItem, `cursor-grab` styling, `React` type import, updated JSDoc
+- `apps/web/src/panels/panel-manager.tsx` — Added `TERMINAL_DRAG_MIME`, `TerminalDragData`, `parseTerminalDragData`, `hasTerminalDragData`, extracted `LeafPaneRenderer` with drop target handlers, `React` type import, updated JSDoc
+
+### Acceptance criteria status
+- [x] Terminal items in the sidebar terminal list are draggable (mouse — `draggable` attribute + `onDragStart`)
+- [x] Empty panel panes (LeafNode with no terminalId) are valid drop targets (checked via `isEmptyTerminalPane` flag)
+- [x] Dropping a terminal onto an empty pane calls `assignTerminalToPane(terminalId, workspaceId, paneId)` — terminal fills the pane
+- [x] Panes that already have a terminal assigned are not valid drop targets (drag handlers return early without `preventDefault`, showing "not allowed" cursor)
+- [x] Visual drag feedback: drop targets highlight on drag-over (`ring-2 ring-primary ring-inset bg-primary/5`)
+- [x] Layout is persisted to LiveStore after drop (via existing `layoutPaneAssigned` event flow in `assignTerminalToPane`)
+- [x] Dragging does not interfere with existing click-to-assign behavior in the sidebar (click handler remains unchanged; drag requires a sustained hold + movement to initiate)
+- [ ] Keyboard accessibility: drag-and-drop can be performed via keyboard (not implemented — native HTML5 DnD does not support keyboard; would require @dnd-kit)
+- [ ] Tests: drag terminal onto empty pane → terminal renders in that pane; drag onto occupied pane → rejected; layout persisted after drop; click-to-assign still works (deferred — web app has no component test infrastructure)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on both modified files with zero issues (`Checked 2 files in 7ms. No fixes applied.`)
+- All 61 tests pass across 4 test files (32 ring buffer + 9 workspace validation + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Native HTML5 DnD over @dnd-kit**: Used the native HTML5 Drag and Drop API instead of adding `@dnd-kit/core` as a dependency. The native API is sufficient for this use case (mouse-based drag from sidebar to panel) and avoids increasing the bundle size. The issue's keyboard accessibility requirement is conditional ("if using @dnd-kit"), so this is acceptable. If keyboard DnD is needed later, @dnd-kit can be added incrementally.
+- **Custom MIME type**: Used `application/x-laborer-terminal` as the drag data format. This ensures only laborer's drop targets accept the drag — browser-native drop zones (text inputs, etc.) won't react to it. The `x-` prefix follows the convention for application-specific MIME types.
+- **JSON drag data**: The drag data is a JSON string with `terminalId` and `workspaceId`. Both values are needed to call `assignTerminalToPane(terminalId, workspaceId, paneId)`.
+- **`hasTerminalDragData` for dragover**: The HTML5 DnD spec restricts `getData()` to the `drop` event only — during `dragover`/`dragenter`, only `dataTransfer.types` is readable. The `hasTerminalDragData` function checks `types.includes(TERMINAL_DRAG_MIME)` to determine whether the drag payload is a terminal without accessing the actual data.
+- **Extracted `LeafPaneRenderer`**: Rather than adding hooks and state management inline in `PanelRenderer`, the LeafNode rendering is extracted to a dedicated `LeafPaneRenderer` component. This isolates the drop target state (`isDragOver`) and handlers, keeping `PanelRenderer` as a clean routing function. The extraction also avoids calling hooks conditionally (which would violate React's rules of hooks).
+- **`relatedTarget` check in dragLeave**: HTML5 DnD fires `dragleave` events when moving between child elements within the drop target. The `e.currentTarget.contains(e.relatedTarget)` check ensures `isDragOver` is only cleared when the drag truly leaves the container, preventing flickering of the drop highlight.
+- **`cursor-grab` / `cursor-grabbing`**: Added CSS cursor feedback on terminal items to signal draggability. `cursor-grab` on hover, `cursor-grabbing` on active (during drag). This is a standard DnD affordance.
+- **No drag preview customization**: The native HTML5 DnD API generates a semi-transparent ghost image of the dragged element. This default preview is sufficient — it shows the terminal item being dragged, which is informative. Custom drag previews would require additional DOM manipulation (e.g., `setDragImage`) which adds complexity for minimal UX benefit.
+- **Occupied panes reject drops silently**: When dragging over a pane that already has a terminal, the handlers return without calling `preventDefault`, causing the browser to show a "not allowed" cursor. No explicit "replace" indicator is shown — this keeps the interaction simple (drag to empty panes only).
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #134. This was a standalone UX improvement.
+

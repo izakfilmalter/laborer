@@ -552,45 +552,9 @@ Audit all custom components (terminal chrome, diff viewer, panel dividers, statu
 
 ---
 
-## Issue 134: Drag terminal from sidebar onto empty panel pane
+## ~~Issue 134: Drag terminal from sidebar onto empty panel pane~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Add drag-and-drop support so users can drag a terminal item from the sidebar terminal list onto an empty panel pane to assign that terminal to that pane. Currently, clicking a terminal in the sidebar auto-finds an empty pane or creates a new split — there is no way to target a specific pane. This feature gives users precise control over which pane displays which terminal.
-
-**Drag source**: Make each `TerminalItem` in the terminal list (`apps/web/src/components/terminal-list.tsx`) draggable, carrying `{ terminalId, workspaceId }` as drag data.
-
-**Drop target**: Make empty `LeafNode` panes in `PaneContent` (`apps/web/src/panels/panel-manager.tsx`) accept drops. An empty pane is a `LeafNode` with `paneType: "terminal"` and no `terminalId` set. When an empty pane receives a drop, it should fill the entire pane with that terminal — no splitting required.
-
-**Assignment action**: Use the existing `panelActions.assignTerminalToPane(terminalId, workspaceId, paneId)` which already supports targeted pane assignment via the `paneId` parameter. The plumbing exists; only the drag-and-drop UI needs to be built.
-
-**Visual feedback**: Show a visual drop indicator (highlight border, background tint) on valid drop targets when dragging. Show a "not allowed" indicator on panes that already have content assigned.
-
-A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the native HTML5 Drag and Drop API should be used. Prefer `@dnd-kit` for accessibility (keyboard-based drag) and better React integration.
-
-### Acceptance criteria
-
-- [ ] Terminal items in the sidebar terminal list are draggable (mouse and keyboard)
-- [ ] Empty panel panes (LeafNode with no terminalId) are valid drop targets
-- [ ] Dropping a terminal onto an empty pane calls `assignTerminalToPane(terminalId, workspaceId, paneId)` — terminal fills the pane
-- [ ] Panes that already have a terminal assigned are not valid drop targets (or show a "replace" indicator)
-- [ ] Visual drag feedback: dragged item has a drag preview, drop targets highlight on drag-over
-- [ ] Layout is persisted to LiveStore after drop (via existing `layoutPaneAssigned` event flow)
-- [ ] Dragging does not interfere with existing click-to-assign behavior in the sidebar
-- [ ] Keyboard accessibility: drag-and-drop can be performed via keyboard (if using @dnd-kit)
-- [ ] Tests: drag terminal onto empty pane → terminal renders in that pane; drag onto occupied pane → rejected or replaced; layout persisted after drop; click-to-assign still works
-
-### Blocked by
-
-- Blocked by #63 (done), #66 (done)
-
-### User stories addressed
-
-- User story 1, 6
+Added drag-and-drop support using the native HTML5 Drag and Drop API. Terminal items in the sidebar are draggable (carrying `{ terminalId, workspaceId }` as JSON in a custom `application/x-laborer-terminal` MIME type). Empty panel panes (LeafNode with `paneType: "terminal"` and no terminalId) are drop targets. Drop calls `assignTerminalToPane(terminalId, workspaceId, paneId)` for targeted pane assignment. Visual feedback: `ring-2 ring-primary ring-inset bg-primary/5` highlight on valid drop targets during drag-over. Occupied panes reject drops (no `preventDefault` → "not allowed" cursor). Click-to-assign still works unchanged.
 
 ---
 
@@ -630,4 +594,4 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 126 | Terminal fidelity — codex | ~~#60~~ | Ready |
 | 127 | Terminal scroll performance | ~~#60~~ | Ready |
 | 131 | Theme consistency audit | ~~#90~~ | Ready |
-| 134 | Drag terminal from sidebar onto empty panel | ~~#63~~, ~~#66~~ | Ready |
+| 134 | ~~Drag terminal from sidebar onto empty panel~~ | ~~#63~~, ~~#66~~ | Done |

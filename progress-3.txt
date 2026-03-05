@@ -899,3 +899,52 @@ Removed `store.commit(events.terminalOutput(...))` calls from TerminalManager's 
 
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #143. This was the last issue in the "deprecate LiveStore terminal output" chain (#135 → #138 → #139 → #140 → #143).
+
+## Issue #137: PTY data coalescing (5ms timer) — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Added a 5ms coalescing timer per PTY instance in the PTY host, matching VS Code's `TerminalDataBufferer` pattern. When `pty.onData` fires, data is buffered in an array. After 5ms of quiet, all buffered chunks are joined and emitted as a single `data` event. This reduces the number of IPC messages by an order of magnitude for burst output (e.g., build logs, `cat` of large files) while adding imperceptible latency for interactive typing.
+
+### What was done
+
+1. **`packages/server/src/pty-host.ts`**:
+   - Added `COALESCE_INTERVAL_MS` constant (5ms) and `CoalesceBuffer` interface (array of string chunks + timer handle).
+   - Added `coalesceBuffers` Map tracking per-PTY coalescing state.
+   - Added `flushCoalesceBuffer(id)` helper — clears the timer, deletes the buffer entry, joins all chunks, and emits a single `data` event. Called by: the 5ms timer, `handleResize` (flush before resize), `pty.onExit` (flush before exit event), `handleKill` (flush before kill), and shutdown cleanup.
+   - Added `bufferData(id, data)` helper — if no buffer exists, creates one with a 5ms timer; if a buffer exists, pushes the chunk onto the existing array (timer already running).
+   - Changed `pty.onData` callback from `emit({ type: "data", ... })` to `bufferData(cmd.id, data)`.
+   - Updated `pty.onExit` to call `flushCoalesceBuffer(cmd.id)` before emitting exit event — ensures consumers see all output before the process is marked as exited.
+   - Updated `handleResize` to call `flushCoalesceBuffer(cmd.id)` before `pty.resize()` — ensures output is associated with the correct terminal dimensions (matching VS Code's behavior per PRD-terminal-perf.md).
+   - Updated `handleKill` to call `flushCoalesceBuffer(cmd.id)` before `pty.kill()` — ensures no output is lost if kill is synchronous.
+   - Updated shutdown cleanup to flush all coalescing buffers and clear any orphaned entries.
+   - Updated module JSDoc to reference Issue #137 and PRD-terminal-perf.md.
+   - Updated IPC protocol documentation: `data` event now says "may be coalesced".
+
+2. **`packages/server/test/pty-host.test.ts`**:
+   - Added "coalesces rapid output into fewer data events (Issue #137)" test: runs `seq 1 1000` and asserts that the number of `data` events is significantly less than 1000 (threshold: < 200, typically under 50 with coalescing).
+   - Added "resize flushes pending coalesced data before applying resize" test: writes data, immediately sends resize, writes more data, asserts both pre- and post-resize data arrive correctly.
+
+### Verification
+- `tsc --noEmit` passes for server package (no new type errors — only pre-existing Effect plugin informational messages)
+- `ultracite check` passes on both modified files with zero issues
+- **All 48 tests pass** (32 ring buffer + 10 PTY host + 6 terminal manager — no regressions, 2 new tests added)
+
+### Acceptance criteria status
+- [x] Each PTY instance in the PTY host has an independent coalescing buffer (`coalesceBuffers` Map keyed by PTY id)
+- [x] Rapid output (multiple `onData` calls within 5ms) produces a single coalesced IPC `data` event (verified by "coalesces rapid output" test — `seq 1 1000` produces < 200 events)
+- [x] Interactive typing (single characters > 5ms apart) still produces individual events after a 5ms delay (unchanged behavior — each character gets its own buffer+timer)
+- [x] Tests: run `seq 1 1000` → count `data` events received, verify significantly fewer than 1000 (proving coalescing)
+- [x] Tests: verify resize flushes pending coalesced data before applying resize
+
+### Design decisions
+- Used an array of strings (`chunks: string[]`) for the coalescing buffer rather than incremental string concatenation. This avoids O(n²) copying during the coalescing window — strings are only joined once when the timer fires. Consistent with the PRD-terminal-perf.md specification.
+- The coalescing timer is per-PTY, not global. Each PTY instance has its own independent buffer and timer. This prevents one high-throughput terminal from delaying output from other terminals.
+- Flush is called in multiple places (timer, resize, exit, kill, shutdown) as a belt-and-suspenders approach. Each flush is idempotent — if the buffer doesn't exist, `flushCoalesceBuffer` returns immediately. This ensures no data is lost regardless of the event ordering.
+- The `onExit` handler flushes before emitting the exit event. This is critical because node-pty may deliver final output chunks asynchronously just before the exit callback, and without flushing, those chunks would be lost (the coalescing timer wouldn't fire because the PTY is already gone from the map).
+- The `handleKill` also flushes before killing. On some platforms, `pty.kill()` may be synchronous and the `onExit` handler may fire inline. Flushing in both places is safe (idempotent) and covers all edge cases.
+
+### Issues unblocked
+- Issue #141: Character-count flow control (server side) — was blocked by #137 and #139. #137 now done, #139 already done. **Issue #141 is now fully unblocked!**

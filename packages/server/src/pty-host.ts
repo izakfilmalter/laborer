@@ -17,6 +17,7 @@
  * loop and signal handling interference. Process isolation eliminates this.
  *
  * See PRD-pty-host.md for full design details.
+ * See PRD-terminal-perf.md for the data coalescing design (Issue #137).
  *
  * IPC Protocol:
  *
@@ -28,7 +29,7 @@
  *
  * Events (stdout, PTY Host -> server):
  *   { type: "ready" }
- *   { type: "data", id, data }  — data is raw UTF-8
+ *   { type: "data", id, data }  — data is raw UTF-8 (may be coalesced)
  *   { type: "exit", id, exitCode, signal }
  *   { type: "error", id?, message }
  */
@@ -106,6 +107,31 @@ type PtyEvent = ReadyEvent | DataEvent | ExitEvent | ErrorEvent;
 
 const ptys = new Map<string, IPty>();
 
+/**
+ * Data coalescing buffers per PTY instance.
+ *
+ * Matches VS Code's `TerminalDataBufferer` pattern (Issue #137,
+ * PRD-terminal-perf.md "Data Coalescing in the PTY Host").
+ *
+ * When `pty.onData` fires: if no buffer exists for that PTY, create one
+ * (an array of strings) and start a 5ms `setTimeout`. If a buffer already
+ * exists, push the data onto it (the timer is already running). When the
+ * timer fires, join all buffered strings, emit a single `data` event,
+ * and delete the buffer.
+ *
+ * This reduces the number of IPC messages by an order of magnitude for
+ * burst output while adding imperceptible latency (~5ms) for interactive
+ * typing.
+ */
+const COALESCE_INTERVAL_MS = 5;
+
+interface CoalesceBuffer {
+	readonly chunks: string[];
+	readonly timer: ReturnType<typeof setTimeout>;
+}
+
+const coalesceBuffers = new Map<string, CoalesceBuffer>();
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -118,6 +144,57 @@ function emit(event: PtyEvent): void {
 /** Log to stderr for debugging (not part of IPC protocol). */
 function debug(message: string, ...args: unknown[]): void {
 	console.error(`[pty-host] ${message}`, ...args);
+}
+
+// ---------------------------------------------------------------------------
+// Data coalescing helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Flush any pending coalesced data for a PTY, emitting a single `data` event
+ * with all buffered chunks joined together.
+ *
+ * Called by:
+ * - The coalescing timer (normal flush after 5ms of quiet)
+ * - handleResize (flush before resize to preserve dimension association)
+ * - pty.onExit (flush remaining data before exit event)
+ * - handleKill (flush before kill in case there's pending data)
+ */
+function flushCoalesceBuffer(id: string): void {
+	const buf = coalesceBuffers.get(id);
+	if (buf === undefined) {
+		return;
+	}
+	clearTimeout(buf.timer);
+	coalesceBuffers.delete(id);
+
+	const joined = buf.chunks.join("");
+	if (joined.length > 0) {
+		emit({ type: "data", id, data: joined });
+	}
+}
+
+/**
+ * Buffer a chunk of PTY output data for coalesced emission.
+ *
+ * If no buffer exists, creates one and starts a 5ms timer.
+ * If a buffer already exists, pushes the chunk onto it.
+ * When the timer fires, all buffered chunks are joined and emitted
+ * as a single `data` event.
+ */
+function bufferData(id: string, data: string): void {
+	const existing = coalesceBuffers.get(id);
+	if (existing !== undefined) {
+		existing.chunks.push(data);
+		return;
+	}
+
+	const chunks = [data];
+	const timer = setTimeout(() => {
+		flushCoalesceBuffer(id);
+	}, COALESCE_INTERVAL_MS);
+
+	coalesceBuffers.set(id, { chunks, timer });
 }
 
 // ---------------------------------------------------------------------------
@@ -204,19 +281,24 @@ function handleSpawn(cmd: SpawnCommand): void {
 
 		ptys.set(cmd.id, pty);
 
-		// Forward PTY output as raw UTF-8 data events.
-		// node-pty's onData produces UTF-8 strings, and JSON natively supports
-		// UTF-8 with proper escaping via JSON.stringify, so no base64 encoding
-		// is needed. This avoids the 33% data inflation of base64.
+		// Forward PTY output through the coalescing buffer (Issue #137).
+		// node-pty's onData can fire for as little as a single character during
+		// interactive typing. The coalescing buffer accumulates chunks and emits
+		// a single IPC data event after 5ms of quiet, reducing IPC message count
+		// by an order of magnitude for burst output while adding imperceptible
+		// latency for interactive use.
 		pty.onData((data: string) => {
-			emit({ type: "data", id: cmd.id, data });
+			bufferData(cmd.id, data);
 		});
 
-		// Forward PTY exit
+		// Forward PTY exit — flush any remaining coalesced data first
 		pty.onExit(({ exitCode, signal }) => {
 			const code = exitCode ?? -1;
 			const sig = signal ?? -1;
 			debug("PTY exited id=%s code=%d signal=%d", cmd.id, code, sig);
+			// Flush any pending coalesced output before the exit event so
+			// consumers see all output before the process is marked as exited.
+			flushCoalesceBuffer(cmd.id);
 			ptys.delete(cmd.id);
 			emit({ type: "exit", id: cmd.id, exitCode: code, signal: sig });
 		});
@@ -265,6 +347,10 @@ function handleResize(cmd: ResizeCommand): void {
 	}
 
 	try {
+		// Flush any pending coalesced data BEFORE applying the resize.
+		// This ensures output is associated with the correct terminal
+		// dimensions, matching VS Code's behavior (PRD-terminal-perf.md).
+		flushCoalesceBuffer(cmd.id);
 		pty.resize(cmd.cols, cmd.rows);
 		debug("Resized PTY id=%s cols=%d rows=%d", cmd.id, cmd.cols, cmd.rows);
 	} catch (error) {
@@ -288,6 +374,10 @@ function handleKill(cmd: KillCommand): void {
 	}
 
 	try {
+		// Flush any pending coalesced data before killing so no output is lost.
+		// The onExit handler also flushes, but flushing here ensures data is
+		// emitted even if kill is synchronous on some platforms.
+		flushCoalesceBuffer(cmd.id);
 		pty.kill();
 		debug("Killed PTY id=%s", cmd.id);
 		// Note: the onExit handler will emit the exit event and clean up the map
@@ -418,14 +508,20 @@ async function readStdin(): Promise<void> {
 	}
 
 	debug("stdin closed, shutting down");
-	// Kill all remaining PTYs on shutdown
+	// Flush all coalescing buffers and kill all remaining PTYs on shutdown
 	for (const [id, pty] of ptys) {
 		debug("Cleaning up PTY id=%s on shutdown", id);
+		flushCoalesceBuffer(id);
 		try {
 			pty.kill();
 		} catch {
 			// Best effort cleanup
 		}
+	}
+	// Clean up any orphaned coalescing buffers (shouldn't happen, but defensive)
+	for (const [id, buf] of coalesceBuffers) {
+		clearTimeout(buf.timer);
+		coalesceBuffers.delete(id);
 	}
 	ptys.clear();
 }

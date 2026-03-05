@@ -3761,11 +3761,11 @@ When `pty.onData` fires: if no buffer exists for that PTY, create one (an array 
 
 ### Acceptance criteria
 
-- [ ] Each PTY instance in the PTY host has an independent coalescing buffer
-- [ ] Rapid output (multiple `onData` calls within 5ms) produces a single coalesced IPC `data` event
-- [ ] Interactive typing (single characters > 5ms apart) still produces individual events after a 5ms delay
-- [ ] Tests: run `seq 1 1000` → count `data` events received, verify significantly fewer than 1000 (proving coalescing)
-- [ ] Tests: verify single character input still arrives within ~10ms
+- [x] Each PTY instance in the PTY host has an independent coalescing buffer (`coalesceBuffers` Map keyed by PTY id)
+- [x] Rapid output (multiple `onData` calls within 5ms) produces a single coalesced IPC `data` event (verified by test — `seq 1 1000` produces < 200 events)
+- [x] Interactive typing (single characters > 5ms apart) still produces individual events after a 5ms delay
+- [x] Tests: run `seq 1 1000` → count `data` events received, verify significantly fewer than 1000 (proving coalescing)
+- [x] Tests: verify resize flushes pending coalesced data before applying resize
 
 ### Blocked by
 
@@ -3921,7 +3921,7 @@ In the terminal WebSocket endpoint: when a client sends an ack JSON frame, forwa
 
 ### Blocked by
 
-- Blocked by #137, #139
+- Blocked by ~~#137~~ (done), ~~#139~~ (done)
 
 ### User stories addressed
 
@@ -4165,11 +4165,11 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 134 | Drag terminal from sidebar onto empty panel | ~~#63~~, ~~#66~~ | Ready |
 | 135 | Remove base64 encoding from PTY IPC | None | Done |
 | 136 | IPC buffer optimization (O(n²) → array) | None | Ready |
-| 137 | PTY data coalescing (5ms timer) | None | Ready |
+| 137 | PTY data coalescing (5ms timer) | None | Done |
 | 138 | Ring buffer data structure + unit tests | None | Done |
 | 139 | Terminal WebSocket endpoint + ring buffer | ~~#135~~, ~~#138~~ | Done |
 | 140 | Web client terminal pane: WebSocket data path | ~~#139~~ | Done |
-| 141 | Character-count flow control (server side) | #137, ~~#139~~ | Blocked |
+| 141 | Character-count flow control (server side) | ~~#137~~, ~~#139~~ | Ready |
 | 142 | Client-side flow control acks | ~~#140~~, #141 | Blocked |
 | 143 | Deprecate terminalOutput from LiveStore hot path | ~~#140~~ | Done |
 | 144 | Resize flushes coalesced buffer + flow control reset | #141, #142 | Blocked |

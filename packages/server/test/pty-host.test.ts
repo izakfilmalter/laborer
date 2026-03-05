@@ -597,4 +597,122 @@ describe("PTY Host", { timeout: 30_000 }, () => {
 		expect(errorEvent2.type).toBe("error");
 		expect((errorEvent2 as ErrorEvent).message).toContain("Invalid command");
 	});
+
+	it("coalesces rapid output into fewer data events (Issue #137)", async () => {
+		const host = spawnPtyHost();
+		currentHost = host;
+
+		await waitForReady(host.events);
+
+		const testId = "test-coalesce-1";
+		// Use `seq 1 1000` which produces 1000 lines of output very rapidly.
+		// Without coalescing, this would produce ~1000 individual data events.
+		// With 5ms coalescing, the output should be batched into significantly
+		// fewer events.
+		host.sendCommand({
+			type: "spawn",
+			id: testId,
+			shell: "/bin/sh",
+			args: ["-c", "seq 1 1000"],
+			cwd: "/tmp",
+			env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+			cols: 80,
+			rows: 24,
+		});
+
+		// Collect all events until exit
+		const collected = await collectEventsUntil(
+			host.events,
+			(e) => e.type === "exit" && e.id === testId
+		);
+
+		const dataEvents = collected.filter(
+			(e) => e.type === "data" && e.id === testId
+		) as DataEvent[];
+
+		// Verify all output arrived correctly
+		const allOutput = dataEvents.map(decodeData).join("");
+		expect(allOutput).toContain("1");
+		expect(allOutput).toContain("1000");
+
+		// Key assertion: coalescing should produce significantly fewer data
+		// events than the 1000 lines of output. Without coalescing, we'd see
+		// ~1000 events (one per onData call). With 5ms coalescing, we expect
+		// dramatically fewer — typically under 50 for this fast-completing
+		// command. We use a generous threshold of 200 to avoid flakiness
+		// across different machines and load conditions.
+		expect(dataEvents.length).toBeLessThan(200);
+
+		// Sanity check: we should have at least 1 event (the output wasn't lost)
+		expect(dataEvents.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it("resize flushes pending coalesced data before applying resize", async () => {
+		const host = spawnPtyHost();
+		currentHost = host;
+
+		await waitForReady(host.events);
+
+		const testId = "test-resize-flush-1";
+		host.sendCommand({
+			type: "spawn",
+			id: testId,
+			shell: "/bin/cat",
+			args: [],
+			cwd: "/tmp",
+			env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+			cols: 80,
+			rows: 24,
+		});
+
+		// Give the PTY a moment to start
+		await new Promise((resolve) => setTimeout(resolve, 500));
+
+		// Write data to cat (which echoes it back)
+		host.sendCommand({
+			type: "write",
+			id: testId,
+			data: "pre-resize-data\n",
+		});
+
+		// Immediately send a resize — this should flush any pending coalesced
+		// data from the write/echo before the resize takes effect.
+		// We don't wait, to test that resize triggers an immediate flush.
+		host.sendCommand({
+			type: "resize",
+			id: testId,
+			cols: 120,
+			rows: 40,
+		});
+
+		// Now write some more data after the resize
+		host.sendCommand({
+			type: "write",
+			id: testId,
+			data: "post-resize-data\n",
+		});
+
+		// Collect data until we see post-resize output
+		const collected = await collectEventsUntil(host.events, (e) => {
+			if (e.type === "data" && e.id === testId) {
+				const decoded = decodeData(e as DataEvent);
+				if (decoded.includes("post-resize-data")) {
+					return true;
+				}
+			}
+			return false;
+		});
+
+		const dataEvents = collected.filter(
+			(e) => e.type === "data" && e.id === testId
+		) as DataEvent[];
+		const allOutput = dataEvents.map(decodeData).join("");
+
+		// Both pre- and post-resize data should have arrived
+		expect(allOutput).toContain("pre-resize-data");
+		expect(allOutput).toContain("post-resize-data");
+
+		// Clean up
+		host.sendCommand({ type: "kill", id: testId });
+	});
 });

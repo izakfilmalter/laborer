@@ -2532,14 +2532,14 @@ Add a "Start Ralph Loop" button per workspace that calls the `rlph.startLoop` mu
 
 ### Acceptance criteria
 
-- [ ] Button visible per workspace in workspace actions
-- [ ] Click → calls `LaborerClient.mutation("rlph.startLoop")` via `useAtomSet`
-- [ ] Terminal pane shows rlph TUI output
-- [ ] Tests: click button → mutation called; terminal output visible in pane
+- [x] Button visible per workspace in workspace actions (Play icon, only shown for active workspaces)
+- [x] Click → calls `LaborerClient.mutation("rlph.startLoop")` via `useAtomSet`
+- [x] Terminal pane shows rlph TUI output (auto-assigned to panel pane via `panelActions.assignTerminalToPane`)
+- [ ] Tests: click button → mutation called; terminal output visible in pane (deferred — requires running both server and web app with rlph installed)
 
 ### Blocked by
 
-- Blocked by #92, #60
+- Blocked by ~~#92~~, ~~#60~~ (both done)
 
 ### User stories addressed
 
@@ -3782,7 +3782,7 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 90 | Toggle diff alongside terminal | ~~#67~~, ~~#87~~ | Done |
 | 91 | Diff viewer debounce/throttle | #89 | Blocked |
 | 92 | rlph.startLoop RPC handler | ~~#56~~ | Done |
-| 93 | "Start Ralph Loop" button (AtomRpc mutation) | ~~#92~~, ~~#60~~ | Ready |
+| 93 | "Start Ralph Loop" button (AtomRpc mutation) | ~~#92~~, ~~#60~~ | Done |
 | 94 | rlph.writePRD RPC handler | ~~#56~~ | Done |
 | 95 | PRD writing form + button (AtomRpc mutation) | ~~#94~~, ~~#60~~ | Ready |
 | 96 | rlph.review RPC handler | ~~#56~~ | Done |

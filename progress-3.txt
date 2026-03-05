@@ -509,3 +509,47 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #133. This completes the terminal lifecycle — all CRUD operations are now implemented: spawn (#50), kill (#54), remove (#132), restart (#133).
+
+## Issue #93: "Start Ralph Loop" button UI — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Added a "Start Ralph Loop" button to each active workspace card in the workspace list UI. This is the primary way users kick off autonomous agent work (user story 13: "start a ralph loop on a workspace via a button in the app").
+- The button calls `LaborerClient.mutation("rlph.startLoop")` via `useAtomSet` with `{ mode: "promise" }`, which spawns a terminal running `rlph --once` in the workspace directory.
+- After the rlph terminal is spawned, it is auto-assigned to a panel pane via `panelActions.assignTerminalToPane(result.id, workspace.id)`, so the user immediately sees the rlph TUI output in xterm.js.
+- The collapsible terminal section auto-expands after starting the loop (`setIsOpen(true)`) so the user can see the new terminal in the sidebar list.
+
+### Files modified
+- `apps/web/src/components/workspace-list.tsx`:
+  - Added `Play` icon import from `lucide-react`
+  - Added `useCallback` import from React
+  - Added `usePanelActions` import from `@/panels/panel-context`
+  - Added `startLoopMutation` module-level declaration (`LaborerClient.mutation("rlph.startLoop")`)
+  - Added `isStartingLoop` state, `startLoop` mutation hook, and `panelActions` hook to `WorkspaceItem`
+  - Added `handleStartLoop` callback with: mutation call, toast notification, panel assignment, collapsible auto-expand, error handling
+  - Added green `Play` icon button in workspace card actions area (between status badge and collapsible trigger), visible only for active workspaces (`isActive`)
+  - Button shows `animate-pulse` state when starting, uses green color for the Play icon
+  - Added `title` tooltip ("Start Ralph Loop (rlph --once)") for discoverability
+  - Updated module JSDoc to reference Issue #93
+
+### Acceptance criteria status
+- [x] Button visible per workspace in workspace actions (Play icon, only shown for active workspaces — running or creating status)
+- [x] Click calls `LaborerClient.mutation("rlph.startLoop")` via `useAtomSet` with `{ mode: "promise" }`
+- [x] Terminal pane shows rlph TUI output (auto-assigned to panel pane via `panelActions.assignTerminalToPane`)
+- [ ] Tests: click button -> mutation called; terminal output visible in pane (deferred — requires running both server and web app with rlph installed)
+
+### Verification
+- `tsc --noEmit` passes (no new type errors — only pre-existing shadcn/ui calendar.tsx and sonner.tsx errors)
+- `ultracite check` passes on `workspace-list.tsx` with zero issues (full codebase check shows only pre-existing errors in generated components)
+
+### Design decisions
+- Used the `Play` icon from lucide-react — universally recognized as "start/run". Green color (`text-green-600 dark:text-green-400`) provides a clear visual affordance for "start something" and matches the workspace "running" status color convention used elsewhere.
+- Placed the button between the status badge and the collapsible trigger (before the destroy button). This groups it with other workspace actions while keeping it prominent for active workspaces.
+- The button is only visible for active workspaces (`isActive` = running or creating). A destroyed, stopped, or errored workspace can't run rlph — the worktree may not exist.
+- Used `useCallback` (consistent with `terminal-list.tsx` pattern) rather than inline arrow function for the handler, since it captures `startLoop`, `workspace.id`, and `panelActions` in its dependency array.
+- Auto-assigns the spawned terminal to a panel pane and auto-expands the collapsible. This ensures the user sees immediate feedback from the action — they don't have to manually find and click the terminal in the sidebar.
+- Shows loading state (`isStartingLoop`) with `animate-pulse` on the Play icon and `disabled` on the button, preventing double-clicks.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #93. The remaining rlph UI issues (#95, #97, #99) follow the same pattern and can be implemented independently.

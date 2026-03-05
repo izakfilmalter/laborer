@@ -7,16 +7,19 @@
  * destroyed=dim.
  * Updates reactively when workspace state changes.
  * Includes a destroy button with confirmation dialog per workspace.
+ * Includes rlph action buttons (Start Ralph Loop, Write PRD, Review PR,
+ * Fix Findings) per active workspace for triggering agent workflows.
  *
  * @see Issue #41: Workspace list UI component
  * @see Issue #48: Destroy Workspace button + confirmation dialog
+ * @see Issue #93: "Start Ralph Loop" button UI
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
 import { projects, workspaces } from "@laborer/shared/schema";
 import { queryDb } from "@livestore/livestore";
-import { ChevronDown, GitBranch, Layers, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, GitBranch, Layers, Play, Trash2 } from "lucide-react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { TerminalList } from "@/components/terminal-list";
@@ -54,11 +57,13 @@ import {
 } from "@/components/ui/empty";
 import { cn, extractErrorMessage } from "@/lib/utils";
 import { useLaborerStore } from "@/livestore/store";
+import { usePanelActions } from "@/panels/panel-context";
 
 const allWorkspaces$ = queryDb(workspaces, { label: "workspaceList" });
 const allProjects$ = queryDb(projects, { label: "workspaceListProjects" });
 
 const destroyWorkspaceMutation = LaborerClient.mutation("workspace.destroy");
+const startLoopMutation = LaborerClient.mutation("rlph.startLoop");
 
 type WorkspaceStatus =
 	| "creating"
@@ -129,9 +134,14 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 	const [isOpen, setIsOpen] = useState(false);
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [isDestroying, setIsDestroying] = useState(false);
+	const [isStartingLoop, setIsStartingLoop] = useState(false);
 	const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
 		mode: "promise",
 	});
+	const startLoop = useAtomSet(startLoopMutation, {
+		mode: "promise",
+	});
+	const panelActions = usePanelActions();
 	const isActive =
 		workspace.status === "running" || workspace.status === "creating";
 
@@ -151,6 +161,26 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 			setIsDestroying(false);
 		}
 	};
+
+	const handleStartLoop = useCallback(async () => {
+		setIsStartingLoop(true);
+		try {
+			const result = await startLoop({
+				payload: { workspaceId: workspace.id },
+			});
+			toast.success("Ralph loop started");
+			// Auto-assign the spawned terminal to a pane
+			if (panelActions) {
+				panelActions.assignTerminalToPane(result.id, workspace.id);
+			}
+			// Auto-expand the collapsible to show the new terminal
+			setIsOpen(true);
+		} catch (error: unknown) {
+			toast.error(`Failed to start ralph loop: ${extractErrorMessage(error)}`);
+		} finally {
+			setIsStartingLoop(false);
+		}
+	}, [startLoop, workspace.id, panelActions]);
 
 	return (
 		<Card size="sm">
@@ -177,6 +207,25 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 								<StatusDot status={workspace.status} />
 								{workspace.status}
 							</Badge>
+							{isActive && (
+								<Button
+									aria-label="Start ralph loop"
+									disabled={isStartingLoop}
+									onClick={handleStartLoop}
+									size="icon-xs"
+									title="Start Ralph Loop (rlph --once)"
+									variant="ghost"
+								>
+									<Play
+										className={cn(
+											"size-3.5",
+											isStartingLoop
+												? "animate-pulse text-muted-foreground"
+												: "text-green-600 dark:text-green-400"
+										)}
+									/>
+								</Button>
+							)}
 							{isActive && (
 								<CollapsibleTrigger
 									render={

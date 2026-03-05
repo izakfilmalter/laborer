@@ -10,7 +10,7 @@
  * - Server → Client: Raw UTF-8 terminal output as text frames
  * - Client → Server: Raw terminal input (keystrokes) as text frames,
  *   or JSON control messages (e.g., `{"type":"ack","chars":5000}` for
- *   flow control — to be implemented in Issue #141)
+ *   flow control — Issue #141)
  *
  * Connection lifecycle:
  * 1. Client connects with `?id=<terminalId>`
@@ -48,6 +48,7 @@ const SCROLLBACK_CHUNK_SIZE = 64_000;
  */
 const handleClientMessage = (
 	ptyWrite: (id: string, data: string) => void,
+	ptyAck: (id: string, chars: number) => void,
 	terminalId: string,
 	data: string | Uint8Array
 ): void => {
@@ -55,12 +56,13 @@ const handleClientMessage = (
 		return;
 	}
 
-	// Detect JSON control messages (ack for flow control)
+	// Detect JSON control messages (ack for flow control — Issue #141)
 	if (data.length > 0 && data[0] === "{" && data.endsWith("}")) {
 		try {
-			const parsed = JSON.parse(data) as { type?: string };
-			if (parsed.type === "ack") {
-				// Flow control ack — forwarding to PTY host in Issue #141
+			const parsed = JSON.parse(data) as { chars?: number; type?: string };
+			if (parsed.type === "ack" && typeof parsed.chars === "number") {
+				// Forward flow control ack to PTY host (Issue #141)
+				ptyAck(terminalId, parsed.chars);
 				return;
 			}
 		} catch {
@@ -168,7 +170,12 @@ const TerminalWsRouteLive = HttpRouter.Default.use((router) =>
 					yield* socket
 						.runRaw(
 							(message) => {
-								handleClientMessage(ptyHostClient.write, terminalId, message);
+								handleClientMessage(
+									ptyHostClient.write,
+									ptyHostClient.ack,
+									terminalId,
+									message
+								);
 							},
 							{
 								onOpen: sendScrollback(writeFn, scrollback).pipe(
@@ -179,10 +186,18 @@ const TerminalWsRouteLive = HttpRouter.Default.use((router) =>
 						.pipe(
 							Effect.catchAll(() => Effect.void),
 							Effect.ensuring(
-								Effect.all([
-									terminalManager.unsubscribe(terminalId, subscriberId),
-									Scope.close(scope, Exit.void),
-								])
+								Effect.gen(function* () {
+									yield* terminalManager.unsubscribe(terminalId, subscriberId);
+
+									// Reset flow control on disconnect (Issue #141):
+									// Send a large ack to the PTY host to ensure the PTY is
+									// resumed if it was paused due to this client falling behind.
+									// The HIGH_WATERMARK_CHARS value (100,000) is sufficient to
+									// clear any accumulated unacknowledged count and resume the PTY.
+									ptyHostClient.ack(terminalId, 100_000);
+
+									yield* Scope.close(scope, Exit.void);
+								})
 							)
 						);
 

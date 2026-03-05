@@ -41,7 +41,23 @@ interface ErrorEvent {
 	readonly type: "error";
 }
 
-type PtyEvent = ReadyEvent | DataEvent | ExitEvent | ErrorEvent;
+interface PausedEvent {
+	readonly id: string;
+	readonly type: "paused";
+}
+
+interface ResumedEvent {
+	readonly id: string;
+	readonly type: "resumed";
+}
+
+type PtyEvent =
+	| ReadyEvent
+	| DataEvent
+	| ExitEvent
+	| ErrorEvent
+	| PausedEvent
+	| ResumedEvent;
 
 // ---------------------------------------------------------------------------
 // Push-based event queue
@@ -711,6 +727,194 @@ describe("PTY Host", { timeout: 30_000 }, () => {
 		// Both pre- and post-resize data should have arrived
 		expect(allOutput).toContain("pre-resize-data");
 		expect(allOutput).toContain("post-resize-data");
+
+		// Clean up
+		host.sendCommand({ type: "kill", id: testId });
+	});
+
+	it("ack command is accepted without error for running PTY (Issue #141)", async () => {
+		const host = spawnPtyHost();
+		currentHost = host;
+
+		await waitForReady(host.events);
+
+		const testId = "test-ack-1";
+		host.sendCommand({
+			type: "spawn",
+			id: testId,
+			shell: "/bin/cat",
+			args: [],
+			cwd: "/tmp",
+			env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+			cols: 80,
+			rows: 24,
+		});
+
+		// Give the PTY a moment to start
+		await new Promise((resolve) => setTimeout(resolve, 500));
+
+		// Send an ack — should not produce an error event
+		host.sendCommand({ type: "ack", id: testId, chars: 5000 });
+
+		// Verify the PTY is still alive by writing to it
+		host.sendCommand({
+			type: "write",
+			id: testId,
+			data: "ack-test-ok\n",
+		});
+
+		const collected = await collectEventsUntil(host.events, (e) => {
+			if (e.type === "data" && e.id === testId) {
+				const decoded = decodeData(e as DataEvent);
+				if (decoded.includes("ack-test-ok")) {
+					return true;
+				}
+			}
+			return false;
+		});
+
+		// No error events should have been produced
+		const errorEvents = collected.filter((e) => e.type === "error");
+		expect(errorEvents).toHaveLength(0);
+
+		const allOutput = collected
+			.filter((e) => e.type === "data" && e.id === testId)
+			.map((e) => decodeData(e as DataEvent))
+			.join("");
+		expect(allOutput).toContain("ack-test-ok");
+
+		host.sendCommand({ type: "kill", id: testId });
+	});
+
+	it("ack for nonexistent PTY is silently ignored (Issue #141)", async () => {
+		const host = spawnPtyHost();
+		currentHost = host;
+
+		await waitForReady(host.events);
+
+		// Send an ack for a nonexistent PTY — should not produce an error
+		host.sendCommand({ type: "ack", id: "nonexistent-pty", chars: 5000 });
+
+		// Verify the host is still alive by spawning a PTY
+		const testId = "test-after-bad-ack";
+		host.sendCommand({
+			type: "spawn",
+			id: testId,
+			shell: "/bin/sh",
+			args: ["-c", "echo alive-after-ack"],
+			cwd: "/tmp",
+			env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+			cols: 80,
+			rows: 24,
+		});
+
+		const collected = await collectEventsUntil(host.events, (e) => {
+			if (e.type === "data" && e.id === testId) {
+				const decoded = decodeData(e as DataEvent);
+				if (decoded.includes("alive-after-ack")) {
+					return true;
+				}
+			}
+			return e.type === "exit" && e.id === testId;
+		});
+
+		const allOutput = collected
+			.filter((e) => e.type === "data" && e.id === testId)
+			.map((e) => decodeData(e as DataEvent))
+			.join("");
+		expect(allOutput).toContain("alive-after-ack");
+	});
+
+	it("fast output without acks produces paused event (Issue #141)", async () => {
+		const host = spawnPtyHost();
+		currentHost = host;
+
+		await waitForReady(host.events);
+
+		const testId = "test-flow-control-1";
+		// Use yes command piped through head to produce a lot of output fast.
+		// `yes` outputs "y\n" infinitely and very fast, which will exceed
+		// the 100,000 character high watermark quickly.
+		// We use `head -c 500000` to limit total output to 500KB to prevent
+		// the test from running forever.
+		host.sendCommand({
+			type: "spawn",
+			id: testId,
+			shell: "/bin/sh",
+			args: ["-c", "yes | head -c 500000"],
+			cwd: "/tmp",
+			env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+			cols: 80,
+			rows: 24,
+		});
+
+		// Collect events until we see a paused event or the process exits
+		const collected = await collectEventsUntil(
+			host.events,
+			(e) =>
+				(e.type === "paused" && e.id === testId) ||
+				(e.type === "exit" && e.id === testId),
+			15_000
+		);
+
+		const pausedEvents = collected.filter(
+			(e) => e.type === "paused" && e.id === testId
+		);
+
+		// The PTY should have been paused due to exceeding high watermark.
+		// It's possible the process exits before we see the paused event
+		// (if the system is very fast and the pipe buffer drains), but
+		// with 500KB of output this is very unlikely.
+		expect(pausedEvents.length).toBeGreaterThanOrEqual(1);
+
+		// Clean up (process may still be running if paused)
+		host.sendCommand({ type: "kill", id: testId });
+	});
+
+	it("ack after pause resumes PTY and produces resumed event (Issue #141)", async () => {
+		const host = spawnPtyHost();
+		currentHost = host;
+
+		await waitForReady(host.events);
+
+		const testId = "test-flow-resume-1";
+		// Same fast-output pattern to trigger pause
+		host.sendCommand({
+			type: "spawn",
+			id: testId,
+			shell: "/bin/sh",
+			args: ["-c", "yes | head -c 500000"],
+			cwd: "/tmp",
+			env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+			cols: 80,
+			rows: 24,
+		});
+
+		// Wait for the paused event
+		await waitForEvent(
+			host.events,
+			(e) => e.type === "paused" && e.id === testId,
+			15_000
+		);
+
+		// Send a large ack to bring unacknowledged count below low watermark
+		host.sendCommand({ type: "ack", id: testId, chars: 200_000 });
+
+		// Wait for the resumed event or process exit
+		const collected = await collectEventsUntil(
+			host.events,
+			(e) =>
+				(e.type === "resumed" && e.id === testId) ||
+				(e.type === "exit" && e.id === testId),
+			15_000
+		);
+
+		const resumedEvents = collected.filter(
+			(e) => e.type === "resumed" && e.id === testId
+		);
+
+		// The PTY should have been resumed after the ack
+		expect(resumedEvents.length).toBeGreaterThanOrEqual(1);
 
 		// Clean up
 		host.sendCommand({ type: "kill", id: testId });

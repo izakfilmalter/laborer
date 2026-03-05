@@ -948,3 +948,58 @@ Added a 5ms coalescing timer per PTY instance in the PTY host, matching VS Code'
 
 ### Issues unblocked
 - Issue #141: Character-count flow control (server side) — was blocked by #137 and #139. #137 now done, #139 already done. **Issue #141 is now fully unblocked!**
+
+---
+
+## Issue #141: Character-count flow control (server side)
+
+**Status:** Done
+**Priority:** Critical (terminal performance pipeline)
+
+### Summary
+Implemented character-count flow control on the server side to prevent fast-running commands from overwhelming clients. The PTY host tracks unacknowledged characters per terminal, pauses the PTY when output exceeds the high watermark (100K chars), and resumes when the client sends enough acks to drop below the low watermark (5K chars). This matches VS Code's flow control design per PRD-terminal-perf.md.
+
+### Files modified
+
+1. **`packages/server/src/pty-host.ts`** (+139 lines):
+   - Added `AckCommand` type to the command union.
+   - Added `PausedEvent` and `ResumedEvent` event types.
+   - Added `FlowControlState` interface tracking `unacknowledgedCharCount` and `paused` per PTY.
+   - Added constants: `HIGH_WATERMARK_CHARS` (100,000) and `LOW_WATERMARK_CHARS` (5,000), matching VS Code's `CharCountAckSize` = 5,000.
+   - `flushCoalesceBuffer` now increments `unacknowledgedCharCount` and calls `pty.pause()` when exceeding high watermark, emitting a `paused` event.
+   - Added `handleAck(cmd)` function that decrements the count and calls `pty.resume()` when below low watermark, emitting a `resumed` event.
+   - Flow control state initialized in `handleSpawn`, cleaned up in `onExit` and shutdown.
+   - Updated `isValidCommand` and command dispatch for the `ack` type.
+
+2. **`packages/server/src/services/pty-host-client.ts`** (+12 lines):
+   - Added `ack(id: string, chars: number)` method to the `PtyHostClient` service interface and implementation, sending `{ type: "ack", id, chars }` over the IPC channel.
+
+3. **`packages/server/src/routes/terminal-ws.ts`** (+35 lines, -15 lines):
+   - Updated `handleClientMessage` to accept and forward ack JSON frames (`{"type":"ack","chars":N}`) to `ptyHostClient.ack()`.
+   - Added flow control reset on WebSocket disconnect — sends a large ack (100K chars) to ensure the PTY resumes if it was paused when the client disconnected.
+
+4. **`packages/server/test/pty-host.test.ts`** (+206 lines):
+   - Added 4 new flow control tests:
+     - "ack command is accepted without error" — sends ack for a spawned PTY, verifies no crash.
+     - "ack for nonexistent PTY is silently ignored" — sends ack for unknown ID, verifies no error.
+     - "fast output produces paused event when exceeding high watermark" — runs `yes | head -c 200000` to produce ~200K chars, asserts a `paused` event fires.
+     - "ack after pause produces resumed event" — after pause, sends ack for the full unacknowledged amount, asserts `resumed` event fires.
+
+### Verification
+- `tsc --noEmit` passes for server package
+- `ultracite check` passes on all 4 modified files with zero issues
+- **All 52 tests pass** (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions, 4 new tests added)
+
+### Acceptance criteria status
+- [x] Each PTY instance tracks `unacknowledgedCharCount` in `FlowControlState`
+- [x] `flushCoalesceBuffer` increments count and pauses PTY at HIGH_WATERMARK_CHARS (100K)
+- [x] `handleAck` decrements count and resumes PTY at LOW_WATERMARK_CHARS (5K)
+- [x] PtyHostClient exposes `ack(id, chars)` method
+- [x] Terminal WebSocket route forwards ack frames from client to PTY host
+- [x] WebSocket disconnect resets flow control (sends large ack to resume paused PTY)
+- [x] Constants match VS Code: HIGH_WATERMARK=100K, LOW_WATERMARK=5K, CharCountAckSize=5K
+- [x] Tests: ack accepted, ack for nonexistent PTY ignored, fast output pauses, ack resumes
+
+### Issues unblocked
+- Issue #142: Client-side flow control acks — was blocked by #141. **Now unblocked!**
+- Issue #144: Resize flushes coalesced buffer + flow control reset — still blocked by #142.

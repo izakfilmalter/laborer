@@ -26,12 +26,15 @@
  *   { type: "write", id, data }
  *   { type: "resize", id, cols, rows }
  *   { type: "kill", id }
+ *   { type: "ack", id, chars }  — flow control acknowledgement (Issue #141)
  *
  * Events (stdout, PTY Host -> server):
  *   { type: "ready" }
  *   { type: "data", id, data }  — data is raw UTF-8 (may be coalesced)
  *   { type: "exit", id, exitCode, signal }
  *   { type: "error", id?, message }
+ *   { type: "paused", id }      — PTY paused due to flow control (Issue #141)
+ *   { type: "resumed", id }     — PTY resumed after flow control ack (Issue #141)
  */
 
 import { createRequire } from "node:module";
@@ -74,7 +77,18 @@ interface KillCommand {
 	readonly type: "kill";
 }
 
-type Command = SpawnCommand | WriteCommand | ResizeCommand | KillCommand;
+interface AckCommand {
+	readonly chars: number;
+	readonly id: string;
+	readonly type: "ack";
+}
+
+type Command =
+	| SpawnCommand
+	| WriteCommand
+	| ResizeCommand
+	| KillCommand
+	| AckCommand;
 
 interface ReadyEvent {
 	readonly type: "ready";
@@ -99,7 +113,23 @@ interface ErrorEvent {
 	readonly type: "error";
 }
 
-type PtyEvent = ReadyEvent | DataEvent | ExitEvent | ErrorEvent;
+interface PausedEvent {
+	readonly id: string;
+	readonly type: "paused";
+}
+
+interface ResumedEvent {
+	readonly id: string;
+	readonly type: "resumed";
+}
+
+type PtyEvent =
+	| ReadyEvent
+	| DataEvent
+	| ExitEvent
+	| ErrorEvent
+	| PausedEvent
+	| ResumedEvent;
 
 // ---------------------------------------------------------------------------
 // State
@@ -132,6 +162,33 @@ interface CoalesceBuffer {
 
 const coalesceBuffers = new Map<string, CoalesceBuffer>();
 
+/**
+ * Character-count flow control per PTY instance.
+ *
+ * Matches VS Code's flow control model (Issue #141,
+ * PRD-terminal-perf.md "Character-Count Flow Control").
+ *
+ * The PTY host tracks `unacknowledgedCharCount` per PTY. Each emitted
+ * `data` event increases it by the character count. When it exceeds
+ * `HIGH_WATERMARK_CHARS`, `pty.pause()` is called to stop reading from
+ * the PTY file descriptor. The OS kernel then applies backpressure to
+ * the producing process via the pipe buffer.
+ *
+ * The web client sends `ack` frames for every `CHAR_COUNT_ACK_SIZE`
+ * characters processed. The server forwards these as `{ type: "ack", id, chars }`
+ * commands. The PTY host decrements `unacknowledgedCharCount` and resumes
+ * the PTY when it drops below `LOW_WATERMARK_CHARS`.
+ */
+const HIGH_WATERMARK_CHARS = 100_000;
+const LOW_WATERMARK_CHARS = 5000;
+
+interface FlowControlState {
+	readonly paused: boolean;
+	unacknowledgedCharCount: number;
+}
+
+const flowControlStates = new Map<string, FlowControlState>();
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -152,7 +209,8 @@ function debug(message: string, ...args: unknown[]): void {
 
 /**
  * Flush any pending coalesced data for a PTY, emitting a single `data` event
- * with all buffered chunks joined together.
+ * with all buffered chunks joined together. Updates flow control state
+ * (unacknowledgedCharCount) and pauses the PTY if the high watermark is exceeded.
  *
  * Called by:
  * - The coalescing timer (normal flush after 5ms of quiet)
@@ -171,6 +229,30 @@ function flushCoalesceBuffer(id: string): void {
 	const joined = buf.chunks.join("");
 	if (joined.length > 0) {
 		emit({ type: "data", id, data: joined });
+
+		// Update flow control: track unacknowledged characters
+		const fcState = flowControlStates.get(id);
+		if (fcState !== undefined) {
+			fcState.unacknowledgedCharCount += joined.length;
+
+			// Pause PTY if high watermark exceeded (Issue #141)
+			if (
+				!fcState.paused &&
+				fcState.unacknowledgedCharCount > HIGH_WATERMARK_CHARS
+			) {
+				const pty = ptys.get(id);
+				if (pty !== undefined) {
+					pty.pause();
+					(fcState as { paused: boolean }).paused = true;
+					emit({ type: "paused", id });
+					debug(
+						"Flow control: paused PTY id=%s (unacked=%d)",
+						id,
+						fcState.unacknowledgedCharCount
+					);
+				}
+			}
+		}
 	}
 }
 
@@ -281,6 +363,12 @@ function handleSpawn(cmd: SpawnCommand): void {
 
 		ptys.set(cmd.id, pty);
 
+		// Initialize flow control state for this PTY (Issue #141)
+		flowControlStates.set(cmd.id, {
+			unacknowledgedCharCount: 0,
+			paused: false,
+		});
+
 		// Forward PTY output through the coalescing buffer (Issue #137).
 		// node-pty's onData can fire for as little as a single character during
 		// interactive typing. The coalescing buffer accumulates chunks and emits
@@ -300,6 +388,8 @@ function handleSpawn(cmd: SpawnCommand): void {
 			// consumers see all output before the process is marked as exited.
 			flushCoalesceBuffer(cmd.id);
 			ptys.delete(cmd.id);
+			// Clean up flow control state (Issue #141)
+			flowControlStates.delete(cmd.id);
 			emit({ type: "exit", id: cmd.id, exitCode: code, signal: sig });
 		});
 
@@ -390,6 +480,41 @@ function handleKill(cmd: KillCommand): void {
 	}
 }
 
+/**
+ * Handle a flow control acknowledgement command (Issue #141).
+ *
+ * Decrements the unacknowledged character count for the PTY.
+ * If the count drops below LOW_WATERMARK_CHARS and the PTY is paused,
+ * resumes the PTY so output continues.
+ */
+function handleAck(cmd: AckCommand): void {
+	const fcState = flowControlStates.get(cmd.id);
+	if (fcState === undefined) {
+		// PTY may have already exited — silently ignore
+		return;
+	}
+
+	fcState.unacknowledgedCharCount = Math.max(
+		0,
+		fcState.unacknowledgedCharCount - cmd.chars
+	);
+
+	// Resume PTY if below low watermark (Issue #141)
+	if (fcState.paused && fcState.unacknowledgedCharCount < LOW_WATERMARK_CHARS) {
+		const pty = ptys.get(cmd.id);
+		if (pty !== undefined) {
+			pty.resume();
+			(fcState as { paused: boolean }).paused = false;
+			emit({ type: "resumed", id: cmd.id });
+			debug(
+				"Flow control: resumed PTY id=%s (unacked=%d)",
+				cmd.id,
+				fcState.unacknowledgedCharCount
+			);
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Command dispatch
 // ---------------------------------------------------------------------------
@@ -425,6 +550,8 @@ function isValidCommand(parsed: unknown): parsed is Command {
 			);
 		case "kill":
 			return typeof obj.id === "string";
+		case "ack":
+			return typeof obj.id === "string" && typeof obj.chars === "number";
 		default:
 			return false;
 	}
@@ -468,11 +595,14 @@ function processLine(line: string): void {
 		case "kill":
 			handleKill(parsed);
 			break;
+		case "ack":
+			handleAck(parsed);
+			break;
 		default:
 			// isValidCommand already filters to known types, but satisfy exhaustiveness
 			emit({
 				type: "error",
-				message: `Unknown command type: ${(parsed as Record<string, unknown>).type}`,
+				message: `Unknown command type: ${(parsed as unknown as Record<string, unknown>).type}`,
 			});
 			break;
 	}
@@ -524,6 +654,7 @@ async function readStdin(): Promise<void> {
 		coalesceBuffers.delete(id);
 	}
 	ptys.clear();
+	flowControlStates.clear();
 }
 
 // ---------------------------------------------------------------------------

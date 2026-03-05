@@ -4169,7 +4169,7 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 138 | Ring buffer data structure + unit tests | None | Done |
 | 139 | Terminal WebSocket endpoint + ring buffer | ~~#135~~, ~~#138~~ | Done |
 | 140 | Web client terminal pane: WebSocket data path | ~~#139~~ | Done |
-| 141 | Character-count flow control (server side) | ~~#137~~, ~~#139~~ | Ready |
-| 142 | Client-side flow control acks | ~~#140~~, #141 | Blocked |
+| 141 | Character-count flow control (server side) | ~~#137~~, ~~#139~~ | Done |
+| 142 | Client-side flow control acks | ~~#140~~, ~~#141~~ | Ready |
 | 143 | Deprecate terminalOutput from LiveStore hot path | ~~#140~~ | Done |
 | 144 | Resize flushes coalesced buffer + flow control reset | #141, #142 | Blocked |

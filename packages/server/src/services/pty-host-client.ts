@@ -113,6 +113,14 @@ class PtyHostClient extends Context.Tag("@laborer/PtyHostClient")<
 		readonly kill: (id: string) => void;
 
 		/**
+		 * Acknowledge processing of `chars` characters for a terminal.
+		 * Used for flow control: the PTY host decrements its
+		 * `unacknowledgedCharCount` and resumes the PTY if below
+		 * the low watermark (Issue #141).
+		 */
+		readonly ack: (id: string, chars: number) => void;
+
+		/**
 		 * Register a callback that is invoked when the PTY Host process
 		 * crashes or exits unexpectedly.
 		 */
@@ -333,6 +341,10 @@ class PtyHostClient extends Context.Tag("@laborer/PtyHostClient")<
 
 				kill: (id) => {
 					sendCommand({ type: "kill", id });
+				},
+
+				ack: (id, chars) => {
+					sendCommand({ type: "ack", id, chars });
 				},
 
 				onCrash: (callback) => {

@@ -1352,3 +1352,53 @@ Modified `packages/server/src/rpc/handlers.ts` — the `task.updateStatus` RPC h
 
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #106. This completes the task-workspace lifecycle loop (#105 + #106).
+
+## Bug fix: Terminal WebSocket route not registered (GET /terminal returning 404)
+
+**Date:** 2026-03-05
+
+### Root cause
+In `packages/server/src/routes/terminal-ws.ts`, the `TerminalWsRouteLive` layer used `HttpRouter.Default.use` with an `Effect.gen` generator that **returned** the `router.addRoute(...)` effect instead of **yielding** it:
+
+```ts
+// BEFORE (broken — route never registered)
+const TerminalWsRouteLive = HttpRouter.Default.use((router) =>
+  Effect.gen(function* () {
+    const terminalManager = yield* TerminalManager;
+    const ptyHostClient = yield* PtyHostClient;
+    return router.addRoute(HttpRouter.makeRoute("GET", "/terminal", handler));
+    //     ^^^^^^ returns Effect<void> as a value — never executed
+  })
+);
+```
+
+`router.addRoute(...)` returns an `Effect<void>` that, when executed, mutates the internal mutable router. Using `return` instead of `yield*` caused the effect to be returned as the success value of the generator — but never actually executed. The route mutation never happened, so `GET /terminal` was never added to the router.
+
+The server returned a generic empty 404 (`Content-Length: 0`) from the Effect HTTP router's `RouteNotFound` handler, confirming the route itself wasn't registered (as opposed to the route handler's JSON 404 for missing terminal IDs, which has a body).
+
+### Why GET / worked
+`CustomRoutesLive` in `main.ts` uses a different pattern — the callback directly returns the `addRoute` effect without wrapping it in `Effect.gen`:
+
+```ts
+const CustomRoutesLive = HttpRouter.Default.use((router) =>
+  router.addRoute(HttpRouter.makeRoute("GET", "/", handler))
+);
+```
+
+Here, `HttpRouter.Default.use` does `Effect.flatMap(Default, f)` where `f` returns the `addRoute` effect. `flatMap` chains and executes it — the mutation happens. No `Effect.gen` wrapper means no `return` vs `yield*` ambiguity.
+
+### Fix
+One-character change in `packages/server/src/routes/terminal-ws.ts:113`:
+
+```ts
+// AFTER (fixed — route is registered)
+yield* router.addRoute(HttpRouter.makeRoute("GET", "/terminal", handler));
+//     ^^^^^^ yields the effect — it executes and mutates the router
+```
+
+### Files modified
+- `packages/server/src/routes/terminal-ws.ts` — Changed `return router.addRoute(...)` to `yield* router.addRoute(...)` (line 113)
+
+### Verification
+- After the fix, `curl 'http://localhost:3000/terminal?id=test'` returns `{"error":"Terminal not found: test"}` with `Content-Type: application/json` — the route handler's 404 with JSON body, confirming the route is now registered and the handler is executing
+- Before the fix, the same request returned an empty 404 (`Content-Length: 0`) — the router's generic `RouteNotFound` response

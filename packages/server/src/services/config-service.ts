@@ -21,7 +21,7 @@
  * }
  * ```
  *
- * The config file name is `laborer.json` (not `.laborer.json`).
+ * The config file name is `laborer.json`.
  * Auto-creates `~/.config/laborer/` directory if it doesn't exist.
  *
  * Usage:

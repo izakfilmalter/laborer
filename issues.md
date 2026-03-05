@@ -732,7 +732,7 @@ Added `writeProjectConfig(projectRepoPath, updates)` to `ConfigService`. The met
 
 ---
 
-## Issue 156: WorkspaceProvider — use ConfigService for worktree path + setup scripts
+## ~~Issue 156: WorkspaceProvider — use ConfigService for worktree path + setup scripts~~ ✅ DONE
 
 ### Parent PRD
 
@@ -744,18 +744,18 @@ Wire the `ConfigService` (Issue #154) into `WorkspaceProvider` to replace the ha
 
 ### Acceptance criteria
 
-- [ ] `WORKTREE_DIR` constant, `readProjectConfig`, `LaborerConfig`, and `CONFIG_FILE` are removed from workspace-provider.ts
-- [ ] WorkspaceProvider depends on ConfigService for worktree directory resolution
-- [ ] Worktree path is `<resolvedConfig.worktreeDir>/<branchSlug>` (not `<repoPath>/.worktrees/<branchSlug>`)
-- [ ] Setup scripts are read from ConfigService resolved config
-- [ ] All `.laborer.json` references in the codebase are renamed to `laborer.json`
-- [ ] ConfigService is added to WorkspaceProvider's layer dependencies
-- [ ] Tests verify worktree creation uses the resolved config path
-- [ ] Tests verify setup scripts come from the resolved config
+- [x] `WORKTREE_DIR` constant, `readProjectConfig`, `LaborerConfig`, and `CONFIG_FILE` are removed from workspace-provider.ts
+- [x] WorkspaceProvider depends on ConfigService for worktree directory resolution
+- [x] Worktree path is `<resolvedConfig.worktreeDir>/<branchSlug>` (not `<repoPath>/.worktrees/<branchSlug>`)
+- [x] Setup scripts are read from ConfigService resolved config
+- [x] All `.laborer.json` references in runtime code are renamed to `laborer.json`
+- [x] ConfigService is added to WorkspaceProvider's layer dependencies
+- [x] Tests verify worktree creation uses the resolved config path
+- [x] Tests verify setup scripts come from the resolved config
 
 ### Blocked by
 
-- Blocked by #154
+- ~~Blocked by #154~~
 
 ### User stories addressed
 
@@ -801,7 +801,7 @@ Save button calls `config.update` mutation with only changed fields. Toast notif
 
 ### Blocked by
 
-- Blocked by #155, #156
+- ~~Blocked by #155, #156~~
 
 ### User stories addressed
 
@@ -913,8 +913,8 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 153 | Cmd+W close panel — polish & verification | ~~#148~~, ~~#149~~, ~~#150~~, #151, #152 | Blocked |
 | 154 | ~~Config Service — resolve config with walk-up + global default~~ | ~~None~~ | Done |
 | 155 | ~~Config Service — write project config~~ | ~~#154~~ | Done |
-| 156 | WorkspaceProvider — use ConfigService for worktree path + setup scripts | ~~#154~~ | Ready |
-| 157 | Config RPC endpoints + project settings modal | ~~#155~~, #156 | Blocked |
+| 156 | ~~WorkspaceProvider — use ConfigService for worktree path + setup scripts~~ | ~~#154~~ | Done |
+| 157 | Config RPC endpoints + project settings modal | ~~#155~~, ~~#156~~ | Ready |
 | 158 | Config + settings polish & edge cases | #157 | Blocked |
 | 159 | WorktreeDetector + schema origin + initial detection on project add | None | Ready |
 | 160 | UI for detected workspaces | #159 | Blocked |

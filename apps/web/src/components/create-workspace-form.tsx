@@ -117,7 +117,7 @@ function getErrorGuidance(code: string | undefined): string | undefined {
 		case "GIT_FETCH_FAILED":
 			return "Check your network connection and remote repository access, then try again.";
 		case "SETUP_SCRIPT_FAILED":
-			return "Check the setup scripts in your project's .laborer.json file and fix the failing script.";
+			return "Check the setup scripts in your project's laborer.json file and fix the failing script.";
 		case "BRANCH_EXISTS":
 			return "Choose a different branch name, or delete the existing branch first.";
 		case "GIT_WORKTREE_FAILED":

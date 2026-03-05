@@ -20,7 +20,7 @@
  * - Full rollback on setup script failure (Issue #37)
  * - Git fetch failure handling (Issue #39)
  *
- * Setup scripts are defined in a `.laborer.json` file at the project root:
+ * Setup scripts are defined in `laborer.json` and resolved via ConfigService:
  * ```json
  * {
  *   "setupScripts": ["bun install", "cp .env.example .env"]
@@ -55,11 +55,12 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { join } from "node:path";
 import { RpcError } from "@laborer/shared/rpc";
 import { events, tables } from "@laborer/shared/schema";
 import { Array as Arr, Context, Effect, Layer, pipe } from "effect";
+import { ConfigService } from "./config-service.js";
 import { LaborerStore } from "./laborer-store.js";
 import { PortAllocator } from "./port-allocator.js";
 import { ProjectRegistry } from "./project-registry.js";
@@ -82,12 +83,6 @@ interface WorkspaceRecord {
 }
 
 /**
- * Default directory name for worktrees, relative to the repo root.
- * Worktrees are created at `<repoPath>/.worktrees/<branchSlug>`.
- */
-const WORKTREE_DIR = ".worktrees";
-
-/**
  * Slugify a branch name for use as a directory name.
  * Replaces non-alphanumeric characters (except hyphens) with hyphens.
  */
@@ -99,75 +94,9 @@ const slugify = (branchName: string): string =>
 		.replace(/^-|-$/g, "");
 
 /**
- * Configuration file name for project-specific settings.
- * Located at the project root (e.g., `/path/to/repo/.laborer.json`).
- */
-const CONFIG_FILE = ".laborer.json";
-
-/**
  * Module-level log annotation for structured logging.
  */
 const logPrefix = "WorkspaceProvider";
-
-/**
- * Shape of the `.laborer.json` project configuration file.
- * Currently only supports `setupScripts` — an array of shell commands
- * to execute in the worktree after creation.
- */
-interface LaborerConfig {
-	readonly setupScripts?: readonly string[];
-}
-
-/**
- * Read and parse the `.laborer.json` config file from a project root.
- * Returns an empty config if the file doesn't exist or is invalid JSON.
- * Logs a warning if the file exists but can't be parsed.
- */
-const readProjectConfig = (
-	repoPath: string
-): Effect.Effect<LaborerConfig, never> => {
-	const configPath = join(repoPath, CONFIG_FILE);
-
-	return Effect.gen(function* () {
-		if (!existsSync(configPath)) {
-			return {} as LaborerConfig;
-		}
-
-		const content = yield* Effect.try({
-			try: () => readFileSync(configPath, "utf-8"),
-			catch: (error) => error,
-		}).pipe(
-			Effect.catchAll((error) =>
-				Effect.gen(function* () {
-					yield* Effect.logWarning(
-						`Failed to read ${CONFIG_FILE}: ${String(error)}`
-					).pipe(Effect.annotateLogs("module", logPrefix));
-					return "" as string;
-				})
-			)
-		);
-
-		if (content.length === 0) {
-			return {} as LaborerConfig;
-		}
-
-		const parsed = yield* Effect.try({
-			try: () => JSON.parse(content) as LaborerConfig,
-			catch: (error) => error,
-		}).pipe(
-			Effect.catchAll((error) =>
-				Effect.gen(function* () {
-					yield* Effect.logWarning(
-						`Failed to parse ${CONFIG_FILE}: ${String(error)}`
-					).pipe(Effect.annotateLogs("module", logPrefix));
-					return {} as LaborerConfig;
-				})
-			)
-		);
-
-		return parsed;
-	});
-};
 
 /**
  * Result of running a single setup script.
@@ -272,28 +201,26 @@ type SetupResult =
 	  };
 
 /**
- * Run setup scripts from the project config in the worktree directory.
+ * Run setup scripts in the worktree directory.
  * Returns a SetupResult indicating success or failure with details.
  * Does nothing (returns Success) if no scripts are configured.
  *
- * @param repoPath - Path to the project repo (for reading .laborer.json)
+ * @param scripts - Setup scripts resolved from ConfigService
  * @param worktreePath - Directory to execute scripts in
  * @param env - Environment variables to inject (PORT, etc.)
  */
 const runProjectSetupScripts = (
-	repoPath: string,
+	scripts: readonly string[],
 	worktreePath: string,
 	env: Record<string, string>
 ): Effect.Effect<SetupResult, RpcError> =>
 	Effect.gen(function* () {
-		const config = yield* readProjectConfig(repoPath);
-
-		if (config.setupScripts === undefined || config.setupScripts.length === 0) {
+		if (scripts.length === 0) {
 			return { _tag: "Success" } as SetupResult;
 		}
 
 		const scriptResults = yield* executeSetupScripts(
-			config.setupScripts,
+			scripts,
 			worktreePath,
 			env
 		);
@@ -319,7 +246,7 @@ const runProjectSetupScripts = (
 		}
 
 		yield* Effect.logInfo(
-			`All ${config.setupScripts.length} setup script(s) completed successfully`
+			`All ${scripts.length} setup script(s) completed successfully`
 		).pipe(Effect.annotateLogs("module", logPrefix));
 
 		return { _tag: "Success" } as SetupResult;
@@ -884,11 +811,18 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 			const { store } = yield* LaborerStore;
 			const portAllocator = yield* PortAllocator;
 			const registry = yield* ProjectRegistry;
+			const configService = yield* ConfigService;
 
 			const createWorktree = Effect.fn("WorkspaceProvider.createWorktree")(
 				function* (projectId: string, branchName?: string, taskId?: string) {
 					// 1. Validate the project exists and get its repo path
 					const project = yield* registry.getProject(projectId);
+
+					// 1b. Resolve config for worktree location + setup scripts
+					const resolvedConfig = yield* configService.resolveConfig(
+						project.repoPath,
+						project.name
+					);
 
 					// 2. Generate or validate branch name
 					const resolvedBranch =
@@ -949,11 +883,11 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 					// 4. Allocate a port for this workspace
 					const port = yield* portAllocator.allocate();
 
-					// 5. Compute worktree path
-					const worktreeDir = resolve(project.repoPath, WORKTREE_DIR);
+					// 5. Compute worktree path from resolved config
+					const worktreeDir = resolvedConfig.worktreeDir.value;
 					const worktreePath = join(worktreeDir, slugify(resolvedBranch));
 
-					// 6. Ensure the .worktrees directory exists
+					// 6. Ensure the resolved worktree directory exists
 					yield* Effect.tryPromise({
 						try: async () => {
 							const proc = Bun.spawn(["mkdir", "-p", worktreeDir], {
@@ -1075,7 +1009,7 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 					const id = crypto.randomUUID();
 					const createdAt = new Date().toISOString();
 
-					// 10. Run setup scripts from .laborer.json (Issue #35, #37)
+					// 10. Run setup scripts from resolved config (Issue #35, #37, #156)
 					// Scripts run in the worktree directory with workspace env vars
 					// injected. If any script fails, the workspace is fully rolled
 					// back: worktree removed, port freed, branch deleted.
@@ -1087,7 +1021,7 @@ class WorkspaceProvider extends Context.Tag("@laborer/WorkspaceProvider")<
 					};
 
 					const setupResult = yield* runProjectSetupScripts(
-						project.repoPath,
+						resolvedConfig.setupScripts.value,
 						worktreePath,
 						scriptEnv
 					);

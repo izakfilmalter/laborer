@@ -28,6 +28,7 @@ import { env } from "@laborer/env/server";
 import { LaborerRpcs } from "@laborer/shared/rpc";
 import { Effect, Layer } from "effect";
 import { LaborerRpcsLive } from "./rpc/handlers.js";
+import { ConfigService } from "./services/config-service.js";
 import { DiffService } from "./services/diff-service.js";
 import { LaborerStoreLive } from "./services/laborer-store.js";
 import { PortAllocator } from "./services/port-allocator.js";
@@ -104,6 +105,7 @@ const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	Layer.provide(DiffService.layer),
 	Layer.provide(TerminalClient.layer),
 	Layer.provide(WorkspaceProvider.layer),
+	Layer.provide(ConfigService.layer),
 	Layer.provide(ProjectRegistry.layer),
 	Layer.provide(PortAllocator.layer),
 	// --- Infrastructure layers ---

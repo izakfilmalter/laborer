@@ -3152,3 +3152,39 @@ Implemented `ConfigService.writeProjectConfig(projectRepoPath, updates)` to writ
 
 ### Issues unblocked
 - Issue #157 remains blocked only by #156 (`WorkspaceProvider — use ConfigService for worktree path + setup scripts`).
+
+---
+
+## Issue #156: WorkspaceProvider — use ConfigService for worktree path + setup scripts
+
+### Summary
+Completed the ConfigService migration in `WorkspaceProvider`: worktree paths and setup scripts now come from resolved `laborer.json` config, server layer wiring includes `ConfigService`, and user-facing setup-script guidance now references `laborer.json`.
+
+### Changes
+
+**Modified:**
+- `packages/server/src/services/workspace-provider.ts`
+  - Finished removing legacy `.worktrees`/dotfile assumptions in docs and comments.
+  - Confirmed worktree path is derived from `resolvedConfig.worktreeDir.value`.
+  - Confirmed setup scripts are sourced from `resolvedConfig.setupScripts.value`.
+
+- `packages/server/src/main.ts`
+  - Added `ConfigService.layer` to the server layer graph so `WorkspaceProvider` dependencies are fully provided at runtime.
+
+- `apps/web/src/components/create-workspace-form.tsx`
+  - Updated setup-script failure guidance text from `.laborer.json` to `laborer.json`.
+
+- `packages/server/src/services/config-service.ts`
+  - Updated service docs to consistently reference `laborer.json`.
+
+- `issues.md`
+  - Marked Issue #156 as done and updated summary table statuses (including #157 now ready).
+
+### Verification
+- `bun run -F @laborer/server test`: pass (93 tests)
+- `bun x ultracite check packages/server/src/services/workspace-provider.ts packages/server/src/services/config-service.ts packages/server/src/main.ts apps/web/src/components/create-workspace-form.tsx`: clean
+- `bun run -F @laborer/server check-types`: reports existing Effect TS plugin warnings/messages in untouched areas and exits non-zero
+- `bun run -F web check-types`: still fails on pre-existing `calendar.tsx` and `sonner.tsx` type errors
+
+### Issues unblocked
+- Issue #157 (`Config RPC endpoints + project settings modal`) is now Ready.

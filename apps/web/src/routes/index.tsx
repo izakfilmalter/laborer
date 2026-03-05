@@ -473,50 +473,50 @@ function HomeComponent() {
 	const { layout, panelActions, activePaneId, leafPaneIds } = usePanelLayout();
 
 	return (
-		<ResizablePanelGroup orientation="horizontal">
-			{/* Sidebar — project list, workspace list, health check */}
-			<ResizablePanel defaultSize="25%" maxSize="40%" minSize="15%">
-				<ScrollArea className="h-full">
-					<div className="grid gap-4 p-3">
-						<section>
-							<div className="mb-2 flex items-center justify-between">
-								<h2 className="font-medium text-sm">Projects</h2>
-								<AddProjectForm />
-							</div>
-							<ProjectList />
-						</section>
-						<section>
-							<div className="mb-2 flex items-center justify-between">
-								<h2 className="font-medium text-sm">Workspaces</h2>
-								<CreateWorkspaceForm />
-							</div>
-							<WorkspaceList />
-						</section>
-						<section className="rounded-lg border p-3">
-							<h2 className="mb-1 font-medium text-sm">Server Status</h2>
-							<p className="text-xs">
-								<Suspense
-									fallback={
-										<span className="text-muted-foreground">loading...</span>
-									}
-								>
-									<HealthCheckStatus />
-								</Suspense>
-							</p>
-						</section>
-					</div>
-				</ScrollArea>
-			</ResizablePanel>
+		<PanelActionsProvider activePaneId={activePaneId} value={panelActions}>
+			<ResizablePanelGroup orientation="horizontal">
+				{/* Sidebar — project list, workspace list, health check */}
+				<ResizablePanel defaultSize="25%" maxSize="40%" minSize="15%">
+					<ScrollArea className="h-full">
+						<div className="grid gap-4 p-3">
+							<section>
+								<div className="mb-2 flex items-center justify-between">
+									<h2 className="font-medium text-sm">Projects</h2>
+									<AddProjectForm />
+								</div>
+								<ProjectList />
+							</section>
+							<section>
+								<div className="mb-2 flex items-center justify-between">
+									<h2 className="font-medium text-sm">Workspaces</h2>
+									<CreateWorkspaceForm />
+								</div>
+								<WorkspaceList />
+							</section>
+							<section className="rounded-lg border p-3">
+								<h2 className="mb-1 font-medium text-sm">Server Status</h2>
+								<p className="text-xs">
+									<Suspense
+										fallback={
+											<span className="text-muted-foreground">loading...</span>
+										}
+									>
+										<HealthCheckStatus />
+									</Suspense>
+								</p>
+							</section>
+						</div>
+					</ScrollArea>
+				</ResizablePanel>
 
-			<ResizableHandle withHandle />
+				<ResizableHandle withHandle />
 
-			{/* Main content — Panel system */}
-			<ResizablePanel defaultSize="75%" minSize="40%">
-				<PanelActionsProvider activePaneId={activePaneId} value={panelActions}>
+				{/* Main content — Panel system */}
+				<ResizablePanel defaultSize="75%" minSize="40%">
 					<PanelHotkeys leafPaneIds={leafPaneIds} />
 					<PanelManager layout={layout} />
-				</PanelActionsProvider>
-			</ResizablePanel>
-		</ResizablePanelGroup>
+				</ResizablePanel>
+			</ResizablePanelGroup>
+		</PanelActionsProvider>
 	);
 }

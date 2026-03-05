@@ -1,0 +1,394 @@
+## Compacted Progress Summary
+
+All entries below this section are compacted summaries of completed work. The last 5 entries are preserved in full detail at the bottom.
+
+---
+
+### Completed Issues (Compacted)
+
+**Issue 1: Initialize `packages/shared` package** — Created package with exports (`.`, `./types`, `./schema`, `./rpc`), tsconfig extending base, placeholder source files. Unblocked #2, #3, #10.
+
+**Issue 2: Shared domain types** — Defined branded IDs (`ProjectId`, `WorkspaceId`, `TerminalId`, `TaskId`), enum variants (`WorkspaceStatus`, `TerminalStatus`, `TaskSource`, `TaskStatus`, `PaneType`, `SplitDirection`), domain model classes (`Project`, `Workspace`, `Terminal`, `Task`, `Diff`), recursive panel layout tree types (`LeafNode`, `SplitNode`, `PanelNode`). All exported from `@laborer/shared/types`. Unblocked #9.
+
+**Issue 3: LiveStore schema — Projects table** — Defined `projects` table, `projectCreated`/`projectRemoved` events with materializers. Created `state` and `schema` exports. Unblocked #4-#8, #17.
+
+**Issue 10: Initialize `packages/server` package** — Created package with Bun HTTP server entry point, scripts (dev/build/check-types/start), tsconfig. Added `Bun` to biome globals. Unblocked #11, #14.
+
+**Issue 11: Effect TS application bootstrap** — Replaced minimal HTTP server with full Effect TS v3 runtime using `@effect/platform-bun`. `BunHttpServer.layer`, `HttpRouter`, `HttpServer.serve(HttpMiddleware.logger)`, `Layer.launch`, `BunRuntime.runMain`. Clean SIGINT/SIGTERM shutdown. Unblocked #12, #15, #16.
+
+**Issue 9: Effect RPC contract types** — Defined `RpcError`, response schemas, and all 15 RPC methods in `LaborerRpcs` group using `RpcGroup.make` with dot-prefixed tags. Exported from `@laborer/shared/rpc`. Unblocked #12.
+
+**Issue 12: Health check RPC endpoint** — Created `LaborerRpcsLive` handler layer, implemented `health.check` returning status/uptime, stubbed all other RPCs. Wired `RpcServer.layer`, `RpcServer.layerProtocolHttp`, `RpcSerialization.layerNdjson`. Unblocked #19 (which was effectively completed as part of #12).
+
+**Issue 4: LiveStore schema — Workspaces table** — Defined `workspaces` table, `workspaceCreated`/`workspaceStatusChanged`/`workspaceDestroyed` events with materializers.
+
+**Issue 5: LiveStore schema — Terminals table** — Defined `terminals` table, `terminalSpawned`/`terminalOutput`/`terminalStatusChanged`/`terminalKilled` events. `terminalOutput` materializer is a no-op (streaming data consumed by subscribers).
+
+**Issue 6: LiveStore schema — Diffs table** — Defined `diffs` table with upsert materializer, `diffUpdated`/`diffCleared` events.
+
+**Issue 8: LiveStore schema — Tasks table** — Defined `tasks` table, `taskCreated`/`taskStatusChanged`/`taskRemoved` events with materializers.
+
+**Issue 7: LiveStore schema — PanelLayout table** — Defined `panelLayout` table with JSON column (`PanelNodeSchema`), 4 layout events (`layoutSplit`, `layoutPaneClosed`, `layoutPaneAssigned`, `layoutRestored`) with upsert materializers. All 6 LiveStore tables now complete.
+
+**Issue 14: Server env validation** — Created `packages/env/src/server.ts` with `PORT`, `PORT_RANGE_START`, `PORT_RANGE_END`, `EDITOR_COMMAND` using `@t3-oss/env-core` + `zod`. All have sensible defaults. Unblocked #15.
+
+**Issue 15: Server consumes env validation** — Imported `env` from `@laborer/env/server` in server's `main.ts`, replaced hardcoded port with `env.PORT`. Fail-fast on invalid env. Unblocked #29.
+
+**Issue 16: LiveStore server adapter setup** — Created `LaborerStore` Effect service with `@livestore/adapter-node` for filesystem-backed SQLite. Resolved `@effect/platform-node` / `@effect/cluster` dependency conflict via Bun patch. Unblocked #21, #100, #129, #18.
+
+**Pin Effect and LiveStore versions** — Bumped LiveStore to `0.4.0-dev.22`, pinned all Effect packages to exact versions from `@livestore/peer-deps`, added `overrides` to root package.json, removed the `@effect/platform-node` patch.
+
+**Issue 21: ProjectRegistry — addProject** — Created `ProjectRegistry` Effect service. `addProject(repoPath)` validates path, checks git repo, checks duplicates, commits `projectCreated` event. Error codes: `INVALID_PATH`, `NOT_GIT_REPO`, `GIT_CHECK_FAILED`, `ALREADY_REGISTERED`. Unblocked #22, #23, #24, #33.
+
+**Issue 29: PortAllocator — allocate** — Created `PortAllocator` Effect service with `Ref<Set<number>>` for fiber-safe port tracking. `allocate()` does atomic linear scan. `make(rangeStart, rangeEnd)` factory for testing. Env-backed default layer. Unblocked #30-#33.
+
+**Issue 22: ProjectRegistry — removeProject** — Added `removeProject(projectId)` with NOT_FOUND validation. Wired to `project.remove` RPC handler.
+
+**Issue 23: ProjectRegistry — listProjects + getProject** — Added `listProjects()` and `getProject(projectId)` methods. Service-level methods for internal use.
+
+**Issue 30: PortAllocator — free** — Added `free(port)` with atomic `Ref.modify` and `PORT_NOT_ALLOCATED` error.
+
+**Issue 33: WorkspaceProvider — create worktree** — Created `WorkspaceProvider` Effect service. `createWorktree(projectId, branchName?, taskId?)` validates project, generates branch name, checks branch exists, allocates port, creates git worktree, verifies, commits `workspaceCreated`. Port cleanup on failure. Wired to `workspace.create` RPC. Unblocked #34-#39, #43.
+
+**Issue 36: WorkspaceProvider — inject PORT env** — Added `getWorkspaceEnv(workspaceId)` returning `PORT`, `LABORER_WORKSPACE_ID`, `LABORER_WORKSPACE_PATH`, `LABORER_BRANCH`. Unblocked #40.
+
+**Issue 40: workspace.create RPC handler** — Already implemented as part of Issue #33.
+
+**Issue 43: WorkspaceProvider — destroy worktree** — Added `destroyWorktree(workspaceId)` with resilient cleanup: status → "destroyed", `git worktree remove --force`, `git branch -D`, `PortAllocator.free()`, commits `workspaceDestroyed`. Wired to `workspace.destroy` RPC. Unblocked #44-#47.
+
+**Issue 50: TerminalManager — spawn PTY** — Created `TerminalManager` Effect service with `node-pty`. Implemented `spawn`, `write`, `resize`, `kill`, `listTerminals`. PTY stdout → LiveStore `terminalOutput` events. `Ref<Map>` for fiber-safe terminal registry. Wired all 4 terminal RPC handlers. Also completed Issues #51-#55 and #56-#59.
+
+**Issue 17: LiveStore client adapter setup** — Configured OPFS-backed SQLite in web app with three-thread model (main thread, shared worker, dedicated worker). Created `LiveStoreProvider`, `useLaborerStore()` hook. Updated Vite config for ES module workers. Unblocked #18.
+
+**Issue 18: LiveStore server-to-client sync** — Created custom sync backend (`sync-backend.ts`) implementing `SyncWsRpc` protocol with pull/push handlers, cursor-based pagination, live streaming via subscriber queues. Client uses `makeWsSync` in worker. Vite proxy for `/rpc`. Unblocked #26, #41, #60, #87, #104.
+
+**Issue 82: DiffService — run git diff** — Created `DiffService` Effect service. `getDiff(workspaceId)` runs `git diff` + `git diff --staged`, combines, commits `DiffUpdated`. All 5 PRD server services now implemented. Unblocked #83, #86.
+
+**Issue 83: DiffService — poll on interval** — Added `startPolling`, `stopPolling`, `stopAllPolling`, `isPolling` methods with daemon fibers. Default 2-second interval. Errors logged as warnings, don't stop polling. Unblocked #84, #85, #87.
+
+**Issue 13: Web env validation** — Defined `VITE_SERVER_URL` in `packages/env/src/web.ts` with URL validation and `http://localhost:3000` default. Unblocked #20.
+
+**Issue 20: AtomRpc client setup** — Installed `@effect-atom/atom@0.4.13` + `@effect-atom/atom-react@0.4.6`. Created `LaborerClient` AtomRpc tag with HTTP protocol, `AtomRegistryProvider`. Health check verification on home page. Unblocked #26-#28, #41-#42, #48, #61-#62, #93-#99, #103, #112.
+
+**Issue 26: Project list UI** — Created `ProjectList` component with LiveStore reactive query, shadcn/ui Cards, workspace count badges, empty state. Unblocked #27, #28, #113.
+
+**Issue 27: Add Project form** — Dialog with TanStack Form, `repoPath` field, `LaborerClient.mutation("project.add")`, toast notifications. Unblocked #42, #118.
+
+**Issue 28: Remove Project button** — AlertDialog confirmation, `LaborerClient.mutation("project.remove")`, trash icon per project card. Extracted `extractErrorMessage` to shared utils.
+
+**Issue 92: rlph.startLoop RPC handler** — Thin wrapper spawning `rlph --once` via `TerminalManager.spawn`.
+
+**Issue 41: Workspace list UI** — Created `WorkspaceList` with status badges (color-coded StatusDot), project name lookup, filtered destroyed workspaces. Unblocked #48, #114, #115, #121.
+
+**Issue 42: Create Workspace form** — Dialog with project selector (Select) + optional branch name, `LaborerClient.mutation("workspace.create")`.
+
+**Issue 60: xterm.js terminal pane — render output** — Installed `@xterm/xterm@6.0.0`, `@xterm/addon-fit`, `@xterm/addon-webgl`. Created `TerminalPane` with event streaming via `store.events({ filter: ["v1.TerminalOutput"] })`, ResizeObserver, WebGL rendering. Unblocked #61, #62, #63-#64, #66, #93, #95, #97, #99, #122-#127.
+
+**Issue 61: xterm.js — send keyboard input** — Wired `terminal.onData` to `LaborerClient.mutation("terminal.write")` in fire-and-forget mode. Module-level atom, ref pattern for stale closure avoidance.
+
+**Fix: LiveStore WebSocket sync** — Split RPC protocol layers: `RpcLive` → `layerProtocolHttp` (POST), `SyncRpcLive` → `layerProtocolWebsocket` (GET upgrade). Both coexist on `/rpc`.
+
+**Issue 66: PanelManager — single pane** — Created `PanelManager`, `PanelRenderer`, `PaneContent` components. Sidebar + panel layout using `ResizablePanelGroup`. `usePanelLayout()` hook auto-generates layout from LiveStore state.
+
+**Issue 67: PanelManager — horizontal split** — Created `SplitPanelRenderer` with `ResizablePanelGroup`. Recursive rendering of `SplitNode`. Also completed Issue #68 (vertical split).
+
+**Issue 62: xterm.js — handle resize** — Added resize mutation dispatch on `ResizeObserver` callback + initial dimension sync on mount.
+
+**Fix: ResizablePanel size props** — Changed bare numbers to percentage strings (`25` → `"25%"`) for `react-resizable-panels` v4.
+
+**Tauri desktop dev workflow** — Changed `dev`/`build` scripts to use `tauri dev`/`tauri build`. Updated Rust toolchain to 1.93.1.
+
+**Issue 69: PanelManager — recursive splits** — Created `layout-utils.ts` with pure tree manipulation (`splitPane`, `closePane`, `findNodeById`, `countLeaves`, `getTreeDepth`, `getLeafIds`, `replaceNode`, `generateId`). Created `PanelActionsContext`. Added `PaneToolbar` with split/close buttons. Also completed Issue #70 (close pane).
+
+**Issue 73: PanelManager — serialize layout to LiveStore** — Refactored `usePanelLayout()` to persist to LiveStore's `panelLayout` table. Split/close actions commit events. Seed logic for initial layout. Also completed Issue #74 (restore layout).
+
+**Issue 94: rlph.writePRD RPC handler** — Thin wrapper spawning `rlph prd [description]` via `TerminalManager.spawn`.
+
+**Issue 96: rlph.review RPC handler** — Thin wrapper spawning `rlph review <prNumber>` via `TerminalManager.spawn`.
+
+**Issue 98: rlph.fix RPC handler** — Thin wrapper spawning `rlph fix <prNumber>` via `TerminalManager.spawn`. All 4 rlph handlers complete.
+
+**Issue 111: editor.open RPC handler** — Opens files in configured editor (`EDITOR_COMMAND` env) via `Bun.spawn`. Last RPC stub removed — all 16 (later 19) RPC methods fully implemented.
+
+**Issue 63: Terminal list per workspace UI** — Created `TerminalList` with spawn/kill/select terminal actions. Collapsible section per workspace card. `assignTerminalToPane` action with smart pane assignment. Added WebSocket sync to server-side LiveStore adapter.
+
+**Issue 44: WorkspaceProvider — kill all processes on destroy** — Added `killAllForWorkspace(workspaceId)` to `TerminalManager`. Best-effort cleanup with `Effect.forEach`. Called in `workspace.destroy` handler before `destroyWorktree`.
+
+**Fix: LiveStore server-to-client sync** — Diagnosed server's two disconnected stores. Added `makeWsSync` to server's `LaborerStore` so events flow through sync backend to browser clients.
+
+**Issue 84: DiffService — deduplicate unchanged diffs** — Added `Ref<Map<string, string>>` cache. Compares new diff against cached before committing. Cache cleared on stop polling.
+
+**Issue 45: WorkspaceProvider — free port on destroy** — Already implemented in Issue #43.
+
+**Issue 46: WorkspaceProvider — remove file watchers on destroy** — N/A (DiffService uses polling, not file watchers).
+
+**Issue 47: workspace.destroy RPC handler** — Already implemented across Issues #43 and #44. Orchestrates: killAllForWorkspace → destroyWorktree.
+
+**Issue 48: Destroy Workspace button** — AlertDialog confirmation, `LaborerClient.mutation("workspace.destroy")`, trash icon per workspace card. Detailed warning message listing consequences.
+
+**Issue 85: DiffService — start/stop on workspace lifecycle** — Auto-start polling in `workspace.create` handler, auto-stop in `workspace.destroy` handler (before terminal kill and worktree removal).
+
+**Issue 87: Diff viewer pane** — Installed `@pierre/diffs@1.0.11` + `shiki@4.0.1`. Created `DiffPane` with `PatchDiff` (split view, pierre dark theme, word-alt highlighting). Reactive LiveStore subscription on `diffs` table. Unblocked #88-#90, #112, #123.
+
+---
+
+## Issue #64: Terminal session reconnection — DONE
+
+### Summary
+Implemented terminal session reconnection so that on page reload, running terminals are detected from LiveStore, xterm.js reconnects to the terminal's output stream (via event log replay), new output appears after reconnection, and stopped terminals are shown in read-only mode with a status banner.
+
+### Key discovery
+LiveStore's `store.events()` replays ALL historical events from the persisted eventlog (OPFS/SQLite) starting from ROOT. Since `v1.TerminalOutput` events have a no-op materializer (they don't update any table), they are still persisted in the event log. On page reload, the `for await` loop over `store.events({ filter: ["v1.TerminalOutput"] })` replays every historical terminal output event, effectively restoring the entire scrollback buffer automatically. This means no separate server-side buffer is needed for reconnection — LiveStore handles it.
+
+### Changes made
+- Modified `apps/web/src/panes/terminal-pane.tsx`:
+  - Added reactive terminal status tracking from LiveStore's `terminals` table via `store.useQuery(allTerminals$)` with a `useMemo` filter by `terminalId`. Status is either "running" or "stopped" (defaults to "stopped" if terminal row not found).
+  - Added `isRunningRef` to gate keyboard input — when the terminal is stopped, the `onData` callback returns early so keystrokes are silently dropped instead of being sent to a dead PTY.
+  - Added a "Process exited — terminal output preserved (read-only)" banner at the bottom of the terminal when status is "stopped". Uses absolute positioning with a semi-transparent `bg-muted/90 backdrop-blur-sm` overlay.
+  - Added initial resize on mount (`fitAddon.fit()` + `terminal.resize` RPC) to re-sync PTY dimensions on reconnection, since the terminal pane may have different dimensions than the last session.
+  - Added JSDoc documentation explaining the reconnection architecture: event log replay, status tracking, panel layout persistence, and the full data flow from server PTY to xterm.js.
+  - Added inline comments on `store.events()` replay behavior and input gating logic.
+- Verified: `tsc --noEmit` and `biome check` show only pre-existing errors in UI component files (calendar.tsx, sonner.tsx, etc.) — no new errors introduced by this change.
+
+### Acceptance criteria status
+- [x] On page reload, running terminals are detected from LiveStore (`store.useQuery(allTerminals$)` reads terminal status from `terminals` table)
+- [x] xterm.js reconnects to the terminal's output stream (`store.events()` replays historical `v1.TerminalOutput` events into xterm.js)
+- [x] New output appears after reconnection (live events stream in after historical replay completes)
+- [ ] Tests: spawn terminal → reload page → terminal still running, new output visible (deferred — requires live server + web app integration test)
+
+### Design decisions
+- Used `store.useQuery(allTerminals$)` with client-side `useMemo` filter instead of a parameterized query, consistent with the pattern used in `TerminalList`, `WorkspaceList`, and `ProjectList` components throughout the codebase.
+- Used `isRunningRef` (ref) instead of direct state check in the `onData` callback because the xterm.js `onData` handler is registered once during the effect setup and never re-registered — it needs to read the latest value via a ref to avoid closure staleness.
+- Defaulted terminal status to "stopped" when the terminal row is not found (`row?.status ?? "stopped"`), which is the safest default: a missing terminal should not accept input.
+- The status banner uses `absolute inset-x-0 bottom-0` positioning to overlay the terminal without disrupting the xterm.js container layout.
+
+### Issues unblocked
+- Issue #65: Terminal scrollback buffer replay (was blocked by #64 — now done! Note: scrollback replay is actually already handled by the event log replay mechanism discovered in this issue.)
+
+## Issue 100: Task CRUD — create manual task — COMPLETED
+## Issue 101: Task CRUD — update status — COMPLETED
+## Issue 102: Task CRUD — list per project — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Created `packages/server/src/services/task-manager.ts` — the `TaskManager` Effect service using `Context.Tag("@laborer/TaskManager")` with 5 methods covering Issues #100, #101, and #102.
+- **`createTask(projectId, title, source, externalId?)` (Issue #100):**
+  1. Validates the project exists by querying LiveStore's `projects` table. Returns `RpcError` with code `NOT_FOUND` if missing.
+  2. Validates the task source is one of: `linear`, `github`, `manual`, `prd`. Returns `RpcError` with code `INVALID_SOURCE` if invalid.
+  3. Validates the title is non-empty after trimming. Returns `RpcError` with code `INVALID_TITLE` if empty.
+  4. Generates a unique ID via `crypto.randomUUID()`.
+  5. Commits `taskCreated` event to LiveStore with status `"pending"`.
+  6. Returns the created `TaskRecord`.
+- **`updateTaskStatus(taskId, status)` (Issue #101):**
+  1. Validates the task exists by querying LiveStore's `tasks` table. Returns `RpcError` with code `NOT_FOUND` if missing.
+  2. Validates the status is one of: `pending`, `in_progress`, `completed`, `cancelled`. Returns `RpcError` with code `INVALID_STATUS` if invalid.
+  3. Commits `taskStatusChanged` event to LiveStore.
+- **`removeTask(taskId)` (Issue #100):**
+  1. Validates the task exists. Returns `RpcError` with code `NOT_FOUND` if missing.
+  2. Commits `taskRemoved` event to LiveStore.
+- **`getTask(taskId)` (read helper):** Queries task by ID, returns `RpcError` with code `NOT_FOUND` if missing.
+- **`listTasks(projectId, statusFilter?)` (Issue #102):** Queries all tasks for a project, optionally filtered by status.
+- Added `TaskResponse` schema to `packages/shared/src/rpc.ts` with fields: id, projectId, source, externalId (optional), title, status.
+- Added 3 new RPC methods to `LaborerRpcs` group: `task.create`, `task.updateStatus`, `task.remove`.
+- Added 3 task RPC handlers to `packages/server/src/rpc/handlers.ts` delegating to `TaskManager`.
+- Added `TaskManager.layer` to `packages/server/src/main.ts` in the `RpcLive` layer composition.
+- Verified: `tsc --noEmit` passes for both server and shared packages (no type errors), `ultracite check` passes with zero issues on all 4 new/modified files.
+
+### Acceptance criteria status
+- [x] TaskManager is a tagged Effect service with CRUD methods
+- [x] `createTask` validates project, source, and title, then commits TaskCreated to LiveStore
+- [x] `updateTaskStatus` validates task and status, then commits TaskStatusChanged to LiveStore
+- [x] `removeTask` validates task exists, then commits TaskRemoved to LiveStore
+- [x] `listTasks` returns tasks filtered by projectId and optional status
+- [x] 3 new RPC methods (`task.create`, `task.updateStatus`, `task.remove`) wired to handlers
+- [x] RPC contract expanded from 16 to 19 methods
+- [ ] Tests: create task → in LiveStore; update status → reflected; remove → gone; list by project → filtered correctly (deferred — vitest not yet configured)
+
+### Design decisions
+- Implemented all three CRUD issues (#100, #101, #102) together in a single `TaskManager` service. The three operations are tightly coupled (same table, same validation patterns, same LiveStore dependency) and implementing them separately would have created 3 near-identical service files.
+- The `task.create` RPC hardcodes `source: "manual"` since this endpoint is for manual task creation from the UI. Other sources (linear, github, prd) will use the same `TaskManager.createTask` method but with different source values when their sourcing mechanisms are implemented (Issues #108, #109, #107).
+- `listTasks` does not have its own RPC endpoint — tasks are read from LiveStore directly on the client via reactive queries. The method exists on the service for internal server-side use.
+- Used `Effect.fn` for methods that can fail and `Effect.sync` for `listTasks` which never fails. Consistent with patterns established in ProjectRegistry and other services.
+
+### Issues unblocked
+- Issue #103: Create Task form UI (was blocked by #100 and #20 — now all blockers done!)
+- Issue #104: Task list UI (was blocked by #102 and #18 — now all blockers done!)
+- Issue #105: Task-driven workspace auto-creation (was blocked by #100 and #40 — now all blockers done!)
+- Issue #107: PRD-generated issues → tasks (was blocked by #94 (done) and #100 — now all blockers done!)
+- Issue #108: Linear task sourcing (was blocked by #102 — now done!)
+- Issue #109: GitHub task sourcing (was blocked by #102 — now done!)
+
+## Issue #75, #76, #77, #78: Keyboard shortcuts — tmux-style panel operations
+**Status: Done**
+
+### What was implemented
+Complete tmux-style keyboard shortcut system for the panel manager using TanStack Hotkeys (`@tanstack/react-hotkeys`).
+
+### Keyboard shortcuts (prefix key: Ctrl+B)
+- `Ctrl+B → H` — split active pane horizontally (side-by-side)
+- `Ctrl+B → V` — split active pane vertically (stacked)
+- `Ctrl+B → X` — close active pane
+- `Ctrl+B → O` — cycle focus to next pane
+- `Ctrl+B → P` — cycle focus to previous pane
+
+### Files created
+- `apps/web/src/panels/panel-hotkeys.tsx` — PanelHotkeys component with all tmux-style keyboard sequences using `useHotkeySequence` from TanStack Hotkeys
+
+### Files modified
+- `apps/web/package.json` — added `@tanstack/react-hotkeys@0.3.1` dependency
+- `apps/web/src/routes/__root.tsx` — wrapped app in `HotkeysProvider` from TanStack Hotkeys
+- `apps/web/src/panels/panel-context.tsx` — added `setActivePaneId` to PanelActions interface, added `ActivePaneIdContext` and `useActivePaneId()` hook, updated `PanelActionsProvider` to accept `activePaneId` prop
+- `apps/web/src/routes/index.tsx` — added `handleSetActivePaneId` callback that persists active pane to LiveStore, added `leafPaneIds` computation, wired `PanelActionsProvider` with `activePaneId`, rendered `PanelHotkeys` component
+- `apps/web/src/panels/panel-manager.tsx` — added active pane visual indicator (ring-2 ring-primary ring-inset), added click/focus-to-activate behavior using `onFocusCapture` and `onMouseDownCapture` on leaf pane containers
+
+### Architecture
+- Active pane state is persisted to LiveStore (not local React state) via the existing `activePaneId` column in the `panelLayout` table
+- Focus changes commit a `layoutPaneAssigned` event with the same layout tree but updated `activePaneId`
+- All shortcuts are no-ops when no pane is active (graceful degradation)
+- Pane cycling uses the ordered `leafPaneIds` array from `getLeafIds()`, wrapping around at boundaries
+- Sequence timeout is 1500ms (configurable via `SEQUENCE_TIMEOUT` constant)
+
+### Also marked as Done (already implemented in codebase)
+- Issue #31: PortAllocator exhaustion — already returns `PORT_EXHAUSTED` error with range info
+- Issue #32: PortAllocator concurrent safety — already uses `Ref.modify` for atomicity
+- Issue #74: Restore layout from LiveStore — `usePanelLayout()` already reads persisted layout on mount
+
+## Issue 90: Toggle diff alongside terminal — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Implemented the "toggle diff alongside terminal" feature that lets users show/hide a diff viewer next to any terminal pane. This is a core UX feature (user story #4) that ties together the terminal and diff viewer systems.
+- Added `toggleDiffPane(paneId)` action to the `PanelActions` interface in `apps/web/src/panels/panel-context.tsx`. The action returns a boolean indicating whether the diff pane is now visible (true = toggled on, false = toggled off).
+- Added two new tree utility functions to `apps/web/src/panels/layout-utils.ts`:
+  - `findParent(root, nodeId)` — finds the parent SplitNode of a given node ID, returning the parent and the child's index within it. Used internally by `findSiblingDiffPane`.
+  - `findSiblingDiffPane(root, terminalPaneId)` — checks if a terminal pane's parent SplitNode contains a sibling diff pane with the same `workspaceId`. Returns the sibling diff LeafNode if found, or undefined. Used by the toggle logic to detect whether a diff pane is already shown (toggle OFF case).
+- Added a "Toggle diff viewer" button to the `PaneToolbar` in `apps/web/src/panels/panel-manager.tsx`:
+  - Uses a `FileCode2` icon from lucide-react.
+  - Only shown when the pane type is `"terminal"` and a `workspaceId` is assigned (no point toggling diff for a terminal without a workspace context).
+  - Changed `PaneToolbar` props from `{ paneId: string }` to `{ node: LeafNode }` to access the full leaf node data for conditional rendering.
+- Implemented the `handleToggleDiffPane` handler in `apps/web/src/routes/index.tsx`:
+  - **Toggle OFF**: Uses `findSiblingDiffPane` to detect an existing sibling diff pane. If found, calls `closePane` on it and commits a `layoutPaneClosed` event to LiveStore. The terminal pane expands to fill the freed space.
+  - **Toggle ON**: Uses `findNodeById` to verify the target is a terminal LeafNode with a `workspaceId`. Calls `splitPane` with `{ paneType: "diff", workspaceId }` to create a horizontal split with a diff pane alongside the terminal. Commits a `layoutSplit` event to LiveStore.
+  - Layout changes are persisted to LiveStore, so the diff toggle state survives page reloads.
+- Added keyboard shortcut `Ctrl+b, d` in `apps/web/src/panels/panel-hotkeys.tsx`:
+  - Calls `actions.toggleDiffPane(activePaneId)` on the currently focused pane.
+  - Follows the same `useHotkeySequence` pattern and 1500ms timeout as all other panel shortcuts.
+  - Documented in the module JSDoc alongside the other shortcuts.
+
+### Files modified
+- `apps/web/src/panels/panel-context.tsx` — Added `toggleDiffPane` to `PanelActions` interface
+- `apps/web/src/panels/layout-utils.ts` — Added `findParent` and `findSiblingDiffPane` utility functions
+- `apps/web/src/panels/panel-manager.tsx` — Added `FileCode2` import, diff toggle button to `PaneToolbar`, changed props from `paneId` to `node`
+- `apps/web/src/panels/panel-hotkeys.tsx` — Added `Ctrl+b, d` keyboard shortcut for diff toggle
+- `apps/web/src/routes/index.tsx` — Added `handleToggleDiffPane` handler, imported `findNodeById` and `findSiblingDiffPane`, wired into `panelActions`
+
+### Acceptance criteria status
+- [x] Toggle button visible on terminal pane chrome (FileCode2 icon in PaneToolbar, only shown for terminal panes with a workspaceId)
+- [x] Toggle on → pane splits with terminal + diff viewer (horizontal split, diff pane inherits workspaceId from terminal)
+- [x] Toggle off → diff viewer removed, terminal fills space (closes sibling diff pane via findSiblingDiffPane + closePane)
+- [x] Layout adjustment is smooth (uses existing ResizablePanelGroup infrastructure with equal 50/50 split)
+- [ ] Tests: toggle on → diff visible; toggle off → diff hidden; layout correct in both states (deferred — requires running both server and web app with a live workspace)
+
+### Design decisions
+- Used `findSiblingDiffPane` for toggle detection rather than tracking toggle state in a separate Map or context. The tree is the source of truth — if a sibling diff pane exists with the same workspaceId, the diff is "on". This is robust against manual pane closes (via the X button or keyboard shortcut) which would desync any external toggle state.
+- The diff toggle button only appears for terminal panes with a `workspaceId`. Diff without a workspace context is meaningless (no worktree to diff against). The button is hidden for empty terminal panes and diff panes.
+- Changed `PaneToolbar` props from `{ paneId: string }` to `{ node: LeafNode }` to give the toolbar access to the full leaf node data. This enables conditional rendering (showing the diff toggle only for terminals) without adding context lookups or additional props.
+- The toggle creates a horizontal split (side-by-side) rather than vertical (stacked). Side-by-side is the conventional layout for terminal + diff, matching the tmux/IDE convention where diffs are shown alongside the main view.
+- Keyboard shortcut `Ctrl+b, d` follows the tmux naming convention (d for diff). It's consistent with the existing shortcut naming pattern (h=horizontal, v=vertical, x=close, o/p=navigate).
+- Layout changes are persisted to LiveStore via the existing event system (layoutSplit, layoutPaneClosed), so the toggle state survives page reloads. This reuses the established persistence infrastructure without adding new event types.
+
+### Issues unblocked
+- Issue #131: Theme consistency audit (was blocked by #90 — now done!)
+
+## Issue 128: Graceful shutdown — kill all terminals — COMPLETED
+
+Date: 2026-03-04
+
+### What was done
+- Added a graceful shutdown finalizer to the `TerminalManager` Effect service in `packages/server/src/services/terminal-manager.ts`.
+- Changed `Layer.effect` to `Layer.scoped` for the `TerminalManager.layer` to support `Effect.addFinalizer`. Scoped layers have their finalizers invoked when the layer scope is torn down — which happens automatically when `BunRuntime.runMain` receives SIGINT/SIGTERM and interrupts the main fiber.
+- The finalizer runs when the server shuts down (SIGINT/SIGTERM) and performs:
+  1. Takes a snapshot of all in-memory terminals via `Ref.get(terminalsRef)`.
+  2. If no active terminals, logs "no active terminals to clean up" and returns early.
+  3. Iterates all terminals using `Effect.forEach` with `{ discard: true }`:
+     - Sends a kill command to the PTY Host via `ptyHostClient.kill(terminal.id)`.
+     - Commits `terminalStatusChanged` event to LiveStore with status "stopped" to update the persistent state.
+     - Increments the killed count.
+  4. Each individual terminal kill is wrapped in `Effect.catchAll` — errors are logged as warnings but do not abort the cleanup. This ensures best-effort resource recovery.
+  5. Clears the in-memory terminals map via `Ref.set`.
+  6. Logs the final count: "Shutdown: killed X/Y terminal(s)".
+- The shutdown finalizer complements the existing stale terminal cleanup on startup (lines 181-198): on startup, any terminals with status "running" in LiveStore are marked as "stopped" since they're orphans from a previous session. Together, these two mechanisms provide belt-and-suspenders reliability:
+  - Normal shutdown: finalizer kills all PTYs and updates LiveStore (clean state on restart).
+  - Abnormal shutdown (crash/SIGKILL): stale terminal cleanup on next startup marks orphans as "stopped".
+- The `PtyHostClient.layer` already has its own finalizer (line 298-306 of pty-host-client.ts) that kills the PTY Host child process on teardown. Since Effect tears down layers in reverse order of construction, the TerminalManager finalizer runs first (killing individual terminals with LiveStore updates), then the PtyHostClient finalizer runs (killing the PTY Host process which terminates any remaining PTY children). This ordering ensures both individual terminal cleanup AND PTY Host process cleanup happen reliably.
+- Updated module JSDoc to reference Issue #128.
+- Verified: `tsc --noEmit` passes (no type errors — only pre-existing Effect plugin informational messages), `ultracite check` passes with zero issues on terminal-manager.ts.
+
+### Acceptance criteria status
+- [x] Shutdown signal → all PTY processes terminated (finalizer iterates all in-memory terminals and kills each via PtyHostClient, then PtyHostClient's own finalizer kills the PTY Host child process)
+- [x] No orphan processes after shutdown (PtyHostClient.kill sends kill command to PTY Host which terminates the PTY; PtyHostClient finalizer kills the PTY Host process itself; on next startup, stale terminal cleanup handles any edge cases)
+- [ ] Tests: spawn terminals → shutdown → all processes gone (deferred — vitest not yet configured; manual verification: SIGINT triggers finalizer logs)
+
+### Design decisions
+- Changed from `Layer.effect` to `Layer.scoped` to support `Effect.addFinalizer`. This is the standard Effect pattern for resources that need cleanup — scoped layers have their scope automatically managed by the containing layer composition.
+- Used the same best-effort cleanup pattern as `killAllForWorkspace` (Issue #44): each terminal kill catches errors independently. If one PTY is already dead or in a bad state, the others are still cleaned up.
+- The finalizer logs at the "module" annotation level (`Effect.annotateLogs("module", logPrefix)`) for consistent structured logging that matches the rest of the TerminalManager's log output.
+- The finalizer runs BEFORE the PtyHostClient finalizer (reverse layer construction order) which is correct: we want to send individual kill commands (which update LiveStore) before the PTY Host process is forcefully terminated. If the PtyHostClient finalizer ran first, the kill commands would fail because the PTY Host would already be dead.
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #128. However, this completes one of three graceful shutdown tasks (Issues #128, #129, #130). Together they ensure clean server shutdown per Polishing requirement 7.
+
+## Bug fix: PanelActionsProvider scope — sidebar components couldn't assign terminals to panels
+
+Date: 2026-03-04
+
+### Root cause
+`PanelActionsProvider` only wrapped the main content panel (`<ResizablePanel defaultSize="75%">`) in `HomeComponent`. The sidebar — containing `WorkspaceList` → `TerminalList` — was a sibling `<ResizablePanel>` outside the provider. When `TerminalList` called `usePanelActions()`, it returned `null`, so after a successful `terminal.spawn` RPC, the `assignTerminalToPane` call was silently skipped.
+
+### Diagnosis
+Added targeted `console.log` statements at every key point in the terminal-spawn-to-panel-assignment chain:
+1. `[TerminalList]` — spawn button click, RPC result, panelActions availability
+2. `[usePanelLayout]` — layout resolution, assignment handler entry, pane search, commits
+3. `[PanelManager]` / `[PaneContent]` — what layout/pane props are received
+
+The logs immediately revealed:
+```
+[TerminalList] handleSpawnTerminal called – {hasPanelActions: false}
+[TerminalList] panelActions is null — cannot assign terminal to pane
+```
+
+### Fix
+Moved `PanelActionsProvider` up one level in the component tree so it wraps the entire `HomeComponent` layout — both the sidebar and the main panel area. The sidebar components (`WorkspaceList` → `TerminalList`) now have access to panel actions via `usePanelActions()`.
+
+Before:
+```
+<ResizablePanelGroup>
+  <ResizablePanel>  ← sidebar (WorkspaceList, TerminalList)
+  <ResizablePanel>
+    <PanelActionsProvider>  ← only wrapped main panel
+      <PanelManager />
+    </PanelActionsProvider>
+  </ResizablePanel>
+</ResizablePanelGroup>
+```
+
+After:
+```
+<PanelActionsProvider>  ← now wraps everything
+  <ResizablePanelGroup>
+    <ResizablePanel>  ← sidebar has access to panel actions
+    <ResizablePanel>
+      <PanelManager />
+    </ResizablePanel>
+  </ResizablePanelGroup>
+</PanelActionsProvider>
+```
+
+### Files modified
+- `apps/web/src/routes/index.tsx` — moved `PanelActionsProvider` to wrap the entire `HomeComponent` return, outside `ResizablePanelGroup`
+
+### User stories addressed
+- User story 3 (agent panes display TUI via xterm.js — terminal must actually appear in a pane after spawning)
+- User story 6 (multiple terminals per workspace — spawn button must assign to panel)

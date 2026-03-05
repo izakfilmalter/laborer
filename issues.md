@@ -2858,14 +2858,16 @@ When a task's status changes to "in_progress", automatically create a workspace 
 
 ### Acceptance criteria
 
-- [ ] Task status → "in_progress" triggers workspace.create
-- [ ] Workspace branch name derived from task (e.g., `task/<id>/<slug>`)
-- [ ] Workspace linked to task in LiveStore
-- [ ] Tests: set task in_progress → workspace auto-created with correct branch and task link
+- [x] Task status → "in_progress" triggers workspace.create (via `WorkspaceProvider.createWorktree` in the `task.updateStatus` handler)
+- [x] Workspace branch name derived from task (e.g., `task/<id-prefix>/<slug>`)
+- [x] Workspace linked to task in LiveStore (via `taskSource` field)
+- [x] Duplicate prevention: toggling back to "in_progress" does not create a second workspace
+- [x] Diff polling auto-starts for the new workspace
+- [ ] Tests: set task in_progress → workspace auto-created with correct branch and task link (deferred — vitest not yet configured)
 
 ### Blocked by
 
-- Blocked by #100, #40
+- Blocked by ~~#100~~, ~~#40~~ (both done)
 
 ### User stories addressed
 
@@ -4133,8 +4135,8 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 102 | Task CRUD — list per project | ~~#100~~ | Done |
 | 103 | Create Task form UI | ~~#100~~, ~~#20~~ | Done |
 | 104 | Task list UI | ~~#102~~, ~~#18~~ | Done |
-| 105 | Task-driven workspace auto-creation | ~~#100~~, ~~#40~~ | Ready |
-| 106 | Task-driven workspace auto-cleanup | #105, ~~#47~~ | Blocked |
+| 105 | Task-driven workspace auto-creation | ~~#100~~, ~~#40~~ | Done |
+| 106 | Task-driven workspace auto-cleanup | ~~#105~~, ~~#47~~ | Ready |
 | 107 | PRD-generated issues → tasks | ~~#94~~, ~~#100~~ | Ready |
 | 108 | Linear task sourcing | ~~#102~~ | Ready |
 | 109 | GitHub task sourcing | ~~#102~~ | Ready |

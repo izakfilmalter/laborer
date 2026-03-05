@@ -41,7 +41,7 @@ const startTime = Date.now();
  * - rlph.review: delegates to TerminalManager.spawn with `rlph review <prNumber>` (Issue #96)
  * - rlph.fix: delegates to TerminalManager.spawn with `rlph fix <prNumber>` (Issue #98)
  * - task.create: delegates to TaskManager.createTask (Issue #100)
- * - task.updateStatus: delegates to TaskManager.updateTaskStatus (Issue #101)
+ * - task.updateStatus: delegates to TaskManager.updateTaskStatus + auto-creates workspace on "in_progress" (Issue #101/#105)
  * - task.remove: delegates to TaskManager.removeTask (Issue #100)
  */
 export const LaborerRpcsLive = LaborerRpcs.toLayer(
@@ -275,6 +275,51 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 			Effect.gen(function* () {
 				const taskManager = yield* TaskManager;
 				yield* taskManager.updateTaskStatus(taskId, status);
+
+				// Issue #105: Task-driven workspace auto-creation.
+				// When a task transitions to "in_progress", automatically create a
+				// workspace for it — connecting the task lifecycle to the workspace
+				// lifecycle. The branch name is derived from the task title for
+				// discoverability in `git branch` output.
+				if (status === "in_progress") {
+					const { store } = yield* LaborerStore;
+					const task = yield* taskManager.getTask(taskId);
+
+					// Check if a workspace already exists for this task to prevent
+					// duplicate creation (e.g., if the task is toggled back to
+					// in_progress after being paused).
+					const existingWorkspaces = store.query(tables.workspaces);
+					const hasWorkspace = pipe(
+						existingWorkspaces,
+						Arr.findFirst(
+							(w) => w.taskSource === taskId && w.status !== "destroyed"
+						)
+					);
+
+					if (hasWorkspace._tag === "None") {
+						// Derive branch name from task: task/<id-prefix>/<slug>
+						const idPrefix = taskId.slice(0, 8);
+						const slug = task.title
+							.toLowerCase()
+							.replace(/[^a-z0-9]+/g, "-")
+							.replace(/^-|-$/g, "")
+							.slice(0, 40);
+						const branchName = `task/${idPrefix}/${slug}`;
+
+						const provider = yield* WorkspaceProvider;
+						const workspace = yield* provider.createWorktree(
+							task.projectId,
+							branchName,
+							taskId
+						);
+
+						// Auto-start diff polling (mirrors workspace.create handler)
+						if (workspace.status === "running") {
+							const diffService = yield* DiffService;
+							yield* diffService.startPolling(workspace.id);
+						}
+					}
+				}
 			}),
 		"task.remove": ({ taskId }) =>
 			Effect.gen(function* () {

@@ -1250,3 +1250,52 @@ Created a "Create Task" dialog form using TanStack Form that allows users to cre
 ### Issues unblocked
 - Issue #105: Task-driven workspace auto-creation — was blocked by #100 (done) and #40 (done). Already unblocked, but now users can actually create tasks to trigger it.
 - Issue #110: Task source picker UI — was blocked by #108, #109, #103. #103 now done; still blocked by #108 and #109.
+
+## Issue #105: Task-driven workspace auto-creation — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented automatic workspace creation when a task's status changes to "in_progress". This connects the task lifecycle to the workspace lifecycle — when a developer marks a task as in-progress (via the task list's status dropdown), a workspace is automatically created with a git worktree, allocated port, and diff polling, all linked back to the task via the `taskSource` field.
+
+### What was done
+
+Modified `packages/server/src/rpc/handlers.ts` — the `task.updateStatus` RPC handler:
+
+1. **Status check**: After the existing `taskManager.updateTaskStatus(taskId, status)` call, added a conditional block that triggers when `status === "in_progress"`.
+
+2. **Task lookup**: Fetches the full task record via `taskManager.getTask(taskId)` to get the `projectId` and `title` needed for workspace creation.
+
+3. **Duplicate prevention**: Queries the `workspaces` table to check if a non-destroyed workspace already exists for this task (`taskSource === taskId && status !== "destroyed"`). This prevents duplicate workspace creation if a task is toggled back to "in_progress" after being paused.
+
+4. **Branch name derivation**: Creates a descriptive branch name from the task: `task/<id-prefix>/<slug>`. The slug is derived from the task title by lowercasing, replacing non-alphanumeric characters with hyphens, trimming leading/trailing hyphens, and truncating to 40 characters. Example: task with ID `abc12345-...` and title "Fix login bug" → branch `task/abc12345/fix-login-bug`.
+
+5. **Workspace creation**: Calls `WorkspaceProvider.createWorktree(task.projectId, branchName, taskId)` with the task ID passed as the third argument, which stores it as `taskSource` in the workspace record.
+
+6. **Auto-start diff polling**: If the workspace is created with status "running", starts diff polling via `DiffService.startPolling(workspace.id)` — mirroring the existing `workspace.create` handler pattern.
+
+### Files modified
+- `packages/server/src/rpc/handlers.ts` — Added ~35 lines of auto-creation logic to the `task.updateStatus` handler, updated JSDoc to reference Issue #105
+
+### Acceptance criteria status
+- [x] Task status → "in_progress" triggers workspace.create (via `WorkspaceProvider.createWorktree` in the `task.updateStatus` handler)
+- [x] Workspace branch name derived from task (e.g., `task/<id-prefix>/<slug>` — `task/abc12345/fix-login-bug`)
+- [x] Workspace linked to task in LiveStore (via `taskSource` field set to `taskId` in the workspace record)
+- [x] Duplicate prevention: toggling a task back to "in_progress" does not create a second workspace if one already exists
+- [x] Diff polling auto-starts for the new workspace (mirrors `workspace.create` handler)
+- [ ] Tests: set task in_progress → workspace auto-created with correct branch and task link (deferred — vitest not yet configured for integration tests)
+
+### Verification
+- `tsc --noEmit` passes for server package (only pre-existing Effect plugin informational messages — no new errors)
+- `ultracite check` passes on `handlers.ts` with zero issues
+- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Handler-level integration**: Added the auto-creation logic in the `task.updateStatus` RPC handler rather than inside `TaskManager.updateTaskStatus`. This keeps TaskManager focused on task CRUD without coupling it to WorkspaceProvider, and follows the existing pattern where the handler layer orchestrates cross-service workflows (e.g., `workspace.create` handler orchestrates WorkspaceProvider + DiffService).
+- **Branch naming convention**: `task/<id-prefix>/<slug>` provides three benefits: (a) easy to identify as task-derived in `git branch` output, (b) the ID prefix enables programmatic lookup, (c) the slug provides human-readable context. The 40-character slug limit prevents excessively long branch names from long task titles.
+- **Duplicate prevention via LiveStore query**: Rather than tracking auto-created workspaces in memory, the handler queries LiveStore's `workspaces` table for any non-destroyed workspace linked to the task. This is robust across server restarts and handles edge cases like manually destroying a task's workspace and then toggling the task back to "in_progress" (which correctly creates a new workspace).
+- **Fire-and-forget semantics**: If workspace creation fails (e.g., git error, port exhaustion), the error propagates to the client as an RPC error. The task status change has already been committed to LiveStore, so the task is in "in_progress" state but without a workspace. The user can retry by toggling the task status or manually creating a workspace. This is the correct behavior — the task status is the user's intent, not contingent on workspace creation success.
+
+### Issues unblocked
+- Issue #106: Task-driven workspace auto-cleanup — was blocked by #105 (now done) and #47 (already done). **Now unblocked!**

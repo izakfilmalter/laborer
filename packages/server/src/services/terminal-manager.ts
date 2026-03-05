@@ -8,13 +8,15 @@
  *
  * Responsibilities:
  * - Terminal spawning via PtyHostClient in workspace directories
- * - I/O streaming: stdout → LiveStore events, stdin ← RPC writes
+ * - I/O streaming: stdout → LiveStore events + ring buffer + WebSocket subscribers
  * - Terminal resize (cols, rows) with SIGWINCH propagation
  * - Terminal kill + resource cleanup
  * - Terminal removal (kill if running + delete from LiveStore)
  * - Multiple terminals per workspace, each tracked by unique ID
  * - Workspace env var injection (PORT, LABORER_* vars)
  * - Graceful shutdown: kills all terminals on layer teardown (Issue #128)
+ * - Ring buffer per terminal for scrollback replay on WebSocket reconnection (Issue #139)
+ * - WebSocket subscriber management for dedicated terminal data channel (Issue #139)
  *
  * Usage:
  * ```ts
@@ -37,6 +39,7 @@
  * Issue #128: graceful shutdown — kills all terminals on SIGINT/SIGTERM
  * Issue #132: terminal.remove — kill (if running) + delete from LiveStore
  * Issue #133: terminal.restart — kill (if running) + respawn with same command, preserving terminal ID
+ * Issue #139: ring buffer per terminal + WebSocket subscriber management
  */
 
 import { RpcError } from "@laborer/shared/rpc";
@@ -50,13 +53,26 @@ import {
 	Ref,
 	Runtime,
 } from "effect";
+// biome-ignore lint/style/useImportType: RingBuffer is used as a value (new RingBuffer())
+import { RingBuffer } from "../lib/ring-buffer.js";
+import { LaborerStore } from "./laborer-store.js";
+import { PtyHostClient } from "./pty-host-client.js";
+import { WorkspaceProvider } from "./workspace-provider.js";
 
 /** Logger tag used for structured Effect.log output in this module. */
 const logPrefix = "TerminalManager";
 
-import { LaborerStore } from "./laborer-store.js";
-import { PtyHostClient } from "./pty-host-client.js";
-import { WorkspaceProvider } from "./workspace-provider.js";
+/** Default ring buffer capacity: 1MB per terminal for scrollback. */
+const RING_BUFFER_CAPACITY = 1_048_576;
+
+/** UTF-8 text encoder shared across all terminal data callbacks. */
+const textEncoder = new TextEncoder();
+
+/**
+ * Callback type for WebSocket subscribers to terminal output.
+ * Receives raw UTF-8 terminal output strings.
+ */
+type OutputSubscriber = (data: string) => void;
 
 /**
  * Internal representation of a managed terminal.
@@ -67,6 +83,19 @@ interface ManagedTerminal {
 	readonly command: string;
 	readonly id: string;
 	readonly workspaceId: string;
+}
+
+/**
+ * Per-terminal scrollback and subscriber state.
+ * Stored in a separate map from ManagedTerminal because ring buffers
+ * are retained after terminal exit (until explicit removal) while
+ * ManagedTerminal entries are removed on exit.
+ */
+interface TerminalBufferState {
+	/** Ring buffer storing the last RING_BUFFER_CAPACITY bytes of output. */
+	readonly ringBuffer: RingBuffer;
+	/** Active WebSocket subscribers receiving live terminal output. */
+	readonly subscribers: Map<string, OutputSubscriber>;
 }
 
 /**
@@ -183,6 +212,43 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 		readonly killAllForWorkspace: (
 			workspaceId: string
 		) => Effect.Effect<number, never>;
+
+		/**
+		 * Subscribe to live terminal output for a WebSocket connection.
+		 * Returns the ring buffer scrollback content and a subscription ID.
+		 * The subscriber callback receives raw UTF-8 strings for each data chunk.
+		 *
+		 * @param terminalId - ID of the terminal to subscribe to
+		 * @param callback - Called with each chunk of terminal output
+		 * @returns Scrollback content (string) and subscriber ID for unsubscribe
+		 */
+		readonly subscribe: (
+			terminalId: string,
+			callback: (data: string) => void
+		) => Effect.Effect<
+			{ readonly scrollback: string; readonly subscriberId: string },
+			RpcError
+		>;
+
+		/**
+		 * Unsubscribe a WebSocket connection from terminal output.
+		 *
+		 * @param terminalId - ID of the terminal
+		 * @param subscriberId - The subscription ID returned by subscribe
+		 */
+		readonly unsubscribe: (
+			terminalId: string,
+			subscriberId: string
+		) => Effect.Effect<void>;
+
+		/**
+		 * Check if a terminal exists (running or stopped) and has a ring buffer.
+		 * Used by the WebSocket endpoint to validate terminal IDs before upgrading.
+		 *
+		 * @param terminalId - ID of the terminal to check
+		 * @returns true if the terminal exists in LiveStore
+		 */
+		readonly terminalExists: (terminalId: string) => Effect.Effect<boolean>;
 	}
 >() {
 	static readonly layer = Layer.scoped(
@@ -201,6 +267,30 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 			// In-memory map of terminal ID → ManagedTerminal.
 			// Uses Effect.Ref for fiber-safe concurrent access.
 			const terminalsRef = yield* Ref.make(new Map<string, ManagedTerminal>());
+
+			// Per-terminal ring buffer and subscriber state.
+			// Stored separately from ManagedTerminal because ring buffers survive
+			// terminal exit (retained until explicit removal via terminal.remove)
+			// so reconnecting clients can see output of stopped terminals.
+			const bufferStates = new Map<string, TerminalBufferState>();
+
+			/**
+			 * Get or create a TerminalBufferState for a terminal.
+			 * Ring buffers are lazily created on first data or first subscribe.
+			 */
+			const getOrCreateBufferState = (
+				terminalId: string
+			): TerminalBufferState => {
+				let state = bufferStates.get(terminalId);
+				if (state === undefined) {
+					state = {
+						ringBuffer: new RingBuffer(RING_BUFFER_CAPACITY),
+						subscribers: new Map(),
+					};
+					bufferStates.set(terminalId, state);
+				}
+				return state;
+			};
 
 			// ---------------------------------------------------------------
 			// Stale terminal cleanup on startup (Issue #4)
@@ -323,7 +413,10 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 					return next;
 				});
 
-				// 6. Spawn PTY via PtyHostClient with data/exit callbacks
+				// 6. Initialize ring buffer for this terminal before spawning
+				const bufferState = getOrCreateBufferState(id);
+
+				// 7. Spawn PTY via PtyHostClient with data/exit callbacks
 				ptyHostClient.spawn(
 					{
 						id,
@@ -338,8 +431,23 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 						cols: 80,
 						rows: 24,
 					},
-					// Data callback: commit raw UTF-8 output to LiveStore
+					// Data callback: write to ring buffer, notify WebSocket subscribers,
+					// and commit to LiveStore (LiveStore commit will be removed in Issue #143)
 					(data: string) => {
+						// Write to ring buffer for scrollback replay
+						bufferState.ringBuffer.write(textEncoder.encode(data));
+
+						// Notify all active WebSocket subscribers
+						for (const subscriber of bufferState.subscribers.values()) {
+							try {
+								subscriber(data);
+							} catch {
+								// Subscriber errors (e.g., closed WebSocket) are silently
+								// ignored. The subscriber will be removed via unsubscribe.
+							}
+						}
+
+						// Commit to LiveStore (still needed until Issue #143 deprecates it)
 						store.commit(events.terminalOutput({ id, data }));
 					},
 					// Exit callback: update LiveStore status and clean up
@@ -360,6 +468,9 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 								return next;
 							})
 						);
+
+						// Note: ring buffer is NOT cleared on exit — retained until
+						// terminal.remove so reconnecting clients can see output.
 					}
 				);
 
@@ -481,6 +592,9 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				// 3. Delete the terminal row from LiveStore
 				store.commit(events.terminalRemoved({ id: terminalId }));
 
+				// 4. Clean up ring buffer and subscriber state
+				bufferStates.delete(terminalId);
+
 				yield* Effect.log(`Removed terminal ${terminalId}`).pipe(
 					Effect.annotateLogs("module", logPrefix)
 				);
@@ -576,7 +690,11 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 					return next;
 				});
 
-				// 7. Respawn PTY via PtyHostClient with same ID
+				// 7. Clear and re-initialize ring buffer for restart
+				const restartBufferState = getOrCreateBufferState(terminalId);
+				restartBufferState.ringBuffer.clear();
+
+				// 8. Respawn PTY via PtyHostClient with same ID
 				ptyHostClient.spawn(
 					{
 						id: terminalId,
@@ -591,8 +709,19 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 						cols: 80,
 						rows: 24,
 					},
-					// Data callback: commit raw UTF-8 output to LiveStore
+					// Data callback: write to ring buffer, notify WebSocket subscribers,
+					// and commit to LiveStore (still needed until Issue #143)
 					(data: string) => {
+						restartBufferState.ringBuffer.write(textEncoder.encode(data));
+
+						for (const subscriber of restartBufferState.subscribers.values()) {
+							try {
+								subscriber(data);
+							} catch {
+								// Subscriber errors silently ignored
+							}
+						}
+
 						store.commit(events.terminalOutput({ id: terminalId, data }));
 					},
 					// Exit callback
@@ -749,6 +878,67 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				})
 			);
 
+			// ---------------------------------------------------------------
+			// WebSocket subscriber management (Issue #139)
+			// ---------------------------------------------------------------
+
+			const subscribe = Effect.fn("TerminalManager.subscribe")(function* (
+				terminalId: string,
+				callback: (data: string) => void
+			) {
+				// Validate terminal exists in LiveStore (running OR stopped)
+				const allTerminals = store.query(tables.terminals);
+				const terminalOpt = pipe(
+					allTerminals,
+					Arr.findFirst((t) => t.id === terminalId)
+				);
+
+				if (terminalOpt._tag === "None") {
+					return yield* new RpcError({
+						message: `Terminal not found: ${terminalId}`,
+						code: "NOT_FOUND",
+					});
+				}
+
+				const state = getOrCreateBufferState(terminalId);
+				const subscriberId = crypto.randomUUID();
+				state.subscribers.set(subscriberId, callback);
+
+				// Read scrollback from ring buffer
+				const scrollback = state.ringBuffer.readString();
+
+				yield* Effect.log(
+					`WebSocket subscribed to terminal ${terminalId} (subscriber=${subscriberId}, scrollback=${scrollback.length} chars)`
+				).pipe(Effect.annotateLogs("module", logPrefix));
+
+				return { scrollback, subscriberId };
+			});
+
+			const unsubscribe = Effect.fn("TerminalManager.unsubscribe")(function* (
+				terminalId: string,
+				subscriberId: string
+			) {
+				const state = bufferStates.get(terminalId);
+				if (state !== undefined) {
+					state.subscribers.delete(subscriberId);
+				}
+
+				yield* Effect.log(
+					`WebSocket unsubscribed from terminal ${terminalId} (subscriber=${subscriberId})`
+				).pipe(Effect.annotateLogs("module", logPrefix));
+			});
+
+			const terminalExists = Effect.fn("TerminalManager.terminalExists")(
+				function* (terminalId: string) {
+					const allTerminals = store.query(tables.terminals);
+					const found = pipe(
+						allTerminals,
+						Arr.findFirst((t) => t.id === terminalId)
+					);
+					return found._tag === "Some";
+				}
+			);
+
 			return TerminalManager.of({
 				spawn,
 				write,
@@ -758,6 +948,9 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				restart,
 				listTerminals,
 				killAllForWorkspace,
+				subscribe,
+				unsubscribe,
+				terminalExists,
 			});
 		})
 	);

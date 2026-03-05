@@ -30,15 +30,23 @@ import { RpcSerialization, RpcServer } from "@effect/rpc";
 import { env } from "@laborer/env/server";
 import { LaborerRpcs } from "@laborer/shared/rpc";
 import { Effect, Layer } from "effect";
+import { TerminalWsRouteLive } from "./routes/terminal-ws.js";
 import { LaborerRpcsLive } from "./rpc/handlers.js";
+// biome-ignore lint/style/useImportType: Value imports needed for Layer.provide
 import { DiffService } from "./services/diff-service.js";
 import { LaborerStoreLive } from "./services/laborer-store.js";
+// biome-ignore lint/style/useImportType: Value imports needed for Layer.provide
 import { PortAllocator } from "./services/port-allocator.js";
+// biome-ignore lint/style/useImportType: Value imports needed for Layer.provide
 import { ProjectRegistry } from "./services/project-registry.js";
+// biome-ignore lint/style/useImportType: Value imports needed for Layer.provide
 import { PtyHostClient } from "./services/pty-host-client.js";
 import { SyncRpcLive } from "./services/sync-backend.js";
+// biome-ignore lint/style/useImportType: Value imports needed for Layer.provide
 import { TaskManager } from "./services/task-manager.js";
+// biome-ignore lint/style/useImportType: Value imports needed for Layer.provide
 import { TerminalManager } from "./services/terminal-manager.js";
+// biome-ignore lint/style/useImportType: Value imports needed for Layer.provide
 import { WorkspaceProvider } from "./services/workspace-provider.js";
 
 /**
@@ -71,23 +79,13 @@ const CustomRoutesLive = HttpRouter.Default.use((router) =>
  * singleton Context.Tag — the HTTP protocol registers POST /rpc and
  * the WebSocket protocol (for sync) registers GET /rpc on the same path.
  *
- * Services required by RPC handlers are provided here:
- * - ProjectRegistry (Issue #21)
- * - PortAllocator (Issue #29)
- * - WorkspaceProvider (Issue #33)
- * - TerminalManager (Issue #50)
- * - DiffService (Issue #82)
+ * Services required by RPC handlers are provided externally via
+ * SharedServicesLive in HttpLive so that TerminalManager and PtyHostClient
+ * are shared with TerminalWsRouteLive (Issue #139).
  */
 const RpcLive = RpcServer.layer(LaborerRpcs).pipe(
 	Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-	Layer.provide(LaborerRpcsLive),
-	Layer.provide(TaskManager.layer),
-	Layer.provide(DiffService.layer),
-	Layer.provide(TerminalManager.layer),
-	Layer.provide(PtyHostClient.layer),
-	Layer.provide(WorkspaceProvider.layer),
-	Layer.provide(ProjectRegistry.layer),
-	Layer.provide(PortAllocator.layer)
+	Layer.provide(LaborerRpcsLive)
 );
 
 /**
@@ -110,6 +108,7 @@ const ServerLive = BunHttpServer.layer({ port: env.PORT });
  * Layer composition:
  *   HttpRouter.Default.serve() — serves the Default router with logging middleware
  *   + CustomRoutesLive — adds GET / to the router
+ *   + TerminalWsRouteLive — adds GET /terminal WebSocket endpoint (Issue #139)
  *   + RpcLive — Laborer RPC handling (POST /rpc via layerProtocolHttp)
  *   + SyncRpcLive — LiveStore sync RPC handler (GET /rpc via layerProtocolWebsocket)
  *   + RpcSerialization.layerJson — wire format for RPC messages (JSON for sync compat)
@@ -119,12 +118,27 @@ const ServerLive = BunHttpServer.layer({ port: env.PORT });
  * Each RPC group has its own Protocol layer: LaborerRpcs uses HTTP (POST)
  * and SyncWsRpc uses WebSocket (GET). Both register on /rpc but with
  * different HTTP methods, so they coexist on the Default router.
+ *
+ * TerminalWsRouteLive registers GET /terminal for WebSocket terminal I/O.
+ * It shares TerminalManager and PtyHostClient with RpcLive.
  */
 const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	HttpServer.withLogAddress,
+	// --- Route layers (consume services from below) ---
 	Layer.provide(CustomRoutesLive),
+	Layer.provide(TerminalWsRouteLive),
 	Layer.provide(RpcLive),
 	Layer.provide(SyncRpcLive),
+	// --- Shared service layers (available to all route layers) ---
+	// Order matters: later provides feed dependencies to earlier provides.
+	Layer.provide(TaskManager.layer),
+	Layer.provide(DiffService.layer),
+	Layer.provide(TerminalManager.layer),
+	Layer.provide(WorkspaceProvider.layer),
+	Layer.provide(PtyHostClient.layer),
+	Layer.provide(ProjectRegistry.layer),
+	Layer.provide(PortAllocator.layer),
+	// --- Infrastructure layers ---
 	Layer.provide(RpcSerialization.layerJson),
 	Layer.provide(LaborerStoreLive),
 	Layer.provide(ServerLive)

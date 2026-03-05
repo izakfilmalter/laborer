@@ -4167,9 +4167,9 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 136 | IPC buffer optimization (O(n²) → array) | None | Ready |
 | 137 | PTY data coalescing (5ms timer) | None | Ready |
 | 138 | Ring buffer data structure + unit tests | None | Done |
-| 139 | Terminal WebSocket endpoint + ring buffer | ~~#135~~, ~~#138~~ | Ready |
-| 140 | Web client terminal pane: WebSocket data path | #139 | Blocked |
-| 141 | Character-count flow control (server side) | #137, #139 | Blocked |
+| 139 | Terminal WebSocket endpoint + ring buffer | ~~#135~~, ~~#138~~ | Done |
+| 140 | Web client terminal pane: WebSocket data path | ~~#139~~ | Ready |
+| 141 | Character-count flow control (server side) | #137, ~~#139~~ | Blocked |
 | 142 | Client-side flow control acks | #140, #141 | Blocked |
 | 143 | Deprecate terminalOutput from LiveStore hot path | #140 | Blocked |
 | 144 | Resize flushes coalesced buffer + flow control reset | #141, #142 | Blocked |

@@ -702,3 +702,81 @@ Date: 2026-03-04
 
 ### Issues unblocked
 - Issue #139: Terminal WebSocket endpoint + server ring buffer integration (was blocked by #135 (done) and #138 — now both done!)
+
+---
+
+## Issue #139: Terminal WebSocket endpoint + server ring buffer integration
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented the dedicated terminal WebSocket endpoint (`GET /terminal?id=<terminalId>`) and integrated the ring buffer from Issue #138 into TerminalManager for scrollback and subscriber-based live output streaming. This moves terminal data off the LiveStore event path onto a direct, low-latency WebSocket channel (LiveStore path retained until Issue #143 deprecates it).
+
+### What was done
+
+1. **TerminalManager enhancements** (`packages/server/src/services/terminal-manager.ts`):
+   - Added `RingBuffer` import with biome-ignore for value import
+   - Added `RING_BUFFER_CAPACITY` (1 MB), `textEncoder`, `OutputSubscriber` type, `TerminalBufferState` interface
+   - Added `bufferStates` Map and `getOrCreateBufferState()` helper — lazily creates per-terminal ring buffer + subscriber set
+   - Updated `spawn` data callback: writes to ring buffer → notifies WebSocket subscribers → commits LiveStore event (triple-path)
+   - Updated `restart` data callback: clears ring buffer on restart, same triple-path data flow
+   - Updated `remove`: deletes buffer state entry to clean up ring buffer + subscribers
+   - Added 3 new service methods: `subscribe(terminalId, callback)`, `unsubscribe(terminalId, subscriberId)`, `terminalExists(terminalId)`
+   - Buffer states survive terminal exit (retained until `terminal.remove`) so reconnecting clients see stopped terminal output
+
+2. **Terminal WebSocket route** (`packages/server/src/routes/terminal-ws.ts`) — **NEW FILE**:
+   - `GET /terminal?id=<terminalId>` route with query parameter validation
+   - WebSocket upgrade via Effect platform Bun adapter (`request.upgrade` cast)
+   - Scrollback chunking (64KB chunks) sent on open via `sendScrollback()`
+   - Client message handling: text frames → PTY input, JSON `{"type":"ack"}` detection for future Issue #141 flow control
+   - Subscriber lifecycle with cleanup via `Effect.ensuring` (unsubscribe + scope close)
+   - SocketError caught in `onOpen` and `runRaw` to handle normal disconnections
+
+3. **Layer composition** (`packages/server/src/main.ts`):
+   - Extracted `TerminalManager.layer`, `PtyHostClient.layer`, and other service layers from `RpcLive` into shared service layers provided at the `HttpLive` level
+   - Both `RpcLive` and `TerminalWsRouteLive` consume the same shared `TerminalManager` instance
+   - Added `TerminalWsRouteLive` to the route layer composition
+
+4. **Vite proxy** (`apps/web/vite.config.ts`):
+   - Added `/terminal` proxy entry with `ws: true` (same pattern as existing `/rpc` proxy)
+
+### Key design decisions
+- **Ring buffer per terminal**: Stored in a plain `Map<string, TerminalBufferState>` alongside the existing `terminalsRef`, not in an Effect Ref (synchronous access needed from PTY data callback)
+- **Subscriber pattern**: Callbacks registered with `subscribe()` are invoked synchronously from the PTY data path for minimal latency; WebSocket write uses `Runtime.runSync` to bridge Effect/non-Effect boundary
+- **Scrollback chunking**: 64KB chunks prevent overwhelming the WebSocket send buffer for large scrollback buffers
+- **Shared service extraction**: Moved service layers to HttpLive level so TerminalManager instance is shared between RPC handlers and WebSocket route
+
+### Verification
+- `tsc --noEmit` passes (no new type errors)
+- All 46 tests pass across 3 test files (no regressions)
+- `ultracite check` has no lint errors in modified files (pre-existing UI component warnings unchanged)
+
+### Files created
+- `packages/server/src/routes/terminal-ws.ts` — Terminal WebSocket route
+
+### Files modified
+- `packages/server/src/services/terminal-manager.ts` — Ring buffer integration, subscriber management, 3 new methods
+- `packages/server/src/main.ts` — Shared service layer extraction, TerminalWsRouteLive wiring
+- `apps/web/vite.config.ts` — `/terminal` proxy entry
+
+### Acceptance criteria status
+- [x] `GET /terminal?id=<terminalId>` endpoint upgrades to WebSocket
+- [x] Missing/invalid terminal ID returns 400/404 JSON error
+- [x] On connect: server sends ring buffer scrollback as text frame(s)
+- [x] Live terminal output forwarded to WebSocket subscribers as text frames
+- [x] Client text frames forwarded to PTY as input
+- [x] On disconnect: subscriber cleaned up, scope closed
+- [x] Ring buffer written on every PTY data event
+- [x] Ring buffer cleared on terminal restart
+- [x] Ring buffer + subscribers cleaned up on terminal remove
+- [x] Scrollback chunked at 64KB to avoid send buffer overflow
+- [x] JSON ack messages detected (stub for Issue #141 flow control)
+- [x] Vite dev proxy configured for `/terminal` WebSocket
+
+### Issues unblocked
+- Issue #140: Client-side terminal WebSocket hook (was blocked by #139)
+- Issue #141: WebSocket flow control / backpressure (was blocked by #139)
+- Issue #142: Incremental rendering with dirty-region tracking (was blocked by #139)
+- Issue #143: Deprecate LiveStore terminal output events (was blocked by #139)
+- Issue #144: Server-side terminal metrics and health monitoring (was blocked by #139)

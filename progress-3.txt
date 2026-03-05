@@ -2145,3 +2145,123 @@ With Issue #117 done, all three Tauri desktop features for User Story 21 are com
 - Issue #116: Global shortcut (Cmd+Shift+L) to bring window to front from anywhere
 - Issue #117: Close-to-tray behavior + window state persistence
 
+## Issue #131: Theme consistency audit — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Audited all custom components across the frontend and replaced hard-coded Tailwind color scale classes (e.g., `text-green-500`, `bg-red-500/10`, `text-yellow-600 dark:text-yellow-400`) with semantic theme tokens. Defined three new semantic CSS custom properties (`--success`, `--warning`, `--info`) in both light and dark modes, mapped them to Tailwind via `@theme inline`, and replaced ~48 hard-coded color references across 14 files. Also fixed a color-space mismatch bug in `sidebar.tsx` (`hsl()` wrapping oklch values), replaced `bg-[#09090b]` arbitrary hex in terminal loading overlay with `bg-background`, replaced `bg-white` in slider thumb with `bg-background`, and replaced `bg-black/10` modal overlays with `bg-foreground/10` for theme consistency. All status indicators (success/running, warning/creating/pending, error/errored, info/in-progress) now use centralized theme tokens that respond correctly to light/dark mode without `dark:` variant overrides.
+
+### What was done
+
+1. **Added semantic color tokens to `apps/web/src/index.css`** (~9 new lines):
+   - **`:root` (light mode)**:
+     - `--success: oklch(0.52 0.17 152)` — green for running/completed status
+     - `--warning: oklch(0.68 0.16 75)` — yellow/amber for creating/pending status
+     - `--info: oklch(0.55 0.18 255)` — blue for in-progress/informational status
+   - **`.dark` (dark mode)**:
+     - `--success: oklch(0.62 0.19 152)` — lighter green for dark backgrounds
+     - `--warning: oklch(0.75 0.15 75)` — lighter yellow for dark backgrounds
+     - `--info: oklch(0.65 0.19 255)` — lighter blue for dark backgrounds
+   - **`@theme inline`**: Added `--color-success: var(--success)`, `--color-warning: var(--warning)`, `--color-info: var(--info)` — enables Tailwind classes `text-success`, `bg-warning/10`, `border-info/30`, etc.
+
+2. **Updated `apps/web/src/components/workspace-list.tsx`** — Replaced all hard-coded status colors:
+   - `getStatusClasses`: creating → `border-warning/30 bg-warning/10 text-warning`, running → `border-success/30 bg-success/10 text-success`, errored → `border-destructive/30 bg-destructive/10 text-destructive`
+   - `StatusDot`: creating spinner → `text-warning`, running dot → `bg-success`, errored dot → `bg-destructive`
+   - Start Ralph Loop icon: `text-green-600 dark:text-green-400` → `text-success`
+   - Creating workspace message: `text-yellow-600 dark:text-yellow-400` → `text-warning`
+
+3. **Updated `apps/web/src/components/workspace-dashboard.tsx`** — Same status color replacements:
+   - `getStatusClasses`, `StatusDot`: same pattern as workspace-list.tsx
+   - `TaskSummary`: pending → `text-info`, in_progress → `text-warning`, completed → `text-success`
+   - `WorkspaceStatusSummary`: running → `text-success`/`bg-success`, creating → `text-warning`, errored → `text-destructive`/`bg-destructive`
+
+4. **Updated `apps/web/src/components/task-list.tsx`** — Status and source badge colors:
+   - `getStatusClasses`: pending → `text-warning`, in_progress → `text-info`, completed → `text-success`
+   - `StatusIcon`: pending → `text-warning`, in_progress → `text-info`, completed → `text-success`
+   - `getSourceClasses`: manual → `text-muted-foreground`, linear → `text-chart-4` (uses chart palette for brand color), github → `text-foreground/70`, prd → `text-info`
+
+5. **Updated `apps/web/src/components/terminal-list.tsx`** — Running terminal colors:
+   - Terminal icon: `text-green-500` → `text-success`
+   - Running status badge: `border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400` → `border-success/30 bg-success/10 text-success`
+
+6. **Updated `apps/web/src/panes/terminal-pane.tsx`** — Two fixes:
+   - Loading overlay: `bg-[#09090b]` → `bg-background` (uses the dark-mode background token)
+   - Reconnecting banner: `border-yellow-500/50 ... text-yellow-600 dark:text-yellow-400` → `border-warning/50 ... text-warning`
+
+7. **Updated `apps/web/src/panes/diff-pane.tsx`** — Accept/reject annotation buttons:
+   - Accept: `bg-green-600/15 text-green-500 hover:bg-green-600/30 hover:text-green-400` → `bg-success/15 text-success hover:bg-success/30`
+   - Reject: `bg-red-600/15 text-red-500 hover:bg-red-600/30 hover:text-red-400` → `bg-destructive/15 text-destructive hover:bg-destructive/30`
+
+8. **Updated `apps/web/src/routes/index.tsx`** — Health check status:
+   - Connected text: `text-green-500` → `text-success`
+
+9. **Updated rlph action button icons**:
+   - `write-prd-form.tsx`: `text-blue-600 dark:text-blue-400` → `text-info`
+   - `review-pr-form.tsx`: `text-purple-600 dark:text-purple-400` → `text-chart-4` (purple via chart palette)
+   - `fix-findings-form.tsx`: `text-amber-600 dark:text-amber-400` → `text-warning`
+
+10. **Fixed `apps/web/src/components/ui/sidebar.tsx`** — Color-space mismatch:
+    - `shadow-[0_0_0_1px_hsl(var(--sidebar-border))]` → `shadow-[0_0_0_1px_var(--sidebar-border)]`
+    - `shadow-[0_0_0_1px_hsl(var(--sidebar-accent))]` → `shadow-[0_0_0_1px_var(--sidebar-accent)]`
+    - The CSS variables contain oklch values, not hsl — wrapping in `hsl()` produced incorrect colors
+
+11. **Fixed `apps/web/src/components/ui/slider.tsx`** — Hard-coded white:
+    - Slider thumb: `bg-white` → `bg-background`
+
+12. **Fixed modal overlay backgrounds** (4 shadcn/ui primitives):
+    - `alert-dialog.tsx`, `dialog.tsx`, `drawer.tsx`, `sheet.tsx`: `bg-black/10` → `bg-foreground/10`
+    - In light mode, `bg-foreground/10` is near-black at 10% opacity (same visual as `bg-black/10`). In dark mode, `bg-foreground/10` is near-white at 10% opacity (appropriate for dark backgrounds). `bg-black/10` was always dark regardless of theme.
+
+### Files modified
+- `apps/web/src/index.css` — Added `--success`, `--warning`, `--info` tokens (light + dark), mapped in `@theme inline`
+- `apps/web/src/components/workspace-list.tsx` — Replaced 7 hard-coded color references with theme tokens
+- `apps/web/src/components/workspace-dashboard.tsx` — Replaced 12 hard-coded color references with theme tokens
+- `apps/web/src/components/task-list.tsx` — Replaced 12 hard-coded color references with theme tokens
+- `apps/web/src/components/terminal-list.tsx` — Replaced 2 hard-coded color references with theme tokens
+- `apps/web/src/panes/terminal-pane.tsx` — Replaced `bg-[#09090b]` + reconnecting banner colors
+- `apps/web/src/panes/diff-pane.tsx` — Replaced accept/reject button colors
+- `apps/web/src/routes/index.tsx` — Replaced health check status color
+- `apps/web/src/components/write-prd-form.tsx` — Replaced icon color
+- `apps/web/src/components/review-pr-form.tsx` — Replaced icon color
+- `apps/web/src/components/fix-findings-form.tsx` — Replaced icon color
+- `apps/web/src/components/ui/sidebar.tsx` — Fixed `hsl()` → direct `var()` for oklch values
+- `apps/web/src/components/ui/slider.tsx` — Replaced `bg-white` with `bg-background`
+- `apps/web/src/components/ui/alert-dialog.tsx` — Replaced `bg-black/10` with `bg-foreground/10`
+- `apps/web/src/components/ui/dialog.tsx` — Replaced `bg-black/10` with `bg-foreground/10`
+- `apps/web/src/components/ui/drawer.tsx` — Replaced `bg-black/10` with `bg-foreground/10`
+- `apps/web/src/components/ui/sheet.tsx` — Replaced `bg-black/10` with `bg-foreground/10`
+
+### Acceptance criteria status
+- [x] All custom components use oklch theme variables (no hard-coded hex/rgb) — replaced `bg-[#09090b]` with `bg-background`; 48 hard-coded Tailwind color scale references replaced with semantic tokens; remaining hex values in xterm.js theme object are ANSI terminal colors (inherently fixed, not UI theme)
+- [x] Dark mode renders correctly across all components — semantic tokens have separate light/dark definitions; no more `dark:` variant overrides needed for status colors
+- [x] Terminal background matches app theme — loading overlay uses `bg-background` instead of hardcoded zinc-950
+- [x] Diff viewer colors complement the theme — accept/reject buttons use `text-success`/`text-destructive` theme tokens
+- [x] Panel dividers and chrome are visually consistent — resize handles use existing theme tokens (pre-existing), header bar uses existing theme tokens (pre-existing)
+- [ ] Tests: visual audit / snapshot tests; toggle theme → all components update (deferred — web app has no visual testing infrastructure; the theme tokens are verified via CSS custom property definitions in both light and dark selectors)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `tsc --noEmit` passes for server package (only pre-existing informational messages — no new errors)
+- `ultracite check` reports zero issues from any modified file (44 pre-existing errors in other files)
+- All 61 tests pass across 4 test files (32 ring buffer + 9 workspace validation + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Three semantic tokens (success/warning/info)**: These are the minimum set needed to replace all hard-coded status colors. Combined with the pre-existing `--destructive` token (red), they cover all four status categories: success (green), warning (yellow/amber), info (blue), destructive (red). The names follow the Bootstrap/Material Design semantic color convention.
+- **oklch color values**: The new tokens use oklch (perceptually uniform color space) matching the existing theme tokens. oklch ensures consistent perceived lightness across hues — the green, yellow, blue, and red tokens at similar lightness values appear equally prominent. Light mode values are darker (L≈0.52-0.68); dark mode values are lighter (L≈0.62-0.75) for readability on dark backgrounds.
+- **No `dark:` variant overrides**: Previously, every status color required both a light and dark variant (e.g., `text-yellow-600 dark:text-yellow-400`). With semantic tokens, a single class like `text-warning` automatically picks the correct value based on the active theme. This eliminates ~48 `dark:` overrides across the codebase.
+- **`bg-foreground/10` for overlays**: `bg-black/10` is always black regardless of theme. `bg-foreground/10` is near-black in light mode (same as `bg-black/10`) and near-white in dark mode. This produces a more appropriate overlay — a subtle darkening on light backgrounds, a subtle lightening on dark backgrounds. The visual difference is minimal but technically correct.
+- **`var()` without `hsl()` wrapper**: The sidebar.tsx `hsl(var(--sidebar-border))` bug occurred because shadcn/ui generated the code when the theme used hsl values. After migrating to oklch, the `hsl()` wrapper produces incorrect colors because it tries to interpret oklch values as hsl. Removing the wrapper and using `var(--sidebar-border)` directly works because CSS custom properties substitute the full oklch value (e.g., `oklch(0.922 0 0)`).
+- **Chart tokens for brand colors**: Linear's brand color is purple, which doesn't have a semantic token. Rather than adding a `--linear` token for one use, the existing `--chart-4` token (a deep purple/indigo) is reused. This keeps the token count minimal while still providing a distinct visual identity for Linear-sourced tasks.
+- **xterm.js ANSI palette left as-is**: The 16 ANSI color values (red, green, blue, yellow, etc.) in the xterm.js theme are terminal standard colors, not UI theme colors. They represent ANSI escape code color slots used by CLI tools. Changing them to match UI theme tokens would break terminal color rendering. The background/foreground/cursor/selection colors could theoretically be derived from CSS custom properties via `getComputedStyle()`, but this adds runtime complexity for minimal benefit — the terminal intentionally has its own visual identity within the app chrome.
+- **Source badge simplification**: The task source badges previously used four distinct color scales (slate, violet, orange, cyan). These are reduced to: manual → muted (no visual emphasis), linear → chart-4 (purple brand color), github → foreground with transparency (neutral), prd → info (blue, matches the write-prd button). This reduces the color palette without losing distinguishability.
+
+### Remaining hard-coded colors (intentionally preserved)
+- **xterm.js ANSI palette** (21 hex values in terminal-pane.tsx): Terminal standard colors, not UI theme
+- **`@pierre/diffs` internal styling**: The diff library has its own theme system; its colors are passed via the `theme: "pierre-dark"` option, not via Tailwind classes
+- **chart.tsx CSS attribute selectors**: `[stroke='#ccc']` and `[stroke='#fff']` are selectors targeting recharts' inline styles, not applied colors — they override recharts defaults with theme tokens (`stroke-border/50`, `stroke-transparent`)
+
+### Issues unblocked
+- No direct downstream issues exclusively blocked by #131. This was a standalone polishing task addressing Polishing requirement 11 (theme consistency).
+

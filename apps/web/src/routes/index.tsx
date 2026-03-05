@@ -127,7 +127,7 @@ function HealthCheckStatus() {
 		return <span className="text-destructive">disconnected</span>;
 	}
 	return (
-		<span className="text-green-500">
+		<span className="text-success">
 			connected (uptime: {Math.round(result.value.uptime)}s)
 		</span>
 	);

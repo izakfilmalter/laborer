@@ -66,13 +66,13 @@ type WorkspaceStatus =
 function getStatusClasses(status: string): string {
 	switch (status as WorkspaceStatus) {
 		case "creating":
-			return "border-yellow-500/30 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400";
+			return "border-warning/30 bg-warning/10 text-warning";
 		case "running":
-			return "border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400";
+			return "border-success/30 bg-success/10 text-success";
 		case "stopped":
 			return "border-muted-foreground/30 bg-muted text-muted-foreground";
 		case "errored":
-			return "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400";
+			return "border-destructive/30 bg-destructive/10 text-destructive";
 		case "destroyed":
 			return "border-muted-foreground/20 bg-muted/50 text-muted-foreground/60";
 		default:
@@ -83,17 +83,17 @@ function getStatusClasses(status: string): string {
 /** Small colored status indicator dot / spinner. */
 function StatusDot({ status }: { readonly status: string }) {
 	if (status === "creating") {
-		return <Spinner className="size-3 text-yellow-600 dark:text-yellow-400" />;
+		return <Spinner className="size-3 text-warning" />;
 	}
 
 	const dotColor = (() => {
 		switch (status as WorkspaceStatus) {
 			case "running":
-				return "bg-green-500";
+				return "bg-success";
 			case "stopped":
 				return "bg-muted-foreground/50";
 			case "errored":
-				return "bg-red-500";
+				return "bg-destructive";
 			case "destroyed":
 				return "bg-muted-foreground/30";
 			default:
@@ -157,19 +157,19 @@ function TaskSummary({ counts }: { readonly counts: TaskCounts }) {
 	return (
 		<div className="flex flex-wrap gap-3 text-xs">
 			{counts.pending > 0 && (
-				<span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
+				<span className="flex items-center gap-1 text-info">
 					<CircleDot className="size-3" />
 					{counts.pending} pending
 				</span>
 			)}
 			{counts.in_progress > 0 && (
-				<span className="flex items-center gap-1 text-yellow-600 dark:text-yellow-400">
+				<span className="flex items-center gap-1 text-warning">
 					<Loader2 className="size-3" />
 					{counts.in_progress} in progress
 				</span>
 			)}
 			{counts.completed > 0 && (
-				<span className="flex items-center gap-1 text-green-600 dark:text-green-400">
+				<span className="flex items-center gap-1 text-success">
 					<CheckCircle2 className="size-3" />
 					{counts.completed} completed
 				</span>
@@ -235,20 +235,20 @@ function WorkspaceStatusSummary({
 	return (
 		<div className="flex flex-wrap gap-3 text-xs">
 			{counts.running > 0 && (
-				<span className="flex items-center gap-1 text-green-600 dark:text-green-400">
-					<span className="inline-block size-2 rounded-full bg-green-500" />
+				<span className="flex items-center gap-1 text-success">
+					<span className="inline-block size-2 rounded-full bg-success" />
 					{counts.running} running
 				</span>
 			)}
 			{counts.creating > 0 && (
-				<span className="flex items-center gap-1 text-yellow-600 dark:text-yellow-400">
+				<span className="flex items-center gap-1 text-warning">
 					<Spinner className="size-3" />
 					{counts.creating} creating
 				</span>
 			)}
 			{counts.errored > 0 && (
-				<span className="flex items-center gap-1 text-red-600 dark:text-red-400">
-					<span className="inline-block size-2 rounded-full bg-red-500" />
+				<span className="flex items-center gap-1 text-destructive">
+					<span className="inline-block size-2 rounded-full bg-destructive" />
 					{counts.errored} errored
 				</span>
 			)}

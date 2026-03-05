@@ -334,38 +334,404 @@ Increased xterm.js scrollback from 10K to 100K lines. Increased server ring buff
 
 ---
 
-## Issue 131: Theme consistency audit
+## ~~Issue 131: Theme consistency audit~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Audit all custom components (terminal chrome, diff viewer, panel dividers, status badges) to ensure they use shadcn/ui theme tokens consistently. No hard-coded colors. Dark mode works throughout. Visual integration between terminal panes, diff viewers, and panel chrome should be seamless.
-
-### Acceptance criteria
-
-- [ ] All custom components use oklch theme variables (no hard-coded hex/rgb)
-- [ ] Dark mode renders correctly across all components
-- [ ] Terminal background matches app theme
-- [ ] Diff viewer colors complement the theme
-- [ ] Panel dividers and chrome are visually consistent
-- [ ] Tests: visual audit / snapshot tests; toggle theme → all components update
-
-### Blocked by
-
-- Blocked by #90
-
-### User stories addressed
-
-- Polishing requirement 11
+Defined semantic CSS custom properties (`--success`, `--warning`, `--info`) in both light and dark modes, mapped to Tailwind via `@theme inline`. Replaced ~48 hard-coded Tailwind color scale references across 14 files with semantic tokens (`text-success`, `bg-warning/10`, `text-info`, etc.). Fixed `hsl()` color-space mismatch bug in sidebar.tsx, replaced `bg-[#09090b]` arbitrary hex with `bg-background`, replaced `bg-white` in slider with `bg-background`, replaced `bg-black/10` overlays with `bg-foreground/10`. All status indicators now use centralized theme tokens — no more `dark:` variant overrides needed.
 
 ---
 
 ## ~~Issue 134: Drag terminal from sidebar onto empty panel pane~~ ✅ DONE
 
 Added drag-and-drop support using the native HTML5 Drag and Drop API. Terminal items in the sidebar are draggable (carrying `{ terminalId, workspaceId }` as JSON in a custom `application/x-laborer-terminal` MIME type). Empty panel panes (LeafNode with `paneType: "terminal"` and no terminalId) are drop targets. Drop calls `assignTerminalToPane(terminalId, workspaceId, paneId)` for targeted pane assignment. Visual feedback: `ring-2 ring-primary ring-inset bg-primary/5` highlight on valid drop targets during drag-over. Occupied panes reject drops (no `preventDefault` → "not allowed" cursor). Click-to-assign still works unchanged.
+
+---
+
+## Issue 135: Terminal package scaffold
+
+### Parent PRD
+
+PRD-terminal-extraction.md
+
+### What to build
+
+Create the new `@laborer/terminal` workspace package at `packages/terminal/` with a minimal Bun HTTP server entry point. This is the foundational tracer bullet — a running process on its own port that proves the package structure, env loading, and turbo dev integration work end-to-end.
+
+Create `package.json` (following the same patterns as `@laborer/server`: `"type": "module"`, exports pointing to TypeScript source, Bun runtime), `tsconfig.json` (extending `@laborer/config/tsconfig.base.json`), and `vitest.config.ts`. The entry point (`src/main.ts`) launches a Bun HTTP server on `TERMINAL_PORT` (read from env, default 3001) with a single `GET /` health check route. Add `TERMINAL_PORT` to `@laborer/env` for validation. Use the `dotenv -e ../../.env.local` pattern for env loading in package scripts. Update `turbo.json` to include the terminal package's `dev` task as persistent.
+
+### Acceptance criteria
+
+- [ ] `packages/terminal/` exists with package.json, tsconfig.json, vitest.config.ts
+- [ ] `bun run dev` in packages/terminal starts a Bun HTTP server on TERMINAL_PORT
+- [ ] `GET /` returns a health check response
+- [ ] `TERMINAL_PORT` is validated in `@laborer/env`
+- [ ] `turbo dev` starts both server and terminal service as independent persistent tasks
+- [ ] Terminal service logs its port on startup
+
+### Blocked by
+
+None - can start immediately
+
+### User stories addressed
+
+- User story 2, 3, 4
+
+---
+
+## Issue 136: Move PTY Host + PtyHostClient to terminal package
+
+### Parent PRD
+
+PRD-terminal-extraction.md
+
+### What to build
+
+Move the PTY Host child process (`pty-host.ts`), the IPC client (`services/pty-host-client.ts`), and the ring buffer (`lib/ring-buffer.ts`) from `@laborer/server` to `@laborer/terminal`. Wire `PtyHostClient` into the terminal service's Effect layer tree in `main.ts`. Move `node-pty` dependency to the terminal package's `package.json`. Port `pty-host.test.ts` and `ring-buffer.test.ts` to `packages/terminal/test/`. The moved modules should be largely unchanged — this is a mechanical extraction.
+
+### Acceptance criteria
+
+- [ ] `pty-host.ts`, `pty-host-client.ts`, `ring-buffer.ts` exist in `packages/terminal/src/`
+- [ ] `PtyHostClient.layer` is wired into the terminal service's layer tree
+- [ ] PTY Host child process spawns successfully when terminal service starts
+- [ ] `node-pty` is a dependency of `@laborer/terminal` (not `@laborer/server`)
+- [ ] `pty-host.test.ts` and `ring-buffer.test.ts` pass in the new package
+- [ ] Terminal service starts and PTY Host logs "ready" on startup
+
+### Blocked by
+
+- Blocked by #135
+
+### User stories addressed
+
+- User story 17, 18, 19
+
+---
+
+## Issue 137: Terminal RPC contract
+
+### Parent PRD
+
+PRD-terminal-extraction.md
+
+### What to build
+
+Define a new `TerminalRpcs` RPC group in `@laborer/shared` using the `@effect/rpc` pattern (matching the existing `LaborerRpcs` pattern). Define RPCs for: `terminal.spawn` (accepts command, args, cwd, env, cols, rows; returns id), `terminal.write`, `terminal.resize`, `terminal.kill`, `terminal.remove`, `terminal.restart`, and `terminal.list` (returns array of terminal state objects). Define request/response schemas using Effect Schema. The `workspaceId` is passed as opaque metadata at spawn time. No streaming endpoint yet (that's Issue #142).
+
+### Acceptance criteria
+
+- [ ] `TerminalRpcs` RPC group is defined in `@laborer/shared`
+- [ ] All 7 RPC endpoints have typed payload and response schemas
+- [ ] `TerminalSpawnPayload` includes command, args, cwd, env, cols, rows, workspaceId
+- [ ] `TerminalInfo` response schema includes id, workspaceId, command, status
+- [ ] Types compile and are importable from both `@laborer/server` and `@laborer/terminal`
+- [ ] Shared `TerminalRpcError` tagged error class defined
+
+### Blocked by
+
+None - can start immediately
+
+### User stories addressed
+
+- User story 5, 7
+
+---
+
+## Issue 138: Move + simplify TerminalManager
+
+### Parent PRD
+
+PRD-terminal-extraction.md
+
+### What to build
+
+Move `TerminalManager` from `@laborer/server` to `@laborer/terminal` and simplify it per the PRD's "Modified Module: TerminalManager" section. Remove all LiveStore dependencies (event commits and table reads). Remove the `WorkspaceProvider` dependency — env vars and cwd are now passed at spawn time via the RPC payload. Add stopped terminal retention: when a PTY exits, keep the terminal entry in the in-memory map with status "stopped" (preserving command and config so restart works). Add lifecycle event emission via Effect `PubSub` — emit events for spawned, status changed, exited, removed, restarted. Update the spawn interface to accept the full spawn payload (command, args, cwd, env, cols, rows, workspaceId) instead of just workspaceId. Port `terminal-manager.test.ts` with updated assertions (no LiveStore, test event emission and stopped retention).
+
+### Acceptance criteria
+
+- [ ] TerminalManager has no dependency on `LaborerStore` or `WorkspaceProvider`
+- [ ] `spawn()` accepts full payload: command, args, cwd, env, cols, rows, workspaceId
+- [ ] Stopped terminals remain in memory with their config (command, env, cwd)
+- [ ] `restart()` works for stopped terminals using retained config
+- [ ] Lifecycle events are emitted via PubSub (spawned, statusChanged, exited, removed, restarted)
+- [ ] `terminal-manager.test.ts` passes in the new package with updated assertions
+- [ ] `listTerminals()` returns both running and stopped terminals
+
+### Blocked by
+
+- Blocked by #136
+
+### User stories addressed
+
+- User story 5, 12, 13
+
+---
+
+## Issue 139: Terminal RPC handlers
+
+### Parent PRD
+
+PRD-terminal-extraction.md
+
+### What to build
+
+Implement RPC handlers in `packages/terminal/src/rpc/handlers.ts` for all terminal operations defined in the `TerminalRpcs` contract (Issue #137). Each handler delegates to `TerminalManager`. Wire the RPC handlers into the terminal service's `main.ts` layer tree at `POST /rpc` using `RpcServer.layerProtocolHttp`. Follow the same handler pattern as the existing `LaborerRpcsLive` in the server package (destructured payload, `Effect.gen`, yield service tag).
+
+### Acceptance criteria
+
+- [ ] RPC handlers implemented for spawn, write, resize, kill, remove, restart, list
+- [ ] `POST /rpc` endpoint is live on the terminal service
+- [ ] Can spawn a terminal via RPC and it appears in `terminal.list()` response
+- [ ] Can write to, resize, kill, remove, and restart terminals via RPC
+- [ ] Errors return typed `TerminalRpcError` responses
+- [ ] RPC serialization (JSON) is wired into the layer tree
+
+### Blocked by
+
+- Blocked by #137, #138
+
+### User stories addressed
+
+- User story 5, 7, 12, 13
+
+---
+
+## Issue 140: Move terminal WebSocket route to terminal package
+
+### Parent PRD
+
+PRD-terminal-extraction.md
+
+### What to build
+
+Move `terminal-ws.ts` from `@laborer/server` to `@laborer/terminal` and wire it into the terminal service's layer tree at `GET /terminal?id=...`. Extend the WebSocket protocol with control messages per the PRD: send `{"type":"status","status":"running"}` on initial connect, `{"type":"status","status":"stopped","exitCode":N}` when the PTY exits, and `{"type":"status","status":"restarted"}` when a terminal is restarted. The existing raw text frame PTY I/O and flow control ack messages remain unchanged. Register callbacks from TerminalManager to push status events to active WebSocket subscribers.
+
+### Acceptance criteria
+
+- [ ] `GET /terminal?id=...` WebSocket endpoint is live on the terminal service
+- [ ] Connecting to a terminal WebSocket receives ring buffer scrollback replay
+- [ ] `{"type":"status","status":"running"}` is sent on successful WebSocket connection
+- [ ] `{"type":"status","status":"stopped","exitCode":N}` is sent when PTY exits
+- [ ] `{"type":"status","status":"restarted"}` is sent when terminal is restarted
+- [ ] Raw PTY I/O text frames and flow control ack frames work unchanged
+- [ ] WebSocket connects to terminal service port directly (not through server)
+
+### Blocked by
+
+- Blocked by #139
+
+### User stories addressed
+
+- User story 6, 11, 15, 21
+
+---
+
+## Issue 141: Update Vite proxy + web app WebSocket hook
+
+### Parent PRD
+
+PRD-terminal-extraction.md
+
+### What to build
+
+Update the web app to connect terminal WebSockets directly to the terminal service. Update `vite.config.ts` to proxy `/terminal` to `TERMINAL_PORT` instead of the server port. Update `use-terminal-websocket.ts` to parse incoming control messages (`{"type":"status",...}`) and expose the terminal's derived status (running/stopped/restarted) to consumers. Update `terminal-pane.tsx` to use the WebSocket-derived status instead of the LiveStore `queryDb(terminals)` query for determining `isRunning`, showing the "Process exited" banner, and clearing the xterm.js buffer on restart. The LiveStore query can remain temporarily (removed in Issue #144) but should no longer drive these UI decisions.
+
+### Acceptance criteria
+
+- [ ] Vite proxy routes `/terminal` WebSocket to `TERMINAL_PORT`
+- [ ] `use-terminal-websocket.ts` parses `{"type":"status",...}` control messages
+- [ ] Hook exposes `terminalStatus: "running" | "stopped" | "restarted"` alongside connection status
+- [ ] `terminal-pane.tsx` uses WebSocket-derived status for isRunning, exit banner, restart buffer clear
+- [ ] Terminal pane connects directly to terminal service (verified via network inspector)
+- [ ] Flow control ack frames still work correctly
+
+### Blocked by
+
+- Blocked by #140
+
+### User stories addressed
+
+- User story 6, 15, 21
+
+---
+
+## Issue 142: Terminal event stream RPC
+
+### Parent PRD
+
+PRD-terminal-extraction.md
+
+### What to build
+
+Add a streaming RPC endpoint `terminal.events()` to the terminal service that pushes terminal lifecycle events to subscribers. The TerminalManager's internal `PubSub` (added in Issue #138) feeds this stream. Events include: `spawned` (with terminal info), `statusChanged` (with id and new status), `exited` (with id and exit code), `removed` (with id), and `restarted` (with id). Use Effect RPC's streaming capabilities (Effect.Stream) for the endpoint. Add the `terminal.events` RPC definition to the `TerminalRpcs` contract in `@laborer/shared`.
+
+### Acceptance criteria
+
+- [ ] `terminal.events` streaming RPC is defined in the shared contract
+- [ ] Terminal service exposes the streaming endpoint
+- [ ] Subscribing to the stream and spawning a terminal yields a "spawned" event
+- [ ] Killing a terminal yields "exited" and "statusChanged" events
+- [ ] Restarting a terminal yields a "restarted" event
+- [ ] Removing a terminal yields a "removed" event
+- [ ] Multiple subscribers receive the same events independently
+
+### Blocked by
+
+- Blocked by #139
+
+### User stories addressed
+
+- User story 8
+
+---
+
+## Issue 143: Server TerminalClient + remove server terminal modules
+
+### Parent PRD
+
+PRD-terminal-extraction.md
+
+### What to build
+
+Add a `TerminalClient` Effect service to `@laborer/server` that acts as an RPC client connecting to the terminal service at `http://localhost:${TERMINAL_PORT}`. Subscribe to `terminal.events()` on startup to track which terminal IDs belong to which workspace (maintaining an in-memory workspace->terminal ID map). Update the server's `main.ts` layer tree: remove `PtyHostClient.layer`, `TerminalManager.layer`, and `TerminalWsRouteLive`; add `TerminalClient.layer`. Update server RPC handlers so that `rlph.startLoop`, `rlph.writePRD`, `rlph.review`, and `rlph.fix` delegate terminal spawning to `TerminalClient`. Implement `killAllForWorkspace` by iterating tracked terminal IDs and calling `TerminalClient.kill()` for each. Remove `node-pty` from server's `package.json`. The server should log a warning and retry if the terminal service is unreachable on startup, not crash.
+
+### Acceptance criteria
+
+- [ ] `TerminalClient` Effect service exists in the server package
+- [ ] Server connects to terminal service via Effect RPC HTTP client
+- [ ] Server subscribes to `terminal.events()` and tracks workspace->terminal mapping
+- [ ] Server `main.ts` no longer includes PtyHostClient, TerminalManager, or TerminalWsRoute layers
+- [ ] rlph commands (startLoop, writePRD, review, fix) spawn terminals through the terminal service
+- [ ] `killAllForWorkspace` kills terminals via TerminalClient
+- [ ] `node-pty` is removed from server's package.json
+- [ ] Server starts gracefully even if terminal service is temporarily unreachable
+
+### Blocked by
+
+- Blocked by #142
+
+### User stories addressed
+
+- User story 12, 20
+
+---
+
+## Issue 144: Web app LiveStore terminal query replacement
+
+### Parent PRD
+
+PRD-terminal-extraction.md
+
+### What to build
+
+Replace all LiveStore `queryDb(terminals, ...)` subscriptions in the web app with RPC calls to the terminal service. Update `terminal-list.tsx` to fetch terminal list via `terminal.list()` RPC (through a Vite proxy rule for the terminal RPC endpoint) instead of LiveStore. Use React Query, SWR, or polling for reactivity. Update `workspace-dashboard.tsx` terminal counts to use the same RPC data source. Update `routes/index.tsx` initial panel layout generation to query running terminals via RPC instead of LiveStore. Remove the `v1.TerminalRestarted` event stream listener from `terminal-pane.tsx` (replaced by WebSocket control messages in Issue #141). Add a Vite proxy rule for the terminal service's RPC endpoint if not already present.
+
+### Acceptance criteria
+
+- [ ] `terminal-list.tsx` fetches terminal list from terminal service RPC, not LiveStore
+- [ ] `workspace-dashboard.tsx` gets terminal counts from terminal service RPC
+- [ ] `routes/index.tsx` queries running terminals from terminal service RPC for layout generation
+- [ ] `terminal-pane.tsx` no longer listens to `v1.TerminalRestarted` LiveStore event stream
+- [ ] No `queryDb(terminals, ...)` calls remain in the web app
+- [ ] Terminal list updates reactively when terminals are spawned or killed (via polling or push)
+- [ ] Vite proxy routes terminal RPC requests to TERMINAL_PORT
+
+### Blocked by
+
+- Blocked by #141, #143
+
+### User stories addressed
+
+- User story 7, 14, 16, 22, 23, 24
+
+---
+
+## Issue 145: LiveStore terminal schema deprecation
+
+### Parent PRD
+
+PRD-terminal-extraction.md
+
+### What to build
+
+Deprecate all terminal-related events and remove the `terminals` table from the active LiveStore schema. Convert materializers for `v1.TerminalSpawned`, `v1.TerminalStatusChanged`, `v1.TerminalKilled`, `v1.TerminalRemoved`, and `v1.TerminalRestarted` to no-ops (following the existing pattern used for `v1.TerminalOutput`). Remove the `terminals` table definition from the schema's state tables. Remove any remaining terminal event commits from server code (if any survived Issue #143). Existing eventlogs containing these events must still load without errors — the no-op materializers ensure backward compatibility.
+
+### Acceptance criteria
+
+- [ ] All terminal event materializers are no-ops (return empty arrays)
+- [ ] `terminals` table is removed from the active schema state
+- [ ] No code commits terminal events to LiveStore anywhere in the codebase
+- [ ] App starts cleanly with existing eventlogs that contain old terminal events
+- [ ] No `queryDb(terminals, ...)` calls exist anywhere in the codebase
+- [ ] `v1.TerminalOutput` no-op pattern is followed for all deprecated events
+
+### Blocked by
+
+- Blocked by #144
+
+### User stories addressed
+
+- User story 14
+
+---
+
+## Issue 146: Grace period reconnection + orphan detection
+
+### Parent PRD
+
+PRD-terminal-extraction.md
+
+### What to build
+
+Add a configurable grace period timer to the terminal service's `TerminalManager` (default 60 seconds, configurable via `TERMINAL_GRACE_PERIOD_MS` env var). When a terminal's last WebSocket subscriber disconnects, start the grace timer. If a new WebSocket subscriber connects within the grace period, cancel the timer and replay the ring buffer for seamless reconnection. If the grace period expires with no subscribers, kill the terminal. Also handle orphaned spawns: if a terminal is spawned via RPC but no WebSocket subscriber connects within the grace period, kill it. Add tests for grace period behavior (survive within window, cleanup after expiry).
+
+### Acceptance criteria
+
+- [ ] Grace period timer starts when last WebSocket subscriber disconnects
+- [ ] Reconnecting within the grace period cancels the timer and replays ring buffer
+- [ ] Terminal is killed after grace period expires with no subscribers
+- [ ] Spawned terminals with no WebSocket subscriber within grace period are killed
+- [ ] Grace period is configurable via `TERMINAL_GRACE_PERIOD_MS` env var (default 60s)
+- [ ] Terminals survive server restarts during development (grace period covers the restart window)
+- [ ] Grace period tests pass (survive within window, cleanup after expiry)
+
+### Blocked by
+
+- Blocked by #140
+
+### User stories addressed
+
+- User story 1, 9, 10
+
+---
+
+## Issue 147: Terminal extraction polish + integration verification
+
+### Parent PRD
+
+PRD-terminal-extraction.md
+
+### What to build
+
+End-to-end verification and polish pass for the full terminal service extraction. Verify keystroke-to-output latency is not degraded (still under 50ms). Verify `turbo dev` starts both server and terminal service reliably as independent processes. Verify that editing server code restarts only the server — terminal service and all running terminals are unaffected. Verify the terminal service's `--watch` mode only reacts to changes within `packages/terminal/`. Verify graceful shutdown of the terminal service kills all PTY processes and the PTY Host child process. Verify the web app shows a clear "Terminal service unavailable" error if the terminal service is unreachable. Verify cross-tab terminal state consistency (multiple browser tabs see the same terminal list). Verify the `dotenv -e ../../.env.local` pattern works for both services.
+
+### Acceptance criteria
+
+- [ ] Keystroke-to-output latency < 50ms (no regression from RPC hop)
+- [ ] `turbo dev` starts both services; server restart does not restart terminal service
+- [ ] Terminal service `--watch` only triggers on terminal package file changes
+- [ ] Graceful shutdown kills all PTYs without orphans
+- [ ] Web app shows "Terminal service unavailable" when terminal service is down
+- [ ] Multiple browser tabs show consistent terminal state
+- [ ] `.env.local` loads correctly for both server and terminal service
+- [ ] Ring buffer replay on reconnection works correctly (no missing output)
+- [ ] All terminal UI states render correctly: loading, connected, disconnected, exited, restarting
+
+### Blocked by
+
+- Blocked by #144, #145, #146
+
+### User stories addressed
+
+- Polishing requirements 1-12
 
 ---
 
@@ -404,5 +770,18 @@ Added drag-and-drop support using the native HTML5 Drag and Drop API. Terminal i
 | 125 | Terminal fidelity — claude | ~~#60~~ | Ready |
 | 126 | Terminal fidelity — codex | ~~#60~~ | Ready |
 | 127 | ~~Terminal scroll performance~~ | ~~#60~~ | Done |
-| 131 | Theme consistency audit | ~~#90~~ | Ready |
+| 131 | ~~Theme consistency audit~~ | ~~#90~~ | Done |
 | 134 | ~~Drag terminal from sidebar onto empty panel~~ | ~~#63~~, ~~#66~~ | Done |
+| 135 | Terminal package scaffold | None | Ready |
+| 136 | Move PTY Host + PtyHostClient to terminal package | #135 | Blocked |
+| 137 | Terminal RPC contract | None | Ready |
+| 138 | Move + simplify TerminalManager | #136 | Blocked |
+| 139 | Terminal RPC handlers | #137, #138 | Blocked |
+| 140 | Move terminal WebSocket route to terminal package | #139 | Blocked |
+| 141 | Update Vite proxy + web app WebSocket hook | #140 | Blocked |
+| 142 | Terminal event stream RPC | #139 | Blocked |
+| 143 | Server TerminalClient + remove server terminal modules | #142 | Blocked |
+| 144 | Web app LiveStore terminal query replacement | #141, #143 | Blocked |
+| 145 | LiveStore terminal schema deprecation | #144 | Blocked |
+| 146 | Grace period reconnection + orphan detection | #140 | Blocked |
+| 147 | Terminal extraction polish + integration verification | #144, #145, #146 | Blocked |

@@ -97,11 +97,11 @@ const STATUS_OPTIONS: readonly {
 function getStatusClasses(status: string): string {
 	switch (status as TaskStatus) {
 		case "pending":
-			return "border-yellow-500/30 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400";
+			return "border-warning/30 bg-warning/10 text-warning";
 		case "in_progress":
-			return "border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400";
+			return "border-info/30 bg-info/10 text-info";
 		case "completed":
-			return "border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400";
+			return "border-success/30 bg-success/10 text-success";
 		case "cancelled":
 			return "border-muted-foreground/30 bg-muted text-muted-foreground";
 		default:
@@ -115,11 +115,11 @@ function getStatusClasses(status: string): string {
 function StatusIcon({ status }: { readonly status: string }) {
 	switch (status as TaskStatus) {
 		case "pending":
-			return <Circle className="size-3.5 text-yellow-500" />;
+			return <Circle className="size-3.5 text-warning" />;
 		case "in_progress":
-			return <Loader2 className="size-3.5 animate-spin text-blue-500" />;
+			return <Loader2 className="size-3.5 animate-spin text-info" />;
 		case "completed":
-			return <CheckCircle2 className="size-3.5 text-green-500" />;
+			return <CheckCircle2 className="size-3.5 text-success" />;
 		case "cancelled":
 			return <XCircle className="size-3.5 text-muted-foreground" />;
 		default:
@@ -133,13 +133,13 @@ function StatusIcon({ status }: { readonly status: string }) {
 function getSourceClasses(source: string): string {
 	switch (source as TaskSource) {
 		case "manual":
-			return "border-slate-500/30 bg-slate-500/10 text-slate-600 dark:text-slate-400";
+			return "border-muted-foreground/30 bg-muted text-muted-foreground";
 		case "linear":
-			return "border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400";
+			return "border-chart-4/30 bg-chart-4/10 text-chart-4";
 		case "github":
-			return "border-orange-500/30 bg-orange-500/10 text-orange-600 dark:text-orange-400";
+			return "border-foreground/20 bg-foreground/5 text-foreground/70";
 		case "prd":
-			return "border-cyan-500/30 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400";
+			return "border-info/30 bg-info/10 text-info";
 		default:
 			return "border-muted-foreground/30 bg-muted text-muted-foreground";
 	}

@@ -90,7 +90,7 @@ function ReviewPrForm({ workspaceId, onTerminalSpawned }: ReviewPrFormProps) {
 					/>
 				}
 			>
-				<Eye className="size-3.5 text-purple-600 dark:text-purple-400" />
+				<Eye className="size-3.5 text-chart-4" />
 			</DialogTrigger>
 			<DialogContent>
 				<DialogHeader>

@@ -91,7 +91,7 @@ function WritePrdForm({ workspaceId, onTerminalSpawned }: WritePrdFormProps) {
 					/>
 				}
 			>
-				<FileText className="size-3.5 text-blue-600 dark:text-blue-400" />
+				<FileText className="size-3.5 text-info" />
 			</DialogTrigger>
 			<DialogContent>
 				<DialogHeader>

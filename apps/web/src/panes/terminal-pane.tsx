@@ -570,7 +570,7 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
  */
 function TerminalLoadingOverlay() {
 	return (
-		<div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#09090b]">
+		<div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background">
 			<Spinner className="size-6 text-muted-foreground" />
 			<p className="text-muted-foreground text-sm">Starting terminal...</p>
 		</div>
@@ -589,7 +589,7 @@ function DisconnectedBanner() {
 /** Banner shown while the WebSocket is reconnecting. */
 function ReconnectingBanner() {
 	return (
-		<div className="absolute inset-x-0 top-0 border-yellow-500/50 border-b bg-yellow-500/10 px-3 py-1 text-center text-xs text-yellow-600 backdrop-blur-sm dark:text-yellow-400">
+		<div className="absolute inset-x-0 top-0 border-warning/50 border-b bg-warning/10 px-3 py-1 text-center text-warning text-xs backdrop-blur-sm">
 			Connecting...
 		</div>
 	);

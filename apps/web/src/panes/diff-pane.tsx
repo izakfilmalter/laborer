@@ -505,7 +505,7 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 				return (
 					<div className="flex items-center gap-0.5">
 						<button
-							className="inline-flex items-center gap-0.5 rounded bg-green-600/15 px-1.5 py-0.5 text-green-500 text-xs transition-colors hover:bg-green-600/30 hover:text-green-400"
+							className="inline-flex items-center gap-0.5 rounded bg-success/15 px-1.5 py-0.5 text-success text-xs transition-colors hover:bg-success/30"
 							onClick={(e) => {
 								e.stopPropagation();
 								handleHunkActionRef.current(
@@ -521,7 +521,7 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 							Accept
 						</button>
 						<button
-							className="inline-flex items-center gap-0.5 rounded bg-red-600/15 px-1.5 py-0.5 text-red-500 text-xs transition-colors hover:bg-red-600/30 hover:text-red-400"
+							className="inline-flex items-center gap-0.5 rounded bg-destructive/15 px-1.5 py-0.5 text-destructive text-xs transition-colors hover:bg-destructive/30"
 							onClick={(e) => {
 								e.stopPropagation();
 								handleHunkActionRef.current(

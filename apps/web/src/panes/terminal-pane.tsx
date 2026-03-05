@@ -40,6 +40,8 @@
  *   xterm.js processes them. When Ctrl+B is pressed, the handler
  *   returns `false` (letting the event bubble to `document` where
  *   TanStack Hotkeys catches it) and enters "prefix mode".
+ * - Cmd+W (Meta+W) is also returned `false` so the global close-pane
+ *   shortcut can run even when the terminal has focus.
  * - In prefix mode, the next keydown is also returned `false` so the
  *   action key (H, V, X, O, P, D) reaches TanStack Hotkeys.
  * - After the action key (or a 1500ms timeout matching SEQUENCE_TIMEOUT),
@@ -121,6 +123,20 @@ const terminalResizeMutation = LaborerClient.mutation("terminal.resize");
  * within this window, prefix mode exits and the terminal resumes normal input.
  */
 const PREFIX_MODE_TIMEOUT = 1500;
+
+const isExactMetaW = (event: KeyboardEvent): boolean =>
+	event.key === "w" &&
+	event.metaKey &&
+	!event.ctrlKey &&
+	!event.shiftKey &&
+	!event.altKey;
+
+const isExactCtrlB = (event: KeyboardEvent): boolean =>
+	event.key === "b" &&
+	event.ctrlKey &&
+	!event.shiftKey &&
+	!event.altKey &&
+	!event.metaKey;
 
 interface TerminalPaneProps {
 	/** The terminal ID to subscribe to for output events. */
@@ -387,15 +403,14 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 				return true;
 			}
 
+			// Let Cmd+W bubble so the global close-pane hotkey can run.
+			if (isExactMetaW(event)) {
+				return false;
+			}
+
 			// Check for Ctrl+B (the panel prefix key).
 			// Must be exactly Ctrl+B — not Ctrl+Shift+B, not Ctrl+Alt+B.
-			if (
-				event.key === "b" &&
-				event.ctrlKey &&
-				!event.shiftKey &&
-				!event.altKey &&
-				!event.metaKey
-			) {
+			if (isExactCtrlB(event)) {
 				// Enter prefix mode: the next keydown will also be passed
 				// through to TanStack Hotkeys.
 				prefixModeRef.current = true;

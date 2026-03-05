@@ -34,6 +34,7 @@
 
 import type { PanelNode } from "@laborer/shared/types";
 import { useHotkeySequence } from "@tanstack/react-hotkeys";
+import { useEffect } from "react";
 import type { NavigationDirection } from "@/panels/layout-utils";
 import { findPaneInDirection } from "@/panels/layout-utils";
 import { useActivePaneId, usePanelActions } from "@/panels/panel-context";
@@ -64,6 +65,26 @@ interface PanelHotkeysProps {
 function PanelHotkeys({ layout, leafPaneIds }: PanelHotkeysProps) {
 	const actions = usePanelActions();
 	const activePaneId = useActivePaneId();
+
+	// Cmd+W (Meta+W) should close panes, not the Tauri window.
+	// Capture at the window level so native close behavior is suppressed.
+	useEffect(() => {
+		const handleMetaW = (event: KeyboardEvent) => {
+			if (
+				event.metaKey &&
+				!event.ctrlKey &&
+				!event.altKey &&
+				event.key === "w"
+			) {
+				event.preventDefault();
+			}
+		};
+
+		window.addEventListener("keydown", handleMetaW);
+		return () => {
+			window.removeEventListener("keydown", handleMetaW);
+		};
+	}, []);
 
 	// Ctrl+b then h → split active pane horizontally
 	useHotkeySequence(
@@ -100,6 +121,14 @@ function PanelHotkeys({ layout, leafPaneIds }: PanelHotkeysProps) {
 		},
 		{ timeout: SEQUENCE_TIMEOUT }
 	);
+
+	// Cmd+w (Meta+W) → close active pane directly
+	useHotkeySequence(["Meta+W"], (event) => {
+		event.preventDefault();
+		if (actions && activePaneId) {
+			actions.closePane(activePaneId);
+		}
+	});
 
 	// Ctrl+b then o → cycle focus to next pane
 	useHotkeySequence(

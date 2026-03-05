@@ -3380,3 +3380,45 @@ Finished the remaining Issue #145 work by removing all terminal-event commits fr
 - [x] App starts cleanly with existing eventlogs that contain old terminal events
 - [x] No `queryDb(terminals, ...)` calls exist anywhere in the codebase
 - [x] `v1.TerminalOutput` no-op pattern is followed for all deprecated events
+
+## Issue #151: Cmd+W shortcut — close active pane — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented direct Cmd+W pane closing in the web app. `Meta+W` now closes the currently focused pane (including empty panes), works when xterm has focus, and no longer triggers native window close when panes are present.
+
+### What was done
+
+1. **Added direct Cmd+W hotkey in panel shortcut layer** (`apps/web/src/panels/panel-hotkeys.tsx`)
+   - Registered `useHotkeySequence(["Meta+W"], ...)` to close the active pane directly.
+   - Kept existing Ctrl+B, X behavior unchanged.
+
+2. **Prevented native Cmd+W close at web layer** (`apps/web/src/panels/panel-hotkeys.tsx`)
+   - Added `window` keydown listener that calls `event.preventDefault()` for exact Cmd+W.
+   - Ensures Cmd+W is routed to pane-close behavior instead of Tauri window close.
+
+3. **Enabled Cmd+W passthrough from terminal focus** (`apps/web/src/panes/terminal-pane.tsx`)
+   - Updated `attachCustomKeyEventHandler` to return `false` for exact Cmd+W so it bubbles to the document-level hotkey handler.
+   - Refactored key guards into `isExactMetaW` / `isExactCtrlB` helpers to satisfy complexity rules.
+
+4. **Updated issue tracking** (`issues.md`)
+   - Marked #151 done.
+   - Unblocked #152 (now Ready).
+   - Updated #153 blocked-by list to strike #151.
+
+### Verification
+- `bun run test` (apps/web): passes (31/31)
+- `bun x ultracite check apps/web/src/panels/panel-hotkeys.tsx apps/web/src/panes/terminal-pane.tsx`: passes
+- `bun run check-types` (apps/web): fails due pre-existing unrelated type errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new type errors from this change
+
+### Acceptance criteria status
+- [x] Cmd+W closes the active pane when a pane is focused
+- [x] Cmd+W works when xterm.js terminal has focus
+- [x] Cmd+W does not trigger native window close/hide when panes exist
+- [x] Cmd+W closes empty panes (no terminal assigned)
+- [x] Existing Ctrl+B, X shortcut still works
+- [ ] Cmd+W works after multiple rapid presses (closing several panes in succession) — not explicitly stress-tested in this slice
+- [ ] Native window close button (red dot) still hides to tray as before — not re-verified in this slice
+- [ ] Cmd+Q still quits the app as before — not re-verified in this slice

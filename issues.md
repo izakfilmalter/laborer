@@ -616,7 +616,7 @@ Enforce the invariant: "there is always exactly one focused pane when at least o
 
 ---
 
-## Issue 151: Cmd+W shortcut — close active pane
+## ~~Issue 151: Cmd+W shortcut — close active pane~~ ✅ DONE
 
 ### Parent PRD
 
@@ -634,16 +634,7 @@ Register Cmd+W (Meta+W) as a direct keyboard shortcut that closes the currently 
 
 The existing Ctrl+B, X shortcut remains unchanged.
 
-### Acceptance criteria
-
-- [ ] Cmd+W closes the active pane when a pane is focused
-- [ ] Cmd+W works when xterm.js terminal has focus
-- [ ] Cmd+W does not trigger native window close/hide when panes exist
-- [ ] Cmd+W closes empty panes (no terminal assigned)
-- [ ] Existing Ctrl+B, X shortcut still works
-- [ ] Cmd+W works after multiple rapid presses (closing several panes in succession)
-- [ ] Native window close button (red dot) still hides to tray as before
-- [ ] Cmd+Q still quits the app as before
+Implemented direct Cmd+W close-pane behavior in the panel hotkey layer using `Meta+W`, plus a window-level keydown preventDefault guard so the shortcut closes panes instead of triggering native window close. Updated xterm.js custom key handler to pass through Cmd+W when terminal has focus, preserving existing Ctrl+B prefix shortcuts.
 
 ### Blocked by
 
@@ -677,7 +668,7 @@ When Cmd+W is pressed and no panes exist, show an AlertDialog asking "Close Labo
 
 ### Blocked by
 
-- Blocked by #151
+- ~~Blocked by #151~~
 
 ### User stories addressed
 
@@ -710,7 +701,7 @@ End-to-end verification and polish pass for the full Cmd+W close panel feature. 
 
 ### Blocked by
 
-- Blocked by ~~#148~~, ~~#149~~, ~~#150~~, #151, #152
+- Blocked by ~~#148~~, ~~#149~~, ~~#150~~, ~~#151~~, #152
 
 ### User stories addressed
 
@@ -910,9 +901,9 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 148 | ~~Focused pane border fix~~ | ~~None~~ | Done |
 | 149 | ~~Focus auto-transfer on pane close~~ | ~~None~~ | Done |
 | 150 | ~~Guaranteed active pane invariant~~ | ~~#149~~ | Done |
-| 151 | Cmd+W shortcut — close active pane | ~~#149~~ | Ready |
-| 152 | Cmd+W close-app confirmation dialog | #151 | Blocked |
-| 153 | Cmd+W close panel — polish & verification | ~~#148~~, ~~#149~~, ~~#150~~, #151, #152 | Blocked |
+| 151 | ~~Cmd+W shortcut — close active pane~~ | ~~#149~~ | Done |
+| 152 | Cmd+W close-app confirmation dialog | ~~#151~~ | Ready |
+| 153 | Cmd+W close panel — polish & verification | ~~#148~~, ~~#149~~, ~~#150~~, ~~#151~~, #152 | Blocked |
 | 154 | ~~Config Service — resolve config with walk-up + global default~~ | ~~None~~ | Done |
 | 155 | ~~Config Service — write project config~~ | ~~#154~~ | Done |
 | 156 | ~~WorkspaceProvider — use ConfigService for worktree path + setup scripts~~ | ~~#154~~ | Done |

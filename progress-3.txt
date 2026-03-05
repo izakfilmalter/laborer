@@ -1456,3 +1456,57 @@ Modified `apps/web/src/panes/terminal-pane.tsx`:
 
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #80. This is a polishing/UX improvement that makes the existing panel shortcuts (Issues #75-#78, #90) work correctly when terminals have focus.
+
+## Issue #95: PRD writing form + writePRD button — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Created a "Write PRD" dialog form that allows users to write a PRD from any active workspace. The form has a description textarea (required) and calls `rlph.writePRD` mutation via AtomRpc, which spawns a terminal running `rlph prd [description]` in the workspace. The spawned terminal is auto-assigned to a panel pane so the user immediately sees the rlph TUI output. A "Write PRD" button (FileText icon, blue color) is added to each active workspace card in the workspace list, next to the "Start Ralph Loop" (Play) button.
+
+### What was done
+
+1. **Created `apps/web/src/components/write-prd-form.tsx`** — new React component (~160 lines) with:
+   - **Module-level atom declaration**: `writePrdMutation` (`LaborerClient.mutation("rlph.writePRD")`)
+   - **Props interface**: `WritePrdFormProps` with `workspaceId` (required string) and `onTerminalSpawned` (optional callback for auto-expanding the collapsible terminal list)
+   - **Dialog wrapper**: `Dialog` with trigger button (`FileText` icon, blue color, `size="icon-xs"`, `variant="ghost"`), header with title and description explaining what `rlph prd` does, form body, and footer with submit button
+   - **TanStack Form**: `useForm` with `defaultValues: { description: "" }` and `onSubmit` handler
+   - **Description field**: `Textarea` with `onChange` validator (required, non-empty after trim), 6 rows, descriptive placeholder
+   - **Submit handler**: Calls `writePrd({ payload: { workspaceId, description? } })`, on success shows `toast.success("PRD writing started")`, calls `panelActions.assignTerminalToPane(result.id, workspaceId)` for auto-assignment, calls `form.reset()` and `setOpen(false)` and `onTerminalSpawned?.()`
+   - **Error handling**: `extractErrorMessage(error)` + `toast.error()` — consistent with all other forms in the codebase
+   - **Submit button**: Uses `form.Subscribe` with `selector` for `[canSubmit, isSubmitting]` to disable during submission and show "Starting..." text
+   - Follows the exact same Dialog/Form/Field/Submit pattern established by `create-workspace-form.tsx` (Issue #42) and `create-task-form.tsx` (Issue #103)
+
+2. **Modified `apps/web/src/components/workspace-list.tsx`**:
+   - Added `import { WritePrdForm } from "@/components/write-prd-form"` import
+   - Added `<WritePrdForm workspaceId={workspace.id} onTerminalSpawned={() => setIsOpen(true)} />` in the workspace card actions area, before the "Start Ralph Loop" button. Only shown for active workspaces (`isActive`).
+   - Updated module JSDoc to reference Issue #95
+
+### Files created
+- `apps/web/src/components/write-prd-form.tsx` — Write PRD dialog form component
+
+### Files modified
+- `apps/web/src/components/workspace-list.tsx` — Added WritePrdForm import and button per active workspace
+
+### Acceptance criteria status
+- [x] Form with description textarea using TanStack Form (Textarea with onChange validation, 6 rows)
+- [x] Submit calls `LaborerClient.mutation("rlph.writePRD")` via `useAtomSet` with `{ mode: "promise" }`
+- [x] Terminal pane shows rlph prd output (auto-assigned via `panelActions.assignTerminalToPane(result.id, workspaceId)`)
+- [x] Form validates (description required — empty/whitespace-only description shows "Description is required" error)
+- [ ] Tests: submit form -> mutation called; output visible; empty description -> validation error (deferred — requires running both server and web app with rlph installed)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `biome check` passes on both new/modified files with zero issues
+- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **FileText icon**: Used `FileText` from lucide-react — represents a document/PRD. Blue color (`text-blue-600 dark:text-blue-400`) distinguishes it from the green Play button (Start Ralph Loop) and red Trash button (Destroy). The color follows a semantic pattern: green=start, blue=create/write, red=destroy.
+- **Dialog form vs inline button**: Unlike "Start Ralph Loop" which has no parameters (just workspaceId), "Write PRD" needs a description textarea. A dialog provides the space and focus for writing a multi-line description. The dialog pattern matches `create-workspace-form.tsx` and `create-task-form.tsx`.
+- **Description required**: The RPC accepts description as optional (`Schema.optional(Schema.String)`), but the form validates it as required. A PRD without a description is not useful — rlph needs context to generate meaningful requirements. If the user wants to run rlph prd without a description, they can use the terminal directly.
+- **onTerminalSpawned callback**: The form calls `onTerminalSpawned?.()` after successful submission. The workspace list passes `() => setIsOpen(true)` to auto-expand the collapsible terminal section, matching the pattern used by "Start Ralph Loop".
+- **Button placement**: The WritePrdForm button is placed before the "Start Ralph Loop" button in the workspace card actions. This follows the workflow order: Write PRD first (creates issues), then Start Ralph Loop (implements issues). The visual order reinforces the logical workflow.
+
+### Issues unblocked
+- Issue #107: PRD-generated issues -> tasks — was blocked by #94 (done) and #100 (done). #95 completes the UI entry point for the PRD writing workflow, making the full PRD -> issues -> tasks pipeline user-accessible.

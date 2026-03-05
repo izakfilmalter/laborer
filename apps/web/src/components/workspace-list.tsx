@@ -13,6 +13,7 @@
  * @see Issue #41: Workspace list UI component
  * @see Issue #48: Destroy Workspace button + confirmation dialog
  * @see Issue #93: "Start Ralph Loop" button UI
+ * @see Issue #95: PRD writing form + writePRD button
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -55,6 +56,7 @@ import {
 	EmptyMedia,
 	EmptyTitle,
 } from "@/components/ui/empty";
+import { WritePrdForm } from "@/components/write-prd-form";
 import { cn, extractErrorMessage } from "@/lib/utils";
 import { useLaborerStore } from "@/livestore/store";
 import { usePanelActions } from "@/panels/panel-context";
@@ -207,6 +209,12 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 								<StatusDot status={workspace.status} />
 								{workspace.status}
 							</Badge>
+							{isActive && (
+								<WritePrdForm
+									onTerminalSpawned={() => setIsOpen(true)}
+									workspaceId={workspace.id}
+								/>
+							)}
 							{isActive && (
 								<Button
 									aria-label="Start ralph loop"

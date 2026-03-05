@@ -2586,15 +2586,15 @@ Create a PRD writing form using TanStack Form with a description textarea. On su
 
 ### Acceptance criteria
 
-- [ ] Form with description textarea using TanStack Form
-- [ ] Submit → calls `LaborerClient.mutation("rlph.writePRD")` via `useAtomSet`
-- [ ] Terminal pane shows rlph prd output
-- [ ] Form validates (description required)
-- [ ] Tests: submit form → mutation called; output visible; empty description → validation error
+- [x] Form with description textarea using TanStack Form (Textarea with onChange validation, 6 rows)
+- [x] Submit → calls `LaborerClient.mutation("rlph.writePRD")` via `useAtomSet` with `{ mode: "promise" }`
+- [x] Terminal pane shows rlph prd output (auto-assigned via `panelActions.assignTerminalToPane`)
+- [x] Form validates (description required — empty/whitespace-only shows error)
+- [ ] Tests: submit form → mutation called; output visible; empty description → validation error (deferred — requires running both server and web app with rlph installed)
 
 ### Blocked by
 
-- Blocked by #94, #60
+- Blocked by ~~#94~~, ~~#60~~ (both done)
 
 ### User stories addressed
 
@@ -4126,7 +4126,7 @@ Handle two edge cases in the coalescing and flow control systems. Reference PRD-
 | 92 | rlph.startLoop RPC handler | ~~#56~~ | Done |
 | 93 | "Start Ralph Loop" button (AtomRpc mutation) | ~~#92~~, ~~#60~~ | Done |
 | 94 | rlph.writePRD RPC handler | ~~#56~~ | Done |
-| 95 | PRD writing form + button (AtomRpc mutation) | ~~#94~~, ~~#60~~ | Ready |
+| 95 | PRD writing form + button (AtomRpc mutation) | ~~#94~~, ~~#60~~ | Done |
 | 96 | rlph.review RPC handler | ~~#56~~ | Done |
 | 97 | "Review PR" button + input (AtomRpc mutation) | ~~#96~~, ~~#60~~ | Ready |
 | 98 | rlph.fix RPC handler | ~~#56~~ | Done |

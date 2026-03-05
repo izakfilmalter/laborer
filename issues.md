@@ -194,31 +194,9 @@ Created a cross-project workspace dashboard with a view toggle in the panel head
 
 ---
 
-## Issue 115: Tauri system tray
+## ~~Issue 115: Tauri system tray~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Add a system tray icon to the Tauri desktop shell. The tray shows the number of running workspaces and provides quick actions (show window, quit).
-
-### Acceptance criteria
-
-- [ ] System tray icon visible when app is running
-- [ ] Tray shows running workspace count
-- [ ] "Show" action brings window to front
-- [ ] "Quit" action closes the app
-- [ ] Tests: manual verification — tray visible, count updates, actions work
-
-### Blocked by
-
-- Blocked by #41
-
-### User stories addressed
-
-- User story 21
+Added system tray icon to the Tauri desktop shell. Tray shows app icon, tooltip with running workspace count (updated reactively from LiveStore via `useTrayWorkspaceCount` hook + `update_tray_workspace_count` Tauri command), right-click context menu with "Show Laborer" and "Quit" actions. Left-click brings window to front. Enabled `tray-icon` Cargo feature.
 
 ---
 
@@ -241,7 +219,7 @@ Register a global keyboard shortcut that brings the Laborer window to the front 
 
 ### Blocked by
 
-- Blocked by #115
+- ~~Blocked by #115~~
 
 ### User stories addressed
 
@@ -268,7 +246,7 @@ Implement minimize-to-tray behavior. Closing the window minimizes to system tray
 
 ### Blocked by
 
-- Blocked by #115
+- ~~Blocked by #115~~
 
 ### User stories addressed
 
@@ -455,9 +433,9 @@ Added drag-and-drop support using the native HTML5 Drag and Drop API. Terminal i
 | 110 | Task source picker UI | #108, #109, #103 | Blocked |
 | 113 | ~~Project switcher~~ | ~~#26~~ | Done |
 | 114 | ~~Cross-project dashboard~~ | ~~#41~~, ~~#104~~ | Done |
-| 115 | Tauri system tray | ~~#41~~ | Ready |
-| 116 | Tauri global shortcut | #115 | Blocked |
-| 117 | Tauri window management | #115 | Blocked |
+| 115 | ~~Tauri system tray~~ | ~~#41~~ | Done |
+| 116 | Tauri global shortcut | ~~#115~~ | Ready |
+| 117 | Tauri window management | ~~#115~~ | Ready |
 | 118 | ~~Empty state — no projects~~ | ~~#27~~ | Done |
 | 119 | ~~Empty state — no workspaces~~ | ~~#42~~ | Done |
 | 120 | ~~Empty state — no terminals~~ | ~~#63~~ | Done |

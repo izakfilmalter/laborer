@@ -57,6 +57,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkspaceDashboard } from "@/components/workspace-dashboard";
 import { WorkspaceList } from "@/components/workspace-list";
 import { useResponsiveLayout } from "@/hooks/use-responsive-layout";
+import { useTrayWorkspaceCount } from "@/hooks/use-tray-workspace-count";
 import { useLaborerStore } from "@/livestore/store";
 import type { NavigationDirection } from "@/panels/layout-utils";
 import {
@@ -763,6 +764,9 @@ function HomeComponent() {
 	const store = useLaborerStore();
 	const projectList = store.useQuery(sidebarProjects$);
 	const hasProjects = projectList.length > 0;
+
+	// Sync running workspace count to Tauri system tray tooltip (no-op in browser)
+	useTrayWorkspaceCount();
 
 	// Responsive sizing — adapts sidebar and pane sizes to viewport width
 	const responsiveSizes = useResponsiveLayout();

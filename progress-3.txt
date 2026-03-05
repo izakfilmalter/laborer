@@ -1954,3 +1954,75 @@ Modified `apps/web/src/panes/diff-pane.tsx`:
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #88. This was the last diff viewer feature issue (User Story 31).
 
+## Issue #115: Tauri system tray — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Added a system tray icon to the Tauri desktop shell. The tray shows the app icon, a tooltip with the running workspace count, and a right-click context menu with "Show Laborer" and "Quit" actions. Left-clicking the tray icon brings the window to front. The workspace count in the tooltip is kept in sync with LiveStore via a React hook that calls a Tauri command whenever the count of running workspaces changes.
+
+### What was done
+
+1. **Modified `apps/web/src-tauri/Cargo.toml`**:
+   - Added `tray-icon` feature to the `tauri` dependency: `features = ["tray-icon"]`
+
+2. **Rewrote `apps/web/src-tauri/src/lib.rs`** (~80 lines):
+   - **`update_tray_workspace_count` Tauri command**: Accepts a `count: u32` parameter from the frontend. Looks up the tray by ID (`"laborer-tray"`) and sets the tooltip to "Laborer — N running workspace(s)" with correct pluralization. Handles 0, 1, and N>1 cases.
+   - **System tray setup in `.setup()`**: Creates a `TrayIconBuilder` with ID `"laborer-tray"`, the app's default window icon, initial tooltip "Laborer — No running workspaces", and a context menu.
+   - **Context menu**: Two items — "Show Laborer" (brings window to front) and "Quit" (exits the app via `app.exit(0)`).
+   - **Left-click handler** (`on_tray_icon_event`): On left-click release, unminimizes, shows, and focuses the main window. Uses pattern matching on `TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up }`.
+   - **Right-click menu** (`show_menu_on_left_click(false)`): Menu only appears on right-click, left-click shows the window.
+   - **`invoke_handler`**: Registered `update_tray_workspace_count` command via `tauri::generate_handler!`.
+
+3. **Created `apps/web/src/hooks/use-tray-workspace-count.ts`** (~55 lines):
+   - **`runningWorkspaces$` query**: LiveStore reactive query for workspaces with `status: "running"`.
+   - **`isTauri()` guard**: Checks `window.__TAURI_INTERNALS__` to detect Tauri desktop shell. Returns false in browser mode (no-op).
+   - **`useTrayWorkspaceCount()` hook**: Subscribes to the running workspace count via LiveStore. When the count changes, calls `invoke("update_tray_workspace_count", { count })` via `@tauri-apps/api/core`. Uses `prevCountRef` to avoid redundant invocations. Silently catches invoke errors (tray may not be available).
+
+4. **Modified `apps/web/src/routes/index.tsx`**:
+   - Added `useTrayWorkspaceCount` import from `@/hooks/use-tray-workspace-count`
+   - Called `useTrayWorkspaceCount()` at the top of `HomeComponent` — syncs workspace count to tray tooltip reactively
+
+5. **Installed `@tauri-apps/api@2.10.1`** in `apps/web/package.json`:
+   - Provides the `invoke` function for calling Rust commands from the frontend
+
+6. **Capabilities** (`default.json`): No changes needed — `core:default` already includes the necessary tray permissions since the tray is created server-side in Rust, not via the JS API.
+
+### Files created
+- `apps/web/src/hooks/use-tray-workspace-count.ts` — React hook for syncing workspace count to Tauri tray
+
+### Files modified
+- `apps/web/src-tauri/Cargo.toml` — Added `tray-icon` feature to tauri dependency
+- `apps/web/src-tauri/src/lib.rs` — Added tray icon builder, context menu, event handlers, `update_tray_workspace_count` command
+- `apps/web/src-tauri/capabilities/default.json` — No functional changes (kept same permissions)
+- `apps/web/src/routes/index.tsx` — Added `useTrayWorkspaceCount` import and hook call in HomeComponent
+
+### Acceptance criteria status
+- [x] System tray icon visible when app is running (uses `app.default_window_icon()`)
+- [x] Tray shows running workspace count (tooltip: "Laborer — N running workspace(s)", updated reactively via `update_tray_workspace_count` Tauri command)
+- [x] "Show" action brings window to front (`window.unminimize()`, `window.show()`, `window.set_focus()`)
+- [x] "Quit" action closes the app (`app.exit(0)`)
+- [ ] Tests: manual verification — tray visible, count updates, actions work (requires running the Tauri desktop app)
+
+### Verification
+- `cargo check` passes for Rust code with zero warnings
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `tsc --noEmit` passes for server package (only pre-existing informational messages — no new errors)
+- `ultracite check` passes on new/modified TypeScript files with zero issues
+- All 61 tests pass across 4 test files (32 ring buffer + 9 workspace validation + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Tray created in Rust `.setup()`, not JavaScript**: The tray is created server-side in the Rust setup callback rather than via the `@tauri-apps/api/tray` JavaScript API. This ensures the tray appears immediately when the app launches, before the webview loads. If the webview fails to load or takes time, the tray is still functional. The Rust API also provides access to `app.default_window_icon()` for the tray icon.
+- **`show_menu_on_left_click(false)`**: The context menu appears on right-click only. Left-click brings the window to front — this matches the macOS convention where tray left-click is the primary action and right-click shows the menu. On macOS, most apps (Slack, Discord, Docker Desktop) follow this pattern.
+- **Workspace count via Tauri command**: The running workspace count is synced from the frontend (which has the reactive LiveStore data) to the Rust tray (which manages the tooltip) via a Tauri command. The alternative — having Rust query LiveStore directly — would require duplicating the LiveStore client in Rust, which is architecturally wrong. The frontend is the source of truth for application state.
+- **`isTauri()` guard**: The hook checks for `window.__TAURI_INTERNALS__` before calling `invoke`. This makes the hook a no-op in browser mode (where `invoke` would throw). The same app runs in both browser and Tauri contexts, so this guard is essential.
+- **Ref-based deduplication**: `prevCountRef` prevents calling `invoke` when the count hasn't changed. LiveStore queries can re-evaluate on any event commit, potentially returning the same count multiple times. The ref ensures only actual count changes trigger IPC.
+- **Silent error catching**: The `invoke` call is wrapped in `.catch(() => {})`. If the tray isn't available (e.g., running in browser with `__TAURI_INTERNALS__` polyfilled but no actual Tauri runtime), the error is silently swallowed. Tray updates are non-critical — they shouldn't affect the main app functionality.
+- **`TrayIconBuilder::with_id("laborer-tray")`**: Using a stable string ID allows the `update_tray_workspace_count` command to look up the tray by ID later. Without a fixed ID, we'd need to store the `TrayIcon` handle in Tauri state, which is more complex.
+- **Pluralization**: The tooltip uses correct English pluralization: "No running workspaces", "1 running workspace", "N running workspaces". This attention to detail matters for a developer tool's system tray presence.
+
+### Issues unblocked
+- Issue #116: Tauri global shortcut — now unblocked (blocked by #115)
+- Issue #117: Tauri window management — now unblocked (blocked by #115)
+

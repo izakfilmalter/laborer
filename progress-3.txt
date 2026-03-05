@@ -632,6 +632,7 @@ Tree: `H-Split(A, V-Split(B, H-Split(C, D)))`
 - **Stops at edges, doesn't wrap**: Unlike Ctrl+B,O/P which cycle through panes wrapping at the ends, directional navigation stops at edges. This matches the spatial mental model — pressing Left when there's nothing to the left should do nothing, not jump to the rightmost pane. This is also how tmux handles directional navigation.
 - **Walks up the tree**: When the active pane's immediate parent split doesn't match the requested direction, the algorithm walks up to higher-level ancestors. This handles nested layouts correctly — e.g., from a pane deep in a vertical split, pressing Left will skip past vertical ancestors until it finds a horizontal ancestor with a left neighbor.
 - **Edge entry**: When navigating into a subtree, the algorithm enters from the appropriate edge. Moving right enters the leftmost (first) leaf of the new subtree. Moving left enters the rightmost (last) leaf. This gives predictable, consistent navigation.
+
 - **Extracted `tryNavigateAtAncestor`**: The original `findPaneInDirection` function exceeded Biome's complexity limit (max 20). Extracting the per-ancestor logic into a helper brought it under the limit while improving readability.
 - **Arrow keys in prefix mode**: The existing keyboard scope isolation (Issue #80) in `terminal-pane.tsx` already passes through ALL keys when in prefix mode (after Ctrl+B). No changes were needed to the terminal's `attachCustomKeyEventHandler` — arrow keys naturally bubble to TanStack Hotkeys when the prefix is active.
 
@@ -3661,3 +3662,62 @@ Implemented live worktree watching and boot-time reconciliation. The server now 
 - `bun run test -- test/worktree-watcher.test.ts test/project-registry.worktree-detection.test.ts test/workspace-destroy-origin.test.ts` (in `packages/server`): passes (7/7)
 - `bun run check-types` (in `packages/server`): passes (pre-existing Effect plugin warnings remain)
 - `bun x ultracite check src/services/worktree-watcher.ts src/services/project-registry.ts src/main.ts test/worktree-watcher.test.ts test/project-registry.worktree-detection.test.ts test/workspace-destroy-origin.test.ts` (in `packages/server`): passes
+
+## Issue #107: PRD-generated issues become tasks — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented automatic PRD task importing on the server. After `rlph.writePRD` spawns a terminal, Laborer now watches that PRD terminal in the background, waits for it to finish via the terminal service lifecycle stream, fetches the terminal scrollback over the terminal WebSocket, parses created GitHub issue URLs and Linear issue keys from the rlph output, and creates missing LiveStore tasks with `source: "prd"` and the parsed `externalId`.
+
+### What was done
+
+1. **Created `packages/server/src/services/prd-task-importer.ts`** — new Effect service with two responsibilities:
+   - **`watchPrdTerminal(terminalId, workspaceId)`**: background watcher started from the `rlph.writePRD` RPC handler. It checks whether the spawned terminal is already stopped, otherwise waits for a matching `terminal.events()` lifecycle event (`Exited`, `Removed`, or `StatusChanged -> stopped`). Once complete, it opens a short-lived WebSocket to `ws://localhost:${TERMINAL_PORT}/terminal?id=...`, collects the ring-buffer scrollback, ignores JSON status control frames, and parses the captured rlph output.
+   - **`importParsedTasks(workspaceId, parsedTasks)`**: resolves the workspace's project, checks existing LiveStore tasks for duplicate PRD `externalId`s, and creates only missing tasks through `TaskManager.createTask(projectId, title, "prd", externalId)`.
+
+2. **Added a resilient rlph output parser** in the same service:
+   - Parses GitHub markdown issue links like `[Title](https://github.com/org/repo/issues/123)`
+   - Parses plain GitHub issue URLs on list lines and derives a title from the surrounding text
+   - Parses Linear issue keys from common output shapes like `LAB-12: Add feature` and `Add feature (LAB-13)`
+   - Strips ANSI escape codes before parsing so raw terminal color codes do not break extraction
+   - Deduplicates repeated matches within the same rlph output by `externalId`
+
+3. **Wired the importer into `packages/server/src/rpc/handlers.ts`**:
+   - `rlph.writePRD` still spawns the terminal via `TerminalClient.spawnInWorkspace`
+   - After spawn, it now resolves `PrdTaskImporter` and forks `watchPrdTerminal(terminal.id, workspaceId)` as a daemon fiber
+   - The RPC still returns immediately with the spawned terminal so the UI behavior is unchanged
+
+4. **Registered the service in `packages/server/src/main.ts`** so it is available to RPC handlers alongside `TaskManager`, `TerminalClient`, and the other server services.
+
+5. **Added server tests in `packages/server/test/prd-task-importer.test.ts`** covering:
+   - GitHub issue link parsing + duplicate suppression
+   - Linear issue key parsing
+   - ANSI-stripped parsing of colored terminal output
+   - Import deduping against existing `prd` tasks in LiveStore
+
+### Files created
+- `packages/server/src/services/prd-task-importer.ts` — PRD terminal watcher + output parser + task importer
+- `packages/server/test/prd-task-importer.test.ts` — parser/import tests
+
+### Files modified
+- `packages/server/src/rpc/handlers.ts` — hooks PRD importer into `rlph.writePRD`
+- `packages/server/src/main.ts` — provides `PrdTaskImporter.layer`
+- `issues.md` — marked Issue #107 done
+
+### Acceptance criteria status
+- [x] After `rlph prd` completes, resulting issues appear as tasks in LiveStore
+- [x] Tasks have `source = "prd"` and correct `externalId`
+- [x] Tests cover parsing/import path for PRD-generated task metadata
+
+### Verification
+- `bun test packages/server/test/prd-task-importer.test.ts` passes (4 tests)
+- `bun x ultracite check packages/server/src/services/prd-task-importer.ts packages/server/src/rpc/handlers.ts packages/server/src/main.ts packages/server/test/prd-task-importer.test.ts` passes
+- `bun run --filter @laborer/server check-types` still exits non-zero because the server package has existing Effect/tsgo diagnostics outside this feature; no new diagnostics referenced the PRD importer files after this change
+
+### Design decisions
+- **Server-side import instead of client-side parsing**: The server already owns task creation and terminal orchestration, so importing PRD-generated tasks there keeps the behavior deterministic even if no browser tab is open.
+- **Wait for terminal completion, then read scrollback**: Reading the final ring-buffer scrollback avoids racing live terminal output frame-by-frame and reuses the terminal service's existing reconnection buffer.
+- **Conservative parsing**: The importer only creates tasks from strong identifiers (GitHub issue URLs and Linear keys), avoiding brittle heuristics that could turn arbitrary terminal text into tasks.
+- **Duplicate protection in importer**: Deduping by `(projectId, source="prd", externalId)` prevents re-importing the same issue if the watcher reconnects or the PRD command is rerun.

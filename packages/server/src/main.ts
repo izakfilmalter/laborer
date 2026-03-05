@@ -32,6 +32,7 @@ import { ConfigService } from "./services/config-service.js";
 import { DiffService } from "./services/diff-service.js";
 import { LaborerStoreLive } from "./services/laborer-store.js";
 import { PortAllocator } from "./services/port-allocator.js";
+import { PrdTaskImporter } from "./services/prd-task-importer.js";
 import { ProjectRegistry } from "./services/project-registry.js";
 import { SyncRpcLive } from "./services/sync-backend.js";
 import { TaskManager } from "./services/task-manager.js";
@@ -104,6 +105,7 @@ const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	Layer.provide(RpcLive),
 	Layer.provide(SyncRpcLive),
 	// --- Shared service layers (available to all route layers) ---
+	Layer.provide(PrdTaskImporter.layer),
 	Layer.provide(TaskManager.layer),
 	Layer.provide(DiffService.layer),
 	Layer.provide(TerminalClient.layer),

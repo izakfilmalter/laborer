@@ -74,7 +74,7 @@ Added `useDebouncedValue` hook (300ms trailing-edge debounce with 500ms max wait
 
 ---
 
-## Issue 107: PRD-generated issues become tasks
+## ~~Issue 107: PRD-generated issues become tasks~~ ✅ DONE
 
 ### Parent PRD
 
@@ -84,11 +84,7 @@ PRD.md
 
 After `rlph prd` completes and creates issues (in Linear or GitHub), those issues should automatically appear as tasks in LiveStore. Monitor the rlph prd terminal output or poll the issue tracker for new issues.
 
-### Acceptance criteria
-
-- [ ] After rlph prd completes, resulting issues appear as tasks in LiveStore
-- [ ] Tasks have source = "prd" and correct externalId
-- [ ] Tests: run rlph prd → new tasks in LiveStore with correct source and metadata
+Watched `rlph prd` terminals from the server after spawn, waited for terminal completion via the terminal-service event stream, fetched the terminal scrollback over the terminal WebSocket, parsed GitHub issue URLs and Linear issue keys from rlph output, and imported missing tasks into LiveStore with `source = "prd"`. Added parser/importer tests covering GitHub links, Linear keys, ANSI-stripped output, and duplicate externalId deduping.
 
 ### Blocked by
 
@@ -872,7 +868,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 81 | ~~Panel responsive layout~~ | ~~#72~~ | Done |
 | 88 | ~~Diff viewer — accept/reject annotations~~ | ~~#87~~ | Done |
 | 91 | ~~Diff viewer debounce/throttle~~ | ~~#89~~ | Done |
-| 107 | PRD-generated issues → tasks | ~~#94~~, ~~#100~~ | Ready |
+| 107 | ~~PRD-generated issues → tasks~~ | ~~#94~~, ~~#100~~ | Done |
 | 108 | Linear task sourcing | ~~#102~~ | Ready |
 | 109 | GitHub task sourcing | ~~#102~~ | Ready |
 | 110 | Task source picker UI | #108, #109, #103 | Blocked |

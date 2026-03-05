@@ -18,6 +18,7 @@ import { Array as Arr, Effect, pipe } from "effect";
 import { ConfigService } from "../services/config-service.js";
 import { DiffService } from "../services/diff-service.js";
 import { LaborerStore } from "../services/laborer-store.js";
+import { PrdTaskImporter } from "../services/prd-task-importer.js";
 import { ProjectRegistry } from "../services/project-registry.js";
 import { TaskManager } from "../services/task-manager.js";
 import { TerminalClient } from "../services/terminal-client.js";
@@ -274,8 +275,13 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 		"rlph.writePRD": ({ workspaceId, description }) =>
 			Effect.gen(function* () {
 				const tc = yield* TerminalClient;
+				const prdTaskImporter = yield* PrdTaskImporter;
 				const command = description ? `rlph prd ${description}` : "rlph prd";
-				return yield* tc.spawnInWorkspace(workspaceId, command);
+				const terminal = yield* tc.spawnInWorkspace(workspaceId, command);
+				yield* prdTaskImporter
+					.watchPrdTerminal(terminal.id, workspaceId)
+					.pipe(Effect.forkDaemon);
+				return terminal;
 			}),
 		"rlph.review": ({ workspaceId, prNumber }) =>
 			Effect.gen(function* () {

@@ -13,12 +13,20 @@ import type { LeafNode, PanelNode, SplitNode } from "@laborer/shared/types";
 import { queryDb } from "@livestore/livestore";
 import { createFileRoute } from "@tanstack/react-router";
 import { Columns2, FileCode2, FolderGit2, Rows2, X } from "lucide-react";
-import { Suspense, useCallback, useEffect, useMemo, useRef } from "react";
+import {
+	Suspense,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
 import { CreateTaskForm } from "@/components/create-task-form";
 import { CreateWorkspaceForm } from "@/components/create-workspace-form";
 import { ProjectList } from "@/components/project-list";
+import { ProjectSwitcher } from "@/components/project-switcher";
 import { TaskList } from "@/components/task-list";
 import { Button } from "@/components/ui/button";
 import {
@@ -629,13 +637,30 @@ function HomeComponent() {
 	const projectList = store.useQuery(sidebarProjects$);
 	const hasProjects = projectList.length > 0;
 
+	// Project switcher state — null means "All Projects" (no filter)
+	const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+
+	// Clear the active project filter if the selected project is removed
+	useEffect(() => {
+		if (activeProjectId && !projectList.some((p) => p.id === activeProjectId)) {
+			setActiveProjectId(null);
+		}
+	}, [activeProjectId, projectList]);
+
 	return (
 		<PanelActionsProvider activePaneId={activePaneId} value={panelActions}>
 			<ResizablePanelGroup orientation="horizontal">
-				{/* Sidebar — project list, workspace list, health check */}
+				{/* Sidebar — project switcher, project list, workspace list, health check */}
 				<ResizablePanel defaultSize="25%" maxSize="40%" minSize="15%">
 					<ScrollArea className="h-full">
 						<div className="grid gap-4 p-3">
+							{/* Project switcher — filter sidebar by project */}
+							{hasProjects && (
+								<ProjectSwitcher
+									activeProjectId={activeProjectId}
+									onProjectChange={setActiveProjectId}
+								/>
+							)}
 							<section>
 								<div className="mb-2 flex items-center justify-between">
 									<h2 className="font-medium text-sm">Projects</h2>
@@ -648,14 +673,14 @@ function HomeComponent() {
 									<h2 className="font-medium text-sm">Workspaces</h2>
 									<CreateWorkspaceForm />
 								</div>
-								<WorkspaceList />
+								<WorkspaceList activeProjectId={activeProjectId} />
 							</section>
 							<section>
 								<div className="mb-2 flex items-center justify-between">
 									<h2 className="font-medium text-sm">Tasks</h2>
 									<CreateTaskForm />
 								</div>
-								<TaskList />
+								<TaskList activeProjectId={activeProjectId} />
 							</section>
 							<section className="rounded-lg border p-3">
 								<h2 className="mb-1 font-medium text-sm">Server Status</h2>

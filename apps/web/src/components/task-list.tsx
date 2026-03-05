@@ -12,7 +12,11 @@
  * - Status update via inline dropdown (updateStatus RPC)
  * - Remove button with confirmation dialog (remove RPC)
  *
+ * Accepts an optional `activeProjectId` prop to filter tasks by project.
+ * When set, only tasks belonging to the selected project are shown.
+ *
  * @see Issue #104: Task list UI component
+ * @see Issue #113: Project switcher — filter tasks by active project
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -299,9 +303,14 @@ function TaskItem({ task, projectName }: TaskItemProps) {
 
 type FilterTab = "all" | TaskStatus;
 
-function TaskList() {
+interface TaskListProps {
+	/** When set, only tasks belonging to this project are shown. */
+	readonly activeProjectId?: string | null;
+}
+
+function TaskList({ activeProjectId }: TaskListProps) {
 	const store = useLaborerStore();
-	const taskList = store.useQuery(allTasks$);
+	const allTaskList = store.useQuery(allTasks$);
 	const projectList = store.useQuery(allProjects$);
 	const [activeFilter, setActiveFilter] = useState<FilterTab>("all");
 
@@ -310,6 +319,14 @@ function TaskList() {
 		() => new Map(projectList.map((p) => [p.id, p.name] as const)),
 		[projectList]
 	);
+
+	// Filter tasks by project if an active project is set
+	const taskList = useMemo(() => {
+		if (!activeProjectId) {
+			return allTaskList;
+		}
+		return allTaskList.filter((t) => t.projectId === activeProjectId);
+	}, [allTaskList, activeProjectId]);
 
 	// Filter tasks by status if a filter is active
 	const filteredTasks = useMemo(() => {

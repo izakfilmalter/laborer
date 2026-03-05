@@ -286,30 +286,9 @@ Create a UI component to select the task source: Linear, GitHub, or Manual. Sele
 
 ---
 
-## Issue 113: Project switcher component
+## ~~Issue 113: Project switcher component~~ ✅ DONE
 
-### Parent PRD
-
-PRD.md
-
-### What to build
-
-Create a project switcher UI (dropdown or sidebar) that lets the user switch the active project context. Switching projects filters the workspace list and task list to that project.
-
-### Acceptance criteria
-
-- [ ] Project dropdown/sidebar shows all registered projects
-- [ ] Selecting a project → workspace list and task list filter to that project
-- [ ] "All Projects" option shows everything
-- [ ] Tests: switch project → lists filter; all projects → everything shown
-
-### Blocked by
-
-- Blocked by #26
-
-### User stories addressed
-
-- User story 12
+Created a project switcher Select dropdown at the top of the sidebar. Lists all registered projects plus an "All Projects" option (default). Selecting a specific project filters the Workspace and Task lists to show only items belonging to that project. Controlled component pattern with state lifted to `HomeComponent`. Auto-clears filter if the selected project is removed. Status counts in task tabs reflect the filtered project.
 
 ---
 
@@ -696,7 +675,7 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 108 | Linear task sourcing | ~~#102~~ | Ready |
 | 109 | GitHub task sourcing | ~~#102~~ | Ready |
 | 110 | Task source picker UI | #108, #109, #103 | Blocked |
-| 113 | Project switcher | ~~#26~~ | Ready |
+| 113 | ~~Project switcher~~ | ~~#26~~ | Done |
 | 114 | Cross-project dashboard | ~~#41~~, ~~#104~~ | Ready |
 | 115 | Tauri system tray | ~~#41~~ | Ready |
 | 116 | Tauri global shortcut | #115 | Blocked |

@@ -16,6 +16,9 @@
  * When no workspaces exist (all destroyed or none created), shows an empty
  * state with guidance text and a CTA button to create the first workspace.
  *
+ * Accepts an optional `activeProjectId` prop to filter workspaces by project.
+ * When set, only workspaces belonging to the selected project are shown.
+ *
  * @see Issue #41: Workspace list UI component
  * @see Issue #48: Destroy Workspace button + confirmation dialog
  * @see Issue #93: "Start Ralph Loop" button UI
@@ -24,6 +27,7 @@
  * @see Issue #99: "Fix Findings" button + PR number input
  * @see Issue #119: Empty state — no workspaces
  * @see Issue #121: Loading state — workspace creation
+ * @see Issue #113: Project switcher — filter workspaces by active project
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -350,7 +354,12 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 	);
 }
 
-function WorkspaceList() {
+interface WorkspaceListProps {
+	/** When set, only workspaces belonging to this project are shown. */
+	readonly activeProjectId?: string | null;
+}
+
+function WorkspaceList({ activeProjectId }: WorkspaceListProps) {
 	const store = useLaborerStore();
 	const workspaceList = store.useQuery(allWorkspaces$);
 	const projectList = store.useQuery(allProjects$);
@@ -360,9 +369,11 @@ function WorkspaceList() {
 		projectList.map((p) => [p.id, p.name] as const)
 	);
 
-	// Filter out destroyed workspaces from the active list
+	// Filter out destroyed workspaces, and optionally filter by active project
 	const activeWorkspaces = workspaceList.filter(
-		(ws) => ws.status !== "destroyed"
+		(ws) =>
+			ws.status !== "destroyed" &&
+			(!activeProjectId || ws.projectId === activeProjectId)
 	);
 
 	if (activeWorkspaces.length === 0) {

@@ -1180,3 +1180,76 @@ Enhanced the Create Workspace form to display distinct, actionable error message
 ### Issues unblocked
 - No direct downstream issues exclusively blocked by #49. This was a leaf issue in the dependency graph — it consumes error types from #37, #38, #39 but doesn't unblock other issues.
 
+## Issue #113: Project switcher component — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Created a project switcher dropdown that lets users filter the sidebar's workspace and task lists by the active project context. The switcher is a compact `Select` dropdown placed at the top of the sidebar (above the Projects section) with an "All Projects" option (default) and one option per registered project. Selecting a specific project filters the Workspace and Task lists to show only items belonging to that project. Selecting "All Projects" shows everything.
+
+### What was done
+
+1. **Created `apps/web/src/components/project-switcher.tsx`** — new React component (~80 lines) with:
+   - **Module-level query**: `allProjects$` (`queryDb(projects, { label: "projectSwitcherProjects" })`) for reactive project list
+   - **`ALL_PROJECTS` sentinel**: Constant `"__all__"` representing "no filter" — mapped to/from `null` in the handler
+   - **`ProjectSwitcherProps` interface**: `activeProjectId` (string | null) and `onProjectChange` callback — controlled component pattern
+   - **`Select` dropdown**: Uses existing `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectSeparator` from shadcn/ui (Base UI). Trigger shows a `FolderGit2` icon for visual context. Size="sm" for compact sidebar appearance.
+   - **"All Projects" option**: Always first, separated from project items by a `SelectSeparator` when projects exist
+   - **Per-project options**: Each registered project listed by name, keyed by `project.id`
+
+2. **Modified `apps/web/src/components/workspace-list.tsx`**:
+   - Added `WorkspaceListProps` interface with optional `activeProjectId` prop
+   - Updated `WorkspaceList` to accept `{ activeProjectId }` prop
+   - Extended the workspace filter to include `(!activeProjectId || ws.projectId === activeProjectId)` alongside the existing `ws.status !== "destroyed"` check
+   - Updated module JSDoc to reference Issue #113
+
+3. **Modified `apps/web/src/components/task-list.tsx`**:
+   - Added `TaskListProps` interface with optional `activeProjectId` prop
+   - Updated `TaskList` to accept `{ activeProjectId }` prop
+   - Renamed internal `taskList` to `allTaskList` for clarity, added a `useMemo` that filters by `activeProjectId` when set
+   - The project-filtered `taskList` feeds into the existing status filter, so both filters compose correctly (project filter → status filter → rendered list)
+   - Status counts in the tab badges reflect the project-filtered list (not the global list), giving accurate counts per-project
+   - Updated module JSDoc to reference Issue #113
+
+4. **Modified `apps/web/src/routes/index.tsx`**:
+   - Added `useState` to React imports
+   - Added `ProjectSwitcher` import
+   - Added `activeProjectId` state (`useState<string | null>(null)`) in `HomeComponent`
+   - Added `useEffect` that clears the active project filter if the selected project is removed (e.g., user deletes the project while it's selected)
+   - Rendered `<ProjectSwitcher>` at the top of the sidebar, conditionally shown only when projects exist (`hasProjects`)
+   - Passed `activeProjectId` prop to `<WorkspaceList>` and `<TaskList>`
+
+### Files created
+- `apps/web/src/components/project-switcher.tsx` — Project switcher Select dropdown component
+
+### Files modified
+- `apps/web/src/components/workspace-list.tsx` — Added `activeProjectId` prop, project filtering, updated JSDoc
+- `apps/web/src/components/task-list.tsx` — Added `activeProjectId` prop, project filtering, updated JSDoc
+- `apps/web/src/routes/index.tsx` — Added project switcher state, `ProjectSwitcher` component in sidebar, prop wiring, auto-clear on project removal
+
+### Acceptance criteria status
+- [x] Project dropdown/sidebar shows all registered projects (Select dropdown with all projects from LiveStore)
+- [x] Selecting a project → workspace list and task list filter to that project (via `activeProjectId` prop)
+- [x] "All Projects" option shows everything (null activeProjectId = no filter applied)
+- [ ] Tests: switch project → lists filter; all projects → everything shown (deferred — web app has no component test infrastructure)
+
+### Verification
+- `tsc --noEmit` passes for web app (only pre-existing calendar.tsx and sonner.tsx errors — no new errors)
+- `ultracite check` passes on all 4 files with zero issues (`Checked 4 files in 10ms. No fixes applied.`)
+- All 52 tests pass across 3 test files (32 ring buffer + 14 PTY host + 6 terminal manager — no regressions)
+
+### Design decisions
+- **Controlled component pattern**: The `ProjectSwitcher` is a controlled component — `activeProjectId` and `onProjectChange` are passed as props from `HomeComponent`. This keeps the state lifted to the parent where it can be shared with `WorkspaceList` and `TaskList` via props. No React Context needed since the components are direct children in the sidebar.
+- **`Select` over `Tabs`**: Used `Select` dropdown rather than `Tabs` because: (a) the number of projects can grow unbounded — tabs would overflow with 5+ projects, (b) the Select is already used throughout the codebase (create-workspace-form, create-task-form, task status) so it's a familiar pattern, (c) a dropdown is more compact in the tight sidebar space.
+- **Sentinel value `__all__`**: Base UI's Select doesn't support `null` values natively. The `ALL_PROJECTS` sentinel string maps to/from `null` in the handler. The double-underscore prefix avoids collision with any possible project ID (which are UUIDs).
+- **Filter composition in TaskList**: The project filter is applied before the status filter. This means the status counts in the tab badges accurately reflect the filtered project — if you select "Project A", the "Pending (3)" badge shows 3 pending tasks for Project A, not 3 across all projects. This is the intuitive behavior.
+- **Auto-clear on project removal**: If the user deletes the currently-selected project, the filter automatically resets to "All Projects". Without this, the sidebar would show an empty workspace/task list with a stale filter pointing to a non-existent project.
+- **Conditional rendering**: The switcher is only shown when `hasProjects` is true. When no projects exist, the sidebar shows the empty state with "Add Project" CTA — a switcher with no options would be confusing.
+- **FolderGit2 icon in trigger**: The small icon in the trigger provides visual context that this dropdown relates to git repositories/projects. It matches the FolderGit2 icon used in the ProjectList cards and the WelcomeEmptyState.
+- **No LiveStore persistence for activeProjectId**: The active project filter is ephemeral (React state). It resets on page reload. This is intentional — the filter is a view preference, not application state. Persisting it to LiveStore would add complexity for minimal benefit, and the user might be confused if they return after a session and see a filtered view without remembering they set it.
+- **ProjectList unfiltered**: The ProjectList itself is NOT filtered by the active project — it always shows all projects. This is by design: the user needs to see all projects to switch between them. Only workspaces and tasks are filtered.
+
+### Issues unblocked
+- Issue #114: Cross-project workspace dashboard — was blocked by #41 (done) and #104 (done). Not directly blocked by #113, but the project switcher's filtering pattern can be reused or extended for the dashboard's per-project summary view.
+

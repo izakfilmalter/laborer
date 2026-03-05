@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun run --watch src/main.ts",
+    "with-env": "dotenv -e ../../.env.local --",
+    "dev": "bun run with-env bun run --watch src/main.ts",
     "build": "tsc --noEmit",
     "check-types": "tsc --noEmit",
-    "start": "bun run src/main.ts",
+    "start": "bun run with-env bun run src/main.ts",
     "test": "vitest run"
   },
   "exports": {

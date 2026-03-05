@@ -4242,3 +4242,48 @@ Implemented a clear "Terminal service unavailable" feedback loop in the sidebar 
 - `bun x ultracite check apps/web/src/hooks/use-terminal-list.ts apps/web/src/components/terminal-list.tsx` ✅
 - `bun run --cwd apps/web test` ✅ (4 files, 44 tests passed)
 - `bun run --cwd apps/web check-types` ⚠️ fails on pre-existing type errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx`; no new type errors from this change
+
+## Issue #147 (partial): Shared dotenv script wiring for server + terminal — COMPLETED
+
+**Status:** In Progress (Issue #147)
+**Date:** 2026-03-05
+
+### Why this next
+Picked this as the next highest-priority slice of Issue #147 because both long-running services must consume a single env source before the remaining extraction verification items (startup reliability, restart isolation, and multi-process behavior) can be trusted.
+
+### Summary
+Wired both `@laborer/server` and `@laborer/terminal` package scripts to load the repo-root `.env.local` through a shared `dotenv -e ../../.env.local --` pattern. This standardizes local service startup and removes env drift between the two processes.
+
+### What was done
+
+1. **Added `dotenv-cli` at the repo root**
+   - Installed `dotenv-cli` as a root dev dependency so `dotenv` is available to workspace package scripts.
+
+2. **Updated `@laborer/server` scripts**
+   - Added `with-env`: `dotenv -e ../../.env.local --`
+   - Changed `dev` to run through `with-env`
+   - Changed `start` to run through `with-env`
+
+3. **Updated `@laborer/terminal` scripts**
+   - Added `with-env`: `dotenv -e ../../.env.local --`
+   - Changed `dev` to run through `with-env`
+   - Changed `start` to run through `with-env`
+
+4. **Updated issue tracking**
+   - Checked off Issue #147 acceptance criterion: `.env.local` loads correctly for both server and terminal service.
+   - Added a dedicated progress note under Issue #147 in `issues.md`.
+
+### Files modified
+- `package.json`
+- `bun.lock`
+- `packages/server/package.json`
+- `packages/terminal/package.json`
+- `issues.md`
+
+### Verification
+- `bun run --cwd packages/server with-env bun -e "console.log(process.env.TERMINAL_PORT ?? 'missing')"` ✅ (script path wiring works; `.env.local` is absent in this workspace, so value resolves to `missing`)
+- `bun run --cwd packages/terminal with-env bun -e "console.log(process.env.TERMINAL_PORT ?? 'missing')"` ✅ (same behavior)
+- `bun run --cwd apps/web test` ✅ (4 files, 44 tests passed)
+- `bun run --cwd packages/server check-types` ⚠️ exits non-zero on pre-existing Effect diagnostics in unrelated files; no new type failures introduced by this script-only change
+- `bun run --cwd packages/terminal check-types` ⚠️ reports pre-existing Effect diagnostics; no new type failures introduced by this script-only change
+- `bun x ultracite check package.json packages/server/package.json packages/terminal/package.json` ✅

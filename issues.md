@@ -562,7 +562,7 @@ End-to-end verification and polish pass for the full terminal service extraction
 - [ ] Graceful shutdown kills all PTYs without orphans
 - [x] Web app shows "Terminal service unavailable" when terminal service is down
 - [ ] Multiple browser tabs show consistent terminal state
-- [ ] `.env.local` loads correctly for both server and terminal service
+- [x] `.env.local` loads correctly for both server and terminal service
 - [ ] Ring buffer replay on reconnection works correctly (no missing output)
 - [ ] All terminal UI states render correctly: loading, connected, disconnected, exited, restarting
 
@@ -577,6 +577,10 @@ End-to-end verification and polish pass for the full terminal service extraction
 ### Progress update (2026-03-05)
 
 Added explicit terminal-service availability handling in the web app terminal list. When polling `/terminal-rpc` fails, the UI now shows a destructive "Terminal service unavailable" alert with recovery guidance (`turbo dev`), and terminal spawn actions are disabled until the service is reachable again.
+
+### Progress update (2026-03-05 — dotenv wiring)
+
+Updated both service package scripts to use the shared root env file via `dotenv -e ../../.env.local --` (`with-env` helper script in `@laborer/server` and `@laborer/terminal`). `dev` and `start` now run through `with-env` so both processes read the same env source consistently when launched directly or via `turbo dev`.
 
 ---
 

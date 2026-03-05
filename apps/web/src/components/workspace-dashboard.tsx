@@ -17,9 +17,11 @@
  *
  * @see Issue #114: Cross-project workspace dashboard
  * @see Issue #144: Web app LiveStore terminal query replacement
+ * @see Issue #160: UI for detected workspaces
  */
 
 import { projects, tasks, workspaces } from "@laborer/shared/schema";
+import type { WorkspaceOrigin } from "@laborer/shared/types";
 import { queryDb } from "@livestore/livestore";
 import {
 	CheckCircle2,
@@ -278,6 +280,7 @@ interface ProjectSection {
 		readonly worktreePath: string;
 		readonly port: number;
 		readonly status: string;
+		readonly origin: WorkspaceOrigin | string;
 		readonly createdAt: string;
 	}>;
 }
@@ -479,16 +482,27 @@ function DashboardWorkspaceRow({
 		readonly branchName: string;
 		readonly port: number;
 		readonly status: string;
+		readonly origin: WorkspaceOrigin | string;
 	};
 	readonly terminalCount: number;
 }) {
+	const isDetectedWorkspace =
+		(workspace.origin as WorkspaceOrigin) === "external";
+
 	return (
 		<div className="flex items-center gap-2 rounded-md border px-3 py-2">
 			<GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
 			<span className="min-w-0 truncate font-mono text-xs">
 				{workspace.branchName}
 			</span>
-			<span className="text-muted-foreground text-xs">:{workspace.port}</span>
+			{isDetectedWorkspace && (
+				<span className="font-mono text-[10px] text-muted-foreground uppercase">
+					Detected
+				</span>
+			)}
+			{workspace.port > 0 && (
+				<span className="text-muted-foreground text-xs">:{workspace.port}</span>
+			)}
 			{terminalCount > 0 && (
 				<span className="text-muted-foreground text-xs">
 					{terminalCount} terminal{terminalCount !== 1 ? "s" : ""}

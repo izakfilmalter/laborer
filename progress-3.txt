@@ -3553,3 +3553,34 @@ Implemented grace-period lifecycle management in the terminal service so running
 - `bun run --filter @laborer/terminal check-types`: passes
 - `bun run --filter @laborer/terminal test`: passes (59/59)
 - `bun x ultracite check packages/terminal/src/services/terminal-manager.ts packages/terminal/test/terminal-manager.test.ts packages/env/src/server.ts`: passes
+
+## Issue #160: UI for detected workspaces — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+Implemented the frontend visibility pass for detected workspaces (`origin: "external"`). Workspace cards and dashboard rows now show a subtle "Detected" marker for external workspaces, and both surfaces hide port metadata when the port is `0`.
+
+### What was done
+
+1. **Workspace cards updated** (`apps/web/src/components/workspace-list.tsx`)
+   - Imported and used `WorkspaceOrigin` from `@laborer/shared/types`.
+   - Added a subtle monospace `Detected` label next to branch names when `origin === "external"`.
+   - Kept Laborer-origin workspaces unchanged (no indicator).
+   - Hid `Port:` metadata when `port` is `0`.
+
+2. **Dashboard workspace rows updated** (`apps/web/src/components/workspace-dashboard.tsx`)
+   - Imported and used `WorkspaceOrigin` for workspace row typing and origin checks.
+   - Added the same subtle `Detected` label for external workspace rows.
+   - Hid `:{port}` when `port` is `0`.
+
+3. **Issue tracking updated** (`issues.md`)
+   - Marked Issue #160 as Done and checked all acceptance criteria.
+   - Updated summary table row for #160 to Done.
+   - Updated downstream dependency references so #162 is unblocked from #160 and #163 now shows #160 as completed in its blocked-by list.
+
+### Verification
+- `bun run --filter web check-types`: fails due pre-existing unrelated TypeScript errors in `apps/web/src/components/ui/calendar.tsx` and `apps/web/src/components/ui/sonner.tsx` (no new errors from this issue)
+- `bun run --filter web test`: passes (31/31)
+- `bun x ultracite check apps/web/src/components/workspace-list.tsx apps/web/src/components/workspace-dashboard.tsx`: passes

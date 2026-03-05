@@ -918,10 +918,10 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 157 | ~~Config RPC endpoints + project settings modal~~ | ~~#155~~, ~~#156~~ | Done |
 | 158 | Config + settings polish & edge cases | ~~#157~~ | Ready |
 | 159 | ~~WorktreeDetector + schema origin + initial detection on project add~~ | ~~None~~ | Done |
-| 160 | UI for detected workspaces | ~~#159~~ | Ready |
+| 160 | ~~UI for detected workspaces~~ | ~~#159~~ | Done |
 | 161 | Live filesystem watcher + server boot reconciliation | ~~#159~~ | Ready |
-| 162 | Origin-aware destroy behavior | #160 | Blocked |
-| 163 | Worktree detection polish & edge cases | #160, #161, #162 | Blocked |
+| 162 | Origin-aware destroy behavior | ~~#160~~ | Ready |
+| 163 | Worktree detection polish & edge cases | #161, #162 | Blocked |
 
 ---
 
@@ -976,7 +976,7 @@ None - can start immediately
 
 ---
 
-## Issue 160: UI for detected workspaces
+## ~~Issue 160: UI for detected workspaces~~ ✅ DONE
 
 ### Parent PRD
 
@@ -996,14 +996,14 @@ Update the frontend workspace list and project cards to render detected (externa
 
 ### Acceptance criteria
 
-- [ ] Workspace cards for `origin: "external"` display a "Detected" indicator (badge or secondary text)
-- [ ] Workspace cards for `origin: "laborer"` do not display any origin indicator (it's the default)
-- [ ] Port display is hidden when port is `0`
-- [ ] Workspace count badge on project cards includes detected workspaces
-- [ ] Cross-project dashboard shows detected workspaces in workspace rows
-- [ ] Dashboard hides port when port is `0`
-- [ ] Stopped status badge renders correctly for detected workspaces
-- [ ] No visual regression for existing Laborer-created workspaces
+- [x] Workspace cards for `origin: "external"` display a "Detected" indicator (badge or secondary text)
+- [x] Workspace cards for `origin: "laborer"` do not display any origin indicator (it's the default)
+- [x] Port display is hidden when port is `0`
+- [x] Workspace count badge on project cards includes detected workspaces
+- [x] Cross-project dashboard shows detected workspaces in workspace rows
+- [x] Dashboard hides port when port is `0`
+- [x] Stopped status badge renders correctly for detected workspaces
+- [x] No visual regression for existing Laborer-created workspaces
 
 ### Blocked by
 
@@ -1012,6 +1012,10 @@ Update the frontend workspace list and project cards to render detected (externa
 ### User stories addressed
 
 - User story 3, 9
+
+### Status: Done
+
+Workspace cards now show a subtle monospace "Detected" indicator for external workspaces, while Laborer-created workspaces remain unchanged. Port metadata is hidden whenever `port` is `0` in both workspace cards and dashboard rows, and detected workspaces are included in existing workspace counts and status rendering.
 
 ---
 
@@ -1087,7 +1091,7 @@ Modify workspace destruction to behave differently based on the workspace's `ori
 
 ### Blocked by
 
-- Blocked by #160
+- ~~Blocked by #160~~
 
 ### User stories addressed
 
@@ -1130,7 +1134,7 @@ End-to-end polish and verification pass for the complete worktree detection feat
 
 ### Blocked by
 
-- Blocked by #160, #161, #162
+- Blocked by ~~#160~~, #161, #162
 
 ### User stories addressed
 

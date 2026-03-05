@@ -28,10 +28,12 @@
  * @see Issue #119: Empty state — no workspaces
  * @see Issue #121: Loading state — workspace creation
  * @see Issue #113: Project switcher — filter workspaces by active project
+ * @see Issue #160: UI for detected workspaces
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
 import { projects, workspaces } from "@laborer/shared/schema";
+import type { WorkspaceOrigin } from "@laborer/shared/types";
 import { queryDb } from "@livestore/livestore";
 import { ChevronDown, GitBranch, Layers, Play, Trash2 } from "lucide-react";
 import { useCallback, useState } from "react";
@@ -150,6 +152,7 @@ interface WorkspaceItemProps {
 		readonly worktreePath: string;
 		readonly port: number;
 		readonly status: string;
+		readonly origin: WorkspaceOrigin | string;
 		readonly createdAt: string;
 		readonly taskSource: string | null;
 	};
@@ -169,6 +172,8 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 	const panelActions = usePanelActions();
 	const isActive =
 		workspace.status === "running" || workspace.status === "creating";
+	const isDetectedWorkspace =
+		(workspace.origin as WorkspaceOrigin) === "external";
 
 	const handleDestroy = async () => {
 		setIsDestroying(true);
@@ -218,6 +223,11 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 								<span className="truncate font-mono text-sm">
 									{workspace.branchName}
 								</span>
+								{isDetectedWorkspace && (
+									<span className="font-mono text-[10px] text-muted-foreground uppercase">
+										Detected
+									</span>
+								)}
 							</CardTitle>
 							<CardDescription>{projectName}</CardDescription>
 						</div>
@@ -330,9 +340,11 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 				</CardHeader>
 				<CardContent>
 					<div className="flex items-center gap-3 text-muted-foreground text-xs">
-						<span>
-							Port: <span className="font-mono">{workspace.port}</span>
-						</span>
+						{workspace.port > 0 && (
+							<span>
+								Port: <span className="font-mono">{workspace.port}</span>
+							</span>
+						)}
 						<span className="truncate font-mono">{workspace.worktreePath}</span>
 					</div>
 					{workspace.status === "creating" && (

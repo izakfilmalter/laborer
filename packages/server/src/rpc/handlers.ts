@@ -22,7 +22,7 @@ const startTime = Date.now();
 /**
  * RPC handler layer for the LaborerRpcs group.
  *
- * All 19 RPC methods are fully implemented:
+ * All 20 RPC methods are fully implemented:
  * - health.check: returns server uptime (Issue #12)
  * - project.add: delegates to ProjectRegistry.addProject (Issue #21)
  * - project.remove: delegates to ProjectRegistry.removeProject (Issue #22)
@@ -32,6 +32,7 @@ const startTime = Date.now();
  * - terminal.write: delegates to TerminalManager.write (Issue #52)
  * - terminal.resize: delegates to TerminalManager.resize (Issue #53)
  * - terminal.kill: delegates to TerminalManager.kill (Issue #54)
+ * - terminal.remove: delegates to TerminalManager.remove (Issue #132)
  * - diff.refresh: delegates to DiffService.getDiff (Issue #82)
  * - editor.open: opens file in configured editor (Issue #111)
  * - rlph.startLoop: delegates to TerminalManager.spawn with `rlph --once` (Issue #92)
@@ -147,6 +148,11 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 			Effect.gen(function* () {
 				const tm = yield* TerminalManager;
 				yield* tm.kill(terminalId);
+			}),
+		"terminal.remove": ({ terminalId }) =>
+			Effect.gen(function* () {
+				const tm = yield* TerminalManager;
+				yield* tm.remove(terminalId);
 			}),
 
 		// -------------------------------------------------------------------

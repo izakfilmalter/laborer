@@ -11,6 +11,7 @@
  * - I/O streaming: stdout → LiveStore events, stdin ← RPC writes
  * - Terminal resize (cols, rows) with SIGWINCH propagation
  * - Terminal kill + resource cleanup
+ * - Terminal removal (kill if running + delete from LiveStore)
  * - Multiple terminals per workspace, each tracked by unique ID
  * - Workspace env var injection (PORT, LABORER_* vars)
  * - Graceful shutdown: kills all terminals on layer teardown (Issue #128)
@@ -34,6 +35,7 @@
  * Issue #54: kill PTY (included — kill method terminates process and cleans up)
  * Issue #55: multiple terminals per workspace (included — Map tracks all terminals)
  * Issue #128: graceful shutdown — kills all terminals on SIGINT/SIGTERM
+ * Issue #132: terminal.remove — kill (if running) + delete from LiveStore
  */
 
 import { RpcError } from "@laborer/shared/rpc";
@@ -138,6 +140,18 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 		readonly listTerminals: (
 			workspaceId: string
 		) => Effect.Effect<readonly TerminalRecord[], RpcError>;
+
+		/**
+		 * Remove a terminal completely — kills PTY if running, removes from
+		 * in-memory map, and deletes the terminal row from LiveStore.
+		 *
+		 * If the terminal is still running, it is killed first. If the terminal
+		 * is already stopped (not in in-memory map), the LiveStore row is
+		 * deleted directly.
+		 *
+		 * @param terminalId - ID of the terminal to remove
+		 */
+		readonly remove: (terminalId: string) => Effect.Effect<void, RpcError>;
 
 		/**
 		 * Kill all terminals belonging to a workspace.
@@ -422,6 +436,43 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				);
 			});
 
+			const remove = Effect.fn("TerminalManager.remove")(function* (
+				terminalId: string
+			) {
+				// 1. Check if the terminal exists in LiveStore
+				const allTerminals = store.query(tables.terminals);
+				const terminalOpt = pipe(
+					allTerminals,
+					Arr.findFirst((t) => t.id === terminalId)
+				);
+
+				if (terminalOpt._tag === "None") {
+					return yield* new RpcError({
+						message: `Terminal not found: ${terminalId}`,
+						code: "NOT_FOUND",
+					});
+				}
+
+				// 2. If the terminal is still running (in-memory map), kill it first
+				const map = yield* Ref.get(terminalsRef);
+				if (map.has(terminalId)) {
+					ptyHostClient.kill(terminalId);
+
+					yield* Ref.update(terminalsRef, (m) => {
+						const next = new Map(m);
+						next.delete(terminalId);
+						return next;
+					});
+				}
+
+				// 3. Delete the terminal row from LiveStore
+				store.commit(events.terminalRemoved({ id: terminalId }));
+
+				yield* Effect.log(`Removed terminal ${terminalId}`).pipe(
+					Effect.annotateLogs("module", logPrefix)
+				);
+			});
+
 			const listTerminals = Effect.fn("TerminalManager.listTerminals")(
 				function* (workspaceId: string) {
 					const allTerminals = store.query(tables.terminals);
@@ -565,6 +616,7 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 				write,
 				resize,
 				kill,
+				remove,
 				listTerminals,
 				killAllForWorkspace,
 			});

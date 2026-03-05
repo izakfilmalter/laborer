@@ -147,6 +147,13 @@ export class LaborerRpcs extends RpcGroup.make(
 		},
 	}),
 
+	Rpc.make("terminal.remove", {
+		error: RpcError,
+		payload: {
+			terminalId: Schema.String,
+		},
+	}),
+
 	// -----------------------------------------------------------------------
 	// Diff RPCs
 	// -----------------------------------------------------------------------

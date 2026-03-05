@@ -12,7 +12,7 @@
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
 import { terminals } from "@laborer/shared/schema";
 import { queryDb } from "@livestore/livestore";
-import { Plus, Square, Terminal as TerminalIcon } from "lucide-react";
+import { Plus, Square, Terminal as TerminalIcon, Trash2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
@@ -26,6 +26,7 @@ const allTerminals$ = queryDb(terminals, { label: "terminalList" });
 
 const spawnTerminalMutation = LaborerClient.mutation("terminal.spawn");
 const killTerminalMutation = LaborerClient.mutation("terminal.kill");
+const removeTerminalMutation = LaborerClient.mutation("terminal.remove");
 
 interface TerminalListProps {
 	/** The workspace ID to filter terminals for. */
@@ -46,6 +47,9 @@ function TerminalList({ workspaceId }: TerminalListProps) {
 		mode: "promise",
 	});
 	const killTerminal = useAtomSet(killTerminalMutation, {
+		mode: "promise",
+	});
+	const removeTerminal = useAtomSet(removeTerminalMutation, {
 		mode: "promise",
 	});
 	const [isSpawning, setIsSpawning] = useState(false);
@@ -85,6 +89,20 @@ function TerminalList({ workspaceId }: TerminalListProps) {
 			}
 		},
 		[killTerminal]
+	);
+
+	const handleRemoveTerminal = useCallback(
+		async (terminalId: string) => {
+			try {
+				await removeTerminal({
+					payload: { terminalId },
+				});
+				toast.success("Terminal removed");
+			} catch (error) {
+				toast.error(`Failed to remove terminal: ${extractErrorMessage(error)}`);
+			}
+		},
+		[removeTerminal]
 	);
 
 	const handleSelectTerminal = useCallback(
@@ -135,6 +153,7 @@ function TerminalList({ workspaceId }: TerminalListProps) {
 				<TerminalItem
 					key={terminal.id}
 					onKill={handleKillTerminal}
+					onRemove={handleRemoveTerminal}
 					onSelect={handleSelectTerminal}
 					terminal={terminal}
 				/>
@@ -145,6 +164,7 @@ function TerminalList({ workspaceId }: TerminalListProps) {
 
 interface TerminalItemProps {
 	readonly onKill: (terminalId: string) => void;
+	readonly onRemove: (terminalId: string) => void;
 	readonly onSelect: (terminalId: string) => void;
 	readonly terminal: {
 		readonly id: string;
@@ -155,7 +175,12 @@ interface TerminalItemProps {
 	};
 }
 
-function TerminalItem({ terminal, onSelect, onKill }: TerminalItemProps) {
+function TerminalItem({
+	terminal,
+	onSelect,
+	onKill,
+	onRemove,
+}: TerminalItemProps) {
 	const isRunning = terminal.status === "running";
 
 	return (
@@ -200,6 +225,20 @@ function TerminalItem({ terminal, onSelect, onKill }: TerminalItemProps) {
 					variant="ghost"
 				>
 					<Square className="size-2.5" />
+				</Button>
+			)}
+			{!isRunning && (
+				<Button
+					aria-label="Remove terminal"
+					className="size-5 shrink-0 text-muted-foreground hover:text-destructive"
+					onClick={(e) => {
+						e.stopPropagation();
+						onRemove(terminal.id);
+					}}
+					size="icon-sm"
+					variant="ghost"
+				>
+					<Trash2 className="size-2.5" />
 				</Button>
 			)}
 		</button>

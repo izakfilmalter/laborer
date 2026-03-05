@@ -164,6 +164,13 @@ export const terminalKilled = Events.synced({
 	}),
 });
 
+export const terminalRemoved = Events.synced({
+	name: "v1.TerminalRemoved",
+	schema: Schema.Struct({
+		id: Schema.String,
+	}),
+});
+
 export const diffUpdated = Events.synced({
 	name: "v1.DiffUpdated",
 	schema: Schema.Struct({
@@ -251,6 +258,7 @@ export const events = {
 	terminalOutput,
 	terminalStatusChanged,
 	terminalKilled,
+	terminalRemoved,
 	diffUpdated,
 	diffCleared,
 	taskCreated,
@@ -299,6 +307,7 @@ const materializers = State.SQLite.materializers(events, {
 	"v1.TerminalStatusChanged": ({ id, status }) =>
 		terminals.update({ status }).where({ id }),
 	"v1.TerminalKilled": ({ id }) => terminals.delete().where({ id }),
+	"v1.TerminalRemoved": ({ id }) => terminals.delete().where({ id }),
 	"v1.DiffUpdated": ({ workspaceId, diffContent, lastUpdated }) =>
 		diffs
 			.insert({ workspaceId, diffContent, lastUpdated })

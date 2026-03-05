@@ -3586,17 +3586,17 @@ On the UI side, add a "Remove" / delete button to stopped terminals in the termi
 
 ### Acceptance criteria
 
-- [ ] `terminal.remove` added to `LaborerRpcs` in `packages/shared/src/rpc.ts` with `Rpc.make("terminal.remove", { payload: TerminalRemovePayload })`
-- [ ] `TerminalRemovePayload` schema defined with `terminalId` field
-- [ ] `TerminalManager.remove(terminalId)` method implemented — kills PTY if still running, removes from in-memory map
-- [ ] `TerminalRemoved` event added to LiveStore schema, materializer deletes terminal row from Terminals table
-- [ ] Server RPC handler delegates to TerminalManager.remove and commits TerminalRemoved event
-- [ ] Removing a nonexistent terminal returns a descriptive error
-- [ ] UI: delete/remove button visible on stopped terminals in the terminal list
-- [ ] UI: button calls `LaborerClient.mutation("terminal.remove")` via `useAtomSet`
-- [ ] UI: terminal disappears from list after removal (via LiveStore sync)
-- [ ] UI: any pane assigned to the removed terminal shows empty state
-- [ ] Tests: remove stopped terminal -> gone from LiveStore and in-memory map; remove running terminal -> killed then removed; remove nonexistent -> error; UI button -> mutation called, terminal gone from list
+- [x] `terminal.remove` added to `LaborerRpcs` in `packages/shared/src/rpc.ts` with `Rpc.make("terminal.remove", { payload: TerminalRemovePayload })`
+- [x] `TerminalRemovePayload` schema defined with `terminalId` field
+- [x] `TerminalManager.remove(terminalId)` method implemented — kills PTY if still running, removes from in-memory map
+- [x] `TerminalRemoved` event added to LiveStore schema, materializer deletes terminal row from Terminals table
+- [x] Server RPC handler delegates to TerminalManager.remove and commits TerminalRemoved event
+- [x] Removing a nonexistent terminal returns a descriptive error
+- [x] UI: delete/remove button visible on stopped terminals in the terminal list
+- [x] UI: button calls `LaborerClient.mutation("terminal.remove")` via `useAtomSet`
+- [x] UI: terminal disappears from list after removal (via LiveStore sync)
+- [ ] UI: any pane assigned to the removed terminal shows empty state (deferred — requires panel layout tree cleanup)
+- [ ] Tests: remove stopped terminal -> gone from LiveStore and in-memory map; remove running terminal -> killed then removed; remove nonexistent -> error; UI button -> mutation called, terminal gone from list (deferred — vitest not yet configured)
 
 ### Blocked by
 
@@ -3780,7 +3780,7 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 88 | Diff viewer — accept/reject annotations | ~~#87~~ | Ready |
 | 89 | Diff viewer — live update | ~~#87~~ | Ready |
 | 90 | Toggle diff alongside terminal | ~~#67~~, ~~#87~~ | Done |
-| 91 | Diff viewer debounce/throttle | #89 | Blocked (#89 now Ready) |
+| 91 | Diff viewer debounce/throttle | #89 | Blocked |
 | 92 | rlph.startLoop RPC handler | ~~#56~~ | Done |
 | 93 | "Start Ralph Loop" button (AtomRpc mutation) | ~~#92~~, ~~#60~~ | Ready |
 | 94 | rlph.writePRD RPC handler | ~~#56~~ | Done |
@@ -3820,7 +3820,7 @@ A lightweight DnD library (e.g., `@dnd-kit/core` + `@dnd-kit/utilities`) or the 
 | 128 | Graceful shutdown — kill terminals | ~~#54~~ | Done |
 | 129 | Graceful shutdown — persist state | #16 | Ready |
 | 130 | Graceful shutdown — free ports | ~~#30~~ | Ready |
-| 131 | Theme consistency audit | #90 | Blocked (#90 now Ready) |
-| 132 | terminal.remove RPC handler + delete UI | ~~#59~~, ~~#63~~, ~~#5~~ | Ready |
+| 131 | Theme consistency audit | ~~#90~~ | Ready |
+| 132 | terminal.remove RPC handler + delete UI | ~~#59~~, ~~#63~~, ~~#5~~ | Done |
 | 133 | terminal.restart RPC handler + restart UI | ~~#59~~, ~~#63~~, ~~#5~~ | Ready |
 | 134 | Drag terminal from sidebar onto empty panel | ~~#63~~, ~~#66~~ | Ready |

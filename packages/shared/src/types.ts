@@ -49,6 +49,9 @@ export const TaskStatus = Schema.Literal(
 )
 export type TaskStatus = typeof TaskStatus.Type
 
+export const ContainerStatus = Schema.Literal('running', 'paused')
+export type ContainerStatus = typeof ContainerStatus.Type
+
 export const PrdStatus = Schema.Literal('draft', 'active', 'completed')
 export type PrdStatus = typeof PrdStatus.Type
 

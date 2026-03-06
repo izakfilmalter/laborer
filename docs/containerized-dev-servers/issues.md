@@ -372,16 +372,16 @@ Add a `containerStatus` field to the LiveStore workspace record (or use the exis
 
 ### Acceptance criteria
 
-- [ ] `ContainerService.pauseContainer(workspaceId)` method calls `docker pause {containerName}`
-- [ ] `ContainerService.unpauseContainer(workspaceId)` method calls `docker unpause {containerName}`
-- [ ] `container.pause` RPC exposed in `LaborerRpcs`
-- [ ] `container.unpause` RPC exposed in `LaborerRpcs`
-- [ ] Container state updated in LiveStore after pause/unpause
-- [ ] Error handling: pausing an already-paused container returns gracefully (idempotent)
-- [ ] Error handling: unpausing a non-paused container returns gracefully (idempotent)
-- [ ] Error handling: operating on a non-existent container returns a clear error
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] `ContainerService.pauseContainer(workspaceId)` method calls `docker pause {containerName}`
+- [x] `ContainerService.unpauseContainer(workspaceId)` method calls `docker unpause {containerName}`
+- [x] `container.pause` RPC exposed in `LaborerRpcs`
+- [x] `container.unpause` RPC exposed in `LaborerRpcs`
+- [x] Container state updated in LiveStore after pause/unpause
+- [x] Error handling: pausing an already-paused container returns gracefully (idempotent)
+- [x] Error handling: unpausing a non-paused container returns gracefully (idempotent)
+- [x] Error handling: operating on a non-existent container returns a clear error
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 

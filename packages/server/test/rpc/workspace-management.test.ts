@@ -159,6 +159,7 @@ describe('LaborerRpcs workspace management', () => {
             containerId: null,
             containerUrl: null,
             containerImage: null,
+            containerStatus: null,
           })
         })
       )

@@ -25,11 +25,14 @@
  *     projectName: "my-app",
  *     devServerConfig: { image: "node:22", workdir: "/app" },
  *   })
+ *   yield* containerService.pauseContainer("ws-123")
+ *   yield* containerService.unpauseContainer("ws-123")
  *   yield* containerService.destroyContainer("ws-123")
  * })
  * ```
  *
  * Issue 5: ContainerService — create and destroy
+ * Issue 10: Container pause/unpause RPCs
  */
 
 import { containerName } from '@laborer/shared/container-name'
@@ -92,6 +95,39 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
      * @param workspaceId - ID of the workspace whose container to destroy
      */
     readonly destroyContainer: (
+      workspaceId: string
+    ) => Effect.Effect<void, RpcError>
+
+    /**
+     * Pause the Docker container for a workspace.
+     *
+     * Runs `docker pause {containerName}` which freezes all processes
+     * in the container using cgroups. The container retains its memory
+     * state and can be resumed instantly.
+     *
+     * Idempotent: pausing an already-paused container returns gracefully.
+     *
+     * Commits a `ContainerPaused` event to LiveStore.
+     *
+     * @param workspaceId - ID of the workspace whose container to pause
+     */
+    readonly pauseContainer: (
+      workspaceId: string
+    ) => Effect.Effect<void, RpcError>
+
+    /**
+     * Unpause a paused Docker container for a workspace.
+     *
+     * Runs `docker unpause {containerName}` which thaws all frozen
+     * processes. The dev server resumes exactly where it left off.
+     *
+     * Idempotent: unpausing a non-paused container returns gracefully.
+     *
+     * Commits a `ContainerUnpaused` event to LiveStore.
+     *
+     * @param workspaceId - ID of the workspace whose container to unpause
+     */
+    readonly unpauseContainer: (
       workspaceId: string
     ) => Effect.Effect<void, RpcError>
   }
@@ -304,9 +340,162 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
         }
       )
 
+      /**
+       * Helper to look up a workspace and its container name from LiveStore.
+       * Returns null if the workspace or containerId is missing.
+       */
+      const lookupContainer = (workspaceId: string) => {
+        const allWorkspaces = store.query(tables.workspaces)
+        const workspaceOpt = pipe(
+          allWorkspaces,
+          Arr.findFirst((w) => w.id === workspaceId)
+        )
+
+        if (workspaceOpt._tag === 'None') {
+          return null
+        }
+
+        const workspace = workspaceOpt.value
+        if (workspace.containerId === null) {
+          return null
+        }
+
+        const name =
+          workspace.containerUrl?.replace('.orb.local', '') ?? workspaceId
+
+        return { workspace, name }
+      }
+
+      const pauseContainer = Effect.fn('ContainerService.pauseContainer')(
+        function* (workspaceId: string) {
+          const lookup = lookupContainer(workspaceId)
+
+          if (lookup === null) {
+            return yield* new RpcError({
+              message: `Cannot pause container: workspace "${workspaceId}" not found or has no container`,
+              code: 'CONTAINER_NOT_FOUND',
+            })
+          }
+
+          const { workspace, name: containerNameValue } = lookup
+
+          // Idempotent: if already paused, return gracefully
+          if (workspace.containerStatus === 'paused') {
+            yield* Effect.logDebug(
+              `Container "${containerNameValue}" is already paused, skipping`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+            return
+          }
+
+          yield* Effect.logInfo(
+            `Pausing container "${containerNameValue}" for workspace "${workspaceId}"`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          const result = yield* Effect.tryPromise({
+            try: async () => {
+              const proc = Bun.spawn(['docker', 'pause', containerNameValue], {
+                stdout: 'pipe',
+                stderr: 'pipe',
+              })
+              const exitCode = await proc.exited
+              const stderr = await new Response(proc.stderr).text()
+              return { exitCode, stderr }
+            },
+            catch: (error) =>
+              new RpcError({
+                message: `Failed to spawn docker pause: ${String(error)}`,
+                code: 'CONTAINER_PAUSE_FAILED',
+              }),
+          })
+
+          if (result.exitCode !== 0) {
+            yield* Effect.logWarning(
+              `docker pause failed (exit ${result.exitCode}): ${result.stderr.trim()}`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+
+            return yield* new RpcError({
+              message: `Failed to pause container "${containerNameValue}" (exit ${result.exitCode}): ${result.stderr.trim()}`,
+              code: 'CONTAINER_PAUSE_FAILED',
+            })
+          }
+
+          store.commit(events.containerPaused({ workspaceId }))
+
+          yield* Effect.logInfo(
+            `Container "${containerNameValue}" paused`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+        }
+      )
+
+      const unpauseContainer = Effect.fn('ContainerService.unpauseContainer')(
+        function* (workspaceId: string) {
+          const lookup = lookupContainer(workspaceId)
+
+          if (lookup === null) {
+            return yield* new RpcError({
+              message: `Cannot unpause container: workspace "${workspaceId}" not found or has no container`,
+              code: 'CONTAINER_NOT_FOUND',
+            })
+          }
+
+          const { workspace, name: containerNameValue } = lookup
+
+          // Idempotent: if already running (not paused), return gracefully
+          if (workspace.containerStatus !== 'paused') {
+            yield* Effect.logDebug(
+              `Container "${containerNameValue}" is not paused (status: ${workspace.containerStatus}), skipping unpause`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+            return
+          }
+
+          yield* Effect.logInfo(
+            `Unpausing container "${containerNameValue}" for workspace "${workspaceId}"`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          const result = yield* Effect.tryPromise({
+            try: async () => {
+              const proc = Bun.spawn(
+                ['docker', 'unpause', containerNameValue],
+                {
+                  stdout: 'pipe',
+                  stderr: 'pipe',
+                }
+              )
+              const exitCode = await proc.exited
+              const stderr = await new Response(proc.stderr).text()
+              return { exitCode, stderr }
+            },
+            catch: (error) =>
+              new RpcError({
+                message: `Failed to spawn docker unpause: ${String(error)}`,
+                code: 'CONTAINER_UNPAUSE_FAILED',
+              }),
+          })
+
+          if (result.exitCode !== 0) {
+            yield* Effect.logWarning(
+              `docker unpause failed (exit ${result.exitCode}): ${result.stderr.trim()}`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+
+            return yield* new RpcError({
+              message: `Failed to unpause container "${containerNameValue}" (exit ${result.exitCode}): ${result.stderr.trim()}`,
+              code: 'CONTAINER_UNPAUSE_FAILED',
+            })
+          }
+
+          store.commit(events.containerUnpaused({ workspaceId }))
+
+          yield* Effect.logInfo(
+            `Container "${containerNameValue}" unpaused`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+        }
+      )
+
       return ContainerService.of({
         createContainer,
         destroyContainer,
+        pauseContainer,
+        unpauseContainer,
       })
     })
   )

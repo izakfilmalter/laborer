@@ -16,6 +16,7 @@ import { LaborerRpcs, RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Array as Arr, Effect, pipe } from 'effect'
 import { ConfigService } from '../services/config-service.js'
+import { ContainerService } from '../services/container-service.js'
 import { DiffService } from '../services/diff-service.js'
 import { DockerDetection } from '../services/docker-detection.js'
 import { GithubTaskImporter } from '../services/github-task-importer.js'
@@ -679,6 +680,20 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 
         const provider = yield* WorkspaceProvider
         yield* provider.destroyWorktree(workspaceId)
+      }),
+
+    // -------------------------------------------------------------------
+    // Container RPCs (Issue 10)
+    // -------------------------------------------------------------------
+    'container.pause': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const containerService = yield* ContainerService
+        yield* containerService.pauseContainer(workspaceId)
+      }),
+    'container.unpause': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const containerService = yield* ContainerService
+        yield* containerService.unpauseContainer(workspaceId)
       }),
 
     // -------------------------------------------------------------------

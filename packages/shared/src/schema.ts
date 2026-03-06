@@ -35,6 +35,8 @@ export const workspaces = State.SQLite.table({
     containerUrl: State.SQLite.text({ nullable: true }),
     /** The Docker image used for the container (e.g., `node:22`). Null when no container exists. */
     containerImage: State.SQLite.text({ nullable: true }),
+    /** The current container status: 'running' or 'paused'. Null when no container exists. */
+    containerStatus: State.SQLite.text({ nullable: true }),
   },
 })
 
@@ -172,6 +174,20 @@ export const containerStarted = Events.synced({
 
 export const containerStopped = Events.synced({
   name: 'v1.ContainerStopped',
+  schema: Schema.Struct({
+    workspaceId: Schema.String,
+  }),
+})
+
+export const containerPaused = Events.synced({
+  name: 'v1.ContainerPaused',
+  schema: Schema.Struct({
+    workspaceId: Schema.String,
+  }),
+})
+
+export const containerUnpaused = Events.synced({
+  name: 'v1.ContainerUnpaused',
   schema: Schema.Struct({
     workspaceId: Schema.String,
   }),
@@ -363,6 +379,8 @@ export const events = {
   workspaceDestroyed,
   containerStarted,
   containerStopped,
+  containerPaused,
+  containerUnpaused,
   terminalSpawned,
   terminalOutput,
   terminalStatusChanged,
@@ -418,6 +436,7 @@ const materializers = State.SQLite.materializers(events, {
       containerId: null,
       containerUrl: null,
       containerImage: null,
+      containerStatus: null,
     }),
   'v1.WorkspaceStatusChanged': ({ id, status }) =>
     workspaces.update({ status }).where({ id }),
@@ -429,11 +448,27 @@ const materializers = State.SQLite.materializers(events, {
     containerImage,
   }) =>
     workspaces
-      .update({ containerId, containerUrl, containerImage })
+      .update({
+        containerId,
+        containerUrl,
+        containerImage,
+        containerStatus: 'running',
+      })
       .where({ id: workspaceId }),
   'v1.ContainerStopped': ({ workspaceId }) =>
     workspaces
-      .update({ containerId: null, containerUrl: null, containerImage: null })
+      .update({
+        containerId: null,
+        containerUrl: null,
+        containerImage: null,
+        containerStatus: null,
+      })
+      .where({ id: workspaceId }),
+  'v1.ContainerPaused': ({ workspaceId }) =>
+    workspaces.update({ containerStatus: 'paused' }).where({ id: workspaceId }),
+  'v1.ContainerUnpaused': ({ workspaceId }) =>
+    workspaces
+      .update({ containerStatus: 'running' })
       .where({ id: workspaceId }),
   'v1.TerminalSpawned': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)
   'v1.TerminalOutput': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #143)

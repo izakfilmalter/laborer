@@ -257,3 +257,61 @@ Replaced the port number display in the workspace sidebar card and dashboard wit
 - `bun run check-types` passes (all 5 packages)
 - `bun x ultracite check` passes (only pre-existing package.json formatting issues)
 - All 121 existing tests pass (no regressions)
+
+## Issue 10: Container pause/unpause RPCs — COMPLETED
+
+Added `container.pause` and `container.unpause` RPCs to the `ContainerService`, exposed them through `LaborerRpcs`, and added container status tracking in LiveStore.
+
+### What was done:
+
+**Types (types.ts):**
+- Added `ContainerStatus` literal type (`'running' | 'paused'`) to shared types
+
+**LiveStore schema (schema.ts):**
+- Added `containerStatus` nullable text column to `workspaces` table
+- Added `containerPaused` event (`v1.ContainerPaused`) with `workspaceId` field
+- Added `containerUnpaused` event (`v1.ContainerUnpaused`) with `workspaceId` field
+- Updated `ContainerStarted` materializer to set `containerStatus: 'running'` alongside container fields
+- Updated `ContainerStopped` materializer to clear `containerStatus` to null alongside other container fields
+- Added `ContainerPaused` materializer: sets `containerStatus: 'paused'`
+- Added `ContainerUnpaused` materializer: sets `containerStatus: 'running'`
+- Updated `WorkspaceCreated` materializer to include `containerStatus: null`
+
+**ContainerService (container-service.ts):**
+- Added `pauseContainer(workspaceId)` method:
+  - Looks up workspace in LiveStore, extracts container name from `containerUrl`
+  - Idempotent: if `containerStatus` is already `'paused'`, returns gracefully with a debug log
+  - Runs `docker pause {containerName}` via `Bun.spawn`
+  - On success, commits `ContainerPaused` event to LiveStore
+  - On failure (non-zero exit code), returns `RpcError` with `CONTAINER_PAUSE_FAILED` code
+  - Returns `RpcError` with `CONTAINER_NOT_FOUND` if workspace or container doesn't exist
+- Added `unpauseContainer(workspaceId)` method:
+  - Same lookup and error handling pattern as `pauseContainer`
+  - Idempotent: if `containerStatus` is not `'paused'`, returns gracefully
+  - Runs `docker unpause {containerName}` via `Bun.spawn`
+  - On success, commits `ContainerUnpaused` event to LiveStore
+  - On failure, returns `RpcError` with `CONTAINER_UNPAUSE_FAILED` code
+- Extracted `lookupContainer()` helper to share workspace+container lookup logic
+
+**RPC layer (rpc.ts + handlers.ts):**
+- Added `container.pause` RPC to `LaborerRpcs` with `workspaceId` payload and `RpcError` error channel
+- Added `container.unpause` RPC to `LaborerRpcs` with `workspaceId` payload and `RpcError` error channel
+- Added handler implementations that delegate to `ContainerService.pauseContainer` / `unpauseContainer`
+- Imported `ContainerService` in handlers
+
+**Tests updated:**
+- Updated `schema.test.ts` container lifecycle test to verify `containerStatus` through the full lifecycle: null -> 'running' (on ContainerStarted) -> 'paused' (on ContainerPaused) -> 'running' (on ContainerUnpaused) -> null (on ContainerStopped)
+- Updated `schema.test.ts` workspace lifecycle test to include `containerStatus: null` in assertion
+- Updated `workspace-management.test.ts` to include `containerStatus: null` in workspace row assertion
+
+### Key design decisions:
+- `containerStatus` is a separate column from the workspace `status` field — container state and workspace state are orthogonal concerns
+- Idempotent operations: pausing an already-paused container and unpausing a non-paused container return gracefully without error
+- Missing workspace or container returns a clear `CONTAINER_NOT_FOUND` error (not silently ignored like destroy's best-effort pattern)
+- The `lookupContainer` helper is a synchronous pure function that reads from LiveStore, shared by both pause and unpause
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All 29 shared tests pass (including updated container lifecycle test)
+- All 137 server tests pass (no regressions)

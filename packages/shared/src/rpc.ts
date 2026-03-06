@@ -383,6 +383,23 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
+  // Container RPCs (Issue 10)
+  // -----------------------------------------------------------------------
+  Rpc.make('container.pause', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  Rpc.make('container.unpause', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  // -----------------------------------------------------------------------
   // Terminal RPCs
   // -----------------------------------------------------------------------
   Rpc.make('terminal.spawn', {

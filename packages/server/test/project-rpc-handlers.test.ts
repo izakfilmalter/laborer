@@ -5,14 +5,18 @@ import { ProjectRegistry } from "../src/services/project-registry.js";
 
 const projects = [
 	{
+		canonicalGitCommonDir: null,
 		id: "project-1",
 		name: "laborer",
+		repoId: null,
 		repoPath: "/repo/laborer",
 		rlphConfig: null,
 	},
 	{
+		canonicalGitCommonDir: null,
 		id: "project-2",
 		name: "website",
+		repoId: null,
 		repoPath: "/repo/website",
 		rlphConfig: ".rlphrc",
 	},

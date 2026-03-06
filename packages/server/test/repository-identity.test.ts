@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
-import { tables } from "@laborer/shared/schema";
+import { events, tables } from "@laborer/shared/schema";
 import { Effect, Layer } from "effect";
 import { afterAll } from "vitest";
 import { BranchStateTracker } from "../src/services/branch-state-tracker.js";
@@ -285,6 +285,49 @@ describe("ProjectRegistry canonical deduplication", () => {
 
 				assert.strictEqual(matchingProjects.length, 1);
 			}).pipe(Effect.provide(RegistryTestLayer))
+	);
+
+	it.scoped("listing legacy projects lazily backfills persisted identity", () =>
+		Effect.gen(function* () {
+			const repoPath = initRepo("registry-legacy-backfill", tempRoots);
+			const registry = yield* ProjectRegistry;
+			const { store } = yield* LaborerStore;
+			const identity = yield* RepositoryIdentity;
+			const resolvedIdentity = yield* identity.resolve(repoPath);
+
+			store.commit(
+				events.projectCreated({
+					id: "legacy-project",
+					repoPath,
+					name: "legacy-project",
+					rlphConfig: null,
+				})
+			);
+
+			const [project] = yield* registry.listProjects();
+
+			assert.strictEqual(project?.id, "legacy-project");
+			assert.strictEqual(project?.repoPath, resolvedIdentity.canonicalRoot);
+			assert.strictEqual(project?.repoId, resolvedIdentity.repoId);
+			assert.strictEqual(
+				project?.canonicalGitCommonDir,
+				resolvedIdentity.canonicalGitCommonDir
+			);
+
+			assert.deepStrictEqual(
+				store.query(tables.projects.where("id", "legacy-project")),
+				[
+					{
+						id: "legacy-project",
+						repoPath: resolvedIdentity.canonicalRoot,
+						repoId: resolvedIdentity.repoId,
+						canonicalGitCommonDir: resolvedIdentity.canonicalGitCommonDir,
+						name: "legacy-project",
+						rlphConfig: null,
+					},
+				]
+			);
+		}).pipe(Effect.provide(RegistryWithIdentityTestLayer))
 	);
 
 	it.scoped(

@@ -20,11 +20,11 @@ This slice should extend the persisted project model, wire the new fields throug
 
 ### Acceptance criteria
 
-- [ ] Project records persist canonical repository identity fields needed for direct dedupe and restore
-- [ ] Adding a linked worktree path or alternate repo path dedupes by persisted logical identity instead of rescanning every project
-- [ ] Existing persisted projects are migrated or lazily backfilled without data loss
-- [ ] Startup restore can operate from persisted identity fields rather than only raw paths
-- [ ] Integration tests cover new-project writes and legacy-project backfill behavior
+- [x] Project records persist canonical repository identity fields needed for direct dedupe and restore
+- [x] Adding a linked worktree path or alternate repo path dedupes by persisted logical identity instead of rescanning every project
+- [x] Existing persisted projects are migrated or lazily backfilled without data loss
+- [x] Startup restore can operate from persisted identity fields rather than only raw paths
+- [x] Integration tests cover new-project writes and legacy-project backfill behavior
 
 ### Blocked by
 
@@ -179,7 +179,7 @@ This slice should ensure watcher boot, dedupe checks, and restore behavior all o
 
 ### Blocked by
 
-- Blocked by #1
+None - Issue #1 is complete
 
 ### User stories addressed
 

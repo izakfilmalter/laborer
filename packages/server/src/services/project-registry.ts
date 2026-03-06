@@ -41,8 +41,10 @@ import { WorktreeReconciler } from "./worktree-reconciler.js";
  * Matches the LiveStore projects table columns.
  */
 interface ProjectRecord {
+	readonly canonicalGitCommonDir: string | null;
 	readonly id: string;
 	readonly name: string;
+	readonly repoId: string | null;
 	readonly repoPath: string;
 	readonly rlphConfig: string | null;
 }
@@ -70,6 +72,38 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 			const worktreeReconciler = yield* WorktreeReconciler;
 			const branchTracker = yield* BranchStateTracker;
 			const watchCoordinator = yield* RepositoryWatchCoordinator;
+
+			const withBestEffortBackfill = (project: ProjectRecord) =>
+				backfillProjectIdentity(project).pipe(
+					Effect.catchAll(() => Effect.succeed(project))
+				);
+
+			const backfillProjectIdentity = Effect.fn(
+				"ProjectRegistry.backfillProjectIdentity"
+			)(function* (project: ProjectRecord) {
+				if (project.repoId !== null && project.canonicalGitCommonDir !== null) {
+					return project;
+				}
+
+				const identity = yield* repoIdentity.resolve(project.repoPath);
+				const backfilledProject = {
+					...project,
+					repoPath: identity.canonicalRoot,
+					repoId: identity.repoId,
+					canonicalGitCommonDir: identity.canonicalGitCommonDir,
+				} satisfies ProjectRecord;
+
+				store.commit(
+					events.projectRepositoryIdentityBackfilled({
+						id: project.id,
+						repoPath: identity.canonicalRoot,
+						repoId: identity.repoId,
+						canonicalGitCommonDir: identity.canonicalGitCommonDir,
+					})
+				);
+
+				return backfilledProject;
+			});
 
 			const addProject = Effect.fn("ProjectRegistry.addProject")(function* (
 				repoPath: string
@@ -103,15 +137,24 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 				const existingProject = yield* Effect.forEach(
 					store.query(tables.projects),
 					(project) =>
-						repoIdentity.resolve(project.repoPath).pipe(
-							Effect.match({
-								onFailure: () => undefined,
-								onSuccess: (projectIdentity) =>
-									projectIdentity.repoId === identity.repoId
-										? project
-										: undefined,
-							})
-						)
+						Effect.gen(function* () {
+							if (project.repoId === identity.repoId) {
+								return project;
+							}
+
+							const backfilledProject = yield* backfillProjectIdentity(
+								project
+							).pipe(
+								Effect.match({
+									onFailure: () => undefined,
+									onSuccess: (resolvedProject) => resolvedProject,
+								})
+							);
+
+							return backfilledProject?.repoId === identity.repoId
+								? backfilledProject
+								: undefined;
+						})
 				).pipe(
 					Effect.map((projects) =>
 						projects.find((project) => project !== undefined)
@@ -135,6 +178,8 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 				const project = {
 					id,
 					repoPath: canonicalRoot,
+					repoId: identity.repoId,
+					canonicalGitCommonDir: identity.canonicalGitCommonDir,
 					name,
 					rlphConfig: null,
 				};
@@ -192,7 +237,9 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 			);
 
 			const listProjects = () =>
-				Effect.sync(() => store.query(tables.projects));
+				Effect.forEach(store.query(tables.projects), (project) =>
+					withBestEffortBackfill(project as ProjectRecord)
+				);
 
 			const getProject = Effect.fn("ProjectRegistry.getProject")(function* (
 				projectId: string
@@ -207,7 +254,7 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 				}
 
 				// Safe: length > 0 guaranteed by the check above
-				return results[0] as (typeof results)[number];
+				return yield* withBestEffortBackfill(results[0] as ProjectRecord);
 			});
 
 			return ProjectRegistry.of({

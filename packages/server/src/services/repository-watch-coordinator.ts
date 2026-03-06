@@ -28,7 +28,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { tables } from "@laborer/shared/schema";
+import { events, tables } from "@laborer/shared/schema";
 import { Context, Data, Effect, Layer, Ref, Runtime } from "effect";
 import { BranchStateTracker } from "./branch-state-tracker.js";
 import {
@@ -66,6 +66,19 @@ interface ProjectWatcherState {
 	worktreesSubscription: WatchSubscription | null;
 	/** Pending debounce timer for worktree reconciliation */
 	worktreeTimer: ReturnType<typeof setTimeout> | null;
+}
+
+interface ProjectRecord {
+	readonly canonicalGitCommonDir: string | null;
+	readonly id: string;
+	readonly repoId: string | null;
+	readonly repoPath: string;
+}
+
+interface WatchTarget {
+	readonly canonicalGitCommonDir: string;
+	readonly projectId: string;
+	readonly repoPath: string;
 }
 
 const DEBOUNCE_MS = 500;
@@ -182,6 +195,33 @@ class RepositoryWatchCoordinator extends Context.Tag(
 			const fileWatcher = yield* FileWatcher;
 			const eventBus = yield* RepositoryEventBus;
 			const runtime = yield* Effect.runtime<never>();
+
+			const ensurePersistedIdentity = Effect.fn(
+				"RepositoryWatchCoordinator.ensurePersistedIdentity"
+			)(function* (project: ProjectRecord) {
+				if (project.repoId !== null && project.canonicalGitCommonDir !== null) {
+					return project;
+				}
+
+				const identity = yield* repoIdentity.resolve(project.repoPath);
+				const updatedProject = {
+					...project,
+					repoPath: identity.canonicalRoot,
+					repoId: identity.repoId,
+					canonicalGitCommonDir: identity.canonicalGitCommonDir,
+				} satisfies ProjectRecord;
+
+				store.commit(
+					events.projectRepositoryIdentityBackfilled({
+						id: project.id,
+						repoPath: identity.canonicalRoot,
+						repoId: identity.repoId,
+						canonicalGitCommonDir: identity.canonicalGitCommonDir,
+					})
+				);
+
+				return updatedProject;
+			});
 			const statesRef = yield* Ref.make(new Map<string, ProjectWatcherState>());
 
 			const runPromise = Runtime.runPromise(runtime);
@@ -635,6 +675,64 @@ class RepositoryWatchCoordinator extends Context.Tag(
 				});
 			});
 
+			const startWatching = Effect.fn(
+				"RepositoryWatchCoordinator.startWatching"
+			)(function* ({
+				canonicalGitCommonDir,
+				projectId,
+				repoPath,
+			}: WatchTarget) {
+				const gitDirPath = canonicalGitCommonDir;
+				const hasWorktreesDir = existsSync(join(gitDirPath, "worktrees"));
+
+				const state: ProjectWatcherState = {
+					closed: false,
+					projectId,
+					repoPath,
+					gitDirPath,
+					gitDirRootSubscription: null,
+					worktreesSubscription: null,
+					repoRootSubscription: null,
+					worktreeTimer: null,
+					branchTimer: null,
+					recoveryTimer: null,
+				};
+
+				state.gitDirRootSubscription = yield* subscribeGitDirRoot(
+					projectId,
+					gitDirPath,
+					state
+				);
+
+				if (hasWorktreesDir) {
+					state.worktreesSubscription = yield* subscribeWorktreesDir(
+						projectId,
+						gitDirPath,
+						state
+					);
+				}
+
+				state.repoRootSubscription = yield* subscribeRepoRoot(
+					projectId,
+					repoPath,
+					state
+				);
+
+				yield* Ref.update(statesRef, (states) => {
+					const next = new Map(states);
+					next.set(projectId, state);
+					return next;
+				});
+
+				if (
+					state.gitDirRootSubscription === null ||
+					state.repoRootSubscription === null ||
+					(hasWorktreesDir && state.worktreesSubscription === null)
+				) {
+					scheduleRecovery(state, "watch-target-unavailable");
+				}
+			});
+
 			const watchProject = Effect.fn("RepositoryWatchCoordinator.watchProject")(
 				function* (projectId: string, repoPath: string) {
 					// Tear down existing watchers for this project
@@ -655,62 +753,27 @@ class RepositoryWatchCoordinator extends Context.Tag(
 						return;
 					}
 
-					const gitDirPath = identity.canonicalGitCommonDir;
-					const hasWorktreesDir = existsSync(join(gitDirPath, "worktrees"));
-
-					const state: ProjectWatcherState = {
-						closed: false,
+					yield* startWatching({
 						projectId,
 						repoPath: identity.canonicalRoot,
-						gitDirPath,
-						gitDirRootSubscription: null,
-						worktreesSubscription: null,
-						repoRootSubscription: null,
-						worktreeTimer: null,
-						branchTimer: null,
-						recoveryTimer: null,
-					};
-
-					state.gitDirRootSubscription = yield* subscribeGitDirRoot(
-						projectId,
-						gitDirPath,
-						state
-					);
-
-					if (hasWorktreesDir) {
-						state.worktreesSubscription = yield* subscribeWorktreesDir(
-							projectId,
-							gitDirPath,
-							state
-						);
-					}
-
-					// Subscribe to the repo checkout root for file-level events
-					state.repoRootSubscription = yield* subscribeRepoRoot(
-						projectId,
-						identity.canonicalRoot,
-						state
-					);
-
-					yield* Ref.update(statesRef, (states) => {
-						const next = new Map(states);
-						next.set(projectId, state);
-						return next;
+						canonicalGitCommonDir: identity.canonicalGitCommonDir,
 					});
-
-					if (
-						state.gitDirRootSubscription === null ||
-						state.repoRootSubscription === null ||
-						(hasWorktreesDir && state.worktreesSubscription === null)
-					) {
-						scheduleRecovery(state, "watch-target-unavailable");
-					}
 				}
 			);
 
 			const watchAll = Effect.fn("RepositoryWatchCoordinator.watchAll")(
 				function* () {
-					const projects = store.query(tables.projects);
+					const projects = yield* Effect.forEach(
+						store.query(tables.projects),
+						(project) =>
+							ensurePersistedIdentity(project as ProjectRecord).pipe(
+								Effect.catchAll((error) =>
+									Effect.logWarning(
+										`Failed to backfill repo identity for project ${project.id}: ${error.message}`
+									).pipe(Effect.as(project))
+								)
+							)
+					);
 					yield* Effect.forEach(projects, (project) =>
 						reconcileWithWarning(project.id, project.repoPath, "startup")
 					);
@@ -718,7 +781,13 @@ class RepositoryWatchCoordinator extends Context.Tag(
 						refreshBranchesWithWarning(project.id, "startup")
 					);
 					yield* Effect.forEach(projects, (project) =>
-						watchProject(project.id, project.repoPath)
+						project.canonicalGitCommonDir === null
+							? watchProject(project.id, project.repoPath)
+							: startWatching({
+									projectId: project.id,
+									repoPath: project.repoPath,
+									canonicalGitCommonDir: project.canonicalGitCommonDir,
+								})
 					);
 				}
 			);

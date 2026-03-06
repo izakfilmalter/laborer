@@ -55,21 +55,29 @@ describe("LaborerRpcs project management", () => {
 					// RepositoryIdentity, so the stored repoPath is the
 					// realpath-resolved checkout root.
 					const canonicalRepoPath = realpathSync(repoPath);
+					const canonicalGitCommonDir = realpathSync(join(repoPath, ".git"));
 					assert.strictEqual(project.repoPath, canonicalRepoPath);
 					assert.strictEqual(project.name, basename(canonicalRepoPath));
 					assert.strictEqual(project.rlphConfig, undefined);
-
-					assert.deepStrictEqual(
-						store.query(tables.projects.where("id", project.id)),
-						[
-							{
-								id: project.id,
-								repoPath: canonicalRepoPath,
-								name: basename(canonicalRepoPath),
-								rlphConfig: null,
-							},
-						]
+					const storedProject = store.query(
+						tables.projects.where("id", project.id)
 					);
+
+					assert.isString(storedProject[0]?.repoId);
+					assert.strictEqual(
+						storedProject[0]?.canonicalGitCommonDir,
+						canonicalGitCommonDir
+					);
+					assert.deepStrictEqual(storedProject, [
+						{
+							id: project.id,
+							repoPath: canonicalRepoPath,
+							repoId: storedProject[0]?.repoId ?? null,
+							canonicalGitCommonDir,
+							name: basename(canonicalRepoPath),
+							rlphConfig: null,
+						},
+					]);
 
 					const workspaces = store.query(
 						tables.workspaces.where("projectId", project.id)

@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import { events, tables } from "@laborer/shared/schema";
 import { Context, Effect, Exit, Layer, Scope } from "effect";
 import { BranchStateTracker } from "../src/services/branch-state-tracker.js";
 import {
@@ -6,6 +7,7 @@ import {
 	type WatchEvent,
 	type WatchSubscription,
 } from "../src/services/file-watcher.js";
+import { LaborerStore } from "../src/services/laborer-store.js";
 import { withFsmonitorDisabled } from "../src/services/repo-watching-git.js";
 import { RepositoryEventBus } from "../src/services/repository-event-bus.js";
 import { RepositoryIdentity } from "../src/services/repository-identity.js";
@@ -204,6 +206,125 @@ describe("RepositoryWatchCoordinator hardening", () => {
 			assert.strictEqual(branchRefreshCalls.current, 1);
 		}).pipe(Effect.provide(TestLayer));
 	});
+
+	it.scoped(
+		"startup restore reuses persisted repository identity without re-resolving",
+		() => {
+			const reconcileCalls = { current: 0 };
+			const branchRefreshCalls = { current: 0 };
+			const watchersByPath = new Map<string, RecordedWatcher[]>();
+			const subscribePaths: string[] = [];
+			const closedPaths: string[] = [];
+			const resolveCalls = { current: 0 };
+
+			const fileWatcherLayer = Layer.succeed(
+				FileWatcher,
+				FileWatcher.of({
+					subscribe: (path, onChange, onError, options) =>
+						Effect.sync(() => {
+							const recorded: RecordedWatcher = {
+								path,
+								onChange,
+								onError,
+								recursive: options?.recursive ?? false,
+								closed: false,
+							};
+							subscribePaths.push(path);
+							const existing = watchersByPath.get(path) ?? [];
+							existing.push(recorded);
+							watchersByPath.set(path, existing);
+							return {
+								close: () => {
+									recorded.closed = true;
+									closedPaths.push(path);
+								},
+							} satisfies WatchSubscription;
+						}),
+				})
+			);
+
+			const repoIdentityLayer = Layer.succeed(
+				RepositoryIdentity,
+				RepositoryIdentity.of({
+					resolve: () =>
+						Effect.sync(() => {
+							resolveCalls.current += 1;
+							throw new Error("watchAll should use persisted identity");
+						}),
+				})
+			);
+
+			const reconcilerLayer = Layer.succeed(
+				WorktreeReconciler,
+				WorktreeReconciler.of({
+					reconcile: (_projectId, _repoPath) =>
+						Effect.sync(() => {
+							reconcileCalls.current += 1;
+							return { added: 0, removed: 0, unchanged: 0 };
+						}),
+				})
+			);
+
+			const branchTrackerLayer = Layer.succeed(
+				BranchStateTracker,
+				BranchStateTracker.of({
+					refreshBranches: (_projectId) =>
+						Effect.sync(() => {
+							branchRefreshCalls.current += 1;
+							return { checked: 0, updated: 0 };
+						}),
+				})
+			);
+
+			const TestLayer = RepositoryWatchCoordinator.layer.pipe(
+				Layer.provide(branchTrackerLayer),
+				Layer.provideMerge(RepositoryEventBus.layer),
+				Layer.provide(fileWatcherLayer),
+				Layer.provide(reconcilerLayer),
+				Layer.provide(repoIdentityLayer),
+				Layer.provideMerge(TestLaborerStore)
+			);
+
+			return Effect.gen(function* () {
+				const { store } = yield* LaborerStore;
+				store.commit(
+					events.projectCreated({
+						id: "project-persisted-startup",
+						repoPath: "/persisted/repo",
+						repoId: "repo-1",
+						canonicalGitCommonDir: "/persisted/repo/.git",
+						name: "persisted-repo",
+						rlphConfig: null,
+					})
+				);
+
+				const coordinator = yield* RepositoryWatchCoordinator;
+				yield* coordinator.watchAll();
+
+				assert.strictEqual(resolveCalls.current, 0);
+				assert.strictEqual(reconcileCalls.current, 1);
+				assert.strictEqual(branchRefreshCalls.current, 1);
+				assert.deepStrictEqual(
+					store.query(tables.projects.where("id", "project-persisted-startup")),
+					[
+						{
+							id: "project-persisted-startup",
+							repoPath: "/persisted/repo",
+							repoId: "repo-1",
+							canonicalGitCommonDir: "/persisted/repo/.git",
+							name: "persisted-repo",
+							rlphConfig: null,
+						},
+					]
+				);
+				assert.deepStrictEqual(subscribePaths, [
+					"/persisted/repo/.git",
+					"/persisted/repo",
+				]);
+				assert.deepStrictEqual(closedPaths, []);
+			}).pipe(Effect.provide(TestLayer));
+		}
+	);
 
 	it("formats actionable non-blocking watcher warnings", () => {
 		assert.strictEqual(

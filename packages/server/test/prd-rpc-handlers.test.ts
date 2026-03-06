@@ -20,8 +20,10 @@ import { TaskManager } from "../src/services/task-manager.js";
 import { TestLaborerStore } from "./helpers/test-store.js";
 
 const project = {
+	canonicalGitCommonDir: null,
 	id: "project-1",
 	name: "laborer",
+	repoId: null,
 	repoPath: "/repo/laborer",
 	rlphConfig: null,
 } as const;

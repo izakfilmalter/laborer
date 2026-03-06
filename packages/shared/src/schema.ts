@@ -10,6 +10,8 @@ export const projects = State.SQLite.table({
 	columns: {
 		id: State.SQLite.text({ primaryKey: true }),
 		repoPath: State.SQLite.text(),
+		repoId: State.SQLite.text({ nullable: true }),
+		canonicalGitCommonDir: State.SQLite.text({ nullable: true }),
 		name: State.SQLite.text(),
 		rlphConfig: State.SQLite.text({ nullable: true }),
 	},
@@ -106,8 +108,20 @@ export const projectCreated = Events.synced({
 	schema: Schema.Struct({
 		id: Schema.String,
 		repoPath: Schema.String,
+		repoId: Schema.optional(Schema.NullOr(Schema.String)),
+		canonicalGitCommonDir: Schema.optional(Schema.NullOr(Schema.String)),
 		name: Schema.String,
 		rlphConfig: Schema.NullOr(Schema.String),
+	}),
+});
+
+export const projectRepositoryIdentityBackfilled = Events.synced({
+	name: "v1.ProjectRepositoryIdentityBackfilled",
+	schema: Schema.Struct({
+		id: Schema.String,
+		repoPath: Schema.String,
+		repoId: Schema.String,
+		canonicalGitCommonDir: Schema.String,
 	}),
 });
 
@@ -342,6 +356,7 @@ export const layoutRestored = Events.synced({
 
 export const events = {
 	projectCreated,
+	projectRepositoryIdentityBackfilled,
 	projectRemoved,
 	workspaceCreated,
 	workspaceStatusChanged,
@@ -373,8 +388,35 @@ export const events = {
 // ---------------------------------------------------------------------------
 
 const materializers = State.SQLite.materializers(events, {
-	"v1.ProjectCreated": ({ id, repoPath, name, rlphConfig }) =>
-		projects.insert({ id, repoPath, name, rlphConfig }),
+	"v1.ProjectCreated": ({
+		id,
+		repoPath,
+		repoId,
+		canonicalGitCommonDir,
+		name,
+		rlphConfig,
+	}) =>
+		projects.insert({
+			id,
+			repoPath,
+			repoId: repoId ?? null,
+			canonicalGitCommonDir: canonicalGitCommonDir ?? null,
+			name,
+			rlphConfig,
+		}),
+	"v1.ProjectRepositoryIdentityBackfilled": ({
+		id,
+		repoPath,
+		repoId,
+		canonicalGitCommonDir,
+	}) =>
+		projects
+			.update({
+				repoPath,
+				repoId,
+				canonicalGitCommonDir,
+			})
+			.where({ id }),
 	"v1.ProjectRemoved": ({ id }) => projects.delete().where({ id }),
 	"v1.WorkspaceCreated": ({
 		id,

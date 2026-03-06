@@ -4,3 +4,10 @@
 - Added an explicit `fs.watch` fallback path that can be selected without changing coordinator code, and automatically falls back with a warning if the native backend cannot start.
 - Added focused watcher tests covering default native preference, native subscribe/close behavior, native-to-fallback failover, and explicit fallback selection.
 - Feedback loops: `bun run test -- test/file-watcher.test.ts` passes in `packages/server`; `bun run check-types` still fails because of pre-existing `ProjectRecord` fixture mismatches in `packages/server/test/prd-rpc-handlers.test.ts` and `packages/server/test/project-rpc-handlers.test.ts`.
+
+2026-03-06
+- Selected Issue 1 as the highest-priority remaining slice because persisted repository identity is the next foundational dependency in the PRD and it unblocks startup-restore work.
+- Extended project identity persistence so new project writes include `repoId` and `canonicalGitCommonDir`, and legacy project reads now lazily backfill those fields through `ProjectRegistry`.
+- Updated startup watcher restore to reuse persisted canonical git identity when available instead of re-resolving everything from raw repo paths.
+- Added regression coverage for new-project persistence, lazy legacy backfill, persisted-identity startup restore, and updated RPC fixture types to match the expanded project record shape.
+- Feedback loops: `bun run check-types` passes in `packages/server` and `packages/shared`; `bun run test -- test/repository-identity.test.ts test/repository-watch-coordinator-hardening.test.ts test/rpc/project-management.test.ts test/project-rpc-handlers.test.ts test/prd-rpc-handlers.test.ts` passes in `packages/server`; `bun run test -- test/schema.test.ts` passes in `packages/shared`; `bun run check` still fails on a pre-existing formatting issue in `.opencode/package.json`.

@@ -140,3 +140,19 @@ Verification:
 - All 6 E2E tests pass with `bun run test:e2e` (6 passed in 30.5s)
 - All 70 existing Vitest tests still pass (`bun run test`)
 - `ultracite check` clean on new/modified files (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)
+
+## Issue 9: E2E — Verify workspace status and branch display — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Added `shows the created workspace branch name and running status in the sidebar` to `apps/web/e2e/workspace-lifecycle.spec.ts`
+- The new test creates a workspace with an explicit branch name (`e2e-branch-<timestamp>`) instead of relying on the auto-generated branch
+- After creation, the test verifies the success toast includes the chosen branch name, the branch name is visible in the sidebar, and the workspace exposes its destroy action and `running` status indicator
+- Updated the spec header to reflect that `workspace-lifecycle.spec.ts` now covers both Issue 8 and Issue 9
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun run test:e2e e2e/workspace-lifecycle.spec.ts` runs both workspace lifecycle E2E tests successfully (2 passed); Playwright reported success before the dev process teardown returned a non-zero turbo exit during shutdown
+- `bun x ultracite check e2e/workspace-lifecycle.spec.ts` passes

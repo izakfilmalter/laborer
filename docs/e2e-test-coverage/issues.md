@@ -287,13 +287,15 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that creates a workspace and verifies the branch name and status indicators are displayed correctly in the sidebar workspace card. This validates that workspace metadata flows from the server through LiveStore to the UI correctly.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/workspace-lifecycle.spec.ts`
-- [ ] Test creates a workspace with a known branch name
-- [ ] Test verifies the branch name is displayed in the workspace card
-- [ ] Test verifies a status badge/indicator is visible (e.g., "running" or similar)
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/workspace-lifecycle.spec.ts`
+- [x] Test creates a workspace with a known branch name
+- [x] Test verifies the branch name is displayed in the workspace card
+- [x] Test verifies a status badge/indicator is visible (e.g., "running" or similar)
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

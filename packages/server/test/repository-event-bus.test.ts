@@ -10,8 +10,11 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { afterAll } from "vitest";
 import { BranchStateTracker } from "../src/services/branch-state-tracker.js";
-import { FileWatcher } from "../src/services/file-watcher.js";
-import { PortAllocator } from "../src/services/port-allocator.js";
+import {
+	FileWatcher,
+	type WatchEvent,
+	type WatchSubscription,
+} from "../src/services/file-watcher.js";
 import {
 	DEFAULT_IGNORED_PREFIXES,
 	RepositoryEventBus,
@@ -20,11 +23,10 @@ import {
 } from "../src/services/repository-event-bus.js";
 import { RepositoryIdentity } from "../src/services/repository-identity.js";
 import { RepositoryWatchCoordinator } from "../src/services/repository-watch-coordinator.js";
-import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
 import { initRepo } from "./helpers/git-helpers.js";
 import { TestLaborerStore } from "./helpers/test-store.js";
-import { delay, waitFor } from "./helpers/timing-helpers.js";
+import { waitFor } from "./helpers/timing-helpers.js";
 
 const tempRoots: string[] = [];
 
@@ -34,20 +36,67 @@ const tempRoots: string[] = [];
  */
 const EventBusTestLayer = RepositoryEventBus.layer;
 
-/**
- * Full integration layer — includes watcher coordinator so we can
- * test that real filesystem events flow through the bus.
- */
-const IntegrationTestLayer = RepositoryWatchCoordinator.layer.pipe(
-	Layer.provide(BranchStateTracker.layer),
-	Layer.provideMerge(RepositoryEventBus.layer),
-	Layer.provide(FileWatcher.layer),
-	Layer.provide(WorktreeReconciler.layer),
-	Layer.provide(WorktreeDetector.layer),
-	Layer.provide(RepositoryIdentity.layer),
-	Layer.provide(PortAllocator.make(4700, 4720)),
-	Layer.provideMerge(TestLaborerStore)
-);
+type RecordedWatchersByPath = Map<
+	string,
+	{ readonly onChange: (event: WatchEvent) => void }[]
+>;
+
+const createDeterministicIntegrationLayer = (
+	repoPath: string,
+	recordedWatchers: RecordedWatchersByPath
+) => {
+	const recordingFileWatcher = Layer.succeed(
+		FileWatcher,
+		FileWatcher.of({
+			subscribe: (path, onChange, _onError, _options) =>
+				Effect.sync(() => {
+					const existing = recordedWatchers.get(path) ?? [];
+					existing.push({ onChange });
+					recordedWatchers.set(path, existing);
+					return {
+						close: () => undefined,
+					} satisfies WatchSubscription;
+				}),
+		})
+	);
+
+	return RepositoryWatchCoordinator.layer.pipe(
+		Layer.provide(
+			Layer.succeed(
+				BranchStateTracker,
+				BranchStateTracker.of({
+					refreshBranches: () => Effect.succeed({ checked: 0, updated: 0 }),
+				})
+			)
+		),
+		Layer.provideMerge(RepositoryEventBus.layer),
+		Layer.provide(recordingFileWatcher),
+		Layer.provide(
+			Layer.succeed(
+				WorktreeReconciler,
+				WorktreeReconciler.of({
+					reconcile: () =>
+						Effect.succeed({ added: 0, removed: 0, unchanged: 0 }),
+				})
+			)
+		),
+		Layer.provide(
+			Layer.succeed(
+				RepositoryIdentity,
+				RepositoryIdentity.of({
+					resolve: () =>
+						Effect.succeed({
+							canonicalRoot: repoPath,
+							canonicalGitCommonDir: join(repoPath, ".git"),
+							repoId: `${repoPath}-repo`,
+							isMainWorktree: true,
+						}),
+				})
+			)
+		),
+		Layer.provideMerge(TestLaborerStore)
+	);
+};
 
 afterAll(() => {
 	for (const root of tempRoots) {
@@ -290,31 +339,47 @@ describe("RepositoryEventBus watcher integration", () => {
 		() =>
 			Effect.gen(function* () {
 				const repoPath = initRepo("eventbus-add-1", tempRoots);
-				const coordinator = yield* RepositoryWatchCoordinator;
-				const bus = yield* RepositoryEventBus;
-
-				const received: RepositoryFileEvent[] = [];
-				yield* bus.subscribe((event) => {
-					received.push(event);
-				});
-
-				yield* coordinator.watchProject("project-eventbus-add", repoPath);
-
-				// Create a new source file in the repo
-				writeFileSync(join(repoPath, "new-file.ts"), "export const x = 1;\n");
-
-				yield* Effect.promise(() =>
-					waitFor(() =>
-						Promise.resolve(
-							received.some((e) => e.relativePath === "new-file.ts")
-						)
-					)
+				const recordedWatchers: RecordedWatchersByPath = new Map();
+				const addEventTestLayer = createDeterministicIntegrationLayer(
+					repoPath,
+					recordedWatchers
 				);
 
-				const addEvent = received.find((e) => e.relativePath === "new-file.ts");
-				assert.isDefined(addEvent);
-				assert.strictEqual(addEvent?.projectId, "project-eventbus-add");
-			}).pipe(Effect.provide(IntegrationTestLayer))
+				yield* Effect.gen(function* () {
+					const coordinator = yield* RepositoryWatchCoordinator;
+					const bus = yield* RepositoryEventBus;
+
+					const received: RepositoryFileEvent[] = [];
+					yield* bus.subscribe((event) => {
+						received.push(event);
+					});
+
+					yield* coordinator.watchProject("project-eventbus-add", repoPath);
+
+					// Create a new source file in the repo, then deterministically
+					// deliver the watcher signal through the coordinator.
+					writeFileSync(join(repoPath, "new-file.ts"), "export const x = 1;\n");
+					recordedWatchers
+						.get(repoPath)
+						?.at(-1)
+						?.onChange({ type: "rename", fileName: "new-file.ts" });
+
+					yield* Effect.promise(() =>
+						waitFor(() =>
+							Promise.resolve(
+								received.some((e) => e.relativePath === "new-file.ts")
+							)
+						)
+					);
+
+					const addEvent = received.find(
+						(e) => e.relativePath === "new-file.ts"
+					);
+					assert.isDefined(addEvent);
+					assert.strictEqual(addEvent?.type, "add");
+					assert.strictEqual(addEvent?.projectId, "project-eventbus-add");
+				}).pipe(Effect.provide(addEventTestLayer));
+			})
 	);
 
 	it.scoped(
@@ -322,34 +387,44 @@ describe("RepositoryEventBus watcher integration", () => {
 		() =>
 			Effect.gen(function* () {
 				const repoPath = initRepo("eventbus-change-1", tempRoots);
-				const coordinator = yield* RepositoryWatchCoordinator;
-				const bus = yield* RepositoryEventBus;
+				const recordedWatchers: RecordedWatchersByPath = new Map();
+				const changeEventTestLayer = createDeterministicIntegrationLayer(
+					repoPath,
+					recordedWatchers
+				);
 
-				const received: RepositoryFileEvent[] = [];
-				yield* bus.subscribe((event) => {
-					received.push(event);
-				});
+				yield* Effect.gen(function* () {
+					const coordinator = yield* RepositoryWatchCoordinator;
+					const bus = yield* RepositoryEventBus;
 
-				yield* coordinator.watchProject("project-eventbus-change", repoPath);
+					const received: RepositoryFileEvent[] = [];
+					yield* bus.subscribe((event) => {
+						received.push(event);
+					});
 
-				// Wait a moment for watcher to settle, then modify an existing file
-				yield* Effect.promise(() => delay(200));
-				writeFileSync(join(repoPath, "README.md"), "# updated content\n");
+					yield* coordinator.watchProject("project-eventbus-change", repoPath);
+					writeFileSync(join(repoPath, "README.md"), "# updated content\n");
+					recordedWatchers.get(repoPath)?.at(-1)?.onChange({
+						type: "change",
+						fileName: "README.md",
+					});
 
-				yield* Effect.promise(() =>
-					waitFor(() =>
-						Promise.resolve(
-							received.some((e) => e.relativePath === "README.md")
+					yield* Effect.promise(() =>
+						waitFor(() =>
+							Promise.resolve(
+								received.some((e) => e.relativePath === "README.md")
+							)
 						)
-					)
-				);
+					);
 
-				const changeEvent = received.find(
-					(e) => e.relativePath === "README.md"
-				);
-				assert.isDefined(changeEvent);
-				assert.strictEqual(changeEvent?.projectId, "project-eventbus-change");
-			}).pipe(Effect.provide(IntegrationTestLayer))
+					const changeEvent = received.find(
+						(e) => e.relativePath === "README.md"
+					);
+					assert.isDefined(changeEvent);
+					assert.strictEqual(changeEvent?.type, "change");
+					assert.strictEqual(changeEvent?.projectId, "project-eventbus-change");
+				}).pipe(Effect.provide(changeEventTestLayer));
+			})
 	);
 
 	it.scoped(
@@ -357,52 +432,58 @@ describe("RepositoryEventBus watcher integration", () => {
 		() =>
 			Effect.gen(function* () {
 				const repoPath = initRepo("eventbus-delete-1", tempRoots);
-				const coordinator = yield* RepositoryWatchCoordinator;
-				const bus = yield* RepositoryEventBus;
+				const recordedWatchers: RecordedWatchersByPath = new Map();
+				const deleteEventTestLayer = createDeterministicIntegrationLayer(
+					repoPath,
+					recordedWatchers
+				);
 
 				// Create a file first so we can delete it
 				const filePath = join(repoPath, "to-delete.ts");
 				writeFileSync(filePath, "export const x = 1;\n");
 
-				const received: RepositoryFileEvent[] = [];
-				yield* bus.subscribe((event) => {
-					received.push(event);
-				});
+				yield* Effect.gen(function* () {
+					const coordinator = yield* RepositoryWatchCoordinator;
+					const bus = yield* RepositoryEventBus;
 
-				yield* coordinator.watchProject("project-eventbus-delete", repoPath);
+					const received: RepositoryFileEvent[] = [];
+					yield* bus.subscribe((event) => {
+						received.push(event);
+					});
 
-				// Wait for watcher to settle, then delete the file
-				yield* Effect.promise(() => delay(200));
-				unlinkSync(filePath);
+					yield* coordinator.watchProject("project-eventbus-delete", repoPath);
+					unlinkSync(filePath);
+					recordedWatchers
+						.get(repoPath)
+						?.at(-1)
+						?.onChange({ type: "rename", fileName: "to-delete.ts" });
 
-				yield* Effect.promise(() =>
-					waitFor(() =>
-						Promise.resolve(
-							received.some((e) => e.relativePath === "to-delete.ts")
+					yield* Effect.promise(() =>
+						waitFor(() =>
+							Promise.resolve(
+								received.some((e) => e.relativePath === "to-delete.ts")
+							)
 						)
-					)
-				);
+					);
 
-				const deleteEvent = received.find(
-					(e) => e.relativePath === "to-delete.ts"
-				);
-				assert.isDefined(deleteEvent);
-				assert.strictEqual(deleteEvent?.projectId, "project-eventbus-delete");
-			}).pipe(Effect.provide(IntegrationTestLayer))
+					const deleteEvent = received.find(
+						(e) => e.relativePath === "to-delete.ts"
+					);
+					assert.isDefined(deleteEvent);
+					assert.strictEqual(deleteEvent?.type, "delete");
+					assert.strictEqual(deleteEvent?.projectId, "project-eventbus-delete");
+				}).pipe(Effect.provide(deleteEventTestLayer));
+			})
 	);
 
 	it.scoped("ignored paths do not produce events through the event bus", () =>
 		Effect.gen(function* () {
 			const repoPath = initRepo("eventbus-ignore-1", tempRoots);
-			const coordinator = yield* RepositoryWatchCoordinator;
-			const bus = yield* RepositoryEventBus;
-
-			const received: RepositoryFileEvent[] = [];
-			yield* bus.subscribe((event) => {
-				received.push(event);
-			});
-
-			yield* coordinator.watchProject("project-eventbus-ignore", repoPath);
+			const recordedWatchers: RecordedWatchersByPath = new Map();
+			const ignoredPathsTestLayer = createDeterministicIntegrationLayer(
+				repoPath,
+				recordedWatchers
+			);
 
 			// Create files in ignored directories
 			const nodeModulesDir = join(repoPath, "node_modules");
@@ -416,34 +497,57 @@ describe("RepositoryEventBus watcher integration", () => {
 			mkdirSync(distDir, { recursive: true });
 			writeFileSync(join(distDir, "bundle.js"), "// bundle\n");
 
-			// Also create a non-ignored file so we know the watcher is working
-			writeFileSync(
-				join(repoPath, "canary-source.ts"),
-				"export const canary = true;\n"
-			);
+			yield* Effect.gen(function* () {
+				const coordinator = yield* RepositoryWatchCoordinator;
+				const bus = yield* RepositoryEventBus;
 
-			yield* Effect.promise(() =>
-				waitFor(() =>
-					Promise.resolve(
-						received.some((e) => e.relativePath === "canary-source.ts")
+				const received: RepositoryFileEvent[] = [];
+				yield* bus.subscribe((event) => {
+					received.push(event);
+				});
+
+				yield* coordinator.watchProject("project-eventbus-ignore", repoPath);
+
+				// Also create a non-ignored file so we know the watcher is working.
+				writeFileSync(
+					join(repoPath, "canary-source.ts"),
+					"export const canary = true;\n"
+				);
+				recordedWatchers.get(repoPath)?.at(-1)?.onChange({
+					type: "rename",
+					fileName: "node_modules/lodash.js",
+				});
+				recordedWatchers.get(repoPath)?.at(-1)?.onChange({
+					type: "rename",
+					fileName: "dist/bundle.js",
+				});
+				recordedWatchers.get(repoPath)?.at(-1)?.onChange({
+					type: "rename",
+					fileName: "canary-source.ts",
+				});
+
+				yield* Effect.promise(() =>
+					waitFor(() =>
+						Promise.resolve(
+							received.some((e) => e.relativePath === "canary-source.ts")
+						)
 					)
-				)
-			);
+				);
 
-			// Verify ignored paths did not produce events
-			const ignoredEvents = received.filter(
-				(e) =>
-					e.relativePath.startsWith("node_modules") ||
-					e.relativePath.startsWith("dist") ||
-					e.relativePath.startsWith(".git")
-			);
+				const ignoredEvents = received.filter(
+					(e) =>
+						e.relativePath.startsWith("node_modules") ||
+						e.relativePath.startsWith("dist") ||
+						e.relativePath.startsWith(".git")
+				);
 
-			assert.strictEqual(
-				ignoredEvents.length,
-				0,
-				`Expected no events from ignored paths, but received: ${ignoredEvents.map((e) => e.relativePath).join(", ")}`
-			);
-		}).pipe(Effect.provide(IntegrationTestLayer))
+				assert.strictEqual(
+					ignoredEvents.length,
+					0,
+					`Expected no events from ignored paths, but received: ${ignoredEvents.map((e) => e.relativePath).join(", ")}`
+				);
+			}).pipe(Effect.provide(ignoredPathsTestLayer));
+		})
 	);
 
 	it.scoped(
@@ -451,47 +555,56 @@ describe("RepositoryEventBus watcher integration", () => {
 		() =>
 			Effect.gen(function* () {
 				const repoPath = initRepo("eventbus-multi-sub-1", tempRoots);
-				const coordinator = yield* RepositoryWatchCoordinator;
-				const bus = yield* RepositoryEventBus;
-
-				const receivedA: RepositoryFileEvent[] = [];
-				const receivedB: RepositoryFileEvent[] = [];
-
-				yield* bus.subscribe((event) => {
-					receivedA.push(event);
-				});
-				yield* bus.subscribe((event) => {
-					receivedB.push(event);
-				});
-
-				yield* coordinator.watchProject("project-eventbus-multi", repoPath);
-				yield* Effect.promise(() => delay(200));
-
-				writeFileSync(
-					join(repoPath, "multi-sub-test.ts"),
-					"export const y = 2;\n"
+				const recordedWatchers: RecordedWatchersByPath = new Map();
+				const multiSubscriberTestLayer = createDeterministicIntegrationLayer(
+					repoPath,
+					recordedWatchers
 				);
 
-				yield* Effect.promise(() =>
-					waitFor(() =>
-						Promise.resolve(
-							receivedA.some((e) => e.relativePath === "multi-sub-test.ts") &&
-								receivedB.some((e) => e.relativePath === "multi-sub-test.ts")
+				yield* Effect.gen(function* () {
+					const coordinator = yield* RepositoryWatchCoordinator;
+					const bus = yield* RepositoryEventBus;
+
+					const receivedA: RepositoryFileEvent[] = [];
+					const receivedB: RepositoryFileEvent[] = [];
+
+					yield* bus.subscribe((event) => {
+						receivedA.push(event);
+					});
+					yield* bus.subscribe((event) => {
+						receivedB.push(event);
+					});
+
+					yield* coordinator.watchProject("project-eventbus-multi", repoPath);
+					writeFileSync(
+						join(repoPath, "multi-sub-test.ts"),
+						"export const y = 2;\n"
+					);
+					recordedWatchers.get(repoPath)?.at(-1)?.onChange({
+						type: "rename",
+						fileName: "multi-sub-test.ts",
+					});
+
+					yield* Effect.promise(() =>
+						waitFor(() =>
+							Promise.resolve(
+								receivedA.some((e) => e.relativePath === "multi-sub-test.ts") &&
+									receivedB.some((e) => e.relativePath === "multi-sub-test.ts")
+							)
 						)
-					)
-				);
+					);
 
-				// Both subscribers should have received the same event
-				const eventA = receivedA.find(
-					(e) => e.relativePath === "multi-sub-test.ts"
-				);
-				const eventB = receivedB.find(
-					(e) => e.relativePath === "multi-sub-test.ts"
-				);
+					const eventA = receivedA.find(
+						(e) => e.relativePath === "multi-sub-test.ts"
+					);
+					const eventB = receivedB.find(
+						(e) => e.relativePath === "multi-sub-test.ts"
+					);
 
-				assert.isDefined(eventA);
-				assert.isDefined(eventB);
-				assert.strictEqual(eventA?.projectId, eventB?.projectId);
-			}).pipe(Effect.provide(IntegrationTestLayer))
+					assert.isDefined(eventA);
+					assert.isDefined(eventB);
+					assert.strictEqual(eventA?.projectId, eventB?.projectId);
+				}).pipe(Effect.provide(multiSubscriberTestLayer));
+			})
 	);
 });

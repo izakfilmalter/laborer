@@ -262,4 +262,50 @@ describe("ProjectRegistry canonical deduplication", () => {
 			assert.strictEqual(matchingProjects.length, 1);
 		}).pipe(Effect.provide(RegistryTestLayer))
 	);
+
+	it.scoped(
+		"adding a linked worktree path does not create a duplicate project",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("registry-worktree-dedup", tempRoots);
+				const linkedPath = join(repoPath, ".worktrees", "feature-y");
+				git(`worktree add -b feature/y ${linkedPath}`, repoPath);
+
+				const registry = yield* ProjectRegistry;
+				const project = yield* registry.addProject(repoPath);
+
+				const result = yield* registry.addProject(linkedPath).pipe(Effect.flip);
+
+				assert.include(result.message, "already registered");
+
+				const { store } = yield* LaborerStore;
+				const matchingProjects = store
+					.query(tables.projects)
+					.filter((candidate) => candidate.repoPath === project.repoPath);
+
+				assert.strictEqual(matchingProjects.length, 1);
+			}).pipe(Effect.provide(RegistryTestLayer))
+	);
+
+	it.scoped(
+		"removing a project unregisters it through the public registry API",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("registry-remove-project", tempRoots);
+				const registry = yield* ProjectRegistry;
+				const project = yield* registry.addProject(repoPath);
+
+				yield* registry.removeProject(project.id);
+
+				const removedProject = yield* registry
+					.getProject(project.id)
+					.pipe(Effect.flip);
+				assert.strictEqual(removedProject.code, "NOT_FOUND");
+
+				const projects = yield* registry.listProjects();
+				assert.isFalse(
+					projects.some((candidate) => candidate.id === project.id)
+				);
+			}).pipe(Effect.provide(RegistryTestLayer))
+	);
 });

@@ -96,23 +96,31 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 
 				const canonicalRoot = identity.canonicalRoot;
 
-				// 2. Check if project is already registered using canonical path
-				// This prevents duplicates from nested paths, symlinks, or
-				// alternate path representations.
-				const existingProjects = store.query(
-					tables.projects.where("repoPath", canonicalRoot)
+				// 2. Check if the logical repository is already registered.
+				// Comparing only checkout roots misses the case where the user
+				// adds a linked worktree path for a repository that already has
+				// its main checkout registered, so dedupe on repo identity.
+				const existingProject = yield* Effect.forEach(
+					store.query(tables.projects),
+					(project) =>
+						repoIdentity.resolve(project.repoPath).pipe(
+							Effect.match({
+								onFailure: () => undefined,
+								onSuccess: (projectIdentity) =>
+									projectIdentity.repoId === identity.repoId
+										? project
+										: undefined,
+							})
+						)
+				).pipe(
+					Effect.map((projects) =>
+						projects.find((project) => project !== undefined)
+					)
 				);
 
-				if (existingProjects.length > 0) {
-					const existingProject = existingProjects[0];
-					if (!existingProject) {
-						return yield* new RpcError({
-							message: `Project already registered: ${canonicalRoot}`,
-							code: "ALREADY_REGISTERED",
-						});
-					}
+				if (existingProject) {
 					return yield* new RpcError({
-						message: `${repoPath} resolves to the already registered repository ${canonicalRoot} (project ${existingProject.name})`,
+						message: `${repoPath} resolves to the already registered repository ${existingProject.repoPath} (project ${existingProject.name})`,
 						code: "ALREADY_REGISTERED",
 					});
 				}

@@ -349,13 +349,16 @@ class RepositoryWatchCoordinator extends Context.Tag(
 			 * Attempt to add the dedicated worktrees watcher when the
 			 * shared worktrees directory appears inside the git dir.
 			 */
-			const switchToWorktreesWatcher = (state: ProjectWatcherState): void => {
+			const switchToWorktreesWatcher = (
+				state: ProjectWatcherState,
+				reason: string
+			): boolean => {
 				if (!isActive(state)) {
-					return;
+					return false;
 				}
 				const worktreesDir = join(state.gitDirPath, "worktrees");
 				if (state.worktreesSubscription !== null || !existsSync(worktreesDir)) {
-					return;
+					return false;
 				}
 
 				runPromise(
@@ -368,10 +371,29 @@ class RepositoryWatchCoordinator extends Context.Tag(
 							) {
 								return Effect.void;
 							}
-							return watchProject(latest.projectId, latest.repoPath);
+							return watchProject(latest.projectId, latest.repoPath).pipe(
+								Effect.zipRight(
+									Ref.get(statesRef).pipe(
+										Effect.flatMap((nextStates) => {
+											const refreshed = nextStates.get(state.projectId);
+											if (refreshed === undefined) {
+												return Effect.void;
+											}
+
+											return reconcileWithWarning(
+												refreshed.projectId,
+												refreshed.repoPath,
+												reason
+											);
+										})
+									)
+								)
+							);
 						})
 					)
 				).catch(() => undefined);
+
+				return true;
 			};
 
 			const handleGitDirRootEvent = (
@@ -382,8 +404,10 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					return;
 				}
 				if (event.fileName === "worktrees") {
-					switchToWorktreesWatcher(state);
-					scheduleReconcile(state, "worktrees-created");
+					const switched = switchToWorktreesWatcher(state, "worktrees-created");
+					if (!switched) {
+						scheduleReconcile(state, "worktrees-created");
+					}
 				}
 
 				if (isBranchRelatedEvent(event.fileName)) {
@@ -533,8 +557,13 @@ class RepositoryWatchCoordinator extends Context.Tag(
 							if (!isActive(state)) {
 								return;
 							}
+							let eventType: "add" | "change" | "delete" = "change";
+							if (event.type === "rename") {
+								const absolutePath = join(repoPath, event.fileName ?? "");
+								eventType = existsSync(absolutePath) ? "add" : "delete";
+							}
 							const normalized = eventBus.normalizeEvent({
-								type: event.type === "rename" ? "add" : "change",
+								type: eventType,
 								fileName: event.fileName,
 								repoRoot: repoPath,
 								projectId,

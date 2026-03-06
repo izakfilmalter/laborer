@@ -346,7 +346,46 @@ describe("Startup bootstrap and project lifecycle integration", () => {
 				);
 
 				git(`worktree add -b feature/public-a ${linkedA}`, repoPath);
+
+				yield* Effect.promise(() =>
+					waitFor(() => {
+						const workspaces = store.query(
+							tables.workspaces.where("projectId", project.id)
+						) as readonly {
+							readonly branchName: string;
+							readonly worktreePath: string;
+						}[];
+
+						return Promise.resolve(
+							workspaces.length === 2 &&
+								workspaces.some(
+									(workspace) =>
+										workspace.worktreePath === realpathSync(linkedA)
+								)
+						);
+					})
+				);
+
 				git(`worktree add -b feature/public-b ${linkedB}`, repoPath);
+
+				yield* Effect.promise(() =>
+					waitFor(() => {
+						const workspaces = store.query(
+							tables.workspaces.where("projectId", project.id)
+						) as readonly {
+							readonly branchName: string;
+							readonly worktreePath: string;
+						}[];
+
+						return Promise.resolve(
+							workspaces.length === 3 &&
+								workspaces.some(
+									(workspace) => workspace.branchName === "feature/public-b"
+								)
+						);
+					})
+				);
+
 				git(`worktree remove --force ${linkedA}`, repoPath);
 
 				yield* Effect.promise(() =>

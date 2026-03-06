@@ -243,11 +243,11 @@ Harden the finished alignment work with targeted regression coverage that exerci
 
 ### Acceptance criteria
 
-- [ ] Tests cover persisted identity migration/backfill and direct dedupe behavior
-- [ ] Tests cover native backend operation and fallback backend behavior
-- [ ] Tests cover ignore filtering at watcher and event-bus boundaries
-- [ ] Tests cover at least one end-to-end downstream invalidation path driven by repo file events
-- [ ] Coverage reporting clearly includes the updated repo-watching implementation areas
+- [x] Tests cover persisted identity migration/backfill and direct dedupe behavior
+- [x] Tests cover native backend operation and fallback backend behavior
+- [x] Tests cover ignore filtering at watcher and event-bus boundaries
+- [x] Tests cover at least one end-to-end downstream invalidation path driven by repo file events
+- [x] Coverage reporting clearly includes the updated repo-watching implementation areas
 
 ### Blocked by
 

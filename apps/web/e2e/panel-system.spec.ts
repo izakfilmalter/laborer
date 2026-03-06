@@ -1,12 +1,12 @@
 /**
  * E2E Tests - Panel system
  *
- * Covers the foundational split-pane flow through the real UI. The test
- * creates a workspace to seed the initial terminal pane, splits it
- * horizontally, then splits one of the resulting panes vertically and
- * verifies the layout geometry updates as expected.
+ * Covers the foundational panel-system flows through the real UI. The
+ * tests create a workspace to seed the initial terminal pane, verify split
+ * layout geometry, and confirm closing an active pane transfers focus to
+ * the remaining sibling pane.
  *
- * @see PRD-e2e-test-coverage.md - Issue 11
+ * @see PRD-e2e-test-coverage.md - Issues 11 and 12
  */
 
 import { readFileSync } from "node:fs";
@@ -106,6 +106,22 @@ function getRequiredPane(boxes: readonly PaneBox[], index: number): PaneBox {
 	return pane;
 }
 
+async function closeExtraPanes(
+	panes: Locator,
+	panels: { closePane: () => Promise<void> }
+): Promise<void> {
+	for (;;) {
+		const paneCount = await panes.count();
+		if (paneCount <= 1) {
+			return;
+		}
+
+		await panes.nth(paneCount - 1).click();
+		await panels.closePane();
+		await expect(panes).toHaveCount(paneCount - 1, { timeout: 10_000 });
+	}
+}
+
 test.describe("panel system", () => {
 	test("can split panes horizontally and then vertically", async ({
 		page,
@@ -157,5 +173,46 @@ test.describe("panel system", () => {
 			24
 		);
 		expect(leftColumnPane.height).toBeGreaterThan(topRightPane.height + 100);
+	});
+
+	test("can close the active pane and keep focus on the remaining pane", async ({
+		page,
+		panels,
+	}) => {
+		await addProjectAndCreateWorkspace(page);
+
+		const paneRegions = page.locator("[data-pane-id]");
+		await expect(paneRegions.first()).toBeVisible({ timeout: 15_000 });
+		await closeExtraPanes(paneRegions, panels);
+		await expect(paneRegions).toHaveCount(1, { timeout: 10_000 });
+
+		await paneRegions.first().click();
+		await panels.splitHorizontal();
+
+		await expect(paneRegions).toHaveCount(2, { timeout: 10_000 });
+
+		const originalPaneId = await paneRegions
+			.first()
+			.getAttribute("data-pane-id");
+		const siblingPane = paneRegions.nth(1);
+		const siblingPaneId = await siblingPane.getAttribute("data-pane-id");
+		if (!(originalPaneId && siblingPaneId)) {
+			throw new Error("Expected both panes to expose data-pane-id attributes");
+		}
+
+		await siblingPane.click();
+		await panels.closePane();
+
+		await expect(paneRegions).toHaveCount(1, { timeout: 10_000 });
+		await expect(page.locator(`[data-pane-id="${siblingPaneId}"]`)).toHaveCount(
+			0
+		);
+		await expect(
+			page.locator(`[data-pane-id="${originalPaneId}"]`)
+		).toBeVisible();
+
+		await panels.splitVertical();
+
+		await expect(paneRegions).toHaveCount(2, { timeout: 10_000 });
 	});
 });

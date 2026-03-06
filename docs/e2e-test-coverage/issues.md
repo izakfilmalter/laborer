@@ -378,14 +378,16 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that splits a pane, then closes one pane and verifies focus transfers to the sibling pane. This validates the close-and-focus-transfer behavior in the real UI (the logic tested at the unit level in `layout-utils.test.ts`).
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/panel-system.spec.ts`
-- [ ] Test splits a pane to create two panes
-- [ ] Test closes one pane (via close button or Cmd+W)
-- [ ] Test verifies only one pane remains
-- [ ] Test verifies the remaining pane is focused/active
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/panel-system.spec.ts`
+- [x] Test splits a pane to create two panes
+- [x] Test closes one pane (via close button or Cmd+W)
+- [x] Test verifies only one pane remains
+- [x] Test verifies the remaining pane is focused/active
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

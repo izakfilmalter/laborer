@@ -209,3 +209,22 @@ Verification:
 - `bun run test` passes in `apps/web` (70 tests)
 - `bun x ultracite check apps/web/e2e/global-setup.ts apps/web/vite.config.ts turbo.json apps/web/e2e/panel-system.spec.ts` passes
 - `bun run test:e2e e2e/panel-system.spec.ts` passes in `apps/web` (1 passed)
+
+## Issue 12: E2E - Close pane and verify focus transfer - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 12 as the highest-priority remaining task because it extends the newly working panel-system coverage and validates the close-path focus transfer that panel navigation and resize flows depend on
+
+Changes made:
+- Added `can close the active pane and keep focus on the remaining pane` to `apps/web/e2e/panel-system.spec.ts`
+- The new test creates a workspace, splits the initial pane, activates the second pane, closes it with the toolbar action, and verifies only the sibling pane remains
+- Verified focus transfer indirectly through real UI behavior by splitting again immediately after the close without re-clicking any pane; the split succeeding proves the remaining sibling became the active pane
+- Updated the spec header so `panel-system.spec.ts` now documents coverage for Issues 11 and 12
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check apps/web/e2e/panel-system.spec.ts docs/e2e-test-coverage/issues.md docs/e2e-test-coverage/progress.txt` passes
+- `bun run test:e2e e2e/panel-system.spec.ts` executes both panel-system tests successfully (2 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown

@@ -33,6 +33,7 @@ import {
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
+import { CreatePlanWorkspace } from "@/components/create-plan-workspace";
 import { PlanEditor } from "@/components/plan-editor";
 import { PlanIssuesList } from "@/components/plan-issues-list";
 import { ProjectGroup } from "@/components/project-group";
@@ -1052,11 +1053,12 @@ function HomeComponent() {
 								<PlanEditor onBack={handlePlanBack} prdId={selectedPlanId} />
 							</div>
 							<div className="w-80 shrink-0 border-l">
-								<div className="flex h-8 shrink-0 items-center border-b px-3">
+								<div className="flex h-8 shrink-0 items-center justify-between border-b px-3">
 									<span className="font-medium text-sm">Issues</span>
 								</div>
 								<ScrollArea className="h-[calc(100%-2rem)]">
-									<div className="p-3">
+									<div className="grid gap-3 p-3">
+										<CreatePlanWorkspace prdId={selectedPlanId} />
 										<PlanIssuesList prdId={selectedPlanId} />
 									</div>
 								</ScrollArea>

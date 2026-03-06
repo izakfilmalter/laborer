@@ -601,13 +601,13 @@ Track the plan-workspace association: either by convention (branch name prefix `
 
 ### Acceptance criteria
 
-- [ ] "Create Workspace" button appears in the plan detail view
-- [ ] Clicking the button creates a workspace via `workspace.create` RPC
-- [ ] Branch name is derived from the plan slug (e.g., `plan/<slug>`)
-- [ ] The button is disabled with a tooltip when a workspace already exists for this plan
-- [ ] The created workspace appears in the plan detail view
-- [ ] The created workspace appears in the project's workspace list in the sidebar
-- [ ] Workspace creation uses the same flow as `CreateWorkspaceForm` (progress, error handling)
+- [x] "Create Workspace" button appears in the plan detail view
+- [x] Clicking the button creates a workspace via `workspace.create` RPC
+- [x] Branch name is derived from the plan slug (e.g., `plan/<slug>`)
+- [x] The button is disabled with a tooltip when a workspace already exists for this plan
+- [x] The created workspace appears in the plan detail view
+- [x] The created workspace appears in the project's workspace list in the sidebar
+- [x] Workspace creation uses the same flow as `CreateWorkspaceForm` (progress, error handling)
 
 ### Blocked by
 
@@ -774,8 +774,8 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 189 | Plans sidebar section: PlanList component | #175 | Done |
 | 190 | Plan detail view: Plate.js markdown editor | #180, #189 | Done |
 | 191 | Plan detail view: issues list alongside editor | #181, #190 | Done |
-| 192 | Create workspace from plan | #191 | Ready |
-| 193 | Plan workspace scoped task list and rlph integration | #186, #192 | Blocked |
+| 192 | Create workspace from plan | #191 | Done |
+| 193 | Plan workspace scoped task list and rlph integration | #186, #192 | Ready |
 | 194 | Remove CreateTaskForm and manual task source tab | #181 | Ready |
 | 195 | Remove WritePrdForm, rlph.writePRD RPC, and PrdTaskImporter | #185 | Done |
 | 196 | Polish and end-to-end verification | #188, #193, #194, #195 | Blocked |

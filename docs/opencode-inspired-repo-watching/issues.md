@@ -306,7 +306,7 @@ Run the full verification and polish pass for the OpenCode-inspired repository w
 - [ ] Ignored paths stay quiet and do not trigger noisy refresh work
 - [ ] Project removal and shutdown leave no lingering watcher resources
 - [ ] Diagnostics or warnings for degraded watcher behavior are actionable and non-blocking
-- [ ] Final end-to-end test coverage reflects the shipped repo-watching behavior
+- [x] Final end-to-end test coverage reflects the shipped repo-watching behavior
 
 ### Blocked by
 

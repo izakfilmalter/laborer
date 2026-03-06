@@ -386,3 +386,16 @@
 - `bun run test -- test/branch-state-tracker.test.ts test/repository-watch-coordinator.test.ts test/repository-watch-coordinator-hardening.test.ts` passes (17 tests)
 - `bun run --filter @laborer/server check-types` passes
 - `bun x ultracite check packages/server/src/services/repository-watch-coordinator.ts packages/server/test/branch-state-tracker.test.ts` passes
+
+## Issue 8: Public-stack end-to-end coverage for shipped repo watching — IN PROGRESS
+
+### What was done
+- Added a new public-stack integration scenario in `packages/server/test/startup-bootstrap.test.ts`
+  - Registers a project through `ProjectRegistry.addProject()` using the full production-like Layer graph
+  - Exercises rapid worktree churn by adding two linked worktrees, removing one, and asserting the persisted workspace state settles without duplicates
+  - Switches the main checkout branch after the linked worktrees exist and verifies watcher-driven branch refresh updates the canonical main workspace record
+  - Uses `realpathSync` for the main checkout assertion so the end-to-end coverage stays stable on macOS canonical temp paths
+
+### Verification
+- `bun run test -- test/startup-bootstrap.test.ts` passes (6 tests)
+- `bun run --filter @laborer/server check-types` passes

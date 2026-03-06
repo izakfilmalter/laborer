@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { events, tables } from "@laborer/shared/schema";
@@ -16,7 +16,7 @@ import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
 import { git, initRepo } from "./helpers/git-helpers.js";
 import { TestLaborerStore } from "./helpers/test-store.js";
-import { waitFor } from "./helpers/timing-helpers.js";
+import { delay, waitFor } from "./helpers/timing-helpers.js";
 
 const tempRoots: string[] = [];
 
@@ -27,7 +27,7 @@ const tempRoots: string[] = [];
 const TestLayer = ProjectRegistry.layer.pipe(
 	Layer.provide(RepositoryWatchCoordinator.layer),
 	Layer.provide(BranchStateTracker.layer),
-	Layer.provide(RepositoryEventBus.layer),
+	Layer.provideMerge(RepositoryEventBus.layer),
 	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),
@@ -321,6 +321,76 @@ describe("Startup bootstrap and project lifecycle integration", () => {
 				assert.isTrue(
 					branchNames.includes("feature/api-b"),
 					"Worktree B branch should be correct"
+				);
+			}).pipe(Effect.provide(TestLayer))
+	);
+
+	it.scoped(
+		"public repo-watching stack stays consistent across branch refresh and worktree churn",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("boot-public-e2e", tempRoots);
+				const canonicalRepoPath = realpathSync(repoPath);
+				const linkedA = join(repoPath, ".worktrees", "boot-public-a");
+				const linkedB = join(repoPath, ".worktrees", "boot-public-b");
+
+				const registry = yield* ProjectRegistry;
+				const { store } = yield* LaborerStore;
+
+				const project = yield* registry.addProject(repoPath);
+				yield* Effect.promise(() => delay(200));
+
+				writeFileSync(
+					join(repoPath, "README.md"),
+					"# public repo-watching e2e\n"
+				);
+
+				git(`worktree add -b feature/public-a ${linkedA}`, repoPath);
+				git(`worktree add -b feature/public-b ${linkedB}`, repoPath);
+				git(`worktree remove --force ${linkedA}`, repoPath);
+
+				yield* Effect.promise(() =>
+					waitFor(() => {
+						const workspaces = store.query(
+							tables.workspaces.where("projectId", project.id)
+						) as readonly {
+							readonly branchName: string;
+							readonly worktreePath: string;
+						}[];
+
+						const worktreePaths = workspaces.map(
+							(workspace) => workspace.worktreePath
+						);
+						return Promise.resolve(
+							workspaces.length === 2 &&
+								new Set(worktreePaths).size === 2 &&
+								workspaces.some(
+									(workspace) => workspace.branchName === "feature/public-b"
+								)
+						);
+					})
+				);
+				yield* Effect.promise(() => delay(700));
+
+				git("checkout -b feature/public-main-refresh", repoPath);
+
+				yield* Effect.promise(() =>
+					waitFor(() => {
+						const workspaces = store.query(
+							tables.workspaces.where("projectId", project.id)
+						) as readonly {
+							readonly branchName: string;
+							readonly worktreePath: string;
+						}[];
+
+						return Promise.resolve(
+							workspaces.some(
+								(workspace) =>
+									workspace.worktreePath === canonicalRepoPath &&
+									workspace.branchName === "feature/public-main-refresh"
+							)
+						);
+					})
 				);
 			}).pipe(Effect.provide(TestLayer))
 	);

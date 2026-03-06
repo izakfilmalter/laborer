@@ -254,6 +254,16 @@ export class LaborerRpcs extends RpcGroup.make(
 		},
 	}),
 
+	Rpc.make("prd.createIssue", {
+		success: TaskResponse,
+		error: RpcError,
+		payload: {
+			prdId: Schema.String,
+			title: Schema.String,
+			body: Schema.String,
+		},
+	}),
+
 	// -----------------------------------------------------------------------
 	// Workspace RPCs
 	// -----------------------------------------------------------------------

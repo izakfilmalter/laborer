@@ -11,6 +11,7 @@ import { Effect, Layer } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ConfigService } from "../src/services/config-service.js";
 import {
+	issuesFilePathFromPrdPath,
 	PrdStorageService,
 	prdFileNameFromTitle,
 	slugifyPrdTitle,
@@ -117,5 +118,55 @@ describe("PrdStorageService", () => {
 		expect(result.resolvedPrdsDir).toBe(customPrdsDir);
 		expect(result.filePath).toBe(join(customPrdsDir, "PRD-read-me-later.md"));
 		expect(result.content).toBe("## Body\n");
+	});
+
+	it("creates and appends companion PRD issues files with numbered sections", async () => {
+		const projectDir = join(testRoot, "issues-prds-dir-project");
+		const customPrdsDir = join(testRoot, "issues-prds-dir-output");
+		mkdirSync(projectDir, { recursive: true });
+		writeFileSync(
+			join(projectDir, "laborer.json"),
+			JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
+		);
+
+		const result = await runWithServices(
+			Effect.gen(function* () {
+				const service = yield* PrdStorageService;
+				const prdFilePath = yield* service.createPrdFile(
+					projectDir,
+					"issues-prds-dir-project",
+					"Issue Workflow",
+					"# PRD\n"
+				);
+
+				const firstIssue = yield* service.appendIssue(
+					prdFilePath,
+					"Create issue RPC",
+					"### What to build\n\nAdd the RPC handler."
+				);
+				const secondIssue = yield* service.appendIssue(
+					prdFilePath,
+					"List remaining issues",
+					"### What to build\n\nFilter pending tasks."
+				);
+
+				return {
+					firstIssue,
+					issuesContent: readFileSync(firstIssue.issueFilePath, "utf-8"),
+					issuesFilePath: firstIssue.issueFilePath,
+					secondIssue,
+				};
+			})
+		);
+
+		expect(result.firstIssue.issueNumber).toBe(1);
+		expect(result.secondIssue.issueNumber).toBe(2);
+		expect(result.issuesFilePath).toBe(
+			issuesFilePathFromPrdPath(join(customPrdsDir, "PRD-issue-workflow.md"))
+		);
+		expect(existsSync(result.issuesFilePath)).toBe(true);
+		expect(result.issuesContent).toContain("## Issue 1: Create issue RPC");
+		expect(result.issuesContent).toContain("## Issue 2: List remaining issues");
+		expect(result.issuesContent).toContain("\n\n---\n\n");
 	});
 });

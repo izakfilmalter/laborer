@@ -219,13 +219,13 @@ The issues file uses the markdown format from the PRD (title as `## Issue <numbe
 
 ### Acceptance criteria
 
-- [ ] `prd.createIssue` RPC is defined with prdId, title, and body payload
-- [ ] Handler creates the issues file if it doesn't exist
-- [ ] Handler appends the issue in the correct markdown format with separator
-- [ ] Handler creates a task in LiveStore with source "prd", the prdId, and an auto-generated externalId
-- [ ] The task title matches the issue title
-- [ ] The created task is returned in the response
-- [ ] Creating an issue for a non-existent PRD returns an error
+- [x] `prd.createIssue` RPC is defined with prdId, title, and body payload
+- [x] Handler creates the issues file if it doesn't exist
+- [x] Handler appends the issue in the correct markdown format with separator
+- [x] Handler creates a task in LiveStore with source "prd", the prdId, and an auto-generated externalId
+- [x] The task title matches the issue title
+- [x] The created task is returned in the response
+- [x] Creating an issue for a non-existent PRD returns an error
 
 ### Blocked by
 
@@ -763,8 +763,8 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 178 | PRD create and list RPCs | #177 | Done |
 | 179 | PRD read and remove RPCs | #178 | Ready |
 | 180 | PRD update RPC and status changes | #179 | Blocked |
-| 181 | Issue creation RPC: prd.createIssue | #178 | Ready |
-| 182 | Issue read and list RPCs | #181 | Blocked |
+| 181 | Issue creation RPC: prd.createIssue | #178 | Done |
+| 182 | Issue read and list RPCs | #181 | Ready |
 | 183 | Issue update RPC: prd.updateIssue | #182 | Blocked |
 | 184 | `@laborer/mcp` package scaffold: stdio server with project discovery | None | Done |
 | 185 | MCP PRD tools: create_prd, read_prd, update_prd, list_prds | #180, #184 | Blocked |
@@ -776,6 +776,6 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 191 | Plan detail view: issues list alongside editor | #181, #190 | Blocked |
 | 192 | Create workspace from plan | #191 | Blocked |
 | 193 | Plan workspace scoped task list and rlph integration | #186, #192 | Blocked |
-| 194 | Remove CreateTaskForm and manual task source tab | #181 | Blocked |
+| 194 | Remove CreateTaskForm and manual task source tab | #181 | Ready |
 | 195 | Remove WritePrdForm, rlph.writePRD RPC, and PrdTaskImporter | #185 | Blocked |
 | 196 | Polish and end-to-end verification | #188, #193, #194, #195 | Blocked |

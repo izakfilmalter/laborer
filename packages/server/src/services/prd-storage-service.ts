@@ -5,7 +5,7 @@ import {
 	renameSync,
 	writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { Context, Data, Effect, Layer } from "effect";
 import { ConfigService } from "./config-service.js";
 
@@ -31,6 +31,42 @@ const slugifyPrdTitle = (title: string): string => {
 
 const prdFileNameFromTitle = (title: string): string =>
 	`PRD-${slugifyPrdTitle(title)}.md`;
+
+const issuesFileNameFromPrdPath = (prdFilePath: string): string => {
+	const prdFileName = basename(prdFilePath);
+	return prdFileName.endsWith(".md")
+		? `${prdFileName.slice(0, -3)}-issues.md`
+		: `${prdFileName}-issues.md`;
+};
+
+const issuesFilePathFromPrdPath = (prdFilePath: string): string =>
+	resolve(join(dirname(prdFilePath), issuesFileNameFromPrdPath(prdFilePath)));
+
+const ISSUE_HEADING_REGEX = /^## Issue (\d+): /gmu;
+
+const getNextIssueNumber = (issuesContent: string): number => {
+	const issueNumbers = Array.from(
+		issuesContent.matchAll(ISSUE_HEADING_REGEX),
+		(match) => Number(match[1])
+	).filter((value) => Number.isInteger(value));
+
+	if (issueNumbers.length === 0) {
+		return 1;
+	}
+
+	return Math.max(...issueNumbers) + 1;
+};
+
+const formatIssueSection = (
+	issueNumber: number,
+	title: string,
+	body: string
+): string => {
+	const trimmedBody = body.trim();
+	return trimmedBody.length > 0
+		? `## Issue ${issueNumber}: ${title}\n\n${trimmedBody}\n`
+		: `## Issue ${issueNumber}: ${title}\n`;
+};
 
 const ensureDirectory = (
 	directoryPath: string
@@ -88,6 +124,17 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 		readonly readPrdFile: (
 			filePath: string
 		) => Effect.Effect<string, PrdStorageError>;
+		readonly appendIssue: (
+			prdFilePath: string,
+			title: string,
+			body: string
+		) => Effect.Effect<
+			{
+				readonly issueFilePath: string;
+				readonly issueNumber: number;
+			},
+			PrdStorageError
+		>;
 		readonly resolvePrdsDir: (
 			projectRepoPath: string,
 			projectName: string
@@ -143,9 +190,46 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 				});
 			});
 
+			const appendIssue = Effect.fn("PrdStorageService.appendIssue")(function* (
+				prdFilePath: string,
+				title: string,
+				body: string
+			) {
+				const issueFilePath = issuesFilePathFromPrdPath(prdFilePath);
+				const existingContent = existsSync(issueFilePath)
+					? yield* Effect.try({
+							try: () => readFileSync(issueFilePath, "utf-8"),
+							catch: (cause) =>
+								new PrdStorageError({
+									message: `Failed to read PRD issues file ${issueFilePath}`,
+									cause,
+								}),
+						})
+					: "";
+
+				const issueNumber = getNextIssueNumber(existingContent);
+				const issueSection = formatIssueSection(issueNumber, title, body);
+				const nextContent =
+					existingContent.trim().length > 0
+						? `${existingContent.trimEnd()}\n\n---\n\n${issueSection}`
+						: issueSection;
+
+				yield* writeFileAtomic(issueFilePath, nextContent);
+
+				yield* Effect.logDebug(`Appended PRD issue at ${issueFilePath}`).pipe(
+					Effect.annotateLogs("module", logPrefix)
+				);
+
+				return {
+					issueFilePath,
+					issueNumber,
+				};
+			});
+
 			return PrdStorageService.of({
 				createPrdFile,
 				readPrdFile,
+				appendIssue,
 				resolvePrdsDir,
 			});
 		})
@@ -155,6 +239,7 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 export {
 	PrdStorageError,
 	PrdStorageService,
+	issuesFilePathFromPrdPath,
 	prdFileNameFromTitle,
 	slugifyPrdTitle,
 	writeFileAtomic,

@@ -60,6 +60,24 @@ const toPrdResponse = (prd: {
 	createdAt: prd.createdAt,
 });
 
+const toTaskResponse = (task: {
+	id: string;
+	projectId: string;
+	source: string;
+	prdId: string | null;
+	externalId: string | null;
+	title: string;
+	status: string;
+}) => ({
+	id: task.id,
+	projectId: task.projectId,
+	source: task.source,
+	prdId: task.prdId ?? undefined,
+	externalId: task.externalId ?? undefined,
+	title: task.title,
+	status: task.status,
+});
+
 export const handleConfigGet = ({ projectId }: { projectId: string }) =>
 	Effect.gen(function* () {
 		const registry = yield* ProjectRegistry;
@@ -177,6 +195,60 @@ export const handlePrdList = ({ projectId }: { projectId: string }) =>
 			.map((prd) => toPrdResponse(prd));
 	});
 
+export const handlePrdCreateIssue = ({
+	prdId,
+	title,
+	body,
+}: {
+	prdId: string;
+	title: string;
+	body: string;
+}) =>
+	Effect.gen(function* () {
+		const trimmedTitle = title.trim();
+		const trimmedBody = body.trim();
+
+		if (trimmedTitle.length === 0) {
+			return yield* new RpcError({
+				code: "INVALID_INPUT",
+				message: "PRD issue title cannot be empty",
+			});
+		}
+
+		if (trimmedBody.length === 0) {
+			return yield* new RpcError({
+				code: "INVALID_INPUT",
+				message: "PRD issue body cannot be empty",
+			});
+		}
+
+		const { store } = yield* LaborerStore;
+		const storage = yield* PrdStorageService;
+		const taskManager = yield* TaskManager;
+
+		const prd = store.query(tables.prds.where("id", prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found: ${prdId}`,
+			});
+		}
+
+		const { issueNumber } = yield* storage
+			.appendIssue(prd.filePath, trimmedTitle, trimmedBody)
+			.pipe(Effect.mapError((error) => toRpcError(error)));
+
+		const task = yield* taskManager.createTask(
+			prd.projectId,
+			trimmedTitle,
+			"prd",
+			`${prd.id}:issue:${issueNumber}`,
+			prd.id
+		);
+
+		return toTaskResponse(task);
+	});
+
 export const handleProjectList = () =>
 	Effect.gen(function* () {
 		const registry = yield* ProjectRegistry;
@@ -254,6 +326,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 		// -------------------------------------------------------------------
 		"prd.create": handlePrdCreate,
 		"prd.list": handlePrdList,
+		"prd.createIssue": handlePrdCreateIssue,
 
 		// -------------------------------------------------------------------
 		// Workspace RPCs (Issue #33-47)
@@ -424,15 +497,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 			Effect.gen(function* () {
 				const taskManager = yield* TaskManager;
 				const task = yield* taskManager.createTask(projectId, title, "manual");
-				return {
-					id: task.id,
-					projectId: task.projectId,
-					source: task.source,
-					prdId: task.prdId ?? undefined,
-					externalId: task.externalId ?? undefined,
-					title: task.title,
-					status: task.status,
-				};
+				return toTaskResponse(task);
 			}),
 		"task.importGithub": ({ projectId }) =>
 			Effect.gen(function* () {

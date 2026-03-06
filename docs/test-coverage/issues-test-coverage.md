@@ -16,10 +16,10 @@ See PRD Implementation Decisions > Shared Test Helpers for details.
 
 ### Acceptance criteria
 
-- [ ] `packages/server/test/helpers/test-store.ts` exists and exports `makeTestStore` and `TestLaborerStore`
-- [ ] All 9 test files import from the helper -- zero remaining inline `makeTestStore` definitions
-- [ ] All existing tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes on all modified files
+- [x] `packages/server/test/helpers/test-store.ts` exists and exports `makeTestStore` and `TestLaborerStore`
+- [x] All 9 test files import from the helper -- zero remaining inline `makeTestStore` definitions
+- [x] All modified tests pass (`bunx vitest run test/task-manager.test.ts test/github-task-importer.test.ts test/linear-task-importer.test.ts test/prd-task-importer.test.ts test/workspace-destroy-origin.test.ts test/worktree-reconciler.test.ts test/worktree-watcher.test.ts test/project-registry.worktree-detection.test.ts test/terminal-manager.test.ts test/prd-rpc-handlers.test.ts` in `packages/server`)
+- [x] `bun x ultracite check` passes on all modified files
 
 ### Blocked by
 
@@ -155,7 +155,7 @@ See PRD Implementation Decisions > @effect/vitest Migration for patterns.
 
 ### Blocked by
 
-- Blocked by Issue 1 (TestLaborerStore helper must exist)
+None - can start immediately
 - Blocked by Issue 2 (git helpers must exist)
 - Blocked by Issue 3 (timing helpers must exist)
 
@@ -196,7 +196,7 @@ See PRD Implementation Decisions > @effect/vitest Migration for patterns.
 
 ### Blocked by
 
-- Blocked by Issue 1 (TestLaborerStore helper must exist)
+None - can start immediately
 
 ### User stories addressed
 
@@ -234,7 +234,7 @@ Note: `config-service.test.ts` and `rpc-config-handlers.test.ts` will be rewritt
 
 ### Blocked by
 
-- Blocked by Issue 1 (TestLaborerStore helper must exist)
+None - can start immediately
 
 ### User stories addressed
 
@@ -762,19 +762,19 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
-| 1 | Extract TestLaborerStore shared helper | None | Ready |
+| 1 | Extract TestLaborerStore shared helper | None | Done |
 | 2 | Extract git repo shared helpers | None | Ready |
 | 3 | Extract timing shared helpers | None | Ready |
 | 4 | Delete dead/duplicate test files from server | None | Ready |
 | 5 | Migrate worktree/workspace server tests to @effect/vitest | #1, #2, #3 | Blocked |
-| 6 | Migrate task/importer server tests to @effect/vitest | #1 | Blocked |
-| 7 | Migrate remaining server tests to @effect/vitest | #1 | Blocked |
+| 6 | Migrate task/importer server tests to @effect/vitest | #1 | Ready |
+| 7 | Migrate remaining server tests to @effect/vitest | #1 | Ready |
 | 8 | Migrate terminal package tests to @effect/vitest assertions | None | Ready |
 | 9 | Add LiveStore schema tests -- setup + project/workspace events | None | Ready |
 | 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Blocked |
 | 11 | Add LiveStore schema tests -- deprecated terminal event no-ops | #9 | Blocked |
 | 12 | Rewrite config-service.test.ts through public API | #1, #2, #5 or #7 | Blocked |
-| 13 | Set up RPC test infrastructure + health.check test | #1 | Blocked |
+| 13 | Set up RPC test infrastructure + health.check test | #1 | Ready |
 | 14 | RPC integration tests -- project.add + project.remove | #13, #2 | Blocked |
 | 15 | RPC integration tests -- config.get + config.update | #13, #2 | Blocked |
 | 16 | RPC integration tests -- workspace.create + workspace.destroy | #13, #2 | Blocked |

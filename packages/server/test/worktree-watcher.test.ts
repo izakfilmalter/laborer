@@ -2,9 +2,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { events, schema, tables } from "@laborer/shared/schema";
-import { makeAdapter } from "@livestore/adapter-node";
-import { createStore, provideOtel } from "@livestore/livestore";
+import { events, tables } from "@laborer/shared/schema";
 import { Effect, Exit, Layer, Scope } from "effect";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LaborerStore } from "../src/services/laborer-store.js";
@@ -12,6 +10,7 @@ import { PortAllocator } from "../src/services/port-allocator.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
 import { WorktreeWatcher } from "../src/services/worktree-watcher.js";
+import { TestLaborerStore } from "./helpers/test-store.js";
 
 const tempRoots: string[] = [];
 
@@ -57,22 +56,6 @@ const waitFor = async (
 	}
 	throw new Error("Timed out waiting for condition");
 };
-
-const makeTestStore = Effect.gen(function* () {
-	const adapter = makeAdapter({ storage: { type: "in-memory" } });
-	const store = yield* createStore({
-		schema,
-		storeId: `test-${crypto.randomUUID()}`,
-		adapter,
-		batchUpdates: (run) => run(),
-		disableDevtools: true,
-	});
-	return { store };
-}).pipe(provideOtel({}));
-
-const TestLaborerStore = Layer.scoped(LaborerStore, makeTestStore).pipe(
-	Layer.orDie
-);
 
 const TestLayer = WorktreeWatcher.layer.pipe(
 	Layer.provide(WorktreeReconciler.layer),

@@ -20,6 +20,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PtyHostClient } from "../src/services/pty-host-client.js";
 import { TerminalManager } from "../src/services/terminal-manager.js";
+import { TestLaborerStore } from "./helpers/test-store.js";
 
 // ---------------------------------------------------------------------------
 // Mock WorkspaceProvider
@@ -37,26 +38,6 @@ const TEST_WORKSPACE_PATH = "/tmp";
 // ---------------------------------------------------------------------------
 // Test layer construction
 // ---------------------------------------------------------------------------
-
-/**
- * Create a LaborerStore layer backed by in-memory SQLite.
- * No filesystem persistence, no WebSocket sync — pure in-memory for tests.
- */
-const makeTestStore = Effect.gen(function* () {
-	const adapter = makeAdapter({ storage: { type: "in-memory" } });
-	const store = yield* createStore({
-		schema,
-		storeId: `test-${crypto.randomUUID()}`,
-		adapter,
-		batchUpdates: (run) => run(),
-		disableDevtools: true,
-	});
-	return { store };
-}).pipe(provideOtel({}));
-
-const TestLaborerStore = Layer.scoped(LaborerStore, makeTestStore).pipe(
-	Layer.orDie
-);
 
 /**
  * Mock WorkspaceProvider that:

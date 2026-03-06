@@ -1,12 +1,9 @@
-import { schema } from "@laborer/shared/schema";
-import { makeAdapter } from "@livestore/adapter-node";
-import { createStore, provideOtel } from "@livestore/livestore";
 import { Effect, Either, Layer } from "effect";
 import { describe, expect, it, vi } from "vitest";
 import { handlePrdCreate, handlePrdList } from "../src/rpc/handlers.js";
-import { LaborerStore } from "../src/services/laborer-store.js";
 import { PrdStorageService } from "../src/services/prd-storage-service.js";
 import { ProjectRegistry } from "../src/services/project-registry.js";
+import { TestLaborerStore } from "./helpers/test-store.js";
 
 const project = {
 	id: "project-1",
@@ -14,23 +11,6 @@ const project = {
 	repoPath: "/repo/laborer",
 	rlphConfig: null,
 } as const;
-
-const makeTestStore = Effect.gen(function* () {
-	const adapter = makeAdapter({ storage: { type: "in-memory" } });
-	const store = yield* createStore({
-		schema,
-		storeId: `test-${crypto.randomUUID()}`,
-		adapter,
-		batchUpdates: (run) => run(),
-		disableDevtools: true,
-	});
-
-	return { store };
-}).pipe(provideOtel({}));
-
-const TestLaborerStore = Layer.scoped(LaborerStore, makeTestStore).pipe(
-	Layer.orDie
-);
 
 const makeProjectRegistryLayer = () =>
 	Layer.succeed(

@@ -2,9 +2,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { schema, tables } from "@laborer/shared/schema";
-import { makeAdapter } from "@livestore/adapter-node";
-import { createStore, provideOtel } from "@livestore/livestore";
+import { tables } from "@laborer/shared/schema";
 import { Effect, Exit, Layer, Scope } from "effect";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LaborerStore } from "../src/services/laborer-store.js";
@@ -13,6 +11,7 @@ import { ProjectRegistry } from "../src/services/project-registry.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
 import { WorktreeWatcher } from "../src/services/worktree-watcher.js";
+import { TestLaborerStore } from "./helpers/test-store.js";
 
 const tempRoots: string[] = [];
 
@@ -39,22 +38,6 @@ const initRepo = (prefix: string): string => {
 	git('commit -m "initial"', repoPath);
 	return repoPath;
 };
-
-const makeTestStore = Effect.gen(function* () {
-	const adapter = makeAdapter({ storage: { type: "in-memory" } });
-	const store = yield* createStore({
-		schema,
-		storeId: `test-${crypto.randomUUID()}`,
-		adapter,
-		batchUpdates: (run) => run(),
-		disableDevtools: true,
-	});
-	return { store };
-}).pipe(provideOtel({}));
-
-const TestLaborerStore = Layer.scoped(LaborerStore, makeTestStore).pipe(
-	Layer.orDie
-);
 
 const TestLayer = ProjectRegistry.layer.pipe(
 	Layer.provide(WorktreeWatcher.layer),

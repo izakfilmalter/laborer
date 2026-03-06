@@ -1,33 +1,16 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { events, schema, tables } from "@laborer/shared/schema";
-import { makeAdapter } from "@livestore/adapter-node";
-import { createStore, provideOtel } from "@livestore/livestore";
+import { events, tables } from "@laborer/shared/schema";
 import { Effect, Layer } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfigService } from "../src/services/config-service.js";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { LinearTaskImporter } from "../src/services/linear-task-importer.js";
 import { TaskManager } from "../src/services/task-manager.js";
+import { TestLaborerStore } from "./helpers/test-store.js";
 
 const LINEAR_API_ERROR_REGEX = /Linear API request failed \(403\):/;
-
-const makeTestStore = Effect.gen(function* () {
-	const adapter = makeAdapter({ storage: { type: "in-memory" } });
-	const store = yield* createStore({
-		schema,
-		storeId: `test-${crypto.randomUUID()}`,
-		adapter,
-		batchUpdates: (run) => run(),
-		disableDevtools: true,
-	});
-	return { store };
-}).pipe(provideOtel({}));
-
-const TestLaborerStore = Layer.scoped(LaborerStore, makeTestStore).pipe(
-	Layer.orDie
-);
 
 const TestLayer = LinearTaskImporter.layer.pipe(
 	Layer.provide(ConfigService.layer),

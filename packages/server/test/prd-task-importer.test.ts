@@ -1,6 +1,4 @@
-import { events, schema, tables } from "@laborer/shared/schema";
-import { makeAdapter } from "@livestore/adapter-node";
-import { createStore, provideOtel } from "@livestore/livestore";
+import { events, tables } from "@laborer/shared/schema";
 import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 import { LaborerStore } from "../src/services/laborer-store.js";
@@ -9,22 +7,7 @@ import {
 	parsePrdGeneratedTasks,
 } from "../src/services/prd-task-importer.js";
 import { TaskManager } from "../src/services/task-manager.js";
-
-const makeTestStore = Effect.gen(function* () {
-	const adapter = makeAdapter({ storage: { type: "in-memory" } });
-	const store = yield* createStore({
-		schema,
-		storeId: `test-${crypto.randomUUID()}`,
-		adapter,
-		batchUpdates: (run) => run(),
-		disableDevtools: true,
-	});
-	return { store };
-}).pipe(provideOtel({}));
-
-const TestLaborerStore = Layer.scoped(LaborerStore, makeTestStore).pipe(
-	Layer.orDie
-);
+import { TestLaborerStore } from "./helpers/test-store.js";
 
 const TestLayer = PrdTaskImporter.layer.pipe(
 	Layer.provide(TaskManager.layer),

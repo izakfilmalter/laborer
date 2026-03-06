@@ -109,3 +109,19 @@ Verification:
 - All 8 remaining Vitest test files pass (70 tests) with `bun run test`
 - `ultracite check` clean (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)
 - The 3 pure function test files are unaffected: `layout-utils.test.ts`, `project-settings-modal.helpers.test.ts`, `task-source-picker.test.ts`
+
+## Issue 6: E2E — Delete project — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Added "can delete a project and verify it disappears from the sidebar" test to `apps/web/e2e/project-management.spec.ts`
+- Test flow: adds a project -> clicks the trash icon button (`aria-label="Remove project <name>"`) -> confirms in the AlertDialog (clicks "Remove") -> verifies success toast (`Project "<name>" removed`) -> verifies the project is no longer visible in the sidebar
+- Uses Playwright auto-waiting throughout (no `waitForTimeout`)
+- Validates the full delete flow: trash button -> confirmation dialog -> RPC mutation -> LiveStore sync -> sidebar re-render
+- Updated file header comment to reference Issue 6
+
+Verification:
+- All 5 E2E tests pass with `bun run test:e2e` (5 passed in 21.9s)
+- All 70 existing Vitest tests still pass (`bun run test`)
+- `ultracite check` clean on modified file (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)

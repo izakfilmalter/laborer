@@ -196,14 +196,16 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that deletes a project and verifies it disappears from the sidebar. This validates the delete flow: button click -> confirmation -> RPC mutation -> LiveStore sync -> sidebar re-render.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/project-management.spec.ts`
-- [ ] Test adds a project first (or uses a project from a prior test)
-- [ ] Test clicks the delete button for the project
-- [ ] Test confirms the deletion (if there's a confirmation dialog)
-- [ ] Test verifies the project is removed from the sidebar
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/project-management.spec.ts`
+- [x] Test adds a project first (or uses a project from a prior test)
+- [x] Test clicks the delete button for the project
+- [x] Test confirms the deletion (if there's a confirmation dialog)
+- [x] Test verifies the project is removed from the sidebar
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

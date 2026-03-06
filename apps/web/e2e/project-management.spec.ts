@@ -7,7 +7,7 @@
  *
  * Uses the temp git repository created by globalSetup.
  *
- * @see PRD-e2e-test-coverage.md — Issues 4, 5
+ * @see PRD-e2e-test-coverage.md — Issues 4, 5, 6
  */
 
 import { readFileSync } from "node:fs";
@@ -170,5 +170,63 @@ test.describe("project management", () => {
 		// Verify the worktree directory shows the updated value, not the initial one
 		await expect(worktreeDirInputAgain).toHaveValue(newWorktreeDir);
 		expect(newWorktreeDir).not.toBe(initialWorktreeDir);
+	});
+
+	test("can delete a project and verify it disappears from the sidebar", async ({
+		page,
+	}) => {
+		const tempRepoDir = getTempRepoDir();
+		const expectedProjectName = basename(tempRepoDir);
+
+		// Navigate to the app with reset to clear any stale OPFS state
+		await page.goto("/?reset");
+
+		// Wait for the app to be fully loaded — server must be connected
+		const connectedStatus = page.getByText("connected", { exact: false });
+		await expect(connectedStatus).toBeVisible({ timeout: 15_000 });
+
+		// --- Step 1: Add a project so there's something to delete ---
+		const projectsHeading = page.getByRole("heading", { name: "Projects" });
+		await expect(projectsHeading).toBeVisible();
+
+		const sidebarForm = projectsHeading
+			.locator("..")
+			.getByLabel("Repository path");
+		await expect(sidebarForm).toBeVisible();
+		await sidebarForm.fill(tempRepoDir);
+
+		const addButton = projectsHeading
+			.locator("..")
+			.getByRole("button", { name: "Add", exact: true });
+		await addButton.click();
+
+		// Wait for the project to appear in the sidebar
+		const projectInSidebar = page.getByRole("button", {
+			name: expectedProjectName,
+			exact: true,
+		});
+		await expect(projectInSidebar).toBeVisible({ timeout: 10_000 });
+
+		// --- Step 2: Click the delete/remove button for the project ---
+		const removeButton = page.getByRole("button", {
+			name: `Remove project ${expectedProjectName}`,
+		});
+		await removeButton.click();
+
+		// --- Step 3: Confirm the deletion in the alert dialog ---
+		const dialogTitle = page.getByText("Remove project?");
+		await expect(dialogTitle).toBeVisible();
+
+		const confirmButton = page.getByRole("button", { name: "Remove" });
+		await confirmButton.click();
+
+		// --- Step 4: Verify success toast ---
+		const successToast = page.getByText(
+			`Project "${expectedProjectName}" removed`
+		);
+		await expect(successToast).toBeVisible({ timeout: 10_000 });
+
+		// --- Step 5: Verify the project is no longer in the sidebar ---
+		await expect(projectInSidebar).not.toBeVisible();
 	});
 });

@@ -48,7 +48,7 @@ import { workspaces } from "@laborer/shared/schema";
 import type { LeafNode, PanelNode, SplitNode } from "@laborer/shared/types";
 import { queryDb } from "@livestore/livestore";
 import { Layers, Plus, Terminal as TerminalIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import type { GroupImperativeHandle } from "react-resizable-panels";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
@@ -332,21 +332,22 @@ interface PanelRendererProps {
  */
 function SplitPanelRenderer({ node }: { readonly node: SplitNode }) {
 	const registry = usePanelGroupRegistry();
-	const groupRef = useRef<GroupImperativeHandle | null>(null);
+	const setGroupRef = useCallback(
+		(handle: GroupImperativeHandle | null) => {
+			if (handle) {
+				registry?.registerGroupRef(node.id, handle);
+				return;
+			}
 
-	useEffect(() => {
-		if (registry && groupRef.current) {
-			registry.registerGroupRef(node.id, groupRef.current);
-		}
-		return () => {
 			registry?.unregisterGroupRef(node.id);
-		};
-	}, [registry, node.id]);
+		},
+		[registry, node.id]
+	);
 
 	return (
 		<ResizablePanelGroup
 			data-split-id={node.id}
-			groupRef={groupRef}
+			groupRef={setGroupRef}
 			orientation={node.direction}
 		>
 			{node.children.map((child, index) => {

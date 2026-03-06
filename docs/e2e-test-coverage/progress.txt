@@ -266,3 +266,22 @@ Verification:
 - `bun run test` passes in `apps/web` (70 tests)
 - `bun x ultracite check e2e/fixtures/terminal-helper.ts e2e/terminal-interaction.spec.ts` passes in `apps/web`
 - `bun run test:e2e e2e/terminal-interaction.spec.ts` executes the terminal interaction E2E test successfully (1 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 14: E2E - Resize panes via keyboard - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 14 as the highest-priority remaining task because it completes the panel-system slice after Issues 11, 12, and 13 and covers the last unfinished keyboard-driven pane behavior in that area
+
+Changes made:
+- Added `can use Ctrl+B then Shift+arrow keys to resize panes` to `apps/web/e2e/panel-system.spec.ts`
+- The new test creates a two-pane layout, records the initial pane bounding boxes, sends the tmux-style resize shortcut, and verifies the active pane grows while its sibling shrinks
+- Extended `apps/web/e2e/fixtures/panel-helper.ts` with a dedicated `resize()` helper for tmux-style resize shortcuts
+- Fixed `apps/web/src/panels/panel-hotkeys.tsx` so resize shortcuts work reliably in the browser: a small manual prefix listener now ignores the standalone `Shift` keydown that occurs before `Shift+Arrow` and then dispatches the correct `resizePane` action
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check src/panels/panel-hotkeys.tsx e2e/fixtures/panel-helper.ts e2e/panel-system.spec.ts src/panels/panel-manager.tsx` passes in `apps/web`
+- `bun run test:e2e e2e/panel-system.spec.ts` executes all 4 panel-system E2E tests successfully (4 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown

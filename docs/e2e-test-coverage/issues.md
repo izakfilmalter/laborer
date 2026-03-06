@@ -439,14 +439,16 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that resizes panes using keyboard shortcuts (Ctrl+B then Shift+arrow) and verifies the pane sizes change. This validates the keyboard-driven resize behavior.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/panel-system.spec.ts`
-- [ ] Test splits panes to create a multi-pane layout
-- [ ] Test captures initial pane sizes (e.g., via bounding box or CSS width)
-- [ ] Test uses Ctrl+B then Shift+Arrow to resize
-- [ ] Test verifies pane sizes changed from the initial values
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/panel-system.spec.ts`
+- [x] Test splits panes to create a multi-pane layout
+- [x] Test captures initial pane sizes (e.g., via bounding box or CSS width)
+- [x] Test uses Ctrl+B then Shift+Arrow to resize
+- [x] Test verifies pane sizes changed from the initial values
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

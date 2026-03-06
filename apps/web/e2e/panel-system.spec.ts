@@ -6,7 +6,7 @@
  * layout geometry, confirm closing an active pane transfers focus to the
  * remaining sibling pane, and validate keyboard navigation between panes.
  *
- * @see PRD-e2e-test-coverage.md - Issues 11, 12, and 13
+ * @see PRD-e2e-test-coverage.md - Issues 11, 12, 13, and 14
  */
 
 import { readFileSync } from "node:fs";
@@ -258,5 +258,57 @@ test.describe("panel system", () => {
 
 		expect(rightColumnPaneCount).toBe(3);
 		expect(leftColumnPaneCount).toBe(1);
+	});
+
+	test("can use Ctrl+B then Shift+arrow keys to resize panes", async ({
+		page,
+		panels,
+	}) => {
+		await addProjectAndCreateWorkspace(page);
+
+		const paneRegions = page.locator("[data-pane-id]");
+		await expect(paneRegions.first()).toBeVisible({ timeout: 15_000 });
+		await closeExtraPanes(paneRegions, panels);
+		await expect(paneRegions).toHaveCount(1, { timeout: 10_000 });
+
+		await paneRegions.first().click();
+		await panels.splitHorizontal();
+		await expect(paneRegions).toHaveCount(2, { timeout: 10_000 });
+
+		const initialBoxes = await getPaneBoxes(paneRegions);
+		const initialLeftPane = getRequiredPane(initialBoxes, 0);
+		const initialRightPane = getRequiredPane(initialBoxes, 1);
+
+		await paneRegions.first().click();
+		await panels.resize("right");
+
+		await expect
+			.poll(
+				async () => {
+					const resizedBoxes = await getPaneBoxes(paneRegions);
+					const resizedLeftPane = getRequiredPane(resizedBoxes, 0);
+					const resizedRightPane = getRequiredPane(resizedBoxes, 1);
+
+					return (
+						resizedLeftPane.width > initialLeftPane.width + 2 &&
+						resizedRightPane.width < initialRightPane.width - 2
+					);
+				},
+				{ timeout: 10_000 }
+			)
+			.toBe(true);
+
+		const resizedBoxes = await getPaneBoxes(paneRegions);
+		const resizedLeftPane = getRequiredPane(resizedBoxes, 0);
+		const resizedRightPane = getRequiredPane(resizedBoxes, 1);
+
+		expect(resizedLeftPane.width).toBeGreaterThan(initialLeftPane.width + 2);
+		expect(resizedRightPane.width).toBeLessThan(initialRightPane.width - 2);
+		expect(
+			Math.abs(resizedLeftPane.height - initialLeftPane.height)
+		).toBeLessThan(24);
+		expect(
+			Math.abs(resizedRightPane.height - initialRightPane.height)
+		).toBeLessThan(24);
 	});
 });

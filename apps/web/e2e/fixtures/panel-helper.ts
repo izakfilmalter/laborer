@@ -74,6 +74,21 @@ export class PanelHelper {
 		await this.runShortcut(actionKeyByDirection[direction]);
 	}
 
+	/** Resize the active pane with Ctrl+B then Shift+arrow key. */
+	async resize(direction: "left" | "right" | "up" | "down"): Promise<void> {
+		const actionKeyByDirection = {
+			left: "ArrowLeft",
+			right: "ArrowRight",
+			up: "ArrowUp",
+			down: "ArrowDown",
+		} as const;
+
+		await this.page.keyboard.press("Control+b");
+		await this.page.keyboard.down("Shift");
+		await this.page.keyboard.press(actionKeyByDirection[direction]);
+		await this.page.keyboard.up("Shift");
+	}
+
 	/** Switch to the dashboard view. */
 	async switchToDashboard(): Promise<void> {
 		await this.dashboardButton.click();

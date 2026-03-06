@@ -187,6 +187,11 @@ const TerminalResponse = Schema.Struct({
   status: Schema.Literal('running', 'stopped'),
 })
 
+const DockerStatusResponse = Schema.Struct({
+  available: Schema.Boolean,
+  error: Schema.optional(Schema.String),
+})
+
 const DiffResponse = Schema.Struct({
   workspaceId: Schema.String,
   diffContent: Schema.String,
@@ -203,6 +208,13 @@ export class LaborerRpcs extends RpcGroup.make(
   // -----------------------------------------------------------------------
   Rpc.make('health.check', {
     success: HealthCheckResponse,
+  }),
+
+  // -----------------------------------------------------------------------
+  // Docker Prerequisite Detection
+  // -----------------------------------------------------------------------
+  Rpc.make('docker.status', {
+    success: DockerStatusResponse,
   }),
 
   // -----------------------------------------------------------------------

@@ -17,6 +17,7 @@ import { events, tables } from '@laborer/shared/schema'
 import { Array as Arr, Effect, pipe } from 'effect'
 import { ConfigService } from '../services/config-service.js'
 import { DiffService } from '../services/diff-service.js'
+import { DockerDetection } from '../services/docker-detection.js'
 import { GithubTaskImporter } from '../services/github-task-importer.js'
 import { LaborerStore } from '../services/laborer-store.js'
 import { LinearTaskImporter } from '../services/linear-task-importer.js'
@@ -582,6 +583,15 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.succeed({
         status: 'ok' as const,
         uptime: (Date.now() - startTime) / 1000,
+      }),
+
+    // -------------------------------------------------------------------
+    // Docker Prerequisite Detection (Issue 2)
+    // -------------------------------------------------------------------
+    'docker.status': () =>
+      Effect.gen(function* () {
+        const dockerDetection = yield* DockerDetection
+        return yield* dockerDetection.check()
       }),
 
     // -------------------------------------------------------------------

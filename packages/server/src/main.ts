@@ -31,6 +31,7 @@ import { LaborerRpcsLive } from './rpc/handlers.js'
 import { ConfigService } from './services/config-service.js'
 import { ContainerService } from './services/container-service.js'
 import { DiffService } from './services/diff-service.js'
+import { DockerDetection } from './services/docker-detection.js'
 import { GithubTaskImporter } from './services/github-task-importer.js'
 import { LaborerStoreLive } from './services/laborer-store.js'
 import { LinearTaskImporter } from './services/linear-task-importer.js'
@@ -117,6 +118,7 @@ const HttpLiveBase = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
   Layer.provide(TerminalClient.layer),
   Layer.provide(WorkspaceProvider.layer),
   Layer.provide(ContainerService.layer),
+  Layer.provide(DockerDetection.layer),
   Layer.provide(ConfigService.layer),
   Layer.provide(McpRegistrar.layer),
   Layer.provide(ProjectRegistry.layer)

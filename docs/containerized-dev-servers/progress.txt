@@ -176,3 +176,51 @@ Extended `TerminalClient.spawnInWorkspace` to detect containerized workspaces an
 - `bun run check-types` passes (all 5 packages)
 - `bun x ultracite check` passes (only pre-existing package.json formatting issues)
 - All 121 existing tests pass (no regressions)
+
+## Issue 2: Docker prerequisite detection — COMPLETED
+
+Created the `DockerDetection` Effect service that checks whether Docker (via OrbStack) is available on the system, exposed it via a `docker.status` RPC, and added a web UI warning banner.
+
+### What was done:
+
+**New service (docker-detection.ts):**
+- Created `DockerDetection` as a `Context.Tag` class with tag `'@laborer/DockerDetection'`
+- Uses `Layer.effect` pattern with `Ref` for caching the detection result
+- `check()` method performs two-step detection:
+  1. `which docker` — checks if Docker CLI is on PATH
+  2. `docker info` — checks if Docker daemon is running
+- Result is cached after first invocation (Docker availability rarely changes mid-session)
+- Detection runs eagerly on service construction so the result is cached before any RPC call
+- Clear, actionable error messages directing users to install OrbStack
+
+**RPC layer (rpc.ts + handlers.ts):**
+- Added `DockerStatusResponse` schema in `rpc.ts` with `available: boolean` and optional `error: string`
+- Added `docker.status` RPC to `LaborerRpcs` (no payload, no error channel — always succeeds)
+- Handler in `handlers.ts` delegates to `DockerDetection.check()`
+
+**Layer wiring:**
+- `main.ts`: imported `DockerDetection`, added `Layer.provide(DockerDetection.layer)` in `HttpLiveBase` composition
+- `test/rpc/test-layer.ts`: created `TestDockerDetection` stub that always returns `{ available: true }`, added to both `TestLaborerRpcLayer` and `TestLaborerRpcWithStoreLayer`
+
+**Web UI (docker-status-banner.tsx + __root.tsx):**
+- Created `DockerStatusBanner` component that queries `docker.status` RPC on mount
+- Uses `LaborerClient.query('docker.status', ...)` with `useAtomValue` hook
+- When Docker is unavailable, renders a destructive `Alert` with:
+  - Warning icon (AlertTriangle)
+  - "Docker not available" title
+  - Error message from the server
+  - Clickable link to OrbStack download page (https://orbstack.dev)
+- Wrapped in `Suspense` with null fallback (no flash during loading)
+- Integrated into `__root.tsx` between `<Header />` and `<Outlet />`
+- Grid layout updated from `grid-rows-[auto_1fr]` to `grid-rows-[auto_auto_1fr]` to accommodate the banner row
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All existing tests pass (no regressions):
+  - `bunx vitest run test/rpc/health-check.test.ts` — 1/1 tests pass
+  - `bunx vitest run test/rpc/config-management.test.ts` — 3/3 tests pass
+  - `bunx vitest run test/rpc/workspace-management.test.ts` — 4/4 tests pass
+  - `bunx vitest run test/config-service.test.ts` — 32/32 tests pass
+  - `bunx vitest run test/container-name.test.ts` (shared) — 21/21 tests pass
+  - `bunx vitest run test/schema.test.ts` (shared) — 8/8 tests pass

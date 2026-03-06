@@ -57,16 +57,16 @@ On the web UI side, if `docker.status` returns `available: false`, show a persis
 
 ### Acceptance criteria
 
-- [ ] New `DockerDetection` Effect service in `packages/server/src/services/`
-- [ ] Service checks `docker` CLI availability and daemon status
-- [ ] Service runs on server startup and caches the result
-- [ ] New `docker.status` RPC exposed in `LaborerRpcs`
-- [ ] RPC returns `{ available: boolean, error?: string }`
-- [ ] Web UI queries `docker.status` on mount
-- [ ] Warning banner displayed when Docker is unavailable with actionable message
-- [ ] Banner includes link to OrbStack download page
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] New `DockerDetection` Effect service in `packages/server/src/services/`
+- [x] Service checks `docker` CLI availability and daemon status
+- [x] Service runs on server startup and caches the result
+- [x] New `docker.status` RPC exposed in `LaborerRpcs`
+- [x] RPC returns `{ available: boolean, error?: string }`
+- [x] Web UI queries `docker.status` on mount
+- [x] Warning banner displayed when Docker is unavailable with actionable message
+- [x] Banner includes link to OrbStack download page
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 

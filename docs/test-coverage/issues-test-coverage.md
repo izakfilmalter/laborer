@@ -587,12 +587,12 @@ Tests use real `TaskManager` layer backed by `TestLaborerStore`. Verify results 
 
 ### Acceptance criteria
 
-- [ ] `task.create` test verifies task creation with all fields
-- [ ] `task.create` test verifies optional prdId linkage
-- [ ] `task.updateStatus` test verifies status transition
-- [ ] `task.remove` test verifies task deletion
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass
+- [x] `task.create` test verifies task creation with all fields
+- [x] `task.create` test verifies optional prdId linkage
+- [x] `task.updateStatus` test verifies status transition
+- [x] `task.remove` test verifies task deletion
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass
 
 ### Blocked by
 
@@ -778,7 +778,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 14 | RPC integration tests -- project.add + project.remove | #13, #2 | Done |
 | 15 | RPC integration tests -- config.get + config.update | None | Done |
 | 16 | RPC integration tests -- workspace.create + workspace.destroy | None | Done |
-| 17 | RPC integration tests -- task.create + task.updateStatus + task.remove | None | Ready |
+| 17 | RPC integration tests -- task.create + task.updateStatus + task.remove | None | Done |
 | 18 | RPC integration tests -- task.importGithub + task.importLinear | None | Ready |
 | 19 | RPC integration tests -- diff.refresh + editor.open | None | Ready |
 | 20 | RPC integration tests -- terminal.spawn + rlph endpoints | None | Ready |

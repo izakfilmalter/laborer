@@ -354,6 +354,7 @@ export class LaborerRpcs extends RpcGroup.make(
 		error: RpcError,
 		payload: {
 			projectId: Schema.String,
+			prdId: Schema.optional(Schema.String),
 			title: Schema.String,
 			description: Schema.optional(Schema.String),
 		},

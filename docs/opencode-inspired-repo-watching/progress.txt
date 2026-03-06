@@ -247,3 +247,48 @@
 - All 170 tests pass (26 test files)
 - TypeScript compiles with no errors
 - Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)
+
+## Issue 6: Startup bootstrap and project lifecycle integration — COMPLETED
+
+### What was done
+- Updated `ProjectRegistry.addProject` to perform initial branch refresh
+  (`packages/server/src/services/project-registry.ts`)
+  - Added `BranchStateTracker` as an Effect service dependency
+  - After worktree reconciliation creates workspace records, `addProject` now
+    calls `branchTracker.refreshBranches(id)` to ensure workspace records have
+    current branch names before the project is returned as ready
+  - Error handling matches existing pattern: logs warning on failure, does not
+    block project creation
+  - Updated JSDoc to reference Issue 6 scope
+
+- Verified existing startup bootstrap infrastructure is already complete:
+  - `RepositoryWatchCoordinator.layer` calls `watchAll()` during construction
+    (line 504), which reconciles worktrees, refreshes branches, and starts
+    watchers for all persisted projects at server boot
+  - `watchAll()` already runs worktree reconciliation AND branch refresh for
+    each persisted project before starting watchers
+  - `addProject` already calls `watchCoordinator.watchProject()` after
+    reconciliation and branch refresh
+
+- Added 5 new integration tests (`packages/server/test/startup-bootstrap.test.ts`)
+  - Project add performs canonical discovery and initial refresh before returning
+    ready state: verifies both worktrees are reconciled and branch names are
+    populated immediately after addProject returns (no async waiting needed)
+  - Project add starts the repository watcher coordinator: verifies that
+    creating a worktree after addProject triggers automatic detection
+  - Server boot restores watchers for all persisted projects: seeds project
+    records, builds coordinator layer (which triggers watchAll), verifies
+    worktree reconciliation ran and watchers are active
+  - Server boot reconciles worktree and branch state that changed while offline:
+    seeds project with stale branch name, adds worktree offline, verifies both
+    new worktree detection and stale branch refresh on startup
+  - Project add through public API returns ready state with all refreshes
+    complete: registers repo with 3 worktrees including a branch-switched one,
+    verifies all workspaces exist with correct branch names immediately
+
+### Verification
+- All 175 tests pass (27 test files)
+- TypeScript compiles with no errors
+- Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)
+- 3 pre-existing flaky filesystem watcher tests may intermittently timeout
+  (worktree-watcher and repository-event-bus timing-dependent tests)

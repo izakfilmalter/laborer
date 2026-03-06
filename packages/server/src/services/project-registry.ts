@@ -20,12 +20,17 @@
  * Issue #21: addProject method
  * Issue #22: removeProject method
  * Issue #23: listProjects + getProject methods
+ *
+ * @see PRD-opencode-inspired-repo-watching.md — Issue 6: addProject performs
+ *   canonical discovery, initial worktree reconciliation, initial branch
+ *   refresh, and watcher startup before returning the project as ready.
  */
 
 import { basename } from "node:path";
 import { RpcError } from "@laborer/shared/rpc";
 import { events, tables } from "@laborer/shared/schema";
 import { Context, Effect, Layer } from "effect";
+import { BranchStateTracker } from "./branch-state-tracker.js";
 import { LaborerStore } from "./laborer-store.js";
 import { RepositoryIdentity } from "./repository-identity.js";
 import { RepositoryWatchCoordinator } from "./repository-watch-coordinator.js";
@@ -63,6 +68,7 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 			const { store } = yield* LaborerStore;
 			const repoIdentity = yield* RepositoryIdentity;
 			const worktreeReconciler = yield* WorktreeReconciler;
+			const branchTracker = yield* BranchStateTracker;
 			const watchCoordinator = yield* RepositoryWatchCoordinator;
 
 			const addProject = Effect.fn("ProjectRegistry.addProject")(function* (
@@ -126,6 +132,20 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 						Effect.catchAll((error) =>
 							Effect.logWarning(
 								`Initial worktree reconciliation failed for project ${canonicalRoot}: ${error.message}`
+							)
+						)
+					);
+
+				// Initial branch refresh ensures workspace records have
+				// current branch names before the project is returned as
+				// ready. This must run after reconciliation has created
+				// workspace records.
+				yield* branchTracker
+					.refreshBranches(id)
+					.pipe(
+						Effect.catchAll((error) =>
+							Effect.logWarning(
+								`Initial branch refresh failed for project ${canonicalRoot}: ${error.message}`
 							)
 						)
 					);

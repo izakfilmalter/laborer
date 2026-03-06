@@ -220,11 +220,11 @@ This slice makes the new architecture the default path through the app rather th
 
 ### Acceptance criteria
 
-- [ ] Project add flow performs canonical discovery and initial refresh before returning ready state
-- [ ] Project add starts the repository watcher coordinator for the resolved logical repo
-- [ ] Server boot restores watchers for all persisted projects
-- [ ] Server boot reconciles worktree and branch state that changed while offline
-- [ ] Integration tests cover project add and server restart flows through public APIs
+- [x] Project add flow performs canonical discovery and initial refresh before returning ready state
+- [x] Project add starts the repository watcher coordinator for the resolved logical repo
+- [x] Server boot restores watchers for all persisted projects
+- [x] Server boot reconciles worktree and branch state that changed while offline
+- [x] Integration tests cover project add and server restart flows through public APIs
 
 ### Blocked by
 

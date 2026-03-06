@@ -10,27 +10,9 @@ import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
 import { WorktreeWatcher } from "../src/services/worktree-watcher.js";
 import { git, initRepo } from "./helpers/git-helpers.js";
 import { TestLaborerStore } from "./helpers/test-store.js";
+import { delay, waitFor } from "./helpers/timing-helpers.js";
 
 const tempRoots: string[] = [];
-
-const delay = (ms: number): Promise<void> =>
-	new Promise((resolve) => {
-		setTimeout(resolve, ms);
-	});
-
-const waitFor = async (
-	assertion: () => Promise<boolean>,
-	timeoutMs = 10_000
-): Promise<void> => {
-	const start = Date.now();
-	while (Date.now() - start < timeoutMs) {
-		if (await assertion()) {
-			return;
-		}
-		await delay(100);
-	}
-	throw new Error("Timed out waiting for condition");
-};
 
 const TestLayer = WorktreeWatcher.layer.pipe(
 	Layer.provide(WorktreeReconciler.layer),

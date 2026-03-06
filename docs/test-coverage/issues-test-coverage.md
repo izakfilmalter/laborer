@@ -78,10 +78,10 @@ See PRD Implementation Decisions > Shared Test Helpers for details.
 
 ### Acceptance criteria
 
-- [ ] `packages/server/test/helpers/timing-helpers.ts` exists and exports `delay` and `waitFor`
-- [ ] All async test files import from the helper -- zero remaining inline definitions
-- [ ] All existing tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes on all modified files
+- [x] `packages/server/test/helpers/timing-helpers.ts` exists and exports `delay` and `waitFor`
+- [x] All async test files import from the helper -- zero remaining inline definitions
+- [x] All existing tests pass (`bun run test` in packages/server)
+- [x] `bun x ultracite check` passes on all modified files
 
 ### Blocked by
 
@@ -660,11 +660,11 @@ Tests use real git repos with actual file changes for diff testing. Editor tests
 
 ### Acceptance criteria
 
-- [ ] `diff.refresh` test verifies diff content is computed from real git changes and stored in LiveStore
-- [ ] `diff.refresh` test verifies error for nonexistent workspace
-- [ ] `editor.open` test verifies the correct editor command is used based on config
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass
+- [x] `diff.refresh` test verifies diff content is computed from real git changes and stored in LiveStore
+- [x] `diff.refresh` test verifies error for nonexistent workspace
+- [x] `editor.open` test verifies the correct editor command is used based on config
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass
 
 ### Blocked by
 
@@ -764,9 +764,9 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 |---|-------|-----------|--------|
 | 1 | Extract TestLaborerStore shared helper | None | Done |
 | 2 | Extract git repo shared helpers | None | Done |
-| 3 | Extract timing shared helpers | None | Ready |
+| 3 | Extract timing shared helpers | None | Done |
 | 4 | Delete dead/duplicate test files from server | None | Done |
-| 5 | Migrate worktree/workspace server tests to @effect/vitest | #3 | Blocked |
+| 5 | Migrate worktree/workspace server tests to @effect/vitest | #3 | Ready |
 | 6 | Migrate task/importer server tests to @effect/vitest | #1 | Ready |
 | 7 | Migrate remaining server tests to @effect/vitest | #1 | Ready |
 | 8 | Migrate terminal package tests to @effect/vitest assertions | None | Ready |
@@ -780,7 +780,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 16 | RPC integration tests -- workspace.create + workspace.destroy | None | Done |
 | 17 | RPC integration tests -- task.create + task.updateStatus + task.remove | None | Done |
 | 18 | RPC integration tests -- task.importGithub + task.importLinear | None | Done |
-| 19 | RPC integration tests -- diff.refresh + editor.open | None | Ready |
+| 19 | RPC integration tests -- diff.refresh + editor.open | None | Done |
 | 20 | RPC integration tests -- terminal.spawn + rlph endpoints | None | Done |
 | 21 | RPC integration tests -- TerminalRpcs (packages/terminal) | #8 | Blocked |
 

@@ -323,3 +323,22 @@ Verification:
 - `bun run test` passes in `apps/web` (70 tests)
 - `bun x ultracite check e2e/fixtures/panel-helper.ts e2e/dashboard.spec.ts` passes in `apps/web`
 - `bun run test:e2e e2e/dashboard.spec.ts` executes the dashboard E2E test successfully (1 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 20: E2E - Verify workspace status badges in dashboard - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 20 as the highest-priority remaining task because it completes the dashboard slice while reusing the existing dashboard setup from Issue 19 and verifies the runtime status signal the dashboard is meant to surface
+
+Changes made:
+- Added `shows workspace status badges in the dashboard` to `apps/web/e2e/dashboard.spec.ts`
+- Reused the existing dashboard setup helper so the new test adds a project, creates a real workspace, switches to the dashboard, and scopes assertions to the matching project card
+- Verified the created workspace branch is rendered in the dashboard and that its row includes the visible `running` status badge, covering the workspace-status flow from backend state through dashboard UI rendering
+- Refactored the spec slightly with a shared `getProjectDashboardCard()` helper so both dashboard tests locate the same project card consistently
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check e2e/dashboard.spec.ts` passes in `apps/web`
+- `bun run test:e2e e2e/dashboard.spec.ts` executes both dashboard E2E tests successfully (2 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown

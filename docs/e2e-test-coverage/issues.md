@@ -625,14 +625,16 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that creates a workspace, switches to the dashboard view, and verifies workspace status badges are displayed correctly. This validates that workspace status flows through to the dashboard rendering.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/dashboard.spec.ts`
-- [ ] Test adds a project and creates a workspace
-- [ ] Test switches to the dashboard view
-- [ ] Test verifies the workspace appears under its project in the dashboard
-- [ ] Test verifies a status badge is visible on the workspace entry
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/dashboard.spec.ts`
+- [x] Test adds a project and creates a workspace
+- [x] Test switches to the dashboard view
+- [x] Test verifies the workspace appears under its project in the dashboard
+- [x] Test verifies a status badge is visible on the workspace entry
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

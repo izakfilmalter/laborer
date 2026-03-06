@@ -16,6 +16,7 @@
  * ```json
  * {
  *   "worktreeDir": "~/.config/laborer/my-project",
+ *   "prdsDir": "~/.config/laborer/my-project/prds",
  *   "setupScripts": ["bun install", "cp .env.example .env"],
  *   "rlphConfig": "path/to/rlph.json"
  * }
@@ -77,6 +78,7 @@ const logPrefix = "ConfigService";
  * configs or hardcoded defaults.
  */
 interface LaborerConfig {
+	readonly prdsDir?: string;
 	readonly rlphConfig?: string;
 	readonly setupScripts?: readonly string[];
 	readonly worktreeDir?: string;
@@ -84,6 +86,7 @@ interface LaborerConfig {
 
 /** Partial updates accepted by writeProjectConfig(). */
 interface ProjectConfigUpdates {
+	readonly prdsDir?: string | undefined;
 	readonly rlphConfig?: string | undefined;
 	readonly setupScripts?: readonly string[] | undefined;
 	readonly worktreeDir?: string | undefined;
@@ -105,6 +108,8 @@ interface ResolvedValue<T> {
  * All fields have concrete values (no undefined).
  */
 interface ResolvedLaborerConfig {
+	/** Absolute path with `~` already expanded. */
+	readonly prdsDir: ResolvedValue<string>;
 	readonly rlphConfig: ResolvedValue<string | null>;
 	readonly setupScripts: ResolvedValue<readonly string[]>;
 	/** Absolute path with `~` already expanded. */
@@ -262,6 +267,10 @@ const applyConfigUpdates = (
 ): Record<string, unknown> => {
 	const next = { ...existing };
 
+	if (updates.prdsDir !== undefined) {
+		next.prdsDir = updates.prdsDir;
+	}
+
 	if (updates.worktreeDir !== undefined) {
 		next.worktreeDir = updates.worktreeDir;
 	}
@@ -391,9 +400,14 @@ const mergeConfigs = (
 	projectName: string
 ): ResolvedLaborerConfig => {
 	const defaultWorktreeDir = join(GLOBAL_CONFIG_DIR, projectName);
+	const defaultPrdsDir = join(defaultWorktreeDir, "prds");
 
 	let worktreeDir: ResolvedValue<string> = {
 		value: defaultWorktreeDir,
+		source: "default",
+	};
+	let prdsDir: ResolvedValue<string> = {
+		value: defaultPrdsDir,
 		source: "default",
 	};
 	let setupScripts: ResolvedValue<readonly string[]> = {
@@ -419,6 +433,19 @@ const mergeConfigs = (
 				value: resolve(expandTilde(config.worktreeDir)),
 				source: path,
 			};
+			if (prdsDir.source === "default") {
+				prdsDir = {
+					value: join(worktreeDir.value, "prds"),
+					source: "default",
+				};
+			}
+		}
+
+		if (config.prdsDir !== undefined) {
+			prdsDir = {
+				value: resolve(expandTilde(config.prdsDir)),
+				source: path,
+			};
 		}
 
 		if (config.setupScripts !== undefined) {
@@ -436,7 +463,7 @@ const mergeConfigs = (
 		}
 	}
 
-	return { worktreeDir, setupScripts, rlphConfig };
+	return { prdsDir, worktreeDir, setupScripts, rlphConfig };
 };
 
 // ---------------------------------------------------------------------------
@@ -511,7 +538,7 @@ class ConfigService extends Context.Tag("@laborer/ConfigService")<
 				const resolved = mergeConfigs(allLayers, projectName);
 
 				yield* Effect.logDebug(
-					`Resolved config for "${projectName}": worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), rlphConfig=${resolved.rlphConfig.value ?? "null"} (from ${resolved.rlphConfig.source})`
+					`Resolved config for "${projectName}": worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), prdsDir="${resolved.prdsDir.value}" (from ${resolved.prdsDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), rlphConfig=${resolved.rlphConfig.value ?? "null"} (from ${resolved.rlphConfig.source})`
 				).pipe(Effect.annotateLogs("module", logPrefix));
 
 				return resolved;

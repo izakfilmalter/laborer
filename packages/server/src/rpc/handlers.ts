@@ -43,6 +43,7 @@ export const handleConfigUpdate = ({
 }: {
 	projectId: string;
 	config: {
+		prdsDir?: string | undefined;
 		rlphConfig?: string | undefined;
 		setupScripts?: readonly string[] | undefined;
 		worktreeDir?: string | undefined;
@@ -55,6 +56,7 @@ export const handleConfigUpdate = ({
 				Array.isArray(config.setupScripts));
 
 		const isValidConfig =
+			(config.prdsDir === undefined || typeof config.prdsDir === "string") &&
 			(config.worktreeDir === undefined ||
 				typeof config.worktreeDir === "string") &&
 			(config.rlphConfig === undefined ||
@@ -65,7 +67,7 @@ export const handleConfigUpdate = ({
 			return yield* new RpcError({
 				code: "INVALID_INPUT",
 				message:
-					"Invalid config payload. Expected optional string fields and setupScripts as string array.",
+					"Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, rlphConfig, and setupScripts as string array.",
 			});
 		}
 

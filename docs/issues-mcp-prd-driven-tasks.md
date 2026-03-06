@@ -80,14 +80,14 @@ Slug generation: convert the PRD title to a URL/file-safe slug (lowercase, hyphe
 
 ### Acceptance criteria
 
-- [ ] `PrdStorageService` is defined as an Effect tagged service following the existing `Context.Tag` + `Layer.effect` pattern
-- [ ] `createPrdFile(projectName, title, content)` writes a markdown file at the resolved path and returns the file path
-- [ ] `readPrdFile(filePath)` reads and returns the markdown content
-- [ ] PRDs directory is auto-created if it doesn't exist
-- [ ] Slug generation produces URL-safe names from titles
-- [ ] `prdsDir` field is added to the `laborer.json` config schema
-- [ ] ConfigService resolves `prdsDir` with the same layered strategy as `worktreeDir`
-- [ ] File writes use the atomic temp-file + rename strategy
+- [x] `PrdStorageService` is defined as an Effect tagged service following the existing `Context.Tag` + `Layer.effect` pattern
+- [x] `createPrdFile(projectName, title, content)` writes a markdown file at the resolved path and returns the file path
+- [x] `readPrdFile(filePath)` reads and returns the markdown content
+- [x] PRDs directory is auto-created if it doesn't exist
+- [x] Slug generation produces URL-safe names from titles
+- [x] `prdsDir` field is added to the `laborer.json` config schema
+- [x] ConfigService resolves `prdsDir` with the same layered strategy as `worktreeDir`
+- [x] File writes use the atomic temp-file + rename strategy
 
 ### Blocked by
 
@@ -759,8 +759,8 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 |---|-------|-----------|--------|
 | 175 | PRDs table and events in LiveStore schema | None | Done |
 | 176 | Tasks table: add prdId column | None | Done |
-| 177 | PrdStorageService: create and read PRD files on disk | #175 | Ready |
-| 178 | PRD create and list RPCs | #177 | Blocked |
+| 177 | PrdStorageService: create and read PRD files on disk | #175 | Done |
+| 178 | PRD create and list RPCs | #177 | Ready |
 | 179 | PRD read and remove RPCs | #178 | Blocked |
 | 180 | PRD update RPC and status changes | #179 | Blocked |
 | 181 | Issue creation RPC: prd.createIssue | #178 | Blocked |

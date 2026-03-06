@@ -85,6 +85,7 @@ const runReadGlobalConfig = (): Promise<LaborerConfig> =>
 const runWriteProjectConfig = (
 	projectRepoPath: string,
 	updates: {
+		prdsDir?: string | undefined;
 		rlphConfig?: string | undefined;
 		setupScripts?: readonly string[] | undefined;
 		worktreeDir?: string | undefined;
@@ -158,12 +159,14 @@ describe("readConfigFile", () => {
 		const dir = join(testRoot, "valid-config");
 		mkdirSync(dir, { recursive: true });
 		writeConfig(dir, {
+			prdsDir: "~/prds",
 			worktreeDir: "~/worktrees",
 			setupScripts: ["bun install"],
 		});
 
 		const result = await runEffect(readConfigFile(join(dir, CONFIG_FILE_NAME)));
 		expect(result).toEqual({
+			prdsDir: "~/prds",
 			worktreeDir: "~/worktrees",
 			setupScripts: ["bun install"],
 		});
@@ -258,6 +261,10 @@ describe("mergeConfigs", () => {
 	it("should use hardcoded defaults when no configs provided", () => {
 		const result = mergeConfigs([], "my-project");
 
+		expect(result.prdsDir.source).toBe("default");
+		expect(result.prdsDir.value).toBe(
+			join(GLOBAL_CONFIG_DIR, "my-project", "prds")
+		);
 		expect(result.worktreeDir.source).toBe("default");
 		expect(result.worktreeDir.value).toBe(
 			join(GLOBAL_CONFIG_DIR, "my-project")
@@ -273,6 +280,7 @@ describe("mergeConfigs", () => {
 			[
 				{
 					config: {
+						prdsDir: "/custom/prds",
 						worktreeDir: "/custom/worktrees",
 						setupScripts: ["npm install"],
 						rlphConfig: "rlph.json",
@@ -283,6 +291,8 @@ describe("mergeConfigs", () => {
 			"my-project"
 		);
 
+		expect(result.prdsDir.value).toBe("/custom/prds");
+		expect(result.prdsDir.source).toBe("/project/laborer.json");
 		expect(result.worktreeDir.value).toBe("/custom/worktrees");
 		expect(result.worktreeDir.source).toBe("/project/laborer.json");
 		expect(result.setupScripts.value).toEqual(["npm install"]);
@@ -333,6 +343,22 @@ describe("mergeConfigs", () => {
 		// worktreeDir from ancestor (only place it's defined)
 		expect(result.worktreeDir.value).toBe("/ancestor-worktrees");
 		expect(result.worktreeDir.source).toBe("/parent/laborer.json");
+		expect(result.prdsDir.value).toBe("/ancestor-worktrees/prds");
+		expect(result.prdsDir.source).toBe("default");
+	});
+
+	it("should expand tilde in prdsDir", () => {
+		const result = mergeConfigs(
+			[
+				{
+					config: { prdsDir: "~/custom-prds" },
+					path: "/repo/laborer.json",
+				},
+			],
+			"my-project"
+		);
+
+		expect(result.prdsDir.value).toBe(join(homedir(), "custom-prds"));
 	});
 
 	it("should expand tilde in worktreeDir", () => {
@@ -398,6 +424,10 @@ describe("ConfigService", () => {
 
 			const result = await runResolveConfig(projectDir, "test-project");
 
+			expect(result.prdsDir.source).toBe("default");
+			expect(result.prdsDir.value).toBe(
+				join(GLOBAL_CONFIG_DIR, "test-project", "prds")
+			);
 			expect(result.worktreeDir.source).toBe("default");
 			expect(result.worktreeDir.value).toBe(
 				join(GLOBAL_CONFIG_DIR, "test-project")
@@ -412,6 +442,7 @@ describe("ConfigService", () => {
 			const projectDir = join(testRoot, "project-root-config");
 			mkdirSync(projectDir, { recursive: true });
 			const configPath = writeConfig(projectDir, {
+				prdsDir: "/custom/prds",
 				worktreeDir: "/custom/worktrees",
 				setupScripts: ["bun install", "cp .env.example .env"],
 				rlphConfig: "rlph-config.json",
@@ -419,6 +450,8 @@ describe("ConfigService", () => {
 
 			const result = await runResolveConfig(projectDir, "test-project");
 
+			expect(result.prdsDir.value).toBe("/custom/prds");
+			expect(result.prdsDir.source).toBe(configPath);
 			expect(result.worktreeDir.value).toBe("/custom/worktrees");
 			expect(result.worktreeDir.source).toBe(configPath);
 			expect(result.setupScripts.value).toEqual([
@@ -444,6 +477,9 @@ describe("ConfigService", () => {
 
 			const result = await runResolveConfig(child, "child-project");
 
+			expect(result.prdsDir.value).toBe(
+				join(homedir(), "parent-worktrees", "prds")
+			);
 			// setupScripts from child (closest)
 			expect(result.setupScripts.value).toEqual(["pnpm install"]);
 			expect(result.setupScripts.source).toBe(childConfigPath);
@@ -469,6 +505,7 @@ describe("ConfigService", () => {
 
 			const result = await runResolveConfig(child, "child-project");
 
+			expect(result.prdsDir.value).toBe("/child-worktrees/prds");
 			// worktreeDir from child overrides parent
 			expect(result.worktreeDir.value).toBe("/child-worktrees");
 			expect(result.worktreeDir.source).toBe(childConfigPath);
@@ -535,6 +572,7 @@ describe("ConfigService", () => {
 			const result = await runResolveConfig(child, "provenance-test");
 
 			// Each field's provenance should trace to the config that set it
+			expect(result.prdsDir.source).toBe("default");
 			expect(result.setupScripts.source).toBe(childPath);
 			expect(result.rlphConfig.source).toBe(gpPath);
 		});
@@ -566,6 +604,7 @@ describe("ConfigService", () => {
 			mkdirSync(projectDir, { recursive: true });
 
 			await runWriteProjectConfig(projectDir, {
+				prdsDir: "~/custom-prds",
 				worktreeDir: "~/custom-worktrees",
 			});
 
@@ -573,8 +612,10 @@ describe("ConfigService", () => {
 			expect(existsSync(configPath)).toBe(true);
 
 			const written = JSON.parse(readFileSync(configPath, "utf-8")) as {
+				prdsDir?: string;
 				worktreeDir?: string;
 			};
+			expect(written.prdsDir).toBe("~/custom-prds");
 			expect(written.worktreeDir).toBe("~/custom-worktrees");
 		});
 

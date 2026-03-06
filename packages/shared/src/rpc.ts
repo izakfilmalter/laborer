@@ -119,6 +119,7 @@ const ConfigResolvedValueNullableString = Schema.Struct({
 });
 
 const ConfigResponse = Schema.Struct({
+	prdsDir: ConfigResolvedValueString,
 	worktreeDir: ConfigResolvedValueString,
 	setupScripts: ConfigResolvedValueStringArray,
 	rlphConfig: ConfigResolvedValueNullableString,
@@ -207,6 +208,7 @@ export class LaborerRpcs extends RpcGroup.make(
 		payload: {
 			projectId: Schema.String,
 			config: Schema.Struct({
+				prdsDir: Schema.optional(Schema.String),
 				worktreeDir: Schema.optional(Schema.String),
 				setupScripts: Schema.optional(Schema.Array(Schema.String)),
 				rlphConfig: Schema.optional(Schema.String),

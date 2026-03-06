@@ -9,3 +9,8 @@
 - Updated `packages/server/src/services/task-manager.ts` and `packages/server/src/rpc/handlers.ts` so task creation can carry an optional `prdId` and preserve it in RPC responses.
 - Extended `packages/server/test/prd-schema.test.ts` and added `packages/server/test/task-manager.test.ts`, while updating existing importer tests to cover the new task payload shape.
 - Verified with `bun run check-types` in `packages/shared`, `bun run check-types` in `packages/server`, `bun run test -- prd-schema.test.ts task-manager.test.ts github-task-importer.test.ts linear-task-importer.test.ts prd-task-importer.test.ts` in `packages/server`, and `bun x ultracite check` on all touched files.
+- Selected Issue 177 as the highest-priority next task because PRD file storage is the core server capability needed before any PRD RPCs or MCP tooling can persist plans.
+- Added `PrdStorageService` in `packages/server/src/services/prd-storage-service.ts` with Effect service wiring, PRD slug/file-name helpers, automatic PRD directory creation, and atomic temp-file writes for markdown files.
+- Extended `packages/server/src/services/config-service.ts`, `packages/server/src/rpc/handlers.ts`, and `packages/shared/src/rpc.ts` to support a layered `prdsDir` config value alongside existing `laborer.json` settings.
+- Expanded `packages/server/test/config-service.test.ts` and added `packages/server/test/prd-storage-service.test.ts` to cover `prdsDir` resolution, default `<worktreeDir>/prds` behavior, slug generation, PRD creation, and PRD reads.
+- Verified with `bun run check-types` in `packages/shared`, `bun run check-types` in `packages/server`, `bun run test -- config-service.test.ts prd-storage-service.test.ts` in `packages/server`, and `bun x ultracite check` on all touched files.

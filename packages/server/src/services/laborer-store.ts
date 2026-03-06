@@ -51,17 +51,17 @@
  * @see Issue #129: Graceful shutdown — persist LiveStore state
  */
 
-import { env } from "@laborer/env/server";
-import { schema, tables } from "@laborer/shared/schema";
-import { createStore, provideOtel } from "@livestore/livestore";
-import { makeWsSync } from "@livestore/sync-cf/client";
-import { Cause, Context, Effect, Layer } from "effect";
+import { env } from '@laborer/env/server'
+import { schema, tables } from '@laborer/shared/schema'
+import { createStore, provideOtel } from '@livestore/livestore'
+import { makeWsSync } from '@livestore/sync-cf/client'
+import { Cause, Context, Effect, Layer } from 'effect'
 
 /**
  * Derive the concrete Store type from our schema so that consumers
  * get full type safety when calling `store.commit()` and `store.query()`.
  */
-type LaborerSchema = typeof schema;
+type LaborerSchema = typeof schema
 
 /**
  * LaborerStore Effect Context Tag
@@ -72,15 +72,15 @@ type LaborerSchema = typeof schema;
  * The service value is `{ store: Store<LaborerSchema> }`, giving
  * consumers type-safe access to commit events and query tables.
  */
-class LaborerStore extends Context.Tag("LaborerStore")<
-	LaborerStore,
-	{
-		readonly store: ReturnType<
-			typeof createStore<LaborerSchema>
-		> extends Effect.Effect<infer S, infer _E, infer _R>
-			? S
-			: never;
-	}
+class LaborerStore extends Context.Tag('LaborerStore')<
+  LaborerStore,
+  {
+    readonly store: ReturnType<
+      typeof createStore<LaborerSchema>
+    > extends Effect.Effect<infer S, infer _E, infer _R>
+      ? S
+      : never
+  }
 >() {}
 
 /**
@@ -88,7 +88,7 @@ class LaborerStore extends Context.Tag("LaborerStore")<
  * Database files are stored at `<DATA_DIR>/<storeId>/`.
  * Defaults to `"./data"` when DATA_DIR is not set.
  */
-const DATA_DIRECTORY = env.DATA_DIR;
+const DATA_DIRECTORY = env.DATA_DIR
 
 /**
  * WebSocket URL for the server-side store to connect to its own sync
@@ -96,12 +96,12 @@ const DATA_DIRECTORY = env.DATA_DIR;
  * The `makeWsSync` client handles reconnection automatically, so the
  * store can start connecting before the HTTP server is fully ready.
  */
-const syncUrl = `ws://localhost:${env.PORT}/rpc`;
+const syncUrl = `ws://localhost:${env.PORT}/rpc`
 
 /**
  * Log prefix for structured logging.
  */
-const logPrefix = "[LaborerStore]";
+const logPrefix = '[LaborerStore]'
 
 /**
  * Effect that creates the LiveStore instance.
@@ -131,85 +131,85 @@ const logPrefix = "[LaborerStore]";
  * @see Issue #129: Graceful shutdown — persist LiveStore state
  */
 const makeStore = Effect.gen(function* () {
-	const { makeAdapter } = yield* Effect.promise(
-		() => import("@livestore/adapter-node")
-	);
+  const { makeAdapter } = yield* Effect.promise(
+    () => import('@livestore/adapter-node')
+  )
 
-	const adapter = makeAdapter({
-		storage: { type: "fs", baseDirectory: DATA_DIRECTORY },
-		sync: {
-			backend: makeWsSync({ url: syncUrl }),
-			onSyncError: "ignore",
-		},
-	});
+  const adapter = makeAdapter({
+    storage: { type: 'fs', baseDirectory: DATA_DIRECTORY },
+    sync: {
+      backend: makeWsSync({ url: syncUrl }),
+      onSyncError: 'ignore',
+    },
+  })
 
-	const store = yield* createStore({
-		adapter,
-		schema,
-		storeId: "laborer",
-		batchUpdates: (run) => run(),
-		disableDevtools: true,
-	});
+  const store = yield* createStore({
+    adapter,
+    schema,
+    storeId: 'laborer',
+    batchUpdates: (run) => run(),
+    disableDevtools: true,
+  })
 
-	// --- Startup: log restored entity counts from SQLite persistence ---
-	// This confirms state was successfully restored from the previous session.
-	const projectCount = store.query(tables.projects).length;
-	const workspaceCount = store.query(tables.workspaces).length;
-	const taskCount = store.query(tables.tasks).length;
+  // --- Startup: log restored entity counts from SQLite persistence ---
+  // This confirms state was successfully restored from the previous session.
+  const projectCount = store.query(tables.projects).length
+  const workspaceCount = store.query(tables.workspaces).length
+  const taskCount = store.query(tables.tasks).length
 
-	yield* Effect.logInfo(
-		`${logPrefix} Store initialized — restored from SQLite: ` +
-			`${projectCount} project(s), ${workspaceCount} workspace(s), ` +
-			`${taskCount} task(s)`
-	);
+  yield* Effect.logInfo(
+    `${logPrefix} Store initialized — restored from SQLite: ` +
+      `${projectCount} project(s), ${workspaceCount} workspace(s), ` +
+      `${taskCount} task(s)`
+  )
 
-	// --- Shutdown finalizer: flush and close LiveStore (Issue #129) ---
-	// The upstream @livestore/adapter-node also registers acquireRelease
-	// finalizers for db.close(), but our explicit finalizer:
-	// 1. Provides observable logging for shutdown diagnostics
-	// 2. Calls store.shutdown() to flush pending writes and close the
-	//    client session before the adapter's own finalizers run
-	// 3. Logs final entity counts for post-mortem verification
-	yield* Effect.addFinalizer(() =>
-		Effect.gen(function* () {
-			yield* Effect.logInfo(
-				`${logPrefix} Shutdown: flushing LiveStore state to SQLite...`
-			);
+  // --- Shutdown finalizer: flush and close LiveStore (Issue #129) ---
+  // The upstream @livestore/adapter-node also registers acquireRelease
+  // finalizers for db.close(), but our explicit finalizer:
+  // 1. Provides observable logging for shutdown diagnostics
+  // 2. Calls store.shutdown() to flush pending writes and close the
+  //    client session before the adapter's own finalizers run
+  // 3. Logs final entity counts for post-mortem verification
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      yield* Effect.logInfo(
+        `${logPrefix} Shutdown: flushing LiveStore state to SQLite...`
+      )
 
-			// Log final entity counts before shutdown for post-mortem verification
-			const finalProjects = store.query(tables.projects).length;
-			const finalWorkspaces = store.query(tables.workspaces).length;
-			const finalTasks = store.query(tables.tasks).length;
+      // Log final entity counts before shutdown for post-mortem verification
+      const finalProjects = store.query(tables.projects).length
+      const finalWorkspaces = store.query(tables.workspaces).length
+      const finalTasks = store.query(tables.tasks).length
 
-			yield* Effect.logInfo(
-				`${logPrefix} Shutdown: final state — ` +
-					`${finalProjects} project(s), ${finalWorkspaces} workspace(s), ` +
-					`${finalTasks} task(s)`
-			);
+      yield* Effect.logInfo(
+        `${logPrefix} Shutdown: final state — ` +
+          `${finalProjects} project(s), ${finalWorkspaces} workspace(s), ` +
+          `${finalTasks} task(s)`
+      )
 
-			// Call store.shutdown() to flush pending writes and close the
-			// client session. This triggers LiveStore's internal cleanup:
-			// - Flushes any pending event commits to SQLite
-			// - Closes the client session (stops sync fibers)
-			// - Closes the lifetimeScope (which cascades to adapter cleanup)
-			yield* store
-				.shutdown()
-				.pipe(
-					Effect.tapDefect((cause) =>
-						Effect.logWarning(
-							`${logPrefix} Shutdown: store.shutdown() encountered an error (state may already be persisted): ${Cause.pretty(cause)}`
-						)
-					)
-				);
+      // Call store.shutdown() to flush pending writes and close the
+      // client session. This triggers LiveStore's internal cleanup:
+      // - Flushes any pending event commits to SQLite
+      // - Closes the client session (stops sync fibers)
+      // - Closes the lifetimeScope (which cascades to adapter cleanup)
+      yield* store
+        .shutdown()
+        .pipe(
+          Effect.tapDefect((cause) =>
+            Effect.logWarning(
+              `${logPrefix} Shutdown: store.shutdown() encountered an error (state may already be persisted): ${Cause.pretty(cause)}`
+            )
+          )
+        )
 
-			yield* Effect.logInfo(
-				`${logPrefix} Shutdown: LiveStore state persisted to SQLite successfully`
-			);
-		})
-	);
+      yield* Effect.logInfo(
+        `${logPrefix} Shutdown: LiveStore state persisted to SQLite successfully`
+      )
+    })
+  )
 
-	return { store };
-}).pipe(provideOtel({}));
+  return { store }
+}).pipe(provideOtel({}))
 
 /**
  * LaborerStoreLive — Layer that provides the LaborerStore service.
@@ -228,8 +228,8 @@ const makeStore = Effect.gen(function* () {
  * - Entity counts are logged to confirm state was restored from SQLite
  */
 const LaborerStoreLive: Layer.Layer<LaborerStore> = Layer.scoped(
-	LaborerStore,
-	makeStore
-).pipe(Layer.orDie);
+  LaborerStore,
+  makeStore
+).pipe(Layer.orDie)
 
-export { LaborerStore, LaborerStoreLive };
+export { LaborerStore, LaborerStoreLive }

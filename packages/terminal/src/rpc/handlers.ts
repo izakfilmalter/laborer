@@ -25,14 +25,14 @@
  */
 
 import {
-	type TerminalLifecycleEventSchema,
-	TerminalRpcs,
-} from "@laborer/shared/rpc";
-import { Effect, Stream } from "effect";
+  type TerminalLifecycleEventSchema,
+  TerminalRpcs,
+} from '@laborer/shared/rpc'
+import { Effect, Stream } from 'effect'
 import {
-	type TerminalLifecycleEvent,
-	TerminalManager,
-} from "../services/terminal-manager.js";
+  type TerminalLifecycleEvent,
+  TerminalManager,
+} from '../services/terminal-manager.js'
 
 /**
  * Converts a TerminalLifecycleEvent (from TerminalManager's PubSub) to
@@ -42,49 +42,49 @@ import {
  * Restarted events. The schema events carry only the essential fields.
  */
 const toLifecycleEventSchema = (
-	event: TerminalLifecycleEvent
+  event: TerminalLifecycleEvent
 ): TerminalLifecycleEventSchema => {
-	switch (event._tag) {
-		case "Spawned":
-			return {
-				_tag: "Spawned" as const,
-				id: event.terminal.id,
-				workspaceId: event.terminal.workspaceId,
-				command: event.terminal.command,
-				status: event.terminal.status,
-			};
-		case "StatusChanged":
-			return {
-				_tag: "StatusChanged" as const,
-				id: event.id,
-				status: event.status,
-			};
-		case "Exited":
-			return {
-				_tag: "Exited" as const,
-				id: event.id,
-				exitCode: event.exitCode,
-				signal: event.signal,
-			};
-		case "Removed":
-			return {
-				_tag: "Removed" as const,
-				id: event.id,
-			};
-		case "Restarted":
-			return {
-				_tag: "Restarted" as const,
-				id: event.terminal.id,
-				workspaceId: event.terminal.workspaceId,
-				command: event.terminal.command,
-				status: event.terminal.status,
-			};
-		default: {
-			const _exhaustive: never = event;
-			return _exhaustive;
-		}
-	}
-};
+  switch (event._tag) {
+    case 'Spawned':
+      return {
+        _tag: 'Spawned' as const,
+        id: event.terminal.id,
+        workspaceId: event.terminal.workspaceId,
+        command: event.terminal.command,
+        status: event.terminal.status,
+      }
+    case 'StatusChanged':
+      return {
+        _tag: 'StatusChanged' as const,
+        id: event.id,
+        status: event.status,
+      }
+    case 'Exited':
+      return {
+        _tag: 'Exited' as const,
+        id: event.id,
+        exitCode: event.exitCode,
+        signal: event.signal,
+      }
+    case 'Removed':
+      return {
+        _tag: 'Removed' as const,
+        id: event.id,
+      }
+    case 'Restarted':
+      return {
+        _tag: 'Restarted' as const,
+        id: event.terminal.id,
+        workspaceId: event.terminal.workspaceId,
+        command: event.terminal.command,
+        status: event.terminal.status,
+      }
+    default: {
+      const _exhaustive: never = event
+      return _exhaustive
+    }
+  }
+}
 
 /**
  * Converts a TerminalRecord (from TerminalManager) to the TerminalInfo
@@ -94,20 +94,20 @@ const toLifecycleEventSchema = (
  * compile time.
  */
 const toTerminalInfo = (record: {
-	readonly args: readonly string[];
-	readonly command: string;
-	readonly cwd: string;
-	readonly id: string;
-	readonly status: "running" | "stopped";
-	readonly workspaceId: string;
+  readonly args: readonly string[]
+  readonly command: string
+  readonly cwd: string
+  readonly id: string
+  readonly status: 'running' | 'stopped'
+  readonly workspaceId: string
 }) => ({
-	id: record.id,
-	workspaceId: record.workspaceId,
-	command: record.command,
-	args: [...record.args],
-	cwd: record.cwd,
-	status: record.status,
-});
+  id: record.id,
+  workspaceId: record.workspaceId,
+  command: record.command,
+  args: [...record.args],
+  cwd: record.cwd,
+  status: record.status,
+})
 
 /**
  * RPC handler layer for the TerminalRpcs group.
@@ -122,80 +122,80 @@ const toTerminalInfo = (record: {
  * - terminal.list: returns all terminals (running and stopped)
  */
 export const TerminalRpcsLive = TerminalRpcs.toLayer(
-	Effect.gen(function* () {
-		const tm = yield* TerminalManager;
+  Effect.gen(function* () {
+    const tm = yield* TerminalManager
 
-		return {
-			// -------------------------------------------------------------------
-			// terminal.spawn — create a new terminal
-			// -------------------------------------------------------------------
-			"terminal.spawn": ({
-				command,
-				args,
-				cwd,
-				env,
-				cols,
-				rows,
-				workspaceId,
-			}) =>
-				Effect.gen(function* () {
-					const record = yield* tm.spawn({
-						command,
-						args: args ?? [],
-						cwd,
-						env: env ?? undefined,
-						cols,
-						rows,
-						workspaceId,
-					});
-					return toTerminalInfo(record);
-				}),
+    return {
+      // -------------------------------------------------------------------
+      // terminal.spawn — create a new terminal
+      // -------------------------------------------------------------------
+      'terminal.spawn': ({
+        command,
+        args,
+        cwd,
+        env,
+        cols,
+        rows,
+        workspaceId,
+      }) =>
+        Effect.gen(function* () {
+          const record = yield* tm.spawn({
+            command,
+            args: args ?? [],
+            cwd,
+            env: env ?? undefined,
+            cols,
+            rows,
+            workspaceId,
+          })
+          return toTerminalInfo(record)
+        }),
 
-			// -------------------------------------------------------------------
-			// terminal.write — send input to a terminal
-			// -------------------------------------------------------------------
-			"terminal.write": ({ id, data }) => tm.write(id, data),
+      // -------------------------------------------------------------------
+      // terminal.write — send input to a terminal
+      // -------------------------------------------------------------------
+      'terminal.write': ({ id, data }) => tm.write(id, data),
 
-			// -------------------------------------------------------------------
-			// terminal.resize — resize a terminal's PTY
-			// -------------------------------------------------------------------
-			"terminal.resize": ({ id, cols, rows }) => tm.resize(id, cols, rows),
+      // -------------------------------------------------------------------
+      // terminal.resize — resize a terminal's PTY
+      // -------------------------------------------------------------------
+      'terminal.resize': ({ id, cols, rows }) => tm.resize(id, cols, rows),
 
-			// -------------------------------------------------------------------
-			// terminal.kill — stop the PTY (terminal retained in memory)
-			// -------------------------------------------------------------------
-			"terminal.kill": ({ id }) => tm.kill(id),
+      // -------------------------------------------------------------------
+      // terminal.kill — stop the PTY (terminal retained in memory)
+      // -------------------------------------------------------------------
+      'terminal.kill': ({ id }) => tm.kill(id),
 
-			// -------------------------------------------------------------------
-			// terminal.remove — kill (if running) and fully remove from memory
-			// -------------------------------------------------------------------
-			"terminal.remove": ({ id }) => tm.remove(id),
+      // -------------------------------------------------------------------
+      // terminal.remove — kill (if running) and fully remove from memory
+      // -------------------------------------------------------------------
+      'terminal.remove': ({ id }) => tm.remove(id),
 
-			// -------------------------------------------------------------------
-			// terminal.restart — kill and respawn with same command/config
-			// -------------------------------------------------------------------
-			"terminal.restart": ({ id }) =>
-				Effect.gen(function* () {
-					const record = yield* tm.restart(id);
-					return toTerminalInfo(record);
-				}),
+      // -------------------------------------------------------------------
+      // terminal.restart — kill and respawn with same command/config
+      // -------------------------------------------------------------------
+      'terminal.restart': ({ id }) =>
+        Effect.gen(function* () {
+          const record = yield* tm.restart(id)
+          return toTerminalInfo(record)
+        }),
 
-			// -------------------------------------------------------------------
-			// terminal.list — return all terminals (running + stopped)
-			// -------------------------------------------------------------------
-			"terminal.list": () =>
-				Effect.gen(function* () {
-					const records = yield* tm.listTerminals();
-					return records.map(toTerminalInfo);
-				}),
+      // -------------------------------------------------------------------
+      // terminal.list — return all terminals (running + stopped)
+      // -------------------------------------------------------------------
+      'terminal.list': () =>
+        Effect.gen(function* () {
+          const records = yield* tm.listTerminals()
+          return records.map(toTerminalInfo)
+        }),
 
-			// -------------------------------------------------------------------
-			// terminal.events — streaming lifecycle events
-			// -------------------------------------------------------------------
-			"terminal.events": () =>
-				Stream.fromPubSub(tm.lifecycleEvents).pipe(
-					Stream.map(toLifecycleEventSchema)
-				),
-		};
-	})
-);
+      // -------------------------------------------------------------------
+      // terminal.events — streaming lifecycle events
+      // -------------------------------------------------------------------
+      'terminal.events': () =>
+        Stream.fromPubSub(tm.lifecycleEvents).pipe(
+          Stream.map(toLifecycleEventSchema)
+        ),
+    }
+  })
+)

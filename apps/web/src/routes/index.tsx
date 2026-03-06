@@ -63,6 +63,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkspaceDashboard } from "@/components/workspace-dashboard";
 import { useProjectCollapseState } from "@/hooks/use-project-collapse-state";
 import { useResponsiveLayout } from "@/hooks/use-responsive-layout";
+import { useSidebarWidth } from "@/hooks/use-sidebar-width";
 import { useTerminalList } from "@/hooks/use-terminal-list";
 import { useTrayWorkspaceCount } from "@/hooks/use-tray-workspace-count";
 import { useLaborerStore } from "@/livestore/store";
@@ -865,6 +866,12 @@ function HomeComponent() {
 	// Responsive sizing — adapts sidebar and pane sizes to viewport width
 	const responsiveSizes = useResponsiveLayout();
 
+	// Sidebar width persistence — restore from localStorage, debounced writes
+	const sidebarWidth = useSidebarWidth(
+		Number.parseFloat(responsiveSizes.sidebarMin),
+		Number.parseFloat(responsiveSizes.sidebarMax)
+	);
+
 	// Project collapse state — persisted to localStorage
 	const collapseState = useProjectCollapseState();
 
@@ -912,12 +919,16 @@ function HomeComponent() {
 	const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-	const handleSidebarResize = useCallback(() => {
-		const panel = sidebarPanelRef.current;
-		if (panel) {
-			setSidebarCollapsed(panel.isCollapsed());
-		}
-	}, []);
+	const handleSidebarResize = useCallback(
+		(panelSize: { asPercentage: number }) => {
+			const panel = sidebarPanelRef.current;
+			if (panel) {
+				setSidebarCollapsed(panel.isCollapsed());
+			}
+			sidebarWidth.handleResize(panelSize.asPercentage);
+		},
+		[sidebarWidth.handleResize]
+	);
 
 	const toggleSidebar = useCallback(() => {
 		const panel = sidebarPanelRef.current;
@@ -948,7 +959,9 @@ function HomeComponent() {
 				<ResizablePanel
 					collapsedSize="0%"
 					collapsible={responsiveSizes.canCollapseSidebar}
-					defaultSize={responsiveSizes.sidebarDefault}
+					defaultSize={
+						sidebarWidth.storedDefault ?? responsiveSizes.sidebarDefault
+					}
 					maxSize={responsiveSizes.sidebarMax}
 					minSize={responsiveSizes.sidebarMin}
 					onResize={handleSidebarResize}

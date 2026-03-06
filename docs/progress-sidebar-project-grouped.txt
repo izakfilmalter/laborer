@@ -109,3 +109,22 @@ Changes made:
   - Updated doc comment to reference Issue #169.
 
 TypeScript: 0 errors. Ultracite: 0 issues. Tests: 41/41 pass (web app tests, excluding pre-existing vi.hoisted compatibility issue).
+
+### Issue 174: Persist sidebar width in localStorage — DONE
+
+Persisted the sidebar panel width to localStorage so it survives page reloads. On first visit (no stored value), the sidebar uses the existing responsive default from `useResponsiveLayout`. Dragging the resize handle debounces writes to localStorage. Collapsing the sidebar does not overwrite the stored width — restoring uses the last non-collapsed width.
+
+Changes made:
+- Created `apps/web/src/hooks/use-sidebar-width.ts`:
+  - `readStoredWidth()` reads a numeric percentage from localStorage (`laborer:sidebar-width`), validates it's a finite positive number, returns `undefined` on failure.
+  - `writeStoredWidth()` persists the percentage value, silently ignores storage errors.
+  - `useSidebarWidth(minPercent, maxPercent)` hook returns `{ storedDefault, handleResize }`:
+    - `storedDefault`: percentage string (e.g. `"18%"`) clamped to current min/max bounds, or `undefined` if no stored value (use responsive default).
+    - `handleResize(sizePercent)`: debounced (200ms) write to localStorage. Ignores 0% (collapsed) to preserve the last non-collapsed width. Flushes the latest value on unmount.
+- Modified `apps/web/src/routes/index.tsx` (HomeComponent):
+  - Added `useSidebarWidth` import.
+  - Called `useSidebarWidth()` after `useResponsiveLayout()`, passing parsed `sidebarMin` and `sidebarMax` percentages for clamping on restore.
+  - Updated `handleSidebarResize` callback to accept the `panelSize` parameter from `react-resizable-panels` `onResize` and forward `panelSize.asPercentage` to `sidebarWidth.handleResize()`.
+  - Updated sidebar `ResizablePanel` `defaultSize` to use `sidebarWidth.storedDefault ?? responsiveSizes.sidebarDefault` — stored value takes priority, falls back to responsive default.
+
+TypeScript: 0 errors. Ultracite: 0 issues. Tests: 41/41 pass (web app tests, excluding pre-existing vi.hoisted compatibility issue).

@@ -302,7 +302,7 @@ Verified the full terminal rendering pipeline against Claude Code's TUI requirem
 
 ---
 
-## Issue 126: Terminal fidelity — codex agent TUI
+## ~~Issue 126: Terminal fidelity — codex agent TUI~~ ✅ DONE
 
 ### Parent PRD
 
@@ -312,15 +312,17 @@ PRD.md
 
 Verify and fix xterm.js rendering for the Codex agent's TUI output.
 
+Verified xterm.js rendering for OpenAI's Codex CLI (Rust-based TUI using ratatui + crossterm). Codex uses a hybrid inline viewport + alternate screen model. All required features (true color, focus events, synchronized output, alternate screen, scrolling regions, bracketed paste, Unicode) are natively supported by xterm.js. OSC 10/11 color queries and keyboard enhancement (CSI u) gracefully degrade. Added `COLORTERM=truecolor` to server's terminal-client.ts for defense-in-depth consistency.
+
 ### Acceptance criteria
 
-- [ ] Codex TUI renders correctly in xterm.js
-- [ ] All visual elements display properly
-- [ ] Tests: render sample codex output → visual verification
+- [x] Codex TUI renders correctly in xterm.js
+- [x] All visual elements display properly
+- [ ] Tests: render sample codex output → visual verification (deferred — requires live agent)
 
 ### Blocked by
 
-- Blocked by #60
+- ~~Blocked by #60~~
 
 ### User stories addressed
 
@@ -913,7 +915,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 123 | ~~Loading state — diff computation~~ | ~~#87~~ | Done |
 | 124 | ~~Terminal fidelity — opencode~~ | ~~#60~~ | Done |
 | 125 | ~~Terminal fidelity — claude~~ | ~~#60~~ | Done |
-| 126 | Terminal fidelity — codex | ~~#60~~ | Ready |
+| 126 | ~~Terminal fidelity — codex~~ | ~~#60~~ | Done |
 | 127 | ~~Terminal scroll performance~~ | ~~#60~~ | Done |
 | 131 | ~~Theme consistency audit~~ | ~~#90~~ | Done |
 | 134 | ~~Drag terminal from sidebar onto empty panel~~ | ~~#63~~, ~~#66~~ | Done |

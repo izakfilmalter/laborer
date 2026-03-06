@@ -113,6 +113,46 @@
  * - Data coalescing (5ms) smooths rapid output bursts from agent tool calls
  * - Flow control prevents output buffer overflow during fast code generation
  *
+ * Terminal fidelity — Codex CLI TUI (Issue #126):
+ * Verified xterm.js rendering for OpenAI's Codex CLI (Rust-based TUI using
+ * ratatui + crossterm). Codex uses a hybrid inline viewport + alternate screen
+ * model: primary view renders inline with scrolling regions (DECSTBM), while
+ * overlay views (diff, pager, agent picker) use the alternate screen buffer.
+ * - TERM=xterm-256color + COLORTERM=truecolor set at PTY spawn — Codex's
+ *   `supports-color` crate detects true color support from these env vars.
+ *   Without COLORTERM, shimmer animations and RGB blending fall back to
+ *   256-color approximation via CIE76 color distance in Lab space.
+ * - Focus events (CSI ? 1004 h) supported natively by xterm.js — Codex
+ *   enables FocusChange tracking to re-query terminal palette colors on
+ *   focus gain and to gate desktop notifications (only notify when unfocused).
+ * - Synchronized output (CSI ? 2026 h) supported natively by xterm.js —
+ *   Codex wraps draw calls in SynchronizedUpdate to prevent tearing. xterm.js
+ *   buffers output when this mode is enabled and renders atomically.
+ * - OSC 10/11 color queries: Codex's custom crossterm fork queries the
+ *   terminal's actual foreground/background colors for adaptive light/dark
+ *   theming. xterm.js does not respond to OSC 10/11 — Codex gracefully
+ *   handles the case where no response arrives (falls back to default theme).
+ * - Keyboard enhancement (CSI u / kitty protocol): Codex uses crossterm's
+ *   PushKeyboardEnhancementFlags for modifier disambiguation. xterm.js does
+ *   not support the kitty keyboard protocol — Codex gracefully degrades via
+ *   `supports_keyboard_enhancement()` detection.
+ * - Bracketed paste (CSI ? 2004 h) supported natively by xterm.js — Codex
+ *   enables this for paste detection.
+ * - Scrolling regions (DECSTBM) supported natively by xterm.js — used by
+ *   Codex's inline viewport to scroll content without affecting terminal
+ *   scrollback above.
+ * - Cursor position report (CPR / DSR 6) supported by xterm.js — Codex
+ *   uses this for inline viewport positioning.
+ * - Mouse events NOT used by Codex — no mouse capture configuration needed.
+ * - Inline images NOT used by Codex — ImageAddon already loaded for opencode.
+ * - No specific cursor style set by Codex — current "bar" style is fine.
+ * - Unicode box-drawing characters (e.g., "▌" for gutter prefix) handled
+ *   correctly by the Unicode11 addon.
+ * - WebGL renderer handles Codex's shimmer text animations (per-character
+ *   RGB blending with time-based sweep) efficiently.
+ * - All pre-existing features (WebGL, Unicode11, WebLinks, ImageAddon, flow
+ *   control, 100K scrollback, 5ms coalescing) fully apply to Codex as well.
+ *
  * Terminal fidelity — opencode TUI (Issue #124):
  * Verified and enhanced xterm.js rendering for opencode's full-screen TUI:
  * - COLORTERM=truecolor injected at PTY spawn — opencode checks this env

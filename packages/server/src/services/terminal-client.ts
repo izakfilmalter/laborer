@@ -244,6 +244,7 @@ class TerminalClient extends Context.Tag("@laborer/TerminalClient")<
 								...process.env,
 								...workspaceEnv,
 								TERM: "xterm-256color",
+								COLORTERM: "truecolor",
 							} as Record<string, string>,
 							cols: 80,
 							rows: 24,

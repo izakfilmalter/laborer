@@ -225,11 +225,13 @@ PRD-e2e-test-coverage.md
 
 Delete the existing `test/project-settings-modal.test.tsx` file. This file mocks 6 internal modules and violates the project's TDD principles. Its behavior is now covered by the Playwright E2E test from Issue 5.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] `apps/web/test/project-settings-modal.test.tsx` is deleted
-- [ ] `bun run test` in `apps/web` still passes (remaining 3 test files unaffected)
-- [ ] `bun x ultracite check` passes
+- [x] `apps/web/test/project-settings-modal.test.tsx` is deleted
+- [x] `bun run test` in `apps/web` still passes (remaining 3 test files unaffected)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 

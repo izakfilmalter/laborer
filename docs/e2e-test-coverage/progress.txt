@@ -95,3 +95,17 @@ Verification:
 - All 4 E2E tests pass with `bun run test:e2e` (4 passed in 18.0s)
 - All 73 existing Vitest tests still pass (`bun run test`)
 - `ultracite check` clean on modified file (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)
+
+## Issue 7: Delete mock-heavy project-settings-modal.test.tsx — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Deleted `apps/web/test/project-settings-modal.test.tsx` — the mock-heavy component test that mocked 6 internal modules (`LaborerClient`, `useAtomSet`, `useAtomValue`, `sonner`, `buildConfigUpdates`, `getSettingsLoadErrorMessage`)
+- This file violated the project's TDD principles by testing implementation details rather than observable behavior
+- Its behavior is now fully covered by the Playwright E2E test from Issue 5 ("can open project settings, modify a field, save, and verify persistence")
+
+Verification:
+- All 8 remaining Vitest test files pass (70 tests) with `bun run test`
+- `ultracite check` clean (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)
+- The 3 pure function test files are unaffected: `layout-utils.test.ts`, `project-settings-modal.helpers.test.ts`, `task-source-picker.test.ts`

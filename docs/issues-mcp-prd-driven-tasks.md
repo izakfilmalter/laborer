@@ -664,12 +664,12 @@ The `TaskSourcePicker` retains the Linear, GitHub, and PRD source tabs. The `tas
 
 ### Acceptance criteria
 
-- [ ] `CreateTaskForm` component file is deleted
-- [ ] "Manual" tab is removed from `TaskSourcePicker`
-- [ ] `TaskSourcePicker` still shows Linear, GitHub, and PRD tabs
-- [ ] Existing manual tasks still display correctly in the task list (read-only, status changes still work)
-- [ ] No dead imports or references to `CreateTaskForm` remain
-- [ ] The `task.create` RPC endpoint is not removed (still used by MCP)
+- [x] `CreateTaskForm` component file is deleted
+- [x] "Manual" tab is removed from `TaskSourcePicker`
+- [x] `TaskSourcePicker` still shows Linear, GitHub, and PRD tabs
+- [x] Existing manual tasks still display correctly in the task list (read-only, status changes still work)
+- [x] No dead imports or references to `CreateTaskForm` remain
+- [x] The `task.create` RPC endpoint is not removed (still used by MCP)
 
 ### Blocked by
 
@@ -776,6 +776,6 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 191 | Plan detail view: issues list alongside editor | #181, #190 | Done |
 | 192 | Create workspace from plan | #191 | Done |
 | 193 | Plan workspace scoped task list and rlph integration | #186, #192 | Done |
-| 194 | Remove CreateTaskForm and manual task source tab | #181 | Ready |
+| 194 | Remove CreateTaskForm and manual task source tab | #181 | Done |
 | 195 | Remove WritePrdForm, rlph.writePRD RPC, and PrdTaskImporter | #185 | Done |
-| 196 | Polish and end-to-end verification | #188, #193, #194, #195 | Blocked |
+| 196 | Polish and end-to-end verification | #188, #193, #194, #195 | Ready |

@@ -5,7 +5,7 @@
  * and tasks nested underneath. The heading shows the project name, a chevron
  * toggle, and project settings/delete actions.
  *
- * Task source selection (Manual/Linear/GitHub) is managed independently
+ * Task source selection (Linear/GitHub) is managed independently
  * per project via local state.
  *
  * @see Issue #168: ProjectGroup collapsible headings with nested workspaces
@@ -71,7 +71,7 @@ function ProjectGroup({
 }: ProjectGroupProps) {
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [isRemoving, setIsRemoving] = useState(false);
-	const [taskSource, setTaskSource] = useState<TaskSourceFilter>("manual");
+	const [taskSource, setTaskSource] = useState<TaskSourceFilter>("linear");
 	const removeProject = useAtomSet(removeProjectMutation, {
 		mode: "promise",
 	});

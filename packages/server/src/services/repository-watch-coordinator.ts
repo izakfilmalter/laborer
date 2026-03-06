@@ -70,6 +70,25 @@ interface ProjectWatcherState {
 
 const DEBOUNCE_MS = 500;
 const RECOVERY_RETRY_MS = 1000;
+const RECOVERY_RETRY_LABEL = `${RECOVERY_RETRY_MS}ms`;
+
+const formatWatcherWarning = (
+	summary: string,
+	params: {
+		readonly detail?: string;
+		readonly path?: string;
+		readonly projectId: string;
+		readonly retrying?: boolean;
+	}
+): string => {
+	const pathSegment = params.path === undefined ? "" : ` at ${params.path}`;
+	const detailSegment = params.detail === undefined ? "" : `: ${params.detail}`;
+	const retrySegment = params.retrying
+		? ` Git-backed refresh remains active; retrying watcher setup in ${RECOVERY_RETRY_LABEL}.`
+		: "";
+
+	return `${summary} for project ${params.projectId}${pathSegment}${detailSegment}.${retrySegment}`;
+};
 
 /**
  * Files in the git directory that indicate branch-related changes.
@@ -186,6 +205,17 @@ class RepositoryWatchCoordinator extends Context.Tag(
 
 			const isActive = (state: ProjectWatcherState): boolean => !state.closed;
 
+			const logWatcherWarning = (
+				summary: string,
+				params: {
+					readonly detail?: string;
+					readonly path?: string;
+					readonly projectId: string;
+					readonly retrying?: boolean;
+				}
+			): Effect.Effect<void, never> =>
+				Effect.logWarning(formatWatcherWarning(summary, params));
+
 			const closeState = (state: ProjectWatcherState): void => {
 				state.closed = true;
 				clearTimers(state);
@@ -292,9 +322,10 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					}
 					state.recoveryTimer = null;
 					runPromise(
-						Effect.logWarning(
-							`Watcher degraded for project ${state.projectId} (${reason}); attempting recovery`
-						).pipe(
+						logWatcherWarning("Watcher degraded", {
+							projectId: state.projectId,
+							detail: `${reason}; attempting recovery now`,
+						}).pipe(
 							Effect.zipRight(
 								Ref.get(statesRef).pipe(
 									Effect.flatMap((states) => {
@@ -394,9 +425,12 @@ class RepositoryWatchCoordinator extends Context.Tag(
 								return;
 							}
 							runPromise(
-								Effect.logWarning(
-									`Git watcher error for project ${projectId} at ${gitDirPath}: ${error.message}`
-								)
+								logWatcherWarning("Git watcher error", {
+									projectId,
+									path: gitDirPath,
+									detail: error.message,
+									retrying: true,
+								})
 							).catch(() => undefined);
 							scheduleReconcile(state, "watcher-error");
 							scheduleBranchRefresh(state, "watcher-error");
@@ -407,15 +441,20 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					.pipe(
 						Effect.tap((subscription) =>
 							subscription === null
-								? Effect.logWarning(
-										`Git watch target unavailable for project ${projectId}: ${gitDirPath}`
-									)
+								? logWatcherWarning("Git watch target unavailable", {
+										projectId,
+										path: gitDirPath,
+										retrying: true,
+									})
 								: Effect.void
 						),
 						Effect.catchAll((error) =>
-							Effect.logWarning(
-								`Failed to watch git dir for project ${projectId}: ${error.message}`
-							).pipe(Effect.as(null))
+							logWatcherWarning("Failed to watch git dir", {
+								projectId,
+								path: gitDirPath,
+								detail: error.message,
+								retrying: true,
+							}).pipe(Effect.as(null))
 						)
 					);
 
@@ -440,9 +479,12 @@ class RepositoryWatchCoordinator extends Context.Tag(
 								return;
 							}
 							runPromise(
-								Effect.logWarning(
-									`Worktrees watcher error for project ${projectId} at ${worktreesDir}: ${error.message}`
-								)
+								logWatcherWarning("Worktrees watcher error", {
+									projectId,
+									path: worktreesDir,
+									detail: error.message,
+									retrying: true,
+								})
 							).catch(() => undefined);
 							scheduleReconcile(state, "watcher-error");
 							scheduleBranchRefresh(state, "watcher-error");
@@ -453,15 +495,20 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					.pipe(
 						Effect.tap((subscription) =>
 							subscription === null
-								? Effect.logWarning(
-										`Git worktrees watch target unavailable for project ${projectId}: ${worktreesDir}`
-									)
+								? logWatcherWarning("Git worktrees watch target unavailable", {
+										projectId,
+										path: worktreesDir,
+										retrying: true,
+									})
 								: Effect.void
 						),
 						Effect.catchAll((error) =>
-							Effect.logWarning(
-								`Failed to watch worktrees dir for project ${projectId}: ${error.message}`
-							).pipe(Effect.as(null))
+							logWatcherWarning("Failed to watch worktrees dir", {
+								projectId,
+								path: worktreesDir,
+								detail: error.message,
+								retrying: true,
+							}).pipe(Effect.as(null))
 						)
 					);
 			};
@@ -501,9 +548,12 @@ class RepositoryWatchCoordinator extends Context.Tag(
 								return;
 							}
 							runPromise(
-								Effect.logWarning(
-									`Repo watcher error for project ${projectId} at ${repoPath}: ${error.message}`
-								)
+								logWatcherWarning("Repo watcher error", {
+									projectId,
+									path: repoPath,
+									detail: error.message,
+									retrying: true,
+								})
 							).catch(() => undefined);
 							runPromise(
 								Ref.get(statesRef).pipe(
@@ -523,15 +573,20 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					.pipe(
 						Effect.tap((subscription) =>
 							subscription === null
-								? Effect.logWarning(
-										`Repo watch target unavailable for project ${projectId}: ${repoPath}`
-									)
+								? logWatcherWarning("Repo watch target unavailable", {
+										projectId,
+										path: repoPath,
+										retrying: true,
+									})
 								: Effect.void
 						),
 						Effect.catchAll((error) =>
-							Effect.logWarning(
-								`Failed to watch repo root for project ${projectId}: ${error.message}`
-							).pipe(Effect.as(null))
+							logWatcherWarning("Failed to watch repo root", {
+								projectId,
+								path: repoPath,
+								detail: error.message,
+								retrying: true,
+							}).pipe(Effect.as(null))
 						)
 					);
 
@@ -667,4 +722,8 @@ class RepositoryWatchCoordinator extends Context.Tag(
 	);
 }
 
-export { RepositoryWatchCoordinator, RepositoryWatchCoordinatorError };
+export {
+	formatWatcherWarning,
+	RepositoryWatchCoordinator,
+	RepositoryWatchCoordinatorError,
+};

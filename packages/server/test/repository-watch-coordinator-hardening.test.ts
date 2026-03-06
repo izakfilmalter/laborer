@@ -9,7 +9,10 @@ import {
 import { withFsmonitorDisabled } from "../src/services/repo-watching-git.js";
 import { RepositoryEventBus } from "../src/services/repository-event-bus.js";
 import { RepositoryIdentity } from "../src/services/repository-identity.js";
-import { RepositoryWatchCoordinator } from "../src/services/repository-watch-coordinator.js";
+import {
+	formatWatcherWarning,
+	RepositoryWatchCoordinator,
+} from "../src/services/repository-watch-coordinator.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
 import { TestLaborerStore } from "./helpers/test-store.js";
 import { delay, waitFor } from "./helpers/timing-helpers.js";
@@ -200,6 +203,26 @@ describe("RepositoryWatchCoordinator hardening", () => {
 
 			assert.strictEqual(branchRefreshCalls.current, 1);
 		}).pipe(Effect.provide(TestLayer));
+	});
+
+	it("formats actionable non-blocking watcher warnings", () => {
+		assert.strictEqual(
+			formatWatcherWarning("Git watcher error", {
+				projectId: "project-warning",
+				path: "/virtual/repo/.git",
+				detail: "ENOENT: watcher target disappeared",
+				retrying: true,
+			}),
+			"Git watcher error for project project-warning at /virtual/repo/.git: ENOENT: watcher target disappeared. Git-backed refresh remains active; retrying watcher setup in 1000ms."
+		);
+
+		assert.strictEqual(
+			formatWatcherWarning("Watcher degraded", {
+				projectId: "project-warning",
+				detail: "git-watcher-error; attempting recovery now",
+			}),
+			"Watcher degraded for project project-warning: git-watcher-error; attempting recovery now."
+		);
 	});
 
 	it.scoped("ignores late watcher callbacks after project teardown", () => {

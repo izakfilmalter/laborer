@@ -440,3 +440,24 @@
 - `bun run test -- test/repository-watch-coordinator-hardening.test.ts` passes
 - `bun run --filter @laborer/server check-types` passes
 - `bun x ultracite check packages/server/test/repository-watch-coordinator-hardening.test.ts docs/opencode-inspired-repo-watching/issues.md docs/opencode-inspired-repo-watching/progress.txt` passes
+
+## Issue 8: Actionable non-blocking watcher degradation warnings — IN PROGRESS
+
+### What was done
+- Refined watcher warning formatting in `packages/server/src/services/repository-watch-coordinator.ts`
+  - Added shared `formatWatcherWarning()` helper so git-dir, worktrees-dir, and repo-root watcher warnings use one consistent message shape
+  - Degraded watcher warnings now explicitly say git-backed refresh remains active and that watcher setup will retry in `1000ms`
+  - Recovery-attempt warnings now read as an immediate next action instead of a vague failure message
+
+- Added focused coverage in `packages/server/test/repository-watch-coordinator-hardening.test.ts`
+  - Verifies the degraded watcher warning text is actionable for operator-facing diagnostics
+  - Verifies the recovery warning text stays distinct from the retry guidance text
+  - Existing recovery integration test continues to prove the warning path is non-blocking because the coordinator resubscribes and keeps syncing after degradation
+
+- Updated `docs/opencode-inspired-repo-watching/issues.md`
+  - Checked off the acceptance criterion for actionable, non-blocking degraded watcher warnings
+
+### Verification
+- `bun run test -- test/repository-watch-coordinator-hardening.test.ts` passes (7 tests)
+- `bun run --filter @laborer/server check-types` passes
+- `bun x ultracite check packages/server/src/services/repository-watch-coordinator.ts packages/server/test/repository-watch-coordinator-hardening.test.ts docs/opencode-inspired-repo-watching/issues.md docs/opencode-inspired-repo-watching/progress.txt` passes

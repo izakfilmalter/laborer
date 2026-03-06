@@ -1,3 +1,5 @@
+// @effect-diagnostics effect/preferSchemaOverJson:off
+
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";

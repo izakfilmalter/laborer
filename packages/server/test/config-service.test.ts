@@ -1,3 +1,5 @@
+// @effect-diagnostics effect/preferSchemaOverJson:off
+
 /**
  * ConfigService integration tests.
  *

@@ -342,3 +342,22 @@ Verification:
 - `bun run test` passes in `apps/web` (70 tests)
 - `bun x ultracite check e2e/dashboard.spec.ts` passes in `apps/web`
 - `bun run test:e2e e2e/dashboard.spec.ts` executes both dashboard E2E tests successfully (2 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 17: E2E - Collapse and expand project groups - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 17 as the highest-priority remaining task because it completes the unfinished sidebar navigation slice before the lower-risk theme toggle coverage
+
+Changes made:
+- Expanded `apps/web/e2e/search-navigation.spec.ts` with a shared setup helper so the search-navigation tests can consistently add a project and create a workspace through the real UI
+- Added `can collapse a project group, keep it collapsed across reload, and expand it again` to verify the project-group toggle hides child workspace controls, preserves that collapsed state after a page reload, and restores the child content when expanded again
+- Kept the assertions fully user-visible by checking the project trigger's `aria-expanded` state and the visibility of the real workspace destroy control instead of touching localStorage or internal state directly
+- Updated the spec header to reflect that `search-navigation.spec.ts` now covers both Issues 16 and 17
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check e2e/search-navigation.spec.ts` passes in `apps/web`
+- `bun run test:e2e e2e/search-navigation.spec.ts` executes both search-navigation E2E tests successfully (2 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown

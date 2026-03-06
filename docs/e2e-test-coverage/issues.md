@@ -534,15 +534,17 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that collapses a project group in the sidebar, verifies its contents are hidden, then expands it and verifies the contents reappear. This validates the collapse/expand behavior and its persistence.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/search-navigation.spec.ts`
-- [ ] Test adds a project with at least one visible child element (workspace or action buttons)
-- [ ] Test clicks the collapse trigger for the project group
-- [ ] Test verifies the project's child content is hidden
-- [ ] Test clicks the expand trigger
-- [ ] Test verifies the child content is visible again
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/search-navigation.spec.ts`
+- [x] Test adds a project with at least one visible child element (workspace or action buttons)
+- [x] Test clicks the collapse trigger for the project group
+- [x] Test verifies the project's child content is hidden
+- [x] Test clicks the expand trigger
+- [x] Test verifies the child content is visible again
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

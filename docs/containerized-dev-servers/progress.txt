@@ -150,3 +150,29 @@ Created the `ContainerService` Effect service that manages Docker container life
   - `bunx vitest run test/rpc/workspace-management.test.ts` — 4/4 tests pass
   - `bunx vitest run test/schema.test.ts` (shared) — 8/8 tests pass
   - `bunx vitest run test/container-name.test.ts` (shared) — 21/21 tests pass
+
+## Issue 6: Dev server terminal — docker exec shell — COMPLETED
+
+Extended `TerminalClient.spawnInWorkspace` to detect containerized workspaces and spawn a terminal session inside the Docker container via `docker exec` instead of a host PTY.
+
+### What was done:
+
+**TerminalClient modification (terminal-client.ts):**
+- After workspace validation and worktree existence check, added container detection logic
+- Checks `workspace.containerId != null` from the LiveStore workspace record
+- When containerized: derives container name from `workspace.containerUrl` by stripping `.orb.local` suffix (same pattern as `ContainerService.destroyContainer`)
+- Constructs spawn payload with `command: 'docker'`, `args: ['exec', '-it', containerName, '/bin/sh']`
+- When a specific command is requested for a containerized workspace, wraps it as `docker exec -it {containerName} /bin/sh -c {command}`
+- Container terminals skip host workspace env vars (env is managed by the container image) but still set `TERM` and `COLORTERM` for proper terminal rendering
+- Non-containerized workspaces retain the original host PTY spawn behavior (no regression)
+- Added structured logging when spawning container terminals for observability
+
+**Key design decisions:**
+- The `cwd` in the spawn payload is still set to `workspace.worktreePath` — the PTY host needs a valid local cwd to start the `docker exec` process, even though the shell runs inside the container
+- Container env vars are intentionally excluded from `workspaceProvider.getWorkspaceEnv()` since the container has its own environment. Only terminal control vars (`TERM`, `COLORTERM`) are passed through from the host
+- Container name derivation uses the stored `containerUrl` rather than recalculating via the `containerName` utility, maintaining consistency with the `ContainerService` destroy path
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All 121 existing tests pass (no regressions)

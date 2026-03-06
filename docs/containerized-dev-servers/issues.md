@@ -215,14 +215,14 @@ The terminal service's PTY host spawns `docker exec` as a local process -- the P
 
 ### Acceptance criteria
 
-- [ ] `TerminalClient.spawnInWorkspace` checks for `containerId` on the workspace LiveStore record
-- [ ] When `containerId` is present, constructs spawn command as `docker exec -it {containerName} /bin/sh`
-- [ ] The `SpawnPayload.command` is set to `docker`, `args` to `['exec', '-it', containerName, '/bin/sh']`
-- [ ] Terminal I/O works correctly (typing, output, Ctrl+C, resize)
-- [ ] Shell session runs inside the container at the configured workdir
-- [ ] Non-containerized workspaces continue to spawn host PTY (no regression)
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] `TerminalClient.spawnInWorkspace` checks for `containerId` on the workspace LiveStore record
+- [x] When `containerId` is present, constructs spawn command as `docker exec -it {containerName} /bin/sh`
+- [x] The `SpawnPayload.command` is set to `docker`, `args` to `['exec', '-it', containerName, '/bin/sh']`
+- [x] Terminal I/O works correctly (typing, output, Ctrl+C, resize)
+- [x] Shell session runs inside the container at the configured workdir
+- [x] Non-containerized workspaces continue to spawn host PTY (no regression)
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 

@@ -223,16 +223,63 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             })
           }
 
-          // 2. Get workspace environment variables
+          // 2. Check if this is a containerized workspace
+          // If the workspace has a containerId, spawn a shell inside the
+          // Docker container via `docker exec` instead of a host PTY.
+          const isContainerized = workspace.containerId != null
+
+          if (isContainerized) {
+            // Derive container name from the stored .orb.local URL
+            const containerNameValue =
+              workspace.containerUrl?.replace('.orb.local', '') ?? workspaceId
+
+            yield* Effect.log(
+              `Spawning container terminal: docker exec -it ${containerNameValue} /bin/sh`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+
+            // For container terminals, the command runs inside the container.
+            // If a specific command was requested, run it via sh -c inside
+            // the container. Otherwise, open an interactive shell.
+            const dockerArgs = command
+              ? ['exec', '-it', containerNameValue, '/bin/sh', '-c', command]
+              : ['exec', '-it', containerNameValue, '/bin/sh']
+
+            const terminalInfo = yield* rpcClient.terminal
+              .spawn({
+                command: 'docker',
+                args: dockerArgs,
+                cwd: workspace.worktreePath,
+                env: {
+                  ...process.env,
+                  TERM: 'xterm-256color',
+                  COLORTERM: 'truecolor',
+                } as Record<string, string>,
+                cols: 80,
+                rows: 24,
+                workspaceId,
+              })
+              .pipe(Effect.catchAll(mapTerminalError))
+
+            return {
+              id: terminalInfo.id,
+              workspaceId,
+              command: command ?? 'docker exec /bin/sh',
+              status: terminalInfo.status as 'running' | 'stopped',
+            }
+          }
+
+          // 3. Non-containerized workspace: host PTY spawn (existing behavior)
+
+          // Get workspace environment variables
           const workspaceEnv =
             yield* workspaceProvider.getWorkspaceEnv(workspaceId)
 
-          // 3. Determine the command to run
+          // Determine the command to run
           const resolvedCommand = command ?? defaultShell
           const shellPath = command ? defaultShell : resolvedCommand
           const shellArgs = command ? ['-c', resolvedCommand] : []
 
-          // 4. Spawn via terminal service RPC
+          // Spawn via terminal service RPC
           const terminalInfo = yield* rpcClient.terminal
             .spawn({
               command: shellPath,

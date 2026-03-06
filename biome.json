@@ -55,7 +55,11 @@
           "level": "warn",
           "fix": "safe",
           "options": {
-            "functions": ["clsx", "cva", "cn"]
+            "functions": [
+              "clsx",
+              "cva",
+              "cn"
+            ]
           }
         }
       },
@@ -78,12 +82,17 @@
       "quoteStyle": "single",
       "semicolons": "asNeeded"
     },
-    "globals": ["Bun"]
+    "globals": [
+      "Bun"
+    ]
   },
   "css": {
     "parser": {
       "tailwindDirectives": true
     }
   },
-  "extends": ["ultracite/biome/core", "ultracite/biome/react"]
+  "extends": [
+    "ultracite/biome/core",
+    "ultracite/biome/react"
+  ]
 }

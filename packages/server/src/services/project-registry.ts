@@ -5,6 +5,10 @@
  * Validates paths are git repositories and stores/retrieves projects
  * via LiveStore.
  *
+ * Uses RepositoryIdentity to resolve canonical repository metadata,
+ * ensuring that repo root, nested path, symlinked path, and linked
+ * worktree inputs all map to the same logical project.
+ *
  * Usage:
  * ```ts
  * const program = Effect.gen(function* () {
@@ -18,22 +22,15 @@
  * Issue #23: listProjects + getProject methods
  */
 
-import { execFile } from "node:child_process";
-import { statSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename } from "node:path";
 import { RpcError } from "@laborer/shared/rpc";
 import { events, tables } from "@laborer/shared/schema";
 import { Context, Effect, Layer } from "effect";
 import { LaborerStore } from "./laborer-store.js";
+import { RepositoryIdentity } from "./repository-identity.js";
 import { WorktreeReconciler } from "./worktree-reconciler.js";
 import { WorktreeWatcher } from "./worktree-watcher.js";
 
-/**
- * ProjectRegistry Effect Context Tag
- *
- * Tagged service that manages project registration, validation,
- * and lifecycle. Depends on LaborerStore for persistence.
- */
 /**
  * Shape of a project record returned by the registry.
  * Matches the LiveStore projects table columns.
@@ -64,85 +61,59 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 		ProjectRegistry,
 		Effect.gen(function* () {
 			const { store } = yield* LaborerStore;
+			const repoIdentity = yield* RepositoryIdentity;
 			const worktreeReconciler = yield* WorktreeReconciler;
 			const worktreeWatcher = yield* WorktreeWatcher;
 
 			const addProject = Effect.fn("ProjectRegistry.addProject")(function* (
 				repoPath: string
 			) {
-				// 1. Resolve to absolute path
-				const resolvedPath = resolve(repoPath);
+				// 1. Resolve canonical repository identity
+				// This validates the path exists, is a directory, and is inside
+				// a git repository. It also resolves symlinks and finds the
+				// true checkout root.
+				const identity = yield* repoIdentity.resolve(repoPath).pipe(
+					Effect.mapError((error) => {
+						// Distinguish between path-level issues and git-level
+						// issues so downstream consumers get appropriate codes.
+						const isPathError =
+							error.message.includes("does not exist") ||
+							error.message.includes("not a directory");
+						return new RpcError({
+							message: isPathError
+								? error.message
+								: `Path is not a git repository: ${repoPath}`,
+							code: isPathError ? "INVALID_PATH" : "NOT_GIT_REPO",
+						});
+					})
+				);
 
-				// 2. Validate path exists and is a directory
-				const pathExists = yield* Effect.try({
-					try: () => {
-						const s = statSync(resolvedPath);
-						return s.isDirectory();
-					},
-					catch: () =>
-						new RpcError({
-							message: `Path does not exist: ${resolvedPath}`,
-							code: "INVALID_PATH",
-						}),
-				});
+				const canonicalRoot = identity.canonicalRoot;
 
-				if (!pathExists) {
-					return yield* new RpcError({
-						message: `Path is not a directory: ${resolvedPath}`,
-						code: "INVALID_PATH",
-					});
-				}
-
-				// 3. Validate it's a git repo by running
-				// `git rev-parse --is-inside-work-tree`
-				const isGitRepo = yield* Effect.tryPromise({
-					try: () =>
-						new Promise<boolean>((resolve) => {
-							execFile(
-								"git",
-								["rev-parse", "--is-inside-work-tree"],
-								{ cwd: resolvedPath },
-								(error) => {
-									resolve(error === null);
-								}
-							);
-						}),
-					catch: () =>
-						new RpcError({
-							message: `Failed to check git status for: ${resolvedPath}`,
-							code: "GIT_CHECK_FAILED",
-						}),
-				});
-
-				if (!isGitRepo) {
-					return yield* new RpcError({
-						message: `Path is not a git repository: ${resolvedPath}`,
-						code: "NOT_GIT_REPO",
-					});
-				}
-
-				// 4. Check if project is already registered
+				// 2. Check if project is already registered using canonical path
+				// This prevents duplicates from nested paths, symlinks, or
+				// alternate path representations.
 				const existingProjects = store.query(
-					tables.projects.where("repoPath", resolvedPath)
+					tables.projects.where("repoPath", canonicalRoot)
 				);
 
 				if (existingProjects.length > 0) {
 					return yield* new RpcError({
-						message: `Project already registered: ${resolvedPath}`,
+						message: `Project already registered: ${canonicalRoot}`,
 						code: "ALREADY_REGISTERED",
 					});
 				}
 
-				// 5. Derive project name from directory name
-				const name = basename(resolvedPath);
+				// 3. Derive project name from the canonical checkout root
+				const name = basename(canonicalRoot);
 
-				// 6. Generate a unique ID
+				// 4. Generate a unique ID
 				const id = crypto.randomUUID();
 
-				// 7. Commit ProjectCreated event to LiveStore
+				// 5. Commit ProjectCreated event to LiveStore using canonical path
 				const project = {
 					id,
-					repoPath: resolvedPath,
+					repoPath: canonicalRoot,
 					name,
 					rlphConfig: null,
 				};
@@ -150,16 +121,16 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 				store.commit(events.projectCreated(project));
 
 				yield* worktreeReconciler
-					.reconcile(id, resolvedPath)
+					.reconcile(id, canonicalRoot)
 					.pipe(
 						Effect.catchAll((error) =>
 							Effect.logWarning(
-								`Initial worktree reconciliation failed for project ${resolvedPath}: ${error.message}`
+								`Initial worktree reconciliation failed for project ${canonicalRoot}: ${error.message}`
 							)
 						)
 					);
 
-				yield* worktreeWatcher.watchProject(id, resolvedPath);
+				yield* worktreeWatcher.watchProject(id, canonicalRoot);
 
 				return project;
 			});

@@ -1,0 +1,33 @@
+## Issue 1: Canonical repository identity tracer bullet — COMPLETED
+
+### What was done
+- Created `RepositoryIdentity` Effect service (`packages/server/src/services/repository-identity.ts`)
+  - Resolves canonical repo metadata (checkout root, git common dir, repoId, isMainWorktree)
+  - Uses `git rev-parse --show-toplevel`, `--git-common-dir`, and `--git-dir`
+  - Canonicalizes all paths through `realpathSync` to collapse symlinks
+  - Derives stable 16-char repoId from SHA-256 of canonical git common dir
+  - Exposes tagged Effect service `@laborer/RepositoryIdentity` with Layer
+
+- Updated `ProjectRegistry` to use `RepositoryIdentity` for canonical path resolution
+  - `addProject` now resolves canonical root before storing, preventing duplicates from
+    nested paths, symlinks, or alternate path representations
+  - Duplicate detection compares against canonical root instead of raw user input
+  - Error mapping distinguishes INVALID_PATH vs NOT_GIT_REPO codes
+
+- Wired `RepositoryIdentity.layer` into main.ts and all test layers that compose
+  ProjectRegistry (project-registry tests, workspace-destroy tests, RPC test layers)
+
+- Updated existing tests to handle canonical paths (macOS /var → /private/var)
+  - `project-management.test.ts`: uses realpathSync for canonical path assertions
+  - `config-management.test.ts`: uses realpathSync for config source path assertions
+
+- Added comprehensive integration tests (`packages/server/test/repository-identity.test.ts`)
+  - 7 RepositoryIdentity tests: repo root, nested path, symlink, linked worktree,
+    non-existent path, non-git dir, shared git dir across multiple worktrees
+  - 3 ProjectRegistry deduplication tests: canonical path storage, nested path dedup,
+    symlink dedup
+
+### Verification
+- All 135 tests pass (23 test files)
+- TypeScript compiles with no errors
+- Ultracite lint passes with no issues

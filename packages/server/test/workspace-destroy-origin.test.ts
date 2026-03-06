@@ -9,6 +9,7 @@ import { ConfigService } from "../src/services/config-service.js";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
 import { ProjectRegistry } from "../src/services/project-registry.js";
+import { RepositoryIdentity } from "../src/services/repository-identity.js";
 import { WorkspaceProvider } from "../src/services/workspace-provider.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
@@ -20,6 +21,7 @@ const tempRoots: string[] = [];
 
 const TestLayer = WorkspaceProvider.layer.pipe(
 	Layer.provideMerge(ProjectRegistry.layer),
+	Layer.provideMerge(RepositoryIdentity.layer),
 	Layer.provideMerge(WorktreeWatcher.layer),
 	Layer.provideMerge(WorktreeReconciler.layer),
 	Layer.provideMerge(WorktreeDetector.layer),

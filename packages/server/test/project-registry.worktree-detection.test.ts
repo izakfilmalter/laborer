@@ -7,6 +7,7 @@ import { afterAll } from "vitest";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
 import { ProjectRegistry } from "../src/services/project-registry.js";
+import { RepositoryIdentity } from "../src/services/repository-identity.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
 import { WorktreeWatcher } from "../src/services/worktree-watcher.js";
@@ -16,6 +17,7 @@ import { TestLaborerStore } from "./helpers/test-store.js";
 const tempRoots: string[] = [];
 
 const TestLayer = ProjectRegistry.layer.pipe(
+	Layer.provide(RepositoryIdentity.layer),
 	Layer.provide(WorktreeWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),

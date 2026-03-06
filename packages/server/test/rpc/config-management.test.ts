@@ -2,6 +2,7 @@ import {
 	existsSync,
 	mkdirSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -85,21 +86,26 @@ describe("LaborerRpcs config management", () => {
 					const project = yield* client.project.add({ repoPath });
 					const config = yield* client.config.get({ projectId: project.id });
 
+					// Config source paths are resolved relative to the
+					// canonical project root, so canonicalize expectations.
+					const canonicalProjectConfigPath = realpathSync(projectConfigPath);
+					const canonicalAncestorConfigPath = realpathSync(ancestorConfigPath);
+
 					assert.deepStrictEqual(config, {
 						prdsDir: {
-							source: projectConfigPath,
+							source: canonicalProjectConfigPath,
 							value: "/tmp/project-prds",
 						},
 						rlphConfig: {
-							source: ancestorConfigPath,
+							source: canonicalAncestorConfigPath,
 							value: "ancestor-rlph.json",
 						},
 						setupScripts: {
-							source: projectConfigPath,
+							source: canonicalProjectConfigPath,
 							value: ["bun install", "bun test"],
 						},
 						worktreeDir: {
-							source: ancestorConfigPath,
+							source: canonicalAncestorConfigPath,
 							value: join(homedir(), "ancestor-worktrees"),
 						},
 					});
@@ -156,7 +162,10 @@ describe("LaborerRpcs config management", () => {
 						},
 					});
 
-					const writtenConfig = readFileSync(configPath, "utf-8");
+					// The config file is written using the canonical path since
+					// the project's repoPath is now canonical.
+					const canonicalConfigPath = realpathSync(configPath);
+					const writtenConfig = readFileSync(canonicalConfigPath, "utf-8");
 
 					assert.match(writtenConfig, CUSTOM_FIELD_PATTERN);
 					assert.match(writtenConfig, PRDS_DIR_PATTERN);
@@ -168,19 +177,19 @@ describe("LaborerRpcs config management", () => {
 
 					assert.deepStrictEqual(resolved, {
 						prdsDir: {
-							source: configPath,
+							source: canonicalConfigPath,
 							value: "/tmp/existing-prds",
 						},
 						rlphConfig: {
-							source: configPath,
+							source: canonicalConfigPath,
 							value: "rlph/project.json",
 						},
 						setupScripts: {
-							source: configPath,
+							source: canonicalConfigPath,
 							value: ["bun install"],
 						},
 						worktreeDir: {
-							source: configPath,
+							source: canonicalConfigPath,
 							value: join(homedir(), "updated-worktrees"),
 						},
 					});

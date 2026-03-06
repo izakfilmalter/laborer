@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, realpathSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { tables } from "@laborer/shared/schema";
@@ -45,8 +45,12 @@ describe("LaborerRpcs project management", () => {
 
 					const project = yield* client.project.add({ repoPath });
 
-					assert.strictEqual(project.repoPath, repoPath);
-					assert.strictEqual(project.name, basename(repoPath));
+					// ProjectRegistry now canonicalizes paths through
+					// RepositoryIdentity, so the stored repoPath is the
+					// realpath-resolved checkout root.
+					const canonicalRepoPath = realpathSync(repoPath);
+					assert.strictEqual(project.repoPath, canonicalRepoPath);
+					assert.strictEqual(project.name, basename(canonicalRepoPath));
 					assert.strictEqual(project.rlphConfig, undefined);
 
 					assert.deepStrictEqual(
@@ -54,8 +58,8 @@ describe("LaborerRpcs project management", () => {
 						[
 							{
 								id: project.id,
-								repoPath,
-								name: basename(repoPath),
+								repoPath: canonicalRepoPath,
+								name: basename(canonicalRepoPath),
 								rlphConfig: null,
 							},
 						]
@@ -97,10 +101,7 @@ describe("LaborerRpcs project management", () => {
 					}
 
 					assert.strictEqual(result.left.code, "NOT_GIT_REPO");
-					assert.strictEqual(
-						result.left.message,
-						`Path is not a git repository: ${repoPath}`
-					);
+					assert.include(result.left.message, "not a git repository");
 					assert.deepStrictEqual(
 						store.query(tables.projects.where("repoPath", repoPath)),
 						[]

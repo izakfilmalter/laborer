@@ -10,6 +10,7 @@ import { LinearTaskImporter } from "../../src/services/linear-task-importer.js";
 import { PortAllocator } from "../../src/services/port-allocator.js";
 import { PrdStorageService } from "../../src/services/prd-storage-service.js";
 import { ProjectRegistry } from "../../src/services/project-registry.js";
+import { RepositoryIdentity } from "../../src/services/repository-identity.js";
 import { TaskManager } from "../../src/services/task-manager.js";
 import { TerminalClient } from "../../src/services/terminal-client.js";
 import { WorkspaceProvider } from "../../src/services/workspace-provider.js";
@@ -91,6 +92,7 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ConfigService.layer),
 	Layer.provide(ProjectRegistry.layer),
+	Layer.provide(RepositoryIdentity.layer),
 	Layer.provide(WorktreeWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),
@@ -109,6 +111,7 @@ const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ConfigService.layer),
 	Layer.provide(ProjectRegistry.layer),
+	Layer.provide(RepositoryIdentity.layer),
 	Layer.provide(WorktreeWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),

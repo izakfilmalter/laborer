@@ -37,6 +37,7 @@ import { McpRegistrar } from "./services/mcp-registrar.js";
 import { PortAllocator } from "./services/port-allocator.js";
 import { PrdStorageService } from "./services/prd-storage-service.js";
 import { ProjectRegistry } from "./services/project-registry.js";
+import { RepositoryIdentity } from "./services/repository-identity.js";
 import { SyncRpcLive } from "./services/sync-backend.js";
 import { TaskManager } from "./services/task-manager.js";
 import { TerminalClient } from "./services/terminal-client.js";
@@ -117,7 +118,8 @@ const HttpLiveBase = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ConfigService.layer),
 	Layer.provide(McpRegistrar.layer),
-	Layer.provide(ProjectRegistry.layer)
+	Layer.provide(ProjectRegistry.layer),
+	Layer.provide(RepositoryIdentity.layer)
 );
 
 const HttpLive = HttpLiveBase.pipe(

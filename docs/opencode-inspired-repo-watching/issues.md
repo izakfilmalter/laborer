@@ -20,11 +20,11 @@ This slice should wire the new repository identity service into project add flow
 
 ### Acceptance criteria
 
-- [ ] Adding a repo root registers a project using canonical repository metadata rather than raw user input
-- [ ] Adding a nested directory inside an already-registered repo does not create a duplicate project
-- [ ] Adding a symlinked path to an already-registered repo does not create a duplicate project
-- [ ] Repository identity is exposed through an Effect tagged service and wired through Layers
-- [ ] Integration tests cover repo root, nested path, and symlink path registration cases
+- [x] Adding a repo root registers a project using canonical repository metadata rather than raw user input
+- [x] Adding a nested directory inside an already-registered repo does not create a duplicate project
+- [x] Adding a symlinked path to an already-registered repo does not create a duplicate project
+- [x] Repository identity is exposed through an Effect tagged service and wired through Layers
+- [x] Integration tests cover repo root, nested path, and symlink path registration cases
 
 ### Blocked by
 

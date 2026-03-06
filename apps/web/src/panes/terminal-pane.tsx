@@ -112,10 +112,29 @@
  * - 100K line scrollback handles long agent sessions with extensive tool output
  * - Data coalescing (5ms) smooths rapid output bursts from agent tool calls
  * - Flow control prevents output buffer overflow during fast code generation
+ *
+ * Terminal fidelity — opencode TUI (Issue #124):
+ * Verified and enhanced xterm.js rendering for opencode's full-screen TUI:
+ * - COLORTERM=truecolor injected at PTY spawn — opencode checks this env
+ *   var to decide whether to use 24-bit RGB colors. Without it, colors
+ *   fall back to the nearest 256-color approximation.
+ * - Image addon (@xterm/addon-image) loaded for inline image rendering.
+ *   opencode supports drag-and-drop of images into the terminal prompt
+ *   and may render inline image previews via iTerm2/Sixel protocols.
+ * - Alternate screen buffer (smcup/rmcup) supported natively by xterm.js
+ *   — opencode is a full-screen TUI that uses cursor positioning,
+ *   alternate screen, and direct cursor movement for layout rendering.
+ * - Mouse event passthrough to xterm.js — opencode uses scroll events
+ *   and configurable scroll acceleration. xterm.js handles mouse
+ *   tracking protocols (SGR, URXVT, etc.) transparently.
+ * - cursorStyle "bar" matches opencode's default cursor appearance
+ * - All pre-existing features (WebGL, Unicode11, WebLinks, flow control,
+ *   100K scrollback, 5ms coalescing) fully apply to opencode as well.
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
 import { FitAddon } from "@xterm/addon-fit";
+import { ImageAddon } from "@xterm/addon-image";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -303,6 +322,7 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 		// Create xterm.js Terminal instance
 		const terminal = new Terminal({
 			cursorBlink: true,
+			cursorStyle: "bar",
 			fontFamily:
 				'"JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace',
 			fontSize: 13,
@@ -358,6 +378,19 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 			terminal.loadAddon(webglAddon);
 		} catch {
 			// WebGL not available — fall back to canvas renderer (default)
+		}
+
+		// Load Image addon for inline image rendering (Issue #124).
+		// opencode supports drag-and-drop of images into the terminal and
+		// may render inline image previews. The addon handles iTerm2 inline
+		// image protocol (OSC 1337) and Sixel graphics. Images render
+		// within the terminal cell grid. The addon requires WebGL or
+		// canvas renderer — loaded after WebGL addon for best performance.
+		try {
+			const imageAddon = new ImageAddon();
+			terminal.loadAddon(imageAddon);
+		} catch {
+			// Image addon failed to load — inline images not supported
 		}
 
 		// Load Unicode 11 addon for correct character width calculation.

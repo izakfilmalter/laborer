@@ -49,7 +49,7 @@ See PRD Implementation Decisions > Shared Test Helpers for details.
 
 - [x] `packages/server/test/helpers/git-helpers.ts` exists and exports `createTempDir`, `git`, `initRepo`
 - [x] All worktree/workspace test files import from the helper -- zero remaining inline definitions
-- [ ] All existing tests pass (`bun run test` in packages/server)
+- [x] All existing tests pass (`bun run test` in packages/server)
 - [x] `bun x ultracite check` passes on all modified files
 
 ### Blocked by
@@ -444,7 +444,7 @@ See PRD Implementation Decisions > RPC Integration Tests and the Effect referenc
 - [x] RPC test infrastructure layer is composable and reusable for all endpoint tests
 - [x] `health.check` test verifies `{ status: "ok", uptime: number }` response through the in-memory RPC client
 - [x] Tests use `@effect/vitest` patterns
-- [ ] All tests pass (`bun run test` in packages/server)
+- [x] All tests pass (`bun run test` in packages/server)
 - [x] `bun x ultracite check` passes
 
 ### Blocked by
@@ -474,13 +474,13 @@ Tests use real git repos on the filesystem, real `ProjectRegistry`, and real `Wo
 
 ### Acceptance criteria
 
-- [ ] `project.add` test verifies project creation and worktree detection for a real git repo
-- [ ] `project.add` test verifies error response for an invalid repo path
-- [ ] `project.remove` test verifies project deletion
-- [ ] `project.remove` test verifies error response for a nonexistent project
-- [ ] Tests use the shared RPC test infrastructure
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass
+- [x] `project.add` test verifies project creation and worktree detection for a real git repo
+- [x] `project.add` test verifies error response for an invalid repo path
+- [x] `project.remove` test verifies project deletion
+- [x] `project.remove` test verifies error response for a nonexistent project
+- [x] Tests use the shared RPC test infrastructure
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass
 
 ### Blocked by
 
@@ -763,25 +763,25 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
 | 1 | Extract TestLaborerStore shared helper | None | Done |
-| 2 | Extract git repo shared helpers | None | In Progress |
+| 2 | Extract git repo shared helpers | None | Done |
 | 3 | Extract timing shared helpers | None | Ready |
 | 4 | Delete dead/duplicate test files from server | None | Done |
-| 5 | Migrate worktree/workspace server tests to @effect/vitest | #1, #2, #3 | Blocked |
+| 5 | Migrate worktree/workspace server tests to @effect/vitest | #3 | Blocked |
 | 6 | Migrate task/importer server tests to @effect/vitest | #1 | Ready |
 | 7 | Migrate remaining server tests to @effect/vitest | #1 | Ready |
 | 8 | Migrate terminal package tests to @effect/vitest assertions | None | Ready |
 | 9 | Add LiveStore schema tests -- setup + project/workspace events | None | Done |
 | 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Ready |
 | 11 | Add LiveStore schema tests -- deprecated terminal event no-ops | #9 | Ready |
-| 12 | Rewrite config-service.test.ts through public API | #1, #2, #5 or #7 | Blocked |
-| 13 | Set up RPC test infrastructure + health.check test | #1 | In Progress |
-| 14 | RPC integration tests -- project.add + project.remove | #13, #2 | Blocked |
-| 15 | RPC integration tests -- config.get + config.update | #13, #2 | Blocked |
-| 16 | RPC integration tests -- workspace.create + workspace.destroy | #13, #2 | Blocked |
-| 17 | RPC integration tests -- task.create + task.updateStatus + task.remove | #13 | Blocked |
-| 18 | RPC integration tests -- task.importGithub + task.importLinear | #13, #2 | Blocked |
-| 19 | RPC integration tests -- diff.refresh + editor.open | #13, #2 | Blocked |
-| 20 | RPC integration tests -- terminal.spawn + rlph endpoints | #13 | Blocked |
+| 12 | Rewrite config-service.test.ts through public API | #5 or #7 | Blocked |
+| 13 | Set up RPC test infrastructure + health.check test | #1 | Done |
+| 14 | RPC integration tests -- project.add + project.remove | #13, #2 | Done |
+| 15 | RPC integration tests -- config.get + config.update | None | Ready |
+| 16 | RPC integration tests -- workspace.create + workspace.destroy | None | Ready |
+| 17 | RPC integration tests -- task.create + task.updateStatus + task.remove | None | Ready |
+| 18 | RPC integration tests -- task.importGithub + task.importLinear | None | Ready |
+| 19 | RPC integration tests -- diff.refresh + editor.open | None | Ready |
+| 20 | RPC integration tests -- terminal.spawn + rlph endpoints | None | Ready |
 | 21 | RPC integration tests -- TerminalRpcs (packages/terminal) | #8 | Blocked |
 
 **Parallelism opportunities:**

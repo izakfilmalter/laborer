@@ -34,6 +34,20 @@ class TestTerminalClientRecorder extends Context.Tag(
 	}
 >() {}
 
+class TestPrdTaskImporterRecorder extends Context.Tag(
+	"@laborer/test/TestPrdTaskImporterRecorder"
+)<
+	TestPrdTaskImporterRecorder,
+	{
+		readonly watchPrdTerminalCalls: Ref.Ref<
+			readonly {
+				readonly terminalId: string;
+				readonly workspaceId: string;
+			}[]
+		>;
+	}
+>() {}
+
 const TestTerminalClientRecorderLayer = Layer.effect(
 	TestTerminalClientRecorder,
 	Effect.gen(function* () {
@@ -42,6 +56,20 @@ const TestTerminalClientRecorderLayer = Layer.effect(
 			spawnInWorkspaceCalls: yield* Ref.make<
 				readonly {
 					readonly command: string | undefined;
+					readonly workspaceId: string;
+				}[]
+			>([]),
+		});
+	})
+);
+
+const TestPrdTaskImporterRecorderLayer = Layer.effect(
+	TestPrdTaskImporterRecorder,
+	Effect.gen(function* () {
+		return TestPrdTaskImporterRecorder.of({
+			watchPrdTerminalCalls: yield* Ref.make<
+				readonly {
+					readonly terminalId: string;
 					readonly workspaceId: string;
 				}[]
 			>([]),
@@ -81,16 +109,25 @@ const TestTerminalClient = Layer.effect(
 	})
 );
 
-const TestPrdTaskImporter = Layer.succeed(
+const TestPrdTaskImporterWithRecorder = Layer.effect(
 	PrdTaskImporter,
-	PrdTaskImporter.of({
-		importParsedTasks: () => Effect.succeed(0),
-		watchPrdTerminal: () => Effect.void,
+	Effect.gen(function* () {
+		const recorder = yield* TestPrdTaskImporterRecorder;
+
+		return PrdTaskImporter.of({
+			importParsedTasks: () => Effect.succeed(0),
+			watchPrdTerminal: (terminalId, workspaceId) =>
+				Ref.update(recorder.watchPrdTerminalCalls, (calls) => [
+					...calls,
+					{ terminalId, workspaceId },
+				]).pipe(Effect.asVoid),
+		});
 	})
 );
 
 export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
-	Layer.provide(TestPrdTaskImporter),
+	Layer.provide(TestPrdTaskImporterWithRecorder),
+	Layer.provideMerge(TestPrdTaskImporterRecorderLayer),
 	Layer.provide(LinearTaskImporter.layer),
 	Layer.provide(GithubTaskImporter.layer),
 	Layer.provide(TaskManager.layer),
@@ -109,7 +146,8 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
 );
 
 const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
-	Layer.provide(TestPrdTaskImporter),
+	Layer.provide(TestPrdTaskImporterWithRecorder),
+	Layer.provideMerge(TestPrdTaskImporterRecorderLayer),
 	Layer.provide(LinearTaskImporter.layer),
 	Layer.provide(GithubTaskImporter.layer),
 	Layer.provide(TaskManager.layer),
@@ -143,6 +181,10 @@ export const makeScopedTestRpcContext = Effect.gen(function* () {
 		context,
 		TestTerminalClientRecorder
 	);
+	const prdTaskImporterRecorder = Context.get(
+		context,
+		TestPrdTaskImporterRecorder
+	);
 
-	return { client, store, terminalClientRecorder };
+	return { client, store, terminalClientRecorder, prdTaskImporterRecorder };
 });

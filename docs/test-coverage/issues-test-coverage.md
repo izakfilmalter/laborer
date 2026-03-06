@@ -698,14 +698,14 @@ All 5 endpoints delegate to `TerminalClient`, which is a system boundary (separa
 
 ### Acceptance criteria
 
-- [ ] `terminal.spawn` test verifies terminal response through RPC
-- [ ] `rlph.startLoop` test verifies terminal response through RPC
-- [ ] `rlph.writePRD` test verifies terminal response through RPC
-- [ ] `rlph.review` test verifies terminal response through RPC
-- [ ] `rlph.fix` test verifies terminal response through RPC
-- [ ] Stub TerminalClient is used (system boundary mock)
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass
+- [x] `terminal.spawn` test verifies terminal response through RPC
+- [x] `rlph.startLoop` test verifies terminal response through RPC
+- [x] `rlph.writePRD` test verifies terminal response through RPC
+- [x] `rlph.review` test verifies terminal response through RPC
+- [x] `rlph.fix` test verifies terminal response through RPC
+- [x] Stub TerminalClient is used (system boundary mock)
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass
 
 ### Blocked by
 
@@ -781,7 +781,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 17 | RPC integration tests -- task.create + task.updateStatus + task.remove | None | Done |
 | 18 | RPC integration tests -- task.importGithub + task.importLinear | None | Done |
 | 19 | RPC integration tests -- diff.refresh + editor.open | None | Ready |
-| 20 | RPC integration tests -- terminal.spawn + rlph endpoints | None | Ready |
+| 20 | RPC integration tests -- terminal.spawn + rlph endpoints | None | Done |
 | 21 | RPC integration tests -- TerminalRpcs (packages/terminal) | #8 | Blocked |
 
 **Parallelism opportunities:**

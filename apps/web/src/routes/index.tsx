@@ -34,7 +34,7 @@ import type { PanelImperativeHandle } from "react-resizable-panels";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
 import { ProjectGroup } from "@/components/project-group";
-import { ProjectSwitcher } from "@/components/project-switcher";
+import { SidebarSearch } from "@/components/sidebar-search";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -772,8 +772,13 @@ function usePanelLayout() {
 	};
 }
 
-/** LiveStore query for projects (used by WelcomeEmptyState to detect zero projects). */
+/** LiveStore query for projects (used by sidebar and WelcomeEmptyState). */
 const sidebarProjects$ = queryDb(projects, { label: "sidebarProjects" });
+
+/** LiveStore query for workspaces (used by sidebar search filtering). */
+const sidebarWorkspaces$ = queryDb(workspaces, {
+	label: "sidebarWorkspaces",
+});
 
 /**
  * Welcome empty state shown in the main content area when no projects
@@ -851,6 +856,7 @@ function HomeComponent() {
 	const { layout, panelActions, activePaneId, leafPaneIds } = usePanelLayout();
 	const store = useLaborerStore();
 	const projectList = store.useQuery(sidebarProjects$);
+	const workspaceList = store.useQuery(sidebarWorkspaces$);
 	const hasProjects = projectList.length > 0;
 
 	// Sync running workspace count to Tauri system tray tooltip (no-op in browser)
@@ -862,8 +868,41 @@ function HomeComponent() {
 	// Project collapse state — persisted to localStorage
 	const collapseState = useProjectCollapseState();
 
-	// Project switcher state — null means "All Projects" (no filter)
-	const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+	// Sidebar search — filters the project tree in real-time
+	const [searchQuery, setSearchQuery] = useState("");
+
+	// Filter projects and determine which to show based on search query.
+	// A project is shown if its name matches OR any of its non-destroyed
+	// workspace branch names match. Matching is case-insensitive substring.
+	const { filteredProjects, matchingProjectIds } = useMemo(() => {
+		const query = searchQuery.trim().toLowerCase();
+		if (query.length === 0) {
+			return {
+				filteredProjects: projectList,
+				matchingProjectIds: new Set<string>(),
+			};
+		}
+		const matching = new Set<string>();
+		const filtered = projectList.filter((project) => {
+			const nameMatch = project.name.toLowerCase().includes(query);
+			const workspaceMatch = workspaceList.some(
+				(ws) =>
+					ws.projectId === project.id &&
+					ws.status !== "destroyed" &&
+					ws.branchName.toLowerCase().includes(query)
+			);
+			if (nameMatch || workspaceMatch) {
+				matching.add(project.id);
+				return true;
+			}
+			return false;
+		});
+		return { filteredProjects: filtered, matchingProjectIds: matching };
+	}, [searchQuery, projectList, workspaceList]);
+
+	// When search is active, auto-expand matching projects (override collapse state).
+	// When search is cleared, the stored collapse state is naturally restored.
+	const isSearchActive = searchQuery.trim().length > 0;
 
 	// Main content view toggle — panels (terminal panes) or dashboard
 	const [mainView, setMainView] = useState<MainView>("panels");
@@ -898,13 +937,6 @@ function HomeComponent() {
 		}
 	}, [mainView]);
 
-	// Clear the active project filter if the selected project is removed
-	useEffect(() => {
-		if (activeProjectId && !projectList.some((p) => p.id === activeProjectId)) {
-			setActiveProjectId(null);
-		}
-	}, [activeProjectId, projectList]);
-
 	return (
 		<PanelActionsProvider activePaneId={activePaneId} value={panelActions}>
 			<CloseAppDialog
@@ -912,7 +944,7 @@ function HomeComponent() {
 				open={isCloseAppDialogOpen}
 			/>
 			<ResizablePanelGroup orientation="horizontal">
-				{/* Sidebar — project switcher, project list, workspace list, health check */}
+				{/* Sidebar — search, project groups, workspace list, health check */}
 				<ResizablePanel
 					collapsedSize="0%"
 					collapsible={responsiveSizes.canCollapseSidebar}
@@ -925,11 +957,11 @@ function HomeComponent() {
 					<div className="flex h-full flex-col">
 						<ScrollArea className="min-h-0 flex-1">
 							<div className="grid gap-4 p-3">
-								{/* Project switcher — filter sidebar by project */}
+								{/* Search bar — filters projects and workspaces in real-time */}
 								{hasProjects && (
-									<ProjectSwitcher
-										activeProjectId={activeProjectId}
-										onProjectChange={setActiveProjectId}
+									<SidebarSearch
+										onChange={setSearchQuery}
+										value={searchQuery}
 									/>
 								)}
 								<div className="flex items-center justify-between">
@@ -937,9 +969,13 @@ function HomeComponent() {
 									<AddProjectForm />
 								</div>
 								{/* Project-grouped tree — each project is a collapsible heading */}
-								{projectList.map((project) => (
+								{filteredProjects.map((project) => (
 									<ProjectGroup
-										expanded={collapseState.isExpanded(project.id)}
+										expanded={
+											isSearchActive && matchingProjectIds.has(project.id)
+												? true
+												: collapseState.isExpanded(project.id)
+										}
 										key={project.id}
 										onToggle={() => collapseState.toggle(project.id)}
 										project={project}
@@ -950,6 +986,13 @@ function HomeComponent() {
 										No projects. Add one to get started.
 									</p>
 								)}
+								{isSearchActive &&
+									filteredProjects.length === 0 &&
+									projectList.length > 0 && (
+										<p className="py-2 text-center text-muted-foreground text-xs">
+											No matching projects or workspaces.
+										</p>
+									)}
 							</div>
 						</ScrollArea>
 						{/* Server Status — sticky footer, always visible outside scroll area */}

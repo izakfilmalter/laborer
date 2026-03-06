@@ -65,3 +65,27 @@ Changes made:
   - `activeProjectId` / `setActiveProjectId` state and `ProjectSwitcher` remain (to be removed in Issue #171).
 
 TypeScript: 0 errors. Ultracite: 0 issues. Tests: 4/4 pass (task-source-picker helpers).
+
+### Issue 171: Replace ProjectSwitcher with search bar — DONE
+
+Removed the ProjectSwitcher dropdown and replaced it with a search input that filters the project-grouped tree in real-time. Auto-expands collapsed projects that contain matches during search. Restores previous collapse state when search is cleared.
+
+Changes made:
+- Created `apps/web/src/components/sidebar-search.tsx` — new SidebarSearch component with a search icon (left), text input, and clear button (X icon, shown only when text is entered). Controlled component with `value` and `onChange` props.
+- Modified `apps/web/src/routes/index.tsx` (HomeComponent):
+  - Replaced `ProjectSwitcher` import with `SidebarSearch` import.
+  - Added `sidebarWorkspaces$` LiveStore query to access workspace data for search filtering.
+  - Replaced `activeProjectId` / `setActiveProjectId` state with `searchQuery` / `setSearchQuery` state.
+  - Added `useMemo`-based filtering logic: when query is non-empty, shows a project if its name matches (case-insensitive substring) OR if any of its non-destroyed workspace branch names match.
+  - Added `isSearchActive` flag and `matchingProjectIds` set for auto-expand logic.
+  - ProjectGroup `expanded` prop now overrides to `true` when search is active and the project has matches; otherwise falls back to the persisted collapse state.
+  - Removed the `useEffect` that cleaned up `activeProjectId` on project removal (no longer needed).
+  - Added empty search results message ("No matching projects or workspaces.") when search is active but no matches found.
+  - Replaced `<ProjectSwitcher>` JSX with `<SidebarSearch>` JSX.
+  - Updated sidebar comment.
+- Modified `apps/web/src/components/workspace-list.tsx`:
+  - Updated stale doc comment from "optional `activeProjectId`" to "required `projectId`".
+
+Note: The `project-switcher.tsx` file is retained but no longer imported anywhere. It can be deleted in a cleanup pass.
+
+TypeScript: 0 errors. Ultracite: 0 issues. Tests: 4/4 pass (task-source-picker helpers).

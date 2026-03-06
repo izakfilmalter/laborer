@@ -17,8 +17,7 @@
  * When no workspaces exist (all destroyed or none created), shows an empty
  * state with guidance text and a CTA button to create the first workspace.
  *
- * Accepts an optional `activeProjectId` prop to filter workspaces by project.
- * When set, only workspaces belonging to the selected project are shown.
+ * Accepts a required `projectId` prop to scope workspaces to a single project.
  *
  * @see Issue #41: Workspace list UI component
  * @see Issue #48: Destroy Workspace button + confirmation dialog

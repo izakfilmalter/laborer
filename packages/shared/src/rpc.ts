@@ -399,15 +399,6 @@ export class LaborerRpcs extends RpcGroup.make(
 		},
 	}),
 
-	Rpc.make("rlph.writePRD", {
-		success: TerminalResponse,
-		error: RpcError,
-		payload: {
-			workspaceId: Schema.String,
-			description: Schema.optional(Schema.String),
-		},
-	}),
-
 	Rpc.make("rlph.review", {
 		success: TerminalResponse,
 		error: RpcError,

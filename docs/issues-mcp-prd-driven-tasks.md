@@ -698,14 +698,14 @@ Remove the old rlph-based PRD writing flow:
 
 ### Acceptance criteria
 
-- [ ] `WritePrdForm` component file is deleted
-- [ ] All references to `WritePrdForm` are removed from workspace components
-- [ ] `rlph.writePRD` RPC is removed from `LaborerRpcs`
-- [ ] `rlph.writePRD` handler is removed from the handlers file
-- [ ] `PrdTaskImporter` service file is deleted
-- [ ] `PrdTaskImporter.layer` is removed from `main.ts`
-- [ ] No dead imports or references to any of the removed code remain
-- [ ] The remaining rlph RPCs (`rlph.startLoop`, `rlph.review`, `rlph.fix`) still work
+- [x] `WritePrdForm` component file is deleted
+- [x] All references to `WritePrdForm` are removed from workspace components
+- [x] `rlph.writePRD` RPC is removed from `LaborerRpcs`
+- [x] `rlph.writePRD` handler is removed from the handlers file
+- [x] `PrdTaskImporter` service file is deleted
+- [x] `PrdTaskImporter.layer` is removed from `main.ts`
+- [x] No dead imports or references to any of the removed code remain
+- [x] The remaining rlph RPCs (`rlph.startLoop`, `rlph.review`, `rlph.fix`) still work
 
 ### Blocked by
 
@@ -777,5 +777,5 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 192 | Create workspace from plan | #191 | Blocked |
 | 193 | Plan workspace scoped task list and rlph integration | #186, #192 | Blocked |
 | 194 | Remove CreateTaskForm and manual task source tab | #181 | Ready |
-| 195 | Remove WritePrdForm, rlph.writePRD RPC, and PrdTaskImporter | #185 | Ready |
+| 195 | Remove WritePrdForm, rlph.writePRD RPC, and PrdTaskImporter | #185 | Done |
 | 196 | Polish and end-to-end verification | #188, #193, #194, #195 | Blocked |

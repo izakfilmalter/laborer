@@ -25,7 +25,6 @@ import {
 	PrdStorageService,
 	slugifyPrdTitle,
 } from "../services/prd-storage-service.js";
-import { PrdTaskImporter } from "../services/prd-task-importer.js";
 import { ProjectRegistry } from "../services/project-registry.js";
 import { TaskManager } from "../services/task-manager.js";
 import { TerminalClient } from "../services/terminal-client.js";
@@ -525,7 +524,7 @@ export const handleProjectList = () =>
 /**
  * RPC handler layer for the LaborerRpcs group.
  *
- * All 23 RPC methods are fully implemented:
+ * All registered RPC methods are fully implemented:
  * - health.check: returns server uptime (Issue #12)
  * - project.add: delegates to ProjectRegistry.addProject (Issue #21)
  * - project.remove: delegates to ProjectRegistry.removeProject (Issue #22)
@@ -537,7 +536,6 @@ export const handleProjectList = () =>
  * - diff.refresh: delegates to DiffService.getDiff (Issue #82)
  * - editor.open: opens file in configured editor (Issue #111)
  * - rlph.startLoop: delegates to TerminalClient.spawnInWorkspace with `rlph --once` (Issue #92/#143)
- * - rlph.writePRD: delegates to TerminalClient.spawnInWorkspace with `rlph prd [description]` (Issue #94/#143)
  * - rlph.review: delegates to TerminalClient.spawnInWorkspace with `rlph review <prNumber>` (Issue #96/#143)
  * - rlph.fix: delegates to TerminalClient.spawnInWorkspace with `rlph fix <prNumber>` (Issue #98/#143)
  * - task.create: delegates to TaskManager.createTask (Issue #100)
@@ -732,17 +730,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 			Effect.gen(function* () {
 				const tc = yield* TerminalClient;
 				return yield* tc.spawnInWorkspace(workspaceId, "rlph --once");
-			}),
-		"rlph.writePRD": ({ workspaceId, description }) =>
-			Effect.gen(function* () {
-				const tc = yield* TerminalClient;
-				const prdTaskImporter = yield* PrdTaskImporter;
-				const command = description ? `rlph prd ${description}` : "rlph prd";
-				const terminal = yield* tc.spawnInWorkspace(workspaceId, command);
-				yield* prdTaskImporter
-					.watchPrdTerminal(terminal.id, workspaceId)
-					.pipe(Effect.forkDaemon);
-				return terminal;
 			}),
 		"rlph.review": ({ workspaceId, prNumber }) =>
 			Effect.gen(function* () {

@@ -10,7 +10,7 @@
  * are in progress.
  * Updates reactively when workspace state changes.
  * Includes a destroy button with confirmation dialog per workspace.
- * Includes rlph action buttons (Start Ralph Loop, Write PRD, Review PR,
+ * Includes rlph action buttons (Start Ralph Loop, Review PR,
  * Fix Findings) on every non-destroyed workspace for triggering agent
  * workflows.
  *
@@ -22,7 +22,6 @@
  * @see Issue #41: Workspace list UI component
  * @see Issue #48: Destroy Workspace button + confirmation dialog
  * @see Issue #93: "Start Ralph Loop" button UI
- * @see Issue #95: PRD writing form + writePRD button
  * @see Issue #97: "Review PR" button + PR number input
  * @see Issue #99: "Fix Findings" button + PR number input
  * @see Issue #119: Empty state — no workspaces
@@ -64,7 +63,6 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { WritePrdForm } from "@/components/write-prd-form";
 import { cn, extractErrorMessage } from "@/lib/utils";
 import { useLaborerStore } from "@/livestore/store";
 import { usePanelActions } from "@/panels/panel-context";
@@ -259,7 +257,6 @@ function WorkspaceItem({ workspace }: WorkspaceItemProps) {
 						</CardDescription>
 					)}
 					<div className="ml-auto flex flex-wrap items-center gap-1">
-						<WritePrdForm workspaceId={workspace.id} />
 						<Button
 							aria-label="Start ralph loop"
 							disabled={isStartingLoop}

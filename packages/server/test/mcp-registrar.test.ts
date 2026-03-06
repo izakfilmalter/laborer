@@ -14,6 +14,7 @@ import {
 	DEFAULT_MCP_ENTRY_PATH,
 	getDesiredCodexMcpConfigBlock,
 	getDesiredMcpServerConfig,
+	getDesiredOpencodeMcpConfig,
 	McpRegistrar,
 	mergeClaudeConfig,
 	mergeCodexConfig,
@@ -56,11 +57,10 @@ afterAll(() => {
 describe("mergeOpencodeConfig", () => {
 	it("adds the laborer MCP entry while preserving existing servers", () => {
 		const existing = {
-			mcpServers: {
+			mcp: {
 				github: {
-					args: ["run", "github"],
-					command: "bun",
-					type: "stdio",
+					command: ["bun", "run", "github"],
+					type: "local",
 				},
 			},
 			theme: "light",
@@ -70,16 +70,16 @@ describe("mergeOpencodeConfig", () => {
 
 		expect(updated).toBe(true);
 		expect(nextConfig.theme).toBe("light");
-		expect(nextConfig.mcpServers).toEqual({
-			github: existing.mcpServers.github,
-			laborer: getDesiredMcpServerConfig(),
+		expect(nextConfig.mcp).toEqual({
+			github: existing.mcp.github,
+			laborer: getDesiredOpencodeMcpConfig(),
 		});
 	});
 
 	it("does not mark config updated when the laborer entry already matches", () => {
 		const existing = {
-			mcpServers: {
-				laborer: getDesiredMcpServerConfig(),
+			mcp: {
+				laborer: getDesiredOpencodeMcpConfig(),
 			},
 		};
 
@@ -167,8 +167,8 @@ describe("registerOpencodeConfig", () => {
 
 		expect(updatedFiles).toEqual([configPath]);
 		expect(readJson(configPath)).toEqual({
-			mcpServers: {
-				laborer: getDesiredMcpServerConfig(),
+			mcp: {
+				laborer: getDesiredOpencodeMcpConfig(),
 			},
 		});
 	});
@@ -180,11 +180,10 @@ describe("registerOpencodeConfig", () => {
 			configPath,
 			JSON.stringify(
 				{
-					mcpServers: {
+					mcp: {
 						github: {
-							args: ["run", "github"],
-							command: "bun",
-							type: "stdio",
+							command: ["bun", "run", "github"],
+							type: "local",
 						},
 					},
 				},
@@ -198,13 +197,12 @@ describe("registerOpencodeConfig", () => {
 		);
 
 		expect(readJson(configPath)).toEqual({
-			mcpServers: {
+			mcp: {
 				github: {
-					args: ["run", "github"],
-					command: "bun",
-					type: "stdio",
+					command: ["bun", "run", "github"],
+					type: "local",
 				},
-				laborer: getDesiredMcpServerConfig(),
+				laborer: getDesiredOpencodeMcpConfig(),
 			},
 		});
 	});
@@ -216,8 +214,8 @@ describe("registerOpencodeConfig", () => {
 			configPath,
 			`${JSON.stringify(
 				{
-					mcpServers: {
-						laborer: getDesiredMcpServerConfig(),
+					mcp: {
+						laborer: getDesiredOpencodeMcpConfig(),
 					},
 				},
 				null,
@@ -335,8 +333,8 @@ describe("McpRegistrar.layer", () => {
 		);
 
 		expect(readJson(opencodeConfigPath)).toEqual({
-			mcpServers: {
-				laborer: getDesiredMcpServerConfig(DEFAULT_MCP_ENTRY_PATH),
+			mcp: {
+				laborer: getDesiredOpencodeMcpConfig(DEFAULT_MCP_ENTRY_PATH),
 			},
 		});
 		expect(readJson(claudeConfigPath)).toEqual({

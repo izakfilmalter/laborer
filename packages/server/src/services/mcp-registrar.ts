@@ -48,6 +48,11 @@ interface McpServerConfig {
 	readonly type: "stdio";
 }
 
+interface OpencodeLocalMcpConfig {
+	readonly command: readonly string[];
+	readonly type: "local";
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	value !== null && typeof value === "object" && !Array.isArray(value);
 
@@ -57,6 +62,13 @@ const getDesiredMcpServerConfig = (
 	args: ["run", resolve(mcpEntryPath)],
 	command: "bun",
 	type: "stdio",
+});
+
+const getDesiredOpencodeMcpConfig = (
+	mcpEntryPath: string = DEFAULT_MCP_ENTRY_PATH
+): OpencodeLocalMcpConfig => ({
+	command: ["bun", "run", resolve(mcpEntryPath)],
+	type: "local",
 });
 
 const hasMatchingMcpServerConfig = (
@@ -81,7 +93,60 @@ const hasMatchingMcpServerConfig = (
 	);
 };
 
+const hasMatchingOpencodeMcpConfig = (
+	value: unknown,
+	expected: OpencodeLocalMcpConfig
+): boolean => {
+	if (!isRecord(value)) {
+		return false;
+	}
+
+	const { command, type } = value;
+
+	return (
+		type === expected.type &&
+		Array.isArray(command) &&
+		command.length === expected.command.length &&
+		command.every(
+			(argument, index) =>
+				typeof argument === "string" && argument === expected.command[index]
+		)
+	);
+};
+
 const mergeOpencodeConfig = (
+	existingConfig: Record<string, unknown>,
+	mcpEntryPath: string = DEFAULT_MCP_ENTRY_PATH
+): {
+	readonly nextConfig: Record<string, unknown>;
+	readonly updated: boolean;
+} => {
+	const expectedServerConfig = getDesiredOpencodeMcpConfig(mcpEntryPath);
+	const existingMcp = isRecord(existingConfig.mcp) ? existingConfig.mcp : {};
+	const existingLaborerEntry = existingMcp[MCP_SERVER_NAME];
+
+	if (
+		hasMatchingOpencodeMcpConfig(existingLaborerEntry, expectedServerConfig)
+	) {
+		return {
+			nextConfig: existingConfig,
+			updated: false,
+		};
+	}
+
+	return {
+		nextConfig: {
+			...existingConfig,
+			mcp: {
+				...existingMcp,
+				[MCP_SERVER_NAME]: expectedServerConfig,
+			},
+		},
+		updated: true,
+	};
+};
+
+const mergeClaudeConfig = (
 	existingConfig: Record<string, unknown>,
 	mcpEntryPath: string = DEFAULT_MCP_ENTRY_PATH
 ): {
@@ -112,14 +177,6 @@ const mergeOpencodeConfig = (
 		updated: true,
 	};
 };
-
-const mergeClaudeConfig = (
-	existingConfig: Record<string, unknown>,
-	mcpEntryPath: string = DEFAULT_MCP_ENTRY_PATH
-): {
-	readonly nextConfig: Record<string, unknown>;
-	readonly updated: boolean;
-} => mergeOpencodeConfig(existingConfig, mcpEntryPath);
 
 const getDesiredCodexMcpConfigBlock = (
 	mcpEntryPath: string = DEFAULT_MCP_ENTRY_PATH
@@ -443,8 +500,10 @@ export {
 	CLAUDE_CONFIG_PATH,
 	CODEX_CONFIG_PATH,
 	getDesiredMcpServerConfig,
+	getDesiredOpencodeMcpConfig,
 	getDesiredCodexMcpConfigBlock,
 	hasMatchingMcpServerConfig,
+	hasMatchingOpencodeMcpConfig,
 	McpRegistrar,
 	mergeClaudeConfig,
 	mergeCodexConfig,
@@ -455,4 +514,4 @@ export {
 	registerOpencodeConfig,
 };
 
-export type { McpRegistrarOptions, McpServerConfig };
+export type { McpRegistrarOptions, McpServerConfig, OpencodeLocalMcpConfig };

@@ -285,3 +285,22 @@ Verification:
 - `bun run test` passes in `apps/web` (70 tests)
 - `bun x ultracite check src/panels/panel-hotkeys.tsx e2e/fixtures/panel-helper.ts e2e/panel-system.spec.ts src/panels/panel-manager.tsx` passes in `apps/web`
 - `bun run test:e2e e2e/panel-system.spec.ts` executes all 4 panel-system E2E tests successfully (4 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 16: E2E - Sidebar search filters projects and workspaces - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 16 as the highest-priority remaining task because it covers a core sidebar navigation flow and starts the unfinished search/navigation slice that also includes collapse/expand and theme toggle behavior
+
+Changes made:
+- Added `apps/web/e2e/search-navigation.spec.ts` with `filters projects and workspaces in real time and restores them when cleared`
+- The new test adds a project, creates a workspace with a unique branch name, searches for that branch through the sidebar search input, and verifies the matching project/workspace controls remain visible
+- The same test then searches for a guaranteed non-match, verifies the empty-state message appears and the previously visible project/workspace controls are hidden, and finally clears the search via the real clear button to confirm everything reappears
+- Updated `apps/web/e2e/fixtures/sidebar-helper.ts` so `clearSearch()` uses the actual `Clear search` button instead of programmatically clearing the input value
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check e2e/fixtures/sidebar-helper.ts e2e/search-navigation.spec.ts` passes in `apps/web`
+- `bun run test:e2e e2e/search-navigation.spec.ts` executes the search navigation E2E test successfully (1 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown

@@ -502,15 +502,17 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that types in the sidebar search box and verifies projects/workspaces are filtered in real-time. This validates the search filtering pipeline.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test file `e2e/search-navigation.spec.ts` created
-- [ ] Test adds at least one project (so there's something to search for)
-- [ ] Test types a search query in the sidebar search input (`aria-label="Search projects and workspaces"`)
-- [ ] Test verifies matching projects remain visible
-- [ ] Test verifies non-matching items are hidden (or a separate project is added to confirm filtering)
-- [ ] Test clears search (via clear button or Escape) and verifies all items reappear
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test file `e2e/search-navigation.spec.ts` created
+- [x] Test adds at least one project (so there's something to search for)
+- [x] Test types a search query in the sidebar search input (`aria-label="Search projects and workspaces"`)
+- [x] Test verifies matching projects remain visible
+- [x] Test verifies non-matching items are hidden (or a separate project is added to confirm filtering)
+- [x] Test clears search (via clear button or Escape) and verifies all items reappear
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

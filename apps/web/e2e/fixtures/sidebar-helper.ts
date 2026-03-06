@@ -21,6 +21,11 @@ export class SidebarHelper {
 		return this.page.getByLabel("Search projects and workspaces");
 	}
 
+	/** Get the clear-search button that appears while a query is active. */
+	get clearSearchButton(): Locator {
+		return this.page.getByRole("button", { name: "Clear search" });
+	}
+
 	/** Type a search query into the sidebar search box. */
 	async search(query: string): Promise<void> {
 		await this.searchInput.fill(query);
@@ -28,7 +33,7 @@ export class SidebarHelper {
 
 	/** Clear the sidebar search. */
 	async clearSearch(): Promise<void> {
-		await this.searchInput.clear();
+		await this.clearSearchButton.click();
 	}
 
 	/** Get a project group by project name. */

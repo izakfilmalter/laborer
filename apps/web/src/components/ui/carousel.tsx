@@ -2,6 +2,7 @@ import useEmblaCarousel, {
 	type UseEmblaCarouselType,
 } from "embla-carousel-react";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+// biome-ignore lint/performance/noNamespaceImport: shadcn/ui component
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -11,6 +12,7 @@ type UseCarouselParameters = Parameters<typeof useEmblaCarousel>;
 type CarouselOptions = UseCarouselParameters[0];
 type CarouselPlugin = UseCarouselParameters[1];
 
+// biome-ignore lint/style/useConsistentTypeDefinitions: shadcn/ui component
 type CarouselProps = {
 	opts?: CarouselOptions;
 	plugins?: CarouselPlugin;
@@ -121,6 +123,7 @@ function Carousel({
 				canScrollNext,
 			}}
 		>
+			{/* biome-ignore lint/a11y/useSemanticElements: shadcn/ui component */}
 			<div
 				aria-roledescription="carousel"
 				className={cn("relative", className)}
@@ -160,6 +163,7 @@ function CarouselItem({ className, ...props }: React.ComponentProps<"div">) {
 	const { orientation } = useCarousel();
 
 	return (
+		// biome-ignore lint/a11y/useSemanticElements: shadcn/ui component
 		<div
 			aria-roledescription="slide"
 			className={cn(

@@ -5,6 +5,7 @@ import {
 	ChevronLeftIcon,
 	ChevronRightIcon,
 } from "lucide-react";
+// biome-ignore lint/performance/noNamespaceImport: shadcn/ui component
 import * as React from "react";
 import {
 	type DayButton,
@@ -130,6 +131,7 @@ function Calendar({
 				...classNames,
 			}}
 			components={{
+				// biome-ignore lint/correctness/noNestedComponentDefinitions: shadcn/ui component
 				Root: ({ className, rootRef, ...props }) => {
 					return (
 						<div
@@ -140,6 +142,7 @@ function Calendar({
 						/>
 					);
 				},
+				// biome-ignore lint/correctness/noNestedComponentDefinitions: shadcn/ui component
 				Chevron: ({ className, orientation, ...props }) => {
 					if (orientation === "left") {
 						return (
@@ -160,9 +163,11 @@ function Calendar({
 						<ChevronDownIcon className={cn("size-4", className)} {...props} />
 					);
 				},
+				// biome-ignore lint/correctness/noNestedComponentDefinitions: shadcn/ui component
 				DayButton: ({ ...props }) => (
 					<CalendarDayButton locale={locale} {...props} />
 				),
+				// biome-ignore lint/correctness/noNestedComponentDefinitions: shadcn/ui component
 				WeekNumber: ({ children, ...props }) => {
 					return (
 						<td {...props}>

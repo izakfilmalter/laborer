@@ -164,6 +164,94 @@ class DiffService extends Context.Tag("@laborer/DiffService")<
 			// Only commit DiffUpdated events when content actually changes.
 			const previousDiffs = yield* Ref.make<Map<string, string>>(new Map());
 
+			// Resolve the merge-base commit for diffing.
+			// Uses baseSha if available, otherwise tries well-known branch names.
+			const resolveMergeBase = Effect.fn("DiffService.resolveMergeBase")(
+				function* (baseSha: string | undefined | null, worktreePath: string) {
+					if (baseSha) {
+						return baseSha;
+					}
+
+					return yield* Effect.tryPromise({
+						try: async () => {
+							for (const candidate of [
+								"main",
+								"master",
+								"develop",
+								"origin/main",
+								"origin/master",
+							]) {
+								const res = await spawnGit(
+									["merge-base", candidate, "HEAD"],
+									worktreePath
+								);
+								if (res.exitCode === 0) {
+									return res.stdout.trim();
+								}
+							}
+							return undefined;
+						},
+						catch: () =>
+							new RpcError({
+								message: "Failed to compute merge-base",
+								code: "GIT_DIFF_FAILED",
+							}),
+					});
+				}
+			);
+
+			// Compute the diff using unstaged + staged as a fallback
+			// when no merge-base is available.
+			const computeFallbackDiff = Effect.fn("DiffService.computeFallbackDiff")(
+				function* (workspaceId: string, worktreePath: string) {
+					yield* Effect.log(
+						`[DiffService] workspace=${workspaceId} no merge-base found, falling back to unstaged+staged diff`
+					);
+
+					const unstagedResult = yield* Effect.tryPromise({
+						try: () => spawnGit(["diff"], worktreePath),
+						catch: (error) =>
+							new RpcError({
+								message: `Failed to spawn git diff: ${String(error)}`,
+								code: "GIT_DIFF_FAILED",
+							}),
+					});
+
+					if (unstagedResult.exitCode !== 0) {
+						return yield* new RpcError({
+							message: `git diff failed (exit ${unstagedResult.exitCode}): ${unstagedResult.stderr.trim()}`,
+							code: "GIT_DIFF_FAILED",
+						});
+					}
+
+					const stagedResult = yield* Effect.tryPromise({
+						try: () => spawnGit(["diff", "--staged"], worktreePath),
+						catch: (error) =>
+							new RpcError({
+								message: `Failed to spawn git diff --staged: ${String(error)}`,
+								code: "GIT_DIFF_FAILED",
+							}),
+					});
+
+					if (stagedResult.exitCode !== 0) {
+						return yield* new RpcError({
+							message: `git diff --staged failed (exit ${stagedResult.exitCode}): ${stagedResult.stderr.trim()}`,
+							code: "GIT_DIFF_FAILED",
+						});
+					}
+
+					const combinedDiff = [unstagedResult.stdout, stagedResult.stdout]
+						.filter((s) => s.length > 0)
+						.join("\n");
+
+					yield* Effect.log(
+						`[DiffService] workspace=${workspaceId} fallback diffLen=${combinedDiff.length}`
+					);
+
+					return combinedDiff;
+				}
+			);
+
 			const getDiff = Effect.fn("DiffService.getDiff")(function* (
 				workspaceId: string
 			) {
@@ -208,34 +296,10 @@ class DiffService extends Context.Tag("@laborer/DiffService")<
 				// (working tree vs index) and `git diff --staged` (index vs HEAD)
 				// both return empty output.
 				const baseSha = workspace.baseSha;
-
-				const mergeBase = baseSha
-					? baseSha
-					: yield* Effect.tryPromise({
-							try: async () => {
-								for (const candidate of [
-									"main",
-									"master",
-									"develop",
-									"origin/main",
-									"origin/master",
-								]) {
-									const res = await spawnGit(
-										["merge-base", candidate, "HEAD"],
-										workspace.worktreePath
-									);
-									if (res.exitCode === 0) {
-										return res.stdout.trim();
-									}
-								}
-								return undefined;
-							},
-							catch: () =>
-								new RpcError({
-									message: "Failed to compute merge-base",
-									code: "GIT_DIFF_FAILED",
-								}),
-						});
+				const mergeBase = yield* resolveMergeBase(
+					baseSha,
+					workspace.worktreePath
+				);
 
 				let combinedDiff: string;
 
@@ -265,51 +329,9 @@ class DiffService extends Context.Tag("@laborer/DiffService")<
 						`[DiffService] workspace=${workspaceId} base=${mergeBase.slice(0, 8)}${baseSha ? " (baseSha)" : " (merge-base fallback)"} diffLen=${combinedDiff.length}`
 					);
 				} else {
-					// 4b. Fallback: no merge-base found (branch may be the default
-					// branch itself, or the repo has no common ancestors with the
-					// candidates). Fall back to unstaged + staged diffs.
-					yield* Effect.log(
-						`[DiffService] workspace=${workspaceId} no merge-base found, falling back to unstaged+staged diff`
-					);
-
-					const unstagedResult = yield* Effect.tryPromise({
-						try: () => spawnGit(["diff"], workspace.worktreePath),
-						catch: (error) =>
-							new RpcError({
-								message: `Failed to spawn git diff: ${String(error)}`,
-								code: "GIT_DIFF_FAILED",
-							}),
-					});
-
-					if (unstagedResult.exitCode !== 0) {
-						return yield* new RpcError({
-							message: `git diff failed (exit ${unstagedResult.exitCode}): ${unstagedResult.stderr.trim()}`,
-							code: "GIT_DIFF_FAILED",
-						});
-					}
-
-					const stagedResult = yield* Effect.tryPromise({
-						try: () => spawnGit(["diff", "--staged"], workspace.worktreePath),
-						catch: (error) =>
-							new RpcError({
-								message: `Failed to spawn git diff --staged: ${String(error)}`,
-								code: "GIT_DIFF_FAILED",
-							}),
-					});
-
-					if (stagedResult.exitCode !== 0) {
-						return yield* new RpcError({
-							message: `git diff --staged failed (exit ${stagedResult.exitCode}): ${stagedResult.stderr.trim()}`,
-							code: "GIT_DIFF_FAILED",
-						});
-					}
-
-					combinedDiff = [unstagedResult.stdout, stagedResult.stdout]
-						.filter((s) => s.length > 0)
-						.join("\n");
-
-					yield* Effect.log(
-						`[DiffService] workspace=${workspaceId} fallback diffLen=${combinedDiff.length}`
+					combinedDiff = yield* computeFallbackDiff(
+						workspaceId,
+						workspace.worktreePath
 					);
 				}
 

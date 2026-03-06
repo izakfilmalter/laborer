@@ -1,6 +1,8 @@
 "use client";
 
+// biome-ignore lint/performance/noNamespaceImport: shadcn/ui component
 import * as React from "react";
+// biome-ignore lint/performance/noNamespaceImport: shadcn/ui component
 import * as RechartsPrimitive from "recharts";
 
 import { cn } from "@/lib/utils";
@@ -18,6 +20,7 @@ export type ChartConfig = {
 	);
 };
 
+// biome-ignore lint/style/useConsistentTypeDefinitions: shadcn/ui component
 type ChartContextProps = {
 	config: ChartConfig;
 };
@@ -80,6 +83,7 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
 
 	return (
 		<style
+			// biome-ignore lint/security/noDangerouslySetInnerHtml: shadcn/ui component
 			dangerouslySetInnerHTML={{
 				__html: Object.entries(THEMES)
 					.map(

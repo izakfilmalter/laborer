@@ -2,6 +2,7 @@
 
 import { Combobox as ComboboxPrimitive } from "@base-ui/react";
 import { CheckIcon, ChevronDownIcon, XIcon } from "lucide-react";
+// biome-ignore lint/performance/noNamespaceImport: shadcn/ui component
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import {

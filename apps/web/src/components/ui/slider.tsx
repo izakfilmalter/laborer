@@ -1,6 +1,7 @@
 "use client";
 
 import { Slider as SliderPrimitive } from "@base-ui/react/slider";
+// biome-ignore lint/performance/noNamespaceImport: shadcn/ui component
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
@@ -17,7 +18,8 @@ function Slider({
 		() =>
 			Array.isArray(value)
 				? value
-				: Array.isArray(defaultValue)
+				: // biome-ignore lint/style/noNestedTernary: shadcn/ui component
+					Array.isArray(defaultValue)
 					? defaultValue
 					: [min, max],
 		[value, defaultValue, min, max]
@@ -48,6 +50,7 @@ function Slider({
 					<SliderPrimitive.Thumb
 						className="relative block size-3 shrink-0 select-none rounded-none border border-ring bg-background ring-ring/50 transition-[color,box-shadow] after:absolute after:-inset-2 hover:ring-1 focus-visible:outline-hidden focus-visible:ring-1 active:ring-1 disabled:pointer-events-none disabled:opacity-50"
 						data-slot="slider-thumb"
+						// biome-ignore lint/suspicious/noArrayIndexKey: shadcn/ui component
 						key={index}
 					/>
 				))}

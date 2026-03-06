@@ -27,7 +27,11 @@ const makeLaborerRpcClientLayer = (
 	Layer.succeed(
 		LaborerRpcClient,
 		LaborerRpcClient.of({
+			createPrd: () => Effect.die("Not implemented in this test"),
+			listPrds: () => Effect.die("Not implemented in this test"),
 			listProjects,
+			readPrd: () => Effect.die("Not implemented in this test"),
+			updatePrd: () => Effect.die("Not implemented in this test"),
 		})
 	);
 

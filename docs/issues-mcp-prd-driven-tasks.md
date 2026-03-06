@@ -356,14 +356,14 @@ Tools are registered using the `McpServer.resource` or `McpServer.toolkit` patte
 
 ### Acceptance criteria
 
-- [ ] `create_prd` tool is registered with title and content parameters
-- [ ] `read_prd` tool is registered and returns PRD markdown content
-- [ ] `update_prd` tool is registered and overwrites PRD content
-- [ ] `list_prds` tool is registered and returns PRD summaries for the current project
-- [ ] All tools use the discovered project context (no explicit projectId parameter)
-- [ ] Tool descriptions are clear and useful for AI agent discovery
-- [ ] Input schemas are properly typed with Effect Schema
-- [ ] Errors from the main server are propagated back as tool errors
+- [x] `create_prd` tool is registered with title and content parameters
+- [x] `read_prd` tool is registered and returns PRD markdown content
+- [x] `update_prd` tool is registered and overwrites PRD content
+- [x] `list_prds` tool is registered and returns PRD summaries for the current project
+- [x] All tools use the discovered project context (no explicit projectId parameter)
+- [x] Tool descriptions are clear and useful for AI agent discovery
+- [x] Input schemas are properly typed with Effect Schema
+- [x] Errors from the main server are propagated back as tool errors
 
 ### Blocked by
 
@@ -767,7 +767,7 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 182 | Issue read and list RPCs | #181 | Done |
 | 183 | Issue update RPC: prd.updateIssue | #182 | Done |
 | 184 | `@laborer/mcp` package scaffold: stdio server with project discovery | None | Done |
-| 185 | MCP PRD tools: create_prd, read_prd, update_prd, list_prds | #180, #184 | Ready |
+| 185 | MCP PRD tools: create_prd, read_prd, update_prd, list_prds | #180, #184 | Done |
 | 186 | MCP issue tools: create_issue, read_issues, update_issue, list_remaining_issues | #183, #184 | Ready |
 | 187 | MCP auto-registration: Opencode config | #184 | Ready |
 | 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Blocked |
@@ -777,5 +777,5 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 192 | Create workspace from plan | #191 | Blocked |
 | 193 | Plan workspace scoped task list and rlph integration | #186, #192 | Blocked |
 | 194 | Remove CreateTaskForm and manual task source tab | #181 | Ready |
-| 195 | Remove WritePrdForm, rlph.writePRD RPC, and PrdTaskImporter | #185 | Blocked |
+| 195 | Remove WritePrdForm, rlph.writePRD RPC, and PrdTaskImporter | #185 | Ready |
 | 196 | Polish and end-to-end verification | #188, #193, #194, #195 | Blocked |

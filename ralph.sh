@@ -11,7 +11,7 @@ fi
 # For each iteration, run Claude Code with the following prompt.
 # This prompt is basic, we'll expand it later.
 for ((i=1; i<=$1; i++)); do
-  result=$(opencode --model anthropic/claude-opus-4-6 run \
+  result=$(opencode --model openai/gpt-5.4 run \
 "@docs/PRD-mcp-prd-driven-tasks.md @docs/issues-mcp-prd-driven-tasks.md @docs/progress-mcp-prd-driven-tasks.txt \
 1. Decide which task to work on next from issues-mcp-prd-driven-tasks.md. \
 This should be the one YOU decide has the highest priority, \

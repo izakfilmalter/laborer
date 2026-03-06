@@ -351,4 +351,115 @@ describe("LiveStore schema", () => {
 				]);
 			})
 	);
+
+	it.scoped("keeps deprecated terminal events as no-op materializers", () =>
+		Effect.gen(function* () {
+			const store = yield* makeTestStore;
+
+			store.commit(
+				events.projectCreated({
+					id: "project-1",
+					repoPath: "/tmp/project-1",
+					name: "Project One",
+					rlphConfig: null,
+				})
+			);
+			store.commit(
+				events.workspaceCreated({
+					id: "workspace-1",
+					projectId: "project-1",
+					taskSource: null,
+					branchName: "feature/no-op-events",
+					worktreePath: "/tmp/project-1/.laborer/workspace-1",
+					port: 4321,
+					status: "running",
+					origin: "laborer",
+					createdAt: "2026-03-06T00:00:00.000Z",
+					baseSha: "abc123",
+				})
+			);
+			store.commit(
+				events.diffUpdated({
+					workspaceId: "workspace-1",
+					diffContent: "diff --git a/file.ts b/file.ts",
+					lastUpdated: "2026-03-06T00:00:00.000Z",
+				})
+			);
+			store.commit(
+				events.taskCreated({
+					id: "task-1",
+					projectId: "project-1",
+					source: "manual",
+					prdId: null,
+					externalId: null,
+					title: "Backwards compatibility",
+					status: "pending",
+				})
+			);
+			store.commit(
+				events.prdCreated({
+					id: "prd-1",
+					projectId: "project-1",
+					title: "Deprecated terminal events",
+					slug: "deprecated-terminal-events",
+					filePath: "/tmp/PRD-deprecated-terminal-events.md",
+					status: "draft",
+					createdAt: "2026-03-06T00:00:00.000Z",
+				})
+			);
+			store.commit(
+				events.layoutRestored({
+					id: "session-1",
+					layoutTree: restoredLayout,
+					activePaneId: "pane-restored",
+				})
+			);
+
+			const beforeDeprecatedEvents = {
+				projects: store.query(tables.projects),
+				workspaces: store.query(tables.workspaces),
+				diffs: store.query(tables.diffs),
+				tasks: store.query(tables.tasks),
+				prds: store.query(tables.prds),
+				panelLayout: store.query(tables.panelLayout),
+			};
+
+			store.commit(
+				events.terminalSpawned({
+					id: "terminal-1",
+					workspaceId: "workspace-1",
+					command: "bun test",
+					status: "running",
+					ptySessionRef: null,
+				})
+			);
+			store.commit(
+				events.terminalOutput({
+					id: "terminal-1",
+					data: "output",
+				})
+			);
+			store.commit(
+				events.terminalStatusChanged({
+					id: "terminal-1",
+					status: "exited",
+				})
+			);
+			store.commit(events.terminalKilled({ id: "terminal-1" }));
+			store.commit(events.terminalRemoved({ id: "terminal-1" }));
+			store.commit(events.terminalRestarted({ id: "terminal-1" }));
+
+			assert.deepStrictEqual(
+				{
+					projects: store.query(tables.projects),
+					workspaces: store.query(tables.workspaces),
+					diffs: store.query(tables.diffs),
+					tasks: store.query(tables.tasks),
+					prds: store.query(tables.prds),
+					panelLayout: store.query(tables.panelLayout),
+				},
+				beforeDeprecatedEvents
+			);
+		})
+	);
 });

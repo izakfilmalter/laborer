@@ -370,10 +370,10 @@ See PRD Further Notes about the importance of these no-op tests.
 
 ### Acceptance criteria
 
-- [ ] All 6 deprecated terminal events are tested
-- [ ] Tests verify that committing these events does not modify any table (or verify the materializer returns empty operations)
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] `bun x ultracite check` passes
+- [x] All 6 deprecated terminal events are tested
+- [x] Tests verify that committing these events does not modify any table (or verify the materializer returns empty operations)
+- [x] Tests use `@effect/vitest` patterns
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -772,7 +772,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 8 | Migrate terminal package tests to @effect/vitest assertions | None | Ready |
 | 9 | Add LiveStore schema tests -- setup + project/workspace events | None | Done |
 | 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Done |
-| 11 | Add LiveStore schema tests -- deprecated terminal event no-ops | #9 | Ready |
+| 11 | Add LiveStore schema tests -- deprecated terminal event no-ops | #9 | Done |
 | 12 | Rewrite config-service.test.ts through public API | #5 or #7 | Blocked |
 | 13 | Set up RPC test infrastructure + health.check test | #1 | Done |
 | 14 | RPC integration tests -- project.add + project.remove | #13, #2 | Done |

@@ -242,6 +242,64 @@ describe("PrdStorageService", () => {
 		expect(result.populatedIssues).toContain("## Issue 1: Read issues RPC");
 	});
 
+	it("updates a single issue section without changing neighboring issues", async () => {
+		const projectDir = join(testRoot, "update-issue-prds-dir-project");
+		const customPrdsDir = join(testRoot, "update-issue-prds-dir-output");
+		mkdirSync(projectDir, { recursive: true });
+		writeFileSync(
+			join(projectDir, "laborer.json"),
+			JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
+		);
+
+		const result = await runWithServices(
+			Effect.gen(function* () {
+				const service = yield* PrdStorageService;
+				const prdFilePath = yield* service.createPrdFile(
+					projectDir,
+					"update-issue-prds-dir-project",
+					"Issue Updater",
+					"# PRD\n"
+				);
+
+				yield* service.appendIssue(
+					prdFilePath,
+					"First issue",
+					"### What to build\n\nKeep this body."
+				);
+				yield* service.appendIssue(
+					prdFilePath,
+					"Second issue",
+					"### What to build\n\nReplace this body."
+				);
+				yield* service.appendIssue(
+					prdFilePath,
+					"Third issue",
+					"### What to build\n\nKeep this one too."
+				);
+
+				yield* service.updateIssue(
+					prdFilePath,
+					"Second issue",
+					"### What to build\n\nUpdated body.",
+					2
+				);
+
+				return yield* service.readIssuesFile(prdFilePath);
+			})
+		);
+
+		expect(result).toContain(
+			"## Issue 1: First issue\n\n### What to build\n\nKeep this body."
+		);
+		expect(result).toContain(
+			"## Issue 2: Second issue\n\n### What to build\n\nUpdated body."
+		);
+		expect(result).toContain(
+			"## Issue 3: Third issue\n\n### What to build\n\nKeep this one too."
+		);
+		expect(result).not.toContain("Replace this body.");
+	});
+
 	it("removes PRD files and companion issues files when deleting a PRD", async () => {
 		const projectDir = join(testRoot, "remove-prd-project");
 		const customPrdsDir = join(testRoot, "remove-prd-output");

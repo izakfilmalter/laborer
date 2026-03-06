@@ -12,6 +12,7 @@ import {
 	handlePrdReadIssues,
 	handlePrdRemove,
 	handlePrdUpdate,
+	handlePrdUpdateIssue,
 	handlePrdUpdateStatus,
 } from "../src/rpc/handlers.js";
 import { LaborerStore } from "../src/services/laborer-store.js";
@@ -67,6 +68,7 @@ const makePrdStorageLayer = ({
 	readIssuesFile,
 	readPrdFile,
 	removePrdArtifacts,
+	updateIssue,
 	updatePrdFile,
 }: {
 	appendIssue?: PrdStorageService["Type"]["appendIssue"];
@@ -74,6 +76,7 @@ const makePrdStorageLayer = ({
 	readIssuesFile?: PrdStorageService["Type"]["readIssuesFile"];
 	readPrdFile?: PrdStorageService["Type"]["readPrdFile"];
 	removePrdArtifacts?: PrdStorageService["Type"]["removePrdArtifacts"];
+	updateIssue?: PrdStorageService["Type"]["updateIssue"];
 	updatePrdFile?: PrdStorageService["Type"]["updatePrdFile"];
 }) =>
 	Layer.succeed(
@@ -86,6 +89,7 @@ const makePrdStorageLayer = ({
 			updatePrdFile:
 				updatePrdFile ?? (() => Effect.die("not used in this test")),
 			appendIssue: appendIssue ?? (() => Effect.die("not used in this test")),
+			updateIssue: updateIssue ?? (() => Effect.die("not used in this test")),
 			removePrdArtifacts:
 				removePrdArtifacts ?? (() => Effect.die("not used in this test")),
 			resolvePrdsDir: () => Effect.die("not used in this test"),
@@ -596,6 +600,133 @@ describe("PRD RPC handlers", () => {
 		);
 	});
 
+	it("updates PRD issue body and status for an existing PRD task", async () => {
+		const updateIssue = vi.fn(() => Effect.void);
+
+		await Effect.runPromise(
+			Effect.gen(function* () {
+				const { store } = yield* LaborerStore;
+				store.commit(
+					events.projectCreated({
+						id: project.id,
+						repoPath: project.repoPath,
+						name: project.name,
+						rlphConfig: project.rlphConfig,
+					})
+				);
+
+				const createdPrd = yield* handlePrdCreate({
+					projectId: project.id,
+					title: "Update Issues PRD",
+					content: "# PRD\n",
+				});
+				const createdIssue = yield* handlePrdCreateIssue({
+					prdId: createdPrd.id,
+					title: "Editable issue",
+					body: "### What to build\n\nOriginal body.",
+				});
+
+				const updatedIssue = yield* handlePrdUpdateIssue({
+					taskId: createdIssue.id,
+					body: "### What to build\n\nUpdated body.",
+					status: "completed",
+				});
+
+				expect(updatedIssue).toEqual(
+					expect.objectContaining({
+						id: createdIssue.id,
+						status: "completed",
+						title: "Editable issue",
+					})
+				);
+
+				const persistedTask = store.query(
+					tables.tasks.where("id", createdIssue.id)
+				)[0];
+				expect(persistedTask?.status).toBe("completed");
+			}).pipe(
+				Effect.provide(
+					Layer.mergeAll(
+						TestLaborerStore,
+						TestTaskManager,
+						makeProjectRegistryLayer(),
+						makePrdStorageLayer({
+							createPrdFile: () =>
+								Effect.succeed("/tmp/prds/PRD-update-issues-prd.md"),
+							appendIssue: () =>
+								Effect.succeed({
+									issueFilePath: "/tmp/prds/PRD-update-issues-prd-issues.md",
+									issueNumber: 3,
+								}),
+							updateIssue,
+						})
+					)
+				)
+			)
+		);
+
+		expect(updateIssue).toHaveBeenCalledWith(
+			"/tmp/prds/PRD-update-issues-prd.md",
+			"Editable issue",
+			"### What to build\n\nUpdated body.",
+			3
+		);
+	});
+
+	it("updates only PRD issue status when no body is provided", async () => {
+		await Effect.runPromise(
+			Effect.gen(function* () {
+				const { store } = yield* LaborerStore;
+				store.commit(
+					events.projectCreated({
+						id: project.id,
+						repoPath: project.repoPath,
+						name: project.name,
+						rlphConfig: project.rlphConfig,
+					})
+				);
+
+				const createdPrd = yield* handlePrdCreate({
+					projectId: project.id,
+					title: "Status-only PRD",
+					content: "# PRD\n",
+				});
+				const createdIssue = yield* handlePrdCreateIssue({
+					prdId: createdPrd.id,
+					title: "Status-only issue",
+					body: "### What to build\n\nOnly update status.",
+				});
+
+				yield* handlePrdUpdateIssue({
+					taskId: createdIssue.id,
+					status: "in_progress",
+				});
+
+				const persistedTask = store.query(
+					tables.tasks.where("id", createdIssue.id)
+				)[0];
+				expect(persistedTask?.status).toBe("in_progress");
+			}).pipe(
+				Effect.provide(
+					Layer.mergeAll(
+						TestLaborerStore,
+						TestTaskManager,
+						makeProjectRegistryLayer(),
+						makePrdStorageLayer({
+							createPrdFile: () =>
+								Effect.succeed("/tmp/prds/PRD-status-only-prd.md"),
+							appendIssue: () =>
+								Effect.succeed({
+									issueFilePath: "/tmp/prds/PRD-status-only-prd-issues.md",
+									issueNumber: 1,
+								}),
+						})
+					)
+				)
+			)
+		);
+	});
+
 	it("removes PRD files, linked PRD tasks, and the PRD record", async () => {
 		const removePrdArtifacts = vi.fn(() => Effect.void);
 
@@ -758,6 +889,32 @@ describe("PRD RPC handlers", () => {
 		if (Either.isLeft(result)) {
 			expect(result.left.code).toBe("NOT_FOUND");
 			expect(result.left.message).toContain("missing-prd");
+		}
+	});
+
+	it("returns not found when updating a missing PRD issue task", async () => {
+		const result = await Effect.runPromise(
+			handlePrdUpdateIssue({
+				taskId: "missing-task",
+				body: "### What to build\n\nUpdated body.",
+			}).pipe(
+				Effect.either,
+				Effect.provide(
+					Layer.mergeAll(
+						TestLaborerStore,
+						TestTaskManager,
+						makePrdStorageLayer({
+							createPrdFile: () => Effect.die("not used in this test"),
+						})
+					)
+				)
+			)
+		);
+
+		expect(Either.isLeft(result)).toBe(true);
+		if (Either.isLeft(result)) {
+			expect(result.left.code).toBe("NOT_FOUND");
+			expect(result.left.message).toContain("missing-task");
 		}
 	});
 });

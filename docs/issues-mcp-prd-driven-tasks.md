@@ -284,11 +284,11 @@ Add a `prd.updateIssue` RPC endpoint that updates an issue's content in the comp
 
 ### Acceptance criteria
 
-- [ ] `prd.updateIssue` RPC is defined with taskId, optional body, and optional status
-- [ ] When body is provided, the corresponding issue section in the markdown file is replaced
-- [ ] When status is provided, the task status is updated in LiveStore via TaskManager
-- [ ] Updating a non-existent task returns an error
-- [ ] The issue file is preserved correctly when updating a single issue (other issues untouched)
+- [x] `prd.updateIssue` RPC is defined with taskId, optional body, and optional status
+- [x] When body is provided, the corresponding issue section in the markdown file is replaced
+- [x] When status is provided, the task status is updated in LiveStore via TaskManager
+- [x] Updating a non-existent task returns an error
+- [x] The issue file is preserved correctly when updating a single issue (other issues untouched)
 
 ### Blocked by
 
@@ -765,10 +765,10 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 180 | PRD update RPC and status changes | #179 | Done |
 | 181 | Issue creation RPC: prd.createIssue | #178 | Done |
 | 182 | Issue read and list RPCs | #181 | Done |
-| 183 | Issue update RPC: prd.updateIssue | #182 | Ready |
+| 183 | Issue update RPC: prd.updateIssue | #182 | Done |
 | 184 | `@laborer/mcp` package scaffold: stdio server with project discovery | None | Done |
 | 185 | MCP PRD tools: create_prd, read_prd, update_prd, list_prds | #180, #184 | Ready |
-| 186 | MCP issue tools: create_issue, read_issues, update_issue, list_remaining_issues | #183, #184 | Blocked |
+| 186 | MCP issue tools: create_issue, read_issues, update_issue, list_remaining_issues | #183, #184 | Ready |
 | 187 | MCP auto-registration: Opencode config | #184 | Ready |
 | 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Blocked |
 | 189 | Plans sidebar section: PlanList component | #175 | Ready |

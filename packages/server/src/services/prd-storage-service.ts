@@ -44,6 +44,8 @@ const issuesFilePathFromPrdPath = (prdFilePath: string): string =>
 	resolve(join(dirname(prdFilePath), issuesFileNameFromPrdPath(prdFilePath)));
 
 const ISSUE_HEADING_REGEX = /^## Issue (\d+): /gmu;
+const ISSUE_SECTION_REGEX = /^## Issue (\d+): (.+)$/gmu;
+const ISSUE_SECTION_SEPARATOR = "\n\n---\n\n";
 
 const getNextIssueNumber = (issuesContent: string): number => {
 	const issueNumbers = Array.from(
@@ -67,6 +69,29 @@ const formatIssueSection = (
 	return trimmedBody.length > 0
 		? `## Issue ${issueNumber}: ${title}\n\n${trimmedBody}\n`
 		: `## Issue ${issueNumber}: ${title}\n`;
+};
+
+interface IssueSection {
+	readonly issueNumber: number;
+	readonly section: string;
+	readonly title: string;
+}
+
+const parseIssueSections = (issuesContent: string): readonly IssueSection[] => {
+	const matches = Array.from(issuesContent.matchAll(ISSUE_SECTION_REGEX));
+
+	return matches.map((match, index) => {
+		const start = match.index ?? 0;
+		const nextStart = matches[index + 1]?.index ?? issuesContent.length;
+		const rawSection = issuesContent.slice(start, nextStart);
+		const section = rawSection.replace(/^\n+|\n+$/g, "");
+
+		return {
+			issueNumber: Number(match[1]),
+			section,
+			title: match[2]?.trim() ?? "",
+		};
+	});
 };
 
 const ensureDirectory = (
@@ -143,6 +168,12 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 			},
 			PrdStorageError
 		>;
+		readonly updateIssue: (
+			prdFilePath: string,
+			title: string,
+			body: string,
+			issueNumber?: number
+		) => Effect.Effect<void, PrdStorageError>;
 		readonly removePrdArtifacts: (
 			prdFilePath: string
 		) => Effect.Effect<void, PrdStorageError>;
@@ -251,7 +282,7 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 				const issueSection = formatIssueSection(issueNumber, title, body);
 				const nextContent =
 					existingContent.trim().length > 0
-						? `${existingContent.trimEnd()}\n\n---\n\n${issueSection}`
+						? `${existingContent.trimEnd()}${ISSUE_SECTION_SEPARATOR}${issueSection}`
 						: issueSection;
 
 				yield* writeFileAtomic(issueFilePath, nextContent);
@@ -264,6 +295,59 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 					issueFilePath,
 					issueNumber,
 				};
+			});
+
+			const updateIssue = Effect.fn("PrdStorageService.updateIssue")(function* (
+				prdFilePath: string,
+				title: string,
+				body: string,
+				issueNumber?: number
+			) {
+				const issueFilePath = issuesFilePathFromPrdPath(prdFilePath);
+				const issuesContent = yield* Effect.try({
+					try: () => readFileSync(issueFilePath, "utf-8"),
+					catch: (cause) =>
+						new PrdStorageError({
+							message: `Failed to read PRD issues file ${issueFilePath}`,
+							cause,
+						}),
+				});
+
+				const sections = parseIssueSections(issuesContent);
+				const targetIndex = sections.findIndex((section) =>
+					issueNumber === undefined
+						? section.title === title
+						: section.issueNumber === issueNumber || section.title === title
+				);
+
+				if (targetIndex === -1) {
+					return yield* new PrdStorageError({
+						message:
+							issueNumber === undefined
+								? `PRD issue not found for title ${title}`
+								: `PRD issue not found for issue ${issueNumber}: ${title}`,
+						cause: new Error("Issue section not found"),
+					});
+				}
+
+				const updatedSections = sections.map((section, index) =>
+					index === targetIndex
+						? formatIssueSection(
+								section.issueNumber,
+								section.title,
+								body
+							).trimEnd()
+						: section.section
+				);
+
+				yield* writeFileAtomic(
+					issueFilePath,
+					`${updatedSections.join(ISSUE_SECTION_SEPARATOR)}\n`
+				);
+
+				yield* Effect.logDebug(`Updated PRD issue in ${issueFilePath}`).pipe(
+					Effect.annotateLogs("module", logPrefix)
+				);
 			});
 
 			const removePrdArtifacts = Effect.fn(
@@ -299,6 +383,7 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 				readIssuesFile,
 				updatePrdFile,
 				appendIssue,
+				updateIssue,
 				removePrdArtifacts,
 				resolvePrdsDir,
 			});

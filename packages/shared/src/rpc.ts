@@ -324,6 +324,16 @@ export class LaborerRpcs extends RpcGroup.make(
 		},
 	}),
 
+	Rpc.make("prd.updateIssue", {
+		success: TaskResponse,
+		error: RpcError,
+		payload: {
+			taskId: Schema.String,
+			body: Schema.optional(Schema.String),
+			status: Schema.optional(Schema.String),
+		},
+	}),
+
 	// -----------------------------------------------------------------------
 	// Workspace RPCs
 	// -----------------------------------------------------------------------

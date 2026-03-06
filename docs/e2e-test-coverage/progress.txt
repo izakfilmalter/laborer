@@ -247,3 +247,22 @@ Verification:
 - `bun run test` passes in `apps/web` (70 tests)
 - `bun x ultracite check apps/web/e2e/fixtures/panel-helper.ts apps/web/e2e/panel-system.spec.ts docs/e2e-test-coverage/issues.md docs/e2e-test-coverage/progress.txt` passes
 - `bun run test:e2e e2e/panel-system.spec.ts` executes all three panel-system tests successfully (3 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 15: E2E - Open terminal, type command, verify output - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 15 as the highest-priority remaining task because it covers the real terminal WebSocket + PTY + xterm pipeline, which is the riskiest unfinished runtime behavior in the PRD
+
+Changes made:
+- Added `apps/web/e2e/terminal-interaction.spec.ts` with `can spawn a terminal, run a command, and see the output`
+- The new test creates a project and a dedicated workspace branch, spawns a terminal from that workspace's sidebar terminal controls, and verifies the terminal is assigned to the active pane
+- The test sends `pwd` through the real terminal input and verifies the pane rendering changes after the command completes, covering terminal input delivery and visible output rendering without using mock state or hardcoded sleeps
+- Updated `apps/web/e2e/fixtures/terminal-helper.ts` to focus xterm's accessible terminal input before typing and to expose terminal pane locators more reliably in WebKit
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check e2e/fixtures/terminal-helper.ts e2e/terminal-interaction.spec.ts` passes in `apps/web`
+- `bun run test:e2e e2e/terminal-interaction.spec.ts` executes the terminal interaction E2E test successfully (1 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown

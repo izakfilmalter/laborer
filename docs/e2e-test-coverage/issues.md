@@ -468,15 +468,17 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that opens a terminal in a pane, types a command (e.g., `echo hello`), and verifies the output appears. This validates the full terminal pipeline: WebSocket connection -> PTY spawn -> xterm.js rendering.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test file `e2e/terminal-interaction.spec.ts` created
-- [ ] Test creates a workspace (which spawns a terminal)
-- [ ] Test assigns the terminal to a pane (or it's auto-assigned)
-- [ ] Test types a command into the terminal pane
-- [ ] Test verifies the command output appears in the terminal
-- [ ] Test uses appropriate timeouts for PTY initialization
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test file `e2e/terminal-interaction.spec.ts` created
+- [x] Test creates a workspace (which spawns a terminal)
+- [x] Test assigns the terminal to a pane (or it's auto-assigned)
+- [x] Test types a command into the terminal pane
+- [x] Test verifies the command output appears in the terminal
+- [x] Test uses appropriate timeouts for PTY initialization
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

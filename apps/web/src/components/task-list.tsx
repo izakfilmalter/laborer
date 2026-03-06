@@ -12,15 +12,15 @@
  * - Status update via inline dropdown (updateStatus RPC)
  * - Remove button with confirmation dialog (remove RPC)
  *
- * Accepts an optional `activeProjectId` prop to filter tasks by project.
- * When set, only tasks belonging to the selected project are shown.
+ * Requires a `projectId` prop — tasks are always rendered within a
+ * specific project context (nested inside a ProjectGroup).
  *
  * @see Issue #104: Task list UI component
- * @see Issue #113: Project switcher — filter tasks by active project
+ * @see Issue #170: Tasks nested under each project
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
-import { projects, tasks } from "@laborer/shared/schema";
+import { tasks } from "@laborer/shared/schema";
 import { queryDb } from "@livestore/livestore";
 import {
 	CheckCircle2,
@@ -51,13 +51,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
 	Empty,
 	EmptyDescription,
@@ -77,8 +71,6 @@ import { cn, extractErrorMessage } from "@/lib/utils";
 import { useLaborerStore } from "@/livestore/store";
 
 const allTasks$ = queryDb(tasks, { label: "taskList" });
-const allProjects$ = queryDb(projects, { label: "taskListProjects" });
-
 const updateTaskStatusMutation = LaborerClient.mutation("task.updateStatus");
 const removeTaskMutation = LaborerClient.mutation("task.remove");
 
@@ -157,7 +149,6 @@ function formatStatus(status: string): string {
 }
 
 interface TaskItemProps {
-	readonly projectName: string;
 	readonly task: {
 		readonly id: string;
 		readonly projectId: string;
@@ -168,7 +159,7 @@ interface TaskItemProps {
 	};
 }
 
-function TaskItem({ task, projectName }: TaskItemProps) {
+function TaskItem({ task }: TaskItemProps) {
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [isUpdating, setIsUpdating] = useState(false);
@@ -220,7 +211,6 @@ function TaskItem({ task, projectName }: TaskItemProps) {
 							<StatusIcon status={task.status} />
 							<span className="truncate text-sm">{task.title}</span>
 						</CardTitle>
-						<CardDescription className="mt-0.5">{projectName}</CardDescription>
 					</div>
 					<div className="flex items-center gap-1">
 						<Badge
@@ -308,28 +298,20 @@ function TaskItem({ task, projectName }: TaskItemProps) {
 type FilterTab = "all" | TaskStatus;
 
 interface TaskListProps {
-	/** When set, only tasks belonging to this project are shown. */
-	readonly activeProjectId?: string | null;
+	/** The project whose tasks to display. */
+	readonly projectId: string;
 	readonly sourceFilter?: TaskSourceFilter;
 }
 
-function TaskList({ activeProjectId, sourceFilter }: TaskListProps) {
+function TaskList({ projectId, sourceFilter }: TaskListProps) {
 	const store = useLaborerStore();
 	const allTaskList = store.useQuery(allTasks$);
-	const projectList = store.useQuery(allProjects$);
 	const [activeFilter, setActiveFilter] = useState<FilterTab>("all");
 
-	// Build a map of project IDs to names for display
-	const projectNameMap = useMemo(
-		() => new Map(projectList.map((p) => [p.id, p.name] as const)),
-		[projectList]
-	);
-
-	// Filter tasks by project if an active project is set
+	// Filter tasks by project and source
 	const taskList = useMemo(
-		() =>
-			filterTasksByProjectAndSource(allTaskList, activeProjectId, sourceFilter),
-		[allTaskList, activeProjectId, sourceFilter]
+		() => filterTasksByProjectAndSource(allTaskList, projectId, sourceFilter),
+		[allTaskList, projectId, sourceFilter]
 	);
 
 	// Filter tasks by status if a filter is active
@@ -406,13 +388,7 @@ function TaskList({ activeProjectId, sourceFilter }: TaskListProps) {
 					No {activeFilter === "all" ? "" : formatStatus(activeFilter)} tasks
 				</p>
 			) : (
-				filteredTasks.map((task) => (
-					<TaskItem
-						key={task.id}
-						projectName={projectNameMap.get(task.projectId) ?? "Unknown"}
-						task={task}
-					/>
-				))
+				filteredTasks.map((task) => <TaskItem key={task.id} task={task} />)
 			)}
 		</div>
 	);

@@ -17,9 +17,9 @@ const importGithubMutation = LaborerClient.mutation("task.importGithub");
 const importLinearMutation = LaborerClient.mutation("task.importLinear");
 
 interface TaskSourcePickerProps {
-	readonly activeProjectId?: string | null;
 	readonly activeSource: TaskSourceFilter;
 	readonly onSourceChange: (source: TaskSourceFilter) => void;
+	readonly projectId: string;
 }
 
 function getImportLabel(source: Exclude<TaskSourceFilter, "manual">): string {
@@ -27,7 +27,7 @@ function getImportLabel(source: Exclude<TaskSourceFilter, "manual">): string {
 }
 
 function TaskSourcePicker({
-	activeProjectId,
+	projectId,
 	activeSource,
 	onSourceChange,
 }: TaskSourcePickerProps) {
@@ -42,7 +42,7 @@ function TaskSourcePicker({
 
 	const runImport = useCallback(
 		async (source: Exclude<TaskSourceFilter, "manual">) => {
-			if (!activeProjectId) {
+			if (!projectId) {
 				return;
 			}
 
@@ -52,10 +52,10 @@ function TaskSourcePicker({
 				const response =
 					source === "github"
 						? await importGithub({
-								payload: { projectId: activeProjectId },
+								payload: { projectId },
 							})
 						: await importLinear({
-								payload: { projectId: activeProjectId },
+								payload: { projectId },
 							});
 
 				const label = getImportLabel(source);
@@ -72,21 +72,18 @@ function TaskSourcePicker({
 				setIsImporting(false);
 			}
 		},
-		[activeProjectId, importGithub, importLinear]
+		[projectId, importGithub, importLinear]
 	);
 
 	useEffect(() => {
 		if (
-			!(
-				canImportTasks(activeSource, activeProjectId) &&
-				isImportSource(activeSource)
-			)
+			!(canImportTasks(activeSource, projectId) && isImportSource(activeSource))
 		) {
 			hasAutoImportedRef.current = null;
 			return;
 		}
 
-		const autoImportKey = `${activeSource}:${activeProjectId}`;
+		const autoImportKey = `${activeSource}:${projectId}`;
 		if (hasAutoImportedRef.current === autoImportKey) {
 			return;
 		}
@@ -95,7 +92,7 @@ function TaskSourcePicker({
 		runImport(activeSource).catch(() => {
 			// Errors are surfaced inside runImport.
 		});
-	}, [activeProjectId, activeSource, runImport]);
+	}, [projectId, activeSource, runImport]);
 
 	return (
 		<div className="grid gap-2">
@@ -120,10 +117,10 @@ function TaskSourcePicker({
 				</Tabs>
 
 				{activeSource === "manual" ? (
-					<CreateTaskForm defaultProjectId={activeProjectId} />
+					<CreateTaskForm defaultProjectId={projectId} />
 				) : (
 					<Button
-						disabled={!activeProjectId || isImporting}
+						disabled={isImporting}
 						onClick={() => {
 							runImport(activeSource).catch(() => {
 								// Errors are surfaced inside runImport.
@@ -137,13 +134,6 @@ function TaskSourcePicker({
 					</Button>
 				)}
 			</div>
-
-			{activeSource !== "manual" && !activeProjectId ? (
-				<p className="text-muted-foreground text-xs">
-					Select a project above to import{" "}
-					{getImportLabel(activeSource).toLowerCase()}.
-				</p>
-			) : null}
 		</div>
 	);
 }

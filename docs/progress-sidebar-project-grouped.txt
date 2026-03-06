@@ -35,3 +35,33 @@ Changes made:
   - Changed the Server Status styling from `rounded-lg border p-3` (card-style inside scroll) to `shrink-0 border-t p-3` (footer-style with top border separator, no shrinking).
 
 TypeScript: 0 errors. Ultracite: 0 issues.
+
+### Issue 170: Tasks nested under each project — DONE
+
+Moved tasks from the flat bottom section of the sidebar into each ProjectGroup as a sub-section below the project's workspaces. Task source selection is now independent per project.
+
+Changes made:
+- Modified `apps/web/src/components/project-group.tsx`:
+  - Added local `taskSource` state (`TaskSourceFilter`) for per-project independent task source selection (Manual/Linear/GitHub).
+  - Added `TaskSourcePicker` and `TaskList` inside the collapsible content, below the WorkspaceList, separated by a `Separator`.
+  - Added a "Tasks" sub-heading to visually distinguish the tasks section from workspaces.
+  - Added imports for `TaskList`, `TaskSourcePicker`, `TaskSourceFilter`, and `Separator`.
+  - Updated doc comment to reference Issue #170.
+- Modified `apps/web/src/components/task-source-picker.tsx`:
+  - Changed `activeProjectId?: string | null` prop to required `projectId: string` since tasks are always rendered within a project context.
+  - Renamed all `activeProjectId` references to `projectId` throughout.
+  - Removed the "Select a project above" conditional message (no longer relevant since project is always known).
+  - Simplified the Sync button's disabled state (removed `!projectId` check since it's always a string).
+- Modified `apps/web/src/components/task-list.tsx`:
+  - Changed `activeProjectId?: string | null` prop to required `projectId: string`.
+  - Removed `projectName` prop from `TaskItemProps` and `CardDescription` from task cards (redundant — project context is provided by parent ProjectGroup heading).
+  - Removed `allProjects$` query and `projects` schema import (no longer needed for project name lookup).
+  - Removed `projectNameMap` construction and usage.
+  - Updated doc comment to reference Issue #170.
+- Modified `apps/web/src/routes/index.tsx` (HomeComponent):
+  - Removed the standalone `<section>` containing Tasks heading, `<TaskSourcePicker>`, and `<TaskList>`.
+  - Removed `activeTaskSource` / `setActiveTaskSource` state (no longer global — now per-project inside each ProjectGroup).
+  - Removed `TaskList`, `TaskSourcePicker`, and `TaskSourceFilter` imports.
+  - `activeProjectId` / `setActiveProjectId` state and `ProjectSwitcher` remain (to be removed in Issue #171).
+
+TypeScript: 0 errors. Ultracite: 0 issues. Tests: 4/4 pass (task-source-picker helpers).

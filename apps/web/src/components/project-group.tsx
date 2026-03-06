@@ -2,10 +2,14 @@
  * Project group component for the sidebar.
  *
  * Renders a single project as a collapsible heading with its workspaces
- * nested underneath. The heading shows the project name, a chevron toggle,
- * and project settings/delete actions.
+ * and tasks nested underneath. The heading shows the project name, a chevron
+ * toggle, and project settings/delete actions.
+ *
+ * Task source selection (Manual/Linear/GitHub) is managed independently
+ * per project via local state.
  *
  * @see Issue #168: ProjectGroup collapsible headings with nested workspaces
+ * @see Issue #170: Tasks nested under each project
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -14,6 +18,9 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { ProjectSettingsModal } from "@/components/project-settings-modal";
+import { TaskList } from "@/components/task-list";
+import { TaskSourcePicker } from "@/components/task-source-picker";
+import type { TaskSourceFilter } from "@/components/task-source-picker.helpers";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -31,6 +38,7 @@ import {
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Separator } from "@/components/ui/separator";
 import { WorkspaceList } from "@/components/workspace-list";
 import { cn, extractErrorMessage } from "@/lib/utils";
 
@@ -50,6 +58,7 @@ interface ProjectGroupProps {
 function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [isRemoving, setIsRemoving] = useState(false);
+	const [taskSource, setTaskSource] = useState<TaskSourceFilter>("manual");
 	const removeProject = useAtomSet(removeProjectMutation, {
 		mode: "promise",
 	});
@@ -130,6 +139,16 @@ function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
 			<CollapsibleContent>
 				<div className="mt-1 ml-2 border-l pl-2">
 					<WorkspaceList projectId={project.id} />
+					<Separator className="my-2" />
+					<div className="grid gap-2">
+						<h3 className="font-medium text-muted-foreground text-xs">Tasks</h3>
+						<TaskSourcePicker
+							activeSource={taskSource}
+							onSourceChange={setTaskSource}
+							projectId={project.id}
+						/>
+						<TaskList projectId={project.id} sourceFilter={taskSource} />
+					</div>
 				</div>
 			</CollapsibleContent>
 		</Collapsible>

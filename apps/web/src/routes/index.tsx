@@ -35,9 +35,6 @@ import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
 import { ProjectGroup } from "@/components/project-group";
 import { ProjectSwitcher } from "@/components/project-switcher";
-import { TaskList } from "@/components/task-list";
-import { TaskSourcePicker } from "@/components/task-source-picker";
-import type { TaskSourceFilter } from "@/components/task-source-picker.helpers";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -867,8 +864,6 @@ function HomeComponent() {
 
 	// Project switcher state — null means "All Projects" (no filter)
 	const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-	const [activeTaskSource, setActiveTaskSource] =
-		useState<TaskSourceFilter>("manual");
 
 	// Main content view toggle — panels (terminal panes) or dashboard
 	const [mainView, setMainView] = useState<MainView>("panels");
@@ -955,20 +950,6 @@ function HomeComponent() {
 										No projects. Add one to get started.
 									</p>
 								)}
-								<section>
-									<div className="mb-2 flex items-center justify-between">
-										<h2 className="font-medium text-sm">Tasks</h2>
-									</div>
-									<TaskSourcePicker
-										activeProjectId={activeProjectId}
-										activeSource={activeTaskSource}
-										onSourceChange={setActiveTaskSource}
-									/>
-									<TaskList
-										activeProjectId={activeProjectId}
-										sourceFilter={activeTaskSource}
-									/>
-								</section>
 							</div>
 						</ScrollArea>
 						{/* Server Status — sticky footer, always visible outside scroll area */}

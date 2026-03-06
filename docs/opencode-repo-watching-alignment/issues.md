@@ -209,11 +209,11 @@ This slice should choose one thin but real downstream consumer path - for exampl
 
 ### Acceptance criteria
 
-- [ ] At least one production downstream service consumes normalized repository file events
-- [ ] The consumer performs meaningful invalidation or refresh work rather than only logging events
-- [ ] Event consumption does not introduce duplicate watcher ownership or tight backend coupling
-- [ ] End-to-end tests verify that repo file changes drive the expected downstream invalidation behavior
-- [ ] The event bus remains reusable for future repo-aware features
+- [x] At least one production downstream service consumes normalized repository file events
+- [x] The consumer performs meaningful invalidation or refresh work rather than only logging events
+- [x] Event consumption does not introduce duplicate watcher ownership or tight backend coupling
+- [x] End-to-end tests verify that repo file changes drive the expected downstream invalidation behavior
+- [x] The event bus remains reusable for future repo-aware features
 
 ### Blocked by
 

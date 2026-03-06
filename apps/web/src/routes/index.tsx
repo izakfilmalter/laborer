@@ -1,4 +1,4 @@
-import { useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import {
   layoutPaneAssigned,
   layoutPaneClosed,
@@ -80,6 +80,8 @@ import {
   generateId,
   getFirstLeafId,
   getLeafIds,
+  getStaleTerminalLeaves,
+  reconcileLayout,
   replaceNode,
   splitPane,
 } from '@/panels/layout-utils'
@@ -123,6 +125,9 @@ const LAYOUT_SESSION_ID = 'default'
 const persistedLayout$ = queryDb(panelLayout, {
   label: 'persistedPanelLayout',
 })
+
+/** Mutation atom for spawning terminals via the server's terminal.spawn RPC. */
+const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
 
 /**
  * Health check query atom — subscribes to the server's health.check RPC.
@@ -458,6 +463,173 @@ function usePanelLayout() {
     }
   }, [persistedLayoutTree, initialLayout, store])
 
+  // -------------------------------------------------------------------
+  // Reconcile persisted layout against live terminal state on startup.
+  // -------------------------------------------------------------------
+  // After a full app restart the terminal service loses its in-memory
+  // state (all PTY processes are gone), but the persisted layout in
+  // LiveStore/OPFS still contains stale terminal IDs. Without this
+  // reconciliation, the UI renders TerminalPane components that try to
+  // connect to non-existent terminals via WebSocket, producing infinite
+  // reconnection loops.
+  //
+  // Following VS Code's approach: on startup we accept the old processes
+  // are dead and spawn NEW terminals in the same workspaces. The user
+  // gets immediately usable terminals instead of empty panes or error
+  // states. Panes without a workspaceId (or where the spawn fails) fall
+  // back to the EmptyTerminalPane CTA.
+  const { terminals: liveTerminals, isLoading: terminalsLoading } =
+    useTerminalList()
+  const spawnTerminal = useAtomSet(spawnTerminalMutation, {
+    mode: 'promise',
+  })
+  // Start as "reconciling" when a persisted layout exists — this prevents
+  // rendering TerminalPane components with potentially stale terminal IDs
+  // before we've checked them against the live terminal service.
+  const [isReconciling, setIsReconciling] = useState(
+    () => persistedLayoutTree !== undefined
+  )
+  const hasReconciled = useRef(false)
+  useEffect(() => {
+    console.log('[reconcile] effect fired', {
+      terminalsLoading,
+      hasReconciled: hasReconciled.current,
+      hasPersistedLayout: persistedLayoutTree !== undefined,
+      liveTerminalCount: liveTerminals.length,
+      liveTerminalIds: liveTerminals.map((t) => t.id),
+    })
+
+    if (terminalsLoading || hasReconciled.current) {
+      console.log(
+        '[reconcile] skipping — terminalsLoading:',
+        terminalsLoading,
+        'hasReconciled:',
+        hasReconciled.current
+      )
+      return
+    }
+
+    if (!persistedLayoutTree) {
+      console.log('[reconcile] no persisted layout — marking done')
+      hasReconciled.current = true
+      setIsReconciling(false)
+      return
+    }
+
+    const liveIds = new Set(liveTerminals.map((t) => t.id))
+    const staleLeaves = getStaleTerminalLeaves(persistedLayoutTree, liveIds)
+    console.log(
+      '[reconcile] stale leaves:',
+      staleLeaves.map((l) => ({
+        id: l.id,
+        terminalId: l.terminalId,
+        workspaceId: l.workspaceId,
+      }))
+    )
+
+    if (staleLeaves.length === 0) {
+      console.log('[reconcile] no stale terminals — marking done')
+      hasReconciled.current = true
+      setIsReconciling(false)
+      return
+    }
+
+    // Mark as reconciled immediately to prevent re-entry during the
+    // async spawn phase.
+    hasReconciled.current = true
+    console.log(
+      '[reconcile] spawning new terminals for',
+      staleLeaves.length,
+      'stale panes'
+    )
+
+    // Spawn new terminals for stale panes sequentially, then update the
+    // layout tree with the new terminal IDs. Sequential spawning avoids
+    // concurrency issues with the AtomRpc mutation layer.
+    const respawnStaleTerminals = async () => {
+      const respawnedIds = new Map<string, string>()
+
+      for (const leaf of staleLeaves) {
+        if (!(leaf.workspaceId && leaf.terminalId)) {
+          console.log(
+            '[reconcile] skipping leaf without workspaceId/terminalId:',
+            leaf.id
+          )
+          continue
+        }
+        try {
+          console.log(
+            '[reconcile] spawning terminal for workspace:',
+            leaf.workspaceId,
+            'replacing:',
+            leaf.terminalId
+          )
+          const result = await spawnTerminal({
+            payload: { workspaceId: leaf.workspaceId },
+          })
+          console.log(
+            '[reconcile] spawned new terminal:',
+            result.id,
+            'for workspace:',
+            leaf.workspaceId
+          )
+          respawnedIds.set(leaf.terminalId, result.id)
+        } catch (error) {
+          console.error(
+            '[reconcile] spawn failed for workspace:',
+            leaf.workspaceId,
+            error
+          )
+        }
+      }
+
+      console.log(
+        '[reconcile] all spawns complete, respawnedIds:',
+        Object.fromEntries(respawnedIds)
+      )
+
+      // Re-read the persisted layout to avoid overwriting any changes
+      // that occurred during the async spawn phase.
+      const currentRows = store.query(persistedLayout$)
+      const currentRow = currentRows.find((row) => row.id === LAYOUT_SESSION_ID)
+      const currentTree = currentRow?.layoutTree as PanelNode | undefined
+      if (!currentTree) {
+        console.log(
+          '[reconcile] no current layout tree after spawn — marking done'
+        )
+        setIsReconciling(false)
+        return
+      }
+
+      const reconciled = reconcileLayout(currentTree, liveIds, respawnedIds)
+      if (reconciled !== currentTree) {
+        console.log('[reconcile] committing reconciled layout')
+        store.commit(
+          layoutRestored({
+            id: LAYOUT_SESSION_ID,
+            layoutTree: reconciled,
+            activePaneId: ensureValidActivePaneId(
+              reconciled,
+              currentRow?.activePaneId ?? null
+            ),
+          })
+        )
+      } else {
+        console.log('[reconcile] layout unchanged after reconciliation')
+      }
+      console.log('[reconcile] done — setIsReconciling(false)')
+      setIsReconciling(false)
+    }
+
+    respawnStaleTerminals()
+  }, [
+    terminalsLoading,
+    liveTerminals,
+    persistedLayoutTree,
+    spawnTerminal,
+    store,
+  ])
+
   const handleSplitPane = useCallback(
     (paneId: string, direction: 'horizontal' | 'vertical') => {
       const base = persistedLayoutTree ?? initialLayout
@@ -772,6 +944,7 @@ function usePanelLayout() {
     panelActions,
     activePaneId: persistedActivePaneId,
     leafPaneIds,
+    isReconciling,
   }
 }
 
@@ -856,7 +1029,8 @@ function CloseAppDialog({
 }
 
 function HomeComponent() {
-  const { layout, panelActions, activePaneId, leafPaneIds } = usePanelLayout()
+  const { layout, panelActions, activePaneId, leafPaneIds, isReconciling } =
+    usePanelLayout()
   const store = useLaborerStore()
   const projectList = store.useQuery(sidebarProjects$)
   const workspaceList = store.useQuery(sidebarWorkspaces$)
@@ -1096,7 +1270,15 @@ function HomeComponent() {
                     onMetaWWithoutPane={handleMetaWWithoutPane}
                   />
                   <div className="min-h-0 flex-1">
-                    <PanelManager layout={layout} />
+                    {isReconciling ? (
+                      <div className="flex h-full items-center justify-center bg-background">
+                        <p className="text-muted-foreground text-sm">
+                          Restoring terminal sessions...
+                        </p>
+                      </div>
+                    ) : (
+                      <PanelManager layout={layout} />
+                    )}
                   </div>
                 </>
               )}

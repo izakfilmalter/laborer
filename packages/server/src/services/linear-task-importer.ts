@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
@@ -162,6 +163,60 @@ const getConfigPath = (
     : resolve(projectRepoPath, configPath)
 }
 
+/**
+ * Read and parse the rlph config file.
+ * Returns a clear error if the file doesn't exist, is invalid,
+ * or is missing a [linear] section.
+ */
+const readRlphConfig = (
+  configPath: string
+): Effect.Effect<
+  ParsedRlphConfig & { readonly linear: LinearConfigValues },
+  RpcError
+> =>
+  Effect.gen(function* () {
+    if (!existsSync(configPath)) {
+      return yield* new RpcError({
+        message: `No rlph config found at ${configPath}. Create a .rlph/config.toml with a [linear] section to enable Linear import.`,
+        code: 'LINEAR_CONFIG_NOT_FOUND',
+      })
+    }
+
+    const configContent = yield* Effect.tryPromise({
+      try: () => readFile(configPath, 'utf8'),
+      catch: (error) =>
+        new RpcError({
+          message:
+            error instanceof Error
+              ? `Could not read rlph config at ${configPath}: ${error.message}`
+              : `Could not read rlph config at ${configPath}`,
+          code: 'LINEAR_CONFIG_NOT_FOUND',
+        }),
+    })
+
+    const parsedConfig = yield* Effect.try({
+      try: () => parseRlphConfig(configContent),
+      catch: (error) =>
+        new RpcError({
+          message:
+            error instanceof Error
+              ? `Invalid rlph config at ${configPath}: ${error.message}`
+              : `Invalid rlph config at ${configPath}`,
+          code: 'LINEAR_CONFIG_INVALID',
+        }),
+    })
+
+    if (!parsedConfig.linear) {
+      return yield* new RpcError({
+        message:
+          'The rlph config is missing a [linear] section with a team value',
+        code: 'LINEAR_CONFIG_MISSING_TEAM',
+      })
+    }
+
+    return { ...parsedConfig, linear: parsedConfig.linear }
+  })
+
 const buildLinearFilter = (
   label: string,
   linearConfig: LinearConfigValues
@@ -258,38 +313,7 @@ class LinearTaskImporter extends Context.Tag('@laborer/LinearTaskImporter')<
           resolvedConfig.rlphConfig.value
         )
 
-        const configContent = yield* Effect.tryPromise({
-          try: () => readFile(configPath, 'utf8'),
-          catch: (error) =>
-            new RpcError({
-              message:
-                error instanceof Error
-                  ? `Could not read rlph config at ${configPath}: ${error.message}`
-                  : `Could not read rlph config at ${configPath}`,
-              code: 'LINEAR_CONFIG_NOT_FOUND',
-            }),
-        })
-
-        const parsedConfig = yield* Effect.try({
-          try: () => parseRlphConfig(configContent),
-          catch: (error) =>
-            new RpcError({
-              message:
-                error instanceof Error
-                  ? `Invalid rlph config at ${configPath}: ${error.message}`
-                  : `Invalid rlph config at ${configPath}`,
-              code: 'LINEAR_CONFIG_INVALID',
-            }),
-        })
-
-        if (!parsedConfig.linear) {
-          return yield* new RpcError({
-            message:
-              'The rlph config is missing a [linear] section with a team value',
-            code: 'LINEAR_CONFIG_MISSING_TEAM',
-          })
-        }
-
+        const parsedConfig = yield* readRlphConfig(configPath)
         const linearConfig = parsedConfig.linear
 
         const apiKey = process.env[linearConfig.apiKeyEnv]

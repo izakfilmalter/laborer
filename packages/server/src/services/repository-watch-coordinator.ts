@@ -54,6 +54,8 @@ interface ProjectWatcherState {
 	readonly gitDirSubscription: WatchSubscription | null;
 	/** Project identifier */
 	readonly projectId: string;
+	/** Pending retry timer for watcher recovery */
+	recoveryTimer: ReturnType<typeof setTimeout> | null;
 	/** Canonical repo checkout root */
 	readonly repoPath: string;
 	/** Subscription to the repo checkout root for file change events */
@@ -65,6 +67,7 @@ interface ProjectWatcherState {
 }
 
 const DEBOUNCE_MS = 500;
+const RECOVERY_RETRY_MS = 1000;
 
 /**
  * Files in the git directory that indicate branch-related changes.
@@ -173,6 +176,10 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					clearTimeout(state.branchTimer);
 					state.branchTimer = null;
 				}
+				if (state.recoveryTimer !== null) {
+					clearTimeout(state.recoveryTimer);
+					state.recoveryTimer = null;
+				}
 			};
 
 			const closeState = (state: ProjectWatcherState): void => {
@@ -242,6 +249,37 @@ class RepositoryWatchCoordinator extends Context.Tag(
 				}, DEBOUNCE_MS);
 			};
 
+			const scheduleRecovery = (
+				state: ProjectWatcherState,
+				reason: string
+			): void => {
+				if (state.recoveryTimer !== null) {
+					return;
+				}
+
+				state.recoveryTimer = setTimeout(() => {
+					state.recoveryTimer = null;
+					runPromise(
+						Effect.logWarning(
+							`Watcher degraded for project ${state.projectId} (${reason}); attempting recovery`
+						).pipe(
+							Effect.zipRight(
+								Ref.get(statesRef).pipe(
+									Effect.flatMap((states) => {
+										const latest = states.get(state.projectId);
+										if (latest === undefined) {
+											return Effect.void;
+										}
+
+										return watchProject(latest.projectId, latest.repoPath);
+									})
+								)
+							)
+						)
+					).catch(() => undefined);
+				}, RECOVERY_RETRY_MS);
+			};
+
 			// ── Git metadata watcher ─────────────────────────────────
 
 			/**
@@ -305,7 +343,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
 				repoPath: string,
 				gitDirPath: string,
 				target: "gitDir" | "worktrees"
-			): Effect.Effect<ProjectWatcherState | null, never> => {
+			): Effect.Effect<ProjectWatcherState, never> => {
 				const watchPath =
 					target === "worktrees" ? join(gitDirPath, "worktrees") : gitDirPath;
 
@@ -319,17 +357,19 @@ class RepositoryWatchCoordinator extends Context.Tag(
 								handleGitDirEvent(stateRef, event);
 							}
 						},
-						(_error) => {
+						(error) => {
 							if (stateRef !== null) {
+								runPromise(
+									Effect.logWarning(
+										`Git watcher error for project ${projectId} at ${watchPath}: ${error.message}`
+									)
+								).catch(() => undefined);
 								scheduleReconcile(stateRef, "watcher-error");
 								scheduleBranchRefresh(stateRef, "watcher-error");
+								scheduleRecovery(stateRef, "git-watcher-error");
 							}
 						}
 					);
-
-					if (subscription === null) {
-						return null;
-					}
 
 					stateRef = {
 						projectId,
@@ -340,14 +380,33 @@ class RepositoryWatchCoordinator extends Context.Tag(
 						repoRootSubscription: null,
 						worktreeTimer: null,
 						branchTimer: null,
+						recoveryTimer: null,
 					};
+
+					if (subscription === null) {
+						yield* Effect.logWarning(
+							`Git watch target unavailable for project ${projectId}: ${watchPath}`
+						);
+					}
 
 					return stateRef;
 				}).pipe(
 					Effect.catchAll((error) =>
 						Effect.logWarning(
 							`Failed to watch git dir for project ${projectId}: ${error.message}`
-						).pipe(Effect.as(null))
+						).pipe(
+							Effect.as({
+								projectId,
+								repoPath,
+								gitDirPath,
+								target,
+								gitDirSubscription: null,
+								repoRootSubscription: null,
+								worktreeTimer: null,
+								branchTimer: null,
+								recoveryTimer: null,
+							} satisfies ProjectWatcherState)
+						)
 					)
 				);
 			};
@@ -378,12 +437,35 @@ class RepositoryWatchCoordinator extends Context.Tag(
 								Runtime.runSync(runtime)(eventBus.publish(normalized));
 							}
 						},
-						(_error) => {
-							// Repo-root watcher errors are non-fatal — log and continue
+						(error) => {
+							runPromise(
+								Effect.logWarning(
+									`Repo watcher error for project ${projectId} at ${repoPath}: ${error.message}`
+								)
+							).catch(() => undefined);
+							runPromise(
+								Ref.get(statesRef).pipe(
+									Effect.flatMap((states) => {
+										const state = states.get(projectId);
+										if (state === undefined) {
+											return Effect.void;
+										}
+										scheduleRecovery(state, "repo-watcher-error");
+										return Effect.void;
+									})
+								)
+							).catch(() => undefined);
 						},
 						{ recursive: true }
 					)
 					.pipe(
+						Effect.tap((subscription) =>
+							subscription === null
+								? Effect.logWarning(
+										`Repo watch target unavailable for project ${projectId}: ${repoPath}`
+									)
+								: Effect.void
+						),
 						Effect.catchAll((error) =>
 							Effect.logWarning(
 								`Failed to watch repo root for project ${projectId}: ${error.message}`
@@ -441,10 +523,6 @@ class RepositoryWatchCoordinator extends Context.Tag(
 						initialTarget
 					);
 
-					if (state === null) {
-						return;
-					}
-
 					// Subscribe to the repo checkout root for file-level events
 					const repoRootSub = yield* subscribeRepoRoot(
 						projectId,
@@ -462,6 +540,13 @@ class RepositoryWatchCoordinator extends Context.Tag(
 						next.set(projectId, stateWithRepoRoot);
 						return next;
 					});
+
+					if (
+						stateWithRepoRoot.gitDirSubscription === null ||
+						stateWithRepoRoot.repoRootSubscription === null
+					) {
+						scheduleRecovery(stateWithRepoRoot, "watch-target-unavailable");
+					}
 				}
 			);
 

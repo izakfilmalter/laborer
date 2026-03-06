@@ -465,6 +465,7 @@ describe("RepositoryEventBus watcher integration", () => {
 				});
 
 				yield* coordinator.watchProject("project-eventbus-multi", repoPath);
+				yield* Effect.promise(() => delay(200));
 
 				writeFileSync(
 					join(repoPath, "multi-sub-test.ts"),

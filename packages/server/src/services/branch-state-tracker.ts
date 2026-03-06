@@ -20,6 +20,7 @@ import { RpcError } from "@laborer/shared/rpc";
 import { events, tables } from "@laborer/shared/schema";
 import { Context, Effect, Layer } from "effect";
 import { LaborerStore } from "./laborer-store.js";
+import { withFsmonitorDisabled } from "./repo-watching-git.js";
 
 export interface BranchRefreshResult {
 	readonly checked: number;
@@ -44,24 +45,31 @@ const runGit = (
 				readonly stderr: string;
 				readonly stdout: string;
 			}>((resolve) => {
-				execFile("git", [...args], { cwd }, (error, stdout, stderr) => {
-					if (error) {
-						const code =
-							typeof error.code === "number" ? error.code : Number(error.code);
+				execFile(
+					"git",
+					withFsmonitorDisabled(args),
+					{ cwd },
+					(error, stdout, stderr) => {
+						if (error) {
+							const code =
+								typeof error.code === "number"
+									? error.code
+									: Number(error.code);
+							resolve({
+								exitCode: Number.isFinite(code) ? code : 1,
+								stdout: stdout ?? "",
+								stderr: stderr ?? "",
+							});
+							return;
+						}
+
 						resolve({
-							exitCode: Number.isFinite(code) ? code : 1,
+							exitCode: 0,
 							stdout: stdout ?? "",
 							stderr: stderr ?? "",
 						});
-						return;
 					}
-
-					resolve({
-						exitCode: 0,
-						stdout: stdout ?? "",
-						stderr: stderr ?? "",
-					});
-				});
+				);
 			}),
 		catch: (error) =>
 			new RpcError({

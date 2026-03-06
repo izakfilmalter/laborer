@@ -292,3 +292,40 @@
 - Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)
 - 3 pre-existing flaky filesystem watcher tests may intermittently timeout
   (worktree-watcher and repository-event-bus timing-dependent tests)
+
+## Issue 7: Correctness hardening for fsmonitor, recovery, and churn — COMPLETED
+
+### What was done
+- Added shared repo-watching git command options in
+  `packages/server/src/services/repo-watching-git.ts`
+  - All correctness-sensitive git reads in the repo-watching stack now run with
+    `-c core.fsmonitor=false`
+  - Wired into `RepositoryIdentity`, `WorktreeDetector`,
+    `WorktreeReconciler`, and `BranchStateTracker`
+
+- Hardened `RepositoryWatchCoordinator` for watcher degradation and recovery
+  (`packages/server/src/services/repository-watch-coordinator.ts`)
+  - Added per-project recovery timers alongside existing debounce timers
+  - Git-dir watcher errors now log warnings, schedule refresh work, and trigger
+    automatic resubscription
+  - Repo-root watcher errors now log warnings and trigger automatic recovery
+  - Missing watch targets now produce warnings and schedule retry instead of
+    silently leaving the project unwatched
+
+- Added focused hardening tests in
+  `packages/server/test/repository-watch-coordinator-hardening.test.ts`
+  - Verifies heavy churn is coalesced into one reconciliation and one branch
+    refresh pass
+  - Verifies watcher degradation causes teardown + resubscription and that sync
+    continues after recovery
+  - Added a small unit test covering the shared fsmonitor-disabled git args
+
+- Stabilized an existing watcher integration test in
+  `packages/server/test/repository-event-bus.test.ts`
+  - Added a short settle delay before writing in the multi-subscriber watcher
+    case to remove an intermittent timing race in the feedback loop
+
+### Verification
+- All 178 server tests pass (28 test files)
+- TypeScript compiles with no errors
+- Ultracite lint passes on the touched server and docs paths

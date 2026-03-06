@@ -23,6 +23,7 @@ import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { Context, Data, Effect, Layer } from "effect";
+import { withFsmonitorDisabled } from "./repo-watching-git.js";
 
 /**
  * Metadata describing a canonical repository identity.
@@ -51,18 +52,23 @@ const runGit = (
 	Effect.tryPromise({
 		try: () =>
 			new Promise<string>((resolvePromise, rejectPromise) => {
-				execFile("git", [...args], { cwd }, (error, stdout, stderr) => {
-					if (error) {
-						rejectPromise(
-							new RepositoryIdentityError({
-								message: `git ${args.join(" ")} failed: ${stderr?.trim() || String(error)}`,
-							})
-						);
-						return;
-					}
+				execFile(
+					"git",
+					withFsmonitorDisabled(args),
+					{ cwd },
+					(error, stdout, stderr) => {
+						if (error) {
+							rejectPromise(
+								new RepositoryIdentityError({
+									message: `git ${args.join(" ")} failed: ${stderr?.trim() || String(error)}`,
+								})
+							);
+							return;
+						}
 
-					resolvePromise(stdout.trim());
-				});
+						resolvePromise(stdout.trim());
+					}
+				);
 			}),
 		catch: (cause) =>
 			cause instanceof RepositoryIdentityError

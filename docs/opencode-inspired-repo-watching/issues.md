@@ -258,11 +258,11 @@ This slice focuses on the non-happy-path behavior that makes the OpenCode-inspir
 
 ### Acceptance criteria
 
-- [ ] Correctness-sensitive git reads disable fsmonitor where needed
-- [ ] Watched directories can be deleted and recreated without permanently breaking sync
-- [ ] Heavy churn scenarios are coalesced into stable refresh behavior
-- [ ] Watcher degradation surfaces as warnings or diagnostics without stopping the app
-- [ ] Integration tests cover recovery and high-churn scenarios
+- [x] Correctness-sensitive git reads disable fsmonitor where needed
+- [x] Watched directories can be deleted and recreated without permanently breaking sync
+- [x] Heavy churn scenarios are coalesced into stable refresh behavior
+- [x] Watcher degradation surfaces as warnings or diagnostics without stopping the app
+- [x] Integration tests cover recovery and high-churn scenarios
 
 ### Blocked by
 

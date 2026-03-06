@@ -927,61 +927,64 @@ function HomeComponent() {
 					onResize={handleSidebarResize}
 					panelRef={sidebarPanelRef}
 				>
-					<ScrollArea className="h-full">
-						<div className="grid gap-4 p-3">
-							{/* Project switcher — filter sidebar by project */}
-							{hasProjects && (
-								<ProjectSwitcher
-									activeProjectId={activeProjectId}
-									onProjectChange={setActiveProjectId}
-								/>
-							)}
-							<div className="flex items-center justify-between">
-								<h2 className="font-medium text-sm">Projects</h2>
-								<AddProjectForm />
-							</div>
-							{/* Project-grouped tree — each project is a collapsible heading */}
-							{projectList.map((project) => (
-								<ProjectGroup
-									expanded={collapseState.isExpanded(project.id)}
-									key={project.id}
-									onToggle={() => collapseState.toggle(project.id)}
-									project={project}
-								/>
-							))}
-							{projectList.length === 0 && (
-								<p className="py-2 text-center text-muted-foreground text-xs">
-									No projects. Add one to get started.
-								</p>
-							)}
-							<section>
-								<div className="mb-2 flex items-center justify-between">
-									<h2 className="font-medium text-sm">Tasks</h2>
+					<div className="flex h-full flex-col">
+						<ScrollArea className="min-h-0 flex-1">
+							<div className="grid gap-4 p-3">
+								{/* Project switcher — filter sidebar by project */}
+								{hasProjects && (
+									<ProjectSwitcher
+										activeProjectId={activeProjectId}
+										onProjectChange={setActiveProjectId}
+									/>
+								)}
+								<div className="flex items-center justify-between">
+									<h2 className="font-medium text-sm">Projects</h2>
+									<AddProjectForm />
 								</div>
-								<TaskSourcePicker
-									activeProjectId={activeProjectId}
-									activeSource={activeTaskSource}
-									onSourceChange={setActiveTaskSource}
-								/>
-								<TaskList
-									activeProjectId={activeProjectId}
-									sourceFilter={activeTaskSource}
-								/>
-							</section>
-							<section className="rounded-lg border p-3">
-								<h2 className="mb-1 font-medium text-sm">Server Status</h2>
-								<p className="text-xs">
-									<Suspense
-										fallback={
-											<span className="text-muted-foreground">loading...</span>
-										}
-									>
-										<HealthCheckStatus />
-									</Suspense>
-								</p>
-							</section>
-						</div>
-					</ScrollArea>
+								{/* Project-grouped tree — each project is a collapsible heading */}
+								{projectList.map((project) => (
+									<ProjectGroup
+										expanded={collapseState.isExpanded(project.id)}
+										key={project.id}
+										onToggle={() => collapseState.toggle(project.id)}
+										project={project}
+									/>
+								))}
+								{projectList.length === 0 && (
+									<p className="py-2 text-center text-muted-foreground text-xs">
+										No projects. Add one to get started.
+									</p>
+								)}
+								<section>
+									<div className="mb-2 flex items-center justify-between">
+										<h2 className="font-medium text-sm">Tasks</h2>
+									</div>
+									<TaskSourcePicker
+										activeProjectId={activeProjectId}
+										activeSource={activeTaskSource}
+										onSourceChange={setActiveTaskSource}
+									/>
+									<TaskList
+										activeProjectId={activeProjectId}
+										sourceFilter={activeTaskSource}
+									/>
+								</section>
+							</div>
+						</ScrollArea>
+						{/* Server Status — sticky footer, always visible outside scroll area */}
+						<section className="shrink-0 border-t p-3">
+							<h2 className="mb-1 font-medium text-sm">Server Status</h2>
+							<p className="text-xs">
+								<Suspense
+									fallback={
+										<span className="text-muted-foreground">loading...</span>
+									}
+								>
+									<HealthCheckStatus />
+								</Suspense>
+							</p>
+						</section>
+					</div>
 				</ResizablePanel>
 
 				<ResizableHandle withHandle />

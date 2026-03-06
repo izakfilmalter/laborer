@@ -22,3 +22,16 @@ Changes made:
   - Kept ProjectSwitcher, Tasks section, and Server Status section temporarily (to be addressed in issues 169-172).
 
 TypeScript: 0 errors. Ultracite: 0 issues.
+
+### Issue 172: Server Status sticky footer — DONE
+
+Extracted the Server Status section from inside the ScrollArea and rendered it as a sticky footer pinned to the bottom of the sidebar panel, always visible regardless of scroll position.
+
+Changes made:
+- Modified `apps/web/src/routes/index.tsx` (HomeComponent sidebar):
+  - Wrapped the sidebar content in a `div.flex.h-full.flex-col` container inside the ResizablePanel so that the ScrollArea and footer share the panel height via flexbox.
+  - Changed the ScrollArea from `className="h-full"` to `className="min-h-0 flex-1"` so it fills remaining space above the footer and allows proper flex shrinking.
+  - Moved the Server Status `<section>` out of the ScrollArea's grid and placed it after the ScrollArea as a sibling element with `className="shrink-0 border-t p-3"`.
+  - Changed the Server Status styling from `rounded-lg border p-3` (card-style inside scroll) to `shrink-0 border-t p-3` (footer-style with top border separator, no shrinking).
+
+TypeScript: 0 errors. Ultracite: 0 issues.

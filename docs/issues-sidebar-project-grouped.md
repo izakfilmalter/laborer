@@ -257,6 +257,6 @@ End-to-end verification and polish pass for the full sidebar restructure. Verify
 | 169 | Per-project "+" button and CreateWorkspaceForm pre-selection | #168 | Ready |
 | 170 | Tasks nested under each project | #168 | Ready |
 | 171 | Replace ProjectSwitcher with search bar | #168 | Ready |
-| 172 | Server Status sticky footer | #168 | Ready |
+| 172 | Server Status sticky footer | #168 | Done |
 | 173 | Sidebar project-grouped layout — polish and verification | #168, #169, #170, #171, #172, #174 | Blocked |
 | 174 | Persist sidebar width in localStorage | None | Ready |

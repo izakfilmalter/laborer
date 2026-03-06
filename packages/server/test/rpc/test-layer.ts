@@ -2,6 +2,7 @@ import { RpcTest } from "@effect/rpc";
 import { LaborerRpcs } from "@laborer/shared/rpc";
 import { Context, Effect, Layer, Ref } from "effect";
 import { LaborerRpcsLive } from "../../src/rpc/handlers.js";
+import { BranchStateTracker } from "../../src/services/branch-state-tracker.js";
 import { ConfigService } from "../../src/services/config-service.js";
 import { DiffService } from "../../src/services/diff-service.js";
 import { FileWatcher } from "../../src/services/file-watcher.js";
@@ -94,6 +95,7 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
 	Layer.provide(ConfigService.layer),
 	Layer.provide(ProjectRegistry.layer),
 	Layer.provide(RepositoryWatchCoordinator.layer),
+	Layer.provide(BranchStateTracker.layer),
 	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),
@@ -114,6 +116,7 @@ const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
 	Layer.provide(ConfigService.layer),
 	Layer.provide(ProjectRegistry.layer),
 	Layer.provide(RepositoryWatchCoordinator.layer),
+	Layer.provide(BranchStateTracker.layer),
 	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),

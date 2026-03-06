@@ -10,21 +10,26 @@
  *
  * Watch events are treated as invalidation signals only. The
  * coordinator does not mutate project or workspace state directly;
- * instead, it debounces events and delegates to refresh services
- * (currently WorktreeReconciler, later BranchStateTracker and
- * RepositoryStateRefresher from Issue 4).
+ * instead, it debounces events and delegates to refresh services:
+ *   - WorktreeReconciler for worktree membership changes
+ *   - BranchStateTracker for branch metadata refresh
+ *
+ * Events are classified by concern and debounced independently so
+ * that rapid branch switches do not delay worktree reconciliation
+ * and vice versa.
  *
  * The coordinator is scoped: project removal tears down that
  * project's watchers, and server shutdown tears down all watchers
  * via the Effect finalizer.
  *
- * @see PRD-opencode-inspired-repo-watching.md — Issue 3
+ * @see PRD-opencode-inspired-repo-watching.md — Issues 3 & 4
  */
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { tables } from "@laborer/shared/schema";
 import { Context, Data, Effect, Layer, Ref, Runtime } from "effect";
+import { BranchStateTracker } from "./branch-state-tracker.js";
 import {
 	FileWatcher,
 	type WatchEvent,
@@ -39,6 +44,8 @@ import { WorktreeReconciler } from "./worktree-reconciler.js";
  * can be individually torn down on project removal.
  */
 interface ProjectWatcherState {
+	/** Pending debounce timer for branch state refresh */
+	branchTimer: ReturnType<typeof setTimeout> | null;
 	/** Canonical path to the git common directory */
 	readonly gitDirPath: string;
 	/** Subscription to the git metadata directory */
@@ -49,11 +56,58 @@ interface ProjectWatcherState {
 	readonly repoPath: string;
 	/** Current git dir watching target (gitDir or worktrees subdirectory) */
 	readonly target: "gitDir" | "worktrees";
-	/** Pending debounce timer for git metadata changes */
-	timer: ReturnType<typeof setTimeout> | null;
+	/** Pending debounce timer for worktree reconciliation */
+	worktreeTimer: ReturnType<typeof setTimeout> | null;
 }
 
 const DEBOUNCE_MS = 500;
+
+/**
+ * Files in the git directory that indicate branch-related changes.
+ * HEAD is modified on branch switches, refs/ contains branch pointers,
+ * MERGE_HEAD and REBASE_HEAD appear during merge/rebase operations.
+ */
+const BRANCH_RELATED_FILES = new Set([
+	"HEAD",
+	"MERGE_HEAD",
+	"REBASE_HEAD",
+	"ORIG_HEAD",
+	"FETCH_HEAD",
+]);
+
+/**
+ * Determine whether a filesystem event from the git directory
+ * is branch-related based on the fileName.
+ */
+const isBranchRelatedEvent = (fileName: string | null): boolean => {
+	if (fileName === null) {
+		// If fileName is unavailable, treat as both concerns
+		return true;
+	}
+	if (BRANCH_RELATED_FILES.has(fileName)) {
+		return true;
+	}
+	// refs/ directory changes (e.g., refs/heads/main) indicate branch updates
+	if (fileName.startsWith("refs")) {
+		return true;
+	}
+	return false;
+};
+
+/**
+ * Determine whether a filesystem event from the git directory
+ * is worktree-related based on the fileName.
+ */
+const isWorktreeRelatedEvent = (fileName: string | null): boolean => {
+	if (fileName === null) {
+		// If fileName is unavailable, treat as both concerns
+		return true;
+	}
+	if (fileName === "worktrees" || fileName.startsWith("worktrees")) {
+		return true;
+	}
+	return false;
+};
 
 class RepositoryWatchCoordinatorError extends Data.TaggedError(
 	"RepositoryWatchCoordinatorError"
@@ -95,6 +149,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
 		Effect.gen(function* () {
 			const { store } = yield* LaborerStore;
 			const reconciler = yield* WorktreeReconciler;
+			const branchTracker = yield* BranchStateTracker;
 			const repoIdentity = yield* RepositoryIdentity;
 			const fileWatcher = yield* FileWatcher;
 			const runtime = yield* Effect.runtime<never>();
@@ -104,15 +159,19 @@ class RepositoryWatchCoordinator extends Context.Tag(
 
 			// ── Helpers ──────────────────────────────────────────────
 
-			const clearTimer = (state: ProjectWatcherState): void => {
-				if (state.timer !== null) {
-					clearTimeout(state.timer);
-					state.timer = null;
+			const clearTimers = (state: ProjectWatcherState): void => {
+				if (state.worktreeTimer !== null) {
+					clearTimeout(state.worktreeTimer);
+					state.worktreeTimer = null;
+				}
+				if (state.branchTimer !== null) {
+					clearTimeout(state.branchTimer);
+					state.branchTimer = null;
 				}
 			};
 
 			const closeState = (state: ProjectWatcherState): void => {
-				clearTimer(state);
+				clearTimers(state);
 				if (state.gitDirSubscription !== null) {
 					state.gitDirSubscription.close();
 				}
@@ -132,16 +191,46 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					)
 				);
 
+			const refreshBranchesWithWarning = (
+				projectId: string,
+				reason: string
+			): Effect.Effect<void, never> =>
+				branchTracker.refreshBranches(projectId).pipe(
+					Effect.asVoid,
+					Effect.catchAll((error) =>
+						Effect.logWarning(
+							`Branch refresh failed for project ${projectId} (${reason}): ${error.message}`
+						)
+					)
+				);
+
 			const scheduleReconcile = (
 				state: ProjectWatcherState,
 				reason: string
 			): void => {
-				clearTimer(state);
-				state.timer = setTimeout(() => {
-					state.timer = null;
+				if (state.worktreeTimer !== null) {
+					clearTimeout(state.worktreeTimer);
+				}
+				state.worktreeTimer = setTimeout(() => {
+					state.worktreeTimer = null;
 					runPromise(
 						reconcileWithWarning(state.projectId, state.repoPath, reason)
 					).catch(() => undefined);
+				}, DEBOUNCE_MS);
+			};
+
+			const scheduleBranchRefresh = (
+				state: ProjectWatcherState,
+				reason: string
+			): void => {
+				if (state.branchTimer !== null) {
+					clearTimeout(state.branchTimer);
+				}
+				state.branchTimer = setTimeout(() => {
+					state.branchTimer = null;
+					runPromise(refreshBranchesWithWarning(state.projectId, reason)).catch(
+						() => undefined
+					);
 				}, DEBOUNCE_MS);
 			};
 
@@ -176,18 +265,31 @@ class RepositoryWatchCoordinator extends Context.Tag(
 				event: WatchEvent
 			): void => {
 				if (state.target === "gitDir") {
-					// Only react to the appearance of the worktrees directory
-					// when watching the whole git dir
+					// When watching the whole git dir, classify events by concern
+
+					// Check for worktrees directory appearance to switch targets
 					if (event.fileName === "worktrees") {
 						switchToWorktreesWatcher(state);
 						scheduleReconcile(state, "worktrees-created");
 					}
+
+					// Branch-related events trigger branch refresh
+					if (isBranchRelatedEvent(event.fileName)) {
+						scheduleBranchRefresh(state, "git-metadata-change");
+					}
+
+					// Worktree-related events trigger reconciliation
+					if (isWorktreeRelatedEvent(event.fileName)) {
+						scheduleReconcile(state, "git-metadata-change");
+					}
 					return;
 				}
 
-				// Watching the worktrees subdirectory — any change schedules
-				// reconciliation
+				// Watching the worktrees subdirectory — changes here are
+				// worktree-related, but also schedule branch refresh since
+				// worktree add/remove can affect branch state
 				scheduleReconcile(state, "filesystem-change");
+				scheduleBranchRefresh(state, "worktree-metadata-change");
 			};
 
 			const subscribeGitDir = (
@@ -212,6 +314,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
 						(_error) => {
 							if (stateRef !== null) {
 								scheduleReconcile(stateRef, "watcher-error");
+								scheduleBranchRefresh(stateRef, "watcher-error");
 							}
 						}
 					);
@@ -226,7 +329,8 @@ class RepositoryWatchCoordinator extends Context.Tag(
 						gitDirPath,
 						target,
 						gitDirSubscription: subscription,
-						timer: null,
+						worktreeTimer: null,
+						branchTimer: null,
 					};
 
 					return stateRef;
@@ -306,6 +410,9 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					const projects = store.query(tables.projects);
 					yield* Effect.forEach(projects, (project) =>
 						reconcileWithWarning(project.id, project.repoPath, "startup")
+					);
+					yield* Effect.forEach(projects, (project) =>
+						refreshBranchesWithWarning(project.id, "startup")
 					);
 					yield* Effect.forEach(projects, (project) =>
 						watchProject(project.id, project.repoPath)

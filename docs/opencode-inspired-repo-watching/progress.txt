@@ -120,3 +120,61 @@
 - All 145 tests pass (24 test files)
 - TypeScript compiles with no errors
 - Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)
+
+## Issue 4: Git metadata refresh for branch and worktree changes — COMPLETED
+
+### What was done
+- Added `workspaceBranchChanged` event to LiveStore schema (`packages/shared/src/schema.ts`)
+  - New synced event `v1.WorkspaceBranchChanged` with `id` and `branchName` fields
+  - Materializer updates the `branchName` column on the `workspaces` table
+  - Enables updating branch names on existing workspace records (previously only
+    set at creation time and never updated)
+
+- Created `BranchStateTracker` Effect service (`packages/server/src/services/branch-state-tracker.ts`)
+  - Reads current branch for each workspace via `git rev-parse --abbrev-ref HEAD`
+  - Compares git-reported branch with stored `branchName` in the workspace record
+  - Commits `workspaceBranchChanged` events for any stale branch names
+  - Handles detached HEAD state (formats as `detached/<short-sha>`)
+  - Skips destroyed workspaces during refresh
+  - Returns `BranchRefreshResult` with `checked` and `updated` counts
+
+- Updated `RepositoryWatchCoordinator` to integrate branch refresh
+  (`packages/server/src/services/repository-watch-coordinator.ts`)
+  - Added `BranchStateTracker` as a service dependency
+  - Event classification: git dir events are now classified by concern using
+    `isBranchRelatedEvent()` and `isWorktreeRelatedEvent()` helper functions
+  - Branch-related files: HEAD, MERGE_HEAD, REBASE_HEAD, ORIG_HEAD, FETCH_HEAD,
+    and anything under `refs/` trigger branch refresh
+  - Worktree-related files: `worktrees/` directory changes trigger reconciliation
+  - Per-concern debouncing: separate `worktreeTimer` and `branchTimer` on each
+    `ProjectWatcherState` so branch refresh and worktree reconciliation debounce
+    independently (both at 500ms)
+  - `watchAll()` now runs both initial reconciliation AND initial branch refresh
+    at startup
+  - Watcher error handlers schedule both reconcile and branch refresh
+
+- Wired `BranchStateTracker.layer` into the layer graph across the codebase:
+  - `main.ts`: added between `RepositoryWatchCoordinator.layer` and `FileWatcher.layer`
+  - All test layers updated with import and layer provision:
+    - `repository-watch-coordinator.test.ts` (main TestLayer + 2 inline ScopedTestLayers)
+    - `worktree-watcher.test.ts`
+    - `project-registry.worktree-detection.test.ts`
+    - `workspace-destroy-origin.test.ts`
+    - `repository-identity.test.ts`
+    - `rpc/test-layer.ts` (both RPC test layer variants)
+
+- Added 7 new integration tests (`packages/server/test/branch-state-tracker.test.ts`)
+  - BranchStateTracker unit tests (5):
+    - Refreshes branch name when workspace branch is stale
+    - Does not update when branch name is already current
+    - Refreshes multiple workspaces in one pass
+    - Skips destroyed workspaces during branch refresh
+    - Detects detached HEAD state during branch refresh
+  - Coordinator integration tests (2):
+    - Branch switch on main worktree triggers branch refresh through the coordinator
+    - Worktree metadata changes trigger both reconciliation and branch refresh
+
+### Verification
+- All 152 tests pass (25 test files)
+- TypeScript compiles with no errors
+- Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)

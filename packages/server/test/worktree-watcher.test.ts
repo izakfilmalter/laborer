@@ -4,6 +4,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { events, tables } from "@laborer/shared/schema";
 import { Effect, Layer } from "effect";
 import { afterAll } from "vitest";
+import { BranchStateTracker } from "../src/services/branch-state-tracker.js";
 import { FileWatcher } from "../src/services/file-watcher.js";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
@@ -18,6 +19,7 @@ import { delay, waitFor } from "./helpers/timing-helpers.js";
 const tempRoots: string[] = [];
 
 const TestLayer = RepositoryWatchCoordinator.layer.pipe(
+	Layer.provide(BranchStateTracker.layer),
 	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),

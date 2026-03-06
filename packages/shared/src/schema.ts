@@ -147,6 +147,14 @@ export const workspaceStatusChanged = Events.synced({
 	}),
 });
 
+export const workspaceBranchChanged = Events.synced({
+	name: "v1.WorkspaceBranchChanged",
+	schema: Schema.Struct({
+		id: Schema.String,
+		branchName: Schema.String,
+	}),
+});
+
 export const workspaceDestroyed = Events.synced({
 	name: "v1.WorkspaceDestroyed",
 	schema: Schema.Struct({
@@ -337,6 +345,7 @@ export const events = {
 	projectRemoved,
 	workspaceCreated,
 	workspaceStatusChanged,
+	workspaceBranchChanged,
 	workspaceDestroyed,
 	terminalSpawned,
 	terminalOutput,
@@ -393,6 +402,8 @@ const materializers = State.SQLite.materializers(events, {
 		}),
 	"v1.WorkspaceStatusChanged": ({ id, status }) =>
 		workspaces.update({ status }).where({ id }),
+	"v1.WorkspaceBranchChanged": ({ id, branchName }) =>
+		workspaces.update({ branchName }).where({ id }),
 	"v1.WorkspaceDestroyed": ({ id }) => workspaces.delete().where({ id }),
 	"v1.TerminalSpawned": () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)
 	"v1.TerminalOutput": () => [], // @deprecated — no-op materializer retained for backward compat (Issue #143)

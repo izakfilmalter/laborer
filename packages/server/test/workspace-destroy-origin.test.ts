@@ -5,6 +5,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { events, tables } from "@laborer/shared/schema";
 import { Effect, Layer } from "effect";
 import { afterAll, beforeAll } from "vitest";
+import { BranchStateTracker } from "../src/services/branch-state-tracker.js";
 import { ConfigService } from "../src/services/config-service.js";
 import { FileWatcher } from "../src/services/file-watcher.js";
 import { LaborerStore } from "../src/services/laborer-store.js";
@@ -23,6 +24,7 @@ const tempRoots: string[] = [];
 const TestLayer = WorkspaceProvider.layer.pipe(
 	Layer.provideMerge(ProjectRegistry.layer),
 	Layer.provideMerge(RepositoryWatchCoordinator.layer),
+	Layer.provideMerge(BranchStateTracker.layer),
 	Layer.provideMerge(FileWatcher.layer),
 	Layer.provideMerge(WorktreeReconciler.layer),
 	Layer.provideMerge(WorktreeDetector.layer),

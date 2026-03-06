@@ -139,11 +139,11 @@ This slice should add the `BranchStateTracker` behavior and connect git-dir watc
 
 ### Acceptance criteria
 
-- [ ] Git metadata watch events trigger git-backed refresh work instead of direct state mutation
-- [ ] Branch changes update externally visible branch state through a dedicated service boundary
-- [ ] Worktree metadata changes trigger reconciliation through the watcher coordinator
-- [ ] Debouncing/coalescing prevents repeated rapid metadata events from thrashing refresh work
-- [ ] Integration tests cover branch switch and external worktree add/remove scenarios
+- [x] Git metadata watch events trigger git-backed refresh work instead of direct state mutation
+- [x] Branch changes update externally visible branch state through a dedicated service boundary
+- [x] Worktree metadata changes trigger reconciliation through the watcher coordinator
+- [x] Debouncing/coalescing prevents repeated rapid metadata events from thrashing refresh work
+- [x] Integration tests cover branch switch and external worktree add/remove scenarios
 
 ### Blocked by
 

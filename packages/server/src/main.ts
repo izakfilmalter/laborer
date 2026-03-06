@@ -28,6 +28,7 @@ import { env } from "@laborer/env/server";
 import { LaborerRpcs } from "@laborer/shared/rpc";
 import { Effect, Layer } from "effect";
 import { LaborerRpcsLive } from "./rpc/handlers.js";
+import { BranchStateTracker } from "./services/branch-state-tracker.js";
 import { ConfigService } from "./services/config-service.js";
 import { DiffService } from "./services/diff-service.js";
 import { FileWatcher } from "./services/file-watcher.js";
@@ -124,6 +125,7 @@ const HttpLiveBase = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 
 const HttpLive = HttpLiveBase.pipe(
 	Layer.provide(RepositoryWatchCoordinator.layer),
+	Layer.provide(BranchStateTracker.layer),
 	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),

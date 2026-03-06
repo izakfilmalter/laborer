@@ -96,12 +96,14 @@ const HealthCheckResponse = Schema.Struct({
 	uptime: Schema.Number,
 });
 
-const ProjectResponse = Schema.Struct({
+export const ProjectResponse = Schema.Struct({
 	id: Schema.String,
 	repoPath: Schema.String,
 	name: Schema.String,
 	rlphConfig: Schema.optional(Schema.String),
 });
+
+export type ProjectResponse = typeof ProjectResponse.Type;
 
 const ConfigResolvedValueString = Schema.Struct({
 	value: Schema.String,
@@ -200,6 +202,11 @@ export class LaborerRpcs extends RpcGroup.make(
 		payload: {
 			projectId: Schema.String,
 		},
+	}),
+
+	Rpc.make("project.list", {
+		success: Schema.Array(ProjectResponse),
+		error: RpcError,
 	}),
 
 	// -----------------------------------------------------------------------

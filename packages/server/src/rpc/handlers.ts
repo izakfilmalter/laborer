@@ -177,6 +177,18 @@ export const handlePrdList = ({ projectId }: { projectId: string }) =>
 			.map((prd) => toPrdResponse(prd));
 	});
 
+export const handleProjectList = () =>
+	Effect.gen(function* () {
+		const registry = yield* ProjectRegistry;
+		const projects = yield* registry.listProjects();
+		return projects.map((project) => ({
+			id: project.id,
+			repoPath: project.repoPath,
+			name: project.name,
+			rlphConfig: project.rlphConfig ?? undefined,
+		}));
+	});
+
 /**
  * RPC handler layer for the LaborerRpcs group.
  *
@@ -229,6 +241,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 				const registry = yield* ProjectRegistry;
 				yield* registry.removeProject(projectId);
 			}),
+		"project.list": handleProjectList,
 
 		// -------------------------------------------------------------------
 		// Config RPCs (Issue #157)

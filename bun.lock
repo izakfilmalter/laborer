@@ -111,6 +111,27 @@
         "typescript": "catalog:",
       },
     },
+    "packages/mcp": {
+      "name": "@laborer/mcp",
+      "version": "0.0.0",
+      "dependencies": {
+        "@effect/ai": "0.29.1",
+        "@effect/platform": "catalog:",
+        "@effect/platform-bun": "catalog:",
+        "@effect/rpc": "catalog:",
+        "@laborer/env": "workspace:*",
+        "@laborer/shared": "workspace:*",
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@effect/vitest": "catalog:",
+        "@laborer/config": "workspace:*",
+        "@types/bun": "^1.2.14",
+        "@types/node": "^25.3.3",
+        "typescript": "catalog:",
+        "vitest": "^3.2.4",
+      },
+    },
     "packages/server": {
       "name": "@laborer/server",
       "version": "0.0.0",
@@ -446,6 +467,8 @@
     "@laborer/config": ["@laborer/config@workspace:packages/config"],
 
     "@laborer/env": ["@laborer/env@workspace:packages/env"],
+
+    "@laborer/mcp": ["@laborer/mcp@workspace:packages/mcp"],
 
     "@laborer/server": ["@laborer/server@workspace:packages/server"],
 

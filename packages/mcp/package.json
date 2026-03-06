@@ -1,0 +1,34 @@
+{
+  "name": "@laborer/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "with-env": "dotenv -e ../../.env.local --",
+    "dev": "bun run with-env bun run --watch src/main.ts",
+    "build": "tsc --noEmit",
+    "check-types": "tsc --noEmit",
+    "start": "bun run with-env bun run src/main.ts",
+    "test": "vitest run"
+  },
+  "exports": {
+    ".": "./src/main.ts"
+  },
+  "dependencies": {
+    "@effect/ai": "0.29.1",
+    "@effect/platform": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@effect/rpc": "catalog:",
+    "@laborer/env": "workspace:*",
+    "@laborer/shared": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@laborer/config": "workspace:*",
+    "@types/bun": "^1.2.14",
+    "@types/node": "^25.3.3",
+    "typescript": "catalog:",
+    "vitest": "^3.2.4"
+  }
+}

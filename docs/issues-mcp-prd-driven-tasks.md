@@ -318,14 +318,14 @@ Register the package in the root `package.json` workspaces and turbo config.
 
 ### Acceptance criteria
 
-- [ ] `packages/mcp/` directory exists with package.json, tsconfig, and entry point
-- [ ] Package builds successfully with `bun run build`
-- [ ] McpServer starts over stdio transport using `@effect/ai` McpServer
-- [ ] RPC client connects to the main Laborer server
-- [ ] Project discovery matches cwd against registered project repoPaths
-- [ ] Project discovery walks up directories to find a matching project
-- [ ] Error is returned if no matching project is found
-- [ ] Package is registered in root workspace config
+- [x] `packages/mcp/` directory exists with package.json, tsconfig, and entry point
+- [x] Package builds successfully with `bun run build`
+- [x] McpServer starts over stdio transport using `@effect/ai` McpServer
+- [x] RPC client connects to the main Laborer server
+- [x] Project discovery matches cwd against registered project repoPaths
+- [x] Project discovery walks up directories to find a matching project
+- [x] Error is returned if no matching project is found
+- [x] Package is registered in root workspace config
 
 ### Blocked by
 
@@ -766,10 +766,10 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 181 | Issue creation RPC: prd.createIssue | #178 | Ready |
 | 182 | Issue read and list RPCs | #181 | Blocked |
 | 183 | Issue update RPC: prd.updateIssue | #182 | Blocked |
-| 184 | `@laborer/mcp` package scaffold: stdio server with project discovery | None | Ready |
+| 184 | `@laborer/mcp` package scaffold: stdio server with project discovery | None | Done |
 | 185 | MCP PRD tools: create_prd, read_prd, update_prd, list_prds | #180, #184 | Blocked |
 | 186 | MCP issue tools: create_issue, read_issues, update_issue, list_remaining_issues | #183, #184 | Blocked |
-| 187 | MCP auto-registration: Opencode config | #184 | Blocked |
+| 187 | MCP auto-registration: Opencode config | #184 | Ready |
 | 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Blocked |
 | 189 | Plans sidebar section: PlanList component | #175 | Ready |
 | 190 | Plan detail view: Plate.js markdown editor | #180, #189 | Blocked |

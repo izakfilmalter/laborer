@@ -92,7 +92,7 @@ const createTestLayer = (params: {
 
 	return RepositoryWatchCoordinator.layer.pipe(
 		Layer.provide(branchTrackerLayer),
-		Layer.provide(RepositoryEventBus.layer),
+		Layer.provideMerge(RepositoryEventBus.layer),
 		Layer.provide(fileWatcherLayer),
 		Layer.provide(reconcilerLayer),
 		Layer.provide(repoIdentityLayer),
@@ -295,6 +295,69 @@ describe("RepositoryWatchCoordinator hardening", () => {
 			]);
 		});
 	});
+
+	it.scoped(
+		"ignored repo-root paths stay quiet without triggering refresh work",
+		() => {
+			const reconcileCalls = { current: 0 };
+			const branchRefreshCalls = { current: 0 };
+			const watchersByPath = new Map<string, RecordedWatcher[]>();
+			const subscribePaths: string[] = [];
+			const closedPaths: string[] = [];
+
+			const TestLayer = createTestLayer({
+				reconcileCalls,
+				branchRefreshCalls,
+				watchersByPath,
+				subscribePaths,
+				closedPaths,
+			});
+
+			return Effect.gen(function* () {
+				const coordinator = yield* RepositoryWatchCoordinator;
+				const eventBus = yield* RepositoryEventBus;
+				const receivedRelativePaths: string[] = [];
+
+				yield* eventBus.subscribe((event) => {
+					receivedRelativePaths.push(event.relativePath);
+				});
+
+				yield* coordinator.watchProject("project-ignored-noise", "/input/repo");
+
+				const repoWatcher = watchersByPath.get("/virtual/repo")?.at(-1);
+				if (repoWatcher === undefined) {
+					throw new Error("Expected repo watcher subscription");
+				}
+
+				repoWatcher.onChange({
+					type: "change",
+					fileName: "node_modules/lodash/index.js",
+				});
+				repoWatcher.onChange({
+					type: "rename",
+					fileName: "dist/bundle.js",
+				});
+				repoWatcher.onChange({
+					type: "change",
+					fileName: "src/canary.ts",
+				});
+
+				yield* Effect.promise(() =>
+					waitFor(() => Promise.resolve(receivedRelativePaths.length === 1))
+				);
+				yield* Effect.promise(() => delay(700));
+
+				assert.deepStrictEqual(receivedRelativePaths, ["src/canary.ts"]);
+				assert.strictEqual(reconcileCalls.current, 0);
+				assert.strictEqual(branchRefreshCalls.current, 0);
+				assert.deepStrictEqual(subscribePaths, [
+					"/virtual/repo/.git",
+					"/virtual/repo",
+				]);
+				assert.deepStrictEqual(closedPaths, []);
+			}).pipe(Effect.provide(TestLayer));
+		}
+	);
 });
 
 describe("repo-watching git command options", () => {

@@ -420,3 +420,23 @@
 - `bun run test -- test/repository-watch-coordinator-hardening.test.ts test/repository-watch-coordinator.test.ts` passes (10 tests)
 - `bun run --filter @laborer/server check-types` passes
 - `bun x ultracite check packages/server/src/services/repository-watch-coordinator.ts packages/server/test/repository-watch-coordinator-hardening.test.ts` passes
+
+## Issue 8: Ignored repo-root noise stays quiet without downstream churn — IN PROGRESS
+
+### What was done
+- Added coordinator hardening coverage in `packages/server/test/repository-watch-coordinator-hardening.test.ts`
+  - Simulates ignored repo-root watcher events for `node_modules` and `dist` through the
+    public `RepositoryWatchCoordinator` + `RepositoryEventBus` test layer
+  - Verifies ignored paths do not publish normalized file events, while a source-file canary
+    event still flows through the repo watcher to prove the watcher is active
+  - Verifies ignored repo-root noise does not schedule worktree reconciliation or branch
+    refresh work, keeping the watcher pipeline quiet under dependency/build-output churn
+
+- Updated `docs/opencode-inspired-repo-watching/issues.md`
+  - Checked off the acceptance criterion for ignored paths staying quiet and not triggering
+    noisy refresh work
+
+### Verification
+- `bun run test -- test/repository-watch-coordinator-hardening.test.ts` passes
+- `bun run --filter @laborer/server check-types` passes
+- `bun x ultracite check packages/server/test/repository-watch-coordinator-hardening.test.ts docs/opencode-inspired-repo-watching/issues.md docs/opencode-inspired-repo-watching/progress.txt` passes

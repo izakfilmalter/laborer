@@ -14,9 +14,7 @@
  * Issue #34: WorkspaceProvider — worktree directory validation + file watcher scoping
  */
 
-import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -25,21 +23,11 @@ import {
 	buildValidationErrorMessage,
 	validateWorktree,
 } from "../src/services/workspace-provider.js";
+import { createTempDir, git } from "./helpers/git-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Test Helpers
 // ---------------------------------------------------------------------------
-
-/** Create a unique temporary directory for test isolation. */
-const createTempDir = (prefix: string): string => {
-	const dir = join(tmpdir(), `laborer-test-${prefix}-${Date.now()}`);
-	mkdirSync(dir, { recursive: true });
-	return dir;
-};
-
-/** Run a shell command in a directory, returning stdout. */
-const git = (args: string, cwd: string): string =>
-	execSync(`git ${args}`, { cwd, encoding: "utf-8" }).trim();
 
 /** Run an Effect and return the result. */
 const runEffect = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>

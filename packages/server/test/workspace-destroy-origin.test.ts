@@ -1,6 +1,5 @@
-import { execSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { spawn } from "node:child_process";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { events, tables } from "@laborer/shared/schema";
 import { Effect, Exit, Layer, Scope } from "effect";
@@ -13,33 +12,10 @@ import { WorkspaceProvider } from "../src/services/workspace-provider.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
 import { WorktreeWatcher } from "../src/services/worktree-watcher.js";
+import { git, initRepo } from "./helpers/git-helpers.js";
 import { TestLaborerStore } from "./helpers/test-store.js";
 
 const tempRoots: string[] = [];
-
-const createTempDir = (prefix: string): string => {
-	const dir = join(
-		tmpdir(),
-		`laborer-test-${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	tempRoots.push(dir);
-	return dir;
-};
-
-const git = (args: string, cwd: string): string =>
-	execSync(`git ${args}`, { cwd, encoding: "utf-8" }).trim();
-
-const initRepo = (prefix: string): string => {
-	const repoPath = createTempDir(prefix);
-	git("init", repoPath);
-	git("config user.email test@example.com", repoPath);
-	git("config user.name Test User", repoPath);
-	writeFileSync(join(repoPath, "README.md"), "# test\n");
-	git("add README.md", repoPath);
-	git('commit -m "initial"', repoPath);
-	return repoPath;
-};
 
 const TestLayer = WorkspaceProvider.layer.pipe(
 	Layer.provideMerge(ProjectRegistry.layer),
@@ -111,7 +87,7 @@ afterAll(() => {
 
 describe("WorkspaceProvider.destroyWorktree origin behavior", () => {
 	it("keeps git worktree and branch for external workspaces", async () => {
-		const repoPath = initRepo("destroy-external");
+		const repoPath = initRepo("destroy-external", tempRoots);
 		const branchName = "feature/external";
 		const worktreePath = join(repoPath, ".worktrees", "external");
 		git(`worktree add -b ${branchName} ${worktreePath}`, repoPath);
@@ -177,7 +153,7 @@ describe("WorkspaceProvider.destroyWorktree origin behavior", () => {
 	});
 
 	it("removes git worktree and branch for laborer workspaces", async () => {
-		const repoPath = initRepo("destroy-laborer");
+		const repoPath = initRepo("destroy-laborer", tempRoots);
 		const branchName = "feature/laborer";
 		const worktreePath = join(repoPath, ".worktrees", "laborer");
 		git(`worktree add -b ${branchName} ${worktreePath}`, repoPath);

@@ -1,6 +1,4 @@
-import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { events, tables } from "@laborer/shared/schema";
 import { Effect, Exit, Layer, Scope } from "effect";
@@ -9,33 +7,10 @@ import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
+import { git, initRepo } from "./helpers/git-helpers.js";
 import { TestLaborerStore } from "./helpers/test-store.js";
 
 const tempRoots: string[] = [];
-
-const createTempDir = (prefix: string): string => {
-	const dir = join(
-		tmpdir(),
-		`laborer-test-${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	tempRoots.push(dir);
-	return dir;
-};
-
-const git = (args: string, cwd: string): string =>
-	execSync(`git ${args}`, { cwd, encoding: "utf-8" }).trim();
-
-const initRepo = (prefix: string): string => {
-	const repoPath = createTempDir(prefix);
-	git("init", repoPath);
-	git("config user.email test@example.com", repoPath);
-	git("config user.name Test User", repoPath);
-	writeFileSync(join(repoPath, "README.md"), "# test\n");
-	git("add README.md", repoPath);
-	git('commit -m "initial"', repoPath);
-	return repoPath;
-};
 
 const getDefaultBranchForTest = (repoPath: string): string => {
 	try {
@@ -100,7 +75,7 @@ afterEach(async () => {
 
 describe("WorktreeReconciler", () => {
 	it("creates external stopped workspaces for detected worktrees", async () => {
-		const repoPath = initRepo("reconciler-create");
+		const repoPath = initRepo("reconciler-create", tempRoots);
 		const linkedPath = join(repoPath, ".worktrees", "feature-c");
 		git(`worktree add -b feature/c ${linkedPath}`, repoPath);
 
@@ -129,7 +104,7 @@ describe("WorktreeReconciler", () => {
 	});
 
 	it("leaves matching existing workspace records untouched", async () => {
-		const repoPath = initRepo("reconciler-unchanged");
+		const repoPath = initRepo("reconciler-unchanged", tempRoots);
 		const [mainWorktreePath] = getDetectedWorktreePaths(repoPath);
 
 		await runEffect(
@@ -180,7 +155,7 @@ describe("WorktreeReconciler", () => {
 	});
 
 	it("removes stale workspace records not present on disk", async () => {
-		const repoPath = initRepo("reconciler-stale");
+		const repoPath = initRepo("reconciler-stale", tempRoots);
 		const stalePath = join(repoPath, ".worktrees", "missing");
 
 		await runEffect(
@@ -223,7 +198,7 @@ describe("WorktreeReconciler", () => {
 	});
 
 	it("handles mixed add, remove, and unchanged reconciliation", async () => {
-		const repoPath = initRepo("reconciler-mixed");
+		const repoPath = initRepo("reconciler-mixed", tempRoots);
 		const linkedPath = join(repoPath, ".worktrees", "feature-mixed");
 		const stalePath = join(repoPath, ".worktrees", "missing-mixed");
 		git(`worktree add -b feature/mixed ${linkedPath}`, repoPath);
@@ -290,7 +265,7 @@ describe("WorktreeReconciler", () => {
 	});
 
 	it("derives base SHA from merge-base for detected worktrees", async () => {
-		const repoPath = initRepo("reconciler-base-sha");
+		const repoPath = initRepo("reconciler-base-sha", tempRoots);
 		git("checkout -b feature/base-sha", repoPath);
 		writeFileSync(join(repoPath, "feature.txt"), "feature branch content\n");
 		git("add feature.txt", repoPath);
@@ -321,7 +296,7 @@ describe("WorktreeReconciler", () => {
 	});
 
 	it("frees allocated port when removing stale workspace", async () => {
-		const repoPath = initRepo("reconciler-free-port");
+		const repoPath = initRepo("reconciler-free-port", tempRoots);
 		const stalePath = join(repoPath, ".worktrees", "missing-port");
 
 		await runEffect(

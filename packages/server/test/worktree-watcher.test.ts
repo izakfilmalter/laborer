@@ -1,6 +1,4 @@
-import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { events, tables } from "@laborer/shared/schema";
 import { Effect, Exit, Layer, Scope } from "effect";
@@ -10,33 +8,10 @@ import { PortAllocator } from "../src/services/port-allocator.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
 import { WorktreeWatcher } from "../src/services/worktree-watcher.js";
+import { git, initRepo } from "./helpers/git-helpers.js";
 import { TestLaborerStore } from "./helpers/test-store.js";
 
 const tempRoots: string[] = [];
-
-const createTempDir = (prefix: string): string => {
-	const dir = join(
-		tmpdir(),
-		`laborer-test-${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	tempRoots.push(dir);
-	return dir;
-};
-
-const git = (args: string, cwd: string): string =>
-	execSync(`git ${args}`, { cwd, encoding: "utf-8" }).trim();
-
-const initRepo = (prefix: string): string => {
-	const repoPath = createTempDir(prefix);
-	git("init", repoPath);
-	git("config user.email test@example.com", repoPath);
-	git("config user.name Test User", repoPath);
-	writeFileSync(join(repoPath, "README.md"), "# test\n");
-	git("add README.md", repoPath);
-	git('commit -m "initial"', repoPath);
-	return repoPath;
-};
 
 const delay = (ms: number): Promise<void> =>
 	new Promise((resolve) => {
@@ -95,7 +70,7 @@ afterAll(() => {
 
 describe("WorktreeWatcher", () => {
 	it("reconciles on worktree add and remove", async () => {
-		const repoPath = initRepo("watcher-add-remove");
+		const repoPath = initRepo("watcher-add-remove", tempRoots);
 		const linkedPath = join(repoPath, ".worktrees", "watcher-one");
 
 		await runEffect(
@@ -135,7 +110,7 @@ describe("WorktreeWatcher", () => {
 	});
 
 	it("unwatchProject stops future reconciliation", async () => {
-		const repoPath = initRepo("watcher-unwatch");
+		const repoPath = initRepo("watcher-unwatch", tempRoots);
 		const linkedA = join(repoPath, ".worktrees", "watcher-a");
 		const linkedB = join(repoPath, ".worktrees", "watcher-b");
 
@@ -184,8 +159,8 @@ describe("WorktreeWatcher", () => {
 	});
 
 	it("watchAll reconciles existing projects and starts watchers", async () => {
-		const repoA = initRepo("watcher-all-a");
-		const repoB = initRepo("watcher-all-b");
+		const repoA = initRepo("watcher-all-a", tempRoots);
+		const repoB = initRepo("watcher-all-b", tempRoots);
 		const linkedA = join(repoA, ".worktrees", "watcher-all-a-one");
 		const linkedB = join(repoB, ".worktrees", "watcher-all-b-one");
 		git(`worktree add -b watcher/all-a ${linkedA}`, repoA);
@@ -250,7 +225,7 @@ describe("WorktreeWatcher", () => {
 	});
 
 	it("handles repos with no .git/worktrees until first linked worktree", async () => {
-		const repoPath = initRepo("watcher-missing-worktrees");
+		const repoPath = initRepo("watcher-missing-worktrees", tempRoots);
 		const linkedPath = join(repoPath, ".worktrees", "watcher-late-create");
 
 		await runEffect(

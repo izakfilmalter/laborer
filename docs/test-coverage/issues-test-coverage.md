@@ -47,10 +47,10 @@ See PRD Implementation Decisions > Shared Test Helpers for details.
 
 ### Acceptance criteria
 
-- [ ] `packages/server/test/helpers/git-helpers.ts` exists and exports `createTempDir`, `git`, `initRepo`
-- [ ] All worktree/workspace test files import from the helper -- zero remaining inline definitions
+- [x] `packages/server/test/helpers/git-helpers.ts` exists and exports `createTempDir`, `git`, `initRepo`
+- [x] All worktree/workspace test files import from the helper -- zero remaining inline definitions
 - [ ] All existing tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes on all modified files
+- [x] `bun x ultracite check` passes on all modified files
 
 ### Blocked by
 
@@ -763,7 +763,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
 | 1 | Extract TestLaborerStore shared helper | None | Done |
-| 2 | Extract git repo shared helpers | None | Ready |
+| 2 | Extract git repo shared helpers | None | In Progress |
 | 3 | Extract timing shared helpers | None | Ready |
 | 4 | Delete dead/duplicate test files from server | None | Ready |
 | 5 | Migrate worktree/workspace server tests to @effect/vitest | #1, #2, #3 | Blocked |

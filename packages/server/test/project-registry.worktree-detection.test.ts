@@ -1,6 +1,4 @@
-import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tables } from "@laborer/shared/schema";
 import { Effect, Exit, Layer, Scope } from "effect";
@@ -11,33 +9,10 @@ import { ProjectRegistry } from "../src/services/project-registry.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
 import { WorktreeWatcher } from "../src/services/worktree-watcher.js";
+import { git, initRepo } from "./helpers/git-helpers.js";
 import { TestLaborerStore } from "./helpers/test-store.js";
 
 const tempRoots: string[] = [];
-
-const createTempDir = (prefix: string): string => {
-	const dir = join(
-		tmpdir(),
-		`laborer-test-${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	tempRoots.push(dir);
-	return dir;
-};
-
-const git = (args: string, cwd: string): string =>
-	execSync(`git ${args}`, { cwd, encoding: "utf-8" }).trim();
-
-const initRepo = (prefix: string): string => {
-	const repoPath = createTempDir(prefix);
-	git("init", repoPath);
-	git("config user.email test@example.com", repoPath);
-	git("config user.name Test User", repoPath);
-	writeFileSync(join(repoPath, "README.md"), "# test\n");
-	git("add README.md", repoPath);
-	git('commit -m "initial"', repoPath);
-	return repoPath;
-};
 
 const TestLayer = ProjectRegistry.layer.pipe(
 	Layer.provide(WorktreeWatcher.layer),
@@ -78,7 +53,7 @@ afterEach(async () => {
 
 describe("ProjectRegistry integration with WorktreeReconciler", () => {
 	it("addProject creates workspace records for main and linked worktrees", async () => {
-		const repoPath = initRepo("project-registry-detect");
+		const repoPath = initRepo("project-registry-detect", tempRoots);
 		const linkedPath = join(repoPath, ".worktrees", "feature-d");
 		git(`worktree add -b feature/d ${linkedPath}`, repoPath);
 

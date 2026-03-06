@@ -989,7 +989,9 @@ function HomeComponent() {
 				{/* Main content — Panel system, dashboard, or welcome empty state */}
 				<ResizablePanel defaultSize="75%" minSize="10%">
 					{hasProjects ? (
-						<div className="flex h-full flex-col">
+						<div
+							className={`flex h-full flex-col border-2 ${mainView === "panels" && activePaneId ? "border-primary" : "border-transparent"}`}
+						>
 							<PanelHeaderBar
 								layout={layout}
 								mainView={mainView}
@@ -1006,9 +1008,7 @@ function HomeComponent() {
 										leafPaneIds={leafPaneIds}
 										onMetaWWithoutPane={handleMetaWWithoutPane}
 									/>
-									<div
-										className={`min-h-0 flex-1 border-2 ${activePaneId ? "border-primary" : "border-transparent"}`}
-									>
+									<div className="min-h-0 flex-1">
 										<PanelManager layout={layout} />
 									</div>
 								</>

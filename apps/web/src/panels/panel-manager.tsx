@@ -76,7 +76,7 @@ import {
 import { useResponsiveLayout } from "@/hooks/use-responsive-layout";
 import { extractErrorMessage } from "@/lib/utils";
 import { useLaborerStore } from "@/livestore/store";
-import { useActivePaneId, usePanelActions } from "@/panels/panel-context";
+import { usePanelActions } from "@/panels/panel-context";
 import { usePanelGroupRegistry } from "@/panels/panel-group-registry";
 import { DiffPane } from "@/panes/diff-pane";
 import { TerminalPane } from "@/panes/terminal-pane";
@@ -405,10 +405,9 @@ function SplitChild({
 /**
  * Renders a LeafNode pane with drop target support for terminal drag-and-drop.
  *
- * Active pane shows `border-2 border-primary` on all four edges.
- * Non-active panes show `border-2 border-transparent` to maintain
- * consistent sizing and prevent layout shift when focus changes.
- * Drag-over drop target uses `border-primary bg-primary/5` for consistency.
+ * The active-pane focus border is rendered on the outer panel container
+ * (in the route component), not on individual leaf panes.
+ * Drag-over drop target uses `border-primary bg-primary/5` for visual feedback.
  *
  * Empty terminal panes (no terminalId assigned) accept drops from the
  * sidebar terminal list. On drag-over, a visual highlight border appears.
@@ -421,13 +420,7 @@ function SplitChild({
  * @see Issue #134: Drag terminal from sidebar onto empty panel pane
  * @see Issue #148: Focused pane border fix
  */
-function LeafPaneRenderer({
-	isActive,
-	node,
-}: {
-	readonly isActive: boolean;
-	readonly node: LeafNode;
-}) {
+function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
 	const actions = usePanelActions();
 	const [isDragOver, setIsDragOver] = useState(false);
 
@@ -483,18 +476,16 @@ function LeafPaneRenderer({
 		[isEmptyTerminalPane, actions, node.id]
 	);
 
-	let borderClass = "border-transparent";
+	let borderClass = "";
 	if (isDragOver) {
-		borderClass = "border-primary bg-primary/5";
-	} else if (isActive) {
-		borderClass = "border-primary";
+		borderClass = "border-2 border-primary bg-primary/5";
 	}
 
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: Panel pane container requires drag-and-drop target behavior
 		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: Drag-and-drop handlers on pane container are essential for terminal assignment
 		<div
-			className={`group/pane relative h-full w-full overflow-hidden border-2 ${borderClass}`}
+			className={`group/pane relative h-full w-full overflow-hidden ${borderClass}`}
 			data-pane-id={node.id}
 			onDragEnter={handleDragEnter}
 			onDragLeave={handleDragLeave}
@@ -521,11 +512,8 @@ function LeafPaneRenderer({
  *   nesting to arbitrary depth (5+ levels).
  */
 function PanelRenderer({ node }: PanelRendererProps) {
-	const activePaneId = useActivePaneId();
-	const isActive = activePaneId === node.id;
-
 	if (node._tag === "LeafNode") {
-		return <LeafPaneRenderer isActive={isActive} node={node} />;
+		return <LeafPaneRenderer node={node} />;
 	}
 
 	// SplitNode — render children in a resizable panel group

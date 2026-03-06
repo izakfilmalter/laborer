@@ -125,3 +125,18 @@ Verification:
 - All 5 E2E tests pass with `bun run test:e2e` (5 passed in 21.9s)
 - All 70 existing Vitest tests still pass (`bun run test`)
 - `ultracite check` clean on modified file (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)
+
+## Issue 8: E2E — Create workspace and verify in sidebar — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Created `apps/web/e2e/workspace-lifecycle.spec.ts` with "can create a workspace and see it in the sidebar" test
+- Test flow: navigates to `/?reset` -> waits for server connection -> adds a project using the temp git repo -> clicks the per-project "+" button (`aria-label="Create workspace in <name>"`) -> waits for Create Workspace dialog -> clicks "Create Workspace" submit button -> waits for success toast ("Workspace created on branch ...") -> verifies dialog closes -> verifies "running" status badge appears in sidebar -> verifies "No workspaces" empty state is gone
+- Used `getByRole("heading")` to disambiguate the dialog title from the submit button (both have text "Create Workspace")
+- Updated `apps/web/e2e/global-setup.ts` to add `laborer.json` to `.gitignore` in the temp git repo, preventing `DIRTY_WORKING_TREE` errors when the settings test's `config.update` writes `laborer.json` to the repo before workspace creation tests run
+
+Verification:
+- All 6 E2E tests pass with `bun run test:e2e` (6 passed in 30.5s)
+- All 70 existing Vitest tests still pass (`bun run test`)
+- `ultracite check` clean on new/modified files (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)

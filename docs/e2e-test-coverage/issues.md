@@ -255,19 +255,21 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that creates a workspace for a project, then verifies the workspace appears in the sidebar. This validates: create workspace dialog -> form submission -> RPC mutation -> worktree creation -> LiveStore sync -> sidebar rendering.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test file `e2e/workspace-lifecycle.spec.ts` created
-- [ ] Test adds a project first (using the temp git repo)
-- [ ] Test opens the create workspace dialog
-- [ ] Test optionally enters a branch name
-- [ ] Test submits and waits for success (workspace appears in sidebar)
-- [ ] Test verifies the workspace card is visible under the correct project
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test file `e2e/workspace-lifecycle.spec.ts` created
+- [x] Test adds a project first (using the temp git repo)
+- [x] Test opens the create workspace dialog
+- [x] Test optionally enters a branch name
+- [x] Test submits and waits for success (workspace appears in sidebar)
+- [x] Test verifies the workspace card is visible under the correct project
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
-- Blocked by Issue 4 (Add project E2E — need a project to create a workspace for)
+- Blocked by Issue 4 (Add project E2E — need a project to create a workspace for) — DONE
 
 ### User stories addressed
 

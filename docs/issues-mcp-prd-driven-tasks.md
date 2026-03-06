@@ -392,12 +392,12 @@ Register four MCP tools in the `@laborer/mcp` server for issue management. Each 
 
 ### Acceptance criteria
 
-- [ ] `create_issue` tool is registered with prdId, title, and body parameters
-- [ ] `read_issues` tool is registered and returns the full issues markdown
-- [ ] `update_issue` tool is registered with taskId, optional body, and optional status
-- [ ] `list_remaining_issues` tool is registered and returns only pending/in_progress issues
-- [ ] Tool descriptions clearly explain their purpose for AI agent discovery
-- [ ] Issues created through MCP appear in LiveStore and are queryable by the UI
+- [x] `create_issue` tool is registered with prdId, title, and body parameters
+- [x] `read_issues` tool is registered and returns the full issues markdown
+- [x] `update_issue` tool is registered with taskId, optional body, and optional status
+- [x] `list_remaining_issues` tool is registered and returns only pending/in_progress issues
+- [x] Tool descriptions clearly explain their purpose for AI agent discovery
+- [x] Issues created through MCP appear in LiveStore and are queryable by the UI
 
 ### Blocked by
 
@@ -768,7 +768,7 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 183 | Issue update RPC: prd.updateIssue | #182 | Done |
 | 184 | `@laborer/mcp` package scaffold: stdio server with project discovery | None | Done |
 | 185 | MCP PRD tools: create_prd, read_prd, update_prd, list_prds | #180, #184 | Done |
-| 186 | MCP issue tools: create_issue, read_issues, update_issue, list_remaining_issues | #183, #184 | Ready |
+| 186 | MCP issue tools: create_issue, read_issues, update_issue, list_remaining_issues | #183, #184 | Done |
 | 187 | MCP auto-registration: Opencode config | #184 | Ready |
 | 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Blocked |
 | 189 | Plans sidebar section: PlanList component | #175 | Ready |

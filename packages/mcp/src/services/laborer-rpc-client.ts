@@ -8,6 +8,7 @@ import {
 	type ProjectResponse,
 	RpcError,
 } from "@laborer/shared/rpc";
+import type { TaskStatus } from "@laborer/shared/types";
 import { Context, Effect, Layer } from "effect";
 
 type PrdResponse = typeof PrdResponseSchema.Type;
@@ -15,6 +16,16 @@ type PrdResponse = typeof PrdResponseSchema.Type;
 type PrdReadResponse = PrdResponse & {
 	readonly content: string;
 };
+
+export interface TaskResponse {
+	readonly externalId?: string | undefined;
+	readonly id: string;
+	readonly prdId?: string | undefined;
+	readonly projectId: string;
+	readonly source: string;
+	readonly status: string;
+	readonly title: string;
+}
 
 const serverRpcUrl = `http://localhost:${env.PORT}/rpc`;
 
@@ -40,6 +51,22 @@ class LaborerRpcClient extends Context.Tag("@laborer/mcp/LaborerRpcClient")<
 			readonly prdId: string;
 			readonly content: string;
 		}) => Effect.Effect<PrdResponse, RpcError>;
+		readonly createIssue: (input: {
+			readonly prdId: string;
+			readonly title: string;
+			readonly body: string;
+		}) => Effect.Effect<TaskResponse, RpcError>;
+		readonly readIssues: (input: {
+			readonly prdId: string;
+		}) => Effect.Effect<string, RpcError>;
+		readonly listRemainingIssues: (input: {
+			readonly prdId: string;
+		}) => Effect.Effect<readonly TaskResponse[], RpcError>;
+		readonly updateIssue: (input: {
+			readonly taskId: string;
+			readonly body?: string | undefined;
+			readonly status?: TaskStatus | undefined;
+		}) => Effect.Effect<TaskResponse, RpcError>;
 	}
 >() {
 	static readonly layer = Layer.scoped(
@@ -103,11 +130,55 @@ class LaborerRpcClient extends Context.Tag("@laborer/mcp/LaborerRpcClient")<
 				}
 			);
 
+			const createIssue = Effect.fn("LaborerRpcClient.createIssue")(
+				function* (input: {
+					readonly prdId: string;
+					readonly title: string;
+					readonly body: string;
+				}) {
+					return yield* rpcClient.prd
+						.createIssue(input)
+						.pipe(Effect.mapError(toRpcError));
+				}
+			);
+
+			const readIssues = Effect.fn("LaborerRpcClient.readIssues")(
+				function* (input: { readonly prdId: string }) {
+					return yield* rpcClient.prd
+						.readIssues(input)
+						.pipe(Effect.mapError(toRpcError));
+				}
+			);
+
+			const listRemainingIssues = Effect.fn(
+				"LaborerRpcClient.listRemainingIssues"
+			)(function* (input: { readonly prdId: string }) {
+				return yield* rpcClient.prd
+					.listRemainingIssues(input)
+					.pipe(Effect.mapError(toRpcError));
+			});
+
+			const updateIssue = Effect.fn("LaborerRpcClient.updateIssue")(
+				function* (input: {
+					readonly taskId: string;
+					readonly body?: string | undefined;
+					readonly status?: TaskStatus | undefined;
+				}) {
+					return yield* rpcClient.prd
+						.updateIssue(input)
+						.pipe(Effect.mapError(toRpcError));
+				}
+			);
+
 			return LaborerRpcClient.of({
+				createIssue,
 				createPrd,
+				listRemainingIssues,
 				listPrds,
 				listProjects,
 				readPrd,
+				readIssues,
+				updateIssue,
 				updatePrd,
 			});
 		})

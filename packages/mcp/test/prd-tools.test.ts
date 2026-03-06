@@ -40,10 +40,14 @@ const makeLaborerRpcClientLayer = (
 	Layer.succeed(
 		LaborerRpcClient,
 		LaborerRpcClient.of({
+			createIssue: () => Effect.die("Not implemented in this test"),
 			listProjects: () => Effect.succeed([project]),
 			createPrd: () => Effect.succeed(prd),
+			listRemainingIssues: () => Effect.die("Not implemented in this test"),
 			listPrds: () => Effect.succeed([prd]),
 			readPrd: () => Effect.succeed(readPrdResponse),
+			readIssues: () => Effect.die("Not implemented in this test"),
+			updateIssue: () => Effect.die("Not implemented in this test"),
 			updatePrd: () => Effect.succeed(prd),
 			...overrides,
 		})

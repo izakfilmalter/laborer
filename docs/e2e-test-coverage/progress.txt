@@ -361,3 +361,22 @@ Verification:
 - `bun run test` passes in `apps/web` (70 tests)
 - `bun x ultracite check e2e/search-navigation.spec.ts` passes in `apps/web`
 - `bun run test:e2e e2e/search-navigation.spec.ts` executes both search-navigation E2E tests successfully (2 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 18: E2E - Toggle dark mode - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 18 as the highest-priority remaining task because it was the last unfinished user-facing E2E flow in the PRD and completed the search/navigation slice
+
+Changes made:
+- Added `can toggle the theme and restore the original mode` to `apps/web/e2e/search-navigation.spec.ts`
+- The new test opens the header theme menu, switches to the opposite theme from the current mode, and verifies the `html` class reflects the change through the real UI
+- The same test then switches back to the original theme and confirms the root `html` class returns to its starting state, covering the full round trip without touching internal app state
+- Updated the spec header so `search-navigation.spec.ts` now documents coverage for Issues 16, 17, and 18
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check e2e/search-navigation.spec.ts` passes in `apps/web`
+- `bun run test:e2e e2e/search-navigation.spec.ts` executes all three search-navigation E2E tests successfully (3 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown

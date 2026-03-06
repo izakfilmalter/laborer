@@ -566,14 +566,16 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that toggles the dark mode switch in the header and verifies the theme changes. This validates the theme toggle mechanism.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/search-navigation.spec.ts`
-- [ ] Test locates the theme toggle in the header
-- [ ] Test clicks the toggle to switch themes
-- [ ] Test verifies the theme changed (e.g., `html` element class or `data-theme` attribute changes, or specific CSS property changes)
-- [ ] Test toggles back and verifies the original theme is restored
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/search-navigation.spec.ts`
+- [x] Test locates the theme toggle in the header
+- [x] Test clicks the toggle to switch themes
+- [x] Test verifies the theme changed (e.g., `html` element class or `data-theme` attribute changes, or specific CSS property changes)
+- [x] Test toggles back and verifies the original theme is restored
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

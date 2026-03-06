@@ -6,7 +6,7 @@
  *
  * Uses the temp git repository created by globalSetup.
  *
- * @see PRD-e2e-test-coverage.md - Issues 16 and 17
+ * @see PRD-e2e-test-coverage.md - Issues 16, 17, and 18
  */
 
 import { readFileSync } from "node:fs";
@@ -14,6 +14,8 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures/test-fixtures.js";
+
+const DARK_CLASS_PATTERN = /dark/;
 
 function getTempRepoDir(): string {
 	const stateFile = join(tmpdir(), "laborer-e2e-state.json");
@@ -156,5 +158,43 @@ test.describe("search navigation", () => {
 
 		await expect(projectToggle).toHaveAttribute("aria-expanded", "true");
 		await expect(destroyWorkspaceButton).toBeVisible({ timeout: 15_000 });
+	});
+
+	test("can toggle the theme and restore the original mode", async ({
+		page,
+	}) => {
+		await page.goto("/?reset");
+		await expect(page.getByText("connected", { exact: false })).toBeVisible({
+			timeout: 15_000,
+		});
+
+		const html = page.locator("html");
+		const themeToggle = page.getByRole("button", { name: "Toggle theme" });
+		const isDarkModeInitially = (await html.getAttribute("class"))?.includes(
+			"dark"
+		);
+
+		const nextTheme = isDarkModeInitially ? "Light" : "Dark";
+		const originalTheme = isDarkModeInitially ? "Dark" : "Light";
+
+		await themeToggle.click();
+		await page.getByRole("menuitem", { name: nextTheme, exact: true }).click();
+
+		if (isDarkModeInitially) {
+			await expect(html).not.toHaveClass(DARK_CLASS_PATTERN);
+		} else {
+			await expect(html).toHaveClass(DARK_CLASS_PATTERN);
+		}
+
+		await themeToggle.click();
+		await page
+			.getByRole("menuitem", { name: originalTheme, exact: true })
+			.click();
+
+		if (isDarkModeInitially) {
+			await expect(html).toHaveClass(DARK_CLASS_PATTERN);
+		} else {
+			await expect(html).not.toHaveClass(DARK_CLASS_PATTERN);
+		}
 	});
 });

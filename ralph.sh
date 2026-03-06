@@ -12,17 +12,17 @@ fi
 # This prompt is basic, we'll expand it later.
 for ((i=1; i<=$1; i++)); do
   result=$(opencode --model anthropic/claude-opus-4-6 run \
-"@docs/test-coverage/PRD-test-coverage.md @docs/test-coverage/issues-test-coverage.md @docs/test-coverage/progress.txt \
-1. Decide which task to work on next from docs/test-coverage/issues-test-coverage.md. \
+"@docs/containerized-dev-servers/PRD-containerized-dev-servers.md @docs/containerized-dev-servers/issues.md @docs/containerized-dev-servers/progress.txt \
+1. Decide which task to work on next from docs/containerized-dev-servers/issues.md. \
 This should be the one YOU decide has the highest priority, \
 - not necessarily the first in the list. \
 2. Check any feedback loops, such as types and tests. \
-3. Append your progress to the docs/test-coverage/progress.txt file. \
-4. Update status of tasks in docs/test-coverage/issues-test-coverage.md \
+3. Append your progress to the docs/containerized-dev-servers/progress.txt file. \
+4. Update status of tasks in docs/containerized-dev-servers/issues.md \
 5. Make a git commit of that feature. \
 ONLY WORK ON A SINGLE TASK / FEATURE. \
 If, while implementing the feature, you notice that all work \
-is complete in docs/test-coverage/issues-test-coverage.md, output <promise>COMPLETE</promise>. \
+is complete in docs/containerized-dev-servers/issues.md, output <promise>COMPLETE</promise>. \
 ")
 
   echo "$result"

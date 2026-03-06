@@ -226,11 +226,11 @@ Note: `config-service.test.ts` and `rpc-config-handlers.test.ts` will be rewritt
 
 ### Acceptance criteria
 
-- [ ] All files import from `@effect/vitest` instead of `vitest`
-- [ ] All files use `it.effect` or `it.scoped` instead of manual `Effect.runPromise`
-- [ ] All files use `assert` instead of `expect`
-- [ ] All tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes on all modified files
+- [x] All files import from `@effect/vitest` instead of `vitest`
+- [x] All files use `it.effect` or `it.scoped` instead of manual `Effect.runPromise`
+- [x] All files use `assert` instead of `expect`
+- [x] All tests pass (`bun run test` in packages/server)
+- [x] `bun x ultracite check` passes on all modified files
 
 ### Blocked by
 
@@ -768,7 +768,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 4 | Delete dead/duplicate test files from server | None | Done |
 | 5 | Migrate worktree/workspace server tests to @effect/vitest | #3 | Done |
 | 6 | Migrate task/importer server tests to @effect/vitest | #1 | Done |
-| 7 | Migrate remaining server tests to @effect/vitest | #1 | Ready |
+| 7 | Migrate remaining server tests to @effect/vitest | #1 | Done |
 | 8 | Migrate terminal package tests to @effect/vitest assertions | None | Ready |
 | 9 | Add LiveStore schema tests -- setup + project/workspace events | None | Done |
 | 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Done |

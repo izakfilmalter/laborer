@@ -1,8 +1,9 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { assert, describe, it } from "@effect/vitest";
 import { tables } from "@laborer/shared/schema";
-import { Effect, Exit, Layer, Scope } from "effect";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Effect, Layer } from "effect";
+import { afterAll } from "vitest";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
 import { ProjectRegistry } from "../src/services/project-registry.js";
@@ -22,21 +23,6 @@ const TestLayer = ProjectRegistry.layer.pipe(
 	Layer.provideMerge(TestLaborerStore)
 );
 
-let scope: Scope.CloseableScope;
-let runEffect: <A, E>(
-	effect: Effect.Effect<A, E, ProjectRegistry | LaborerStore>
-) => Promise<A>;
-
-beforeEach(async () => {
-	scope = Effect.runSync(Scope.make());
-	const context = await Effect.runPromise(
-		Layer.buildWithScope(TestLayer, scope)
-	);
-	runEffect = <A, E>(
-		effect: Effect.Effect<A, E, ProjectRegistry | LaborerStore>
-	) => Effect.runPromise(Effect.provide(effect, Layer.succeedContext(context)));
-});
-
 afterAll(() => {
 	for (const root of tempRoots) {
 		if (existsSync(root)) {
@@ -45,34 +31,26 @@ afterAll(() => {
 	}
 });
 
-afterEach(async () => {
-	if (scope) {
-		await Effect.runPromise(Scope.close(scope, Exit.void));
-	}
-});
-
 describe("ProjectRegistry integration with WorktreeReconciler", () => {
-	it("addProject creates workspace records for main and linked worktrees", async () => {
-		const repoPath = initRepo("project-registry-detect", tempRoots);
-		const linkedPath = join(repoPath, ".worktrees", "feature-d");
-		git(`worktree add -b feature/d ${linkedPath}`, repoPath);
-
-		const project = await runEffect(
+	it.scoped(
+		"addProject creates workspace records for main and linked worktrees",
+		() =>
 			Effect.gen(function* () {
+				const repoPath = initRepo("project-registry-detect", tempRoots);
+				const linkedPath = join(repoPath, ".worktrees", "feature-d");
+				git(`worktree add -b feature/d ${linkedPath}`, repoPath);
+
 				const registry = yield* ProjectRegistry;
-				return yield* registry.addProject(repoPath);
-			})
-		);
+				const project = yield* registry.addProject(repoPath);
 
-		const rows = await runEffect(
-			Effect.gen(function* () {
 				const { store } = yield* LaborerStore;
-				return store.query(tables.workspaces.where("projectId", project.id));
-			})
-		);
+				const rows = store.query(
+					tables.workspaces.where("projectId", project.id)
+				);
 
-		expect(rows.length).toBe(2);
-		expect(rows.every((row) => row.origin === "external")).toBe(true);
-		expect(rows.every((row) => row.status === "stopped")).toBe(true);
-	});
+				assert.strictEqual(rows.length, 2);
+				assert.isTrue(rows.every((row) => row.origin === "external"));
+				assert.isTrue(rows.every((row) => row.status === "stopped"));
+			}).pipe(Effect.provide(TestLayer))
+	);
 });

@@ -441,11 +441,11 @@ See PRD Implementation Decisions > RPC Integration Tests and the Effect referenc
 
 ### Acceptance criteria
 
-- [ ] RPC test infrastructure layer is composable and reusable for all endpoint tests
-- [ ] `health.check` test verifies `{ status: "ok", uptime: number }` response through the in-memory RPC client
-- [ ] Tests use `@effect/vitest` patterns
+- [x] RPC test infrastructure layer is composable and reusable for all endpoint tests
+- [x] `health.check` test verifies `{ status: "ok", uptime: number }` response through the in-memory RPC client
+- [x] Tests use `@effect/vitest` patterns
 - [ ] All tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -774,7 +774,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Blocked |
 | 11 | Add LiveStore schema tests -- deprecated terminal event no-ops | #9 | Blocked |
 | 12 | Rewrite config-service.test.ts through public API | #1, #2, #5 or #7 | Blocked |
-| 13 | Set up RPC test infrastructure + health.check test | #1 | Ready |
+| 13 | Set up RPC test infrastructure + health.check test | #1 | In Progress |
 | 14 | RPC integration tests -- project.add + project.remove | #13, #2 | Blocked |
 | 15 | RPC integration tests -- config.get + config.update | #13, #2 | Blocked |
 | 16 | RPC integration tests -- workspace.create + workspace.destroy | #13, #2 | Blocked |

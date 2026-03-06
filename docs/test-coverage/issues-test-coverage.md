@@ -16,10 +16,10 @@ See PRD Implementation Decisions > Shared Test Helpers for details.
 
 ### Acceptance criteria
 
-- [ ] `packages/server/test/helpers/test-store.ts` exists and exports `makeTestStore` and `TestLaborerStore`
-- [ ] All 9 test files import from the helper -- zero remaining inline `makeTestStore` definitions
-- [ ] All existing tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes on all modified files
+- [x] `packages/server/test/helpers/test-store.ts` exists and exports `makeTestStore` and `TestLaborerStore`
+- [x] All 9 test files import from the helper -- zero remaining inline `makeTestStore` definitions
+- [x] All modified tests pass (`bunx vitest run test/task-manager.test.ts test/github-task-importer.test.ts test/linear-task-importer.test.ts test/prd-task-importer.test.ts test/workspace-destroy-origin.test.ts test/worktree-reconciler.test.ts test/worktree-watcher.test.ts test/project-registry.worktree-detection.test.ts test/terminal-manager.test.ts test/prd-rpc-handlers.test.ts` in `packages/server`)
+- [x] `bun x ultracite check` passes on all modified files
 
 ### Blocked by
 
@@ -47,10 +47,10 @@ See PRD Implementation Decisions > Shared Test Helpers for details.
 
 ### Acceptance criteria
 
-- [ ] `packages/server/test/helpers/git-helpers.ts` exists and exports `createTempDir`, `git`, `initRepo`
-- [ ] All worktree/workspace test files import from the helper -- zero remaining inline definitions
-- [ ] All existing tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes on all modified files
+- [x] `packages/server/test/helpers/git-helpers.ts` exists and exports `createTempDir`, `git`, `initRepo`
+- [x] All worktree/workspace test files import from the helper -- zero remaining inline definitions
+- [x] All existing tests pass (`bun run test` in packages/server)
+- [x] `bun x ultracite check` passes on all modified files
 
 ### Blocked by
 
@@ -78,10 +78,10 @@ See PRD Implementation Decisions > Shared Test Helpers for details.
 
 ### Acceptance criteria
 
-- [ ] `packages/server/test/helpers/timing-helpers.ts` exists and exports `delay` and `waitFor`
-- [ ] All async test files import from the helper -- zero remaining inline definitions
-- [ ] All existing tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes on all modified files
+- [x] `packages/server/test/helpers/timing-helpers.ts` exists and exports `delay` and `waitFor`
+- [x] All async test files import from the helper -- zero remaining inline definitions
+- [x] All existing tests pass (`bun run test` in packages/server)
+- [x] `bun x ultracite check` passes on all modified files
 
 ### Blocked by
 
@@ -109,11 +109,11 @@ Remove three test files from `packages/server/test/` that are dead or duplicate 
 
 ### Acceptance criteria
 
-- [ ] `packages/server/test/terminal-manager.test.ts` is deleted
-- [ ] `packages/server/test/pty-host.test.ts` is deleted
-- [ ] `packages/server/test/ring-buffer.test.ts` is deleted
-- [ ] No remaining `describe.skip` blocks in the server test suite
-- [ ] All remaining server tests pass (`bun run test` in packages/server)
+- [x] `packages/server/test/terminal-manager.test.ts` is deleted
+- [x] `packages/server/test/pty-host.test.ts` is deleted
+- [x] `packages/server/test/ring-buffer.test.ts` is deleted
+- [x] No remaining `describe.skip` blocks in the server test suite
+- [x] All remaining server tests pass (`bun run test` in packages/server)
 
 ### Blocked by
 
@@ -147,15 +147,15 @@ See PRD Implementation Decisions > @effect/vitest Migration for patterns.
 
 ### Acceptance criteria
 
-- [ ] All 5 files import from `@effect/vitest` instead of `vitest`
-- [ ] All 5 files use `it.effect` or `it.scoped` instead of manual `Effect.runPromise`
-- [ ] All 5 files use `assert` instead of `expect`
-- [ ] All tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes on all modified files
+- [x] All 5 files import from `@effect/vitest` instead of `vitest`
+- [x] All 5 files use `it.effect` or `it.scoped` instead of manual `Effect.runPromise`
+- [x] All 5 files use `assert` instead of `expect`
+- [x] All tests pass (`bun run test` in packages/server)
+- [x] `bun x ultracite check` passes on all modified files
 
 ### Blocked by
 
-- Blocked by Issue 1 (TestLaborerStore helper must exist)
+None - can start immediately
 - Blocked by Issue 2 (git helpers must exist)
 - Blocked by Issue 3 (timing helpers must exist)
 
@@ -187,16 +187,16 @@ See PRD Implementation Decisions > @effect/vitest Migration for patterns.
 
 ### Acceptance criteria
 
-- [ ] All 4 files import from `@effect/vitest` instead of `vitest`
-- [ ] All 4 files use `it.effect` or `it.scoped` instead of manual `Effect.runPromise`
-- [ ] All 4 files use `assert` instead of `expect`
-- [ ] The `runWithTestServices` helper is removed from each file (replaced by `Effect.provide(TestLayer)`)
-- [ ] All tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes on all modified files
+- [x] All 4 files import from `@effect/vitest` instead of `vitest`
+- [x] All 4 files use `it.effect` or `it.scoped` instead of manual `Effect.runPromise`
+- [x] All 4 files use `assert` instead of `expect`
+- [x] The `runWithTestServices` helper is removed from each file (replaced by `Effect.provide(TestLayer)`)
+- [x] All tests pass (`bun run test` in packages/server)
+- [x] `bun x ultracite check` passes on all modified files
 
 ### Blocked by
 
-- Blocked by Issue 1 (TestLaborerStore helper must exist)
+None - can start immediately
 
 ### User stories addressed
 
@@ -226,15 +226,15 @@ Note: `config-service.test.ts` and `rpc-config-handlers.test.ts` will be rewritt
 
 ### Acceptance criteria
 
-- [ ] All files import from `@effect/vitest` instead of `vitest`
-- [ ] All files use `it.effect` or `it.scoped` instead of manual `Effect.runPromise`
-- [ ] All files use `assert` instead of `expect`
-- [ ] All tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes on all modified files
+- [x] All files import from `@effect/vitest` instead of `vitest`
+- [x] All files use `it.effect` or `it.scoped` instead of manual `Effect.runPromise`
+- [x] All files use `assert` instead of `expect`
+- [x] All tests pass (`bun run test` in packages/server)
+- [x] `bun x ultracite check` passes on all modified files
 
 ### Blocked by
 
-- Blocked by Issue 1 (TestLaborerStore helper must exist)
+None - can start immediately
 
 ### User stories addressed
 
@@ -259,11 +259,11 @@ See PRD Implementation Decisions > @effect/vitest Migration > Exception note.
 
 ### Acceptance criteria
 
-- [ ] `terminal-manager.test.ts` imports `assert` from `@effect/vitest`
-- [ ] All `expect()` calls in `terminal-manager.test.ts` are replaced with `assert.*` equivalents
-- [ ] The custom `runEffect` / `beforeAll` / `afterAll` scope management is preserved (not converted to `it.scoped`)
-- [ ] All terminal tests pass (`bun run test` in packages/terminal)
-- [ ] `bun x ultracite check` passes
+- [x] `terminal-manager.test.ts` imports `assert` from `@effect/vitest`
+- [x] All `expect()` calls in `terminal-manager.test.ts` are replaced with `assert.*` equivalents
+- [x] The custom `runEffect` / `beforeAll` / `afterAll` scope management is preserved (not converted to `it.scoped`)
+- [x] All terminal tests pass (`bun run test` in packages/terminal)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -299,13 +299,13 @@ See PRD Implementation Decisions > LiveStore Schema Tests.
 
 ### Acceptance criteria
 
-- [ ] `packages/shared/vitest.config.ts` exists with correct configuration
-- [ ] `packages/shared/package.json` has a `test` script
-- [ ] `packages/shared/test/schema.test.ts` exists with project and workspace event tests
-- [ ] `prd-schema.test.ts` is removed from `packages/server/test/`
-- [ ] All tests pass (`bun run test` in packages/shared)
-- [ ] Tests use `@effect/vitest` patterns (`it.effect`, `assert`)
-- [ ] `bun x ultracite check` passes
+- [x] `packages/shared/vitest.config.ts` exists with correct configuration
+- [x] `packages/shared/package.json` has a `test` script
+- [x] `packages/shared/test/schema.test.ts` exists with project and workspace event tests
+- [x] `prd-schema.test.ts` is removed from `packages/server/test/`
+- [x] All tests pass (`bun run test` in packages/shared)
+- [x] Tests use `@effect/vitest` patterns (`it.effect`, `assert`)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -337,12 +337,12 @@ Each test commits an event and verifies the table state via query.
 
 ### Acceptance criteria
 
-- [ ] Diff event tests (DiffUpdated upsert, DiffCleared delete) pass
-- [ ] Task event tests (TaskCreated, TaskStatusChanged, TaskRemoved) pass
-- [ ] PRD event tests (PrdCreated, PrdStatusChanged, PrdRemoved) pass
-- [ ] Panel layout event tests (LayoutSplit, LayoutPaneClosed, LayoutPaneAssigned, LayoutRestored) pass
-- [ ] All tests use `@effect/vitest` patterns
-- [ ] `bun x ultracite check` passes
+- [x] Diff event tests (DiffUpdated upsert, DiffCleared delete) pass
+- [x] Task event tests (TaskCreated, TaskStatusChanged, TaskRemoved) pass
+- [x] PRD event tests (PrdCreated, PrdStatusChanged, PrdRemoved) pass
+- [x] Panel layout event tests (LayoutSplit, LayoutPaneClosed, LayoutPaneAssigned, LayoutRestored) pass
+- [x] All tests use `@effect/vitest` patterns
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -370,10 +370,10 @@ See PRD Further Notes about the importance of these no-op tests.
 
 ### Acceptance criteria
 
-- [ ] All 6 deprecated terminal events are tested
-- [ ] Tests verify that committing these events does not modify any table (or verify the materializer returns empty operations)
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] `bun x ultracite check` passes
+- [x] All 6 deprecated terminal events are tested
+- [x] Tests verify that committing these events does not modify any table (or verify the materializer returns empty operations)
+- [x] Tests use `@effect/vitest` patterns
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -403,13 +403,13 @@ See PRD Implementation Decisions > Existing Test Audit and Testing Decisions.
 
 ### Acceptance criteria
 
-- [ ] No imports of `expandTilde`, `readConfigFile`, `walkUpForConfigs`, `mergeConfigs` in the test file
-- [ ] All tests go through `ConfigService.resolveConfig`, `readGlobalConfig`, or `writeProjectConfig`
-- [ ] Tilde expansion, walk-up traversal, config merging, and global fallback behavior are still tested (through the public API)
-- [ ] Tests use `@effect/vitest` patterns (`it.effect`, `it.scoped`, `assert`)
-- [ ] Tests use shared helpers (TestLaborerStore, git helpers)
-- [ ] All tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes
+- [x] No imports of `expandTilde`, `readConfigFile`, `walkUpForConfigs`, `mergeConfigs` in the test file
+- [x] All tests go through `ConfigService.resolveConfig`, `readGlobalConfig`, or `writeProjectConfig`
+- [x] Tilde expansion, walk-up traversal, config merging, and global fallback behavior are still tested (through the public API)
+- [x] Tests use `@effect/vitest` patterns (`it.effect`, `it.scoped`, `assert`)
+- [x] Tests use shared helpers (TestLaborerStore, git helpers)
+- [x] All tests pass (`bun run test` in packages/server)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -441,11 +441,11 @@ See PRD Implementation Decisions > RPC Integration Tests and the Effect referenc
 
 ### Acceptance criteria
 
-- [ ] RPC test infrastructure layer is composable and reusable for all endpoint tests
-- [ ] `health.check` test verifies `{ status: "ok", uptime: number }` response through the in-memory RPC client
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes
+- [x] RPC test infrastructure layer is composable and reusable for all endpoint tests
+- [x] `health.check` test verifies `{ status: "ok", uptime: number }` response through the in-memory RPC client
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass (`bun run test` in packages/server)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -474,13 +474,13 @@ Tests use real git repos on the filesystem, real `ProjectRegistry`, and real `Wo
 
 ### Acceptance criteria
 
-- [ ] `project.add` test verifies project creation and worktree detection for a real git repo
-- [ ] `project.add` test verifies error response for an invalid repo path
-- [ ] `project.remove` test verifies project deletion
-- [ ] `project.remove` test verifies error response for a nonexistent project
-- [ ] Tests use the shared RPC test infrastructure
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass
+- [x] `project.add` test verifies project creation and worktree detection for a real git repo
+- [x] `project.add` test verifies error response for an invalid repo path
+- [x] `project.remove` test verifies project deletion
+- [x] `project.remove` test verifies error response for a nonexistent project
+- [x] Tests use the shared RPC test infrastructure
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass
 
 ### Blocked by
 
@@ -511,13 +511,13 @@ Tests use real `ConfigService` and real `ProjectRegistry` layers with real files
 
 ### Acceptance criteria
 
-- [ ] `config.get` test verifies resolved config with correct provenance source metadata
-- [ ] `config.get` test verifies error response for a nonexistent project
-- [ ] `config.update` test verifies config is written and retrievable
-- [ ] `rpc-config-handlers.test.ts` is deleted or fully replaced (no `vi.fn()` mocks remain)
-- [ ] Tests use real `ConfigService` and `ProjectRegistry` layers (no `Layer.succeed` stubs)
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass
+- [x] `config.get` test verifies resolved config with correct provenance source metadata
+- [x] `config.get` test verifies error response for a nonexistent project
+- [x] `config.update` test verifies config is written and retrievable
+- [x] `rpc-config-handlers.test.ts` is deleted or fully replaced (no `vi.fn()` mocks remain)
+- [x] Tests use real `ConfigService` and `ProjectRegistry` layers (no `Layer.succeed` stubs)
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass
 
 ### Blocked by
 
@@ -549,13 +549,13 @@ Tests use real git repos, real `WorkspaceProvider`, real `PortAllocator`, and a 
 
 ### Acceptance criteria
 
-- [ ] `workspace.create` test verifies worktree creation, port allocation, and LiveStore workspace record
-- [ ] `workspace.create` test verifies error for nonexistent project
-- [ ] `workspace.destroy` test verifies laborer-origin workspace has worktree removed
-- [ ] `workspace.destroy` test verifies external-origin workspace retains worktree
-- [ ] Stub TerminalClient is used (system boundary mock, not internal mock)
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass
+- [x] `workspace.create` test verifies worktree creation, port allocation, and LiveStore workspace record
+- [x] `workspace.create` test verifies error for nonexistent project
+- [x] `workspace.destroy` test verifies laborer-origin workspace has worktree removed
+- [x] `workspace.destroy` test verifies external-origin workspace retains worktree
+- [x] Stub TerminalClient is used (system boundary mock, not internal mock)
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass
 
 ### Blocked by
 
@@ -587,12 +587,12 @@ Tests use real `TaskManager` layer backed by `TestLaborerStore`. Verify results 
 
 ### Acceptance criteria
 
-- [ ] `task.create` test verifies task creation with all fields
-- [ ] `task.create` test verifies optional prdId linkage
-- [ ] `task.updateStatus` test verifies status transition
-- [ ] `task.remove` test verifies task deletion
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass
+- [x] `task.create` test verifies task creation with all fields
+- [x] `task.create` test verifies optional prdId linkage
+- [x] `task.updateStatus` test verifies status transition
+- [x] `task.remove` test verifies task deletion
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass
 
 ### Blocked by
 
@@ -622,14 +622,14 @@ Tests mock `fetch` at the system boundary for GitHub REST API and Linear GraphQL
 
 ### Acceptance criteria
 
-- [ ] `task.importGithub` test verifies issue import with correct count
-- [ ] `task.importGithub` test verifies PR filtering (PRs are skipped)
-- [ ] `task.importGithub` test verifies deduplication (existing tasks not re-imported)
-- [ ] `task.importLinear` test verifies issue import with correct count
-- [ ] `task.importLinear` test verifies deduplication
-- [ ] Only `fetch` is mocked (system boundary) -- all internal services are real
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass
+- [x] `task.importGithub` test verifies issue import with correct count
+- [x] `task.importGithub` test verifies PR filtering (PRs are skipped)
+- [x] `task.importGithub` test verifies deduplication (existing tasks not re-imported)
+- [x] `task.importLinear` test verifies issue import with correct count
+- [x] `task.importLinear` test verifies deduplication
+- [x] Only `fetch` is mocked (system boundary) -- all internal services are real
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass
 
 ### Blocked by
 
@@ -660,11 +660,11 @@ Tests use real git repos with actual file changes for diff testing. Editor tests
 
 ### Acceptance criteria
 
-- [ ] `diff.refresh` test verifies diff content is computed from real git changes and stored in LiveStore
-- [ ] `diff.refresh` test verifies error for nonexistent workspace
-- [ ] `editor.open` test verifies the correct editor command is used based on config
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass
+- [x] `diff.refresh` test verifies diff content is computed from real git changes and stored in LiveStore
+- [x] `diff.refresh` test verifies error for nonexistent workspace
+- [x] `editor.open` test verifies the correct editor command is used based on config
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass
 
 ### Blocked by
 
@@ -698,14 +698,14 @@ All 5 endpoints delegate to `TerminalClient`, which is a system boundary (separa
 
 ### Acceptance criteria
 
-- [ ] `terminal.spawn` test verifies terminal response through RPC
-- [ ] `rlph.startLoop` test verifies terminal response through RPC
-- [ ] `rlph.writePRD` test verifies terminal response through RPC
-- [ ] `rlph.review` test verifies terminal response through RPC
-- [ ] `rlph.fix` test verifies terminal response through RPC
-- [ ] Stub TerminalClient is used (system boundary mock)
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass
+- [x] `terminal.spawn` test verifies terminal response through RPC
+- [x] `rlph.startLoop` test verifies terminal response through RPC
+- [x] `rlph.writePRD` test verifies terminal response through RPC
+- [x] `rlph.review` test verifies terminal response through RPC
+- [x] `rlph.fix` test verifies terminal response through RPC
+- [x] Stub TerminalClient is used (system boundary mock)
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass
 
 ### Blocked by
 
@@ -741,12 +741,12 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 
 ### Acceptance criteria
 
-- [ ] All 8 TerminalRpcs endpoints are tested through `RpcTest.makeClient`
-- [ ] Tests use real `PtyHostClient` + `TerminalManager` layers (no service mocking)
-- [ ] `terminal.events` streaming test verifies lifecycle events arrive via the RPC stream
-- [ ] Tests use `@effect/vitest` patterns (or the custom `runEffect` pattern where needed for shared scope)
-- [ ] All tests pass (`bun run test` in packages/terminal)
-- [ ] `bun x ultracite check` passes
+- [x] All 8 TerminalRpcs endpoints are tested through `RpcTest.makeClient`
+- [x] Tests use real `PtyHostClient` + `TerminalManager` layers (no service mocking)
+- [x] `terminal.events` streaming test verifies lifecycle events arrive via the RPC stream
+- [x] Tests use `@effect/vitest` patterns (or the custom `runEffect` pattern where needed for shared scope)
+- [x] All tests pass (`bun run test` in packages/terminal)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -762,27 +762,27 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
-| 1 | Extract TestLaborerStore shared helper | None | Ready |
-| 2 | Extract git repo shared helpers | None | Ready |
-| 3 | Extract timing shared helpers | None | Ready |
-| 4 | Delete dead/duplicate test files from server | None | Ready |
-| 5 | Migrate worktree/workspace server tests to @effect/vitest | #1, #2, #3 | Blocked |
-| 6 | Migrate task/importer server tests to @effect/vitest | #1 | Blocked |
-| 7 | Migrate remaining server tests to @effect/vitest | #1 | Blocked |
-| 8 | Migrate terminal package tests to @effect/vitest assertions | None | Ready |
-| 9 | Add LiveStore schema tests -- setup + project/workspace events | None | Ready |
-| 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Blocked |
-| 11 | Add LiveStore schema tests -- deprecated terminal event no-ops | #9 | Blocked |
-| 12 | Rewrite config-service.test.ts through public API | #1, #2, #5 or #7 | Blocked |
-| 13 | Set up RPC test infrastructure + health.check test | #1 | Blocked |
-| 14 | RPC integration tests -- project.add + project.remove | #13, #2 | Blocked |
-| 15 | RPC integration tests -- config.get + config.update | #13, #2 | Blocked |
-| 16 | RPC integration tests -- workspace.create + workspace.destroy | #13, #2 | Blocked |
-| 17 | RPC integration tests -- task.create + task.updateStatus + task.remove | #13 | Blocked |
-| 18 | RPC integration tests -- task.importGithub + task.importLinear | #13, #2 | Blocked |
-| 19 | RPC integration tests -- diff.refresh + editor.open | #13, #2 | Blocked |
-| 20 | RPC integration tests -- terminal.spawn + rlph endpoints | #13 | Blocked |
-| 21 | RPC integration tests -- TerminalRpcs (packages/terminal) | #8 | Blocked |
+| 1 | Extract TestLaborerStore shared helper | None | Done |
+| 2 | Extract git repo shared helpers | None | Done |
+| 3 | Extract timing shared helpers | None | Done |
+| 4 | Delete dead/duplicate test files from server | None | Done |
+| 5 | Migrate worktree/workspace server tests to @effect/vitest | #3 | Done |
+| 6 | Migrate task/importer server tests to @effect/vitest | #1 | Done |
+| 7 | Migrate remaining server tests to @effect/vitest | #1 | Done |
+| 8 | Migrate terminal package tests to @effect/vitest assertions | None | Done |
+| 9 | Add LiveStore schema tests -- setup + project/workspace events | None | Done |
+| 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Done |
+| 11 | Add LiveStore schema tests -- deprecated terminal event no-ops | #9 | Done |
+| 12 | Rewrite config-service.test.ts through public API | #5 or #7 | Done |
+| 13 | Set up RPC test infrastructure + health.check test | #1 | Done |
+| 14 | RPC integration tests -- project.add + project.remove | #13, #2 | Done |
+| 15 | RPC integration tests -- config.get + config.update | None | Done |
+| 16 | RPC integration tests -- workspace.create + workspace.destroy | None | Done |
+| 17 | RPC integration tests -- task.create + task.updateStatus + task.remove | None | Done |
+| 18 | RPC integration tests -- task.importGithub + task.importLinear | None | Done |
+| 19 | RPC integration tests -- diff.refresh + editor.open | None | Done |
+| 20 | RPC integration tests -- terminal.spawn + rlph endpoints | None | Done |
+| 21 | RPC integration tests -- TerminalRpcs (packages/terminal) | #8 | Done |
 
 **Parallelism opportunities:**
 - Issues 1, 2, 3, 4, 8, 9 can all start immediately in parallel

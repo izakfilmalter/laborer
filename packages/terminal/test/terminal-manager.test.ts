@@ -20,6 +20,7 @@
  * @see Issue #138: Move + simplify TerminalManager
  */
 
+import { assert, describe } from "@effect/vitest";
 import {
 	type Context,
 	Effect,
@@ -30,7 +31,7 @@ import {
 	Scope,
 	Stream,
 } from "effect";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, it } from "vitest";
 
 import { PtyHostClient } from "../src/services/pty-host-client.js";
 import {
@@ -135,11 +136,11 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 			})
 		);
 
-		expect(result.id).toBeDefined();
-		expect(result.workspaceId).toBe(TEST_WORKSPACE_ID);
-		expect(result.command).toBe('echo "hello-from-terminal"');
-		expect(result.cwd).toBe(TEST_CWD);
-		expect(result.status).toBe("running");
+		assert.isDefined(result.id);
+		assert.strictEqual(result.workspaceId, TEST_WORKSPACE_ID);
+		assert.strictEqual(result.command, 'echo "hello-from-terminal"');
+		assert.strictEqual(result.cwd, TEST_CWD);
+		assert.strictEqual(result.status, "running");
 
 		// Wait for the command to execute and exit
 		await delay(2000);
@@ -153,8 +154,8 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 		);
 
 		const terminal = terminals.find((t) => t.id === result.id);
-		expect(terminal).toBeDefined();
-		expect(terminal?.status).toBe("stopped");
+		assert.isDefined(terminal);
+		assert.strictEqual(terminal?.status, "stopped");
 	});
 
 	it("write() sends input that produces corresponding output", async () => {
@@ -201,8 +202,8 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 		);
 
 		const terminal = terminals.find((t) => t.id === result.id);
-		expect(terminal).toBeDefined();
-		expect(terminal?.status).toBe("stopped");
+		assert.isDefined(terminal);
+		assert.strictEqual(terminal?.status, "stopped");
 	});
 
 	it("resize() changes dimensions without crashing the PTY", async () => {
@@ -248,7 +249,7 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 		);
 
 		const terminal = terminals.find((t) => t.id === result.id);
-		expect(terminal?.status).toBe("running");
+		assert.strictEqual(terminal?.status, "running");
 
 		// Clean up
 		await runEffect(
@@ -294,11 +295,11 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 		);
 
 		const terminal = terminals.find((t) => t.id === result.id);
-		expect(terminal).toBeDefined();
-		expect(terminal?.status).toBe("stopped");
-		expect(terminal?.command).toBe("cat");
-		expect(terminal?.cwd).toBe(TEST_CWD);
-		expect(terminal?.workspaceId).toBe(TEST_WORKSPACE_ID);
+		assert.isDefined(terminal);
+		assert.strictEqual(terminal?.status, "stopped");
+		assert.strictEqual(terminal?.command, "cat");
+		assert.strictEqual(terminal?.cwd, TEST_CWD);
+		assert.strictEqual(terminal?.workspaceId, TEST_WORKSPACE_ID);
 	});
 
 	it("restart() works for stopped terminals using retained config", async () => {
@@ -335,10 +336,10 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 			})
 		);
 
-		expect(restarted.id).toBe(result.id);
-		expect(restarted.command).toBe("cat");
-		expect(restarted.cwd).toBe(TEST_CWD);
-		expect(restarted.status).toBe("running");
+		assert.strictEqual(restarted.id, result.id);
+		assert.strictEqual(restarted.command, "cat");
+		assert.strictEqual(restarted.cwd, TEST_CWD);
+		assert.strictEqual(restarted.status, "running");
 
 		await delay(500);
 
@@ -384,7 +385,10 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 				return yield* tm.listTerminals();
 			})
 		);
-		expect(terminals.find((t) => t.id === result.id)?.status).toBe("stopped");
+		assert.strictEqual(
+			terminals.find((t) => t.id === result.id)?.status,
+			"stopped"
+		);
 
 		// Remove it
 		await runEffect(
@@ -401,7 +405,7 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 				return yield* tm.listTerminals();
 			})
 		);
-		expect(terminals.find((t) => t.id === result.id)).toBeUndefined();
+		assert.isUndefined(terminals.find((t) => t.id === result.id));
 
 		// terminalExists should return false
 		const exists = await runEffect(
@@ -410,7 +414,7 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 				return yield* tm.terminalExists(result.id);
 			})
 		);
-		expect(exists).toBe(false);
+		assert.isFalse(exists);
 	});
 
 	it("listTerminals() returns both running and stopped terminals", async () => {
@@ -457,11 +461,11 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 		const runningTerminal = terminals.find((t) => t.id === running.id);
 		const stoppedTerminal = terminals.find((t) => t.id === shortLived.id);
 
-		expect(runningTerminal).toBeDefined();
-		expect(runningTerminal?.status).toBe("running");
+		assert.isDefined(runningTerminal);
+		assert.strictEqual(runningTerminal?.status, "running");
 
-		expect(stoppedTerminal).toBeDefined();
-		expect(stoppedTerminal?.status).toBe("stopped");
+		assert.isDefined(stoppedTerminal);
+		assert.strictEqual(stoppedTerminal?.status, "stopped");
 
 		// Clean up
 		await runEffect(
@@ -524,7 +528,7 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 		const spawnedEvent = collectedEvents.find(
 			(e) => e._tag === "Spawned" && e.terminal.id === result.id
 		);
-		expect(spawnedEvent).toBeDefined();
+		assert.isDefined(spawnedEvent);
 
 		// Check for StatusChanged event (stopped)
 		const statusEvent = collectedEvents.find(
@@ -533,7 +537,7 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 				e.id === result.id &&
 				e.status === "stopped"
 		);
-		expect(statusEvent).toBeDefined();
+		assert.isDefined(statusEvent);
 	});
 
 	it("lifecycle events stream via Stream.fromPubSub matches terminal.events pattern", async () => {
@@ -588,9 +592,9 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 		);
 
 		// Should have captured the StatusChanged event for our terminal
-		expect(result.events.length).toBe(1);
-		expect(result.events[0]?._tag).toBe("StatusChanged");
-		expect(result.events[0]?.id).toBe(result.terminalId);
+		assert.strictEqual(result.events.length, 1);
+		assert.strictEqual(result.events[0]?._tag, "StatusChanged");
+		assert.strictEqual(result.events[0]?.id, result.terminalId);
 	});
 
 	it("spawn() with custom args passes them correctly", async () => {
@@ -608,8 +612,8 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 			})
 		);
 
-		expect(result.args).toEqual(["hello", "world"]);
-		expect(result.command).toBe("/bin/echo");
+		assert.deepStrictEqual(result.args, ["hello", "world"]);
+		assert.strictEqual(result.command, "/bin/echo");
 
 		await delay(2000);
 
@@ -622,8 +626,8 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 		);
 
 		const terminal = terminals.find((t) => t.id === result.id);
-		expect(terminal?.status).toBe("stopped");
-		expect(terminal?.args).toEqual(["hello", "world"]);
+		assert.strictEqual(terminal?.status, "stopped");
+		assert.deepStrictEqual(terminal?.args, ["hello", "world"]);
 	});
 
 	it("kills orphaned spawned terminals after grace period expires", async () => {
@@ -650,7 +654,8 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 				})
 			);
 
-			expect(terminals.find((t) => t.id === terminal.id)?.status).toBe(
+			assert.strictEqual(
+				terminals.find((t) => t.id === terminal.id)?.status,
 				"stopped"
 			);
 		});
@@ -705,7 +710,8 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 				})
 			);
 
-			expect(terminals.find((t) => t.id === terminal.id)?.status).toBe(
+			assert.strictEqual(
+				terminals.find((t) => t.id === terminal.id)?.status,
 				"running"
 			);
 
@@ -758,7 +764,8 @@ describe("TerminalManager (terminal package)", { timeout: 30_000 }, () => {
 				})
 			);
 
-			expect(terminals.find((t) => t.id === terminal.id)?.status).toBe(
+			assert.strictEqual(
+				terminals.find((t) => t.id === terminal.id)?.status,
 				"stopped"
 			);
 		});

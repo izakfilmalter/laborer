@@ -1,34 +1,15 @@
-import { execSync } from "node:child_process";
-import {
-	existsSync,
-	mkdirSync,
-	realpathSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll } from "vitest";
 import {
 	parsePorcelainOutput,
 	WorktreeDetector,
 } from "../src/services/worktree-detector.js";
+import { createTempDir, git, initRepo } from "./helpers/git-helpers.js";
 
 const tempRoots: string[] = [];
-
-const createTempDir = (prefix: string): string => {
-	const dir = join(
-		tmpdir(),
-		`laborer-test-${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	tempRoots.push(dir);
-	return dir;
-};
-
-const git = (args: string, cwd: string): string =>
-	execSync(`git ${args}`, { cwd, encoding: "utf-8" }).trim();
 
 const normalizePath = (value: string): string => {
 	try {
@@ -36,17 +17,6 @@ const normalizePath = (value: string): string => {
 	} catch {
 		return value;
 	}
-};
-
-const initRepo = (prefix: string): string => {
-	const repoPath = createTempDir(prefix);
-	git("init", repoPath);
-	git("config user.email test@example.com", repoPath);
-	git("config user.name Test User", repoPath);
-	writeFileSync(join(repoPath, "README.md"), "# test\n");
-	git("add README.md", repoPath);
-	git('commit -m "initial"', repoPath);
-	return repoPath;
 };
 
 afterAll(() => {
@@ -58,162 +28,148 @@ afterAll(() => {
 });
 
 describe("WorktreeDetector", () => {
-	it("detects main worktree when no linked worktrees exist", async () => {
-		const repoPath = initRepo("detector-main-only");
+	it.effect("detects main worktree when no linked worktrees exist", () =>
+		Effect.gen(function* () {
+			const repoPath = initRepo("detector-main-only", tempRoots);
 
-		const detected = await Effect.runPromise(
-			Effect.gen(function* () {
-				const service = yield* WorktreeDetector;
-				return yield* service.detect(repoPath);
-			}).pipe(Effect.provide(WorktreeDetector.layer))
-		);
+			const service = yield* WorktreeDetector;
+			const detected = yield* service.detect(repoPath);
 
-		expect(detected.length).toBe(1);
-		expect(detected[0]?.isMain).toBe(true);
-		expect(normalizePath(detected[0]?.path ?? "")).toBe(
-			normalizePath(repoPath)
-		);
-		expect(detected[0]?.head.length).toBeGreaterThan(0);
-	});
+			assert.strictEqual(detected.length, 1);
+			assert.strictEqual(detected[0]?.isMain, true);
+			assert.strictEqual(
+				normalizePath(detected[0]?.path ?? ""),
+				normalizePath(repoPath)
+			);
+			assert.isTrue((detected[0]?.head.length ?? 0) > 0);
+		}).pipe(Effect.provide(WorktreeDetector.layer))
+	);
 
-	it("detects one linked worktree with its branch name", async () => {
-		const repoPath = initRepo("detector-one-linked");
-		const linkedPath = join(repoPath, ".worktrees", "feature-one");
-		git(`worktree add -b feature/one ${linkedPath}`, repoPath);
+	it.effect("detects one linked worktree with its branch name", () =>
+		Effect.gen(function* () {
+			const repoPath = initRepo("detector-one-linked", tempRoots);
+			const linkedPath = join(repoPath, ".worktrees", "feature-one");
+			git(`worktree add -b feature/one ${linkedPath}`, repoPath);
 
-		const detected = await Effect.runPromise(
-			Effect.gen(function* () {
-				const service = yield* WorktreeDetector;
-				return yield* service.detect(repoPath);
-			}).pipe(Effect.provide(WorktreeDetector.layer))
-		);
+			const service = yield* WorktreeDetector;
+			const detected = yield* service.detect(repoPath);
 
-		expect(detected.length).toBe(2);
-		const linked = detected.find(
-			(entry) => normalizePath(entry.path) === normalizePath(linkedPath)
-		);
-		expect(linked?.branch).toBe("feature/one");
-		expect(linked?.isMain).toBe(false);
-	});
-
-	it("detects multiple linked worktrees", async () => {
-		const repoPath = initRepo("detector-multiple-linked");
-		const linkedPathA = join(repoPath, ".worktrees", "feature-multi-a");
-		const linkedPathB = join(repoPath, ".worktrees", "feature-multi-b");
-		git(`worktree add -b feature/multi-a ${linkedPathA}`, repoPath);
-		git(`worktree add -b feature/multi-b ${linkedPathB}`, repoPath);
-
-		const detected = await Effect.runPromise(
-			Effect.gen(function* () {
-				const service = yield* WorktreeDetector;
-				return yield* service.detect(repoPath);
-			}).pipe(Effect.provide(WorktreeDetector.layer))
-		);
-
-		expect(detected.length).toBe(3);
-		expect(
-			detected.some(
-				(entry) => normalizePath(entry.path) === normalizePath(linkedPathA)
-			)
-		).toBe(true);
-		expect(
-			detected.some(
-				(entry) => normalizePath(entry.path) === normalizePath(linkedPathB)
-			)
-		).toBe(true);
-	});
-
-	it("detects linked worktrees and detached HEAD", async () => {
-		const repoPath = initRepo("detector-linked");
-		const linkedPath = join(repoPath, ".worktrees", "feature-a");
-		git(`worktree add -b feature/a ${linkedPath}`, repoPath);
-		git("checkout --detach", linkedPath);
-
-		const detected = await Effect.runPromise(
-			Effect.gen(function* () {
-				const service = yield* WorktreeDetector;
-				return yield* service.detect(repoPath);
-			}).pipe(Effect.provide(WorktreeDetector.layer))
-		);
-
-		expect(detected.length).toBe(2);
-		const linked = detected.find(
-			(entry) => normalizePath(entry.path) === normalizePath(linkedPath)
-		);
-		expect(linked).toBeDefined();
-		expect(linked?.branch).toBeNull();
-		expect(linked?.isMain).toBe(false);
-	});
-
-	it("marks only one entry as main worktree", async () => {
-		const repoPath = initRepo("detector-single-main");
-		const linkedPath = join(repoPath, ".worktrees", "feature-main-check");
-		git(`worktree add -b feature/main-check ${linkedPath}`, repoPath);
-
-		const detected = await Effect.runPromise(
-			Effect.gen(function* () {
-				const service = yield* WorktreeDetector;
-				return yield* service.detect(repoPath);
-			}).pipe(Effect.provide(WorktreeDetector.layer))
-		);
-
-		const mainEntries = detected.filter((entry) => entry.isMain);
-		expect(mainEntries.length).toBe(1);
-		expect(normalizePath(mainEntries[0]?.path ?? "")).toBe(
-			normalizePath(repoPath)
-		);
-	});
-
-	it("detects linked worktrees outside the repository directory", async () => {
-		const repoPath = initRepo("detector-external-path");
-		const linkedPath = join(
-			createTempDir("detector-external-worktree"),
-			"external"
-		);
-		git(`worktree add -b feature/external ${linkedPath}`, repoPath);
-
-		const detected = await Effect.runPromise(
-			Effect.gen(function* () {
-				const service = yield* WorktreeDetector;
-				return yield* service.detect(repoPath);
-			}).pipe(Effect.provide(WorktreeDetector.layer))
-		);
-
-		expect(
-			detected.some(
+			assert.strictEqual(detected.length, 2);
+			const linked = detected.find(
 				(entry) => normalizePath(entry.path) === normalizePath(linkedPath)
-			)
-		).toBe(true);
-	});
+			);
+			assert.strictEqual(linked?.branch, "feature/one");
+			assert.strictEqual(linked?.isMain, false);
+		}).pipe(Effect.provide(WorktreeDetector.layer))
+	);
 
-	it("excludes prunable worktrees", async () => {
-		const repoPath = initRepo("detector-prunable");
-		const linkedPath = join(repoPath, ".worktrees", "feature-b");
-		git(`worktree add -b feature/b ${linkedPath}`, repoPath);
-		rmSync(linkedPath, { recursive: true, force: true });
+	it.effect("detects multiple linked worktrees", () =>
+		Effect.gen(function* () {
+			const repoPath = initRepo("detector-multiple-linked", tempRoots);
+			const linkedPathA = join(repoPath, ".worktrees", "feature-multi-a");
+			const linkedPathB = join(repoPath, ".worktrees", "feature-multi-b");
+			git(`worktree add -b feature/multi-a ${linkedPathA}`, repoPath);
+			git(`worktree add -b feature/multi-b ${linkedPathB}`, repoPath);
 
-		const detected = await Effect.runPromise(
-			Effect.gen(function* () {
-				const service = yield* WorktreeDetector;
-				return yield* service.detect(repoPath);
-			}).pipe(Effect.provide(WorktreeDetector.layer))
-		);
+			const service = yield* WorktreeDetector;
+			const detected = yield* service.detect(repoPath);
 
-		expect(detected.some((entry) => entry.path === linkedPath)).toBe(false);
-	});
+			assert.strictEqual(detected.length, 3);
+			assert.isTrue(
+				detected.some(
+					(entry) => normalizePath(entry.path) === normalizePath(linkedPathA)
+				)
+			);
+			assert.isTrue(
+				detected.some(
+					(entry) => normalizePath(entry.path) === normalizePath(linkedPathB)
+				)
+			);
+		}).pipe(Effect.provide(WorktreeDetector.layer))
+	);
 
-	it("returns a typed error for non-git directories", async () => {
-		const nonRepoPath = createTempDir("detector-non-repo");
+	it.effect("detects linked worktrees and detached HEAD", () =>
+		Effect.gen(function* () {
+			const repoPath = initRepo("detector-linked", tempRoots);
+			const linkedPath = join(repoPath, ".worktrees", "feature-a");
+			git(`worktree add -b feature/a ${linkedPath}`, repoPath);
+			git("checkout --detach", linkedPath);
 
-		const error = await Effect.runPromise(
-			Effect.gen(function* () {
-				const service = yield* WorktreeDetector;
-				return yield* service.detect(nonRepoPath);
-			}).pipe(Effect.provide(WorktreeDetector.layer), Effect.flip)
-		);
+			const service = yield* WorktreeDetector;
+			const detected = yield* service.detect(repoPath);
 
-		expect(error.code).toBe("WORKTREE_DETECT_FAILED");
-	});
+			assert.strictEqual(detected.length, 2);
+			const linked = detected.find(
+				(entry) => normalizePath(entry.path) === normalizePath(linkedPath)
+			);
+			assert.isDefined(linked);
+			assert.strictEqual(linked?.branch, null);
+			assert.strictEqual(linked?.isMain, false);
+		}).pipe(Effect.provide(WorktreeDetector.layer))
+	);
+
+	it.effect("marks only one entry as main worktree", () =>
+		Effect.gen(function* () {
+			const repoPath = initRepo("detector-single-main", tempRoots);
+			const linkedPath = join(repoPath, ".worktrees", "feature-main-check");
+			git(`worktree add -b feature/main-check ${linkedPath}`, repoPath);
+
+			const service = yield* WorktreeDetector;
+			const detected = yield* service.detect(repoPath);
+
+			const mainEntries = detected.filter((entry) => entry.isMain);
+			assert.strictEqual(mainEntries.length, 1);
+			assert.strictEqual(
+				normalizePath(mainEntries[0]?.path ?? ""),
+				normalizePath(repoPath)
+			);
+		}).pipe(Effect.provide(WorktreeDetector.layer))
+	);
+
+	it.effect("detects linked worktrees outside the repository directory", () =>
+		Effect.gen(function* () {
+			const repoPath = initRepo("detector-external-path", tempRoots);
+			const linkedPath = join(
+				createTempDir("detector-external-worktree", tempRoots),
+				"external"
+			);
+			git(`worktree add -b feature/external ${linkedPath}`, repoPath);
+
+			const service = yield* WorktreeDetector;
+			const detected = yield* service.detect(repoPath);
+
+			assert.isTrue(
+				detected.some(
+					(entry) => normalizePath(entry.path) === normalizePath(linkedPath)
+				)
+			);
+		}).pipe(Effect.provide(WorktreeDetector.layer))
+	);
+
+	it.effect("excludes prunable worktrees", () =>
+		Effect.gen(function* () {
+			const repoPath = initRepo("detector-prunable", tempRoots);
+			const linkedPath = join(repoPath, ".worktrees", "feature-b");
+			git(`worktree add -b feature/b ${linkedPath}`, repoPath);
+			rmSync(linkedPath, { recursive: true, force: true });
+
+			const service = yield* WorktreeDetector;
+			const detected = yield* service.detect(repoPath);
+
+			assert.isFalse(detected.some((entry) => entry.path === linkedPath));
+		}).pipe(Effect.provide(WorktreeDetector.layer))
+	);
+
+	it.effect("returns a typed error for non-git directories", () =>
+		Effect.gen(function* () {
+			const nonRepoPath = createTempDir("detector-non-repo", tempRoots);
+
+			const service = yield* WorktreeDetector;
+			const error = yield* service.detect(nonRepoPath).pipe(Effect.flip);
+
+			assert.strictEqual(error.code, "WORKTREE_DETECT_FAILED");
+		}).pipe(Effect.provide(WorktreeDetector.layer))
+	);
 });
 
 describe("parsePorcelainOutput", () => {
@@ -222,8 +178,8 @@ describe("parsePorcelainOutput", () => {
 			"worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\nworktree /repo/.worktrees/old\nHEAD def456\nprunable gitdir file points to non-existent location\n"
 		);
 
-		expect(parsed.length).toBe(2);
-		expect(parsed[0]?.branch).toBe("main");
-		expect(parsed[1]?.prunable).toBe(true);
+		assert.strictEqual(parsed.length, 2);
+		assert.strictEqual(parsed[0]?.branch, "main");
+		assert.strictEqual(parsed[1]?.prunable, true);
 	});
 });

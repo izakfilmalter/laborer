@@ -1,5 +1,5 @@
+import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { describe, expect, it } from "vitest";
 import { handleProjectList } from "../src/rpc/handlers.js";
 import { ProjectRegistry } from "../src/services/project-registry.js";
 
@@ -29,24 +29,24 @@ const ProjectRegistryTestLayer = Layer.succeed(
 );
 
 describe("project.list RPC handler", () => {
-	it("returns registered projects from the project registry", async () => {
-		const listedProjects = await Effect.runPromise(
-			handleProjectList().pipe(Effect.provide(ProjectRegistryTestLayer))
-		);
+	it.effect("returns registered projects from the project registry", () =>
+		Effect.gen(function* () {
+			const listedProjects = yield* handleProjectList();
 
-		expect(listedProjects).toEqual([
-			{
-				id: "project-1",
-				name: "laborer",
-				repoPath: "/repo/laborer",
-				rlphConfig: undefined,
-			},
-			{
-				id: "project-2",
-				name: "website",
-				repoPath: "/repo/website",
-				rlphConfig: ".rlphrc",
-			},
-		]);
-	});
+			assert.deepStrictEqual(listedProjects, [
+				{
+					id: "project-1",
+					name: "laborer",
+					repoPath: "/repo/laborer",
+					rlphConfig: undefined,
+				},
+				{
+					id: "project-2",
+					name: "website",
+					repoPath: "/repo/website",
+					rlphConfig: ".rlphrc",
+				},
+			]);
+		}).pipe(Effect.provide(ProjectRegistryTestLayer))
+	);
 });

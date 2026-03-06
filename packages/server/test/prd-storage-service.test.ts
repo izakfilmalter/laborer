@@ -1,3 +1,5 @@
+// @effect-diagnostics effect/preferSchemaOverJson:off
+
 import {
 	existsSync,
 	mkdirSync,
@@ -7,8 +9,9 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll } from "vitest";
 import { ConfigService } from "../src/services/config-service.js";
 import {
 	issuesFilePathFromPrdPath,
@@ -28,16 +31,9 @@ const createTempDir = (prefix: string): string => {
 	return dir;
 };
 
-const runWithServices = <A>(
-	effect: Effect.Effect<A, unknown, PrdStorageService>
-): Promise<A> =>
-	Effect.runPromise(
-		effect.pipe(
-			Effect.provide(
-				PrdStorageService.layer.pipe(Layer.provide(ConfigService.layer))
-			)
-		)
-	);
+const PrdStorageTestLayer = PrdStorageService.layer.pipe(
+	Layer.provide(ConfigService.layer)
+);
 
 let testRoot: string;
 
@@ -53,49 +49,52 @@ afterAll(() => {
 
 describe("PrdStorageService", () => {
 	it("slugifies PRD titles into safe file names", () => {
-		expect(slugifyPrdTitle(" MCP Server & PRD Workflow! ")).toBe(
+		assert.strictEqual(
+			slugifyPrdTitle(" MCP Server & PRD Workflow! "),
 			"mcp-server-prd-workflow"
 		);
-		expect(prdFileNameFromTitle("Plan / MVP")).toBe("PRD-plan-mvp.md");
+		assert.strictEqual(prdFileNameFromTitle("Plan / MVP"), "PRD-plan-mvp.md");
 	});
 
-	it("creates PRD files under the resolved default prdsDir", async () => {
-		const projectDir = join(testRoot, "default-prds-dir-project");
-		const worktreeDir = join(testRoot, "default-prds-dir-worktrees");
-		mkdirSync(projectDir, { recursive: true });
-		writeFileSync(
-			join(projectDir, "laborer.json"),
-			JSON.stringify({ worktreeDir }, null, 2)
-		);
+	it.effect("creates PRD files under the resolved default prdsDir", () =>
+		Effect.gen(function* () {
+			const projectDir = join(testRoot, "default-prds-dir-project");
+			const worktreeDir = join(testRoot, "default-prds-dir-worktrees");
+			mkdirSync(projectDir, { recursive: true });
+			writeFileSync(
+				join(projectDir, "laborer.json"),
+				JSON.stringify({ worktreeDir }, null, 2)
+			);
 
-		const filePath = await runWithServices(
+			const service = yield* PrdStorageService;
+			const filePath = yield* service.createPrdFile(
+				projectDir,
+				"default-prds-dir-project",
+				"MCP Planning",
+				"# PRD\n"
+			);
+
+			assert.strictEqual(
+				filePath,
+				join(worktreeDir, "prds", "PRD-mcp-planning.md")
+			);
+			assert.isTrue(existsSync(filePath));
+			assert.strictEqual(readFileSync(filePath, "utf-8"), "# PRD\n");
+		}).pipe(Effect.provide(PrdStorageTestLayer))
+	);
+
+	it.effect(
+		"uses a custom prdsDir from laborer.json and reads files back",
+		() =>
 			Effect.gen(function* () {
-				const service = yield* PrdStorageService;
-				return yield* service.createPrdFile(
-					projectDir,
-					"default-prds-dir-project",
-					"MCP Planning",
-					"# PRD\n"
+				const projectDir = join(testRoot, "custom-prds-dir-project");
+				const customPrdsDir = join(testRoot, "custom-prds-dir-output");
+				mkdirSync(projectDir, { recursive: true });
+				writeFileSync(
+					join(projectDir, "laborer.json"),
+					JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
 				);
-			})
-		);
 
-		expect(filePath).toBe(join(worktreeDir, "prds", "PRD-mcp-planning.md"));
-		expect(existsSync(filePath)).toBe(true);
-		expect(readFileSync(filePath, "utf-8")).toBe("# PRD\n");
-	});
-
-	it("uses a custom prdsDir from laborer.json and reads files back", async () => {
-		const projectDir = join(testRoot, "custom-prds-dir-project");
-		const customPrdsDir = join(testRoot, "custom-prds-dir-output");
-		mkdirSync(projectDir, { recursive: true });
-		writeFileSync(
-			join(projectDir, "laborer.json"),
-			JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
-		);
-
-		const result = await runWithServices(
-			Effect.gen(function* () {
 				const service = yield* PrdStorageService;
 				const filePath = yield* service.createPrdFile(
 					projectDir,
@@ -104,65 +103,59 @@ describe("PrdStorageService", () => {
 					"## Body\n"
 				);
 				const content = yield* service.readPrdFile(filePath);
-				return {
-					content,
-					filePath,
-					resolvedPrdsDir: yield* service.resolvePrdsDir(
-						projectDir,
-						"custom-prds-dir-project"
-					),
-				};
-			})
-		);
-
-		expect(result.resolvedPrdsDir).toBe(customPrdsDir);
-		expect(result.filePath).toBe(join(customPrdsDir, "PRD-read-me-later.md"));
-		expect(result.content).toBe("## Body\n");
-	});
-
-	it("overwrites existing PRD files atomically", async () => {
-		const projectDir = join(testRoot, "update-prds-dir-project");
-		const customPrdsDir = join(testRoot, "update-prds-dir-output");
-		mkdirSync(projectDir, { recursive: true });
-		writeFileSync(
-			join(projectDir, "laborer.json"),
-			JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
-		);
-
-		const result = await runWithServices(
-			Effect.gen(function* () {
-				const service = yield* PrdStorageService;
-				const filePath = yield* service.createPrdFile(
+				const resolvedPrdsDir = yield* service.resolvePrdsDir(
 					projectDir,
-					"update-prds-dir-project",
-					"Editable Plan",
-					"# Draft\n"
+					"custom-prds-dir-project"
 				);
 
-				yield* service.updatePrdFile(filePath, "# Final\n");
-
-				return {
-					content: yield* service.readPrdFile(filePath),
+				assert.strictEqual(resolvedPrdsDir, customPrdsDir);
+				assert.strictEqual(
 					filePath,
-				};
-			})
-		);
+					join(customPrdsDir, "PRD-read-me-later.md")
+				);
+				assert.strictEqual(content, "## Body\n");
+			}).pipe(Effect.provide(PrdStorageTestLayer))
+	);
 
-		expect(result.filePath).toBe(join(customPrdsDir, "PRD-editable-plan.md"));
-		expect(result.content).toBe("# Final\n");
-	});
+	it.effect("overwrites existing PRD files atomically", () =>
+		Effect.gen(function* () {
+			const projectDir = join(testRoot, "update-prds-dir-project");
+			const customPrdsDir = join(testRoot, "update-prds-dir-output");
+			mkdirSync(projectDir, { recursive: true });
+			writeFileSync(
+				join(projectDir, "laborer.json"),
+				JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
+			);
 
-	it("creates and appends companion PRD issues files with numbered sections", async () => {
-		const projectDir = join(testRoot, "issues-prds-dir-project");
-		const customPrdsDir = join(testRoot, "issues-prds-dir-output");
-		mkdirSync(projectDir, { recursive: true });
-		writeFileSync(
-			join(projectDir, "laborer.json"),
-			JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
-		);
+			const service = yield* PrdStorageService;
+			const filePath = yield* service.createPrdFile(
+				projectDir,
+				"update-prds-dir-project",
+				"Editable Plan",
+				"# Draft\n"
+			);
 
-		const result = await runWithServices(
+			yield* service.updatePrdFile(filePath, "# Final\n");
+
+			const content = yield* service.readPrdFile(filePath);
+
+			assert.strictEqual(filePath, join(customPrdsDir, "PRD-editable-plan.md"));
+			assert.strictEqual(content, "# Final\n");
+		}).pipe(Effect.provide(PrdStorageTestLayer))
+	);
+
+	it.effect(
+		"creates and appends companion PRD issues files with numbered sections",
+		() =>
 			Effect.gen(function* () {
+				const projectDir = join(testRoot, "issues-prds-dir-project");
+				const customPrdsDir = join(testRoot, "issues-prds-dir-output");
+				mkdirSync(projectDir, { recursive: true });
+				writeFileSync(
+					join(projectDir, "laborer.json"),
+					JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
+				);
+
 				const service = yield* PrdStorageService;
 				const prdFilePath = yield* service.createPrdFile(
 					projectDir,
@@ -182,37 +175,35 @@ describe("PrdStorageService", () => {
 					"### What to build\n\nFilter pending tasks."
 				);
 
-				return {
-					firstIssue,
-					issuesContent: readFileSync(firstIssue.issueFilePath, "utf-8"),
-					issuesFilePath: firstIssue.issueFilePath,
-					secondIssue,
-				};
-			})
-		);
+				const issuesContent = readFileSync(firstIssue.issueFilePath, "utf-8");
 
-		expect(result.firstIssue.issueNumber).toBe(1);
-		expect(result.secondIssue.issueNumber).toBe(2);
-		expect(result.issuesFilePath).toBe(
-			issuesFilePathFromPrdPath(join(customPrdsDir, "PRD-issue-workflow.md"))
-		);
-		expect(existsSync(result.issuesFilePath)).toBe(true);
-		expect(result.issuesContent).toContain("## Issue 1: Create issue RPC");
-		expect(result.issuesContent).toContain("## Issue 2: List remaining issues");
-		expect(result.issuesContent).toContain("\n\n---\n\n");
-	});
+				assert.strictEqual(firstIssue.issueNumber, 1);
+				assert.strictEqual(secondIssue.issueNumber, 2);
+				assert.strictEqual(
+					firstIssue.issueFilePath,
+					issuesFilePathFromPrdPath(
+						join(customPrdsDir, "PRD-issue-workflow.md")
+					)
+				);
+				assert.isTrue(existsSync(firstIssue.issueFilePath));
+				assert.include(issuesContent, "## Issue 1: Create issue RPC");
+				assert.include(issuesContent, "## Issue 2: List remaining issues");
+				assert.include(issuesContent, "\n\n---\n\n");
+			}).pipe(Effect.provide(PrdStorageTestLayer))
+	);
 
-	it("reads companion PRD issues files and returns an empty string when missing", async () => {
-		const projectDir = join(testRoot, "read-issues-prds-dir-project");
-		const customPrdsDir = join(testRoot, "read-issues-prds-dir-output");
-		mkdirSync(projectDir, { recursive: true });
-		writeFileSync(
-			join(projectDir, "laborer.json"),
-			JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
-		);
-
-		const result = await runWithServices(
+	it.effect(
+		"reads companion PRD issues files and returns an empty string when missing",
+		() =>
 			Effect.gen(function* () {
+				const projectDir = join(testRoot, "read-issues-prds-dir-project");
+				const customPrdsDir = join(testRoot, "read-issues-prds-dir-output");
+				mkdirSync(projectDir, { recursive: true });
+				writeFileSync(
+					join(projectDir, "laborer.json"),
+					JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
+				);
+
 				const service = yield* PrdStorageService;
 				const prdFilePath = yield* service.createPrdFile(
 					projectDir,
@@ -231,28 +222,23 @@ describe("PrdStorageService", () => {
 
 				const populatedIssues = yield* service.readIssuesFile(prdFilePath);
 
-				return {
-					emptyIssues,
-					populatedIssues,
-				};
-			})
-		);
+				assert.strictEqual(emptyIssues, "");
+				assert.include(populatedIssues, "## Issue 1: Read issues RPC");
+			}).pipe(Effect.provide(PrdStorageTestLayer))
+	);
 
-		expect(result.emptyIssues).toBe("");
-		expect(result.populatedIssues).toContain("## Issue 1: Read issues RPC");
-	});
-
-	it("updates a single issue section without changing neighboring issues", async () => {
-		const projectDir = join(testRoot, "update-issue-prds-dir-project");
-		const customPrdsDir = join(testRoot, "update-issue-prds-dir-output");
-		mkdirSync(projectDir, { recursive: true });
-		writeFileSync(
-			join(projectDir, "laborer.json"),
-			JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
-		);
-
-		const result = await runWithServices(
+	it.effect(
+		"updates a single issue section without changing neighboring issues",
+		() =>
 			Effect.gen(function* () {
+				const projectDir = join(testRoot, "update-issue-prds-dir-project");
+				const customPrdsDir = join(testRoot, "update-issue-prds-dir-output");
+				mkdirSync(projectDir, { recursive: true });
+				writeFileSync(
+					join(projectDir, "laborer.json"),
+					JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
+				);
+
 				const service = yield* PrdStorageService;
 				const prdFilePath = yield* service.createPrdFile(
 					projectDir,
@@ -284,33 +270,36 @@ describe("PrdStorageService", () => {
 					2
 				);
 
-				return yield* service.readIssuesFile(prdFilePath);
-			})
-		);
+				const result = yield* service.readIssuesFile(prdFilePath);
 
-		expect(result).toContain(
-			"## Issue 1: First issue\n\n### What to build\n\nKeep this body."
-		);
-		expect(result).toContain(
-			"## Issue 2: Second issue\n\n### What to build\n\nUpdated body."
-		);
-		expect(result).toContain(
-			"## Issue 3: Third issue\n\n### What to build\n\nKeep this one too."
-		);
-		expect(result).not.toContain("Replace this body.");
-	});
+				assert.include(
+					result,
+					"## Issue 1: First issue\n\n### What to build\n\nKeep this body."
+				);
+				assert.include(
+					result,
+					"## Issue 2: Second issue\n\n### What to build\n\nUpdated body."
+				);
+				assert.include(
+					result,
+					"## Issue 3: Third issue\n\n### What to build\n\nKeep this one too."
+				);
+				assert.notInclude(result, "Replace this body.");
+			}).pipe(Effect.provide(PrdStorageTestLayer))
+	);
 
-	it("removes PRD files and companion issues files when deleting a PRD", async () => {
-		const projectDir = join(testRoot, "remove-prd-project");
-		const customPrdsDir = join(testRoot, "remove-prd-output");
-		mkdirSync(projectDir, { recursive: true });
-		writeFileSync(
-			join(projectDir, "laborer.json"),
-			JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
-		);
-
-		const result = await runWithServices(
+	it.effect(
+		"removes PRD files and companion issues files when deleting a PRD",
+		() =>
 			Effect.gen(function* () {
+				const projectDir = join(testRoot, "remove-prd-project");
+				const customPrdsDir = join(testRoot, "remove-prd-output");
+				mkdirSync(projectDir, { recursive: true });
+				writeFileSync(
+					join(projectDir, "laborer.json"),
+					JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
+				);
+
 				const service = yield* PrdStorageService;
 				const prdFilePath = yield* service.createPrdFile(
 					projectDir,
@@ -327,14 +316,8 @@ describe("PrdStorageService", () => {
 
 				yield* service.removePrdArtifacts(prdFilePath);
 
-				return {
-					issueFilePath: issue.issueFilePath,
-					prdFilePath,
-				};
-			})
-		);
-
-		expect(existsSync(result.prdFilePath)).toBe(false);
-		expect(existsSync(result.issueFilePath)).toBe(false);
-	});
+				assert.isFalse(existsSync(prdFilePath));
+				assert.isFalse(existsSync(issue.issueFilePath));
+			}).pipe(Effect.provide(PrdStorageTestLayer))
+	);
 });

@@ -1,8 +1,6 @@
-import { events, schema, tables } from "@laborer/shared/schema";
-import { makeAdapter } from "@livestore/adapter-node";
-import { createStore, provideOtel } from "@livestore/livestore";
+import { assert, describe, it } from "@effect/vitest";
+import { events, tables } from "@laborer/shared/schema";
 import { Effect, Either, Layer } from "effect";
-import { describe, expect, it, vi } from "vitest";
 import {
 	handlePrdCreate,
 	handlePrdCreateIssue,
@@ -19,6 +17,7 @@ import { LaborerStore } from "../src/services/laborer-store.js";
 import { PrdStorageService } from "../src/services/prd-storage-service.js";
 import { ProjectRegistry } from "../src/services/project-registry.js";
 import { TaskManager } from "../src/services/task-manager.js";
+import { TestLaborerStore } from "./helpers/test-store.js";
 
 const project = {
 	id: "project-1",
@@ -26,23 +25,6 @@ const project = {
 	repoPath: "/repo/laborer",
 	rlphConfig: null,
 } as const;
-
-const makeTestStore = Effect.gen(function* () {
-	const adapter = makeAdapter({ storage: { type: "in-memory" } });
-	const store = yield* createStore({
-		schema,
-		storeId: `test-${crypto.randomUUID()}`,
-		adapter,
-		batchUpdates: (run) => run(),
-		disableDevtools: true,
-	});
-
-	return { store };
-}).pipe(provideOtel({}));
-
-const TestLaborerStore = Layer.scoped(LaborerStore, makeTestStore).pipe(
-	Layer.orDie
-);
 
 const TestTaskManager = TaskManager.layer.pipe(
 	Layer.provideMerge(TestLaborerStore)
@@ -97,97 +79,107 @@ const makePrdStorageLayer = ({
 	);
 
 describe("PRD RPC handlers", () => {
-	it("creates a PRD, writes the file, and lists the saved metadata", async () => {
-		const createPrdFile = vi.fn(() =>
-			Effect.succeed("/tmp/prds/PRD-mcp-server-prd-workflow.md")
-		);
+	it.scoped(
+		"creates a PRD, writes the file, and lists the saved metadata",
+		() => {
+			const calls: [string, string, string, string][] = [];
+			const createPrdFile: PrdStorageService["Type"]["createPrdFile"] = (
+				repoPath,
+				name,
+				title,
+				content
+			) => {
+				calls.push([repoPath, name, title, content]);
+				return Effect.succeed("/tmp/prds/PRD-mcp-server-prd-workflow.md");
+			};
 
-		await Effect.runPromise(
-			Effect.gen(function* () {
+			return Effect.gen(function* () {
 				const created = yield* handlePrdCreate({
 					projectId: project.id,
 					title: "MCP Server & PRD Workflow",
 					content: "# PRD\n",
 				});
 
-				expect(created).toEqual(
-					expect.objectContaining({
-						projectId: project.id,
-						title: "MCP Server & PRD Workflow",
-						slug: "mcp-server-prd-workflow",
-						filePath: "/tmp/prds/PRD-mcp-server-prd-workflow.md",
-						status: "draft",
-					})
+				assert.strictEqual(created.projectId, project.id);
+				assert.strictEqual(created.title, "MCP Server & PRD Workflow");
+				assert.strictEqual(created.slug, "mcp-server-prd-workflow");
+				assert.strictEqual(
+					created.filePath,
+					"/tmp/prds/PRD-mcp-server-prd-workflow.md"
 				);
+				assert.strictEqual(created.status, "draft");
 
 				const listed = yield* handlePrdList({ projectId: project.id });
-				expect(listed).toEqual([created]);
+				assert.deepStrictEqual(listed, [created]);
+
+				assert.strictEqual(calls.length, 1);
+				assert.strictEqual(calls[0]?.[0], project.repoPath);
+				assert.strictEqual(calls[0]?.[1], project.name);
+				assert.strictEqual(calls[0]?.[2], "MCP Server & PRD Workflow");
+				assert.strictEqual(calls[0]?.[3], "# PRD\n");
 			}).pipe(
 				Effect.provide(
 					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
 						makeProjectRegistryLayer(),
 						makePrdStorageLayer({ createPrdFile })
-					)
+					).pipe(Layer.provideMerge(TestTaskManager))
 				)
-			)
-		);
-
-		expect(createPrdFile).toHaveBeenCalledWith(
-			project.repoPath,
-			project.name,
-			"MCP Server & PRD Workflow",
-			"# PRD\n"
-		);
-	});
-
-	it("rejects duplicate PRD titles within the same project", async () => {
-		const result = await Effect.runPromise(
-			Effect.gen(function* () {
-				yield* handlePrdCreate({
-					projectId: project.id,
-					title: "Shared plan",
-					content: "# First\n",
-				});
-
-				return yield* handlePrdCreate({
-					projectId: project.id,
-					title: "Shared plan",
-					content: "# Second\n",
-				}).pipe(Effect.either);
-			}).pipe(
-				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makeProjectRegistryLayer(),
-						makePrdStorageLayer({
-							createPrdFile: (_, __, title) =>
-								Effect.succeed(`/tmp/prds/PRD-${title}.md`),
-						})
-					)
-				)
-			)
-		);
-
-		expect(Either.isLeft(result)).toBe(true);
-		if (Either.isLeft(result)) {
-			expect(result.left.code).toBe("ALREADY_EXISTS");
-			expect(result.left.message).toContain("Shared plan");
+			);
 		}
-	});
+	);
 
-	it("creates a PRD issue, appends it to the issues file, and returns the PRD task", async () => {
-		const appendIssue = vi.fn(() =>
-			Effect.succeed({
-				issueFilePath: "/tmp/prds/PRD-mcp-server-prd-workflow-issues.md",
-				issueNumber: 2,
-			})
-		);
+	it.scoped("rejects duplicate PRD titles within the same project", () =>
+		Effect.gen(function* () {
+			yield* handlePrdCreate({
+				projectId: project.id,
+				title: "Shared plan",
+				content: "# First\n",
+			});
 
-		await Effect.runPromise(
-			Effect.gen(function* () {
+			const result = yield* handlePrdCreate({
+				projectId: project.id,
+				title: "Shared plan",
+				content: "# Second\n",
+			}).pipe(Effect.either);
+
+			assert.isTrue(Either.isLeft(result));
+			if (Either.isLeft(result)) {
+				assert.strictEqual(result.left.code, "ALREADY_EXISTS");
+				assert.include(result.left.message, "Shared plan");
+			}
+		}).pipe(
+			Effect.provide(
+				Layer.mergeAll(
+					makeProjectRegistryLayer(),
+					makePrdStorageLayer({
+						createPrdFile: (
+							_repoPath: string,
+							_name: string,
+							title: string,
+							_content: string
+						) => Effect.succeed(`/tmp/prds/PRD-${title}.md`),
+					})
+				).pipe(Layer.provideMerge(TestTaskManager))
+			)
+		)
+	);
+
+	it.scoped(
+		"creates a PRD issue, appends it to the issues file, and returns the PRD task",
+		() => {
+			let appendIssueCalls: unknown[][] = [];
+			const appendIssue: PrdStorageService["Type"]["appendIssue"] = (
+				...args
+			) => {
+				appendIssueCalls.push(args);
+				return Effect.succeed({
+					issueFilePath: "/tmp/prds/PRD-mcp-server-prd-workflow-issues.md",
+					issueNumber: 2,
+				});
+			};
+
+			return Effect.gen(function* () {
+				appendIssueCalls = [];
 				const { store } = yield* LaborerStore;
 				store.commit(
 					events.projectCreated({
@@ -212,148 +204,162 @@ describe("PRD RPC handlers", () => {
 					),
 				});
 
-				expect(createdIssue).toEqual(
-					expect.objectContaining({
-						projectId: project.id,
-						source: "prd",
-						prdId: createdPrd.id,
-						externalId: `${createdPrd.id}:issue:2`,
-						title: "Create issue RPC",
-						status: "pending",
-					})
+				assert.strictEqual(createdIssue.projectId, project.id);
+				assert.strictEqual(createdIssue.source, "prd");
+				assert.strictEqual(createdIssue.prdId, createdPrd.id);
+				assert.strictEqual(createdIssue.externalId, `${createdPrd.id}:issue:2`);
+				assert.strictEqual(createdIssue.title, "Create issue RPC");
+				assert.strictEqual(createdIssue.status, "pending");
+
+				assert.strictEqual(appendIssueCalls.length, 1);
+				assert.strictEqual(
+					appendIssueCalls[0]?.[0],
+					"/tmp/prds/PRD-mcp-server-prd-workflow.md"
+				);
+				assert.strictEqual(appendIssueCalls[0]?.[1], "Create issue RPC");
+				assert.strictEqual(
+					appendIssueCalls[0]?.[2],
+					["### Parent PRD", "", "PRD-mcp-prd-driven-tasks.md"].join("\n")
 				);
 			}).pipe(
 				Effect.provide(
 					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
 						makeProjectRegistryLayer(),
 						makePrdStorageLayer({
 							createPrdFile: () =>
 								Effect.succeed("/tmp/prds/PRD-mcp-server-prd-workflow.md"),
 							appendIssue,
 						})
-					)
+					).pipe(Layer.provideMerge(TestTaskManager))
 				)
-			)
-		);
+			);
+		}
+	);
 
-		expect(appendIssue).toHaveBeenCalledWith(
-			"/tmp/prds/PRD-mcp-server-prd-workflow.md",
-			"Create issue RPC",
-			["### Parent PRD", "", "PRD-mcp-prd-driven-tasks.md"].join("\n")
-		);
-	});
+	it.scoped("reads PRD metadata and markdown content from disk", () => {
+		let readPrdFileCalls: string[] = [];
+		const readPrdFile: PrdStorageService["Type"]["readPrdFile"] = (
+			filePath
+		) => {
+			readPrdFileCalls.push(filePath);
+			return Effect.succeed("# Stored PRD\n");
+		};
 
-	it("reads PRD metadata and markdown content from disk", async () => {
-		const readPrdFile = vi.fn(() => Effect.succeed("# Stored PRD\n"));
+		return Effect.gen(function* () {
+			readPrdFileCalls = [];
+			const created = yield* handlePrdCreate({
+				projectId: project.id,
+				title: "Readable PRD",
+				content: "# Draft\n",
+			});
 
-		await Effect.runPromise(
-			Effect.gen(function* () {
-				const created = yield* handlePrdCreate({
-					projectId: project.id,
-					title: "Readable PRD",
-					content: "# Draft\n",
-				});
+			const read = yield* handlePrdRead({ prdId: created.id });
 
-				const read = yield* handlePrdRead({ prdId: created.id });
+			assert.deepStrictEqual(read, {
+				...created,
+				content: "# Stored PRD\n",
+			});
 
-				expect(read).toEqual({
-					...created,
-					content: "# Stored PRD\n",
-				});
-			}).pipe(
-				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makeProjectRegistryLayer(),
-						makePrdStorageLayer({
-							createPrdFile: () =>
-								Effect.succeed("/tmp/prds/PRD-readable-prd.md"),
-							readPrdFile,
-						})
-					)
-				)
-			)
-		);
-
-		expect(readPrdFile).toHaveBeenCalledWith("/tmp/prds/PRD-readable-prd.md");
-	});
-
-	it("reads issues markdown for an existing PRD", async () => {
-		const readIssuesFile = vi.fn(() =>
-			Effect.succeed("## Issue 1: Create issue RPC\n\n### What to build\n")
-		);
-
-		await Effect.runPromise(
-			Effect.gen(function* () {
-				const created = yield* handlePrdCreate({
-					projectId: project.id,
-					title: "Readable Issues PRD",
-					content: "# Draft\n",
-				});
-
-				const issues = yield* handlePrdReadIssues({ prdId: created.id });
-
-				expect(issues).toBe(
-					"## Issue 1: Create issue RPC\n\n### What to build\n"
-				);
-			}).pipe(
-				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makeProjectRegistryLayer(),
-						makePrdStorageLayer({
-							createPrdFile: () =>
-								Effect.succeed("/tmp/prds/PRD-readable-issues-prd.md"),
-							readIssuesFile,
-						})
-					)
-				)
-			)
-		);
-
-		expect(readIssuesFile).toHaveBeenCalledWith(
-			"/tmp/prds/PRD-readable-issues-prd.md"
-		);
-	});
-
-	it("returns an empty string when a PRD has no issues file yet", async () => {
-		await Effect.runPromise(
-			Effect.gen(function* () {
-				const created = yield* handlePrdCreate({
-					projectId: project.id,
-					title: "No Issues Yet",
-					content: "# Draft\n",
-				});
-
-				const issues = yield* handlePrdReadIssues({ prdId: created.id });
-
-				expect(issues).toBe("");
-			}).pipe(
-				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makeProjectRegistryLayer(),
-						makePrdStorageLayer({
-							createPrdFile: () =>
-								Effect.succeed("/tmp/prds/PRD-no-issues-yet.md"),
-							readIssuesFile: () => Effect.succeed(""),
-						})
-					)
-				)
+			assert.strictEqual(readPrdFileCalls.length, 1);
+			assert.strictEqual(readPrdFileCalls[0], "/tmp/prds/PRD-readable-prd.md");
+		}).pipe(
+			Effect.provide(
+				Layer.mergeAll(
+					makeProjectRegistryLayer(),
+					makePrdStorageLayer({
+						createPrdFile: () =>
+							Effect.succeed("/tmp/prds/PRD-readable-prd.md"),
+						readPrdFile,
+					})
+				).pipe(Layer.provideMerge(TestTaskManager))
 			)
 		);
 	});
 
-	it("updates PRD markdown content and returns the existing metadata", async () => {
-		const updatePrdFile = vi.fn(() => Effect.void);
+	it.scoped("reads issues markdown for an existing PRD", () => {
+		let readIssuesFileCalls: string[] = [];
+		const readIssuesFile: PrdStorageService["Type"]["readIssuesFile"] = (
+			filePath
+		) => {
+			readIssuesFileCalls.push(filePath);
+			return Effect.succeed(
+				"## Issue 1: Create issue RPC\n\n### What to build\n"
+			);
+		};
 
-		await Effect.runPromise(
-			Effect.gen(function* () {
+		return Effect.gen(function* () {
+			readIssuesFileCalls = [];
+			const created = yield* handlePrdCreate({
+				projectId: project.id,
+				title: "Readable Issues PRD",
+				content: "# Draft\n",
+			});
+
+			const issues = yield* handlePrdReadIssues({ prdId: created.id });
+
+			assert.strictEqual(
+				issues,
+				"## Issue 1: Create issue RPC\n\n### What to build\n"
+			);
+
+			assert.strictEqual(readIssuesFileCalls.length, 1);
+			assert.strictEqual(
+				readIssuesFileCalls[0],
+				"/tmp/prds/PRD-readable-issues-prd.md"
+			);
+		}).pipe(
+			Effect.provide(
+				Layer.mergeAll(
+					makeProjectRegistryLayer(),
+					makePrdStorageLayer({
+						createPrdFile: () =>
+							Effect.succeed("/tmp/prds/PRD-readable-issues-prd.md"),
+						readIssuesFile,
+					})
+				).pipe(Layer.provideMerge(TestTaskManager))
+			)
+		);
+	});
+
+	it.scoped("returns an empty string when a PRD has no issues file yet", () =>
+		Effect.gen(function* () {
+			const created = yield* handlePrdCreate({
+				projectId: project.id,
+				title: "No Issues Yet",
+				content: "# Draft\n",
+			});
+
+			const issues = yield* handlePrdReadIssues({ prdId: created.id });
+
+			assert.strictEqual(issues, "");
+		}).pipe(
+			Effect.provide(
+				Layer.mergeAll(
+					makeProjectRegistryLayer(),
+					makePrdStorageLayer({
+						createPrdFile: () =>
+							Effect.succeed("/tmp/prds/PRD-no-issues-yet.md"),
+						readIssuesFile: () => Effect.succeed(""),
+					})
+				).pipe(Layer.provideMerge(TestTaskManager))
+			)
+		)
+	);
+
+	it.scoped(
+		"updates PRD markdown content and returns the existing metadata",
+		() => {
+			let updatePrdFileCalls: [string, string][] = [];
+			const updatePrdFile: PrdStorageService["Type"]["updatePrdFile"] = (
+				filePath,
+				content
+			) => {
+				updatePrdFileCalls.push([filePath, content]);
+				return Effect.void;
+			};
+
+			return Effect.gen(function* () {
+				updatePrdFileCalls = [];
 				const created = yield* handlePrdCreate({
 					projectId: project.id,
 					title: "Editable PRD",
@@ -365,151 +371,136 @@ describe("PRD RPC handlers", () => {
 					content: "# Final\n",
 				});
 
-				expect(updated).toEqual(created);
+				assert.deepStrictEqual(updated, created);
+
+				assert.strictEqual(updatePrdFileCalls.length, 1);
+				assert.strictEqual(
+					updatePrdFileCalls[0]?.[0],
+					"/tmp/prds/PRD-editable-prd.md"
+				);
+				assert.strictEqual(updatePrdFileCalls[0]?.[1], "# Final\n");
 			}).pipe(
 				Effect.provide(
 					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
 						makeProjectRegistryLayer(),
 						makePrdStorageLayer({
 							createPrdFile: () =>
 								Effect.succeed("/tmp/prds/PRD-editable-prd.md"),
 							updatePrdFile,
 						})
-					)
+					).pipe(Layer.provideMerge(TestTaskManager))
 				)
-			)
-		);
-
-		expect(updatePrdFile).toHaveBeenCalledWith(
-			"/tmp/prds/PRD-editable-prd.md",
-			"# Final\n"
-		);
-	});
-
-	it("updates PRD status and persists the new value", async () => {
-		await Effect.runPromise(
-			Effect.gen(function* () {
-				const created = yield* handlePrdCreate({
-					projectId: project.id,
-					title: "Statusful PRD",
-					content: "# Draft\n",
-				});
-
-				const updated = yield* handlePrdUpdateStatus({
-					prdId: created.id,
-					status: "active",
-				});
-
-				expect(updated.status).toBe("active");
-
-				const listed = yield* handlePrdList({ projectId: project.id });
-				expect(listed).toEqual([
-					expect.objectContaining({
-						id: created.id,
-						status: "active",
-					}),
-				]);
-			}).pipe(
-				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makeProjectRegistryLayer(),
-						makePrdStorageLayer({
-							createPrdFile: () =>
-								Effect.succeed("/tmp/prds/PRD-statusful-prd.md"),
-						})
-					)
-				)
-			)
-		);
-	});
-
-	it("returns not found when reading a missing PRD", async () => {
-		const result = await Effect.runPromise(
-			handlePrdRead({ prdId: "missing-prd" }).pipe(
-				Effect.either,
-				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makePrdStorageLayer({
-							createPrdFile: () => Effect.die("not used in this test"),
-						})
-					)
-				)
-			)
-		);
-
-		expect(Either.isLeft(result)).toBe(true);
-		if (Either.isLeft(result)) {
-			expect(result.left.code).toBe("NOT_FOUND");
-			expect(result.left.message).toContain("missing-prd");
+			);
 		}
-	});
+	);
 
-	it("returns not found when updating a missing PRD", async () => {
-		const result = await Effect.runPromise(
-			handlePrdUpdate({ prdId: "missing-prd", content: "# Updated\n" }).pipe(
-				Effect.either,
-				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makePrdStorageLayer({
-							createPrdFile: () => Effect.die("not used in this test"),
-						})
-					)
-				)
+	it.scoped("updates PRD status and persists the new value", () =>
+		Effect.gen(function* () {
+			const created = yield* handlePrdCreate({
+				projectId: project.id,
+				title: "Statusful PRD",
+				content: "# Draft\n",
+			});
+
+			const updated = yield* handlePrdUpdateStatus({
+				prdId: created.id,
+				status: "active",
+			});
+
+			assert.strictEqual(updated.status, "active");
+
+			const listed = yield* handlePrdList({ projectId: project.id });
+			assert.strictEqual(listed.length, 1);
+			assert.strictEqual(listed[0]?.id, created.id);
+			assert.strictEqual(listed[0]?.status, "active");
+		}).pipe(
+			Effect.provide(
+				Layer.mergeAll(
+					makeProjectRegistryLayer(),
+					makePrdStorageLayer({
+						createPrdFile: () =>
+							Effect.succeed("/tmp/prds/PRD-statusful-prd.md"),
+					})
+				).pipe(Layer.provideMerge(TestTaskManager))
 			)
-		);
+		)
+	);
 
-		expect(Either.isLeft(result)).toBe(true);
-		if (Either.isLeft(result)) {
-			expect(result.left.code).toBe("NOT_FOUND");
-			expect(result.left.message).toContain("missing-prd");
-		}
-	});
+	it.scoped("returns not found when reading a missing PRD", () =>
+		Effect.gen(function* () {
+			const result = yield* handlePrdRead({ prdId: "missing-prd" }).pipe(
+				Effect.either
+			);
 
-	it("rejects invalid PRD status updates", async () => {
-		const result = await Effect.runPromise(
-			Effect.gen(function* () {
-				const created = yield* handlePrdCreate({
-					projectId: project.id,
-					title: "Validated PRD",
-					content: "# Draft\n",
-				});
-
-				return yield* handlePrdUpdateStatus({
-					prdId: created.id,
-					status: "pending",
-				}).pipe(Effect.either);
-			}).pipe(
-				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makeProjectRegistryLayer(),
-						makePrdStorageLayer({
-							createPrdFile: () =>
-								Effect.succeed("/tmp/prds/PRD-validated-prd.md"),
-						})
-					)
-				)
+			assert.isTrue(Either.isLeft(result));
+			if (Either.isLeft(result)) {
+				assert.strictEqual(result.left.code, "NOT_FOUND");
+				assert.include(result.left.message, "missing-prd");
+			}
+		}).pipe(
+			Effect.provide(
+				makePrdStorageLayer({
+					createPrdFile: () => Effect.die("not used in this test"),
+				}).pipe(Layer.provideMerge(TestTaskManager))
 			)
-		);
+		)
+	);
 
-		expect(Either.isLeft(result)).toBe(true);
-		if (Either.isLeft(result)) {
-			expect(result.left.code).toBe("INVALID_STATUS");
-			expect(result.left.message).toContain("pending");
-		}
-	});
+	it.scoped("returns not found when updating a missing PRD", () =>
+		Effect.gen(function* () {
+			const result = yield* handlePrdUpdate({
+				prdId: "missing-prd",
+				content: "# Updated\n",
+			}).pipe(Effect.either);
 
-	it("lists only pending and in-progress PRD issues for the requested PRD", async () => {
-		await Effect.runPromise(
+			assert.isTrue(Either.isLeft(result));
+			if (Either.isLeft(result)) {
+				assert.strictEqual(result.left.code, "NOT_FOUND");
+				assert.include(result.left.message, "missing-prd");
+			}
+		}).pipe(
+			Effect.provide(
+				makePrdStorageLayer({
+					createPrdFile: () => Effect.die("not used in this test"),
+				}).pipe(Layer.provideMerge(TestTaskManager))
+			)
+		)
+	);
+
+	it.scoped("rejects invalid PRD status updates", () =>
+		Effect.gen(function* () {
+			const created = yield* handlePrdCreate({
+				projectId: project.id,
+				title: "Validated PRD",
+				content: "# Draft\n",
+			});
+
+			const result = yield* handlePrdUpdateStatus({
+				prdId: created.id,
+				status: "pending",
+			}).pipe(Effect.either);
+
+			assert.isTrue(Either.isLeft(result));
+			if (Either.isLeft(result)) {
+				assert.strictEqual(result.left.code, "INVALID_STATUS");
+				assert.include(result.left.message, "pending");
+			}
+		}).pipe(
+			Effect.provide(
+				Layer.mergeAll(
+					makeProjectRegistryLayer(),
+					makePrdStorageLayer({
+						createPrdFile: () =>
+							Effect.succeed("/tmp/prds/PRD-validated-prd.md"),
+					})
+				).pipe(Layer.provideMerge(TestTaskManager))
+			)
+		)
+	);
+
+	it.scoped(
+		"lists only pending and in-progress PRD issues for the requested PRD",
+		() =>
 			Effect.gen(function* () {
 				const { store } = yield* LaborerStore;
 				store.commit(
@@ -560,29 +551,26 @@ describe("PRD RPC handlers", () => {
 					prdId: createdPrd.id,
 				});
 
-				expect(remainingIssues).toEqual([
-					expect.objectContaining({
-						id: pendingIssue.id,
-						prdId: createdPrd.id,
-						status: "pending",
-						title: "Pending issue",
-					}),
-					expect.objectContaining({
-						id: inProgressIssue.id,
-						prdId: createdPrd.id,
-						status: "in_progress",
-						title: "In-progress issue",
-					}),
-				]);
+				assert.strictEqual(remainingIssues.length, 2);
+				assert.strictEqual(remainingIssues[0]?.id, pendingIssue.id);
+				assert.strictEqual(remainingIssues[0]?.prdId, createdPrd.id);
+				assert.strictEqual(remainingIssues[0]?.status, "pending");
+				assert.strictEqual(remainingIssues[0]?.title, "Pending issue");
+				assert.strictEqual(remainingIssues[1]?.id, inProgressIssue.id);
+				assert.strictEqual(remainingIssues[1]?.prdId, createdPrd.id);
+				assert.strictEqual(remainingIssues[1]?.status, "in_progress");
+				assert.strictEqual(remainingIssues[1]?.title, "In-progress issue");
 			}).pipe(
 				Effect.provide(
 					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
 						makeProjectRegistryLayer(),
 						makePrdStorageLayer({
-							createPrdFile: (_, __, title) =>
-								Effect.succeed(`/tmp/prds/PRD-${title}.md`),
+							createPrdFile: (
+								_repoPath: string,
+								_name: string,
+								title: string,
+								_content: string
+							) => Effect.succeed(`/tmp/prds/PRD-${title}.md`),
 							appendIssue: (() => {
 								let issueNumber = 0;
 								return () => {
@@ -594,17 +582,24 @@ describe("PRD RPC handlers", () => {
 								};
 							})(),
 						})
-					)
+					).pipe(Layer.provideMerge(TestTaskManager))
 				)
 			)
-		);
-	});
+	);
 
-	it("updates PRD issue body and status for an existing PRD task", async () => {
-		const updateIssue = vi.fn(() => Effect.void);
+	it.scoped(
+		"updates PRD issue body and status for an existing PRD task",
+		() => {
+			let updateIssueCalls: unknown[][] = [];
+			const updateIssue: PrdStorageService["Type"]["updateIssue"] = (
+				...args
+			) => {
+				updateIssueCalls.push(args);
+				return Effect.void;
+			};
 
-		await Effect.runPromise(
-			Effect.gen(function* () {
+			return Effect.gen(function* () {
+				updateIssueCalls = [];
 				const { store } = yield* LaborerStore;
 				store.commit(
 					events.projectCreated({
@@ -632,23 +627,29 @@ describe("PRD RPC handlers", () => {
 					status: "completed",
 				});
 
-				expect(updatedIssue).toEqual(
-					expect.objectContaining({
-						id: createdIssue.id,
-						status: "completed",
-						title: "Editable issue",
-					})
-				);
+				assert.strictEqual(updatedIssue.id, createdIssue.id);
+				assert.strictEqual(updatedIssue.status, "completed");
+				assert.strictEqual(updatedIssue.title, "Editable issue");
 
 				const persistedTask = store.query(
 					tables.tasks.where("id", createdIssue.id)
 				)[0];
-				expect(persistedTask?.status).toBe("completed");
+				assert.strictEqual(persistedTask?.status, "completed");
+
+				assert.strictEqual(updateIssueCalls.length, 1);
+				assert.strictEqual(
+					updateIssueCalls[0]?.[0],
+					"/tmp/prds/PRD-update-issues-prd.md"
+				);
+				assert.strictEqual(updateIssueCalls[0]?.[1], "Editable issue");
+				assert.strictEqual(
+					updateIssueCalls[0]?.[2],
+					"### What to build\n\nUpdated body."
+				);
+				assert.strictEqual(updateIssueCalls[0]?.[3], 3);
 			}).pipe(
 				Effect.provide(
 					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
 						makeProjectRegistryLayer(),
 						makePrdStorageLayer({
 							createPrdFile: () =>
@@ -660,261 +661,239 @@ describe("PRD RPC handlers", () => {
 								}),
 							updateIssue,
 						})
-					)
+					).pipe(Layer.provideMerge(TestTaskManager))
 				)
-			)
-		);
+			);
+		}
+	);
 
-		expect(updateIssue).toHaveBeenCalledWith(
-			"/tmp/prds/PRD-update-issues-prd.md",
-			"Editable issue",
-			"### What to build\n\nUpdated body.",
-			3
+	it.scoped("updates only PRD issue status when no body is provided", () =>
+		Effect.gen(function* () {
+			const { store } = yield* LaborerStore;
+			store.commit(
+				events.projectCreated({
+					id: project.id,
+					repoPath: project.repoPath,
+					name: project.name,
+					rlphConfig: project.rlphConfig,
+				})
+			);
+
+			const createdPrd = yield* handlePrdCreate({
+				projectId: project.id,
+				title: "Status-only PRD",
+				content: "# PRD\n",
+			});
+			const createdIssue = yield* handlePrdCreateIssue({
+				prdId: createdPrd.id,
+				title: "Status-only issue",
+				body: "### What to build\n\nOnly update status.",
+			});
+
+			yield* handlePrdUpdateIssue({
+				taskId: createdIssue.id,
+				status: "in_progress",
+			});
+
+			const persistedTask = store.query(
+				tables.tasks.where("id", createdIssue.id)
+			)[0];
+			assert.strictEqual(persistedTask?.status, "in_progress");
+		}).pipe(
+			Effect.provide(
+				Layer.mergeAll(
+					makeProjectRegistryLayer(),
+					makePrdStorageLayer({
+						createPrdFile: () =>
+							Effect.succeed("/tmp/prds/PRD-status-only-prd.md"),
+						appendIssue: () =>
+							Effect.succeed({
+								issueFilePath: "/tmp/prds/PRD-status-only-prd-issues.md",
+								issueNumber: 1,
+							}),
+					})
+				).pipe(Layer.provideMerge(TestTaskManager))
+			)
+		)
+	);
+
+	it.scoped("removes PRD files, linked PRD tasks, and the PRD record", () => {
+		let removePrdArtifactsCalls: string[] = [];
+		const removePrdArtifacts: PrdStorageService["Type"]["removePrdArtifacts"] =
+			(filePath) => {
+				removePrdArtifactsCalls.push(filePath);
+				return Effect.void;
+			};
+
+		return Effect.gen(function* () {
+			removePrdArtifactsCalls = [];
+			const { store } = yield* LaborerStore;
+			store.commit(
+				events.projectCreated({
+					id: project.id,
+					repoPath: project.repoPath,
+					name: project.name,
+					rlphConfig: project.rlphConfig,
+				})
+			);
+
+			const createdPrd = yield* handlePrdCreate({
+				projectId: project.id,
+				title: "Disposable PRD",
+				content: "# PRD\n",
+			});
+
+			yield* handlePrdCreateIssue({
+				prdId: createdPrd.id,
+				title: "PRD-linked task",
+				body: "### What to build\n\nRemove this task.",
+			});
+
+			const taskManager = yield* TaskManager;
+			yield* taskManager.createTask(project.id, "Manual task", "manual");
+
+			yield* handlePrdRemove({ prdId: createdPrd.id });
+
+			const manualTasks = store
+				.query(tables.tasks.where("projectId", project.id))
+				.filter((task) => task.source === "manual");
+
+			assert.strictEqual(
+				store.query(tables.prds.where("id", createdPrd.id)).length,
+				0
+			);
+			assert.strictEqual(
+				store.query(tables.tasks.where("prdId", createdPrd.id)).length,
+				0
+			);
+			assert.strictEqual(manualTasks.length, 1);
+
+			assert.strictEqual(removePrdArtifactsCalls.length, 1);
+			assert.strictEqual(
+				removePrdArtifactsCalls[0],
+				"/tmp/prds/PRD-disposable-prd.md"
+			);
+		}).pipe(
+			Effect.provide(
+				Layer.mergeAll(
+					makeProjectRegistryLayer(),
+					makePrdStorageLayer({
+						createPrdFile: () =>
+							Effect.succeed("/tmp/prds/PRD-disposable-prd.md"),
+						appendIssue: () =>
+							Effect.succeed({
+								issueFilePath: "/tmp/prds/PRD-disposable-prd-issues.md",
+								issueNumber: 1,
+							}),
+						removePrdArtifacts,
+					})
+				).pipe(Layer.provideMerge(TestTaskManager))
+			)
 		);
 	});
 
-	it("updates only PRD issue status when no body is provided", async () => {
-		await Effect.runPromise(
+	it.scoped("returns not found when removing a missing PRD", () =>
+		Effect.gen(function* () {
+			const result = yield* handlePrdRemove({ prdId: "missing-prd" }).pipe(
+				Effect.either
+			);
+
+			assert.isTrue(Either.isLeft(result));
+			if (Either.isLeft(result)) {
+				assert.strictEqual(result.left.code, "NOT_FOUND");
+				assert.include(result.left.message, "missing-prd");
+			}
+		}).pipe(
+			Effect.provide(
+				makePrdStorageLayer({
+					createPrdFile: () => Effect.die("not used in this test"),
+				}).pipe(Layer.provideMerge(TestTaskManager))
+			)
+		)
+	);
+
+	it.scoped("returns not found when reading issues for a missing PRD", () =>
+		Effect.gen(function* () {
+			const result = yield* handlePrdReadIssues({
+				prdId: "missing-prd",
+			}).pipe(Effect.either);
+
+			assert.isTrue(Either.isLeft(result));
+			if (Either.isLeft(result)) {
+				assert.strictEqual(result.left.code, "NOT_FOUND");
+				assert.include(result.left.message, "missing-prd");
+			}
+		}).pipe(
+			Effect.provide(
+				makePrdStorageLayer({
+					createPrdFile: () => Effect.die("not used in this test"),
+				}).pipe(Layer.provideMerge(TestTaskManager))
+			)
+		)
+	);
+
+	it.scoped(
+		"returns not found when listing remaining issues for a missing PRD",
+		() =>
 			Effect.gen(function* () {
-				const { store } = yield* LaborerStore;
-				store.commit(
-					events.projectCreated({
-						id: project.id,
-						repoPath: project.repoPath,
-						name: project.name,
-						rlphConfig: project.rlphConfig,
-					})
-				);
+				const result = yield* handlePrdListRemainingIssues({
+					prdId: "missing-prd",
+				}).pipe(Effect.either);
 
-				const createdPrd = yield* handlePrdCreate({
-					projectId: project.id,
-					title: "Status-only PRD",
-					content: "# PRD\n",
-				});
-				const createdIssue = yield* handlePrdCreateIssue({
-					prdId: createdPrd.id,
-					title: "Status-only issue",
-					body: "### What to build\n\nOnly update status.",
-				});
-
-				yield* handlePrdUpdateIssue({
-					taskId: createdIssue.id,
-					status: "in_progress",
-				});
-
-				const persistedTask = store.query(
-					tables.tasks.where("id", createdIssue.id)
-				)[0];
-				expect(persistedTask?.status).toBe("in_progress");
+				assert.isTrue(Either.isLeft(result));
+				if (Either.isLeft(result)) {
+					assert.strictEqual(result.left.code, "NOT_FOUND");
+					assert.include(result.left.message, "missing-prd");
+				}
 			}).pipe(
 				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makeProjectRegistryLayer(),
-						makePrdStorageLayer({
-							createPrdFile: () =>
-								Effect.succeed("/tmp/prds/PRD-status-only-prd.md"),
-							appendIssue: () =>
-								Effect.succeed({
-									issueFilePath: "/tmp/prds/PRD-status-only-prd-issues.md",
-									issueNumber: 1,
-								}),
-						})
-					)
+					makePrdStorageLayer({
+						createPrdFile: () => Effect.die("not used in this test"),
+					}).pipe(Layer.provideMerge(TestTaskManager))
 				)
 			)
-		);
-	});
+	);
 
-	it("removes PRD files, linked PRD tasks, and the PRD record", async () => {
-		const removePrdArtifacts = vi.fn(() => Effect.void);
-
-		await Effect.runPromise(
-			Effect.gen(function* () {
-				const { store } = yield* LaborerStore;
-				store.commit(
-					events.projectCreated({
-						id: project.id,
-						repoPath: project.repoPath,
-						name: project.name,
-						rlphConfig: project.rlphConfig,
-					})
-				);
-
-				const createdPrd = yield* handlePrdCreate({
-					projectId: project.id,
-					title: "Disposable PRD",
-					content: "# PRD\n",
-				});
-
-				yield* handlePrdCreateIssue({
-					prdId: createdPrd.id,
-					title: "PRD-linked task",
-					body: "### What to build\n\nRemove this task.",
-				});
-
-				const taskManager = yield* TaskManager;
-				yield* taskManager.createTask(project.id, "Manual task", "manual");
-
-				yield* handlePrdRemove({ prdId: createdPrd.id });
-
-				const manualTasks = store
-					.query(tables.tasks.where("projectId", project.id))
-					.filter((task) => task.source === "manual");
-
-				expect(
-					store.query(tables.prds.where("id", createdPrd.id))
-				).toHaveLength(0);
-				expect(
-					store.query(tables.tasks.where("prdId", createdPrd.id))
-				).toHaveLength(0);
-				expect(manualTasks).toHaveLength(1);
-			}).pipe(
-				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makeProjectRegistryLayer(),
-						makePrdStorageLayer({
-							createPrdFile: () =>
-								Effect.succeed("/tmp/prds/PRD-disposable-prd.md"),
-							appendIssue: () =>
-								Effect.succeed({
-									issueFilePath: "/tmp/prds/PRD-disposable-prd-issues.md",
-									issueNumber: 1,
-								}),
-							removePrdArtifacts,
-						})
-					)
-				)
-			)
-		);
-
-		expect(removePrdArtifacts).toHaveBeenCalledWith(
-			"/tmp/prds/PRD-disposable-prd.md"
-		);
-	});
-
-	it("returns not found when removing a missing PRD", async () => {
-		const result = await Effect.runPromise(
-			handlePrdRemove({ prdId: "missing-prd" }).pipe(
-				Effect.either,
-				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makePrdStorageLayer({
-							createPrdFile: () => Effect.die("not used in this test"),
-						})
-					)
-				)
-			)
-		);
-
-		expect(Either.isLeft(result)).toBe(true);
-		if (Either.isLeft(result)) {
-			expect(result.left.code).toBe("NOT_FOUND");
-			expect(result.left.message).toContain("missing-prd");
-		}
-	});
-
-	it("returns not found when reading issues for a missing PRD", async () => {
-		const result = await Effect.runPromise(
-			handlePrdReadIssues({ prdId: "missing-prd" }).pipe(
-				Effect.either,
-				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makePrdStorageLayer({
-							createPrdFile: () => Effect.die("not used in this test"),
-						})
-					)
-				)
-			)
-		);
-
-		expect(Either.isLeft(result)).toBe(true);
-		if (Either.isLeft(result)) {
-			expect(result.left.code).toBe("NOT_FOUND");
-			expect(result.left.message).toContain("missing-prd");
-		}
-	});
-
-	it("returns not found when listing remaining issues for a missing PRD", async () => {
-		const result = await Effect.runPromise(
-			handlePrdListRemainingIssues({ prdId: "missing-prd" }).pipe(
-				Effect.either,
-				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makePrdStorageLayer({
-							createPrdFile: () => Effect.die("not used in this test"),
-						})
-					)
-				)
-			)
-		);
-
-		expect(Either.isLeft(result)).toBe(true);
-		if (Either.isLeft(result)) {
-			expect(result.left.code).toBe("NOT_FOUND");
-			expect(result.left.message).toContain("missing-prd");
-		}
-	});
-
-	it("returns not found when creating an issue for a missing PRD", async () => {
-		const result = await Effect.runPromise(
-			handlePrdCreateIssue({
+	it.scoped("returns not found when creating an issue for a missing PRD", () =>
+		Effect.gen(function* () {
+			const result = yield* handlePrdCreateIssue({
 				prdId: "missing-prd",
 				title: "Create issue RPC",
 				body: "### What to build",
-			}).pipe(
-				Effect.either,
-				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makePrdStorageLayer({
-							createPrdFile: () => Effect.die("not used in this test"),
-						})
-					)
-				)
+			}).pipe(Effect.either);
+
+			assert.isTrue(Either.isLeft(result));
+			if (Either.isLeft(result)) {
+				assert.strictEqual(result.left.code, "NOT_FOUND");
+				assert.include(result.left.message, "missing-prd");
+			}
+		}).pipe(
+			Effect.provide(
+				makePrdStorageLayer({
+					createPrdFile: () => Effect.die("not used in this test"),
+				}).pipe(Layer.provideMerge(TestTaskManager))
 			)
-		);
+		)
+	);
 
-		expect(Either.isLeft(result)).toBe(true);
-		if (Either.isLeft(result)) {
-			expect(result.left.code).toBe("NOT_FOUND");
-			expect(result.left.message).toContain("missing-prd");
-		}
-	});
-
-	it("returns not found when updating a missing PRD issue task", async () => {
-		const result = await Effect.runPromise(
-			handlePrdUpdateIssue({
+	it.scoped("returns not found when updating a missing PRD issue task", () =>
+		Effect.gen(function* () {
+			const result = yield* handlePrdUpdateIssue({
 				taskId: "missing-task",
 				body: "### What to build\n\nUpdated body.",
-			}).pipe(
-				Effect.either,
-				Effect.provide(
-					Layer.mergeAll(
-						TestLaborerStore,
-						TestTaskManager,
-						makePrdStorageLayer({
-							createPrdFile: () => Effect.die("not used in this test"),
-						})
-					)
-				)
-			)
-		);
+			}).pipe(Effect.either);
 
-		expect(Either.isLeft(result)).toBe(true);
-		if (Either.isLeft(result)) {
-			expect(result.left.code).toBe("NOT_FOUND");
-			expect(result.left.message).toContain("missing-task");
-		}
-	});
+			assert.isTrue(Either.isLeft(result));
+			if (Either.isLeft(result)) {
+				assert.strictEqual(result.left.code, "NOT_FOUND");
+				assert.include(result.left.message, "missing-task");
+			}
+		}).pipe(
+			Effect.provide(
+				makePrdStorageLayer({
+					createPrdFile: () => Effect.die("not used in this test"),
+				}).pipe(Layer.provideMerge(TestTaskManager))
+			)
+		)
+	);
 });

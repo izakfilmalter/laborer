@@ -748,10 +748,16 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 		// -------------------------------------------------------------------
 		// Task RPCs (Issue #100-102)
 		// -------------------------------------------------------------------
-		"task.create": ({ projectId, title }) =>
+		"task.create": ({ projectId, prdId, title }) =>
 			Effect.gen(function* () {
 				const taskManager = yield* TaskManager;
-				const task = yield* taskManager.createTask(projectId, title, "manual");
+				const task = yield* taskManager.createTask(
+					projectId,
+					title,
+					"manual",
+					undefined,
+					prdId
+				);
 				return toTaskResponse(task);
 			}),
 		"task.importGithub": ({ projectId }) =>

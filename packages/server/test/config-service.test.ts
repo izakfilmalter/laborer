@@ -1,11 +1,15 @@
+// @effect-diagnostics effect/preferSchemaOverJson:off
+
 /**
  * ConfigService integration tests.
  *
  * Tests config resolution, walk-up directory traversal, global config
  * fallback, provenance metadata, tilde expansion, and error handling
- * using real temporary directories on the filesystem.
+ * through the public ConfigService API using real temporary directories
+ * on the filesystem.
  *
- * Issue #154: Config Service — resolve config with walk-up + global default
+ * All tests exercise ConfigService.resolveConfig, ConfigService.readGlobalConfig,
+ * or ConfigService.writeProjectConfig — no internal helpers are tested directly.
  */
 
 import {
@@ -17,8 +21,9 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll } from "vitest";
 import type {
 	LaborerConfig,
 	ResolvedLaborerConfig,
@@ -26,28 +31,13 @@ import type {
 import {
 	CONFIG_FILE_NAME,
 	ConfigService,
-	expandTilde,
 	GLOBAL_CONFIG_DIR,
-	mergeConfigs,
-	readConfigFile,
-	walkUpForConfigs,
 } from "../src/services/config-service.js";
+import { createTempDir } from "./helpers/git-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Create a unique temporary directory for test isolation. */
-const createTempDir = (prefix: string): string => {
-	const dir = join(
-		homedir(),
-		".config",
-		"laborer-test",
-		`${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	return dir;
-};
 
 /** Write a laborer.json config file at the given directory. */
 const writeConfig = (dir: string, config: LaborerConfig): string => {
@@ -56,33 +46,25 @@ const writeConfig = (dir: string, config: LaborerConfig): string => {
 	return configPath;
 };
 
-/** Run an Effect and return the result. */
-const runEffect = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
-	Effect.runPromise(effect);
-
 /** Run ConfigService.resolveConfig via the layer. */
-const runResolveConfig = (
+const resolveConfig = (
 	projectRepoPath: string,
 	projectName: string
-): Promise<ResolvedLaborerConfig> =>
-	Effect.runPromise(
-		Effect.gen(function* () {
-			const service = yield* ConfigService;
-			return yield* service.resolveConfig(projectRepoPath, projectName);
-		}).pipe(Effect.provide(ConfigService.layer))
-	);
+): Effect.Effect<ResolvedLaborerConfig> =>
+	Effect.gen(function* () {
+		const service = yield* ConfigService;
+		return yield* service.resolveConfig(projectRepoPath, projectName);
+	}).pipe(Effect.provide(ConfigService.layer));
 
 /** Run ConfigService.readGlobalConfig via the layer. */
-const runReadGlobalConfig = (): Promise<LaborerConfig> =>
-	Effect.runPromise(
-		Effect.gen(function* () {
-			const service = yield* ConfigService;
-			return yield* service.readGlobalConfig();
-		}).pipe(Effect.provide(ConfigService.layer))
-	);
+const readGlobalConfig = (): Effect.Effect<LaborerConfig> =>
+	Effect.gen(function* () {
+		const service = yield* ConfigService;
+		return yield* service.readGlobalConfig();
+	}).pipe(Effect.provide(ConfigService.layer));
 
 /** Run ConfigService.writeProjectConfig via the layer. */
-const runWriteProjectConfig = (
+const writeProjectConfig = (
 	projectRepoPath: string,
 	updates: {
 		prdsDir?: string | undefined;
@@ -90,622 +72,478 @@ const runWriteProjectConfig = (
 		setupScripts?: readonly string[] | undefined;
 		worktreeDir?: string | undefined;
 	}
-): Promise<void> =>
-	Effect.runPromise(
-		Effect.gen(function* () {
-			const service = yield* ConfigService;
-			yield* service.writeProjectConfig(projectRepoPath, updates);
-		}).pipe(Effect.provide(ConfigService.layer))
-	);
+): Effect.Effect<void> =>
+	Effect.gen(function* () {
+		const service = yield* ConfigService;
+		yield* service.writeProjectConfig(projectRepoPath, updates);
+	}).pipe(Effect.provide(ConfigService.layer));
 
 // ---------------------------------------------------------------------------
 // Test Fixtures
 // ---------------------------------------------------------------------------
 
+/** Temp directories for cleanup. */
+const tempRoots: string[] = [];
+
 /** Root temp directory for all tests in this suite. */
 let testRoot: string;
 
 beforeAll(() => {
-	testRoot = createTempDir("config-service");
+	testRoot = createTempDir("config-service", tempRoots);
 });
 
 afterAll(() => {
-	if (testRoot) {
-		rmSync(testRoot, { recursive: true, force: true });
+	for (const dir of tempRoots) {
+		rmSync(dir, { recursive: true, force: true });
 	}
 });
 
 // ---------------------------------------------------------------------------
-// expandTilde tests
-// ---------------------------------------------------------------------------
-
-describe("expandTilde", () => {
-	it("should expand ~ to home directory", () => {
-		expect(expandTilde("~")).toBe(homedir());
-	});
-
-	it("should expand ~/ prefix to home directory", () => {
-		expect(expandTilde("~/projects/repo")).toBe(
-			join(homedir(), "projects/repo")
-		);
-	});
-
-	it("should not expand ~ in the middle of a path", () => {
-		expect(expandTilde("/path/to/~something")).toBe("/path/to/~something");
-	});
-
-	it("should return absolute paths unchanged", () => {
-		expect(expandTilde("/absolute/path")).toBe("/absolute/path");
-	});
-
-	it("should return relative paths unchanged", () => {
-		expect(expandTilde("relative/path")).toBe("relative/path");
-	});
-});
-
-// ---------------------------------------------------------------------------
-// readConfigFile tests
-// ---------------------------------------------------------------------------
-
-describe("readConfigFile", () => {
-	it("should return undefined for non-existent file", async () => {
-		const result = await runEffect(
-			readConfigFile(join(testRoot, "nonexistent", CONFIG_FILE_NAME))
-		);
-		expect(result).toBeUndefined();
-	});
-
-	it("should parse valid JSON config", async () => {
-		const dir = join(testRoot, "valid-config");
-		mkdirSync(dir, { recursive: true });
-		writeConfig(dir, {
-			prdsDir: "~/prds",
-			worktreeDir: "~/worktrees",
-			setupScripts: ["bun install"],
-		});
-
-		const result = await runEffect(readConfigFile(join(dir, CONFIG_FILE_NAME)));
-		expect(result).toEqual({
-			prdsDir: "~/prds",
-			worktreeDir: "~/worktrees",
-			setupScripts: ["bun install"],
-		});
-	});
-
-	it("should return empty object for malformed JSON", async () => {
-		const dir = join(testRoot, "malformed-json");
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, CONFIG_FILE_NAME), "{ not valid json }}}");
-
-		const result = await runEffect(readConfigFile(join(dir, CONFIG_FILE_NAME)));
-		expect(result).toEqual({});
-	});
-
-	it("should return empty object for empty file", async () => {
-		const dir = join(testRoot, "empty-file");
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, CONFIG_FILE_NAME), "");
-
-		const result = await runEffect(readConfigFile(join(dir, CONFIG_FILE_NAME)));
-		expect(result).toEqual({});
-	});
-});
-
-// ---------------------------------------------------------------------------
-// walkUpForConfigs tests
-// ---------------------------------------------------------------------------
-
-describe("walkUpForConfigs", () => {
-	it("should find config at the starting directory", async () => {
-		const dir = join(testRoot, "walk-start");
-		mkdirSync(dir, { recursive: true });
-		const configPath = writeConfig(dir, { setupScripts: ["echo hello"] });
-
-		const results = await runEffect(walkUpForConfigs(dir));
-		expect(results.length).toBeGreaterThanOrEqual(1);
-		expect(results[0]?.path).toBe(configPath);
-		expect(results[0]?.config.setupScripts).toEqual(["echo hello"]);
-	});
-
-	it("should find configs in ancestor directories", async () => {
-		const parent = join(testRoot, "walk-ancestor-parent");
-		const child = join(parent, "child-project");
-		mkdirSync(child, { recursive: true });
-
-		const parentConfigPath = writeConfig(parent, {
-			worktreeDir: "~/parent-worktrees",
-		});
-		const childConfigPath = writeConfig(child, {
-			setupScripts: ["bun install"],
-		});
-
-		const results = await runEffect(walkUpForConfigs(child));
-
-		// Child config should be first (closest), parent second
-		const childResult = results.find((r) => r.path === childConfigPath);
-		const parentResult = results.find((r) => r.path === parentConfigPath);
-
-		expect(childResult).toBeDefined();
-		expect(parentResult).toBeDefined();
-		expect(childResult?.config.setupScripts).toEqual(["bun install"]);
-		expect(parentResult?.config.worktreeDir).toBe("~/parent-worktrees");
-
-		// Child should come before parent in the results
-		const childIndex = childResult ? results.indexOf(childResult) : -1;
-		const parentIndex = parentResult ? results.indexOf(parentResult) : -1;
-		expect(childIndex).toBeLessThan(parentIndex);
-	});
-
-	it("should return empty array when no configs found", async () => {
-		const dir = join(testRoot, "walk-no-config");
-		mkdirSync(dir, { recursive: true });
-		// Don't create a config file
-
-		const results = await runEffect(walkUpForConfigs(dir));
-		// May find configs in ancestor dirs (testRoot, etc.) — filter to only
-		// configs at or below our test directory
-		const relevantResults = results.filter(
-			(r) =>
-				r.path === join(dir, CONFIG_FILE_NAME) ||
-				r.path.startsWith(join(dir, "/"))
-		);
-		expect(relevantResults).toHaveLength(0);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// mergeConfigs tests
-// ---------------------------------------------------------------------------
-
-describe("mergeConfigs", () => {
-	it("should use hardcoded defaults when no configs provided", () => {
-		const result = mergeConfigs([], "my-project");
-
-		expect(result.prdsDir.source).toBe("default");
-		expect(result.prdsDir.value).toBe(
-			join(GLOBAL_CONFIG_DIR, "my-project", "prds")
-		);
-		expect(result.worktreeDir.source).toBe("default");
-		expect(result.worktreeDir.value).toBe(
-			join(GLOBAL_CONFIG_DIR, "my-project")
-		);
-		expect(result.setupScripts.source).toBe("default");
-		expect(result.setupScripts.value).toEqual([]);
-		expect(result.rlphConfig.source).toBe("default");
-		expect(result.rlphConfig.value).toBeNull();
-	});
-
-	it("should use values from config when provided", () => {
-		const result = mergeConfigs(
-			[
-				{
-					config: {
-						prdsDir: "/custom/prds",
-						worktreeDir: "/custom/worktrees",
-						setupScripts: ["npm install"],
-						rlphConfig: "rlph.json",
-					},
-					path: "/project/laborer.json",
-				},
-			],
-			"my-project"
-		);
-
-		expect(result.prdsDir.value).toBe("/custom/prds");
-		expect(result.prdsDir.source).toBe("/project/laborer.json");
-		expect(result.worktreeDir.value).toBe("/custom/worktrees");
-		expect(result.worktreeDir.source).toBe("/project/laborer.json");
-		expect(result.setupScripts.value).toEqual(["npm install"]);
-		expect(result.setupScripts.source).toBe("/project/laborer.json");
-		expect(result.rlphConfig.value).toBe("rlph.json");
-		expect(result.rlphConfig.source).toBe("/project/laborer.json");
-	});
-
-	it("should prefer closest config (project root over ancestor)", () => {
-		const result = mergeConfigs(
-			[
-				{
-					config: { worktreeDir: "/project-level" },
-					path: "/repo/laborer.json",
-				},
-				{
-					config: { worktreeDir: "/ancestor-level" },
-					path: "/parent/laborer.json",
-				},
-			],
-			"my-project"
-		);
-
-		// Closest (first in array) wins
-		expect(result.worktreeDir.value).toBe("/project-level");
-		expect(result.worktreeDir.source).toBe("/repo/laborer.json");
-	});
-
-	it("should merge partial configs from different levels", () => {
-		const result = mergeConfigs(
-			[
-				{
-					config: { setupScripts: ["bun install"] },
-					path: "/repo/laborer.json",
-				},
-				{
-					config: { worktreeDir: "/ancestor-worktrees" },
-					path: "/parent/laborer.json",
-				},
-			],
-			"my-project"
-		);
-
-		// setupScripts from project root (closest)
-		expect(result.setupScripts.value).toEqual(["bun install"]);
-		expect(result.setupScripts.source).toBe("/repo/laborer.json");
-
-		// worktreeDir from ancestor (only place it's defined)
-		expect(result.worktreeDir.value).toBe("/ancestor-worktrees");
-		expect(result.worktreeDir.source).toBe("/parent/laborer.json");
-		expect(result.prdsDir.value).toBe("/ancestor-worktrees/prds");
-		expect(result.prdsDir.source).toBe("default");
-	});
-
-	it("should expand tilde in prdsDir", () => {
-		const result = mergeConfigs(
-			[
-				{
-					config: { prdsDir: "~/custom-prds" },
-					path: "/repo/laborer.json",
-				},
-			],
-			"my-project"
-		);
-
-		expect(result.prdsDir.value).toBe(join(homedir(), "custom-prds"));
-	});
-
-	it("should expand tilde in worktreeDir", () => {
-		const result = mergeConfigs(
-			[
-				{
-					config: { worktreeDir: "~/my-worktrees" },
-					path: "/repo/laborer.json",
-				},
-			],
-			"my-project"
-		);
-
-		expect(result.worktreeDir.value).toBe(join(homedir(), "my-worktrees"));
-	});
-
-	it("should resolve relative worktreeDir to absolute", () => {
-		const result = mergeConfigs(
-			[
-				{
-					config: { worktreeDir: "relative/path" },
-					path: "/repo/laborer.json",
-				},
-			],
-			"my-project"
-		);
-
-		// resolve() converts relative to absolute based on cwd
-		expect(result.worktreeDir.value.startsWith("/")).toBe(true);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// ConfigService integration tests (via layer)
+// ConfigService.resolveConfig
 // ---------------------------------------------------------------------------
 
 describe("ConfigService", () => {
 	describe("resolveConfig", () => {
-		it("should re-read config file on each resolve call", async () => {
-			const projectDir = join(testRoot, "no-cache-between-calls");
-			mkdirSync(projectDir, { recursive: true });
+		it.effect("should re-read config file on each resolve call", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "no-cache-between-calls");
+				mkdirSync(projectDir, { recursive: true });
 
-			const configPath = writeConfig(projectDir, {
-				worktreeDir: "/tmp/first-worktrees",
-			});
+				const configPath = writeConfig(projectDir, {
+					worktreeDir: "/tmp/first-worktrees",
+				});
 
-			const first = await runResolveConfig(projectDir, "cache-test-project");
-			expect(first.worktreeDir.value).toBe("/tmp/first-worktrees");
-			expect(first.worktreeDir.source).toBe(configPath);
+				const first = yield* resolveConfig(projectDir, "cache-test-project");
+				assert.strictEqual(first.worktreeDir.value, "/tmp/first-worktrees");
+				assert.strictEqual(first.worktreeDir.source, configPath);
 
-			writeConfig(projectDir, {
-				worktreeDir: "/tmp/second-worktrees",
-			});
+				writeConfig(projectDir, {
+					worktreeDir: "/tmp/second-worktrees",
+				});
 
-			const second = await runResolveConfig(projectDir, "cache-test-project");
-			expect(second.worktreeDir.value).toBe("/tmp/second-worktrees");
-			expect(second.worktreeDir.source).toBe(configPath);
-		});
+				const second = yield* resolveConfig(projectDir, "cache-test-project");
+				assert.strictEqual(second.worktreeDir.value, "/tmp/second-worktrees");
+				assert.strictEqual(second.worktreeDir.source, configPath);
+			})
+		);
 
-		it("should return defaults when no config files exist", async () => {
-			const projectDir = join(testRoot, "no-config-project");
-			mkdirSync(projectDir, { recursive: true });
+		it.effect("should return defaults when no config files exist", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "no-config-project");
+				mkdirSync(projectDir, { recursive: true });
 
-			const result = await runResolveConfig(projectDir, "test-project");
+				const result = yield* resolveConfig(projectDir, "test-project");
 
-			expect(result.prdsDir.source).toBe("default");
-			expect(result.prdsDir.value).toBe(
-				join(GLOBAL_CONFIG_DIR, "test-project", "prds")
-			);
-			expect(result.worktreeDir.source).toBe("default");
-			expect(result.worktreeDir.value).toBe(
-				join(GLOBAL_CONFIG_DIR, "test-project")
-			);
-			expect(result.setupScripts.source).toBe("default");
-			expect(result.setupScripts.value).toEqual([]);
-			expect(result.rlphConfig.source).toBe("default");
-			expect(result.rlphConfig.value).toBeNull();
-		});
+				assert.strictEqual(result.prdsDir.source, "default");
+				assert.strictEqual(
+					result.prdsDir.value,
+					join(GLOBAL_CONFIG_DIR, "test-project", "prds")
+				);
+				assert.strictEqual(result.worktreeDir.source, "default");
+				assert.strictEqual(
+					result.worktreeDir.value,
+					join(GLOBAL_CONFIG_DIR, "test-project")
+				);
+				assert.strictEqual(result.setupScripts.source, "default");
+				assert.deepStrictEqual(result.setupScripts.value, []);
+				assert.strictEqual(result.rlphConfig.source, "default");
+				assert.isNull(result.rlphConfig.value);
+			})
+		);
 
-		it("should read config from project root", async () => {
-			const projectDir = join(testRoot, "project-root-config");
-			mkdirSync(projectDir, { recursive: true });
-			const configPath = writeConfig(projectDir, {
-				prdsDir: "/custom/prds",
-				worktreeDir: "/custom/worktrees",
-				setupScripts: ["bun install", "cp .env.example .env"],
-				rlphConfig: "rlph-config.json",
-			});
+		it.effect("should read config from project root", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "project-root-config");
+				mkdirSync(projectDir, { recursive: true });
+				const configPath = writeConfig(projectDir, {
+					prdsDir: "/custom/prds",
+					worktreeDir: "/custom/worktrees",
+					setupScripts: ["bun install", "cp .env.example .env"],
+					rlphConfig: "rlph-config.json",
+				});
 
-			const result = await runResolveConfig(projectDir, "test-project");
+				const result = yield* resolveConfig(projectDir, "test-project");
 
-			expect(result.prdsDir.value).toBe("/custom/prds");
-			expect(result.prdsDir.source).toBe(configPath);
-			expect(result.worktreeDir.value).toBe("/custom/worktrees");
-			expect(result.worktreeDir.source).toBe(configPath);
-			expect(result.setupScripts.value).toEqual([
-				"bun install",
-				"cp .env.example .env",
-			]);
-			expect(result.setupScripts.source).toBe(configPath);
-			expect(result.rlphConfig.value).toBe("rlph-config.json");
-			expect(result.rlphConfig.source).toBe(configPath);
-		});
+				assert.strictEqual(result.prdsDir.value, "/custom/prds");
+				assert.strictEqual(result.prdsDir.source, configPath);
+				assert.strictEqual(result.worktreeDir.value, "/custom/worktrees");
+				assert.strictEqual(result.worktreeDir.source, configPath);
+				assert.deepStrictEqual(result.setupScripts.value, [
+					"bun install",
+					"cp .env.example .env",
+				]);
+				assert.strictEqual(result.setupScripts.source, configPath);
+				assert.strictEqual(result.rlphConfig.value, "rlph-config.json");
+				assert.strictEqual(result.rlphConfig.source, configPath);
+			})
+		);
 
-		it("should inherit from ancestor config", async () => {
-			const parent = join(testRoot, "ancestor-inherit-parent");
-			const child = join(parent, "child-project");
-			mkdirSync(child, { recursive: true });
+		it.effect("should inherit from ancestor config", () =>
+			Effect.gen(function* () {
+				const parent = join(testRoot, "ancestor-inherit-parent");
+				const child = join(parent, "child-project");
+				mkdirSync(child, { recursive: true });
 
-			writeConfig(parent, {
-				worktreeDir: "~/parent-worktrees",
-			});
-			const childConfigPath = writeConfig(child, {
-				setupScripts: ["pnpm install"],
-			});
+				writeConfig(parent, {
+					worktreeDir: "~/parent-worktrees",
+				});
+				const childConfigPath = writeConfig(child, {
+					setupScripts: ["pnpm install"],
+				});
 
-			const result = await runResolveConfig(child, "child-project");
+				const result = yield* resolveConfig(child, "child-project");
 
-			expect(result.prdsDir.value).toBe(
-				join(homedir(), "parent-worktrees", "prds")
-			);
-			// setupScripts from child (closest)
-			expect(result.setupScripts.value).toEqual(["pnpm install"]);
-			expect(result.setupScripts.source).toBe(childConfigPath);
+				assert.strictEqual(
+					result.prdsDir.value,
+					join(homedir(), "parent-worktrees", "prds")
+				);
+				// setupScripts from child (closest)
+				assert.deepStrictEqual(result.setupScripts.value, ["pnpm install"]);
+				assert.strictEqual(result.setupScripts.source, childConfigPath);
 
-			// worktreeDir from parent (inherited)
-			expect(result.worktreeDir.value).toBe(
-				join(homedir(), "parent-worktrees")
-			);
-		});
+				// worktreeDir from parent (inherited)
+				assert.strictEqual(
+					result.worktreeDir.value,
+					join(homedir(), "parent-worktrees")
+				);
+			})
+		);
 
-		it("should override ancestor config with project root config", async () => {
-			const parent = join(testRoot, "override-parent");
-			const child = join(parent, "override-child");
-			mkdirSync(child, { recursive: true });
+		it.effect("should override ancestor config with project root config", () =>
+			Effect.gen(function* () {
+				const parent = join(testRoot, "override-parent");
+				const child = join(parent, "override-child");
+				mkdirSync(child, { recursive: true });
 
-			writeConfig(parent, {
-				worktreeDir: "/parent-worktrees",
-				setupScripts: ["parent-script"],
-			});
-			const childConfigPath = writeConfig(child, {
-				worktreeDir: "/child-worktrees",
-			});
+				writeConfig(parent, {
+					worktreeDir: "/parent-worktrees",
+					setupScripts: ["parent-script"],
+				});
+				const childConfigPath = writeConfig(child, {
+					worktreeDir: "/child-worktrees",
+				});
 
-			const result = await runResolveConfig(child, "child-project");
+				const result = yield* resolveConfig(child, "child-project");
 
-			expect(result.prdsDir.value).toBe("/child-worktrees/prds");
-			// worktreeDir from child overrides parent
-			expect(result.worktreeDir.value).toBe("/child-worktrees");
-			expect(result.worktreeDir.source).toBe(childConfigPath);
+				// prdsDir defaults to worktreeDir/prds when only worktreeDir is set
+				assert.strictEqual(result.prdsDir.value, "/child-worktrees/prds");
+				// worktreeDir from child overrides parent
+				assert.strictEqual(result.worktreeDir.value, "/child-worktrees");
+				assert.strictEqual(result.worktreeDir.source, childConfigPath);
 
-			// setupScripts still from parent (child doesn't set it)
-			expect(result.setupScripts.value).toEqual(["parent-script"]);
-		});
+				// setupScripts still from parent (child doesn't set it)
+				assert.deepStrictEqual(result.setupScripts.value, ["parent-script"]);
+			})
+		);
 
-		it("should expand tilde in worktreeDir from config", async () => {
-			const projectDir = join(testRoot, "tilde-expansion");
-			mkdirSync(projectDir, { recursive: true });
-			writeConfig(projectDir, {
-				worktreeDir: "~/my-laborer-worktrees",
-			});
+		it.effect("should expand tilde in worktreeDir from config", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "tilde-expansion-worktree");
+				mkdirSync(projectDir, { recursive: true });
+				writeConfig(projectDir, {
+					worktreeDir: "~/my-laborer-worktrees",
+				});
 
-			const result = await runResolveConfig(projectDir, "test-project");
+				const result = yield* resolveConfig(projectDir, "test-project");
 
-			expect(result.worktreeDir.value).toBe(
-				join(homedir(), "my-laborer-worktrees")
-			);
-		});
+				assert.strictEqual(
+					result.worktreeDir.value,
+					join(homedir(), "my-laborer-worktrees")
+				);
+			})
+		);
 
-		it("should handle malformed config gracefully", async () => {
-			const projectDir = join(testRoot, "malformed-config-project");
-			mkdirSync(projectDir, { recursive: true });
-			writeFileSync(join(projectDir, CONFIG_FILE_NAME), "{ broken json !!!");
+		it.effect("should expand tilde in prdsDir from config", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "tilde-expansion-prds");
+				mkdirSync(projectDir, { recursive: true });
+				writeConfig(projectDir, {
+					prdsDir: "~/custom-prds",
+				});
 
-			// Should not throw — falls back to defaults
-			const result = await runResolveConfig(projectDir, "test-project");
+				const result = yield* resolveConfig(projectDir, "test-project");
 
-			// Malformed config is treated as empty, so defaults apply
-			expect(result.worktreeDir.source).toBe("default");
-		});
+				assert.strictEqual(
+					result.prdsDir.value,
+					join(homedir(), "custom-prds")
+				);
+			})
+		);
 
-		it("should use global config as fallback", async () => {
-			// This test depends on whether a global config exists on the machine.
-			// We just verify the service doesn't crash and returns a valid result.
-			const projectDir = join(testRoot, "global-fallback-project");
-			mkdirSync(projectDir, { recursive: true });
+		it.effect("should resolve relative worktreeDir to absolute path", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "relative-worktree");
+				mkdirSync(projectDir, { recursive: true });
+				writeConfig(projectDir, {
+					worktreeDir: "relative/path",
+				});
 
-			const result = await runResolveConfig(projectDir, "global-fallback-test");
+				const result = yield* resolveConfig(projectDir, "test-project");
 
-			// Should always have a valid worktreeDir
-			expect(result.worktreeDir.value).toBeTruthy();
-			expect(typeof result.worktreeDir.value).toBe("string");
-		});
+				// resolve() converts relative to absolute based on cwd
+				assert.isTrue(result.worktreeDir.value.startsWith("/"));
+			})
+		);
 
-		it("should preserve provenance for each field independently", async () => {
-			const grandparent = join(testRoot, "provenance-grandparent");
-			const parent = join(grandparent, "provenance-parent");
-			const child = join(parent, "provenance-child");
-			mkdirSync(child, { recursive: true });
+		it.effect("should handle malformed config gracefully", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "malformed-config-project");
+				mkdirSync(projectDir, { recursive: true });
+				writeFileSync(join(projectDir, CONFIG_FILE_NAME), "{ broken json !!!");
 
-			const gpPath = writeConfig(grandparent, {
-				rlphConfig: "grandparent-rlph.json",
-			});
-			writeConfig(parent, {
-				worktreeDir: "/parent-worktrees",
-			});
-			const childPath = writeConfig(child, {
-				setupScripts: ["child-script"],
-			});
+				// Should not throw — falls back to defaults
+				const result = yield* resolveConfig(projectDir, "test-project");
 
-			const result = await runResolveConfig(child, "provenance-test");
+				// Malformed config is treated as empty, so defaults apply
+				assert.strictEqual(result.worktreeDir.source, "default");
+			})
+		);
 
-			// Each field's provenance should trace to the config that set it
-			expect(result.prdsDir.source).toBe("default");
-			expect(result.setupScripts.source).toBe(childPath);
-			expect(result.rlphConfig.source).toBe(gpPath);
-		});
+		it.effect("should handle empty config file gracefully", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "empty-config-project");
+				mkdirSync(projectDir, { recursive: true });
+				writeFileSync(join(projectDir, CONFIG_FILE_NAME), "");
+
+				// Should not throw — falls back to defaults
+				const result = yield* resolveConfig(projectDir, "test-project");
+
+				assert.strictEqual(result.worktreeDir.source, "default");
+				assert.strictEqual(result.setupScripts.source, "default");
+			})
+		);
+
+		it.effect("should use global config as fallback", () =>
+			Effect.gen(function* () {
+				// This test depends on whether a global config exists on the machine.
+				// We just verify the service doesn't crash and returns a valid result.
+				const projectDir = join(testRoot, "global-fallback-project");
+				mkdirSync(projectDir, { recursive: true });
+
+				const result = yield* resolveConfig(projectDir, "global-fallback-test");
+
+				// Should always have a valid worktreeDir
+				assert.isTrue(result.worktreeDir.value.length > 0);
+				assert.strictEqual(typeof result.worktreeDir.value, "string");
+			})
+		);
+
+		it.effect("should preserve provenance for each field independently", () =>
+			Effect.gen(function* () {
+				const grandparent = join(testRoot, "provenance-grandparent");
+				const parent = join(grandparent, "provenance-parent");
+				const child = join(parent, "provenance-child");
+				mkdirSync(child, { recursive: true });
+
+				const gpPath = writeConfig(grandparent, {
+					rlphConfig: "grandparent-rlph.json",
+				});
+				writeConfig(parent, {
+					worktreeDir: "/parent-worktrees",
+				});
+				const childPath = writeConfig(child, {
+					setupScripts: ["child-script"],
+				});
+
+				const result = yield* resolveConfig(child, "provenance-test");
+
+				// Each field's provenance should trace to the config that set it
+				assert.strictEqual(result.prdsDir.source, "default");
+				assert.strictEqual(result.setupScripts.source, childPath);
+				assert.strictEqual(result.rlphConfig.source, gpPath);
+			})
+		);
+
+		it.effect(
+			"should default prdsDir to worktreeDir/prds when worktreeDir is set",
+			() =>
+				Effect.gen(function* () {
+					const projectDir = join(testRoot, "prdsdir-default-from-worktree");
+					mkdirSync(projectDir, { recursive: true });
+					writeConfig(projectDir, {
+						worktreeDir: "/custom/worktrees",
+					});
+
+					const result = yield* resolveConfig(projectDir, "test-project");
+
+					// prdsDir should default to worktreeDir + "/prds"
+					assert.strictEqual(result.prdsDir.value, "/custom/worktrees/prds");
+					assert.strictEqual(result.prdsDir.source, "default");
+				})
+		);
 	});
+
+	// ---------------------------------------------------------------------------
+	// ConfigService.readGlobalConfig
+	// ---------------------------------------------------------------------------
 
 	describe("readGlobalConfig", () => {
-		it("should return empty config when no global config file exists", async () => {
-			// The global config file may or may not exist on the machine.
-			// This test just verifies it doesn't crash.
-			const result = await runReadGlobalConfig();
+		it.effect(
+			"should return empty config when no global config file exists",
+			() =>
+				Effect.gen(function* () {
+					// The global config file may or may not exist on the machine.
+					// This test just verifies it doesn't crash.
+					const result = yield* readGlobalConfig();
 
-			expect(result).toBeDefined();
-			expect(typeof result).toBe("object");
-		});
+					assert.isDefined(result);
+					assert.strictEqual(typeof result, "object");
+				})
+		);
 
-		it("should ensure global config directory exists", async () => {
-			// Just calling readGlobalConfig should create the directory
-			await runReadGlobalConfig();
+		it.effect("should ensure global config directory exists", () =>
+			Effect.gen(function* () {
+				// Just calling readGlobalConfig should create the directory
+				yield* readGlobalConfig();
 
-			// The GLOBAL_CONFIG_DIR should exist (it may have existed before)
-			const { existsSync } = await import("node:fs");
-			expect(existsSync(GLOBAL_CONFIG_DIR)).toBe(true);
-		});
+				// The GLOBAL_CONFIG_DIR should exist (it may have existed before)
+				assert.isTrue(existsSync(GLOBAL_CONFIG_DIR));
+			})
+		);
 	});
 
+	// ---------------------------------------------------------------------------
+	// ConfigService.writeProjectConfig
+	// ---------------------------------------------------------------------------
+
 	describe("writeProjectConfig", () => {
-		it("should create laborer.json when missing", async () => {
-			const projectDir = join(testRoot, "write-create-missing");
-			mkdirSync(projectDir, { recursive: true });
+		it.effect("should create laborer.json when missing", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "write-create-missing");
+				mkdirSync(projectDir, { recursive: true });
 
-			await runWriteProjectConfig(projectDir, {
-				prdsDir: "~/custom-prds",
-				worktreeDir: "~/custom-worktrees",
-			});
+				yield* writeProjectConfig(projectDir, {
+					prdsDir: "~/custom-prds",
+					worktreeDir: "~/custom-worktrees",
+				});
 
-			const configPath = join(projectDir, CONFIG_FILE_NAME);
-			expect(existsSync(configPath)).toBe(true);
+				const configPath = join(projectDir, CONFIG_FILE_NAME);
+				assert.isTrue(existsSync(configPath));
 
-			const written = JSON.parse(readFileSync(configPath, "utf-8")) as {
-				prdsDir?: string;
-				worktreeDir?: string;
-			};
-			expect(written.prdsDir).toBe("~/custom-prds");
-			expect(written.worktreeDir).toBe("~/custom-worktrees");
-		});
+				const written = JSON.parse(readFileSync(configPath, "utf-8")) as {
+					prdsDir?: string;
+					worktreeDir?: string;
+				};
+				assert.strictEqual(written.prdsDir, "~/custom-prds");
+				assert.strictEqual(written.worktreeDir, "~/custom-worktrees");
+			})
+		);
 
-		it("should merge updates without clobbering unrelated fields", async () => {
-			const projectDir = join(testRoot, "write-merge");
-			mkdirSync(projectDir, { recursive: true });
+		it.effect("should merge updates without clobbering unrelated fields", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "write-merge");
+				mkdirSync(projectDir, { recursive: true });
 
-			writeConfig(projectDir, {
-				worktreeDir: "/existing/worktrees",
-				rlphConfig: "rlph-existing.json",
-			});
+				writeConfig(projectDir, {
+					worktreeDir: "/existing/worktrees",
+					rlphConfig: "rlph-existing.json",
+				});
 
-			await runWriteProjectConfig(projectDir, {
-				setupScripts: ["bun install", "bun test"],
-			});
+				yield* writeProjectConfig(projectDir, {
+					setupScripts: ["bun install", "bun test"],
+				});
 
-			const written = JSON.parse(
-				readFileSync(join(projectDir, CONFIG_FILE_NAME), "utf-8")
-			) as {
-				rlphConfig?: string;
-				setupScripts?: string[];
-				worktreeDir?: string;
-			};
+				const written = JSON.parse(
+					readFileSync(join(projectDir, CONFIG_FILE_NAME), "utf-8")
+				) as {
+					rlphConfig?: string;
+					setupScripts?: string[];
+					worktreeDir?: string;
+				};
 
-			expect(written.worktreeDir).toBe("/existing/worktrees");
-			expect(written.rlphConfig).toBe("rlph-existing.json");
-			expect(written.setupScripts).toEqual(["bun install", "bun test"]);
-		});
+				assert.strictEqual(written.worktreeDir, "/existing/worktrees");
+				assert.strictEqual(written.rlphConfig, "rlph-existing.json");
+				assert.deepStrictEqual(written.setupScripts, [
+					"bun install",
+					"bun test",
+				]);
+			})
+		);
 
-		it("should preserve unknown fields in existing config", async () => {
-			const projectDir = join(testRoot, "write-preserve-unknown");
-			mkdirSync(projectDir, { recursive: true });
+		it.effect("should preserve unknown fields in existing config", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "write-preserve-unknown");
+				mkdirSync(projectDir, { recursive: true });
 
-			const configPath = join(projectDir, CONFIG_FILE_NAME);
-			writeFileSync(
-				configPath,
-				JSON.stringify(
-					{
-						worktreeDir: "/existing/worktrees",
-						customField: "preserve-me",
-						nested: { hello: "world" },
-					},
-					null,
-					2
-				)
-			);
+				const configPath = join(projectDir, CONFIG_FILE_NAME);
+				writeFileSync(
+					configPath,
+					JSON.stringify(
+						{
+							worktreeDir: "/existing/worktrees",
+							customField: "preserve-me",
+							nested: { hello: "world" },
+						},
+						null,
+						2
+					)
+				);
 
-			await runWriteProjectConfig(projectDir, {
-				rlphConfig: "new-rlph.json",
-			});
+				yield* writeProjectConfig(projectDir, {
+					rlphConfig: "new-rlph.json",
+				});
 
-			const written = JSON.parse(readFileSync(configPath, "utf-8")) as {
-				customField?: string;
-				nested?: { hello?: string };
-				rlphConfig?: string;
-				worktreeDir?: string;
-			};
+				const written = JSON.parse(readFileSync(configPath, "utf-8")) as {
+					customField?: string;
+					nested?: { hello?: string };
+					rlphConfig?: string;
+					worktreeDir?: string;
+				};
 
-			expect(written.customField).toBe("preserve-me");
-			expect(written.nested?.hello).toBe("world");
-			expect(written.worktreeDir).toBe("/existing/worktrees");
-			expect(written.rlphConfig).toBe("new-rlph.json");
-		});
+				assert.strictEqual(written.customField, "preserve-me");
+				assert.strictEqual(written.nested?.hello, "world");
+				assert.strictEqual(written.worktreeDir, "/existing/worktrees");
+				assert.strictEqual(written.rlphConfig, "new-rlph.json");
+			})
+		);
 
-		it("should not write undefined fields", async () => {
-			const projectDir = join(testRoot, "write-ignore-undefined");
-			mkdirSync(projectDir, { recursive: true });
+		it.effect("should not write undefined fields", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "write-ignore-undefined");
+				mkdirSync(projectDir, { recursive: true });
 
-			writeConfig(projectDir, {
-				setupScripts: ["existing-script"],
-				worktreeDir: "/existing/worktrees",
-			});
+				writeConfig(projectDir, {
+					setupScripts: ["existing-script"],
+					worktreeDir: "/existing/worktrees",
+				});
 
-			await runWriteProjectConfig(projectDir, {
-				rlphConfig: "updated-rlph.json",
-				setupScripts: undefined,
-				worktreeDir: undefined,
-			});
+				yield* writeProjectConfig(projectDir, {
+					rlphConfig: "updated-rlph.json",
+					setupScripts: undefined,
+					worktreeDir: undefined,
+				});
 
-			const written = JSON.parse(
-				readFileSync(join(projectDir, CONFIG_FILE_NAME), "utf-8")
-			) as {
-				rlphConfig?: string;
-				setupScripts?: string[];
-				worktreeDir?: string;
-			};
+				const written = JSON.parse(
+					readFileSync(join(projectDir, CONFIG_FILE_NAME), "utf-8")
+				) as {
+					rlphConfig?: string;
+					setupScripts?: string[];
+					worktreeDir?: string;
+				};
 
-			expect(written.rlphConfig).toBe("updated-rlph.json");
-			expect(written.setupScripts).toEqual(["existing-script"]);
-			expect(written.worktreeDir).toBe("/existing/worktrees");
-		});
+				assert.strictEqual(written.rlphConfig, "updated-rlph.json");
+				assert.deepStrictEqual(written.setupScripts, ["existing-script"]);
+				assert.strictEqual(written.worktreeDir, "/existing/worktrees");
+			})
+		);
+
+		it.effect(
+			"should allow written config to be read back via resolveConfig",
+			() =>
+				Effect.gen(function* () {
+					const projectDir = join(testRoot, "write-then-read");
+					mkdirSync(projectDir, { recursive: true });
+
+					yield* writeProjectConfig(projectDir, {
+						worktreeDir: "/written/worktrees",
+						setupScripts: ["bun install"],
+					});
+
+					const result = yield* resolveConfig(projectDir, "roundtrip-project");
+
+					assert.strictEqual(result.worktreeDir.value, "/written/worktrees");
+					assert.deepStrictEqual(result.setupScripts.value, ["bun install"]);
+				})
+		);
 	});
 });

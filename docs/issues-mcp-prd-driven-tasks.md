@@ -151,14 +151,14 @@ Add `prd.read` and `prd.remove` RPC endpoints to `LaborerRpcs`.
 
 ### Acceptance criteria
 
-- [ ] `prd.read` RPC is defined with prdId payload and returns PRD metadata + markdown content
-- [ ] `prd.read` handler reads the file from disk and returns the content
-- [ ] `prd.read` returns an error if the PRD doesn't exist
-- [ ] `prd.remove` RPC is defined with prdId payload
-- [ ] `prd.remove` handler deletes the PRD file from disk
-- [ ] `prd.remove` handler deletes the associated issues file if it exists
-- [ ] `prd.remove` handler removes linked tasks (source "prd" with matching prdId) from LiveStore
-- [ ] `prd.remove` handler commits `prdRemoved` event
+- [x] `prd.read` RPC is defined with prdId payload and returns PRD metadata + markdown content
+- [x] `prd.read` handler reads the file from disk and returns the content
+- [x] `prd.read` returns an error if the PRD doesn't exist
+- [x] `prd.remove` RPC is defined with prdId payload
+- [x] `prd.remove` handler deletes the PRD file from disk
+- [x] `prd.remove` handler deletes the associated issues file if it exists
+- [x] `prd.remove` handler removes linked tasks (source "prd" with matching prdId) from LiveStore
+- [x] `prd.remove` handler commits `prdRemoved` event
 
 ### Blocked by
 
@@ -761,8 +761,8 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 176 | Tasks table: add prdId column | None | Done |
 | 177 | PrdStorageService: create and read PRD files on disk | #175 | Done |
 | 178 | PRD create and list RPCs | #177 | Done |
-| 179 | PRD read and remove RPCs | #178 | Ready |
-| 180 | PRD update RPC and status changes | #179 | Blocked |
+| 179 | PRD read and remove RPCs | #178 | Done |
+| 180 | PRD update RPC and status changes | #179 | Ready |
 | 181 | Issue creation RPC: prd.createIssue | #178 | Done |
 | 182 | Issue read and list RPCs | #181 | Ready |
 | 183 | Issue update RPC: prd.updateIssue | #182 | Blocked |

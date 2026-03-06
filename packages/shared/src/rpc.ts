@@ -152,6 +152,17 @@ export const PrdResponse = Schema.Struct({
 	createdAt: Schema.String,
 });
 
+const PrdReadResponse = Schema.Struct({
+	id: Schema.String,
+	projectId: Schema.String,
+	title: Schema.String,
+	slug: Schema.String,
+	filePath: Schema.String,
+	status: PrdStatus,
+	createdAt: Schema.String,
+	content: Schema.String,
+});
+
 const WorkspaceResponse = Schema.Struct({
 	id: Schema.String,
 	projectId: Schema.String,
@@ -251,6 +262,21 @@ export class LaborerRpcs extends RpcGroup.make(
 		error: RpcError,
 		payload: {
 			projectId: Schema.String,
+		},
+	}),
+
+	Rpc.make("prd.read", {
+		success: PrdReadResponse,
+		error: RpcError,
+		payload: {
+			prdId: Schema.String,
+		},
+	}),
+
+	Rpc.make("prd.remove", {
+		error: RpcError,
+		payload: {
+			prdId: Schema.String,
 		},
 	}),
 

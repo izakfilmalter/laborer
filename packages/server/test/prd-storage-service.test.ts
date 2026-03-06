@@ -169,4 +169,42 @@ describe("PrdStorageService", () => {
 		expect(result.issuesContent).toContain("## Issue 2: List remaining issues");
 		expect(result.issuesContent).toContain("\n\n---\n\n");
 	});
+
+	it("removes PRD files and companion issues files when deleting a PRD", async () => {
+		const projectDir = join(testRoot, "remove-prd-project");
+		const customPrdsDir = join(testRoot, "remove-prd-output");
+		mkdirSync(projectDir, { recursive: true });
+		writeFileSync(
+			join(projectDir, "laborer.json"),
+			JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
+		);
+
+		const result = await runWithServices(
+			Effect.gen(function* () {
+				const service = yield* PrdStorageService;
+				const prdFilePath = yield* service.createPrdFile(
+					projectDir,
+					"remove-prd-project",
+					"Disposable Plan",
+					"# PRD\n"
+				);
+
+				const issue = yield* service.appendIssue(
+					prdFilePath,
+					"Linked issue",
+					"### What to build\n\nDelete files."
+				);
+
+				yield* service.removePrdArtifacts(prdFilePath);
+
+				return {
+					issueFilePath: issue.issueFilePath,
+					prdFilePath,
+				};
+			})
+		);
+
+		expect(existsSync(result.prdFilePath)).toBe(false);
+		expect(existsSync(result.issueFilePath)).toBe(false);
+	});
 });

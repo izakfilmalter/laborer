@@ -3,6 +3,7 @@ import {
 	mkdirSync,
 	readFileSync,
 	renameSync,
+	unlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -135,6 +136,9 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 			},
 			PrdStorageError
 		>;
+		readonly removePrdArtifacts: (
+			prdFilePath: string
+		) => Effect.Effect<void, PrdStorageError>;
 		readonly resolvePrdsDir: (
 			projectRepoPath: string,
 			projectName: string
@@ -226,10 +230,38 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 				};
 			});
 
+			const removePrdArtifacts = Effect.fn(
+				"PrdStorageService.removePrdArtifacts"
+			)(function* (prdFilePath: string) {
+				const issueFilePath = issuesFilePathFromPrdPath(prdFilePath);
+
+				const removeFileIfPresent = (filePath: string) =>
+					Effect.try({
+						try: () => {
+							if (existsSync(filePath)) {
+								unlinkSync(filePath);
+							}
+						},
+						catch: (cause) =>
+							new PrdStorageError({
+								message: `Failed to remove PRD artifact ${filePath}`,
+								cause,
+							}),
+					});
+
+				yield* removeFileIfPresent(issueFilePath);
+				yield* removeFileIfPresent(prdFilePath);
+
+				yield* Effect.logDebug(
+					`Removed PRD artifacts at ${prdFilePath} and ${issueFilePath}`
+				).pipe(Effect.annotateLogs("module", logPrefix));
+			});
+
 			return PrdStorageService.of({
 				createPrdFile,
 				readPrdFile,
 				appendIssue,
+				removePrdArtifacts,
 				resolvePrdsDir,
 			});
 		})

@@ -195,6 +195,58 @@ export const handlePrdList = ({ projectId }: { projectId: string }) =>
 			.map((prd) => toPrdResponse(prd));
 	});
 
+export const handlePrdRead = ({ prdId }: { prdId: string }) =>
+	Effect.gen(function* () {
+		const storage = yield* PrdStorageService;
+		const { store } = yield* LaborerStore;
+
+		const prd = store.query(tables.prds.where("id", prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found: ${prdId}`,
+			});
+		}
+
+		const content = yield* storage
+			.readPrdFile(prd.filePath)
+			.pipe(Effect.mapError((error) => toRpcError(error, "NOT_FOUND")));
+
+		return {
+			...toPrdResponse(prd),
+			content,
+		};
+	});
+
+export const handlePrdRemove = ({ prdId }: { prdId: string }) =>
+	Effect.gen(function* () {
+		const { store } = yield* LaborerStore;
+		const storage = yield* PrdStorageService;
+		const taskManager = yield* TaskManager;
+
+		const prd = store.query(tables.prds.where("id", prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found: ${prdId}`,
+			});
+		}
+
+		yield* storage
+			.removePrdArtifacts(prd.filePath)
+			.pipe(Effect.mapError((error) => toRpcError(error)));
+
+		const linkedTasks = store
+			.query(tables.tasks.where("prdId", prdId))
+			.filter((task) => task.source === "prd");
+
+		for (const task of linkedTasks) {
+			yield* taskManager.removeTask(task.id);
+		}
+
+		store.commit(events.prdRemoved({ id: prdId }));
+	});
+
 export const handlePrdCreateIssue = ({
 	prdId,
 	title,
@@ -326,6 +378,8 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 		// -------------------------------------------------------------------
 		"prd.create": handlePrdCreate,
 		"prd.list": handlePrdList,
+		"prd.read": handlePrdRead,
+		"prd.remove": handlePrdRemove,
 		"prd.createIssue": handlePrdCreateIssue,
 
 		// -------------------------------------------------------------------

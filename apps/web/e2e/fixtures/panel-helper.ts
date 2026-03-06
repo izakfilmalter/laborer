@@ -56,6 +56,24 @@ export class PanelHelper {
 		await this.closePaneButton.click();
 	}
 
+	/** Run a tmux-style Ctrl+B panel shortcut sequence. */
+	async runShortcut(actionKey: string): Promise<void> {
+		await this.page.keyboard.press("Control+b");
+		await this.page.keyboard.press(actionKey);
+	}
+
+	/** Move focus to an adjacent pane with Ctrl+B then arrow key. */
+	async navigate(direction: "left" | "right" | "up" | "down"): Promise<void> {
+		const actionKeyByDirection = {
+			left: "ArrowLeft",
+			right: "ArrowRight",
+			up: "ArrowUp",
+			down: "ArrowDown",
+		} as const;
+
+		await this.runShortcut(actionKeyByDirection[direction]);
+	}
+
 	/** Switch to the dashboard view. */
 	async switchToDashboard(): Promise<void> {
 		await this.dashboardButton.click();

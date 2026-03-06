@@ -409,13 +409,15 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that uses keyboard shortcuts (Ctrl+B prefix then arrow keys) to navigate between panes. This validates the panel keyboard navigation system.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/panel-system.spec.ts`
-- [ ] Test splits panes to create a multi-pane layout
-- [ ] Test uses Ctrl+B then arrow key to move focus to an adjacent pane
-- [ ] Test verifies the active pane changes (e.g., active pane indicator updates)
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/panel-system.spec.ts`
+- [x] Test splits panes to create a multi-pane layout
+- [x] Test uses Ctrl+B then arrow key to move focus to an adjacent pane
+- [x] Test verifies the active pane changes (e.g., active pane indicator updates)
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

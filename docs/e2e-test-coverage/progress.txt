@@ -228,3 +228,22 @@ Verification:
 - `bun run test` passes in `apps/web` (70 tests)
 - `bun x ultracite check apps/web/e2e/panel-system.spec.ts docs/e2e-test-coverage/issues.md docs/e2e-test-coverage/progress.txt` passes
 - `bun run test:e2e e2e/panel-system.spec.ts` executes both panel-system tests successfully (2 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 13: E2E - Keyboard navigate between panes - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 13 as the highest-priority remaining task because it continues the panel-system slice and verifies the keyboard navigation behavior that Issue 14 builds on
+
+Changes made:
+- Added `can use Ctrl+B then arrow keys to move focus between panes` to `apps/web/e2e/panel-system.spec.ts`
+- The new test creates a three-pane layout, clicks the left pane, sends the tmux-style `Ctrl+B` then `ArrowRight` shortcut, and immediately splits vertically from the newly active pane
+- Verified the active pane changed indirectly through real UI behavior by asserting the follow-up split produced three panes in the right column and left the original left column untouched
+- Extended `apps/web/e2e/fixtures/panel-helper.ts` with reusable keyboard shortcut helpers for prefix-sequence panel interactions
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check apps/web/e2e/fixtures/panel-helper.ts apps/web/e2e/panel-system.spec.ts docs/e2e-test-coverage/issues.md docs/e2e-test-coverage/progress.txt` passes
+- `bun run test:e2e e2e/panel-system.spec.ts` executes all three panel-system tests successfully (3 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown

@@ -3,10 +3,10 @@
  *
  * Covers the foundational panel-system flows through the real UI. The
  * tests create a workspace to seed the initial terminal pane, verify split
- * layout geometry, and confirm closing an active pane transfers focus to
- * the remaining sibling pane.
+ * layout geometry, confirm closing an active pane transfers focus to the
+ * remaining sibling pane, and validate keyboard navigation between panes.
  *
- * @see PRD-e2e-test-coverage.md - Issues 11 and 12
+ * @see PRD-e2e-test-coverage.md - Issues 11, 12, and 13
  */
 
 import { readFileSync } from "node:fs";
@@ -214,5 +214,49 @@ test.describe("panel system", () => {
 		await panels.splitVertical();
 
 		await expect(paneRegions).toHaveCount(2, { timeout: 10_000 });
+	});
+
+	test("can use Ctrl+B then arrow keys to move focus between panes", async ({
+		page,
+		panels,
+	}) => {
+		await addProjectAndCreateWorkspace(page);
+
+		const paneRegions = page.locator("[data-pane-id]");
+		await expect(paneRegions.first()).toBeVisible({ timeout: 15_000 });
+		await closeExtraPanes(paneRegions, panels);
+		await expect(paneRegions).toHaveCount(1, { timeout: 10_000 });
+
+		await paneRegions.first().click();
+		await panels.splitHorizontal();
+		await expect(paneRegions).toHaveCount(2, { timeout: 10_000 });
+
+		await paneRegions.nth(1).click();
+		await panels.splitVertical();
+		await expect(paneRegions).toHaveCount(3, { timeout: 10_000 });
+
+		const initialBoxes = await getPaneBoxes(paneRegions);
+		const leftPane = getRequiredPane(initialBoxes, 0);
+		const topRightPane = getRequiredPane(initialBoxes, 1);
+		const bottomRightPane = getRequiredPane(initialBoxes, 2);
+
+		expect(topRightPane.x - leftPane.x).toBeGreaterThan(100);
+		expect(bottomRightPane.y - topRightPane.y).toBeGreaterThan(50);
+
+		await paneRegions.first().click();
+		await panels.navigate("right");
+		await panels.splitVertical();
+
+		await expect(paneRegions).toHaveCount(4, { timeout: 10_000 });
+		const boxesAfterNavigation = await getPaneBoxes(paneRegions);
+		const rightColumnPaneCount = boxesAfterNavigation.filter(
+			(box) => Math.abs(box.x - topRightPane.x) < 24
+		).length;
+		const leftColumnPaneCount = boxesAfterNavigation.filter(
+			(box) => Math.abs(box.x - leftPane.x) < 24
+		).length;
+
+		expect(rightColumnPaneCount).toBe(3);
+		expect(leftColumnPaneCount).toBe(1);
 	});
 });

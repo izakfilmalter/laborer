@@ -1,6 +1,6 @@
 import { Rpc, RpcGroup } from "@effect/rpc";
 import { Schema } from "effect";
-import { TerminalStatus, WorkspaceStatus } from "./types.js";
+import { PrdStatus, TerminalStatus, WorkspaceStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Terminal Lifecycle Event Schemas
@@ -140,6 +140,16 @@ const TaskImportResponse = Schema.Struct({
 	totalCount: Schema.Int,
 });
 
+export const PrdResponse = Schema.Struct({
+	id: Schema.String,
+	projectId: Schema.String,
+	title: Schema.String,
+	slug: Schema.String,
+	filePath: Schema.String,
+	status: PrdStatus,
+	createdAt: Schema.String,
+});
+
 const WorkspaceResponse = Schema.Struct({
 	id: Schema.String,
 	projectId: Schema.String,
@@ -213,6 +223,27 @@ export class LaborerRpcs extends RpcGroup.make(
 				setupScripts: Schema.optional(Schema.Array(Schema.String)),
 				rlphConfig: Schema.optional(Schema.String),
 			}),
+		},
+	}),
+
+	// -----------------------------------------------------------------------
+	// PRD RPCs
+	// -----------------------------------------------------------------------
+	Rpc.make("prd.create", {
+		success: PrdResponse,
+		error: RpcError,
+		payload: {
+			projectId: Schema.String,
+			title: Schema.String,
+			content: Schema.String,
+		},
+	}),
+
+	Rpc.make("prd.list", {
+		success: Schema.Array(PrdResponse),
+		error: RpcError,
+		payload: {
+			projectId: Schema.String,
 		},
 	}),
 

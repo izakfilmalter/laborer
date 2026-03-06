@@ -13,13 +13,18 @@
 
 import { join } from "node:path";
 import { LaborerRpcs, RpcError } from "@laborer/shared/rpc";
-import { tables } from "@laborer/shared/schema";
+import { events, tables } from "@laborer/shared/schema";
 import { Array as Arr, Effect, pipe } from "effect";
 import { ConfigService } from "../services/config-service.js";
 import { DiffService } from "../services/diff-service.js";
 import { GithubTaskImporter } from "../services/github-task-importer.js";
 import { LaborerStore } from "../services/laborer-store.js";
 import { LinearTaskImporter } from "../services/linear-task-importer.js";
+import {
+	type PrdStorageError,
+	PrdStorageService,
+	slugifyPrdTitle,
+} from "../services/prd-storage-service.js";
 import { PrdTaskImporter } from "../services/prd-task-importer.js";
 import { ProjectRegistry } from "../services/project-registry.js";
 import { TaskManager } from "../services/task-manager.js";
@@ -27,6 +32,33 @@ import { TerminalClient } from "../services/terminal-client.js";
 import { WorkspaceProvider } from "../services/workspace-provider.js";
 
 const startTime = Date.now();
+
+const toRpcError = (
+	error: PrdStorageError,
+	code = "PRD_STORAGE_ERROR"
+): RpcError =>
+	new RpcError({
+		code,
+		message: error.message,
+	});
+
+const toPrdResponse = (prd: {
+	id: string;
+	projectId: string;
+	title: string;
+	slug: string;
+	filePath: string;
+	status: string;
+	createdAt: string;
+}) => ({
+	id: prd.id,
+	projectId: prd.projectId,
+	title: prd.title,
+	slug: prd.slug,
+	filePath: prd.filePath,
+	status: prd.status as "draft" | "active" | "completed",
+	createdAt: prd.createdAt,
+});
 
 export const handleConfigGet = ({ projectId }: { projectId: string }) =>
 	Effect.gen(function* () {
@@ -76,6 +108,73 @@ export const handleConfigUpdate = ({
 
 		const project = yield* registry.getProject(projectId);
 		yield* configService.writeProjectConfig(project.repoPath, config);
+	});
+
+export const handlePrdCreate = ({
+	projectId,
+	title,
+	content,
+}: {
+	projectId: string;
+	title: string;
+	content: string;
+}) =>
+	Effect.gen(function* () {
+		const trimmedTitle = title.trim();
+		if (trimmedTitle.length === 0) {
+			return yield* new RpcError({
+				code: "INVALID_INPUT",
+				message: "PRD title cannot be empty",
+			});
+		}
+
+		const registry = yield* ProjectRegistry;
+		const storage = yield* PrdStorageService;
+		const { store } = yield* LaborerStore;
+		const project = yield* registry.getProject(projectId);
+		const slug = slugifyPrdTitle(trimmedTitle);
+
+		const existingPrds = store.query(tables.prds.where("projectId", projectId));
+		const duplicatePrd = existingPrds.find(
+			(prd) => prd.title === trimmedTitle || prd.slug === slug
+		);
+
+		if (duplicatePrd) {
+			return yield* new RpcError({
+				code: "ALREADY_EXISTS",
+				message: `PRD already exists for project ${projectId}: ${trimmedTitle}`,
+			});
+		}
+
+		const filePath = yield* storage
+			.createPrdFile(project.repoPath, project.name, trimmedTitle, content)
+			.pipe(Effect.mapError((error) => toRpcError(error)));
+
+		const prd = {
+			id: crypto.randomUUID(),
+			projectId,
+			title: trimmedTitle,
+			slug,
+			filePath,
+			status: "draft" as const,
+			createdAt: new Date().toISOString(),
+		};
+
+		store.commit(events.prdCreated(prd));
+
+		return toPrdResponse(prd);
+	});
+
+export const handlePrdList = ({ projectId }: { projectId: string }) =>
+	Effect.gen(function* () {
+		const registry = yield* ProjectRegistry;
+		const { store } = yield* LaborerStore;
+
+		yield* registry.getProject(projectId);
+
+		return store
+			.query(tables.prds.where("projectId", projectId))
+			.map((prd) => toPrdResponse(prd));
 	});
 
 /**
@@ -136,6 +235,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 		// -------------------------------------------------------------------
 		"config.get": handleConfigGet,
 		"config.update": handleConfigUpdate,
+
+		// -------------------------------------------------------------------
+		// PRD RPCs (Issue #178)
+		// -------------------------------------------------------------------
+		"prd.create": handlePrdCreate,
+		"prd.list": handlePrdList,
 
 		// -------------------------------------------------------------------
 		// Workspace RPCs (Issue #33-47)

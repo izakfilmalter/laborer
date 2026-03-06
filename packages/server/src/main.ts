@@ -34,6 +34,7 @@ import { GithubTaskImporter } from "./services/github-task-importer.js";
 import { LaborerStoreLive } from "./services/laborer-store.js";
 import { LinearTaskImporter } from "./services/linear-task-importer.js";
 import { PortAllocator } from "./services/port-allocator.js";
+import { PrdStorageService } from "./services/prd-storage-service.js";
 import { PrdTaskImporter } from "./services/prd-task-importer.js";
 import { ProjectRegistry } from "./services/project-registry.js";
 import { SyncRpcLive } from "./services/sync-backend.js";
@@ -100,7 +101,7 @@ const ServerLive = BunHttpServer.layer({ port: env.PORT });
  * Terminal operations are delegated to the standalone terminal service via
  * TerminalClient, which connects over Effect RPC HTTP.
  */
-const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
+const HttpLiveBase = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	HttpServer.withLogAddress,
 	// --- Route layers (consume services from below) ---
 	Layer.provide(CustomRoutesLive),
@@ -111,11 +112,15 @@ const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	Layer.provide(LinearTaskImporter.layer),
 	Layer.provide(GithubTaskImporter.layer),
 	Layer.provide(TaskManager.layer),
+	Layer.provide(PrdStorageService.layer),
 	Layer.provide(DiffService.layer),
 	Layer.provide(TerminalClient.layer),
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ConfigService.layer),
-	Layer.provide(ProjectRegistry.layer),
+	Layer.provide(ProjectRegistry.layer)
+);
+
+const HttpLive = HttpLiveBase.pipe(
 	Layer.provide(WorktreeWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),

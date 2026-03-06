@@ -117,13 +117,13 @@ Wire the new service layer into `main.ts`.
 
 ### Acceptance criteria
 
-- [ ] `PrdResponse` schema is defined with id, projectId, title, slug, filePath, status, createdAt
-- [ ] `prd.create` RPC is defined in `LaborerRpcs` with success and error schemas
-- [ ] `prd.list` RPC is defined in `LaborerRpcs`
-- [ ] `prd.create` handler writes the PRD file and commits `prdCreated` event
-- [ ] `prd.list` handler queries LiveStore and returns PRD metadata
-- [ ] `PrdStorageService.layer` is wired into `main.ts`
-- [ ] Creating a PRD with a duplicate title for the same project returns an error
+- [x] `PrdResponse` schema is defined with id, projectId, title, slug, filePath, status, createdAt
+- [x] `prd.create` RPC is defined in `LaborerRpcs` with success and error schemas
+- [x] `prd.list` RPC is defined in `LaborerRpcs`
+- [x] `prd.create` handler writes the PRD file and commits `prdCreated` event
+- [x] `prd.list` handler queries LiveStore and returns PRD metadata
+- [x] `PrdStorageService.layer` is wired into `main.ts`
+- [x] Creating a PRD with a duplicate title for the same project returns an error
 
 ### Blocked by
 
@@ -760,10 +760,10 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 175 | PRDs table and events in LiveStore schema | None | Done |
 | 176 | Tasks table: add prdId column | None | Done |
 | 177 | PrdStorageService: create and read PRD files on disk | #175 | Done |
-| 178 | PRD create and list RPCs | #177 | Ready |
-| 179 | PRD read and remove RPCs | #178 | Blocked |
+| 178 | PRD create and list RPCs | #177 | Done |
+| 179 | PRD read and remove RPCs | #178 | Ready |
 | 180 | PRD update RPC and status changes | #179 | Blocked |
-| 181 | Issue creation RPC: prd.createIssue | #178 | Blocked |
+| 181 | Issue creation RPC: prd.createIssue | #178 | Ready |
 | 182 | Issue read and list RPCs | #181 | Blocked |
 | 183 | Issue update RPC: prd.updateIssue | #182 | Blocked |
 | 184 | `@laborer/mcp` package scaffold: stdio server with project discovery | None | Ready |

@@ -496,7 +496,7 @@ function DashboardWorkspaceRow({
 				{workspace.branchName}
 			</span>
 			{isDetectedWorkspace && (
-				<span className="font-mono text-[10px] text-muted-foreground uppercase">
+				<span className="shrink-0 font-mono text-[10px] text-muted-foreground uppercase">
 					Detected
 				</span>
 			)}

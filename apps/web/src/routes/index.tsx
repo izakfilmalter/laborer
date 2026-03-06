@@ -981,7 +981,7 @@ function HomeComponent() {
 				<ResizableHandle withHandle />
 
 				{/* Main content — Panel system, dashboard, or welcome empty state */}
-				<ResizablePanel defaultSize="75%" minSize="40%">
+				<ResizablePanel defaultSize="75%" minSize="10%">
 					{hasProjects ? (
 						<div className="flex h-full flex-col">
 							<PanelHeaderBar

@@ -4452,3 +4452,54 @@ Workspace counts are derived from LiveStore queries that include all workspaces 
 - `bun run --cwd packages/server check-types` ⚠️ pre-existing Effect plugin warnings only
 - `bun run --cwd packages/terminal check-types` ✅
 - `bun x ultracite check` ✅ (all modified files, 0 issues)
+
+## Issue #167: Sidebar & workspace card polish — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Summary
+End-to-end verification and polish pass for the sidebar max-width removal (#164), workspace card two-row header restructure (#165), and detected worktree feature parity (#166). Verified all 10 acceptance criteria through comprehensive code analysis and made two fixes.
+
+### What was done
+
+1. **Fixed effective sidebar max-width cap** (`apps/web/src/routes/index.tsx`):
+   - The main content panel had `minSize="40%"`, which capped the sidebar's effective maximum at 60% (100% - 40%), despite `sidebarMax: "90%"` being correctly set in the responsive layout hook. Changed to `minSize="10%"` so the sidebar can truly reach 90%.
+
+2. **Added `shrink-0` to dashboard "Detected" label** (`apps/web/src/components/workspace-dashboard.tsx`):
+   - The "Detected" label in `DashboardWorkspaceRow` was missing `shrink-0`, unlike the same label in `workspace-list.tsx`. At narrow dashboard widths, the label could be squeezed by flex. Added `shrink-0` for consistency.
+
+### Verification of all 10 acceptance criteria
+
+1. **Sidebar resizes smoothly from minimum to 90%** — ✅ Fixed. With main content `minSize="10%"`, the sidebar can now reach its stated 90% max. `react-resizable-panels` handles smooth resize via percentage-based layout.
+
+2. **ResizableHandle drag handle works correctly at the new maximum width** — ✅ The `ResizableHandle` component uses a `Separator` with `after:w-2` (8px) hit area. No changes needed; the handle is positioned by the panel library regardless of sidebar width.
+
+3. **Main content panel maintains a usable minimum width when sidebar is at 90%** — ✅ With `minSize="10%"`, the main content retains at least 10% of the viewport width (192px at 1920px, 256px at 2560px) when the sidebar is at maximum.
+
+4. **Branch names with `/` separators wrap at reasonable break points** — ✅ `break-all` is used on branch name text, which breaks at any character boundary. For monospace text like branch names (e.g., `feature/JIRA-12345-very-long-description`) that lack natural word boundaries, `break-all` is the correct behavior. Slash characters are not CSS word-break points, so `break-words` (which only breaks at word boundaries) would not help.
+
+5. **2-line clamp ellipsis renders correctly** — ✅ `line-clamp-2` is correctly applied to both branch name (`<span className="line-clamp-2 break-all font-mono text-sm">`) and worktree path (`<span className="line-clamp-2 break-all font-mono">`). Short names render on one line without clamping; very long names (3+ lines) get truncated with ellipsis after 2 lines.
+
+6. **Action buttons on Row 2 correctly spaced and aligned** — ✅ Action row uses `flex flex-wrap items-center gap-1`. All 6 action elements (WritePrd, Start Loop, ReviewPr, FixFindings, CollapsibleTrigger, AlertDialog destroy) wrap naturally at narrow widths. `gap-1` provides consistent 4px spacing.
+
+7. **Detected worktree terminal spawning works end-to-end** — ✅ All action buttons render for all non-destroyed workspaces (no `isActive` gate). The `TerminalClient.spawnInWorkspace()` has a worktree existence check (Issue #163) that returns `WORKTREE_NOT_FOUND` if the worktree was removed externally.
+
+8. **Agent workflow buttons function correctly for detected worktrees** — ✅ WritePrd, Start Loop, ReviewPr, FixFindings all render unconditionally. Server-side RPC handlers accept workspace ID regardless of origin. Errors surface via existing toast handling.
+
+9. **Card layout looks correct at narrow/wide sidebar widths** — ✅ Info row uses `flex items-start justify-between gap-2` with `min-w-0` on the branch container for text truncation within flex. Status badge has `shrink-0`. At ~220px min sidebar, the branch text area is constrained but functional (a few characters visible plus `line-clamp-2`). At 800px+ sidebar, the full branch name is visible.
+
+10. **"Detected" badge and status badge don't overflow at narrow widths** — ✅ Both have `shrink-0` to prevent flex compression. The branch name container has `min-w-0` to absorb the remaining space. The "Detected" label uses `text-[10px]` (tiny) and `uppercase` for minimal visual footprint.
+
+### Files modified
+- `apps/web/src/routes/index.tsx` — Changed main content panel `minSize` from `"40%"` to `"10%"` to allow sidebar to reach its stated 90% max
+- `apps/web/src/components/workspace-dashboard.tsx` — Added `shrink-0` to dashboard "Detected" label for consistency with workspace-list.tsx
+
+### Verification
+- `bun run --cwd apps/web check-types` ⚠️ pre-existing errors in `calendar.tsx` and `sonner.tsx` only — no new errors
+- `bun run --cwd packages/server check-types` ⚠️ pre-existing Effect plugin warnings only — no new errors
+- `bun x ultracite check apps/web/src/routes/index.tsx apps/web/src/components/workspace-dashboard.tsx` ✅ (0 issues)
+- `bun run --cwd apps/web test` ✅ (44 tests pass)
+- `bun run --cwd packages/server test` ✅ (122 tests pass, 6 skipped)
+- `bun run --cwd packages/terminal test` ✅ (59 tests pass)
+- Total: **225 tests pass**, 6 skipped, 0 failures

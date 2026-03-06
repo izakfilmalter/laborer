@@ -181,7 +181,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LaborerClient } from "@/atoms/laborer-client";
+import { TerminalServiceClient } from "@/atoms/terminal-service-client";
 import { Spinner } from "@/components/ui/spinner";
 import {
 	type TerminalStatus,
@@ -189,7 +189,8 @@ import {
 } from "@/hooks/use-terminal-websocket";
 
 /** Module-level mutation atom for terminal.resize — shared across all TerminalPane instances. */
-const terminalResizeMutation = LaborerClient.mutation("terminal.resize");
+const terminalResizeMutation =
+	TerminalServiceClient.mutation("terminal.resize");
 
 /**
  * Timeout for prefix mode (ms). Matches the SEQUENCE_TIMEOUT in panel-hotkeys.tsx
@@ -467,7 +468,7 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 			const { cols, rows } = terminal;
 			if (cols > 0 && rows > 0) {
 				resizeTerminalRef.current({
-					payload: { terminalId, cols, rows },
+					payload: { id: terminalId, cols, rows },
 				});
 			}
 		} catch {
@@ -620,7 +621,7 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 		const { cols, rows } = terminal;
 		if (cols > 0 && rows > 0) {
 			resizeTerminalRef.current({
-				payload: { terminalId, cols, rows },
+				payload: { id: terminalId, cols, rows },
 			});
 		}
 	}, [terminalId]);

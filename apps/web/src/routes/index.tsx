@@ -33,8 +33,7 @@ import {
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
-import { CreateWorkspaceForm } from "@/components/create-workspace-form";
-import { ProjectList } from "@/components/project-list";
+import { ProjectGroup } from "@/components/project-group";
 import { ProjectSwitcher } from "@/components/project-switcher";
 import { TaskList } from "@/components/task-list";
 import { TaskSourcePicker } from "@/components/task-source-picker";
@@ -65,7 +64,7 @@ import {
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkspaceDashboard } from "@/components/workspace-dashboard";
-import { WorkspaceList } from "@/components/workspace-list";
+import { useProjectCollapseState } from "@/hooks/use-project-collapse-state";
 import { useResponsiveLayout } from "@/hooks/use-responsive-layout";
 import { useTerminalList } from "@/hooks/use-terminal-list";
 import { useTrayWorkspaceCount } from "@/hooks/use-tray-workspace-count";
@@ -863,6 +862,9 @@ function HomeComponent() {
 	// Responsive sizing — adapts sidebar and pane sizes to viewport width
 	const responsiveSizes = useResponsiveLayout();
 
+	// Project collapse state — persisted to localStorage
+	const collapseState = useProjectCollapseState();
+
 	// Project switcher state — null means "All Projects" (no filter)
 	const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 	const [activeTaskSource, setActiveTaskSource] =
@@ -934,20 +936,24 @@ function HomeComponent() {
 									onProjectChange={setActiveProjectId}
 								/>
 							)}
-							<section>
-								<div className="mb-2 flex items-center justify-between">
-									<h2 className="font-medium text-sm">Projects</h2>
-									<AddProjectForm />
-								</div>
-								<ProjectList />
-							</section>
-							<section>
-								<div className="mb-2 flex items-center justify-between">
-									<h2 className="font-medium text-sm">Workspaces</h2>
-									<CreateWorkspaceForm />
-								</div>
-								<WorkspaceList activeProjectId={activeProjectId} />
-							</section>
+							<div className="flex items-center justify-between">
+								<h2 className="font-medium text-sm">Projects</h2>
+								<AddProjectForm />
+							</div>
+							{/* Project-grouped tree — each project is a collapsible heading */}
+							{projectList.map((project) => (
+								<ProjectGroup
+									expanded={collapseState.isExpanded(project.id)}
+									key={project.id}
+									onToggle={() => collapseState.toggle(project.id)}
+									project={project}
+								/>
+							))}
+							{projectList.length === 0 && (
+								<p className="py-2 text-center text-muted-foreground text-xs">
+									No projects. Add one to get started.
+								</p>
+							)}
 							<section>
 								<div className="mb-2 flex items-center justify-between">
 									<h2 className="font-medium text-sm">Tasks</h2>
@@ -1000,7 +1006,9 @@ function HomeComponent() {
 										leafPaneIds={leafPaneIds}
 										onMetaWWithoutPane={handleMetaWWithoutPane}
 									/>
-									<div className="min-h-0 flex-1">
+									<div
+										className={`min-h-0 flex-1 border-2 ${activePaneId ? "border-primary" : "border-transparent"}`}
+									>
 										<PanelManager layout={layout} />
 									</div>
 								</>

@@ -2,4 +2,23 @@
 
 ## Session Log
 
-(No progress yet — work has not started.)
+### Issue 168: ProjectGroup collapsible headings with nested workspaces — DONE
+
+Replaced the flat sidebar layout (separate Projects section + Workspaces section) with a project-grouped tree structure.
+
+Changes made:
+- Created `apps/web/src/hooks/use-project-collapse-state.ts` — hook to manage per-project expand/collapse state, persisted to localStorage. Defaults to all projects expanded when no stored state exists.
+- Created `apps/web/src/components/project-group.tsx` — new ProjectGroup component that renders each project as a collapsible heading (chevron + folder icon + project name) with project settings and delete actions, and its workspaces nested underneath via the existing WorkspaceList component.
+- Modified `apps/web/src/components/workspace-list.tsx`:
+  - Changed `WorkspaceListProps` from optional `activeProjectId` to required `projectId` prop.
+  - Removed project name from WorkspaceItem cards (CardDescription no longer shows `projectName` since the project context is provided by the parent ProjectGroup heading).
+  - Removed unused `allProjects$` query and `projects` schema import.
+  - Simplified empty state to a compact text line ("No workspaces") instead of a full Empty component, since each project group already provides context.
+- Modified `apps/web/src/routes/index.tsx` (HomeComponent):
+  - Replaced flat `<ProjectList>` and `<WorkspaceList>` sections with a loop over projects rendering `<ProjectGroup>` per project.
+  - Added `useProjectCollapseState` hook for managing collapse state.
+  - Imported `ProjectGroup` component.
+  - Removed `ProjectList`, `CreateWorkspaceForm`, and `WorkspaceList` imports (no longer used directly).
+  - Kept ProjectSwitcher, Tasks section, and Server Status section temporarily (to be addressed in issues 169-172).
+
+TypeScript: 0 errors. Ultracite: 0 issues.

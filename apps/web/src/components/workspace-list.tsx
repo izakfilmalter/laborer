@@ -33,15 +33,14 @@
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
-import { projects, workspaces } from "@laborer/shared/schema";
+import { workspaces } from "@laborer/shared/schema";
 import type { WorkspaceOrigin } from "@laborer/shared/types";
 import { queryDb } from "@livestore/livestore";
-import { GitBranch, Layers, Play, Trash2 } from "lucide-react";
+import { GitBranch, Play, Trash2 } from "lucide-react";
 import { type FC, useCallback, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { CopyButton } from "@/components/copy-button";
-import { CreateWorkspaceForm } from "@/components/create-workspace-form";
 import { FixFindingsForm } from "@/components/fix-findings-form";
 import { ReviewPrForm } from "@/components/review-pr-form";
 import { TerminalList } from "@/components/terminal-list";
@@ -65,15 +64,6 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
-
-import {
-	Empty,
-	EmptyContent,
-	EmptyDescription,
-	EmptyHeader,
-	EmptyMedia,
-	EmptyTitle,
-} from "@/components/ui/empty";
 import { Spinner } from "@/components/ui/spinner";
 import { WritePrdForm } from "@/components/write-prd-form";
 import { cn, extractErrorMessage } from "@/lib/utils";
@@ -81,7 +71,6 @@ import { useLaborerStore } from "@/livestore/store";
 import { usePanelActions } from "@/panels/panel-context";
 
 const allWorkspaces$ = queryDb(workspaces, { label: "workspaceList" });
-const allProjects$ = queryDb(projects, { label: "workspaceListProjects" });
 
 const destroyWorkspaceMutation = LaborerClient.mutation("workspace.destroy");
 const startLoopMutation = LaborerClient.mutation("rlph.startLoop");
@@ -172,7 +161,6 @@ const CopyableValue: FC<CopyableValueProps> = (props) => {
 };
 
 interface WorkspaceItemProps {
-	readonly projectName: string;
 	readonly workspace: {
 		readonly id: string;
 		readonly projectId: string;
@@ -186,7 +174,7 @@ interface WorkspaceItemProps {
 	};
 }
 
-function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
+function WorkspaceItem({ workspace }: WorkspaceItemProps) {
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [isDestroying, setIsDestroying] = useState(false);
 	const [isStartingLoop, setIsStartingLoop] = useState(false);
@@ -265,7 +253,6 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 				</div>
 				<div className="flex items-center justify-between gap-2">
 					<CardDescription className="flex items-center gap-2">
-						<span>{projectName}</span>
 						{workspace.port > 0 && (
 							<span className="font-mono text-muted-foreground">
 								:{workspace.port}
@@ -368,55 +355,27 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 }
 
 interface WorkspaceListProps {
-	/** When set, only workspaces belonging to this project are shown. */
-	readonly activeProjectId?: string | null;
+	/** Only workspaces belonging to this project are shown. */
+	readonly projectId: string;
 }
 
-function WorkspaceList({ activeProjectId }: WorkspaceListProps) {
+function WorkspaceList({ projectId }: WorkspaceListProps) {
 	const store = useLaborerStore();
 	const workspaceList = store.useQuery(allWorkspaces$);
-	const projectList = store.useQuery(allProjects$);
 
-	// Build a map of project IDs to names for display
-	const projectNameMap = new Map(
-		projectList.map((p) => [p.id, p.name] as const)
-	);
-
-	// Filter out destroyed workspaces, and optionally filter by active project
+	// Filter out destroyed workspaces, scoped to the given project
 	const activeWorkspaces = workspaceList.filter(
-		(ws) =>
-			ws.status !== "destroyed" &&
-			(!activeProjectId || ws.projectId === activeProjectId)
+		(ws) => ws.status !== "destroyed" && ws.projectId === projectId
 	);
 
 	if (activeWorkspaces.length === 0) {
-		return (
-			<Empty className="border">
-				<EmptyHeader>
-					<EmptyMedia variant="icon">
-						<Layers />
-					</EmptyMedia>
-					<EmptyTitle>No workspaces</EmptyTitle>
-					<EmptyDescription>
-						Create a workspace to get started. Each workspace is an isolated git
-						worktree with its own branch, port, and dev server.
-					</EmptyDescription>
-				</EmptyHeader>
-				<EmptyContent>
-					<CreateWorkspaceForm />
-				</EmptyContent>
-			</Empty>
-		);
+		return <p className="py-2 text-muted-foreground text-xs">No workspaces</p>;
 	}
 
 	return (
 		<div className="grid gap-2">
 			{activeWorkspaces.map((workspace) => (
-				<WorkspaceItem
-					key={workspace.id}
-					projectName={projectNameMap.get(workspace.projectId) ?? "Unknown"}
-					workspace={workspace}
-				/>
+				<WorkspaceItem key={workspace.id} workspace={workspace} />
 			))}
 		</div>
 	);

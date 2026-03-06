@@ -688,10 +688,10 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // terminal RPCs (write, resize, kill, remove, restart) are called
     // directly from the web app to the terminal service.
     // -------------------------------------------------------------------
-    'terminal.spawn': ({ workspaceId, command }) =>
+    'terminal.spawn': ({ workspaceId, command, autoRun }) =>
       Effect.gen(function* () {
         const tc = yield* TerminalClient
-        return yield* tc.spawnInWorkspace(workspaceId, command)
+        return yield* tc.spawnInWorkspace(workspaceId, command, autoRun)
       }),
 
     // -------------------------------------------------------------------

@@ -253,16 +253,16 @@ For v1, there is no explicit "wait for completion" between scripts -- they are w
 
 ### Acceptance criteria
 
-- [ ] After container terminal spawn, setup scripts from `laborer.json` are auto-typed into the terminal
-- [ ] Each script is written via `TerminalManager.write()` with a trailing newline
-- [ ] After all setup scripts, `devServer.startCommand` is written with a trailing newline
-- [ ] Small delay between script writes to allow shell to process each line
-- [ ] If no setup scripts configured, only the start command is written
-- [ ] If no start command configured, only setup scripts run (or nothing if both are empty)
-- [ ] User can see all script output in the terminal pane
-- [ ] User can interact with the terminal after auto-typing completes (Ctrl+C, re-run, etc.)
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] After container terminal spawn, setup scripts from `laborer.json` are auto-typed into the terminal
+- [x] Each script is written via `TerminalManager.write()` with a trailing newline
+- [x] After all setup scripts, `devServer.startCommand` is written with a trailing newline
+- [x] Small delay between script writes to allow shell to process each line
+- [x] If no setup scripts configured, only the start command is written
+- [x] If no start command configured, only setup scripts run (or nothing if both are empty)
+- [x] User can see all script output in the terminal pane
+- [x] User can interact with the terminal after auto-typing completes (Ctrl+C, re-run, etc.)
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 

@@ -391,6 +391,12 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       workspaceId: Schema.String,
       command: Schema.optional(Schema.String),
+      /**
+       * When true and the workspace is containerized, auto-types setup scripts
+       * from `laborer.json` followed by the `devServer.startCommand` into the
+       * terminal after spawn. Used for dev server terminals.
+       */
+      autoRun: Schema.optional(Schema.Boolean),
     },
   }),
 

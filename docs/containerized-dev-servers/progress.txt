@@ -224,3 +224,49 @@ Created the `DockerDetection` Effect service that checks whether Docker (via Orb
   - `bunx vitest run test/config-service.test.ts` — 32/32 tests pass
   - `bunx vitest run test/container-name.test.ts` (shared) — 21/21 tests pass
   - `bunx vitest run test/schema.test.ts` (shared) — 8/8 tests pass
+
+## Issue 7: Auto-run setup scripts + start command in container terminal — COMPLETED
+
+Extended `TerminalClient.spawnInWorkspace` with an `autoRun` parameter that auto-types setup scripts and the dev server start command into containerized terminal sessions after spawn.
+
+### What was done:
+
+**RPC schema (rpc.ts):**
+- Added optional `autoRun: Schema.Boolean` field to the `terminal.spawn` LaborerRpc payload
+- When true and the workspace is containerized, triggers auto-typing of setup scripts + start command
+
+**TerminalClient refactoring (terminal-client.ts):**
+- Added `ConfigService` and `ProjectRegistry` as new dependencies for config resolution
+- Extracted `spawnContainerTerminal()` — handles Docker container terminal spawn with optional auto-run
+- Extracted `spawnHostTerminal()` — handles non-containerized host PTY spawn (existing behavior)
+- Extracted `autoTypeScripts()` — writes setup scripts and start command into a terminal via `rpcClient.terminal.write()` with delays between each write
+- Extracted `scheduleAutoRun()` — resolves project config and delegates to `autoTypeScripts()`
+- Refactored `spawnInWorkspace` from a single monolithic function into a dispatcher that delegates to `spawnContainerTerminal` or `spawnHostTerminal` (reduces cognitive complexity)
+
+**Auto-typing flow:**
+1. After container terminal is spawned via `docker exec`, checks if `autoRun === true` and no explicit command was provided
+2. Forks a daemon fiber (fire-and-forget) so the spawn response returns immediately
+3. The fiber resolves project config via `ProjectRegistry` + `ConfigService`
+4. Waits 500ms for the container shell to initialize
+5. Writes each setup script from `laborer.json` `setupScripts` array via `rpcClient.terminal.write()` with 200ms delay between scripts
+6. Writes the `devServer.startCommand` via `rpcClient.terminal.write()`
+7. All errors are caught and logged as warnings (never blocks or fails the spawn)
+
+**RPC handler (handlers.ts):**
+- Updated `terminal.spawn` handler to pass `autoRun` through to `TerminalClient.spawnInWorkspace()`
+
+**Test layer (test-layer.ts):**
+- Updated `TestTerminalClient` stub's `spawnInWorkspace` to accept the third `autoRun` parameter
+
+### Key design decisions:
+- Auto-typing runs as a fire-and-forget daemon fiber — the spawn response returns immediately without waiting for scripts to finish
+- Scripts are written sequentially with delays (500ms initial wait, 200ms between scripts) to allow the shell to process each line
+- For v1, there is no explicit "wait for completion" between scripts — they are typed sequentially
+- The `autoRun` flag is opt-in — regular `terminal.spawn` calls without `autoRun` behave exactly as before (no regression)
+- If no setup scripts are configured, only the start command is written; if no start command, only setup scripts run; if both empty, nothing is auto-typed
+- All auto-typing errors are caught and logged — a failure to auto-type never prevents the terminal from spawning
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All 121 existing tests pass (no regressions)

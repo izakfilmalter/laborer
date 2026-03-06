@@ -89,3 +89,23 @@ Changes made:
 Note: The `project-switcher.tsx` file is retained but no longer imported anywhere. It can be deleted in a cleanup pass.
 
 TypeScript: 0 errors. Ultracite: 0 issues. Tests: 4/4 pass (task-source-picker helpers).
+
+### Issue 169: Per-project "+" button and CreateWorkspaceForm pre-selection — DONE
+
+Added a "+" button to each project heading that opens the CreateWorkspaceForm dialog with the project pre-selected. The user can still change the project selection in the dialog.
+
+Changes made:
+- Modified `apps/web/src/components/create-workspace-form.tsx`:
+  - Added `CreateWorkspaceFormProps` interface with optional `defaultProjectId` and `trigger` props.
+  - `defaultProjectId` pre-populates the project select field when the dialog opens. Form resets with the `defaultProjectId` value on each dialog open via `form.reset()`.
+  - `trigger` allows a custom trigger element (defaults to the existing "Create Workspace" button). Used by ProjectGroup to render a compact "+" icon button instead.
+  - Added `ReactNode` type import.
+  - Exported `CreateWorkspaceFormProps` type.
+  - Updated doc comment to reference Issue #169.
+- Modified `apps/web/src/components/project-group.tsx`:
+  - Added `CreateWorkspaceForm` with `defaultProjectId={project.id}` and a custom `DialogTrigger` rendering a "+" icon button with `title="Create Workspace"` tooltip and `aria-label`.
+  - The "+" button sits at the right end of the project heading row, before the settings and delete buttons.
+  - Added imports: `Plus` (lucide-react), `CreateWorkspaceForm`, `DialogTrigger`.
+  - Updated doc comment to reference Issue #169.
+
+TypeScript: 0 errors. Ultracite: 0 issues. Tests: 41/41 pass (web app tests, excluding pre-existing vi.hoisted compatibility issue).

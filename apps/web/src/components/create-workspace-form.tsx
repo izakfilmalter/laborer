@@ -16,6 +16,7 @@
  * @see Issue #42: Create Workspace form
  * @see Issue #49: Workspace creation error display
  * @see Issue #121: Loading state — workspace creation
+ * @see Issue #169: Per-project "+" button and CreateWorkspaceForm pre-selection
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -30,6 +31,7 @@ import {
 	WifiOff,
 	X,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
@@ -147,7 +149,17 @@ function getErrorIcon(code: string | undefined) {
 	}
 }
 
-function CreateWorkspaceForm() {
+interface CreateWorkspaceFormProps {
+	/** Pre-select a project in the form. The user can still change the selection. */
+	readonly defaultProjectId?: string | undefined;
+	/** Custom trigger element. Defaults to a "Create Workspace" button. */
+	readonly trigger?: ReactNode | undefined;
+}
+
+function CreateWorkspaceForm({
+	defaultProjectId,
+	trigger,
+}: CreateWorkspaceFormProps) {
 	const [open, setOpen] = useState(false);
 	const [creationError, setCreationError] =
 		useState<WorkspaceCreationError | null>(null);
@@ -163,7 +175,7 @@ function CreateWorkspaceForm() {
 
 	const form = useForm({
 		defaultValues: {
-			projectId: "",
+			projectId: defaultProjectId ?? "",
 			branchName: "",
 		},
 		onSubmit: async ({ value }) => {
@@ -198,7 +210,13 @@ function CreateWorkspaceForm() {
 				// Prevent closing dialog while workspace is being created
 				if (!form.state.isSubmitting) {
 					setOpen(value);
-					// Clear error when dialog is closed
+					if (value) {
+						// Reset form with the defaultProjectId when dialog opens
+						form.reset({
+							projectId: defaultProjectId ?? "",
+							branchName: "",
+						});
+					}
 					if (!value) {
 						setCreationError(null);
 					}
@@ -206,10 +224,12 @@ function CreateWorkspaceForm() {
 			}}
 			open={open}
 		>
-			<DialogTrigger render={<Button size="sm" variant="outline" />}>
-				<Layers className="size-3.5" />
-				Create Workspace
-			</DialogTrigger>
+			{trigger ?? (
+				<DialogTrigger render={<Button size="sm" variant="outline" />}>
+					<Layers className="size-3.5" />
+					Create Workspace
+				</DialogTrigger>
+			)}
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>Create Workspace</DialogTitle>
@@ -375,3 +395,4 @@ function WorkspaceErrorAlert({
 }
 
 export { CreateWorkspaceForm };
+export type { CreateWorkspaceFormProps };

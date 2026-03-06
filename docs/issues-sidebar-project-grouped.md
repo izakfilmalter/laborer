@@ -254,7 +254,7 @@ End-to-end verification and polish pass for the full sidebar restructure. Verify
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
 | 168 | ProjectGroup collapsible headings with nested workspaces | None | Done |
-| 169 | Per-project "+" button and CreateWorkspaceForm pre-selection | #168 | Ready |
+| 169 | Per-project "+" button and CreateWorkspaceForm pre-selection | #168 | Done |
 | 170 | Tasks nested under each project | #168 | Done |
 | 171 | Replace ProjectSwitcher with search bar | #168 | Done |
 | 172 | Server Status sticky footer | #168 | Done |

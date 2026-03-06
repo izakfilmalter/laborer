@@ -9,14 +9,16 @@
  * per project via local state.
  *
  * @see Issue #168: ProjectGroup collapsible headings with nested workspaces
+ * @see Issue #169: Per-project "+" button and CreateWorkspaceForm pre-selection
  * @see Issue #170: Tasks nested under each project
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
-import { ChevronRight, FolderGit2, Trash2 } from "lucide-react";
+import { ChevronRight, FolderGit2, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
+import { CreateWorkspaceForm } from "@/components/create-workspace-form";
 import { ProjectSettingsModal } from "@/components/project-settings-modal";
 import { TaskList } from "@/components/task-list";
 import { TaskSourcePicker } from "@/components/task-source-picker";
@@ -38,6 +40,7 @@ import {
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { DialogTrigger } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { WorkspaceList } from "@/components/workspace-list";
 import { cn, extractErrorMessage } from "@/lib/utils";
@@ -95,6 +98,24 @@ function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
 					<span className="min-w-0 truncate">{project.name}</span>
 				</CollapsibleTrigger>
 				<div className="flex shrink-0 items-center gap-0.5">
+					<CreateWorkspaceForm
+						defaultProjectId={project.id}
+						trigger={
+							<DialogTrigger
+								render={
+									<Button
+										aria-label={`Create workspace in ${project.name}`}
+										className="h-7 w-7"
+										size="icon-sm"
+										title="Create Workspace"
+										variant="ghost"
+									/>
+								}
+							>
+								<Plus className="size-3.5 text-muted-foreground" />
+							</DialogTrigger>
+						}
+					/>
 					<ProjectSettingsModal
 						projectId={project.id}
 						projectName={project.name}

@@ -549,13 +549,13 @@ Tests use real git repos, real `WorkspaceProvider`, real `PortAllocator`, and a 
 
 ### Acceptance criteria
 
-- [ ] `workspace.create` test verifies worktree creation, port allocation, and LiveStore workspace record
-- [ ] `workspace.create` test verifies error for nonexistent project
-- [ ] `workspace.destroy` test verifies laborer-origin workspace has worktree removed
-- [ ] `workspace.destroy` test verifies external-origin workspace retains worktree
-- [ ] Stub TerminalClient is used (system boundary mock, not internal mock)
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass
+- [x] `workspace.create` test verifies worktree creation, port allocation, and LiveStore workspace record
+- [x] `workspace.create` test verifies error for nonexistent project
+- [x] `workspace.destroy` test verifies laborer-origin workspace has worktree removed
+- [x] `workspace.destroy` test verifies external-origin workspace retains worktree
+- [x] Stub TerminalClient is used (system boundary mock, not internal mock)
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass
 
 ### Blocked by
 
@@ -777,7 +777,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 13 | Set up RPC test infrastructure + health.check test | #1 | Done |
 | 14 | RPC integration tests -- project.add + project.remove | #13, #2 | Done |
 | 15 | RPC integration tests -- config.get + config.update | None | Done |
-| 16 | RPC integration tests -- workspace.create + workspace.destroy | None | Ready |
+| 16 | RPC integration tests -- workspace.create + workspace.destroy | None | Done |
 | 17 | RPC integration tests -- task.create + task.updateStatus + task.remove | None | Ready |
 | 18 | RPC integration tests -- task.importGithub + task.importLinear | None | Ready |
 | 19 | RPC integration tests -- diff.refresh + editor.open | None | Ready |

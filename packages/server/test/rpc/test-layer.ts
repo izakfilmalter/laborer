@@ -1,6 +1,6 @@
 import { RpcTest } from "@effect/rpc";
 import { LaborerRpcs } from "@laborer/shared/rpc";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Ref } from "effect";
 import { LaborerRpcsLive } from "../../src/rpc/handlers.js";
 import { ConfigService } from "../../src/services/config-service.js";
 import { DiffService } from "../../src/services/diff-service.js";
@@ -19,17 +19,65 @@ import { WorktreeReconciler } from "../../src/services/worktree-reconciler.js";
 import { WorktreeWatcher } from "../../src/services/worktree-watcher.js";
 import { TestLaborerStore } from "../helpers/test-store.js";
 
-const TestTerminalClient = Layer.succeed(
+class TestTerminalClientRecorder extends Context.Tag(
+	"@laborer/test/TestTerminalClientRecorder"
+)<
+	TestTerminalClientRecorder,
+	{
+		readonly killAllForWorkspaceCalls: Ref.Ref<readonly string[]>;
+		readonly spawnInWorkspaceCalls: Ref.Ref<
+			readonly {
+				readonly command: string | undefined;
+				readonly workspaceId: string;
+			}[]
+		>;
+	}
+>() {}
+
+const TestTerminalClientRecorderLayer = Layer.effect(
+	TestTerminalClientRecorder,
+	Effect.gen(function* () {
+		return TestTerminalClientRecorder.of({
+			killAllForWorkspaceCalls: yield* Ref.make<readonly string[]>([]),
+			spawnInWorkspaceCalls: yield* Ref.make<
+				readonly {
+					readonly command: string | undefined;
+					readonly workspaceId: string;
+				}[]
+			>([]),
+		});
+	})
+);
+
+const TestTerminalClient = Layer.effect(
 	TerminalClient,
-	TerminalClient.of({
-		spawnInWorkspace: (workspaceId, command) =>
-			Effect.succeed({
-				id: crypto.randomUUID(),
-				workspaceId,
-				command: command ?? "test-shell",
-				status: "running" as const,
-			}),
-		killAllForWorkspace: () => Effect.succeed(0),
+	Effect.gen(function* () {
+		const recorder = yield* TestTerminalClientRecorder;
+
+		return TerminalClient.of({
+			spawnInWorkspace: (workspaceId, command) =>
+				Effect.gen(function* () {
+					yield* Ref.update(recorder.spawnInWorkspaceCalls, (calls) => [
+						...calls,
+						{ command, workspaceId },
+					]);
+
+					return {
+						id: crypto.randomUUID(),
+						workspaceId,
+						command: command ?? "test-shell",
+						status: "running" as const,
+					};
+				}),
+			killAllForWorkspace: (workspaceId) =>
+				Effect.gen(function* () {
+					yield* Ref.update(recorder.killAllForWorkspaceCalls, (calls) => [
+						...calls,
+						workspaceId,
+					]);
+					return 0;
+				}),
+		});
 	})
 );
 
@@ -49,6 +97,7 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
 	Layer.provide(PrdStorageService.layer),
 	Layer.provide(DiffService.layer),
 	Layer.provide(TestTerminalClient),
+	Layer.provideMerge(TestTerminalClientRecorderLayer),
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ConfigService.layer),
 	Layer.provide(ProjectRegistry.layer),
@@ -67,6 +116,7 @@ const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
 	Layer.provide(PrdStorageService.layer),
 	Layer.provide(DiffService.layer),
 	Layer.provide(TestTerminalClient),
+	Layer.provideMerge(TestTerminalClientRecorderLayer),
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ConfigService.layer),
 	Layer.provide(ProjectRegistry.layer),
@@ -89,6 +139,10 @@ export const makeScopedTestRpcContext = Effect.gen(function* () {
 		Effect.provide(Layer.succeedContext(context))
 	);
 	const { store } = Context.get(context, LaborerStore);
+	const terminalClientRecorder = Context.get(
+		context,
+		TestTerminalClientRecorder
+	);
 
-	return { client, store };
+	return { client, store, terminalClientRecorder };
 });

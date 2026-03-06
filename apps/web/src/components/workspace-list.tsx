@@ -14,6 +14,11 @@
  * Fix Findings) on every non-destroyed workspace for triggering agent
  * workflows.
  *
+ * When a workspace is associated with a plan (branch name matches
+ * `plan/<slug>`), a scoped task list is shown inside the workspace card
+ * displaying only the plan's issues. Status changes propagate to the
+ * sidebar plan progress indicator via LiveStore reactivity.
+ *
  * When no workspaces exist (all destroyed or none created), shows an empty
  * state with guidance text and a CTA button to create the first workspace.
  *
@@ -28,18 +33,20 @@
  * @see Issue #121: Loading state — workspace creation
  * @see Issue #113: Project switcher — filter workspaces by active project
  * @see Issue #160: UI for detected workspaces
+ * @see Issue #193: Plan workspace scoped task list and rlph integration
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
-import { workspaces } from "@laborer/shared/schema";
+import { prds, workspaces } from "@laborer/shared/schema";
 import type { WorkspaceOrigin } from "@laborer/shared/types";
 import { queryDb } from "@livestore/livestore";
 import { GitBranch, Play, Trash2 } from "lucide-react";
-import { type FC, useCallback, useState } from "react";
+import { type FC, useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { CopyButton } from "@/components/copy-button";
 import { FixFindingsForm } from "@/components/fix-findings-form";
+import { PlanIssuesList } from "@/components/plan-issues-list";
 import { ReviewPrForm } from "@/components/review-pr-form";
 import { TerminalList } from "@/components/terminal-list";
 import {
@@ -68,9 +75,13 @@ import { useLaborerStore } from "@/livestore/store";
 import { usePanelActions } from "@/panels/panel-context";
 
 const allWorkspaces$ = queryDb(workspaces, { label: "workspaceList" });
+const allPrds$ = queryDb(prds, { label: "workspaceList.prds" });
 
 const destroyWorkspaceMutation = LaborerClient.mutation("workspace.destroy");
 const startLoopMutation = LaborerClient.mutation("rlph.startLoop");
+
+/** Prefix used to associate workspaces with plans by branch name convention. */
+const PLAN_BRANCH_PREFIX = "plan/";
 
 type WorkspaceStatus =
 	| "creating"
@@ -158,6 +169,8 @@ const CopyableValue: FC<CopyableValueProps> = (props) => {
 };
 
 interface WorkspaceItemProps {
+	/** The prdId of the plan this workspace is associated with, if any. */
+	readonly associatedPrdId?: string | undefined;
 	readonly workspace: {
 		readonly id: string;
 		readonly projectId: string;
@@ -171,7 +184,7 @@ interface WorkspaceItemProps {
 	};
 }
 
-function WorkspaceItem({ workspace }: WorkspaceItemProps) {
+function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [isDestroying, setIsDestroying] = useState(false);
 	const [isStartingLoop, setIsStartingLoop] = useState(false);
@@ -345,6 +358,14 @@ function WorkspaceItem({ workspace }: WorkspaceItemProps) {
 				<div className="border-t pt-2">
 					<TerminalList workspaceId={workspace.id} />
 				</div>
+				{associatedPrdId && (
+					<div className="border-t pt-2">
+						<h4 className="mb-2 font-medium text-muted-foreground text-xs">
+							Plan Issues
+						</h4>
+						<PlanIssuesList prdId={associatedPrdId} />
+					</div>
+				)}
 			</CardContent>
 		</Card>
 	);
@@ -358,11 +379,24 @@ interface WorkspaceListProps {
 function WorkspaceList({ projectId }: WorkspaceListProps) {
 	const store = useLaborerStore();
 	const workspaceList = store.useQuery(allWorkspaces$);
+	const prdList = store.useQuery(allPrds$);
 
 	// Filter out destroyed workspaces, scoped to the given project
 	const activeWorkspaces = workspaceList.filter(
 		(ws) => ws.status !== "destroyed" && ws.projectId === projectId
 	);
+
+	// Build a map of plan/<slug> branch name → prdId for this project,
+	// so we can detect which workspaces are associated with a plan.
+	const branchToPrdId = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const prd of prdList) {
+			if (prd.projectId === projectId) {
+				map.set(`${PLAN_BRANCH_PREFIX}${prd.slug}`, prd.id);
+			}
+		}
+		return map;
+	}, [prdList, projectId]);
 
 	if (activeWorkspaces.length === 0) {
 		return <p className="py-2 text-muted-foreground text-xs">No workspaces</p>;
@@ -371,7 +405,11 @@ function WorkspaceList({ projectId }: WorkspaceListProps) {
 	return (
 		<div className="grid gap-2">
 			{activeWorkspaces.map((workspace) => (
-				<WorkspaceItem key={workspace.id} workspace={workspace} />
+				<WorkspaceItem
+					associatedPrdId={branchToPrdId.get(workspace.branchName)}
+					key={workspace.id}
+					workspace={workspace}
+				/>
 			))}
 		</div>
 	);

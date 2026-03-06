@@ -633,12 +633,12 @@ The scoped task list shows only tasks with the plan's `prdId`. The rlph "start l
 
 ### Acceptance criteria
 
-- [ ] Workspace view detects when a workspace is associated with a plan
-- [ ] Workspace view shows a scoped task list with only the plan's issues
-- [ ] The scoped task list uses the same visual components as the full task list
-- [ ] rlph can be started in the workspace via the existing start loop button
-- [ ] rlph can call MCP tools to read the PRD and remaining issues
-- [ ] Issue status updates in the scoped list propagate to the sidebar plan progress indicator
+- [x] Workspace view detects when a workspace is associated with a plan
+- [x] Workspace view shows a scoped task list with only the plan's issues
+- [x] The scoped task list uses the same visual components as the full task list
+- [x] rlph can be started in the workspace via the existing start loop button
+- [x] rlph can call MCP tools to read the PRD and remaining issues
+- [x] Issue status updates in the scoped list propagate to the sidebar plan progress indicator
 
 ### Blocked by
 
@@ -775,7 +775,7 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 190 | Plan detail view: Plate.js markdown editor | #180, #189 | Done |
 | 191 | Plan detail view: issues list alongside editor | #181, #190 | Done |
 | 192 | Create workspace from plan | #191 | Done |
-| 193 | Plan workspace scoped task list and rlph integration | #186, #192 | Ready |
+| 193 | Plan workspace scoped task list and rlph integration | #186, #192 | Done |
 | 194 | Remove CreateTaskForm and manual task source tab | #181 | Ready |
 | 195 | Remove WritePrdForm, rlph.writePRD RPC, and PrdTaskImporter | #185 | Done |
 | 196 | Polish and end-to-end verification | #188, #193, #194, #195 | Blocked |

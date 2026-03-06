@@ -403,13 +403,13 @@ See PRD Implementation Decisions > Existing Test Audit and Testing Decisions.
 
 ### Acceptance criteria
 
-- [ ] No imports of `expandTilde`, `readConfigFile`, `walkUpForConfigs`, `mergeConfigs` in the test file
-- [ ] All tests go through `ConfigService.resolveConfig`, `readGlobalConfig`, or `writeProjectConfig`
-- [ ] Tilde expansion, walk-up traversal, config merging, and global fallback behavior are still tested (through the public API)
-- [ ] Tests use `@effect/vitest` patterns (`it.effect`, `it.scoped`, `assert`)
-- [ ] Tests use shared helpers (TestLaborerStore, git helpers)
-- [ ] All tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes
+- [x] No imports of `expandTilde`, `readConfigFile`, `walkUpForConfigs`, `mergeConfigs` in the test file
+- [x] All tests go through `ConfigService.resolveConfig`, `readGlobalConfig`, or `writeProjectConfig`
+- [x] Tilde expansion, walk-up traversal, config merging, and global fallback behavior are still tested (through the public API)
+- [x] Tests use `@effect/vitest` patterns (`it.effect`, `it.scoped`, `assert`)
+- [x] Tests use shared helpers (TestLaborerStore, git helpers)
+- [x] All tests pass (`bun run test` in packages/server)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -773,7 +773,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 9 | Add LiveStore schema tests -- setup + project/workspace events | None | Done |
 | 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Done |
 | 11 | Add LiveStore schema tests -- deprecated terminal event no-ops | #9 | Done |
-| 12 | Rewrite config-service.test.ts through public API | #5 or #7 | Ready |
+| 12 | Rewrite config-service.test.ts through public API | #5 or #7 | Done |
 | 13 | Set up RPC test infrastructure + health.check test | #1 | Done |
 | 14 | RPC integration tests -- project.add + project.remove | #13, #2 | Done |
 | 15 | RPC integration tests -- config.get + config.update | None | Done |

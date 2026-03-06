@@ -3,9 +3,11 @@
  *
  * Tests config resolution, walk-up directory traversal, global config
  * fallback, provenance metadata, tilde expansion, and error handling
- * using real temporary directories on the filesystem.
+ * through the public ConfigService API using real temporary directories
+ * on the filesystem.
  *
- * Issue #154: Config Service — resolve config with walk-up + global default
+ * All tests exercise ConfigService.resolveConfig, ConfigService.readGlobalConfig,
+ * or ConfigService.writeProjectConfig — no internal helpers are tested directly.
  */
 
 import {
@@ -27,28 +29,13 @@ import type {
 import {
 	CONFIG_FILE_NAME,
 	ConfigService,
-	expandTilde,
 	GLOBAL_CONFIG_DIR,
-	mergeConfigs,
-	readConfigFile,
-	walkUpForConfigs,
 } from "../src/services/config-service.js";
+import { createTempDir } from "./helpers/git-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Create a unique temporary directory for test isolation. */
-const createTempDir = (prefix: string): string => {
-	const dir = join(
-		homedir(),
-		".config",
-		"laborer-test",
-		`${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	return dir;
-};
 
 /** Write a laborer.json config file at the given directory. */
 const writeConfig = (dir: string, config: LaborerConfig): string => {
@@ -93,323 +80,24 @@ const writeProjectConfig = (
 // Test Fixtures
 // ---------------------------------------------------------------------------
 
+/** Temp directories for cleanup. */
+const tempRoots: string[] = [];
+
 /** Root temp directory for all tests in this suite. */
 let testRoot: string;
 
 beforeAll(() => {
-	testRoot = createTempDir("config-service");
+	testRoot = createTempDir("config-service", tempRoots);
 });
 
 afterAll(() => {
-	if (testRoot) {
-		rmSync(testRoot, { recursive: true, force: true });
+	for (const dir of tempRoots) {
+		rmSync(dir, { recursive: true, force: true });
 	}
 });
 
 // ---------------------------------------------------------------------------
-// expandTilde tests
-// ---------------------------------------------------------------------------
-
-describe("expandTilde", () => {
-	it("should expand ~ to home directory", () => {
-		assert.strictEqual(expandTilde("~"), homedir());
-	});
-
-	it("should expand ~/ prefix to home directory", () => {
-		assert.strictEqual(
-			expandTilde("~/projects/repo"),
-			join(homedir(), "projects/repo")
-		);
-	});
-
-	it("should not expand ~ in the middle of a path", () => {
-		assert.strictEqual(
-			expandTilde("/path/to/~something"),
-			"/path/to/~something"
-		);
-	});
-
-	it("should return absolute paths unchanged", () => {
-		assert.strictEqual(expandTilde("/absolute/path"), "/absolute/path");
-	});
-
-	it("should return relative paths unchanged", () => {
-		assert.strictEqual(expandTilde("relative/path"), "relative/path");
-	});
-});
-
-// ---------------------------------------------------------------------------
-// readConfigFile tests
-// ---------------------------------------------------------------------------
-
-describe("readConfigFile", () => {
-	it.effect("should return undefined for non-existent file", () =>
-		Effect.gen(function* () {
-			const result = yield* readConfigFile(
-				join(testRoot, "nonexistent", CONFIG_FILE_NAME)
-			);
-			assert.isUndefined(result);
-		})
-	);
-
-	it.effect("should parse valid JSON config", () =>
-		Effect.gen(function* () {
-			const dir = join(testRoot, "valid-config");
-			mkdirSync(dir, { recursive: true });
-			writeConfig(dir, {
-				prdsDir: "~/prds",
-				worktreeDir: "~/worktrees",
-				setupScripts: ["bun install"],
-			});
-
-			const result = yield* readConfigFile(join(dir, CONFIG_FILE_NAME));
-			assert.deepStrictEqual(result, {
-				prdsDir: "~/prds",
-				worktreeDir: "~/worktrees",
-				setupScripts: ["bun install"],
-			});
-		})
-	);
-
-	it.effect("should return empty object for malformed JSON", () =>
-		Effect.gen(function* () {
-			const dir = join(testRoot, "malformed-json");
-			mkdirSync(dir, { recursive: true });
-			writeFileSync(join(dir, CONFIG_FILE_NAME), "{ not valid json }}}");
-
-			const result = yield* readConfigFile(join(dir, CONFIG_FILE_NAME));
-			assert.deepStrictEqual(result, {});
-		})
-	);
-
-	it.effect("should return empty object for empty file", () =>
-		Effect.gen(function* () {
-			const dir = join(testRoot, "empty-file");
-			mkdirSync(dir, { recursive: true });
-			writeFileSync(join(dir, CONFIG_FILE_NAME), "");
-
-			const result = yield* readConfigFile(join(dir, CONFIG_FILE_NAME));
-			assert.deepStrictEqual(result, {});
-		})
-	);
-});
-
-// ---------------------------------------------------------------------------
-// walkUpForConfigs tests
-// ---------------------------------------------------------------------------
-
-describe("walkUpForConfigs", () => {
-	it.effect("should find config at the starting directory", () =>
-		Effect.gen(function* () {
-			const dir = join(testRoot, "walk-start");
-			mkdirSync(dir, { recursive: true });
-			const configPath = writeConfig(dir, { setupScripts: ["echo hello"] });
-
-			const results = yield* walkUpForConfigs(dir);
-			assert.isTrue(results.length >= 1);
-			assert.strictEqual(results[0]?.path, configPath);
-			assert.deepStrictEqual(results[0]?.config.setupScripts, ["echo hello"]);
-		})
-	);
-
-	it.effect("should find configs in ancestor directories", () =>
-		Effect.gen(function* () {
-			const parent = join(testRoot, "walk-ancestor-parent");
-			const child = join(parent, "child-project");
-			mkdirSync(child, { recursive: true });
-
-			const parentConfigPath = writeConfig(parent, {
-				worktreeDir: "~/parent-worktrees",
-			});
-			const childConfigPath = writeConfig(child, {
-				setupScripts: ["bun install"],
-			});
-
-			const results = yield* walkUpForConfigs(child);
-
-			// Child config should be first (closest), parent second
-			const childResult = results.find((r) => r.path === childConfigPath);
-			const parentResult = results.find((r) => r.path === parentConfigPath);
-
-			assert.isDefined(childResult);
-			assert.isDefined(parentResult);
-			assert.deepStrictEqual(childResult?.config.setupScripts, ["bun install"]);
-			assert.strictEqual(
-				parentResult?.config.worktreeDir,
-				"~/parent-worktrees"
-			);
-
-			// Child should come before parent in the results
-			const childIndex = childResult ? results.indexOf(childResult) : -1;
-			const parentIndex = parentResult ? results.indexOf(parentResult) : -1;
-			assert.isTrue(childIndex < parentIndex);
-		})
-	);
-
-	it.effect("should return empty array when no configs found", () =>
-		Effect.gen(function* () {
-			const dir = join(testRoot, "walk-no-config");
-			mkdirSync(dir, { recursive: true });
-			// Don't create a config file
-
-			const results = yield* walkUpForConfigs(dir);
-			// May find configs in ancestor dirs (testRoot, etc.) — filter to only
-			// configs at or below our test directory
-			const relevantResults = results.filter(
-				(r) =>
-					r.path === join(dir, CONFIG_FILE_NAME) ||
-					r.path.startsWith(join(dir, "/"))
-			);
-			assert.strictEqual(relevantResults.length, 0);
-		})
-	);
-});
-
-// ---------------------------------------------------------------------------
-// mergeConfigs tests
-// ---------------------------------------------------------------------------
-
-describe("mergeConfigs", () => {
-	it("should use hardcoded defaults when no configs provided", () => {
-		const result = mergeConfigs([], "my-project");
-
-		assert.strictEqual(result.prdsDir.source, "default");
-		assert.strictEqual(
-			result.prdsDir.value,
-			join(GLOBAL_CONFIG_DIR, "my-project", "prds")
-		);
-		assert.strictEqual(result.worktreeDir.source, "default");
-		assert.strictEqual(
-			result.worktreeDir.value,
-			join(GLOBAL_CONFIG_DIR, "my-project")
-		);
-		assert.strictEqual(result.setupScripts.source, "default");
-		assert.deepStrictEqual(result.setupScripts.value, []);
-		assert.strictEqual(result.rlphConfig.source, "default");
-		assert.isNull(result.rlphConfig.value);
-	});
-
-	it("should use values from config when provided", () => {
-		const result = mergeConfigs(
-			[
-				{
-					config: {
-						prdsDir: "/custom/prds",
-						worktreeDir: "/custom/worktrees",
-						setupScripts: ["npm install"],
-						rlphConfig: "rlph.json",
-					},
-					path: "/project/laborer.json",
-				},
-			],
-			"my-project"
-		);
-
-		assert.strictEqual(result.prdsDir.value, "/custom/prds");
-		assert.strictEqual(result.prdsDir.source, "/project/laborer.json");
-		assert.strictEqual(result.worktreeDir.value, "/custom/worktrees");
-		assert.strictEqual(result.worktreeDir.source, "/project/laborer.json");
-		assert.deepStrictEqual(result.setupScripts.value, ["npm install"]);
-		assert.strictEqual(result.setupScripts.source, "/project/laborer.json");
-		assert.strictEqual(result.rlphConfig.value, "rlph.json");
-		assert.strictEqual(result.rlphConfig.source, "/project/laborer.json");
-	});
-
-	it("should prefer closest config (project root over ancestor)", () => {
-		const result = mergeConfigs(
-			[
-				{
-					config: { worktreeDir: "/project-level" },
-					path: "/repo/laborer.json",
-				},
-				{
-					config: { worktreeDir: "/ancestor-level" },
-					path: "/parent/laborer.json",
-				},
-			],
-			"my-project"
-		);
-
-		// Closest (first in array) wins
-		assert.strictEqual(result.worktreeDir.value, "/project-level");
-		assert.strictEqual(result.worktreeDir.source, "/repo/laborer.json");
-	});
-
-	it("should merge partial configs from different levels", () => {
-		const result = mergeConfigs(
-			[
-				{
-					config: { setupScripts: ["bun install"] },
-					path: "/repo/laborer.json",
-				},
-				{
-					config: { worktreeDir: "/ancestor-worktrees" },
-					path: "/parent/laborer.json",
-				},
-			],
-			"my-project"
-		);
-
-		// setupScripts from project root (closest)
-		assert.deepStrictEqual(result.setupScripts.value, ["bun install"]);
-		assert.strictEqual(result.setupScripts.source, "/repo/laborer.json");
-
-		// worktreeDir from ancestor (only place it's defined)
-		assert.strictEqual(result.worktreeDir.value, "/ancestor-worktrees");
-		assert.strictEqual(result.worktreeDir.source, "/parent/laborer.json");
-		assert.strictEqual(result.prdsDir.value, "/ancestor-worktrees/prds");
-		assert.strictEqual(result.prdsDir.source, "default");
-	});
-
-	it("should expand tilde in prdsDir", () => {
-		const result = mergeConfigs(
-			[
-				{
-					config: { prdsDir: "~/custom-prds" },
-					path: "/repo/laborer.json",
-				},
-			],
-			"my-project"
-		);
-
-		assert.strictEqual(result.prdsDir.value, join(homedir(), "custom-prds"));
-	});
-
-	it("should expand tilde in worktreeDir", () => {
-		const result = mergeConfigs(
-			[
-				{
-					config: { worktreeDir: "~/my-worktrees" },
-					path: "/repo/laborer.json",
-				},
-			],
-			"my-project"
-		);
-
-		assert.strictEqual(
-			result.worktreeDir.value,
-			join(homedir(), "my-worktrees")
-		);
-	});
-
-	it("should resolve relative worktreeDir to absolute", () => {
-		const result = mergeConfigs(
-			[
-				{
-					config: { worktreeDir: "relative/path" },
-					path: "/repo/laborer.json",
-				},
-			],
-			"my-project"
-		);
-
-		// resolve() converts relative to absolute based on cwd
-		assert.isTrue(result.worktreeDir.value.startsWith("/"));
-	});
-});
-
-// ---------------------------------------------------------------------------
-// ConfigService integration tests (via layer)
+// ConfigService.resolveConfig
 // ---------------------------------------------------------------------------
 
 describe("ConfigService", () => {
@@ -535,6 +223,7 @@ describe("ConfigService", () => {
 
 				const result = yield* resolveConfig(child, "child-project");
 
+				// prdsDir defaults to worktreeDir/prds when only worktreeDir is set
 				assert.strictEqual(result.prdsDir.value, "/child-worktrees/prds");
 				// worktreeDir from child overrides parent
 				assert.strictEqual(result.worktreeDir.value, "/child-worktrees");
@@ -547,7 +236,7 @@ describe("ConfigService", () => {
 
 		it.effect("should expand tilde in worktreeDir from config", () =>
 			Effect.gen(function* () {
-				const projectDir = join(testRoot, "tilde-expansion");
+				const projectDir = join(testRoot, "tilde-expansion-worktree");
 				mkdirSync(projectDir, { recursive: true });
 				writeConfig(projectDir, {
 					worktreeDir: "~/my-laborer-worktrees",
@@ -562,6 +251,38 @@ describe("ConfigService", () => {
 			})
 		);
 
+		it.effect("should expand tilde in prdsDir from config", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "tilde-expansion-prds");
+				mkdirSync(projectDir, { recursive: true });
+				writeConfig(projectDir, {
+					prdsDir: "~/custom-prds",
+				});
+
+				const result = yield* resolveConfig(projectDir, "test-project");
+
+				assert.strictEqual(
+					result.prdsDir.value,
+					join(homedir(), "custom-prds")
+				);
+			})
+		);
+
+		it.effect("should resolve relative worktreeDir to absolute path", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "relative-worktree");
+				mkdirSync(projectDir, { recursive: true });
+				writeConfig(projectDir, {
+					worktreeDir: "relative/path",
+				});
+
+				const result = yield* resolveConfig(projectDir, "test-project");
+
+				// resolve() converts relative to absolute based on cwd
+				assert.isTrue(result.worktreeDir.value.startsWith("/"));
+			})
+		);
+
 		it.effect("should handle malformed config gracefully", () =>
 			Effect.gen(function* () {
 				const projectDir = join(testRoot, "malformed-config-project");
@@ -573,6 +294,20 @@ describe("ConfigService", () => {
 
 				// Malformed config is treated as empty, so defaults apply
 				assert.strictEqual(result.worktreeDir.source, "default");
+			})
+		);
+
+		it.effect("should handle empty config file gracefully", () =>
+			Effect.gen(function* () {
+				const projectDir = join(testRoot, "empty-config-project");
+				mkdirSync(projectDir, { recursive: true });
+				writeFileSync(join(projectDir, CONFIG_FILE_NAME), "");
+
+				// Should not throw — falls back to defaults
+				const result = yield* resolveConfig(projectDir, "test-project");
+
+				assert.strictEqual(result.worktreeDir.source, "default");
+				assert.strictEqual(result.setupScripts.source, "default");
 			})
 		);
 
@@ -616,7 +351,29 @@ describe("ConfigService", () => {
 				assert.strictEqual(result.rlphConfig.source, gpPath);
 			})
 		);
+
+		it.effect(
+			"should default prdsDir to worktreeDir/prds when worktreeDir is set",
+			() =>
+				Effect.gen(function* () {
+					const projectDir = join(testRoot, "prdsdir-default-from-worktree");
+					mkdirSync(projectDir, { recursive: true });
+					writeConfig(projectDir, {
+						worktreeDir: "/custom/worktrees",
+					});
+
+					const result = yield* resolveConfig(projectDir, "test-project");
+
+					// prdsDir should default to worktreeDir + "/prds"
+					assert.strictEqual(result.prdsDir.value, "/custom/worktrees/prds");
+					assert.strictEqual(result.prdsDir.source, "default");
+				})
+		);
 	});
+
+	// ---------------------------------------------------------------------------
+	// ConfigService.readGlobalConfig
+	// ---------------------------------------------------------------------------
 
 	describe("readGlobalConfig", () => {
 		it.effect(
@@ -642,6 +399,10 @@ describe("ConfigService", () => {
 			})
 		);
 	});
+
+	// ---------------------------------------------------------------------------
+	// ConfigService.writeProjectConfig
+	// ---------------------------------------------------------------------------
 
 	describe("writeProjectConfig", () => {
 		it.effect("should create laborer.json when missing", () =>
@@ -762,6 +523,25 @@ describe("ConfigService", () => {
 				assert.deepStrictEqual(written.setupScripts, ["existing-script"]);
 				assert.strictEqual(written.worktreeDir, "/existing/worktrees");
 			})
+		);
+
+		it.effect(
+			"should allow written config to be read back via resolveConfig",
+			() =>
+				Effect.gen(function* () {
+					const projectDir = join(testRoot, "write-then-read");
+					mkdirSync(projectDir, { recursive: true });
+
+					yield* writeProjectConfig(projectDir, {
+						worktreeDir: "/written/worktrees",
+						setupScripts: ["bun install"],
+					});
+
+					const result = yield* resolveConfig(projectDir, "roundtrip-project");
+
+					assert.strictEqual(result.worktreeDir.value, "/written/worktrees");
+					assert.deepStrictEqual(result.setupScripts.value, ["bun install"]);
+				})
 		);
 	});
 });

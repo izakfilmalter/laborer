@@ -190,10 +190,9 @@ class PrdStorageService extends Context.Tag('@laborer/PrdStorageService')<
 
       const resolvePrdsDir = Effect.fn('PrdStorageService.resolvePrdsDir')(
         function* (projectRepoPath: string, projectName: string) {
-          const resolvedConfig = yield* configService.resolveConfig(
-            projectRepoPath,
-            projectName
-          )
+          const resolvedConfig = yield* configService
+            .resolveConfig(projectRepoPath, projectName)
+            .pipe(Effect.orDie)
 
           return resolvedConfig.prdsDir.value
         }

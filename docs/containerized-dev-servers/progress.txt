@@ -17,3 +17,55 @@ Implemented the `containerName` pure utility function in `packages/shared/src/co
 - `bun run check-types` passes
 - `bun x ultracite check` passes (no lint errors in new files)
 - `bunx vitest run test/container-name.test.ts` — 21/21 tests pass
+
+## Issue 1: devServer config schema in laborer.json — COMPLETED
+
+Added `devServer` configuration object to the `laborer.json` schema in `ConfigService`, with full layered resolution, mutual exclusion validation, and RPC support.
+
+### What was done:
+
+**Types & interfaces (config-service.ts):**
+- Added `DevServerConfig` interface with `image`, `dockerfile`, `startCommand`, `workdir` fields (all optional)
+- Added `devServer?: DevServerConfig` to `LaborerConfig` and `ProjectConfigUpdates`
+- Added `ResolvedDevServerConfig` with `ResolvedValue<>` wrapper for each field
+- Added `devServer: ResolvedDevServerConfig` to `ResolvedLaborerConfig`
+- Added `ConfigValidationError` tagged error for validation failures
+
+**Resolution & validation (config-service.ts):**
+- Extracted `mergeDevServerConfig()` helper for devServer-specific layered resolution (keeps `mergeConfigs` under complexity limit)
+- Each devServer field resolves independently with provenance tracking (closest-wins, same as existing fields)
+- `validateDevServerConfig()` rejects configs where both `image` and `dockerfile` are set (mutually exclusive), including cross-layer conflicts
+- Default values: `workdir` defaults to `/app`, others default to `null`
+
+**Write support (config-service.ts):**
+- Updated `applyConfigUpdates()` to merge devServer fields into existing config (preserves existing devServer sub-fields not being updated)
+
+**RPC layer (rpc.ts + handlers.ts):**
+- Added `DevServerConfigResponse` schema in `rpc.ts` with resolved value shapes for all 4 devServer fields
+- Added `devServer` to `ConfigResponse` schema
+- Added optional `devServer` struct to `config.update` RPC payload
+- Updated `handleConfigUpdate` to validate devServer fields and pass through to `writeProjectConfig`
+
+**Caller updates:**
+- `workspace-provider.ts`: maps `ConfigValidationError` to `RpcError` with `CONFIG_VALIDATION_ERROR` code
+- `prd-storage-service.ts`: uses `Effect.orDie` (config validation is a programmer error in PRD context)
+- `linear-task-importer.ts`: maps `ConfigValidationError` to `RpcError`
+- `handlers.ts` (`config.get`): maps `ConfigValidationError` to `RpcError`
+
+### Tests:
+- 12 new unit tests in `config-service.test.ts` covering:
+  - Default devServer values when no config exists
+  - Reading each devServer field from project config (image, dockerfile, startCommand, workdir)
+  - Mutual exclusion validation (same layer and cross-layer)
+  - Layered inheritance (ancestor -> child field override)
+  - Independent provenance tracking across 3 config layers
+  - Write/read roundtrip for devServer config
+  - Merge semantics (updating devServer.startCommand preserves devServer.image)
+- Updated 2 existing RPC tests to include devServer defaults in assertions
+- All 32 config-service tests pass, all 3 RPC config-management tests pass
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- `bunx vitest run test/config-service.test.ts` — 32/32 tests pass
+- `bunx vitest run test/rpc/config-management.test.ts` — 3/3 tests pass

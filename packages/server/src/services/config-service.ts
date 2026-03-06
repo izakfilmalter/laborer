@@ -60,6 +60,10 @@ class ConfigIOError extends Data.TaggedError('ConfigIOError')<{
   readonly cause: unknown
 }> {}
 
+class ConfigValidationError extends Data.TaggedError('ConfigValidationError')<{
+  readonly message: string
+}> {}
+
 /** Config file name used at all levels (project root, ancestors, global). */
 const CONFIG_FILE_NAME = 'laborer.json'
 
@@ -73,11 +77,27 @@ const GLOBAL_CONFIG_PATH = join(GLOBAL_CONFIG_DIR, CONFIG_FILE_NAME)
 const logPrefix = 'ConfigService'
 
 /**
+ * Dev server container configuration.
+ * `image` and `dockerfile` are mutually exclusive.
+ */
+interface DevServerConfig {
+  /** Path to a Dockerfile for building the container image. */
+  readonly dockerfile?: string | undefined
+  /** Base Docker image name (e.g. "node:22"). */
+  readonly image?: string | undefined
+  /** Command to start the dev server (e.g. "bun dev"). */
+  readonly startCommand?: string | undefined
+  /** Mount point inside the container. Defaults to "/app". */
+  readonly workdir?: string | undefined
+}
+
+/**
  * Shape of a `laborer.json` config file.
  * All fields are optional — missing fields are resolved from ancestor
  * configs or hardcoded defaults.
  */
 interface LaborerConfig {
+  readonly devServer?: DevServerConfig
   readonly prdsDir?: string
   readonly rlphConfig?: string
   readonly setupScripts?: readonly string[]
@@ -86,6 +106,7 @@ interface LaborerConfig {
 
 /** Partial updates accepted by writeProjectConfig(). */
 interface ProjectConfigUpdates {
+  readonly devServer?: DevServerConfig | undefined
   readonly prdsDir?: string | undefined
   readonly rlphConfig?: string | undefined
   readonly setupScripts?: readonly string[] | undefined
@@ -104,10 +125,22 @@ interface ResolvedValue<T> {
 }
 
 /**
+ * Fully resolved dev server configuration with provenance for each field.
+ * All fields have concrete values (no undefined).
+ */
+interface ResolvedDevServerConfig {
+  readonly dockerfile: ResolvedValue<string | null>
+  readonly image: ResolvedValue<string | null>
+  readonly startCommand: ResolvedValue<string | null>
+  readonly workdir: ResolvedValue<string>
+}
+
+/**
  * Fully resolved config with provenance for each field.
  * All fields have concrete values (no undefined).
  */
 interface ResolvedLaborerConfig {
+  readonly devServer: ResolvedDevServerConfig
   /** Absolute path with `~` already expanded. */
   readonly prdsDir: ResolvedValue<string>
   readonly rlphConfig: ResolvedValue<string | null>
@@ -283,6 +316,31 @@ const applyConfigUpdates = (
     next.rlphConfig = updates.rlphConfig
   }
 
+  if (updates.devServer !== undefined) {
+    const existingDevServer =
+      typeof existing.devServer === 'object' &&
+      existing.devServer !== null &&
+      !Array.isArray(existing.devServer)
+        ? (existing.devServer as Record<string, unknown>)
+        : {}
+    const merged = { ...existingDevServer }
+
+    if (updates.devServer.image !== undefined) {
+      merged.image = updates.devServer.image
+    }
+    if (updates.devServer.dockerfile !== undefined) {
+      merged.dockerfile = updates.devServer.dockerfile
+    }
+    if (updates.devServer.startCommand !== undefined) {
+      merged.startCommand = updates.devServer.startCommand
+    }
+    if (updates.devServer.workdir !== undefined) {
+      merged.workdir = updates.devServer.workdir
+    }
+
+    next.devServer = merged
+  }
+
   return next
 }
 
@@ -395,6 +453,76 @@ const ensureGlobalConfigDir = (): Effect.Effect<void, never> =>
  *   closest (project root) to farthest (global). Closest wins.
  * @param projectName - Used to compute the default worktreeDir.
  */
+/**
+ * Resolve devServer config from layered configs.
+ * Iterates from farthest to closest (closest wins).
+ */
+const mergeDevServerConfig = (
+  configLayers: ReadonlyArray<{ config: LaborerConfig; path: string }>
+): ResolvedDevServerConfig => {
+  let image: ResolvedValue<string | null> = {
+    value: null,
+    source: 'default',
+  }
+  let dockerfile: ResolvedValue<string | null> = {
+    value: null,
+    source: 'default',
+  }
+  let startCommand: ResolvedValue<string | null> = {
+    value: null,
+    source: 'default',
+  }
+  let workdir: ResolvedValue<string> = {
+    value: '/app',
+    source: 'default',
+  }
+
+  for (let i = configLayers.length - 1; i >= 0; i--) {
+    const layer = configLayers[i]
+    if (layer === undefined) {
+      continue
+    }
+    const { config, path } = layer
+
+    if (config.devServer === undefined) {
+      continue
+    }
+
+    const ds = config.devServer
+
+    if (ds.image !== undefined) {
+      image = { value: ds.image, source: path }
+    }
+    if (ds.dockerfile !== undefined) {
+      dockerfile = { value: ds.dockerfile, source: path }
+    }
+    if (ds.startCommand !== undefined) {
+      startCommand = { value: ds.startCommand, source: path }
+    }
+    if (ds.workdir !== undefined) {
+      workdir = { value: ds.workdir, source: path }
+    }
+  }
+
+  return { dockerfile, image, startCommand, workdir }
+}
+
+/**
+ * Validate that the resolved devServer config is consistent.
+ * Returns an error message string if validation fails, or undefined if valid.
+ */
+const validateDevServerConfig = (
+  devServer: ResolvedDevServerConfig
+): string | undefined => {
+  if (devServer.image.value !== null && devServer.dockerfile.value !== null) {
+    return (
+      'devServer.image and devServer.dockerfile are mutually exclusive. ' +
+      `image from ${devServer.image.source}, dockerfile from ${devServer.dockerfile.source}`
+    )
+  }
+  return undefined
+}
+
 const mergeConfigs = (
   configLayers: ReadonlyArray<{ config: LaborerConfig; path: string }>,
   projectName: string
@@ -419,7 +547,7 @@ const mergeConfigs = (
     source: 'default',
   }
 
-  // Walk from farthest to closest (global → ancestors → project root).
+  // Walk from farthest to closest (global -> ancestors -> project root).
   // Closest wins, so we iterate in reverse and each closer layer overwrites.
   for (let i = configLayers.length - 1; i >= 0; i--) {
     const layer = configLayers[i]
@@ -463,7 +591,9 @@ const mergeConfigs = (
     }
   }
 
-  return { prdsDir, worktreeDir, setupScripts, rlphConfig }
+  const devServer = mergeDevServerConfig(configLayers)
+
+  return { devServer, prdsDir, worktreeDir, setupScripts, rlphConfig }
 }
 
 // ---------------------------------------------------------------------------
@@ -489,7 +619,7 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
     readonly resolveConfig: (
       projectRepoPath: string,
       projectName: string
-    ) => Effect.Effect<ResolvedLaborerConfig, never>
+    ) => Effect.Effect<ResolvedLaborerConfig, ConfigValidationError>
 
     /**
      * Read the global config at `~/.config/laborer/laborer.json`.
@@ -537,8 +667,16 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
         // 5. Merge with closest-wins strategy and apply defaults
         const resolved = mergeConfigs(allLayers, projectName)
 
+        // 6. Validate devServer mutual exclusion (image vs dockerfile)
+        const validationError = validateDevServerConfig(resolved.devServer)
+        if (validationError !== undefined) {
+          return yield* new ConfigValidationError({
+            message: validationError,
+          })
+        }
+
         yield* Effect.logDebug(
-          `Resolved config for "${projectName}": worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), prdsDir="${resolved.prdsDir.value}" (from ${resolved.prdsDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), rlphConfig=${resolved.rlphConfig.value ?? 'null'} (from ${resolved.rlphConfig.source})`
+          `Resolved config for "${projectName}": worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), prdsDir="${resolved.prdsDir.value}" (from ${resolved.prdsDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), rlphConfig=${resolved.rlphConfig.value ?? 'null'} (from ${resolved.rlphConfig.source}), devServer.image=${resolved.devServer.image.value ?? 'null'} (from ${resolved.devServer.image.source}), devServer.workdir="${resolved.devServer.workdir.value}" (from ${resolved.devServer.workdir.source})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
         return resolved
@@ -579,22 +717,27 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
 
 export {
   ConfigService,
+  ConfigValidationError,
   // Exported for testing
   CONFIG_FILE_NAME,
   expandTilde,
   GLOBAL_CONFIG_DIR,
   GLOBAL_CONFIG_PATH,
   mergeConfigs,
+  mergeDevServerConfig,
   readConfigFile,
   readRawConfigObject,
+  validateDevServerConfig,
   walkUpForConfigs,
   applyConfigUpdates,
   writeJsonAtomic,
 }
 
 export type {
+  DevServerConfig,
   LaborerConfig,
   ProjectConfigUpdates,
+  ResolvedDevServerConfig,
   ResolvedLaborerConfig,
   ResolvedValue,
 }

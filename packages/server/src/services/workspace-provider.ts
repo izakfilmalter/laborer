@@ -827,10 +827,17 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           const project = yield* registry.getProject(projectId)
 
           // 1b. Resolve config for worktree location + setup scripts
-          const resolvedConfig = yield* configService.resolveConfig(
-            project.repoPath,
-            project.name
-          )
+          const resolvedConfig = yield* configService
+            .resolveConfig(project.repoPath, project.name)
+            .pipe(
+              Effect.mapError(
+                (e) =>
+                  new RpcError({
+                    message: e.message,
+                    code: 'CONFIG_VALIDATION_ERROR',
+                  })
+              )
+            )
 
           // 2. Generate or validate branch name
           const resolvedBranch =

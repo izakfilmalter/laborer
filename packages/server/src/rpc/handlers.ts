@@ -84,7 +84,17 @@ export const handleConfigGet = ({ projectId }: { projectId: string }) =>
     const configService = yield* ConfigService
 
     const project = yield* registry.getProject(projectId)
-    return yield* configService.resolveConfig(project.repoPath, project.name)
+    return yield* configService
+      .resolveConfig(project.repoPath, project.name)
+      .pipe(
+        Effect.mapError(
+          (e) =>
+            new RpcError({
+              message: e.message,
+              code: 'CONFIG_VALIDATION_ERROR',
+            })
+        )
+      )
   })
 
 export const handleConfigUpdate = ({
@@ -93,6 +103,14 @@ export const handleConfigUpdate = ({
 }: {
   projectId: string
   config: {
+    devServer?:
+      | {
+          dockerfile?: string | undefined
+          image?: string | undefined
+          startCommand?: string | undefined
+          workdir?: string | undefined
+        }
+      | undefined
     prdsDir?: string | undefined
     rlphConfig?: string | undefined
     setupScripts?: readonly string[] | undefined
@@ -105,19 +123,32 @@ export const handleConfigUpdate = ({
       (config.setupScripts.every((script) => typeof script === 'string') &&
         Array.isArray(config.setupScripts))
 
+    const isValidDevServer =
+      config.devServer === undefined ||
+      (typeof config.devServer === 'object' &&
+        (config.devServer.image === undefined ||
+          typeof config.devServer.image === 'string') &&
+        (config.devServer.dockerfile === undefined ||
+          typeof config.devServer.dockerfile === 'string') &&
+        (config.devServer.startCommand === undefined ||
+          typeof config.devServer.startCommand === 'string') &&
+        (config.devServer.workdir === undefined ||
+          typeof config.devServer.workdir === 'string'))
+
     const isValidConfig =
       (config.prdsDir === undefined || typeof config.prdsDir === 'string') &&
       (config.worktreeDir === undefined ||
         typeof config.worktreeDir === 'string') &&
       (config.rlphConfig === undefined ||
         typeof config.rlphConfig === 'string') &&
-      isValidSetupScripts
+      isValidSetupScripts &&
+      isValidDevServer
 
     if (!isValidConfig) {
       return yield* new RpcError({
         code: 'INVALID_INPUT',
         message:
-          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, rlphConfig, and setupScripts as string array.',
+          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, rlphConfig, setupScripts as string array, and devServer with optional string fields.',
       })
     }
 

@@ -18,16 +18,16 @@ See the PRD "Container Configuration in laborer.json" section for the full schem
 
 ### Acceptance criteria
 
-- [ ] `LaborerConfig` type in ConfigService gains an optional `devServer` object with `image?: string`, `dockerfile?: string`, `startCommand?: string`, `workdir?: string`
-- [ ] `ResolvedLaborerConfig` gains corresponding `ResolvedValue<>` fields for each devServer property
-- [ ] Validation rejects configs where both `image` and `dockerfile` are specified (mutually exclusive)
-- [ ] Default values: `workdir` defaults to `/app`, others default to `undefined`
-- [ ] Layered resolution works: project-level `devServer.image` overrides global-level
-- [ ] `writeProjectConfig` RPC supports updating `devServer` fields
-- [ ] `ConfigResponse` schema in shared `rpc.ts` includes the new devServer fields
-- [ ] Unit tests for devServer config parsing, validation, and resolution
-- [ ] Type checks pass (`bun run check-types`)
-- [ ] `bun x ultracite check` passes
+- [x] `LaborerConfig` type in ConfigService gains an optional `devServer` object with `image?: string`, `dockerfile?: string`, `startCommand?: string`, `workdir?: string`
+- [x] `ResolvedLaborerConfig` gains corresponding `ResolvedValue<>` fields for each devServer property
+- [x] Validation rejects configs where both `image` and `dockerfile` are specified (mutually exclusive)
+- [x] Default values: `workdir` defaults to `/app`, others default to `undefined`
+- [x] Layered resolution works: project-level `devServer.image` overrides global-level
+- [x] `writeProjectConfig` RPC supports updating `devServer` fields
+- [x] `ConfigResponse` schema in shared `rpc.ts` includes the new devServer fields
+- [x] Unit tests for devServer config parsing, validation, and resolution
+- [x] Type checks pass (`bun run check-types`)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 

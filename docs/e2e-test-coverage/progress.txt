@@ -12,3 +12,21 @@ Verification:
 - All 125 existing server tests pass (22 test files)
 - `ultracite check` clean on changed files (2 pre-existing format issues in unrelated files)
 - Default behavior preserved: when `DATA_DIR` is not set, both files still use `"./data"`
+
+## Issue 2: Browser-mode file picker fallback — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Modified `apps/web/src/components/add-project-form.tsx` to detect Tauri desktop shell at runtime via `__TAURI_INTERNALS__` in window
+- When Tauri is present: unchanged behavior — opens native folder picker via dynamic `import("@tauri-apps/plugin-dialog")`
+- When Tauri is absent (plain browser / E2E tests): renders a text input (`aria-label="Repository path"`) with placeholder `/path/to/git/repo` and a submit button
+- Both code paths share the same `project.add` RPC mutation, toast notifications (success/error), and loading state ("Adding...")
+- Tauri dialog import changed from static to dynamic `import()` to avoid bundling issues when running in a plain browser
+- Extracted shared `submitProject` helper to avoid duplicating mutation/toast/loading logic between the two code paths
+
+Verification:
+- Type checks pass (`tsc --noEmit` in `apps/web`)
+- All 73 existing Vitest tests pass (9 test files)
+- `ultracite check` clean (119 files checked, no issues)
+- Text input fallback only renders when `window.__TAURI_INTERNALS__` is absent (runtime check)

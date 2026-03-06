@@ -53,16 +53,18 @@ When `__TAURI__` is absent (browser-only): render a text input where the user ca
 
 See the PRD "Browser-Mode File Picker" section for details.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] `AddProjectForm` checks `window.__TAURI__` (or equivalent Tauri detection) at runtime
-- [ ] When Tauri is absent, renders a text input with a label/placeholder for the repo path and a submit button
-- [ ] When Tauri is present, behavior is unchanged (native file dialog)
-- [ ] The text input form calls the same `project.add` RPC mutation with `{ repoPath: inputValue }`
-- [ ] Success shows a toast with the project name; error shows an error toast (same as current behavior)
-- [ ] Loading state ("Adding...") shown during submission
-- [ ] Type checks pass (`bun run check-types` in `apps/web`)
-- [ ] `bun x ultracite check` passes
+- [x] `AddProjectForm` checks `window.__TAURI__` (or equivalent Tauri detection) at runtime
+- [x] When Tauri is absent, renders a text input with a label/placeholder for the repo path and a submit button
+- [x] When Tauri is present, behavior is unchanged (native file dialog)
+- [x] The text input form calls the same `project.add` RPC mutation with `{ repoPath: inputValue }`
+- [x] Success shows a toast with the project name; error shows an error toast (same as current behavior)
+- [x] Loading state ("Adding...") shown during submission
+- [x] Type checks pass (`bun run check-types` in `apps/web`)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 

@@ -14,6 +14,7 @@
 
 import { execSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { FullConfig } from "@playwright/test";
@@ -27,6 +28,10 @@ const HEALTH_CHECK_TIMEOUT = 120_000;
 /** Interval between health check polls (ms). */
 const HEALTH_CHECK_INTERVAL = 2000;
 
+const DEFAULT_WEB_PORT = 3001;
+const DEFAULT_SERVER_PORT = 3000;
+const DEFAULT_TERMINAL_PORT = 3002;
+
 /**
  * Check if a service is already running by attempting a single fetch.
  */
@@ -39,6 +44,45 @@ async function isServiceRunning(url: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+function canListenOnPort(port: number): Promise<boolean> {
+	return new Promise((resolve) => {
+		const server = createServer();
+		server.once("error", () => {
+			resolve(false);
+		});
+		server.once("listening", () => {
+			server.close(() => resolve(true));
+		});
+		server.listen(port);
+	});
+}
+
+async function findAvailablePort(preferredPort: number): Promise<number> {
+	if (await canListenOnPort(preferredPort)) {
+		return preferredPort;
+	}
+
+	return new Promise((resolve, reject) => {
+		const server = createServer();
+		server.once("error", reject);
+		server.listen(0, () => {
+			const address = server.address();
+			if (!address || typeof address === "string") {
+				server.close(() => reject(new Error("Failed to allocate a free port")));
+				return;
+			}
+			const { port } = address;
+			server.close((error) => {
+				if (error) {
+					reject(error);
+					return;
+				}
+				resolve(port);
+			});
+		});
+	});
 }
 
 /**
@@ -91,14 +135,17 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
 
 	// 2. Check if services are already running
 	const [webRunning, serverRunning, terminalRunning] = await Promise.all([
-		isServiceRunning("http://localhost:3001"),
-		isServiceRunning("http://localhost:3000"),
-		isServiceRunning("http://localhost:3002"),
+		isServiceRunning(`http://localhost:${DEFAULT_WEB_PORT}`),
+		isServiceRunning(`http://localhost:${DEFAULT_SERVER_PORT}`),
+		isServiceRunning(`http://localhost:${DEFAULT_TERMINAL_PORT}`),
 	]);
 
 	const allRunning = webRunning && serverRunning && terminalRunning;
 	let turboPid: number | null = null;
 	let dataDirBase: string | null = null;
+	const webPort = DEFAULT_WEB_PORT;
+	let serverPort = DEFAULT_SERVER_PORT;
+	let terminalPort = DEFAULT_TERMINAL_PORT;
 
 	if (allRunning) {
 		// Services already running — skip starting turbo dev.
@@ -108,16 +155,28 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
 		);
 	} else {
 		// 3. Start turbo dev with isolated DATA_DIR
+		[serverPort, terminalPort] = await Promise.all([
+			findAvailablePort(DEFAULT_SERVER_PORT),
+			findAvailablePort(DEFAULT_TERMINAL_PORT),
+		]);
+
 		dataDirBase = mkdtempSync(join(tmpdir(), "laborer-e2e-data-"));
 		mkdirSync(join(dataDirBase, "data"), { recursive: true });
 
 		const monorepoRoot = resolve(import.meta.dirname, "../../..");
-		const turboProcess = spawn("turbo", ["dev"], {
+		const webUrl = `http://localhost:${webPort}`;
+		const serverUrl = `http://localhost:${serverPort}`;
+		const terminalUrl = `http://localhost:${terminalPort}`;
+		const turboProcess = spawn("turbo", ["dev", "--env-mode=loose"], {
 			cwd: monorepoRoot,
 			stdio: "pipe",
 			env: {
 				...process.env,
 				DATA_DIR: dataDirBase,
+				PORT: String(serverPort),
+				TERMINAL_PORT: String(terminalPort),
+				VITE_SERVER_URL: serverUrl,
+				WEB_PORT: String(webPort),
 			},
 			detached: true,
 		});
@@ -159,24 +218,20 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
 		};
 
 		const checks = await Promise.all([
+			pollEndpoint(webUrl, HEALTH_CHECK_TIMEOUT, HEALTH_CHECK_INTERVAL).then(
+				(ok) => {
+					status.web = ok;
+					return ok;
+				}
+			),
+			pollEndpoint(serverUrl, HEALTH_CHECK_TIMEOUT, HEALTH_CHECK_INTERVAL).then(
+				(ok) => {
+					status.server = ok;
+					return ok;
+				}
+			),
 			pollEndpoint(
-				"http://localhost:3001",
-				HEALTH_CHECK_TIMEOUT,
-				HEALTH_CHECK_INTERVAL
-			).then((ok) => {
-				status.web = ok;
-				return ok;
-			}),
-			pollEndpoint(
-				"http://localhost:3000",
-				HEALTH_CHECK_TIMEOUT,
-				HEALTH_CHECK_INTERVAL
-			).then((ok) => {
-				status.server = ok;
-				return ok;
-			}),
-			pollEndpoint(
-				"http://localhost:3002",
+				terminalUrl,
 				HEALTH_CHECK_TIMEOUT,
 				HEALTH_CHECK_INTERVAL
 			).then((ok) => {
@@ -199,6 +254,9 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
 
 	// 5. Save state for teardown and test access
 	const state = {
+		webPort,
+		serverPort,
+		terminalPort,
 		turboPid,
 		dataDirBase,
 		tempRepoDir,

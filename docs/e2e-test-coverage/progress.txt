@@ -191,3 +191,21 @@ Verification:
 - `bun run test` passes in `apps/web` (70 tests)
 - `bun x ultracite check e2e/panel-system.spec.ts` passes
 - `bun run test:e2e e2e/panel-system.spec.ts` is currently blocked in this environment because an unrelated Next.js dev server from another workspace is already listening on port `3000`, which prevents Playwright global setup from starting the required Laborer backend stack on its expected ports
+
+## Issue 11: E2E - Split panes horizontally and vertically - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 11 as the highest-priority remaining task because it unlocks the rest of the panel-system work (Issues 12, 13, and 14)
+
+Changes made:
+- Updated `apps/web/e2e/global-setup.ts` to probe port availability using the same host-binding behavior as the Bun services, so E2E setup no longer treats `3000` or `3002` as free when another process is already bound on a different interface
+- Kept the existing dynamic-port startup flow in place for the server and terminal services, allowing the panel-system spec to boot the stack even when another workspace is already using the default backend ports
+- Reused the panel split spec and proxy/env wiring already in progress so the feature could be verified end-to-end without touching unrelated tasks
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check apps/web/e2e/global-setup.ts apps/web/vite.config.ts turbo.json apps/web/e2e/panel-system.spec.ts` passes
+- `bun run test:e2e e2e/panel-system.spec.ts` passes in `apps/web` (1 passed)

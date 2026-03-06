@@ -1,0 +1,6 @@
+2026-03-06
+- Selected Issue 2 as the highest-priority remaining slice because the watcher backend is the main parity gap called out in the PRD and it unblocks the later ignore/event-semantic work.
+- Replaced the default `FileWatcher` implementation with a native `@parcel/watcher` backend while preserving the existing service contract and coordinator wiring.
+- Added an explicit `fs.watch` fallback path that can be selected without changing coordinator code, and automatically falls back with a warning if the native backend cannot start.
+- Added focused watcher tests covering default native preference, native subscribe/close behavior, native-to-fallback failover, and explicit fallback selection.
+- Feedback loops: `bun run test -- test/file-watcher.test.ts` passes in `packages/server`; `bun run check-types` still fails because of pre-existing `ProjectRecord` fixture mismatches in `packages/server/test/prd-rpc-handlers.test.ts` and `packages/server/test/project-rpc-handlers.test.ts`.

@@ -58,11 +58,11 @@ This slice should focus on infrastructure parity: backend selection, subscriptio
 
 ### Acceptance criteria
 
-- [ ] `FileWatcher` uses a native watcher backend by default behind the same public service interface
-- [ ] A fallback implementation exists and can be selected without changing coordinator code
-- [ ] Repository and git-metadata subscriptions still clean up correctly on project removal and server shutdown
-- [ ] Watcher behavior remains compatible with existing coordinator recovery logic
-- [ ] Integration tests cover native backend subscribe/unsubscribe behavior and fallback operation
+- [x] `FileWatcher` uses a native watcher backend by default behind the same public service interface
+- [x] A fallback implementation exists and can be selected without changing coordinator code
+- [x] Repository and git-metadata subscriptions still clean up correctly on project removal and server shutdown
+- [x] Watcher behavior remains compatible with existing coordinator recovery logic
+- [x] Integration tests cover native backend subscribe/unsubscribe behavior and fallback operation
 
 ### Blocked by
 

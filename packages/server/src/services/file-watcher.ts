@@ -14,6 +14,7 @@
  */
 
 import { existsSync, type FSWatcher, watch } from "node:fs";
+import { relative } from "node:path";
 import { Context, Data, Effect, Layer } from "effect";
 
 /**
@@ -49,68 +50,184 @@ type WatchCallback = (event: WatchEvent) => void;
  */
 type WatchErrorCallback = (error: Error) => void;
 
+interface FileWatcherService {
+	readonly subscribe: (
+		path: string,
+		onChange: WatchCallback,
+		onError: WatchErrorCallback,
+		options?: { readonly recursive?: boolean }
+	) => Effect.Effect<WatchSubscription | null, FileWatcherError>;
+}
+
+interface FileWatcherDrivers {
+	readonly fs: (
+		path: string,
+		onChange: WatchCallback,
+		onError: WatchErrorCallback,
+		options?: { readonly recursive?: boolean }
+	) => Effect.Effect<WatchSubscription | null, FileWatcherError>;
+	readonly native: (
+		path: string,
+		onChange: WatchCallback,
+		onError: WatchErrorCallback,
+		options?: { readonly recursive?: boolean }
+	) => Effect.Effect<WatchSubscription | null, FileWatcherError>;
+}
+
+type FileWatcherBackendName = "fs" | "native";
+
+type ParcelWatcherModule = typeof import("@parcel/watcher");
+
+const DEFAULT_FILE_WATCHER_BACKEND: FileWatcherBackendName = "native";
+
+const resolveFileWatcherBackendPreference = (): FileWatcherBackendName =>
+	process.env.LABORER_FILE_WATCHER_BACKEND === "fs"
+		? "fs"
+		: DEFAULT_FILE_WATCHER_BACKEND;
+
+const normalizeRelativeFileName = (
+	watchPath: string,
+	changedPath: string
+): string | null => {
+	const relativePath = relative(watchPath, changedPath).replaceAll("\\", "/");
+	return relativePath === "" ? null : relativePath;
+};
+
+const subscribeWithFsWatch = (
+	path: string,
+	onChange: WatchCallback,
+	onError: WatchErrorCallback,
+	options?: { readonly recursive?: boolean }
+): Effect.Effect<WatchSubscription | null, FileWatcherError> =>
+	Effect.gen(function* () {
+		if (!existsSync(path)) {
+			return null;
+		}
+
+		const watcher = yield* Effect.try({
+			try: (): FSWatcher =>
+				watch(
+					path,
+					{ recursive: options?.recursive ?? false },
+					(eventType, fileName) => {
+						onChange({
+							type: eventType as "rename" | "change",
+							fileName: fileName ?? null,
+						});
+					}
+				),
+			catch: (cause) =>
+				new FileWatcherError({
+					message: `Failed to watch ${path} with fs backend: ${String(cause)}`,
+				}),
+		});
+
+		watcher.on("error", (error: Error) => {
+			onError(error);
+		});
+
+		return {
+			close: () => {
+				watcher.close();
+			},
+		} satisfies WatchSubscription;
+	});
+
+const subscribeWithNativeWatcher = (
+	path: string,
+	onChange: WatchCallback,
+	onError: WatchErrorCallback,
+	_options?: { readonly recursive?: boolean }
+): Effect.Effect<WatchSubscription | null, FileWatcherError> =>
+	Effect.gen(function* () {
+		if (!existsSync(path)) {
+			return null;
+		}
+
+		const parcelWatcher = yield* Effect.tryPromise({
+			try: async () => {
+				const imported = await import("@parcel/watcher");
+				return (imported.default ?? imported) as ParcelWatcherModule;
+			},
+			catch: (cause) =>
+				new FileWatcherError({
+					message: `Failed to load native watcher backend: ${String(cause)}`,
+				}),
+		});
+
+		const subscription = yield* Effect.tryPromise({
+			try: () =>
+				parcelWatcher.subscribe(path, (error, events) => {
+					if (error !== null) {
+						onError(error);
+						return;
+					}
+
+					for (const event of events) {
+						onChange({
+							type: event.type === "update" ? "change" : "rename",
+							fileName: normalizeRelativeFileName(path, event.path),
+						});
+					}
+				}),
+			catch: (cause) =>
+				new FileWatcherError({
+					message: `Failed to watch ${path} with native backend: ${String(cause)}`,
+				}),
+		});
+
+		return {
+			close: () => {
+				subscription.unsubscribe().catch(onError);
+			},
+		} satisfies WatchSubscription;
+	});
+const defaultFileWatcherDrivers: FileWatcherDrivers = {
+	fs: subscribeWithFsWatch,
+	native: subscribeWithNativeWatcher,
+};
+
+function makeFileWatcher(
+	preferredBackend: FileWatcherBackendName,
+	drivers: FileWatcherDrivers = defaultFileWatcherDrivers
+) {
+	return {
+		subscribe: (path, onChange, onError, options) =>
+			preferredBackend === "fs"
+				? drivers.fs(path, onChange, onError, options)
+				: drivers
+						.native(path, onChange, onError, options)
+						.pipe(
+							Effect.catchAll((error) =>
+								Effect.logWarning(
+									`Native file watcher unavailable for ${path}; falling back to fs.watch. ${error.message}`
+								).pipe(
+									Effect.zipRight(drivers.fs(path, onChange, onError, options))
+								)
+							)
+						),
+	} satisfies FileWatcherService;
+}
+
 class FileWatcher extends Context.Tag("@laborer/FileWatcher")<
 	FileWatcher,
-	{
-		/**
-		 * Subscribe to filesystem events for the given path.
-		 * Returns a subscription handle or null if the path does not exist.
-		 *
-		 * @param path — Absolute path to watch
-		 * @param onChange — Called on each filesystem event
-		 * @param onError — Called when the underlying watcher fails
-		 * @param options — Optional configuration (recursive watching)
-		 */
-		readonly subscribe: (
-			path: string,
-			onChange: WatchCallback,
-			onError: WatchErrorCallback,
-			options?: { readonly recursive?: boolean }
-		) => Effect.Effect<WatchSubscription | null, FileWatcherError>;
-	}
+	FileWatcherService
 >() {
 	/**
 	 * Default implementation backed by Node.js `fs.watch`.
 	 */
 	static readonly layer = Layer.succeed(
 		FileWatcher,
-		FileWatcher.of({
-			subscribe: (path, onChange, onError, options) =>
-				Effect.gen(function* () {
-					if (!existsSync(path)) {
-						return null;
-					}
-
-					const watcher = yield* Effect.try({
-						try: (): FSWatcher =>
-							watch(
-								path,
-								{ recursive: options?.recursive ?? false },
-								(eventType, fileName) => {
-									onChange({
-										type: eventType as "rename" | "change",
-										fileName: fileName ?? null,
-									});
-								}
-							),
-						catch: (cause) =>
-							new FileWatcherError({
-								message: `Failed to watch ${path}: ${String(cause)}`,
-							}),
-					});
-
-					watcher.on("error", (error: Error) => {
-						onError(error);
-					});
-
-					return {
-						close: () => {
-							watcher.close();
-						},
-					} satisfies WatchSubscription;
-				}),
-		})
+		makeFileWatcher(resolveFileWatcherBackendPreference())
 	);
 }
 
-export { FileWatcher, FileWatcherError };
+export {
+	DEFAULT_FILE_WATCHER_BACKEND,
+	FileWatcher,
+	FileWatcherError,
+	type FileWatcherBackendName,
+	type FileWatcherDrivers,
+	makeFileWatcher,
+	resolveFileWatcherBackendPreference,
+};

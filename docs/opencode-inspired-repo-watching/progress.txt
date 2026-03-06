@@ -358,3 +358,31 @@
 - `bun run test test/rpc/project-management.test.ts` passes (6 tests)
 - `bun run --filter @laborer/server check-types` passes
 - `bun x ultracite check packages/server/src/services/project-registry.ts packages/server/test/rpc/project-management.test.ts` passes
+
+## Issue 8: Branch refresh stays correct with linked worktrees — IN PROGRESS
+
+### What was done
+- Updated `RepositoryWatchCoordinator` in `packages/server/src/services/repository-watch-coordinator.ts`
+  - Keeps watching the git metadata root for `HEAD` and `refs` changes even after linked
+    worktrees exist, instead of switching away from the root watcher
+  - Adds a dedicated recursive watcher for `.git/worktrees` so linked-worktree metadata
+    changes still trigger reconciliation and branch refresh
+  - Cleans up all three watcher subscriptions (git root, worktrees, repo root) together on
+    project unwatch and scope shutdown
+
+- Added coordinator integration coverage in `packages/server/test/branch-state-tracker.test.ts`
+  - Main-checkout branch switches keep refreshing after linked worktrees are present
+  - Linked-worktree branch switches refresh through the dedicated worktrees watcher
+  - Canonical path assertions use `realpathSync` so the tests stay stable on macOS
+
+- Re-verified watcher lifecycle coverage in `packages/server/test/repository-watch-coordinator.test.ts`
+  - Project teardown still stops future reconciliation with the expanded watcher set
+
+- Updated `docs/opencode-inspired-repo-watching/issues.md`
+  - Checked off the acceptance criterion for prompt branch indicator refresh after branch
+    switches
+
+### Verification
+- `bun run test -- test/branch-state-tracker.test.ts test/repository-watch-coordinator.test.ts test/repository-watch-coordinator-hardening.test.ts` passes (17 tests)
+- `bun run --filter @laborer/server check-types` passes
+- `bun x ultracite check packages/server/src/services/repository-watch-coordinator.ts packages/server/test/branch-state-tracker.test.ts` passes

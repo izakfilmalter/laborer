@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { events, tables } from "@laborer/shared/schema";
@@ -362,6 +362,152 @@ describe("RepositoryWatchCoordinator branch refresh integration", () => {
 					initialBranch,
 					"feature/coord-branch-updated",
 					"Branch should have been different initially"
+				);
+			}).pipe(Effect.provide(CoordinatorTestLayer))
+	);
+
+	it.scoped(
+		"branch switch on main worktree still refreshes after linked worktrees are present",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("coord-main-branch-with-linked", tempRoots);
+				const linkedPath = join(
+					repoPath,
+					".worktrees",
+					"coord-main-branch-with-linked"
+				);
+				git(`worktree add -b feature/linked-existing ${linkedPath}`, repoPath);
+				const canonicalRepoPath = realpathSync(repoPath);
+
+				const { store } = yield* LaborerStore;
+				const projectId = "project-coord-main-branch-with-linked";
+				store.commit(
+					events.projectCreated({
+						id: projectId,
+						repoPath,
+						name: "coord-main-branch-with-linked",
+						rlphConfig: null,
+					})
+				);
+
+				const coordinator = yield* RepositoryWatchCoordinator;
+				yield* coordinator.watchAll();
+
+				yield* Effect.promise(() =>
+					waitFor(() =>
+						Promise.resolve(
+							store.query(tables.workspaces.where("projectId", projectId))
+								.length === 2
+						)
+					)
+				);
+
+				git("checkout -b feature/main-after-linked", repoPath);
+
+				yield* Effect.promise(() =>
+					waitFor(() => {
+						const workspaces = store.query(
+							tables.workspaces.where("projectId", projectId)
+						) as readonly {
+							readonly branchName: string;
+							readonly worktreePath: string;
+						}[];
+
+						return Promise.resolve(
+							workspaces.some(
+								(workspace) =>
+									workspace.worktreePath === canonicalRepoPath &&
+									workspace.branchName === "feature/main-after-linked"
+							)
+						);
+					})
+				);
+
+				const workspaces = store.query(
+					tables.workspaces.where("projectId", projectId)
+				) as readonly {
+					readonly branchName: string;
+					readonly worktreePath: string;
+				}[];
+				assert.isDefined(
+					workspaces.find(
+						(workspace) =>
+							workspace.worktreePath === canonicalRepoPath &&
+							workspace.branchName === "feature/main-after-linked"
+					)
+				);
+			}).pipe(Effect.provide(CoordinatorTestLayer))
+	);
+
+	it.scoped(
+		"branch switch on linked worktree refreshes through the dedicated worktrees watcher",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("coord-linked-branch-refresh", tempRoots);
+				const linkedPath = join(
+					repoPath,
+					".worktrees",
+					"coord-linked-branch-refresh"
+				);
+				git(`worktree add -b feature/linked-start ${linkedPath}`, repoPath);
+				const canonicalLinkedPath = realpathSync(linkedPath);
+
+				const { store } = yield* LaborerStore;
+				const projectId = "project-coord-linked-branch-refresh";
+				store.commit(
+					events.projectCreated({
+						id: projectId,
+						repoPath,
+						name: "coord-linked-branch-refresh",
+						rlphConfig: null,
+					})
+				);
+
+				const coordinator = yield* RepositoryWatchCoordinator;
+				yield* coordinator.watchAll();
+
+				yield* Effect.promise(() =>
+					waitFor(() =>
+						Promise.resolve(
+							store.query(tables.workspaces.where("projectId", projectId))
+								.length === 2
+						)
+					)
+				);
+
+				git("checkout -b feature/linked-updated", linkedPath);
+
+				yield* Effect.promise(() =>
+					waitFor(() => {
+						const workspaces = store.query(
+							tables.workspaces.where("projectId", projectId)
+						) as readonly {
+							readonly branchName: string;
+							readonly worktreePath: string;
+						}[];
+
+						return Promise.resolve(
+							workspaces.some(
+								(workspace) =>
+									workspace.worktreePath === canonicalLinkedPath &&
+									workspace.branchName === "feature/linked-updated"
+							)
+						);
+					})
+				);
+
+				const workspaces = store.query(
+					tables.workspaces.where("projectId", projectId)
+				) as readonly {
+					readonly branchName: string;
+					readonly worktreePath: string;
+				}[];
+				assert.isDefined(
+					workspaces.find(
+						(workspace) =>
+							workspace.worktreePath === canonicalLinkedPath &&
+							workspace.branchName === "feature/linked-updated"
+					)
 				);
 			}).pipe(Effect.provide(CoordinatorTestLayer))
 	);

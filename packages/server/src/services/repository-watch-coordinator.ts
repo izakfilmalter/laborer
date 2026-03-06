@@ -50,8 +50,8 @@ interface ProjectWatcherState {
 	branchTimer: ReturnType<typeof setTimeout> | null;
 	/** Canonical path to the git common directory */
 	readonly gitDirPath: string;
-	/** Subscription to the git metadata directory */
-	readonly gitDirSubscription: WatchSubscription | null;
+	/** Subscription to the git metadata root for HEAD/refs changes */
+	gitDirRootSubscription: WatchSubscription | null;
 	/** Project identifier */
 	readonly projectId: string;
 	/** Pending retry timer for watcher recovery */
@@ -59,9 +59,9 @@ interface ProjectWatcherState {
 	/** Canonical repo checkout root */
 	readonly repoPath: string;
 	/** Subscription to the repo checkout root for file change events */
-	readonly repoRootSubscription: WatchSubscription | null;
-	/** Current git dir watching target (gitDir or worktrees subdirectory) */
-	readonly target: "gitDir" | "worktrees";
+	repoRootSubscription: WatchSubscription | null;
+	/** Subscription to the shared worktrees directory for linked-worktree metadata */
+	worktreesSubscription: WatchSubscription | null;
 	/** Pending debounce timer for worktree reconciliation */
 	worktreeTimer: ReturnType<typeof setTimeout> | null;
 }
@@ -184,8 +184,11 @@ class RepositoryWatchCoordinator extends Context.Tag(
 
 			const closeState = (state: ProjectWatcherState): void => {
 				clearTimers(state);
-				if (state.gitDirSubscription !== null) {
-					state.gitDirSubscription.close();
+				if (state.gitDirRootSubscription !== null) {
+					state.gitDirRootSubscription.close();
+				}
+				if (state.worktreesSubscription !== null) {
+					state.worktreesSubscription.close();
 				}
 				if (state.repoRootSubscription !== null) {
 					state.repoRootSubscription.close();
@@ -283,13 +286,12 @@ class RepositoryWatchCoordinator extends Context.Tag(
 			// ── Git metadata watcher ─────────────────────────────────
 
 			/**
-			 * Attempt to switch from watching the gitDir to watching
-			 * the more specific worktrees subdirectory. Called when a
-			 * "worktrees" directory appears inside the git dir.
+			 * Attempt to add the dedicated worktrees watcher when the
+			 * shared worktrees directory appears inside the git dir.
 			 */
 			const switchToWorktreesWatcher = (state: ProjectWatcherState): void => {
 				const worktreesDir = join(state.gitDirPath, "worktrees");
-				if (state.target !== "gitDir" || !existsSync(worktreesDir)) {
+				if (state.worktreesSubscription !== null || !existsSync(worktreesDir)) {
 					return;
 				}
 
@@ -297,7 +299,10 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					Ref.get(statesRef).pipe(
 						Effect.flatMap((states) => {
 							const latest = states.get(state.projectId);
-							if (latest === undefined || latest.target !== "gitDir") {
+							if (
+								latest === undefined ||
+								latest.worktreesSubscription !== null
+							) {
 								return Effect.void;
 							}
 							return watchProject(latest.projectId, latest.repoPath);
@@ -306,109 +311,109 @@ class RepositoryWatchCoordinator extends Context.Tag(
 				).catch(() => undefined);
 			};
 
-			const handleGitDirEvent = (
+			const handleGitDirRootEvent = (
 				state: ProjectWatcherState,
 				event: WatchEvent
 			): void => {
-				if (state.target === "gitDir") {
-					// When watching the whole git dir, classify events by concern
-
-					// Check for worktrees directory appearance to switch targets
-					if (event.fileName === "worktrees") {
-						switchToWorktreesWatcher(state);
-						scheduleReconcile(state, "worktrees-created");
-					}
-
-					// Branch-related events trigger branch refresh
-					if (isBranchRelatedEvent(event.fileName)) {
-						scheduleBranchRefresh(state, "git-metadata-change");
-					}
-
-					// Worktree-related events trigger reconciliation
-					if (isWorktreeRelatedEvent(event.fileName)) {
-						scheduleReconcile(state, "git-metadata-change");
-					}
-					return;
+				if (event.fileName === "worktrees") {
+					switchToWorktreesWatcher(state);
+					scheduleReconcile(state, "worktrees-created");
 				}
 
-				// Watching the worktrees subdirectory — changes here are
-				// worktree-related, but also schedule branch refresh since
-				// worktree add/remove can affect branch state
-				scheduleReconcile(state, "filesystem-change");
+				if (isBranchRelatedEvent(event.fileName)) {
+					scheduleBranchRefresh(state, "git-metadata-change");
+				}
+
+				if (isWorktreeRelatedEvent(event.fileName)) {
+					scheduleReconcile(state, "git-metadata-change");
+				}
+			};
+
+			const handleWorktreesEvent = (
+				state: ProjectWatcherState,
+				_event: WatchEvent
+			): void => {
+				scheduleReconcile(state, "worktree-metadata-change");
 				scheduleBranchRefresh(state, "worktree-metadata-change");
 			};
 
-			const subscribeGitDir = (
+			const subscribeGitDirRoot = (
 				projectId: string,
-				repoPath: string,
 				gitDirPath: string,
-				target: "gitDir" | "worktrees"
-			): Effect.Effect<ProjectWatcherState, never> => {
-				const watchPath =
-					target === "worktrees" ? join(gitDirPath, "worktrees") : gitDirPath;
-
-				return Effect.gen(function* () {
-					let stateRef: ProjectWatcherState | null = null;
-
-					const subscription = yield* fileWatcher.subscribe(
-						watchPath,
+				state: ProjectWatcherState
+			): Effect.Effect<WatchSubscription | null, never> =>
+				fileWatcher
+					.subscribe(
+						gitDirPath,
 						(event) => {
-							if (stateRef !== null) {
-								handleGitDirEvent(stateRef, event);
-							}
+							handleGitDirRootEvent(state, event);
 						},
 						(error) => {
-							if (stateRef !== null) {
-								runPromise(
-									Effect.logWarning(
-										`Git watcher error for project ${projectId} at ${watchPath}: ${error.message}`
+							runPromise(
+								Effect.logWarning(
+									`Git watcher error for project ${projectId} at ${gitDirPath}: ${error.message}`
+								)
+							).catch(() => undefined);
+							scheduleReconcile(state, "watcher-error");
+							scheduleBranchRefresh(state, "watcher-error");
+							scheduleRecovery(state, "git-watcher-error");
+						},
+						{ recursive: true }
+					)
+					.pipe(
+						Effect.tap((subscription) =>
+							subscription === null
+								? Effect.logWarning(
+										`Git watch target unavailable for project ${projectId}: ${gitDirPath}`
 									)
-								).catch(() => undefined);
-								scheduleReconcile(stateRef, "watcher-error");
-								scheduleBranchRefresh(stateRef, "watcher-error");
-								scheduleRecovery(stateRef, "git-watcher-error");
-							}
-						}
+								: Effect.void
+						),
+						Effect.catchAll((error) =>
+							Effect.logWarning(
+								`Failed to watch git dir for project ${projectId}: ${error.message}`
+							).pipe(Effect.as(null))
+						)
 					);
 
-					stateRef = {
-						projectId,
-						repoPath,
-						gitDirPath,
-						target,
-						gitDirSubscription: subscription,
-						repoRootSubscription: null,
-						worktreeTimer: null,
-						branchTimer: null,
-						recoveryTimer: null,
-					};
+			const subscribeWorktreesDir = (
+				projectId: string,
+				gitDirPath: string,
+				state: ProjectWatcherState
+			): Effect.Effect<WatchSubscription | null, never> => {
+				const worktreesDir = join(gitDirPath, "worktrees");
 
-					if (subscription === null) {
-						yield* Effect.logWarning(
-							`Git watch target unavailable for project ${projectId}: ${watchPath}`
-						);
-					}
-
-					return stateRef;
-				}).pipe(
-					Effect.catchAll((error) =>
-						Effect.logWarning(
-							`Failed to watch git dir for project ${projectId}: ${error.message}`
-						).pipe(
-							Effect.as({
-								projectId,
-								repoPath,
-								gitDirPath,
-								target,
-								gitDirSubscription: null,
-								repoRootSubscription: null,
-								worktreeTimer: null,
-								branchTimer: null,
-								recoveryTimer: null,
-							} satisfies ProjectWatcherState)
-						)
+				return fileWatcher
+					.subscribe(
+						worktreesDir,
+						(event) => {
+							handleWorktreesEvent(state, event);
+						},
+						(error) => {
+							runPromise(
+								Effect.logWarning(
+									`Worktrees watcher error for project ${projectId} at ${worktreesDir}: ${error.message}`
+								)
+							).catch(() => undefined);
+							scheduleReconcile(state, "watcher-error");
+							scheduleBranchRefresh(state, "watcher-error");
+							scheduleRecovery(state, "worktrees-watcher-error");
+						},
+						{ recursive: true }
 					)
-				);
+					.pipe(
+						Effect.tap((subscription) =>
+							subscription === null
+								? Effect.logWarning(
+										`Git worktrees watch target unavailable for project ${projectId}: ${worktreesDir}`
+									)
+								: Effect.void
+						),
+						Effect.catchAll((error) =>
+							Effect.logWarning(
+								`Failed to watch worktrees dir for project ${projectId}: ${error.message}`
+							).pipe(Effect.as(null))
+						)
+					);
 			};
 
 			// ── Repo-root file watcher ───────────────────────────────
@@ -510,42 +515,52 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					}
 
 					const gitDirPath = identity.canonicalGitCommonDir;
+					const hasWorktreesDir = existsSync(join(gitDirPath, "worktrees"));
 
-					// Pick the most specific watch target
-					const initialTarget = existsSync(join(gitDirPath, "worktrees"))
-						? "worktrees"
-						: "gitDir";
-
-					const state = yield* subscribeGitDir(
+					const state: ProjectWatcherState = {
 						projectId,
-						identity.canonicalRoot,
+						repoPath: identity.canonicalRoot,
 						gitDirPath,
-						initialTarget
+						gitDirRootSubscription: null,
+						worktreesSubscription: null,
+						repoRootSubscription: null,
+						worktreeTimer: null,
+						branchTimer: null,
+						recoveryTimer: null,
+					};
+
+					state.gitDirRootSubscription = yield* subscribeGitDirRoot(
+						projectId,
+						gitDirPath,
+						state
 					);
 
+					if (hasWorktreesDir) {
+						state.worktreesSubscription = yield* subscribeWorktreesDir(
+							projectId,
+							gitDirPath,
+							state
+						);
+					}
+
 					// Subscribe to the repo checkout root for file-level events
-					const repoRootSub = yield* subscribeRepoRoot(
+					state.repoRootSubscription = yield* subscribeRepoRoot(
 						projectId,
 						identity.canonicalRoot
 					);
 
-					// Attach the repo root subscription to the state
-					const stateWithRepoRoot: ProjectWatcherState = {
-						...state,
-						repoRootSubscription: repoRootSub,
-					};
-
 					yield* Ref.update(statesRef, (states) => {
 						const next = new Map(states);
-						next.set(projectId, stateWithRepoRoot);
+						next.set(projectId, state);
 						return next;
 					});
 
 					if (
-						stateWithRepoRoot.gitDirSubscription === null ||
-						stateWithRepoRoot.repoRootSubscription === null
+						state.gitDirRootSubscription === null ||
+						state.repoRootSubscription === null ||
+						(hasWorktreesDir && state.worktreesSubscription === null)
 					) {
-						scheduleRecovery(stateWithRepoRoot, "watch-target-unavailable");
+						scheduleRecovery(state, "watch-target-unavailable");
 					}
 				}
 			);

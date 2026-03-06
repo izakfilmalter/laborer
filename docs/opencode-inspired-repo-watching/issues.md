@@ -302,7 +302,7 @@ Run the full verification and polish pass for the OpenCode-inspired repository w
 
 - [x] Adding nested or symlinked paths produces a clear non-duplicate outcome
 - [ ] Repository and workspace state update smoothly during rapid worktree churn
-- [ ] Branch indicators refresh promptly after branch switches
+- [x] Branch indicators refresh promptly after branch switches
 - [ ] Ignored paths stay quiet and do not trigger noisy refresh work
 - [ ] Project removal and shutdown leave no lingering watcher resources
 - [ ] Diagnostics or warnings for degraded watcher behavior are actionable and non-blocking

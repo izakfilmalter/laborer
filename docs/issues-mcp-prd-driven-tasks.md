@@ -425,14 +425,14 @@ The registrar runs as part of the server startup sequence (in `main.ts`), after 
 
 ### Acceptance criteria
 
-- [ ] `McpRegistrar` is defined as an Effect tagged service
-- [ ] On startup, it reads the Opencode config file at `~/.config/opencode/config.json`
-- [ ] It adds a `laborer` entry to `mcpServers` with command `bun` and args pointing to the MCP package entry
-- [ ] Existing `mcpServers` entries are preserved
-- [ ] If the `laborer` entry already exists with the same config, the file is not rewritten
-- [ ] If the config file doesn't exist, it creates it with the correct structure
-- [ ] The registrar logs which files it updated
-- [ ] Registration errors are logged as warnings (don't crash the server)
+- [x] `McpRegistrar` is defined as an Effect tagged service
+- [x] On startup, it reads the Opencode config file at `~/.config/opencode/config.json`
+- [x] It adds a `laborer` entry to `mcpServers` with command `bun` and args pointing to the MCP package entry
+- [x] Existing `mcpServers` entries are preserved
+- [x] If the `laborer` entry already exists with the same config, the file is not rewritten
+- [x] If the config file doesn't exist, it creates it with the correct structure
+- [x] The registrar logs which files it updated
+- [x] Registration errors are logged as warnings (don't crash the server)
 
 ### Blocked by
 
@@ -769,8 +769,8 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 184 | `@laborer/mcp` package scaffold: stdio server with project discovery | None | Done |
 | 185 | MCP PRD tools: create_prd, read_prd, update_prd, list_prds | #180, #184 | Done |
 | 186 | MCP issue tools: create_issue, read_issues, update_issue, list_remaining_issues | #183, #184 | Done |
-| 187 | MCP auto-registration: Opencode config | #184 | Ready |
-| 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Blocked |
+| 187 | MCP auto-registration: Opencode config | #184 | Done |
+| 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Ready |
 | 189 | Plans sidebar section: PlanList component | #175 | Done |
 | 190 | Plan detail view: Plate.js markdown editor | #180, #189 | Ready |
 | 191 | Plan detail view: issues list alongside editor | #181, #190 | Blocked |

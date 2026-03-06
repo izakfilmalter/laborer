@@ -33,6 +33,7 @@ import { DiffService } from "./services/diff-service.js";
 import { GithubTaskImporter } from "./services/github-task-importer.js";
 import { LaborerStoreLive } from "./services/laborer-store.js";
 import { LinearTaskImporter } from "./services/linear-task-importer.js";
+import { McpRegistrar } from "./services/mcp-registrar.js";
 import { PortAllocator } from "./services/port-allocator.js";
 import { PrdStorageService } from "./services/prd-storage-service.js";
 import { PrdTaskImporter } from "./services/prd-task-importer.js";
@@ -117,6 +118,7 @@ const HttpLiveBase = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	Layer.provide(TerminalClient.layer),
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ConfigService.layer),
+	Layer.provide(McpRegistrar.layer),
 	Layer.provide(ProjectRegistry.layer)
 );
 

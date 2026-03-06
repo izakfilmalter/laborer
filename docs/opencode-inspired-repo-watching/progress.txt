@@ -399,3 +399,24 @@
 ### Verification
 - `bun run test -- test/startup-bootstrap.test.ts` passes (6 tests)
 - `bun run --filter @laborer/server check-types` passes
+
+## Issue 8: Tear down watcher callbacks cleanly after unwatch and shutdown — IN PROGRESS
+
+### What was done
+- Hardened `RepositoryWatchCoordinator` in `packages/server/src/services/repository-watch-coordinator.ts`
+  - Added explicit `closed` state tracking for each project watcher bundle
+  - `closeState()` now nulls subscriptions after closing them so disposed watchers cannot be reused
+  - Debounced reconcile, branch-refresh, and recovery scheduling now bail out once a project has been unwatched or the coordinator scope has been closed
+  - Git-dir, worktrees-dir, and repo-root watcher callbacks now ignore late events and late errors from stale subscriptions instead of scheduling new work after teardown
+
+- Added teardown hardening coverage in `packages/server/test/repository-watch-coordinator-hardening.test.ts`
+  - Verifies stale watcher callbacks after `unwatchProject()` do not trigger reconciliation, branch refresh, or recovery resubscription
+  - Verifies stale watcher callbacks after scoped shutdown are also ignored, preventing post-shutdown work from leaking through closed subscriptions
+
+- Updated `docs/opencode-inspired-repo-watching/issues.md`
+  - Checked off the acceptance criterion for watcher teardown leaving no lingering resources or follow-up work
+
+### Verification
+- `bun run test -- test/repository-watch-coordinator-hardening.test.ts test/repository-watch-coordinator.test.ts` passes (10 tests)
+- `bun run --filter @laborer/server check-types` passes
+- `bun x ultracite check packages/server/src/services/repository-watch-coordinator.ts packages/server/test/repository-watch-coordinator-hardening.test.ts` passes

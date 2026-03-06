@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Context, Effect, Exit, Layer, Scope } from "effect";
 import { BranchStateTracker } from "../src/services/branch-state-tracker.js";
 import {
 	FileWatcher,
@@ -12,7 +12,7 @@ import { RepositoryIdentity } from "../src/services/repository-identity.js";
 import { RepositoryWatchCoordinator } from "../src/services/repository-watch-coordinator.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
 import { TestLaborerStore } from "./helpers/test-store.js";
-import { waitFor } from "./helpers/timing-helpers.js";
+import { delay, waitFor } from "./helpers/timing-helpers.js";
 
 interface RecordedWatcher {
 	closed: boolean;
@@ -200,6 +200,100 @@ describe("RepositoryWatchCoordinator hardening", () => {
 
 			assert.strictEqual(branchRefreshCalls.current, 1);
 		}).pipe(Effect.provide(TestLayer));
+	});
+
+	it.scoped("ignores late watcher callbacks after project teardown", () => {
+		const reconcileCalls = { current: 0 };
+		const branchRefreshCalls = { current: 0 };
+		const watchersByPath = new Map<string, RecordedWatcher[]>();
+		const subscribePaths: string[] = [];
+		const closedPaths: string[] = [];
+
+		const TestLayer = createTestLayer({
+			reconcileCalls,
+			branchRefreshCalls,
+			watchersByPath,
+			subscribePaths,
+			closedPaths,
+		});
+
+		return Effect.gen(function* () {
+			const coordinator = yield* RepositoryWatchCoordinator;
+			yield* coordinator.watchProject("project-teardown", "/input/repo");
+
+			const gitWatcher = watchersByPath.get("/virtual/repo/.git")?.at(-1);
+			const repoWatcher = watchersByPath.get("/virtual/repo")?.at(-1);
+			if (gitWatcher === undefined || repoWatcher === undefined) {
+				throw new Error("Expected initial watcher subscriptions");
+			}
+
+			yield* coordinator.unwatchProject("project-teardown");
+
+			gitWatcher.onChange({ type: "change", fileName: "HEAD" });
+			gitWatcher.onError(new Error("late git callback"));
+			repoWatcher.onChange({ type: "change", fileName: "src/index.ts" });
+			repoWatcher.onError(new Error("late repo callback"));
+
+			yield* Effect.promise(() => delay(1600));
+
+			assert.strictEqual(reconcileCalls.current, 0);
+			assert.strictEqual(branchRefreshCalls.current, 0);
+			assert.deepStrictEqual(subscribePaths, [
+				"/virtual/repo/.git",
+				"/virtual/repo",
+			]);
+			assert.deepStrictEqual(closedPaths, [
+				"/virtual/repo/.git",
+				"/virtual/repo",
+			]);
+		}).pipe(Effect.provide(TestLayer));
+	});
+
+	it.scoped("ignores late watcher callbacks after scope shutdown", () => {
+		const reconcileCalls = { current: 0 };
+		const branchRefreshCalls = { current: 0 };
+		const watchersByPath = new Map<string, RecordedWatcher[]>();
+		const subscribePaths: string[] = [];
+		const closedPaths: string[] = [];
+
+		const TestLayer = createTestLayer({
+			reconcileCalls,
+			branchRefreshCalls,
+			watchersByPath,
+			subscribePaths,
+			closedPaths,
+		});
+
+		return Effect.gen(function* () {
+			const scope = yield* Scope.make();
+			const ctx = yield* Layer.buildWithScope(TestLayer, scope);
+			const coordinator = Context.get(ctx, RepositoryWatchCoordinator);
+
+			yield* coordinator.watchProject("project-shutdown", "/input/repo");
+
+			const gitWatcher = watchersByPath.get("/virtual/repo/.git")?.at(-1);
+			if (gitWatcher === undefined) {
+				throw new Error("Expected git watcher subscription");
+			}
+
+			yield* Scope.close(scope, Exit.succeed(undefined));
+
+			gitWatcher.onChange({ type: "rename", fileName: "worktrees/late" });
+			gitWatcher.onError(new Error("late shutdown callback"));
+
+			yield* Effect.promise(() => delay(1600));
+
+			assert.strictEqual(reconcileCalls.current, 0);
+			assert.strictEqual(branchRefreshCalls.current, 0);
+			assert.deepStrictEqual(subscribePaths, [
+				"/virtual/repo/.git",
+				"/virtual/repo",
+			]);
+			assert.deepStrictEqual(closedPaths, [
+				"/virtual/repo/.git",
+				"/virtual/repo",
+			]);
+		});
 	});
 });
 

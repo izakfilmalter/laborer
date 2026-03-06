@@ -48,6 +48,8 @@ import { WorktreeReconciler } from "./worktree-reconciler.js";
 interface ProjectWatcherState {
 	/** Pending debounce timer for branch state refresh */
 	branchTimer: ReturnType<typeof setTimeout> | null;
+	/** Whether this watcher state has been torn down */
+	closed: boolean;
 	/** Canonical path to the git common directory */
 	readonly gitDirPath: string;
 	/** Subscription to the git metadata root for HEAD/refs changes */
@@ -182,16 +184,22 @@ class RepositoryWatchCoordinator extends Context.Tag(
 				}
 			};
 
+			const isActive = (state: ProjectWatcherState): boolean => !state.closed;
+
 			const closeState = (state: ProjectWatcherState): void => {
+				state.closed = true;
 				clearTimers(state);
 				if (state.gitDirRootSubscription !== null) {
 					state.gitDirRootSubscription.close();
+					state.gitDirRootSubscription = null;
 				}
 				if (state.worktreesSubscription !== null) {
 					state.worktreesSubscription.close();
+					state.worktreesSubscription = null;
 				}
 				if (state.repoRootSubscription !== null) {
 					state.repoRootSubscription.close();
+					state.repoRootSubscription = null;
 				}
 			};
 
@@ -226,10 +234,17 @@ class RepositoryWatchCoordinator extends Context.Tag(
 				state: ProjectWatcherState,
 				reason: string
 			): void => {
+				if (!isActive(state)) {
+					return;
+				}
 				if (state.worktreeTimer !== null) {
 					clearTimeout(state.worktreeTimer);
 				}
 				state.worktreeTimer = setTimeout(() => {
+					if (!isActive(state)) {
+						state.worktreeTimer = null;
+						return;
+					}
 					state.worktreeTimer = null;
 					runPromise(
 						reconcileWithWarning(state.projectId, state.repoPath, reason)
@@ -241,10 +256,17 @@ class RepositoryWatchCoordinator extends Context.Tag(
 				state: ProjectWatcherState,
 				reason: string
 			): void => {
+				if (!isActive(state)) {
+					return;
+				}
 				if (state.branchTimer !== null) {
 					clearTimeout(state.branchTimer);
 				}
 				state.branchTimer = setTimeout(() => {
+					if (!isActive(state)) {
+						state.branchTimer = null;
+						return;
+					}
 					state.branchTimer = null;
 					runPromise(refreshBranchesWithWarning(state.projectId, reason)).catch(
 						() => undefined
@@ -256,11 +278,18 @@ class RepositoryWatchCoordinator extends Context.Tag(
 				state: ProjectWatcherState,
 				reason: string
 			): void => {
+				if (!isActive(state)) {
+					return;
+				}
 				if (state.recoveryTimer !== null) {
 					return;
 				}
 
 				state.recoveryTimer = setTimeout(() => {
+					if (!isActive(state)) {
+						state.recoveryTimer = null;
+						return;
+					}
 					state.recoveryTimer = null;
 					runPromise(
 						Effect.logWarning(
@@ -290,6 +319,9 @@ class RepositoryWatchCoordinator extends Context.Tag(
 			 * shared worktrees directory appears inside the git dir.
 			 */
 			const switchToWorktreesWatcher = (state: ProjectWatcherState): void => {
+				if (!isActive(state)) {
+					return;
+				}
 				const worktreesDir = join(state.gitDirPath, "worktrees");
 				if (state.worktreesSubscription !== null || !existsSync(worktreesDir)) {
 					return;
@@ -315,6 +347,9 @@ class RepositoryWatchCoordinator extends Context.Tag(
 				state: ProjectWatcherState,
 				event: WatchEvent
 			): void => {
+				if (!isActive(state)) {
+					return;
+				}
 				if (event.fileName === "worktrees") {
 					switchToWorktreesWatcher(state);
 					scheduleReconcile(state, "worktrees-created");
@@ -333,6 +368,9 @@ class RepositoryWatchCoordinator extends Context.Tag(
 				state: ProjectWatcherState,
 				_event: WatchEvent
 			): void => {
+				if (!isActive(state)) {
+					return;
+				}
 				scheduleReconcile(state, "worktree-metadata-change");
 				scheduleBranchRefresh(state, "worktree-metadata-change");
 			};
@@ -346,9 +384,15 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					.subscribe(
 						gitDirPath,
 						(event) => {
+							if (!isActive(state)) {
+								return;
+							}
 							handleGitDirRootEvent(state, event);
 						},
 						(error) => {
+							if (!isActive(state)) {
+								return;
+							}
 							runPromise(
 								Effect.logWarning(
 									`Git watcher error for project ${projectId} at ${gitDirPath}: ${error.message}`
@@ -386,9 +430,15 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					.subscribe(
 						worktreesDir,
 						(event) => {
+							if (!isActive(state)) {
+								return;
+							}
 							handleWorktreesEvent(state, event);
 						},
 						(error) => {
+							if (!isActive(state)) {
+								return;
+							}
 							runPromise(
 								Effect.logWarning(
 									`Worktrees watcher error for project ${projectId} at ${worktreesDir}: ${error.message}`
@@ -426,12 +476,16 @@ class RepositoryWatchCoordinator extends Context.Tag(
 			 */
 			const subscribeRepoRoot = (
 				projectId: string,
-				repoPath: string
+				repoPath: string,
+				state: ProjectWatcherState
 			): Effect.Effect<WatchSubscription | null, never> =>
 				fileWatcher
 					.subscribe(
 						repoPath,
 						(event) => {
+							if (!isActive(state)) {
+								return;
+							}
 							const normalized = eventBus.normalizeEvent({
 								type: event.type === "rename" ? "add" : "change",
 								fileName: event.fileName,
@@ -443,6 +497,9 @@ class RepositoryWatchCoordinator extends Context.Tag(
 							}
 						},
 						(error) => {
+							if (!isActive(state)) {
+								return;
+							}
 							runPromise(
 								Effect.logWarning(
 									`Repo watcher error for project ${projectId} at ${repoPath}: ${error.message}`
@@ -518,6 +575,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					const hasWorktreesDir = existsSync(join(gitDirPath, "worktrees"));
 
 					const state: ProjectWatcherState = {
+						closed: false,
 						projectId,
 						repoPath: identity.canonicalRoot,
 						gitDirPath,
@@ -546,7 +604,8 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					// Subscribe to the repo checkout root for file-level events
 					state.repoRootSubscription = yield* subscribeRepoRoot(
 						projectId,
-						identity.canonicalRoot
+						identity.canonicalRoot,
+						state
 					);
 
 					yield* Ref.update(statesRef, (states) => {

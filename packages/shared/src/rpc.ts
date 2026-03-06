@@ -128,6 +128,7 @@ const TaskResponse = Schema.Struct({
 	id: Schema.String,
 	projectId: Schema.String,
 	source: Schema.String,
+	prdId: Schema.optional(Schema.String),
 	externalId: Schema.optional(Schema.String),
 	title: Schema.String,
 	status: Schema.String,

@@ -127,6 +127,7 @@ describe("PrdTaskImporter.importParsedTasks", () => {
 						id: "existing-task",
 						projectId: "project-1",
 						source: "prd",
+						prdId: null,
 						externalId: "LAB-10",
 						title: "Already imported",
 						status: "pending",

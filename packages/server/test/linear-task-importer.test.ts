@@ -111,6 +111,7 @@ describe("LinearTaskImporter.importProjectIssues", () => {
 						id: "existing-task",
 						projectId: "project-1",
 						source: "linear",
+						prdId: null,
 						externalId: "ENG-101",
 						title: "Already imported",
 						status: "pending",

@@ -93,6 +93,7 @@ export class Task extends Schema.Class<Task>("Task")({
 	id: TaskId,
 	projectId: ProjectId,
 	source: TaskSource,
+	prdId: Schema.optional(Schema.String),
 	externalId: Schema.optional(Schema.String),
 	title: Schema.String,
 	status: TaskStatus,

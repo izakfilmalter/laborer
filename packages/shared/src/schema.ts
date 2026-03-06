@@ -58,6 +58,7 @@ export const tasks = State.SQLite.table({
 		id: State.SQLite.text({ primaryKey: true }),
 		projectId: State.SQLite.text(),
 		source: State.SQLite.text(),
+		prdId: State.SQLite.text({ nullable: true }),
 		externalId: State.SQLite.text({ nullable: true }),
 		title: State.SQLite.text(),
 		status: State.SQLite.text({ default: "pending" }),
@@ -230,6 +231,9 @@ export const taskCreated = Events.synced({
 		id: Schema.String,
 		projectId: Schema.String,
 		source: Schema.String,
+		prdId: Schema.optionalWith(Schema.NullOr(Schema.String), {
+			default: () => null,
+		}),
 		externalId: Schema.NullOr(Schema.String),
 		title: Schema.String,
 		status: Schema.String,
@@ -387,8 +391,24 @@ const materializers = State.SQLite.materializers(events, {
 			.insert({ workspaceId, diffContent, lastUpdated })
 			.onConflict("workspaceId", "replace"),
 	"v1.DiffCleared": ({ workspaceId }) => diffs.delete().where({ workspaceId }),
-	"v1.TaskCreated": ({ id, projectId, source, externalId, title, status }) =>
-		tasks.insert({ id, projectId, source, externalId, title, status }),
+	"v1.TaskCreated": ({
+		id,
+		projectId,
+		source,
+		prdId,
+		externalId,
+		title,
+		status,
+	}) =>
+		tasks.insert({
+			id,
+			projectId,
+			source,
+			prdId,
+			externalId,
+			title,
+			status,
+		}),
 	"v1.TaskStatusChanged": ({ id, status }) =>
 		tasks.update({ status }).where({ id }),
 	"v1.TaskRemoved": ({ id }) => tasks.delete().where({ id }),

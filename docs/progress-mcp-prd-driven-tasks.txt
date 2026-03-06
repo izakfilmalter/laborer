@@ -4,3 +4,8 @@
 - Added the `prds` LiveStore table plus `prdCreated`, `prdStatusChanged`, and `prdRemoved` synced events/materializers in `packages/shared/src/schema.ts`, and registered `prds` in both schema exports and `activeTables`.
 - Added `packages/server/test/prd-schema.test.ts` to verify PRD lifecycle materialization, supported status values, and that existing task materialization still works.
 - Verified with `bun run check-types` in `packages/shared` and `bun run test -- prd-schema.test.ts` in `packages/server`.
+- Selected Issue 176 as the highest-priority next task because PRD-linked tasks are the critical dependency for `prd.createIssue`, remaining-issues queries, and plan progress tracking.
+- Added nullable `prdId` support across the shared task model in `packages/shared/src/schema.ts`, `packages/shared/src/types.ts`, and `packages/shared/src/rpc.ts` so PRD tasks can be linked without breaking existing task records.
+- Updated `packages/server/src/services/task-manager.ts` and `packages/server/src/rpc/handlers.ts` so task creation can carry an optional `prdId` and preserve it in RPC responses.
+- Extended `packages/server/test/prd-schema.test.ts` and added `packages/server/test/task-manager.test.ts`, while updating existing importer tests to cover the new task payload shape.
+- Verified with `bun run check-types` in `packages/shared`, `bun run check-types` in `packages/server`, `bun run test -- prd-schema.test.ts task-manager.test.ts github-task-importer.test.ts linear-task-importer.test.ts prd-task-importer.test.ts` in `packages/server`, and `bun x ultracite check` on all touched files.

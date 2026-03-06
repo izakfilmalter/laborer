@@ -109,6 +109,7 @@ describe("GithubTaskImporter.importProjectIssues", () => {
 						id: "existing-task",
 						projectId: "project-1",
 						source: "github",
+						prdId: null,
 						externalId: "https://github.com/acme/laborer/issues/101",
 						title: "Already imported",
 						status: "pending",

@@ -48,11 +48,11 @@ Add a nullable `prdId` column to the existing `tasks` table so that tasks with s
 
 ### Acceptance criteria
 
-- [ ] `tasks` table has a new nullable `prdId` column of type text
-- [ ] `taskCreated` event schema includes an optional `prdId` field
-- [ ] `taskCreated` materializer passes `prdId` to the insert operation
-- [ ] Existing tasks are unaffected (null prdId)
-- [ ] TaskManager's `createTask` method accepts an optional `prdId` parameter
+- [x] `tasks` table has a new nullable `prdId` column of type text
+- [x] `taskCreated` event schema includes an optional `prdId` field
+- [x] `taskCreated` materializer passes `prdId` to the insert operation
+- [x] Existing tasks are unaffected (null prdId)
+- [x] TaskManager's `createTask` method accepts an optional `prdId` parameter
 
 ### Blocked by
 
@@ -758,12 +758,12 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
 | 175 | PRDs table and events in LiveStore schema | None | Done |
-| 176 | Tasks table: add prdId column | None | Ready |
+| 176 | Tasks table: add prdId column | None | Done |
 | 177 | PrdStorageService: create and read PRD files on disk | #175 | Ready |
 | 178 | PRD create and list RPCs | #177 | Blocked |
 | 179 | PRD read and remove RPCs | #178 | Blocked |
 | 180 | PRD update RPC and status changes | #179 | Blocked |
-| 181 | Issue creation RPC: prd.createIssue | #176, #178 | Blocked |
+| 181 | Issue creation RPC: prd.createIssue | #178 | Blocked |
 | 182 | Issue read and list RPCs | #181 | Blocked |
 | 183 | Issue update RPC: prd.updateIssue | #182 | Blocked |
 | 184 | `@laborer/mcp` package scaffold: stdio server with project discovery | None | Ready |

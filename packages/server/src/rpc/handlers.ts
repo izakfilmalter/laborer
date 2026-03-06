@@ -308,6 +308,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 					id: task.id,
 					projectId: task.projectId,
 					source: task.source,
+					prdId: task.prdId ?? undefined,
 					externalId: task.externalId ?? undefined,
 					title: task.title,
 					status: task.status,

@@ -30,6 +30,7 @@ import { LaborerStore } from "./laborer-store.js";
 interface TaskRecord {
 	readonly externalId: string | null;
 	readonly id: string;
+	readonly prdId: string | null;
 	readonly projectId: string;
 	readonly source: string;
 	readonly status: string;
@@ -43,7 +44,8 @@ class TaskManager extends Context.Tag("@laborer/TaskManager")<
 			projectId: string,
 			title: string,
 			source: string,
-			externalId?: string
+			externalId?: string,
+			prdId?: string
 		) => Effect.Effect<TaskRecord, RpcError>;
 		readonly updateTaskStatus: (
 			taskId: string,
@@ -66,7 +68,8 @@ class TaskManager extends Context.Tag("@laborer/TaskManager")<
 				projectId: string,
 				title: string,
 				source: string,
-				externalId?: string
+				externalId?: string,
+				prdId?: string
 			) {
 				// 1. Validate the project exists
 				const existingProjects = store.query(
@@ -106,6 +109,7 @@ class TaskManager extends Context.Tag("@laborer/TaskManager")<
 					id,
 					projectId,
 					source,
+					prdId: prdId ?? null,
 					externalId: externalId ?? null,
 					title: trimmedTitle,
 					status: "pending",
@@ -116,6 +120,7 @@ class TaskManager extends Context.Tag("@laborer/TaskManager")<
 						id: task.id,
 						projectId: task.projectId,
 						source: task.source,
+						prdId: task.prdId,
 						externalId: task.externalId,
 						title: task.title,
 						status: task.status,

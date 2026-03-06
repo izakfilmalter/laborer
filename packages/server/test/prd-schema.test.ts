@@ -68,6 +68,7 @@ describe("PRD LiveStore schema", () => {
 				id: "task-1",
 				projectId: "project-1",
 				source: "manual",
+				prdId: null,
 				externalId: null,
 				title: "Existing task",
 				status: "pending",
@@ -77,8 +78,34 @@ describe("PRD LiveStore schema", () => {
 		expect(store.query(tables.tasks.where("id", "task-1"))).toEqual([
 			expect.objectContaining({
 				id: "task-1",
+				prdId: null,
 				title: "Existing task",
 				status: "pending",
+			}),
+		]);
+	});
+
+	it("stores prd-linked tasks with their prdId", async () => {
+		const store = await createTestStore();
+
+		store.commit(
+			events.taskCreated({
+				id: "task-2",
+				projectId: "project-1",
+				source: "prd",
+				prdId: "prd-1",
+				externalId: null,
+				title: "Implement MCP issue flow",
+				status: "pending",
+			})
+		);
+
+		expect(store.query(tables.tasks.where("id", "task-2"))).toEqual([
+			expect.objectContaining({
+				id: "task-2",
+				prdId: "prd-1",
+				source: "prd",
+				title: "Implement MCP issue flow",
 			}),
 		]);
 	});

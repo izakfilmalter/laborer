@@ -11,7 +11,7 @@ const runtimeEnv = (
 export const env = createEnv({
   clientPrefix: 'VITE_',
   client: {
-    VITE_SERVER_URL: z.string().url().default('http://localhost:3000'),
+    VITE_SERVER_URL: z.string().url().default('http://localhost:2100'),
   },
   runtimeEnv: {
     VITE_SERVER_URL: runtimeEnv?.VITE_SERVER_URL,

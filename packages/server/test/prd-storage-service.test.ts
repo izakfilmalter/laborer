@@ -202,6 +202,46 @@ describe("PrdStorageService", () => {
 		expect(result.issuesContent).toContain("\n\n---\n\n");
 	});
 
+	it("reads companion PRD issues files and returns an empty string when missing", async () => {
+		const projectDir = join(testRoot, "read-issues-prds-dir-project");
+		const customPrdsDir = join(testRoot, "read-issues-prds-dir-output");
+		mkdirSync(projectDir, { recursive: true });
+		writeFileSync(
+			join(projectDir, "laborer.json"),
+			JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
+		);
+
+		const result = await runWithServices(
+			Effect.gen(function* () {
+				const service = yield* PrdStorageService;
+				const prdFilePath = yield* service.createPrdFile(
+					projectDir,
+					"read-issues-prds-dir-project",
+					"Issue Reader",
+					"# PRD\n"
+				);
+
+				const emptyIssues = yield* service.readIssuesFile(prdFilePath);
+
+				yield* service.appendIssue(
+					prdFilePath,
+					"Read issues RPC",
+					"### What to build\n\nReturn issues content."
+				);
+
+				const populatedIssues = yield* service.readIssuesFile(prdFilePath);
+
+				return {
+					emptyIssues,
+					populatedIssues,
+				};
+			})
+		);
+
+		expect(result.emptyIssues).toBe("");
+		expect(result.populatedIssues).toContain("## Issue 1: Read issues RPC");
+	});
+
 	it("removes PRD files and companion issues files when deleting a PRD", async () => {
 		const projectDir = join(testRoot, "remove-prd-project");
 		const customPrdsDir = join(testRoot, "remove-prd-output");

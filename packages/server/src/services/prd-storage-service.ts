@@ -125,6 +125,9 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 		readonly readPrdFile: (
 			filePath: string
 		) => Effect.Effect<string, PrdStorageError>;
+		readonly readIssuesFile: (
+			prdFilePath: string
+		) => Effect.Effect<string, PrdStorageError>;
 		readonly updatePrdFile: (
 			filePath: string,
 			content: string
@@ -197,6 +200,25 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 						}),
 				});
 			});
+
+			const readIssuesFile = Effect.fn("PrdStorageService.readIssuesFile")(
+				function* (prdFilePath: string) {
+					const issueFilePath = issuesFilePathFromPrdPath(prdFilePath);
+
+					if (!existsSync(issueFilePath)) {
+						return "";
+					}
+
+					return yield* Effect.try({
+						try: () => readFileSync(issueFilePath, "utf-8"),
+						catch: (cause) =>
+							new PrdStorageError({
+								message: `Failed to read PRD issues file ${issueFilePath}`,
+								cause,
+							}),
+					});
+				}
+			);
 
 			const updatePrdFile = Effect.fn("PrdStorageService.updatePrdFile")(
 				function* (filePath: string, content: string) {
@@ -274,6 +296,7 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 			return PrdStorageService.of({
 				createPrdFile,
 				readPrdFile,
+				readIssuesFile,
 				updatePrdFile,
 				appendIssue,
 				removePrdArtifacts,

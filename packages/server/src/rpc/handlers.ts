@@ -378,6 +378,48 @@ export const handlePrdCreateIssue = ({
 		return toTaskResponse(task);
 	});
 
+export const handlePrdReadIssues = ({ prdId }: { prdId: string }) =>
+	Effect.gen(function* () {
+		const { store } = yield* LaborerStore;
+		const storage = yield* PrdStorageService;
+
+		const prd = store.query(tables.prds.where("id", prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found: ${prdId}`,
+			});
+		}
+
+		return yield* storage
+			.readIssuesFile(prd.filePath)
+			.pipe(Effect.mapError((error) => toRpcError(error)));
+	});
+
+export const handlePrdListRemainingIssues = ({ prdId }: { prdId: string }) =>
+	Effect.gen(function* () {
+		const { store } = yield* LaborerStore;
+
+		const prd = store.query(tables.prds.where("id", prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found: ${prdId}`,
+			});
+		}
+
+		const remainingTasks = store
+			.query(tables.tasks.where("prdId", prdId))
+			.filter(
+				(task) =>
+					task.source === "prd" &&
+					(task.status === "pending" || task.status === "in_progress")
+			)
+			.map((task) => toTaskResponse(task));
+
+		return remainingTasks;
+	});
+
 export const handleProjectList = () =>
 	Effect.gen(function* () {
 		const registry = yield* ProjectRegistry;
@@ -460,6 +502,8 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 		"prd.update": handlePrdUpdate,
 		"prd.updateStatus": handlePrdUpdateStatus,
 		"prd.createIssue": handlePrdCreateIssue,
+		"prd.readIssues": handlePrdReadIssues,
+		"prd.listRemainingIssues": handlePrdListRemainingIssues,
 
 		// -------------------------------------------------------------------
 		// Workspace RPCs (Issue #33-47)

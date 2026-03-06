@@ -253,12 +253,12 @@ Add `prd.readIssues` and `prd.listRemainingIssues` RPC endpoints.
 
 ### Acceptance criteria
 
-- [ ] `prd.readIssues` RPC is defined and returns the issues file content as a string
-- [ ] `prd.readIssues` returns an empty string if no issues file exists
-- [ ] `prd.listRemainingIssues` RPC is defined and returns an array of task records
-- [ ] `prd.listRemainingIssues` filters to only pending and in_progress tasks
-- [ ] `prd.listRemainingIssues` filters by both prdId and source "prd"
-- [ ] Querying a non-existent PRD returns an error
+- [x] `prd.readIssues` RPC is defined and returns the issues file content as a string
+- [x] `prd.readIssues` returns an empty string if no issues file exists
+- [x] `prd.listRemainingIssues` RPC is defined and returns an array of task records
+- [x] `prd.listRemainingIssues` filters to only pending and in_progress tasks
+- [x] `prd.listRemainingIssues` filters by both prdId and source "prd"
+- [x] Querying a non-existent PRD returns an error
 
 ### Blocked by
 
@@ -764,8 +764,8 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 179 | PRD read and remove RPCs | #178 | Done |
 | 180 | PRD update RPC and status changes | #179 | Done |
 | 181 | Issue creation RPC: prd.createIssue | #178 | Done |
-| 182 | Issue read and list RPCs | #181 | Ready |
-| 183 | Issue update RPC: prd.updateIssue | #182 | Blocked |
+| 182 | Issue read and list RPCs | #181 | Done |
+| 183 | Issue update RPC: prd.updateIssue | #182 | Ready |
 | 184 | `@laborer/mcp` package scaffold: stdio server with project discovery | None | Done |
 | 185 | MCP PRD tools: create_prd, read_prd, update_prd, list_prds | #180, #184 | Ready |
 | 186 | MCP issue tools: create_issue, read_issues, update_issue, list_remaining_issues | #183, #184 | Blocked |

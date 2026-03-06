@@ -38,7 +38,41 @@
  */
 
 import { createRequire } from "node:module";
-import type { IPty } from "node-pty";
+
+// Local type declarations for node-pty to avoid a compile-time dependency.
+// node-pty is loaded at runtime via createRequire because this script runs
+// under Node.js (not Bun). The package may not be installed in all environments.
+
+interface IDisposable {
+	dispose(): void;
+}
+
+interface IPty {
+	kill(signal?: string): void;
+	onData(callback: (data: string) => void): IDisposable;
+	onExit(
+		callback: (exitStatus: { exitCode: number; signal: number }) => void
+	): IDisposable;
+	pause(): void;
+	readonly pid: number;
+	resize(columns: number, rows: number): void;
+	resume(): void;
+	write(data: string): void;
+}
+
+interface INodePtyModule {
+	spawn(
+		file: string,
+		args: readonly string[] | string[],
+		options: {
+			readonly cols: number;
+			readonly cwd: string;
+			readonly env: Record<string, string>;
+			readonly name: string;
+			readonly rows: number;
+		}
+	): IPty;
+}
 
 // createRequire is needed because this script runs under Node.js as ESM
 // (the package has "type": "module"), where bare `require()` is unavailable.
@@ -351,7 +385,7 @@ function handleSpawn(cmd: SpawnCommand): void {
 	try {
 		// Import node-pty synchronously via createRequire (this script runs as
 		// ESM under Node.js, so bare require() is not available)
-		const nodePty = require_("node-pty") as typeof import("node-pty");
+		const nodePty = require_("node-pty") as INodePtyModule;
 
 		const pty = nodePty.spawn(cmd.shell, cmd.args as string[], {
 			name: "xterm-256color",

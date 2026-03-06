@@ -259,11 +259,11 @@ See PRD Implementation Decisions > @effect/vitest Migration > Exception note.
 
 ### Acceptance criteria
 
-- [ ] `terminal-manager.test.ts` imports `assert` from `@effect/vitest`
-- [ ] All `expect()` calls in `terminal-manager.test.ts` are replaced with `assert.*` equivalents
-- [ ] The custom `runEffect` / `beforeAll` / `afterAll` scope management is preserved (not converted to `it.scoped`)
-- [ ] All terminal tests pass (`bun run test` in packages/terminal)
-- [ ] `bun x ultracite check` passes
+- [x] `terminal-manager.test.ts` imports `assert` from `@effect/vitest`
+- [x] All `expect()` calls in `terminal-manager.test.ts` are replaced with `assert.*` equivalents
+- [x] The custom `runEffect` / `beforeAll` / `afterAll` scope management is preserved (not converted to `it.scoped`)
+- [x] All terminal tests pass (`bun run test` in packages/terminal)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -769,7 +769,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 5 | Migrate worktree/workspace server tests to @effect/vitest | #3 | Done |
 | 6 | Migrate task/importer server tests to @effect/vitest | #1 | Done |
 | 7 | Migrate remaining server tests to @effect/vitest | #1 | Done |
-| 8 | Migrate terminal package tests to @effect/vitest assertions | None | Ready |
+| 8 | Migrate terminal package tests to @effect/vitest assertions | None | Done |
 | 9 | Add LiveStore schema tests -- setup + project/workspace events | None | Done |
 | 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Done |
 | 11 | Add LiveStore schema tests -- deprecated terminal event no-ops | #9 | Done |
@@ -782,7 +782,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 18 | RPC integration tests -- task.importGithub + task.importLinear | None | Done |
 | 19 | RPC integration tests -- diff.refresh + editor.open | None | Done |
 | 20 | RPC integration tests -- terminal.spawn + rlph endpoints | None | Done |
-| 21 | RPC integration tests -- TerminalRpcs (packages/terminal) | #8 | Blocked |
+| 21 | RPC integration tests -- TerminalRpcs (packages/terminal) | #8 | Ready |
 
 **Parallelism opportunities:**
 - Issues 1, 2, 3, 4, 8, 9 can all start immediately in parallel

@@ -183,48 +183,15 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 
 		// -------------------------------------------------------------------
 		// Terminal RPCs (Issue #50-59, #143)
-		// Terminal operations are now proxied to the terminal service.
-		// The web app will eventually call the terminal service directly
-		// (Issue #144), but for now these handlers delegate via TerminalClient.
+		// Only terminal.spawn is handled here — it resolves workspace info
+		// (cwd, env) before delegating to the terminal service. All other
+		// terminal RPCs (write, resize, kill, remove, restart) are called
+		// directly from the web app to the terminal service.
 		// -------------------------------------------------------------------
 		"terminal.spawn": ({ workspaceId, command }) =>
 			Effect.gen(function* () {
 				const tc = yield* TerminalClient;
 				return yield* tc.spawnInWorkspace(workspaceId, command);
-			}),
-		"terminal.write": ({ terminalId: _terminalId, data: _data }) =>
-			// Write is handled directly by the web app's WebSocket to terminal service.
-			// This handler exists for backward compatibility but should not be called.
-			Effect.logWarning(
-				"terminal.write called on server — should be sent directly to terminal service"
-			),
-		"terminal.resize": ({
-			terminalId: _terminalId,
-			cols: _cols,
-			rows: _rows,
-		}) =>
-			Effect.logWarning(
-				"terminal.resize called on server — should be sent directly to terminal service"
-			),
-		"terminal.kill": ({ terminalId: _terminalId }) =>
-			Effect.logWarning(
-				"terminal.kill called on server — should be sent directly to terminal service"
-			),
-		"terminal.remove": ({ terminalId: _terminalId }) =>
-			Effect.logWarning(
-				"terminal.remove called on server — should be sent directly to terminal service"
-			),
-		"terminal.restart": ({ terminalId: _terminalId }) =>
-			Effect.gen(function* () {
-				yield* Effect.logWarning(
-					"terminal.restart called on server — should be sent directly to terminal service"
-				);
-				return {
-					id: "",
-					workspaceId: "",
-					command: "",
-					status: "stopped" as const,
-				};
 			}),
 
 		// -------------------------------------------------------------------

@@ -30,6 +30,7 @@ import type React from "react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
+import { TerminalServiceClient } from "@/atoms/terminal-service-client";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,9 +39,11 @@ import { cn, extractErrorMessage } from "@/lib/utils";
 import { usePanelActions } from "@/panels/panel-context";
 
 const spawnTerminalMutation = LaborerClient.mutation("terminal.spawn");
-const killTerminalMutation = LaborerClient.mutation("terminal.kill");
-const removeTerminalMutation = LaborerClient.mutation("terminal.remove");
-const restartTerminalMutation = LaborerClient.mutation("terminal.restart");
+const killTerminalMutation = TerminalServiceClient.mutation("terminal.kill");
+const removeTerminalMutation =
+	TerminalServiceClient.mutation("terminal.remove");
+const restartTerminalMutation =
+	TerminalServiceClient.mutation("terminal.restart");
 
 interface TerminalListProps {
 	/** The workspace ID to filter terminals for. */
@@ -105,7 +108,7 @@ function TerminalList({ workspaceId }: TerminalListProps) {
 		async (terminalId: string) => {
 			try {
 				await killTerminal({
-					payload: { terminalId },
+					payload: { id: terminalId },
 				});
 				toast.success("Terminal stopped");
 			} catch (error) {
@@ -119,7 +122,7 @@ function TerminalList({ workspaceId }: TerminalListProps) {
 		async (terminalId: string) => {
 			try {
 				await removeTerminal({
-					payload: { terminalId },
+					payload: { id: terminalId },
 				});
 				toast.success("Terminal removed");
 			} catch (error) {
@@ -133,7 +136,7 @@ function TerminalList({ workspaceId }: TerminalListProps) {
 		async (terminalId: string) => {
 			try {
 				await restartTerminal({
-					payload: { terminalId },
+					payload: { id: terminalId },
 				});
 				toast.success("Terminal restarted");
 			} catch (error) {

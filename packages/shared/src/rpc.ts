@@ -245,45 +245,6 @@ export class LaborerRpcs extends RpcGroup.make(
 		},
 	}),
 
-	Rpc.make("terminal.write", {
-		error: RpcError,
-		payload: {
-			terminalId: Schema.String,
-			data: Schema.String,
-		},
-	}),
-
-	Rpc.make("terminal.resize", {
-		error: RpcError,
-		payload: {
-			terminalId: Schema.String,
-			cols: Schema.Int,
-			rows: Schema.Int,
-		},
-	}),
-
-	Rpc.make("terminal.kill", {
-		error: RpcError,
-		payload: {
-			terminalId: Schema.String,
-		},
-	}),
-
-	Rpc.make("terminal.remove", {
-		error: RpcError,
-		payload: {
-			terminalId: Schema.String,
-		},
-	}),
-
-	Rpc.make("terminal.restart", {
-		success: TerminalResponse,
-		error: RpcError,
-		payload: {
-			terminalId: Schema.String,
-		},
-	}),
-
 	// -----------------------------------------------------------------------
 	// Diff RPCs
 	// -----------------------------------------------------------------------

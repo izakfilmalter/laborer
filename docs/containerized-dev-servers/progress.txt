@@ -1,0 +1,19 @@
+## Issue 3: Container naming/sanitization — COMPLETED
+
+Implemented the `containerName` pure utility function in `packages/shared/src/container-name.ts`.
+
+### What was done:
+- Created `containerName(branchName, projectName) => { name, url }` function
+- Sanitization: lowercases, replaces slashes with hyphens, strips invalid chars (only [a-z0-9-] retained), collapses consecutive hyphens, trims leading/trailing hyphens
+- Truncation: names exceeding 63 chars (DNS label limit per RFC 1035) are truncated with a 6-char SHA-256 hash suffix for uniqueness
+- Output format: `{branchSlug}--{projectSlug}` with URL as `{containerName}.orb.local`
+- Added subpath export `@laborer/shared/container-name` in package.json
+
+### Tests:
+- 21 unit tests covering: simple names, slashes, lowercasing, invalid chars, consecutive hyphens, leading/trailing hyphens, unicode, empty segments, exact 63-char boundary, truncation with hash, uniqueness preservation, deterministic output, trailing hyphen cleanup after truncation
+- All tests pass
+
+### Verification:
+- `bun run check-types` passes
+- `bun x ultracite check` passes (no lint errors in new files)
+- `bunx vitest run test/container-name.test.ts` — 21/21 tests pass

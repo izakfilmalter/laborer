@@ -94,18 +94,18 @@ This is a pure function with no side effects -- ideal for comprehensive unit tes
 
 ### Acceptance criteria
 
-- [ ] Pure function `containerName(branchName: string, projectName: string): { name: string, url: string }` exported from `packages/shared`
-- [ ] Slashes converted to hyphens (`feature/auth` -> `feature-auth`)
-- [ ] All characters lowercased
-- [ ] Invalid characters stripped (only `[a-z0-9-]` retained)
-- [ ] Consecutive hyphens collapsed
-- [ ] Leading/trailing hyphens trimmed
-- [ ] Names exceeding 63 chars truncated with 6-char hash suffix
-- [ ] Output format: `{branchSlug}--{projectSlug}`
-- [ ] URL format: `{containerName}.orb.local`
-- [ ] Unit tests cover: simple names, slashes, long names, special characters, unicode, empty segments, names exactly at 63 chars
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] Pure function `containerName(branchName: string, projectName: string): { name: string, url: string }` exported from `packages/shared`
+- [x] Slashes converted to hyphens (`feature/auth` -> `feature-auth`)
+- [x] All characters lowercased
+- [x] Invalid characters stripped (only `[a-z0-9-]` retained)
+- [x] Consecutive hyphens collapsed
+- [x] Leading/trailing hyphens trimmed
+- [x] Names exceeding 63 chars truncated with 6-char hash suffix
+- [x] Output format: `{branchSlug}--{projectSlug}`
+- [x] URL format: `{containerName}.orb.local`
+- [x] Unit tests cover: simple names, slashes, long names, special characters, unicode, empty segments, names exactly at 63 chars
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 

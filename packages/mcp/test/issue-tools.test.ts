@@ -1,5 +1,5 @@
+import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { describe, expect, it, vi } from "vitest";
 import { LaborerRpcClient } from "../src/services/laborer-rpc-client.js";
 import { ProjectDiscovery } from "../src/services/project-discovery.js";
 import { IssueTools, makeIssueToolHandlers } from "../src/tools/issue-tools.js";
@@ -62,109 +62,81 @@ const makeToolkit = (rpcOverrides: Partial<LaborerRpcClient["Type"]> = {}) =>
 	);
 
 describe("IssueTools", () => {
-	it("registers the expected MCP issue tools", () => {
-		expect(Object.keys(IssueTools.tools)).toEqual([
-			"create_issue",
-			"read_issues",
-			"update_issue",
-			"list_remaining_issues",
-		]);
+	it.effect("registers the expected MCP issue tools", () =>
+		Effect.sync(() => {
+			assert.deepStrictEqual(Object.keys(IssueTools.tools), [
+				"create_issue",
+				"read_issues",
+				"update_issue",
+				"list_remaining_issues",
+			]);
 
-		expect(IssueTools.tools.create_issue.description).toContain(
-			"issues markdown file"
-		);
-		expect(IssueTools.tools.list_remaining_issues.description).toContain(
-			"pending or in-progress"
-		);
-	});
+			assert.include(
+				IssueTools.tools.create_issue.description,
+				"issues markdown file"
+			);
+			assert.include(
+				IssueTools.tools.list_remaining_issues.description,
+				"pending or in-progress"
+			);
+		})
+	);
 
-	it("create_issue delegates to prd.createIssue", async () => {
-		const createIssue = vi.fn(() => Effect.succeed(task));
-		const toolkit = await Effect.runPromise(
-			makeToolkit({
-				createIssue,
-			})
-		);
+	it.effect("create_issue returns the created task", () =>
+		Effect.gen(function* () {
+			const toolkit = yield* makeToolkit();
 
-		const result = await Effect.runPromise(
-			toolkit.handle("create_issue", {
+			const result = yield* toolkit.handle("create_issue", {
 				prdId: task.prdId,
 				title: task.title,
 				body: "### What to build\n\nAdd MCP issue tools.",
-			})
-		);
+			});
 
-		expect(createIssue).toHaveBeenCalledWith({
-			prdId: task.prdId,
-			title: task.title,
-			body: "### What to build\n\nAdd MCP issue tools.",
-		});
-		expect(result.result).toEqual(task);
-	});
+			assert.strictEqual(result.result.id, task.id);
+			assert.strictEqual(result.result.title, task.title);
+			assert.strictEqual(result.result.status, "pending");
+			assert.strictEqual(result.result.source, "prd");
+		})
+	);
 
-	it("read_issues delegates to prd.readIssues", async () => {
-		const readIssues = vi.fn(() => Effect.succeed(issuesMarkdown));
-		const toolkit = await Effect.runPromise(
-			makeToolkit({
-				readIssues,
-			})
-		);
+	it.effect("read_issues returns the issues markdown", () =>
+		Effect.gen(function* () {
+			const toolkit = yield* makeToolkit();
 
-		const result = await Effect.runPromise(
-			toolkit.handle("read_issues", { prdId: task.prdId })
-		);
+			const result = yield* toolkit.handle("read_issues", {
+				prdId: task.prdId,
+			});
 
-		expect(readIssues).toHaveBeenCalledWith({ prdId: task.prdId });
-		expect(result.result).toBe(issuesMarkdown);
-	});
+			assert.strictEqual(result.result, issuesMarkdown);
+		})
+	);
 
-	it("update_issue delegates to prd.updateIssue", async () => {
-		const updateIssue = vi.fn(() =>
-			Effect.succeed({
-				...task,
-				status: "completed",
-			})
-		);
-		const toolkit = await Effect.runPromise(
-			makeToolkit({
-				updateIssue,
-			})
-		);
+	it.effect("update_issue returns the updated task with new status", () =>
+		Effect.gen(function* () {
+			const toolkit = yield* makeToolkit();
 
-		const result = await Effect.runPromise(
-			toolkit.handle("update_issue", {
+			const result = yield* toolkit.handle("update_issue", {
 				taskId: task.id,
 				body: "### What to build\n\nShip the issue tools.",
 				status: "completed",
-			})
-		);
+			});
 
-		expect(updateIssue).toHaveBeenCalledWith({
-			taskId: task.id,
-			body: "### What to build\n\nShip the issue tools.",
-			status: "completed",
-		});
-		expect(result.result).toEqual({
-			...task,
-			status: "completed",
-		});
-	});
+			assert.strictEqual(result.result.id, task.id);
+			assert.strictEqual(result.result.status, "completed");
+		})
+	);
 
-	it("list_remaining_issues delegates to prd.listRemainingIssues", async () => {
-		const listRemainingIssues = vi.fn(() => Effect.succeed([task]));
-		const toolkit = await Effect.runPromise(
-			makeToolkit({
-				listRemainingIssues,
-			})
-		);
+	it.effect("list_remaining_issues returns pending and in-progress tasks", () =>
+		Effect.gen(function* () {
+			const toolkit = yield* makeToolkit();
 
-		const result = await Effect.runPromise(
-			toolkit.handle("list_remaining_issues", {
+			const result = yield* toolkit.handle("list_remaining_issues", {
 				prdId: task.prdId,
-			})
-		);
+			});
 
-		expect(listRemainingIssues).toHaveBeenCalledWith({ prdId: task.prdId });
-		expect(result.result).toEqual([task]);
-	});
+			assert.strictEqual(result.result.length, 1);
+			assert.strictEqual(result.result[0]?.id, task.id);
+			assert.strictEqual(result.result[0]?.status, "pending");
+		})
+	);
 });

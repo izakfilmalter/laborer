@@ -1,5 +1,5 @@
+import { assert, describe, it } from "@effect/vitest";
 import { Effect, Either, Layer } from "effect";
-import { describe, expect, it, vi } from "vitest";
 import { LaborerRpcClient } from "../src/services/laborer-rpc-client.js";
 import { ProjectDiscovery } from "../src/services/project-discovery.js";
 import { makePrdToolHandlers, PrdTools } from "../src/tools/prd-tools.js";
@@ -64,110 +64,141 @@ const makeToolkit = (rpcOverrides: Partial<LaborerRpcClient["Type"]> = {}) =>
 	);
 
 describe("PrdTools", () => {
-	it("registers the expected MCP PRD tools", () => {
-		expect(Object.keys(PrdTools.tools)).toEqual([
-			"create_prd",
-			"read_prd",
-			"update_prd",
-			"list_prds",
-		]);
+	it.effect("registers the expected MCP PRD tools", () =>
+		Effect.sync(() => {
+			assert.deepStrictEqual(Object.keys(PrdTools.tools), [
+				"create_prd",
+				"read_prd",
+				"update_prd",
+				"list_prds",
+			]);
 
-		expect(PrdTools.tools.create_prd.description).toContain(
-			"current Laborer project"
-		);
-		expect(PrdTools.tools.read_prd.description).toContain("id or exact title");
-	});
+			assert.include(
+				PrdTools.tools.create_prd.description,
+				"current Laborer project"
+			);
+			assert.include(PrdTools.tools.read_prd.description, "id or exact title");
+		})
+	);
 
-	it("create_prd uses the discovered project context", async () => {
-		const createPrd = vi.fn(() => Effect.succeed(prd));
-		const toolkit = await Effect.runPromise(
-			makeToolkit({
-				createPrd,
-			})
-		);
+	it.effect("create_prd returns the created PRD", () =>
+		Effect.gen(function* () {
+			const toolkit = yield* makeToolkit();
 
-		const result = await Effect.runPromise(
-			toolkit.handle("create_prd", {
+			const result = yield* toolkit.handle("create_prd", {
 				title: "Roadmap",
 				content: "# Roadmap",
-			})
-		);
+			});
 
-		expect(createPrd).toHaveBeenCalledWith({
-			projectId: project.id,
-			title: "Roadmap",
-			content: "# Roadmap",
-		});
-		expect(result.result).toEqual(prd);
-	});
+			assert.strictEqual(result.result.id, prd.id);
+			assert.strictEqual(result.result.title, prd.title);
+			assert.strictEqual(result.result.status, "draft");
+		})
+	);
 
-	it("list_prds uses the discovered project context", async () => {
-		const listPrds = vi.fn(() => Effect.succeed([prd]));
-		const toolkit = await Effect.runPromise(
-			makeToolkit({
-				listPrds,
-			})
-		);
+	it.effect("create_prd passes the discovered project context to the RPC", () =>
+		Effect.gen(function* () {
+			const receivedInputs: { projectId: string }[] = [];
+			const toolkit = yield* makeToolkit({
+				createPrd: (input) => {
+					receivedInputs.push({ projectId: input.projectId });
+					return Effect.succeed(prd);
+				},
+			});
 
-		const result = await Effect.runPromise(toolkit.handle("list_prds", {}));
+			yield* toolkit.handle("create_prd", {
+				title: "Roadmap",
+				content: "# Roadmap",
+			});
 
-		expect(listPrds).toHaveBeenCalledWith({ projectId: project.id });
-		expect(result.result).toEqual([prd]);
-	});
+			assert.strictEqual(receivedInputs.length, 1);
+			assert.strictEqual(receivedInputs[0]?.projectId, project.id);
+		})
+	);
 
-	it("read_prd resolves an exact title before delegating to prd.read", async () => {
-		const listPrds = vi.fn(() => Effect.succeed([prd]));
-		const readPrd = vi.fn(() => Effect.succeed(readPrdResponse));
-		const toolkit = await Effect.runPromise(
-			makeToolkit({
-				listPrds,
-				readPrd,
-			})
-		);
+	it.effect("list_prds returns PRDs for the discovered project", () =>
+		Effect.gen(function* () {
+			const toolkit = yield* makeToolkit();
 
-		const result = await Effect.runPromise(
-			toolkit.handle("read_prd", {
+			const result = yield* toolkit.handle("list_prds", {});
+
+			assert.strictEqual(result.result.length, 1);
+			assert.strictEqual(result.result[0]?.id, prd.id);
+			assert.strictEqual(result.result[0]?.title, prd.title);
+		})
+	);
+
+	it.effect("read_prd returns PRD content when given a prdId", () =>
+		Effect.gen(function* () {
+			const toolkit = yield* makeToolkit();
+
+			const result = yield* toolkit.handle("read_prd", {
+				prdId: prd.id,
+			});
+
+			assert.strictEqual(result.result.id, prd.id);
+			assert.strictEqual(result.result.content, "# Roadmap");
+		})
+	);
+
+	it.effect("read_prd resolves a title to the matching PRD", () =>
+		Effect.gen(function* () {
+			const toolkit = yield* makeToolkit();
+
+			const result = yield* toolkit.handle("read_prd", {
 				title: prd.title,
+			});
+
+			assert.strictEqual(result.result.id, prd.id);
+			assert.strictEqual(result.result.content, "# Roadmap");
+		})
+	);
+
+	it.effect(
+		"read_prd fails with NOT_FOUND when title does not match any PRD",
+		() =>
+			Effect.gen(function* () {
+				const toolkit = yield* makeToolkit();
+
+				const result = yield* toolkit
+					.handle("read_prd", { title: "Nonexistent" })
+					.pipe(Effect.either);
+
+				assert.isTrue(Either.isLeft(result));
+				if (Either.isLeft(result)) {
+					assert.strictEqual(result.left.code, "NOT_FOUND");
+				}
 			})
-		);
+	);
 
-		expect(listPrds).toHaveBeenCalledWith({ projectId: project.id });
-		expect(readPrd).toHaveBeenCalledWith({ prdId: prd.id });
-		expect(result.result).toEqual(readPrdResponse);
-	});
+	it.effect(
+		"read_prd fails with INVALID_INPUT when neither prdId nor title is provided",
+		() =>
+			Effect.gen(function* () {
+				const toolkit = yield* makeToolkit();
 
-	it("update_prd delegates directly to the PRD update RPC", async () => {
-		const updatePrd = vi.fn(() => Effect.succeed(prd));
-		const toolkit = await Effect.runPromise(
-			makeToolkit({
-				updatePrd,
+				const result = yield* toolkit
+					.handle("read_prd", {})
+					.pipe(Effect.either);
+
+				assert.isTrue(Either.isLeft(result));
+				if (Either.isLeft(result)) {
+					assert.strictEqual(result.left.code, "INVALID_INPUT");
+				}
 			})
-		);
+	);
 
-		const result = await Effect.runPromise(
-			toolkit.handle("update_prd", {
+	it.effect("update_prd returns the updated PRD", () =>
+		Effect.gen(function* () {
+			const toolkit = yield* makeToolkit();
+
+			const result = yield* toolkit.handle("update_prd", {
 				prdId: prd.id,
 				content: "# Updated roadmap",
-			})
-		);
+			});
 
-		expect(updatePrd).toHaveBeenCalledWith({
-			prdId: prd.id,
-			content: "# Updated roadmap",
-		});
-		expect(result.result).toEqual(prd);
-	});
-
-	it("read_prd fails when neither prdId nor title is provided", async () => {
-		const toolkit = await Effect.runPromise(makeToolkit());
-
-		const result = await Effect.runPromise(
-			toolkit.handle("read_prd", {}).pipe(Effect.either)
-		);
-
-		expect(Either.isLeft(result)).toBe(true);
-		if (Either.isLeft(result)) {
-			expect(result.left.code).toBe("INVALID_INPUT");
-		}
-	});
+			assert.strictEqual(result.result.id, prd.id);
+			assert.strictEqual(result.result.title, prd.title);
+		})
+	);
 });

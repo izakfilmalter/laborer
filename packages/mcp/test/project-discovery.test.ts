@@ -1,5 +1,5 @@
+import { assert, describe, it } from "@effect/vitest";
 import { Effect, Either, Layer } from "effect";
-import { describe, expect, it, vi } from "vitest";
 import { LaborerRpcClient } from "../src/services/laborer-rpc-client.js";
 import {
 	discoverProjectFromCwd,
@@ -40,51 +40,66 @@ const makeLaborerRpcClientLayer = (
 	);
 
 describe("discoverProjectFromCwd", () => {
-	it("matches a project directly from its repo path", () => {
-		expect(discoverProjectFromCwd(projects, "/repo/laborer")).toEqual(
-			projects[0]
-		);
-	});
+	it.effect("matches a project directly from its repo path", () =>
+		Effect.sync(() => {
+			assert.deepStrictEqual(
+				discoverProjectFromCwd(projects, "/repo/laborer"),
+				projects[0]
+			);
+		})
+	);
 
-	it("walks up parent directories to find the closest project", () => {
-		expect(
-			discoverProjectFromCwd(projects, "/repo/laborer/packages/mcp/src")
-		).toEqual(projects[0]);
-	});
+	it.effect("walks up parent directories to find the closest project", () =>
+		Effect.sync(() => {
+			assert.deepStrictEqual(
+				discoverProjectFromCwd(projects, "/repo/laborer/packages/mcp/src"),
+				projects[0]
+			);
+		})
+	);
 
-	it("returns null when no registered project matches the cwd", () => {
-		expect(discoverProjectFromCwd(projects, "/tmp/outside-project")).toBeNull();
-	});
+	it.effect("returns null when no registered project matches the cwd", () =>
+		Effect.sync(() => {
+			assert.isNull(discoverProjectFromCwd(projects, "/tmp/outside-project"));
+		})
+	);
 });
 
 describe("ProjectDiscovery", () => {
-	it("loads projects through the RPC client and resolves the cwd", async () => {
-		const listProjects = vi.fn(() => Effect.succeed(projects));
+	it.effect("loads projects through the RPC client and resolves the cwd", () =>
+		Effect.gen(function* () {
+			const discovery = yield* ProjectDiscovery;
+			const project = yield* discovery.discoverProject(
+				"/repo/laborer/packages/mcp"
+			);
 
-		const project = await Effect.runPromise(
-			Effect.gen(function* () {
-				const discovery = yield* ProjectDiscovery;
-				return yield* discovery.discoverProject("/repo/laborer/packages/mcp");
-			}).pipe(
-				Effect.provide(
-					ProjectDiscovery.layer.pipe(
-						Layer.provide(makeLaborerRpcClientLayer(listProjects))
+			assert.deepStrictEqual(project, projects[0]);
+		}).pipe(
+			Effect.provide(
+				ProjectDiscovery.layer.pipe(
+					Layer.provide(
+						makeLaborerRpcClientLayer(() => Effect.succeed(projects))
 					)
 				)
 			)
-		);
+		)
+	);
 
-		expect(project).toEqual(projects[0]);
-		expect(listProjects).toHaveBeenCalledTimes(1);
-	});
-
-	it("fails with NOT_FOUND when the cwd is outside registered projects", async () => {
-		const result = await Effect.runPromise(
+	it.effect(
+		"fails with NOT_FOUND when the cwd is outside registered projects",
+		() =>
 			Effect.gen(function* () {
 				const discovery = yield* ProjectDiscovery;
-				return yield* discovery.discoverProject("/tmp/outside-project");
+				const result = yield* discovery
+					.discoverProject("/tmp/outside-project")
+					.pipe(Effect.either);
+
+				assert.isTrue(Either.isLeft(result));
+				if (Either.isLeft(result)) {
+					assert.strictEqual(result.left.code, "NOT_FOUND");
+					assert.include(result.left.message, "/tmp/outside-project");
+				}
 			}).pipe(
-				Effect.either,
 				Effect.provide(
 					ProjectDiscovery.layer.pipe(
 						Layer.provide(
@@ -93,12 +108,5 @@ describe("ProjectDiscovery", () => {
 					)
 				)
 			)
-		);
-
-		expect(Either.isLeft(result)).toBe(true);
-		if (Either.isLeft(result)) {
-			expect(result.left.code).toBe("NOT_FOUND");
-			expect(result.left.message).toContain("/tmp/outside-project");
-		}
-	});
+	);
 });

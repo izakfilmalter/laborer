@@ -225,3 +225,35 @@ Extended `TerminalClient.spawnInWorkspace` with an `autoRun` parameter that auto
 - `bun run check-types` passes (all 5 packages)
 - `bun x ultracite check` passes (only pre-existing package.json formatting issues)
 - All 121 existing tests pass (no regressions)
+
+## Issue 9: Workspace URL display -- replace port with .orb.local link — COMPLETED
+
+Replaced the port number display in the workspace sidebar card and dashboard with a clickable `.orb.local` URL for containerized workspaces, with a copy-to-clipboard button on hover.
+
+### What was done:
+
+**workspace-list.tsx (sidebar workspace card):**
+- Added `containerUrl: string | null` to `WorkspaceItemProps.workspace` interface
+- Added `ExternalLink` icon import from `lucide-react`
+- Replaced the `:{port}` display with a conditional: when `containerUrl` is present, renders a clickable HTTPS link (`https://{containerUrl}`) with monospace font matching the existing port style
+- On hover, shows a copy button (using the existing `CopyButton` component) that copies the full HTTPS URL to clipboard
+- On hover, also shows an external link icon button for opening in browser
+- Uses the `group/copyable` CSS pattern consistent with the existing `CopyableValue` component's hover-to-reveal behavior
+- Non-containerized workspaces continue to show `:{port}` (backward compatible fallback)
+- All links include `rel="noopener"` and `target="_blank"` for security
+
+**workspace-dashboard.tsx (dashboard workspace row):**
+- Added `containerUrl: string | null` to `ProjectSection.workspaces` type and `DashboardWorkspaceRow` props
+- Replaced the `:{port}` display with a conditional: when `containerUrl` is present, renders a clickable HTTPS link with the same monospace styling
+- Non-containerized workspaces continue to show `:{port}` (backward compatible fallback)
+
+### Key design decisions:
+- The `containerUrl` field from LiveStore is used directly — `queryDb(workspaces)` already returns all columns including `containerUrl`, so no query changes were needed
+- The URL is stored without protocol in LiveStore (e.g., `feature-auth--myproject.orb.local`) and displayed as-is in the UI, but links and copy use the full `https://` URL since OrbStack provides HTTPS automatically
+- The copy button copies the full HTTPS URL (not just the domain) for maximum utility when pasting into browsers or sharing
+- The hover-to-reveal pattern matches the existing `CopyableValue` component used for branch names
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All 121 existing tests pass (no regressions)

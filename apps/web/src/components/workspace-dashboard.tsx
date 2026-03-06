@@ -282,6 +282,7 @@ interface ProjectSection {
     readonly status: string
     readonly origin: WorkspaceOrigin | string
     readonly createdAt: string
+    readonly containerUrl: string | null
   }>
 }
 
@@ -483,6 +484,7 @@ function DashboardWorkspaceRow({
     readonly port: number
     readonly status: string
     readonly origin: WorkspaceOrigin | string
+    readonly containerUrl: string | null
   }
   readonly terminalCount: number
 }) {
@@ -500,8 +502,22 @@ function DashboardWorkspaceRow({
           Detected
         </span>
       )}
-      {workspace.port > 0 && (
-        <span className="text-muted-foreground text-xs">:{workspace.port}</span>
+      {workspace.containerUrl ? (
+        <a
+          className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
+          href={`https://${workspace.containerUrl}`}
+          rel="noopener"
+          target="_blank"
+          title={`Open https://${workspace.containerUrl}`}
+        >
+          {workspace.containerUrl}
+        </a>
+      ) : (
+        workspace.port > 0 && (
+          <span className="text-muted-foreground text-xs">
+            :{workspace.port}
+          </span>
+        )
       )}
       {terminalCount > 0 && (
         <span className="text-muted-foreground text-xs">

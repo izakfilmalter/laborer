@@ -40,7 +40,7 @@ import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { prds, workspaces } from '@laborer/shared/schema'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
-import { GitBranch, Play, Trash2 } from 'lucide-react'
+import { ExternalLink, GitBranch, Play, Trash2 } from 'lucide-react'
 import { type FC, useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -181,6 +181,7 @@ interface WorkspaceItemProps {
     readonly origin: WorkspaceOrigin | string
     readonly createdAt: string
     readonly taskSource: string | null
+    readonly containerUrl: string | null
   }
 }
 
@@ -262,12 +263,43 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
           </Badge>
         </div>
         <div className="flex items-center justify-between gap-2">
-          {workspace.port > 0 && (
-            <CardDescription className="flex items-center gap-2">
-              <span className="font-mono text-muted-foreground">
-                :{workspace.port}
+          {workspace.containerUrl ? (
+            <CardDescription className="flex min-w-0 items-center gap-2">
+              <span className="group/copyable flex min-w-0 items-center gap-1">
+                <a
+                  className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
+                  href={`https://${workspace.containerUrl}`}
+                  rel="noopener"
+                  target="_blank"
+                  title={`Open https://${workspace.containerUrl}`}
+                >
+                  {workspace.containerUrl}
+                </a>
+                <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:opacity-100">
+                  <CopyButton
+                    title="Copy URL"
+                    value={`https://${workspace.containerUrl}`}
+                  />
+                  <a
+                    className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                    href={`https://${workspace.containerUrl}`}
+                    rel="noopener"
+                    target="_blank"
+                    title="Open in browser"
+                  >
+                    <ExternalLink className="size-3" />
+                  </a>
+                </span>
               </span>
             </CardDescription>
+          ) : (
+            workspace.port > 0 && (
+              <CardDescription className="flex items-center gap-2">
+                <span className="font-mono text-muted-foreground">
+                  :{workspace.port}
+                </span>
+              </CardDescription>
+            )
           )}
           <div className="ml-auto flex flex-wrap items-center gap-1">
             <Button

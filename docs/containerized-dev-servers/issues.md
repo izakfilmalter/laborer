@@ -332,16 +332,16 @@ Non-containerized workspaces continue to show the port number (backward compatib
 
 ### Acceptance criteria
 
-- [ ] Workspace card reads `containerUrl` from the workspace LiveStore record
-- [ ] When `containerUrl` is present, displays it as a clickable link instead of `:<port>`
-- [ ] Link opens the URL in the default browser on click
-- [ ] Copy button appears on hover, copies the full URL to clipboard
-- [ ] Uses the existing `CopyableValue` component pattern for consistency
-- [ ] Non-containerized workspaces still show `:<port>` (no regression)
-- [ ] Link text is styled with monospace font matching the existing port display
-- [ ] HTTPS URL variant (`https://...orb.local`) is accessible (OrbStack provides this automatically)
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] Workspace card reads `containerUrl` from the workspace LiveStore record
+- [x] When `containerUrl` is present, displays it as a clickable link instead of `:<port>`
+- [x] Link opens the URL in the default browser on click
+- [x] Copy button appears on hover, copies the full URL to clipboard
+- [x] Uses the existing `CopyableValue` component pattern for consistency
+- [x] Non-containerized workspaces still show `:<port>` (no regression)
+- [x] Link text is styled with monospace font matching the existing port display
+- [x] HTTPS URL variant (`https://...orb.local`) is accessible (OrbStack provides this automatically)
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 

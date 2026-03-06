@@ -348,12 +348,14 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that splits a pane horizontally, verifies two panes are visible, then splits one of them vertically, verifying three panes. This validates the recursive panel split system through the real UI.
 
+### Status: IN PROGRESS
+
 ### Acceptance criteria
 
-- [ ] Test file `e2e/panel-system.spec.ts` created
-- [ ] Test clicks the horizontal split button and verifies two panes are rendered
-- [ ] Test clicks the vertical split button within one pane and verifies three panes are rendered
-- [ ] Test verifies the pane layout structure visually (panes are side-by-side for horizontal, stacked for vertical)
+- [x] Test file `e2e/panel-system.spec.ts` created
+- [x] Test clicks the horizontal split button and verifies two panes are rendered
+- [x] Test clicks the vertical split button within one pane and verifies three panes are rendered
+- [x] Test verifies the pane layout structure visually (panes are side-by-side for horizontal, stacked for vertical)
 - [ ] Test passes with `bun run test:e2e`
 
 ### Blocked by

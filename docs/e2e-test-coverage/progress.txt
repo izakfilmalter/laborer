@@ -171,3 +171,23 @@ Verification:
 - `bun run test` passes in `apps/web` (70 tests)
 - `bun run test:e2e e2e/workspace-lifecycle.spec.ts` runs all 3 workspace lifecycle E2E tests successfully (3 passed); Playwright reported success before the dev process teardown returned a non-zero turbo exit during shutdown
 - `bun x ultracite check e2e/workspace-lifecycle.spec.ts` passes
+
+## Issue 11: E2E — Split panes horizontally and vertically — IN PROGRESS
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 11 as the highest-priority remaining task because it unlocks the rest of the panel-system work (Issues 12, 13, and 14)
+
+Changes made:
+- Added `apps/web/e2e/panel-system.spec.ts` with a focused panel-layout E2E test
+- Reused the temp repo from global setup to add a project and create a workspace so the app seeds an initial pane
+- Verified the horizontal split flow by clicking the toolbar action, asserting two pane regions render, and comparing pane bounding boxes to confirm a side-by-side layout
+- Verified the nested vertical split flow by activating the right pane, splitting it vertically, asserting three pane regions render, and comparing pane bounding boxes to confirm a stacked right column beside the original left pane
+- Used Playwright locator assertions and bounding boxes only; no hardcoded sleeps or direct state manipulation
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check e2e/panel-system.spec.ts` passes
+- `bun run test:e2e e2e/panel-system.spec.ts` is currently blocked in this environment because an unrelated Next.js dev server from another workspace is already listening on port `3000`, which prevents Playwright global setup from starting the required Laborer backend stack on its expected ports

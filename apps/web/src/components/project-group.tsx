@@ -51,6 +51,7 @@ const removeProjectMutation = LaborerClient.mutation("project.remove");
 
 interface ProjectGroupProps {
 	readonly expanded: boolean;
+	readonly onSelectPlan?: ((prdId: string) => void) | undefined;
 	readonly onToggle: () => void;
 	readonly project: {
 		readonly id: string;
@@ -58,9 +59,16 @@ interface ProjectGroupProps {
 		readonly repoPath: string;
 		readonly rlphConfig: string | null;
 	};
+	readonly selectedPlanId?: string | null | undefined;
 }
 
-function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
+function ProjectGroup({
+	project,
+	expanded,
+	onToggle,
+	selectedPlanId,
+	onSelectPlan,
+}: ProjectGroupProps) {
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [taskSource, setTaskSource] = useState<TaskSourceFilter>("manual");
@@ -163,7 +171,11 @@ function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
 				<div className="mt-1 ml-2 border-l pl-2">
 					<WorkspaceList projectId={project.id} />
 					<Separator className="my-2" />
-					<PlanList projectId={project.id} />
+					<PlanList
+						onSelectPlan={onSelectPlan}
+						projectId={project.id}
+						selectedPlanId={selectedPlanId}
+					/>
 					<Separator className="my-2" />
 					<div className="grid gap-2">
 						<h3 className="font-medium text-muted-foreground text-xs">Tasks</h3>

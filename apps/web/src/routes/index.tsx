@@ -33,6 +33,7 @@ import {
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { AddProjectForm } from "@/components/add-project-form";
+import { PlanEditor } from "@/components/plan-editor";
 import { ProjectGroup } from "@/components/project-group";
 import { SidebarSearch } from "@/components/sidebar-search";
 import {
@@ -146,8 +147,8 @@ function HealthCheckStatus() {
 /** LiveStore query for projects (used by PanelHeaderBar to resolve names). */
 const allProjects$ = queryDb(projects, { label: "headerProjects" });
 
-/** The two main content views: terminal panels or cross-project dashboard. */
-type MainView = "panels" | "dashboard";
+/** The two main content views: terminal panels, cross-project dashboard, or plan editor. */
+type MainView = "panels" | "dashboard" | "plan";
 
 /**
  * Thin header bar rendered above the PanelManager.
@@ -911,9 +912,22 @@ function HomeComponent() {
 	// When search is cleared, the stored collapse state is naturally restored.
 	const isSearchActive = searchQuery.trim().length > 0;
 
-	// Main content view toggle — panels (terminal panes) or dashboard
+	// Main content view toggle — panels (terminal panes), dashboard, or plan editor
 	const [mainView, setMainView] = useState<MainView>("panels");
+	const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
 	const [isCloseAppDialogOpen, setIsCloseAppDialogOpen] = useState(false);
+
+	// Handle plan selection from sidebar — switch to plan view
+	const handleSelectPlan = useCallback((prdId: string) => {
+		setSelectedPlanId(prdId);
+		setMainView("plan");
+	}, []);
+
+	// Handle back from plan editor — return to panels view
+	const handlePlanBack = useCallback(() => {
+		setSelectedPlanId(null);
+		setMainView("panels");
+	}, []);
 
 	// Sidebar collapse via imperative panel ref
 	const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
@@ -990,8 +1004,10 @@ function HomeComponent() {
 												: collapseState.isExpanded(project.id)
 										}
 										key={project.id}
+										onSelectPlan={handleSelectPlan}
 										onToggle={() => collapseState.toggle(project.id)}
 										project={project}
+										selectedPlanId={selectedPlanId}
 									/>
 								))}
 								{projectList.length === 0 && (
@@ -1026,9 +1042,15 @@ function HomeComponent() {
 
 				<ResizableHandle withHandle />
 
-				{/* Main content — Panel system, dashboard, or welcome empty state */}
+				{/* Main content — Panel system, dashboard, plan editor, or welcome empty state */}
 				<ResizablePanel defaultSize="75%" minSize="10%">
-					{hasProjects ? (
+					{!hasProjects && <WelcomeEmptyState />}
+					{hasProjects && mainView === "plan" && selectedPlanId && (
+						<div className="flex h-full flex-col border-2 border-transparent">
+							<PlanEditor onBack={handlePlanBack} prdId={selectedPlanId} />
+						</div>
+					)}
+					{hasProjects && mainView !== "plan" && (
 						<div
 							className={`flex h-full flex-col border-2 ${mainView === "panels" && activePaneId ? "border-primary" : "border-transparent"}`}
 						>
@@ -1059,8 +1081,6 @@ function HomeComponent() {
 								</div>
 							)}
 						</div>
-					) : (
-						<WelcomeEmptyState />
 					)}
 				</ResizablePanel>
 			</ResizablePanelGroup>

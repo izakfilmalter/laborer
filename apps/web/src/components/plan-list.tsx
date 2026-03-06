@@ -22,7 +22,9 @@ const allPrds$ = queryDb(prds, { label: "planList.prds" });
 const allTasks$ = queryDb(tasks, { label: "planList.tasks" });
 
 interface PlanListProps {
+	readonly onSelectPlan?: ((prdId: string) => void) | undefined;
 	readonly projectId: string;
+	readonly selectedPlanId?: string | null | undefined;
 }
 
 interface PlanProgress {
@@ -55,12 +57,21 @@ function computePlanProgress(
 	return { completed, total };
 }
 
-function PlanList({ projectId }: PlanListProps) {
+function PlanList({
+	projectId,
+	selectedPlanId: externalSelectedPlanId,
+	onSelectPlan,
+}: PlanListProps) {
 	const store = useLaborerStore();
 	const prdList = store.useQuery(allPrds$);
 	const taskList = store.useQuery(allTasks$);
 	const [expanded, setExpanded] = useState(true);
-	const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+	const [localSelectedPlanId, setLocalSelectedPlanId] = useState<string | null>(
+		null
+	);
+
+	// Use external selection if provided, otherwise fall back to local state
+	const selectedPlanId = externalSelectedPlanId ?? localSelectedPlanId;
 
 	const plans = useMemo(() => {
 		const projectTasks = taskList.filter(
@@ -118,7 +129,13 @@ function PlanList({ projectId }: PlanListProps) {
 												"border-primary/40 bg-accent/50"
 										)}
 										key={plan.id}
-										onClick={() => setSelectedPlanId(plan.id)}
+										onClick={() => {
+											if (onSelectPlan) {
+												onSelectPlan(plan.id);
+											} else {
+												setLocalSelectedPlanId(plan.id);
+											}
+										}}
 										type="button"
 									>
 										<div className="flex items-start gap-2">

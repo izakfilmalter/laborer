@@ -531,15 +531,15 @@ The editor loads content via the `prd.read` RPC and saves via `prd.update` on bl
 
 ### Acceptance criteria
 
-- [ ] Plate.js is installed and configured with minimal markdown plugins
-- [ ] `PlanEditor` renders the PRD markdown content in a WYSIWYG editor
-- [ ] Markdown is deserialized to Plate nodes on load
-- [ ] Plate nodes are serialized back to markdown on save
-- [ ] Round-trip serialization preserves content (no formatting loss)
-- [ ] Editor saves content via `prd.update` RPC on blur or auto-save
-- [ ] Editor shows a loading state while fetching content
-- [ ] Editor handles errors (file not found, save failure) with user-friendly messages
-- [ ] Selecting a plan in the sidebar opens the editor in the main content area
+- [x] Plate.js is installed and configured with minimal markdown plugins
+- [x] `PlanEditor` renders the PRD markdown content in a WYSIWYG editor
+- [x] Markdown is deserialized to Plate nodes on load
+- [x] Plate nodes are serialized back to markdown on save
+- [x] Round-trip serialization preserves content (no formatting loss)
+- [x] Editor saves content via `prd.update` RPC on blur or auto-save
+- [x] Editor shows a loading state while fetching content
+- [x] Editor handles errors (file not found, save failure) with user-friendly messages
+- [x] Selecting a plan in the sidebar opens the editor in the main content area
 
 ### Blocked by
 
@@ -772,8 +772,8 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 187 | MCP auto-registration: Opencode config | #184 | Done |
 | 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Done |
 | 189 | Plans sidebar section: PlanList component | #175 | Done |
-| 190 | Plan detail view: Plate.js markdown editor | #180, #189 | Ready |
-| 191 | Plan detail view: issues list alongside editor | #181, #190 | Blocked |
+| 190 | Plan detail view: Plate.js markdown editor | #180, #189 | Done |
+| 191 | Plan detail view: issues list alongside editor | #181, #190 | Ready |
 | 192 | Create workspace from plan | #191 | Blocked |
 | 193 | Plan workspace scoped task list and rlph integration | #186, #192 | Blocked |
 | 194 | Remove CreateTaskForm and manual task source tab | #181 | Ready |

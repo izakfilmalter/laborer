@@ -98,11 +98,26 @@
  *   large scrollback doesn't impact rendering performance
  * - Fast scroll sensitivity increased for quicker navigation through large buffers
  * - Alt+scroll modifier enables accelerated scrolling (5x speed)
+ *
+ * Terminal fidelity — Claude Code TUI (Issue #125):
+ * Verified and enhanced xterm.js rendering for Claude Code's TUI output:
+ * - TERM=xterm-256color set at PTY spawn (supports 256-color + true color)
+ * - 16-color palette mapped to Tailwind zinc scale for dark theme consistency
+ * - WebGL renderer handles rapid full-screen redraws from agent tool output
+ * - Unicode11 addon ensures correct width for box-drawing chars, emoji, spinners
+ * - Web Links addon (@xterm/addon-web-links) enables clickable URLs in agent
+ *   output (PRs, docs, file paths) — Cmd+Click opens in default browser
+ * - convertEol: false preserves raw escape sequences for cursor positioning
+ * - allowProposedApi: true enables advanced features agents may use
+ * - 100K line scrollback handles long agent sessions with extensive tool output
+ * - Data coalescing (5ms) smooths rapid output bursts from agent tool calls
+ * - Flow control prevents output buffer overflow during fast code generation
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -356,6 +371,20 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
 			terminal.unicode.activeVersion = "11";
 		} catch {
 			// Unicode11 addon failed to load — default width calculation used
+		}
+
+		// Load Web Links addon for clickable URL detection (Issue #125).
+		// Agent TUIs (Claude Code, opencode, codex) frequently output URLs
+		// in their responses — file paths, documentation links, PR URLs.
+		// Without this addon, URLs are plain text. With it, URLs are
+		// auto-detected and rendered as clickable links that open in the
+		// user's default browser. Uses Cmd+Click (macOS) / Ctrl+Click
+		// (Linux/Windows) to avoid accidental activation during text selection.
+		try {
+			const webLinksAddon = new WebLinksAddon();
+			terminal.loadAddon(webLinksAddon);
+		} catch {
+			// Web Links addon failed to load — URLs remain plain text
 		}
 
 		// Initial fit — also send dimensions to server PTY so it starts

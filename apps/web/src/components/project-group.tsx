@@ -11,6 +11,7 @@
  * @see Issue #168: ProjectGroup collapsible headings with nested workspaces
  * @see Issue #169: Per-project "+" button and CreateWorkspaceForm pre-selection
  * @see Issue #170: Tasks nested under each project
+ * @see Issue #173: Polish and verification
  */
 
 import { useAtomSet } from "@effect-atom/atom-react/Hooks";
@@ -85,7 +86,7 @@ function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
 		<Collapsible defaultOpen={expanded} open={expanded}>
 			<div className="flex items-center gap-1">
 				<CollapsibleTrigger
-					className="flex flex-1 items-center gap-1.5 rounded-md px-1 py-1 text-left font-medium text-sm hover:bg-accent"
+					className="flex flex-1 items-center gap-1.5 rounded-md px-1 py-1 text-left font-medium text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
 					onClick={onToggle}
 				>
 					<ChevronRight

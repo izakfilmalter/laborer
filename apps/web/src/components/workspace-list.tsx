@@ -251,14 +251,14 @@ function WorkspaceItem({ workspace }: WorkspaceItemProps) {
 					</Badge>
 				</div>
 				<div className="flex items-center justify-between gap-2">
-					<CardDescription className="flex items-center gap-2">
-						{workspace.port > 0 && (
+					{workspace.port > 0 && (
+						<CardDescription className="flex items-center gap-2">
 							<span className="font-mono text-muted-foreground">
 								:{workspace.port}
 							</span>
-						)}
-					</CardDescription>
-					<div className="flex flex-wrap items-center gap-1">
+						</CardDescription>
+					)}
+					<div className="ml-auto flex flex-wrap items-center gap-1">
 						<WritePrdForm workspaceId={workspace.id} />
 						<Button
 							aria-label="Start ralph loop"

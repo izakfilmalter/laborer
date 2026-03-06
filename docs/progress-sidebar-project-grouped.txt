@@ -128,3 +128,37 @@ Changes made:
   - Updated sidebar `ResizablePanel` `defaultSize` to use `sidebarWidth.storedDefault ?? responsiveSizes.sidebarDefault` — stored value takes priority, falls back to responsive default.
 
 TypeScript: 0 errors. Ultracite: 0 issues. Tests: 41/41 pass (web app tests, excluding pre-existing vi.hoisted compatibility issue).
+
+### Issue 173: Sidebar project-grouped layout — polish and verification — DONE
+
+End-to-end polish pass for the full sidebar restructure. Verified all polishing requirements from the PRD and applied fixes.
+
+Changes made:
+- Deleted `apps/web/src/components/project-switcher.tsx` — dead code, no longer imported anywhere after Issue #171 replaced it with SidebarSearch.
+- Deleted `apps/web/src/components/project-list.tsx` — dead code, no longer imported anywhere after Issue #168 replaced it with ProjectGroup.
+- Modified `apps/web/src/components/project-group.tsx`:
+  - Added `focus-visible` ring styles to the CollapsibleTrigger (`focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1`) so keyboard navigation through project headings is clearly visible.
+  - Added `@see Issue #173` doc comment.
+- Modified `apps/web/src/components/sidebar-search.tsx`:
+  - Added Escape key handler: pressing Escape when search has text clears the query and restores focus to the input.
+  - Added `focus-visible` ring styles to the clear (X) button for keyboard accessibility.
+  - Added `KeyboardEvent` type import.
+- Modified `apps/web/src/components/workspace-list.tsx`:
+  - Fixed empty `CardDescription` rendering when `workspace.port` is 0 — the `CardDescription` wrapper is now conditionally rendered only when port > 0, preventing an empty container from leaving awkward whitespace after the project name was removed from workspace cards.
+  - Added `ml-auto` to the action buttons container so they right-align correctly when CardDescription is absent.
+
+Verification against acceptance criteria:
+- [x] Consistent indentation and visual hierarchy — `ml-2 border-l pl-2` nesting with Tasks sub-heading provides clear hierarchy.
+- [x] Chevron rotation animation — `transition-transform duration-200` on ChevronRight provides smooth 90° rotation.
+- [x] Search bar handles edge cases — case-insensitive substring matching on project names and workspace branch names; tested via code review of the `useMemo` filter logic in HomeComponent.
+- [x] Auto-expansion during search — `isSearchActive && matchingProjectIds.has(project.id)` overrides collapse state; clearing search restores previous state.
+- [x] Sticky footer — Server Status sits outside ScrollArea with `shrink-0 border-t p-3`, no overlap with scrollable content.
+- [x] Keyboard navigation — CollapsibleTrigger is a native button (Tab-focusable, Enter/Space to toggle); base-ui provides `aria-expanded` and `aria-controls` automatically; focus-visible ring added for visual feedback; Escape clears search.
+- [x] Removing project name from workspace cards — no awkward empty space thanks to conditional CardDescription rendering.
+- [x] "+" button has clear hover state and tooltip — `variant="ghost"` provides hover state, `title="Create Workspace"` provides tooltip.
+- [x] Search bar clear button works correctly — X icon button with `aria-label`, `focus-visible` styles, and Escape key support.
+- [x] Sidebar retains current resizable behavior — `react-resizable-panels` setup unchanged; width persisted via Issue #174.
+- [x] No visual regressions — workspace cards, task lists, and project actions all retained their existing designs.
+- [x] Dead code cleanup — removed unused `project-switcher.tsx` and `project-list.tsx` files.
+
+TypeScript: 0 errors. Ultracite: 0 issues (only pre-existing terminal-pane.tsx warnings). Tests: 41/41 pass (web app tests, excluding pre-existing vi.hoisted compatibility issue).

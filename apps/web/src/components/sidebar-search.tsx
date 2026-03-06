@@ -9,6 +9,7 @@
  */
 
 import { Search, X } from "lucide-react";
+import type { KeyboardEvent } from "react";
 import { useCallback, useRef } from "react";
 import { Input } from "@/components/ui/input";
 
@@ -27,6 +28,16 @@ function SidebarSearch({ value, onChange }: SidebarSearchProps) {
 		inputRef.current?.focus();
 	}, [onChange]);
 
+	const handleKeyDown = useCallback(
+		(e: KeyboardEvent<HTMLInputElement>) => {
+			if (e.key === "Escape" && value.length > 0) {
+				e.preventDefault();
+				handleClear();
+			}
+		},
+		[value, handleClear]
+	);
+
 	return (
 		<div className="relative">
 			<Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -34,6 +45,7 @@ function SidebarSearch({ value, onChange }: SidebarSearchProps) {
 				aria-label="Search projects and workspaces"
 				className="pr-7 pl-7"
 				onChange={(e) => onChange(e.target.value)}
+				onKeyDown={handleKeyDown}
 				placeholder="Search projects..."
 				ref={inputRef}
 				type="text"
@@ -42,7 +54,7 @@ function SidebarSearch({ value, onChange }: SidebarSearchProps) {
 			{value.length > 0 && (
 				<button
 					aria-label="Clear search"
-					className="absolute top-1/2 right-1.5 flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+					className="absolute top-1/2 right-1.5 flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					onClick={handleClear}
 					type="button"
 				>

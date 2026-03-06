@@ -1,12 +1,13 @@
 /**
  * E2E Tests — Project Management
  *
- * Tests the full add-project flow: enter repo path in the browser-mode
- * text input -> RPC mutation -> LiveStore sync -> sidebar rendering.
+ * Tests project lifecycle flows: add project, open/save settings, delete.
+ * All tests exercise the full stack: browser UI -> RPC mutation -> backend
+ * -> LiveStore sync -> UI re-render.
  *
  * Uses the temp git repository created by globalSetup.
  *
- * @see PRD-e2e-test-coverage.md — Issue 4
+ * @see PRD-e2e-test-coverage.md — Issues 4, 5
  */
 
 import { readFileSync } from "node:fs";
@@ -80,5 +81,94 @@ test.describe("project management", () => {
 
 		// Verify the input was cleared after successful submission
 		await expect(sidebarForm).toHaveValue("");
+	});
+
+	test("can open project settings, modify a field, save, and verify persistence", async ({
+		page,
+	}) => {
+		const tempRepoDir = getTempRepoDir();
+		const expectedProjectName = basename(tempRepoDir);
+
+		// Navigate to the app with reset to clear any stale OPFS state
+		await page.goto("/?reset");
+
+		// Wait for the app to be fully loaded — server must be connected
+		const connectedStatus = page.getByText("connected", { exact: false });
+		await expect(connectedStatus).toBeVisible({ timeout: 15_000 });
+
+		// --- Step 1: Add a project so there's something to configure ---
+		const projectsHeading = page.getByRole("heading", { name: "Projects" });
+		await expect(projectsHeading).toBeVisible();
+
+		const sidebarForm = projectsHeading
+			.locator("..")
+			.getByLabel("Repository path");
+		await expect(sidebarForm).toBeVisible();
+		await sidebarForm.fill(tempRepoDir);
+
+		const addButton = projectsHeading
+			.locator("..")
+			.getByRole("button", { name: "Add", exact: true });
+		await addButton.click();
+
+		// Wait for the project to appear in the sidebar
+		const projectInSidebar = page.getByRole("button", {
+			name: expectedProjectName,
+			exact: true,
+		});
+		await expect(projectInSidebar).toBeVisible({ timeout: 10_000 });
+
+		// --- Step 2: Open the project settings modal ---
+		const settingsButton = page.getByRole("button", {
+			name: `Open settings for ${expectedProjectName}`,
+		});
+		await settingsButton.click();
+
+		// Wait for the settings form to load (async config.get RPC)
+		const modalTitle = page.getByText("Project settings");
+		await expect(modalTitle).toBeVisible({ timeout: 10_000 });
+
+		// Wait for the loading spinner to disappear and form fields to appear
+		const worktreeDirInput = page.getByRole("textbox", {
+			name: "Worktree directory",
+		});
+		await expect(worktreeDirInput).toBeVisible({ timeout: 10_000 });
+
+		// Read the initial value of the worktree directory field
+		const initialWorktreeDir = await worktreeDirInput.inputValue();
+
+		// --- Step 3: Modify the worktree directory field ---
+		const newWorktreeDir = `/tmp/e2e-test-worktrees/${expectedProjectName}`;
+		await worktreeDirInput.clear();
+		await worktreeDirInput.fill(newWorktreeDir);
+
+		// Verify the input shows the new value before saving
+		await expect(worktreeDirInput).toHaveValue(newWorktreeDir);
+
+		// --- Step 4: Save the settings ---
+		const saveButton = page.getByRole("button", { name: "Save" });
+		await saveButton.click();
+
+		// Wait for the success toast
+		const successToast = page.getByText(
+			`Saved settings for ${expectedProjectName}`
+		);
+		await expect(successToast).toBeVisible({ timeout: 10_000 });
+
+		// The dialog should close on successful save
+		await expect(modalTitle).not.toBeVisible();
+
+		// --- Step 5: Re-open settings and verify the saved value persists ---
+		await settingsButton.click();
+
+		// Wait for the form to load again
+		const worktreeDirInputAgain = page.getByRole("textbox", {
+			name: "Worktree directory",
+		});
+		await expect(worktreeDirInputAgain).toBeVisible({ timeout: 10_000 });
+
+		// Verify the worktree directory shows the updated value, not the initial one
+		await expect(worktreeDirInputAgain).toHaveValue(newWorktreeDir);
+		expect(newWorktreeDir).not.toBe(initialWorktreeDir);
 	});
 });

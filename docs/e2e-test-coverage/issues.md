@@ -164,15 +164,17 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that opens the project settings modal for an existing project, modifies a field (e.g., worktree directory), saves, and verifies the change persists (re-open modal and check the value). This validates the settings flow through the real UI and real backend.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/project-management.spec.ts`
-- [ ] Test adds a project first (or uses a project from a prior test in the same file via `test.describe.serial`)
-- [ ] Test clicks the settings button for the project
-- [ ] Test modifies a field in the settings modal
-- [ ] Test saves and waits for the success toast
-- [ ] Test re-opens settings and verifies the saved value persists
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/project-management.spec.ts`
+- [x] Test adds a project first (or uses a project from a prior test in the same file via `test.describe.serial`)
+- [x] Test clicks the settings button for the project
+- [x] Test modifies a field in the settings modal
+- [x] Test saves and waits for the success toast
+- [x] Test re-opens settings and verifies the saved value persists
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

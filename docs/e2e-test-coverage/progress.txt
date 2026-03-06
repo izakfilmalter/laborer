@@ -79,3 +79,19 @@ Verification:
 - All 73 existing Vitest tests still pass (`bun run test`)
 - TypeScript type checks pass (`tsc --noEmit`)
 - `ultracite check` clean on new file (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)
+
+## Issue 5: E2E — Open and save project settings — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Added "can open project settings, modify a field, save, and verify persistence" test to `apps/web/e2e/project-management.spec.ts`
+- Test flow: adds a project -> opens settings modal via gear icon button (`aria-label="Open settings for <name>"`) -> waits for async config load -> modifies the "Worktree directory" field to a new value -> clicks Save -> verifies success toast ("Saved settings for <name>") -> verifies dialog closes -> re-opens settings -> verifies the saved worktree directory value persists
+- Uses Playwright auto-waiting throughout (no `waitForTimeout`)
+- Validates the full settings round-trip: UI form -> `config.update` RPC mutation -> backend persistence -> `config.get` RPC query -> UI re-render with saved value
+- Updated file header comment to reference Issue 5
+
+Verification:
+- All 4 E2E tests pass with `bun run test:e2e` (4 passed in 18.0s)
+- All 73 existing Vitest tests still pass (`bun run test`)
+- `ultracite check` clean on modified file (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)

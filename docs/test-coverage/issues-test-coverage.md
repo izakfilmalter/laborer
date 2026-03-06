@@ -741,12 +741,12 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 
 ### Acceptance criteria
 
-- [ ] All 8 TerminalRpcs endpoints are tested through `RpcTest.makeClient`
-- [ ] Tests use real `PtyHostClient` + `TerminalManager` layers (no service mocking)
-- [ ] `terminal.events` streaming test verifies lifecycle events arrive via the RPC stream
-- [ ] Tests use `@effect/vitest` patterns (or the custom `runEffect` pattern where needed for shared scope)
-- [ ] All tests pass (`bun run test` in packages/terminal)
-- [ ] `bun x ultracite check` passes
+- [x] All 8 TerminalRpcs endpoints are tested through `RpcTest.makeClient`
+- [x] Tests use real `PtyHostClient` + `TerminalManager` layers (no service mocking)
+- [x] `terminal.events` streaming test verifies lifecycle events arrive via the RPC stream
+- [x] Tests use `@effect/vitest` patterns (or the custom `runEffect` pattern where needed for shared scope)
+- [x] All tests pass (`bun run test` in packages/terminal)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -782,7 +782,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 18 | RPC integration tests -- task.importGithub + task.importLinear | None | Done |
 | 19 | RPC integration tests -- diff.refresh + editor.open | None | Done |
 | 20 | RPC integration tests -- terminal.spawn + rlph endpoints | None | Done |
-| 21 | RPC integration tests -- TerminalRpcs (packages/terminal) | #8 | Ready |
+| 21 | RPC integration tests -- TerminalRpcs (packages/terminal) | #8 | Done |
 
 **Parallelism opportunities:**
 - Issues 1, 2, 3, 4, 8, 9 can all start immediately in parallel

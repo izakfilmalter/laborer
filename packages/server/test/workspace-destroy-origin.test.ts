@@ -6,6 +6,7 @@ import { events, tables } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import { afterAll, beforeAll } from 'vitest'
 import { ConfigService } from '../src/services/config-service.js'
+import { ContainerService } from '../src/services/container-service.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { PortAllocator } from '../src/services/port-allocator.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
@@ -19,6 +20,7 @@ import { TestLaborerStore } from './helpers/test-store.js'
 const tempRoots: string[] = []
 
 const TestLayer = WorkspaceProvider.layer.pipe(
+  Layer.provideMerge(ContainerService.layer),
   Layer.provideMerge(ProjectRegistry.layer),
   Layer.provideMerge(WorktreeWatcher.layer),
   Layer.provideMerge(WorktreeReconciler.layer),

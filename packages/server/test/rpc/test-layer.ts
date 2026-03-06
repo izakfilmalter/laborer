@@ -3,6 +3,7 @@ import { LaborerRpcs } from '@laborer/shared/rpc'
 import { Context, Effect, Layer, Ref } from 'effect'
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
 import { ConfigService } from '../../src/services/config-service.js'
+import { ContainerService } from '../../src/services/container-service.js'
 import { DiffService } from '../../src/services/diff-service.js'
 import { GithubTaskImporter } from '../../src/services/github-task-importer.js'
 import { LaborerStore } from '../../src/services/laborer-store.js'
@@ -89,6 +90,7 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
   Layer.provide(WorkspaceProvider.layer),
+  Layer.provide(ContainerService.layer),
   Layer.provide(ConfigService.layer),
   Layer.provide(ProjectRegistry.layer),
   Layer.provide(WorktreeWatcher.layer),
@@ -107,6 +109,7 @@ const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
   Layer.provide(WorkspaceProvider.layer),
+  Layer.provide(ContainerService.layer),
   Layer.provide(ConfigService.layer),
   Layer.provide(ProjectRegistry.layer),
   Layer.provide(WorktreeWatcher.layer),

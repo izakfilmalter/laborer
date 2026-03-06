@@ -170,19 +170,19 @@ Integrate into the existing `WorkspaceProvider.createWorktree` and `destroyWorkt
 
 ### Acceptance criteria
 
-- [ ] New `ContainerService` Effect service in `packages/server/src/services/`
-- [ ] `createContainer(workspaceId, worktreePath, branchName, projectName, devServerConfig)` method
-- [ ] Runs `docker run -d --name {containerName} -v {worktreePath}:{workdir} -w {workdir} {image} sleep infinity`
-- [ ] Container name generated using the naming utility from Issue 3
-- [ ] `ContainerStarted` event committed to LiveStore with containerId, containerUrl, containerImage
-- [ ] `destroyContainer(workspaceId)` method runs `docker stop` then `docker rm`
-- [ ] `ContainerStopped` event committed to LiveStore
-- [ ] Destroy follows best-effort cleanup pattern (catches errors, logs warnings, continues)
-- [ ] Integrated into `WorkspaceProvider.createWorktree` pipeline (container created after worktree, only when devServer config is present)
-- [ ] Integrated into `WorkspaceProvider.destroyWorktree` pipeline (container destroyed before worktree removal)
-- [ ] Rollback: if container creation fails, workspace creation fails with clear error
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] New `ContainerService` Effect service in `packages/server/src/services/`
+- [x] `createContainer(workspaceId, worktreePath, branchName, projectName, devServerConfig)` method
+- [x] Runs `docker run -d --name {containerName} -v {worktreePath}:{workdir} -w {workdir} {image} sleep infinity`
+- [x] Container name generated using the naming utility from Issue 3
+- [x] `ContainerStarted` event committed to LiveStore with containerId, containerUrl, containerImage
+- [x] `destroyContainer(workspaceId)` method runs `docker stop` then `docker rm`
+- [x] `ContainerStopped` event committed to LiveStore
+- [x] Destroy follows best-effort cleanup pattern (catches errors, logs warnings, continues)
+- [x] Integrated into `WorkspaceProvider.createWorktree` pipeline (container created after worktree, only when devServer config is present)
+- [x] Integrated into `WorkspaceProvider.destroyWorktree` pipeline (container destroyed before worktree removal)
+- [x] Rollback: if container creation fails, workspace creation fails with clear error
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 

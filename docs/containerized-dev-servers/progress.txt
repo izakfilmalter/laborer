@@ -106,3 +106,47 @@ Extended the `workspaces` LiveStore table to track container state and added `Co
 - `bun x ultracite check` passes (only pre-existing package.json formatting issues)
 - Backward compatible: existing workspaces without containers get null defaults
 - No changes to WorkspaceCreated event schema — container fields managed independently via ContainerStarted/ContainerStopped events
+
+## Issue 5: ContainerService — create and destroy — COMPLETED
+
+Created the `ContainerService` Effect service that manages Docker container lifecycle, and integrated it into the `WorkspaceProvider` create/destroy pipelines.
+
+### What was done:
+
+**New service (container-service.ts):**
+- Created `ContainerService` as a `Context.Tag` class with tag `'@laborer/ContainerService'`
+- Uses `Layer.effect` pattern, depends on `LaborerStore` for event commits
+- `createContainer(params)` method:
+  - Takes `workspaceId`, `worktreePath`, `branchName`, `projectName`, and `devServerConfig` (image, dockerfile, workdir)
+  - Generates container name and URL via shared `containerName` utility
+  - Runs `docker run -d --name {name} -v {worktreePath}:{workdir} -w {workdir} {image} sleep infinity`
+  - Commits `ContainerStarted` event to LiveStore with containerId, containerUrl, containerImage
+  - Returns `RpcError` with `CONTAINER_CONFIG_ERROR` if no image specified (Dockerfile builds not yet supported)
+  - Returns `RpcError` with `CONTAINER_CREATE_FAILED` on docker run failure
+- `destroyContainer(workspaceId)` method:
+  - Looks up workspace in LiveStore to get container info
+  - Derives container name from containerUrl
+  - Runs `docker stop` then `docker rm` (best-effort: catches errors, logs warnings, continues)
+  - Commits `ContainerStopped` event to LiveStore
+  - Gracefully handles missing workspace or missing container (no-op with log)
+
+**WorkspaceProvider integration (workspace-provider.ts):**
+- Added `ContainerService` as a dependency (injected via `yield* ContainerService`)
+- `createWorktree`: after workspace is committed to LiveStore, checks if `devServer.image` is configured. If so, calls `containerService.createContainer()`. On failure, performs full rollback (worktree removed, branch deleted, port freed, workspace removed from LiveStore).
+- `destroyWorktree`: before worktree removal, checks if workspace has a `containerId`. If so, calls `containerService.destroyContainer()` with best-effort error handling (logs warnings, continues cleanup).
+
+**Layer wiring:**
+- `main.ts`: imported `ContainerService`, added `Layer.provide(ContainerService.layer)` in `HttpLiveBase` composition
+- `test/rpc/test-layer.ts`: added `ContainerService.layer` to both `TestLaborerRpcLayer` and `TestLaborerRpcWithStoreLayer`
+- `test/workspace-destroy-origin.test.ts`: added `ContainerService.layer` to `TestLayer`
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All existing tests pass:
+  - `bunx vitest run test/config-service.test.ts` — 32/32 tests pass
+  - `bunx vitest run test/rpc/config-management.test.ts` — 3/3 tests pass
+  - `bunx vitest run test/rpc/health-check.test.ts` — 1/1 tests pass
+  - `bunx vitest run test/rpc/workspace-management.test.ts` — 4/4 tests pass
+  - `bunx vitest run test/schema.test.ts` (shared) — 8/8 tests pass
+  - `bunx vitest run test/container-name.test.ts` (shared) — 21/21 tests pass

@@ -49,6 +49,9 @@ coverage
 # LiveStore data (SQLite persistence)
 data/
 
+# Worktree
+.worktree-index
+
 # Misc
 *.tgz
 .cache

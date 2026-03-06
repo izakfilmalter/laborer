@@ -28,6 +28,52 @@ bun run dev
 
 Open [http://localhost:3001](http://localhost:3001) in your browser to see the web application.
 
+## Development Flow
+
+We use [git-worktree-runner (gtr)](https://github.com/coderabbitai/git-worktree-runner) for parallel branch development. This allows you to work on multiple branches simultaneously without stashing or switching.
+
+### First-Time Setup
+
+```bash
+# Install gtr globally (one-time)
+git clone https://github.com/coderabbitai/git-worktree-runner.git ~/.gtr
+cd ~/.gtr && ./install.sh
+
+# Configure gtr for this repo (one-time per clone)
+./.gtr-setup.sh
+```
+
+### Daily Workflow
+
+**Starting a new branch:**
+
+```bash
+# Create a worktree for your branch
+git gtr new izak/feature-name
+
+# Open in Cursor
+git gtr editor izak/feature-name
+
+# Or start Claude Code
+git gtr ai izak/feature-name
+```
+
+This automatically:
+- Creates a new worktree with your branch
+- Copies `.env.local` (via gtr config)
+- Copies AI tool config directories (`.opencode/`, `.cursor/`, `.claude/`)
+- Runs `bun install`
+
+**Cleanup:**
+
+```bash
+# Remove worktree when done
+git gtr rm izak/feature-name
+
+# List all worktrees
+git gtr list
+```
+
 ## Git Hooks and Formatting
 
 - Format and lint fix: `bun run check`

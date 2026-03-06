@@ -180,11 +180,11 @@ This slice should also centralize ignore handling so dependency folders, build o
 
 ### Acceptance criteria
 
-- [ ] Repo-wide file watching emits normalized add/change/delete events through an Effect-managed event bus
-- [ ] The event bus can be consumed by downstream services without creating duplicate watchers
-- [ ] Ignore rules suppress git internals and other configured noisy paths
-- [ ] Watcher events are treated as invalidation signals and not as direct source-of-truth state
-- [ ] Integration tests cover file add/change/delete events and ignored-path behavior
+- [x] Repo-wide file watching emits normalized add/change/delete events through an Effect-managed event bus
+- [x] The event bus can be consumed by downstream services without creating duplicate watchers
+- [x] Ignore rules suppress git internals and other configured noisy paths
+- [x] Watcher events are treated as invalidation signals and not as direct source-of-truth state
+- [x] Integration tests cover file add/change/delete events and ignored-path behavior
 
 ### Blocked by
 

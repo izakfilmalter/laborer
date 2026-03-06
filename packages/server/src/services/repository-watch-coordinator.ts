@@ -5,14 +5,15 @@
  * project, the coordinator subscribes to:
  *   1. The canonical common git directory — for metadata changes that
  *      affect branch state, worktree membership, and HEAD.
- *   2. (Future: the canonical checkout root — for repo-wide file change
- *      events, to be wired in Issue 5.)
+ *   2. The canonical checkout root — for repo-wide file change events
+ *      that are normalized and published through the RepositoryEventBus.
  *
  * Watch events are treated as invalidation signals only. The
  * coordinator does not mutate project or workspace state directly;
  * instead, it debounces events and delegates to refresh services:
  *   - WorktreeReconciler for worktree membership changes
  *   - BranchStateTracker for branch metadata refresh
+ *   - RepositoryEventBus for normalized file change fanout
  *
  * Events are classified by concern and debounced independently so
  * that rapid branch switches do not delay worktree reconciliation
@@ -22,7 +23,7 @@
  * project's watchers, and server shutdown tears down all watchers
  * via the Effect finalizer.
  *
- * @see PRD-opencode-inspired-repo-watching.md — Issues 3 & 4
+ * @see PRD-opencode-inspired-repo-watching.md — Issues 3, 4 & 5
  */
 
 import { existsSync } from "node:fs";
@@ -36,6 +37,7 @@ import {
 	type WatchSubscription,
 } from "./file-watcher.js";
 import { LaborerStore } from "./laborer-store.js";
+import { RepositoryEventBus } from "./repository-event-bus.js";
 import { RepositoryIdentity } from "./repository-identity.js";
 import { WorktreeReconciler } from "./worktree-reconciler.js";
 
@@ -54,6 +56,8 @@ interface ProjectWatcherState {
 	readonly projectId: string;
 	/** Canonical repo checkout root */
 	readonly repoPath: string;
+	/** Subscription to the repo checkout root for file change events */
+	readonly repoRootSubscription: WatchSubscription | null;
 	/** Current git dir watching target (gitDir or worktrees subdirectory) */
 	readonly target: "gitDir" | "worktrees";
 	/** Pending debounce timer for worktree reconciliation */
@@ -152,6 +156,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
 			const branchTracker = yield* BranchStateTracker;
 			const repoIdentity = yield* RepositoryIdentity;
 			const fileWatcher = yield* FileWatcher;
+			const eventBus = yield* RepositoryEventBus;
 			const runtime = yield* Effect.runtime<never>();
 			const statesRef = yield* Ref.make(new Map<string, ProjectWatcherState>());
 
@@ -174,6 +179,9 @@ class RepositoryWatchCoordinator extends Context.Tag(
 				clearTimers(state);
 				if (state.gitDirSubscription !== null) {
 					state.gitDirSubscription.close();
+				}
+				if (state.repoRootSubscription !== null) {
+					state.repoRootSubscription.close();
 				}
 			};
 
@@ -329,6 +337,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
 						gitDirPath,
 						target,
 						gitDirSubscription: subscription,
+						repoRootSubscription: null,
 						worktreeTimer: null,
 						branchTimer: null,
 					};
@@ -342,6 +351,45 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					)
 				);
 			};
+
+			// ── Repo-root file watcher ───────────────────────────────
+
+			/**
+			 * Subscribe to the canonical repo checkout root for file-level
+			 * change events. Events are normalized and published through
+			 * the RepositoryEventBus. Ignored paths are suppressed before
+			 * publishing.
+			 */
+			const subscribeRepoRoot = (
+				projectId: string,
+				repoPath: string
+			): Effect.Effect<WatchSubscription | null, never> =>
+				fileWatcher
+					.subscribe(
+						repoPath,
+						(event) => {
+							const normalized = eventBus.normalizeEvent({
+								type: event.type === "rename" ? "add" : "change",
+								fileName: event.fileName,
+								repoRoot: repoPath,
+								projectId,
+							});
+							if (normalized !== null) {
+								Runtime.runSync(runtime)(eventBus.publish(normalized));
+							}
+						},
+						(_error) => {
+							// Repo-root watcher errors are non-fatal — log and continue
+						},
+						{ recursive: true }
+					)
+					.pipe(
+						Effect.catchAll((error) =>
+							Effect.logWarning(
+								`Failed to watch repo root for project ${projectId}: ${error.message}`
+							).pipe(Effect.as(null))
+						)
+					);
 
 			// ── Public methods ───────────────────────────────────────
 
@@ -397,9 +445,21 @@ class RepositoryWatchCoordinator extends Context.Tag(
 						return;
 					}
 
+					// Subscribe to the repo checkout root for file-level events
+					const repoRootSub = yield* subscribeRepoRoot(
+						projectId,
+						identity.canonicalRoot
+					);
+
+					// Attach the repo root subscription to the state
+					const stateWithRepoRoot: ProjectWatcherState = {
+						...state,
+						repoRootSubscription: repoRootSub,
+					};
+
 					yield* Ref.update(statesRef, (states) => {
 						const next = new Map(states);
-						next.set(projectId, state);
+						next.set(projectId, stateWithRepoRoot);
 						return next;
 					});
 				}

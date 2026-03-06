@@ -11,6 +11,7 @@ import { FileWatcher } from "../src/services/file-watcher.js";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
 import { ProjectRegistry } from "../src/services/project-registry.js";
+import { RepositoryEventBus } from "../src/services/repository-event-bus.js";
 import { RepositoryIdentity } from "../src/services/repository-identity.js";
 import { RepositoryWatchCoordinator } from "../src/services/repository-watch-coordinator.js";
 import { WorkspaceProvider } from "../src/services/workspace-provider.js";
@@ -25,6 +26,7 @@ const TestLayer = WorkspaceProvider.layer.pipe(
 	Layer.provideMerge(ProjectRegistry.layer),
 	Layer.provideMerge(RepositoryWatchCoordinator.layer),
 	Layer.provideMerge(BranchStateTracker.layer),
+	Layer.provideMerge(RepositoryEventBus.layer),
 	Layer.provideMerge(FileWatcher.layer),
 	Layer.provideMerge(WorktreeReconciler.layer),
 	Layer.provideMerge(WorktreeDetector.layer),

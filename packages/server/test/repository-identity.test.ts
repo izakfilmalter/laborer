@@ -9,6 +9,7 @@ import { FileWatcher } from "../src/services/file-watcher.js";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
 import { ProjectRegistry } from "../src/services/project-registry.js";
+import { RepositoryEventBus } from "../src/services/repository-event-bus.js";
 import { RepositoryIdentity } from "../src/services/repository-identity.js";
 import { RepositoryWatchCoordinator } from "../src/services/repository-watch-coordinator.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
@@ -23,6 +24,7 @@ const IdentityTestLayer = RepositoryIdentity.layer;
 const RegistryTestLayer = ProjectRegistry.layer.pipe(
 	Layer.provide(RepositoryWatchCoordinator.layer),
 	Layer.provide(BranchStateTracker.layer),
+	Layer.provide(RepositoryEventBus.layer),
 	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),

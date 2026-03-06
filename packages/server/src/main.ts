@@ -39,6 +39,7 @@ import { McpRegistrar } from "./services/mcp-registrar.js";
 import { PortAllocator } from "./services/port-allocator.js";
 import { PrdStorageService } from "./services/prd-storage-service.js";
 import { ProjectRegistry } from "./services/project-registry.js";
+import { RepositoryEventBus } from "./services/repository-event-bus.js";
 import { RepositoryIdentity } from "./services/repository-identity.js";
 import { RepositoryWatchCoordinator } from "./services/repository-watch-coordinator.js";
 import { SyncRpcLive } from "./services/sync-backend.js";
@@ -126,6 +127,7 @@ const HttpLiveBase = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 const HttpLive = HttpLiveBase.pipe(
 	Layer.provide(RepositoryWatchCoordinator.layer),
 	Layer.provide(BranchStateTracker.layer),
+	Layer.provide(RepositoryEventBus.layer),
 	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),

@@ -178,3 +178,72 @@
 - All 152 tests pass (25 test files)
 - TypeScript compiles with no errors
 - Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)
+
+## Issue 5: Repo-wide file events with normalized event bus and ignores — COMPLETED
+
+### What was done
+- Created `RepositoryEventBus` Effect service (`packages/server/src/services/repository-event-bus.ts`)
+  - Publishes normalized add/change/delete file events for repository watching
+  - Stable `RepositoryFileEvent` shape: `{ type, relativePath, absolutePath, projectId, repoRoot }`
+  - Multiple downstream subscribers can consume events without creating duplicate watchers
+  - `subscribe(handler)` returns an `EventBusSubscription` with synchronous `unsubscribe()`
+  - `publish(event)` fans out to all registered handlers
+  - `normalizeEvent(params)` applies ignore rules and returns null for suppressed paths
+
+- Added centralized ignore handling with `shouldIgnore` and `DEFAULT_IGNORED_PREFIXES`
+  - Prefix-based matching against the first path segment of relative paths
+  - Default ignores: `.git`, `node_modules`, `dist`, `build`, `out`, `.next`, `.nuxt`,
+    `.svelte-kit`, `.turbo`, `.yarn`, `.pnpm-store`, `.idea`, `.vscode`, `.DS_Store`,
+    `Thumbs.db`, `coverage`, `.nyc_output`
+  - Both `shouldIgnore` and `DEFAULT_IGNORED_PREFIXES` are exported for testability
+
+- Updated `RepositoryWatchCoordinator` to wire repo-wide file watching
+  (`packages/server/src/services/repository-watch-coordinator.ts`)
+  - Added `RepositoryEventBus` as a service dependency
+  - Added `repoRootSubscription` to `ProjectWatcherState` for repo checkout root watching
+  - New `subscribeRepoRoot(projectId, repoPath)` subscribes to the checkout root
+    with `recursive: true` via `FileWatcher`
+  - Raw watcher events are mapped through `eventBus.normalizeEvent()` — ignored paths
+    are suppressed before publishing, non-ignored events are published via `eventBus.publish()`
+  - `watchProject` now subscribes to both the git dir (metadata) AND the repo root (files)
+  - `closeState` tears down both git dir and repo root subscriptions on project removal
+  - Updated JSDoc header to reflect Issue 5 scope (no longer "future")
+
+- Wired `RepositoryEventBus.layer` into the layer graph across the codebase:
+  - `main.ts`: added between `BranchStateTracker.layer` and `FileWatcher.layer`
+  - All test layers updated with import and layer provision:
+    - `repository-watch-coordinator.test.ts` (main TestLayer + 2 inline ScopedTestLayers)
+    - `branch-state-tracker.test.ts`
+    - `worktree-watcher.test.ts`
+    - `project-registry.worktree-detection.test.ts`
+    - `workspace-destroy-origin.test.ts`
+    - `repository-identity.test.ts`
+    - `rpc/test-layer.ts` (both RPC test layer variants)
+
+- Added 18 new tests (`packages/server/test/repository-event-bus.test.ts`)
+  - shouldIgnore unit tests (7):
+    - Ignores .git paths
+    - Ignores node_modules paths
+    - Ignores dist, build, and out paths
+    - Ignores framework-specific output directories (.next, .nuxt, .svelte-kit, .turbo)
+    - Ignores IDE and OS metadata (.idea, .vscode, .DS_Store)
+    - Does not ignore source files (src/index.ts, packages/server/main.ts, README.md)
+    - Ignores empty paths
+  - RepositoryEventBus unit tests (5):
+    - Subscribers receive published events
+    - Multiple subscribers receive the same event
+    - Unsubscribe removes the handler
+    - normalizeEvent returns null for null fileName
+    - normalizeEvent suppresses ignored paths (.git, node_modules, dist)
+    - normalizeEvent returns event for source files
+  - Watcher integration tests (5):
+    - File add in watched repo emits normalized event through the event bus
+    - File change in watched repo emits event through the event bus
+    - File delete in watched repo emits event through the event bus
+    - Ignored paths do not produce events through the event bus
+    - Multiple subscribers receive events without creating duplicate watchers
+
+### Verification
+- All 170 tests pass (26 test files)
+- TypeScript compiles with no errors
+- Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)

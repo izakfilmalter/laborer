@@ -11,6 +11,7 @@ import {
 } from "../src/services/file-watcher.js";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
+import { RepositoryEventBus } from "../src/services/repository-event-bus.js";
 import { RepositoryIdentity } from "../src/services/repository-identity.js";
 import { RepositoryWatchCoordinator } from "../src/services/repository-watch-coordinator.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
@@ -23,6 +24,7 @@ const tempRoots: string[] = [];
 
 const TestLayer = RepositoryWatchCoordinator.layer.pipe(
 	Layer.provide(BranchStateTracker.layer),
+	Layer.provide(RepositoryEventBus.layer),
 	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),
@@ -171,6 +173,7 @@ describe("RepositoryWatchCoordinator scoped lifecycle", () => {
 				// Build a scoped layer with the recording watcher
 				const ScopedTestLayer = RepositoryWatchCoordinator.layer.pipe(
 					Layer.provide(BranchStateTracker.layer),
+					Layer.provide(RepositoryEventBus.layer),
 					Layer.provide(RecordingFileWatcher),
 					Layer.provide(WorktreeReconciler.layer),
 					Layer.provide(WorktreeDetector.layer),
@@ -226,6 +229,7 @@ describe("RepositoryWatchCoordinator scoped lifecycle", () => {
 
 				const ScopedTestLayer = RepositoryWatchCoordinator.layer.pipe(
 					Layer.provide(BranchStateTracker.layer),
+					Layer.provide(RepositoryEventBus.layer),
 					Layer.provide(RecordingFileWatcher),
 					Layer.provide(WorktreeReconciler.layer),
 					Layer.provide(WorktreeDetector.layer),

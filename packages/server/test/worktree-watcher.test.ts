@@ -8,6 +8,7 @@ import { BranchStateTracker } from "../src/services/branch-state-tracker.js";
 import { FileWatcher } from "../src/services/file-watcher.js";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
+import { RepositoryEventBus } from "../src/services/repository-event-bus.js";
 import { RepositoryIdentity } from "../src/services/repository-identity.js";
 import { RepositoryWatchCoordinator } from "../src/services/repository-watch-coordinator.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
@@ -20,6 +21,7 @@ const tempRoots: string[] = [];
 
 const TestLayer = RepositoryWatchCoordinator.layer.pipe(
 	Layer.provide(BranchStateTracker.layer),
+	Layer.provide(RepositoryEventBus.layer),
 	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),

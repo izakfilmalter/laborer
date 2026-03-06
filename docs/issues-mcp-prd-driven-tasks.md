@@ -567,13 +567,13 @@ Layout: the plan detail view is split with the editor on the left/top and the is
 
 ### Acceptance criteria
 
-- [ ] `PlanIssuesList` renders all issues for a given prdId
-- [ ] Issues display title and status icon consistent with existing TaskList styling
-- [ ] Status dropdown allows changing issue status (pending, in_progress, completed, cancelled)
-- [ ] Status changes call `task.updateStatus` RPC and update in real-time
-- [ ] Layout splits editor and issues list responsively
-- [ ] Empty state shown when a plan has no issues
-- [ ] Issues are ordered by creation order (matching the order in the issues file)
+- [x] `PlanIssuesList` renders all issues for a given prdId
+- [x] Issues display title and status icon consistent with existing TaskList styling
+- [x] Status dropdown allows changing issue status (pending, in_progress, completed, cancelled)
+- [x] Status changes call `task.updateStatus` RPC and update in real-time
+- [x] Layout splits editor and issues list responsively
+- [x] Empty state shown when a plan has no issues
+- [x] Issues are ordered by creation order (matching the order in the issues file)
 
 ### Blocked by
 
@@ -773,8 +773,8 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Done |
 | 189 | Plans sidebar section: PlanList component | #175 | Done |
 | 190 | Plan detail view: Plate.js markdown editor | #180, #189 | Done |
-| 191 | Plan detail view: issues list alongside editor | #181, #190 | Ready |
-| 192 | Create workspace from plan | #191 | Blocked |
+| 191 | Plan detail view: issues list alongside editor | #181, #190 | Done |
+| 192 | Create workspace from plan | #191 | Ready |
 | 193 | Plan workspace scoped task list and rlph integration | #186, #192 | Blocked |
 | 194 | Remove CreateTaskForm and manual task source tab | #181 | Ready |
 | 195 | Remove WritePrdForm, rlph.writePRD RPC, and PrdTaskImporter | #185 | Done |

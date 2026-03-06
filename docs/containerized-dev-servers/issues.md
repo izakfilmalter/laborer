@@ -294,16 +294,16 @@ The pane should use the same `LeafNode` structure as regular terminals but with 
 
 ### Acceptance criteria
 
-- [ ] `PaneType` schema in shared types includes `'devServerTerminal'`
-- [ ] `PaneContent` component handles `devServerTerminal` pane type
-- [ ] Dev server terminal pane has a visual distinction from agent terminals (colored border, icon, or label)
-- [ ] Toggle button added to workspace controls for showing/hiding the dev server pane
-- [ ] Toggle follows the same interaction pattern as the diff viewer toggle
-- [ ] When workspace with container is created, dev server pane auto-opens
-- [ ] Pane can be closed and reopened via the toggle
-- [ ] Terminal reconnection works when toggling (scrollback preserved)
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] `PaneType` schema in shared types includes `'devServerTerminal'`
+- [x] `PaneContent` component handles `devServerTerminal` pane type
+- [x] Dev server terminal pane has a visual distinction from agent terminals (colored border, icon, or label)
+- [x] Toggle button added to workspace controls for showing/hiding the dev server pane
+- [x] Toggle follows the same interaction pattern as the diff viewer toggle
+- [x] When workspace with container is created, dev server pane auto-opens
+- [x] Pane can be closed and reopened via the toggle
+- [x] Terminal reconnection works when toggling (scrollback preserved)
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 

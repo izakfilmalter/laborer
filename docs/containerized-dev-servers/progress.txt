@@ -67,115 +67,70 @@ Added `devServer` configuration object to the `laborer.json` schema in `ConfigSe
 ### Verification:
 - `bun run check-types` passes (all 5 packages)
 - `bun x ultracite check` passes (only pre-existing package.json formatting issues)
-- `bunx vitest run test/config-service.test.ts` — 32/32 tests pass
-- `bunx vitest run test/rpc/config-management.test.ts` — 3/3 tests pass
-
-## Issue 4: LiveStore schema for container state — COMPLETED
-
-Extended the `workspaces` LiveStore table to track container state and added `ContainerStarted`/`ContainerStopped` events with materializers.
-
-### What was done:
-
-**Table changes (schema.ts):**
-- Added three nullable columns to `workspaces` table: `containerId`, `containerUrl`, `containerImage` (all `State.SQLite.text({ nullable: true })`)
-- Workspace rows are created with null container fields by default
-- Container fields are populated via `ContainerStarted` event and cleared via `ContainerStopped` event
-
-**Event definitions (schema.ts):**
-- `ContainerStarted` event: carries `workspaceId`, `containerId`, `containerUrl`, `containerImage` fields
-- `ContainerStopped` event: carries `workspaceId` field
-- Both events use the `Events.synced` pattern matching existing codebase conventions
-- Events registered in the `events` object export
-
-**Materializers (schema.ts):**
-- `v1.ContainerStarted`: updates workspace row with `containerId`, `containerUrl`, `containerImage` via `workspaces.update({...}).where({ id: workspaceId })`
-- `v1.ContainerStopped`: sets all three container fields to null via `workspaces.update({...}).where({ id: workspaceId })`
-- `v1.WorkspaceCreated` materializer updated to always insert null for container fields (containers are started after workspace creation)
-
-**Test updates:**
-- Updated workspace lifecycle test assertion to include `containerId: null`, `containerUrl: null`, `containerImage: null`
-- Added new test: "materializes container lifecycle events on the workspaces table" covering full container lifecycle (create workspace → start container → verify fields populated → stop container → verify fields cleared → verify other workspace fields preserved)
-- Updated workspace management RPC test assertion to include container null fields
-
-### Tests:
-- `bunx vitest run test/schema.test.ts` — 8/8 tests pass (1 new container lifecycle test)
-- `bunx vitest run test/rpc/workspace-management.test.ts` — 4/4 tests pass
-
-### Verification:
-- `bun run check-types` passes (all 5 packages)
-- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
-- Backward compatible: existing workspaces without containers get null defaults
-- No changes to WorkspaceCreated event schema — container fields managed independently via ContainerStarted/ContainerStopped events
-
-## Issue 5: ContainerService — create and destroy — COMPLETED
-
-Created the `ContainerService` Effect service that manages Docker container lifecycle, and integrated it into the `WorkspaceProvider` create/destroy pipelines.
-
-### What was done:
-
-**New service (container-service.ts):**
-- Created `ContainerService` as a `Context.Tag` class with tag `'@laborer/ContainerService'`
-- Uses `Layer.effect` pattern, depends on `LaborerStore` for event commits
-- `createContainer(params)` method:
-  - Takes `workspaceId`, `worktreePath`, `branchName`, `projectName`, and `devServerConfig` (image, dockerfile, workdir)
-  - Generates container name and URL via shared `containerName` utility
-  - Runs `docker run -d --name {name} -v {worktreePath}:{workdir} -w {workdir} {image} sleep infinity`
-  - Commits `ContainerStarted` event to LiveStore with containerId, containerUrl, containerImage
-  - Returns `RpcError` with `CONTAINER_CONFIG_ERROR` if no image specified (Dockerfile builds not yet supported)
-  - Returns `RpcError` with `CONTAINER_CREATE_FAILED` on docker run failure
-- `destroyContainer(workspaceId)` method:
-  - Looks up workspace in LiveStore to get container info
-  - Derives container name from containerUrl
-  - Runs `docker stop` then `docker rm` (best-effort: catches errors, logs warnings, continues)
-  - Commits `ContainerStopped` event to LiveStore
-  - Gracefully handles missing workspace or missing container (no-op with log)
-
-**WorkspaceProvider integration (workspace-provider.ts):**
-- Added `ContainerService` as a dependency (injected via `yield* ContainerService`)
-- `createWorktree`: after workspace is committed to LiveStore, checks if `devServer.image` is configured. If so, calls `containerService.createContainer()`. On failure, performs full rollback (worktree removed, branch deleted, port freed, workspace removed from LiveStore).
-- `destroyWorktree`: before worktree removal, checks if workspace has a `containerId`. If so, calls `containerService.destroyContainer()` with best-effort error handling (logs warnings, continues cleanup).
-
-**Layer wiring:**
-- `main.ts`: imported `ContainerService`, added `Layer.provide(ContainerService.layer)` in `HttpLiveBase` composition
-- `test/rpc/test-layer.ts`: added `ContainerService.layer` to both `TestLaborerRpcLayer` and `TestLaborerRpcWithStoreLayer`
-- `test/workspace-destroy-origin.test.ts`: added `ContainerService.layer` to `TestLayer`
-
-### Verification:
-- `bun run check-types` passes (all 5 packages)
-- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
-- All existing tests pass:
-  - `bunx vitest run test/config-service.test.ts` — 32/32 tests pass
-  - `bunx vitest run test/rpc/config-management.test.ts` — 3/3 tests pass
-  - `bunx vitest run test/rpc/health-check.test.ts` — 1/1 tests pass
-  - `bunx vitest run test/rpc/workspace-management.test.ts` — 4/4 tests pass
-  - `bunx vitest run test/schema.test.ts` (shared) — 8/8 tests pass
-  - `bunx vitest run test/container-name.test.ts` (shared) — 21/21 tests pass
-
-## Issue 6: Dev server terminal — docker exec shell — COMPLETED
-
-Extended `TerminalClient.spawnInWorkspace` to detect containerized workspaces and spawn a terminal session inside the Docker container via `docker exec` instead of a host PTY.
-
-### What was done:
-
-**TerminalClient modification (terminal-client.ts):**
-- After workspace validation and worktree existence check, added container detection logic
-- Checks `workspace.containerId != null` from the LiveStore workspace record
-- When containerized: derives container name from `workspace.containerUrl` by stripping `.orb.local` suffix (same pattern as `ContainerService.destroyContainer`)
-- Constructs spawn payload with `command: 'docker'`, `args: ['exec', '-it', containerName, '/bin/sh']`
-- When a specific command is requested for a containerized workspace, wraps it as `docker exec -it {containerName} /bin/sh -c {command}`
-- Container terminals skip host workspace env vars (env is managed by the container image) but still set `TERM` and `COLORTERM` for proper terminal rendering
-- Non-containerized workspaces retain the original host PTY spawn behavior (no regression)
-- Added structured logging when spawning container terminals for observability
-
-**Key design decisions:**
-- The `cwd` in the spawn payload is still set to `workspace.worktreePath` — the PTY host needs a valid local cwd to start the `docker exec` process, even though the shell runs inside the container
-- Container env vars are intentionally excluded from `workspaceProvider.getWorkspaceEnv()` since the container has its own environment. Only terminal control vars (`TERM`, `COLORTERM`) are passed through from the host
-- Container name derivation uses the stored `containerUrl` rather than recalculating via the `containerName` utility, maintaining consistency with the `ContainerService` destroy path
-
-### Verification:
-- `bun run check-types` passes (all 5 packages)
-- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
 - All 121 existing tests pass (no regressions)
+
+## Issue 8: Dev server terminal pane type + toggle — COMPLETED
+
+Added `devServerTerminal` pane type to the panel system with a toggleable dev server terminal sidebar, matching the existing diff viewer toggle pattern.
+
+### What was done:
+
+**Shared types (types.ts):**
+- Added `'devServerTerminal'` to `PaneType` schema literal union
+- Added `devServerOpen?: boolean` field to `LeafNode` interface (controls visibility of dev server terminal sidebar)
+- Added `devServerTerminalId?: string` field to `LeafNode` interface (stores the terminal session ID for the dev server)
+- Updated `LeafNodeSchema` with corresponding optional fields for persistence
+
+**New component (dev-server-terminal-pane.tsx):**
+- Created `DevServerTerminalPane` component that wraps the standard `TerminalPane` with a visual distinction
+- Teal/cyan top border + "Dev Server" label with server icon to immediately distinguish from agent terminals
+- Reuses the full `TerminalPane` for all xterm.js, WebSocket, resize, and reconnection behavior
+
+**Panel rendering (panel-manager.tsx):**
+- Extracted `TerminalPaneWithSidebars` component to handle terminal panes with optional diff and/or dev server sidebars
+- Dev server terminal sidebar renders vertically below the main terminal (diff renders horizontally to the right)
+- When both are open, the layout is: main terminal + diff on right (horizontal split) over dev server terminal (vertical split)
+- Added handling for standalone `devServerTerminal` pane type in `PaneContent`
+- Imported `DevServerTerminalPane` component
+
+**Toggle action (panel-context.tsx + index.tsx):**
+- Added `toggleDevServerPane(paneId): Promise<boolean>` to `PanelActions` interface
+- Implemented `handleToggleDevServerPane` in `usePanelLayout` hook:
+  - Toggle OFF: flips `devServerOpen` to false, preserves `devServerTerminalId` for reconnection
+  - Toggle ON (existing terminal): flips `devServerOpen` to true, reconnects to existing terminal session
+  - Toggle ON (new terminal): spawns `terminal.spawn` with `autoRun: true` to auto-type setup scripts + dev server start command, then sets both `devServerOpen` and `devServerTerminalId`
+  - Re-reads layout after async spawn to avoid overwriting concurrent changes
+
+**Toggle button (index.tsx PanelHeaderBar):**
+- Added Server icon toggle button next to the diff viewer toggle
+- Button only appears for terminal panes belonging to containerized workspaces (checks `workspace.containerId != null`)
+- Active state highlighted with `bg-accent` matching the diff toggle pattern
+- Tooltips: "Open dev server terminal" / "Close dev server terminal"
+
+**Auto-open on workspace creation:**
+- When a terminal is assigned to a pane for a containerized workspace, the dev server pane auto-opens
+- Uses a ref-based pattern (`autoOpenDevServerRef`) to avoid circular dependencies between `handleAssignTerminalToPane` (sync) and `handleToggleDevServerPane` (async)
+- Fire-and-forget: spawn errors logged but never block layout assignment
+
+**Keyboard shortcut (panel-hotkeys.tsx):**
+- Added `Ctrl+b then s` hotkey sequence to toggle dev server terminal (matching `Ctrl+b then d` for diff)
+- Updated docblock with the new shortcut
+
+**Terminal reconnection:**
+- Toggling OFF preserves `devServerTerminalId` on the leaf node
+- Toggling ON with an existing `devServerTerminalId` just flips `devServerOpen` to true
+- The underlying `TerminalPane` handles WebSocket reconnection and scrollback restoration automatically
+
+### Key design decisions:
+- Dev server terminal is rendered as an inline sidebar within a terminal pane (same as diff), not as a separate pane in the layout tree. This keeps the dev server terminal visually coupled to its workspace terminal.
+- The `devServerOpen` + `devServerTerminalId` pattern mirrors the `diffOpen` pattern, providing a consistent toggle UX.
+- The dev server terminal uses `autoRun: true` on spawn, which triggers the auto-typing of setup scripts and `devServer.startCommand` from `laborer.json` (Issue 7).
+- The teal color theme for the dev server pane provides immediate visual distinction from agent terminals.
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All 137 existing tests pass (no regressions)
 
 ## Issue 2: Docker prerequisite detection — COMPLETED
 

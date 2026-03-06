@@ -11,6 +11,7 @@
  * - Ctrl+b then o → cycle focus to next pane
  * - Ctrl+b then p → cycle focus to previous pane
  * - Ctrl+b then d → toggle diff viewer alongside active terminal pane
+ * - Ctrl+b then s → toggle dev server terminal alongside active terminal pane
  * - Ctrl+b then ArrowLeft → move focus left
  * - Ctrl+b then ArrowRight → move focus right
  * - Ctrl+b then ArrowUp → move focus up
@@ -185,6 +186,18 @@ function PanelHotkeys({
       event.preventDefault()
       if (actions && activePaneId) {
         actions.toggleDiffPane(activePaneId)
+      }
+    },
+    { timeout: SEQUENCE_TIMEOUT }
+  )
+
+  // Ctrl+b then s → toggle dev server terminal alongside active terminal pane
+  useHotkeySequence(
+    ['Control+B', 'S'],
+    (event) => {
+      event.preventDefault()
+      if (actions && activePaneId) {
+        actions.toggleDevServerPane(activePaneId)
       }
     },
     { timeout: SEQUENCE_TIMEOUT }

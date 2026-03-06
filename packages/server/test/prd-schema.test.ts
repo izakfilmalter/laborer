@@ -68,6 +68,25 @@ describe("PRD LiveStore schema", () => {
 		assert.strictEqual(afterUpdate[0]?.title, "MCP planning revised");
 		assert.strictEqual(afterUpdate[0]?.status, "active");
 
+		store.commit(
+			events.prdUpdated({
+				id: "prd-1",
+				projectId: "project-1",
+				title: "MCP planning revised",
+				slug: "mcp-planning",
+				filePath: "/tmp/PRD-mcp-planning.md",
+				status: "active",
+				createdAt: "2026-03-06T00:00:00.000Z",
+			})
+		);
+
+		expect(store.query(tables.prds.where("id", "prd-1"))).toEqual([
+			expect.objectContaining({
+				title: "MCP planning revised",
+				status: "active",
+			}),
+		]);
+
 		store.commit(events.prdRemoved({ id: "prd-1" }));
 
 		const afterRemove = store.query(tables.prds.where("id", "prd-1"));

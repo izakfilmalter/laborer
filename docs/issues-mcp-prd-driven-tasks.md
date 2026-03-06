@@ -18,13 +18,13 @@ Add a `PrdId` branded string type and `PrdStatus` literal type to the shared typ
 
 ### Acceptance criteria
 
-- [ ] `prds` table is defined with all columns (id, projectId, title, slug, filePath, status, createdAt)
-- [ ] `PrdId` branded type and `PrdStatus` literal type exist in shared types
-- [ ] `prdCreated` event inserts a row into the prds table
-- [ ] `prdStatusChanged` event updates the status column
-- [ ] `prdRemoved` event deletes the row
-- [ ] `prds` table is included in `activeTables` and the schema exports
-- [ ] Existing tables and events are unaffected
+- [x] `prds` table is defined with all columns (id, projectId, title, slug, filePath, status, createdAt)
+- [x] `PrdId` branded type and `PrdStatus` literal type exist in shared types
+- [x] `prdCreated` event inserts a row into the prds table
+- [x] `prdStatusChanged` event updates the status column
+- [x] `prdRemoved` event deletes the row
+- [x] `prds` table is included in `activeTables` and the schema exports
+- [x] Existing tables and events are unaffected
 
 ### Blocked by
 
@@ -757,9 +757,9 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
-| 175 | PRDs table and events in LiveStore schema | None | Ready |
+| 175 | PRDs table and events in LiveStore schema | None | Done |
 | 176 | Tasks table: add prdId column | None | Ready |
-| 177 | PrdStorageService: create and read PRD files on disk | #175 | Blocked |
+| 177 | PrdStorageService: create and read PRD files on disk | #175 | Ready |
 | 178 | PRD create and list RPCs | #177 | Blocked |
 | 179 | PRD read and remove RPCs | #178 | Blocked |
 | 180 | PRD update RPC and status changes | #179 | Blocked |
@@ -771,7 +771,7 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 186 | MCP issue tools: create_issue, read_issues, update_issue, list_remaining_issues | #183, #184 | Blocked |
 | 187 | MCP auto-registration: Opencode config | #184 | Blocked |
 | 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Blocked |
-| 189 | Plans sidebar section: PlanList component | #175 | Blocked |
+| 189 | Plans sidebar section: PlanList component | #175 | Ready |
 | 190 | Plan detail view: Plate.js markdown editor | #180, #189 | Blocked |
 | 191 | Plan detail view: issues list alongside editor | #181, #190 | Blocked |
 | 192 | Create workspace from plan | #191 | Blocked |

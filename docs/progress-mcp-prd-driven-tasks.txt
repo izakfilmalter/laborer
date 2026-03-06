@@ -1,0 +1,6 @@
+2026-03-06
+- Selected Issue 175 as the highest-priority next task because it is foundational PRD data-model work and unblocks both storage and UI follow-up issues.
+- Added `PrdId` and `PrdStatus` to `packages/shared/src/types.ts` and introduced the `Prd` domain model.
+- Added the `prds` LiveStore table plus `prdCreated`, `prdStatusChanged`, and `prdRemoved` synced events/materializers in `packages/shared/src/schema.ts`, and registered `prds` in both schema exports and `activeTables`.
+- Added `packages/server/test/prd-schema.test.ts` to verify PRD lifecycle materialization, supported status values, and that existing task materialization still works.
+- Verified with `bun run check-types` in `packages/shared` and `bun run test -- prd-schema.test.ts` in `packages/server`.

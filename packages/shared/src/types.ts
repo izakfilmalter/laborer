@@ -16,6 +16,9 @@ export type TerminalId = typeof TerminalId.Type;
 export const TaskId = Schema.String.pipe(Schema.brand("TaskId"));
 export type TaskId = typeof TaskId.Type;
 
+export const PrdId = Schema.String.pipe(Schema.brand("PrdId"));
+export type PrdId = typeof PrdId.Type;
+
 // ---------------------------------------------------------------------------
 // Enums (Variants)
 // ---------------------------------------------------------------------------
@@ -45,6 +48,9 @@ export const TaskStatus = Schema.Literal(
 	"cancelled"
 );
 export type TaskStatus = typeof TaskStatus.Type;
+
+export const PrdStatus = Schema.Literal("draft", "active", "completed");
+export type PrdStatus = typeof PrdStatus.Type;
 
 export const PaneType = Schema.Literal("terminal", "diff");
 export type PaneType = typeof PaneType.Type;
@@ -90,6 +96,16 @@ export class Task extends Schema.Class<Task>("Task")({
 	externalId: Schema.optional(Schema.String),
 	title: Schema.String,
 	status: TaskStatus,
+}) {}
+
+export class Prd extends Schema.Class<Prd>("Prd")({
+	id: PrdId,
+	projectId: ProjectId,
+	title: Schema.String,
+	slug: Schema.String,
+	filePath: Schema.String,
+	status: PrdStatus,
+	createdAt: Schema.Date,
 }) {}
 
 export class Diff extends Schema.Class<Diff>("Diff")({

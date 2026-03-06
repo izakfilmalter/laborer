@@ -1,5 +1,5 @@
 import { Events, makeSchema, Schema, State } from "@livestore/livestore";
-import { PanelNodeSchema } from "./types.js";
+import { PanelNodeSchema, PrdStatus } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Tables
@@ -61,6 +61,19 @@ export const tasks = State.SQLite.table({
 		externalId: State.SQLite.text({ nullable: true }),
 		title: State.SQLite.text(),
 		status: State.SQLite.text({ default: "pending" }),
+	},
+});
+
+export const prds = State.SQLite.table({
+	name: "prds",
+	columns: {
+		id: State.SQLite.text({ primaryKey: true }),
+		projectId: State.SQLite.text(),
+		title: State.SQLite.text(),
+		slug: State.SQLite.text(),
+		filePath: State.SQLite.text(),
+		status: State.SQLite.text({ default: "draft" }),
+		createdAt: State.SQLite.text(),
 	},
 });
 
@@ -238,6 +251,36 @@ export const taskRemoved = Events.synced({
 	}),
 });
 
+export const prdCreated = Events.synced({
+	name: "v1.PrdCreated",
+	schema: Schema.Struct({
+		id: Schema.String,
+		projectId: Schema.String,
+		title: Schema.String,
+		slug: Schema.String,
+		filePath: Schema.String,
+		status: Schema.optionalWith(PrdStatus, {
+			default: () => "draft",
+		}),
+		createdAt: Schema.String,
+	}),
+});
+
+export const prdStatusChanged = Events.synced({
+	name: "v1.PrdStatusChanged",
+	schema: Schema.Struct({
+		id: Schema.String,
+		status: PrdStatus,
+	}),
+});
+
+export const prdRemoved = Events.synced({
+	name: "v1.PrdRemoved",
+	schema: Schema.Struct({
+		id: Schema.String,
+	}),
+});
+
 // -- Panel Layout events ----------------------------------------------------
 
 /**
@@ -289,6 +332,9 @@ export const events = {
 	taskCreated,
 	taskStatusChanged,
 	taskRemoved,
+	prdCreated,
+	prdStatusChanged,
+	prdRemoved,
 	layoutSplit,
 	layoutPaneClosed,
 	layoutPaneAssigned,
@@ -346,6 +392,27 @@ const materializers = State.SQLite.materializers(events, {
 	"v1.TaskStatusChanged": ({ id, status }) =>
 		tasks.update({ status }).where({ id }),
 	"v1.TaskRemoved": ({ id }) => tasks.delete().where({ id }),
+	"v1.PrdCreated": ({
+		id,
+		projectId,
+		title,
+		slug,
+		filePath,
+		status,
+		createdAt,
+	}) =>
+		prds.insert({
+			id,
+			projectId,
+			title,
+			slug,
+			filePath,
+			status,
+			createdAt,
+		}),
+	"v1.PrdStatusChanged": ({ id, status }) =>
+		prds.update({ status }).where({ id }),
+	"v1.PrdRemoved": ({ id }) => prds.delete().where({ id }),
 	"v1.LayoutSplit": ({ id, layoutTree, activePaneId }) =>
 		panelLayout
 			.insert({ id, layoutTree, activePaneId })
@@ -374,6 +441,7 @@ export const tables = {
 	terminals,
 	diffs,
 	tasks,
+	prds,
 	panelLayout,
 };
 
@@ -388,6 +456,7 @@ const activeTables = {
 	workspaces,
 	diffs,
 	tasks,
+	prds,
 	panelLayout,
 };
 

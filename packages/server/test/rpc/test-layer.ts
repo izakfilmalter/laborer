@@ -4,6 +4,7 @@ import { Context, Effect, Layer, Ref } from "effect";
 import { LaborerRpcsLive } from "../../src/rpc/handlers.js";
 import { ConfigService } from "../../src/services/config-service.js";
 import { DiffService } from "../../src/services/diff-service.js";
+import { FileWatcher } from "../../src/services/file-watcher.js";
 import { GithubTaskImporter } from "../../src/services/github-task-importer.js";
 import { LaborerStore } from "../../src/services/laborer-store.js";
 import { LinearTaskImporter } from "../../src/services/linear-task-importer.js";
@@ -11,12 +12,12 @@ import { PortAllocator } from "../../src/services/port-allocator.js";
 import { PrdStorageService } from "../../src/services/prd-storage-service.js";
 import { ProjectRegistry } from "../../src/services/project-registry.js";
 import { RepositoryIdentity } from "../../src/services/repository-identity.js";
+import { RepositoryWatchCoordinator } from "../../src/services/repository-watch-coordinator.js";
 import { TaskManager } from "../../src/services/task-manager.js";
 import { TerminalClient } from "../../src/services/terminal-client.js";
 import { WorkspaceProvider } from "../../src/services/workspace-provider.js";
 import { WorktreeDetector } from "../../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../../src/services/worktree-reconciler.js";
-import { WorktreeWatcher } from "../../src/services/worktree-watcher.js";
 import { TestLaborerStore } from "../helpers/test-store.js";
 
 class TestTerminalClientRecorder extends Context.Tag(
@@ -92,7 +93,8 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ConfigService.layer),
 	Layer.provide(ProjectRegistry.layer),
-	Layer.provide(WorktreeWatcher.layer),
+	Layer.provide(RepositoryWatchCoordinator.layer),
+	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),
 	Layer.provide(RepositoryIdentity.layer),
@@ -111,7 +113,8 @@ const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ConfigService.layer),
 	Layer.provide(ProjectRegistry.layer),
-	Layer.provide(WorktreeWatcher.layer),
+	Layer.provide(RepositoryWatchCoordinator.layer),
+	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),
 	Layer.provide(RepositoryIdentity.layer),

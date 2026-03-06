@@ -4,19 +4,21 @@ import { assert, describe, it } from "@effect/vitest";
 import { events, tables } from "@laborer/shared/schema";
 import { Effect, Layer } from "effect";
 import { afterAll } from "vitest";
+import { FileWatcher } from "../src/services/file-watcher.js";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
 import { RepositoryIdentity } from "../src/services/repository-identity.js";
+import { RepositoryWatchCoordinator } from "../src/services/repository-watch-coordinator.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
-import { WorktreeWatcher } from "../src/services/worktree-watcher.js";
 import { git, initRepo } from "./helpers/git-helpers.js";
 import { TestLaborerStore } from "./helpers/test-store.js";
 import { delay, waitFor } from "./helpers/timing-helpers.js";
 
 const tempRoots: string[] = [];
 
-const TestLayer = WorktreeWatcher.layer.pipe(
+const TestLayer = RepositoryWatchCoordinator.layer.pipe(
+	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),
 	Layer.provide(RepositoryIdentity.layer),
@@ -32,14 +34,14 @@ afterAll(() => {
 	}
 });
 
-describe("WorktreeWatcher", () => {
+describe("RepositoryWatchCoordinator", () => {
 	it.scoped("reconciles on worktree add and remove", () =>
 		Effect.gen(function* () {
 			const repoPath = initRepo("watcher-add-remove", tempRoots);
 			const linkedPath = join(repoPath, ".worktrees", "watcher-one");
 
-			const watcher = yield* WorktreeWatcher;
-			yield* watcher.watchProject("project-watch-1", repoPath);
+			const coordinator = yield* RepositoryWatchCoordinator;
+			yield* coordinator.watchProject("project-watch-1", repoPath);
 
 			const { store } = yield* LaborerStore;
 
@@ -73,8 +75,8 @@ describe("WorktreeWatcher", () => {
 			const linkedA = join(repoPath, ".worktrees", "watcher-a");
 			const linkedB = join(repoPath, ".worktrees", "watcher-b");
 
-			const watcher = yield* WorktreeWatcher;
-			yield* watcher.watchProject("project-watch-2", repoPath);
+			const coordinator = yield* RepositoryWatchCoordinator;
+			yield* coordinator.watchProject("project-watch-2", repoPath);
 
 			const { store } = yield* LaborerStore;
 
@@ -89,7 +91,7 @@ describe("WorktreeWatcher", () => {
 				)
 			);
 
-			yield* watcher.unwatchProject("project-watch-2");
+			yield* coordinator.unwatchProject("project-watch-2");
 
 			git(`worktree add -b watcher/b ${linkedB}`, repoPath);
 			yield* Effect.promise(() => delay(1500));
@@ -127,8 +129,8 @@ describe("WorktreeWatcher", () => {
 				})
 			);
 
-			const watcher = yield* WorktreeWatcher;
-			yield* watcher.watchAll();
+			const coordinator = yield* RepositoryWatchCoordinator;
+			yield* coordinator.watchAll();
 
 			yield* Effect.promise(() =>
 				waitFor(() => {
@@ -163,8 +165,8 @@ describe("WorktreeWatcher", () => {
 				const repoPath = initRepo("watcher-missing-worktrees", tempRoots);
 				const linkedPath = join(repoPath, ".worktrees", "watcher-late-create");
 
-				const watcher = yield* WorktreeWatcher;
-				yield* watcher.watchProject("project-watch-3", repoPath);
+				const coordinator = yield* RepositoryWatchCoordinator;
+				yield* coordinator.watchProject("project-watch-3", repoPath);
 
 				const { store } = yield* LaborerStore;
 

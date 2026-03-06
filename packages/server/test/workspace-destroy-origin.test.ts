@@ -6,14 +6,15 @@ import { events, tables } from "@laborer/shared/schema";
 import { Effect, Layer } from "effect";
 import { afterAll, beforeAll } from "vitest";
 import { ConfigService } from "../src/services/config-service.js";
+import { FileWatcher } from "../src/services/file-watcher.js";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
 import { ProjectRegistry } from "../src/services/project-registry.js";
 import { RepositoryIdentity } from "../src/services/repository-identity.js";
+import { RepositoryWatchCoordinator } from "../src/services/repository-watch-coordinator.js";
 import { WorkspaceProvider } from "../src/services/workspace-provider.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
-import { WorktreeWatcher } from "../src/services/worktree-watcher.js";
 import { git, initRepo } from "./helpers/git-helpers.js";
 import { TestLaborerStore } from "./helpers/test-store.js";
 
@@ -21,7 +22,8 @@ const tempRoots: string[] = [];
 
 const TestLayer = WorkspaceProvider.layer.pipe(
 	Layer.provideMerge(ProjectRegistry.layer),
-	Layer.provideMerge(WorktreeWatcher.layer),
+	Layer.provideMerge(RepositoryWatchCoordinator.layer),
+	Layer.provideMerge(FileWatcher.layer),
 	Layer.provideMerge(WorktreeReconciler.layer),
 	Layer.provideMerge(WorktreeDetector.layer),
 	Layer.provideMerge(RepositoryIdentity.layer),

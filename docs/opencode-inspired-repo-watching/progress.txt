@@ -70,3 +70,53 @@
 - All 140 tests pass (23 test files)
 - TypeScript compiles with no errors
 - Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)
+
+## Issue 3: Scoped repository watcher coordinator — COMPLETED
+
+### What was done
+- Created `FileWatcher` abstracted watcher backend (`packages/server/src/services/file-watcher.ts`)
+  - Platform-independent interface wrapping `fs.watch` behind a tagged Effect service
+  - Exposes `subscribe(path, onChange, onError, options)` returning a `WatchSubscription` handle
+  - Designed to be swappable with `@parcel/watcher` or other native backends
+  - Default `Layer.succeed` implementation using Node.js `fs.watch`
+
+- Created `RepositoryWatchCoordinator` scoped Effect service
+  (`packages/server/src/services/repository-watch-coordinator.ts`)
+  - Owns all watcher lifecycle for each registered repository
+  - Subscribes to canonical common git directory for metadata changes
+  - Uses `RepositoryIdentity` for canonical path resolution (not raw paths)
+  - Debounces filesystem events (500ms) before triggering reconciliation
+  - Two-phase git dir watching: watches `.git` initially, switches to
+    `.git/worktrees` when the subdirectory appears
+  - `watchProject(projectId, repoPath)` — idempotent, replaces previous watchers
+  - `unwatchProject(projectId)` — tears down subscriptions and clears timers
+  - `watchAll()` — reconciles and watches all persisted projects (startup bootstrap)
+  - `Effect.addFinalizer` ensures all watchers close on scope disposal
+
+- Replaced `WorktreeWatcher` with `RepositoryWatchCoordinator` throughout:
+  - `ProjectRegistry` now depends on `RepositoryWatchCoordinator` instead of `WorktreeWatcher`
+  - `main.ts` layer graph updated: `RepositoryWatchCoordinator.layer` + `FileWatcher.layer`
+    replace `WorktreeWatcher.layer`
+  - All test layers updated (worktree-watcher.test.ts, repository-identity.test.ts,
+    project-registry.worktree-detection.test.ts, workspace-destroy-origin.test.ts,
+    rpc/test-layer.ts)
+
+- Added 5 new integration tests (`packages/server/test/repository-watch-coordinator.test.ts`)
+  - Each registered project gets a scoped watcher coordinator tied to its lifecycle
+  - Coordinator watches the canonical common git dir for metadata changes
+  - Removing a project tears down its watchers cleanly (no detection after unwatch)
+  - Server shutdown tears down all watcher resources through scoped service disposal
+    (verified via recording FileWatcher mock)
+  - FileWatcher abstraction is used for subscriptions instead of raw fs.watch
+    (verified via recording FileWatcher mock)
+
+- Preserved all existing worktree-watcher behavior (4 tests renamed but unchanged):
+  - Reconciles on worktree add and remove
+  - unwatchProject stops future reconciliation
+  - watchAll reconciles existing projects and starts watchers
+  - Handles repos with no .git/worktrees until first linked worktree
+
+### Verification
+- All 145 tests pass (24 test files)
+- TypeScript compiles with no errors
+- Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)

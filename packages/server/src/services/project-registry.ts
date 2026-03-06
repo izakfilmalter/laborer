@@ -28,8 +28,8 @@ import { events, tables } from "@laborer/shared/schema";
 import { Context, Effect, Layer } from "effect";
 import { LaborerStore } from "./laborer-store.js";
 import { RepositoryIdentity } from "./repository-identity.js";
+import { RepositoryWatchCoordinator } from "./repository-watch-coordinator.js";
 import { WorktreeReconciler } from "./worktree-reconciler.js";
-import { WorktreeWatcher } from "./worktree-watcher.js";
 
 /**
  * Shape of a project record returned by the registry.
@@ -63,7 +63,7 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 			const { store } = yield* LaborerStore;
 			const repoIdentity = yield* RepositoryIdentity;
 			const worktreeReconciler = yield* WorktreeReconciler;
-			const worktreeWatcher = yield* WorktreeWatcher;
+			const watchCoordinator = yield* RepositoryWatchCoordinator;
 
 			const addProject = Effect.fn("ProjectRegistry.addProject")(function* (
 				repoPath: string
@@ -130,7 +130,7 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 						)
 					);
 
-				yield* worktreeWatcher.watchProject(id, canonicalRoot);
+				yield* watchCoordinator.watchProject(id, canonicalRoot);
 
 				return project;
 			});
@@ -149,7 +149,7 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 						});
 					}
 
-					yield* worktreeWatcher.unwatchProject(projectId);
+					yield* watchCoordinator.unwatchProject(projectId);
 
 					// 2. Commit ProjectRemoved event to LiveStore
 					store.commit(events.projectRemoved({ id: projectId }));

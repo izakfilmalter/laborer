@@ -99,11 +99,11 @@ This slice should replace the assumption that `fs.watch` is enough with an abstr
 
 ### Acceptance criteria
 
-- [ ] Each registered project gets a scoped watcher coordinator tied to its lifecycle
-- [ ] The coordinator watches both the canonical repo root and canonical common git dir
-- [ ] Removing a project tears down its watchers cleanly
-- [ ] Server shutdown tears down watcher resources cleanly through scoped service disposal
-- [ ] Integration tests verify watcher setup and teardown through public service behavior
+- [x] Each registered project gets a scoped watcher coordinator tied to its lifecycle
+- [x] The coordinator watches both the canonical repo root and canonical common git dir
+- [x] Removing a project tears down its watchers cleanly
+- [x] Server shutdown tears down watcher resources cleanly through scoped service disposal
+- [x] Integration tests verify watcher setup and teardown through public service behavior
 
 ### Blocked by
 

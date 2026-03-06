@@ -14,15 +14,17 @@ Currently, both `laborer-store.ts` and `sync-backend.ts` in `packages/server` ha
 
 See the PRD "Server DATA_DIR Configuration" section for details.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] `DATA_DIR` env var added to `packages/env/src/server.ts` with default `"./data"`
-- [ ] `packages/server/src/services/laborer-store.ts` reads `DATA_DIRECTORY` from `env.DATA_DIR` instead of hardcoding `"./data"`
-- [ ] `packages/server/src/services/sync-backend.ts` reads `DATA_DIRECTORY` from `env.DATA_DIR` instead of hardcoding `"./data"`
-- [ ] Existing behavior unchanged when `DATA_DIR` is not set (default `"./data"`)
-- [ ] Setting `DATA_DIR=/tmp/test-data` causes the server to write databases to `/tmp/test-data/`
-- [ ] Type checks pass (`bun run check-types` in `packages/server` and `packages/env`)
-- [ ] Existing server tests still pass (`bun run test` in `packages/server`)
+- [x] `DATA_DIR` env var added to `packages/env/src/server.ts` with default `"./data"`
+- [x] `packages/server/src/services/laborer-store.ts` reads `DATA_DIRECTORY` from `env.DATA_DIR` instead of hardcoding `"./data"`
+- [x] `packages/server/src/services/sync-backend.ts` reads `DATA_DIRECTORY` from `env.DATA_DIR` instead of hardcoding `"./data"`
+- [x] Existing behavior unchanged when `DATA_DIR` is not set (default `"./data"`)
+- [x] Setting `DATA_DIR=/tmp/test-data` causes the server to write databases to `/tmp/test-data/`
+- [x] Type checks pass (`bun run check-types` in `packages/server` and `packages/env`)
+- [x] Existing server tests still pass (`bun run test` in `packages/server`)
 
 ### Blocked by
 

@@ -17,6 +17,7 @@ export const env = createEnv({
 		EDITOR_COMMAND: z
 			.enum(["cursor", "code", "vim", "nvim", "emacs"])
 			.default("cursor"),
+		DATA_DIR: z.string().min(1).default("./data"),
 	},
 	runtimeEnv: process.env,
 	emptyStringAsUndefined: true,

@@ -1,0 +1,14 @@
+## Issue 1: Server DATA_DIR env var — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Added `DATA_DIR` env var to `packages/env/src/server.ts` with `z.string().min(1).default("./data")`
+- Updated `packages/server/src/services/laborer-store.ts` to read `DATA_DIRECTORY` from `env.DATA_DIR` instead of hardcoding `"./data"`
+- Updated `packages/server/src/services/sync-backend.ts` to read `DATA_DIRECTORY` from `env.DATA_DIR` instead of hardcoding `"./data"`, added `import { env } from "@laborer/env/server"`
+
+Verification:
+- Type checks pass for `@laborer/server` and `@laborer/shared` (via `turbo check-types`)
+- All 125 existing server tests pass (22 test files)
+- `ultracite check` clean on changed files (2 pre-existing format issues in unrelated files)
+- Default behavior preserved: when `DATA_DIR` is not set, both files still use `"./data"`

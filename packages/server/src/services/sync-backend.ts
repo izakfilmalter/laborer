@@ -16,6 +16,7 @@
 
 import { Database } from "bun:sqlite";
 import { Rpc, RpcGroup, RpcServer } from "@effect/rpc";
+import { env } from "@laborer/env/server";
 import {
 	Context,
 	Effect,
@@ -529,7 +530,11 @@ const SyncRpcHandlersLive = SyncWsRpc.toLayer({
 		),
 });
 
-const DATA_DIRECTORY = "./data";
+/**
+ * Data directory for sync SQLite persistence, configurable via DATA_DIR env var.
+ * Defaults to `"./data"` when DATA_DIR is not set.
+ */
+const DATA_DIRECTORY = env.DATA_DIR;
 const STORE_ID = "laborer";
 
 const SyncBackendServiceLive = Layer.scoped(

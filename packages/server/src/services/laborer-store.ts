@@ -84,10 +84,11 @@ class LaborerStore extends Context.Tag("LaborerStore")<
 >() {}
 
 /**
- * Default data directory for SQLite persistence.
- * Database files are stored at `./data/<storeId>/`.
+ * Data directory for SQLite persistence, configurable via DATA_DIR env var.
+ * Database files are stored at `<DATA_DIR>/<storeId>/`.
+ * Defaults to `"./data"` when DATA_DIR is not set.
  */
-const DATA_DIRECTORY = "./data";
+const DATA_DIRECTORY = env.DATA_DIR;
 
 /**
  * WebSocket URL for the server-side store to connect to its own sync

@@ -12,43 +12,43 @@
  * @see PRD-e2e-test-coverage.md — Issue 3
  */
 
-import { expect, test } from "./fixtures/test-fixtures.js";
+import { expect, test } from './fixtures/test-fixtures.js'
 
-test.describe("tracer bullet", () => {
-	test("app loads and renders basic page structure", async ({ page }) => {
-		// Navigate to the app (uses ?reset to clear OPFS state)
-		await page.goto("/?reset");
+test.describe('tracer bullet', () => {
+  test('app loads and renders basic page structure', async ({ page }) => {
+    // Navigate to the app (uses ?reset to clear OPFS state)
+    await page.goto('/?reset')
 
-		// Wait for the app to fully load — the "Home" navigation link
-		// is rendered by the Header component in the root layout
-		const homeLink = page.getByRole("link", { name: "Home" });
-		await expect(homeLink).toBeVisible();
+    // Wait for the app to fully load — the "Home" navigation link
+    // is rendered by the Header component in the root layout
+    const homeLink = page.getByRole('link', { name: 'Home' })
+    await expect(homeLink).toBeVisible()
 
-		// Verify the header is present with its controls
-		const resetButton = page.getByRole("button", {
-			name: "Reset persistence",
-		});
-		await expect(resetButton).toBeVisible();
+    // Verify the header is present with its controls
+    const resetButton = page.getByRole('button', {
+      name: 'Reset persistence',
+    })
+    await expect(resetButton).toBeVisible()
 
-		// Verify the sidebar structure is present
-		// When no projects exist, we should see "Projects" heading and the
-		// welcome empty state or "No projects" message
-		const projectsHeading = page.getByRole("heading", { name: "Projects" });
-		await expect(projectsHeading).toBeVisible();
+    // Verify the sidebar structure is present
+    // When no projects exist, we should see "Projects" heading and the
+    // welcome empty state or "No projects" message
+    const projectsHeading = page.getByRole('heading', { name: 'Projects' })
+    await expect(projectsHeading).toBeVisible()
 
-		// Verify the server status section is present in the sidebar
-		const serverStatusHeading = page.getByRole("heading", {
-			name: "Server Status",
-		});
-		await expect(serverStatusHeading).toBeVisible();
+    // Verify the server status section is present in the sidebar
+    const serverStatusHeading = page.getByRole('heading', {
+      name: 'Server Status',
+    })
+    await expect(serverStatusHeading).toBeVisible()
 
-		// Verify the server connects successfully (health check status shows "connected")
-		const connectedStatus = page.getByText("connected", { exact: false });
-		await expect(connectedStatus).toBeVisible({ timeout: 15_000 });
-	});
+    // Verify the server connects successfully (health check status shows "connected")
+    const connectedStatus = page.getByText('connected', { exact: false })
+    await expect(connectedStatus).toBeVisible({ timeout: 15_000 })
+  })
 
-	test("page title is set to laborer", async ({ page }) => {
-		await page.goto("/");
-		await expect(page).toHaveTitle("laborer");
-	});
-});
+  test('page title is set to laborer', async ({ page }) => {
+    await page.goto('/')
+    await expect(page).toHaveTitle('laborer')
+  })
+})

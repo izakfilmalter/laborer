@@ -8,18 +8,18 @@
  * @see PRD-e2e-test-coverage.md — Page Object Pattern
  */
 
-import { test as base, expect as playwrightExpect } from "@playwright/test";
-import { PanelHelper } from "./panel-helper.js";
-import { SidebarHelper } from "./sidebar-helper.js";
-import { TerminalHelper } from "./terminal-helper.js";
+import { test as base, expect as playwrightExpect } from '@playwright/test'
+import { PanelHelper } from './panel-helper.js'
+import { SidebarHelper } from './sidebar-helper.js'
+import { TerminalHelper } from './terminal-helper.js'
 
-export const expect = playwrightExpect;
+export const expect = playwrightExpect
 
 /** Extended test fixtures with page object helpers. */
 interface E2EFixtures {
-	panels: PanelHelper;
-	sidebar: SidebarHelper;
-	terminal: TerminalHelper;
+  panels: PanelHelper
+  sidebar: SidebarHelper
+  terminal: TerminalHelper
 }
 
 /**
@@ -36,13 +36,13 @@ interface E2EFixtures {
  * ```
  */
 export const test = base.extend<E2EFixtures>({
-	sidebar: async ({ page }, use) => {
-		await use(new SidebarHelper(page));
-	},
-	panels: async ({ page }, use) => {
-		await use(new PanelHelper(page));
-	},
-	terminal: async ({ page }, use) => {
-		await use(new TerminalHelper(page));
-	},
-});
+  sidebar: async ({ page }, use) => {
+    await use(new SidebarHelper(page))
+  },
+  panels: async ({ page }, use) => {
+    await use(new PanelHelper(page))
+  },
+  terminal: async ({ page }, use) => {
+    await use(new TerminalHelper(page))
+  },
+})

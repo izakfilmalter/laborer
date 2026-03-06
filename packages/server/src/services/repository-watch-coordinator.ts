@@ -169,11 +169,18 @@ class RepositoryWatchCoordinator extends Context.Tag(
 		 * identity, subscribes to git metadata, and sets up debounced
 		 * refresh. Idempotent — re-calling for the same project
 		 * replaces the previous watchers.
+		 *
+		 * When `canonicalGitCommonDir` is provided, the coordinator
+		 * skips identity re-resolution and uses the supplied value
+		 * directly. This avoids redundant git commands when the caller
+		 * (e.g. `ProjectRegistry.addProject`) has already resolved
+		 * canonical identity.
 		 */
 		readonly watchProject: (
 			projectId: string,
 			repoPath: string,
-			projectName?: string
+			projectName?: string,
+			canonicalGitCommonDir?: string
 		) => Effect.Effect<void, never>;
 
 		/**
@@ -798,9 +805,26 @@ class RepositoryWatchCoordinator extends Context.Tag(
 			});
 
 			const watchProject = Effect.fn("RepositoryWatchCoordinator.watchProject")(
-				function* (projectId: string, repoPath: string, projectName?: string) {
+				function* (
+					projectId: string,
+					repoPath: string,
+					projectName?: string,
+					preResolvedGitCommonDir?: string
+				) {
 					// Tear down existing watchers for this project
 					yield* unwatchProject(projectId);
+
+					// Use pre-resolved identity when the caller already has it,
+					// otherwise resolve from git.
+					if (preResolvedGitCommonDir !== undefined) {
+						yield* startWatching({
+							projectId,
+							projectName: projectName ?? projectId,
+							repoPath,
+							canonicalGitCommonDir: preResolvedGitCommonDir,
+						});
+						return;
+					}
 
 					// Resolve canonical git common dir
 					const identity = yield* repoIdentity

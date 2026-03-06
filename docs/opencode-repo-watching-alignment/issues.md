@@ -171,11 +171,11 @@ This slice should ensure watcher boot, dedupe checks, and restore behavior all o
 
 ### Acceptance criteria
 
-- [ ] Project add flow writes persisted identity fields and uses them immediately for lifecycle operations
-- [ ] Server startup restores watchers using persisted canonical identity
-- [ ] Legacy persisted projects remain bootable through migration or lazy backfill
-- [ ] Startup restore produces the same visible workspaces and branch state as fresh registration
-- [ ] Integration tests cover restart flows for both migrated and newly created project records
+- [x] Project add flow writes persisted identity fields and uses them immediately for lifecycle operations
+- [x] Server startup restores watchers using persisted canonical identity
+- [x] Legacy persisted projects remain bootable through migration or lazy backfill
+- [x] Startup restore produces the same visible workspaces and branch state as fresh registration
+- [x] Integration tests cover restart flows for both migrated and newly created project records
 
 ### Blocked by
 

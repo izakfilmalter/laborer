@@ -210,7 +210,12 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 						)
 					);
 
-				yield* watchCoordinator.watchProject(id, canonicalRoot);
+				yield* watchCoordinator.watchProject(
+					id,
+					canonicalRoot,
+					name,
+					identity.canonicalGitCommonDir
+				);
 
 				return project;
 			});

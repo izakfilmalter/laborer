@@ -276,6 +276,7 @@ function PanelHeaderBar({
 					{mainView === "dashboard" && (
 						<span className="text-foreground">Dashboard</span>
 					)}
+					{mainView === "plan" && <span className="text-foreground">Plan</span>}
 				</div>
 			</div>
 
@@ -1048,20 +1049,31 @@ function HomeComponent() {
 				<ResizablePanel defaultSize="75%" minSize="10%">
 					{!hasProjects && <WelcomeEmptyState />}
 					{hasProjects && mainView === "plan" && selectedPlanId && (
-						<div className="flex h-full border-2 border-transparent">
-							<div className="min-w-0 flex-1">
-								<PlanEditor onBack={handlePlanBack} prdId={selectedPlanId} />
-							</div>
-							<div className="w-80 shrink-0 border-l">
-								<div className="flex h-8 shrink-0 items-center justify-between border-b px-3">
-									<span className="font-medium text-sm">Issues</span>
+						<div className="flex h-full flex-col border-2 border-transparent">
+							<PanelHeaderBar
+								layout={layout}
+								mainView={mainView}
+								onToggleSidebar={
+									responsiveSizes.canCollapseSidebar ? toggleSidebar : undefined
+								}
+								onViewChange={setMainView}
+								sidebarCollapsed={sidebarCollapsed}
+							/>
+							<div className="flex min-h-0 flex-1 flex-col md:flex-row">
+								<div className="min-h-0 min-w-0 flex-1">
+									<PlanEditor onBack={handlePlanBack} prdId={selectedPlanId} />
 								</div>
-								<ScrollArea className="h-[calc(100%-2rem)]">
-									<div className="grid gap-3 p-3">
-										<CreatePlanWorkspace prdId={selectedPlanId} />
-										<PlanIssuesList prdId={selectedPlanId} />
+								<div className="h-64 shrink-0 border-t md:h-auto md:w-80 md:border-t-0 md:border-l">
+									<div className="flex h-8 shrink-0 items-center justify-between border-b px-3">
+										<span className="font-medium text-sm">Issues</span>
 									</div>
-								</ScrollArea>
+									<ScrollArea className="h-[calc(100%-2rem)]">
+										<div className="grid gap-3 p-3">
+											<CreatePlanWorkspace prdId={selectedPlanId} />
+											<PlanIssuesList prdId={selectedPlanId} />
+										</div>
+									</ScrollArea>
+								</div>
 							</div>
 						</div>
 					)}

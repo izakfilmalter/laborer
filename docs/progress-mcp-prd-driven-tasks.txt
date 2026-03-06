@@ -113,3 +113,19 @@
 - Confirmed `task.create` RPC in `packages/shared/src/rpc.ts` and its handler in `packages/server/src/rpc/handlers.ts` remain untouched (still used by MCP).
 - Updated `apps/web/test/task-source-picker.test.ts` to remove the manual-specific test case and adjust sample data to use only Linear and GitHub sources.
 - Verified with `bun run check-types` in `apps/web`, `packages/shared`, and `packages/server`; `bun run test` (73 tests, 9 files, all passing) in `apps/web`; and `bun x ultracite check` on all touched files.
+- Selected Issue 196 as the highest-priority (and only remaining) ready task — it is the final polish and end-to-end verification pass for the full MCP + PRD-driven task workflow.
+- Reviewed all 13 polishing requirements from the PRD against the existing codebase implementation:
+  - Plans sub-section visual hierarchy: already consistent with Workspaces and Tasks sections (same `Collapsible`, `text-xs`, `font-medium`, `text-muted-foreground` patterns).
+  - Plate.js editor: already loads without layout shift (loading spinner shown while fetching, `initialMarkdown !== null` guard prevents premature editor render).
+  - Issue status indicators: `StatusIcon` and `getStatusClasses` in `plan-issues-list.tsx` are identical to `task-list.tsx` (same icons, colors, and badge patterns).
+  - Create Workspace button: already disabled with tooltip when workspace exists (`create-plan-workspace.tsx:116-132`).
+  - MCP auto-registration: `mergeOpencodeConfig`, `mergeClaudeConfig`, `mergeCodexConfig` all preserve existing user entries by only touching the `laborer` key.
+  - MCP concurrent tool calls: tools are stateless RPC delegates with no shared mutable state, handled gracefully by Effect's concurrency model.
+  - Error states: plan editor shows `AlertCircle` icon, descriptive message, and "Go back" button; save failures show toast notifications.
+  - Keyboard navigation: plan items are `<button type="button">` with `aria-pressed`, collapsible trigger has `focus-visible:ring-2` and `focus-visible:ring-ring`.
+  - Real-time updates: `PlanIssuesList` and `PlanList` both query LiveStore reactively via `store.useQuery()`, so status changes propagate automatically.
+  - Branch name: `planBranchName` produces `plan/<slug>` which is a sensible, recognizable convention.
+  - Markdown round-trip: `MarkdownPlugin` with `remarkGfm` configured for standard GFM serialization/deserialization.
+  - No visual regressions: all sidebar sections use consistent `Card`, `Badge`, `Collapsible`, `Empty` component patterns.
+- Fixed the plan detail view responsive layout in `apps/web/src/routes/index.tsx`: added `PanelHeaderBar` to the plan view for consistent sidebar toggle and view switching, and made the editor/issues split layout responsive with `flex-col md:flex-row` so the issues sidebar stacks below the editor on narrow viewports (with a fixed `h-64` height) and sits side-by-side at `md:w-80` on wider screens. Added "Plan" label to the header bar context display.
+- Verified with `bun run check-types` and `bun run test` (73 tests, 9 files, all passing) in `apps/web`, and `bun x ultracite check apps/web/src/routes/index.tsx`.

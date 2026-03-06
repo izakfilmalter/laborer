@@ -729,19 +729,19 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 
 ### Acceptance criteria
 
-- [ ] Plans sub-section has consistent visual hierarchy with Workspaces and Tasks sections
-- [ ] Plate.js editor loads without layout shift or flash of unstyled content
-- [ ] Plan detail view is responsive at various sidebar widths
-- [ ] Issue status indicators use the same colors and icons as the existing task list
-- [ ] "Create Workspace" button is disabled with tooltip when workspace already exists
-- [ ] MCP auto-registration preserves user-added MCP servers in AI tool configs
-- [ ] MCP server handles concurrent tool calls gracefully
-- [ ] Error states in the plan editor show clear, actionable messages
-- [ ] Keyboard navigation works for the Plans section (Tab, Enter, shortcuts)
-- [ ] Plan workspace scoped task list updates in real-time
-- [ ] Workspace branch name derived from plan name is sensible
-- [ ] Plate.js editor preserves markdown formatting on round-trip
-- [ ] No visual regressions in existing sidebar sections, task lists, or workspace cards
+- [x] Plans sub-section has consistent visual hierarchy with Workspaces and Tasks sections
+- [x] Plate.js editor loads without layout shift or flash of unstyled content
+- [x] Plan detail view is responsive at various sidebar widths
+- [x] Issue status indicators use the same colors and icons as the existing task list
+- [x] "Create Workspace" button is disabled with tooltip when workspace already exists
+- [x] MCP auto-registration preserves user-added MCP servers in AI tool configs
+- [x] MCP server handles concurrent tool calls gracefully
+- [x] Error states in the plan editor show clear, actionable messages
+- [x] Keyboard navigation works for the Plans section (Tab, Enter, shortcuts)
+- [x] Plan workspace scoped task list updates in real-time
+- [x] Workspace branch name derived from plan name is sensible
+- [x] Plate.js editor preserves markdown formatting on round-trip
+- [x] No visual regressions in existing sidebar sections, task lists, or workspace cards
 
 ### Blocked by
 
@@ -778,4 +778,4 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 193 | Plan workspace scoped task list and rlph integration | #186, #192 | Done |
 | 194 | Remove CreateTaskForm and manual task source tab | #181 | Done |
 | 195 | Remove WritePrdForm, rlph.writePRD RPC, and PrdTaskImporter | #185 | Done |
-| 196 | Polish and end-to-end verification | #188, #193, #194, #195 | Ready |
+| 196 | Polish and end-to-end verification | #188, #193, #194, #195 | Done |

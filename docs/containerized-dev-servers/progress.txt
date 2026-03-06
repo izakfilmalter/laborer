@@ -315,3 +315,44 @@ Added `container.pause` and `container.unpause` RPCs to the `ContainerService`, 
 - `bun x ultracite check` passes (only pre-existing package.json formatting issues)
 - All 29 shared tests pass (including updated container lifecycle test)
 - All 137 server tests pass (no regressions)
+
+## Issue 11: Wire pause/unpause to workspace play/pause buttons — COMPLETED
+
+Connected the existing play/pause buttons in the workspace sidebar and dashboard to the `container.pause`/`container.unpause` RPCs for containerized workspaces, with paused state reflected in status badges.
+
+### What was done:
+
+**workspace-list.tsx (sidebar workspace card):**
+- Created `ContainerPauseButton` component that calls `container.pause` / `container.unpause` RPCs
+  - Shows Play icon (green) when paused, Pause icon (amber) when running
+  - Loading state with pulsing animation during RPC calls
+  - Error toasts on failure, success toasts on completion
+  - Idempotent: delegates to the server's idempotent pause/unpause methods
+- For containerized workspaces, the play button area renders `ContainerPauseButton` instead of "Start Ralph Loop"
+- Non-containerized workspaces retain the existing "Start Ralph Loop" button (no regression)
+- Added `containerId` and `containerStatus` to `WorkspaceItemProps` interface
+- Derived `displayStatus` from container state: shows 'paused' (amber badge) when container is paused, otherwise shows workspace lifecycle status
+- Added 'paused' to `WorkspaceStatus` type with amber color classes in `getStatusClasses` and `StatusDot`
+- Imported `Pause` icon from lucide-react
+- Extracted `ContainerPauseButton` as a separate component to keep `WorkspaceItem` under cognitive complexity limit
+
+**workspace-dashboard.tsx (dashboard workspace rows):**
+- Added 'paused' to `WorkspaceStatus` type with amber color classes
+- Added `paused` to `WorkspaceCounts` interface and `computeWorkspaceCounts()` function
+- Created `getDisplayStatus()` helper that derives display status from workspace + container state
+- Updated `DashboardWorkspaceRow` to accept `containerId` and `containerStatus` props
+- Dashboard rows show amber 'paused' badge when container is paused
+- `WorkspaceStatusSummary` shows paused count with amber dot
+- Non-containerized workspaces unaffected (backward compatible)
+
+### Key design decisions:
+- The container pause/unpause button is a separate component (`ContainerPauseButton`) to keep cognitive complexity under the 20-point limit enforced by biome
+- For containerized workspaces, the play/pause button replaces the "Start Ralph Loop" button entirely — these are mutually exclusive concerns (containers use pause/unpause, non-containerized use rlph)
+- The `displayStatus` derivation is done at the component level: if a workspace has a `containerId` and `containerStatus === 'paused'`, the badge shows 'paused' instead of the workspace lifecycle status
+- Amber/yellow-500 is used for the paused state to visually distinguish it from running (green) and stopped (gray)
+- Terminal pane freezing when paused is inherent Docker behavior — no additional code needed
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All 121 existing tests pass (no regressions)

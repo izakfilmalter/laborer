@@ -59,6 +59,7 @@ const dashboardTasks$ = queryDb(tasks, { label: 'dashboardTasks' })
 type WorkspaceStatus =
   | 'creating'
   | 'running'
+  | 'paused'
   | 'stopped'
   | 'errored'
   | 'destroyed'
@@ -70,6 +71,8 @@ function getStatusClasses(status: string): string {
       return 'border-warning/30 bg-warning/10 text-warning'
     case 'running':
       return 'border-success/30 bg-success/10 text-success'
+    case 'paused':
+      return 'border-amber-500/30 bg-amber-500/10 text-amber-500'
     case 'stopped':
       return 'border-muted-foreground/30 bg-muted text-muted-foreground'
     case 'errored':
@@ -91,6 +94,8 @@ function StatusDot({ status }: { readonly status: string }) {
     switch (status as WorkspaceStatus) {
       case 'running':
         return 'bg-success'
+      case 'paused':
+        return 'bg-amber-500'
       case 'stopped':
         return 'bg-muted-foreground/50'
       case 'errored':
@@ -189,26 +194,50 @@ function TaskSummary({ counts }: { readonly counts: TaskCounts }) {
 interface WorkspaceCounts {
   readonly creating: number
   readonly errored: number
+  readonly paused: number
   readonly running: number
   readonly stopped: number
   readonly total: number
 }
 
+/**
+ * Derive the display status for a workspace, accounting for
+ * container paused state.
+ */
+function getDisplayStatus(ws: {
+  readonly status: string
+  readonly containerId?: string | null
+  readonly containerStatus?: string | null
+}): string {
+  if (ws.containerId != null && ws.containerStatus === 'paused') {
+    return 'paused'
+  }
+  return ws.status
+}
+
 /** Aggregate workspace counts from a filtered workspace list. */
 function computeWorkspaceCounts(
-  wsList: ReadonlyArray<{ readonly status: string }>
+  wsList: ReadonlyArray<{
+    readonly status: string
+    readonly containerId?: string | null
+    readonly containerStatus?: string | null
+  }>
 ): WorkspaceCounts {
   let running = 0
   let creating = 0
+  let paused = 0
   let stopped = 0
   let errored = 0
   for (const ws of wsList) {
-    switch (ws.status as WorkspaceStatus) {
+    switch (getDisplayStatus(ws) as WorkspaceStatus) {
       case 'running':
         running++
         break
       case 'creating':
         creating++
+        break
+      case 'paused':
+        paused++
         break
       case 'stopped':
         stopped++
@@ -220,7 +249,7 @@ function computeWorkspaceCounts(
         break
     }
   }
-  return { running, creating, stopped, errored, total: wsList.length }
+  return { running, creating, paused, stopped, errored, total: wsList.length }
 }
 
 /** Compact workspace status summary. */
@@ -239,6 +268,12 @@ function WorkspaceStatusSummary({
         <span className="flex items-center gap-1 text-success">
           <span className="inline-block size-2 rounded-full bg-success" />
           {counts.running} running
+        </span>
+      )}
+      {counts.paused > 0 && (
+        <span className="flex items-center gap-1 text-amber-500">
+          <span className="inline-block size-2 rounded-full bg-amber-500" />
+          {counts.paused} paused
         </span>
       )}
       {counts.creating > 0 && (
@@ -282,7 +317,9 @@ interface ProjectSection {
     readonly status: string
     readonly origin: WorkspaceOrigin | string
     readonly createdAt: string
+    readonly containerId: string | null
     readonly containerUrl: string | null
+    readonly containerStatus: string | null
   }>
 }
 
@@ -484,12 +521,18 @@ function DashboardWorkspaceRow({
     readonly port: number
     readonly status: string
     readonly origin: WorkspaceOrigin | string
+    readonly containerId: string | null
     readonly containerUrl: string | null
+    readonly containerStatus: string | null
   }
   readonly terminalCount: number
 }) {
   const isDetectedWorkspace =
     (workspace.origin as WorkspaceOrigin) === 'external'
+  const isContainerized = workspace.containerId != null
+  const isContainerPaused = workspace.containerStatus === 'paused'
+  const displayStatus =
+    isContainerized && isContainerPaused ? 'paused' : workspace.status
 
   return (
     <div className="flex items-center gap-2 rounded-md border px-3 py-2">
@@ -527,7 +570,7 @@ function DashboardWorkspaceRow({
       <Badge
         className={cn(
           'ml-auto shrink-0 border',
-          getStatusClasses(workspace.status)
+          getStatusClasses(displayStatus)
         )}
         title={
           isDetectedWorkspace && workspace.status === 'stopped'
@@ -536,8 +579,8 @@ function DashboardWorkspaceRow({
         }
         variant="outline"
       >
-        <StatusDot status={workspace.status} />
-        {workspace.status}
+        <StatusDot status={displayStatus} />
+        {displayStatus}
       </Badge>
     </div>
   )

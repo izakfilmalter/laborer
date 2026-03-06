@@ -410,16 +410,16 @@ When paused, the dev server terminal pane freezes (docker exec session is frozen
 
 ### Acceptance criteria
 
-- [ ] Play button calls `container.unpause` RPC for containerized workspaces
-- [ ] Pause button calls `container.pause` RPC for containerized workspaces
-- [ ] Non-containerized workspaces retain existing play button behavior (no regression)
-- [ ] Status badge shows paused state distinctly (yellow/amber color with "paused" label)
-- [ ] Button icon changes between play/pause based on container state
-- [ ] Loading state shown during pause/unpause RPC calls
-- [ ] Error toast shown if pause/unpause fails
-- [ ] Terminal pane freezes when paused, resumes when unpaused (inherent Docker behavior, just verify)
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] Play button calls `container.unpause` RPC for containerized workspaces
+- [x] Pause button calls `container.pause` RPC for containerized workspaces
+- [x] Non-containerized workspaces retain existing play button behavior (no regression)
+- [x] Status badge shows paused state distinctly (yellow/amber color with "paused" label)
+- [x] Button icon changes between play/pause based on container state
+- [x] Loading state shown during pause/unpause RPC calls
+- [x] Error toast shown if pause/unpause fails
+- [x] Terminal pane freezes when paused, resumes when unpaused (inherent Docker behavior, just verify)
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 

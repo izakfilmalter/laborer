@@ -40,7 +40,7 @@ import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { prds, workspaces } from '@laborer/shared/schema'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
-import { ExternalLink, GitBranch, Play, Trash2 } from 'lucide-react'
+import { ExternalLink, GitBranch, Pause, Play, Trash2 } from 'lucide-react'
 import { type FC, useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -79,6 +79,8 @@ const allPrds$ = queryDb(prds, { label: 'workspaceList.prds' })
 
 const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
 const startLoopMutation = LaborerClient.mutation('rlph.startLoop')
+const pauseContainerMutation = LaborerClient.mutation('container.pause')
+const unpauseContainerMutation = LaborerClient.mutation('container.unpause')
 
 /** Prefix used to associate workspaces with plans by branch name convention. */
 const PLAN_BRANCH_PREFIX = 'plan/'
@@ -86,6 +88,7 @@ const PLAN_BRANCH_PREFIX = 'plan/'
 type WorkspaceStatus =
   | 'creating'
   | 'running'
+  | 'paused'
   | 'stopped'
   | 'errored'
   | 'destroyed'
@@ -99,6 +102,8 @@ function getStatusClasses(status: string): string {
       return 'border-warning/30 bg-warning/10 text-warning'
     case 'running':
       return 'border-success/30 bg-success/10 text-success'
+    case 'paused':
+      return 'border-amber-500/30 bg-amber-500/10 text-amber-500'
     case 'stopped':
       return 'border-muted-foreground/30 bg-muted text-muted-foreground'
     case 'errored':
@@ -124,6 +129,8 @@ function StatusDot({ status }: { readonly status: string }) {
     switch (status as WorkspaceStatus) {
       case 'running':
         return 'bg-success'
+      case 'paused':
+        return 'bg-amber-500'
       case 'stopped':
         return 'bg-muted-foreground/50'
       case 'errored':
@@ -168,6 +175,72 @@ const CopyableValue: FC<CopyableValueProps> = (props) => {
   )
 }
 
+/**
+ * Pause/unpause toggle button for containerized workspaces.
+ * Calls `container.pause` or `container.unpause` RPC based on current state.
+ */
+function ContainerPauseButton({
+  workspaceId,
+  isPaused,
+}: {
+  readonly workspaceId: string
+  readonly isPaused: boolean
+}) {
+  const [isLoading, setIsLoading] = useState(false)
+  const pauseContainer = useAtomSet(pauseContainerMutation, {
+    mode: 'promise',
+  })
+  const unpauseContainer = useAtomSet(unpauseContainerMutation, {
+    mode: 'promise',
+  })
+
+  const handleToggle = useCallback(async () => {
+    setIsLoading(true)
+    try {
+      if (isPaused) {
+        await unpauseContainer({ payload: { workspaceId } })
+        toast.success('Container resumed')
+      } else {
+        await pauseContainer({ payload: { workspaceId } })
+        toast.success('Container paused')
+      }
+    } catch (error: unknown) {
+      toast.error(
+        `Failed to ${isPaused ? 'resume' : 'pause'} container: ${extractErrorMessage(error)}`
+      )
+    } finally {
+      setIsLoading(false)
+    }
+  }, [isPaused, pauseContainer, unpauseContainer, workspaceId])
+
+  return (
+    <Button
+      aria-label={isPaused ? 'Resume container' : 'Pause container'}
+      disabled={isLoading}
+      onClick={handleToggle}
+      size="icon-xs"
+      title={isPaused ? 'Resume container' : 'Pause container'}
+      variant="ghost"
+    >
+      {isPaused ? (
+        <Play
+          className={cn(
+            'size-3.5',
+            isLoading ? 'animate-pulse text-muted-foreground' : 'text-success'
+          )}
+        />
+      ) : (
+        <Pause
+          className={cn(
+            'size-3.5',
+            isLoading ? 'animate-pulse text-muted-foreground' : 'text-amber-500'
+          )}
+        />
+      )}
+    </Button>
+  )
+}
+
 interface WorkspaceItemProps {
   /** The prdId of the plan this workspace is associated with, if any. */
   readonly associatedPrdId?: string | undefined
@@ -181,7 +254,9 @@ interface WorkspaceItemProps {
     readonly origin: WorkspaceOrigin | string
     readonly createdAt: string
     readonly taskSource: string | null
+    readonly containerId: string | null
     readonly containerUrl: string | null
+    readonly containerStatus: string | null
   }
 }
 
@@ -231,7 +306,17 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
     }
   }, [startLoop, workspace.id, panelActions])
 
+  const isContainerized = workspace.containerId != null
+  const isContainerPaused = workspace.containerStatus === 'paused'
   const isExternalOrigin = (workspace.origin as WorkspaceOrigin) === 'external'
+
+  /**
+   * For containerized workspaces, derive the display status from the
+   * container state (paused vs running) rather than the workspace
+   * lifecycle status, so the badge accurately reflects container state.
+   */
+  const displayStatus =
+    isContainerized && isContainerPaused ? 'paused' : workspace.status
 
   return (
     <Card size="sm">
@@ -252,14 +337,11 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
             </CardTitle>
           </div>
           <Badge
-            className={cn(
-              'shrink-0 border',
-              getStatusClasses(workspace.status)
-            )}
+            className={cn('shrink-0 border', getStatusClasses(displayStatus))}
             variant="outline"
           >
-            <StatusDot status={workspace.status} />
-            {workspace.status}
+            <StatusDot status={displayStatus} />
+            {displayStatus}
           </Badge>
         </div>
         <div className="flex items-center justify-between gap-2">
@@ -302,23 +384,30 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
             )
           )}
           <div className="ml-auto flex flex-wrap items-center gap-1">
-            <Button
-              aria-label="Start ralph loop"
-              disabled={isStartingLoop}
-              onClick={handleStartLoop}
-              size="icon-xs"
-              title="Start Ralph Loop (rlph --once)"
-              variant="ghost"
-            >
-              <Play
-                className={cn(
-                  'size-3.5',
-                  isStartingLoop
-                    ? 'animate-pulse text-muted-foreground'
-                    : 'text-success'
-                )}
+            {isContainerized ? (
+              <ContainerPauseButton
+                isPaused={isContainerPaused}
+                workspaceId={workspace.id}
               />
-            </Button>
+            ) : (
+              <Button
+                aria-label="Start ralph loop"
+                disabled={isStartingLoop}
+                onClick={handleStartLoop}
+                size="icon-xs"
+                title="Start Ralph Loop (rlph --once)"
+                variant="ghost"
+              >
+                <Play
+                  className={cn(
+                    'size-3.5',
+                    isStartingLoop
+                      ? 'animate-pulse text-muted-foreground'
+                      : 'text-success'
+                  )}
+                />
+              </Button>
+            )}
             <ReviewPrForm workspaceId={workspace.id} />
             <FixFindingsForm workspaceId={workspace.id} />
             <AlertDialog onOpenChange={setDialogOpen} open={dialogOpen}>

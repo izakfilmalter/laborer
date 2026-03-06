@@ -622,14 +622,14 @@ Tests mock `fetch` at the system boundary for GitHub REST API and Linear GraphQL
 
 ### Acceptance criteria
 
-- [ ] `task.importGithub` test verifies issue import with correct count
-- [ ] `task.importGithub` test verifies PR filtering (PRs are skipped)
-- [ ] `task.importGithub` test verifies deduplication (existing tasks not re-imported)
-- [ ] `task.importLinear` test verifies issue import with correct count
-- [ ] `task.importLinear` test verifies deduplication
-- [ ] Only `fetch` is mocked (system boundary) -- all internal services are real
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass
+- [x] `task.importGithub` test verifies issue import with correct count
+- [x] `task.importGithub` test verifies PR filtering (PRs are skipped)
+- [x] `task.importGithub` test verifies deduplication (existing tasks not re-imported)
+- [x] `task.importLinear` test verifies issue import with correct count
+- [x] `task.importLinear` test verifies deduplication
+- [x] Only `fetch` is mocked (system boundary) -- all internal services are real
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass
 
 ### Blocked by
 
@@ -779,7 +779,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 15 | RPC integration tests -- config.get + config.update | None | Done |
 | 16 | RPC integration tests -- workspace.create + workspace.destroy | None | Done |
 | 17 | RPC integration tests -- task.create + task.updateStatus + task.remove | None | Done |
-| 18 | RPC integration tests -- task.importGithub + task.importLinear | None | Ready |
+| 18 | RPC integration tests -- task.importGithub + task.importLinear | None | Done |
 | 19 | RPC integration tests -- diff.refresh + editor.open | None | Ready |
 | 20 | RPC integration tests -- terminal.spawn + rlph endpoints | None | Ready |
 | 21 | RPC integration tests -- TerminalRpcs (packages/terminal) | #8 | Blocked |

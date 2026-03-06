@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { RpcError } from "@laborer/shared/rpc";
 import { events, tables } from "@laborer/shared/schema";
 import { Context, Effect, Layer } from "effect";
 import { LaborerStore } from "./laborer-store.js";
 import { PortAllocator } from "./port-allocator.js";
+import { RepositoryIdentity } from "./repository-identity.js";
 import { WorktreeDetector } from "./worktree-detector.js";
 
 interface WorkspaceRecord {
@@ -114,6 +116,14 @@ const deriveBaseSha = (
 		return null;
 	});
 
+const canonicalize = (path: string): string => {
+	try {
+		return realpathSync(path);
+	} catch {
+		return path;
+	}
+};
+
 const toWorkspaceBranchName = (
 	branch: string | null,
 	headSha: string
@@ -139,13 +149,28 @@ class WorktreeReconciler extends Context.Tag("@laborer/WorktreeReconciler")<
 			const { store } = yield* LaborerStore;
 			const portAllocator = yield* PortAllocator;
 			const detector = yield* WorktreeDetector;
+			const repoIdentity = yield* RepositoryIdentity;
 
 			const reconcile = Effect.fn("WorktreeReconciler.reconcile")(function* (
 				projectId: string,
 				repoPath: string
 			) {
-				const detectedWorktrees = yield* detector.detect(repoPath);
-				const defaultBranchRef = yield* getDefaultBranchRef(repoPath);
+				// Resolve canonical repo path through RepositoryIdentity so that
+				// detection runs against a canonicalized checkout root regardless
+				// of what path representation the caller provides.
+				const identity = yield* repoIdentity.resolve(repoPath).pipe(
+					Effect.mapError(
+						(error) =>
+							new RpcError({
+								message: `Failed to resolve canonical identity for reconciliation: ${error.message}`,
+								code: "WORKTREE_RECONCILE_FAILED",
+							})
+					)
+				);
+				const canonicalRepoPath = identity.canonicalRoot;
+
+				const detectedWorktrees = yield* detector.detect(canonicalRepoPath);
+				const defaultBranchRef = yield* getDefaultBranchRef(canonicalRepoPath);
 
 				const allWorkspaces = store.query(
 					tables.workspaces.where("projectId", projectId)
@@ -160,14 +185,17 @@ class WorktreeReconciler extends Context.Tag("@laborer/WorktreeReconciler")<
 					(w) => w.status !== "destroyed"
 				);
 
-				const existingByPath = new Map(
+				// Canonicalize existing workspace paths for comparison so that
+				// path representation differences (symlinks, /var vs /private/var)
+				// do not cause false adds or removes.
+				const existingByCanonicalPath = new Map(
 					existingWorkspaces.map((workspace) => [
-						workspace.worktreePath,
+						canonicalize(workspace.worktreePath),
 						workspace,
 					])
 				);
-				const detectedPaths = new Set(
-					detectedWorktrees.map((worktree) => worktree.path)
+				const detectedCanonicalPaths = new Set(
+					detectedWorktrees.map((worktree) => canonicalize(worktree.path))
 				);
 
 				let added = 0;
@@ -175,13 +203,14 @@ class WorktreeReconciler extends Context.Tag("@laborer/WorktreeReconciler")<
 				let unchanged = 0;
 
 				for (const detected of detectedWorktrees) {
-					if (existingByPath.has(detected.path)) {
+					const canonicalDetectedPath = canonicalize(detected.path);
+					if (existingByCanonicalPath.has(canonicalDetectedPath)) {
 						unchanged += 1;
 						continue;
 					}
 
 					const baseSha = yield* deriveBaseSha(
-						repoPath,
+						canonicalRepoPath,
 						defaultBranchRef,
 						detected.head
 					);
@@ -192,7 +221,7 @@ class WorktreeReconciler extends Context.Tag("@laborer/WorktreeReconciler")<
 							projectId,
 							taskSource: null,
 							branchName: toWorkspaceBranchName(detected.branch, detected.head),
-							worktreePath: detected.path,
+							worktreePath: canonicalDetectedPath,
 							port: 0,
 							status: "stopped",
 							origin: "external",
@@ -204,7 +233,8 @@ class WorktreeReconciler extends Context.Tag("@laborer/WorktreeReconciler")<
 				}
 
 				for (const workspace of existingWorkspaces) {
-					if (detectedPaths.has(workspace.worktreePath)) {
+					const canonicalWorkspacePath = canonicalize(workspace.worktreePath);
+					if (detectedCanonicalPaths.has(canonicalWorkspacePath)) {
 						continue;
 					}
 

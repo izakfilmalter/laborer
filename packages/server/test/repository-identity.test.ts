@@ -19,10 +19,10 @@ const tempRoots: string[] = [];
 const IdentityTestLayer = RepositoryIdentity.layer;
 
 const RegistryTestLayer = ProjectRegistry.layer.pipe(
-	Layer.provide(RepositoryIdentity.layer),
 	Layer.provide(WorktreeWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),
+	Layer.provide(RepositoryIdentity.layer),
 	Layer.provide(PortAllocator.make(4400, 4410)),
 	Layer.provideMerge(TestLaborerStore)
 );

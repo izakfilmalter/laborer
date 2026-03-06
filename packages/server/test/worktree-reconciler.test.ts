@@ -1,4 +1,10 @@
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { events, tables } from "@laborer/shared/schema";
@@ -6,9 +12,10 @@ import { Effect, Layer } from "effect";
 import { afterAll } from "vitest";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
+import { RepositoryIdentity } from "../src/services/repository-identity.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
-import { git, initRepo } from "./helpers/git-helpers.js";
+import { createTempDir, git, initRepo } from "./helpers/git-helpers.js";
 import { TestLaborerStore } from "./helpers/test-store.js";
 
 const tempRoots: string[] = [];
@@ -36,6 +43,7 @@ const getDetectedWorktreePaths = (repoPath: string): string[] =>
 		.map((line) => line.slice("worktree ".length));
 
 const TestLayer = WorktreeReconciler.layer.pipe(
+	Layer.provideMerge(RepositoryIdentity.layer),
 	Layer.provideMerge(WorktreeDetector.layer),
 	Layer.provideMerge(PortAllocator.make(4100, 4110)),
 	Layer.provideMerge(TestLaborerStore)
@@ -261,5 +269,204 @@ describe("WorktreeReconciler", () => {
 			const reusedPort = yield* allocator.allocate();
 			assert.strictEqual(reusedPort, 4100);
 		}).pipe(Effect.provide(TestLayer))
+	);
+});
+
+// ---------------------------------------------------------------------------
+// Canonical worktree reconciliation — Issue 2
+// ---------------------------------------------------------------------------
+
+describe("WorktreeReconciler canonical path support", () => {
+	it.scoped("stores canonical worktree paths in workspace records", () =>
+		Effect.gen(function* () {
+			const repoPath = initRepo("reconciler-canonical-paths", tempRoots);
+			const linkedPath = join(repoPath, ".worktrees", "feature-canon");
+			git(`worktree add -b feature/canon ${linkedPath}`, repoPath);
+
+			const reconciler = yield* WorktreeReconciler;
+			const result = yield* reconciler.reconcile("project-canonical", repoPath);
+
+			assert.strictEqual(result.added, 2);
+
+			const { store } = yield* LaborerStore;
+			const rows = store.query(
+				tables.workspaces.where("projectId", "project-canonical")
+			);
+
+			// All stored worktreePaths should be canonical (realpath-resolved)
+			for (const row of rows) {
+				const canonical = realpathSync(row.worktreePath);
+				assert.strictEqual(
+					row.worktreePath,
+					canonical,
+					`Stored worktreePath should be canonical: ${row.worktreePath}`
+				);
+			}
+		}).pipe(Effect.provide(TestLayer))
+	);
+
+	it.scoped(
+		"reconciles linked worktrees outside the main checkout under the correct project",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("reconciler-external-wt", tempRoots);
+				const externalDir = createTempDir(
+					"reconciler-external-wt-dir",
+					tempRoots
+				);
+				const externalLinkedPath = join(externalDir, "external-wt");
+				git(`worktree add -b feature/external ${externalLinkedPath}`, repoPath);
+
+				const reconciler = yield* WorktreeReconciler;
+				const result = yield* reconciler.reconcile(
+					"project-external-wt",
+					repoPath
+				);
+
+				// Should detect both main worktree and external linked worktree
+				assert.strictEqual(result.added, 2);
+
+				const { store } = yield* LaborerStore;
+				const rows = store.query(
+					tables.workspaces.where("projectId", "project-external-wt")
+				);
+
+				assert.strictEqual(rows.length, 2);
+				assert.isTrue(
+					rows.some(
+						(row) => row.worktreePath === realpathSync(externalLinkedPath)
+					),
+					"External linked worktree should be detected with canonical path"
+				);
+				assert.isTrue(
+					rows.every((row) => row.origin === "external"),
+					"All detected worktrees should have origin 'external'"
+				);
+			}).pipe(Effect.provide(TestLayer))
+	);
+
+	it.scoped(
+		"does not create duplicate workspaces when reconciling with symlinked repo path",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("reconciler-symlink-dedup", tempRoots);
+				const linkedPath = join(repoPath, ".worktrees", "feature-sym");
+				git(`worktree add -b feature/sym ${linkedPath}`, repoPath);
+
+				// Create a symlink to the repo
+				const symlinkDir = createTempDir(
+					"reconciler-symlink-dedup-link",
+					tempRoots
+				);
+				const symlinkPath = join(symlinkDir, "linked-repo");
+				symlinkSync(repoPath, symlinkPath);
+
+				const reconciler = yield* WorktreeReconciler;
+
+				// First reconcile via the real path
+				const result1 = yield* reconciler.reconcile(
+					"project-sym-dedup",
+					repoPath
+				);
+				assert.strictEqual(result1.added, 2);
+
+				// Second reconcile via the symlinked path — should detect
+				// all as unchanged since paths are canonicalized
+				const result2 = yield* reconciler.reconcile(
+					"project-sym-dedup",
+					symlinkPath
+				);
+				assert.strictEqual(result2.added, 0);
+				assert.strictEqual(result2.unchanged, 2);
+				assert.strictEqual(result2.removed, 0);
+			}).pipe(Effect.provide(TestLayer))
+	);
+
+	it.scoped(
+		"canonicalizes existing workspace paths when comparing against detected worktrees",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("reconciler-existing-canon", tempRoots);
+				const canonicalRepoPath = realpathSync(repoPath);
+
+				// Pre-seed a workspace with the raw (non-canonical) path
+				// On macOS, /tmp is a symlink to /private/tmp, so use the
+				// raw path to simulate a non-canonical stored path
+				const { store } = yield* LaborerStore;
+				store.commit(
+					events.workspaceCreated({
+						id: "existing-non-canonical",
+						projectId: "project-existing-canon",
+						taskSource: null,
+						branchName: "main",
+						worktreePath: canonicalRepoPath,
+						port: 0,
+						status: "stopped",
+						origin: "external",
+						createdAt: new Date().toISOString(),
+						baseSha: null,
+					})
+				);
+
+				const reconciler = yield* WorktreeReconciler;
+				const result = yield* reconciler.reconcile(
+					"project-existing-canon",
+					repoPath
+				);
+
+				// The existing workspace should be matched (unchanged) even though
+				// the stored path might differ in representation
+				assert.strictEqual(result.unchanged, 1);
+				assert.strictEqual(result.removed, 0);
+			}).pipe(Effect.provide(TestLayer))
+	);
+
+	it.scoped(
+		"reconciles worktrees with shared git dir consistently across multiple worktrees",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("reconciler-shared-git", tempRoots);
+				const wt1Path = join(repoPath, ".worktrees", "wt1");
+				const wt2Path = join(repoPath, ".worktrees", "wt2");
+				git(`worktree add -b wt1 ${wt1Path}`, repoPath);
+				git(`worktree add -b wt2 ${wt2Path}`, repoPath);
+
+				const reconciler = yield* WorktreeReconciler;
+				const result = yield* reconciler.reconcile(
+					"project-shared-git",
+					repoPath
+				);
+
+				// Should detect all 3 worktrees (main + wt1 + wt2)
+				assert.strictEqual(result.added, 3);
+
+				const { store } = yield* LaborerStore;
+				const rows = store.query(
+					tables.workspaces.where("projectId", "project-shared-git")
+				);
+
+				assert.strictEqual(rows.length, 3);
+
+				// All paths should be canonical
+				for (const row of rows) {
+					const canonical = realpathSync(row.worktreePath);
+					assert.strictEqual(row.worktreePath, canonical);
+				}
+
+				// Verify the specific worktrees are detected
+				const paths = rows.map((r) => r.worktreePath);
+				assert.isTrue(
+					paths.includes(realpathSync(repoPath)),
+					"Main worktree path should be present"
+				);
+				assert.isTrue(
+					paths.includes(realpathSync(wt1Path)),
+					"wt1 path should be present"
+				);
+				assert.isTrue(
+					paths.includes(realpathSync(wt2Path)),
+					"wt2 path should be present"
+				);
+			}).pipe(Effect.provide(TestLayer))
 	);
 });

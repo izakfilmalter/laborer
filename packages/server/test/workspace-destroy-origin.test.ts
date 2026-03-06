@@ -21,10 +21,10 @@ const tempRoots: string[] = [];
 
 const TestLayer = WorkspaceProvider.layer.pipe(
 	Layer.provideMerge(ProjectRegistry.layer),
-	Layer.provideMerge(RepositoryIdentity.layer),
 	Layer.provideMerge(WorktreeWatcher.layer),
 	Layer.provideMerge(WorktreeReconciler.layer),
 	Layer.provideMerge(WorktreeDetector.layer),
+	Layer.provideMerge(RepositoryIdentity.layer),
 	Layer.provideMerge(ConfigService.layer),
 	Layer.provideMerge(PortAllocator.make(4300, 4300)),
 	Layer.provideMerge(TestLaborerStore)

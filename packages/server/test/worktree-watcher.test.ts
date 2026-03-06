@@ -6,6 +6,7 @@ import { Effect, Layer } from "effect";
 import { afterAll } from "vitest";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
+import { RepositoryIdentity } from "../src/services/repository-identity.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
 import { WorktreeReconciler } from "../src/services/worktree-reconciler.js";
 import { WorktreeWatcher } from "../src/services/worktree-watcher.js";
@@ -18,6 +19,7 @@ const tempRoots: string[] = [];
 const TestLayer = WorktreeWatcher.layer.pipe(
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),
+	Layer.provide(RepositoryIdentity.layer),
 	Layer.provide(PortAllocator.make(4300, 4310)),
 	Layer.provideMerge(TestLaborerStore)
 );

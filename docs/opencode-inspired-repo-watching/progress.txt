@@ -31,3 +31,42 @@
 - All 135 tests pass (23 test files)
 - TypeScript compiles with no errors
 - Ultracite lint passes with no issues
+
+## Issue 2: Canonical worktree reconciliation with shared git dir support — COMPLETED
+
+### What was done
+- Updated `WorktreeDetector` to return canonical (realpath-resolved) paths in
+  `DetectedWorktree.path` instead of raw git-reported paths
+  - Changed `worktree-detector.ts` to use the normalized path in the output object
+    rather than the raw `block.path`
+
+- Updated `WorktreeReconciler` to use `RepositoryIdentity` for canonical path resolution
+  - Added `RepositoryIdentity` as an Effect service dependency
+  - `reconcile()` now resolves canonical repo path via `RepositoryIdentity.resolve()`
+    before running detection, so any path representation works as input
+  - Existing workspace `worktreePath` values are canonicalized during comparison
+    (via `realpathSync`) to prevent false adds/removes from path differences
+  - Newly created workspace records store canonical paths
+  - Added `canonicalize` helper function for consistent path normalization
+
+- Updated Layer composition throughout the codebase to thread `RepositoryIdentity`
+  through `WorktreeReconciler`'s dependency chain:
+  - `main.ts`: moved `RepositoryIdentity.layer` below `WorktreeReconciler.layer`
+  - `worktree-reconciler.test.ts`: added `RepositoryIdentity.layer` to TestLayer
+  - `worktree-watcher.test.ts`: added `RepositoryIdentity.layer` to TestLayer
+  - `project-registry.worktree-detection.test.ts`: reordered layer composition
+  - `repository-identity.test.ts`: reordered layer composition
+  - `workspace-destroy-origin.test.ts`: reordered layer composition
+  - `rpc/test-layer.ts`: reordered both RPC test layers
+
+- Added 5 new integration tests in `worktree-reconciler.test.ts`:
+  - Stores canonical worktree paths in workspace records
+  - Reconciles linked worktrees outside the main checkout under the correct project
+  - Does not create duplicate workspaces when reconciling with symlinked repo path
+  - Canonicalizes existing workspace paths when comparing against detected worktrees
+  - Reconciles worktrees with shared git dir consistently across multiple worktrees
+
+### Verification
+- All 140 tests pass (23 test files)
+- TypeScript compiles with no errors
+- Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)

@@ -17,10 +17,10 @@ import { TestLaborerStore } from "./helpers/test-store.js";
 const tempRoots: string[] = [];
 
 const TestLayer = ProjectRegistry.layer.pipe(
-	Layer.provide(RepositoryIdentity.layer),
 	Layer.provide(WorktreeWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),
+	Layer.provide(RepositoryIdentity.layer),
 	Layer.provide(PortAllocator.make(4200, 4210)),
 	Layer.provideMerge(TestLaborerStore)
 );

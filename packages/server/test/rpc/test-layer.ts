@@ -92,10 +92,10 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ConfigService.layer),
 	Layer.provide(ProjectRegistry.layer),
-	Layer.provide(RepositoryIdentity.layer),
 	Layer.provide(WorktreeWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),
+	Layer.provide(RepositoryIdentity.layer),
 	Layer.provide(PortAllocator.make(4100, 4199)),
 	Layer.provide(TestLaborerStore)
 );
@@ -111,10 +111,10 @@ const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ConfigService.layer),
 	Layer.provide(ProjectRegistry.layer),
-	Layer.provide(RepositoryIdentity.layer),
 	Layer.provide(WorktreeWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),
+	Layer.provide(RepositoryIdentity.layer),
 	Layer.provide(PortAllocator.make(4100, 4199)),
 	Layer.provideMerge(TestLaborerStore)
 );

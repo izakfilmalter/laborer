@@ -118,8 +118,7 @@ const HttpLiveBase = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 	Layer.provide(WorkspaceProvider.layer),
 	Layer.provide(ConfigService.layer),
 	Layer.provide(McpRegistrar.layer),
-	Layer.provide(ProjectRegistry.layer),
-	Layer.provide(RepositoryIdentity.layer)
+	Layer.provide(ProjectRegistry.layer)
 );
 
 const HttpLive = HttpLiveBase.pipe(
@@ -127,6 +126,7 @@ const HttpLive = HttpLiveBase.pipe(
 	Layer.provide(WorktreeReconciler.layer),
 	Layer.provide(WorktreeDetector.layer),
 	Layer.provide(PortAllocator.layer),
+	Layer.provide(RepositoryIdentity.layer),
 	// --- Infrastructure layers ---
 	Layer.provide(RpcSerialization.layerJson),
 	Layer.provide(LaborerStoreLive),

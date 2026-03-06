@@ -170,7 +170,7 @@ class WorktreeDetector extends Context.Tag("@laborer/WorktreeDetector")<
 					.map((block) => {
 						const normalized = normalizePath(block.path);
 						return {
-							path: block.path,
+							path: normalized,
 							head: block.head,
 							branch: block.branch,
 							isMain:

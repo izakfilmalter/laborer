@@ -59,11 +59,11 @@ This slice should keep `git worktree list --porcelain` as the source of truth, m
 
 ### Acceptance criteria
 
-- [ ] Worktree reconciliation uses canonical repo identity and canonical worktree paths
-- [ ] Linked worktrees living outside the main checkout still reconcile under the correct project
-- [ ] Reconciliation does not create duplicate workspaces due to path representation differences
-- [ ] Worktree reconciliation is exposed through an Effect tagged service boundary
-- [ ] Real-git integration tests cover shared git dir and canonical path matching cases
+- [x] Worktree reconciliation uses canonical repo identity and canonical worktree paths
+- [x] Linked worktrees living outside the main checkout still reconcile under the correct project
+- [x] Reconciliation does not create duplicate workspaces due to path representation differences
+- [x] Worktree reconciliation is exposed through an Effect tagged service boundary
+- [x] Real-git integration tests cover shared git dir and canonical path matching cases
 
 ### Blocked by
 

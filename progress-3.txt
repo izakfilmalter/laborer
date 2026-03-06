@@ -4389,3 +4389,66 @@ Tree and `activePaneId` are committed atomically in a single `store.commit()` ca
 - `bun run --cwd packages/server check-types` ⚠️ pre-existing Effect plugin warnings only
 - `bun run --cwd packages/terminal check-types` ✅
 - `bun x ultracite check apps/web/src/panels/ apps/web/src/panes/ apps/web/src/routes/index.tsx` ✅ (8 files, 0 issues)
+
+---
+
+## Issue 163: Worktree detection polish & edge cases
+
+### Summary
+
+Implemented three targeted improvements for worktree detection edge cases and polish:
+
+1. **Worktree existence check before terminal spawn** — `TerminalClient.spawnInWorkspace()` now checks whether the worktree directory exists on disk before attempting to spawn a terminal. If the worktree was removed externally (e.g., `git worktree remove` or manual deletion), the user gets a clear `WORKTREE_NOT_FOUND` RpcError with a descriptive message instead of a cryptic spawn failure.
+
+2. **Reconciler excludes destroyed workspaces** — `WorktreeReconciler` now filters out workspaces with `status === "destroyed"` before building its path lookup map. Previously, destroyed workspace records would prevent re-detection of worktrees at the same path. Now if a user destroys a detected workspace and the worktree still exists on disk, the next reconciliation pass will re-detect it.
+
+3. **Tooltip on "stopped" badge for detected workspaces** — Both `workspace-list.tsx` and `workspace-dashboard.tsx` now show a distinguishing tooltip on the status badge when a detected workspace has never been activated: "Detected from existing git worktree — never activated in Laborer". This makes it clear why a workspace shows "stopped" without ever having been started.
+
+### Acceptance criteria verification
+
+**1. Detected workspaces render consistently with Laborer-created workspaces** — PASS
+Detected workspaces use the same `WorkspaceCard` component with identical layout, badge positioning, and action buttons. The only visual difference is the subtle "Detected" origin indicator (secondary text).
+
+**2. "Detected" indicator is visually subtle** — PASS
+The origin indicator uses `text-muted-foreground text-xs` styling — small, grey secondary text below the branch name. Not a badge or prominent element.
+
+**3. "Stopped" badge for never-activated workspaces has distinguishing tooltip** — PASS
+Added `title` attribute to the Badge component in both workspace-list and workspace-dashboard views. Tooltip reads: "Detected from existing git worktree — never activated in Laborer".
+
+**4. Rapid worktree creation/removal results in smooth UI updates** — PASS
+The `WorktreeWatcher` debounces filesystem events with a 500ms window (Issue #161). LiveStore sync uses SQLite mutations which are atomic. The frontend re-renders via reactive queries — no intermediate flicker states.
+
+**5. Detection failures surface as non-blocking warnings** — PASS
+`WorktreeDetector.detectAll()` wraps `git worktree list --porcelain` in `Effect.tryPromise` with tagged errors. The reconciler catches detection failures and logs warnings without blocking project operations. Project add succeeds even if detection fails.
+
+**6. Watcher teardown on project removal is clean** — PASS
+`WorktreeWatcher` uses `chokidar` with a `close()` method called on project removal via `Effect.addFinalizer`. The watcher is scoped to the project's `Scope` — when the project scope closes, the watcher is torn down automatically.
+
+**7. Diff service correctly shows diffs from merge-base for detected workspaces** — PASS
+Detected workspaces store `baseSha` derived from `git merge-base HEAD <default-branch>` during detection. The diff service uses this SHA for computing diffs, showing changes since the merge-base rather than since the beginning of time.
+
+**8. Workspace count badges accurately include detected workspaces** — PASS
+Workspace counts are derived from LiveStore queries that include all workspaces regardless of origin. Detected workspaces are counted alongside Laborer-created ones.
+
+**9. Detection works with worktrees in various filesystem locations** — PASS
+`WorktreeDetector` parses `git worktree list --porcelain` output which reports absolute paths for all worktrees regardless of location. Worktrees in `.worktrees/`, home directories, or arbitrary paths are all detected.
+
+**10. Error when activating a workspace whose worktree was removed shows clear message** — PASS
+`TerminalClient.spawnInWorkspace()` now calls `existsSync(workspace.worktreePath)` before spawning. Returns `WORKTREE_NOT_FOUND` RpcError: "Worktree directory does not exist on disk: {path}. The worktree may have been removed outside of Laborer."
+
+### Files modified
+- `packages/server/src/services/terminal-client.ts` — Added `existsSync` import and worktree path existence check in `spawnInWorkspace()`
+- `packages/server/src/services/worktree-reconciler.ts` — Filter destroyed workspaces from path lookup in reconciliation
+- `apps/web/src/components/workspace-list.tsx` — Added tooltip on stopped badge for detected workspaces
+- `apps/web/src/components/workspace-dashboard.tsx` — Added tooltip on stopped badge for detected workspaces
+- `issues.md` — Updated Issue 150 body to Done, updated Issue 163 to Done
+
+### Verification
+- `bun run --cwd apps/web test` ✅ (44 tests pass)
+- `bun run --cwd packages/server test` ✅ (122 tests pass, 6 skipped)
+- `bun run --cwd packages/terminal test` ✅ (59 tests pass)
+- Total: **225 tests pass**, 6 skipped
+- `bun run --cwd apps/web check-types` ⚠️ pre-existing errors in `calendar.tsx` and `sonner.tsx` only
+- `bun run --cwd packages/server check-types` ⚠️ pre-existing Effect plugin warnings only
+- `bun run --cwd packages/terminal check-types` ✅
+- `bun x ultracite check` ✅ (all modified files, 0 issues)

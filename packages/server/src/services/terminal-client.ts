@@ -15,8 +15,10 @@
  *
  * @see PRD-terminal-extraction.md
  * @see Issue #143: Server TerminalClient + remove server terminal modules
+ * @see Issue #163: Worktree detection polish — worktree existence check before spawn
  */
 
+import { existsSync } from "node:fs";
 import { FetchHttpClient } from "@effect/platform";
 import { RpcClient, RpcSerialization } from "@effect/rpc";
 import { RpcError, TerminalRpcs } from "@laborer/shared/rpc";
@@ -209,6 +211,17 @@ class TerminalClient extends Context.Tag("@laborer/TerminalClient")<
 						return yield* new RpcError({
 							message: `Workspace ${workspaceId} is in status "${workspace.status}" — cannot spawn terminal`,
 							code: "INVALID_STATE",
+						});
+					}
+
+					// 1b. Verify worktree directory exists on disk
+					// This catches the case where a detected (external) worktree was
+					// removed between detection and activation.
+					// @see Issue #163: Worktree detection polish — activating removed worktree
+					if (!existsSync(workspace.worktreePath)) {
+						return yield* new RpcError({
+							message: `Worktree directory does not exist: ${workspace.worktreePath}. The git worktree may have been removed outside of Laborer.`,
+							code: "WORKTREE_NOT_FOUND",
 						});
 					}
 

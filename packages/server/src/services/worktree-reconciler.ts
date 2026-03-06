@@ -147,9 +147,18 @@ class WorktreeReconciler extends Context.Tag("@laborer/WorktreeReconciler")<
 				const detectedWorktrees = yield* detector.detect(repoPath);
 				const defaultBranchRef = yield* getDefaultBranchRef(repoPath);
 
-				const existingWorkspaces = store.query(
+				const allWorkspaces = store.query(
 					tables.workspaces.where("projectId", projectId)
 				) as readonly WorkspaceRecord[];
+
+				// Filter out destroyed workspaces so that a worktree whose Laborer
+				// record was destroyed can be re-detected on the next reconciliation
+				// pass. Without this filter, destroyed records would block re-detection
+				// since their worktreePath would match the detected path.
+				// @see Issue #163: Worktree detection polish — stale destroyed records
+				const existingWorkspaces = allWorkspaces.filter(
+					(w) => w.status !== "destroyed"
+				);
 
 				const existingByPath = new Map(
 					existingWorkspaces.map((workspace) => [

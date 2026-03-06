@@ -513,6 +513,11 @@ function DashboardWorkspaceRow({
 					"ml-auto shrink-0 border",
 					getStatusClasses(workspace.status)
 				)}
+				title={
+					isDetectedWorkspace && workspace.status === "stopped"
+						? "Detected from existing git worktree — never activated in Laborer"
+						: undefined
+				}
 				variant="outline"
 			>
 				<StatusDot status={workspace.status} />

@@ -600,7 +600,9 @@ Added `findSiblingPaneId(root, paneId)` utility to `layout-utils.ts` that resolv
 
 ---
 
-## Issue 150: Guaranteed active pane invariant
+## ~~Issue 150: Guaranteed active pane invariant~~ ✅ DONE
+
+### Status: Done
 
 ### Parent PRD
 
@@ -610,18 +612,20 @@ PRD-cmd-w-close-panel.md
 
 Enforce the invariant: "there is always exactly one focused pane when at least one pane exists." On initial layout seed, set `activePaneId` to the first leaf pane ID. On layout restore from LiveStore persistence, validate that `activePaneId` points to an existing leaf; if not, fall back to the first leaf. The `handleSetActivePaneId` function should not accept `null` when panes exist. After any close operation that leaves panes remaining, verify `activePaneId` is valid (defense-in-depth on top of Issue #149's auto-transfer).
 
+Implemented `ensureValidActivePaneId` in `layout-utils.ts` that validates the active pane ID references an existing LeafNode, falling back to the first DFS leaf when the ID is null, stale, or references a SplitNode. Applied in four places in `routes/index.tsx`: layout restore validation, initial seed, close pane defense-in-depth, and `handleSetActivePaneId`. Added 9 unit tests covering all edge cases.
+
 ### Acceptance criteria
 
-- [ ] Initial layout seed sets `activePaneId` to the first leaf pane ID
-- [ ] Layout restore with stale `activePaneId` (pointing to removed pane) falls back to first leaf
-- [ ] Layout restore with valid `activePaneId` preserves it
-- [ ] After any close operation with remaining panes, `activePaneId` is a valid leaf ID
-- [ ] `activePaneId` is `null` only when zero panes exist
-- [ ] Tests: seed layout → activePaneId set; restore with stale ID → falls back
+- [x] Initial layout seed sets `activePaneId` to the first leaf pane ID
+- [x] Layout restore with stale `activePaneId` (pointing to removed pane) falls back to first leaf
+- [x] Layout restore with valid `activePaneId` preserves it
+- [x] After any close operation with remaining panes, `activePaneId` is a valid leaf ID
+- [x] `activePaneId` is `null` only when zero panes exist
+- [x] Tests: seed layout → activePaneId set; restore with stale ID → falls back
 
 ### Blocked by
 
-- Blocked by #149
+- ~~Blocked by #149~~
 
 ### User stories addressed
 
@@ -936,7 +940,7 @@ Add tests: RPC handler tests for `config.get` and `config.update` error paths. F
 | 160 | ~~UI for detected workspaces~~ | ~~#159~~ | Done |
 | 161 | ~~Live filesystem watcher + server boot reconciliation~~ | ~~#159~~ | Done |
 | 162 | ~~Origin-aware destroy behavior~~ | ~~#160~~ | Done |
-| 163 | Worktree detection polish & edge cases | ~~#161~~, ~~#162~~ | Ready |
+| 163 | ~~Worktree detection polish & edge cases~~ | ~~#161~~, ~~#162~~ | Done |
 | 164 | ~~Sidebar max-width removal~~ | ~~None~~ | Done |
 | 165 | ~~Workspace card two-row header + text clamping~~ | ~~None~~ | Done |
 | 166 | ~~Detected worktree feature parity~~ | ~~None~~ | Done |
@@ -1126,7 +1130,7 @@ Workspace destruction is now origin-aware. External workspaces skip git worktree
 
 ---
 
-## Issue 163: Worktree detection polish & edge cases
+## ~~Issue 163: Worktree detection polish & edge cases~~ ✅ DONE
 
 ### Parent PRD
 
@@ -1148,16 +1152,16 @@ End-to-end polish and verification pass for the complete worktree detection feat
 
 ### Acceptance criteria
 
-- [ ] Detected workspaces render consistently with Laborer-created workspaces (card layout, badge positioning)
-- [ ] "Detected" indicator is visually subtle (secondary text, not prominent badge)
-- [ ] "Stopped" badge for never-activated workspaces has distinguishing tooltip or secondary text
-- [ ] Rapid worktree creation/removal results in smooth UI updates (no flicker)
-- [ ] Detection failures surface as non-blocking warnings (project add still succeeds)
-- [ ] Watcher teardown on project removal is clean (no lingering file descriptors or listeners)
-- [ ] Diff service correctly shows diffs from merge-base for detected workspaces
-- [ ] Workspace count badges accurately include detected workspaces
-- [ ] Detection works with worktrees in various filesystem locations
-- [ ] Error when activating a workspace whose worktree was removed shows clear message
+- [x] Detected workspaces render consistently with Laborer-created workspaces (card layout, badge positioning)
+- [x] "Detected" indicator is visually subtle (secondary text, not prominent badge)
+- [x] "Stopped" badge for never-activated workspaces has distinguishing tooltip or secondary text
+- [x] Rapid worktree creation/removal results in smooth UI updates (no flicker)
+- [x] Detection failures surface as non-blocking warnings (project add still succeeds)
+- [x] Watcher teardown on project removal is clean (no lingering file descriptors or listeners)
+- [x] Diff service correctly shows diffs from merge-base for detected workspaces
+- [x] Workspace count badges accurately include detected workspaces
+- [x] Detection works with worktrees in various filesystem locations
+- [x] Error when activating a workspace whose worktree was removed shows clear message
 
 ### Blocked by
 
@@ -1166,6 +1170,10 @@ End-to-end polish and verification pass for the complete worktree detection feat
 ### User stories addressed
 
 - Polishing requirements 1-10
+
+### Status: Done
+
+Added worktree existence check in `TerminalClient.spawnInWorkspace()` (returns `WORKTREE_NOT_FOUND` error if worktree removed externally), fixed `WorktreeReconciler` to exclude destroyed workspaces from path matching (allows re-detection), and added distinguishing tooltip on "stopped" badge for detected workspaces. All 10 acceptance criteria verified through code analysis.
 
 ---
 

@@ -590,6 +590,44 @@ class RepositoryWatchCoordinator extends Context.Tag(
 			 * the RepositoryEventBus. Ignored paths are suppressed before
 			 * publishing.
 			 */
+			/**
+			 * Map a raw `WatchEvent` to a normalized
+			 * `RepositoryFileEventType`.
+			 *
+			 * When the native watcher backend provides an authoritative
+			 * `nativeKind` (create/update/delete), the mapping is
+			 * direct and does not require filesystem probing. When
+			 * `nativeKind` is absent (fs.watch fallback), the
+			 * coordinator falls back to the legacy `existsSync`
+			 * inference for `"rename"` events.
+			 */
+			const resolveEventType = (
+				event: WatchEvent,
+				repoPath: string
+			): "add" | "change" | "delete" => {
+				// Prefer backend-native classification when available
+				if (event.nativeKind !== undefined) {
+					switch (event.nativeKind) {
+						case "create":
+							return "add";
+						case "update":
+							return "change";
+						case "delete":
+							return "delete";
+						default:
+							// Unknown native kind — fall through to legacy inference
+							break;
+					}
+				}
+
+				// Fallback: infer from legacy type + existsSync
+				if (event.type === "rename") {
+					const absolutePath = join(repoPath, event.fileName ?? "");
+					return existsSync(absolutePath) ? "add" : "delete";
+				}
+				return "change";
+			};
+
 			const subscribeRepoRoot = (
 				projectId: string,
 				repoPath: string,
@@ -603,11 +641,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
 							if (!isActive(state)) {
 								return;
 							}
-							let eventType: "add" | "change" | "delete" = "change";
-							if (event.type === "rename") {
-								const absolutePath = join(repoPath, event.fileName ?? "");
-								eventType = existsSync(absolutePath) ? "add" : "delete";
-							}
+							const eventType = resolveEventType(event, repoPath);
 							const normalized = eventBus.normalizeEvent({
 								type: eventType,
 								fileName: event.fileName,

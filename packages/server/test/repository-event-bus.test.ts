@@ -895,3 +895,415 @@ describe("Config-driven ignore filtering", () => {
 			})
 	);
 });
+
+// ── Integration tests: backend-native event semantics ──────────
+
+describe("Backend-native repository event semantics", () => {
+	it.scoped(
+		"native watcher create events map to 'add' without existsSync inference",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("eventbus-native-create", tempRoots);
+				const recordedWatchers: RecordedWatchersByPath = new Map();
+				const testLayer = createDeterministicIntegrationLayer(
+					repoPath,
+					recordedWatchers
+				);
+
+				yield* Effect.gen(function* () {
+					const coordinator = yield* RepositoryWatchCoordinator;
+					const bus = yield* RepositoryEventBus;
+
+					const received: RepositoryFileEvent[] = [];
+					yield* bus.subscribe((event) => {
+						received.push(event);
+					});
+
+					yield* coordinator.watchProject("project-native-create", repoPath);
+
+					// Deliver a native create event — the file does NOT need to
+					// exist on disk because the native backend classification is
+					// authoritative.
+					recordedWatchers.get(repoPath)?.at(-1)?.onChange({
+						type: "rename",
+						nativeKind: "create",
+						fileName: "brand-new-file.ts",
+					});
+
+					yield* Effect.promise(() =>
+						waitFor(() =>
+							Promise.resolve(
+								received.some((e) => e.relativePath === "brand-new-file.ts")
+							)
+						)
+					);
+
+					const addEvent = received.find(
+						(e) => e.relativePath === "brand-new-file.ts"
+					);
+					assert.isDefined(addEvent);
+					assert.strictEqual(addEvent?.type, "add");
+				}).pipe(Effect.provide(testLayer));
+			})
+	);
+
+	it.scoped("native watcher update events map to 'change'", () =>
+		Effect.gen(function* () {
+			const repoPath = initRepo("eventbus-native-update", tempRoots);
+			const recordedWatchers: RecordedWatchersByPath = new Map();
+			const testLayer = createDeterministicIntegrationLayer(
+				repoPath,
+				recordedWatchers
+			);
+
+			yield* Effect.gen(function* () {
+				const coordinator = yield* RepositoryWatchCoordinator;
+				const bus = yield* RepositoryEventBus;
+
+				const received: RepositoryFileEvent[] = [];
+				yield* bus.subscribe((event) => {
+					received.push(event);
+				});
+
+				yield* coordinator.watchProject("project-native-update", repoPath);
+
+				recordedWatchers.get(repoPath)?.at(-1)?.onChange({
+					type: "change",
+					nativeKind: "update",
+					fileName: "README.md",
+				});
+
+				yield* Effect.promise(() =>
+					waitFor(() =>
+						Promise.resolve(
+							received.some((e) => e.relativePath === "README.md")
+						)
+					)
+				);
+
+				const changeEvent = received.find(
+					(e) => e.relativePath === "README.md"
+				);
+				assert.isDefined(changeEvent);
+				assert.strictEqual(changeEvent?.type, "change");
+			}).pipe(Effect.provide(testLayer));
+		})
+	);
+
+	it.scoped(
+		"native watcher delete events map to 'delete' without existsSync inference",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("eventbus-native-delete", tempRoots);
+				const recordedWatchers: RecordedWatchersByPath = new Map();
+				const testLayer = createDeterministicIntegrationLayer(
+					repoPath,
+					recordedWatchers
+				);
+
+				yield* Effect.gen(function* () {
+					const coordinator = yield* RepositoryWatchCoordinator;
+					const bus = yield* RepositoryEventBus;
+
+					const received: RepositoryFileEvent[] = [];
+					yield* bus.subscribe((event) => {
+						received.push(event);
+					});
+
+					yield* coordinator.watchProject("project-native-delete", repoPath);
+
+					// Deliver a native delete event — the file still exists on
+					// disk but the native backend says it was deleted. With the
+					// old existsSync inference this would have been classified
+					// as "add" because the file exists. The native kind should
+					// take precedence.
+					writeFileSync(
+						join(repoPath, "still-on-disk.ts"),
+						"export const x = 1;\n"
+					);
+					recordedWatchers.get(repoPath)?.at(-1)?.onChange({
+						type: "rename",
+						nativeKind: "delete",
+						fileName: "still-on-disk.ts",
+					});
+
+					yield* Effect.promise(() =>
+						waitFor(() =>
+							Promise.resolve(
+								received.some((e) => e.relativePath === "still-on-disk.ts")
+							)
+						)
+					);
+
+					const deleteEvent = received.find(
+						(e) => e.relativePath === "still-on-disk.ts"
+					);
+					assert.isDefined(deleteEvent);
+					assert.strictEqual(
+						deleteEvent?.type,
+						"delete",
+						"Native delete should take precedence over existsSync which would say 'add'"
+					);
+				}).pipe(Effect.provide(testLayer));
+			})
+	);
+
+	it.scoped(
+		"fallback watcher still infers add/delete from existsSync when nativeKind is absent",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("eventbus-fallback-infer", tempRoots);
+				const recordedWatchers: RecordedWatchersByPath = new Map();
+				const testLayer = createDeterministicIntegrationLayer(
+					repoPath,
+					recordedWatchers
+				);
+
+				yield* Effect.gen(function* () {
+					const coordinator = yield* RepositoryWatchCoordinator;
+					const bus = yield* RepositoryEventBus;
+
+					const received: RepositoryFileEvent[] = [];
+					yield* bus.subscribe((event) => {
+						received.push(event);
+					});
+
+					yield* coordinator.watchProject("project-fallback-infer", repoPath);
+
+					// Simulate fs.watch fallback: rename event without nativeKind,
+					// file exists → should infer "add"
+					writeFileSync(
+						join(repoPath, "fallback-add.ts"),
+						"export const fb = 1;\n"
+					);
+					recordedWatchers.get(repoPath)?.at(-1)?.onChange({
+						type: "rename",
+						fileName: "fallback-add.ts",
+					});
+
+					yield* Effect.promise(() =>
+						waitFor(() =>
+							Promise.resolve(
+								received.some((e) => e.relativePath === "fallback-add.ts")
+							)
+						)
+					);
+
+					const addEvent = received.find(
+						(e) => e.relativePath === "fallback-add.ts"
+					);
+					assert.isDefined(addEvent);
+					assert.strictEqual(addEvent?.type, "add");
+
+					// Simulate fs.watch fallback: rename event without nativeKind,
+					// file does NOT exist → should infer "delete"
+					recordedWatchers.get(repoPath)?.at(-1)?.onChange({
+						type: "rename",
+						fileName: "nonexistent-file.ts",
+					});
+
+					yield* Effect.promise(() =>
+						waitFor(() =>
+							Promise.resolve(
+								received.some((e) => e.relativePath === "nonexistent-file.ts")
+							)
+						)
+					);
+
+					const deleteEvent = received.find(
+						(e) => e.relativePath === "nonexistent-file.ts"
+					);
+					assert.isDefined(deleteEvent);
+					assert.strictEqual(deleteEvent?.type, "delete");
+				}).pipe(Effect.provide(testLayer));
+			})
+	);
+
+	it.scoped(
+		"rename-heavy churn with native backend classifies events accurately",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("eventbus-rename-churn", tempRoots);
+				const recordedWatchers: RecordedWatchersByPath = new Map();
+				const testLayer = createDeterministicIntegrationLayer(
+					repoPath,
+					recordedWatchers
+				);
+
+				yield* Effect.gen(function* () {
+					const coordinator = yield* RepositoryWatchCoordinator;
+					const bus = yield* RepositoryEventBus;
+
+					const received: RepositoryFileEvent[] = [];
+					yield* bus.subscribe((event) => {
+						received.push(event);
+					});
+
+					yield* coordinator.watchProject("project-rename-churn", repoPath);
+
+					const watcher = recordedWatchers.get(repoPath)?.at(-1);
+
+					// Simulate a rapid rename: old file deleted, new file created.
+					// With native kinds, both events should be classified
+					// correctly regardless of disk state.
+					watcher?.onChange({
+						type: "rename",
+						nativeKind: "delete",
+						fileName: "old-name.ts",
+					});
+					watcher?.onChange({
+						type: "rename",
+						nativeKind: "create",
+						fileName: "new-name.ts",
+					});
+
+					// Simulate a rapid sequence of creates and deletes
+					// (e.g. branch switch causing many file changes)
+					for (let i = 0; i < 5; i++) {
+						watcher?.onChange({
+							type: "rename",
+							nativeKind: "delete",
+							fileName: `feature-${i}.ts`,
+						});
+					}
+					for (let i = 0; i < 5; i++) {
+						watcher?.onChange({
+							type: "rename",
+							nativeKind: "create",
+							fileName: `refactor-${i}.ts`,
+						});
+					}
+
+					// Add a final update as a sync point
+					watcher?.onChange({
+						type: "change",
+						nativeKind: "update",
+						fileName: "package.json",
+					});
+
+					yield* Effect.promise(() =>
+						waitFor(() =>
+							Promise.resolve(
+								received.some((e) => e.relativePath === "package.json")
+							)
+						)
+					);
+
+					// Verify rename events were correctly classified
+					const oldNameEvent = received.find(
+						(e) => e.relativePath === "old-name.ts"
+					);
+					assert.isDefined(oldNameEvent);
+					assert.strictEqual(oldNameEvent?.type, "delete");
+
+					const newNameEvent = received.find(
+						(e) => e.relativePath === "new-name.ts"
+					);
+					assert.isDefined(newNameEvent);
+					assert.strictEqual(newNameEvent?.type, "add");
+
+					// Verify batch deletes
+					for (let i = 0; i < 5; i++) {
+						const deleteEvent = received.find(
+							(e) => e.relativePath === `feature-${i}.ts`
+						);
+						assert.isDefined(
+							deleteEvent,
+							`Missing delete event for feature-${i}.ts`
+						);
+						assert.strictEqual(deleteEvent?.type, "delete");
+					}
+
+					// Verify batch creates
+					for (let i = 0; i < 5; i++) {
+						const createEvent = received.find(
+							(e) => e.relativePath === `refactor-${i}.ts`
+						);
+						assert.isDefined(
+							createEvent,
+							`Missing create event for refactor-${i}.ts`
+						);
+						assert.strictEqual(createEvent?.type, "add");
+					}
+
+					// Verify update
+					const updateEvent = received.find(
+						(e) => e.relativePath === "package.json"
+					);
+					assert.isDefined(updateEvent);
+					assert.strictEqual(updateEvent?.type, "change");
+				}).pipe(Effect.provide(testLayer));
+			})
+	);
+
+	it.scoped(
+		"event fanout remains backend-agnostic for downstream subscribers",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("eventbus-agnostic-fanout", tempRoots);
+				const recordedWatchers: RecordedWatchersByPath = new Map();
+				const testLayer = createDeterministicIntegrationLayer(
+					repoPath,
+					recordedWatchers
+				);
+
+				yield* Effect.gen(function* () {
+					const coordinator = yield* RepositoryWatchCoordinator;
+					const bus = yield* RepositoryEventBus;
+
+					const received: RepositoryFileEvent[] = [];
+					yield* bus.subscribe((event) => {
+						received.push(event);
+					});
+
+					yield* coordinator.watchProject("project-agnostic-fanout", repoPath);
+
+					const watcher = recordedWatchers.get(repoPath)?.at(-1);
+
+					// Mix of native and fallback-style events should all
+					// produce the same normalized RepositoryFileEvent shape
+					watcher?.onChange({
+						type: "rename",
+						nativeKind: "create",
+						fileName: "native-add.ts",
+					});
+					watcher?.onChange({
+						type: "change",
+						nativeKind: "update",
+						fileName: "native-change.ts",
+					});
+					writeFileSync(
+						join(repoPath, "fallback-add.ts"),
+						"export const x = 1;\n"
+					);
+					watcher?.onChange({
+						type: "rename",
+						fileName: "fallback-add.ts",
+					});
+					watcher?.onChange({
+						type: "change",
+						fileName: "fallback-change.ts",
+					});
+
+					yield* Effect.promise(() =>
+						waitFor(() => Promise.resolve(received.length >= 4))
+					);
+
+					// All events should conform to the same RepositoryFileEvent shape
+					for (const event of received) {
+						assert.isString(event.absolutePath);
+						assert.isString(event.relativePath);
+						assert.isString(event.projectId);
+						assert.isString(event.repoRoot);
+						assert.oneOf(event.type, ["add", "change", "delete"]);
+						// Verify no backend-specific fields leaked through
+						assert.notProperty(
+							event,
+							"nativeKind",
+							"Backend-specific nativeKind should not leak to downstream events"
+						);
+					}
+				}).pipe(Effect.provide(testLayer));
+			})
+	);
+});

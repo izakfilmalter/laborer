@@ -28,12 +28,13 @@ import { Context, Data, Effect, Layer } from "effect";
  * - "change" — an existing file was modified
  * - "delete" — a file or directory was removed
  *
- * Note: the underlying `fs.watch` backend reports "rename" for both
- * add and delete. The coordinator maps these to the appropriate type
- * using existence checks where feasible, but consumers should treat
- * "add" and "delete" as best-effort classifications. The system is
- * eventually consistent — missed classifications are corrected by
- * subsequent events.
+ * When the native `@parcel/watcher` backend is active, these
+ * classifications are authoritative — the backend provides
+ * create/update/delete semantics directly. When the `fs.watch`
+ * fallback is in use, "add" and "delete" are inferred from
+ * `existsSync` checks on "rename" events and should be treated
+ * as best-effort. The system is eventually consistent — missed
+ * classifications are corrected by subsequent events.
  */
 type RepositoryFileEventType = "add" | "change" | "delete";
 

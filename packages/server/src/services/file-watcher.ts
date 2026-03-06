@@ -18,12 +18,38 @@ import { relative } from "node:path";
 import { Context, Data, Effect, Layer } from "effect";
 
 /**
- * Events emitted by the file watcher. Intentionally minimal —
- * downstream services interpret the signals, not the watcher.
+ * Backend-native event classification when available.
+ *
+ * The native `@parcel/watcher` backend provides authoritative
+ * create/update/delete semantics. When present, downstream code
+ * can trust this classification instead of inferring from
+ * `existsSync` checks.
+ */
+export type WatchEventNativeKind = "create" | "update" | "delete";
+
+/**
+ * Events emitted by the file watcher.
+ *
+ * The `type` field preserves the legacy `"rename" | "change"`
+ * vocabulary for backward compatibility. The optional `nativeKind`
+ * field carries the backend's authoritative event classification
+ * when available (native backend only). Downstream services should
+ * prefer `nativeKind` over inferring from `type` + `existsSync`.
  */
 export interface WatchEvent {
 	/** Name of the changed file/directory relative to the watched root, or null if unavailable */
 	readonly fileName: string | null;
+	/**
+	 * Backend-native event classification when available.
+	 *
+	 * - `"create"` — a new file or directory was created
+	 * - `"update"` — an existing file was modified
+	 * - `"delete"` — a file or directory was removed
+	 *
+	 * Only populated by the native `@parcel/watcher` backend.
+	 * The `fs.watch` fallback leaves this `undefined`.
+	 */
+	readonly nativeKind?: WatchEventNativeKind | undefined;
 	/** The type of filesystem event reported by the backend */
 	readonly type: "rename" | "change";
 }
@@ -183,6 +209,7 @@ const subscribeWithNativeWatcher = (
 						for (const event of events) {
 							onChange({
 								type: event.type === "update" ? "change" : "rename",
+								nativeKind: event.type,
 								fileName: normalizeRelativeFileName(path, event.path),
 							});
 						}

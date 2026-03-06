@@ -133,11 +133,11 @@ This slice should keep the event bus stable while improving how events are produ
 
 ### Acceptance criteria
 
-- [ ] Native watcher events map cleanly into Laborer's normalized add/change/delete event model
-- [ ] Fallback watcher behavior still produces the normalized event shape with explicit best-effort semantics where needed
-- [ ] Event fanout remains backend-agnostic for downstream services
-- [ ] Delete/add classification is more accurate under rename and churn-heavy scenarios than the current `fs.watch` implementation
-- [ ] Integration tests cover add, change, delete, rename-heavy churn, and fallback semantics
+- [x] Native watcher events map cleanly into Laborer's normalized add/change/delete event model
+- [x] Fallback watcher behavior still produces the normalized event shape with explicit best-effort semantics where needed
+- [x] Event fanout remains backend-agnostic for downstream services
+- [x] Delete/add classification is more accurate under rename and churn-heavy scenarios than the current `fs.watch` implementation
+- [x] Integration tests cover add, change, delete, rename-heavy churn, and fallback semantics
 
 ### Blocked by
 

@@ -299,13 +299,13 @@ See PRD Implementation Decisions > LiveStore Schema Tests.
 
 ### Acceptance criteria
 
-- [ ] `packages/shared/vitest.config.ts` exists with correct configuration
-- [ ] `packages/shared/package.json` has a `test` script
-- [ ] `packages/shared/test/schema.test.ts` exists with project and workspace event tests
-- [ ] `prd-schema.test.ts` is removed from `packages/server/test/`
-- [ ] All tests pass (`bun run test` in packages/shared)
-- [ ] Tests use `@effect/vitest` patterns (`it.effect`, `assert`)
-- [ ] `bun x ultracite check` passes
+- [x] `packages/shared/vitest.config.ts` exists with correct configuration
+- [x] `packages/shared/package.json` has a `test` script
+- [x] `packages/shared/test/schema.test.ts` exists with project and workspace event tests
+- [x] `prd-schema.test.ts` is removed from `packages/server/test/`
+- [x] All tests pass (`bun run test` in packages/shared)
+- [x] Tests use `@effect/vitest` patterns (`it.effect`, `assert`)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -770,9 +770,9 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 6 | Migrate task/importer server tests to @effect/vitest | #1 | Ready |
 | 7 | Migrate remaining server tests to @effect/vitest | #1 | Ready |
 | 8 | Migrate terminal package tests to @effect/vitest assertions | None | Ready |
-| 9 | Add LiveStore schema tests -- setup + project/workspace events | None | Ready |
-| 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Blocked |
-| 11 | Add LiveStore schema tests -- deprecated terminal event no-ops | #9 | Blocked |
+| 9 | Add LiveStore schema tests -- setup + project/workspace events | None | Done |
+| 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Ready |
+| 11 | Add LiveStore schema tests -- deprecated terminal event no-ops | #9 | Ready |
 | 12 | Rewrite config-service.test.ts through public API | #1, #2, #5 or #7 | Blocked |
 | 13 | Set up RPC test infrastructure + health.check test | #1 | In Progress |
 | 14 | RPC integration tests -- project.add + project.remove | #13, #2 | Blocked |

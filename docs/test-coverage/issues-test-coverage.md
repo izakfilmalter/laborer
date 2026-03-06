@@ -511,13 +511,13 @@ Tests use real `ConfigService` and real `ProjectRegistry` layers with real files
 
 ### Acceptance criteria
 
-- [ ] `config.get` test verifies resolved config with correct provenance source metadata
-- [ ] `config.get` test verifies error response for a nonexistent project
-- [ ] `config.update` test verifies config is written and retrievable
-- [ ] `rpc-config-handlers.test.ts` is deleted or fully replaced (no `vi.fn()` mocks remain)
-- [ ] Tests use real `ConfigService` and `ProjectRegistry` layers (no `Layer.succeed` stubs)
-- [ ] Tests use `@effect/vitest` patterns
-- [ ] All tests pass
+- [x] `config.get` test verifies resolved config with correct provenance source metadata
+- [x] `config.get` test verifies error response for a nonexistent project
+- [x] `config.update` test verifies config is written and retrievable
+- [x] `rpc-config-handlers.test.ts` is deleted or fully replaced (no `vi.fn()` mocks remain)
+- [x] Tests use real `ConfigService` and `ProjectRegistry` layers (no `Layer.succeed` stubs)
+- [x] Tests use `@effect/vitest` patterns
+- [x] All tests pass
 
 ### Blocked by
 
@@ -776,7 +776,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 12 | Rewrite config-service.test.ts through public API | #5 or #7 | Blocked |
 | 13 | Set up RPC test infrastructure + health.check test | #1 | Done |
 | 14 | RPC integration tests -- project.add + project.remove | #13, #2 | Done |
-| 15 | RPC integration tests -- config.get + config.update | None | Ready |
+| 15 | RPC integration tests -- config.get + config.update | None | Done |
 | 16 | RPC integration tests -- workspace.create + workspace.destroy | None | Ready |
 | 17 | RPC integration tests -- task.create + task.updateStatus + task.remove | None | Ready |
 | 18 | RPC integration tests -- task.importGithub + task.importLinear | None | Ready |

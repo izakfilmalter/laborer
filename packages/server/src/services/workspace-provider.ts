@@ -85,6 +85,7 @@ interface WorkspaceRecord {
 
 class GitSpawnError extends Data.TaggedError("GitSpawnError")<{
 	readonly cause: unknown;
+	readonly message: string;
 }> {}
 
 /**
@@ -325,7 +326,11 @@ const rollbackWorktree = (
 				const stderr = await new Response(proc.stderr).text();
 				return { exitCode, stderr };
 			},
-			catch: (cause) => new GitSpawnError({ cause }),
+			catch: (cause) =>
+				new GitSpawnError({
+					cause,
+					message: `Failed to spawn git worktree remove during rollback: ${String(cause)}`,
+				}),
 		}).pipe(
 			Effect.tap(({ exitCode, stderr }) =>
 				exitCode !== 0
@@ -355,7 +360,11 @@ const rollbackWorktree = (
 				const stderr = await new Response(proc.stderr).text();
 				return { exitCode, stderr };
 			},
-			catch: (cause) => new GitSpawnError({ cause }),
+			catch: (cause) =>
+				new GitSpawnError({
+					cause,
+					message: `Failed to spawn git branch -D during rollback: ${String(cause)}`,
+				}),
 		}).pipe(
 			Effect.tap(({ exitCode, stderr }) =>
 				exitCode !== 0

@@ -55,6 +55,7 @@ import { Context, Data, Effect, Layer } from "effect";
 // ---------------------------------------------------------------------------
 
 class ConfigIOError extends Data.TaggedError("ConfigIOError")<{
+	readonly message: string;
 	readonly cause: unknown;
 }> {}
 
@@ -144,12 +145,16 @@ const readConfigFile = (
 
 		const content = yield* Effect.try({
 			try: () => readFileSync(configPath, "utf-8"),
-			catch: (cause) => new ConfigIOError({ cause }),
+			catch: (cause) =>
+				new ConfigIOError({
+					message: `Failed to read ${configPath}`,
+					cause,
+				}),
 		}).pipe(
 			Effect.catchAll((error) =>
 				Effect.gen(function* () {
 					yield* Effect.logWarning(
-						`Failed to read ${configPath}: ${String(error)}`
+						`${error.message}: ${String(error.cause)}`
 					).pipe(Effect.annotateLogs("module", logPrefix));
 					return "" as string;
 				})
@@ -162,12 +167,16 @@ const readConfigFile = (
 
 		const parsed = yield* Effect.try({
 			try: () => JSON.parse(content) as LaborerConfig,
-			catch: (cause) => new ConfigIOError({ cause }),
+			catch: (cause) =>
+				new ConfigIOError({
+					message: `Failed to parse ${configPath}`,
+					cause,
+				}),
 		}).pipe(
 			Effect.catchAll((error) =>
 				Effect.gen(function* () {
 					yield* Effect.logWarning(
-						`Failed to parse ${configPath}: ${String(error)}`
+						`${error.message}: ${String(error.cause)}`
 					).pipe(Effect.annotateLogs("module", logPrefix));
 					return {} as LaborerConfig;
 				})
@@ -191,12 +200,16 @@ const readRawConfigObject = (
 
 		const content = yield* Effect.try({
 			try: () => readFileSync(configPath, "utf-8"),
-			catch: (cause) => new ConfigIOError({ cause }),
+			catch: (cause) =>
+				new ConfigIOError({
+					message: `Failed to read ${configPath}`,
+					cause,
+				}),
 		}).pipe(
 			Effect.catchAll((error) =>
 				Effect.gen(function* () {
 					yield* Effect.logWarning(
-						`Failed to read ${configPath}: ${String(error)}`
+						`${error.message}: ${String(error.cause)}`
 					).pipe(Effect.annotateLogs("module", logPrefix));
 					return "" as string;
 				})
@@ -209,12 +222,16 @@ const readRawConfigObject = (
 
 		const parsed = yield* Effect.try({
 			try: () => JSON.parse(content) as unknown,
-			catch: (cause) => new ConfigIOError({ cause }),
+			catch: (cause) =>
+				new ConfigIOError({
+					message: `Failed to parse ${configPath}`,
+					cause,
+				}),
 		}).pipe(
 			Effect.catchAll((error) =>
 				Effect.gen(function* () {
 					yield* Effect.logWarning(
-						`Failed to parse ${configPath}: ${String(error)}`
+						`${error.message}: ${String(error.cause)}`
 					).pipe(Effect.annotateLogs("module", logPrefix));
 					return {} as unknown;
 				})
@@ -275,23 +292,31 @@ const writeJsonAtomic = (
 				writeFileSync(`${tempPath}`, `${JSON.stringify(content, null, 2)}\n`, {
 					encoding: "utf-8",
 				}),
-			catch: (cause) => new ConfigIOError({ cause }),
+			catch: (cause) =>
+				new ConfigIOError({
+					message: `Failed to write temp config file ${tempPath}`,
+					cause,
+				}),
 		}).pipe(
 			Effect.catchAll((error) =>
-				Effect.logWarning(
-					`Failed to write temp config file ${tempPath}: ${String(error)}`
-				).pipe(Effect.annotateLogs("module", logPrefix))
+				Effect.logWarning(`${error.message}: ${String(error.cause)}`).pipe(
+					Effect.annotateLogs("module", logPrefix)
+				)
 			)
 		);
 
 		yield* Effect.try({
 			try: () => renameSync(tempPath, targetPath),
-			catch: (cause) => new ConfigIOError({ cause }),
+			catch: (cause) =>
+				new ConfigIOError({
+					message: `Failed to atomically move ${tempPath} to ${targetPath}`,
+					cause,
+				}),
 		}).pipe(
 			Effect.catchAll((error) =>
-				Effect.logWarning(
-					`Failed to atomically move ${tempPath} to ${targetPath}: ${String(error)}`
-				).pipe(Effect.annotateLogs("module", logPrefix))
+				Effect.logWarning(`${error.message}: ${String(error.cause)}`).pipe(
+					Effect.annotateLogs("module", logPrefix)
+				)
 			)
 		);
 	});
@@ -339,12 +364,16 @@ const ensureGlobalConfigDir = (): Effect.Effect<void, never> =>
 		if (!existsSync(GLOBAL_CONFIG_DIR)) {
 			yield* Effect.try({
 				try: () => mkdirSync(GLOBAL_CONFIG_DIR, { recursive: true }),
-				catch: (cause) => new ConfigIOError({ cause }),
+				catch: (cause) =>
+					new ConfigIOError({
+						message: `Failed to create global config directory ${GLOBAL_CONFIG_DIR}`,
+						cause,
+					}),
 			}).pipe(
 				Effect.catchAll((error) =>
-					Effect.logWarning(
-						`Failed to create global config directory ${GLOBAL_CONFIG_DIR}: ${String(error)}`
-					).pipe(Effect.annotateLogs("module", logPrefix))
+					Effect.logWarning(`${error.message}: ${String(error.cause)}`).pipe(
+						Effect.annotateLogs("module", logPrefix)
+					)
 				)
 			);
 		}

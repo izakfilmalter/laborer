@@ -109,11 +109,11 @@ Remove three test files from `packages/server/test/` that are dead or duplicate 
 
 ### Acceptance criteria
 
-- [ ] `packages/server/test/terminal-manager.test.ts` is deleted
-- [ ] `packages/server/test/pty-host.test.ts` is deleted
-- [ ] `packages/server/test/ring-buffer.test.ts` is deleted
-- [ ] No remaining `describe.skip` blocks in the server test suite
-- [ ] All remaining server tests pass (`bun run test` in packages/server)
+- [x] `packages/server/test/terminal-manager.test.ts` is deleted
+- [x] `packages/server/test/pty-host.test.ts` is deleted
+- [x] `packages/server/test/ring-buffer.test.ts` is deleted
+- [x] No remaining `describe.skip` blocks in the server test suite
+- [x] All remaining server tests pass (`bun run test` in packages/server)
 
 ### Blocked by
 
@@ -765,7 +765,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 1 | Extract TestLaborerStore shared helper | None | Done |
 | 2 | Extract git repo shared helpers | None | In Progress |
 | 3 | Extract timing shared helpers | None | Ready |
-| 4 | Delete dead/duplicate test files from server | None | Ready |
+| 4 | Delete dead/duplicate test files from server | None | Done |
 | 5 | Migrate worktree/workspace server tests to @effect/vitest | #1, #2, #3 | Blocked |
 | 6 | Migrate task/importer server tests to @effect/vitest | #1 | Ready |
 | 7 | Migrate remaining server tests to @effect/vitest | #1 | Ready |

@@ -16,6 +16,39 @@ const makeTestStore = Effect.gen(function* () {
 	});
 }).pipe(provideOtel({}));
 
+const leafPane = {
+	_tag: "LeafNode",
+	id: "pane-1",
+	paneType: "terminal",
+	terminalId: "terminal-1",
+	workspaceId: "workspace-1",
+} as const;
+
+const splitLayout = {
+	_tag: "SplitNode",
+	id: "layout-root",
+	direction: "horizontal",
+	children: [
+		leafPane,
+		{
+			_tag: "LeafNode",
+			id: "pane-2",
+			paneType: "diff",
+			diffOpen: true,
+			workspaceId: "workspace-1",
+		},
+	],
+	sizes: [0.6, 0.4],
+} as const;
+
+const restoredLayout = {
+	_tag: "LeafNode",
+	id: "pane-restored",
+	paneType: "terminal",
+	terminalId: "terminal-2",
+	workspaceId: "workspace-1",
+} as const;
+
 describe("LiveStore schema", () => {
 	it.scoped(
 		"materializes project lifecycle events into the projects table",
@@ -115,6 +148,89 @@ describe("LiveStore schema", () => {
 			})
 	);
 
+	it.scoped("materializes diff lifecycle events into the diffs table", () =>
+		Effect.gen(function* () {
+			const store = yield* makeTestStore;
+
+			store.commit(
+				events.diffUpdated({
+					workspaceId: "workspace-1",
+					diffContent: "diff --git a/file.ts b/file.ts",
+					lastUpdated: "2026-03-06T00:00:00.000Z",
+				})
+			);
+
+			store.commit(
+				events.diffUpdated({
+					workspaceId: "workspace-1",
+					diffContent: "diff --git a/file.ts b/file.ts\n+updated line",
+					lastUpdated: "2026-03-06T00:01:00.000Z",
+				})
+			);
+
+			assert.deepStrictEqual(store.query(tables.diffs), [
+				{
+					workspaceId: "workspace-1",
+					diffContent: "diff --git a/file.ts b/file.ts\n+updated line",
+					lastUpdated: "2026-03-06T00:01:00.000Z",
+				},
+			]);
+
+			store.commit(events.diffCleared({ workspaceId: "workspace-1" }));
+
+			assert.deepStrictEqual(
+				store.query(tables.diffs.where("workspaceId", "workspace-1")),
+				[]
+			);
+		})
+	);
+
+	it.scoped("materializes task lifecycle events into the tasks table", () =>
+		Effect.gen(function* () {
+			const store = yield* makeTestStore;
+
+			store.commit(
+				events.taskCreated({
+					id: "task-1",
+					projectId: "project-1",
+					source: "manual",
+					prdId: "prd-1",
+					externalId: null,
+					title: "Cover schema materializers",
+					status: "pending",
+				})
+			);
+
+			assert.deepStrictEqual(store.query(tables.tasks.where("id", "task-1")), [
+				{
+					id: "task-1",
+					projectId: "project-1",
+					source: "manual",
+					prdId: "prd-1",
+					externalId: null,
+					title: "Cover schema materializers",
+					status: "pending",
+				},
+			]);
+
+			store.commit(
+				events.taskStatusChanged({ id: "task-1", status: "completed" })
+			);
+
+			assert.strictEqual(
+				store.query(tables.tasks.where("id", "task-1"))[0]?.status,
+				"completed"
+			);
+
+			store.commit(events.taskRemoved({ id: "task-1" }));
+
+			assert.deepStrictEqual(
+				store.query(tables.tasks.where("id", "task-1")),
+				[]
+			);
+		})
+	);
+
 	it.scoped("materializes prd lifecycle events into the prds table", () =>
 		Effect.gen(function* () {
 			const store = yield* makeTestStore;
@@ -154,5 +270,85 @@ describe("LiveStore schema", () => {
 
 			assert.deepStrictEqual(store.query(tables.prds.where("id", "prd-1")), []);
 		})
+	);
+
+	it.scoped(
+		"materializes panel layout events into the panel_layout table",
+		() =>
+			Effect.gen(function* () {
+				const store = yield* makeTestStore;
+
+				store.commit(
+					events.layoutSplit({
+						id: "session-1",
+						layoutTree: splitLayout,
+						activePaneId: "pane-1",
+					})
+				);
+
+				assert.deepStrictEqual(store.query(tables.panelLayout), [
+					{
+						id: "session-1",
+						layoutTree: splitLayout,
+						activePaneId: "pane-1",
+					},
+				]);
+
+				store.commit(
+					events.layoutPaneClosed({
+						id: "session-1",
+						layoutTree: leafPane,
+						activePaneId: "pane-1",
+					})
+				);
+
+				assert.deepStrictEqual(store.query(tables.panelLayout), [
+					{
+						id: "session-1",
+						layoutTree: leafPane,
+						activePaneId: "pane-1",
+					},
+				]);
+
+				store.commit(
+					events.layoutPaneAssigned({
+						id: "session-1",
+						layoutTree: {
+							...leafPane,
+							terminalId: "terminal-3",
+							id: "pane-assigned",
+						},
+						activePaneId: "pane-assigned",
+					})
+				);
+
+				assert.deepStrictEqual(store.query(tables.panelLayout), [
+					{
+						id: "session-1",
+						layoutTree: {
+							...leafPane,
+							terminalId: "terminal-3",
+							id: "pane-assigned",
+						},
+						activePaneId: "pane-assigned",
+					},
+				]);
+
+				store.commit(
+					events.layoutRestored({
+						id: "session-1",
+						layoutTree: restoredLayout,
+						activePaneId: null,
+					})
+				);
+
+				assert.deepStrictEqual(store.query(tables.panelLayout), [
+					{
+						id: "session-1",
+						layoutTree: restoredLayout,
+						activePaneId: null,
+					},
+				]);
+			})
 	);
 });

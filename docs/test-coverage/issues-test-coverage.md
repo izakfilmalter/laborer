@@ -337,12 +337,12 @@ Each test commits an event and verifies the table state via query.
 
 ### Acceptance criteria
 
-- [ ] Diff event tests (DiffUpdated upsert, DiffCleared delete) pass
-- [ ] Task event tests (TaskCreated, TaskStatusChanged, TaskRemoved) pass
-- [ ] PRD event tests (PrdCreated, PrdStatusChanged, PrdRemoved) pass
-- [ ] Panel layout event tests (LayoutSplit, LayoutPaneClosed, LayoutPaneAssigned, LayoutRestored) pass
-- [ ] All tests use `@effect/vitest` patterns
-- [ ] `bun x ultracite check` passes
+- [x] Diff event tests (DiffUpdated upsert, DiffCleared delete) pass
+- [x] Task event tests (TaskCreated, TaskStatusChanged, TaskRemoved) pass
+- [x] PRD event tests (PrdCreated, PrdStatusChanged, PrdRemoved) pass
+- [x] Panel layout event tests (LayoutSplit, LayoutPaneClosed, LayoutPaneAssigned, LayoutRestored) pass
+- [x] All tests use `@effect/vitest` patterns
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -771,7 +771,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 7 | Migrate remaining server tests to @effect/vitest | #1 | Ready |
 | 8 | Migrate terminal package tests to @effect/vitest assertions | None | Ready |
 | 9 | Add LiveStore schema tests -- setup + project/workspace events | None | Done |
-| 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Ready |
+| 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Done |
 | 11 | Add LiveStore schema tests -- deprecated terminal event no-ops | #9 | Ready |
 | 12 | Rewrite config-service.test.ts through public API | #5 or #7 | Blocked |
 | 13 | Set up RPC test infrastructure + health.check test | #1 | Done |

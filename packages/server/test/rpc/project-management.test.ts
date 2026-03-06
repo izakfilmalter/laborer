@@ -1,4 +1,10 @@
-import { existsSync, realpathSync, rmSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { tables } from "@laborer/shared/schema";
@@ -106,6 +112,82 @@ describe("LaborerRpcs project management", () => {
 						store.query(tables.projects.where("repoPath", repoPath)),
 						[]
 					);
+				})
+			)
+	);
+
+	it.scoped(
+		"project.add returns a clear duplicate message for nested repo paths",
+		() =>
+			runWithRpcTestContext(({ client, store }) =>
+				Effect.gen(function* () {
+					const tempRoots: string[] = [];
+					yield* Effect.addFinalizer(() =>
+						Effect.sync(() => cleanupTempRoots(tempRoots))
+					);
+
+					const repoPath = initRepo("rpc-project-nested-duplicate", tempRoots);
+					const nestedPath = join(repoPath, "src", "nested");
+					const canonicalRepoPath = realpathSync(repoPath);
+					mkdirSync(nestedPath, { recursive: true });
+
+					const project = yield* client.project.add({ repoPath });
+					const result = yield* client.project
+						.add({ repoPath: nestedPath })
+						.pipe(Effect.either);
+
+					assert.isTrue(Either.isLeft(result));
+					if (Either.isRight(result)) {
+						assert.fail("Expected nested duplicate project.add to fail");
+					}
+
+					assert.strictEqual(result.left.code, "ALREADY_REGISTERED");
+					assert.include(result.left.message, nestedPath);
+					assert.include(result.left.message, canonicalRepoPath);
+					assert.include(result.left.message, project.name);
+					assert.include(result.left.message, "already registered repository");
+
+					assert.strictEqual(store.query(tables.projects).length, 1);
+				})
+			)
+	);
+
+	it.scoped(
+		"project.add returns a clear duplicate message for symlinked repo paths",
+		() =>
+			runWithRpcTestContext(({ client, store }) =>
+				Effect.gen(function* () {
+					const tempRoots: string[] = [];
+					yield* Effect.addFinalizer(() =>
+						Effect.sync(() => cleanupTempRoots(tempRoots))
+					);
+
+					const repoPath = initRepo("rpc-project-symlink-duplicate", tempRoots);
+					const symlinkRoot = createTempDir(
+						"rpc-project-symlink-root",
+						tempRoots
+					);
+					const symlinkPath = join(symlinkRoot, "linked-repo");
+					const canonicalRepoPath = realpathSync(repoPath);
+					symlinkSync(repoPath, symlinkPath);
+
+					const project = yield* client.project.add({ repoPath });
+					const result = yield* client.project
+						.add({ repoPath: symlinkPath })
+						.pipe(Effect.either);
+
+					assert.isTrue(Either.isLeft(result));
+					if (Either.isRight(result)) {
+						assert.fail("Expected symlink duplicate project.add to fail");
+					}
+
+					assert.strictEqual(result.left.code, "ALREADY_REGISTERED");
+					assert.include(result.left.message, symlinkPath);
+					assert.include(result.left.message, canonicalRepoPath);
+					assert.include(result.left.message, project.name);
+					assert.include(result.left.message, "already registered repository");
+
+					assert.strictEqual(store.query(tables.projects).length, 1);
 				})
 			)
 	);

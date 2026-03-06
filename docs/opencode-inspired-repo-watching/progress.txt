@@ -329,3 +329,32 @@
 - All 178 server tests pass (28 test files)
 - TypeScript compiles with no errors
 - Ultracite lint passes on the touched server and docs paths
+
+## Issue 8: Clear duplicate-project outcome for canonicalized paths — IN PROGRESS
+
+### What was done
+- Tightened duplicate project registration messaging in
+  `packages/server/src/services/project-registry.ts`
+  - `ALREADY_REGISTERED` errors now explain that the user-supplied path resolves
+    to an already registered canonical repository path
+  - The message includes the existing project name so nested-path and symlink
+    attempts point back to the correct logical project instead of feeling like a
+    generic failure
+
+- Added RPC integration coverage in
+  `packages/server/test/rpc/project-management.test.ts`
+  - Nested path registration returns `ALREADY_REGISTERED` with the original
+    input path, canonical repo path, and project name in the message
+  - Symlinked path registration returns the same clear duplicate outcome
+  - Both cases verify that only one project record exists after the duplicate
+    add attempt
+
+- Updated `docs/opencode-inspired-repo-watching/issues.md`
+  - Marked Issue 8 as in progress
+  - Checked off the acceptance criterion for clear nested/symlink duplicate
+    outcomes
+
+### Verification
+- `bun run test test/rpc/project-management.test.ts` passes (6 tests)
+- `bun run --filter @laborer/server check-types` passes
+- `bun x ultracite check packages/server/src/services/project-registry.ts packages/server/test/rpc/project-management.test.ts` passes

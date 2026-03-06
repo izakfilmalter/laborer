@@ -104,8 +104,15 @@ class ProjectRegistry extends Context.Tag("@laborer/ProjectRegistry")<
 				);
 
 				if (existingProjects.length > 0) {
+					const existingProject = existingProjects[0];
+					if (!existingProject) {
+						return yield* new RpcError({
+							message: `Project already registered: ${canonicalRoot}`,
+							code: "ALREADY_REGISTERED",
+						});
+					}
 					return yield* new RpcError({
-						message: `Project already registered: ${canonicalRoot}`,
+						message: `${repoPath} resolves to the already registered repository ${canonicalRoot} (project ${existingProject.name})`,
 						code: "ALREADY_REGISTERED",
 					});
 				}

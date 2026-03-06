@@ -282,6 +282,10 @@ This slice focuses on the non-happy-path behavior that makes the OpenCode-inspir
 
 ## Issue 8: Polish and verification pass for the full repo-watching stack
 
+### Status
+
+In progress
+
 ### Parent PRD
 
 PRD-opencode-inspired-repo-watching.md
@@ -296,7 +300,7 @@ Run the full verification and polish pass for the OpenCode-inspired repository w
 
 ### Acceptance criteria
 
-- [ ] Adding nested or symlinked paths produces a clear non-duplicate outcome
+- [x] Adding nested or symlinked paths produces a clear non-duplicate outcome
 - [ ] Repository and workspace state update smoothly during rapid worktree churn
 - [ ] Branch indicators refresh promptly after branch switches
 - [ ] Ignored paths stay quiet and do not trigger noisy refresh work

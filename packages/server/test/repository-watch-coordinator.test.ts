@@ -5,6 +5,7 @@ import { tables } from "@laborer/shared/schema";
 import { Context, Effect, Exit, Layer, Scope } from "effect";
 import { afterAll } from "vitest";
 import { BranchStateTracker } from "../src/services/branch-state-tracker.js";
+import { ConfigService } from "../src/services/config-service.js";
 import {
 	FileWatcher,
 	type WatchSubscription,
@@ -24,6 +25,7 @@ const tempRoots: string[] = [];
 
 const TestLayer = RepositoryWatchCoordinator.layer.pipe(
 	Layer.provide(BranchStateTracker.layer),
+	Layer.provide(ConfigService.layer),
 	Layer.provide(RepositoryEventBus.layer),
 	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),
@@ -173,6 +175,7 @@ describe("RepositoryWatchCoordinator scoped lifecycle", () => {
 				// Build a scoped layer with the recording watcher
 				const ScopedTestLayer = RepositoryWatchCoordinator.layer.pipe(
 					Layer.provide(BranchStateTracker.layer),
+					Layer.provide(ConfigService.layer),
 					Layer.provide(RepositoryEventBus.layer),
 					Layer.provide(RecordingFileWatcher),
 					Layer.provide(WorktreeReconciler.layer),
@@ -229,6 +232,7 @@ describe("RepositoryWatchCoordinator scoped lifecycle", () => {
 
 				const ScopedTestLayer = RepositoryWatchCoordinator.layer.pipe(
 					Layer.provide(BranchStateTracker.layer),
+					Layer.provide(ConfigService.layer),
 					Layer.provide(RepositoryEventBus.layer),
 					Layer.provide(RecordingFileWatcher),
 					Layer.provide(WorktreeReconciler.layer),

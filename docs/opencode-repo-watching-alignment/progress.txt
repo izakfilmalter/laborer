@@ -11,3 +11,14 @@
 - Updated startup watcher restore to reuse persisted canonical git identity when available instead of re-resolving everything from raw repo paths.
 - Added regression coverage for new-project persistence, lazy legacy backfill, persisted-identity startup restore, and updated RPC fixture types to match the expanded project record shape.
 - Feedback loops: `bun run check-types` passes in `packages/server` and `packages/shared`; `bun run test -- test/repository-identity.test.ts test/repository-watch-coordinator-hardening.test.ts test/rpc/project-management.test.ts test/project-rpc-handlers.test.ts test/prd-rpc-handlers.test.ts` passes in `packages/server`; `bun run test -- test/schema.test.ts` passes in `packages/shared`; `bun run check` still fails on a pre-existing formatting issue in `.opencode/package.json`.
+
+2026-03-06
+- Selected Issue 3 as the highest-priority remaining slice because it unblocks Issues 6 and 7 and directly addresses a core PRD concern about filtering noise earlier in the pipeline.
+- Added `watchIgnore` field to `LaborerConfig` and `ResolvedLaborerConfig` so ignore patterns can be extended via `laborer.json` without code changes.
+- Extended `FileWatcher.subscribe` options to accept `ignore` glob patterns; the native `@parcel/watcher` backend now passes these to the underlying watcher for early suppression.
+- Added `mergeIgnorePrefixes`, `toWatcherIgnoreGlobs`, and `setAdditionalIgnorePrefixes` to `RepositoryEventBus` so the coordinator can wire config-provided patterns into the centralized ignore model.
+- Updated `RepositoryWatchCoordinator` to resolve project config at watch setup time, merge additional ignore prefixes into the event bus, and pass derived ignore globs to the repo-root watcher subscription.
+- Added `ConfigService` as a dependency of `RepositoryWatchCoordinator.layer` and updated all test layers (13 sites across 8 test files plus `main.ts` and `test/rpc/test-layer.ts`) to provide `ConfigService`.
+- Added unit tests for `mergeIgnorePrefixes`, `toWatcherIgnoreGlobs`, `setAdditionalIgnorePrefixes`, and config-driven ignore suppression through the full watcher-to-event-bus pipeline.
+- Added integration tests for custom `watchIgnore` patterns from `laborer.json` and build output churn suppression across default ignore rules.
+- Feedback loops: `bun run check-types` passes in `packages/server` and `packages/shared`; all affected test suites pass (repository-event-bus, repository-watch-coordinator, coordinator-hardening, branch-state-tracker, startup-bootstrap, worktree-watcher, project-registry.worktree-detection, repository-identity, config-service, file-watcher, health-check, prd-rpc-handlers, project-rpc-handlers); `bun run check` still fails on a pre-existing formatting issue in `.opencode/package.json`.

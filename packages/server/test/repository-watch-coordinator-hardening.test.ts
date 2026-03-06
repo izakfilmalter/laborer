@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { events, tables } from "@laborer/shared/schema";
 import { Context, Effect, Exit, Layer, Scope } from "effect";
 import { BranchStateTracker } from "../src/services/branch-state-tracker.js";
+import { ConfigService } from "../src/services/config-service.js";
 import {
 	FileWatcher,
 	type WatchEvent,
@@ -97,6 +98,7 @@ const createTestLayer = (params: {
 
 	return RepositoryWatchCoordinator.layer.pipe(
 		Layer.provide(branchTrackerLayer),
+		Layer.provide(ConfigService.layer),
 		Layer.provideMerge(RepositoryEventBus.layer),
 		Layer.provide(fileWatcherLayer),
 		Layer.provide(reconcilerLayer),
@@ -278,6 +280,7 @@ describe("RepositoryWatchCoordinator hardening", () => {
 
 			const TestLayer = RepositoryWatchCoordinator.layer.pipe(
 				Layer.provide(branchTrackerLayer),
+				Layer.provide(ConfigService.layer),
 				Layer.provideMerge(RepositoryEventBus.layer),
 				Layer.provide(fileWatcherLayer),
 				Layer.provide(reconcilerLayer),

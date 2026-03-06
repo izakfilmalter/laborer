@@ -31,6 +31,7 @@ import { join } from "node:path";
 import { events, tables } from "@laborer/shared/schema";
 import { Context, Data, Effect, Layer, Ref, Runtime } from "effect";
 import { BranchStateTracker } from "./branch-state-tracker.js";
+import { ConfigService } from "./config-service.js";
 import {
 	FileWatcher,
 	type WatchEvent,
@@ -71,6 +72,7 @@ interface ProjectWatcherState {
 interface ProjectRecord {
 	readonly canonicalGitCommonDir: string | null;
 	readonly id: string;
+	readonly name: string;
 	readonly repoId: string | null;
 	readonly repoPath: string;
 }
@@ -78,6 +80,7 @@ interface ProjectRecord {
 interface WatchTarget {
 	readonly canonicalGitCommonDir: string;
 	readonly projectId: string;
+	readonly projectName: string;
 	readonly repoPath: string;
 }
 
@@ -169,7 +172,8 @@ class RepositoryWatchCoordinator extends Context.Tag(
 		 */
 		readonly watchProject: (
 			projectId: string,
-			repoPath: string
+			repoPath: string,
+			projectName?: string
 		) => Effect.Effect<void, never>;
 
 		/**
@@ -194,6 +198,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
 			const repoIdentity = yield* RepositoryIdentity;
 			const fileWatcher = yield* FileWatcher;
 			const eventBus = yield* RepositoryEventBus;
+			const configService = yield* ConfigService;
 			const runtime = yield* Effect.runtime<never>();
 
 			const ensurePersistedIdentity = Effect.fn(
@@ -588,7 +593,8 @@ class RepositoryWatchCoordinator extends Context.Tag(
 			const subscribeRepoRoot = (
 				projectId: string,
 				repoPath: string,
-				state: ProjectWatcherState
+				state: ProjectWatcherState,
+				ignoreGlobs?: string[]
 			): Effect.Effect<WatchSubscription | null, never> =>
 				fileWatcher
 					.subscribe(
@@ -637,7 +643,9 @@ class RepositoryWatchCoordinator extends Context.Tag(
 								)
 							).catch(() => undefined);
 						},
-						{ recursive: true }
+						ignoreGlobs !== undefined && ignoreGlobs.length > 0
+							? { recursive: true, ignore: ignoreGlobs }
+							: { recursive: true }
 					)
 					.pipe(
 						Effect.tap((subscription) =>
@@ -680,8 +688,26 @@ class RepositoryWatchCoordinator extends Context.Tag(
 			)(function* ({
 				canonicalGitCommonDir,
 				projectId,
+				projectName,
 				repoPath,
 			}: WatchTarget) {
+				// Resolve project config for ignore patterns
+				const resolvedConfig = yield* configService
+					.resolveConfig(repoPath, projectName)
+					.pipe(
+						Effect.catchAll((error) =>
+							Effect.logWarning(
+								`Failed to resolve config for project ${projectId}: ${String(error)}`
+							).pipe(Effect.as(null))
+						)
+					);
+
+				// Wire additional ignore prefixes from config into the event bus
+				const additionalIgnores = resolvedConfig?.watchIgnore.value ?? [];
+				if (additionalIgnores.length > 0) {
+					eventBus.setAdditionalIgnorePrefixes(additionalIgnores);
+				}
+
 				const gitDirPath = canonicalGitCommonDir;
 				const hasWorktreesDir = existsSync(join(gitDirPath, "worktrees"));
 
@@ -712,10 +738,14 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					);
 				}
 
+				// Pass ignore globs to the repo-root watcher so the native
+				// backend can suppress noisy directories before events
+				// reach user-space.
 				state.repoRootSubscription = yield* subscribeRepoRoot(
 					projectId,
 					repoPath,
-					state
+					state,
+					[...eventBus.ignoreGlobs]
 				);
 
 				yield* Ref.update(statesRef, (states) => {
@@ -734,7 +764,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
 			});
 
 			const watchProject = Effect.fn("RepositoryWatchCoordinator.watchProject")(
-				function* (projectId: string, repoPath: string) {
+				function* (projectId: string, repoPath: string, projectName?: string) {
 					// Tear down existing watchers for this project
 					yield* unwatchProject(projectId);
 
@@ -755,6 +785,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
 
 					yield* startWatching({
 						projectId,
+						projectName: projectName ?? projectId,
 						repoPath: identity.canonicalRoot,
 						canonicalGitCommonDir: identity.canonicalGitCommonDir,
 					});
@@ -782,9 +813,10 @@ class RepositoryWatchCoordinator extends Context.Tag(
 					);
 					yield* Effect.forEach(projects, (project) =>
 						project.canonicalGitCommonDir === null
-							? watchProject(project.id, project.repoPath)
+							? watchProject(project.id, project.repoPath, project.name)
 							: startWatching({
 									projectId: project.id,
+									projectName: project.name,
 									repoPath: project.repoPath,
 									canonicalGitCommonDir: project.canonicalGitCommonDir,
 								})

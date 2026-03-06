@@ -5,6 +5,7 @@ import { tables } from "@laborer/shared/schema";
 import { Effect, Layer } from "effect";
 import { afterAll } from "vitest";
 import { BranchStateTracker } from "../src/services/branch-state-tracker.js";
+import { ConfigService } from "../src/services/config-service.js";
 import { FileWatcher } from "../src/services/file-watcher.js";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
@@ -22,6 +23,7 @@ const tempRoots: string[] = [];
 const TestLayer = ProjectRegistry.layer.pipe(
 	Layer.provide(RepositoryWatchCoordinator.layer),
 	Layer.provide(BranchStateTracker.layer),
+	Layer.provide(ConfigService.layer),
 	Layer.provide(RepositoryEventBus.layer),
 	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),

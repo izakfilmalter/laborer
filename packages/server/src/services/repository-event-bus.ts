@@ -133,6 +133,30 @@ class RepositoryEventBusError extends Data.TaggedError(
 
 // ── Service ─────────────────────────────────────────────────────
 
+/**
+ * Merge the default ignore prefixes with additional config-provided
+ * prefixes, deduplicating entries.
+ */
+const mergeIgnorePrefixes = (
+	additional: readonly string[]
+): readonly string[] => {
+	if (additional.length === 0) {
+		return DEFAULT_IGNORED_PREFIXES;
+	}
+	const combined = new Set([...DEFAULT_IGNORED_PREFIXES, ...additional]);
+	return [...combined];
+};
+
+/**
+ * Convert first-segment ignore prefixes into glob patterns suitable
+ * for passing to `@parcel/watcher`'s `ignore` option.
+ *
+ * Each prefix becomes a glob like `node_modules/**` so the native
+ * backend can suppress events before they reach user-space.
+ */
+const toWatcherIgnoreGlobs = (prefixes: readonly string[]): string[] =>
+	prefixes.map((prefix) => `${prefix}/**`);
+
 class RepositoryEventBus extends Context.Tag("@laborer/RepositoryEventBus")<
 	RepositoryEventBus,
 	{
@@ -164,6 +188,28 @@ class RepositoryEventBus extends Context.Tag("@laborer/RepositoryEventBus")<
 			readonly repoRoot: string;
 			readonly projectId: string;
 		}) => RepositoryFileEvent | null;
+
+		/**
+		 * The effective ignore prefixes used by this bus instance.
+		 * Includes both defaults and any config-provided additions.
+		 * Exposed so the coordinator can pass these to the watcher backend.
+		 */
+		readonly ignorePrefixes: readonly string[];
+
+		/**
+		 * Glob patterns derived from `ignorePrefixes`, suitable for
+		 * passing to native watcher backends that support early filtering.
+		 */
+		readonly ignoreGlobs: readonly string[];
+
+		/**
+		 * Update the effective ignore prefixes by merging additional
+		 * config-provided patterns into the defaults. This is called
+		 * by the coordinator after reading project-level config.
+		 */
+		readonly setAdditionalIgnorePrefixes: (
+			additional: readonly string[]
+		) => void;
 	}
 >() {
 	static readonly layer = Layer.effect(
@@ -174,7 +220,10 @@ class RepositoryEventBus extends Context.Tag("@laborer/RepositoryEventBus")<
 			// This avoids Effect.runSync in the synchronous
 			// unsubscribe callback.
 			const handlers: RepositoryFileEventHandler[] = [];
-			const ignoredPrefixes = DEFAULT_IGNORED_PREFIXES;
+			let ignoredPrefixes: readonly string[] = DEFAULT_IGNORED_PREFIXES;
+			let ignoreGlobs: readonly string[] = toWatcherIgnoreGlobs(
+				DEFAULT_IGNORED_PREFIXES
+			);
 
 			const subscribe = (
 				handler: RepositoryFileEventHandler
@@ -227,10 +276,24 @@ class RepositoryEventBus extends Context.Tag("@laborer/RepositoryEventBus")<
 				};
 			};
 
+			const setAdditionalIgnorePrefixes = (
+				additional: readonly string[]
+			): void => {
+				ignoredPrefixes = mergeIgnorePrefixes(additional);
+				ignoreGlobs = toWatcherIgnoreGlobs(ignoredPrefixes);
+			};
+
 			return RepositoryEventBus.of({
 				subscribe,
 				publish,
 				normalizeEvent,
+				get ignorePrefixes() {
+					return ignoredPrefixes;
+				},
+				get ignoreGlobs() {
+					return ignoreGlobs;
+				},
+				setAdditionalIgnorePrefixes,
 			});
 		})
 	);
@@ -245,4 +308,6 @@ export {
 	type RepositoryFileEventType,
 	shouldIgnore,
 	DEFAULT_IGNORED_PREFIXES,
+	mergeIgnorePrefixes,
+	toWatcherIgnoreGlobs,
 };

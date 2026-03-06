@@ -10,6 +10,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { afterAll } from "vitest";
 import { BranchStateTracker } from "../src/services/branch-state-tracker.js";
+import { ConfigService } from "../src/services/config-service.js";
 import {
 	FileWatcher,
 	type WatchEvent,
@@ -17,9 +18,11 @@ import {
 } from "../src/services/file-watcher.js";
 import {
 	DEFAULT_IGNORED_PREFIXES,
+	mergeIgnorePrefixes,
 	RepositoryEventBus,
 	type RepositoryFileEvent,
 	shouldIgnore,
+	toWatcherIgnoreGlobs,
 } from "../src/services/repository-event-bus.js";
 import { RepositoryIdentity } from "../src/services/repository-identity.js";
 import { RepositoryWatchCoordinator } from "../src/services/repository-watch-coordinator.js";
@@ -69,6 +72,7 @@ const createDeterministicIntegrationLayer = (
 				})
 			)
 		),
+		Layer.provide(ConfigService.layer),
 		Layer.provideMerge(RepositoryEventBus.layer),
 		Layer.provide(recordingFileWatcher),
 		Layer.provide(
@@ -605,6 +609,289 @@ describe("RepositoryEventBus watcher integration", () => {
 					assert.isDefined(eventB);
 					assert.strictEqual(eventA?.projectId, eventB?.projectId);
 				}).pipe(Effect.provide(multiSubscriberTestLayer));
+			})
+	);
+});
+
+// ── Unit tests: configurable ignore helpers ────────────────────
+
+describe("mergeIgnorePrefixes", () => {
+	it.effect("returns defaults when no additional prefixes are provided", () =>
+		Effect.sync(() => {
+			const merged = mergeIgnorePrefixes([]);
+			assert.deepStrictEqual(merged, DEFAULT_IGNORED_PREFIXES);
+		})
+	);
+
+	it.effect("appends new prefixes to defaults", () =>
+		Effect.sync(() => {
+			const merged = mergeIgnorePrefixes([".cache", "tmp"]);
+			assert.isTrue(merged.includes(".cache"));
+			assert.isTrue(merged.includes("tmp"));
+			// All defaults should still be present
+			for (const prefix of DEFAULT_IGNORED_PREFIXES) {
+				assert.isTrue(merged.includes(prefix), `Missing default: ${prefix}`);
+			}
+		})
+	);
+
+	it.effect("deduplicates overlapping prefixes", () =>
+		Effect.sync(() => {
+			const merged = mergeIgnorePrefixes(["node_modules", ".cache"]);
+			const nodeModulesCount = merged.filter(
+				(p: string) => p === "node_modules"
+			).length;
+			assert.strictEqual(nodeModulesCount, 1, "Should not duplicate entries");
+			assert.isTrue(merged.includes(".cache"));
+		})
+	);
+});
+
+describe("toWatcherIgnoreGlobs", () => {
+	it.effect("converts prefixes to glob patterns", () =>
+		Effect.sync(() => {
+			const globs = toWatcherIgnoreGlobs(["node_modules", ".git", "dist"]);
+			assert.deepStrictEqual(globs, ["node_modules/**", ".git/**", "dist/**"]);
+		})
+	);
+
+	it.effect("handles empty prefix list", () =>
+		Effect.sync(() => {
+			const globs = toWatcherIgnoreGlobs([]);
+			assert.deepStrictEqual(globs, []);
+		})
+	);
+});
+
+// ── Unit tests: configurable ignore via event bus ──────────────
+
+describe("RepositoryEventBus configurable ignores", () => {
+	it.effect("exposes default ignore prefixes and globs", () =>
+		Effect.gen(function* () {
+			const bus = yield* RepositoryEventBus;
+
+			assert.deepStrictEqual(bus.ignorePrefixes, DEFAULT_IGNORED_PREFIXES);
+			assert.strictEqual(
+				bus.ignoreGlobs.length,
+				DEFAULT_IGNORED_PREFIXES.length
+			);
+			assert.isTrue(
+				bus.ignoreGlobs.every((g) => g.endsWith("/**")),
+				"All globs should end with /**"
+			);
+		}).pipe(Effect.provide(EventBusTestLayer))
+	);
+
+	it.effect("setAdditionalIgnorePrefixes merges with defaults", () =>
+		Effect.gen(function* () {
+			const bus = yield* RepositoryEventBus;
+
+			bus.setAdditionalIgnorePrefixes([".cache", "tmp"]);
+
+			assert.isTrue(bus.ignorePrefixes.includes(".cache"));
+			assert.isTrue(bus.ignorePrefixes.includes("tmp"));
+			// Defaults should still be present
+			assert.isTrue(bus.ignorePrefixes.includes("node_modules"));
+			assert.isTrue(bus.ignorePrefixes.includes(".git"));
+		}).pipe(Effect.provide(EventBusTestLayer))
+	);
+
+	it.effect(
+		"normalizeEvent suppresses paths matching config-added prefixes",
+		() =>
+			Effect.gen(function* () {
+				const bus = yield* RepositoryEventBus;
+
+				// Before adding custom ignore, .cache should not be ignored
+				const beforeResult = bus.normalizeEvent({
+					type: "change",
+					fileName: ".cache/some-file.json",
+					repoRoot: "/repo",
+					projectId: "test-project",
+				});
+				assert.isNotNull(beforeResult);
+
+				// Add custom ignore
+				bus.setAdditionalIgnorePrefixes([".cache"]);
+
+				// After adding, .cache should be ignored
+				const afterResult = bus.normalizeEvent({
+					type: "change",
+					fileName: ".cache/some-file.json",
+					repoRoot: "/repo",
+					projectId: "test-project",
+				});
+				assert.isNull(afterResult);
+
+				// Source files should still pass through
+				const sourceResult = bus.normalizeEvent({
+					type: "change",
+					fileName: "src/app.ts",
+					repoRoot: "/repo",
+					projectId: "test-project",
+				});
+				assert.isNotNull(sourceResult);
+			}).pipe(Effect.provide(EventBusTestLayer))
+	);
+});
+
+// ── Integration test: config-driven ignore through coordinator ──
+
+describe("Config-driven ignore filtering", () => {
+	it.scoped(
+		"custom watchIgnore patterns from config suppress events through the full pipeline",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("eventbus-config-ignore", tempRoots);
+				const recordedWatchers: RecordedWatchersByPath = new Map();
+
+				// Create a laborer.json with custom watchIgnore patterns
+				writeFileSync(
+					join(repoPath, "laborer.json"),
+					JSON.stringify({ watchIgnore: [".cache", "tmp"] })
+				);
+
+				const configIgnoreTestLayer = createDeterministicIntegrationLayer(
+					repoPath,
+					recordedWatchers
+				);
+
+				yield* Effect.gen(function* () {
+					const coordinator = yield* RepositoryWatchCoordinator;
+					const bus = yield* RepositoryEventBus;
+
+					const received: RepositoryFileEvent[] = [];
+					yield* bus.subscribe((event) => {
+						received.push(event);
+					});
+
+					yield* coordinator.watchProject(
+						"project-config-ignore",
+						repoPath,
+						"config-ignore-test"
+					);
+
+					// Create files in custom-ignored directories
+					mkdirSync(join(repoPath, ".cache"), { recursive: true });
+					writeFileSync(join(repoPath, ".cache", "cached-data.json"), "{ }");
+					mkdirSync(join(repoPath, "tmp"), { recursive: true });
+					writeFileSync(join(repoPath, "tmp", "temp-output.log"), "log data");
+					writeFileSync(
+						join(repoPath, "real-source.ts"),
+						"export const x = 1;\n"
+					);
+
+					// Deliver watcher events
+					recordedWatchers
+						.get(repoPath)
+						?.at(-1)
+						?.onChange({ type: "rename", fileName: ".cache/cached-data.json" });
+					recordedWatchers
+						.get(repoPath)
+						?.at(-1)
+						?.onChange({ type: "rename", fileName: "tmp/temp-output.log" });
+					recordedWatchers
+						.get(repoPath)
+						?.at(-1)
+						?.onChange({ type: "rename", fileName: "real-source.ts" });
+
+					yield* Effect.promise(() =>
+						waitFor(() =>
+							Promise.resolve(
+								received.some((e) => e.relativePath === "real-source.ts")
+							)
+						)
+					);
+
+					// Custom-ignored paths should not produce events
+					const ignoredEvents = received.filter(
+						(e) =>
+							e.relativePath.startsWith(".cache") ||
+							e.relativePath.startsWith("tmp")
+					);
+					assert.strictEqual(
+						ignoredEvents.length,
+						0,
+						`Expected no events from config-ignored paths, but received: ${ignoredEvents.map((e) => e.relativePath).join(", ")}`
+					);
+
+					// Real source files should still produce events
+					const sourceEvent = received.find(
+						(e) => e.relativePath === "real-source.ts"
+					);
+					assert.isDefined(sourceEvent);
+				}).pipe(Effect.provide(configIgnoreTestLayer));
+			})
+	);
+
+	it.scoped(
+		"build output churn from default ignore rules stays suppressed",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("eventbus-build-churn", tempRoots);
+				const recordedWatchers: RecordedWatchersByPath = new Map();
+				const buildChurnTestLayer = createDeterministicIntegrationLayer(
+					repoPath,
+					recordedWatchers
+				);
+
+				yield* Effect.gen(function* () {
+					const coordinator = yield* RepositoryWatchCoordinator;
+					const bus = yield* RepositoryEventBus;
+
+					const received: RepositoryFileEvent[] = [];
+					yield* bus.subscribe((event) => {
+						received.push(event);
+					});
+
+					yield* coordinator.watchProject("project-build-churn", repoPath);
+
+					// Simulate build output churn in multiple ignored directories
+					const churnPaths = [
+						"dist/bundle.js",
+						"dist/bundle.js.map",
+						"build/output.css",
+						".next/cache/webpack.js",
+						".turbo/cache/hash.json",
+						"coverage/lcov-report/index.html",
+						".nyc_output/processinfo.json",
+					];
+
+					for (const path of churnPaths) {
+						recordedWatchers
+							.get(repoPath)
+							?.at(-1)
+							?.onChange({ type: "change", fileName: path });
+					}
+
+					// Send one valid source event as canary
+					writeFileSync(
+						join(repoPath, "canary.ts"),
+						"export const canary = true;\n"
+					);
+					recordedWatchers
+						.get(repoPath)
+						?.at(-1)
+						?.onChange({ type: "rename", fileName: "canary.ts" });
+
+					yield* Effect.promise(() =>
+						waitFor(() =>
+							Promise.resolve(
+								received.some((e) => e.relativePath === "canary.ts")
+							)
+						)
+					);
+
+					// No build churn events should have reached the bus
+					const buildEvents = received.filter(
+						(e) => e.relativePath !== "canary.ts"
+					);
+					assert.strictEqual(
+						buildEvents.length,
+						0,
+						`Build churn should be filtered: ${buildEvents.map((e) => e.relativePath).join(", ")}`
+					);
+				}).pipe(Effect.provide(buildChurnTestLayer));
 			})
 	);
 });

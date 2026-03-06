@@ -50,12 +50,22 @@ type WatchCallback = (event: WatchEvent) => void;
  */
 type WatchErrorCallback = (error: Error) => void;
 
+interface FileWatcherSubscribeOptions {
+	/**
+	 * Glob patterns to pass to the native watcher backend for
+	 * early suppression of noisy directories. The fs.watch fallback
+	 * ignores this option — filtering happens downstream.
+	 */
+	readonly ignore?: readonly string[];
+	readonly recursive?: boolean;
+}
+
 interface FileWatcherService {
 	readonly subscribe: (
 		path: string,
 		onChange: WatchCallback,
 		onError: WatchErrorCallback,
-		options?: { readonly recursive?: boolean }
+		options?: FileWatcherSubscribeOptions
 	) => Effect.Effect<WatchSubscription | null, FileWatcherError>;
 }
 
@@ -64,13 +74,13 @@ interface FileWatcherDrivers {
 		path: string,
 		onChange: WatchCallback,
 		onError: WatchErrorCallback,
-		options?: { readonly recursive?: boolean }
+		options?: FileWatcherSubscribeOptions
 	) => Effect.Effect<WatchSubscription | null, FileWatcherError>;
 	readonly native: (
 		path: string,
 		onChange: WatchCallback,
 		onError: WatchErrorCallback,
-		options?: { readonly recursive?: boolean }
+		options?: FileWatcherSubscribeOptions
 	) => Effect.Effect<WatchSubscription | null, FileWatcherError>;
 }
 
@@ -97,7 +107,7 @@ const subscribeWithFsWatch = (
 	path: string,
 	onChange: WatchCallback,
 	onError: WatchErrorCallback,
-	options?: { readonly recursive?: boolean }
+	options?: FileWatcherSubscribeOptions
 ): Effect.Effect<WatchSubscription | null, FileWatcherError> =>
 	Effect.gen(function* () {
 		if (!existsSync(path)) {
@@ -137,7 +147,7 @@ const subscribeWithNativeWatcher = (
 	path: string,
 	onChange: WatchCallback,
 	onError: WatchErrorCallback,
-	_options?: { readonly recursive?: boolean }
+	options?: FileWatcherSubscribeOptions
 ): Effect.Effect<WatchSubscription | null, FileWatcherError> =>
 	Effect.gen(function* () {
 		if (!existsSync(path)) {
@@ -155,21 +165,30 @@ const subscribeWithNativeWatcher = (
 				}),
 		});
 
+		const subscribeOptions: { ignore?: string[] } = {};
+		if (options?.ignore !== undefined && options.ignore.length > 0) {
+			subscribeOptions.ignore = [...options.ignore];
+		}
+
 		const subscription = yield* Effect.tryPromise({
 			try: () =>
-				parcelWatcher.subscribe(path, (error, events) => {
-					if (error !== null) {
-						onError(error);
-						return;
-					}
+				parcelWatcher.subscribe(
+					path,
+					(error, events) => {
+						if (error !== null) {
+							onError(error);
+							return;
+						}
 
-					for (const event of events) {
-						onChange({
-							type: event.type === "update" ? "change" : "rename",
-							fileName: normalizeRelativeFileName(path, event.path),
-						});
-					}
-				}),
+						for (const event of events) {
+							onChange({
+								type: event.type === "update" ? "change" : "rename",
+								fileName: normalizeRelativeFileName(path, event.path),
+							});
+						}
+					},
+					subscribeOptions
+				),
 			catch: (cause) =>
 				new FileWatcherError({
 					message: `Failed to watch ${path} with native backend: ${String(cause)}`,
@@ -228,6 +247,7 @@ export {
 	FileWatcherError,
 	type FileWatcherBackendName,
 	type FileWatcherDrivers,
+	type FileWatcherSubscribeOptions,
 	makeFileWatcher,
 	resolveFileWatcherBackendPreference,
 };

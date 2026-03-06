@@ -127,6 +127,7 @@ const HttpLiveBase = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 const HttpLive = HttpLiveBase.pipe(
 	Layer.provide(RepositoryWatchCoordinator.layer),
 	Layer.provide(BranchStateTracker.layer),
+	Layer.provide(ConfigService.layer),
 	Layer.provide(RepositoryEventBus.layer),
 	Layer.provide(FileWatcher.layer),
 	Layer.provide(WorktreeReconciler.layer),

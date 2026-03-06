@@ -96,11 +96,11 @@ This slice should also make ignore configuration extensible so Laborer can appen
 
 ### Acceptance criteria
 
-- [ ] Default ignore rules remain centralized and are applied consistently across watcher and event-bus boundaries
-- [ ] Watcher-capable backends suppress ignored paths before downstream invalidation work when possible
-- [ ] Ignore configuration can be extended without editing source code
-- [ ] Ignored paths do not trigger branch refresh, worktree reconciliation, or repo event fanout
-- [ ] Integration tests cover dependency installs, build output churn, and custom ignore additions
+- [x] Default ignore rules remain centralized and are applied consistently across watcher and event-bus boundaries
+- [x] Watcher-capable backends suppress ignored paths before downstream invalidation work when possible
+- [x] Ignore configuration can be extended without editing source code
+- [x] Ignored paths do not trigger branch refresh, worktree reconciliation, or repo event fanout
+- [x] Integration tests cover dependency installs, build output churn, and custom ignore additions
 
 ### Blocked by
 

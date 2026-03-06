@@ -496,14 +496,14 @@ Clicking a plan item will eventually open the plan detail view (wired in a later
 
 ### Acceptance criteria
 
-- [ ] A "Plans" sub-section appears under each project group in the sidebar
-- [ ] The section is collapsible, consistent with the Workspaces section style
-- [ ] `PlanList` queries LiveStore for PRDs with the project's ID
-- [ ] Each plan item displays the PRD title
-- [ ] Each plan item shows an issue progress indicator (completed/total)
-- [ ] Plans are ordered by creation date (newest first)
-- [ ] Empty state is shown when a project has no plans
-- [ ] Visual styling is consistent with existing sidebar sections
+- [x] A "Plans" sub-section appears under each project group in the sidebar
+- [x] The section is collapsible, consistent with the Workspaces section style
+- [x] `PlanList` queries LiveStore for PRDs with the project's ID
+- [x] Each plan item displays the PRD title
+- [x] Each plan item shows an issue progress indicator (completed/total)
+- [x] Plans are ordered by creation date (newest first)
+- [x] Empty state is shown when a project has no plans
+- [x] Visual styling is consistent with existing sidebar sections
 
 ### Blocked by
 
@@ -771,8 +771,8 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 186 | MCP issue tools: create_issue, read_issues, update_issue, list_remaining_issues | #183, #184 | Done |
 | 187 | MCP auto-registration: Opencode config | #184 | Ready |
 | 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Blocked |
-| 189 | Plans sidebar section: PlanList component | #175 | Ready |
-| 190 | Plan detail view: Plate.js markdown editor | #180, #189 | Blocked |
+| 189 | Plans sidebar section: PlanList component | #175 | Done |
+| 190 | Plan detail view: Plate.js markdown editor | #180, #189 | Ready |
 | 191 | Plan detail view: issues list alongside editor | #181, #190 | Blocked |
 | 192 | Create workspace from plan | #191 | Blocked |
 | 193 | Plan workspace scoped task list and rlph integration | #186, #192 | Blocked |

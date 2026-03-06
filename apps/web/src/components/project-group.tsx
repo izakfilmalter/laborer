@@ -20,6 +20,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { CreateWorkspaceForm } from "@/components/create-workspace-form";
+import { PlanList } from "@/components/plan-list";
 import { ProjectSettingsModal } from "@/components/project-settings-modal";
 import { TaskList } from "@/components/task-list";
 import { TaskSourcePicker } from "@/components/task-source-picker";
@@ -161,6 +162,8 @@ function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
 			<CollapsibleContent>
 				<div className="mt-1 ml-2 border-l pl-2">
 					<WorkspaceList projectId={project.id} />
+					<Separator className="my-2" />
+					<PlanList projectId={project.id} />
 					<Separator className="my-2" />
 					<div className="grid gap-2">
 						<h3 className="font-medium text-muted-foreground text-xs">Tasks</h3>

@@ -5,7 +5,7 @@
  * and tasks nested underneath. The heading shows the project name, a chevron
  * toggle, and project settings/delete actions.
  *
- * Task source selection (Manual/Linear/GitHub) is managed independently
+ * Task source selection (Linear/GitHub) is managed independently
  * per project via local state.
  *
  * @see Issue #168: ProjectGroup collapsible headings with nested workspaces
@@ -20,6 +20,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
 import { CreateWorkspaceForm } from "@/components/create-workspace-form";
+import { PlanList } from "@/components/plan-list";
 import { ProjectSettingsModal } from "@/components/project-settings-modal";
 import { TaskList } from "@/components/task-list";
 import { TaskSourcePicker } from "@/components/task-source-picker";
@@ -50,6 +51,7 @@ const removeProjectMutation = LaborerClient.mutation("project.remove");
 
 interface ProjectGroupProps {
 	readonly expanded: boolean;
+	readonly onSelectPlan?: ((prdId: string) => void) | undefined;
 	readonly onToggle: () => void;
 	readonly project: {
 		readonly id: string;
@@ -57,12 +59,19 @@ interface ProjectGroupProps {
 		readonly repoPath: string;
 		readonly rlphConfig: string | null;
 	};
+	readonly selectedPlanId?: string | null | undefined;
 }
 
-function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
+function ProjectGroup({
+	project,
+	expanded,
+	onToggle,
+	selectedPlanId,
+	onSelectPlan,
+}: ProjectGroupProps) {
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [isRemoving, setIsRemoving] = useState(false);
-	const [taskSource, setTaskSource] = useState<TaskSourceFilter>("manual");
+	const [taskSource, setTaskSource] = useState<TaskSourceFilter>("linear");
 	const removeProject = useAtomSet(removeProjectMutation, {
 		mode: "promise",
 	});
@@ -161,6 +170,12 @@ function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
 			<CollapsibleContent>
 				<div className="mt-1 ml-2 border-l pl-2">
 					<WorkspaceList projectId={project.id} />
+					<Separator className="my-2" />
+					<PlanList
+						onSelectPlan={onSelectPlan}
+						projectId={project.id}
+						selectedPlanId={selectedPlanId}
+					/>
 					<Separator className="my-2" />
 					<div className="grid gap-2">
 						<h3 className="font-medium text-muted-foreground text-xs">Tasks</h3>

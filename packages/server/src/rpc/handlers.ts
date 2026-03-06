@@ -25,13 +25,13 @@ import {
 	PrdStorageService,
 	slugifyPrdTitle,
 } from "../services/prd-storage-service.js";
-import { PrdTaskImporter } from "../services/prd-task-importer.js";
 import { ProjectRegistry } from "../services/project-registry.js";
 import { TaskManager } from "../services/task-manager.js";
 import { TerminalClient } from "../services/terminal-client.js";
 import { WorkspaceProvider } from "../services/workspace-provider.js";
 
 const startTime = Date.now();
+const PRD_ISSUE_EXTERNAL_ID_REGEX = /:issue:(\d+)$/u;
 
 const toRpcError = (
 	error: PrdStorageError,
@@ -58,6 +58,24 @@ const toPrdResponse = (prd: {
 	filePath: prd.filePath,
 	status: prd.status as "draft" | "active" | "completed",
 	createdAt: prd.createdAt,
+});
+
+const toTaskResponse = (task: {
+	id: string;
+	projectId: string;
+	source: string;
+	prdId: string | null;
+	externalId: string | null;
+	title: string;
+	status: string;
+}) => ({
+	id: task.id,
+	projectId: task.projectId,
+	source: task.source,
+	prdId: task.prdId ?? undefined,
+	externalId: task.externalId ?? undefined,
+	title: task.title,
+	status: task.status,
 });
 
 export const handleConfigGet = ({ projectId }: { projectId: string }) =>
@@ -177,6 +195,320 @@ export const handlePrdList = ({ projectId }: { projectId: string }) =>
 			.map((prd) => toPrdResponse(prd));
 	});
 
+export const handlePrdRead = ({ prdId }: { prdId: string }) =>
+	Effect.gen(function* () {
+		const storage = yield* PrdStorageService;
+		const { store } = yield* LaborerStore;
+
+		const prd = store.query(tables.prds.where("id", prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found: ${prdId}`,
+			});
+		}
+
+		const content = yield* storage
+			.readPrdFile(prd.filePath)
+			.pipe(Effect.mapError((error) => toRpcError(error, "NOT_FOUND")));
+
+		return {
+			...toPrdResponse(prd),
+			content,
+		};
+	});
+
+export const handlePrdRemove = ({ prdId }: { prdId: string }) =>
+	Effect.gen(function* () {
+		const { store } = yield* LaborerStore;
+		const storage = yield* PrdStorageService;
+		const taskManager = yield* TaskManager;
+
+		const prd = store.query(tables.prds.where("id", prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found: ${prdId}`,
+			});
+		}
+
+		yield* storage
+			.removePrdArtifacts(prd.filePath)
+			.pipe(Effect.mapError((error) => toRpcError(error)));
+
+		const linkedTasks = store
+			.query(tables.tasks.where("prdId", prdId))
+			.filter((task) => task.source === "prd");
+
+		for (const task of linkedTasks) {
+			yield* taskManager.removeTask(task.id);
+		}
+
+		store.commit(events.prdRemoved({ id: prdId }));
+	});
+
+export const handlePrdUpdate = ({
+	prdId,
+	content,
+}: {
+	prdId: string;
+	content: string;
+}) =>
+	Effect.gen(function* () {
+		const { store } = yield* LaborerStore;
+		const storage = yield* PrdStorageService;
+
+		const prd = store.query(tables.prds.where("id", prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found: ${prdId}`,
+			});
+		}
+
+		yield* storage
+			.updatePrdFile(prd.filePath, content)
+			.pipe(Effect.mapError((error) => toRpcError(error)));
+
+		store.commit(
+			events.prdUpdated({
+				id: prd.id,
+				projectId: prd.projectId,
+				title: prd.title,
+				slug: prd.slug,
+				filePath: prd.filePath,
+				status: prd.status as "draft" | "active" | "completed",
+				createdAt: prd.createdAt,
+			})
+		);
+
+		return toPrdResponse(prd);
+	});
+
+export const handlePrdUpdateStatus = ({
+	prdId,
+	status,
+}: {
+	prdId: string;
+	status: string;
+}) =>
+	Effect.gen(function* () {
+		const { store } = yield* LaborerStore;
+
+		const prd = store.query(tables.prds.where("id", prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found: ${prdId}`,
+			});
+		}
+
+		const validStatuses = ["draft", "active", "completed"] as const;
+		if (!validStatuses.some((value) => value === status)) {
+			return yield* new RpcError({
+				code: "INVALID_STATUS",
+				message: `Invalid PRD status: ${status}. Must be one of: ${validStatuses.join(", ")}`,
+			});
+		}
+
+		store.commit(
+			events.prdStatusChanged({
+				id: prdId,
+				status: status as "draft" | "active" | "completed",
+			})
+		);
+
+		return toPrdResponse({
+			...prd,
+			status: status as "draft" | "active" | "completed",
+		});
+	});
+
+export const handlePrdCreateIssue = ({
+	prdId,
+	title,
+	body,
+}: {
+	prdId: string;
+	title: string;
+	body: string;
+}) =>
+	Effect.gen(function* () {
+		const trimmedTitle = title.trim();
+		const trimmedBody = body.trim();
+
+		if (trimmedTitle.length === 0) {
+			return yield* new RpcError({
+				code: "INVALID_INPUT",
+				message: "PRD issue title cannot be empty",
+			});
+		}
+
+		if (trimmedBody.length === 0) {
+			return yield* new RpcError({
+				code: "INVALID_INPUT",
+				message: "PRD issue body cannot be empty",
+			});
+		}
+
+		const { store } = yield* LaborerStore;
+		const storage = yield* PrdStorageService;
+		const taskManager = yield* TaskManager;
+
+		const prd = store.query(tables.prds.where("id", prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found: ${prdId}`,
+			});
+		}
+
+		const { issueNumber } = yield* storage
+			.appendIssue(prd.filePath, trimmedTitle, trimmedBody)
+			.pipe(Effect.mapError((error) => toRpcError(error)));
+
+		const task = yield* taskManager.createTask(
+			prd.projectId,
+			trimmedTitle,
+			"prd",
+			`${prd.id}:issue:${issueNumber}`,
+			prd.id
+		);
+
+		return toTaskResponse(task);
+	});
+
+export const handlePrdReadIssues = ({ prdId }: { prdId: string }) =>
+	Effect.gen(function* () {
+		const { store } = yield* LaborerStore;
+		const storage = yield* PrdStorageService;
+
+		const prd = store.query(tables.prds.where("id", prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found: ${prdId}`,
+			});
+		}
+
+		return yield* storage
+			.readIssuesFile(prd.filePath)
+			.pipe(Effect.mapError((error) => toRpcError(error)));
+	});
+
+export const handlePrdListRemainingIssues = ({ prdId }: { prdId: string }) =>
+	Effect.gen(function* () {
+		const { store } = yield* LaborerStore;
+
+		const prd = store.query(tables.prds.where("id", prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found: ${prdId}`,
+			});
+		}
+
+		const remainingTasks = store
+			.query(tables.tasks.where("prdId", prdId))
+			.filter(
+				(task) =>
+					task.source === "prd" &&
+					(task.status === "pending" || task.status === "in_progress")
+			)
+			.map((task) => toTaskResponse(task));
+
+		return remainingTasks;
+	});
+
+const parseIssueNumberFromExternalId = (
+	externalId: string | null
+): number | undefined => {
+	if (!externalId) {
+		return undefined;
+	}
+
+	const match = externalId.match(PRD_ISSUE_EXTERNAL_ID_REGEX);
+	if (!match) {
+		return undefined;
+	}
+
+	const issueNumber = Number(match[1]);
+	return Number.isInteger(issueNumber) ? issueNumber : undefined;
+};
+
+export const handlePrdUpdateIssue = ({
+	taskId,
+	body,
+	status,
+}: {
+	taskId: string;
+	body?: string | undefined;
+	status?: string | undefined;
+}) =>
+	Effect.gen(function* () {
+		const nextBody = body?.trim();
+
+		if (nextBody === undefined && status === undefined) {
+			return yield* new RpcError({
+				code: "INVALID_INPUT",
+				message:
+					"Provide at least one of body or status when updating a PRD issue",
+			});
+		}
+
+		if (body !== undefined && nextBody?.length === 0) {
+			return yield* new RpcError({
+				code: "INVALID_INPUT",
+				message: "PRD issue body cannot be empty",
+			});
+		}
+
+		const { store } = yield* LaborerStore;
+		const storage = yield* PrdStorageService;
+		const taskManager = yield* TaskManager;
+
+		const task = yield* taskManager.getTask(taskId);
+
+		if (task.source !== "prd" || task.prdId === null) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD issue task not found: ${taskId}`,
+			});
+		}
+
+		const prd = store.query(tables.prds.where("id", task.prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found for task ${taskId}: ${task.prdId}`,
+			});
+		}
+
+		if (nextBody !== undefined) {
+			yield* storage
+				.updateIssue(
+					prd.filePath,
+					task.title,
+					nextBody,
+					parseIssueNumberFromExternalId(task.externalId)
+				)
+				.pipe(Effect.mapError((error) => toRpcError(error, "NOT_FOUND")));
+		}
+
+		if (status !== undefined) {
+			yield* taskManager.updateTaskStatus(taskId, status);
+		}
+
+		return toTaskResponse(
+			status !== undefined
+				? {
+						...task,
+						status,
+					}
+				: task
+		);
+	});
+
 export const handleProjectList = () =>
 	Effect.gen(function* () {
 		const registry = yield* ProjectRegistry;
@@ -192,7 +524,7 @@ export const handleProjectList = () =>
 /**
  * RPC handler layer for the LaborerRpcs group.
  *
- * All 23 RPC methods are fully implemented:
+ * All registered RPC methods are fully implemented:
  * - health.check: returns server uptime (Issue #12)
  * - project.add: delegates to ProjectRegistry.addProject (Issue #21)
  * - project.remove: delegates to ProjectRegistry.removeProject (Issue #22)
@@ -204,7 +536,6 @@ export const handleProjectList = () =>
  * - diff.refresh: delegates to DiffService.getDiff (Issue #82)
  * - editor.open: opens file in configured editor (Issue #111)
  * - rlph.startLoop: delegates to TerminalClient.spawnInWorkspace with `rlph --once` (Issue #92/#143)
- * - rlph.writePRD: delegates to TerminalClient.spawnInWorkspace with `rlph prd [description]` (Issue #94/#143)
  * - rlph.review: delegates to TerminalClient.spawnInWorkspace with `rlph review <prNumber>` (Issue #96/#143)
  * - rlph.fix: delegates to TerminalClient.spawnInWorkspace with `rlph fix <prNumber>` (Issue #98/#143)
  * - task.create: delegates to TaskManager.createTask (Issue #100)
@@ -254,6 +585,14 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 		// -------------------------------------------------------------------
 		"prd.create": handlePrdCreate,
 		"prd.list": handlePrdList,
+		"prd.read": handlePrdRead,
+		"prd.remove": handlePrdRemove,
+		"prd.update": handlePrdUpdate,
+		"prd.updateStatus": handlePrdUpdateStatus,
+		"prd.createIssue": handlePrdCreateIssue,
+		"prd.readIssues": handlePrdReadIssues,
+		"prd.listRemainingIssues": handlePrdListRemainingIssues,
+		"prd.updateIssue": handlePrdUpdateIssue,
 
 		// -------------------------------------------------------------------
 		// Workspace RPCs (Issue #33-47)
@@ -392,17 +731,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 				const tc = yield* TerminalClient;
 				return yield* tc.spawnInWorkspace(workspaceId, "rlph --once");
 			}),
-		"rlph.writePRD": ({ workspaceId, description }) =>
-			Effect.gen(function* () {
-				const tc = yield* TerminalClient;
-				const prdTaskImporter = yield* PrdTaskImporter;
-				const command = description ? `rlph prd ${description}` : "rlph prd";
-				const terminal = yield* tc.spawnInWorkspace(workspaceId, command);
-				yield* prdTaskImporter
-					.watchPrdTerminal(terminal.id, workspaceId)
-					.pipe(Effect.forkDaemon);
-				return terminal;
-			}),
 		"rlph.review": ({ workspaceId, prNumber }) =>
 			Effect.gen(function* () {
 				const tc = yield* TerminalClient;
@@ -430,15 +758,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 					undefined,
 					prdId
 				);
-				return {
-					id: task.id,
-					projectId: task.projectId,
-					source: task.source,
-					prdId: task.prdId ?? undefined,
-					externalId: task.externalId ?? undefined,
-					title: task.title,
-					status: task.status,
-				};
+				return toTaskResponse(task);
 			}),
 		"task.importGithub": ({ projectId }) =>
 			Effect.gen(function* () {

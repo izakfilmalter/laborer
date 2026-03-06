@@ -3,10 +3,8 @@ import { Github, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
-import { CreateTaskForm } from "@/components/create-task-form";
 import {
 	canImportTasks,
-	isImportSource,
 	type TaskSourceFilter,
 } from "@/components/task-source-picker.helpers";
 import { Button } from "@/components/ui/button";
@@ -22,7 +20,7 @@ interface TaskSourcePickerProps {
 	readonly projectId: string;
 }
 
-function getImportLabel(source: Exclude<TaskSourceFilter, "manual">): string {
+function getImportLabel(source: TaskSourceFilter): string {
 	return source === "github" ? "GitHub issues" : "Linear tasks";
 }
 
@@ -41,7 +39,7 @@ function TaskSourcePicker({
 	const hasAutoImportedRef = useRef<string | null>(null);
 
 	const runImport = useCallback(
-		async (source: Exclude<TaskSourceFilter, "manual">) => {
+		async (source: TaskSourceFilter) => {
 			if (!projectId) {
 				return;
 			}
@@ -76,9 +74,7 @@ function TaskSourcePicker({
 	);
 
 	useEffect(() => {
-		if (
-			!(canImportTasks(activeSource, projectId) && isImportSource(activeSource))
-		) {
+		if (!canImportTasks(activeSource, projectId)) {
 			hasAutoImportedRef.current = null;
 			return;
 		}
@@ -103,9 +99,6 @@ function TaskSourcePicker({
 					value={activeSource}
 				>
 					<TabsList className="w-full" variant="line">
-						<TabsTrigger className="flex-1" value="manual">
-							Manual
-						</TabsTrigger>
 						<TabsTrigger className="flex-1" value="linear">
 							Linear
 						</TabsTrigger>
@@ -116,23 +109,19 @@ function TaskSourcePicker({
 					</TabsList>
 				</Tabs>
 
-				{activeSource === "manual" ? (
-					<CreateTaskForm defaultProjectId={projectId} />
-				) : (
-					<Button
-						disabled={isImporting}
-						onClick={() => {
-							runImport(activeSource).catch(() => {
-								// Errors are surfaced inside runImport.
-							});
-						}}
-						size="sm"
-						variant="outline"
-					>
-						{isImporting ? <Loader2 className="size-3.5 animate-spin" /> : null}
-						Sync
-					</Button>
-				)}
+				<Button
+					disabled={isImporting}
+					onClick={() => {
+						runImport(activeSource).catch(() => {
+							// Errors are surfaced inside runImport.
+						});
+					}}
+					size="sm"
+					variant="outline"
+				>
+					{isImporting ? <Loader2 className="size-3.5 animate-spin" /> : null}
+					Sync
+				</Button>
 			</div>
 		</div>
 	);

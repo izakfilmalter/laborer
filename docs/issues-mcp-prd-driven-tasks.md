@@ -151,14 +151,14 @@ Add `prd.read` and `prd.remove` RPC endpoints to `LaborerRpcs`.
 
 ### Acceptance criteria
 
-- [ ] `prd.read` RPC is defined with prdId payload and returns PRD metadata + markdown content
-- [ ] `prd.read` handler reads the file from disk and returns the content
-- [ ] `prd.read` returns an error if the PRD doesn't exist
-- [ ] `prd.remove` RPC is defined with prdId payload
-- [ ] `prd.remove` handler deletes the PRD file from disk
-- [ ] `prd.remove` handler deletes the associated issues file if it exists
-- [ ] `prd.remove` handler removes linked tasks (source "prd" with matching prdId) from LiveStore
-- [ ] `prd.remove` handler commits `prdRemoved` event
+- [x] `prd.read` RPC is defined with prdId payload and returns PRD metadata + markdown content
+- [x] `prd.read` handler reads the file from disk and returns the content
+- [x] `prd.read` returns an error if the PRD doesn't exist
+- [x] `prd.remove` RPC is defined with prdId payload
+- [x] `prd.remove` handler deletes the PRD file from disk
+- [x] `prd.remove` handler deletes the associated issues file if it exists
+- [x] `prd.remove` handler removes linked tasks (source "prd" with matching prdId) from LiveStore
+- [x] `prd.remove` handler commits `prdRemoved` event
 
 ### Blocked by
 
@@ -186,12 +186,12 @@ Add `prd.update` and `prd.updateStatus` RPC endpoints to `LaborerRpcs`. Add the 
 
 ### Acceptance criteria
 
-- [ ] `prdUpdated` event is defined in the schema with appropriate fields
-- [ ] `prdUpdated` materializer updates the prds table correctly
-- [ ] `prd.update` RPC accepts prdId and content, overwrites the file, and commits `prdUpdated`
-- [ ] `prd.updateStatus` RPC accepts prdId and status, commits `prdStatusChanged`
-- [ ] Invalid status values return an error
-- [ ] Updating a non-existent PRD returns an error
+- [x] `prdUpdated` event is defined in the schema with appropriate fields
+- [x] `prdUpdated` materializer updates the prds table correctly
+- [x] `prd.update` RPC accepts prdId and content, overwrites the file, and commits `prdUpdated`
+- [x] `prd.updateStatus` RPC accepts prdId and status, commits `prdStatusChanged`
+- [x] Invalid status values return an error
+- [x] Updating a non-existent PRD returns an error
 
 ### Blocked by
 
@@ -219,13 +219,13 @@ The issues file uses the markdown format from the PRD (title as `## Issue <numbe
 
 ### Acceptance criteria
 
-- [ ] `prd.createIssue` RPC is defined with prdId, title, and body payload
-- [ ] Handler creates the issues file if it doesn't exist
-- [ ] Handler appends the issue in the correct markdown format with separator
-- [ ] Handler creates a task in LiveStore with source "prd", the prdId, and an auto-generated externalId
-- [ ] The task title matches the issue title
-- [ ] The created task is returned in the response
-- [ ] Creating an issue for a non-existent PRD returns an error
+- [x] `prd.createIssue` RPC is defined with prdId, title, and body payload
+- [x] Handler creates the issues file if it doesn't exist
+- [x] Handler appends the issue in the correct markdown format with separator
+- [x] Handler creates a task in LiveStore with source "prd", the prdId, and an auto-generated externalId
+- [x] The task title matches the issue title
+- [x] The created task is returned in the response
+- [x] Creating an issue for a non-existent PRD returns an error
 
 ### Blocked by
 
@@ -253,12 +253,12 @@ Add `prd.readIssues` and `prd.listRemainingIssues` RPC endpoints.
 
 ### Acceptance criteria
 
-- [ ] `prd.readIssues` RPC is defined and returns the issues file content as a string
-- [ ] `prd.readIssues` returns an empty string if no issues file exists
-- [ ] `prd.listRemainingIssues` RPC is defined and returns an array of task records
-- [ ] `prd.listRemainingIssues` filters to only pending and in_progress tasks
-- [ ] `prd.listRemainingIssues` filters by both prdId and source "prd"
-- [ ] Querying a non-existent PRD returns an error
+- [x] `prd.readIssues` RPC is defined and returns the issues file content as a string
+- [x] `prd.readIssues` returns an empty string if no issues file exists
+- [x] `prd.listRemainingIssues` RPC is defined and returns an array of task records
+- [x] `prd.listRemainingIssues` filters to only pending and in_progress tasks
+- [x] `prd.listRemainingIssues` filters by both prdId and source "prd"
+- [x] Querying a non-existent PRD returns an error
 
 ### Blocked by
 
@@ -284,11 +284,11 @@ Add a `prd.updateIssue` RPC endpoint that updates an issue's content in the comp
 
 ### Acceptance criteria
 
-- [ ] `prd.updateIssue` RPC is defined with taskId, optional body, and optional status
-- [ ] When body is provided, the corresponding issue section in the markdown file is replaced
-- [ ] When status is provided, the task status is updated in LiveStore via TaskManager
-- [ ] Updating a non-existent task returns an error
-- [ ] The issue file is preserved correctly when updating a single issue (other issues untouched)
+- [x] `prd.updateIssue` RPC is defined with taskId, optional body, and optional status
+- [x] When body is provided, the corresponding issue section in the markdown file is replaced
+- [x] When status is provided, the task status is updated in LiveStore via TaskManager
+- [x] Updating a non-existent task returns an error
+- [x] The issue file is preserved correctly when updating a single issue (other issues untouched)
 
 ### Blocked by
 
@@ -356,14 +356,14 @@ Tools are registered using the `McpServer.resource` or `McpServer.toolkit` patte
 
 ### Acceptance criteria
 
-- [ ] `create_prd` tool is registered with title and content parameters
-- [ ] `read_prd` tool is registered and returns PRD markdown content
-- [ ] `update_prd` tool is registered and overwrites PRD content
-- [ ] `list_prds` tool is registered and returns PRD summaries for the current project
-- [ ] All tools use the discovered project context (no explicit projectId parameter)
-- [ ] Tool descriptions are clear and useful for AI agent discovery
-- [ ] Input schemas are properly typed with Effect Schema
-- [ ] Errors from the main server are propagated back as tool errors
+- [x] `create_prd` tool is registered with title and content parameters
+- [x] `read_prd` tool is registered and returns PRD markdown content
+- [x] `update_prd` tool is registered and overwrites PRD content
+- [x] `list_prds` tool is registered and returns PRD summaries for the current project
+- [x] All tools use the discovered project context (no explicit projectId parameter)
+- [x] Tool descriptions are clear and useful for AI agent discovery
+- [x] Input schemas are properly typed with Effect Schema
+- [x] Errors from the main server are propagated back as tool errors
 
 ### Blocked by
 
@@ -392,12 +392,12 @@ Register four MCP tools in the `@laborer/mcp` server for issue management. Each 
 
 ### Acceptance criteria
 
-- [ ] `create_issue` tool is registered with prdId, title, and body parameters
-- [ ] `read_issues` tool is registered and returns the full issues markdown
-- [ ] `update_issue` tool is registered with taskId, optional body, and optional status
-- [ ] `list_remaining_issues` tool is registered and returns only pending/in_progress issues
-- [ ] Tool descriptions clearly explain their purpose for AI agent discovery
-- [ ] Issues created through MCP appear in LiveStore and are queryable by the UI
+- [x] `create_issue` tool is registered with prdId, title, and body parameters
+- [x] `read_issues` tool is registered and returns the full issues markdown
+- [x] `update_issue` tool is registered with taskId, optional body, and optional status
+- [x] `list_remaining_issues` tool is registered and returns only pending/in_progress issues
+- [x] Tool descriptions clearly explain their purpose for AI agent discovery
+- [x] Issues created through MCP appear in LiveStore and are queryable by the UI
 
 ### Blocked by
 
@@ -425,14 +425,14 @@ The registrar runs as part of the server startup sequence (in `main.ts`), after 
 
 ### Acceptance criteria
 
-- [ ] `McpRegistrar` is defined as an Effect tagged service
-- [ ] On startup, it reads the Opencode config file at `~/.config/opencode/config.json`
-- [ ] It adds a `laborer` entry to `mcpServers` with command `bun` and args pointing to the MCP package entry
-- [ ] Existing `mcpServers` entries are preserved
-- [ ] If the `laborer` entry already exists with the same config, the file is not rewritten
-- [ ] If the config file doesn't exist, it creates it with the correct structure
-- [ ] The registrar logs which files it updated
-- [ ] Registration errors are logged as warnings (don't crash the server)
+- [x] `McpRegistrar` is defined as an Effect tagged service
+- [x] On startup, it reads the Opencode config file at `~/.config/opencode/config.json`
+- [x] It adds a `laborer` entry to `mcpServers` with command `bun` and args pointing to the MCP package entry
+- [x] Existing `mcpServers` entries are preserved
+- [x] If the `laborer` entry already exists with the same config, the file is not rewritten
+- [x] If the config file doesn't exist, it creates it with the correct structure
+- [x] The registrar logs which files it updated
+- [x] Registration errors are logged as warnings (don't crash the server)
 
 ### Blocked by
 
@@ -462,13 +462,13 @@ Each target config format may differ slightly — the registrar handles format d
 
 ### Acceptance criteria
 
-- [ ] Claude Code config is updated with the laborer MCP entry
-- [ ] Codex config is updated with the laborer MCP entry
-- [ ] Each config file format is handled correctly (different JSON structures)
-- [ ] Existing entries in both configs are preserved
-- [ ] Registration is idempotent for all three targets
-- [ ] Missing config files are created with correct structure
-- [ ] Failures for one target don't prevent registration with other targets
+- [x] Claude Code config is updated with the laborer MCP entry
+- [x] Codex config is updated with the laborer MCP entry
+- [x] Each config file format is handled correctly (different JSON structures)
+- [x] Existing entries in both configs are preserved
+- [x] Registration is idempotent for all three targets
+- [x] Missing config files are created with correct structure
+- [x] Failures for one target don't prevent registration with other targets
 
 ### Blocked by
 
@@ -496,14 +496,14 @@ Clicking a plan item will eventually open the plan detail view (wired in a later
 
 ### Acceptance criteria
 
-- [ ] A "Plans" sub-section appears under each project group in the sidebar
-- [ ] The section is collapsible, consistent with the Workspaces section style
-- [ ] `PlanList` queries LiveStore for PRDs with the project's ID
-- [ ] Each plan item displays the PRD title
-- [ ] Each plan item shows an issue progress indicator (completed/total)
-- [ ] Plans are ordered by creation date (newest first)
-- [ ] Empty state is shown when a project has no plans
-- [ ] Visual styling is consistent with existing sidebar sections
+- [x] A "Plans" sub-section appears under each project group in the sidebar
+- [x] The section is collapsible, consistent with the Workspaces section style
+- [x] `PlanList` queries LiveStore for PRDs with the project's ID
+- [x] Each plan item displays the PRD title
+- [x] Each plan item shows an issue progress indicator (completed/total)
+- [x] Plans are ordered by creation date (newest first)
+- [x] Empty state is shown when a project has no plans
+- [x] Visual styling is consistent with existing sidebar sections
 
 ### Blocked by
 
@@ -531,15 +531,15 @@ The editor loads content via the `prd.read` RPC and saves via `prd.update` on bl
 
 ### Acceptance criteria
 
-- [ ] Plate.js is installed and configured with minimal markdown plugins
-- [ ] `PlanEditor` renders the PRD markdown content in a WYSIWYG editor
-- [ ] Markdown is deserialized to Plate nodes on load
-- [ ] Plate nodes are serialized back to markdown on save
-- [ ] Round-trip serialization preserves content (no formatting loss)
-- [ ] Editor saves content via `prd.update` RPC on blur or auto-save
-- [ ] Editor shows a loading state while fetching content
-- [ ] Editor handles errors (file not found, save failure) with user-friendly messages
-- [ ] Selecting a plan in the sidebar opens the editor in the main content area
+- [x] Plate.js is installed and configured with minimal markdown plugins
+- [x] `PlanEditor` renders the PRD markdown content in a WYSIWYG editor
+- [x] Markdown is deserialized to Plate nodes on load
+- [x] Plate nodes are serialized back to markdown on save
+- [x] Round-trip serialization preserves content (no formatting loss)
+- [x] Editor saves content via `prd.update` RPC on blur or auto-save
+- [x] Editor shows a loading state while fetching content
+- [x] Editor handles errors (file not found, save failure) with user-friendly messages
+- [x] Selecting a plan in the sidebar opens the editor in the main content area
 
 ### Blocked by
 
@@ -567,13 +567,13 @@ Layout: the plan detail view is split with the editor on the left/top and the is
 
 ### Acceptance criteria
 
-- [ ] `PlanIssuesList` renders all issues for a given prdId
-- [ ] Issues display title and status icon consistent with existing TaskList styling
-- [ ] Status dropdown allows changing issue status (pending, in_progress, completed, cancelled)
-- [ ] Status changes call `task.updateStatus` RPC and update in real-time
-- [ ] Layout splits editor and issues list responsively
-- [ ] Empty state shown when a plan has no issues
-- [ ] Issues are ordered by creation order (matching the order in the issues file)
+- [x] `PlanIssuesList` renders all issues for a given prdId
+- [x] Issues display title and status icon consistent with existing TaskList styling
+- [x] Status dropdown allows changing issue status (pending, in_progress, completed, cancelled)
+- [x] Status changes call `task.updateStatus` RPC and update in real-time
+- [x] Layout splits editor and issues list responsively
+- [x] Empty state shown when a plan has no issues
+- [x] Issues are ordered by creation order (matching the order in the issues file)
 
 ### Blocked by
 
@@ -601,13 +601,13 @@ Track the plan-workspace association: either by convention (branch name prefix `
 
 ### Acceptance criteria
 
-- [ ] "Create Workspace" button appears in the plan detail view
-- [ ] Clicking the button creates a workspace via `workspace.create` RPC
-- [ ] Branch name is derived from the plan slug (e.g., `plan/<slug>`)
-- [ ] The button is disabled with a tooltip when a workspace already exists for this plan
-- [ ] The created workspace appears in the plan detail view
-- [ ] The created workspace appears in the project's workspace list in the sidebar
-- [ ] Workspace creation uses the same flow as `CreateWorkspaceForm` (progress, error handling)
+- [x] "Create Workspace" button appears in the plan detail view
+- [x] Clicking the button creates a workspace via `workspace.create` RPC
+- [x] Branch name is derived from the plan slug (e.g., `plan/<slug>`)
+- [x] The button is disabled with a tooltip when a workspace already exists for this plan
+- [x] The created workspace appears in the plan detail view
+- [x] The created workspace appears in the project's workspace list in the sidebar
+- [x] Workspace creation uses the same flow as `CreateWorkspaceForm` (progress, error handling)
 
 ### Blocked by
 
@@ -633,12 +633,12 @@ The scoped task list shows only tasks with the plan's `prdId`. The rlph "start l
 
 ### Acceptance criteria
 
-- [ ] Workspace view detects when a workspace is associated with a plan
-- [ ] Workspace view shows a scoped task list with only the plan's issues
-- [ ] The scoped task list uses the same visual components as the full task list
-- [ ] rlph can be started in the workspace via the existing start loop button
-- [ ] rlph can call MCP tools to read the PRD and remaining issues
-- [ ] Issue status updates in the scoped list propagate to the sidebar plan progress indicator
+- [x] Workspace view detects when a workspace is associated with a plan
+- [x] Workspace view shows a scoped task list with only the plan's issues
+- [x] The scoped task list uses the same visual components as the full task list
+- [x] rlph can be started in the workspace via the existing start loop button
+- [x] rlph can call MCP tools to read the PRD and remaining issues
+- [x] Issue status updates in the scoped list propagate to the sidebar plan progress indicator
 
 ### Blocked by
 
@@ -664,12 +664,12 @@ The `TaskSourcePicker` retains the Linear, GitHub, and PRD source tabs. The `tas
 
 ### Acceptance criteria
 
-- [ ] `CreateTaskForm` component file is deleted
-- [ ] "Manual" tab is removed from `TaskSourcePicker`
-- [ ] `TaskSourcePicker` still shows Linear, GitHub, and PRD tabs
-- [ ] Existing manual tasks still display correctly in the task list (read-only, status changes still work)
-- [ ] No dead imports or references to `CreateTaskForm` remain
-- [ ] The `task.create` RPC endpoint is not removed (still used by MCP)
+- [x] `CreateTaskForm` component file is deleted
+- [x] "Manual" tab is removed from `TaskSourcePicker`
+- [x] `TaskSourcePicker` still shows Linear, GitHub, and PRD tabs
+- [x] Existing manual tasks still display correctly in the task list (read-only, status changes still work)
+- [x] No dead imports or references to `CreateTaskForm` remain
+- [x] The `task.create` RPC endpoint is not removed (still used by MCP)
 
 ### Blocked by
 
@@ -698,14 +698,14 @@ Remove the old rlph-based PRD writing flow:
 
 ### Acceptance criteria
 
-- [ ] `WritePrdForm` component file is deleted
-- [ ] All references to `WritePrdForm` are removed from workspace components
-- [ ] `rlph.writePRD` RPC is removed from `LaborerRpcs`
-- [ ] `rlph.writePRD` handler is removed from the handlers file
-- [ ] `PrdTaskImporter` service file is deleted
-- [ ] `PrdTaskImporter.layer` is removed from `main.ts`
-- [ ] No dead imports or references to any of the removed code remain
-- [ ] The remaining rlph RPCs (`rlph.startLoop`, `rlph.review`, `rlph.fix`) still work
+- [x] `WritePrdForm` component file is deleted
+- [x] All references to `WritePrdForm` are removed from workspace components
+- [x] `rlph.writePRD` RPC is removed from `LaborerRpcs`
+- [x] `rlph.writePRD` handler is removed from the handlers file
+- [x] `PrdTaskImporter` service file is deleted
+- [x] `PrdTaskImporter.layer` is removed from `main.ts`
+- [x] No dead imports or references to any of the removed code remain
+- [x] The remaining rlph RPCs (`rlph.startLoop`, `rlph.review`, `rlph.fix`) still work
 
 ### Blocked by
 
@@ -729,19 +729,19 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 
 ### Acceptance criteria
 
-- [ ] Plans sub-section has consistent visual hierarchy with Workspaces and Tasks sections
-- [ ] Plate.js editor loads without layout shift or flash of unstyled content
-- [ ] Plan detail view is responsive at various sidebar widths
-- [ ] Issue status indicators use the same colors and icons as the existing task list
-- [ ] "Create Workspace" button is disabled with tooltip when workspace already exists
-- [ ] MCP auto-registration preserves user-added MCP servers in AI tool configs
-- [ ] MCP server handles concurrent tool calls gracefully
-- [ ] Error states in the plan editor show clear, actionable messages
-- [ ] Keyboard navigation works for the Plans section (Tab, Enter, shortcuts)
-- [ ] Plan workspace scoped task list updates in real-time
-- [ ] Workspace branch name derived from plan name is sensible
-- [ ] Plate.js editor preserves markdown formatting on round-trip
-- [ ] No visual regressions in existing sidebar sections, task lists, or workspace cards
+- [x] Plans sub-section has consistent visual hierarchy with Workspaces and Tasks sections
+- [x] Plate.js editor loads without layout shift or flash of unstyled content
+- [x] Plan detail view is responsive at various sidebar widths
+- [x] Issue status indicators use the same colors and icons as the existing task list
+- [x] "Create Workspace" button is disabled with tooltip when workspace already exists
+- [x] MCP auto-registration preserves user-added MCP servers in AI tool configs
+- [x] MCP server handles concurrent tool calls gracefully
+- [x] Error states in the plan editor show clear, actionable messages
+- [x] Keyboard navigation works for the Plans section (Tab, Enter, shortcuts)
+- [x] Plan workspace scoped task list updates in real-time
+- [x] Workspace branch name derived from plan name is sensible
+- [x] Plate.js editor preserves markdown formatting on round-trip
+- [x] No visual regressions in existing sidebar sections, task lists, or workspace cards
 
 ### Blocked by
 
@@ -761,21 +761,21 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 176 | Tasks table: add prdId column | None | Done |
 | 177 | PrdStorageService: create and read PRD files on disk | #175 | Done |
 | 178 | PRD create and list RPCs | #177 | Done |
-| 179 | PRD read and remove RPCs | #178 | Ready |
-| 180 | PRD update RPC and status changes | #179 | Blocked |
-| 181 | Issue creation RPC: prd.createIssue | #178 | Ready |
-| 182 | Issue read and list RPCs | #181 | Blocked |
-| 183 | Issue update RPC: prd.updateIssue | #182 | Blocked |
+| 179 | PRD read and remove RPCs | #178 | Done |
+| 180 | PRD update RPC and status changes | #179 | Done |
+| 181 | Issue creation RPC: prd.createIssue | #178 | Done |
+| 182 | Issue read and list RPCs | #181 | Done |
+| 183 | Issue update RPC: prd.updateIssue | #182 | Done |
 | 184 | `@laborer/mcp` package scaffold: stdio server with project discovery | None | Done |
-| 185 | MCP PRD tools: create_prd, read_prd, update_prd, list_prds | #180, #184 | Blocked |
-| 186 | MCP issue tools: create_issue, read_issues, update_issue, list_remaining_issues | #183, #184 | Blocked |
-| 187 | MCP auto-registration: Opencode config | #184 | Ready |
-| 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Blocked |
-| 189 | Plans sidebar section: PlanList component | #175 | Ready |
-| 190 | Plan detail view: Plate.js markdown editor | #180, #189 | Blocked |
-| 191 | Plan detail view: issues list alongside editor | #181, #190 | Blocked |
-| 192 | Create workspace from plan | #191 | Blocked |
-| 193 | Plan workspace scoped task list and rlph integration | #186, #192 | Blocked |
-| 194 | Remove CreateTaskForm and manual task source tab | #181 | Blocked |
-| 195 | Remove WritePrdForm, rlph.writePRD RPC, and PrdTaskImporter | #185 | Blocked |
-| 196 | Polish and end-to-end verification | #188, #193, #194, #195 | Blocked |
+| 185 | MCP PRD tools: create_prd, read_prd, update_prd, list_prds | #180, #184 | Done |
+| 186 | MCP issue tools: create_issue, read_issues, update_issue, list_remaining_issues | #183, #184 | Done |
+| 187 | MCP auto-registration: Opencode config | #184 | Done |
+| 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Done |
+| 189 | Plans sidebar section: PlanList component | #175 | Done |
+| 190 | Plan detail view: Plate.js markdown editor | #180, #189 | Done |
+| 191 | Plan detail view: issues list alongside editor | #181, #190 | Done |
+| 192 | Create workspace from plan | #191 | Done |
+| 193 | Plan workspace scoped task list and rlph integration | #186, #192 | Done |
+| 194 | Remove CreateTaskForm and manual task source tab | #181 | Done |
+| 195 | Remove WritePrdForm, rlph.writePRD RPC, and PrdTaskImporter | #185 | Done |
+| 196 | Polish and end-to-end verification | #188, #193, #194, #195 | Done |

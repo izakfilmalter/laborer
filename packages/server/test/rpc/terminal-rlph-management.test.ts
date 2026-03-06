@@ -61,24 +61,6 @@ const makeWorkspaceFixture = (
 		return { projectId: project.id, workspaceId };
 	});
 
-const waitForPrdWatcherCall = (
-	context: RpcTestContext
-): Effect.Effect<
-	readonly {
-		readonly terminalId: string;
-		readonly workspaceId: string;
-	}[],
-	never,
-	never
-> =>
-	Effect.eventually(
-		Ref.get(context.prdTaskImporterRecorder.watchPrdTerminalCalls).pipe(
-			Effect.flatMap((calls) =>
-				calls.length > 0 ? Effect.succeed(calls) : Effect.fail("pending")
-			)
-		)
-	);
-
 describe("LaborerRpcs terminal and rlph management", () => {
 	it.scoped("terminal.spawn delegates to the terminal client boundary", () =>
 		runWithRpcTestContext(({ client, terminalClientRecorder, ...context }) =>
@@ -131,64 +113,6 @@ describe("LaborerRpcs terminal and rlph management", () => {
 				);
 			})
 		)
-	);
-
-	it.scoped(
-		"rlph.writePRD spawns the PRD command and starts PRD terminal watching",
-		() =>
-			runWithRpcTestContext(
-				({
-					client,
-					prdTaskImporterRecorder,
-					terminalClientRecorder,
-					...context
-				}) =>
-					Effect.gen(function* () {
-						const tempRoots: string[] = [];
-						yield* Effect.addFinalizer(() =>
-							Effect.sync(() => cleanupTempRoots(tempRoots))
-						);
-
-						const { workspaceId } = yield* makeWorkspaceFixture(
-							{
-								client,
-								prdTaskImporterRecorder,
-								terminalClientRecorder,
-								...context,
-							},
-							tempRoots
-						);
-						const terminal = yield* client.rlph.writePRD({
-							workspaceId,
-							description: "draft coverage plan",
-						});
-
-						assert.strictEqual(terminal.workspaceId, workspaceId);
-						assert.strictEqual(
-							terminal.command,
-							"rlph prd draft coverage plan"
-						);
-						assert.strictEqual(terminal.status, "running");
-						assert.deepStrictEqual(
-							yield* Ref.get(terminalClientRecorder.spawnInWorkspaceCalls),
-							[
-								{
-									workspaceId,
-									command: "rlph prd draft coverage plan",
-								},
-							]
-						);
-						assert.deepStrictEqual(
-							yield* waitForPrdWatcherCall({
-								client,
-								prdTaskImporterRecorder,
-								terminalClientRecorder,
-								...context,
-							}),
-							[{ terminalId: terminal.id, workspaceId }]
-						);
-					})
-			)
 	);
 
 	it.scoped("rlph.review spawns the review command through RPC", () =>

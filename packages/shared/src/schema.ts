@@ -278,6 +278,19 @@ export const prdStatusChanged = Events.synced({
 	}),
 });
 
+export const prdUpdated = Events.synced({
+	name: "v1.PrdUpdated",
+	schema: Schema.Struct({
+		id: Schema.String,
+		projectId: Schema.String,
+		title: Schema.String,
+		slug: Schema.String,
+		filePath: Schema.String,
+		status: PrdStatus,
+		createdAt: Schema.String,
+	}),
+});
+
 export const prdRemoved = Events.synced({
 	name: "v1.PrdRemoved",
 	schema: Schema.Struct({
@@ -337,6 +350,7 @@ export const events = {
 	taskStatusChanged,
 	taskRemoved,
 	prdCreated,
+	prdUpdated,
 	prdStatusChanged,
 	prdRemoved,
 	layoutSplit,
@@ -430,6 +444,25 @@ const materializers = State.SQLite.materializers(events, {
 			status,
 			createdAt,
 		}),
+	"v1.PrdUpdated": ({
+		id,
+		projectId,
+		title,
+		slug,
+		filePath,
+		status,
+		createdAt,
+	}) =>
+		prds
+			.update({
+				projectId,
+				title,
+				slug,
+				filePath,
+				status,
+				createdAt,
+			})
+			.where({ id }),
 	"v1.PrdStatusChanged": ({ id, status }) =>
 		prds.update({ status }).where({ id }),
 	"v1.PrdRemoved": ({ id }) => prds.delete().where({ id }),

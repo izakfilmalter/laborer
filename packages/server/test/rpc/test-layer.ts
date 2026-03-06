@@ -9,7 +9,6 @@ import { LaborerStore } from "../../src/services/laborer-store.js";
 import { LinearTaskImporter } from "../../src/services/linear-task-importer.js";
 import { PortAllocator } from "../../src/services/port-allocator.js";
 import { PrdStorageService } from "../../src/services/prd-storage-service.js";
-import { PrdTaskImporter } from "../../src/services/prd-task-importer.js";
 import { ProjectRegistry } from "../../src/services/project-registry.js";
 import { TaskManager } from "../../src/services/task-manager.js";
 import { TerminalClient } from "../../src/services/terminal-client.js";
@@ -34,20 +33,6 @@ class TestTerminalClientRecorder extends Context.Tag(
 	}
 >() {}
 
-class TestPrdTaskImporterRecorder extends Context.Tag(
-	"@laborer/test/TestPrdTaskImporterRecorder"
-)<
-	TestPrdTaskImporterRecorder,
-	{
-		readonly watchPrdTerminalCalls: Ref.Ref<
-			readonly {
-				readonly terminalId: string;
-				readonly workspaceId: string;
-			}[]
-		>;
-	}
->() {}
-
 const TestTerminalClientRecorderLayer = Layer.effect(
 	TestTerminalClientRecorder,
 	Effect.gen(function* () {
@@ -56,20 +41,6 @@ const TestTerminalClientRecorderLayer = Layer.effect(
 			spawnInWorkspaceCalls: yield* Ref.make<
 				readonly {
 					readonly command: string | undefined;
-					readonly workspaceId: string;
-				}[]
-			>([]),
-		});
-	})
-);
-
-const TestPrdTaskImporterRecorderLayer = Layer.effect(
-	TestPrdTaskImporterRecorder,
-	Effect.gen(function* () {
-		return TestPrdTaskImporterRecorder.of({
-			watchPrdTerminalCalls: yield* Ref.make<
-				readonly {
-					readonly terminalId: string;
 					readonly workspaceId: string;
 				}[]
 			>([]),
@@ -109,25 +80,7 @@ const TestTerminalClient = Layer.effect(
 	})
 );
 
-const TestPrdTaskImporterWithRecorder = Layer.effect(
-	PrdTaskImporter,
-	Effect.gen(function* () {
-		const recorder = yield* TestPrdTaskImporterRecorder;
-
-		return PrdTaskImporter.of({
-			importParsedTasks: () => Effect.succeed(0),
-			watchPrdTerminal: (terminalId, workspaceId) =>
-				Ref.update(recorder.watchPrdTerminalCalls, (calls) => [
-					...calls,
-					{ terminalId, workspaceId },
-				]).pipe(Effect.asVoid),
-		});
-	})
-);
-
 export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
-	Layer.provide(TestPrdTaskImporterWithRecorder),
-	Layer.provideMerge(TestPrdTaskImporterRecorderLayer),
 	Layer.provide(LinearTaskImporter.layer),
 	Layer.provide(GithubTaskImporter.layer),
 	Layer.provide(TaskManager.layer),
@@ -146,8 +99,6 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
 );
 
 const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
-	Layer.provide(TestPrdTaskImporterWithRecorder),
-	Layer.provideMerge(TestPrdTaskImporterRecorderLayer),
 	Layer.provide(LinearTaskImporter.layer),
 	Layer.provide(GithubTaskImporter.layer),
 	Layer.provide(TaskManager.layer),
@@ -181,10 +132,6 @@ export const makeScopedTestRpcContext = Effect.gen(function* () {
 		context,
 		TestTerminalClientRecorder
 	);
-	const prdTaskImporterRecorder = Context.get(
-		context,
-		TestPrdTaskImporterRecorder
-	);
 
-	return { client, store, terminalClientRecorder, prdTaskImporterRecorder };
+	return { client, store, terminalClientRecorder };
 });

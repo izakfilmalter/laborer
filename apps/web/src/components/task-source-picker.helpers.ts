@@ -1,21 +1,15 @@
-export type TaskSourceFilter = "manual" | "linear" | "github";
+export type TaskSourceFilter = "linear" | "github";
 
 interface FilterableTask {
 	readonly projectId: string;
 	readonly source: string;
 }
 
-function isImportSource(
-	source: TaskSourceFilter
-): source is Exclude<TaskSourceFilter, "manual"> {
-	return source !== "manual";
-}
-
 function canImportTasks(
-	source: TaskSourceFilter,
+	_source: TaskSourceFilter,
 	activeProjectId?: string | null
 ): boolean {
-	return isImportSource(source) && !!activeProjectId;
+	return !!activeProjectId;
 }
 
 function filterTasksByProjectAndSource<T extends FilterableTask>(
@@ -36,4 +30,4 @@ function filterTasksByProjectAndSource<T extends FilterableTask>(
 	});
 }
 
-export { canImportTasks, filterTasksByProjectAndSource, isImportSource };
+export { canImportTasks, filterTasksByProjectAndSource };

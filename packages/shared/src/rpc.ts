@@ -152,6 +152,17 @@ export const PrdResponse = Schema.Struct({
 	createdAt: Schema.String,
 });
 
+const PrdReadResponse = Schema.Struct({
+	id: Schema.String,
+	projectId: Schema.String,
+	title: Schema.String,
+	slug: Schema.String,
+	filePath: Schema.String,
+	status: PrdStatus,
+	createdAt: Schema.String,
+	content: Schema.String,
+});
+
 const WorkspaceResponse = Schema.Struct({
 	id: Schema.String,
 	projectId: Schema.String,
@@ -254,6 +265,75 @@ export class LaborerRpcs extends RpcGroup.make(
 		},
 	}),
 
+	Rpc.make("prd.read", {
+		success: PrdReadResponse,
+		error: RpcError,
+		payload: {
+			prdId: Schema.String,
+		},
+	}),
+
+	Rpc.make("prd.remove", {
+		error: RpcError,
+		payload: {
+			prdId: Schema.String,
+		},
+	}),
+
+	Rpc.make("prd.update", {
+		success: PrdResponse,
+		error: RpcError,
+		payload: {
+			prdId: Schema.String,
+			content: Schema.String,
+		},
+	}),
+
+	Rpc.make("prd.updateStatus", {
+		success: PrdResponse,
+		error: RpcError,
+		payload: {
+			prdId: Schema.String,
+			status: PrdStatus,
+		},
+	}),
+
+	Rpc.make("prd.createIssue", {
+		success: TaskResponse,
+		error: RpcError,
+		payload: {
+			prdId: Schema.String,
+			title: Schema.String,
+			body: Schema.String,
+		},
+	}),
+
+	Rpc.make("prd.readIssues", {
+		success: Schema.String,
+		error: RpcError,
+		payload: {
+			prdId: Schema.String,
+		},
+	}),
+
+	Rpc.make("prd.listRemainingIssues", {
+		success: Schema.Array(TaskResponse),
+		error: RpcError,
+		payload: {
+			prdId: Schema.String,
+		},
+	}),
+
+	Rpc.make("prd.updateIssue", {
+		success: TaskResponse,
+		error: RpcError,
+		payload: {
+			taskId: Schema.String,
+			body: Schema.optional(Schema.String),
+			status: Schema.optional(Schema.String),
+		},
+	}),
+
 	// -----------------------------------------------------------------------
 	// Workspace RPCs
 	// -----------------------------------------------------------------------
@@ -316,15 +396,6 @@ export class LaborerRpcs extends RpcGroup.make(
 		error: RpcError,
 		payload: {
 			workspaceId: Schema.String,
-		},
-	}),
-
-	Rpc.make("rlph.writePRD", {
-		success: TerminalResponse,
-		error: RpcError,
-		payload: {
-			workspaceId: Schema.String,
-			description: Schema.optional(Schema.String),
 		},
 	}),
 

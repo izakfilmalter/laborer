@@ -187,12 +187,12 @@ See PRD Implementation Decisions > @effect/vitest Migration for patterns.
 
 ### Acceptance criteria
 
-- [ ] All 4 files import from `@effect/vitest` instead of `vitest`
-- [ ] All 4 files use `it.effect` or `it.scoped` instead of manual `Effect.runPromise`
-- [ ] All 4 files use `assert` instead of `expect`
-- [ ] The `runWithTestServices` helper is removed from each file (replaced by `Effect.provide(TestLayer)`)
-- [ ] All tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes on all modified files
+- [x] All 4 files import from `@effect/vitest` instead of `vitest`
+- [x] All 4 files use `it.effect` or `it.scoped` instead of manual `Effect.runPromise`
+- [x] All 4 files use `assert` instead of `expect`
+- [x] The `runWithTestServices` helper is removed from each file (replaced by `Effect.provide(TestLayer)`)
+- [x] All tests pass (`bun run test` in packages/server)
+- [x] `bun x ultracite check` passes on all modified files
 
 ### Blocked by
 
@@ -767,7 +767,7 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 3 | Extract timing shared helpers | None | Done |
 | 4 | Delete dead/duplicate test files from server | None | Done |
 | 5 | Migrate worktree/workspace server tests to @effect/vitest | #3 | Done |
-| 6 | Migrate task/importer server tests to @effect/vitest | #1 | Ready |
+| 6 | Migrate task/importer server tests to @effect/vitest | #1 | Done |
 | 7 | Migrate remaining server tests to @effect/vitest | #1 | Ready |
 | 8 | Migrate terminal package tests to @effect/vitest assertions | None | Ready |
 | 9 | Add LiveStore schema tests -- setup + project/workspace events | None | Done |

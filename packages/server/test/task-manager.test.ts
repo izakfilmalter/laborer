@@ -1,58 +1,50 @@
+import { assert, describe, it } from "@effect/vitest";
 import { events, tables } from "@laborer/shared/schema";
 import { Effect, Layer } from "effect";
-import { describe, expect, it } from "vitest";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { TaskManager } from "../src/services/task-manager.js";
 import { TestLaborerStore } from "./helpers/test-store.js";
 
 const TestLayer = TaskManager.layer.pipe(Layer.provideMerge(TestLaborerStore));
 
-const runWithTestServices = <A, E>(
-	effect: Effect.Effect<A, E, TaskManager | LaborerStore>
-): Promise<A> =>
-	Effect.runPromise(Effect.scoped(Effect.provide(effect, TestLayer)));
-
 describe("TaskManager.createTask", () => {
-	it("accepts an optional prdId and persists it on PRD tasks", async () => {
-		await runWithTestServices(
-			Effect.gen(function* () {
-				const { store } = yield* LaborerStore;
-				store.commit(
-					events.projectCreated({
-						id: "project-1",
-						repoPath: "/tmp/project-1",
-						name: "project-1",
-						rlphConfig: null,
-					})
-				);
+	it.scoped("accepts an optional prdId and persists it on PRD tasks", () =>
+		Effect.gen(function* () {
+			const { store } = yield* LaborerStore;
+			store.commit(
+				events.projectCreated({
+					id: "project-1",
+					repoPath: "/tmp/project-1",
+					name: "project-1",
+					rlphConfig: null,
+				})
+			);
 
-				const taskManager = yield* TaskManager;
-				const task = yield* taskManager.createTask(
-					"project-1",
-					"Build PRD issue import",
-					"prd",
-					undefined,
-					"prd-1"
-				);
+			const taskManager = yield* TaskManager;
+			const task = yield* taskManager.createTask(
+				"project-1",
+				"Build PRD issue import",
+				"prd",
+				undefined,
+				"prd-1"
+			);
 
-				expect(task).toEqual(
-					expect.objectContaining({
-						projectId: "project-1",
-						source: "prd",
-						prdId: "prd-1",
-						title: "Build PRD issue import",
-						status: "pending",
-					})
-				);
+			assert.strictEqual(task.projectId, "project-1");
+			assert.strictEqual(task.source, "prd");
+			assert.strictEqual(task.prdId, "prd-1");
+			assert.strictEqual(task.title, "Build PRD issue import");
+			assert.strictEqual(task.status, "pending");
 
-				expect(store.query(tables.tasks.where("id", task.id))).toEqual([
-					expect.objectContaining({
-						id: task.id,
-						prdId: "prd-1",
-						source: "prd",
-					}),
-				]);
-			})
-		);
-	});
+			const storedTasks = store.query(tables.tasks.where("id", task.id));
+			assert.strictEqual(storedTasks.length, 1);
+			const storedTask = storedTasks[0];
+			assert.isDefined(storedTask);
+			if (storedTask === undefined) {
+				assert.fail("Expected task to be materialized in store");
+			}
+			assert.strictEqual(storedTask.id, task.id);
+			assert.strictEqual(storedTask.prdId, "prd-1");
+			assert.strictEqual(storedTask.source, "prd");
+		}).pipe(Effect.provide(TestLayer))
+	);
 });

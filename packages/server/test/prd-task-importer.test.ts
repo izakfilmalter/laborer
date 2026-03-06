@@ -1,6 +1,6 @@
+import { assert, describe, it } from "@effect/vitest";
 import { events, tables } from "@laborer/shared/schema";
 import { Effect, Layer } from "effect";
-import { describe, expect, it } from "vitest";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import {
 	PrdTaskImporter,
@@ -14,18 +14,6 @@ const TestLayer = PrdTaskImporter.layer.pipe(
 	Layer.provideMerge(TestLaborerStore)
 );
 
-const runWithTestServices = <A, E>(
-	effect: Effect.Effect<A, E, PrdTaskImporter | LaborerStore>
-): Promise<A> =>
-	Effect.runPromise(
-		Effect.scoped(
-			Effect.gen(function* () {
-				const context = yield* Layer.build(TestLayer);
-				return yield* Effect.provide(effect, Layer.succeedContext(context));
-			})
-		)
-	);
-
 describe("parsePrdGeneratedTasks", () => {
 	it("extracts GitHub issue links and ignores duplicates", () => {
 		const output = [
@@ -35,7 +23,7 @@ describe("parsePrdGeneratedTasks", () => {
 			"- Add PRD task importing https://github.com/acme/laborer/issues/102",
 		].join("\n");
 
-		expect(parsePrdGeneratedTasks(output)).toEqual([
+		assert.deepStrictEqual(parsePrdGeneratedTasks(output), [
 			{
 				externalId: "https://github.com/acme/laborer/issues/101",
 				title: "Add task list filters",
@@ -53,7 +41,7 @@ describe("parsePrdGeneratedTasks", () => {
 			"Improve project settings modal (LAB-13)",
 		].join("\n");
 
-		expect(parsePrdGeneratedTasks(output)).toEqual([
+		assert.deepStrictEqual(parsePrdGeneratedTasks(output), [
 			{
 				externalId: "LAB-12",
 				title: "Add task source picker UI",
@@ -69,7 +57,7 @@ describe("parsePrdGeneratedTasks", () => {
 		const output =
 			"\u001b[32mCreated issue\u001b[0m LAB-77: Add imported PRD tasks";
 
-		expect(parsePrdGeneratedTasks(output)).toEqual([
+		assert.deepStrictEqual(parsePrdGeneratedTasks(output), [
 			{
 				externalId: "LAB-77",
 				title: "Add imported PRD tasks",
@@ -79,65 +67,62 @@ describe("parsePrdGeneratedTasks", () => {
 });
 
 describe("PrdTaskImporter.importParsedTasks", () => {
-	it("creates prd tasks and skips existing externalIds", async () => {
-		await runWithTestServices(
-			Effect.gen(function* () {
-				const { store } = yield* LaborerStore;
-				store.commit(
-					events.projectCreated({
-						id: "project-1",
-						repoPath: "/repo",
-						name: "laborer",
-						rlphConfig: null,
-					})
-				);
-				store.commit(
-					events.workspaceCreated({
-						id: "workspace-1",
-						projectId: "project-1",
-						branchName: "task/prd-import",
-						worktreePath: "/repo/.worktrees/task-prd-import",
-						port: 3101,
-						status: "running",
-						createdAt: new Date().toISOString(),
-						taskSource: null,
-						origin: "laborer",
-						baseSha: null,
-					})
-				);
-				store.commit(
-					events.taskCreated({
-						id: "existing-task",
-						projectId: "project-1",
-						source: "prd",
-						prdId: null,
-						externalId: "LAB-10",
-						title: "Already imported",
-						status: "pending",
-					})
-				);
+	it.scoped("creates prd tasks and skips existing externalIds", () =>
+		Effect.gen(function* () {
+			const { store } = yield* LaborerStore;
+			store.commit(
+				events.projectCreated({
+					id: "project-1",
+					repoPath: "/repo",
+					name: "laborer",
+					rlphConfig: null,
+				})
+			);
+			store.commit(
+				events.workspaceCreated({
+					id: "workspace-1",
+					projectId: "project-1",
+					branchName: "task/prd-import",
+					worktreePath: "/repo/.worktrees/task-prd-import",
+					port: 3101,
+					status: "running",
+					createdAt: new Date().toISOString(),
+					taskSource: null,
+					origin: "laborer",
+					baseSha: null,
+				})
+			);
+			store.commit(
+				events.taskCreated({
+					id: "existing-task",
+					projectId: "project-1",
+					source: "prd",
+					prdId: null,
+					externalId: "LAB-10",
+					title: "Already imported",
+					status: "pending",
+				})
+			);
 
-				const importer = yield* PrdTaskImporter;
-				const importedCount = yield* importer.importParsedTasks("workspace-1", [
-					{ externalId: "LAB-10", title: "Already imported" },
-					{ externalId: "LAB-11", title: "Import PRD tasks" },
-				]);
+			const importer = yield* PrdTaskImporter;
+			const importedCount = yield* importer.importParsedTasks("workspace-1", [
+				{ externalId: "LAB-10", title: "Already imported" },
+				{ externalId: "LAB-11", title: "Import PRD tasks" },
+			]);
 
-				expect(importedCount).toBe(1);
+			assert.strictEqual(importedCount, 1);
 
-				const tasks = store.query(tables.tasks.where("projectId", "project-1"));
-				expect(tasks).toHaveLength(2);
-				expect(tasks).toEqual(
-					expect.arrayContaining([
-						expect.objectContaining({
-							source: "prd",
-							externalId: "LAB-11",
-							title: "Import PRD tasks",
-							status: "pending",
-						}),
-					])
-				);
-			})
-		);
-	});
+			const tasks = store.query(tables.tasks.where("projectId", "project-1"));
+			assert.strictEqual(tasks.length, 2);
+
+			const newTask = tasks.find((t) => t.externalId === "LAB-11");
+			assert.isDefined(newTask);
+			if (newTask === undefined) {
+				assert.fail("Expected newly imported task to exist");
+			}
+			assert.strictEqual(newTask.source, "prd");
+			assert.strictEqual(newTask.title, "Import PRD tasks");
+			assert.strictEqual(newTask.status, "pending");
+		}).pipe(Effect.provide(TestLayer))
+	);
 });

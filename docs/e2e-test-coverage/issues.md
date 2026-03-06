@@ -317,14 +317,16 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that destroys a workspace and verifies it disappears from the sidebar. This validates: destroy button -> confirmation (if any) -> RPC mutation -> worktree cleanup -> LiveStore sync -> sidebar re-render.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/workspace-lifecycle.spec.ts`
-- [ ] Test creates a workspace first
-- [ ] Test clicks the destroy button on the workspace card
-- [ ] Test confirms destruction (if there's a confirmation step)
-- [ ] Test verifies the workspace is removed from the sidebar
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/workspace-lifecycle.spec.ts`
+- [x] Test creates a workspace first
+- [x] Test clicks the destroy button on the workspace card
+- [x] Test confirms destruction (if there's a confirmation step)
+- [x] Test verifies the workspace is removed from the sidebar
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

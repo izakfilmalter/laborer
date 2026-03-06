@@ -156,3 +156,18 @@ Verification:
 - `bun run test` passes in `apps/web` (70 tests)
 - `bun run test:e2e e2e/workspace-lifecycle.spec.ts` runs both workspace lifecycle E2E tests successfully (2 passed); Playwright reported success before the dev process teardown returned a non-zero turbo exit during shutdown
 - `bun x ultracite check e2e/workspace-lifecycle.spec.ts` passes
+
+## Issue 10: E2E — Destroy workspace — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Added `can destroy a workspace and verify it disappears from the sidebar` to `apps/web/e2e/workspace-lifecycle.spec.ts`
+- The new test creates a project, creates a workspace with an explicit branch name (`e2e-destroy-<timestamp>`), opens the workspace destroy confirmation dialog, confirms destruction, and verifies both the branch label and destroy action disappear from the sidebar
+- Updated the spec header so `workspace-lifecycle.spec.ts` now documents coverage for Issues 8, 9, and 10
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun run test:e2e e2e/workspace-lifecycle.spec.ts` runs all 3 workspace lifecycle E2E tests successfully (3 passed); Playwright reported success before the dev process teardown returned a non-zero turbo exit during shutdown
+- `bun x ultracite check e2e/workspace-lifecycle.spec.ts` passes

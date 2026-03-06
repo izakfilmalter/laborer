@@ -1,9 +1,9 @@
 /**
  * E2E Tests — Workspace Lifecycle
  *
- * Tests workspace creation and sidebar display: create workspaces via the
+ * Tests workspace lifecycle flows: create and destroy workspaces via the
  * per-project "+" button dialog, verify the workspace cards appear in the
- * sidebar with their branch names and status badges.
+ * sidebar with their branch names and status badges, and confirm removal.
  *
  * All tests exercise the full stack: browser UI -> RPC mutation -> backend
  * (worktree creation, port allocation, setup scripts) -> LiveStore sync
@@ -11,7 +11,7 @@
  *
  * Uses the temp git repository created by globalSetup.
  *
- * @see PRD-e2e-test-coverage.md — Issues 8, 9
+ * @see PRD-e2e-test-coverage.md — Issues 8, 9, 10
  */
 
 import { readFileSync } from "node:fs";
@@ -194,5 +194,90 @@ test.describe("workspace lifecycle", () => {
 		).toBeVisible({
 			timeout: 15_000,
 		});
+	});
+
+	test("can destroy a workspace and verify it disappears from the sidebar", async ({
+		page,
+	}) => {
+		const tempRepoDir = getTempRepoDir();
+		const expectedProjectName = basename(tempRepoDir);
+		const branchName = `e2e-destroy-${Date.now()}`;
+
+		await page.goto("/?reset");
+
+		const connectedStatus = page.getByText("connected", { exact: false });
+		await expect(connectedStatus).toBeVisible({ timeout: 15_000 });
+
+		const projectsHeading = page.getByRole("heading", { name: "Projects" });
+		await expect(projectsHeading).toBeVisible();
+
+		const sidebarForm = projectsHeading
+			.locator("..")
+			.getByLabel("Repository path");
+		await sidebarForm.fill(tempRepoDir);
+
+		const addButton = projectsHeading
+			.locator("..")
+			.getByRole("button", { name: "Add", exact: true });
+		await addButton.click();
+
+		const projectInSidebar = page.getByRole("button", {
+			name: expectedProjectName,
+			exact: true,
+		});
+		await expect(projectInSidebar).toBeVisible({ timeout: 10_000 });
+
+		const createWorkspaceButton = page.getByRole("button", {
+			name: `Create workspace in ${expectedProjectName}`,
+		});
+		await createWorkspaceButton.click();
+
+		const dialogTitle = page.getByRole("heading", {
+			name: "Create Workspace",
+		});
+		await expect(dialogTitle).toBeVisible({ timeout: 10_000 });
+
+		const branchNameInput = page.getByRole("textbox", {
+			name: "Branch Name (optional)",
+		});
+		await branchNameInput.fill(branchName);
+
+		const submitButton = page.getByRole("button", {
+			name: "Create Workspace",
+			exact: true,
+		});
+		await submitButton.click();
+
+		const successToast = page.getByText("Workspace created on branch", {
+			exact: false,
+		});
+		await expect(successToast).toBeVisible({ timeout: 30_000 });
+		await expect(successToast).toContainText(branchName);
+
+		await expect(dialogTitle).not.toBeVisible();
+
+		const workspaceBranch = page.getByText(branchName, { exact: true });
+		await expect(workspaceBranch).toBeVisible({ timeout: 15_000 });
+
+		const destroyWorkspaceButton = page.getByRole("button", {
+			name: `Destroy workspace ${branchName}`,
+		});
+		await expect(destroyWorkspaceButton).toBeVisible({ timeout: 15_000 });
+		await destroyWorkspaceButton.click();
+
+		const destroyDialogTitle = page.getByRole("heading", {
+			name: "Destroy workspace?",
+		});
+		await expect(destroyDialogTitle).toBeVisible({ timeout: 10_000 });
+
+		const confirmDestroyButton = page.getByRole("button", {
+			name: "Destroy",
+			exact: true,
+		});
+		await confirmDestroyButton.click();
+
+		await expect(destroyDialogTitle).not.toBeVisible({ timeout: 30_000 });
+		await expect(workspaceBranch).not.toBeVisible({ timeout: 30_000 });
+		await expect(destroyWorkspaceButton).not.toBeVisible({ timeout: 30_000 });
 	});
 });

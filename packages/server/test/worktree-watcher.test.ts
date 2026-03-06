@@ -1,8 +1,9 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { assert, describe, it } from "@effect/vitest";
 import { events, tables } from "@laborer/shared/schema";
-import { Effect, Exit, Layer, Scope } from "effect";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Effect, Layer } from "effect";
+import { afterAll } from "vitest";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
 import { WorktreeDetector } from "../src/services/worktree-detector.js";
@@ -21,27 +22,6 @@ const TestLayer = WorktreeWatcher.layer.pipe(
 	Layer.provideMerge(TestLaborerStore)
 );
 
-let scope: Scope.CloseableScope;
-let runEffect: <A, E>(
-	effect: Effect.Effect<A, E, WorktreeWatcher | LaborerStore>
-) => Promise<A>;
-
-beforeEach(async () => {
-	scope = Effect.runSync(Scope.make());
-	const context = await Effect.runPromise(
-		Layer.buildWithScope(TestLayer, scope)
-	);
-	runEffect = <A, E>(
-		effect: Effect.Effect<A, E, WorktreeWatcher | LaborerStore>
-	) => Effect.runPromise(Effect.provide(effect, Layer.succeedContext(context)));
-});
-
-afterEach(async () => {
-	if (scope) {
-		await Effect.runPromise(Scope.close(scope, Exit.void));
-	}
-});
-
 afterAll(() => {
 	for (const root of tempRoots) {
 		if (existsSync(root)) {
@@ -51,184 +31,152 @@ afterAll(() => {
 });
 
 describe("WorktreeWatcher", () => {
-	it("reconciles on worktree add and remove", async () => {
-		const repoPath = initRepo("watcher-add-remove", tempRoots);
-		const linkedPath = join(repoPath, ".worktrees", "watcher-one");
+	it.scoped("reconciles on worktree add and remove", () =>
+		Effect.gen(function* () {
+			const repoPath = initRepo("watcher-add-remove", tempRoots);
+			const linkedPath = join(repoPath, ".worktrees", "watcher-one");
 
-		await runEffect(
-			Effect.gen(function* () {
-				const watcher = yield* WorktreeWatcher;
-				yield* watcher.watchProject("project-watch-1", repoPath);
-			})
-		);
+			const watcher = yield* WorktreeWatcher;
+			yield* watcher.watchProject("project-watch-1", repoPath);
 
-		git(`worktree add -b watcher/one ${linkedPath}`, repoPath);
+			const { store } = yield* LaborerStore;
 
-		await waitFor(async () =>
-			runEffect(
-				Effect.gen(function* () {
-					const { store } = yield* LaborerStore;
-					const rows = store.query(
-						tables.workspaces.where("projectId", "project-watch-1")
-					);
-					return rows.length === 2;
+			git(`worktree add -b watcher/one ${linkedPath}`, repoPath);
+
+			yield* Effect.promise(() =>
+				waitFor(() =>
+					Promise.resolve(
+						store.query(tables.workspaces.where("projectId", "project-watch-1"))
+							.length === 2
+					)
+				)
+			);
+
+			git(`worktree remove --force ${linkedPath}`, repoPath);
+
+			yield* Effect.promise(() =>
+				waitFor(() =>
+					Promise.resolve(
+						store.query(tables.workspaces.where("projectId", "project-watch-1"))
+							.length === 1
+					)
+				)
+			);
+		}).pipe(Effect.provide(TestLayer))
+	);
+
+	it.scoped("unwatchProject stops future reconciliation", () =>
+		Effect.gen(function* () {
+			const repoPath = initRepo("watcher-unwatch", tempRoots);
+			const linkedA = join(repoPath, ".worktrees", "watcher-a");
+			const linkedB = join(repoPath, ".worktrees", "watcher-b");
+
+			const watcher = yield* WorktreeWatcher;
+			yield* watcher.watchProject("project-watch-2", repoPath);
+
+			const { store } = yield* LaborerStore;
+
+			git(`worktree add -b watcher/a ${linkedA}`, repoPath);
+
+			yield* Effect.promise(() =>
+				waitFor(() =>
+					Promise.resolve(
+						store.query(tables.workspaces.where("projectId", "project-watch-2"))
+							.length === 2
+					)
+				)
+			);
+
+			yield* watcher.unwatchProject("project-watch-2");
+
+			git(`worktree add -b watcher/b ${linkedB}`, repoPath);
+			yield* Effect.promise(() => delay(1500));
+
+			const rows = store.query(
+				tables.workspaces.where("projectId", "project-watch-2")
+			);
+			assert.strictEqual(rows.length, 2);
+		}).pipe(Effect.provide(TestLayer))
+	);
+
+	it.scoped("watchAll reconciles existing projects and starts watchers", () =>
+		Effect.gen(function* () {
+			const repoA = initRepo("watcher-all-a", tempRoots);
+			const repoB = initRepo("watcher-all-b", tempRoots);
+			const linkedA = join(repoA, ".worktrees", "watcher-all-a-one");
+			const linkedB = join(repoB, ".worktrees", "watcher-all-b-one");
+			git(`worktree add -b watcher/all-a ${linkedA}`, repoA);
+
+			const { store } = yield* LaborerStore;
+			store.commit(
+				events.projectCreated({
+					id: "project-watch-all-a",
+					repoPath: repoA,
+					name: "watch-all-a",
+					rlphConfig: null,
 				})
-			)
-		);
-
-		git(`worktree remove --force ${linkedPath}`, repoPath);
-
-		await waitFor(async () =>
-			runEffect(
-				Effect.gen(function* () {
-					const { store } = yield* LaborerStore;
-					const rows = store.query(
-						tables.workspaces.where("projectId", "project-watch-1")
-					);
-					return rows.length === 1;
+			);
+			store.commit(
+				events.projectCreated({
+					id: "project-watch-all-b",
+					repoPath: repoB,
+					name: "watch-all-b",
+					rlphConfig: null,
 				})
-			)
-		);
-	});
+			);
 
-	it("unwatchProject stops future reconciliation", async () => {
-		const repoPath = initRepo("watcher-unwatch", tempRoots);
-		const linkedA = join(repoPath, ".worktrees", "watcher-a");
-		const linkedB = join(repoPath, ".worktrees", "watcher-b");
+			const watcher = yield* WorktreeWatcher;
+			yield* watcher.watchAll();
 
-		await runEffect(
-			Effect.gen(function* () {
-				const watcher = yield* WorktreeWatcher;
-				yield* watcher.watchProject("project-watch-2", repoPath);
-			})
-		);
-
-		git(`worktree add -b watcher/a ${linkedA}`, repoPath);
-
-		await waitFor(async () =>
-			runEffect(
-				Effect.gen(function* () {
-					const { store } = yield* LaborerStore;
-					const rows = store.query(
-						tables.workspaces.where("projectId", "project-watch-2")
-					);
-					return rows.length === 2;
-				})
-			)
-		);
-
-		await runEffect(
-			Effect.gen(function* () {
-				const watcher = yield* WorktreeWatcher;
-				yield* watcher.unwatchProject("project-watch-2");
-			})
-		);
-
-		git(`worktree add -b watcher/b ${linkedB}`, repoPath);
-		await delay(1500);
-
-		const rowCount = await runEffect(
-			Effect.gen(function* () {
-				const { store } = yield* LaborerStore;
-				const rows = store.query(
-					tables.workspaces.where("projectId", "project-watch-2")
-				);
-				return rows.length;
-			})
-		);
-
-		expect(rowCount).toBe(2);
-	});
-
-	it("watchAll reconciles existing projects and starts watchers", async () => {
-		const repoA = initRepo("watcher-all-a", tempRoots);
-		const repoB = initRepo("watcher-all-b", tempRoots);
-		const linkedA = join(repoA, ".worktrees", "watcher-all-a-one");
-		const linkedB = join(repoB, ".worktrees", "watcher-all-b-one");
-		git(`worktree add -b watcher/all-a ${linkedA}`, repoA);
-
-		await runEffect(
-			Effect.gen(function* () {
-				const { store } = yield* LaborerStore;
-				store.commit(
-					events.projectCreated({
-						id: "project-watch-all-a",
-						repoPath: repoA,
-						name: "watch-all-a",
-						rlphConfig: null,
-					})
-				);
-				store.commit(
-					events.projectCreated({
-						id: "project-watch-all-b",
-						repoPath: repoB,
-						name: "watch-all-b",
-						rlphConfig: null,
-					})
-				);
-			})
-		);
-
-		await runEffect(
-			Effect.gen(function* () {
-				const watcher = yield* WorktreeWatcher;
-				yield* watcher.watchAll();
-			})
-		);
-
-		await waitFor(async () =>
-			runEffect(
-				Effect.gen(function* () {
-					const { store } = yield* LaborerStore;
+			yield* Effect.promise(() =>
+				waitFor(() => {
 					const rowsA = store.query(
 						tables.workspaces.where("projectId", "project-watch-all-a")
 					);
 					const rowsB = store.query(
 						tables.workspaces.where("projectId", "project-watch-all-b")
 					);
-					return rowsA.length === 2 && rowsB.length === 1;
+					return Promise.resolve(rowsA.length === 2 && rowsB.length === 1);
 				})
-			)
-		);
+			);
 
-		git(`worktree add -b watcher/all-b ${linkedB}`, repoB);
+			git(`worktree add -b watcher/all-b ${linkedB}`, repoB);
 
-		await waitFor(async () =>
-			runEffect(
-				Effect.gen(function* () {
-					const { store } = yield* LaborerStore;
-					const rowsB = store.query(
-						tables.workspaces.where("projectId", "project-watch-all-b")
-					);
-					return rowsB.length === 2;
-				})
-			)
-		);
-	});
+			yield* Effect.promise(() =>
+				waitFor(() =>
+					Promise.resolve(
+						store.query(
+							tables.workspaces.where("projectId", "project-watch-all-b")
+						).length === 2
+					)
+				)
+			);
+		}).pipe(Effect.provide(TestLayer))
+	);
 
-	it("handles repos with no .git/worktrees until first linked worktree", async () => {
-		const repoPath = initRepo("watcher-missing-worktrees", tempRoots);
-		const linkedPath = join(repoPath, ".worktrees", "watcher-late-create");
-
-		await runEffect(
+	it.scoped(
+		"handles repos with no .git/worktrees until first linked worktree",
+		() =>
 			Effect.gen(function* () {
+				const repoPath = initRepo("watcher-missing-worktrees", tempRoots);
+				const linkedPath = join(repoPath, ".worktrees", "watcher-late-create");
+
 				const watcher = yield* WorktreeWatcher;
 				yield* watcher.watchProject("project-watch-3", repoPath);
-			})
-		);
 
-		git(`worktree add -b watcher/late ${linkedPath}`, repoPath);
+				const { store } = yield* LaborerStore;
 
-		await waitFor(async () =>
-			runEffect(
-				Effect.gen(function* () {
-					const { store } = yield* LaborerStore;
-					const rows = store.query(
-						tables.workspaces.where("projectId", "project-watch-3")
-					);
-					return rows.length === 2;
-				})
-			)
-		);
-	});
+				git(`worktree add -b watcher/late ${linkedPath}`, repoPath);
+
+				yield* Effect.promise(() =>
+					waitFor(() =>
+						Promise.resolve(
+							store.query(
+								tables.workspaces.where("projectId", "project-watch-3")
+							).length === 2
+						)
+					)
+				);
+			}).pipe(Effect.provide(TestLayer))
+	);
 });

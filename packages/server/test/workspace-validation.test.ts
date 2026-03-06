@@ -16,22 +16,15 @@
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll } from "vitest";
 import type { WorktreeValidation } from "../src/services/workspace-provider.js";
 import {
 	buildValidationErrorMessage,
 	validateWorktree,
 } from "../src/services/workspace-provider.js";
 import { createTempDir, git } from "./helpers/git-helpers.js";
-
-// ---------------------------------------------------------------------------
-// Test Helpers
-// ---------------------------------------------------------------------------
-
-/** Run an Effect and return the result. */
-const runEffect = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
-	Effect.runPromise(effect);
 
 // ---------------------------------------------------------------------------
 // Test Fixtures
@@ -79,64 +72,76 @@ afterAll(() => {
 // ---------------------------------------------------------------------------
 
 describe("validateWorktree", () => {
-	it("should pass all checks for a valid worktree", async () => {
-		const result = await runEffect(validateWorktree(worktreePath, testBranch));
+	it.effect("should pass all checks for a valid worktree", () =>
+		Effect.gen(function* () {
+			const result = yield* validateWorktree(worktreePath, testBranch);
 
-		expect(result.directoryExists).toBe(true);
-		expect(result.isGitWorkTree).toBe(true);
-		expect(result.correctBranch).toBe(true);
-		expect(result.actualBranch).toBe(testBranch);
-		expect(result.isolatedToplevel).toBe(true);
-	});
+			assert.strictEqual(result.directoryExists, true);
+			assert.strictEqual(result.isGitWorkTree, true);
+			assert.strictEqual(result.correctBranch, true);
+			assert.strictEqual(result.actualBranch, testBranch);
+			assert.strictEqual(result.isolatedToplevel, true);
+		})
+	);
 
-	it("should fail directoryExists for non-existent path", async () => {
-		const nonExistentPath = join(testRepoPath, ".worktrees", "does-not-exist");
-		const result = await runEffect(
-			validateWorktree(nonExistentPath, testBranch)
-		);
+	it.effect("should fail directoryExists for non-existent path", () =>
+		Effect.gen(function* () {
+			const nonExistentPath = join(
+				testRepoPath,
+				".worktrees",
+				"does-not-exist"
+			);
+			const result = yield* validateWorktree(nonExistentPath, testBranch);
 
-		expect(result.directoryExists).toBe(false);
-		expect(result.isGitWorkTree).toBe(false);
-		expect(result.correctBranch).toBe(false);
-		expect(result.isolatedToplevel).toBe(false);
-	});
+			assert.strictEqual(result.directoryExists, false);
+			assert.strictEqual(result.isGitWorkTree, false);
+			assert.strictEqual(result.correctBranch, false);
+			assert.strictEqual(result.isolatedToplevel, false);
+		})
+	);
 
-	it("should fail correctBranch when branch name doesn't match", async () => {
-		const result = await runEffect(
-			validateWorktree(worktreePath, "wrong-branch-name")
-		);
+	it.effect("should fail correctBranch when branch name doesn't match", () =>
+		Effect.gen(function* () {
+			const result = yield* validateWorktree(worktreePath, "wrong-branch-name");
 
-		expect(result.directoryExists).toBe(true);
-		expect(result.isGitWorkTree).toBe(true);
-		expect(result.correctBranch).toBe(false);
-		expect(result.actualBranch).toBe(testBranch);
-		expect(result.isolatedToplevel).toBe(true);
-	});
+			assert.strictEqual(result.directoryExists, true);
+			assert.strictEqual(result.isGitWorkTree, true);
+			assert.strictEqual(result.correctBranch, false);
+			assert.strictEqual(result.actualBranch, testBranch);
+			assert.strictEqual(result.isolatedToplevel, true);
+		})
+	);
 
-	it("should fail isGitWorkTree for a non-git directory", async () => {
-		const nonGitDir = createTempDir("non-git");
-		const result = await runEffect(validateWorktree(nonGitDir, "any-branch"));
+	it.effect("should fail isGitWorkTree for a non-git directory", () =>
+		Effect.gen(function* () {
+			const nonGitDir = createTempDir("non-git");
+			const result = yield* validateWorktree(nonGitDir, "any-branch");
 
-		expect(result.directoryExists).toBe(true);
-		expect(result.isGitWorkTree).toBe(false);
+			assert.strictEqual(result.directoryExists, true);
+			assert.strictEqual(result.isGitWorkTree, false);
 
-		rmSync(nonGitDir, { recursive: true, force: true });
-	});
+			rmSync(nonGitDir, { recursive: true, force: true });
+		})
+	);
 
-	it("should fail isolatedToplevel when run in main repo directory", async () => {
-		// Running validation against the main repo (not a worktree) — the
-		// toplevel will match testRepoPath, but the "worktreePath" argument
-		// won't match the expected branch (main repo is on "main" or "master")
-		const mainBranch = git("rev-parse --abbrev-ref HEAD", testRepoPath);
-		const result = await runEffect(validateWorktree(testRepoPath, mainBranch));
+	it.effect(
+		"should fail isolatedToplevel when run in main repo directory",
+		() =>
+			Effect.gen(function* () {
+				// Running validation against the main repo (not a worktree) — the
+				// toplevel will match testRepoPath, but the "worktreePath" argument
+				// won't match the expected branch (main repo is on "main" or "master")
+				const mainBranch = git("rev-parse --abbrev-ref HEAD", testRepoPath);
+				const result = yield* validateWorktree(testRepoPath, mainBranch);
 
-		// The main repo IS a git work tree with the correct branch, but the
-		// toplevel check passes (it IS the main repo's own directory)
-		expect(result.directoryExists).toBe(true);
-		expect(result.isGitWorkTree).toBe(true);
-		expect(result.correctBranch).toBe(true);
-		expect(result.isolatedToplevel).toBe(true);
-	});
+				// The main repo IS a git work tree with the correct branch, but the
+				// toplevel check passes (it IS the main repo's own directory)
+				assert.strictEqual(result.directoryExists, true);
+				assert.strictEqual(result.isGitWorkTree, true);
+				assert.strictEqual(result.correctBranch, true);
+				assert.strictEqual(result.isolatedToplevel, true);
+			})
+	);
 });
 
 // ---------------------------------------------------------------------------
@@ -160,8 +165,8 @@ describe("buildValidationErrorMessage", () => {
 			"feature/test"
 		);
 
-		expect(msg).toContain("directory does not exist");
-		expect(msg).toContain("/path/to/worktree");
+		assert.include(msg, "directory does not exist");
+		assert.include(msg, "/path/to/worktree");
 	});
 
 	it("should list incorrect branch", () => {
@@ -180,8 +185,8 @@ describe("buildValidationErrorMessage", () => {
 			"feature/test"
 		);
 
-		expect(msg).toContain('expected branch "feature/test"');
-		expect(msg).toContain('found "wrong-branch"');
+		assert.include(msg, 'expected branch "feature/test"');
+		assert.include(msg, 'found "wrong-branch"');
 	});
 
 	it("should list multiple failures", () => {
@@ -200,12 +205,12 @@ describe("buildValidationErrorMessage", () => {
 			"feature/test"
 		);
 
-		expect(msg).toContain("not a valid git working tree");
-		expect(msg).toContain("expected branch");
-		expect(msg).toContain("git toplevel");
+		assert.include(msg, "not a valid git working tree");
+		assert.include(msg, "expected branch");
+		assert.include(msg, "git toplevel");
 		// All three failures separated by semicolons
 		const semicolonCount = (msg.match(/;/g) ?? []).length;
-		expect(semicolonCount).toBe(2);
+		assert.strictEqual(semicolonCount, 2);
 	});
 
 	it("should list non-isolated toplevel", () => {
@@ -224,8 +229,8 @@ describe("buildValidationErrorMessage", () => {
 			"feature/test"
 		);
 
-		expect(msg).toContain("git toplevel");
-		expect(msg).toContain("/main/repo/path");
-		expect(msg).toContain("/path/to/worktree");
+		assert.include(msg, "git toplevel");
+		assert.include(msg, "/main/repo/path");
+		assert.include(msg, "/path/to/worktree");
 	});
 });

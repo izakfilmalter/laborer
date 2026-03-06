@@ -147,11 +147,11 @@ See PRD Implementation Decisions > @effect/vitest Migration for patterns.
 
 ### Acceptance criteria
 
-- [ ] All 5 files import from `@effect/vitest` instead of `vitest`
-- [ ] All 5 files use `it.effect` or `it.scoped` instead of manual `Effect.runPromise`
-- [ ] All 5 files use `assert` instead of `expect`
-- [ ] All tests pass (`bun run test` in packages/server)
-- [ ] `bun x ultracite check` passes on all modified files
+- [x] All 5 files import from `@effect/vitest` instead of `vitest`
+- [x] All 5 files use `it.effect` or `it.scoped` instead of manual `Effect.runPromise`
+- [x] All 5 files use `assert` instead of `expect`
+- [x] All tests pass (`bun run test` in packages/server)
+- [x] `bun x ultracite check` passes on all modified files
 
 ### Blocked by
 
@@ -766,14 +766,14 @@ Tests use real `TerminalManager.layer` + `PtyHostClient.layer` (real PTY Host su
 | 2 | Extract git repo shared helpers | None | Done |
 | 3 | Extract timing shared helpers | None | Done |
 | 4 | Delete dead/duplicate test files from server | None | Done |
-| 5 | Migrate worktree/workspace server tests to @effect/vitest | #3 | Ready |
+| 5 | Migrate worktree/workspace server tests to @effect/vitest | #3 | Done |
 | 6 | Migrate task/importer server tests to @effect/vitest | #1 | Ready |
 | 7 | Migrate remaining server tests to @effect/vitest | #1 | Ready |
 | 8 | Migrate terminal package tests to @effect/vitest assertions | None | Ready |
 | 9 | Add LiveStore schema tests -- setup + project/workspace events | None | Done |
 | 10 | Add LiveStore schema tests -- diff, task, PRD, panel layout events | #9 | Done |
 | 11 | Add LiveStore schema tests -- deprecated terminal event no-ops | #9 | Done |
-| 12 | Rewrite config-service.test.ts through public API | #5 or #7 | Blocked |
+| 12 | Rewrite config-service.test.ts through public API | #5 or #7 | Ready |
 | 13 | Set up RPC test infrastructure + health.check test | #1 | Done |
 | 14 | RPC integration tests -- project.add + project.remove | #13, #2 | Done |
 | 15 | RPC integration tests -- config.get + config.update | None | Done |

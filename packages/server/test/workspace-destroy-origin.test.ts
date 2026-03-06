@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { assert, describe, it } from "@effect/vitest";
 import { events, tables } from "@laborer/shared/schema";
-import { Effect, Exit, Layer, Scope } from "effect";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Effect, Layer } from "effect";
+import { afterAll, beforeAll } from "vitest";
 import { ConfigService } from "../src/services/config-service.js";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import { PortAllocator } from "../src/services/port-allocator.js";
@@ -51,30 +52,8 @@ const ensureBunSpawnForNodeTests = (): void => {
 	};
 };
 
-let scope: Scope.CloseableScope;
-let runEffect: <A, E>(
-	effect: Effect.Effect<A, E, WorkspaceProvider | LaborerStore | PortAllocator>
-) => Promise<A>;
-
-beforeEach(async () => {
+beforeAll(() => {
 	ensureBunSpawnForNodeTests();
-	scope = Effect.runSync(Scope.make());
-	const context = await Effect.runPromise(
-		Layer.buildWithScope(TestLayer, scope)
-	);
-	runEffect = <A, E>(
-		effect: Effect.Effect<
-			A,
-			E,
-			WorkspaceProvider | LaborerStore | PortAllocator
-		>
-	) => Effect.runPromise(Effect.provide(effect, Layer.succeedContext(context)));
-});
-
-afterEach(async () => {
-	if (scope) {
-		await Effect.runPromise(Scope.close(scope, Exit.void));
-	}
 });
 
 afterAll(() => {
@@ -86,121 +65,103 @@ afterAll(() => {
 });
 
 describe("WorkspaceProvider.destroyWorktree origin behavior", () => {
-	it("keeps git worktree and branch for external workspaces", async () => {
-		const repoPath = initRepo("destroy-external", tempRoots);
-		const branchName = "feature/external";
-		const worktreePath = join(repoPath, ".worktrees", "external");
-		git(`worktree add -b ${branchName} ${worktreePath}`, repoPath);
+	it.scoped("keeps git worktree and branch for external workspaces", () =>
+		Effect.gen(function* () {
+			const repoPath = initRepo("destroy-external", tempRoots);
+			const branchName = "feature/external";
+			const worktreePath = join(repoPath, ".worktrees", "external");
+			git(`worktree add -b ${branchName} ${worktreePath}`, repoPath);
 
-		const projectId = crypto.randomUUID();
-		const workspaceId = crypto.randomUUID();
-		const allocatedPort = await runEffect(
-			Effect.gen(function* () {
-				const allocator = yield* PortAllocator;
-				return yield* allocator.allocate();
-			})
-		);
+			const projectId = crypto.randomUUID();
+			const workspaceId = crypto.randomUUID();
 
-		await runEffect(
-			Effect.gen(function* () {
-				const { store } = yield* LaborerStore;
-				store.commit(
-					events.projectCreated({
-						id: projectId,
-						repoPath,
-						name: "destroy-external",
-						rlphConfig: null,
-					})
-				);
-				store.commit(
-					events.workspaceCreated({
-						id: workspaceId,
-						projectId,
-						taskSource: null,
-						branchName,
-						worktreePath,
-						port: allocatedPort,
-						status: "stopped",
-						origin: "external",
-						createdAt: new Date().toISOString(),
-						baseSha: null,
-					})
-				);
+			const allocator = yield* PortAllocator;
+			const allocatedPort = yield* allocator.allocate();
 
-				const provider = yield* WorkspaceProvider;
-				yield* provider.destroyWorktree(workspaceId);
-			})
-		);
+			const { store } = yield* LaborerStore;
+			store.commit(
+				events.projectCreated({
+					id: projectId,
+					repoPath,
+					name: "destroy-external",
+					rlphConfig: null,
+				})
+			);
+			store.commit(
+				events.workspaceCreated({
+					id: workspaceId,
+					projectId,
+					taskSource: null,
+					branchName,
+					worktreePath,
+					port: allocatedPort,
+					status: "stopped",
+					origin: "external",
+					createdAt: new Date().toISOString(),
+					baseSha: null,
+				})
+			);
 
-		expect(existsSync(worktreePath)).toBe(true);
-		expect(git(`branch --list ${branchName}`, repoPath)).toContain(branchName);
+			const provider = yield* WorkspaceProvider;
+			yield* provider.destroyWorktree(workspaceId);
 
-		const workspaceRows = await runEffect(
-			Effect.gen(function* () {
-				const { store } = yield* LaborerStore;
-				return store.query(tables.workspaces.where("id", workspaceId));
-			})
-		);
-		expect(workspaceRows).toHaveLength(0);
+			assert.isTrue(existsSync(worktreePath));
+			assert.include(git(`branch --list ${branchName}`, repoPath), branchName);
 
-		const reallocatedPort = await runEffect(
-			Effect.gen(function* () {
-				const allocator = yield* PortAllocator;
-				return yield* allocator.allocate();
-			})
-		);
-		expect(reallocatedPort).toBe(allocatedPort);
-	});
+			const workspaceRows = store.query(
+				tables.workspaces.where("id", workspaceId)
+			);
+			assert.strictEqual(workspaceRows.length, 0);
 
-	it("removes git worktree and branch for laborer workspaces", async () => {
-		const repoPath = initRepo("destroy-laborer", tempRoots);
-		const branchName = "feature/laborer";
-		const worktreePath = join(repoPath, ".worktrees", "laborer");
-		git(`worktree add -b ${branchName} ${worktreePath}`, repoPath);
+			const reallocatedPort = yield* allocator.allocate();
+			assert.strictEqual(reallocatedPort, allocatedPort);
+		}).pipe(Effect.provide(TestLayer))
+	);
 
-		const projectId = crypto.randomUUID();
-		const workspaceId = crypto.randomUUID();
+	it.scoped("removes git worktree and branch for laborer workspaces", () =>
+		Effect.gen(function* () {
+			const repoPath = initRepo("destroy-laborer", tempRoots);
+			const branchName = "feature/laborer";
+			const worktreePath = join(repoPath, ".worktrees", "laborer");
+			git(`worktree add -b ${branchName} ${worktreePath}`, repoPath);
 
-		await runEffect(
-			Effect.gen(function* () {
-				const { store } = yield* LaborerStore;
-				store.commit(
-					events.projectCreated({
-						id: projectId,
-						repoPath,
-						name: "destroy-laborer",
-						rlphConfig: null,
-					})
-				);
-				store.commit(
-					events.workspaceCreated({
-						id: workspaceId,
-						projectId,
-						taskSource: null,
-						branchName,
-						worktreePath,
-						port: 0,
-						status: "stopped",
-						origin: "laborer",
-						createdAt: new Date().toISOString(),
-						baseSha: null,
-					})
-				);
+			const projectId = crypto.randomUUID();
+			const workspaceId = crypto.randomUUID();
 
-				const provider = yield* WorkspaceProvider;
-				yield* provider.destroyWorktree(workspaceId);
-			})
-		);
+			const { store } = yield* LaborerStore;
+			store.commit(
+				events.projectCreated({
+					id: projectId,
+					repoPath,
+					name: "destroy-laborer",
+					rlphConfig: null,
+				})
+			);
+			store.commit(
+				events.workspaceCreated({
+					id: workspaceId,
+					projectId,
+					taskSource: null,
+					branchName,
+					worktreePath,
+					port: 0,
+					status: "stopped",
+					origin: "laborer",
+					createdAt: new Date().toISOString(),
+					baseSha: null,
+				})
+			);
 
-		expect(existsSync(worktreePath)).toBe(false);
-		expect(git(`branch --list ${branchName}`, repoPath)).toBe("");
+			const provider = yield* WorkspaceProvider;
+			yield* provider.destroyWorktree(workspaceId);
 
-		const workspaceRows = await runEffect(
-			Effect.gen(function* () {
-				const { store } = yield* LaborerStore;
-				return store.query(tables.workspaces.where("id", workspaceId));
-			})
-		);
-		expect(workspaceRows).toHaveLength(0);
-	});
+			assert.isFalse(existsSync(worktreePath));
+			assert.strictEqual(git(`branch --list ${branchName}`, repoPath), "");
+
+			const workspaceRows = store.query(
+				tables.workspaces.where("id", workspaceId)
+			);
+			assert.strictEqual(workspaceRows.length, 0);
+		}).pipe(Effect.provide(TestLayer))
+	);
 });

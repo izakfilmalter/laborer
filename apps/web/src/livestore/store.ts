@@ -21,30 +21,30 @@
  * @see Issue #17: LiveStore client adapter setup
  */
 
-import { schema } from "@laborer/shared/schema";
+import { schema } from '@laborer/shared/schema'
 
-import { makePersistedAdapter } from "@livestore/adapter-web";
-import LiveStoreSharedWorker from "@livestore/adapter-web/shared-worker?sharedworker";
-import { useStore } from "@livestore/react";
-import { unstable_batchedUpdates as batchUpdates } from "react-dom";
-import LiveStoreWorker from "../livestore.worker.ts?worker";
+import { makePersistedAdapter } from '@livestore/adapter-web'
+import LiveStoreSharedWorker from '@livestore/adapter-web/shared-worker?sharedworker'
+import { useStore } from '@livestore/react'
+import { unstable_batchedUpdates as batchUpdates } from 'react-dom'
+import LiveStoreWorker from '../livestore.worker.ts?worker'
 
 /**
  * Whether to reset persistence on load. In dev mode, append `?reset`
  * to the URL to clear the local OPFS databases and start fresh.
  */
 const resetPersistence =
-	import.meta.env.DEV &&
-	new URLSearchParams(globalThis.location.search).get("reset") !== null;
+  import.meta.env.DEV &&
+  new URLSearchParams(globalThis.location.search).get('reset') !== null
 
 if (resetPersistence) {
-	const searchParams = new URLSearchParams(globalThis.location.search);
-	searchParams.delete("reset");
-	globalThis.history.replaceState(
-		null,
-		"",
-		`${globalThis.location.pathname}?${searchParams.toString()}`
-	);
+  const searchParams = new URLSearchParams(globalThis.location.search)
+  searchParams.delete('reset')
+  globalThis.history.replaceState(
+    null,
+    '',
+    `${globalThis.location.pathname}?${searchParams.toString()}`
+  )
 }
 
 /**
@@ -54,11 +54,11 @@ if (resetPersistence) {
  * and a Shared Worker for cross-tab coordination and leader election.
  */
 const adapter = makePersistedAdapter({
-	storage: { type: "opfs" },
-	worker: LiveStoreWorker,
-	sharedWorker: LiveStoreSharedWorker,
-	resetPersistence,
-});
+  storage: { type: 'opfs' },
+  worker: LiveStoreWorker,
+  sharedWorker: LiveStoreSharedWorker,
+  resetPersistence,
+})
 
 /**
  * React hook that returns the LiveStore instance for the Laborer app.
@@ -75,11 +75,11 @@ const adapter = makePersistedAdapter({
  * `store.query(table)` for synchronous queries.
  */
 const useLaborerStore = () =>
-	useStore({
-		storeId: "laborer",
-		schema,
-		adapter,
-		batchUpdates,
-	});
+  useStore({
+    storeId: 'laborer',
+    schema,
+    adapter,
+    batchUpdates,
+  })
 
-export { useLaborerStore };
+export { useLaborerStore }

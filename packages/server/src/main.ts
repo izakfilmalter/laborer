@@ -17,33 +17,33 @@
  */
 
 import {
-	HttpMiddleware,
-	HttpRouter,
-	HttpServer,
-	HttpServerResponse,
-} from "@effect/platform";
-import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
-import { RpcSerialization, RpcServer } from "@effect/rpc";
-import { env } from "@laborer/env/server";
-import { LaborerRpcs } from "@laborer/shared/rpc";
-import { Effect, Layer } from "effect";
-import { LaborerRpcsLive } from "./rpc/handlers.js";
-import { ConfigService } from "./services/config-service.js";
-import { DiffService } from "./services/diff-service.js";
-import { GithubTaskImporter } from "./services/github-task-importer.js";
-import { LaborerStoreLive } from "./services/laborer-store.js";
-import { LinearTaskImporter } from "./services/linear-task-importer.js";
-import { McpRegistrar } from "./services/mcp-registrar.js";
-import { PortAllocator } from "./services/port-allocator.js";
-import { PrdStorageService } from "./services/prd-storage-service.js";
-import { ProjectRegistry } from "./services/project-registry.js";
-import { SyncRpcLive } from "./services/sync-backend.js";
-import { TaskManager } from "./services/task-manager.js";
-import { TerminalClient } from "./services/terminal-client.js";
-import { WorkspaceProvider } from "./services/workspace-provider.js";
-import { WorktreeDetector } from "./services/worktree-detector.js";
-import { WorktreeReconciler } from "./services/worktree-reconciler.js";
-import { WorktreeWatcher } from "./services/worktree-watcher.js";
+  HttpMiddleware,
+  HttpRouter,
+  HttpServer,
+  HttpServerResponse,
+} from '@effect/platform'
+import { BunHttpServer, BunRuntime } from '@effect/platform-bun'
+import { RpcSerialization, RpcServer } from '@effect/rpc'
+import { env } from '@laborer/env/server'
+import { LaborerRpcs } from '@laborer/shared/rpc'
+import { Effect, Layer } from 'effect'
+import { LaborerRpcsLive } from './rpc/handlers.js'
+import { ConfigService } from './services/config-service.js'
+import { DiffService } from './services/diff-service.js'
+import { GithubTaskImporter } from './services/github-task-importer.js'
+import { LaborerStoreLive } from './services/laborer-store.js'
+import { LinearTaskImporter } from './services/linear-task-importer.js'
+import { McpRegistrar } from './services/mcp-registrar.js'
+import { PortAllocator } from './services/port-allocator.js'
+import { PrdStorageService } from './services/prd-storage-service.js'
+import { ProjectRegistry } from './services/project-registry.js'
+import { SyncRpcLive } from './services/sync-backend.js'
+import { TaskManager } from './services/task-manager.js'
+import { TerminalClient } from './services/terminal-client.js'
+import { WorkspaceProvider } from './services/workspace-provider.js'
+import { WorktreeDetector } from './services/worktree-detector.js'
+import { WorktreeReconciler } from './services/worktree-reconciler.js'
+import { WorktreeWatcher } from './services/worktree-watcher.js'
 
 /**
  * Custom HTTP Routes
@@ -52,17 +52,17 @@ import { WorktreeWatcher } from "./services/worktree-watcher.js";
  * The root endpoint returns a basic server identity response.
  */
 const CustomRoutesLive = HttpRouter.Default.use((router) =>
-	router.addRoute(
-		HttpRouter.makeRoute(
-			"GET",
-			"/",
-			HttpServerResponse.json({
-				status: "ok",
-				name: "laborer-server",
-			})
-		)
-	)
-);
+  router.addRoute(
+    HttpRouter.makeRoute(
+      'GET',
+      '/',
+      HttpServerResponse.json({
+        status: 'ok',
+        name: 'laborer-server',
+      })
+    )
+  )
+)
 
 /**
  * RPC Layer — Business RPCs over HTTP (POST /rpc)
@@ -72,16 +72,16 @@ const CustomRoutesLive = HttpRouter.Default.use((router) =>
  * matches the client's RpcClient.layerProtocolHttp.
  */
 const RpcLive = RpcServer.layer(LaborerRpcs).pipe(
-	Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-	Layer.provide(LaborerRpcsLive)
-);
+  Layer.provide(RpcServer.layerProtocolHttp({ path: '/rpc' })),
+  Layer.provide(LaborerRpcsLive)
+)
 
 /**
  * Server Layer
  *
  * Provides the Bun HTTP server on the configured port.
  */
-const ServerLive = BunHttpServer.layer({ port: env.PORT });
+const ServerLive = BunHttpServer.layer({ port: env.PORT })
 
 /**
  * Application Layer
@@ -102,34 +102,34 @@ const ServerLive = BunHttpServer.layer({ port: env.PORT });
  * TerminalClient, which connects over Effect RPC HTTP.
  */
 const HttpLiveBase = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
-	HttpServer.withLogAddress,
-	// --- Route layers (consume services from below) ---
-	Layer.provide(CustomRoutesLive),
-	Layer.provide(RpcLive),
-	Layer.provide(SyncRpcLive),
-	// --- Shared service layers (available to all route layers) ---
-	Layer.provide(LinearTaskImporter.layer),
-	Layer.provide(GithubTaskImporter.layer),
-	Layer.provide(TaskManager.layer),
-	Layer.provide(PrdStorageService.layer),
-	Layer.provide(DiffService.layer),
-	Layer.provide(TerminalClient.layer),
-	Layer.provide(WorkspaceProvider.layer),
-	Layer.provide(ConfigService.layer),
-	Layer.provide(McpRegistrar.layer),
-	Layer.provide(ProjectRegistry.layer)
-);
+  HttpServer.withLogAddress,
+  // --- Route layers (consume services from below) ---
+  Layer.provide(CustomRoutesLive),
+  Layer.provide(RpcLive),
+  Layer.provide(SyncRpcLive),
+  // --- Shared service layers (available to all route layers) ---
+  Layer.provide(LinearTaskImporter.layer),
+  Layer.provide(GithubTaskImporter.layer),
+  Layer.provide(TaskManager.layer),
+  Layer.provide(PrdStorageService.layer),
+  Layer.provide(DiffService.layer),
+  Layer.provide(TerminalClient.layer),
+  Layer.provide(WorkspaceProvider.layer),
+  Layer.provide(ConfigService.layer),
+  Layer.provide(McpRegistrar.layer),
+  Layer.provide(ProjectRegistry.layer)
+)
 
 const HttpLive = HttpLiveBase.pipe(
-	Layer.provide(WorktreeWatcher.layer),
-	Layer.provide(WorktreeReconciler.layer),
-	Layer.provide(WorktreeDetector.layer),
-	Layer.provide(PortAllocator.layer),
-	// --- Infrastructure layers ---
-	Layer.provide(RpcSerialization.layerJson),
-	Layer.provide(LaborerStoreLive),
-	Layer.provide(ServerLive)
-);
+  Layer.provide(WorktreeWatcher.layer),
+  Layer.provide(WorktreeReconciler.layer),
+  Layer.provide(WorktreeDetector.layer),
+  Layer.provide(PortAllocator.layer),
+  // --- Infrastructure layers ---
+  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(LaborerStoreLive),
+  Layer.provide(ServerLive)
+)
 
 /**
  * Main program
@@ -139,6 +139,6 @@ const HttpLive = HttpLiveBase.pipe(
  * 2. Keeps running until interrupted
  * 3. On SIGINT/SIGTERM, tears down all layer scopes
  */
-const main = HttpLive.pipe(Layer.launch, Effect.scoped);
+const main = HttpLive.pipe(Layer.launch, Effect.scoped)
 
-BunRuntime.runMain(main);
+BunRuntime.runMain(main)

@@ -1,41 +1,41 @@
-import path from "node:path";
-import tailwindcss from "@tailwindcss/vite";
-import { tanstackRouter } from "@tanstack/router-plugin/vite";
-import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import path from 'node:path'
+import tailwindcss from '@tailwindcss/vite'
+import { tanstackRouter } from '@tanstack/router-plugin/vite'
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
 
 /** Regex for stripping the /terminal-rpc prefix when proxying to the terminal service. */
-const TERMINAL_RPC_PREFIX = /^\/terminal-rpc/;
+const TERMINAL_RPC_PREFIX = /^\/terminal-rpc/
 
 export default defineConfig({
-	plugins: [tailwindcss(), tanstackRouter({}), react()],
-	resolve: {
-		alias: {
-			"@": path.resolve(import.meta.dirname, "./src"),
-		},
-	},
-	server: {
-		port: 3001,
-		fs: { strict: false },
-		proxy: {
-			"/rpc": {
-				target: "http://localhost:3000",
-				ws: true,
-			},
-			"/terminal-rpc": {
-				target: "http://localhost:3002",
-				rewrite: (p) => p.replace(TERMINAL_RPC_PREFIX, "/rpc"),
-			},
-			"/terminal": {
-				target: "http://localhost:3002",
-				ws: true,
-			},
-		},
-	},
-	worker: {
-		format: "es",
-	},
-	optimizeDeps: {
-		exclude: ["@livestore/adapter-web"],
-	},
-});
+  plugins: [tailwindcss(), tanstackRouter({}), react()],
+  resolve: {
+    alias: {
+      '@': path.resolve(import.meta.dirname, './src'),
+    },
+  },
+  server: {
+    port: 3001,
+    fs: { strict: false },
+    proxy: {
+      '/rpc': {
+        target: 'http://localhost:3000',
+        ws: true,
+      },
+      '/terminal-rpc': {
+        target: 'http://localhost:3002',
+        rewrite: (p) => p.replace(TERMINAL_RPC_PREFIX, '/rpc'),
+      },
+      '/terminal': {
+        target: 'http://localhost:3002',
+        ws: true,
+      },
+    },
+  },
+  worker: {
+    format: 'es',
+  },
+  optimizeDeps: {
+    exclude: ['@livestore/adapter-web'],
+  },
+})

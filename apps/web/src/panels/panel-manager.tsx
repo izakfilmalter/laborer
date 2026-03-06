@@ -43,57 +43,57 @@
  * @see Issue #148: Focused pane border fix — replaced ring with border
  */
 
-import { useAtomSet } from "@effect-atom/atom-react/Hooks";
-import { workspaces } from "@laborer/shared/schema";
-import type { LeafNode, PanelNode, SplitNode } from "@laborer/shared/types";
-import { queryDb } from "@livestore/livestore";
-import { Layers, Plus, Terminal as TerminalIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { GroupImperativeHandle } from "react-resizable-panels";
-import { toast } from "sonner";
-import { LaborerClient } from "@/atoms/laborer-client";
-import { Button } from "@/components/ui/button";
+import { useAtomSet } from '@effect-atom/atom-react/Hooks'
+import { workspaces } from '@laborer/shared/schema'
+import type { LeafNode, PanelNode, SplitNode } from '@laborer/shared/types'
+import { queryDb } from '@livestore/livestore'
+import { Layers, Plus, Terminal as TerminalIcon } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { GroupImperativeHandle } from 'react-resizable-panels'
+import { toast } from 'sonner'
+import { LaborerClient } from '@/atoms/laborer-client'
+import { Button } from '@/components/ui/button'
 import {
-	Empty,
-	EmptyContent,
-	EmptyDescription,
-	EmptyHeader,
-	EmptyMedia,
-	EmptyTitle,
-} from "@/components/ui/empty";
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
 import {
-	ResizableHandle,
-	ResizablePanel,
-	ResizablePanelGroup,
-} from "@/components/ui/resizable";
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from '@/components/ui/resizable'
 import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
-import { useResponsiveLayout } from "@/hooks/use-responsive-layout";
-import { extractErrorMessage } from "@/lib/utils";
-import { useLaborerStore } from "@/livestore/store";
-import { usePanelActions } from "@/panels/panel-context";
-import { usePanelGroupRegistry } from "@/panels/panel-group-registry";
-import { DiffPane } from "@/panes/diff-pane";
-import { TerminalPane } from "@/panes/terminal-pane";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
+import { extractErrorMessage } from '@/lib/utils'
+import { useLaborerStore } from '@/livestore/store'
+import { usePanelActions } from '@/panels/panel-context'
+import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
+import { DiffPane } from '@/panes/diff-pane'
+import { TerminalPane } from '@/panes/terminal-pane'
 
-const allWorkspaces$ = queryDb(workspaces, { label: "paneWorkspaces" });
-const spawnTerminalMutation = LaborerClient.mutation("terminal.spawn");
+const allWorkspaces$ = queryDb(workspaces, { label: 'paneWorkspaces' })
+const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
 
 /**
  * MIME type for terminal drag data. Must match the value used in
  * terminal-list.tsx drag source.
  */
-const TERMINAL_DRAG_MIME = "application/x-laborer-terminal";
+const TERMINAL_DRAG_MIME = 'application/x-laborer-terminal'
 
 /** Parsed terminal drag data shape. */
 interface TerminalDragData {
-	readonly terminalId: string;
-	readonly workspaceId: string;
+  readonly terminalId: string
+  readonly workspaceId: string
 }
 
 /**
@@ -101,28 +101,28 @@ interface TerminalDragData {
  * Returns undefined if the data is missing or invalid.
  */
 function parseTerminalDragData(
-	dataTransfer: DataTransfer
+  dataTransfer: DataTransfer
 ): TerminalDragData | undefined {
-	const raw = dataTransfer.getData(TERMINAL_DRAG_MIME);
-	if (!raw) {
-		return undefined;
-	}
-	try {
-		const parsed: unknown = JSON.parse(raw);
-		if (
-			typeof parsed === "object" &&
-			parsed !== null &&
-			"terminalId" in parsed &&
-			"workspaceId" in parsed &&
-			typeof (parsed as TerminalDragData).terminalId === "string" &&
-			typeof (parsed as TerminalDragData).workspaceId === "string"
-		) {
-			return parsed as TerminalDragData;
-		}
-	} catch {
-		// Invalid JSON — ignore
-	}
-	return undefined;
+  const raw = dataTransfer.getData(TERMINAL_DRAG_MIME)
+  if (!raw) {
+    return undefined
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      'terminalId' in parsed &&
+      'workspaceId' in parsed &&
+      typeof (parsed as TerminalDragData).terminalId === 'string' &&
+      typeof (parsed as TerminalDragData).workspaceId === 'string'
+    ) {
+      return parsed as TerminalDragData
+    }
+  } catch {
+    // Invalid JSON — ignore
+  }
+  return undefined
 }
 
 /**
@@ -131,14 +131,14 @@ function parseTerminalDragData(
  * since `getData()` is only accessible during drop.
  */
 function hasTerminalDragData(dataTransfer: DataTransfer): boolean {
-	return dataTransfer.types.includes(TERMINAL_DRAG_MIME);
+  return dataTransfer.types.includes(TERMINAL_DRAG_MIME)
 }
 
 interface EmptyTerminalPaneProps {
-	/** The pane ID, used to assign the spawned terminal to this specific pane. */
-	readonly paneId: string;
-	/** Pre-assigned workspace ID from the pane node, if any. */
-	readonly workspaceId?: string | undefined;
+  /** The pane ID, used to assign the spawned terminal to this specific pane. */
+  readonly paneId: string
+  /** Pre-assigned workspace ID from the pane node, if any. */
+  readonly workspaceId?: string | undefined
 }
 
 /**
@@ -152,103 +152,103 @@ interface EmptyTerminalPaneProps {
  * - If no active workspaces exist, shows guidance pointing to the sidebar.
  */
 function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
-	const store = useLaborerStore();
-	const workspaceList = store.useQuery(allWorkspaces$);
-	const panelActions = usePanelActions();
-	const spawnTerminal = useAtomSet(spawnTerminalMutation, {
-		mode: "promise",
-	});
-	const [isSpawning, setIsSpawning] = useState(false);
-	const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
+  const store = useLaborerStore()
+  const workspaceList = store.useQuery(allWorkspaces$)
+  const panelActions = usePanelActions()
+  const spawnTerminal = useAtomSet(spawnTerminalMutation, {
+    mode: 'promise',
+  })
+  const [isSpawning, setIsSpawning] = useState(false)
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('')
 
-	const activeWorkspaces = workspaceList.filter(
-		(ws) => ws.status === "running" || ws.status === "creating"
-	);
+  const activeWorkspaces = workspaceList.filter(
+    (ws) => ws.status === 'running' || ws.status === 'creating'
+  )
 
-	// Determine which workspace to use for spawning
-	const singleWorkspaceId =
-		activeWorkspaces.length === 1 ? activeWorkspaces[0]?.id : undefined;
-	const resolvedWorkspaceId =
-		workspaceId ?? singleWorkspaceId ?? selectedWorkspaceId;
+  // Determine which workspace to use for spawning
+  const singleWorkspaceId =
+    activeWorkspaces.length === 1 ? activeWorkspaces[0]?.id : undefined
+  const resolvedWorkspaceId =
+    workspaceId ?? singleWorkspaceId ?? selectedWorkspaceId
 
-	const handleSpawn = useCallback(async () => {
-		if (!resolvedWorkspaceId) {
-			return;
-		}
-		setIsSpawning(true);
-		try {
-			const result = await spawnTerminal({
-				payload: { workspaceId: resolvedWorkspaceId },
-			});
-			toast.success(`Terminal spawned: ${result.command}`);
-			if (panelActions) {
-				panelActions.assignTerminalToPane(
-					result.id,
-					resolvedWorkspaceId,
-					paneId
-				);
-			}
-		} catch (error) {
-			toast.error(`Failed to spawn terminal: ${extractErrorMessage(error)}`);
-		} finally {
-			setIsSpawning(false);
-		}
-	}, [spawnTerminal, resolvedWorkspaceId, panelActions, paneId]);
+  const handleSpawn = useCallback(async () => {
+    if (!resolvedWorkspaceId) {
+      return
+    }
+    setIsSpawning(true)
+    try {
+      const result = await spawnTerminal({
+        payload: { workspaceId: resolvedWorkspaceId },
+      })
+      toast.success(`Terminal spawned: ${result.command}`)
+      if (panelActions) {
+        panelActions.assignTerminalToPane(
+          result.id,
+          resolvedWorkspaceId,
+          paneId
+        )
+      }
+    } catch (error) {
+      toast.error(`Failed to spawn terminal: ${extractErrorMessage(error)}`)
+    } finally {
+      setIsSpawning(false)
+    }
+  }, [spawnTerminal, resolvedWorkspaceId, panelActions, paneId])
 
-	const hasMultipleWorkspaces = !workspaceId && activeWorkspaces.length > 1;
+  const hasMultipleWorkspaces = !workspaceId && activeWorkspaces.length > 1
 
-	return (
-		<div className="flex h-full w-full items-center justify-center bg-background">
-			<Empty>
-				<EmptyHeader>
-					<EmptyMedia variant="icon">
-						<TerminalIcon />
-					</EmptyMedia>
-					<EmptyTitle>No terminal</EmptyTitle>
-					<EmptyDescription>
-						{activeWorkspaces.length === 0
-							? "Create a workspace first, then spawn a terminal to see output here."
-							: "Spawn a terminal in a workspace to see output here."}
-					</EmptyDescription>
-				</EmptyHeader>
-				{activeWorkspaces.length > 0 && (
-					<EmptyContent>
-						{hasMultipleWorkspaces && (
-							<Select
-								onValueChange={(value) => setSelectedWorkspaceId(value ?? "")}
-								value={selectedWorkspaceId}
-							>
-								<SelectTrigger className="w-full">
-									<SelectValue placeholder="Select workspace" />
-								</SelectTrigger>
-								<SelectContent>
-									{activeWorkspaces.map((ws) => (
-										<SelectItem key={ws.id} value={ws.id}>
-											{ws.branchName}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						)}
-						<Button
-							disabled={isSpawning || !resolvedWorkspaceId}
-							onClick={handleSpawn}
-							size="sm"
-							variant="outline"
-						>
-							<Plus className="size-3.5" />
-							{isSpawning ? "Spawning..." : "Spawn Terminal"}
-						</Button>
-					</EmptyContent>
-				)}
-			</Empty>
-		</div>
-	);
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-background">
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <TerminalIcon />
+          </EmptyMedia>
+          <EmptyTitle>No terminal</EmptyTitle>
+          <EmptyDescription>
+            {activeWorkspaces.length === 0
+              ? 'Create a workspace first, then spawn a terminal to see output here.'
+              : 'Spawn a terminal in a workspace to see output here.'}
+          </EmptyDescription>
+        </EmptyHeader>
+        {activeWorkspaces.length > 0 && (
+          <EmptyContent>
+            {hasMultipleWorkspaces && (
+              <Select
+                onValueChange={(value) => setSelectedWorkspaceId(value ?? '')}
+                value={selectedWorkspaceId}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select workspace" />
+                </SelectTrigger>
+                <SelectContent>
+                  {activeWorkspaces.map((ws) => (
+                    <SelectItem key={ws.id} value={ws.id}>
+                      {ws.branchName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Button
+              disabled={isSpawning || !resolvedWorkspaceId}
+              onClick={handleSpawn}
+              size="sm"
+              variant="outline"
+            >
+              <Plus className="size-3.5" />
+              {isSpawning ? 'Spawning...' : 'Spawn Terminal'}
+            </Button>
+          </EmptyContent>
+        )}
+      </Empty>
+    </div>
+  )
 }
 
 interface PaneContentProps {
-	/** The leaf node describing this pane's content. */
-	readonly node: LeafNode;
+  /** The leaf node describing this pane's content. */
+  readonly node: LeafNode
 }
 
 /**
@@ -259,47 +259,45 @@ interface PaneContentProps {
  * This keeps the diff visually coupled to its terminal.
  */
 function PaneContent({ node }: PaneContentProps) {
-	const { paneMin } = useResponsiveLayout();
+  const { paneMin } = useResponsiveLayout()
 
-	if (node.paneType === "terminal" && node.terminalId) {
-		// Terminal with integrated diff sidebar
-		if (node.diffOpen && node.workspaceId) {
-			return (
-				<ResizablePanelGroup orientation="horizontal">
-					<ResizablePanel defaultSize="60%" minSize={paneMin}>
-						<TerminalPane terminalId={node.terminalId} />
-					</ResizablePanel>
-					<ResizableHandle />
-					<ResizablePanel defaultSize="40%" minSize={paneMin}>
-						<DiffPane workspaceId={node.workspaceId} />
-					</ResizablePanel>
-				</ResizablePanelGroup>
-			);
-		}
-		return <TerminalPane terminalId={node.terminalId} />;
-	}
+  if (node.paneType === 'terminal' && node.terminalId) {
+    // Terminal with integrated diff sidebar
+    if (node.diffOpen && node.workspaceId) {
+      return (
+        <ResizablePanelGroup orientation="horizontal">
+          <ResizablePanel defaultSize="60%" minSize={paneMin}>
+            <TerminalPane terminalId={node.terminalId} />
+          </ResizablePanel>
+          <ResizableHandle />
+          <ResizablePanel defaultSize="40%" minSize={paneMin}>
+            <DiffPane workspaceId={node.workspaceId} />
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      )
+    }
+    return <TerminalPane terminalId={node.terminalId} />
+  }
 
-	// Empty pane — use guided empty state with CTA for terminal panes
-	if (node.paneType === "terminal") {
-		return (
-			<EmptyTerminalPane paneId={node.id} workspaceId={node.workspaceId} />
-		);
-	}
+  // Empty pane — use guided empty state with CTA for terminal panes
+  if (node.paneType === 'terminal') {
+    return <EmptyTerminalPane paneId={node.id} workspaceId={node.workspaceId} />
+  }
 
-	// Generic empty pane (non-terminal)
-	return (
-		<div className="flex h-full w-full items-center justify-center bg-background">
-			<Empty>
-				<EmptyHeader>
-					<EmptyMedia variant="icon">
-						<Layers />
-					</EmptyMedia>
-					<EmptyTitle>Empty pane</EmptyTitle>
-					<EmptyDescription>Assign content to this pane.</EmptyDescription>
-				</EmptyHeader>
-			</Empty>
-		</div>
-	);
+  // Generic empty pane (non-terminal)
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-background">
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Layers />
+          </EmptyMedia>
+          <EmptyTitle>Empty pane</EmptyTitle>
+          <EmptyDescription>Assign content to this pane.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    </div>
+  )
 }
 
 /**
@@ -309,8 +307,8 @@ function PaneContent({ node }: PaneContentProps) {
  */
 
 interface PanelRendererProps {
-	/** The panel node tree to render. */
-	readonly node: PanelNode;
+  /** The panel node tree to render. */
+  readonly node: PanelNode
 }
 
 /**
@@ -331,37 +329,37 @@ interface PanelRendererProps {
  * @see Issue #79: Keyboard shortcut — resize panes
  */
 function SplitPanelRenderer({ node }: { readonly node: SplitNode }) {
-	const registry = usePanelGroupRegistry();
-	const groupRef = useRef<GroupImperativeHandle | null>(null);
+  const registry = usePanelGroupRegistry()
+  const groupRef = useRef<GroupImperativeHandle | null>(null)
 
-	useEffect(() => {
-		if (registry && groupRef.current) {
-			registry.registerGroupRef(node.id, groupRef.current);
-		}
-		return () => {
-			registry?.unregisterGroupRef(node.id);
-		};
-	}, [registry, node.id]);
+  useEffect(() => {
+    if (registry && groupRef.current) {
+      registry.registerGroupRef(node.id, groupRef.current)
+    }
+    return () => {
+      registry?.unregisterGroupRef(node.id)
+    }
+  }, [registry, node.id])
 
-	return (
-		<ResizablePanelGroup
-			data-split-id={node.id}
-			groupRef={groupRef}
-			orientation={node.direction}
-		>
-			{node.children.map((child, index) => {
-				const size = node.sizes[index] ?? 100 / node.children.length;
-				return (
-					<SplitChild
-						child={child}
-						defaultSize={size}
-						index={index}
-						key={child.id}
-					/>
-				);
-			})}
-		</ResizablePanelGroup>
-	);
+  return (
+    <ResizablePanelGroup
+      data-split-id={node.id}
+      groupRef={groupRef}
+      orientation={node.direction}
+    >
+      {node.children.map((child, index) => {
+        const size = node.sizes[index] ?? 100 / node.children.length
+        return (
+          <SplitChild
+            child={child}
+            defaultSize={size}
+            index={index}
+            key={child.id}
+          />
+        )
+      })}
+    </ResizablePanelGroup>
+  )
 }
 
 /**
@@ -379,27 +377,27 @@ function SplitPanelRenderer({ node }: { readonly node: SplitNode }) {
  * @see Issue #81: Panel responsive layout
  */
 function SplitChild({
-	child,
-	defaultSize,
-	index,
+  child,
+  defaultSize,
+  index,
 }: {
-	readonly child: PanelNode;
-	readonly defaultSize: number;
-	readonly index: number;
+  readonly child: PanelNode
+  readonly defaultSize: number
+  readonly index: number
 }) {
-	const { paneMin } = useResponsiveLayout();
-	return (
-		<>
-			{index > 0 && <ResizableHandle />}
-			<ResizablePanel
-				defaultSize={`${defaultSize}%`}
-				id={child.id}
-				minSize={paneMin}
-			>
-				<PanelRenderer node={child} />
-			</ResizablePanel>
-		</>
-	);
+  const { paneMin } = useResponsiveLayout()
+  return (
+    <>
+      {index > 0 && <ResizableHandle />}
+      <ResizablePanel
+        defaultSize={`${defaultSize}%`}
+        id={child.id}
+        minSize={paneMin}
+      >
+        <PanelRenderer node={child} />
+      </ResizablePanel>
+    </>
+  )
 }
 
 /**
@@ -421,83 +419,83 @@ function SplitChild({
  * @see Issue #148: Focused pane border fix
  */
 function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
-	const actions = usePanelActions();
-	const [isDragOver, setIsDragOver] = useState(false);
+  const actions = usePanelActions()
+  const [isDragOver, setIsDragOver] = useState(false)
 
-	const isEmptyTerminalPane = node.paneType === "terminal" && !node.terminalId;
+  const isEmptyTerminalPane = node.paneType === 'terminal' && !node.terminalId
 
-	const handleDragOver = useCallback(
-		(e: React.DragEvent<HTMLDivElement>) => {
-			if (!(isEmptyTerminalPane && hasTerminalDragData(e.dataTransfer))) {
-				return;
-			}
-			e.preventDefault();
-			e.dataTransfer.dropEffect = "move";
-			setIsDragOver(true);
-		},
-		[isEmptyTerminalPane]
-	);
+  const handleDragOver = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      if (!(isEmptyTerminalPane && hasTerminalDragData(e.dataTransfer))) {
+        return
+      }
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      setIsDragOver(true)
+    },
+    [isEmptyTerminalPane]
+  )
 
-	const handleDragEnter = useCallback(
-		(e: React.DragEvent<HTMLDivElement>) => {
-			if (!(isEmptyTerminalPane && hasTerminalDragData(e.dataTransfer))) {
-				return;
-			}
-			e.preventDefault();
-			setIsDragOver(true);
-		},
-		[isEmptyTerminalPane]
-	);
+  const handleDragEnter = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      if (!(isEmptyTerminalPane && hasTerminalDragData(e.dataTransfer))) {
+        return
+      }
+      e.preventDefault()
+      setIsDragOver(true)
+    },
+    [isEmptyTerminalPane]
+  )
 
-	const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-		// Only clear when leaving the container, not when moving between children
-		if (e.currentTarget.contains(e.relatedTarget as Node)) {
-			return;
-		}
-		setIsDragOver(false);
-	}, []);
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    // Only clear when leaving the container, not when moving between children
+    if (e.currentTarget.contains(e.relatedTarget as Node)) {
+      return
+    }
+    setIsDragOver(false)
+  }, [])
 
-	const handleDrop = useCallback(
-		(e: React.DragEvent<HTMLDivElement>) => {
-			e.preventDefault();
-			setIsDragOver(false);
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      setIsDragOver(false)
 
-			if (!(isEmptyTerminalPane && actions)) {
-				return;
-			}
+      if (!(isEmptyTerminalPane && actions)) {
+        return
+      }
 
-			const data = parseTerminalDragData(e.dataTransfer);
-			if (!data) {
-				return;
-			}
+      const data = parseTerminalDragData(e.dataTransfer)
+      if (!data) {
+        return
+      }
 
-			actions.assignTerminalToPane(data.terminalId, data.workspaceId, node.id);
-		},
-		[isEmptyTerminalPane, actions, node.id]
-	);
+      actions.assignTerminalToPane(data.terminalId, data.workspaceId, node.id)
+    },
+    [isEmptyTerminalPane, actions, node.id]
+  )
 
-	let borderClass = "";
-	if (isDragOver) {
-		borderClass = "border-2 border-primary bg-primary/5";
-	}
+  let borderClass = ''
+  if (isDragOver) {
+    borderClass = 'border-2 border-primary bg-primary/5'
+  }
 
-	return (
-		// biome-ignore lint/a11y/useSemanticElements: Panel pane container requires drag-and-drop target behavior
-		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: Drag-and-drop handlers on pane container are essential for terminal assignment
-		<div
-			className={`group/pane relative h-full w-full overflow-hidden ${borderClass}`}
-			data-pane-id={node.id}
-			onDragEnter={handleDragEnter}
-			onDragLeave={handleDragLeave}
-			onDragOver={handleDragOver}
-			onDrop={handleDrop}
-			onFocusCapture={() => actions?.setActivePaneId(node.id)}
-			onMouseDownCapture={() => actions?.setActivePaneId(node.id)}
-			role="region"
-		>
-			<PaneContent node={node} />
-		</div>
-	);
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: Panel pane container requires drag-and-drop target behavior
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Drag-and-drop handlers on pane container are essential for terminal assignment
+    <div
+      className={`group/pane relative h-full w-full overflow-hidden ${borderClass}`}
+      data-pane-id={node.id}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+      onFocusCapture={() => actions?.setActivePaneId(node.id)}
+      onMouseDownCapture={() => actions?.setActivePaneId(node.id)}
+      role="region"
+    >
+      <PaneContent node={node} />
+    </div>
+  )
 }
 
 /**
@@ -512,24 +510,24 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
  *   nesting to arbitrary depth (5+ levels).
  */
 function PanelRenderer({ node }: PanelRendererProps) {
-	if (node._tag === "LeafNode") {
-		return <LeafPaneRenderer node={node} />;
-	}
+  if (node._tag === 'LeafNode') {
+    return <LeafPaneRenderer node={node} />
+  }
 
-	// SplitNode — render children in a resizable panel group
-	if (node.children.length === 0) {
-		return null;
-	}
+  // SplitNode — render children in a resizable panel group
+  if (node.children.length === 0) {
+    return null
+  }
 
-	return <SplitPanelRenderer node={node} />;
+  return <SplitPanelRenderer node={node} />
 }
 
 interface PanelManagerProps {
-	/**
-	 * The root panel node to render. When undefined, renders an empty state
-	 * guiding the user to create a workspace and spawn a terminal.
-	 */
-	readonly layout?: PanelNode | undefined;
+  /**
+   * The root panel node to render. When undefined, renders an empty state
+   * guiding the user to create a workspace and spawn a terminal.
+   */
+  readonly layout?: PanelNode | undefined
 }
 
 /**
@@ -542,30 +540,30 @@ interface PanelManagerProps {
  * is present, the pane toolbar is hidden.
  */
 function PanelManager({ layout }: PanelManagerProps) {
-	if (!layout) {
-		return (
-			<div className="flex h-full w-full items-center justify-center bg-background">
-				<Empty>
-					<EmptyHeader>
-						<EmptyMedia variant="icon">
-							<Layers />
-						</EmptyMedia>
-						<EmptyTitle>No panels</EmptyTitle>
-						<EmptyDescription>
-							Create a workspace and spawn a terminal to get started. Panels
-							will appear here automatically.
-						</EmptyDescription>
-					</EmptyHeader>
-				</Empty>
-			</div>
-		);
-	}
+  if (!layout) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-background">
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Layers />
+            </EmptyMedia>
+            <EmptyTitle>No panels</EmptyTitle>
+            <EmptyDescription>
+              Create a workspace and spawn a terminal to get started. Panels
+              will appear here automatically.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </div>
+    )
+  }
 
-	return (
-		<div className="h-full w-full overflow-hidden">
-			<PanelRenderer node={layout} />
-		</div>
-	);
+  return (
+    <div className="h-full w-full overflow-hidden">
+      <PanelRenderer node={layout} />
+    </div>
+  )
 }
 
-export { PanelManager, PanelRenderer, PaneContent, SplitPanelRenderer };
+export { PanelManager, PanelRenderer, PaneContent, SplitPanelRenderer }

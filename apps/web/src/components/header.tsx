@@ -1,47 +1,47 @@
-import { Link } from "@tanstack/react-router";
-import { RotateCcw } from "lucide-react";
-import { useCallback } from "react";
+import { Link } from '@tanstack/react-router'
+import { RotateCcw } from 'lucide-react'
+import { useCallback } from 'react'
 
-import { Button } from "@/components/ui/button";
+import { Button } from '@/components/ui/button'
 
-import { ModeToggle } from "./mode-toggle";
+import { ModeToggle } from './mode-toggle'
 
 function ResetButton() {
-	const handleReset = useCallback(() => {
-		const url = new URL(globalThis.location.href);
-		url.searchParams.set("reset", "");
-		globalThis.location.href = url.toString();
-	}, []);
+  const handleReset = useCallback(() => {
+    const url = new URL(globalThis.location.href)
+    url.searchParams.set('reset', '')
+    globalThis.location.href = url.toString()
+  }, [])
 
-	return (
-		<Button onClick={handleReset} size="icon" variant="outline">
-			<RotateCcw className="h-[1.2rem] w-[1.2rem]" />
-			<span className="sr-only">Reset persistence</span>
-		</Button>
-	);
+  return (
+    <Button onClick={handleReset} size="icon" variant="outline">
+      <RotateCcw className="h-[1.2rem] w-[1.2rem]" />
+      <span className="sr-only">Reset persistence</span>
+    </Button>
+  )
 }
 
 export default function Header() {
-	const links = [{ to: "/", label: "Home" }] as const;
+  const links = [{ to: '/', label: 'Home' }] as const
 
-	return (
-		<div>
-			<div className="flex flex-row items-center justify-between px-2 py-1">
-				<nav className="flex gap-4 text-lg">
-					{links.map(({ to, label }) => {
-						return (
-							<Link key={to} to={to}>
-								{label}
-							</Link>
-						);
-					})}
-				</nav>
-				<div className="flex items-center gap-2">
-					<ResetButton />
-					<ModeToggle />
-				</div>
-			</div>
-			<hr />
-		</div>
-	);
+  return (
+    <div>
+      <div className="flex flex-row items-center justify-between px-2 py-1">
+        <nav className="flex gap-4 text-lg">
+          {links.map(({ to, label }) => {
+            return (
+              <Link key={to} to={to}>
+                {label}
+              </Link>
+            )
+          })}
+        </nav>
+        <div className="flex items-center gap-2">
+          <ResetButton />
+          <ModeToggle />
+        </div>
+      </div>
+      <hr />
+    </div>
+  )
 }

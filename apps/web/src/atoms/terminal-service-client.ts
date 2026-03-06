@@ -13,11 +13,11 @@
  * @see packages/terminal/src/main.ts — Terminal service entry point
  */
 
-import { FetchHttpClient } from "@effect/platform";
-import { RpcClient, RpcSerialization } from "@effect/rpc";
-import { AtomRpc } from "@effect-atom/atom";
-import { TerminalRpcs } from "@laborer/shared/rpc";
-import { Layer } from "effect";
+import { FetchHttpClient } from '@effect/platform'
+import { RpcClient, RpcSerialization } from '@effect/rpc'
+import { AtomRpc } from '@effect-atom/atom'
+import { TerminalRpcs } from '@laborer/shared/rpc'
+import { Layer } from 'effect'
 
 /**
  * Terminal service RPC URL.
@@ -25,7 +25,7 @@ import { Layer } from "effect";
  * In development, Vite proxies /terminal-rpc to the terminal service's
  * /rpc endpoint at TERMINAL_PORT (default 3002).
  */
-const TERMINAL_RPC_URL = "/terminal-rpc";
+const TERMINAL_RPC_URL = '/terminal-rpc'
 
 /**
  * TerminalServiceClient — typed AtomRpc client for the terminal service.
@@ -35,12 +35,12 @@ const TERMINAL_RPC_URL = "/terminal-rpc";
  * - terminal.remove, terminal.restart, terminal.list
  */
 export class TerminalServiceClient extends AtomRpc.Tag<TerminalServiceClient>()(
-	"TerminalServiceClient",
-	{
-		group: TerminalRpcs,
-		protocol: RpcClient.layerProtocolHttp({ url: TERMINAL_RPC_URL }).pipe(
-			Layer.provide(FetchHttpClient.layer),
-			Layer.provide(RpcSerialization.layerJson)
-		),
-	}
+  'TerminalServiceClient',
+  {
+    group: TerminalRpcs,
+    protocol: RpcClient.layerProtocolHttp({ url: TERMINAL_RPC_URL }).pipe(
+      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(RpcSerialization.layerJson)
+    ),
+  }
 ) {}

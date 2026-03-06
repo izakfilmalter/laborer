@@ -14,11 +14,11 @@
  * @see Issue #20: AtomRpc client setup
  */
 
-import { FetchHttpClient } from "@effect/platform";
-import { RpcClient, RpcSerialization } from "@effect/rpc";
-import { AtomRpc } from "@effect-atom/atom";
-import { LaborerRpcs } from "@laborer/shared/rpc";
-import { Layer } from "effect";
+import { FetchHttpClient } from '@effect/platform'
+import { RpcClient, RpcSerialization } from '@effect/rpc'
+import { AtomRpc } from '@effect-atom/atom'
+import { LaborerRpcs } from '@laborer/shared/rpc'
+import { Layer } from 'effect'
 
 /**
  * Derive the server RPC URL from the current page origin.
@@ -30,7 +30,7 @@ import { Layer } from "effect";
  * Using same-origin /rpc avoids hardcoding server URLs and works
  * seamlessly with the Vite proxy during development.
  */
-const RPC_URL = "/rpc";
+const RPC_URL = '/rpc'
 
 /**
  * LaborerClient — typed AtomRpc client for React components.
@@ -41,12 +41,12 @@ const RPC_URL = "/rpc";
  * RpcServer.layerProtocolHttp({ path: "/rpc" }).
  */
 export class LaborerClient extends AtomRpc.Tag<LaborerClient>()(
-	"LaborerClient",
-	{
-		group: LaborerRpcs,
-		protocol: RpcClient.layerProtocolHttp({ url: RPC_URL }).pipe(
-			Layer.provide(FetchHttpClient.layer),
-			Layer.provide(RpcSerialization.layerJson)
-		),
-	}
+  'LaborerClient',
+  {
+    group: LaborerRpcs,
+    protocol: RpcClient.layerProtocolHttp({ url: RPC_URL }).pipe(
+      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(RpcSerialization.layerJson)
+    ),
+  }
 ) {}

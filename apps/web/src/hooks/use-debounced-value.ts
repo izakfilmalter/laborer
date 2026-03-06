@@ -20,14 +20,14 @@
  * @see Issue #91: Diff viewer debounce/throttle for rapid changes
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from 'react'
 
 /**
  * Maximum delay (ms) between the first update and when it's emitted.
  * This ensures updates are eventually shown even under sustained rapid
  * changes, rather than being indefinitely postponed.
  */
-const MAX_DELAY_MS = 500;
+const MAX_DELAY_MS = 500
 
 /**
  * Debounces a value, emitting at most once per `delayMs` milliseconds.
@@ -42,71 +42,71 @@ const MAX_DELAY_MS = 500;
  * @returns A tuple of [debouncedValue, isPending]
  */
 function useDebouncedValue<T>(
-	value: T,
-	delayMs = 300
+  value: T,
+  delayMs = 300
 ): [debouncedValue: T, isPending: boolean] {
-	const [debouncedValue, setDebouncedValue] = useState(value);
-	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const maxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const latestValueRef = useRef(value);
+  const [debouncedValue, setDebouncedValue] = useState(value)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const maxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const latestValueRef = useRef(value)
 
-	// Track whether the debounced value is behind the latest input
-	const isPending = value !== debouncedValue;
+  // Track whether the debounced value is behind the latest input
+  const isPending = value !== debouncedValue
 
-	useEffect(() => {
-		latestValueRef.current = value;
+  useEffect(() => {
+    latestValueRef.current = value
 
-		// Clear any existing debounce timer
-		if (timerRef.current) {
-			clearTimeout(timerRef.current);
-		}
+    // Clear any existing debounce timer
+    if (timerRef.current) {
+      clearTimeout(timerRef.current)
+    }
 
-		// Set up a new trailing-edge debounce timer
-		timerRef.current = setTimeout(() => {
-			setDebouncedValue(latestValueRef.current);
-			// Clear max timer since we've emitted
-			if (maxTimerRef.current) {
-				clearTimeout(maxTimerRef.current);
-				maxTimerRef.current = null;
-			}
-		}, delayMs);
+    // Set up a new trailing-edge debounce timer
+    timerRef.current = setTimeout(() => {
+      setDebouncedValue(latestValueRef.current)
+      // Clear max timer since we've emitted
+      if (maxTimerRef.current) {
+        clearTimeout(maxTimerRef.current)
+        maxTimerRef.current = null
+      }
+    }, delayMs)
 
-		// Set up a max-wait timer if one isn't already running.
-		// This ensures that under sustained rapid updates (value changes
-		// every frame), the debounced value still emits within MAX_DELAY_MS.
-		if (!maxTimerRef.current) {
-			maxTimerRef.current = setTimeout(() => {
-				setDebouncedValue(latestValueRef.current);
-				maxTimerRef.current = null;
-				// Clear the trailing timer since max wait fired first
-				if (timerRef.current) {
-					clearTimeout(timerRef.current);
-					timerRef.current = null;
-				}
-			}, MAX_DELAY_MS);
-		}
+    // Set up a max-wait timer if one isn't already running.
+    // This ensures that under sustained rapid updates (value changes
+    // every frame), the debounced value still emits within MAX_DELAY_MS.
+    if (!maxTimerRef.current) {
+      maxTimerRef.current = setTimeout(() => {
+        setDebouncedValue(latestValueRef.current)
+        maxTimerRef.current = null
+        // Clear the trailing timer since max wait fired first
+        if (timerRef.current) {
+          clearTimeout(timerRef.current)
+          timerRef.current = null
+        }
+      }, MAX_DELAY_MS)
+    }
 
-		return () => {
-			if (timerRef.current) {
-				clearTimeout(timerRef.current);
-				timerRef.current = null;
-			}
-		};
-	}, [value, delayMs]);
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+    }
+  }, [value, delayMs])
 
-	// Cleanup both timers on unmount
-	useEffect(() => {
-		return () => {
-			if (timerRef.current) {
-				clearTimeout(timerRef.current);
-			}
-			if (maxTimerRef.current) {
-				clearTimeout(maxTimerRef.current);
-			}
-		};
-	}, []);
+  // Cleanup both timers on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+      }
+      if (maxTimerRef.current) {
+        clearTimeout(maxTimerRef.current)
+      }
+    }
+  }, [])
 
-	return [debouncedValue, isPending];
+  return [debouncedValue, isPending]
 }
 
-export { useDebouncedValue };
+export { useDebouncedValue }

@@ -36,78 +36,78 @@
  * @see Issue #193: Plan workspace scoped task list and rlph integration
  */
 
-import { useAtomSet } from "@effect-atom/atom-react/Hooks";
-import { prds, workspaces } from "@laborer/shared/schema";
-import type { WorkspaceOrigin } from "@laborer/shared/types";
-import { queryDb } from "@livestore/livestore";
-import { GitBranch, Play, Trash2 } from "lucide-react";
-import { type FC, useCallback, useMemo, useState } from "react";
-import { toast } from "sonner";
-import { LaborerClient } from "@/atoms/laborer-client";
-import { CopyButton } from "@/components/copy-button";
-import { FixFindingsForm } from "@/components/fix-findings-form";
-import { PlanIssuesList } from "@/components/plan-issues-list";
-import { ReviewPrForm } from "@/components/review-pr-form";
-import { TerminalList } from "@/components/terminal-list";
+import { useAtomSet } from '@effect-atom/atom-react/Hooks'
+import { prds, workspaces } from '@laborer/shared/schema'
+import type { WorkspaceOrigin } from '@laborer/shared/types'
+import { queryDb } from '@livestore/livestore'
+import { GitBranch, Play, Trash2 } from 'lucide-react'
+import { type FC, useCallback, useMemo, useState } from 'react'
+import { toast } from 'sonner'
+import { LaborerClient } from '@/atoms/laborer-client'
+import { CopyButton } from '@/components/copy-button'
+import { FixFindingsForm } from '@/components/fix-findings-form'
+import { PlanIssuesList } from '@/components/plan-issues-list'
+import { ReviewPrForm } from '@/components/review-pr-form'
+import { TerminalList } from '@/components/terminal-list'
 import {
-	AlertDialog,
-	AlertDialogAction,
-	AlertDialogCancel,
-	AlertDialogContent,
-	AlertDialogDescription,
-	AlertDialogFooter,
-	AlertDialogHeader,
-	AlertDialogTitle,
-	AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
-import { Spinner } from "@/components/ui/spinner";
-import { cn, extractErrorMessage } from "@/lib/utils";
-import { useLaborerStore } from "@/livestore/store";
-import { usePanelActions } from "@/panels/panel-context";
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Spinner } from '@/components/ui/spinner'
+import { cn, extractErrorMessage } from '@/lib/utils'
+import { useLaborerStore } from '@/livestore/store'
+import { usePanelActions } from '@/panels/panel-context'
 
-const allWorkspaces$ = queryDb(workspaces, { label: "workspaceList" });
-const allPrds$ = queryDb(prds, { label: "workspaceList.prds" });
+const allWorkspaces$ = queryDb(workspaces, { label: 'workspaceList' })
+const allPrds$ = queryDb(prds, { label: 'workspaceList.prds' })
 
-const destroyWorkspaceMutation = LaborerClient.mutation("workspace.destroy");
-const startLoopMutation = LaborerClient.mutation("rlph.startLoop");
+const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
+const startLoopMutation = LaborerClient.mutation('rlph.startLoop')
 
 /** Prefix used to associate workspaces with plans by branch name convention. */
-const PLAN_BRANCH_PREFIX = "plan/";
+const PLAN_BRANCH_PREFIX = 'plan/'
 
 type WorkspaceStatus =
-	| "creating"
-	| "running"
-	| "stopped"
-	| "errored"
-	| "destroyed";
+  | 'creating'
+  | 'running'
+  | 'stopped'
+  | 'errored'
+  | 'destroyed'
 
 /**
  * Returns Tailwind classes for a status badge based on workspace status.
  */
 function getStatusClasses(status: string): string {
-	switch (status as WorkspaceStatus) {
-		case "creating":
-			return "border-warning/30 bg-warning/10 text-warning";
-		case "running":
-			return "border-success/30 bg-success/10 text-success";
-		case "stopped":
-			return "border-muted-foreground/30 bg-muted text-muted-foreground";
-		case "errored":
-			return "border-destructive/30 bg-destructive/10 text-destructive";
-		case "destroyed":
-			return "border-muted-foreground/20 bg-muted/50 text-muted-foreground/60";
-		default:
-			return "border-muted-foreground/30 bg-muted text-muted-foreground";
-	}
+  switch (status as WorkspaceStatus) {
+    case 'creating':
+      return 'border-warning/30 bg-warning/10 text-warning'
+    case 'running':
+      return 'border-success/30 bg-success/10 text-success'
+    case 'stopped':
+      return 'border-muted-foreground/30 bg-muted text-muted-foreground'
+    case 'errored':
+      return 'border-destructive/30 bg-destructive/10 text-destructive'
+    case 'destroyed':
+      return 'border-muted-foreground/20 bg-muted/50 text-muted-foreground/60'
+    default:
+      return 'border-muted-foreground/30 bg-muted text-muted-foreground'
+  }
 }
 
 /**
@@ -116,303 +116,303 @@ function getStatusClasses(status: string): string {
  * in-progress operation, and a colored dot for all other statuses.
  */
 function StatusDot({ status }: { readonly status: string }) {
-	if (status === "creating") {
-		return <Spinner className="size-3 text-warning" />;
-	}
+  if (status === 'creating') {
+    return <Spinner className="size-3 text-warning" />
+  }
 
-	const dotColor = (() => {
-		switch (status as WorkspaceStatus) {
-			case "running":
-				return "bg-success";
-			case "stopped":
-				return "bg-muted-foreground/50";
-			case "errored":
-				return "bg-destructive";
-			case "destroyed":
-				return "bg-muted-foreground/30";
-			default:
-				return "bg-muted-foreground/50";
-		}
-	})();
+  const dotColor = (() => {
+    switch (status as WorkspaceStatus) {
+      case 'running':
+        return 'bg-success'
+      case 'stopped':
+        return 'bg-muted-foreground/50'
+      case 'errored':
+        return 'bg-destructive'
+      case 'destroyed':
+        return 'bg-muted-foreground/30'
+      default:
+        return 'bg-muted-foreground/50'
+    }
+  })()
 
-	return <span className={cn("inline-block size-2 rounded-full", dotColor)} />;
+  return <span className={cn('inline-block size-2 rounded-full', dotColor)} />
 }
 
 interface CopyableValueProps {
-	/** Extra values that get their own copy button on hover. */
-	readonly extraCopyValues?: ReadonlyArray<{
-		readonly value: string;
-		readonly label: string;
-	}>;
-	readonly value: string;
+  /** Extra values that get their own copy button on hover. */
+  readonly extraCopyValues?: ReadonlyArray<{
+    readonly value: string
+    readonly label: string
+  }>
+  readonly value: string
 }
 
 const CopyableValue: FC<CopyableValueProps> = (props) => {
-	const { value, extraCopyValues } = props;
+  const { value, extraCopyValues } = props
 
-	return (
-		<span className="group/copyable flex w-full min-w-0 items-start justify-between gap-1">
-			<span className="line-clamp-2 min-w-0 break-all">{value}</span>
-			<span className="-mr-8 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
-				{extraCopyValues?.map((extra) => (
-					<CopyButton
-						aria-label={extra.label}
-						key={extra.label}
-						title={extra.label}
-						value={extra.value}
-					/>
-				))}
-				<CopyButton title={`Copy ${value}`} value={value} />
-			</span>
-		</span>
-	);
-};
+  return (
+    <span className="group/copyable flex w-full min-w-0 items-start justify-between gap-1">
+      <span className="line-clamp-2 min-w-0 break-all">{value}</span>
+      <span className="-mr-8 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
+        {extraCopyValues?.map((extra) => (
+          <CopyButton
+            aria-label={extra.label}
+            key={extra.label}
+            title={extra.label}
+            value={extra.value}
+          />
+        ))}
+        <CopyButton title={`Copy ${value}`} value={value} />
+      </span>
+    </span>
+  )
+}
 
 interface WorkspaceItemProps {
-	/** The prdId of the plan this workspace is associated with, if any. */
-	readonly associatedPrdId?: string | undefined;
-	readonly workspace: {
-		readonly id: string;
-		readonly projectId: string;
-		readonly branchName: string;
-		readonly worktreePath: string;
-		readonly port: number;
-		readonly status: string;
-		readonly origin: WorkspaceOrigin | string;
-		readonly createdAt: string;
-		readonly taskSource: string | null;
-	};
+  /** The prdId of the plan this workspace is associated with, if any. */
+  readonly associatedPrdId?: string | undefined
+  readonly workspace: {
+    readonly id: string
+    readonly projectId: string
+    readonly branchName: string
+    readonly worktreePath: string
+    readonly port: number
+    readonly status: string
+    readonly origin: WorkspaceOrigin | string
+    readonly createdAt: string
+    readonly taskSource: string | null
+  }
 }
 
 function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
-	const [dialogOpen, setDialogOpen] = useState(false);
-	const [isDestroying, setIsDestroying] = useState(false);
-	const [isStartingLoop, setIsStartingLoop] = useState(false);
-	const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
-		mode: "promise",
-	});
-	const startLoop = useAtomSet(startLoopMutation, {
-		mode: "promise",
-	});
-	const panelActions = usePanelActions();
-	const handleDestroy = async () => {
-		setIsDestroying(true);
-		try {
-			await destroyWorkspace({
-				payload: { workspaceId: workspace.id },
-			});
-			toast.success(
-				`Workspace "${workspace.branchName}" destroyed successfully`
-			);
-			setDialogOpen(false);
-		} catch (error: unknown) {
-			const message = extractErrorMessage(error);
-			toast.error(message);
-			setIsDestroying(false);
-		}
-	};
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [isDestroying, setIsDestroying] = useState(false)
+  const [isStartingLoop, setIsStartingLoop] = useState(false)
+  const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
+    mode: 'promise',
+  })
+  const startLoop = useAtomSet(startLoopMutation, {
+    mode: 'promise',
+  })
+  const panelActions = usePanelActions()
+  const handleDestroy = async () => {
+    setIsDestroying(true)
+    try {
+      await destroyWorkspace({
+        payload: { workspaceId: workspace.id },
+      })
+      toast.success(
+        `Workspace "${workspace.branchName}" destroyed successfully`
+      )
+      setDialogOpen(false)
+    } catch (error: unknown) {
+      const message = extractErrorMessage(error)
+      toast.error(message)
+      setIsDestroying(false)
+    }
+  }
 
-	const handleStartLoop = useCallback(async () => {
-		setIsStartingLoop(true);
-		try {
-			const result = await startLoop({
-				payload: { workspaceId: workspace.id },
-			});
-			toast.success("Ralph loop started");
-			// Auto-assign the spawned terminal to a pane
-			if (panelActions) {
-				panelActions.assignTerminalToPane(result.id, workspace.id);
-			}
-		} catch (error: unknown) {
-			toast.error(`Failed to start ralph loop: ${extractErrorMessage(error)}`);
-		} finally {
-			setIsStartingLoop(false);
-		}
-	}, [startLoop, workspace.id, panelActions]);
+  const handleStartLoop = useCallback(async () => {
+    setIsStartingLoop(true)
+    try {
+      const result = await startLoop({
+        payload: { workspaceId: workspace.id },
+      })
+      toast.success('Ralph loop started')
+      // Auto-assign the spawned terminal to a pane
+      if (panelActions) {
+        panelActions.assignTerminalToPane(result.id, workspace.id)
+      }
+    } catch (error: unknown) {
+      toast.error(`Failed to start ralph loop: ${extractErrorMessage(error)}`)
+    } finally {
+      setIsStartingLoop(false)
+    }
+  }, [startLoop, workspace.id, panelActions])
 
-	const isExternalOrigin = (workspace.origin as WorkspaceOrigin) === "external";
+  const isExternalOrigin = (workspace.origin as WorkspaceOrigin) === 'external'
 
-	return (
-		<Card size="sm">
-			<CardHeader className="gap-2">
-				<div className="flex items-start gap-2">
-					<div className="flex min-w-0 flex-1 items-start gap-2 overflow-hidden">
-						<GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-						<CardTitle className="min-w-0 font-mono text-sm">
-							<CopyableValue
-								extraCopyValues={[
-									{
-										value: workspace.worktreePath,
-										label: "Copy worktree path",
-									},
-								]}
-								value={workspace.branchName}
-							/>
-						</CardTitle>
-					</div>
-					<Badge
-						className={cn(
-							"shrink-0 border",
-							getStatusClasses(workspace.status)
-						)}
-						variant="outline"
-					>
-						<StatusDot status={workspace.status} />
-						{workspace.status}
-					</Badge>
-				</div>
-				<div className="flex items-center justify-between gap-2">
-					{workspace.port > 0 && (
-						<CardDescription className="flex items-center gap-2">
-							<span className="font-mono text-muted-foreground">
-								:{workspace.port}
-							</span>
-						</CardDescription>
-					)}
-					<div className="ml-auto flex flex-wrap items-center gap-1">
-						<Button
-							aria-label="Start ralph loop"
-							disabled={isStartingLoop}
-							onClick={handleStartLoop}
-							size="icon-xs"
-							title="Start Ralph Loop (rlph --once)"
-							variant="ghost"
-						>
-							<Play
-								className={cn(
-									"size-3.5",
-									isStartingLoop
-										? "animate-pulse text-muted-foreground"
-										: "text-success"
-								)}
-							/>
-						</Button>
-						<ReviewPrForm workspaceId={workspace.id} />
-						<FixFindingsForm workspaceId={workspace.id} />
-						<AlertDialog onOpenChange={setDialogOpen} open={dialogOpen}>
-							<AlertDialogTrigger
-								render={
-									<Button
-										aria-label={`Destroy workspace ${workspace.branchName}`}
-										size="icon-xs"
-										variant="ghost"
-									/>
-								}
-							>
-								<Trash2 className="size-3.5 text-muted-foreground" />
-							</AlertDialogTrigger>
-							<AlertDialogContent>
-								<AlertDialogHeader>
-									<AlertDialogTitle>Destroy workspace?</AlertDialogTitle>
-									<AlertDialogDescription>
-										{isExternalOrigin ? (
-											<>
-												This will remove workspace{" "}
-												<strong className="font-mono text-foreground">
-													{workspace.branchName}
-												</strong>{" "}
-												from Laborer. Running processes in this workspace will
-												be stopped and any allocated port will be freed, but the
-												git worktree on disk at{" "}
-												<strong className="font-mono text-foreground">
-													{workspace.worktreePath}
-												</strong>{" "}
-												will not be changed.
-											</>
-										) : (
-											<>
-												This will permanently destroy workspace{" "}
-												<strong className="font-mono text-foreground">
-													{workspace.branchName}
-												</strong>
-												. All running processes (terminals, dev servers, agents)
-												will be killed, the git worktree will be removed, and
-												the allocated port will be freed. This action cannot be
-												undone.
-											</>
-										)}
-									</AlertDialogDescription>
-								</AlertDialogHeader>
-								<AlertDialogFooter>
-									<AlertDialogCancel>Cancel</AlertDialogCancel>
-									<AlertDialogAction
-										disabled={isDestroying}
-										onClick={handleDestroy}
-										variant="destructive"
-									>
-										{isDestroying ? "Destroying..." : "Destroy"}
-									</AlertDialogAction>
-								</AlertDialogFooter>
-							</AlertDialogContent>
-						</AlertDialog>
-					</div>
-				</div>
-			</CardHeader>
-			<CardContent>
-				{workspace.status === "creating" && (
-					<div className="mb-2 flex items-center gap-2 text-warning text-xs">
-						<Spinner className="size-3 text-warning" />
-						Setting up workspace...
-					</div>
-				)}
-				<div className="border-t pt-2">
-					<TerminalList workspaceId={workspace.id} />
-				</div>
-				{associatedPrdId && (
-					<div className="border-t pt-2">
-						<h4 className="mb-2 font-medium text-muted-foreground text-xs">
-							Plan Issues
-						</h4>
-						<PlanIssuesList prdId={associatedPrdId} />
-					</div>
-				)}
-			</CardContent>
-		</Card>
-	);
+  return (
+    <Card size="sm">
+      <CardHeader className="gap-2">
+        <div className="flex items-start gap-2">
+          <div className="flex min-w-0 flex-1 items-start gap-2 overflow-hidden">
+            <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <CardTitle className="min-w-0 font-mono text-sm">
+              <CopyableValue
+                extraCopyValues={[
+                  {
+                    value: workspace.worktreePath,
+                    label: 'Copy worktree path',
+                  },
+                ]}
+                value={workspace.branchName}
+              />
+            </CardTitle>
+          </div>
+          <Badge
+            className={cn(
+              'shrink-0 border',
+              getStatusClasses(workspace.status)
+            )}
+            variant="outline"
+          >
+            <StatusDot status={workspace.status} />
+            {workspace.status}
+          </Badge>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          {workspace.port > 0 && (
+            <CardDescription className="flex items-center gap-2">
+              <span className="font-mono text-muted-foreground">
+                :{workspace.port}
+              </span>
+            </CardDescription>
+          )}
+          <div className="ml-auto flex flex-wrap items-center gap-1">
+            <Button
+              aria-label="Start ralph loop"
+              disabled={isStartingLoop}
+              onClick={handleStartLoop}
+              size="icon-xs"
+              title="Start Ralph Loop (rlph --once)"
+              variant="ghost"
+            >
+              <Play
+                className={cn(
+                  'size-3.5',
+                  isStartingLoop
+                    ? 'animate-pulse text-muted-foreground'
+                    : 'text-success'
+                )}
+              />
+            </Button>
+            <ReviewPrForm workspaceId={workspace.id} />
+            <FixFindingsForm workspaceId={workspace.id} />
+            <AlertDialog onOpenChange={setDialogOpen} open={dialogOpen}>
+              <AlertDialogTrigger
+                render={
+                  <Button
+                    aria-label={`Destroy workspace ${workspace.branchName}`}
+                    size="icon-xs"
+                    variant="ghost"
+                  />
+                }
+              >
+                <Trash2 className="size-3.5 text-muted-foreground" />
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Destroy workspace?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {isExternalOrigin ? (
+                      <>
+                        This will remove workspace{' '}
+                        <strong className="font-mono text-foreground">
+                          {workspace.branchName}
+                        </strong>{' '}
+                        from Laborer. Running processes in this workspace will
+                        be stopped and any allocated port will be freed, but the
+                        git worktree on disk at{' '}
+                        <strong className="font-mono text-foreground">
+                          {workspace.worktreePath}
+                        </strong>{' '}
+                        will not be changed.
+                      </>
+                    ) : (
+                      <>
+                        This will permanently destroy workspace{' '}
+                        <strong className="font-mono text-foreground">
+                          {workspace.branchName}
+                        </strong>
+                        . All running processes (terminals, dev servers, agents)
+                        will be killed, the git worktree will be removed, and
+                        the allocated port will be freed. This action cannot be
+                        undone.
+                      </>
+                    )}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={isDestroying}
+                    onClick={handleDestroy}
+                    variant="destructive"
+                  >
+                    {isDestroying ? 'Destroying...' : 'Destroy'}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {workspace.status === 'creating' && (
+          <div className="mb-2 flex items-center gap-2 text-warning text-xs">
+            <Spinner className="size-3 text-warning" />
+            Setting up workspace...
+          </div>
+        )}
+        <div className="border-t pt-2">
+          <TerminalList workspaceId={workspace.id} />
+        </div>
+        {associatedPrdId && (
+          <div className="border-t pt-2">
+            <h4 className="mb-2 font-medium text-muted-foreground text-xs">
+              Plan Issues
+            </h4>
+            <PlanIssuesList prdId={associatedPrdId} />
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
 }
 
 interface WorkspaceListProps {
-	/** Only workspaces belonging to this project are shown. */
-	readonly projectId: string;
+  /** Only workspaces belonging to this project are shown. */
+  readonly projectId: string
 }
 
 function WorkspaceList({ projectId }: WorkspaceListProps) {
-	const store = useLaborerStore();
-	const workspaceList = store.useQuery(allWorkspaces$);
-	const prdList = store.useQuery(allPrds$);
+  const store = useLaborerStore()
+  const workspaceList = store.useQuery(allWorkspaces$)
+  const prdList = store.useQuery(allPrds$)
 
-	// Filter out destroyed workspaces, scoped to the given project
-	const activeWorkspaces = workspaceList.filter(
-		(ws) => ws.status !== "destroyed" && ws.projectId === projectId
-	);
+  // Filter out destroyed workspaces, scoped to the given project
+  const activeWorkspaces = workspaceList.filter(
+    (ws) => ws.status !== 'destroyed' && ws.projectId === projectId
+  )
 
-	// Build a map of plan/<slug> branch name → prdId for this project,
-	// so we can detect which workspaces are associated with a plan.
-	const branchToPrdId = useMemo(() => {
-		const map = new Map<string, string>();
-		for (const prd of prdList) {
-			if (prd.projectId === projectId) {
-				map.set(`${PLAN_BRANCH_PREFIX}${prd.slug}`, prd.id);
-			}
-		}
-		return map;
-	}, [prdList, projectId]);
+  // Build a map of plan/<slug> branch name → prdId for this project,
+  // so we can detect which workspaces are associated with a plan.
+  const branchToPrdId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const prd of prdList) {
+      if (prd.projectId === projectId) {
+        map.set(`${PLAN_BRANCH_PREFIX}${prd.slug}`, prd.id)
+      }
+    }
+    return map
+  }, [prdList, projectId])
 
-	if (activeWorkspaces.length === 0) {
-		return <p className="py-2 text-muted-foreground text-xs">No workspaces</p>;
-	}
+  if (activeWorkspaces.length === 0) {
+    return <p className="py-2 text-muted-foreground text-xs">No workspaces</p>
+  }
 
-	return (
-		<div className="grid gap-2">
-			{activeWorkspaces.map((workspace) => (
-				<WorkspaceItem
-					associatedPrdId={branchToPrdId.get(workspace.branchName)}
-					key={workspace.id}
-					workspace={workspace}
-				/>
-			))}
-		</div>
-	);
+  return (
+    <div className="grid gap-2">
+      {activeWorkspaces.map((workspace) => (
+        <WorkspaceItem
+          associatedPrdId={branchToPrdId.get(workspace.branchName)}
+          key={workspace.id}
+          workspace={workspace}
+        />
+      ))}
+    </div>
+  )
 }
 
-export { WorkspaceList };
+export { WorkspaceList }

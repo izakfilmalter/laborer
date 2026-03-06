@@ -36,10 +36,11 @@ import { useAtomSet } from "@effect-atom/atom-react/Hooks";
 import { projects, workspaces } from "@laborer/shared/schema";
 import type { WorkspaceOrigin } from "@laborer/shared/types";
 import { queryDb } from "@livestore/livestore";
-import { ChevronDown, GitBranch, Layers, Play, Trash2 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { GitBranch, Layers, Play, Trash2 } from "lucide-react";
+import { type FC, useCallback, useState } from "react";
 import { toast } from "sonner";
 import { LaborerClient } from "@/atoms/laborer-client";
+import { CopyButton } from "@/components/copy-button";
 import { CreateWorkspaceForm } from "@/components/create-workspace-form";
 import { FixFindingsForm } from "@/components/fix-findings-form";
 import { ReviewPrForm } from "@/components/review-pr-form";
@@ -64,11 +65,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
-import {
-	Collapsible,
-	CollapsibleContent,
-	CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+
 import {
 	Empty,
 	EmptyContent,
@@ -144,6 +141,36 @@ function StatusDot({ status }: { readonly status: string }) {
 	return <span className={cn("inline-block size-2 rounded-full", dotColor)} />;
 }
 
+interface CopyableValueProps {
+	/** Extra values that get their own copy button on hover. */
+	readonly extraCopyValues?: ReadonlyArray<{
+		readonly value: string;
+		readonly label: string;
+	}>;
+	readonly value: string;
+}
+
+const CopyableValue: FC<CopyableValueProps> = (props) => {
+	const { value, extraCopyValues } = props;
+
+	return (
+		<span className="group/copyable flex w-full min-w-0 items-start justify-between gap-1">
+			<span className="line-clamp-2 min-w-0 break-all">{value}</span>
+			<span className="-mr-8 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
+				{extraCopyValues?.map((extra) => (
+					<CopyButton
+						aria-label={extra.label}
+						key={extra.label}
+						title={extra.label}
+						value={extra.value}
+					/>
+				))}
+				<CopyButton title={`Copy ${value}`} value={value} />
+			</span>
+		</span>
+	);
+};
+
 interface WorkspaceItemProps {
 	readonly projectName: string;
 	readonly workspace: {
@@ -160,7 +187,6 @@ interface WorkspaceItemProps {
 }
 
 function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
-	const [isOpen, setIsOpen] = useState(false);
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [isDestroying, setIsDestroying] = useState(false);
 	const [isStartingLoop, setIsStartingLoop] = useState(false);
@@ -171,9 +197,6 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 		mode: "promise",
 	});
 	const panelActions = usePanelActions();
-	const isDetectedWorkspace =
-		(workspace.origin as WorkspaceOrigin) === "external";
-
 	const handleDestroy = async () => {
 		setIsDestroying(true);
 		try {
@@ -202,8 +225,6 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 			if (panelActions) {
 				panelActions.assignTerminalToPane(result.id, workspace.id);
 			}
-			// Auto-expand the collapsible to show the new terminal
-			setIsOpen(true);
 		} catch (error: unknown) {
 			toast.error(`Failed to start ralph loop: ${extractErrorMessage(error)}`);
 		} finally {
@@ -211,46 +232,48 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 		}
 	}, [startLoop, workspace.id, panelActions]);
 
+	const isExternalOrigin = (workspace.origin as WorkspaceOrigin) === "external";
+
 	return (
 		<Card size="sm">
-			<Collapsible onOpenChange={setIsOpen} open={isOpen}>
-				<CardHeader className="gap-2">
-					<div className="flex items-start justify-between gap-2">
-						<div className="flex min-w-0 items-start gap-2">
-							<GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-							<CardTitle className="min-w-0">
-								<span className="line-clamp-2 break-all font-mono text-sm">
-									{workspace.branchName}
-								</span>
-							</CardTitle>
-							{isDetectedWorkspace && (
-								<span className="shrink-0 pt-0.5 font-mono text-[10px] text-muted-foreground uppercase">
-									Detected
-								</span>
-							)}
-						</div>
-						<Badge
-							className={cn(
-								"shrink-0 border",
-								getStatusClasses(workspace.status)
-							)}
-							title={
-								isDetectedWorkspace && workspace.status === "stopped"
-									? "Detected from existing git worktree — never activated in Laborer"
-									: undefined
-							}
-							variant="outline"
-						>
-							<StatusDot status={workspace.status} />
-							{workspace.status}
-						</Badge>
+			<CardHeader className="gap-2">
+				<div className="flex items-start gap-2">
+					<div className="flex min-w-0 flex-1 items-start gap-2 overflow-hidden">
+						<GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+						<CardTitle className="min-w-0 font-mono text-sm">
+							<CopyableValue
+								extraCopyValues={[
+									{
+										value: workspace.worktreePath,
+										label: "Copy worktree path",
+									},
+								]}
+								value={workspace.branchName}
+							/>
+						</CardTitle>
 					</div>
-					<CardDescription>{projectName}</CardDescription>
+					<Badge
+						className={cn(
+							"shrink-0 border",
+							getStatusClasses(workspace.status)
+						)}
+						variant="outline"
+					>
+						<StatusDot status={workspace.status} />
+						{workspace.status}
+					</Badge>
+				</div>
+				<div className="flex items-center justify-between gap-2">
+					<CardDescription className="flex items-center gap-2">
+						<span>{projectName}</span>
+						{workspace.port > 0 && (
+							<span className="font-mono text-muted-foreground">
+								:{workspace.port}
+							</span>
+						)}
+					</CardDescription>
 					<div className="flex flex-wrap items-center gap-1">
-						<WritePrdForm
-							onTerminalSpawned={() => setIsOpen(true)}
-							workspaceId={workspace.id}
-						/>
+						<WritePrdForm workspaceId={workspace.id} />
 						<Button
 							aria-label="Start ralph loop"
 							disabled={isStartingLoop}
@@ -268,30 +291,8 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 								)}
 							/>
 						</Button>
-						<ReviewPrForm
-							onTerminalSpawned={() => setIsOpen(true)}
-							workspaceId={workspace.id}
-						/>
-						<FixFindingsForm
-							onTerminalSpawned={() => setIsOpen(true)}
-							workspaceId={workspace.id}
-						/>
-						<CollapsibleTrigger
-							render={
-								<Button
-									aria-label={isOpen ? "Hide terminals" : "Show terminals"}
-									size="icon-xs"
-									variant="ghost"
-								/>
-							}
-						>
-							<ChevronDown
-								className={cn(
-									"size-3.5 transition-transform",
-									isOpen && "rotate-180"
-								)}
-							/>
-						</CollapsibleTrigger>
+						<ReviewPrForm workspaceId={workspace.id} />
+						<FixFindingsForm workspaceId={workspace.id} />
 						<AlertDialog onOpenChange={setDialogOpen} open={dialogOpen}>
 							<AlertDialogTrigger
 								render={
@@ -308,7 +309,7 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 								<AlertDialogHeader>
 									<AlertDialogTitle>Destroy workspace?</AlertDialogTitle>
 									<AlertDialogDescription>
-										{isDetectedWorkspace ? (
+										{isExternalOrigin ? (
 											<>
 												This will remove workspace{" "}
 												<strong className="font-mono text-foreground">
@@ -349,31 +350,19 @@ function WorkspaceItem({ workspace, projectName }: WorkspaceItemProps) {
 							</AlertDialogContent>
 						</AlertDialog>
 					</div>
-				</CardHeader>
-				<CardContent>
-					<div className="flex items-start gap-3 text-muted-foreground text-xs">
-						{workspace.port > 0 && (
-							<span>
-								Port: <span className="font-mono">{workspace.port}</span>
-							</span>
-						)}
-						<span className="line-clamp-2 break-all font-mono">
-							{workspace.worktreePath}
-						</span>
+				</div>
+			</CardHeader>
+			<CardContent>
+				{workspace.status === "creating" && (
+					<div className="mb-2 flex items-center gap-2 text-warning text-xs">
+						<Spinner className="size-3 text-warning" />
+						Setting up workspace...
 					</div>
-					{workspace.status === "creating" && (
-						<div className="mt-2 flex items-center gap-2 text-warning text-xs">
-							<Spinner className="size-3 text-warning" />
-							Setting up workspace...
-						</div>
-					)}
-					<CollapsibleContent>
-						<div className="mt-2 border-t pt-2">
-							<TerminalList workspaceId={workspace.id} />
-						</div>
-					</CollapsibleContent>
-				</CardContent>
-			</Collapsible>
+				)}
+				<div className="border-t pt-2">
+					<TerminalList workspaceId={workspace.id} />
+				</div>
+			</CardContent>
 		</Card>
 	);
 }

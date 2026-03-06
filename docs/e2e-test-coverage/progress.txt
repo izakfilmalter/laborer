@@ -59,3 +59,23 @@ Verification:
 - `biome check` clean on all new files (0 errors)
 - Global teardown correctly kills processes and cleans up temp directories
 - Temp git repo path accessible to tests via E2E_TEMP_REPO_DIR env var
+
+## Issue 4: E2E — Add project and verify in sidebar — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Created `apps/web/e2e/project-management.spec.ts` with "can add a project and see it in the sidebar" test
+- Test reads the temp git repo path from the global setup state file (`/tmp/laborer-e2e-state.json`)
+- Test navigates to `/?reset`, waits for server connection, fills the browser-mode text input with the temp repo path, clicks "Add", and verifies:
+  - Success toast appears with the project name
+  - Project name appears in the sidebar as a collapsible group button (exact match)
+  - Input field is cleared after successful submission
+- Scoped locators to the sidebar form (near "Projects" heading) to avoid ambiguity with the WelcomeEmptyState form that also renders an AddProjectForm when no projects exist
+- Used `exact: true` on the project name button locator to avoid matching other buttons that contain the project name in their aria-labels (e.g., "Create workspace in <name>", "Remove project <name>")
+
+Verification:
+- All 3 E2E tests pass with `bun run test:e2e` (3 passed in 14.1s)
+- All 73 existing Vitest tests still pass (`bun run test`)
+- TypeScript type checks pass (`tsc --noEmit`)
+- `ultracite check` clean on new file (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)

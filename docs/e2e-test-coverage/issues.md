@@ -133,14 +133,16 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that adds a project using the browser-mode text input fallback (Issue 2), then verifies the project appears in the sidebar. This validates the full add-project flow: text input -> RPC mutation -> LiveStore sync -> sidebar rendering.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test file `e2e/project-management.spec.ts` created (or appended to)
-- [ ] Test enters a repo path in the text input fallback (using the temp git repo from globalSetup)
-- [ ] Test submits the form and waits for the success toast
-- [ ] Test verifies the project name appears in the sidebar
-- [ ] Test uses Playwright auto-waiting (no `waitForTimeout`)
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test file `e2e/project-management.spec.ts` created (or appended to)
+- [x] Test enters a repo path in the text input fallback (using the temp git repo from globalSetup)
+- [x] Test submits the form and waits for the success toast
+- [x] Test verifies the project name appears in the sidebar
+- [x] Test uses Playwright auto-waiting (no `waitForTimeout`)
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

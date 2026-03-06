@@ -462,13 +462,13 @@ Each target config format may differ slightly — the registrar handles format d
 
 ### Acceptance criteria
 
-- [ ] Claude Code config is updated with the laborer MCP entry
-- [ ] Codex config is updated with the laborer MCP entry
-- [ ] Each config file format is handled correctly (different JSON structures)
-- [ ] Existing entries in both configs are preserved
-- [ ] Registration is idempotent for all three targets
-- [ ] Missing config files are created with correct structure
-- [ ] Failures for one target don't prevent registration with other targets
+- [x] Claude Code config is updated with the laborer MCP entry
+- [x] Codex config is updated with the laborer MCP entry
+- [x] Each config file format is handled correctly (different JSON structures)
+- [x] Existing entries in both configs are preserved
+- [x] Registration is idempotent for all three targets
+- [x] Missing config files are created with correct structure
+- [x] Failures for one target don't prevent registration with other targets
 
 ### Blocked by
 
@@ -770,7 +770,7 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 185 | MCP PRD tools: create_prd, read_prd, update_prd, list_prds | #180, #184 | Done |
 | 186 | MCP issue tools: create_issue, read_issues, update_issue, list_remaining_issues | #183, #184 | Done |
 | 187 | MCP auto-registration: Opencode config | #184 | Done |
-| 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Ready |
+| 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Done |
 | 189 | Plans sidebar section: PlanList component | #175 | Done |
 | 190 | Plan detail view: Plate.js markdown editor | #180, #189 | Ready |
 | 191 | Plan detail view: issues list alongside editor | #181, #190 | Blocked |

@@ -70,3 +70,7 @@
 - Wired `packages/server/src/main.ts` to provide `McpRegistrar.layer` during server startup so the Opencode MCP entry is registered automatically once the server store layer is available.
 - Added `packages/server/test/mcp-registrar.test.ts` to cover config merging, missing-file creation, preservation of existing MCP servers, idempotent no-rewrite behavior, and startup-time registration.
 - Verified with `bun run check-types`, `bun run test -- mcp-registrar.test.ts`, and `bun x ultracite check src/main.ts src/services/mcp-registrar.ts test/mcp-registrar.test.ts` in `packages/server`.
+- Selected Issue 188 as the highest-priority ready task because completing multi-client MCP auto-registration closes the remaining core agent-setup gap before the larger plan-editor UI slice, and it finishes the registrar work already started in Issue 187.
+- Extended `packages/server/src/services/mcp-registrar.ts` so startup registration now covers Claude Code and Codex in addition to Opencode, using `~/.claude.json` JSON merging for Claude and `~/.codex/config.toml` section management for Codex while preserving unrelated user config.
+- Expanded `packages/server/test/mcp-registrar.test.ts` to cover Claude config creation, Codex TOML block creation and replacement, idempotent no-rewrite behavior, and end-to-end startup registration across all three targets.
+- Verified with `bun run check-types`, `bun run test -- mcp-registrar.test.ts`, and `bun x ultracite check src/services/mcp-registrar.ts test/mcp-registrar.test.ts` in `packages/server`.

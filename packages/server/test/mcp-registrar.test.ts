@@ -12,9 +12,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { LaborerStore } from "../src/services/laborer-store.js";
 import {
 	DEFAULT_MCP_ENTRY_PATH,
+	getDesiredCodexMcpConfigBlock,
 	getDesiredMcpServerConfig,
 	McpRegistrar,
+	mergeClaudeConfig,
+	mergeCodexConfig,
 	mergeOpencodeConfig,
+	registerClaudeConfig,
+	registerCodexConfig,
 	registerOpencodeConfig,
 } from "../src/services/mcp-registrar.js";
 
@@ -79,6 +84,73 @@ describe("mergeOpencodeConfig", () => {
 		};
 
 		const { nextConfig, updated } = mergeOpencodeConfig(existing);
+
+		expect(updated).toBe(false);
+		expect(nextConfig).toBe(existing);
+	});
+});
+
+describe("mergeClaudeConfig", () => {
+	it("adds the laborer MCP entry while preserving existing servers", () => {
+		const existing = {
+			mcpServers: {
+				filesystem: {
+					args: ["server"],
+					command: "node",
+					type: "stdio",
+				},
+			},
+		};
+
+		const { nextConfig, updated } = mergeClaudeConfig(existing);
+
+		expect(updated).toBe(true);
+		expect(nextConfig.mcpServers).toEqual({
+			filesystem: existing.mcpServers.filesystem,
+			laborer: getDesiredMcpServerConfig(),
+		});
+	});
+});
+
+describe("mergeCodexConfig", () => {
+	it("appends the laborer MCP server block to a new config", () => {
+		const { nextConfig, updated } = mergeCodexConfig("");
+
+		expect(updated).toBe(true);
+		expect(nextConfig).toBe(getDesiredCodexMcpConfigBlock());
+	});
+
+	it("replaces an existing laborer block while preserving other config", () => {
+		const existing = [
+			'model = "gpt-5.4"',
+			"",
+			"[mcp_servers.github]",
+			'command = "npx"',
+			'args = ["-y", "@github/mcp"]',
+			"",
+			"[mcp_servers.laborer]",
+			'command = "node"',
+			'args = ["old.js"]',
+			"",
+		].join("\n");
+
+		const { nextConfig, updated } = mergeCodexConfig(existing);
+
+		expect(updated).toBe(true);
+		expect(nextConfig).toContain('model = "gpt-5.4"');
+		expect(nextConfig).toContain("[mcp_servers.github]");
+		expect(nextConfig).toContain(getDesiredCodexMcpConfigBlock());
+		expect(nextConfig).not.toContain('command = "node"');
+	});
+
+	it("does not update when the existing laborer block already matches", () => {
+		const existing = [
+			'model = "gpt-5.4"',
+			"",
+			getDesiredCodexMcpConfigBlock(),
+		].join("\n");
+
+		const { nextConfig, updated } = mergeCodexConfig(existing);
 
 		expect(updated).toBe(false);
 		expect(nextConfig).toBe(existing);
@@ -168,24 +240,112 @@ describe("registerOpencodeConfig", () => {
 	});
 });
 
+describe("registerClaudeConfig", () => {
+	it("creates a missing Claude config file with the laborer entry", async () => {
+		const configPath = join(testRoot, "claude-missing", "claude.json");
+
+		const updatedFiles = await Effect.runPromise(
+			registerClaudeConfig({ claudeConfigPath: configPath })
+		);
+
+		expect(updatedFiles).toEqual([configPath]);
+		expect(readJson(configPath)).toEqual({
+			mcpServers: {
+				laborer: getDesiredMcpServerConfig(),
+			},
+		});
+	});
+});
+
+describe("registerCodexConfig", () => {
+	it("creates a missing Codex config file with the laborer MCP block", async () => {
+		const configPath = join(testRoot, "codex-missing", "config.toml");
+
+		const updatedFiles = await Effect.runPromise(
+			registerCodexConfig({ codexConfigPath: configPath })
+		);
+
+		expect(updatedFiles).toEqual([configPath]);
+		expect(readFileSync(configPath, "utf-8")).toBe(
+			getDesiredCodexMcpConfigBlock()
+		);
+	});
+
+	it("preserves existing Codex config content when adding the laborer block", async () => {
+		const configPath = join(testRoot, "codex-preserve", "config.toml");
+		mkdirSync(join(testRoot, "codex-preserve"), { recursive: true });
+		writeFileSync(
+			configPath,
+			[
+				'model = "gpt-5.4"',
+				"",
+				"[mcp_servers.github]",
+				'command = "npx"',
+				'args = ["-y", "@github/mcp"]',
+				"",
+			].join("\n")
+		);
+
+		await Effect.runPromise(
+			registerCodexConfig({ codexConfigPath: configPath })
+		);
+
+		const content = readFileSync(configPath, "utf-8");
+		expect(content).toContain('model = "gpt-5.4"');
+		expect(content).toContain("[mcp_servers.github]");
+		expect(content).toContain(getDesiredCodexMcpConfigBlock());
+	});
+
+	it("does not rewrite the Codex config when the laborer block is already current", async () => {
+		const configPath = join(testRoot, "codex-idempotent", "config.toml");
+		mkdirSync(join(testRoot, "codex-idempotent"), { recursive: true });
+		writeFileSync(configPath, getDesiredCodexMcpConfigBlock());
+
+		const before = statSync(configPath).mtimeMs;
+		await new Promise((resolvePromise) => {
+			setTimeout(resolvePromise, 20);
+		});
+
+		const updatedFiles = await Effect.runPromise(
+			registerCodexConfig({ codexConfigPath: configPath })
+		);
+
+		const after = statSync(configPath).mtimeMs;
+		expect(updatedFiles).toEqual([]);
+		expect(after).toBe(before);
+	});
+});
+
 describe("McpRegistrar.layer", () => {
 	it("runs registration during layer startup", async () => {
-		const configPath = join(testRoot, "startup", "config.json");
+		const opencodeConfigPath = join(testRoot, "startup", "opencode.json");
+		const claudeConfigPath = join(testRoot, "startup", "claude.json");
+		const codexConfigPath = join(testRoot, "startup", "config.toml");
 
 		await Effect.runPromise(
 			Effect.flatMap(McpRegistrar, () => Effect.void).pipe(
 				Effect.provide(
-					McpRegistrar.makeLayer({ opencodeConfigPath: configPath }).pipe(
-						Layer.provide(DummyLaborerStoreLayer)
-					)
+					McpRegistrar.makeLayer({
+						claudeConfigPath,
+						codexConfigPath,
+						opencodeConfigPath,
+					}).pipe(Layer.provide(DummyLaborerStoreLayer))
 				)
 			)
 		);
 
-		expect(readJson(configPath)).toEqual({
+		expect(readJson(opencodeConfigPath)).toEqual({
 			mcpServers: {
 				laborer: getDesiredMcpServerConfig(DEFAULT_MCP_ENTRY_PATH),
 			},
 		});
+		expect(readJson(claudeConfigPath)).toEqual({
+			mcpServers: {
+				laborer: getDesiredMcpServerConfig(DEFAULT_MCP_ENTRY_PATH),
+			},
+		});
+		expect(readFileSync(codexConfigPath, "utf-8")).toBe(
+			getDesiredCodexMcpConfigBlock(DEFAULT_MCP_ENTRY_PATH)
+		);
 	});
 });

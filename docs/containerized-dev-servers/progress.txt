@@ -69,3 +69,40 @@ Added `devServer` configuration object to the `laborer.json` schema in `ConfigSe
 - `bun x ultracite check` passes (only pre-existing package.json formatting issues)
 - `bunx vitest run test/config-service.test.ts` — 32/32 tests pass
 - `bunx vitest run test/rpc/config-management.test.ts` — 3/3 tests pass
+
+## Issue 4: LiveStore schema for container state — COMPLETED
+
+Extended the `workspaces` LiveStore table to track container state and added `ContainerStarted`/`ContainerStopped` events with materializers.
+
+### What was done:
+
+**Table changes (schema.ts):**
+- Added three nullable columns to `workspaces` table: `containerId`, `containerUrl`, `containerImage` (all `State.SQLite.text({ nullable: true })`)
+- Workspace rows are created with null container fields by default
+- Container fields are populated via `ContainerStarted` event and cleared via `ContainerStopped` event
+
+**Event definitions (schema.ts):**
+- `ContainerStarted` event: carries `workspaceId`, `containerId`, `containerUrl`, `containerImage` fields
+- `ContainerStopped` event: carries `workspaceId` field
+- Both events use the `Events.synced` pattern matching existing codebase conventions
+- Events registered in the `events` object export
+
+**Materializers (schema.ts):**
+- `v1.ContainerStarted`: updates workspace row with `containerId`, `containerUrl`, `containerImage` via `workspaces.update({...}).where({ id: workspaceId })`
+- `v1.ContainerStopped`: sets all three container fields to null via `workspaces.update({...}).where({ id: workspaceId })`
+- `v1.WorkspaceCreated` materializer updated to always insert null for container fields (containers are started after workspace creation)
+
+**Test updates:**
+- Updated workspace lifecycle test assertion to include `containerId: null`, `containerUrl: null`, `containerImage: null`
+- Added new test: "materializes container lifecycle events on the workspaces table" covering full container lifecycle (create workspace → start container → verify fields populated → stop container → verify fields cleared → verify other workspace fields preserved)
+- Updated workspace management RPC test assertion to include container null fields
+
+### Tests:
+- `bunx vitest run test/schema.test.ts` — 8/8 tests pass (1 new container lifecycle test)
+- `bunx vitest run test/rpc/workspace-management.test.ts` — 4/4 tests pass
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- Backward compatible: existing workspaces without containers get null defaults
+- No changes to WorkspaceCreated event schema — container fields managed independently via ContainerStarted/ContainerStopped events

@@ -123,6 +123,9 @@ describe('LiveStore schema', () => {
           origin: 'laborer',
           createdAt: '2026-03-06T00:00:00.000Z',
           baseSha: 'abc123',
+          containerId: null,
+          containerUrl: null,
+          containerImage: null,
         })
 
         store.commit(
@@ -145,6 +148,80 @@ describe('LiveStore schema', () => {
           store.query(tables.workspaces.where('id', 'workspace-1')),
           []
         )
+      })
+  )
+
+  it.scoped(
+    'materializes container lifecycle events on the workspaces table',
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTestStore
+
+        // Create a workspace first
+        store.commit(
+          events.workspaceCreated({
+            id: 'workspace-container',
+            projectId: 'project-1',
+            taskSource: null,
+            branchName: 'feature/container-test',
+            worktreePath: '/tmp/project-1/.laborer/workspace-container',
+            port: 4322,
+            status: 'running',
+            origin: 'laborer',
+            createdAt: '2026-03-06T00:00:00.000Z',
+            baseSha: 'def456',
+          })
+        )
+
+        // Verify container fields start as null
+        const beforeContainer = store.query(
+          tables.workspaces.where('id', 'workspace-container')
+        )
+        assert.strictEqual(beforeContainer.length, 1)
+        assert.strictEqual(beforeContainer[0]?.containerId, null)
+        assert.strictEqual(beforeContainer[0]?.containerUrl, null)
+        assert.strictEqual(beforeContainer[0]?.containerImage, null)
+
+        // Start a container
+        store.commit(
+          events.containerStarted({
+            workspaceId: 'workspace-container',
+            containerId: 'docker-abc123',
+            containerUrl: 'feature-container-test--project-1.orb.local',
+            containerImage: 'node:22',
+          })
+        )
+
+        const afterStart = store.query(
+          tables.workspaces.where('id', 'workspace-container')
+        )
+        assert.strictEqual(afterStart.length, 1)
+        assert.strictEqual(afterStart[0]?.containerId, 'docker-abc123')
+        assert.strictEqual(
+          afterStart[0]?.containerUrl,
+          'feature-container-test--project-1.orb.local'
+        )
+        assert.strictEqual(afterStart[0]?.containerImage, 'node:22')
+
+        // Stop the container
+        store.commit(
+          events.containerStopped({
+            workspaceId: 'workspace-container',
+          })
+        )
+
+        const afterStop = store.query(
+          tables.workspaces.where('id', 'workspace-container')
+        )
+        assert.strictEqual(afterStop.length, 1)
+        assert.strictEqual(afterStop[0]?.containerId, null)
+        assert.strictEqual(afterStop[0]?.containerUrl, null)
+        assert.strictEqual(afterStop[0]?.containerImage, null)
+
+        // Verify other workspace fields are preserved after container events
+        assert.strictEqual(afterStop[0]?.branchName, 'feature/container-test')
+        assert.strictEqual(afterStop[0]?.port, 4322)
+        assert.strictEqual(afterStop[0]?.status, 'running')
       })
   )
 

@@ -133,14 +133,14 @@ Write materializers for these events that update the workspace row.
 
 ### Acceptance criteria
 
-- [ ] `workspaces` table gains `containerId: text({ nullable: true })`, `containerUrl: text({ nullable: true })`, `containerImage: text({ nullable: true })` columns
-- [ ] `ContainerStarted` event defined with `workspaceId`, `containerId`, `containerUrl`, `containerImage` fields
-- [ ] `ContainerStopped` event defined with `workspaceId` field
-- [ ] Materializers: `ContainerStarted` updates workspace row with container fields; `ContainerStopped` sets `containerId` to null
-- [ ] Backward compatible: existing workspaces without containers continue to work (null defaults)
-- [ ] Events use `Events.synced` pattern
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] `workspaces` table gains `containerId: text({ nullable: true })`, `containerUrl: text({ nullable: true })`, `containerImage: text({ nullable: true })` columns
+- [x] `ContainerStarted` event defined with `workspaceId`, `containerId`, `containerUrl`, `containerImage` fields
+- [x] `ContainerStopped` event defined with `workspaceId` field
+- [x] Materializers: `ContainerStarted` updates workspace row with container fields; `ContainerStopped` sets `containerId` to null
+- [x] Backward compatible: existing workspaces without containers continue to work (null defaults)
+- [x] Events use `Events.synced` pattern
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 

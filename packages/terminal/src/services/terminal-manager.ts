@@ -19,7 +19,7 @@
  */
 
 import { TerminalRpcError } from "@laborer/shared/rpc";
-import { Context, Effect, Layer, PubSub, Ref, Runtime } from "effect";
+import { Cause, Context, Effect, Layer, PubSub, Ref, Runtime } from "effect";
 import { RingBuffer } from "../lib/ring-buffer.js";
 import { PtyHostClient } from "./pty-host-client.js";
 
@@ -328,7 +328,13 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 							yield* Effect.log(
 								`Grace period expired (${gracePeriodMs}ms, reason=${reason}) — killed terminal ${terminalId}`
 							).pipe(Effect.annotateLogs("module", logPrefix));
-						})
+						}).pipe(
+							Effect.tapDefect((cause) =>
+								Effect.logWarning(
+									`Failed grace-period cleanup for terminal ${terminalId}: ${Cause.pretty(cause)}`
+								).pipe(Effect.annotateLogs("module", logPrefix))
+							)
+						)
 					);
 				}, gracePeriodMs);
 
@@ -817,7 +823,13 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 							clearGraceTimeout(terminal.id);
 
 							killedCount += 1;
-						}),
+						}).pipe(
+							Effect.tapDefect((cause) =>
+								Effect.logWarning(
+									`Failed to kill terminal ${terminal.id} during workspace cleanup: ${Cause.pretty(cause)}`
+								)
+							)
+						),
 					{ discard: true }
 				);
 
@@ -860,7 +872,13 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 							Effect.gen(function* () {
 								yield* Effect.sync(() => ptyHostClient.kill(terminal.id));
 								killedCount += 1;
-							}),
+							}).pipe(
+								Effect.tapDefect((cause) =>
+									Effect.logWarning(
+										`Shutdown: failed to kill terminal ${terminal.id}: ${Cause.pretty(cause)}`
+									).pipe(Effect.annotateLogs("module", logPrefix))
+								)
+							),
 						{ discard: true }
 					);
 

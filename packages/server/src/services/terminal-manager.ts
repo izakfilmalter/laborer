@@ -46,6 +46,7 @@ import { RpcError } from "@laborer/shared/rpc";
 import { tables } from "@laborer/shared/schema";
 import {
 	Array as Arr,
+	Cause,
 	Context,
 	Effect,
 	Layer,
@@ -777,6 +778,11 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 								Effect.sync(() => {
 									killedCount += 1;
 								})
+							),
+							Effect.tapDefect((cause) =>
+								Effect.logWarning(
+									`Failed to kill terminal ${terminal.id} during workspace cleanup: ${Cause.pretty(cause)}`
+								)
 							)
 						),
 					{ discard: true }
@@ -826,6 +832,11 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 									Effect.sync(() => {
 										killedCount += 1;
 									})
+								),
+								Effect.tapDefect((cause) =>
+									Effect.logWarning(
+										`Shutdown: failed to kill terminal ${terminal.id}: ${Cause.pretty(cause)}`
+									).pipe(Effect.annotateLogs("module", logPrefix))
 								)
 							),
 						{ discard: true }

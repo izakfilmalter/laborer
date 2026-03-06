@@ -55,7 +55,7 @@ import { env } from "@laborer/env/server";
 import { schema, tables } from "@laborer/shared/schema";
 import { createStore, provideOtel } from "@livestore/livestore";
 import { makeWsSync } from "@livestore/sync-cf/client";
-import { Context, Effect, Layer } from "effect";
+import { Cause, Context, Effect, Layer } from "effect";
 
 /**
  * Derive the concrete Store type from our schema so that consumers
@@ -191,7 +191,15 @@ const makeStore = Effect.gen(function* () {
 			// - Flushes any pending event commits to SQLite
 			// - Closes the client session (stops sync fibers)
 			// - Closes the lifetimeScope (which cascades to adapter cleanup)
-			yield* store.shutdown();
+			yield* store
+				.shutdown()
+				.pipe(
+					Effect.tapDefect((cause) =>
+						Effect.logWarning(
+							`${logPrefix} Shutdown: store.shutdown() encountered an error (state may already be persisted): ${Cause.pretty(cause)}`
+						)
+					)
+				);
 
 			yield* Effect.logInfo(
 				`${logPrefix} Shutdown: LiveStore state persisted to SQLite successfully`

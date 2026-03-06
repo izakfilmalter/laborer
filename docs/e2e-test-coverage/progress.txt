@@ -304,3 +304,22 @@ Verification:
 - `bun run test` passes in `apps/web` (70 tests)
 - `bun x ultracite check e2e/fixtures/sidebar-helper.ts e2e/search-navigation.spec.ts` passes in `apps/web`
 - `bun run test:e2e e2e/search-navigation.spec.ts` executes the search navigation E2E test successfully (1 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 19: E2E - Switch to dashboard view and verify summary - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 19 as the highest-priority remaining task because it opens the unfinished dashboard slice and unlocks Issue 20, which depends on dashboard coverage already being in place
+
+Changes made:
+- Added `apps/web/e2e/dashboard.spec.ts` with `can switch to the dashboard and see the cross-project summary`
+- The new test adds a project, creates a workspace so both the dashboard and panel views have real content, switches to the dashboard, and verifies the `Overview` summary plus the project card render the expected project name, repo path, and workspace branch
+- The same test switches back to the terminal panels view and verifies the pane layout is visible again, covering the full dashboard-toggle round trip through the real UI
+- Tightened `apps/web/e2e/fixtures/panel-helper.ts` so the dashboard and terminal-panel toggle locators use exact button-name matching, avoiding collisions with workspace action buttons whose labels include the word `Dashboard`
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check e2e/fixtures/panel-helper.ts e2e/dashboard.spec.ts` passes in `apps/web`
+- `bun run test:e2e e2e/dashboard.spec.ts` executes the dashboard E2E test successfully (1 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown

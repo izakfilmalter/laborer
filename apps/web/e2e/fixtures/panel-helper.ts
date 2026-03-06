@@ -33,12 +33,18 @@ export class PanelHelper {
 
 	/** Get the terminal panels view toggle button. */
 	get terminalPanelsButton(): Locator {
-		return this.page.getByLabel("Terminal panels");
+		return this.page.getByRole("button", {
+			name: "Terminal panels",
+			exact: true,
+		});
 	}
 
 	/** Get the dashboard view toggle button. */
 	get dashboardButton(): Locator {
-		return this.page.getByLabel("Dashboard");
+		return this.page.getByRole("button", {
+			name: "Dashboard",
+			exact: true,
+		});
 	}
 
 	/** Split the active pane horizontally. */

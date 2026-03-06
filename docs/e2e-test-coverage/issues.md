@@ -593,15 +593,17 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that switches to the dashboard view and verifies the cross-project summary is displayed. This validates the dashboard toggle and rendering.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test file `e2e/dashboard.spec.ts` created
-- [ ] Test adds at least one project (so the dashboard has content)
-- [ ] Test clicks the dashboard view toggle button
-- [ ] Test verifies the dashboard view is rendered (summary section visible)
-- [ ] Test verifies project information appears in the dashboard
-- [ ] Test switches back to the panels view and verifies panels are visible again
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test file `e2e/dashboard.spec.ts` created
+- [x] Test adds at least one project (so the dashboard has content)
+- [x] Test clicks the dashboard view toggle button
+- [x] Test verifies the dashboard view is rendered (summary section visible)
+- [x] Test verifies project information appears in the dashboard
+- [x] Test switches back to the panels view and verifies panels are visible again
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

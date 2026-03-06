@@ -90,18 +90,20 @@ This is the foundational issue — all other E2E test issues depend on this infr
 
 See the PRD sections: "Playwright Infrastructure", "Global Setup / Teardown", "E2E Test Organization", "Page Object Pattern".
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] `@playwright/test` added as a dev dependency to `apps/web`
-- [ ] `playwright.config.ts` configured: WebKit browser, `e2e/` test directory, base URL `http://localhost:3001`, 30s test timeout, 10s assertion timeout, 1 retry, screenshots on failure in `e2e/results/`
-- [ ] `globalSetup.ts` creates a temp directory for `DATA_DIR`, creates a temp git repo with `git init` + initial commit, starts `turbo dev` with `DATA_DIR` env var, polls until all 3 services are healthy (web :3001, server :3000, terminal :3002)
-- [ ] `globalTeardown.ts` kills the `turbo dev` process tree, removes temp database directory and temp git repo
-- [ ] `e2e/results/` is added to `.gitignore`
-- [ ] `test:e2e` script added to `apps/web/package.json`
-- [ ] `e2e/fixtures/` directory created with skeleton page object helpers (SidebarHelper, PanelHelper, TerminalHelper)
-- [ ] One tracer bullet test exists: navigates to the app, verifies the page loads (header visible, sidebar present)
-- [ ] `bun run test:e2e` passes end-to-end
-- [ ] Temp git repo path is accessible to test files (via env var or Playwright project config)
+- [x] `@playwright/test` added as a dev dependency to `apps/web`
+- [x] `playwright.config.ts` configured: WebKit browser, `e2e/` test directory, base URL `http://localhost:3001`, 30s test timeout, 10s assertion timeout, 1 retry, screenshots on failure in `e2e/results/`
+- [x] `globalSetup.ts` creates a temp directory for `DATA_DIR`, creates a temp git repo with `git init` + initial commit, starts `turbo dev` with `DATA_DIR` env var, polls until all 3 services are healthy (web :3001, server :3000, terminal :3002)
+- [x] `globalTeardown.ts` kills the `turbo dev` process tree, removes temp database directory and temp git repo
+- [x] `e2e/results/` is added to `.gitignore`
+- [x] `test:e2e` script added to `apps/web/package.json`
+- [x] `e2e/fixtures/` directory created with skeleton page object helpers (SidebarHelper, PanelHelper, TerminalHelper)
+- [x] One tracer bullet test exists: navigates to the app, verifies the page loads (header visible, sidebar present)
+- [x] `bun run test:e2e` passes end-to-end
+- [x] Temp git repo path is accessible to test files (via env var or Playwright project config)
 
 ### Blocked by
 

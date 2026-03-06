@@ -30,3 +30,32 @@ Verification:
 - All 73 existing Vitest tests pass (9 test files)
 - `ultracite check` clean (119 files checked, no issues)
 - Text input fallback only renders when `window.__TAURI_INTERNALS__` is absent (runtime check)
+
+## Issue 3: Playwright infrastructure + tracer bullet test — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Installed `@playwright/test` as dev dependency in `apps/web` (v1.58.2)
+- Installed WebKit browser for Playwright (matching Tauri's engine on macOS)
+- Created `apps/web/playwright.config.ts`: WebKit browser, `e2e/` test dir, base URL localhost:3001, 30s test timeout, 10s assertion timeout, 1 retry, screenshots on failure in `e2e/results/`
+- Created `apps/web/e2e/global-setup.ts`: creates temp git repo with initial commit, detects if services are already running (developer workflow), starts `turbo dev` with isolated DATA_DIR if needed, polls health endpoints on :3000, :3001, :3002 until all healthy
+- Created `apps/web/e2e/global-teardown.ts`: kills turbo dev process tree, removes temp database directory and temp git repo, cleans up state file
+- Created `apps/web/e2e/fixtures/` with skeleton page object helpers:
+  - `sidebar-helper.ts` — search, find projects, server status locators
+  - `panel-helper.ts` — split, close, navigate, resize, view toggle locators
+  - `terminal-helper.ts` — type commands, wait for output in xterm.js
+  - `test-fixtures.ts` — extended Playwright test with all helpers as fixtures
+- Created tracer bullet test `apps/web/e2e/tracer-bullet.spec.ts`:
+  - "app loads and renders basic page structure" — verifies Home link, Reset button, Projects heading, Server Status heading, and "connected" health check status
+  - "page title is set to laborer" — verifies document title
+- Added `test:e2e` script to `apps/web/package.json`
+- Added `/e2e/results` to `apps/web/.gitignore`
+
+Verification:
+- Both tracer bullet E2E tests pass with `bun run test:e2e` (2 passed in 18.5s)
+- All 73 existing Vitest tests still pass (`bun run test`)
+- TypeScript type checks pass (`tsc --noEmit`)
+- `biome check` clean on all new files (0 errors)
+- Global teardown correctly kills processes and cleans up temp directories
+- Temp git repo path accessible to tests via E2E_TEMP_REPO_DIR env var

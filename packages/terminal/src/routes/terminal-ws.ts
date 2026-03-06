@@ -182,7 +182,7 @@ const subscribeToLifecycleEvents = (
 					const event = yield* queue.take;
 					handleLifecycleEvent(event, terminalId, wsSend);
 				}
-			}).pipe(Effect.catchAll(() => Effect.void))
+			})
 		);
 	});
 

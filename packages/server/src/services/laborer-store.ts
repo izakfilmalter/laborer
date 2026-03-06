@@ -191,17 +191,7 @@ const makeStore = Effect.gen(function* () {
 			// - Flushes any pending event commits to SQLite
 			// - Closes the client session (stops sync fibers)
 			// - Closes the lifetimeScope (which cascades to adapter cleanup)
-			// Wrapped in catchAll to ensure shutdown continues even if the
-			// store is already in a degraded state.
-			yield* store
-				.shutdown()
-				.pipe(
-					Effect.catchAll((error) =>
-						Effect.logWarning(
-							`${logPrefix} Shutdown: store.shutdown() encountered an error (state may already be persisted): ${String(error)}`
-						)
-					)
-				);
+			yield* store.shutdown();
 
 			yield* Effect.logInfo(
 				`${logPrefix} Shutdown: LiveStore state persisted to SQLite successfully`

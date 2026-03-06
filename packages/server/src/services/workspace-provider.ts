@@ -59,7 +59,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { RpcError } from "@laborer/shared/rpc";
 import { events, tables } from "@laborer/shared/schema";
-import { Array as Arr, Context, Effect, Layer, pipe } from "effect";
+import { Array as Arr, Context, Data, Effect, Layer, pipe } from "effect";
 import { ConfigService } from "./config-service.js";
 import { LaborerStore } from "./laborer-store.js";
 import { PortAllocator } from "./port-allocator.js";
@@ -82,6 +82,10 @@ interface WorkspaceRecord {
 	readonly taskSource: string | null;
 	readonly worktreePath: string;
 }
+
+class GitSpawnError extends Data.TaggedError("GitSpawnError")<{
+	readonly cause: unknown;
+}> {}
 
 /**
  * Slugify a branch name for use as a directory name.
@@ -321,8 +325,7 @@ const rollbackWorktree = (
 				const stderr = await new Response(proc.stderr).text();
 				return { exitCode, stderr };
 			},
-			catch: (error) =>
-				new Error(`Failed to spawn git worktree remove: ${String(error)}`),
+			catch: (cause) => new GitSpawnError({ cause }),
 		}).pipe(
 			Effect.tap(({ exitCode, stderr }) =>
 				exitCode !== 0
@@ -352,8 +355,7 @@ const rollbackWorktree = (
 				const stderr = await new Response(proc.stderr).text();
 				return { exitCode, stderr };
 			},
-			catch: (error) =>
-				new Error(`Failed to spawn git branch -D: ${String(error)}`),
+			catch: (cause) => new GitSpawnError({ cause }),
 		}).pipe(
 			Effect.tap(({ exitCode, stderr }) =>
 				exitCode !== 0

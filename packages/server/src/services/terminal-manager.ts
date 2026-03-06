@@ -777,11 +777,6 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 								Effect.sync(() => {
 									killedCount += 1;
 								})
-							),
-							Effect.catchAll((err) =>
-								Effect.logWarning(
-									`Failed to kill terminal ${terminal.id} during workspace cleanup: ${String(err)}`
-								)
 							)
 						),
 					{ discard: true }
@@ -831,11 +826,6 @@ class TerminalManager extends Context.Tag("@laborer/TerminalManager")<
 									Effect.sync(() => {
 										killedCount += 1;
 									})
-								),
-								Effect.catchAll((err) =>
-									Effect.logWarning(
-										`Shutdown: failed to kill terminal ${terminal.id}: ${String(err)}`
-									).pipe(Effect.annotateLogs("module", logPrefix))
 								)
 							),
 						{ discard: true }

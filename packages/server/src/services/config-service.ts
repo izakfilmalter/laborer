@@ -48,11 +48,15 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { Context, Effect, Layer } from "effect";
+import { Context, Data, Effect, Layer } from "effect";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+class ConfigIOError extends Data.TaggedError("ConfigIOError")<{
+	readonly cause: unknown;
+}> {}
 
 /** Config file name used at all levels (project root, ancestors, global). */
 const CONFIG_FILE_NAME = "laborer.json";
@@ -140,7 +144,7 @@ const readConfigFile = (
 
 		const content = yield* Effect.try({
 			try: () => readFileSync(configPath, "utf-8"),
-			catch: (error) => error,
+			catch: (cause) => new ConfigIOError({ cause }),
 		}).pipe(
 			Effect.catchAll((error) =>
 				Effect.gen(function* () {
@@ -158,7 +162,7 @@ const readConfigFile = (
 
 		const parsed = yield* Effect.try({
 			try: () => JSON.parse(content) as LaborerConfig,
-			catch: (error) => error,
+			catch: (cause) => new ConfigIOError({ cause }),
 		}).pipe(
 			Effect.catchAll((error) =>
 				Effect.gen(function* () {
@@ -187,7 +191,7 @@ const readRawConfigObject = (
 
 		const content = yield* Effect.try({
 			try: () => readFileSync(configPath, "utf-8"),
-			catch: (error) => error,
+			catch: (cause) => new ConfigIOError({ cause }),
 		}).pipe(
 			Effect.catchAll((error) =>
 				Effect.gen(function* () {
@@ -205,7 +209,7 @@ const readRawConfigObject = (
 
 		const parsed = yield* Effect.try({
 			try: () => JSON.parse(content) as unknown,
-			catch: (error) => error,
+			catch: (cause) => new ConfigIOError({ cause }),
 		}).pipe(
 			Effect.catchAll((error) =>
 				Effect.gen(function* () {
@@ -271,7 +275,7 @@ const writeJsonAtomic = (
 				writeFileSync(`${tempPath}`, `${JSON.stringify(content, null, 2)}\n`, {
 					encoding: "utf-8",
 				}),
-			catch: (error) => error,
+			catch: (cause) => new ConfigIOError({ cause }),
 		}).pipe(
 			Effect.catchAll((error) =>
 				Effect.logWarning(
@@ -282,7 +286,7 @@ const writeJsonAtomic = (
 
 		yield* Effect.try({
 			try: () => renameSync(tempPath, targetPath),
-			catch: (error) => error,
+			catch: (cause) => new ConfigIOError({ cause }),
 		}).pipe(
 			Effect.catchAll((error) =>
 				Effect.logWarning(
@@ -335,7 +339,7 @@ const ensureGlobalConfigDir = (): Effect.Effect<void, never> =>
 		if (!existsSync(GLOBAL_CONFIG_DIR)) {
 			yield* Effect.try({
 				try: () => mkdirSync(GLOBAL_CONFIG_DIR, { recursive: true }),
-				catch: (error) => error,
+				catch: (cause) => new ConfigIOError({ cause }),
 			}).pipe(
 				Effect.catchAll((error) =>
 					Effect.logWarning(

@@ -122,24 +122,28 @@ export interface SplitNode {
 
 export type PanelNode = LeafNode | SplitNode;
 
-export const LeafNodeSchema: Schema.Schema<LeafNode> = Schema.Struct({
-	_tag: Schema.Literal("LeafNode"),
-	diffOpen: Schema.optional(Schema.Boolean),
-	id: Schema.String,
-	paneType: PaneType,
-	terminalId: Schema.optional(Schema.String),
-	workspaceId: Schema.optional(Schema.String),
-});
+export const LeafNodeSchema: Schema.Schema<LeafNode> = Schema.TaggedStruct(
+	"LeafNode",
+	{
+		diffOpen: Schema.optional(Schema.Boolean),
+		id: Schema.String,
+		paneType: PaneType,
+		terminalId: Schema.optional(Schema.String),
+		workspaceId: Schema.optional(Schema.String),
+	}
+);
 
-export const SplitNodeSchema: Schema.Schema<SplitNode> = Schema.Struct({
-	_tag: Schema.Literal("SplitNode"),
-	id: Schema.String,
-	direction: SplitDirection,
-	children: Schema.Array(
-		Schema.suspend((): Schema.Schema<PanelNode> => PanelNodeSchema)
-	),
-	sizes: Schema.Array(Schema.Number),
-});
+export const SplitNodeSchema: Schema.Schema<SplitNode> = Schema.TaggedStruct(
+	"SplitNode",
+	{
+		id: Schema.String,
+		direction: SplitDirection,
+		children: Schema.Array(
+			Schema.suspend((): Schema.Schema<PanelNode> => PanelNodeSchema)
+		),
+		sizes: Schema.Array(Schema.Number),
+	}
+);
 
 export const PanelNodeSchema: Schema.Schema<PanelNode> = Schema.Union(
 	LeafNodeSchema,

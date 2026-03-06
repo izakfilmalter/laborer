@@ -328,13 +328,7 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 							yield* Effect.log(
 								`Grace period expired (${gracePeriodMs}ms, reason=${reason}) — killed terminal ${terminalId}`
 							).pipe(Effect.annotateLogs("module", logPrefix));
-						}).pipe(
-							Effect.catchAll((error) =>
-								Effect.logWarning(
-									`Failed grace-period cleanup for terminal ${terminalId}: ${String(error)}`
-								).pipe(Effect.annotateLogs("module", logPrefix))
-							)
-						)
+						})
 					);
 				}, gracePeriodMs);
 
@@ -823,13 +817,7 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 							clearGraceTimeout(terminal.id);
 
 							killedCount += 1;
-						}).pipe(
-							Effect.catchAll((err) =>
-								Effect.logWarning(
-									`Failed to kill terminal ${terminal.id} during workspace cleanup: ${String(err)}`
-								)
-							)
-						),
+						}),
 					{ discard: true }
 				);
 
@@ -872,13 +860,7 @@ class TerminalManager extends Context.Tag("@laborer/terminal/TerminalManager")<
 							Effect.gen(function* () {
 								yield* Effect.sync(() => ptyHostClient.kill(terminal.id));
 								killedCount += 1;
-							}).pipe(
-								Effect.catchAll((err) =>
-									Effect.logWarning(
-										`Shutdown: failed to kill terminal ${terminal.id}: ${String(err)}`
-									).pipe(Effect.annotateLogs("module", logPrefix))
-								)
-							),
+							}),
 						{ discard: true }
 					);
 

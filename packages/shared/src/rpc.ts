@@ -12,34 +12,29 @@ import { TerminalStatus, WorkspaceStatus } from "./types.js";
 // @see Issue #142: Terminal event stream RPC
 // ---------------------------------------------------------------------------
 
-export const TerminalSpawnedEvent = Schema.Struct({
-	_tag: Schema.Literal("Spawned"),
+export const TerminalSpawnedEvent = Schema.TaggedStruct("Spawned", {
 	id: Schema.String,
 	workspaceId: Schema.String,
 	command: Schema.String,
 	status: TerminalStatus,
 });
 
-export const TerminalStatusChangedEvent = Schema.Struct({
-	_tag: Schema.Literal("StatusChanged"),
+export const TerminalStatusChangedEvent = Schema.TaggedStruct("StatusChanged", {
 	id: Schema.String,
 	status: TerminalStatus,
 });
 
-export const TerminalExitedEvent = Schema.Struct({
-	_tag: Schema.Literal("Exited"),
+export const TerminalExitedEvent = Schema.TaggedStruct("Exited", {
 	id: Schema.String,
 	exitCode: Schema.Int,
 	signal: Schema.Int,
 });
 
-export const TerminalRemovedEvent = Schema.Struct({
-	_tag: Schema.Literal("Removed"),
+export const TerminalRemovedEvent = Schema.TaggedStruct("Removed", {
 	id: Schema.String,
 });
 
-export const TerminalRestartedEvent = Schema.Struct({
-	_tag: Schema.Literal("Restarted"),
+export const TerminalRestartedEvent = Schema.TaggedStruct("Restarted", {
 	id: Schema.String,
 	workspaceId: Schema.String,
 	command: Schema.String,
@@ -66,13 +61,10 @@ export type TerminalLifecycleEventSchema =
 // Error Types
 // ---------------------------------------------------------------------------
 
-export class RpcError extends Schema.TaggedError<RpcError>("RpcError")(
-	"RpcError",
-	{
-		message: Schema.String,
-		code: Schema.optional(Schema.String),
-	}
-) {}
+export class RpcError extends Schema.TaggedError<RpcError>()("RpcError", {
+	message: Schema.String,
+	code: Schema.optional(Schema.String),
+}) {}
 
 /**
  * Tagged error type for terminal service RPC operations.
@@ -87,12 +79,13 @@ export class RpcError extends Schema.TaggedError<RpcError>("RpcError")(
  *
  * @see Issue #137: Terminal RPC contract
  */
-export class TerminalRpcError extends Schema.TaggedError<TerminalRpcError>(
-	"TerminalRpcError"
-)("TerminalRpcError", {
-	message: Schema.String,
-	code: Schema.optional(Schema.String),
-}) {}
+export class TerminalRpcError extends Schema.TaggedError<TerminalRpcError>()(
+	"TerminalRpcError",
+	{
+		message: Schema.String,
+		code: Schema.optional(Schema.String),
+	}
+) {}
 
 // ---------------------------------------------------------------------------
 // Shared Response Schemas

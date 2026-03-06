@@ -33,8 +33,7 @@ import {
 
 const BackendId = Schema.String;
 
-const SyncMetadata = Schema.Struct({
-	_tag: Schema.Literal("SyncMessage.SyncMetadata"),
+const SyncMetadata = Schema.TaggedStruct("SyncMessage.SyncMetadata", {
 	createdAt: Schema.String,
 });
 
@@ -50,12 +49,11 @@ const EventEncoded = Schema.Struct({
 type EventEncodedType = typeof EventEncoded.Type;
 
 const PullResPageInfo = Schema.Union(
-	Schema.Struct({ _tag: Schema.Literal("MoreUnknown") }),
-	Schema.Struct({
-		_tag: Schema.Literal("MoreKnown"),
+	Schema.TaggedStruct("MoreUnknown", {}),
+	Schema.TaggedStruct("MoreKnown", {
 		remaining: Schema.Number,
 	}),
-	Schema.Struct({ _tag: Schema.Literal("NoMore") })
+	Schema.TaggedStruct("NoMore", {})
 );
 
 const PullResponse = Schema.Struct({

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, type FSWatcher, watch } from "node:fs";
 import { join, resolve } from "node:path";
 import { tables } from "@laborer/shared/schema";
-import { Context, Effect, Layer, Ref } from "effect";
+import { Context, Data, Effect, Layer, Ref, Runtime } from "effect";
 import { LaborerStore } from "./laborer-store.js";
 import { WorktreeReconciler } from "./worktree-reconciler.js";
 
@@ -17,10 +17,14 @@ interface ProjectWatchState {
 
 const DEBOUNCE_MS = 500;
 
+class GitCommandError extends Data.TaggedError("GitCommandError")<{
+	readonly message: string;
+}> {}
+
 const runGit = (
 	repoPath: string,
 	args: readonly string[]
-): Effect.Effect<string, Error> =>
+): Effect.Effect<string, GitCommandError> =>
 	Effect.tryPromise({
 		try: () =>
 			new Promise<string>((resolvePromise, rejectPromise) => {
@@ -31,9 +35,9 @@ const runGit = (
 					(error, stdout, stderr) => {
 						if (error) {
 							rejectPromise(
-								new Error(
-									`git ${args.join(" ")} failed: ${stderr.trim() || String(error)}`
-								)
+								new GitCommandError({
+									message: `git ${args.join(" ")} failed: ${stderr.trim() || String(error)}`,
+								})
 							);
 							return;
 						}
@@ -42,11 +46,15 @@ const runGit = (
 					}
 				);
 			}),
-		catch: (error) =>
-			error instanceof Error ? error : new Error(String(error)),
+		catch: (cause) =>
+			cause instanceof GitCommandError
+				? cause
+				: new GitCommandError({ message: String(cause) }),
 	});
 
-const resolveGitCommonDir = (repoPath: string): Effect.Effect<string, Error> =>
+const resolveGitCommonDir = (
+	repoPath: string
+): Effect.Effect<string, GitCommandError> =>
 	Effect.gen(function* () {
 		const raw = yield* runGit(repoPath, ["rev-parse", "--git-common-dir"]);
 		return resolve(repoPath, raw);
@@ -68,6 +76,7 @@ class WorktreeWatcher extends Context.Tag("@laborer/WorktreeWatcher")<
 		Effect.gen(function* () {
 			const { store } = yield* LaborerStore;
 			const reconciler = yield* WorktreeReconciler;
+			const runtime = yield* Effect.runtime<never>();
 			const statesRef = yield* Ref.make(new Map<string, ProjectWatchState>());
 
 			const clearTimer = (state: ProjectWatchState): void => {
@@ -96,6 +105,8 @@ class WorktreeWatcher extends Context.Tag("@laborer/WorktreeWatcher")<
 					)
 				);
 
+			const runPromise = Runtime.runPromise(runtime);
+
 			const scheduleReconcile = (
 				state: ProjectWatchState,
 				reason: string
@@ -103,7 +114,7 @@ class WorktreeWatcher extends Context.Tag("@laborer/WorktreeWatcher")<
 				clearTimer(state);
 				state.timer = setTimeout(() => {
 					state.timer = null;
-					Effect.runPromise(
+					runPromise(
 						reconcileWithWarning(state.projectId, state.repoPath, reason)
 					).catch(() => undefined);
 				}, DEBOUNCE_MS);
@@ -115,7 +126,7 @@ class WorktreeWatcher extends Context.Tag("@laborer/WorktreeWatcher")<
 					return;
 				}
 
-				Effect.runPromise(
+				runPromise(
 					Ref.get(statesRef).pipe(
 						Effect.flatMap((states) => {
 							const latest = states.get(state.projectId);
@@ -191,8 +202,7 @@ class WorktreeWatcher extends Context.Tag("@laborer/WorktreeWatcher")<
 
 						return stateRef;
 					},
-					catch: (error) =>
-						error instanceof Error ? error : new Error(String(error)),
+					catch: (cause) => new GitCommandError({ message: String(cause) }),
 				}).pipe(
 					Effect.catchAll((error) =>
 						Effect.logWarning(

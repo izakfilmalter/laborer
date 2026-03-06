@@ -344,7 +344,7 @@ class LinearTaskImporter extends Context.Tag("@laborer/LinearTaskImporter")<
 				if (!response.ok) {
 					const errorMessage =
 						responseBody && typeof responseBody === "object"
-							? JSON.stringify(responseBody)
+							? String(responseBody)
 							: response.statusText;
 					return yield* new RpcError({
 						message: `Linear API request failed (${response.status}): ${errorMessage}`,
@@ -358,7 +358,7 @@ class LinearTaskImporter extends Context.Tag("@laborer/LinearTaskImporter")<
 					Reflect.has(responseBody, "errors")
 				) {
 					return yield* new RpcError({
-						message: `Linear API errors: ${JSON.stringify(Reflect.get(responseBody, "errors"))}`,
+						message: `Linear API errors: ${String(Reflect.get(responseBody, "errors"))}`,
 						code: "LINEAR_API_FAILED",
 					});
 				}

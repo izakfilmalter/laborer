@@ -4333,3 +4333,59 @@ Verified all 9 acceptance criteria for Issue #147 through comprehensive code rev
 - `bun run --cwd packages/server check-types` ⚠️ exits non-zero on pre-existing Effect plugin diagnostics; no real type errors
 - `bun run --cwd apps/web check-types` ⚠️ pre-existing errors in `calendar.tsx` and `sonner.tsx`; no new type failures
 - `bun x ultracite check packages/terminal/src/main.ts` ✅
+
+## Issue #153: Cmd+W close panel — polish & verification — COMPLETED
+
+**Status:** Done
+**Date:** 2026-03-05
+
+### Why this next
+Picked Issue #153 as the highest-priority remaining task because it validates the integration of 5 already-completed features (#148 focused pane border fix, #149 focus auto-transfer, #150 guaranteed active pane invariant, #151 Cmd+W shortcut, #152 close-app confirmation dialog) that form a core daily workflow. Panel close operations are used constantly, and edge cases (rapid presses, deeply nested splits, tree collapse) need defense-in-depth verification.
+
+### Summary
+Comprehensive code review and verification pass across all 10 acceptance criteria for the Cmd+W close panel feature. Verified the complete flow from keyboard event capture through layout mutation to focus transfer and border rendering. All criteria pass — no code changes needed.
+
+### Acceptance criteria verification
+
+**1. Border renders correctly at all split nesting depths (1 through 5+)** — PASS
+`LeafPaneRenderer` in `panel-manager.tsx` always renders `border-2 ${borderClass}` regardless of nesting depth. The rendering path is recursive: `PanelRenderer` → `SplitPanelRenderer` → `SplitChild` → `ResizablePanel` → `PanelRenderer` → (recurses until `LeafNode`). Every leaf goes through the same component. `overflow-hidden` on the same element clips children, not its own border.
+
+**2. Border does not overlap or conflict with ResizableHandle drag handles** — PASS
+`ResizableHandle` is a flex sibling between `ResizablePanel` elements. The border is inside the panel's content area. The handle's 8px hit target (`after:w-2`) is a pseudo-element for drag interaction (transparent), positioned via absolute centering. No visual or layout overlap.
+
+**3. Cmd+W works after multiple rapid presses** — PASS
+`store.commit()` is synchronous — each close writes to SQLite and materializes immediately. The `handleClosePane` callback uses `useCallback` with `[persistedLayoutTree, persistedActivePaneId]` deps. If two events fire before React re-renders, the second would operate on the same tree and try to close an already-closed pane — `closePane` returns the tree unchanged (paneId not found), resulting in a harmless no-op commit. `ensureValidActivePaneId` provides defense-in-depth.
+
+**4. Close-app AlertDialog can be dismissed with Escape or clicking Cancel** — PASS
+Base UI's `AlertDialog.Root` with `open`/`onOpenChange` supports Escape natively. `AlertDialogCancel` uses `AlertDialogPrimitive.Close` which calls `onOpenChange(false)` on click.
+
+**5. Close-app AlertDialog does not appear when at least one pane exists** — PASS
+Guard in `panel-hotkeys.tsx`: `if (actions && activePaneId) { actions.closePane(activePaneId); return; }`. `onMetaWWithoutPane?.()` only fires when `activePaneId` is null. `ensureValidActivePaneId` guarantees non-null when panes exist.
+
+**6. Focus auto-transfer works when closing the only child in a nested split (tree collapse)** — PASS
+`findSiblingPaneId` is called BEFORE `closePane` mutates the tree. For nested splits where closing a leaf causes the parent SplitNode to collapse (1 remaining child → tree simplification), the sibling is found in the pre-mutation tree and its ID remains valid post-mutation. `ensureValidActivePaneId` validates post-close as defense-in-depth. 14 unit tests in `layout-utils.test.ts` cover edge cases.
+
+**7. Border disappears when no panes exist (empty layout state)** — PASS
+When all panes are closed, a placeholder `LeafNode` (id: "pane-empty") is committed with `activePaneId: null`. In `LeafPaneRenderer`, `isActive = null === "pane-empty" = false`, so `borderClass = "border-transparent"` (invisible). The empty state shows `EmptyTerminalPane` with guidance CTA.
+
+**8. Drag-over drop target highlight still works alongside the new border style** — PASS
+The `if/else if` chain in `LeafPaneRenderer`: `isDragOver` → `border-primary bg-primary/5` (highest priority), `isActive` → `border-primary`, default → `border-transparent`. Drag-over correctly overrides active state with an additional background tint for visual distinction.
+
+**9. Cmd+W does not interfere with DevTools** — PASS
+The `window.addEventListener("keydown")` handler only captures events when the app's `window` receives them. In Tauri, DevTools runs in a separate WebView inspector with its own event context. In docked Chrome DevTools, keyboard events are routed to DevTools' own event system. The app's handler never sees events targeted at DevTools.
+
+**10. Active pane border does not flicker during layout transitions** — PASS
+Tree and `activePaneId` are committed atomically in a single `store.commit()` call — no intermediate render where the tree has changed but `activePaneId` hasn't. `ensureValidActivePaneId` is a pure function that runs during render (not a side effect), so there's no render cycle that could cause flicker. Split operations preserve `activePaneId` unchanged. Resize uses imperative `setLayout()` API (no tree mutation).
+
+### Files modified
+- `issues.md` — Marked Issue #153 as Done, checked all acceptance criteria
+
+### Verification
+- `bun run --cwd apps/web test` ✅ (44 tests pass)
+- `bun run --cwd packages/server test` ✅ (122 tests pass, 6 skipped)
+- `bun run --cwd packages/terminal test` ✅ (59 tests pass)
+- Total: **225 tests pass**, 6 skipped
+- `bun run --cwd apps/web check-types` ⚠️ pre-existing errors in `calendar.tsx` and `sonner.tsx` only
+- `bun run --cwd packages/server check-types` ⚠️ pre-existing Effect plugin warnings only
+- `bun run --cwd packages/terminal check-types` ✅
+- `bun x ultracite check apps/web/src/panels/ apps/web/src/panes/ apps/web/src/routes/index.tsx` ✅ (8 files, 0 issues)

@@ -186,12 +186,12 @@ Add `prd.update` and `prd.updateStatus` RPC endpoints to `LaborerRpcs`. Add the 
 
 ### Acceptance criteria
 
-- [ ] `prdUpdated` event is defined in the schema with appropriate fields
-- [ ] `prdUpdated` materializer updates the prds table correctly
-- [ ] `prd.update` RPC accepts prdId and content, overwrites the file, and commits `prdUpdated`
-- [ ] `prd.updateStatus` RPC accepts prdId and status, commits `prdStatusChanged`
-- [ ] Invalid status values return an error
-- [ ] Updating a non-existent PRD returns an error
+- [x] `prdUpdated` event is defined in the schema with appropriate fields
+- [x] `prdUpdated` materializer updates the prds table correctly
+- [x] `prd.update` RPC accepts prdId and content, overwrites the file, and commits `prdUpdated`
+- [x] `prd.updateStatus` RPC accepts prdId and status, commits `prdStatusChanged`
+- [x] Invalid status values return an error
+- [x] Updating a non-existent PRD returns an error
 
 ### Blocked by
 
@@ -762,12 +762,12 @@ End-to-end verification and polish pass for the full MCP + PRD-driven task workf
 | 177 | PrdStorageService: create and read PRD files on disk | #175 | Done |
 | 178 | PRD create and list RPCs | #177 | Done |
 | 179 | PRD read and remove RPCs | #178 | Done |
-| 180 | PRD update RPC and status changes | #179 | Ready |
+| 180 | PRD update RPC and status changes | #179 | Done |
 | 181 | Issue creation RPC: prd.createIssue | #178 | Done |
 | 182 | Issue read and list RPCs | #181 | Ready |
 | 183 | Issue update RPC: prd.updateIssue | #182 | Blocked |
 | 184 | `@laborer/mcp` package scaffold: stdio server with project discovery | None | Done |
-| 185 | MCP PRD tools: create_prd, read_prd, update_prd, list_prds | #180, #184 | Blocked |
+| 185 | MCP PRD tools: create_prd, read_prd, update_prd, list_prds | #180, #184 | Ready |
 | 186 | MCP issue tools: create_issue, read_issues, update_issue, list_remaining_issues | #183, #184 | Blocked |
 | 187 | MCP auto-registration: Opencode config | #184 | Ready |
 | 188 | MCP auto-registration: Claude Code and Codex configs | #187 | Blocked |

@@ -247,6 +247,83 @@ export const handlePrdRemove = ({ prdId }: { prdId: string }) =>
 		store.commit(events.prdRemoved({ id: prdId }));
 	});
 
+export const handlePrdUpdate = ({
+	prdId,
+	content,
+}: {
+	prdId: string;
+	content: string;
+}) =>
+	Effect.gen(function* () {
+		const { store } = yield* LaborerStore;
+		const storage = yield* PrdStorageService;
+
+		const prd = store.query(tables.prds.where("id", prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found: ${prdId}`,
+			});
+		}
+
+		yield* storage
+			.updatePrdFile(prd.filePath, content)
+			.pipe(Effect.mapError((error) => toRpcError(error)));
+
+		store.commit(
+			events.prdUpdated({
+				id: prd.id,
+				projectId: prd.projectId,
+				title: prd.title,
+				slug: prd.slug,
+				filePath: prd.filePath,
+				status: prd.status as "draft" | "active" | "completed",
+				createdAt: prd.createdAt,
+			})
+		);
+
+		return toPrdResponse(prd);
+	});
+
+export const handlePrdUpdateStatus = ({
+	prdId,
+	status,
+}: {
+	prdId: string;
+	status: string;
+}) =>
+	Effect.gen(function* () {
+		const { store } = yield* LaborerStore;
+
+		const prd = store.query(tables.prds.where("id", prdId))[0];
+		if (!prd) {
+			return yield* new RpcError({
+				code: "NOT_FOUND",
+				message: `PRD not found: ${prdId}`,
+			});
+		}
+
+		const validStatuses = ["draft", "active", "completed"] as const;
+		if (!validStatuses.some((value) => value === status)) {
+			return yield* new RpcError({
+				code: "INVALID_STATUS",
+				message: `Invalid PRD status: ${status}. Must be one of: ${validStatuses.join(", ")}`,
+			});
+		}
+
+		store.commit(
+			events.prdStatusChanged({
+				id: prdId,
+				status: status as "draft" | "active" | "completed",
+			})
+		);
+
+		return toPrdResponse({
+			...prd,
+			status: status as "draft" | "active" | "completed",
+		});
+	});
+
 export const handlePrdCreateIssue = ({
 	prdId,
 	title,
@@ -380,6 +457,8 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 		"prd.list": handlePrdList,
 		"prd.read": handlePrdRead,
 		"prd.remove": handlePrdRemove,
+		"prd.update": handlePrdUpdate,
+		"prd.updateStatus": handlePrdUpdateStatus,
 		"prd.createIssue": handlePrdCreateIssue,
 
 		// -------------------------------------------------------------------

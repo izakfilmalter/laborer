@@ -280,6 +280,24 @@ export class LaborerRpcs extends RpcGroup.make(
 		},
 	}),
 
+	Rpc.make("prd.update", {
+		success: PrdResponse,
+		error: RpcError,
+		payload: {
+			prdId: Schema.String,
+			content: Schema.String,
+		},
+	}),
+
+	Rpc.make("prd.updateStatus", {
+		success: PrdResponse,
+		error: RpcError,
+		payload: {
+			prdId: Schema.String,
+			status: PrdStatus,
+		},
+	}),
+
 	Rpc.make("prd.createIssue", {
 		success: TaskResponse,
 		error: RpcError,

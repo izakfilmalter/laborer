@@ -120,6 +120,38 @@ describe("PrdStorageService", () => {
 		expect(result.content).toBe("## Body\n");
 	});
 
+	it("overwrites existing PRD files atomically", async () => {
+		const projectDir = join(testRoot, "update-prds-dir-project");
+		const customPrdsDir = join(testRoot, "update-prds-dir-output");
+		mkdirSync(projectDir, { recursive: true });
+		writeFileSync(
+			join(projectDir, "laborer.json"),
+			JSON.stringify({ prdsDir: customPrdsDir }, null, 2)
+		);
+
+		const result = await runWithServices(
+			Effect.gen(function* () {
+				const service = yield* PrdStorageService;
+				const filePath = yield* service.createPrdFile(
+					projectDir,
+					"update-prds-dir-project",
+					"Editable Plan",
+					"# Draft\n"
+				);
+
+				yield* service.updatePrdFile(filePath, "# Final\n");
+
+				return {
+					content: yield* service.readPrdFile(filePath),
+					filePath,
+				};
+			})
+		);
+
+		expect(result.filePath).toBe(join(customPrdsDir, "PRD-editable-plan.md"));
+		expect(result.content).toBe("# Final\n");
+	});
+
 	it("creates and appends companion PRD issues files with numbered sections", async () => {
 		const projectDir = join(testRoot, "issues-prds-dir-project");
 		const customPrdsDir = join(testRoot, "issues-prds-dir-output");

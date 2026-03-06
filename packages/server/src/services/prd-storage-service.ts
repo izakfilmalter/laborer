@@ -125,6 +125,10 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 		readonly readPrdFile: (
 			filePath: string
 		) => Effect.Effect<string, PrdStorageError>;
+		readonly updatePrdFile: (
+			filePath: string,
+			content: string
+		) => Effect.Effect<void, PrdStorageError>;
 		readonly appendIssue: (
 			prdFilePath: string,
 			title: string,
@@ -194,6 +198,16 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 				});
 			});
 
+			const updatePrdFile = Effect.fn("PrdStorageService.updatePrdFile")(
+				function* (filePath: string, content: string) {
+					yield* writeFileAtomic(filePath, content);
+
+					yield* Effect.logDebug(`Updated PRD file at ${filePath}`).pipe(
+						Effect.annotateLogs("module", logPrefix)
+					);
+				}
+			);
+
 			const appendIssue = Effect.fn("PrdStorageService.appendIssue")(function* (
 				prdFilePath: string,
 				title: string,
@@ -260,6 +274,7 @@ class PrdStorageService extends Context.Tag("@laborer/PrdStorageService")<
 			return PrdStorageService.of({
 				createPrdFile,
 				readPrdFile,
+				updatePrdFile,
 				appendIssue,
 				removePrdArtifacts,
 				resolvePrdsDir,

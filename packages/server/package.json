@@ -10,8 +10,7 @@
     "typecheck": "tsc --noEmit",
     "start": "bun run with-env bun run src/main.ts",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:watch": "vitest"
   },
   "exports": {
     ".": "./src/main.ts"

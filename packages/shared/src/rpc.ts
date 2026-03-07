@@ -120,7 +120,15 @@ const ConfigResolvedValueNullableString = Schema.Struct({
   source: Schema.String,
 })
 
+const DevServerConfigResponse = Schema.Struct({
+  image: ConfigResolvedValueNullableString,
+  dockerfile: ConfigResolvedValueNullableString,
+  startCommand: ConfigResolvedValueNullableString,
+  workdir: ConfigResolvedValueString,
+})
+
 const ConfigResponse = Schema.Struct({
+  devServer: DevServerConfigResponse,
   prdsDir: ConfigResolvedValueString,
   worktreeDir: ConfigResolvedValueString,
   setupScripts: ConfigResolvedValueStringArray,
@@ -180,6 +188,11 @@ const TerminalResponse = Schema.Struct({
   status: Schema.Literal('running', 'stopped'),
 })
 
+const DockerStatusResponse = Schema.Struct({
+  available: Schema.Boolean,
+  error: Schema.optional(Schema.String),
+})
+
 const DiffResponse = Schema.Struct({
   workspaceId: Schema.String,
   diffContent: Schema.String,
@@ -196,6 +209,13 @@ export class LaborerRpcs extends RpcGroup.make(
   // -----------------------------------------------------------------------
   Rpc.make('health.check', {
     success: HealthCheckResponse,
+  }),
+
+  // -----------------------------------------------------------------------
+  // Docker Prerequisite Detection
+  // -----------------------------------------------------------------------
+  Rpc.make('docker.status', {
+    success: DockerStatusResponse,
   }),
 
   // -----------------------------------------------------------------------
@@ -237,6 +257,14 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       projectId: Schema.String,
       config: Schema.Struct({
+        devServer: Schema.optional(
+          Schema.Struct({
+            image: Schema.optional(Schema.String),
+            dockerfile: Schema.optional(Schema.String),
+            startCommand: Schema.optional(Schema.String),
+            workdir: Schema.optional(Schema.String),
+          })
+        ),
         prdsDir: Schema.optional(Schema.String),
         worktreeDir: Schema.optional(Schema.String),
         setupScripts: Schema.optional(Schema.Array(Schema.String)),
@@ -356,6 +384,23 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
+  // Container RPCs (Issue 10)
+  // -----------------------------------------------------------------------
+  Rpc.make('container.pause', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  Rpc.make('container.unpause', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  // -----------------------------------------------------------------------
   // Terminal RPCs
   // -----------------------------------------------------------------------
   Rpc.make('terminal.spawn', {
@@ -364,6 +409,12 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       workspaceId: Schema.String,
       command: Schema.optional(Schema.String),
+      /**
+       * When true and the workspace is containerized, auto-types setup scripts
+       * from `laborer.json` followed by the `devServer.startCommand` into the
+       * terminal after spawn. Used for dev server terminals.
+       */
+      autoRun: Schema.optional(Schema.Boolean),
     },
   }),
 

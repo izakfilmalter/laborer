@@ -92,6 +92,12 @@ describe('LaborerRpcs config management', () => {
           const canonicalAncestorConfigPath = realpathSync(ancestorConfigPath)
 
           assert.deepStrictEqual(config, {
+            devServer: {
+              dockerfile: { source: 'default', value: null },
+              image: { source: 'default', value: null },
+              startCommand: { source: 'default', value: null },
+              workdir: { source: 'default', value: '/app' },
+            },
             prdsDir: {
               source: canonicalProjectConfigPath,
               value: '/tmp/project-prds',
@@ -180,6 +186,12 @@ describe('LaborerRpcs config management', () => {
           const resolved = yield* client.config.get({ projectId: project.id })
 
           assert.deepStrictEqual(resolved, {
+            devServer: {
+              dockerfile: { source: 'default', value: null },
+              image: { source: 'default', value: null },
+              startCommand: { source: 'default', value: null },
+              workdir: { source: 'default', value: '/app' },
+            },
             prdsDir: {
               source: canonicalConfigPath,
               value: '/tmp/existing-prds',

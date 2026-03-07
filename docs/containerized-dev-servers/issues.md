@@ -18,16 +18,16 @@ See the PRD "Container Configuration in laborer.json" section for the full schem
 
 ### Acceptance criteria
 
-- [ ] `LaborerConfig` type in ConfigService gains an optional `devServer` object with `image?: string`, `dockerfile?: string`, `startCommand?: string`, `workdir?: string`
-- [ ] `ResolvedLaborerConfig` gains corresponding `ResolvedValue<>` fields for each devServer property
-- [ ] Validation rejects configs where both `image` and `dockerfile` are specified (mutually exclusive)
-- [ ] Default values: `workdir` defaults to `/app`, others default to `undefined`
-- [ ] Layered resolution works: project-level `devServer.image` overrides global-level
-- [ ] `writeProjectConfig` RPC supports updating `devServer` fields
-- [ ] `ConfigResponse` schema in shared `rpc.ts` includes the new devServer fields
-- [ ] Unit tests for devServer config parsing, validation, and resolution
-- [ ] Type checks pass (`bun run check-types`)
-- [ ] `bun x ultracite check` passes
+- [x] `LaborerConfig` type in ConfigService gains an optional `devServer` object with `image?: string`, `dockerfile?: string`, `startCommand?: string`, `workdir?: string`
+- [x] `ResolvedLaborerConfig` gains corresponding `ResolvedValue<>` fields for each devServer property
+- [x] Validation rejects configs where both `image` and `dockerfile` are specified (mutually exclusive)
+- [x] Default values: `workdir` defaults to `/app`, others default to `undefined`
+- [x] Layered resolution works: project-level `devServer.image` overrides global-level
+- [x] `writeProjectConfig` RPC supports updating `devServer` fields
+- [x] `ConfigResponse` schema in shared `rpc.ts` includes the new devServer fields
+- [x] Unit tests for devServer config parsing, validation, and resolution
+- [x] Type checks pass (`bun run check-types`)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -57,16 +57,16 @@ On the web UI side, if `docker.status` returns `available: false`, show a persis
 
 ### Acceptance criteria
 
-- [ ] New `DockerDetection` Effect service in `packages/server/src/services/`
-- [ ] Service checks `docker` CLI availability and daemon status
-- [ ] Service runs on server startup and caches the result
-- [ ] New `docker.status` RPC exposed in `LaborerRpcs`
-- [ ] RPC returns `{ available: boolean, error?: string }`
-- [ ] Web UI queries `docker.status` on mount
-- [ ] Warning banner displayed when Docker is unavailable with actionable message
-- [ ] Banner includes link to OrbStack download page
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] New `DockerDetection` Effect service in `packages/server/src/services/`
+- [x] Service checks `docker` CLI availability and daemon status
+- [x] Service runs on server startup and caches the result
+- [x] New `docker.status` RPC exposed in `LaborerRpcs`
+- [x] RPC returns `{ available: boolean, error?: string }`
+- [x] Web UI queries `docker.status` on mount
+- [x] Warning banner displayed when Docker is unavailable with actionable message
+- [x] Banner includes link to OrbStack download page
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -94,18 +94,18 @@ This is a pure function with no side effects -- ideal for comprehensive unit tes
 
 ### Acceptance criteria
 
-- [ ] Pure function `containerName(branchName: string, projectName: string): { name: string, url: string }` exported from `packages/shared`
-- [ ] Slashes converted to hyphens (`feature/auth` -> `feature-auth`)
-- [ ] All characters lowercased
-- [ ] Invalid characters stripped (only `[a-z0-9-]` retained)
-- [ ] Consecutive hyphens collapsed
-- [ ] Leading/trailing hyphens trimmed
-- [ ] Names exceeding 63 chars truncated with 6-char hash suffix
-- [ ] Output format: `{branchSlug}--{projectSlug}`
-- [ ] URL format: `{containerName}.orb.local`
-- [ ] Unit tests cover: simple names, slashes, long names, special characters, unicode, empty segments, names exactly at 63 chars
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] Pure function `containerName(branchName: string, projectName: string): { name: string, url: string }` exported from `packages/shared`
+- [x] Slashes converted to hyphens (`feature/auth` -> `feature-auth`)
+- [x] All characters lowercased
+- [x] Invalid characters stripped (only `[a-z0-9-]` retained)
+- [x] Consecutive hyphens collapsed
+- [x] Leading/trailing hyphens trimmed
+- [x] Names exceeding 63 chars truncated with 6-char hash suffix
+- [x] Output format: `{branchSlug}--{projectSlug}`
+- [x] URL format: `{containerName}.orb.local`
+- [x] Unit tests cover: simple names, slashes, long names, special characters, unicode, empty segments, names exactly at 63 chars
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -133,14 +133,14 @@ Write materializers for these events that update the workspace row.
 
 ### Acceptance criteria
 
-- [ ] `workspaces` table gains `containerId: text({ nullable: true })`, `containerUrl: text({ nullable: true })`, `containerImage: text({ nullable: true })` columns
-- [ ] `ContainerStarted` event defined with `workspaceId`, `containerId`, `containerUrl`, `containerImage` fields
-- [ ] `ContainerStopped` event defined with `workspaceId` field
-- [ ] Materializers: `ContainerStarted` updates workspace row with container fields; `ContainerStopped` sets `containerId` to null
-- [ ] Backward compatible: existing workspaces without containers continue to work (null defaults)
-- [ ] Events use `Events.synced` pattern
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] `workspaces` table gains `containerId: text({ nullable: true })`, `containerUrl: text({ nullable: true })`, `containerImage: text({ nullable: true })` columns
+- [x] `ContainerStarted` event defined with `workspaceId`, `containerId`, `containerUrl`, `containerImage` fields
+- [x] `ContainerStopped` event defined with `workspaceId` field
+- [x] Materializers: `ContainerStarted` updates workspace row with container fields; `ContainerStopped` sets `containerId` to null
+- [x] Backward compatible: existing workspaces without containers continue to work (null defaults)
+- [x] Events use `Events.synced` pattern
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -170,19 +170,19 @@ Integrate into the existing `WorkspaceProvider.createWorktree` and `destroyWorkt
 
 ### Acceptance criteria
 
-- [ ] New `ContainerService` Effect service in `packages/server/src/services/`
-- [ ] `createContainer(workspaceId, worktreePath, branchName, projectName, devServerConfig)` method
-- [ ] Runs `docker run -d --name {containerName} -v {worktreePath}:{workdir} -w {workdir} {image} sleep infinity`
-- [ ] Container name generated using the naming utility from Issue 3
-- [ ] `ContainerStarted` event committed to LiveStore with containerId, containerUrl, containerImage
-- [ ] `destroyContainer(workspaceId)` method runs `docker stop` then `docker rm`
-- [ ] `ContainerStopped` event committed to LiveStore
-- [ ] Destroy follows best-effort cleanup pattern (catches errors, logs warnings, continues)
-- [ ] Integrated into `WorkspaceProvider.createWorktree` pipeline (container created after worktree, only when devServer config is present)
-- [ ] Integrated into `WorkspaceProvider.destroyWorktree` pipeline (container destroyed before worktree removal)
-- [ ] Rollback: if container creation fails, workspace creation fails with clear error
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] New `ContainerService` Effect service in `packages/server/src/services/`
+- [x] `createContainer(workspaceId, worktreePath, branchName, projectName, devServerConfig)` method
+- [x] Runs `docker run -d --name {containerName} -v {worktreePath}:{workdir} -w {workdir} {image} sleep infinity`
+- [x] Container name generated using the naming utility from Issue 3
+- [x] `ContainerStarted` event committed to LiveStore with containerId, containerUrl, containerImage
+- [x] `destroyContainer(workspaceId)` method runs `docker stop` then `docker rm`
+- [x] `ContainerStopped` event committed to LiveStore
+- [x] Destroy follows best-effort cleanup pattern (catches errors, logs warnings, continues)
+- [x] Integrated into `WorkspaceProvider.createWorktree` pipeline (container created after worktree, only when devServer config is present)
+- [x] Integrated into `WorkspaceProvider.destroyWorktree` pipeline (container destroyed before worktree removal)
+- [x] Rollback: if container creation fails, workspace creation fails with clear error
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -215,14 +215,14 @@ The terminal service's PTY host spawns `docker exec` as a local process -- the P
 
 ### Acceptance criteria
 
-- [ ] `TerminalClient.spawnInWorkspace` checks for `containerId` on the workspace LiveStore record
-- [ ] When `containerId` is present, constructs spawn command as `docker exec -it {containerName} /bin/sh`
-- [ ] The `SpawnPayload.command` is set to `docker`, `args` to `['exec', '-it', containerName, '/bin/sh']`
-- [ ] Terminal I/O works correctly (typing, output, Ctrl+C, resize)
-- [ ] Shell session runs inside the container at the configured workdir
-- [ ] Non-containerized workspaces continue to spawn host PTY (no regression)
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] `TerminalClient.spawnInWorkspace` checks for `containerId` on the workspace LiveStore record
+- [x] When `containerId` is present, constructs spawn command as `docker exec -it {containerName} /bin/sh`
+- [x] The `SpawnPayload.command` is set to `docker`, `args` to `['exec', '-it', containerName, '/bin/sh']`
+- [x] Terminal I/O works correctly (typing, output, Ctrl+C, resize)
+- [x] Shell session runs inside the container at the configured workdir
+- [x] Non-containerized workspaces continue to spawn host PTY (no regression)
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -253,16 +253,16 @@ For v1, there is no explicit "wait for completion" between scripts -- they are w
 
 ### Acceptance criteria
 
-- [ ] After container terminal spawn, setup scripts from `laborer.json` are auto-typed into the terminal
-- [ ] Each script is written via `TerminalManager.write()` with a trailing newline
-- [ ] After all setup scripts, `devServer.startCommand` is written with a trailing newline
-- [ ] Small delay between script writes to allow shell to process each line
-- [ ] If no setup scripts configured, only the start command is written
-- [ ] If no start command configured, only setup scripts run (or nothing if both are empty)
-- [ ] User can see all script output in the terminal pane
-- [ ] User can interact with the terminal after auto-typing completes (Ctrl+C, re-run, etc.)
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] After container terminal spawn, setup scripts from `laborer.json` are auto-typed into the terminal
+- [x] Each script is written via `TerminalManager.write()` with a trailing newline
+- [x] After all setup scripts, `devServer.startCommand` is written with a trailing newline
+- [x] Small delay between script writes to allow shell to process each line
+- [x] If no setup scripts configured, only the start command is written
+- [x] If no start command configured, only setup scripts run (or nothing if both are empty)
+- [x] User can see all script output in the terminal pane
+- [x] User can interact with the terminal after auto-typing completes (Ctrl+C, re-run, etc.)
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -294,16 +294,16 @@ The pane should use the same `LeafNode` structure as regular terminals but with 
 
 ### Acceptance criteria
 
-- [ ] `PaneType` schema in shared types includes `'devServerTerminal'`
-- [ ] `PaneContent` component handles `devServerTerminal` pane type
-- [ ] Dev server terminal pane has a visual distinction from agent terminals (colored border, icon, or label)
-- [ ] Toggle button added to workspace controls for showing/hiding the dev server pane
-- [ ] Toggle follows the same interaction pattern as the diff viewer toggle
-- [ ] When workspace with container is created, dev server pane auto-opens
-- [ ] Pane can be closed and reopened via the toggle
-- [ ] Terminal reconnection works when toggling (scrollback preserved)
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] `PaneType` schema in shared types includes `'devServerTerminal'`
+- [x] `PaneContent` component handles `devServerTerminal` pane type
+- [x] Dev server terminal pane has a visual distinction from agent terminals (colored border, icon, or label)
+- [x] Toggle button added to workspace controls for showing/hiding the dev server pane
+- [x] Toggle follows the same interaction pattern as the diff viewer toggle
+- [x] When workspace with container is created, dev server pane auto-opens
+- [x] Pane can be closed and reopened via the toggle
+- [x] Terminal reconnection works when toggling (scrollback preserved)
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -332,16 +332,16 @@ Non-containerized workspaces continue to show the port number (backward compatib
 
 ### Acceptance criteria
 
-- [ ] Workspace card reads `containerUrl` from the workspace LiveStore record
-- [ ] When `containerUrl` is present, displays it as a clickable link instead of `:<port>`
-- [ ] Link opens the URL in the default browser on click
-- [ ] Copy button appears on hover, copies the full URL to clipboard
-- [ ] Uses the existing `CopyableValue` component pattern for consistency
-- [ ] Non-containerized workspaces still show `:<port>` (no regression)
-- [ ] Link text is styled with monospace font matching the existing port display
-- [ ] HTTPS URL variant (`https://...orb.local`) is accessible (OrbStack provides this automatically)
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] Workspace card reads `containerUrl` from the workspace LiveStore record
+- [x] When `containerUrl` is present, displays it as a clickable link instead of `:<port>`
+- [x] Link opens the URL in the default browser on click
+- [x] Copy button appears on hover, copies the full URL to clipboard
+- [x] Uses the existing `CopyableValue` component pattern for consistency
+- [x] Non-containerized workspaces still show `:<port>` (no regression)
+- [x] Link text is styled with monospace font matching the existing port display
+- [x] HTTPS URL variant (`https://...orb.local`) is accessible (OrbStack provides this automatically)
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -372,16 +372,16 @@ Add a `containerStatus` field to the LiveStore workspace record (or use the exis
 
 ### Acceptance criteria
 
-- [ ] `ContainerService.pauseContainer(workspaceId)` method calls `docker pause {containerName}`
-- [ ] `ContainerService.unpauseContainer(workspaceId)` method calls `docker unpause {containerName}`
-- [ ] `container.pause` RPC exposed in `LaborerRpcs`
-- [ ] `container.unpause` RPC exposed in `LaborerRpcs`
-- [ ] Container state updated in LiveStore after pause/unpause
-- [ ] Error handling: pausing an already-paused container returns gracefully (idempotent)
-- [ ] Error handling: unpausing a non-paused container returns gracefully (idempotent)
-- [ ] Error handling: operating on a non-existent container returns a clear error
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] `ContainerService.pauseContainer(workspaceId)` method calls `docker pause {containerName}`
+- [x] `ContainerService.unpauseContainer(workspaceId)` method calls `docker unpause {containerName}`
+- [x] `container.pause` RPC exposed in `LaborerRpcs`
+- [x] `container.unpause` RPC exposed in `LaborerRpcs`
+- [x] Container state updated in LiveStore after pause/unpause
+- [x] Error handling: pausing an already-paused container returns gracefully (idempotent)
+- [x] Error handling: unpausing a non-paused container returns gracefully (idempotent)
+- [x] Error handling: operating on a non-existent container returns a clear error
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -410,16 +410,16 @@ When paused, the dev server terminal pane freezes (docker exec session is frozen
 
 ### Acceptance criteria
 
-- [ ] Play button calls `container.unpause` RPC for containerized workspaces
-- [ ] Pause button calls `container.pause` RPC for containerized workspaces
-- [ ] Non-containerized workspaces retain existing play button behavior (no regression)
-- [ ] Status badge shows paused state distinctly (yellow/amber color with "paused" label)
-- [ ] Button icon changes between play/pause based on container state
-- [ ] Loading state shown during pause/unpause RPC calls
-- [ ] Error toast shown if pause/unpause fails
-- [ ] Terminal pane freezes when paused, resumes when unpaused (inherent Docker behavior, just verify)
-- [ ] Type checks pass
-- [ ] `bun x ultracite check` passes
+- [x] Play button calls `container.unpause` RPC for containerized workspaces
+- [x] Pause button calls `container.pause` RPC for containerized workspaces
+- [x] Non-containerized workspaces retain existing play button behavior (no regression)
+- [x] Status badge shows paused state distinctly (yellow/amber color with "paused" label)
+- [x] Button icon changes between play/pause based on container state
+- [x] Loading state shown during pause/unpause RPC calls
+- [x] Error toast shown if pause/unpause fails
+- [x] Terminal pane freezes when paused, resumes when unpaused (inherent Docker behavior, just verify)
+- [x] Type checks pass
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 

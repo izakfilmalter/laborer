@@ -156,6 +156,10 @@ describe('LaborerRpcs workspace management', () => {
             status: 'running',
             taskSource: null,
             worktreePath: workspace.worktreePath,
+            containerId: null,
+            containerUrl: null,
+            containerImage: null,
+            containerStatus: null,
           })
         })
       )

@@ -304,10 +304,17 @@ class LinearTaskImporter extends Context.Tag('@laborer/LinearTaskImporter')<
           })
         }
 
-        const resolvedConfig = yield* configService.resolveConfig(
-          project.repoPath,
-          project.name
-        )
+        const resolvedConfig = yield* configService
+          .resolveConfig(project.repoPath, project.name)
+          .pipe(
+            Effect.mapError(
+              (e) =>
+                new RpcError({
+                  message: e.message,
+                  code: 'CONFIG_VALIDATION_ERROR',
+                })
+            )
+          )
         const configPath = getConfigPath(
           project.repoPath,
           resolvedConfig.rlphConfig.value

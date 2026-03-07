@@ -4,7 +4,9 @@ import { Context, Effect, Layer, Ref } from 'effect'
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
 import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
 import { ConfigService } from '../../src/services/config-service.js'
+import { ContainerService } from '../../src/services/container-service.js'
 import { DiffService } from '../../src/services/diff-service.js'
+import { DockerDetection } from '../../src/services/docker-detection.js'
 import { FileWatcher } from '../../src/services/file-watcher.js'
 import { GithubTaskImporter } from '../../src/services/github-task-importer.js'
 import { LaborerStore } from '../../src/services/laborer-store.js'
@@ -58,7 +60,7 @@ const TestTerminalClient = Layer.effect(
     const recorder = yield* TestTerminalClientRecorder
 
     return TerminalClient.of({
-      spawnInWorkspace: (workspaceId, command) =>
+      spawnInWorkspace: (workspaceId, command, _autoRun) =>
         Effect.gen(function* () {
           yield* Ref.update(recorder.spawnInWorkspaceCalls, (calls) => [
             ...calls,
@@ -84,6 +86,17 @@ const TestTerminalClient = Layer.effect(
   })
 )
 
+/**
+ * Test stub for DockerDetection — always reports Docker as available.
+ * Avoids running actual `which docker` / `docker info` commands in tests.
+ */
+const TestDockerDetection = Layer.succeed(
+  DockerDetection,
+  DockerDetection.of({
+    check: () => Effect.succeed({ available: true }),
+  })
+)
+
 export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(LinearTaskImporter.layer),
   Layer.provide(GithubTaskImporter.layer),
@@ -93,6 +106,8 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
   Layer.provide(WorkspaceProvider.layer),
+  Layer.provide(ContainerService.layer),
+  Layer.provide(TestDockerDetection),
   Layer.provide(ConfigService.layer),
   Layer.provide(ProjectRegistry.layer),
   Layer.provide(RepositoryWatchCoordinator.layer),
@@ -116,6 +131,8 @@ const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
   Layer.provide(WorkspaceProvider.layer),
+  Layer.provide(ContainerService.layer),
+  Layer.provide(TestDockerDetection),
   Layer.provide(ConfigService.layer),
   Layer.provide(ProjectRegistry.layer),
   Layer.provide(RepositoryWatchCoordinator.layer),

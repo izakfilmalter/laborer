@@ -24,14 +24,13 @@ import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { afterAll, beforeAll } from 'vitest'
-import type {
-  LaborerConfig,
-  ResolvedLaborerConfig,
-} from '../src/services/config-service.js'
 import {
   CONFIG_FILE_NAME,
   ConfigService,
+  type ConfigValidationError,
   GLOBAL_CONFIG_DIR,
+  type LaborerConfig,
+  type ResolvedLaborerConfig,
 } from '../src/services/config-service.js'
 import { createTempDir } from './helpers/git-helpers.js'
 
@@ -50,7 +49,7 @@ const writeConfig = (dir: string, config: LaborerConfig): string => {
 const resolveConfig = (
   projectRepoPath: string,
   projectName: string
-): Effect.Effect<ResolvedLaborerConfig> =>
+): Effect.Effect<ResolvedLaborerConfig, ConfigValidationError> =>
   Effect.gen(function* () {
     const service = yield* ConfigService
     return yield* service.resolveConfig(projectRepoPath, projectName)
@@ -67,6 +66,14 @@ const readGlobalConfig = (): Effect.Effect<LaborerConfig> =>
 const writeProjectConfig = (
   projectRepoPath: string,
   updates: {
+    devServer?:
+      | {
+          dockerfile?: string | undefined
+          image?: string | undefined
+          startCommand?: string | undefined
+          workdir?: string | undefined
+        }
+      | undefined
     prdsDir?: string | undefined
     rlphConfig?: string | undefined
     setupScripts?: readonly string[] | undefined
@@ -581,6 +588,302 @@ describe('ConfigService', () => {
             'Source should reference the config file'
           )
         }).pipe(Effect.provide(ConfigService.layer))
+    )
+
+    it.effect('should write and read back devServer config', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'write-devserver-roundtrip')
+        mkdirSync(projectDir, { recursive: true })
+
+        yield* writeProjectConfig(projectDir, {
+          devServer: {
+            image: 'node:22',
+            startCommand: 'bun dev',
+            workdir: '/workspace',
+          },
+        })
+
+        const result = yield* resolveConfig(projectDir, 'devserver-roundtrip')
+
+        assert.strictEqual(result.devServer.image.value, 'node:22')
+        assert.strictEqual(result.devServer.startCommand.value, 'bun dev')
+        assert.strictEqual(result.devServer.workdir.value, '/workspace')
+        assert.isNull(result.devServer.dockerfile.value)
+      })
+    )
+
+    it.effect(
+      'should merge devServer updates without clobbering existing devServer fields',
+      () =>
+        Effect.gen(function* () {
+          const projectDir = join(testRoot, 'write-devserver-merge')
+          mkdirSync(projectDir, { recursive: true })
+
+          writeConfig(projectDir, {
+            devServer: {
+              image: 'node:22',
+              startCommand: 'npm run dev',
+            },
+          })
+
+          yield* writeProjectConfig(projectDir, {
+            devServer: { startCommand: 'bun dev' },
+          })
+
+          const configPath = join(projectDir, CONFIG_FILE_NAME)
+          const written = JSON.parse(readFileSync(configPath, 'utf-8')) as {
+            devServer?: { image?: string; startCommand?: string }
+          }
+
+          assert.strictEqual(written.devServer?.image, 'node:22')
+          assert.strictEqual(written.devServer?.startCommand, 'bun dev')
+        })
+    )
+  })
+
+  // ---------------------------------------------------------------------------
+  // devServer config resolution
+  // ---------------------------------------------------------------------------
+
+  describe('devServer config', () => {
+    it.effect('should return defaults when no devServer config exists', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'no-devserver')
+        mkdirSync(projectDir, { recursive: true })
+
+        const result = yield* resolveConfig(projectDir, 'no-devserver')
+
+        assert.isNull(result.devServer.image.value)
+        assert.isNull(result.devServer.dockerfile.value)
+        assert.isNull(result.devServer.startCommand.value)
+        assert.strictEqual(result.devServer.workdir.value, '/app')
+        assert.strictEqual(result.devServer.image.source, 'default')
+        assert.strictEqual(result.devServer.dockerfile.source, 'default')
+        assert.strictEqual(result.devServer.startCommand.source, 'default')
+        assert.strictEqual(result.devServer.workdir.source, 'default')
+      })
+    )
+
+    it.effect('should read devServer.image from project config', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'devserver-image')
+        mkdirSync(projectDir, { recursive: true })
+        const configPath = writeConfig(projectDir, {
+          devServer: { image: 'node:22' },
+        })
+
+        const result = yield* resolveConfig(projectDir, 'devserver-image')
+
+        assert.strictEqual(result.devServer.image.value, 'node:22')
+        assert.strictEqual(result.devServer.image.source, configPath)
+        assert.strictEqual(result.devServer.workdir.value, '/app')
+      })
+    )
+
+    it.effect('should read devServer.dockerfile from project config', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'devserver-dockerfile')
+        mkdirSync(projectDir, { recursive: true })
+        const configPath = writeConfig(projectDir, {
+          devServer: { dockerfile: './Dockerfile.dev' },
+        })
+
+        const result = yield* resolveConfig(projectDir, 'devserver-dockerfile')
+
+        assert.strictEqual(
+          result.devServer.dockerfile.value,
+          './Dockerfile.dev'
+        )
+        assert.strictEqual(result.devServer.dockerfile.source, configPath)
+        assert.isNull(result.devServer.image.value)
+      })
+    )
+
+    it.effect('should read devServer.startCommand from project config', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'devserver-startcmd')
+        mkdirSync(projectDir, { recursive: true })
+        const configPath = writeConfig(projectDir, {
+          devServer: { image: 'node:22', startCommand: 'bun dev' },
+        })
+
+        const result = yield* resolveConfig(projectDir, 'devserver-startcmd')
+
+        assert.strictEqual(result.devServer.startCommand.value, 'bun dev')
+        assert.strictEqual(result.devServer.startCommand.source, configPath)
+      })
+    )
+
+    it.effect('should read devServer.workdir from project config', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'devserver-workdir')
+        mkdirSync(projectDir, { recursive: true })
+        const configPath = writeConfig(projectDir, {
+          devServer: { image: 'node:22', workdir: '/workspace' },
+        })
+
+        const result = yield* resolveConfig(projectDir, 'devserver-workdir')
+
+        assert.strictEqual(result.devServer.workdir.value, '/workspace')
+        assert.strictEqual(result.devServer.workdir.source, configPath)
+      })
+    )
+
+    it.effect(
+      'should reject config with both image and dockerfile specified',
+      () =>
+        Effect.gen(function* () {
+          const projectDir = join(testRoot, 'devserver-mutual-exclusion')
+          mkdirSync(projectDir, { recursive: true })
+          writeConfig(projectDir, {
+            devServer: {
+              image: 'node:22',
+              dockerfile: './Dockerfile.dev',
+            },
+          })
+
+          const result = yield* resolveConfig(
+            projectDir,
+            'devserver-exclusive'
+          ).pipe(Effect.either)
+
+          assert.isTrue(
+            result._tag === 'Left',
+            'Expected validation error for mutually exclusive image + dockerfile'
+          )
+          if (result._tag === 'Left') {
+            assert.include(result.left.message, 'mutually exclusive')
+          }
+        })
+    )
+
+    it.effect('should inherit devServer fields from ancestor config', () =>
+      Effect.gen(function* () {
+        const parent = join(testRoot, 'devserver-inherit-parent')
+        const child = join(parent, 'devserver-inherit-child')
+        mkdirSync(child, { recursive: true })
+
+        writeConfig(parent, {
+          devServer: {
+            image: 'node:20',
+            startCommand: 'npm start',
+            workdir: '/parent-app',
+          },
+        })
+        const childConfigPath = writeConfig(child, {
+          devServer: {
+            startCommand: 'bun dev',
+          },
+        })
+
+        const result = yield* resolveConfig(child, 'devserver-inherit')
+
+        // startCommand overridden by child
+        assert.strictEqual(result.devServer.startCommand.value, 'bun dev')
+        assert.strictEqual(
+          result.devServer.startCommand.source,
+          childConfigPath
+        )
+        // image inherited from parent
+        assert.strictEqual(result.devServer.image.value, 'node:20')
+        // workdir inherited from parent
+        assert.strictEqual(result.devServer.workdir.value, '/parent-app')
+      })
+    )
+
+    it.effect(
+      'should override ancestor devServer fields with project config',
+      () =>
+        Effect.gen(function* () {
+          const parent = join(testRoot, 'devserver-override-parent')
+          const child = join(parent, 'devserver-override-child')
+          mkdirSync(child, { recursive: true })
+
+          writeConfig(parent, {
+            devServer: {
+              image: 'node:18',
+              workdir: '/parent-workdir',
+            },
+          })
+          const childConfigPath = writeConfig(child, {
+            devServer: {
+              image: 'node:22',
+            },
+          })
+
+          const result = yield* resolveConfig(child, 'devserver-override')
+
+          // image overridden by child
+          assert.strictEqual(result.devServer.image.value, 'node:22')
+          assert.strictEqual(result.devServer.image.source, childConfigPath)
+          // workdir inherited from parent (child doesn't set it)
+          assert.strictEqual(result.devServer.workdir.value, '/parent-workdir')
+        })
+    )
+
+    it.effect(
+      'should reject config when image and dockerfile come from different layers',
+      () =>
+        Effect.gen(function* () {
+          const parent = join(testRoot, 'devserver-crosslayer-exclusive-parent')
+          const child = join(parent, 'devserver-crosslayer-exclusive-child')
+          mkdirSync(child, { recursive: true })
+
+          writeConfig(parent, {
+            devServer: { image: 'node:22' },
+          })
+          writeConfig(child, {
+            devServer: { dockerfile: './Dockerfile.dev' },
+          })
+
+          const result = yield* resolveConfig(
+            child,
+            'devserver-crosslayer'
+          ).pipe(Effect.either)
+
+          assert.isTrue(
+            result._tag === 'Left',
+            'Expected validation error when image from parent and dockerfile from child'
+          )
+          if (result._tag === 'Left') {
+            assert.include(result.left.message, 'mutually exclusive')
+          }
+        })
+    )
+
+    it.effect(
+      'should preserve provenance for each devServer field independently',
+      () =>
+        Effect.gen(function* () {
+          const grandparent = join(testRoot, 'devserver-provenance-gp')
+          const parent = join(grandparent, 'devserver-provenance-parent')
+          const child = join(parent, 'devserver-provenance-child')
+          mkdirSync(child, { recursive: true })
+
+          const gpPath = writeConfig(grandparent, {
+            devServer: {
+              image: 'node:18',
+              workdir: '/gp-app',
+            },
+          })
+          const parentPath = writeConfig(parent, {
+            devServer: { startCommand: 'npm start' },
+          })
+          const childPath = writeConfig(child, {
+            devServer: { workdir: '/child-app' },
+          })
+
+          const result = yield* resolveConfig(child, 'devserver-provenance')
+
+          assert.strictEqual(result.devServer.image.source, gpPath)
+          assert.strictEqual(result.devServer.image.value, 'node:18')
+          assert.strictEqual(result.devServer.startCommand.source, parentPath)
+          assert.strictEqual(result.devServer.startCommand.value, 'npm start')
+          assert.strictEqual(result.devServer.workdir.source, childPath)
+          assert.strictEqual(result.devServer.workdir.value, '/child-app')
+          assert.strictEqual(result.devServer.dockerfile.source, 'default')
+          assert.isNull(result.devServer.dockerfile.value)
+        })
     )
   })
 })

@@ -31,7 +31,7 @@
   "scripts": {
     "dev": "turbo dev",
     "build": "turbo build",
-    "check-types": "turbo check-types --ui=stream",
+    "typecheck": "turbo typecheck --ui=stream",
     "dev:native": "turbo -F native dev",
     "check": "ultracite check",
     "fix": "ultracite fix",

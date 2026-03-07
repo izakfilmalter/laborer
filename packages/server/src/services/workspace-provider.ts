@@ -61,6 +61,7 @@ import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Array as Arr, Context, Data, Effect, Layer, pipe } from 'effect'
 import { ConfigService } from './config-service.js'
+import { ContainerService } from './container-service.js'
 import { LaborerStore } from './laborer-store.js'
 import { PortAllocator } from './port-allocator.js'
 import { ProjectRegistry } from './project-registry.js'
@@ -820,6 +821,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       const portAllocator = yield* PortAllocator
       const registry = yield* ProjectRegistry
       const configService = yield* ConfigService
+      const containerService = yield* ContainerService
 
       const createWorktree = Effect.fn('WorkspaceProvider.createWorktree')(
         function* (projectId: string, branchName?: string, taskId?: string) {
@@ -827,10 +829,17 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           const project = yield* registry.getProject(projectId)
 
           // 1b. Resolve config for worktree location + setup scripts
-          const resolvedConfig = yield* configService.resolveConfig(
-            project.repoPath,
-            project.name
-          )
+          const resolvedConfig = yield* configService
+            .resolveConfig(project.repoPath, project.name)
+            .pipe(
+              Effect.mapError(
+                (e) =>
+                  new RpcError({
+                    message: e.message,
+                    code: 'CONFIG_VALIDATION_ERROR',
+                  })
+              )
+            )
 
           // 2. Generate or validate branch name
           const resolvedBranch =
@@ -1100,6 +1109,44 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             })
           )
 
+          // 12. Start container if devServer config has an image (Issue #5)
+          const devServerImage = resolvedConfig.devServer.image.value
+          if (devServerImage !== null) {
+            yield* containerService
+              .createContainer({
+                workspaceId: id,
+                worktreePath,
+                branchName: resolvedBranch,
+                projectName: project.name,
+                devServerConfig: {
+                  image: devServerImage,
+                  dockerfile: resolvedConfig.devServer.dockerfile.value,
+                  workdir: resolvedConfig.devServer.workdir.value,
+                },
+              })
+              .pipe(
+                Effect.tapError((containerError) =>
+                  Effect.gen(function* () {
+                    yield* Effect.logWarning(
+                      `Container creation failed, rolling back workspace: ${containerError.message}`
+                    ).pipe(Effect.annotateLogs('module', logPrefix))
+
+                    // Full rollback: remove worktree, delete branch, free port
+                    yield* rollbackWorktree(
+                      project.repoPath,
+                      worktreePath,
+                      resolvedBranch,
+                      port,
+                      portAllocator
+                    )
+
+                    // Remove the workspace from LiveStore after rollback
+                    store.commit(events.workspaceDestroyed({ id }))
+                  })
+                )
+              )
+          }
+
           return workspace
         }
       )
@@ -1134,6 +1181,22 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               status: 'destroyed',
             })
           )
+
+          // 3b. Destroy container if one exists (Issue #5)
+          //     Container destruction happens before worktree removal so
+          //     the container is stopped before its bind-mounted directory
+          //     is deleted. Best-effort: logs warnings but continues cleanup.
+          if (workspace.containerId !== null) {
+            yield* containerService
+              .destroyContainer(workspaceId)
+              .pipe(
+                Effect.catchAll((error) =>
+                  Effect.logWarning(
+                    `Container destroy failed for workspace "${workspaceId}": ${error.message}`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
+                )
+              )
+          }
 
           if (!isExternalWorkspace) {
             // 4. Remove the git worktree using --force to handle dirty state

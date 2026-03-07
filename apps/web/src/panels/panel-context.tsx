@@ -78,6 +78,20 @@ interface PanelActions {
     newPaneContent?: Partial<LeafNode>
   ) => void
   /**
+   * Toggle the dev server terminal alongside a terminal pane.
+   *
+   * When toggled ON: the dev server terminal pane is rendered below the
+   * main terminal in a vertical split. If no dev server terminal session
+   * exists yet, one is spawned via `terminal.spawn` with `autoRun: true`.
+   * When toggled OFF: hides the dev server terminal pane but keeps the
+   * terminal session alive for later reconnection.
+   *
+   * @param paneId - The ID of the terminal LeafNode to toggle dev server for
+   * @returns A promise that resolves to whether the dev server pane is now
+   *   visible (true = toggled on)
+   */
+  readonly toggleDevServerPane: (paneId: string) => Promise<boolean>
+  /**
    * Toggle a diff viewer alongside a terminal pane.
    *
    * When toggled ON: splits the terminal pane horizontally with a diff

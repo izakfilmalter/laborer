@@ -1,0 +1,358 @@
+## Issue 3: Container naming/sanitization — COMPLETED
+
+Implemented the `containerName` pure utility function in `packages/shared/src/container-name.ts`.
+
+### What was done:
+- Created `containerName(branchName, projectName) => { name, url }` function
+- Sanitization: lowercases, replaces slashes with hyphens, strips invalid chars (only [a-z0-9-] retained), collapses consecutive hyphens, trims leading/trailing hyphens
+- Truncation: names exceeding 63 chars (DNS label limit per RFC 1035) are truncated with a 6-char SHA-256 hash suffix for uniqueness
+- Output format: `{branchSlug}--{projectSlug}` with URL as `{containerName}.orb.local`
+- Added subpath export `@laborer/shared/container-name` in package.json
+
+### Tests:
+- 21 unit tests covering: simple names, slashes, lowercasing, invalid chars, consecutive hyphens, leading/trailing hyphens, unicode, empty segments, exact 63-char boundary, truncation with hash, uniqueness preservation, deterministic output, trailing hyphen cleanup after truncation
+- All tests pass
+
+### Verification:
+- `bun run check-types` passes
+- `bun x ultracite check` passes (no lint errors in new files)
+- `bunx vitest run test/container-name.test.ts` — 21/21 tests pass
+
+## Issue 1: devServer config schema in laborer.json — COMPLETED
+
+Added `devServer` configuration object to the `laborer.json` schema in `ConfigService`, with full layered resolution, mutual exclusion validation, and RPC support.
+
+### What was done:
+
+**Types & interfaces (config-service.ts):**
+- Added `DevServerConfig` interface with `image`, `dockerfile`, `startCommand`, `workdir` fields (all optional)
+- Added `devServer?: DevServerConfig` to `LaborerConfig` and `ProjectConfigUpdates`
+- Added `ResolvedDevServerConfig` with `ResolvedValue<>` wrapper for each field
+- Added `devServer: ResolvedDevServerConfig` to `ResolvedLaborerConfig`
+- Added `ConfigValidationError` tagged error for validation failures
+
+**Resolution & validation (config-service.ts):**
+- Extracted `mergeDevServerConfig()` helper for devServer-specific layered resolution (keeps `mergeConfigs` under complexity limit)
+- Each devServer field resolves independently with provenance tracking (closest-wins, same as existing fields)
+- `validateDevServerConfig()` rejects configs where both `image` and `dockerfile` are set (mutually exclusive), including cross-layer conflicts
+- Default values: `workdir` defaults to `/app`, others default to `null`
+
+**Write support (config-service.ts):**
+- Updated `applyConfigUpdates()` to merge devServer fields into existing config (preserves existing devServer sub-fields not being updated)
+
+**RPC layer (rpc.ts + handlers.ts):**
+- Added `DevServerConfigResponse` schema in `rpc.ts` with resolved value shapes for all 4 devServer fields
+- Added `devServer` to `ConfigResponse` schema
+- Added optional `devServer` struct to `config.update` RPC payload
+- Updated `handleConfigUpdate` to validate devServer fields and pass through to `writeProjectConfig`
+
+**Caller updates:**
+- `workspace-provider.ts`: maps `ConfigValidationError` to `RpcError` with `CONFIG_VALIDATION_ERROR` code
+- `prd-storage-service.ts`: uses `Effect.orDie` (config validation is a programmer error in PRD context)
+- `linear-task-importer.ts`: maps `ConfigValidationError` to `RpcError`
+- `handlers.ts` (`config.get`): maps `ConfigValidationError` to `RpcError`
+
+### Tests:
+- 12 new unit tests in `config-service.test.ts` covering:
+  - Default devServer values when no config exists
+  - Reading each devServer field from project config (image, dockerfile, startCommand, workdir)
+  - Mutual exclusion validation (same layer and cross-layer)
+  - Layered inheritance (ancestor -> child field override)
+  - Independent provenance tracking across 3 config layers
+  - Write/read roundtrip for devServer config
+  - Merge semantics (updating devServer.startCommand preserves devServer.image)
+- Updated 2 existing RPC tests to include devServer defaults in assertions
+- All 32 config-service tests pass, all 3 RPC config-management tests pass
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All 121 existing tests pass (no regressions)
+
+## Issue 8: Dev server terminal pane type + toggle — COMPLETED
+
+Added `devServerTerminal` pane type to the panel system with a toggleable dev server terminal sidebar, matching the existing diff viewer toggle pattern.
+
+### What was done:
+
+**Shared types (types.ts):**
+- Added `'devServerTerminal'` to `PaneType` schema literal union
+- Added `devServerOpen?: boolean` field to `LeafNode` interface (controls visibility of dev server terminal sidebar)
+- Added `devServerTerminalId?: string` field to `LeafNode` interface (stores the terminal session ID for the dev server)
+- Updated `LeafNodeSchema` with corresponding optional fields for persistence
+
+**New component (dev-server-terminal-pane.tsx):**
+- Created `DevServerTerminalPane` component that wraps the standard `TerminalPane` with a visual distinction
+- Teal/cyan top border + "Dev Server" label with server icon to immediately distinguish from agent terminals
+- Reuses the full `TerminalPane` for all xterm.js, WebSocket, resize, and reconnection behavior
+
+**Panel rendering (panel-manager.tsx):**
+- Extracted `TerminalPaneWithSidebars` component to handle terminal panes with optional diff and/or dev server sidebars
+- Dev server terminal sidebar renders vertically below the main terminal (diff renders horizontally to the right)
+- When both are open, the layout is: main terminal + diff on right (horizontal split) over dev server terminal (vertical split)
+- Added handling for standalone `devServerTerminal` pane type in `PaneContent`
+- Imported `DevServerTerminalPane` component
+
+**Toggle action (panel-context.tsx + index.tsx):**
+- Added `toggleDevServerPane(paneId): Promise<boolean>` to `PanelActions` interface
+- Implemented `handleToggleDevServerPane` in `usePanelLayout` hook:
+  - Toggle OFF: flips `devServerOpen` to false, preserves `devServerTerminalId` for reconnection
+  - Toggle ON (existing terminal): flips `devServerOpen` to true, reconnects to existing terminal session
+  - Toggle ON (new terminal): spawns `terminal.spawn` with `autoRun: true` to auto-type setup scripts + dev server start command, then sets both `devServerOpen` and `devServerTerminalId`
+  - Re-reads layout after async spawn to avoid overwriting concurrent changes
+
+**Toggle button (index.tsx PanelHeaderBar):**
+- Added Server icon toggle button next to the diff viewer toggle
+- Button only appears for terminal panes belonging to containerized workspaces (checks `workspace.containerId != null`)
+- Active state highlighted with `bg-accent` matching the diff toggle pattern
+- Tooltips: "Open dev server terminal" / "Close dev server terminal"
+
+**Auto-open on workspace creation:**
+- When a terminal is assigned to a pane for a containerized workspace, the dev server pane auto-opens
+- Uses a ref-based pattern (`autoOpenDevServerRef`) to avoid circular dependencies between `handleAssignTerminalToPane` (sync) and `handleToggleDevServerPane` (async)
+- Fire-and-forget: spawn errors logged but never block layout assignment
+
+**Keyboard shortcut (panel-hotkeys.tsx):**
+- Added `Ctrl+b then s` hotkey sequence to toggle dev server terminal (matching `Ctrl+b then d` for diff)
+- Updated docblock with the new shortcut
+
+**Terminal reconnection:**
+- Toggling OFF preserves `devServerTerminalId` on the leaf node
+- Toggling ON with an existing `devServerTerminalId` just flips `devServerOpen` to true
+- The underlying `TerminalPane` handles WebSocket reconnection and scrollback restoration automatically
+
+### Key design decisions:
+- Dev server terminal is rendered as an inline sidebar within a terminal pane (same as diff), not as a separate pane in the layout tree. This keeps the dev server terminal visually coupled to its workspace terminal.
+- The `devServerOpen` + `devServerTerminalId` pattern mirrors the `diffOpen` pattern, providing a consistent toggle UX.
+- The dev server terminal uses `autoRun: true` on spawn, which triggers the auto-typing of setup scripts and `devServer.startCommand` from `laborer.json` (Issue 7).
+- The teal color theme for the dev server pane provides immediate visual distinction from agent terminals.
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All 137 existing tests pass (no regressions)
+
+## Issue 2: Docker prerequisite detection — COMPLETED
+
+Created the `DockerDetection` Effect service that checks whether Docker (via OrbStack) is available on the system, exposed it via a `docker.status` RPC, and added a web UI warning banner.
+
+### What was done:
+
+**New service (docker-detection.ts):**
+- Created `DockerDetection` as a `Context.Tag` class with tag `'@laborer/DockerDetection'`
+- Uses `Layer.effect` pattern with `Ref` for caching the detection result
+- `check()` method performs two-step detection:
+  1. `which docker` — checks if Docker CLI is on PATH
+  2. `docker info` — checks if Docker daemon is running
+- Result is cached after first invocation (Docker availability rarely changes mid-session)
+- Detection runs eagerly on service construction so the result is cached before any RPC call
+- Clear, actionable error messages directing users to install OrbStack
+
+**RPC layer (rpc.ts + handlers.ts):**
+- Added `DockerStatusResponse` schema in `rpc.ts` with `available: boolean` and optional `error: string`
+- Added `docker.status` RPC to `LaborerRpcs` (no payload, no error channel — always succeeds)
+- Handler in `handlers.ts` delegates to `DockerDetection.check()`
+
+**Layer wiring:**
+- `main.ts`: imported `DockerDetection`, added `Layer.provide(DockerDetection.layer)` in `HttpLiveBase` composition
+- `test/rpc/test-layer.ts`: created `TestDockerDetection` stub that always returns `{ available: true }`, added to both `TestLaborerRpcLayer` and `TestLaborerRpcWithStoreLayer`
+
+**Web UI (docker-status-banner.tsx + __root.tsx):**
+- Created `DockerStatusBanner` component that queries `docker.status` RPC on mount
+- Uses `LaborerClient.query('docker.status', ...)` with `useAtomValue` hook
+- When Docker is unavailable, renders a destructive `Alert` with:
+  - Warning icon (AlertTriangle)
+  - "Docker not available" title
+  - Error message from the server
+  - Clickable link to OrbStack download page (https://orbstack.dev)
+- Wrapped in `Suspense` with null fallback (no flash during loading)
+- Integrated into `__root.tsx` between `<Header />` and `<Outlet />`
+- Grid layout updated from `grid-rows-[auto_1fr]` to `grid-rows-[auto_auto_1fr]` to accommodate the banner row
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All existing tests pass (no regressions):
+  - `bunx vitest run test/rpc/health-check.test.ts` — 1/1 tests pass
+  - `bunx vitest run test/rpc/config-management.test.ts` — 3/3 tests pass
+  - `bunx vitest run test/rpc/workspace-management.test.ts` — 4/4 tests pass
+  - `bunx vitest run test/config-service.test.ts` — 32/32 tests pass
+  - `bunx vitest run test/container-name.test.ts` (shared) — 21/21 tests pass
+  - `bunx vitest run test/schema.test.ts` (shared) — 8/8 tests pass
+
+## Issue 7: Auto-run setup scripts + start command in container terminal — COMPLETED
+
+Extended `TerminalClient.spawnInWorkspace` with an `autoRun` parameter that auto-types setup scripts and the dev server start command into containerized terminal sessions after spawn.
+
+### What was done:
+
+**RPC schema (rpc.ts):**
+- Added optional `autoRun: Schema.Boolean` field to the `terminal.spawn` LaborerRpc payload
+- When true and the workspace is containerized, triggers auto-typing of setup scripts + start command
+
+**TerminalClient refactoring (terminal-client.ts):**
+- Added `ConfigService` and `ProjectRegistry` as new dependencies for config resolution
+- Extracted `spawnContainerTerminal()` — handles Docker container terminal spawn with optional auto-run
+- Extracted `spawnHostTerminal()` — handles non-containerized host PTY spawn (existing behavior)
+- Extracted `autoTypeScripts()` — writes setup scripts and start command into a terminal via `rpcClient.terminal.write()` with delays between each write
+- Extracted `scheduleAutoRun()` — resolves project config and delegates to `autoTypeScripts()`
+- Refactored `spawnInWorkspace` from a single monolithic function into a dispatcher that delegates to `spawnContainerTerminal` or `spawnHostTerminal` (reduces cognitive complexity)
+
+**Auto-typing flow:**
+1. After container terminal is spawned via `docker exec`, checks if `autoRun === true` and no explicit command was provided
+2. Forks a daemon fiber (fire-and-forget) so the spawn response returns immediately
+3. The fiber resolves project config via `ProjectRegistry` + `ConfigService`
+4. Waits 500ms for the container shell to initialize
+5. Writes each setup script from `laborer.json` `setupScripts` array via `rpcClient.terminal.write()` with 200ms delay between scripts
+6. Writes the `devServer.startCommand` via `rpcClient.terminal.write()`
+7. All errors are caught and logged as warnings (never blocks or fails the spawn)
+
+**RPC handler (handlers.ts):**
+- Updated `terminal.spawn` handler to pass `autoRun` through to `TerminalClient.spawnInWorkspace()`
+
+**Test layer (test-layer.ts):**
+- Updated `TestTerminalClient` stub's `spawnInWorkspace` to accept the third `autoRun` parameter
+
+### Key design decisions:
+- Auto-typing runs as a fire-and-forget daemon fiber — the spawn response returns immediately without waiting for scripts to finish
+- Scripts are written sequentially with delays (500ms initial wait, 200ms between scripts) to allow the shell to process each line
+- For v1, there is no explicit "wait for completion" between scripts — they are typed sequentially
+- The `autoRun` flag is opt-in — regular `terminal.spawn` calls without `autoRun` behave exactly as before (no regression)
+- If no setup scripts are configured, only the start command is written; if no start command, only setup scripts run; if both empty, nothing is auto-typed
+- All auto-typing errors are caught and logged — a failure to auto-type never prevents the terminal from spawning
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All 121 existing tests pass (no regressions)
+
+## Issue 9: Workspace URL display -- replace port with .orb.local link — COMPLETED
+
+Replaced the port number display in the workspace sidebar card and dashboard with a clickable `.orb.local` URL for containerized workspaces, with a copy-to-clipboard button on hover.
+
+### What was done:
+
+**workspace-list.tsx (sidebar workspace card):**
+- Added `containerUrl: string | null` to `WorkspaceItemProps.workspace` interface
+- Added `ExternalLink` icon import from `lucide-react`
+- Replaced the `:{port}` display with a conditional: when `containerUrl` is present, renders a clickable HTTPS link (`https://{containerUrl}`) with monospace font matching the existing port style
+- On hover, shows a copy button (using the existing `CopyButton` component) that copies the full HTTPS URL to clipboard
+- On hover, also shows an external link icon button for opening in browser
+- Uses the `group/copyable` CSS pattern consistent with the existing `CopyableValue` component's hover-to-reveal behavior
+- Non-containerized workspaces continue to show `:{port}` (backward compatible fallback)
+- All links include `rel="noopener"` and `target="_blank"` for security
+
+**workspace-dashboard.tsx (dashboard workspace row):**
+- Added `containerUrl: string | null` to `ProjectSection.workspaces` type and `DashboardWorkspaceRow` props
+- Replaced the `:{port}` display with a conditional: when `containerUrl` is present, renders a clickable HTTPS link with the same monospace styling
+- Non-containerized workspaces continue to show `:{port}` (backward compatible fallback)
+
+### Key design decisions:
+- The `containerUrl` field from LiveStore is used directly — `queryDb(workspaces)` already returns all columns including `containerUrl`, so no query changes were needed
+- The URL is stored without protocol in LiveStore (e.g., `feature-auth--myproject.orb.local`) and displayed as-is in the UI, but links and copy use the full `https://` URL since OrbStack provides HTTPS automatically
+- The copy button copies the full HTTPS URL (not just the domain) for maximum utility when pasting into browsers or sharing
+- The hover-to-reveal pattern matches the existing `CopyableValue` component used for branch names
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All 121 existing tests pass (no regressions)
+
+## Issue 10: Container pause/unpause RPCs — COMPLETED
+
+Added `container.pause` and `container.unpause` RPCs to the `ContainerService`, exposed them through `LaborerRpcs`, and added container status tracking in LiveStore.
+
+### What was done:
+
+**Types (types.ts):**
+- Added `ContainerStatus` literal type (`'running' | 'paused'`) to shared types
+
+**LiveStore schema (schema.ts):**
+- Added `containerStatus` nullable text column to `workspaces` table
+- Added `containerPaused` event (`v1.ContainerPaused`) with `workspaceId` field
+- Added `containerUnpaused` event (`v1.ContainerUnpaused`) with `workspaceId` field
+- Updated `ContainerStarted` materializer to set `containerStatus: 'running'` alongside container fields
+- Updated `ContainerStopped` materializer to clear `containerStatus` to null alongside other container fields
+- Added `ContainerPaused` materializer: sets `containerStatus: 'paused'`
+- Added `ContainerUnpaused` materializer: sets `containerStatus: 'running'`
+- Updated `WorkspaceCreated` materializer to include `containerStatus: null`
+
+**ContainerService (container-service.ts):**
+- Added `pauseContainer(workspaceId)` method:
+  - Looks up workspace in LiveStore, extracts container name from `containerUrl`
+  - Idempotent: if `containerStatus` is already `'paused'`, returns gracefully with a debug log
+  - Runs `docker pause {containerName}` via `Bun.spawn`
+  - On success, commits `ContainerPaused` event to LiveStore
+  - On failure (non-zero exit code), returns `RpcError` with `CONTAINER_PAUSE_FAILED` code
+  - Returns `RpcError` with `CONTAINER_NOT_FOUND` if workspace or container doesn't exist
+- Added `unpauseContainer(workspaceId)` method:
+  - Same lookup and error handling pattern as `pauseContainer`
+  - Idempotent: if `containerStatus` is not `'paused'`, returns gracefully
+  - Runs `docker unpause {containerName}` via `Bun.spawn`
+  - On success, commits `ContainerUnpaused` event to LiveStore
+  - On failure, returns `RpcError` with `CONTAINER_UNPAUSE_FAILED` code
+- Extracted `lookupContainer()` helper to share workspace+container lookup logic
+
+**RPC layer (rpc.ts + handlers.ts):**
+- Added `container.pause` RPC to `LaborerRpcs` with `workspaceId` payload and `RpcError` error channel
+- Added `container.unpause` RPC to `LaborerRpcs` with `workspaceId` payload and `RpcError` error channel
+- Added handler implementations that delegate to `ContainerService.pauseContainer` / `unpauseContainer`
+- Imported `ContainerService` in handlers
+
+**Tests updated:**
+- Updated `schema.test.ts` container lifecycle test to verify `containerStatus` through the full lifecycle: null -> 'running' (on ContainerStarted) -> 'paused' (on ContainerPaused) -> 'running' (on ContainerUnpaused) -> null (on ContainerStopped)
+- Updated `schema.test.ts` workspace lifecycle test to include `containerStatus: null` in assertion
+- Updated `workspace-management.test.ts` to include `containerStatus: null` in workspace row assertion
+
+### Key design decisions:
+- `containerStatus` is a separate column from the workspace `status` field — container state and workspace state are orthogonal concerns
+- Idempotent operations: pausing an already-paused container and unpausing a non-paused container return gracefully without error
+- Missing workspace or container returns a clear `CONTAINER_NOT_FOUND` error (not silently ignored like destroy's best-effort pattern)
+- The `lookupContainer` helper is a synchronous pure function that reads from LiveStore, shared by both pause and unpause
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All 29 shared tests pass (including updated container lifecycle test)
+- All 137 server tests pass (no regressions)
+
+## Issue 11: Wire pause/unpause to workspace play/pause buttons — COMPLETED
+
+Connected the existing play/pause buttons in the workspace sidebar and dashboard to the `container.pause`/`container.unpause` RPCs for containerized workspaces, with paused state reflected in status badges.
+
+### What was done:
+
+**workspace-list.tsx (sidebar workspace card):**
+- Created `ContainerPauseButton` component that calls `container.pause` / `container.unpause` RPCs
+  - Shows Play icon (green) when paused, Pause icon (amber) when running
+  - Loading state with pulsing animation during RPC calls
+  - Error toasts on failure, success toasts on completion
+  - Idempotent: delegates to the server's idempotent pause/unpause methods
+- For containerized workspaces, the play button area renders `ContainerPauseButton` instead of "Start Ralph Loop"
+- Non-containerized workspaces retain the existing "Start Ralph Loop" button (no regression)
+- Added `containerId` and `containerStatus` to `WorkspaceItemProps` interface
+- Derived `displayStatus` from container state: shows 'paused' (amber badge) when container is paused, otherwise shows workspace lifecycle status
+- Added 'paused' to `WorkspaceStatus` type with amber color classes in `getStatusClasses` and `StatusDot`
+- Imported `Pause` icon from lucide-react
+- Extracted `ContainerPauseButton` as a separate component to keep `WorkspaceItem` under cognitive complexity limit
+
+**workspace-dashboard.tsx (dashboard workspace rows):**
+- Added 'paused' to `WorkspaceStatus` type with amber color classes
+- Added `paused` to `WorkspaceCounts` interface and `computeWorkspaceCounts()` function
+- Created `getDisplayStatus()` helper that derives display status from workspace + container state
+- Updated `DashboardWorkspaceRow` to accept `containerId` and `containerStatus` props
+- Dashboard rows show amber 'paused' badge when container is paused
+- `WorkspaceStatusSummary` shows paused count with amber dot
+- Non-containerized workspaces unaffected (backward compatible)
+
+### Key design decisions:
+- The container pause/unpause button is a separate component (`ContainerPauseButton`) to keep cognitive complexity under the 20-point limit enforced by biome
+- For containerized workspaces, the play/pause button replaces the "Start Ralph Loop" button entirely — these are mutually exclusive concerns (containers use pause/unpause, non-containerized use rlph)
+- The `displayStatus` derivation is done at the component level: if a workspace has a `containerId` and `containerStatus === 'paused'`, the badge shows 'paused' instead of the workspace lifecycle status
+- Amber/yellow-500 is used for the paused state to visually distinguish it from running (green) and stopped (gray)
+- Terminal pane freezing when paused is inherent Docker behavior — no additional code needed
+
+### Verification:
+- `bun run check-types` passes (all 5 packages)
+- `bun x ultracite check` passes (only pre-existing package.json formatting issues)
+- All 121 existing tests pass (no regressions)

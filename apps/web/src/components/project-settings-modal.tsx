@@ -62,6 +62,9 @@ function ProjectSettingsForm({
   const [setupScripts, setSetupScripts] = useState<SetupScriptItem[]>([])
   const [rlphConfig, setRlphConfig] = useState('')
   const [devServerImage, setDevServerImage] = useState('')
+  const [devServerSetupScripts, setDevServerSetupScripts] = useState<
+    SetupScriptItem[]
+  >([])
   const [devServerStartCommand, setDevServerStartCommand] = useState('')
   const [initialized, setInitialized] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -81,6 +84,9 @@ function ProjectSettingsForm({
     setSetupScripts(toSetupScriptItems(configResult.value.setupScripts.value))
     setRlphConfig(configResult.value.rlphConfig.value ?? '')
     setDevServerImage(configResult.value.devServer.image.value ?? '')
+    setDevServerSetupScripts(
+      toSetupScriptItems(configResult.value.devServer.setupScripts.value)
+    )
     setDevServerStartCommand(
       configResult.value.devServer.startCommand.value ?? ''
     )
@@ -128,10 +134,12 @@ function ProjectSettingsForm({
   const handleSave = async () => {
     const updates = buildConfigUpdates({
       devServerImage,
+      devServerSetupScripts,
       devServerStartCommand,
       rlphConfig,
       resolvedConfig: {
         devServerImage: resolvedConfig.devServer.image.value,
+        devServerSetupScripts: resolvedConfig.devServer.setupScripts.value,
         devServerStartCommand: resolvedConfig.devServer.startCommand.value,
         rlphConfig: resolvedConfig.rlphConfig.value,
         setupScripts: resolvedConfig.setupScripts.value,
@@ -268,6 +276,75 @@ function ProjectSettingsForm({
             <FieldDescription className={provenanceClassName}>
               Source: {resolvedConfig.devServer.image.source}
             </FieldDescription>
+          </Field>
+
+          <Field>
+            <FieldLabel>Container setup scripts</FieldLabel>
+            <div className="grid gap-2">
+              {devServerSetupScripts.length === 0 && (
+                <p className="text-muted-foreground text-xs">
+                  No container setup scripts configured.
+                </p>
+              )}
+              {devServerSetupScripts.map((script) => (
+                <div className="flex items-center gap-2" key={script.id}>
+                  <Input
+                    aria-label="Container setup script"
+                    className="truncate"
+                    id={`dev-server-setup-script-${projectId}-${script.id}`}
+                    onChange={(event) => {
+                      setDevServerSetupScripts((prev) => {
+                        return prev.map((item) => {
+                          if (item.id !== script.id) {
+                            return item
+                          }
+
+                          return {
+                            ...item,
+                            value: event.target.value,
+                          }
+                        })
+                      })
+                    }}
+                    placeholder="apt-get install -y python3"
+                    value={script.value}
+                  />
+                  <Button
+                    aria-label="Remove container setup script"
+                    onClick={() => {
+                      setDevServerSetupScripts((prev) =>
+                        prev.filter((item) => item.id !== script.id)
+                      )
+                    }}
+                    size="icon-sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Trash2 className="size-3.5 text-muted-foreground" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <FieldDescription className={provenanceClassName}>
+                Source: {resolvedConfig.devServer.setupScripts.source}
+              </FieldDescription>
+              <Button
+                aria-label="Add container setup script"
+                onClick={() => {
+                  setDevServerSetupScripts((prev) => [
+                    ...prev,
+                    { id: globalThis.crypto.randomUUID(), value: '' },
+                  ])
+                }}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <Plus className="size-3.5" />
+                Add script
+              </Button>
+            </div>
           </Field>
 
           <Field>

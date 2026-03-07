@@ -5,6 +5,7 @@ interface SetupScriptItem {
 
 interface ResolvedConfigSnapshot {
   readonly devServerImage: string | null
+  readonly devServerSetupScripts: readonly string[]
   readonly devServerStartCommand: string | null
   readonly rlphConfig: string | null
   readonly setupScripts: readonly string[]
@@ -14,6 +15,7 @@ interface ResolvedConfigSnapshot {
 interface ConfigUpdates {
   devServer?: {
     image?: string
+    setupScripts?: string[]
     startCommand?: string
   }
   rlphConfig?: string
@@ -47,6 +49,7 @@ const areStringArraysEqual = (
 
 const buildConfigUpdates = ({
   devServerImage,
+  devServerSetupScripts,
   devServerStartCommand,
   rlphConfig,
   resolvedConfig,
@@ -54,6 +57,7 @@ const buildConfigUpdates = ({
   worktreeDir,
 }: {
   devServerImage: string
+  devServerSetupScripts: readonly SetupScriptItem[]
   devServerStartCommand: string
   rlphConfig: string
   resolvedConfig: ResolvedConfigSnapshot
@@ -66,6 +70,9 @@ const buildConfigUpdates = ({
   const normalizedSetupScripts = normalizeSetupScripts(setupScripts)
   const normalizedRlphConfig = rlphConfig.trim()
   const normalizedDevServerImage = devServerImage.trim()
+  const normalizedDevServerSetupScripts = normalizeSetupScripts(
+    devServerSetupScripts
+  )
   const normalizedDevServerStartCommand = devServerStartCommand.trim()
 
   if (
@@ -90,14 +97,21 @@ const buildConfigUpdates = ({
 
   const imageChanged =
     normalizedDevServerImage !== (resolvedConfig.devServerImage ?? '')
+  const setupScriptsChanged = !areStringArraysEqual(
+    normalizedDevServerSetupScripts,
+    resolvedConfig.devServerSetupScripts
+  )
   const startCommandChanged =
     normalizedDevServerStartCommand !==
     (resolvedConfig.devServerStartCommand ?? '')
 
-  if (imageChanged || startCommandChanged) {
+  if (imageChanged || setupScriptsChanged || startCommandChanged) {
     const devServer: ConfigUpdates['devServer'] = {}
     if (imageChanged) {
       devServer.image = normalizedDevServerImage
+    }
+    if (setupScriptsChanged) {
+      devServer.setupScripts = normalizedDevServerSetupScripts
     }
     if (startCommandChanged) {
       devServer.startCommand = normalizedDevServerStartCommand

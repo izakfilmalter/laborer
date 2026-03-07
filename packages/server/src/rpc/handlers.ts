@@ -109,6 +109,7 @@ export const handleConfigUpdate = ({
       | {
           dockerfile?: string | undefined
           image?: string | undefined
+          setupScripts?: readonly string[] | undefined
           startCommand?: string | undefined
           workdir?: string | undefined
         }
@@ -125,6 +126,13 @@ export const handleConfigUpdate = ({
       (config.setupScripts.every((script) => typeof script === 'string') &&
         Array.isArray(config.setupScripts))
 
+    const isValidDevServerSetupScripts =
+      config.devServer?.setupScripts === undefined ||
+      (Array.isArray(config.devServer.setupScripts) &&
+        config.devServer.setupScripts.every(
+          (script) => typeof script === 'string'
+        ))
+
     const isValidDevServer =
       config.devServer === undefined ||
       (typeof config.devServer === 'object' &&
@@ -132,6 +140,7 @@ export const handleConfigUpdate = ({
           typeof config.devServer.image === 'string') &&
         (config.devServer.dockerfile === undefined ||
           typeof config.devServer.dockerfile === 'string') &&
+        isValidDevServerSetupScripts &&
         (config.devServer.startCommand === undefined ||
           typeof config.devServer.startCommand === 'string') &&
         (config.devServer.workdir === undefined ||

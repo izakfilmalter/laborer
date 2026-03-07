@@ -85,6 +85,8 @@ interface DevServerConfig {
   readonly dockerfile?: string | undefined
   /** Base Docker image name (e.g. "node:22"). */
   readonly image?: string | undefined
+  /** Scripts to run inside the container before the start command (e.g. "apt-get install -y python3"). */
+  readonly setupScripts?: readonly string[] | undefined
   /** Command to start the dev server (e.g. "bun dev"). */
   readonly startCommand?: string | undefined
   /** Mount point inside the container. Defaults to "/app". */
@@ -133,6 +135,7 @@ interface ResolvedValue<T> {
 interface ResolvedDevServerConfig {
   readonly dockerfile: ResolvedValue<string | null>
   readonly image: ResolvedValue<string | null>
+  readonly setupScripts: ResolvedValue<readonly string[]>
   readonly startCommand: ResolvedValue<string | null>
   readonly workdir: ResolvedValue<string>
 }
@@ -343,6 +346,9 @@ const applyConfigUpdates = (
     if (updates.devServer.dockerfile !== undefined) {
       merged.dockerfile = updates.devServer.dockerfile
     }
+    if (updates.devServer.setupScripts !== undefined) {
+      merged.setupScripts = [...updates.devServer.setupScripts]
+    }
     if (updates.devServer.startCommand !== undefined) {
       merged.startCommand = updates.devServer.startCommand
     }
@@ -480,6 +486,10 @@ const mergeDevServerConfig = (
     value: null,
     source: 'default',
   }
+  let setupScripts: ResolvedValue<readonly string[]> = {
+    value: ['apt-get update && apt-get install -y python3'],
+    source: 'default',
+  }
   let startCommand: ResolvedValue<string | null> = {
     value: null,
     source: 'default',
@@ -489,19 +499,7 @@ const mergeDevServerConfig = (
     source: 'default',
   }
 
-  for (let i = configLayers.length - 1; i >= 0; i--) {
-    const layer = configLayers[i]
-    if (layer === undefined) {
-      continue
-    }
-    const { config, path } = layer
-
-    if (config.devServer === undefined) {
-      continue
-    }
-
-    const ds = config.devServer
-
+  const applyDevServerLayer = (ds: DevServerConfig, path: string) => {
     if (ds.image !== undefined) {
       image = { value: ds.image, source: path }
       // image and dockerfile are mutually exclusive — setting one clears the other
@@ -516,6 +514,9 @@ const mergeDevServerConfig = (
         image = { value: null, source: 'default' }
       }
     }
+    if (ds.setupScripts !== undefined) {
+      setupScripts = { value: ds.setupScripts, source: path }
+    }
     if (ds.startCommand !== undefined) {
       startCommand = { value: ds.startCommand, source: path }
     }
@@ -524,7 +525,19 @@ const mergeDevServerConfig = (
     }
   }
 
-  return { dockerfile, image, startCommand, workdir }
+  for (let i = configLayers.length - 1; i >= 0; i--) {
+    const layer = configLayers[i]
+    if (layer === undefined) {
+      continue
+    }
+    const { config, path } = layer
+
+    if (config.devServer !== undefined) {
+      applyDevServerLayer(config.devServer, path)
+    }
+  }
+
+  return { dockerfile, image, setupScripts, startCommand, workdir }
 }
 
 /**

@@ -123,6 +123,7 @@ const ConfigResolvedValueNullableString = Schema.Struct({
 const DevServerConfigResponse = Schema.Struct({
   image: ConfigResolvedValueNullableString,
   dockerfile: ConfigResolvedValueNullableString,
+  setupScripts: ConfigResolvedValueStringArray,
   startCommand: ConfigResolvedValueNullableString,
   workdir: ConfigResolvedValueString,
 })
@@ -261,6 +262,7 @@ export class LaborerRpcs extends RpcGroup.make(
           Schema.Struct({
             image: Schema.optional(Schema.String),
             dockerfile: Schema.optional(Schema.String),
+            setupScripts: Schema.optional(Schema.Array(Schema.String)),
             startCommand: Schema.optional(Schema.String),
             workdir: Schema.optional(Schema.String),
           })

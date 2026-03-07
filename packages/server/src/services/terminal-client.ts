@@ -290,7 +290,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           if (resolvedConfig !== null) {
             yield* autoTypeScripts(
               terminalId,
-              resolvedConfig.setupScripts.value,
+              resolvedConfig.devServer.setupScripts.value,
               resolvedConfig.devServer.startCommand.value
             )
           }

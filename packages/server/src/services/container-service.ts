@@ -177,6 +177,8 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
                   '-d',
                   '--name',
                   name,
+                  '--network',
+                  'host',
                   '-v',
                   `${worktreePath}:${workdir}`,
                   '-w',

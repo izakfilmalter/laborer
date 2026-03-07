@@ -442,8 +442,8 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             })
           }
 
-          // 2. Containerized workspace: spawn shell inside Docker container
-          if (workspace.containerId != null) {
+          // 2. Dev server terminal in containerized workspace: spawn inside container
+          if (workspace.containerId != null && autoRun === true) {
             return yield* spawnContainerTerminal(
               workspace,
               workspaceId,
@@ -452,7 +452,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             )
           }
 
-          // 3. Non-containerized workspace: host PTY spawn (existing behavior)
+          // 3. Regular terminal: always spawn on host (even for containerized workspaces)
           return yield* spawnHostTerminal(workspace, workspaceId, command)
         }
       )

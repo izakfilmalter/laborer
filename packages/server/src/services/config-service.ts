@@ -490,6 +490,7 @@ const mergeDevServerConfig = (
     value: [
       'apt-get update && apt-get install -y python3',
       'bun add -g pnpm',
+      'pnpm install --force',
       'exec bash',
     ],
     source: 'default',

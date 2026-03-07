@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { RpcError } from '@laborer/shared/rpc'
 import { Context, Effect, Layer } from 'effect'
+import { withFsmonitorDisabled } from './repo-watching-git.js'
 
 export interface DetectedWorktree {
   readonly branch: string | null
@@ -103,24 +104,29 @@ const runGit = (
         readonly stderr: string
         readonly stdout: string
       }>((resolve) => {
-        execFile('git', [...args], { cwd }, (error, stdout, stderr) => {
-          if (error) {
-            const code =
-              typeof error.code === 'number' ? error.code : Number(error.code)
+        execFile(
+          'git',
+          withFsmonitorDisabled(args),
+          { cwd },
+          (error, stdout, stderr) => {
+            if (error) {
+              const code =
+                typeof error.code === 'number' ? error.code : Number(error.code)
+              resolve({
+                exitCode: Number.isFinite(code) ? code : 1,
+                stdout: stdout ?? '',
+                stderr: stderr ?? '',
+              })
+              return
+            }
+
             resolve({
-              exitCode: Number.isFinite(code) ? code : 1,
+              exitCode: 0,
               stdout: stdout ?? '',
               stderr: stderr ?? '',
             })
-            return
           }
-
-          resolve({
-            exitCode: 0,
-            stdout: stdout ?? '',
-            stderr: stderr ?? '',
-          })
-        })
+        )
       }),
     catch: (error) =>
       new RpcError({
@@ -170,7 +176,7 @@ class WorktreeDetector extends Context.Tag('@laborer/WorktreeDetector')<
           .map((block) => {
             const normalized = normalizePath(block.path)
             return {
-              path: block.path,
+              path: normalized,
               head: block.head,
               branch: block.branch,
               isMain:

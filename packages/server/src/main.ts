@@ -28,10 +28,12 @@ import { env } from '@laborer/env/server'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import { Effect, Layer } from 'effect'
 import { LaborerRpcsLive } from './rpc/handlers.js'
+import { BranchStateTracker } from './services/branch-state-tracker.js'
 import { ConfigService } from './services/config-service.js'
 import { ContainerService } from './services/container-service.js'
 import { DiffService } from './services/diff-service.js'
 import { DockerDetection } from './services/docker-detection.js'
+import { FileWatcher } from './services/file-watcher.js'
 import { GithubTaskImporter } from './services/github-task-importer.js'
 import { LaborerStoreLive } from './services/laborer-store.js'
 import { LinearTaskImporter } from './services/linear-task-importer.js'
@@ -39,13 +41,15 @@ import { McpRegistrar } from './services/mcp-registrar.js'
 import { PortAllocator } from './services/port-allocator.js'
 import { PrdStorageService } from './services/prd-storage-service.js'
 import { ProjectRegistry } from './services/project-registry.js'
+import { RepositoryEventBus } from './services/repository-event-bus.js'
+import { RepositoryIdentity } from './services/repository-identity.js'
+import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
 import { SyncRpcLive } from './services/sync-backend.js'
 import { TaskManager } from './services/task-manager.js'
 import { TerminalClient } from './services/terminal-client.js'
 import { WorkspaceProvider } from './services/workspace-provider.js'
 import { WorktreeDetector } from './services/worktree-detector.js'
 import { WorktreeReconciler } from './services/worktree-reconciler.js'
-import { WorktreeWatcher } from './services/worktree-watcher.js'
 
 /**
  * Custom HTTP Routes
@@ -125,10 +129,15 @@ const HttpLiveBase = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
 )
 
 const HttpLive = HttpLiveBase.pipe(
-  Layer.provide(WorktreeWatcher.layer),
+  Layer.provide(RepositoryWatchCoordinator.layer),
+  Layer.provide(BranchStateTracker.layer),
+  Layer.provide(ConfigService.layer),
+  Layer.provide(RepositoryEventBus.layer),
+  Layer.provide(FileWatcher.layer),
   Layer.provide(WorktreeReconciler.layer),
   Layer.provide(WorktreeDetector.layer),
   Layer.provide(PortAllocator.layer),
+  Layer.provide(RepositoryIdentity.layer),
   // --- Infrastructure layers ---
   Layer.provide(RpcSerialization.layerJson),
   Layer.provide(LaborerStoreLive),

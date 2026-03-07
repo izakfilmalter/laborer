@@ -73,6 +73,8 @@ describe('LiveStore schema', () => {
         assert.deepStrictEqual(createdProject[0], {
           id: 'project-1',
           repoPath: '/tmp/project-1',
+          repoId: null,
+          canonicalGitCommonDir: null,
           name: 'Project One',
           rlphConfig: null,
         })
@@ -82,6 +84,45 @@ describe('LiveStore schema', () => {
         assert.deepStrictEqual(
           store.query(tables.projects.where('id', 'project-1')),
           []
+        )
+      })
+  )
+
+  it.scoped(
+    'backfills persisted repository identity onto existing projects',
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTestStore
+
+        store.commit(
+          events.projectCreated({
+            id: 'project-1',
+            repoPath: '/tmp/project-1',
+            name: 'Project One',
+            rlphConfig: null,
+          })
+        )
+        store.commit(
+          events.projectRepositoryIdentityBackfilled({
+            id: 'project-1',
+            repoPath: '/private/tmp/project-1',
+            repoId: 'repo-1',
+            canonicalGitCommonDir: '/private/tmp/project-1/.git',
+          })
+        )
+
+        assert.deepStrictEqual(
+          store.query(tables.projects.where('id', 'project-1')),
+          [
+            {
+              id: 'project-1',
+              repoPath: '/private/tmp/project-1',
+              repoId: 'repo-1',
+              canonicalGitCommonDir: '/private/tmp/project-1/.git',
+              name: 'Project One',
+              rlphConfig: null,
+            },
+          ]
         )
       })
   )

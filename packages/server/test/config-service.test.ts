@@ -550,6 +550,46 @@ describe('ConfigService', () => {
         })
     )
 
+    it.effect(
+      'should persist and read back watchIgnore patterns via writeProjectConfig',
+      () =>
+        Effect.gen(function* () {
+          const projectDir = join(testRoot, 'write-watch-ignore')
+          mkdirSync(projectDir, { recursive: true })
+
+          const service = yield* ConfigService
+          yield* service.writeProjectConfig(projectDir, {
+            watchIgnore: ['.cache', 'tmp', '.myBuildOutput'],
+          })
+
+          // Verify the file was written correctly
+          const rawContent = JSON.parse(
+            readFileSync(join(projectDir, CONFIG_FILE_NAME), 'utf-8')
+          ) as { watchIgnore?: readonly string[] }
+          assert.deepStrictEqual(rawContent.watchIgnore, [
+            '.cache',
+            'tmp',
+            '.myBuildOutput',
+          ])
+
+          // Verify it can be read back via resolveConfig
+          const result = yield* service.resolveConfig(
+            projectDir,
+            'watchignore-roundtrip'
+          )
+          assert.deepStrictEqual(result.watchIgnore.value, [
+            '.cache',
+            'tmp',
+            '.myBuildOutput',
+          ])
+          assert.include(
+            result.watchIgnore.source,
+            'laborer.json',
+            'Source should reference the config file'
+          )
+        }).pipe(Effect.provide(ConfigService.layer))
+    )
+
     it.effect('should write and read back devServer config', () =>
       Effect.gen(function* () {
         const projectDir = join(testRoot, 'write-devserver-roundtrip')

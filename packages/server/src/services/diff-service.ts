@@ -2,8 +2,9 @@
  * DiffService — Effect Service
  *
  * Monitors active workspaces for file changes by running `git diff`
- * in their worktree directories. Supports both on-demand diffing and
- * automatic polling on a configurable interval.
+ * in their worktree directories. Supports both on-demand diffing,
+ * automatic polling on a configurable interval, and event-driven
+ * invalidation from the RepositoryEventBus.
  *
  * Responsibilities:
  * - Run `git diff` in a workspace's worktree directory
@@ -12,6 +13,14 @@
  * - Commit DiffUpdated events to LiveStore
  * - Poll on interval (default 2s) for active workspaces
  * - Start/stop polling per workspace
+ * - Subscribe to RepositoryEventBus for event-driven diff refresh
+ *   when file changes are detected, reducing latency vs pure polling
+ *
+ * The event-driven path triggers a debounced diff refresh for all
+ * actively-polled workspaces belonging to the project that emitted
+ * the file event. This supplements polling — it does not replace it —
+ * so diffs remain up to date even if the watcher is temporarily
+ * degraded.
  *
  * Usage:
  * ```ts
@@ -45,9 +54,14 @@ import {
   Layer,
   pipe,
   Ref,
+  Runtime,
   Schedule,
 } from 'effect'
 import { LaborerStore } from './laborer-store.js'
+import {
+  RepositoryEventBus,
+  type RepositoryFileEvent,
+} from './repository-event-bus.js'
 
 /**
  * Shape of a diff result returned by the service.
@@ -64,6 +78,17 @@ interface DiffResult {
  * The PRD specifies 1-2 seconds; we default to 2 seconds.
  */
 const DEFAULT_POLL_INTERVAL_MS = 2000
+
+/**
+ * Debounce interval for event-driven diff invalidation.
+ *
+ * When the RepositoryEventBus publishes file events, the DiffService
+ * coalesces rapid changes per-project before running `getDiff` for
+ * affected workspaces. This prevents overwhelming git during heavy
+ * churn (e.g. branch switch, dependency install) while still being
+ * more responsive than the 2-second polling interval.
+ */
+const EVENT_DEBOUNCE_MS = 300
 
 /**
  * Helper: spawn a git command in a worktree and capture stdout/stderr.
@@ -149,10 +174,13 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
     readonly isPolling: (workspaceId: string) => Effect.Effect<boolean>
   }
 >() {
-  static readonly layer = Layer.effect(
+  static readonly layer = Layer.scoped(
     DiffService,
     Effect.gen(function* () {
       const { store } = yield* LaborerStore
+      const eventBus = yield* RepositoryEventBus
+      const runtime = yield* Effect.runtime<never>()
+      const runPromise = Runtime.runPromise(runtime)
 
       // Track active polling fibers per workspace.
       // Uses Ref for fiber-safe concurrent access.
@@ -461,6 +489,90 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
         const currentFibers = yield* Ref.get(pollingFibers)
         return currentFibers.has(workspaceId)
       })
+
+      // ── Event-driven diff invalidation ─────────────────────
+      //
+      // Subscribe to the RepositoryEventBus so file changes
+      // trigger an immediate (debounced) diff refresh for any
+      // actively-polled workspaces belonging to the affected
+      // project. This supplements polling — it does not
+      // replace it — so diffs remain fresh even if the watcher
+      // is temporarily degraded.
+
+      /** Pending per-project debounce timers for event-driven refresh. */
+      const eventDebounceTimers = new Map<
+        string,
+        ReturnType<typeof setTimeout>
+      >()
+
+      /**
+       * Refresh diffs for all actively-polled workspaces in a
+       * project. Errors are logged and swallowed so they never
+       * crash the event handler or the polling loop.
+       */
+      const refreshProjectDiffs = (projectId: string): void => {
+        const activeWorkspaces = store
+          .query(tables.workspaces)
+          .filter(
+            (w) =>
+              w.projectId === projectId &&
+              (w.status === 'running' || w.status === 'creating')
+          )
+
+        runPromise(Ref.get(pollingFibers))
+          .then((fibers: Map<string, Fiber.RuntimeFiber<void, never>>) => {
+            for (const workspace of activeWorkspaces) {
+              if (fibers.has(workspace.id)) {
+                runPromise(
+                  getDiff(workspace.id).pipe(
+                    Effect.catchAll((error) =>
+                      Effect.logWarning(
+                        `DiffService event-driven refresh error for workspace ${workspace.id}: ${error.message}`
+                      )
+                    )
+                  )
+                ).catch(() => undefined)
+              }
+            }
+          })
+          .catch(() => undefined)
+      }
+
+      /**
+       * Handle a file event from the RepositoryEventBus.
+       * Debounces per project to coalesce rapid changes.
+       */
+      const handleRepoFileEvent = (event: RepositoryFileEvent): void => {
+        const existing = eventDebounceTimers.get(event.projectId)
+        if (existing !== undefined) {
+          clearTimeout(existing)
+        }
+
+        eventDebounceTimers.set(
+          event.projectId,
+          setTimeout(() => {
+            eventDebounceTimers.delete(event.projectId)
+            refreshProjectDiffs(event.projectId)
+          }, EVENT_DEBOUNCE_MS)
+        )
+      }
+
+      // Wire the subscription. The bus handler is synchronous
+      // and non-blocking — the actual git work runs in the
+      // background via runPromise.
+      const subscription = yield* eventBus.subscribe(handleRepoFileEvent)
+
+      // Clean up the subscription when the service scope closes.
+      // Also clear any pending debounce timers.
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          subscription.unsubscribe()
+          for (const timer of eventDebounceTimers.values()) {
+            clearTimeout(timer)
+          }
+          eventDebounceTimers.clear()
+        })
+      )
 
       return DiffService.of({
         getDiff,

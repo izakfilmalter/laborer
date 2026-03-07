@@ -101,6 +101,7 @@ interface LaborerConfig {
   readonly prdsDir?: string
   readonly rlphConfig?: string
   readonly setupScripts?: readonly string[]
+  readonly watchIgnore?: readonly string[]
   readonly worktreeDir?: string
 }
 
@@ -110,6 +111,7 @@ interface ProjectConfigUpdates {
   readonly prdsDir?: string | undefined
   readonly rlphConfig?: string | undefined
   readonly setupScripts?: readonly string[] | undefined
+  readonly watchIgnore?: readonly string[] | undefined
   readonly worktreeDir?: string | undefined
 }
 
@@ -145,6 +147,12 @@ interface ResolvedLaborerConfig {
   readonly prdsDir: ResolvedValue<string>
   readonly rlphConfig: ResolvedValue<string | null>
   readonly setupScripts: ResolvedValue<readonly string[]>
+  /**
+   * Additional ignore patterns appended to the default set.
+   * These are first-segment prefixes (e.g. ".cache", "tmp")
+   * that suppress watcher events from noisy directories.
+   */
+  readonly watchIgnore: ResolvedValue<readonly string[]>
   /** Absolute path with `~` already expanded. */
   readonly worktreeDir: ResolvedValue<string>
 }
@@ -314,6 +322,10 @@ const applyConfigUpdates = (
 
   if (updates.rlphConfig !== undefined) {
     next.rlphConfig = updates.rlphConfig
+  }
+
+  if (updates.watchIgnore !== undefined) {
+    next.watchIgnore = [...updates.watchIgnore]
   }
 
   if (updates.devServer !== undefined) {
@@ -546,6 +558,10 @@ const mergeConfigs = (
     value: null,
     source: 'default',
   }
+  let watchIgnore: ResolvedValue<readonly string[]> = {
+    value: [],
+    source: 'default',
+  }
 
   // Walk from farthest to closest (global -> ancestors -> project root).
   // Closest wins, so we iterate in reverse and each closer layer overwrites.
@@ -589,11 +605,25 @@ const mergeConfigs = (
         source: path,
       }
     }
+
+    if (config.watchIgnore !== undefined) {
+      watchIgnore = {
+        value: config.watchIgnore,
+        source: path,
+      }
+    }
   }
 
   const devServer = mergeDevServerConfig(configLayers)
 
-  return { devServer, prdsDir, worktreeDir, setupScripts, rlphConfig }
+  return {
+    devServer,
+    prdsDir,
+    worktreeDir,
+    setupScripts,
+    rlphConfig,
+    watchIgnore,
+  }
 }
 
 // ---------------------------------------------------------------------------

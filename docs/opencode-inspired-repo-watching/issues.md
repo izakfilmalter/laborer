@@ -20,11 +20,11 @@ This slice should wire the new repository identity service into project add flow
 
 ### Acceptance criteria
 
-- [ ] Adding a repo root registers a project using canonical repository metadata rather than raw user input
-- [ ] Adding a nested directory inside an already-registered repo does not create a duplicate project
-- [ ] Adding a symlinked path to an already-registered repo does not create a duplicate project
-- [ ] Repository identity is exposed through an Effect tagged service and wired through Layers
-- [ ] Integration tests cover repo root, nested path, and symlink path registration cases
+- [x] Adding a repo root registers a project using canonical repository metadata rather than raw user input
+- [x] Adding a nested directory inside an already-registered repo does not create a duplicate project
+- [x] Adding a symlinked path to an already-registered repo does not create a duplicate project
+- [x] Repository identity is exposed through an Effect tagged service and wired through Layers
+- [x] Integration tests cover repo root, nested path, and symlink path registration cases
 
 ### Blocked by
 
@@ -59,11 +59,11 @@ This slice should keep `git worktree list --porcelain` as the source of truth, m
 
 ### Acceptance criteria
 
-- [ ] Worktree reconciliation uses canonical repo identity and canonical worktree paths
-- [ ] Linked worktrees living outside the main checkout still reconcile under the correct project
-- [ ] Reconciliation does not create duplicate workspaces due to path representation differences
-- [ ] Worktree reconciliation is exposed through an Effect tagged service boundary
-- [ ] Real-git integration tests cover shared git dir and canonical path matching cases
+- [x] Worktree reconciliation uses canonical repo identity and canonical worktree paths
+- [x] Linked worktrees living outside the main checkout still reconcile under the correct project
+- [x] Reconciliation does not create duplicate workspaces due to path representation differences
+- [x] Worktree reconciliation is exposed through an Effect tagged service boundary
+- [x] Real-git integration tests cover shared git dir and canonical path matching cases
 
 ### Blocked by
 
@@ -99,11 +99,11 @@ This slice should replace the assumption that `fs.watch` is enough with an abstr
 
 ### Acceptance criteria
 
-- [ ] Each registered project gets a scoped watcher coordinator tied to its lifecycle
-- [ ] The coordinator watches both the canonical repo root and canonical common git dir
-- [ ] Removing a project tears down its watchers cleanly
-- [ ] Server shutdown tears down watcher resources cleanly through scoped service disposal
-- [ ] Integration tests verify watcher setup and teardown through public service behavior
+- [x] Each registered project gets a scoped watcher coordinator tied to its lifecycle
+- [x] The coordinator watches both the canonical repo root and canonical common git dir
+- [x] Removing a project tears down its watchers cleanly
+- [x] Server shutdown tears down watcher resources cleanly through scoped service disposal
+- [x] Integration tests verify watcher setup and teardown through public service behavior
 
 ### Blocked by
 
@@ -139,11 +139,11 @@ This slice should add the `BranchStateTracker` behavior and connect git-dir watc
 
 ### Acceptance criteria
 
-- [ ] Git metadata watch events trigger git-backed refresh work instead of direct state mutation
-- [ ] Branch changes update externally visible branch state through a dedicated service boundary
-- [ ] Worktree metadata changes trigger reconciliation through the watcher coordinator
-- [ ] Debouncing/coalescing prevents repeated rapid metadata events from thrashing refresh work
-- [ ] Integration tests cover branch switch and external worktree add/remove scenarios
+- [x] Git metadata watch events trigger git-backed refresh work instead of direct state mutation
+- [x] Branch changes update externally visible branch state through a dedicated service boundary
+- [x] Worktree metadata changes trigger reconciliation through the watcher coordinator
+- [x] Debouncing/coalescing prevents repeated rapid metadata events from thrashing refresh work
+- [x] Integration tests cover branch switch and external worktree add/remove scenarios
 
 ### Blocked by
 
@@ -180,11 +180,11 @@ This slice should also centralize ignore handling so dependency folders, build o
 
 ### Acceptance criteria
 
-- [ ] Repo-wide file watching emits normalized add/change/delete events through an Effect-managed event bus
-- [ ] The event bus can be consumed by downstream services without creating duplicate watchers
-- [ ] Ignore rules suppress git internals and other configured noisy paths
-- [ ] Watcher events are treated as invalidation signals and not as direct source-of-truth state
-- [ ] Integration tests cover file add/change/delete events and ignored-path behavior
+- [x] Repo-wide file watching emits normalized add/change/delete events through an Effect-managed event bus
+- [x] The event bus can be consumed by downstream services without creating duplicate watchers
+- [x] Ignore rules suppress git internals and other configured noisy paths
+- [x] Watcher events are treated as invalidation signals and not as direct source-of-truth state
+- [x] Integration tests cover file add/change/delete events and ignored-path behavior
 
 ### Blocked by
 
@@ -220,11 +220,11 @@ This slice makes the new architecture the default path through the app rather th
 
 ### Acceptance criteria
 
-- [ ] Project add flow performs canonical discovery and initial refresh before returning ready state
-- [ ] Project add starts the repository watcher coordinator for the resolved logical repo
-- [ ] Server boot restores watchers for all persisted projects
-- [ ] Server boot reconciles worktree and branch state that changed while offline
-- [ ] Integration tests cover project add and server restart flows through public APIs
+- [x] Project add flow performs canonical discovery and initial refresh before returning ready state
+- [x] Project add starts the repository watcher coordinator for the resolved logical repo
+- [x] Server boot restores watchers for all persisted projects
+- [x] Server boot reconciles worktree and branch state that changed while offline
+- [x] Integration tests cover project add and server restart flows through public APIs
 
 ### Blocked by
 
@@ -258,11 +258,11 @@ This slice focuses on the non-happy-path behavior that makes the OpenCode-inspir
 
 ### Acceptance criteria
 
-- [ ] Correctness-sensitive git reads disable fsmonitor where needed
-- [ ] Watched directories can be deleted and recreated without permanently breaking sync
-- [ ] Heavy churn scenarios are coalesced into stable refresh behavior
-- [ ] Watcher degradation surfaces as warnings or diagnostics without stopping the app
-- [ ] Integration tests cover recovery and high-churn scenarios
+- [x] Correctness-sensitive git reads disable fsmonitor where needed
+- [x] Watched directories can be deleted and recreated without permanently breaking sync
+- [x] Heavy churn scenarios are coalesced into stable refresh behavior
+- [x] Watcher degradation surfaces as warnings or diagnostics without stopping the app
+- [x] Integration tests cover recovery and high-churn scenarios
 
 ### Blocked by
 
@@ -282,6 +282,10 @@ This slice focuses on the non-happy-path behavior that makes the OpenCode-inspir
 
 ## Issue 8: Polish and verification pass for the full repo-watching stack
 
+### Status
+
+In progress
+
 ### Parent PRD
 
 PRD-opencode-inspired-repo-watching.md
@@ -296,13 +300,13 @@ Run the full verification and polish pass for the OpenCode-inspired repository w
 
 ### Acceptance criteria
 
-- [ ] Adding nested or symlinked paths produces a clear non-duplicate outcome
+- [x] Adding nested or symlinked paths produces a clear non-duplicate outcome
 - [ ] Repository and workspace state update smoothly during rapid worktree churn
-- [ ] Branch indicators refresh promptly after branch switches
-- [ ] Ignored paths stay quiet and do not trigger noisy refresh work
-- [ ] Project removal and shutdown leave no lingering watcher resources
-- [ ] Diagnostics or warnings for degraded watcher behavior are actionable and non-blocking
-- [ ] Final end-to-end test coverage reflects the shipped repo-watching behavior
+- [x] Branch indicators refresh promptly after branch switches
+- [x] Ignored paths stay quiet and do not trigger noisy refresh work
+- [x] Project removal and shutdown leave no lingering watcher resources
+- [x] Diagnostics or warnings for degraded watcher behavior are actionable and non-blocking
+- [x] Final end-to-end test coverage reflects the shipped repo-watching behavior
 
 ### Blocked by
 

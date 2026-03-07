@@ -4,21 +4,31 @@ import { assert, describe, it } from '@effect/vitest'
 import { tables } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
+import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
+import { ConfigService } from '../src/services/config-service.js'
+import { FileWatcher } from '../src/services/file-watcher.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { PortAllocator } from '../src/services/port-allocator.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
+import { RepositoryEventBus } from '../src/services/repository-event-bus.js'
+import { RepositoryIdentity } from '../src/services/repository-identity.js'
+import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
-import { WorktreeWatcher } from '../src/services/worktree-watcher.js'
 import { git, initRepo } from './helpers/git-helpers.js'
 import { TestLaborerStore } from './helpers/test-store.js'
 
 const tempRoots: string[] = []
 
 const TestLayer = ProjectRegistry.layer.pipe(
-  Layer.provide(WorktreeWatcher.layer),
+  Layer.provide(RepositoryWatchCoordinator.layer),
+  Layer.provide(BranchStateTracker.layer),
+  Layer.provide(ConfigService.layer),
+  Layer.provide(RepositoryEventBus.layer),
+  Layer.provide(FileWatcher.layer),
   Layer.provide(WorktreeReconciler.layer),
   Layer.provide(WorktreeDetector.layer),
+  Layer.provide(RepositoryIdentity.layer),
   Layer.provide(PortAllocator.make(4200, 4210)),
   Layer.provideMerge(TestLaborerStore)
 )

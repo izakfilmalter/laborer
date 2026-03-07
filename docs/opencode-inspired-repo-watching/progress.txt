@@ -1,0 +1,463 @@
+## Issue 1: Canonical repository identity tracer bullet — COMPLETED
+
+### What was done
+- Created `RepositoryIdentity` Effect service (`packages/server/src/services/repository-identity.ts`)
+  - Resolves canonical repo metadata (checkout root, git common dir, repoId, isMainWorktree)
+  - Uses `git rev-parse --show-toplevel`, `--git-common-dir`, and `--git-dir`
+  - Canonicalizes all paths through `realpathSync` to collapse symlinks
+  - Derives stable 16-char repoId from SHA-256 of canonical git common dir
+  - Exposes tagged Effect service `@laborer/RepositoryIdentity` with Layer
+
+- Updated `ProjectRegistry` to use `RepositoryIdentity` for canonical path resolution
+  - `addProject` now resolves canonical root before storing, preventing duplicates from
+    nested paths, symlinks, or alternate path representations
+  - Duplicate detection compares against canonical root instead of raw user input
+  - Error mapping distinguishes INVALID_PATH vs NOT_GIT_REPO codes
+
+- Wired `RepositoryIdentity.layer` into main.ts and all test layers that compose
+  ProjectRegistry (project-registry tests, workspace-destroy tests, RPC test layers)
+
+- Updated existing tests to handle canonical paths (macOS /var → /private/var)
+  - `project-management.test.ts`: uses realpathSync for canonical path assertions
+  - `config-management.test.ts`: uses realpathSync for config source path assertions
+
+- Added comprehensive integration tests (`packages/server/test/repository-identity.test.ts`)
+  - 7 RepositoryIdentity tests: repo root, nested path, symlink, linked worktree,
+    non-existent path, non-git dir, shared git dir across multiple worktrees
+  - 3 ProjectRegistry deduplication tests: canonical path storage, nested path dedup,
+    symlink dedup
+
+### Verification
+- All 135 tests pass (23 test files)
+- TypeScript compiles with no errors
+- Ultracite lint passes with no issues
+
+## Issue 2: Canonical worktree reconciliation with shared git dir support — COMPLETED
+
+### What was done
+- Updated `WorktreeDetector` to return canonical (realpath-resolved) paths in
+  `DetectedWorktree.path` instead of raw git-reported paths
+  - Changed `worktree-detector.ts` to use the normalized path in the output object
+    rather than the raw `block.path`
+
+- Updated `WorktreeReconciler` to use `RepositoryIdentity` for canonical path resolution
+  - Added `RepositoryIdentity` as an Effect service dependency
+  - `reconcile()` now resolves canonical repo path via `RepositoryIdentity.resolve()`
+    before running detection, so any path representation works as input
+  - Existing workspace `worktreePath` values are canonicalized during comparison
+    (via `realpathSync`) to prevent false adds/removes from path differences
+  - Newly created workspace records store canonical paths
+  - Added `canonicalize` helper function for consistent path normalization
+
+- Updated Layer composition throughout the codebase to thread `RepositoryIdentity`
+  through `WorktreeReconciler`'s dependency chain:
+  - `main.ts`: moved `RepositoryIdentity.layer` below `WorktreeReconciler.layer`
+  - `worktree-reconciler.test.ts`: added `RepositoryIdentity.layer` to TestLayer
+  - `worktree-watcher.test.ts`: added `RepositoryIdentity.layer` to TestLayer
+  - `project-registry.worktree-detection.test.ts`: reordered layer composition
+  - `repository-identity.test.ts`: reordered layer composition
+  - `workspace-destroy-origin.test.ts`: reordered layer composition
+  - `rpc/test-layer.ts`: reordered both RPC test layers
+
+- Added 5 new integration tests in `worktree-reconciler.test.ts`:
+  - Stores canonical worktree paths in workspace records
+  - Reconciles linked worktrees outside the main checkout under the correct project
+  - Does not create duplicate workspaces when reconciling with symlinked repo path
+  - Canonicalizes existing workspace paths when comparing against detected worktrees
+  - Reconciles worktrees with shared git dir consistently across multiple worktrees
+
+### Verification
+- All 140 tests pass (23 test files)
+- TypeScript compiles with no errors
+- Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)
+
+## Issue 3: Scoped repository watcher coordinator — COMPLETED
+
+### What was done
+- Created `FileWatcher` abstracted watcher backend (`packages/server/src/services/file-watcher.ts`)
+  - Platform-independent interface wrapping `fs.watch` behind a tagged Effect service
+  - Exposes `subscribe(path, onChange, onError, options)` returning a `WatchSubscription` handle
+  - Designed to be swappable with `@parcel/watcher` or other native backends
+  - Default `Layer.succeed` implementation using Node.js `fs.watch`
+
+- Created `RepositoryWatchCoordinator` scoped Effect service
+  (`packages/server/src/services/repository-watch-coordinator.ts`)
+  - Owns all watcher lifecycle for each registered repository
+  - Subscribes to canonical common git directory for metadata changes
+  - Uses `RepositoryIdentity` for canonical path resolution (not raw paths)
+  - Debounces filesystem events (500ms) before triggering reconciliation
+  - Two-phase git dir watching: watches `.git` initially, switches to
+    `.git/worktrees` when the subdirectory appears
+  - `watchProject(projectId, repoPath)` — idempotent, replaces previous watchers
+  - `unwatchProject(projectId)` — tears down subscriptions and clears timers
+  - `watchAll()` — reconciles and watches all persisted projects (startup bootstrap)
+  - `Effect.addFinalizer` ensures all watchers close on scope disposal
+
+- Replaced `WorktreeWatcher` with `RepositoryWatchCoordinator` throughout:
+  - `ProjectRegistry` now depends on `RepositoryWatchCoordinator` instead of `WorktreeWatcher`
+  - `main.ts` layer graph updated: `RepositoryWatchCoordinator.layer` + `FileWatcher.layer`
+    replace `WorktreeWatcher.layer`
+  - All test layers updated (worktree-watcher.test.ts, repository-identity.test.ts,
+    project-registry.worktree-detection.test.ts, workspace-destroy-origin.test.ts,
+    rpc/test-layer.ts)
+
+- Added 5 new integration tests (`packages/server/test/repository-watch-coordinator.test.ts`)
+  - Each registered project gets a scoped watcher coordinator tied to its lifecycle
+  - Coordinator watches the canonical common git dir for metadata changes
+  - Removing a project tears down its watchers cleanly (no detection after unwatch)
+  - Server shutdown tears down all watcher resources through scoped service disposal
+    (verified via recording FileWatcher mock)
+  - FileWatcher abstraction is used for subscriptions instead of raw fs.watch
+    (verified via recording FileWatcher mock)
+
+- Preserved all existing worktree-watcher behavior (4 tests renamed but unchanged):
+  - Reconciles on worktree add and remove
+  - unwatchProject stops future reconciliation
+  - watchAll reconciles existing projects and starts watchers
+  - Handles repos with no .git/worktrees until first linked worktree
+
+### Verification
+- All 145 tests pass (24 test files)
+- TypeScript compiles with no errors
+- Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)
+
+## Issue 4: Git metadata refresh for branch and worktree changes — COMPLETED
+
+### What was done
+- Added `workspaceBranchChanged` event to LiveStore schema (`packages/shared/src/schema.ts`)
+  - New synced event `v1.WorkspaceBranchChanged` with `id` and `branchName` fields
+  - Materializer updates the `branchName` column on the `workspaces` table
+  - Enables updating branch names on existing workspace records (previously only
+    set at creation time and never updated)
+
+- Created `BranchStateTracker` Effect service (`packages/server/src/services/branch-state-tracker.ts`)
+  - Reads current branch for each workspace via `git rev-parse --abbrev-ref HEAD`
+  - Compares git-reported branch with stored `branchName` in the workspace record
+  - Commits `workspaceBranchChanged` events for any stale branch names
+  - Handles detached HEAD state (formats as `detached/<short-sha>`)
+  - Skips destroyed workspaces during refresh
+  - Returns `BranchRefreshResult` with `checked` and `updated` counts
+
+- Updated `RepositoryWatchCoordinator` to integrate branch refresh
+  (`packages/server/src/services/repository-watch-coordinator.ts`)
+  - Added `BranchStateTracker` as a service dependency
+  - Event classification: git dir events are now classified by concern using
+    `isBranchRelatedEvent()` and `isWorktreeRelatedEvent()` helper functions
+  - Branch-related files: HEAD, MERGE_HEAD, REBASE_HEAD, ORIG_HEAD, FETCH_HEAD,
+    and anything under `refs/` trigger branch refresh
+  - Worktree-related files: `worktrees/` directory changes trigger reconciliation
+  - Per-concern debouncing: separate `worktreeTimer` and `branchTimer` on each
+    `ProjectWatcherState` so branch refresh and worktree reconciliation debounce
+    independently (both at 500ms)
+  - `watchAll()` now runs both initial reconciliation AND initial branch refresh
+    at startup
+  - Watcher error handlers schedule both reconcile and branch refresh
+
+- Wired `BranchStateTracker.layer` into the layer graph across the codebase:
+  - `main.ts`: added between `RepositoryWatchCoordinator.layer` and `FileWatcher.layer`
+  - All test layers updated with import and layer provision:
+    - `repository-watch-coordinator.test.ts` (main TestLayer + 2 inline ScopedTestLayers)
+    - `worktree-watcher.test.ts`
+    - `project-registry.worktree-detection.test.ts`
+    - `workspace-destroy-origin.test.ts`
+    - `repository-identity.test.ts`
+    - `rpc/test-layer.ts` (both RPC test layer variants)
+
+- Added 7 new integration tests (`packages/server/test/branch-state-tracker.test.ts`)
+  - BranchStateTracker unit tests (5):
+    - Refreshes branch name when workspace branch is stale
+    - Does not update when branch name is already current
+    - Refreshes multiple workspaces in one pass
+    - Skips destroyed workspaces during branch refresh
+    - Detects detached HEAD state during branch refresh
+  - Coordinator integration tests (2):
+    - Branch switch on main worktree triggers branch refresh through the coordinator
+    - Worktree metadata changes trigger both reconciliation and branch refresh
+
+### Verification
+- All 152 tests pass (25 test files)
+- TypeScript compiles with no errors
+- Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)
+
+## Issue 5: Repo-wide file events with normalized event bus and ignores — COMPLETED
+
+### What was done
+- Created `RepositoryEventBus` Effect service (`packages/server/src/services/repository-event-bus.ts`)
+  - Publishes normalized add/change/delete file events for repository watching
+  - Stable `RepositoryFileEvent` shape: `{ type, relativePath, absolutePath, projectId, repoRoot }`
+  - Multiple downstream subscribers can consume events without creating duplicate watchers
+  - `subscribe(handler)` returns an `EventBusSubscription` with synchronous `unsubscribe()`
+  - `publish(event)` fans out to all registered handlers
+  - `normalizeEvent(params)` applies ignore rules and returns null for suppressed paths
+
+- Added centralized ignore handling with `shouldIgnore` and `DEFAULT_IGNORED_PREFIXES`
+  - Prefix-based matching against the first path segment of relative paths
+  - Default ignores: `.git`, `node_modules`, `dist`, `build`, `out`, `.next`, `.nuxt`,
+    `.svelte-kit`, `.turbo`, `.yarn`, `.pnpm-store`, `.idea`, `.vscode`, `.DS_Store`,
+    `Thumbs.db`, `coverage`, `.nyc_output`
+  - Both `shouldIgnore` and `DEFAULT_IGNORED_PREFIXES` are exported for testability
+
+- Updated `RepositoryWatchCoordinator` to wire repo-wide file watching
+  (`packages/server/src/services/repository-watch-coordinator.ts`)
+  - Added `RepositoryEventBus` as a service dependency
+  - Added `repoRootSubscription` to `ProjectWatcherState` for repo checkout root watching
+  - New `subscribeRepoRoot(projectId, repoPath)` subscribes to the checkout root
+    with `recursive: true` via `FileWatcher`
+  - Raw watcher events are mapped through `eventBus.normalizeEvent()` — ignored paths
+    are suppressed before publishing, non-ignored events are published via `eventBus.publish()`
+  - `watchProject` now subscribes to both the git dir (metadata) AND the repo root (files)
+  - `closeState` tears down both git dir and repo root subscriptions on project removal
+  - Updated JSDoc header to reflect Issue 5 scope (no longer "future")
+
+- Wired `RepositoryEventBus.layer` into the layer graph across the codebase:
+  - `main.ts`: added between `BranchStateTracker.layer` and `FileWatcher.layer`
+  - All test layers updated with import and layer provision:
+    - `repository-watch-coordinator.test.ts` (main TestLayer + 2 inline ScopedTestLayers)
+    - `branch-state-tracker.test.ts`
+    - `worktree-watcher.test.ts`
+    - `project-registry.worktree-detection.test.ts`
+    - `workspace-destroy-origin.test.ts`
+    - `repository-identity.test.ts`
+    - `rpc/test-layer.ts` (both RPC test layer variants)
+
+- Added 18 new tests (`packages/server/test/repository-event-bus.test.ts`)
+  - shouldIgnore unit tests (7):
+    - Ignores .git paths
+    - Ignores node_modules paths
+    - Ignores dist, build, and out paths
+    - Ignores framework-specific output directories (.next, .nuxt, .svelte-kit, .turbo)
+    - Ignores IDE and OS metadata (.idea, .vscode, .DS_Store)
+    - Does not ignore source files (src/index.ts, packages/server/main.ts, README.md)
+    - Ignores empty paths
+  - RepositoryEventBus unit tests (5):
+    - Subscribers receive published events
+    - Multiple subscribers receive the same event
+    - Unsubscribe removes the handler
+    - normalizeEvent returns null for null fileName
+    - normalizeEvent suppresses ignored paths (.git, node_modules, dist)
+    - normalizeEvent returns event for source files
+  - Watcher integration tests (5):
+    - File add in watched repo emits normalized event through the event bus
+    - File change in watched repo emits event through the event bus
+    - File delete in watched repo emits event through the event bus
+    - Ignored paths do not produce events through the event bus
+    - Multiple subscribers receive events without creating duplicate watchers
+
+### Verification
+- All 170 tests pass (26 test files)
+- TypeScript compiles with no errors
+- Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)
+
+## Issue 6: Startup bootstrap and project lifecycle integration — COMPLETED
+
+### What was done
+- Updated `ProjectRegistry.addProject` to perform initial branch refresh
+  (`packages/server/src/services/project-registry.ts`)
+  - Added `BranchStateTracker` as an Effect service dependency
+  - After worktree reconciliation creates workspace records, `addProject` now
+    calls `branchTracker.refreshBranches(id)` to ensure workspace records have
+    current branch names before the project is returned as ready
+  - Error handling matches existing pattern: logs warning on failure, does not
+    block project creation
+  - Updated JSDoc to reference Issue 6 scope
+
+- Verified existing startup bootstrap infrastructure is already complete:
+  - `RepositoryWatchCoordinator.layer` calls `watchAll()` during construction
+    (line 504), which reconciles worktrees, refreshes branches, and starts
+    watchers for all persisted projects at server boot
+  - `watchAll()` already runs worktree reconciliation AND branch refresh for
+    each persisted project before starting watchers
+  - `addProject` already calls `watchCoordinator.watchProject()` after
+    reconciliation and branch refresh
+
+- Added 5 new integration tests (`packages/server/test/startup-bootstrap.test.ts`)
+  - Project add performs canonical discovery and initial refresh before returning
+    ready state: verifies both worktrees are reconciled and branch names are
+    populated immediately after addProject returns (no async waiting needed)
+  - Project add starts the repository watcher coordinator: verifies that
+    creating a worktree after addProject triggers automatic detection
+  - Server boot restores watchers for all persisted projects: seeds project
+    records, builds coordinator layer (which triggers watchAll), verifies
+    worktree reconciliation ran and watchers are active
+  - Server boot reconciles worktree and branch state that changed while offline:
+    seeds project with stale branch name, adds worktree offline, verifies both
+    new worktree detection and stale branch refresh on startup
+  - Project add through public API returns ready state with all refreshes
+    complete: registers repo with 3 worktrees including a branch-switched one,
+    verifies all workspaces exist with correct branch names immediately
+
+### Verification
+- All 175 tests pass (27 test files)
+- TypeScript compiles with no errors
+- Ultracite lint passes (only pre-existing .opencode/package.json formatting issue)
+- 3 pre-existing flaky filesystem watcher tests may intermittently timeout
+  (worktree-watcher and repository-event-bus timing-dependent tests)
+
+## Issue 7: Correctness hardening for fsmonitor, recovery, and churn — COMPLETED
+
+### What was done
+- Added shared repo-watching git command options in
+  `packages/server/src/services/repo-watching-git.ts`
+  - All correctness-sensitive git reads in the repo-watching stack now run with
+    `-c core.fsmonitor=false`
+  - Wired into `RepositoryIdentity`, `WorktreeDetector`,
+    `WorktreeReconciler`, and `BranchStateTracker`
+
+- Hardened `RepositoryWatchCoordinator` for watcher degradation and recovery
+  (`packages/server/src/services/repository-watch-coordinator.ts`)
+  - Added per-project recovery timers alongside existing debounce timers
+  - Git-dir watcher errors now log warnings, schedule refresh work, and trigger
+    automatic resubscription
+  - Repo-root watcher errors now log warnings and trigger automatic recovery
+  - Missing watch targets now produce warnings and schedule retry instead of
+    silently leaving the project unwatched
+
+- Added focused hardening tests in
+  `packages/server/test/repository-watch-coordinator-hardening.test.ts`
+  - Verifies heavy churn is coalesced into one reconciliation and one branch
+    refresh pass
+  - Verifies watcher degradation causes teardown + resubscription and that sync
+    continues after recovery
+  - Added a small unit test covering the shared fsmonitor-disabled git args
+
+- Stabilized an existing watcher integration test in
+  `packages/server/test/repository-event-bus.test.ts`
+  - Added a short settle delay before writing in the multi-subscriber watcher
+    case to remove an intermittent timing race in the feedback loop
+
+### Verification
+- All 178 server tests pass (28 test files)
+- TypeScript compiles with no errors
+- Ultracite lint passes on the touched server and docs paths
+
+## Issue 8: Clear duplicate-project outcome for canonicalized paths — IN PROGRESS
+
+### What was done
+- Tightened duplicate project registration messaging in
+  `packages/server/src/services/project-registry.ts`
+  - `ALREADY_REGISTERED` errors now explain that the user-supplied path resolves
+    to an already registered canonical repository path
+  - The message includes the existing project name so nested-path and symlink
+    attempts point back to the correct logical project instead of feeling like a
+    generic failure
+
+- Added RPC integration coverage in
+  `packages/server/test/rpc/project-management.test.ts`
+  - Nested path registration returns `ALREADY_REGISTERED` with the original
+    input path, canonical repo path, and project name in the message
+  - Symlinked path registration returns the same clear duplicate outcome
+  - Both cases verify that only one project record exists after the duplicate
+    add attempt
+
+- Updated `docs/opencode-inspired-repo-watching/issues.md`
+  - Marked Issue 8 as in progress
+  - Checked off the acceptance criterion for clear nested/symlink duplicate
+    outcomes
+
+### Verification
+- `bun run test test/rpc/project-management.test.ts` passes (6 tests)
+- `bun run --filter @laborer/server check-types` passes
+- `bun x ultracite check packages/server/src/services/project-registry.ts packages/server/test/rpc/project-management.test.ts` passes
+
+## Issue 8: Branch refresh stays correct with linked worktrees — IN PROGRESS
+
+### What was done
+- Updated `RepositoryWatchCoordinator` in `packages/server/src/services/repository-watch-coordinator.ts`
+  - Keeps watching the git metadata root for `HEAD` and `refs` changes even after linked
+    worktrees exist, instead of switching away from the root watcher
+  - Adds a dedicated recursive watcher for `.git/worktrees` so linked-worktree metadata
+    changes still trigger reconciliation and branch refresh
+  - Cleans up all three watcher subscriptions (git root, worktrees, repo root) together on
+    project unwatch and scope shutdown
+
+- Added coordinator integration coverage in `packages/server/test/branch-state-tracker.test.ts`
+  - Main-checkout branch switches keep refreshing after linked worktrees are present
+  - Linked-worktree branch switches refresh through the dedicated worktrees watcher
+  - Canonical path assertions use `realpathSync` so the tests stay stable on macOS
+
+- Re-verified watcher lifecycle coverage in `packages/server/test/repository-watch-coordinator.test.ts`
+  - Project teardown still stops future reconciliation with the expanded watcher set
+
+- Updated `docs/opencode-inspired-repo-watching/issues.md`
+  - Checked off the acceptance criterion for prompt branch indicator refresh after branch
+    switches
+
+### Verification
+- `bun run test -- test/branch-state-tracker.test.ts test/repository-watch-coordinator.test.ts test/repository-watch-coordinator-hardening.test.ts` passes (17 tests)
+- `bun run --filter @laborer/server check-types` passes
+- `bun x ultracite check packages/server/src/services/repository-watch-coordinator.ts packages/server/test/branch-state-tracker.test.ts` passes
+
+## Issue 8: Public-stack end-to-end coverage for shipped repo watching — IN PROGRESS
+
+### What was done
+- Added a new public-stack integration scenario in `packages/server/test/startup-bootstrap.test.ts`
+  - Registers a project through `ProjectRegistry.addProject()` using the full production-like Layer graph
+  - Exercises rapid worktree churn by adding two linked worktrees, removing one, and asserting the persisted workspace state settles without duplicates
+  - Switches the main checkout branch after the linked worktrees exist and verifies watcher-driven branch refresh updates the canonical main workspace record
+  - Uses `realpathSync` for the main checkout assertion so the end-to-end coverage stays stable on macOS canonical temp paths
+
+### Verification
+- `bun run test -- test/startup-bootstrap.test.ts` passes (6 tests)
+- `bun run --filter @laborer/server check-types` passes
+
+## Issue 8: Tear down watcher callbacks cleanly after unwatch and shutdown — IN PROGRESS
+
+### What was done
+- Hardened `RepositoryWatchCoordinator` in `packages/server/src/services/repository-watch-coordinator.ts`
+  - Added explicit `closed` state tracking for each project watcher bundle
+  - `closeState()` now nulls subscriptions after closing them so disposed watchers cannot be reused
+  - Debounced reconcile, branch-refresh, and recovery scheduling now bail out once a project has been unwatched or the coordinator scope has been closed
+  - Git-dir, worktrees-dir, and repo-root watcher callbacks now ignore late events and late errors from stale subscriptions instead of scheduling new work after teardown
+
+- Added teardown hardening coverage in `packages/server/test/repository-watch-coordinator-hardening.test.ts`
+  - Verifies stale watcher callbacks after `unwatchProject()` do not trigger reconciliation, branch refresh, or recovery resubscription
+  - Verifies stale watcher callbacks after scoped shutdown are also ignored, preventing post-shutdown work from leaking through closed subscriptions
+
+- Updated `docs/opencode-inspired-repo-watching/issues.md`
+  - Checked off the acceptance criterion for watcher teardown leaving no lingering resources or follow-up work
+
+### Verification
+- `bun run test -- test/repository-watch-coordinator-hardening.test.ts test/repository-watch-coordinator.test.ts` passes (10 tests)
+- `bun run --filter @laborer/server check-types` passes
+- `bun x ultracite check packages/server/src/services/repository-watch-coordinator.ts packages/server/test/repository-watch-coordinator-hardening.test.ts` passes
+
+## Issue 8: Ignored repo-root noise stays quiet without downstream churn — IN PROGRESS
+
+### What was done
+- Added coordinator hardening coverage in `packages/server/test/repository-watch-coordinator-hardening.test.ts`
+  - Simulates ignored repo-root watcher events for `node_modules` and `dist` through the
+    public `RepositoryWatchCoordinator` + `RepositoryEventBus` test layer
+  - Verifies ignored paths do not publish normalized file events, while a source-file canary
+    event still flows through the repo watcher to prove the watcher is active
+  - Verifies ignored repo-root noise does not schedule worktree reconciliation or branch
+    refresh work, keeping the watcher pipeline quiet under dependency/build-output churn
+
+- Updated `docs/opencode-inspired-repo-watching/issues.md`
+  - Checked off the acceptance criterion for ignored paths staying quiet and not triggering
+    noisy refresh work
+
+### Verification
+- `bun run test -- test/repository-watch-coordinator-hardening.test.ts` passes
+- `bun run --filter @laborer/server check-types` passes
+- `bun x ultracite check packages/server/test/repository-watch-coordinator-hardening.test.ts docs/opencode-inspired-repo-watching/issues.md docs/opencode-inspired-repo-watching/progress.txt` passes
+
+## Issue 8: Actionable non-blocking watcher degradation warnings — IN PROGRESS
+
+### What was done
+- Refined watcher warning formatting in `packages/server/src/services/repository-watch-coordinator.ts`
+  - Added shared `formatWatcherWarning()` helper so git-dir, worktrees-dir, and repo-root watcher warnings use one consistent message shape
+  - Degraded watcher warnings now explicitly say git-backed refresh remains active and that watcher setup will retry in `1000ms`
+  - Recovery-attempt warnings now read as an immediate next action instead of a vague failure message
+
+- Added focused coverage in `packages/server/test/repository-watch-coordinator-hardening.test.ts`
+  - Verifies the degraded watcher warning text is actionable for operator-facing diagnostics
+  - Verifies the recovery warning text stays distinct from the retry guidance text
+  - Existing recovery integration test continues to prove the warning path is non-blocking because the coordinator resubscribes and keeps syncing after degradation
+
+- Updated `docs/opencode-inspired-repo-watching/issues.md`
+  - Checked off the acceptance criterion for actionable, non-blocking degraded watcher warnings
+
+### Verification
+- `bun run test -- test/repository-watch-coordinator-hardening.test.ts` passes (7 tests)
+- `bun run --filter @laborer/server check-types` passes
+- `bun x ultracite check packages/server/src/services/repository-watch-coordinator.ts packages/server/test/repository-watch-coordinator-hardening.test.ts docs/opencode-inspired-repo-watching/issues.md docs/opencode-inspired-repo-watching/progress.txt` passes

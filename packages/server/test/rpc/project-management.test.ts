@@ -1,4 +1,10 @@
-import { existsSync, rmSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+} from 'node:fs'
 import { basename, join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { tables } from '@laborer/shared/schema'
@@ -41,21 +47,33 @@ describe('LaborerRpcs project management', () => {
 
           const project = yield* client.project.add({ repoPath })
 
-          assert.strictEqual(project.repoPath, repoPath)
-          assert.strictEqual(project.name, basename(repoPath))
+          // ProjectRegistry now canonicalizes paths through
+          // RepositoryIdentity, so the stored repoPath is the
+          // realpath-resolved checkout root.
+          const canonicalRepoPath = realpathSync(repoPath)
+          const canonicalGitCommonDir = realpathSync(join(repoPath, '.git'))
+          assert.strictEqual(project.repoPath, canonicalRepoPath)
+          assert.strictEqual(project.name, basename(canonicalRepoPath))
           assert.strictEqual(project.rlphConfig, undefined)
-
-          assert.deepStrictEqual(
-            store.query(tables.projects.where('id', project.id)),
-            [
-              {
-                id: project.id,
-                repoPath,
-                name: basename(repoPath),
-                rlphConfig: null,
-              },
-            ]
+          const storedProject = store.query(
+            tables.projects.where('id', project.id)
           )
+
+          assert.isString(storedProject[0]?.repoId)
+          assert.strictEqual(
+            storedProject[0]?.canonicalGitCommonDir,
+            canonicalGitCommonDir
+          )
+          assert.deepStrictEqual(storedProject, [
+            {
+              id: project.id,
+              repoPath: canonicalRepoPath,
+              repoId: storedProject[0]?.repoId ?? null,
+              canonicalGitCommonDir,
+              name: basename(canonicalRepoPath),
+              rlphConfig: null,
+            },
+          ])
 
           const workspaces = store.query(
             tables.workspaces.where('projectId', project.id)
@@ -93,14 +111,87 @@ describe('LaborerRpcs project management', () => {
           }
 
           assert.strictEqual(result.left.code, 'NOT_GIT_REPO')
-          assert.strictEqual(
-            result.left.message,
-            `Path is not a git repository: ${repoPath}`
-          )
+          assert.include(result.left.message, 'not a git repository')
           assert.deepStrictEqual(
             store.query(tables.projects.where('repoPath', repoPath)),
             []
           )
+        })
+      )
+  )
+
+  it.scoped(
+    'project.add returns a clear duplicate message for nested repo paths',
+    () =>
+      runWithRpcTestContext(({ client, store }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
+
+          const repoPath = initRepo('rpc-project-nested-duplicate', tempRoots)
+          const nestedPath = join(repoPath, 'src', 'nested')
+          const canonicalRepoPath = realpathSync(repoPath)
+          mkdirSync(nestedPath, { recursive: true })
+
+          const project = yield* client.project.add({ repoPath })
+          const result = yield* client.project
+            .add({ repoPath: nestedPath })
+            .pipe(Effect.either)
+
+          assert.isTrue(Either.isLeft(result))
+          if (Either.isRight(result)) {
+            assert.fail('Expected nested duplicate project.add to fail')
+          }
+
+          assert.strictEqual(result.left.code, 'ALREADY_REGISTERED')
+          assert.include(result.left.message, nestedPath)
+          assert.include(result.left.message, canonicalRepoPath)
+          assert.include(result.left.message, project.name)
+          assert.include(result.left.message, 'already registered repository')
+
+          assert.strictEqual(store.query(tables.projects).length, 1)
+        })
+      )
+  )
+
+  it.scoped(
+    'project.add returns a clear duplicate message for symlinked repo paths',
+    () =>
+      runWithRpcTestContext(({ client, store }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
+
+          const repoPath = initRepo('rpc-project-symlink-duplicate', tempRoots)
+          const symlinkRoot = createTempDir(
+            'rpc-project-symlink-root',
+            tempRoots
+          )
+          const symlinkPath = join(symlinkRoot, 'linked-repo')
+          const canonicalRepoPath = realpathSync(repoPath)
+          symlinkSync(repoPath, symlinkPath)
+
+          const project = yield* client.project.add({ repoPath })
+          const result = yield* client.project
+            .add({ repoPath: symlinkPath })
+            .pipe(Effect.either)
+
+          assert.isTrue(Either.isLeft(result))
+          if (Either.isRight(result)) {
+            assert.fail('Expected symlink duplicate project.add to fail')
+          }
+
+          assert.strictEqual(result.left.code, 'ALREADY_REGISTERED')
+          assert.include(result.left.message, symlinkPath)
+          assert.include(result.left.message, canonicalRepoPath)
+          assert.include(result.left.message, project.name)
+          assert.include(result.left.message, 'already registered repository')
+
+          assert.strictEqual(store.query(tables.projects).length, 1)
         })
       )
   )

@@ -68,6 +68,8 @@ export type SplitDirection = typeof SplitDirection.Type
 export class Project extends Schema.Class<Project>('Project')({
   id: ProjectId,
   repoPath: Schema.String,
+  repoId: Schema.optional(Schema.String),
+  canonicalGitCommonDir: Schema.optional(Schema.String),
   name: Schema.String,
   rlphConfig: Schema.optional(Schema.String),
 }) {}

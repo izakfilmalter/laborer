@@ -23,43 +23,43 @@
  * @see Issue #81: Panel responsive layout
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from 'react'
 
 /** The minimum usable width for a terminal pane in pixels. */
-const MIN_PANE_WIDTH_PX = 100;
+const MIN_PANE_WIDTH_PX = 100
 
 /** Sidebar sizing breakpoints (in viewport width pixels). */
 const SIDEBAR_CONFIG = {
-	/** Minimum sidebar width in pixels. */
-	minPx: 220,
-	/** Maximum sidebar width in pixels. */
-	maxPx: 480,
-	/** Default sidebar width in pixels. */
-	defaultPx: 280,
-	/** Additional pixels per 1000px of viewport width beyond 1920px. */
-	scalePerKPx: 50,
-} as const;
+  /** Minimum sidebar width in pixels. */
+  minPx: 220,
+  /** Maximum sidebar width in pixels. */
+  maxPx: 480,
+  /** Default sidebar width in pixels. */
+  defaultPx: 280,
+  /** Additional pixels per 1000px of viewport width beyond 1920px. */
+  scalePerKPx: 50,
+} as const
 
 interface ResponsiveLayoutSizes {
-	/** Whether the viewport is narrow enough to support sidebar collapsing. */
-	readonly canCollapseSidebar: boolean;
-	/** Minimum pane size as a percentage string (e.g., "5%"). */
-	readonly paneMin: string;
-	/** Sidebar default size as a percentage string (e.g., "25%"). */
-	readonly sidebarDefault: string;
-	/** Sidebar maximum size as a percentage string (e.g., "35%"). */
-	readonly sidebarMax: string;
-	/** Sidebar minimum size as a percentage string (e.g., "12%"). */
-	readonly sidebarMin: string;
-	/** Current viewport width in pixels. */
-	readonly viewportWidth: number;
+  /** Whether the viewport is narrow enough to support sidebar collapsing. */
+  readonly canCollapseSidebar: boolean
+  /** Minimum pane size as a percentage string (e.g., "5%"). */
+  readonly paneMin: string
+  /** Sidebar default size as a percentage string (e.g., "25%"). */
+  readonly sidebarDefault: string
+  /** Sidebar maximum size as a percentage string (e.g., "35%"). */
+  readonly sidebarMax: string
+  /** Sidebar minimum size as a percentage string (e.g., "12%"). */
+  readonly sidebarMin: string
+  /** Current viewport width in pixels. */
+  readonly viewportWidth: number
 }
 
 /**
  * Clamp a value between a minimum and maximum.
  */
 function clamp(value: number, min: number, max: number): number {
-	return Math.min(Math.max(value, min), max);
+  return Math.min(Math.max(value, min), max)
 }
 
 /**
@@ -67,8 +67,8 @@ function clamp(value: number, min: number, max: number): number {
  * formatted as a string with "%" suffix for react-resizable-panels.
  */
 function pxToPercent(px: number, viewportWidth: number): string {
-	const percent = (px / viewportWidth) * 100;
-	return `${Math.round(percent)}%`;
+  const percent = (px / viewportWidth) * 100
+  return `${Math.round(percent)}%`
 }
 
 /**
@@ -76,24 +76,24 @@ function pxToPercent(px: number, viewportWidth: number): string {
  * Sidebar grows slightly on larger displays to take advantage of space.
  */
 function computeSidebarPx(viewportWidth: number): {
-	defaultPx: number;
-	minPx: number;
+  defaultPx: number
+  minPx: number
 } {
-	const extraKPx = Math.max(0, viewportWidth - 1920) / 1000;
-	const scale = extraKPx * SIDEBAR_CONFIG.scalePerKPx;
+  const extraKPx = Math.max(0, viewportWidth - 1920) / 1000
+  const scale = extraKPx * SIDEBAR_CONFIG.scalePerKPx
 
-	return {
-		defaultPx: clamp(
-			SIDEBAR_CONFIG.defaultPx + scale,
-			SIDEBAR_CONFIG.minPx,
-			SIDEBAR_CONFIG.maxPx
-		),
-		minPx: clamp(
-			SIDEBAR_CONFIG.minPx + scale * 0.4,
-			SIDEBAR_CONFIG.minPx,
-			SIDEBAR_CONFIG.maxPx
-		),
-	};
+  return {
+    defaultPx: clamp(
+      SIDEBAR_CONFIG.defaultPx + scale,
+      SIDEBAR_CONFIG.minPx,
+      SIDEBAR_CONFIG.maxPx
+    ),
+    minPx: clamp(
+      SIDEBAR_CONFIG.minPx + scale * 0.4,
+      SIDEBAR_CONFIG.minPx,
+      SIDEBAR_CONFIG.maxPx
+    ),
+  }
 }
 
 /**
@@ -104,37 +104,37 @@ function computeSidebarPx(viewportWidth: number): {
  * continuous resize event listeners.
  */
 function useResponsiveLayout(): ResponsiveLayoutSizes {
-	const computeSizes = useCallback((): ResponsiveLayoutSizes => {
-		const vw = window.innerWidth;
-		const sidebar = computeSidebarPx(vw);
+  const computeSizes = useCallback((): ResponsiveLayoutSizes => {
+    const vw = window.innerWidth
+    const sidebar = computeSidebarPx(vw)
 
-		// Minimum pane size: ensure at least MIN_PANE_WIDTH_PX, but cap at 15%
-		// to prevent one pane from dominating in deeply nested splits.
-		const paneMinPercent = clamp((MIN_PANE_WIDTH_PX / vw) * 100, 3, 15);
+    // Minimum pane size: ensure at least MIN_PANE_WIDTH_PX, but cap at 15%
+    // to prevent one pane from dominating in deeply nested splits.
+    const paneMinPercent = clamp((MIN_PANE_WIDTH_PX / vw) * 100, 3, 15)
 
-		return {
-			sidebarDefault: pxToPercent(sidebar.defaultPx, vw),
-			sidebarMin: pxToPercent(sidebar.minPx, vw),
-			sidebarMax: "90%",
-			paneMin: `${Math.round(paneMinPercent)}%`,
-			canCollapseSidebar: vw < 1280,
-			viewportWidth: vw,
-		};
-	}, []);
+    return {
+      sidebarDefault: pxToPercent(sidebar.defaultPx, vw),
+      sidebarMin: pxToPercent(sidebar.minPx, vw),
+      sidebarMax: '90%',
+      paneMin: `${Math.round(paneMinPercent)}%`,
+      canCollapseSidebar: vw < 1280,
+      viewportWidth: vw,
+    }
+  }, [])
 
-	const [sizes, setSizes] = useState<ResponsiveLayoutSizes>(computeSizes);
+  const [sizes, setSizes] = useState<ResponsiveLayoutSizes>(computeSizes)
 
-	useEffect(() => {
-		const handleResize = () => {
-			setSizes(computeSizes());
-		};
+  useEffect(() => {
+    const handleResize = () => {
+      setSizes(computeSizes())
+    }
 
-		window.addEventListener("resize", handleResize);
-		return () => window.removeEventListener("resize", handleResize);
-	}, [computeSizes]);
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [computeSizes])
 
-	return sizes;
+  return sizes
 }
 
-export { useResponsiveLayout, MIN_PANE_WIDTH_PX };
-export type { ResponsiveLayoutSizes };
+export { useResponsiveLayout, MIN_PANE_WIDTH_PX }
+export type { ResponsiveLayoutSizes }

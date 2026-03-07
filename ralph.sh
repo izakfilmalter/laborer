@@ -11,18 +11,18 @@ fi
 # For each iteration, run Claude Code with the following prompt.
 # This prompt is basic, we'll expand it later.
 for ((i=1; i<=$1; i++)); do
-  result=$(opencode --model openai/gpt-5.4 run \
-"@docs/opencode-inspired-repo-watching/PRD-opencode-inspired-repo-watching.md @docs/opencode-inspired-repo-watching/issues-opencode-inspired-repo-watching.md @docs/opencode-inspired-repo-watching/progress.txt \
-1. Decide which task to work on next from docs/opencode-inspired-repo-watching/issues-opencode-inspired-repo-watching.md. \
+result=$(opencode --model anthropic/claude-opus-4-6 run \
+"@docs/opencode-repo-watching-alignment/PRD-opencode-repo-watching-alignment.md @docs/opencode-repo-watching-alignment/issues.md @docs/opencode-repo-watching-alignment/progress.txt \
+1. Decide which task to work on next from docs/opencode-repo-watching-alignment/issues.md. \
 This should be the one YOU decide has the highest priority, \
 - not necessarily the first in the list. \
 2. Check any feedback loops, such as types and tests. \
-3. Append your progress to the docs/opencode-inspired-repo-watching/progress.txt file. \
-4. Update status of tasks in docs/opencode-inspired-repo-watching/issues-opencode-inspired-repo-watching.md \
+3. Append your progress to the docs/opencode-repo-watching-alignment/progress.txt file. \
+4. Update status of tasks in docs/opencode-repo-watching-alignment/issues.md \
 5. Make a git commit of that feature. \
 ONLY WORK ON A SINGLE TASK / FEATURE. \
 If, while implementing the feature, you notice that all work \
-is complete in docs/opencode-inspired-repo-watching/issues-opencode-inspired-repo-watching.md, output <promise>COMPLETE</promise>. \
+is complete in docs/opencode-repo-watching-alignment/issues.md, output <promise>COMPLETE</promise>. \
 ")
 
   echo "$result"

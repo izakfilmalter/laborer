@@ -11,21 +11,21 @@
  * @see Issue #115: Tauri system tray
  */
 
-import { workspaces } from "@laborer/shared/schema";
-import { queryDb } from "@livestore/livestore";
-import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useRef } from "react";
+import { workspaces } from '@laborer/shared/schema'
+import { queryDb } from '@livestore/livestore'
+import { invoke } from '@tauri-apps/api/core'
+import { useEffect, useRef } from 'react'
 
-import { useLaborerStore } from "@/livestore/store";
+import { useLaborerStore } from '@/livestore/store'
 
 /** LiveStore query for all non-destroyed workspaces with "running" status. */
-const runningWorkspaces$ = queryDb(workspaces.where({ status: "running" }), {
-	label: "trayRunningWorkspaces",
-});
+const runningWorkspaces$ = queryDb(workspaces.where({ status: 'running' }), {
+  label: 'trayRunningWorkspaces',
+})
 
 /** Check if running inside Tauri desktop shell. */
 function isTauri(): boolean {
-	return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
 /**
@@ -36,24 +36,24 @@ function isTauri(): boolean {
  * Rust command `update_tray_workspace_count` when the count changes.
  */
 function useTrayWorkspaceCount(): void {
-	const store = useLaborerStore();
-	const runningWs = store.useQuery(runningWorkspaces$);
-	const count = runningWs.length;
-	const prevCountRef = useRef<number>(-1);
+  const store = useLaborerStore()
+  const runningWs = store.useQuery(runningWorkspaces$)
+  const count = runningWs.length
+  const prevCountRef = useRef<number>(-1)
 
-	useEffect(() => {
-		if (!isTauri()) {
-			return;
-		}
-		if (count === prevCountRef.current) {
-			return;
-		}
-		prevCountRef.current = count;
+  useEffect(() => {
+    if (!isTauri()) {
+      return
+    }
+    if (count === prevCountRef.current) {
+      return
+    }
+    prevCountRef.current = count
 
-		invoke("update_tray_workspace_count", { count }).catch(() => {
-			// Silently ignore — tray may not be available in all environments
-		});
-	}, [count]);
+    invoke('update_tray_workspace_count', { count }).catch(() => {
+      // Silently ignore — tray may not be available in all environments
+    })
+  }, [count])
 }
 
-export { useTrayWorkspaceCount };
+export { useTrayWorkspaceCount }

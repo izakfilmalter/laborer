@@ -12,20 +12,20 @@
  * @see Issue #17: LiveStore client adapter setup
  */
 
-import { StoreRegistry } from "@livestore/livestore";
-import { StoreRegistryProvider } from "@livestore/react";
-import { Suspense, useState } from "react";
+import { StoreRegistry } from '@livestore/livestore'
+import { StoreRegistryProvider } from '@livestore/react'
+import { Suspense, useState } from 'react'
 
-import Loader from "@/components/loader";
+import Loader from '@/components/loader'
 
 const LiveStoreProvider = ({ children }: { children: React.ReactNode }) => {
-	const [storeRegistry] = useState(() => new StoreRegistry());
+  const [storeRegistry] = useState(() => new StoreRegistry())
 
-	return (
-		<StoreRegistryProvider storeRegistry={storeRegistry}>
-			<Suspense fallback={<Loader />}>{children}</Suspense>
-		</StoreRegistryProvider>
-	);
-};
+  return (
+    <StoreRegistryProvider storeRegistry={storeRegistry}>
+      <Suspense fallback={<Loader />}>{children}</Suspense>
+    </StoreRegistryProvider>
+  )
+}
 
-export { LiveStoreProvider };
+export { LiveStoreProvider }

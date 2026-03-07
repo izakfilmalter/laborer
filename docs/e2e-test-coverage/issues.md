@@ -14,15 +14,17 @@ Currently, both `laborer-store.ts` and `sync-backend.ts` in `packages/server` ha
 
 See the PRD "Server DATA_DIR Configuration" section for details.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] `DATA_DIR` env var added to `packages/env/src/server.ts` with default `"./data"`
-- [ ] `packages/server/src/services/laborer-store.ts` reads `DATA_DIRECTORY` from `env.DATA_DIR` instead of hardcoding `"./data"`
-- [ ] `packages/server/src/services/sync-backend.ts` reads `DATA_DIRECTORY` from `env.DATA_DIR` instead of hardcoding `"./data"`
-- [ ] Existing behavior unchanged when `DATA_DIR` is not set (default `"./data"`)
-- [ ] Setting `DATA_DIR=/tmp/test-data` causes the server to write databases to `/tmp/test-data/`
-- [ ] Type checks pass (`bun run check-types` in `packages/server` and `packages/env`)
-- [ ] Existing server tests still pass (`bun run test` in `packages/server`)
+- [x] `DATA_DIR` env var added to `packages/env/src/server.ts` with default `"./data"`
+- [x] `packages/server/src/services/laborer-store.ts` reads `DATA_DIRECTORY` from `env.DATA_DIR` instead of hardcoding `"./data"`
+- [x] `packages/server/src/services/sync-backend.ts` reads `DATA_DIRECTORY` from `env.DATA_DIR` instead of hardcoding `"./data"`
+- [x] Existing behavior unchanged when `DATA_DIR` is not set (default `"./data"`)
+- [x] Setting `DATA_DIR=/tmp/test-data` causes the server to write databases to `/tmp/test-data/`
+- [x] Type checks pass (`bun run check-types` in `packages/server` and `packages/env`)
+- [x] Existing server tests still pass (`bun run test` in `packages/server`)
 
 ### Blocked by
 
@@ -51,16 +53,18 @@ When `__TAURI__` is absent (browser-only): render a text input where the user ca
 
 See the PRD "Browser-Mode File Picker" section for details.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] `AddProjectForm` checks `window.__TAURI__` (or equivalent Tauri detection) at runtime
-- [ ] When Tauri is absent, renders a text input with a label/placeholder for the repo path and a submit button
-- [ ] When Tauri is present, behavior is unchanged (native file dialog)
-- [ ] The text input form calls the same `project.add` RPC mutation with `{ repoPath: inputValue }`
-- [ ] Success shows a toast with the project name; error shows an error toast (same as current behavior)
-- [ ] Loading state ("Adding...") shown during submission
-- [ ] Type checks pass (`bun run check-types` in `apps/web`)
-- [ ] `bun x ultracite check` passes
+- [x] `AddProjectForm` checks `window.__TAURI__` (or equivalent Tauri detection) at runtime
+- [x] When Tauri is absent, renders a text input with a label/placeholder for the repo path and a submit button
+- [x] When Tauri is present, behavior is unchanged (native file dialog)
+- [x] The text input form calls the same `project.add` RPC mutation with `{ repoPath: inputValue }`
+- [x] Success shows a toast with the project name; error shows an error toast (same as current behavior)
+- [x] Loading state ("Adding...") shown during submission
+- [x] Type checks pass (`bun run check-types` in `apps/web`)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -86,18 +90,20 @@ This is the foundational issue — all other E2E test issues depend on this infr
 
 See the PRD sections: "Playwright Infrastructure", "Global Setup / Teardown", "E2E Test Organization", "Page Object Pattern".
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] `@playwright/test` added as a dev dependency to `apps/web`
-- [ ] `playwright.config.ts` configured: WebKit browser, `e2e/` test directory, base URL `http://localhost:3001`, 30s test timeout, 10s assertion timeout, 1 retry, screenshots on failure in `e2e/results/`
-- [ ] `globalSetup.ts` creates a temp directory for `DATA_DIR`, creates a temp git repo with `git init` + initial commit, starts `turbo dev` with `DATA_DIR` env var, polls until all 3 services are healthy (web :3001, server :3000, terminal :3002)
-- [ ] `globalTeardown.ts` kills the `turbo dev` process tree, removes temp database directory and temp git repo
-- [ ] `e2e/results/` is added to `.gitignore`
-- [ ] `test:e2e` script added to `apps/web/package.json`
-- [ ] `e2e/fixtures/` directory created with skeleton page object helpers (SidebarHelper, PanelHelper, TerminalHelper)
-- [ ] One tracer bullet test exists: navigates to the app, verifies the page loads (header visible, sidebar present)
-- [ ] `bun run test:e2e` passes end-to-end
-- [ ] Temp git repo path is accessible to test files (via env var or Playwright project config)
+- [x] `@playwright/test` added as a dev dependency to `apps/web`
+- [x] `playwright.config.ts` configured: WebKit browser, `e2e/` test directory, base URL `http://localhost:3001`, 30s test timeout, 10s assertion timeout, 1 retry, screenshots on failure in `e2e/results/`
+- [x] `globalSetup.ts` creates a temp directory for `DATA_DIR`, creates a temp git repo with `git init` + initial commit, starts `turbo dev` with `DATA_DIR` env var, polls until all 3 services are healthy (web :3001, server :3000, terminal :3002)
+- [x] `globalTeardown.ts` kills the `turbo dev` process tree, removes temp database directory and temp git repo
+- [x] `e2e/results/` is added to `.gitignore`
+- [x] `test:e2e` script added to `apps/web/package.json`
+- [x] `e2e/fixtures/` directory created with skeleton page object helpers (SidebarHelper, PanelHelper, TerminalHelper)
+- [x] One tracer bullet test exists: navigates to the app, verifies the page loads (header visible, sidebar present)
+- [x] `bun run test:e2e` passes end-to-end
+- [x] Temp git repo path is accessible to test files (via env var or Playwright project config)
 
 ### Blocked by
 
@@ -127,14 +133,16 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that adds a project using the browser-mode text input fallback (Issue 2), then verifies the project appears in the sidebar. This validates the full add-project flow: text input -> RPC mutation -> LiveStore sync -> sidebar rendering.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test file `e2e/project-management.spec.ts` created (or appended to)
-- [ ] Test enters a repo path in the text input fallback (using the temp git repo from globalSetup)
-- [ ] Test submits the form and waits for the success toast
-- [ ] Test verifies the project name appears in the sidebar
-- [ ] Test uses Playwright auto-waiting (no `waitForTimeout`)
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test file `e2e/project-management.spec.ts` created (or appended to)
+- [x] Test enters a repo path in the text input fallback (using the temp git repo from globalSetup)
+- [x] Test submits the form and waits for the success toast
+- [x] Test verifies the project name appears in the sidebar
+- [x] Test uses Playwright auto-waiting (no `waitForTimeout`)
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
@@ -156,15 +164,17 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that opens the project settings modal for an existing project, modifies a field (e.g., worktree directory), saves, and verifies the change persists (re-open modal and check the value). This validates the settings flow through the real UI and real backend.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/project-management.spec.ts`
-- [ ] Test adds a project first (or uses a project from a prior test in the same file via `test.describe.serial`)
-- [ ] Test clicks the settings button for the project
-- [ ] Test modifies a field in the settings modal
-- [ ] Test saves and waits for the success toast
-- [ ] Test re-opens settings and verifies the saved value persists
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/project-management.spec.ts`
+- [x] Test adds a project first (or uses a project from a prior test in the same file via `test.describe.serial`)
+- [x] Test clicks the settings button for the project
+- [x] Test modifies a field in the settings modal
+- [x] Test saves and waits for the success toast
+- [x] Test re-opens settings and verifies the saved value persists
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
@@ -186,14 +196,16 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that deletes a project and verifies it disappears from the sidebar. This validates the delete flow: button click -> confirmation -> RPC mutation -> LiveStore sync -> sidebar re-render.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/project-management.spec.ts`
-- [ ] Test adds a project first (or uses a project from a prior test)
-- [ ] Test clicks the delete button for the project
-- [ ] Test confirms the deletion (if there's a confirmation dialog)
-- [ ] Test verifies the project is removed from the sidebar
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/project-management.spec.ts`
+- [x] Test adds a project first (or uses a project from a prior test)
+- [x] Test clicks the delete button for the project
+- [x] Test confirms the deletion (if there's a confirmation dialog)
+- [x] Test verifies the project is removed from the sidebar
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
@@ -215,11 +227,13 @@ PRD-e2e-test-coverage.md
 
 Delete the existing `test/project-settings-modal.test.tsx` file. This file mocks 6 internal modules and violates the project's TDD principles. Its behavior is now covered by the Playwright E2E test from Issue 5.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] `apps/web/test/project-settings-modal.test.tsx` is deleted
-- [ ] `bun run test` in `apps/web` still passes (remaining 3 test files unaffected)
-- [ ] `bun x ultracite check` passes
+- [x] `apps/web/test/project-settings-modal.test.tsx` is deleted
+- [x] `bun run test` in `apps/web` still passes (remaining 3 test files unaffected)
+- [x] `bun x ultracite check` passes
 
 ### Blocked by
 
@@ -241,19 +255,21 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that creates a workspace for a project, then verifies the workspace appears in the sidebar. This validates: create workspace dialog -> form submission -> RPC mutation -> worktree creation -> LiveStore sync -> sidebar rendering.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test file `e2e/workspace-lifecycle.spec.ts` created
-- [ ] Test adds a project first (using the temp git repo)
-- [ ] Test opens the create workspace dialog
-- [ ] Test optionally enters a branch name
-- [ ] Test submits and waits for success (workspace appears in sidebar)
-- [ ] Test verifies the workspace card is visible under the correct project
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test file `e2e/workspace-lifecycle.spec.ts` created
+- [x] Test adds a project first (using the temp git repo)
+- [x] Test opens the create workspace dialog
+- [x] Test optionally enters a branch name
+- [x] Test submits and waits for success (workspace appears in sidebar)
+- [x] Test verifies the workspace card is visible under the correct project
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
-- Blocked by Issue 4 (Add project E2E — need a project to create a workspace for)
+- Blocked by Issue 4 (Add project E2E — need a project to create a workspace for) — DONE
 
 ### User stories addressed
 
@@ -271,13 +287,15 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that creates a workspace and verifies the branch name and status indicators are displayed correctly in the sidebar workspace card. This validates that workspace metadata flows from the server through LiveStore to the UI correctly.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/workspace-lifecycle.spec.ts`
-- [ ] Test creates a workspace with a known branch name
-- [ ] Test verifies the branch name is displayed in the workspace card
-- [ ] Test verifies a status badge/indicator is visible (e.g., "running" or similar)
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/workspace-lifecycle.spec.ts`
+- [x] Test creates a workspace with a known branch name
+- [x] Test verifies the branch name is displayed in the workspace card
+- [x] Test verifies a status badge/indicator is visible (e.g., "running" or similar)
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
@@ -299,14 +317,16 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that destroys a workspace and verifies it disappears from the sidebar. This validates: destroy button -> confirmation (if any) -> RPC mutation -> worktree cleanup -> LiveStore sync -> sidebar re-render.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/workspace-lifecycle.spec.ts`
-- [ ] Test creates a workspace first
-- [ ] Test clicks the destroy button on the workspace card
-- [ ] Test confirms destruction (if there's a confirmation step)
-- [ ] Test verifies the workspace is removed from the sidebar
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/workspace-lifecycle.spec.ts`
+- [x] Test creates a workspace first
+- [x] Test clicks the destroy button on the workspace card
+- [x] Test confirms destruction (if there's a confirmation step)
+- [x] Test verifies the workspace is removed from the sidebar
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
@@ -328,13 +348,15 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that splits a pane horizontally, verifies two panes are visible, then splits one of them vertically, verifying three panes. This validates the recursive panel split system through the real UI.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test file `e2e/panel-system.spec.ts` created
-- [ ] Test clicks the horizontal split button and verifies two panes are rendered
-- [ ] Test clicks the vertical split button within one pane and verifies three panes are rendered
-- [ ] Test verifies the pane layout structure visually (panes are side-by-side for horizontal, stacked for vertical)
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test file `e2e/panel-system.spec.ts` created
+- [x] Test clicks the horizontal split button and verifies two panes are rendered
+- [x] Test clicks the vertical split button within one pane and verifies three panes are rendered
+- [x] Test verifies the pane layout structure visually (panes are side-by-side for horizontal, stacked for vertical)
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
@@ -356,14 +378,16 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that splits a pane, then closes one pane and verifies focus transfers to the sibling pane. This validates the close-and-focus-transfer behavior in the real UI (the logic tested at the unit level in `layout-utils.test.ts`).
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/panel-system.spec.ts`
-- [ ] Test splits a pane to create two panes
-- [ ] Test closes one pane (via close button or Cmd+W)
-- [ ] Test verifies only one pane remains
-- [ ] Test verifies the remaining pane is focused/active
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/panel-system.spec.ts`
+- [x] Test splits a pane to create two panes
+- [x] Test closes one pane (via close button or Cmd+W)
+- [x] Test verifies only one pane remains
+- [x] Test verifies the remaining pane is focused/active
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
@@ -385,13 +409,15 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that uses keyboard shortcuts (Ctrl+B prefix then arrow keys) to navigate between panes. This validates the panel keyboard navigation system.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/panel-system.spec.ts`
-- [ ] Test splits panes to create a multi-pane layout
-- [ ] Test uses Ctrl+B then arrow key to move focus to an adjacent pane
-- [ ] Test verifies the active pane changes (e.g., active pane indicator updates)
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/panel-system.spec.ts`
+- [x] Test splits panes to create a multi-pane layout
+- [x] Test uses Ctrl+B then arrow key to move focus to an adjacent pane
+- [x] Test verifies the active pane changes (e.g., active pane indicator updates)
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
@@ -413,14 +439,16 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that resizes panes using keyboard shortcuts (Ctrl+B then Shift+arrow) and verifies the pane sizes change. This validates the keyboard-driven resize behavior.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/panel-system.spec.ts`
-- [ ] Test splits panes to create a multi-pane layout
-- [ ] Test captures initial pane sizes (e.g., via bounding box or CSS width)
-- [ ] Test uses Ctrl+B then Shift+Arrow to resize
-- [ ] Test verifies pane sizes changed from the initial values
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/panel-system.spec.ts`
+- [x] Test splits panes to create a multi-pane layout
+- [x] Test captures initial pane sizes (e.g., via bounding box or CSS width)
+- [x] Test uses Ctrl+B then Shift+Arrow to resize
+- [x] Test verifies pane sizes changed from the initial values
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
@@ -442,15 +470,17 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that opens a terminal in a pane, types a command (e.g., `echo hello`), and verifies the output appears. This validates the full terminal pipeline: WebSocket connection -> PTY spawn -> xterm.js rendering.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test file `e2e/terminal-interaction.spec.ts` created
-- [ ] Test creates a workspace (which spawns a terminal)
-- [ ] Test assigns the terminal to a pane (or it's auto-assigned)
-- [ ] Test types a command into the terminal pane
-- [ ] Test verifies the command output appears in the terminal
-- [ ] Test uses appropriate timeouts for PTY initialization
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test file `e2e/terminal-interaction.spec.ts` created
+- [x] Test creates a workspace (which spawns a terminal)
+- [x] Test assigns the terminal to a pane (or it's auto-assigned)
+- [x] Test types a command into the terminal pane
+- [x] Test verifies the command output appears in the terminal
+- [x] Test uses appropriate timeouts for PTY initialization
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
@@ -472,15 +502,17 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that types in the sidebar search box and verifies projects/workspaces are filtered in real-time. This validates the search filtering pipeline.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test file `e2e/search-navigation.spec.ts` created
-- [ ] Test adds at least one project (so there's something to search for)
-- [ ] Test types a search query in the sidebar search input (`aria-label="Search projects and workspaces"`)
-- [ ] Test verifies matching projects remain visible
-- [ ] Test verifies non-matching items are hidden (or a separate project is added to confirm filtering)
-- [ ] Test clears search (via clear button or Escape) and verifies all items reappear
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test file `e2e/search-navigation.spec.ts` created
+- [x] Test adds at least one project (so there's something to search for)
+- [x] Test types a search query in the sidebar search input (`aria-label="Search projects and workspaces"`)
+- [x] Test verifies matching projects remain visible
+- [x] Test verifies non-matching items are hidden (or a separate project is added to confirm filtering)
+- [x] Test clears search (via clear button or Escape) and verifies all items reappear
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
@@ -502,15 +534,17 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that collapses a project group in the sidebar, verifies its contents are hidden, then expands it and verifies the contents reappear. This validates the collapse/expand behavior and its persistence.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/search-navigation.spec.ts`
-- [ ] Test adds a project with at least one visible child element (workspace or action buttons)
-- [ ] Test clicks the collapse trigger for the project group
-- [ ] Test verifies the project's child content is hidden
-- [ ] Test clicks the expand trigger
-- [ ] Test verifies the child content is visible again
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/search-navigation.spec.ts`
+- [x] Test adds a project with at least one visible child element (workspace or action buttons)
+- [x] Test clicks the collapse trigger for the project group
+- [x] Test verifies the project's child content is hidden
+- [x] Test clicks the expand trigger
+- [x] Test verifies the child content is visible again
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
@@ -532,14 +566,16 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that toggles the dark mode switch in the header and verifies the theme changes. This validates the theme toggle mechanism.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/search-navigation.spec.ts`
-- [ ] Test locates the theme toggle in the header
-- [ ] Test clicks the toggle to switch themes
-- [ ] Test verifies the theme changed (e.g., `html` element class or `data-theme` attribute changes, or specific CSS property changes)
-- [ ] Test toggles back and verifies the original theme is restored
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/search-navigation.spec.ts`
+- [x] Test locates the theme toggle in the header
+- [x] Test clicks the toggle to switch themes
+- [x] Test verifies the theme changed (e.g., `html` element class or `data-theme` attribute changes, or specific CSS property changes)
+- [x] Test toggles back and verifies the original theme is restored
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
@@ -561,15 +597,17 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that switches to the dashboard view and verifies the cross-project summary is displayed. This validates the dashboard toggle and rendering.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test file `e2e/dashboard.spec.ts` created
-- [ ] Test adds at least one project (so the dashboard has content)
-- [ ] Test clicks the dashboard view toggle button
-- [ ] Test verifies the dashboard view is rendered (summary section visible)
-- [ ] Test verifies project information appears in the dashboard
-- [ ] Test switches back to the panels view and verifies panels are visible again
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test file `e2e/dashboard.spec.ts` created
+- [x] Test adds at least one project (so the dashboard has content)
+- [x] Test clicks the dashboard view toggle button
+- [x] Test verifies the dashboard view is rendered (summary section visible)
+- [x] Test verifies project information appears in the dashboard
+- [x] Test switches back to the panels view and verifies panels are visible again
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 
@@ -591,14 +629,16 @@ PRD-e2e-test-coverage.md
 
 Write a Playwright E2E test that creates a workspace, switches to the dashboard view, and verifies workspace status badges are displayed correctly. This validates that workspace status flows through to the dashboard rendering.
 
+### Status: COMPLETED
+
 ### Acceptance criteria
 
-- [ ] Test added to `e2e/dashboard.spec.ts`
-- [ ] Test adds a project and creates a workspace
-- [ ] Test switches to the dashboard view
-- [ ] Test verifies the workspace appears under its project in the dashboard
-- [ ] Test verifies a status badge is visible on the workspace entry
-- [ ] Test passes with `bun run test:e2e`
+- [x] Test added to `e2e/dashboard.spec.ts`
+- [x] Test adds a project and creates a workspace
+- [x] Test switches to the dashboard view
+- [x] Test verifies the workspace appears under its project in the dashboard
+- [x] Test verifies a status badge is visible on the workspace entry
+- [x] Test passes with `bun run test:e2e`
 
 ### Blocked by
 

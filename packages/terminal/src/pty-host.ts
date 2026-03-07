@@ -37,105 +37,105 @@
  *   { type: "resumed", id }     — PTY resumed after flow control ack (Issue #141)
  */
 
-import { createRequire } from "node:module";
-import type { IPty } from "node-pty";
+import { createRequire } from 'node:module'
+import type { IPty } from 'node-pty'
 
 // createRequire is needed because this script runs under Node.js as ESM
 // (the package has "type": "module"), where bare `require()` is unavailable.
-const require_ = createRequire(import.meta.url);
+const require_ = createRequire(import.meta.url)
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 interface SpawnCommand {
-	readonly args: readonly string[];
-	readonly cols: number;
-	readonly cwd: string;
-	readonly env: Record<string, string>;
-	readonly id: string;
-	readonly rows: number;
-	readonly shell: string;
-	readonly type: "spawn";
+  readonly args: readonly string[]
+  readonly cols: number
+  readonly cwd: string
+  readonly env: Record<string, string>
+  readonly id: string
+  readonly rows: number
+  readonly shell: string
+  readonly type: 'spawn'
 }
 
 interface WriteCommand {
-	readonly data: string;
-	readonly id: string;
-	readonly type: "write";
+  readonly data: string
+  readonly id: string
+  readonly type: 'write'
 }
 
 interface ResizeCommand {
-	readonly cols: number;
-	readonly id: string;
-	readonly rows: number;
-	readonly type: "resize";
+  readonly cols: number
+  readonly id: string
+  readonly rows: number
+  readonly type: 'resize'
 }
 
 interface KillCommand {
-	readonly id: string;
-	readonly type: "kill";
+  readonly id: string
+  readonly type: 'kill'
 }
 
 interface AckCommand {
-	readonly chars: number;
-	readonly id: string;
-	readonly type: "ack";
+  readonly chars: number
+  readonly id: string
+  readonly type: 'ack'
 }
 
 type Command =
-	| SpawnCommand
-	| WriteCommand
-	| ResizeCommand
-	| KillCommand
-	| AckCommand;
+  | SpawnCommand
+  | WriteCommand
+  | ResizeCommand
+  | KillCommand
+  | AckCommand
 
 interface ReadyEvent {
-	readonly type: "ready";
+  readonly type: 'ready'
 }
 
 interface DataEvent {
-	readonly data: string; // raw UTF-8
-	readonly id: string;
-	readonly type: "data";
+  readonly data: string // raw UTF-8
+  readonly id: string
+  readonly type: 'data'
 }
 
 interface ExitEvent {
-	readonly exitCode: number;
-	readonly id: string;
-	readonly signal: number;
-	readonly type: "exit";
+  readonly exitCode: number
+  readonly id: string
+  readonly signal: number
+  readonly type: 'exit'
 }
 
 interface ErrorEvent {
-	readonly id?: string;
-	readonly message: string;
-	readonly type: "error";
+  readonly id?: string
+  readonly message: string
+  readonly type: 'error'
 }
 
 interface PausedEvent {
-	readonly id: string;
-	readonly type: "paused";
+  readonly id: string
+  readonly type: 'paused'
 }
 
 interface ResumedEvent {
-	readonly id: string;
-	readonly type: "resumed";
+  readonly id: string
+  readonly type: 'resumed'
 }
 
 type PtyEvent =
-	| ReadyEvent
-	| DataEvent
-	| ExitEvent
-	| ErrorEvent
-	| PausedEvent
-	| ResumedEvent;
+  | ReadyEvent
+  | DataEvent
+  | ExitEvent
+  | ErrorEvent
+  | PausedEvent
+  | ResumedEvent
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
-const ptys = new Map<string, IPty>();
+const ptys = new Map<string, IPty>()
 
 /**
  * Data coalescing buffers per PTY instance.
@@ -153,14 +153,14 @@ const ptys = new Map<string, IPty>();
  * burst output while adding imperceptible latency (~5ms) for interactive
  * typing.
  */
-const COALESCE_INTERVAL_MS = 5;
+const COALESCE_INTERVAL_MS = 5
 
 interface CoalesceBuffer {
-	readonly chunks: string[];
-	readonly timer: ReturnType<typeof setTimeout>;
+  readonly chunks: string[]
+  readonly timer: ReturnType<typeof setTimeout>
 }
 
-const coalesceBuffers = new Map<string, CoalesceBuffer>();
+const coalesceBuffers = new Map<string, CoalesceBuffer>()
 
 /**
  * Character-count flow control per PTY instance.
@@ -179,15 +179,15 @@ const coalesceBuffers = new Map<string, CoalesceBuffer>();
  * commands. The PTY host decrements `unacknowledgedCharCount` and resumes
  * the PTY when it drops below `LOW_WATERMARK_CHARS`.
  */
-const HIGH_WATERMARK_CHARS = 100_000;
-const LOW_WATERMARK_CHARS = 5000;
+const HIGH_WATERMARK_CHARS = 100_000
+const LOW_WATERMARK_CHARS = 5000
 
 interface FlowControlState {
-	readonly paused: boolean;
-	unacknowledgedCharCount: number;
+  readonly paused: boolean
+  unacknowledgedCharCount: number
 }
 
-const flowControlStates = new Map<string, FlowControlState>();
+const flowControlStates = new Map<string, FlowControlState>()
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -195,12 +195,12 @@ const flowControlStates = new Map<string, FlowControlState>();
 
 /** Write a JSON event to stdout (one line per event). */
 function emit(event: PtyEvent): void {
-	process.stdout.write(`${JSON.stringify(event)}\n`);
+  process.stdout.write(`${JSON.stringify(event)}\n`)
 }
 
 /** Log to stderr for debugging (not part of IPC protocol). */
 function debug(message: string, ...args: unknown[]): void {
-	console.error(`[pty-host] ${message}`, ...args);
+  console.error(`[pty-host] ${message}`, ...args)
 }
 
 // ---------------------------------------------------------------------------
@@ -219,41 +219,41 @@ function debug(message: string, ...args: unknown[]): void {
  * - handleKill (flush before kill in case there's pending data)
  */
 function flushCoalesceBuffer(id: string): void {
-	const buf = coalesceBuffers.get(id);
-	if (buf === undefined) {
-		return;
-	}
-	clearTimeout(buf.timer);
-	coalesceBuffers.delete(id);
+  const buf = coalesceBuffers.get(id)
+  if (buf === undefined) {
+    return
+  }
+  clearTimeout(buf.timer)
+  coalesceBuffers.delete(id)
 
-	const joined = buf.chunks.join("");
-	if (joined.length > 0) {
-		emit({ type: "data", id, data: joined });
+  const joined = buf.chunks.join('')
+  if (joined.length > 0) {
+    emit({ type: 'data', id, data: joined })
 
-		// Update flow control: track unacknowledged characters
-		const fcState = flowControlStates.get(id);
-		if (fcState !== undefined) {
-			fcState.unacknowledgedCharCount += joined.length;
+    // Update flow control: track unacknowledged characters
+    const fcState = flowControlStates.get(id)
+    if (fcState !== undefined) {
+      fcState.unacknowledgedCharCount += joined.length
 
-			// Pause PTY if high watermark exceeded (Issue #141)
-			if (
-				!fcState.paused &&
-				fcState.unacknowledgedCharCount > HIGH_WATERMARK_CHARS
-			) {
-				const pty = ptys.get(id);
-				if (pty !== undefined) {
-					pty.pause();
-					(fcState as { paused: boolean }).paused = true;
-					emit({ type: "paused", id });
-					debug(
-						"Flow control: paused PTY id=%s (unacked=%d)",
-						id,
-						fcState.unacknowledgedCharCount
-					);
-				}
-			}
-		}
-	}
+      // Pause PTY if high watermark exceeded (Issue #141)
+      if (
+        !fcState.paused &&
+        fcState.unacknowledgedCharCount > HIGH_WATERMARK_CHARS
+      ) {
+        const pty = ptys.get(id)
+        if (pty !== undefined) {
+          pty.pause()
+          ;(fcState as { paused: boolean }).paused = true
+          emit({ type: 'paused', id })
+          debug(
+            'Flow control: paused PTY id=%s (unacked=%d)',
+            id,
+            fcState.unacknowledgedCharCount
+          )
+        }
+      }
+    }
+  }
 }
 
 /**
@@ -265,18 +265,18 @@ function flushCoalesceBuffer(id: string): void {
  * as a single `data` event.
  */
 function bufferData(id: string, data: string): void {
-	const existing = coalesceBuffers.get(id);
-	if (existing !== undefined) {
-		existing.chunks.push(data);
-		return;
-	}
+  const existing = coalesceBuffers.get(id)
+  if (existing !== undefined) {
+    existing.chunks.push(data)
+    return
+  }
 
-	const chunks = [data];
-	const timer = setTimeout(() => {
-		flushCoalesceBuffer(id);
-	}, COALESCE_INTERVAL_MS);
+  const chunks = [data]
+  const timer = setTimeout(() => {
+    flushCoalesceBuffer(id)
+  }, COALESCE_INTERVAL_MS)
 
-	coalesceBuffers.set(id, { chunks, timer });
+  coalesceBuffers.set(id, { chunks, timer })
 }
 
 // ---------------------------------------------------------------------------
@@ -291,47 +291,47 @@ function bufferData(id: string, data: string): void {
  * replacing the need for a postinstall script.
  */
 async function fixSpawnHelperPermissions(): Promise<void> {
-	const { readdir, chmod, stat } = await import("node:fs/promises");
-	const { join, dirname } = await import("node:path");
+  const { readdir, chmod, stat } = await import('node:fs/promises')
+  const { join, dirname } = await import('node:path')
 
-	// Resolve the node-pty package directory using the top-level require_
-	let nodePtyDir: string;
-	try {
-		const nodePtyMain = require_.resolve("node-pty");
-		nodePtyDir = dirname(nodePtyMain);
-		// Walk up to the package root (node-pty/lib/index.js -> node-pty/)
-		while (nodePtyDir !== "/" && !nodePtyDir.endsWith("node-pty")) {
-			nodePtyDir = dirname(nodePtyDir);
-		}
-	} catch {
-		debug("Could not resolve node-pty package path, skipping permission fix");
-		return;
-	}
+  // Resolve the node-pty package directory using the top-level require_
+  let nodePtyDir: string
+  try {
+    const nodePtyMain = require_.resolve('node-pty')
+    nodePtyDir = dirname(nodePtyMain)
+    // Walk up to the package root (node-pty/lib/index.js -> node-pty/)
+    while (nodePtyDir !== '/' && !nodePtyDir.endsWith('node-pty')) {
+      nodePtyDir = dirname(nodePtyDir)
+    }
+  } catch {
+    debug('Could not resolve node-pty package path, skipping permission fix')
+    return
+  }
 
-	const prebuildsDir = join(nodePtyDir, "prebuilds");
+  const prebuildsDir = join(nodePtyDir, 'prebuilds')
 
-	try {
-		const platforms = await readdir(prebuildsDir);
-		for (const platform of platforms) {
-			const helperPath = join(prebuildsDir, platform, "spawn-helper");
-			try {
-				const st = await stat(helperPath);
-				// Check if execute bit is missing for owner
-				const isExecutable = Boolean(
-					// biome-ignore lint/suspicious/noBitwiseOperators: bitwise check for file permissions
-					(st.mode ?? 0) & 0o100
-				);
-				if (!isExecutable) {
-					await chmod(helperPath, 0o755);
-					debug("Fixed execute permission on %s", helperPath);
-				}
-			} catch {
-				// spawn-helper doesn't exist for this platform, skip
-			}
-		}
-	} catch {
-		debug("No prebuilds directory found at %s, skipping", prebuildsDir);
-	}
+  try {
+    const platforms = await readdir(prebuildsDir)
+    for (const platform of platforms) {
+      const helperPath = join(prebuildsDir, platform, 'spawn-helper')
+      try {
+        const st = await stat(helperPath)
+        // Check if execute bit is missing for owner
+        const isExecutable = Boolean(
+          // biome-ignore lint/suspicious/noBitwiseOperators: bitwise check for file permissions
+          (st.mode ?? 0) & 0o100
+        )
+        if (!isExecutable) {
+          await chmod(helperPath, 0o755)
+          debug('Fixed execute permission on %s', helperPath)
+        }
+      } catch {
+        // spawn-helper doesn't exist for this platform, skip
+      }
+    }
+  } catch {
+    debug('No prebuilds directory found at %s, skipping', prebuildsDir)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -339,145 +339,145 @@ async function fixSpawnHelperPermissions(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function handleSpawn(cmd: SpawnCommand): void {
-	if (ptys.has(cmd.id)) {
-		emit({
-			type: "error",
-			id: cmd.id,
-			message: `PTY with id "${cmd.id}" already exists`,
-		});
-		return;
-	}
+  if (ptys.has(cmd.id)) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `PTY with id "${cmd.id}" already exists`,
+    })
+    return
+  }
 
-	try {
-		// Import node-pty synchronously via createRequire (this script runs as
-		// ESM under Node.js, so bare require() is not available)
-		const nodePty = require_("node-pty") as typeof import("node-pty");
+  try {
+    // Import node-pty synchronously via createRequire (this script runs as
+    // ESM under Node.js, so bare require() is not available)
+    const nodePty = require_('node-pty') as typeof import('node-pty')
 
-		const pty = nodePty.spawn(cmd.shell, cmd.args as string[], {
-			name: "xterm-256color",
-			cols: cmd.cols,
-			rows: cmd.rows,
-			cwd: cmd.cwd,
-			env: cmd.env,
-		});
+    const pty = nodePty.spawn(cmd.shell, cmd.args as string[], {
+      name: 'xterm-256color',
+      cols: cmd.cols,
+      rows: cmd.rows,
+      cwd: cmd.cwd,
+      env: cmd.env,
+    })
 
-		ptys.set(cmd.id, pty);
+    ptys.set(cmd.id, pty)
 
-		// Initialize flow control state for this PTY (Issue #141)
-		flowControlStates.set(cmd.id, {
-			unacknowledgedCharCount: 0,
-			paused: false,
-		});
+    // Initialize flow control state for this PTY (Issue #141)
+    flowControlStates.set(cmd.id, {
+      unacknowledgedCharCount: 0,
+      paused: false,
+    })
 
-		// Forward PTY output through the coalescing buffer (Issue #137).
-		// node-pty's onData can fire for as little as a single character during
-		// interactive typing. The coalescing buffer accumulates chunks and emits
-		// a single IPC data event after 5ms of quiet, reducing IPC message count
-		// by an order of magnitude for burst output while adding imperceptible
-		// latency for interactive use.
-		pty.onData((data: string) => {
-			bufferData(cmd.id, data);
-		});
+    // Forward PTY output through the coalescing buffer (Issue #137).
+    // node-pty's onData can fire for as little as a single character during
+    // interactive typing. The coalescing buffer accumulates chunks and emits
+    // a single IPC data event after 5ms of quiet, reducing IPC message count
+    // by an order of magnitude for burst output while adding imperceptible
+    // latency for interactive use.
+    pty.onData((data: string) => {
+      bufferData(cmd.id, data)
+    })
 
-		// Forward PTY exit — flush any remaining coalesced data first
-		pty.onExit(({ exitCode, signal }) => {
-			const code = exitCode ?? -1;
-			const sig = signal ?? -1;
-			debug("PTY exited id=%s code=%d signal=%d", cmd.id, code, sig);
-			// Flush any pending coalesced output before the exit event so
-			// consumers see all output before the process is marked as exited.
-			flushCoalesceBuffer(cmd.id);
-			ptys.delete(cmd.id);
-			// Clean up flow control state (Issue #141)
-			flowControlStates.delete(cmd.id);
-			emit({ type: "exit", id: cmd.id, exitCode: code, signal: sig });
-		});
+    // Forward PTY exit — flush any remaining coalesced data first
+    pty.onExit(({ exitCode, signal }) => {
+      const code = exitCode ?? -1
+      const sig = signal ?? -1
+      debug('PTY exited id=%s code=%d signal=%d', cmd.id, code, sig)
+      // Flush any pending coalesced output before the exit event so
+      // consumers see all output before the process is marked as exited.
+      flushCoalesceBuffer(cmd.id)
+      ptys.delete(cmd.id)
+      // Clean up flow control state (Issue #141)
+      flowControlStates.delete(cmd.id)
+      emit({ type: 'exit', id: cmd.id, exitCode: code, signal: sig })
+    })
 
-		debug("Spawned PTY id=%s pid=%d shell=%s", cmd.id, pty.pid, cmd.shell);
-	} catch (error) {
-		emit({
-			type: "error",
-			id: cmd.id,
-			message: `Failed to spawn PTY: ${String(error)}`,
-		});
-	}
+    debug('Spawned PTY id=%s pid=%d shell=%s', cmd.id, pty.pid, cmd.shell)
+  } catch (error) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `Failed to spawn PTY: ${String(error)}`,
+    })
+  }
 }
 
 function handleWrite(cmd: WriteCommand): void {
-	const pty = ptys.get(cmd.id);
-	if (pty === undefined) {
-		emit({
-			type: "error",
-			id: cmd.id,
-			message: `PTY not found: ${cmd.id}`,
-		});
-		return;
-	}
+  const pty = ptys.get(cmd.id)
+  if (pty === undefined) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `PTY not found: ${cmd.id}`,
+    })
+    return
+  }
 
-	try {
-		pty.write(cmd.data);
-	} catch (error) {
-		emit({
-			type: "error",
-			id: cmd.id,
-			message: `Failed to write to PTY: ${String(error)}`,
-		});
-	}
+  try {
+    pty.write(cmd.data)
+  } catch (error) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `Failed to write to PTY: ${String(error)}`,
+    })
+  }
 }
 
 function handleResize(cmd: ResizeCommand): void {
-	const pty = ptys.get(cmd.id);
-	if (pty === undefined) {
-		emit({
-			type: "error",
-			id: cmd.id,
-			message: `PTY not found: ${cmd.id}`,
-		});
-		return;
-	}
+  const pty = ptys.get(cmd.id)
+  if (pty === undefined) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `PTY not found: ${cmd.id}`,
+    })
+    return
+  }
 
-	try {
-		// Flush any pending coalesced data BEFORE applying the resize.
-		// This ensures output is associated with the correct terminal
-		// dimensions, matching VS Code's behavior (PRD-terminal-perf.md).
-		flushCoalesceBuffer(cmd.id);
-		pty.resize(cmd.cols, cmd.rows);
-		debug("Resized PTY id=%s cols=%d rows=%d", cmd.id, cmd.cols, cmd.rows);
-	} catch (error) {
-		emit({
-			type: "error",
-			id: cmd.id,
-			message: `Failed to resize PTY: ${String(error)}`,
-		});
-	}
+  try {
+    // Flush any pending coalesced data BEFORE applying the resize.
+    // This ensures output is associated with the correct terminal
+    // dimensions, matching VS Code's behavior (PRD-terminal-perf.md).
+    flushCoalesceBuffer(cmd.id)
+    pty.resize(cmd.cols, cmd.rows)
+    debug('Resized PTY id=%s cols=%d rows=%d', cmd.id, cmd.cols, cmd.rows)
+  } catch (error) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `Failed to resize PTY: ${String(error)}`,
+    })
+  }
 }
 
 function handleKill(cmd: KillCommand): void {
-	const pty = ptys.get(cmd.id);
-	if (pty === undefined) {
-		emit({
-			type: "error",
-			id: cmd.id,
-			message: `PTY not found: ${cmd.id}`,
-		});
-		return;
-	}
+  const pty = ptys.get(cmd.id)
+  if (pty === undefined) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `PTY not found: ${cmd.id}`,
+    })
+    return
+  }
 
-	try {
-		// Flush any pending coalesced data before killing so no output is lost.
-		// The onExit handler also flushes, but flushing here ensures data is
-		// emitted even if kill is synchronous on some platforms.
-		flushCoalesceBuffer(cmd.id);
-		pty.kill();
-		debug("Killed PTY id=%s", cmd.id);
-		// Note: the onExit handler will emit the exit event and clean up the map
-	} catch (error) {
-		emit({
-			type: "error",
-			id: cmd.id,
-			message: `Failed to kill PTY: ${String(error)}`,
-		});
-	}
+  try {
+    // Flush any pending coalesced data before killing so no output is lost.
+    // The onExit handler also flushes, but flushing here ensures data is
+    // emitted even if kill is synchronous on some platforms.
+    flushCoalesceBuffer(cmd.id)
+    pty.kill()
+    debug('Killed PTY id=%s', cmd.id)
+    // Note: the onExit handler will emit the exit event and clean up the map
+  } catch (error) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `Failed to kill PTY: ${String(error)}`,
+    })
+  }
 }
 
 /**
@@ -488,31 +488,31 @@ function handleKill(cmd: KillCommand): void {
  * resumes the PTY so output continues.
  */
 function handleAck(cmd: AckCommand): void {
-	const fcState = flowControlStates.get(cmd.id);
-	if (fcState === undefined) {
-		// PTY may have already exited — silently ignore
-		return;
-	}
+  const fcState = flowControlStates.get(cmd.id)
+  if (fcState === undefined) {
+    // PTY may have already exited — silently ignore
+    return
+  }
 
-	fcState.unacknowledgedCharCount = Math.max(
-		0,
-		fcState.unacknowledgedCharCount - cmd.chars
-	);
+  fcState.unacknowledgedCharCount = Math.max(
+    0,
+    fcState.unacknowledgedCharCount - cmd.chars
+  )
 
-	// Resume PTY if below low watermark (Issue #141)
-	if (fcState.paused && fcState.unacknowledgedCharCount < LOW_WATERMARK_CHARS) {
-		const pty = ptys.get(cmd.id);
-		if (pty !== undefined) {
-			pty.resume();
-			(fcState as { paused: boolean }).paused = false;
-			emit({ type: "resumed", id: cmd.id });
-			debug(
-				"Flow control: resumed PTY id=%s (unacked=%d)",
-				cmd.id,
-				fcState.unacknowledgedCharCount
-			);
-		}
-	}
+  // Resume PTY if below low watermark (Issue #141)
+  if (fcState.paused && fcState.unacknowledgedCharCount < LOW_WATERMARK_CHARS) {
+    const pty = ptys.get(cmd.id)
+    if (pty !== undefined) {
+      pty.resume()
+      ;(fcState as { paused: boolean }).paused = false
+      emit({ type: 'resumed', id: cmd.id })
+      debug(
+        'Flow control: resumed PTY id=%s (unacked=%d)',
+        cmd.id,
+        fcState.unacknowledgedCharCount
+      )
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -520,92 +520,92 @@ function handleAck(cmd: AckCommand): void {
 // ---------------------------------------------------------------------------
 
 function isValidCommand(parsed: unknown): parsed is Command {
-	if (typeof parsed !== "object" || parsed === null) {
-		return false;
-	}
-	const obj = parsed as Record<string, unknown>;
-	if (typeof obj.type !== "string") {
-		return false;
-	}
+  if (typeof parsed !== 'object' || parsed === null) {
+    return false
+  }
+  const obj = parsed as Record<string, unknown>
+  if (typeof obj.type !== 'string') {
+    return false
+  }
 
-	switch (obj.type) {
-		case "spawn":
-			return (
-				typeof obj.id === "string" &&
-				typeof obj.shell === "string" &&
-				Array.isArray(obj.args) &&
-				typeof obj.cwd === "string" &&
-				typeof obj.env === "object" &&
-				obj.env !== null &&
-				typeof obj.cols === "number" &&
-				typeof obj.rows === "number"
-			);
-		case "write":
-			return typeof obj.id === "string" && typeof obj.data === "string";
-		case "resize":
-			return (
-				typeof obj.id === "string" &&
-				typeof obj.cols === "number" &&
-				typeof obj.rows === "number"
-			);
-		case "kill":
-			return typeof obj.id === "string";
-		case "ack":
-			return typeof obj.id === "string" && typeof obj.chars === "number";
-		default:
-			return false;
-	}
+  switch (obj.type) {
+    case 'spawn':
+      return (
+        typeof obj.id === 'string' &&
+        typeof obj.shell === 'string' &&
+        Array.isArray(obj.args) &&
+        typeof obj.cwd === 'string' &&
+        typeof obj.env === 'object' &&
+        obj.env !== null &&
+        typeof obj.cols === 'number' &&
+        typeof obj.rows === 'number'
+      )
+    case 'write':
+      return typeof obj.id === 'string' && typeof obj.data === 'string'
+    case 'resize':
+      return (
+        typeof obj.id === 'string' &&
+        typeof obj.cols === 'number' &&
+        typeof obj.rows === 'number'
+      )
+    case 'kill':
+      return typeof obj.id === 'string'
+    case 'ack':
+      return typeof obj.id === 'string' && typeof obj.chars === 'number'
+    default:
+      return false
+  }
 }
 
 function processLine(line: string): void {
-	const trimmed = line.trim();
-	if (trimmed === "") {
-		return;
-	}
+  const trimmed = line.trim()
+  if (trimmed === '') {
+    return
+  }
 
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(trimmed);
-	} catch {
-		emit({
-			type: "error",
-			message: `Invalid JSON: ${trimmed.slice(0, 100)}`,
-		});
-		return;
-	}
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    emit({
+      type: 'error',
+      message: `Invalid JSON: ${trimmed.slice(0, 100)}`,
+    })
+    return
+  }
 
-	if (!isValidCommand(parsed)) {
-		emit({
-			type: "error",
-			message: `Invalid command: ${trimmed.slice(0, 100)}`,
-		});
-		return;
-	}
+  if (!isValidCommand(parsed)) {
+    emit({
+      type: 'error',
+      message: `Invalid command: ${trimmed.slice(0, 100)}`,
+    })
+    return
+  }
 
-	switch (parsed.type) {
-		case "spawn":
-			handleSpawn(parsed);
-			break;
-		case "write":
-			handleWrite(parsed);
-			break;
-		case "resize":
-			handleResize(parsed);
-			break;
-		case "kill":
-			handleKill(parsed);
-			break;
-		case "ack":
-			handleAck(parsed);
-			break;
-		default:
-			// isValidCommand already filters to known types, but satisfy exhaustiveness
-			emit({
-				type: "error",
-				message: `Unknown command type: ${(parsed as unknown as Record<string, unknown>).type}`,
-			});
-			break;
-	}
+  switch (parsed.type) {
+    case 'spawn':
+      handleSpawn(parsed)
+      break
+    case 'write':
+      handleWrite(parsed)
+      break
+    case 'resize':
+      handleResize(parsed)
+      break
+    case 'kill':
+      handleKill(parsed)
+      break
+    case 'ack':
+      handleAck(parsed)
+      break
+    default:
+      // isValidCommand already filters to known types, but satisfy exhaustiveness
+      emit({
+        type: 'error',
+        message: `Unknown command type: ${(parsed as unknown as Record<string, unknown>).type}`,
+      })
+      break
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -623,56 +623,56 @@ function processLine(line: string): void {
  * array for the next iteration.
  */
 async function readStdin(): Promise<void> {
-	const bufferChunks: string[] = [];
+  const bufferChunks: string[] = []
 
-	for await (const chunk of process.stdin) {
-		bufferChunks.push(
-			typeof chunk === "string" ? chunk : (chunk as Buffer).toString("utf-8")
-		);
+  for await (const chunk of process.stdin) {
+    bufferChunks.push(
+      typeof chunk === 'string' ? chunk : (chunk as Buffer).toString('utf-8')
+    )
 
-		// Join accumulated chunks to scan for newlines
-		const joined = bufferChunks.join("");
-		bufferChunks.length = 0;
+    // Join accumulated chunks to scan for newlines
+    const joined = bufferChunks.join('')
+    bufferChunks.length = 0
 
-		let searchStart = 0;
-		let newlineIdx = joined.indexOf("\n", searchStart);
-		while (newlineIdx !== -1) {
-			const line = joined.slice(searchStart, newlineIdx);
-			processLine(line);
-			searchStart = newlineIdx + 1;
-			newlineIdx = joined.indexOf("\n", searchStart);
-		}
+    let searchStart = 0
+    let newlineIdx = joined.indexOf('\n', searchStart)
+    while (newlineIdx !== -1) {
+      const line = joined.slice(searchStart, newlineIdx)
+      processLine(line)
+      searchStart = newlineIdx + 1
+      newlineIdx = joined.indexOf('\n', searchStart)
+    }
 
-		// Keep the remainder (after the last newline) for the next chunk
-		if (searchStart < joined.length) {
-			bufferChunks.push(joined.slice(searchStart));
-		}
-	}
+    // Keep the remainder (after the last newline) for the next chunk
+    if (searchStart < joined.length) {
+      bufferChunks.push(joined.slice(searchStart))
+    }
+  }
 
-	// Process any remaining data after stdin closes
-	const remaining = bufferChunks.join("").trim();
-	if (remaining !== "") {
-		processLine(remaining);
-	}
+  // Process any remaining data after stdin closes
+  const remaining = bufferChunks.join('').trim()
+  if (remaining !== '') {
+    processLine(remaining)
+  }
 
-	debug("stdin closed, shutting down");
-	// Flush all coalescing buffers and kill all remaining PTYs on shutdown
-	for (const [id, pty] of ptys) {
-		debug("Cleaning up PTY id=%s on shutdown", id);
-		flushCoalesceBuffer(id);
-		try {
-			pty.kill();
-		} catch {
-			// Best effort cleanup
-		}
-	}
-	// Clean up any orphaned coalescing buffers (shouldn't happen, but defensive)
-	for (const [id, buf] of coalesceBuffers) {
-		clearTimeout(buf.timer);
-		coalesceBuffers.delete(id);
-	}
-	ptys.clear();
-	flowControlStates.clear();
+  debug('stdin closed, shutting down')
+  // Flush all coalescing buffers and kill all remaining PTYs on shutdown
+  for (const [id, pty] of ptys) {
+    debug('Cleaning up PTY id=%s on shutdown', id)
+    flushCoalesceBuffer(id)
+    try {
+      pty.kill()
+    } catch {
+      // Best effort cleanup
+    }
+  }
+  // Clean up any orphaned coalescing buffers (shouldn't happen, but defensive)
+  for (const [id, buf] of coalesceBuffers) {
+    clearTimeout(buf.timer)
+    coalesceBuffers.delete(id)
+  }
+  ptys.clear()
+  flowControlStates.clear()
 }
 
 // ---------------------------------------------------------------------------
@@ -680,24 +680,24 @@ async function readStdin(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-	debug("Starting PTY Host (pid=%d)", process.pid);
+  debug('Starting PTY Host (pid=%d)', process.pid)
 
-	// Fix spawn-helper permissions before anything else
-	await fixSpawnHelperPermissions();
+  // Fix spawn-helper permissions before anything else
+  await fixSpawnHelperPermissions()
 
-	// Signal readiness to the parent process
-	emit({ type: "ready" });
-	debug("Ready");
+  // Signal readiness to the parent process
+  emit({ type: 'ready' })
+  debug('Ready')
 
-	// Start reading commands from stdin
-	await readStdin();
+  // Start reading commands from stdin
+  await readStdin()
 }
 
 main().catch((error) => {
-	debug("Fatal error: %s", String(error));
-	emit({
-		type: "error",
-		message: `PTY Host fatal error: ${String(error)}`,
-	});
-	process.exit(1);
-});
+  debug('Fatal error: %s', String(error))
+  emit({
+    type: 'error',
+    message: `PTY Host fatal error: ${String(error)}`,
+  })
+  process.exit(1)
+})

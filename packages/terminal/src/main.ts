@@ -33,20 +33,20 @@
  */
 
 import {
-	HttpMiddleware,
-	HttpRouter,
-	HttpServer,
-	HttpServerResponse,
-} from "@effect/platform";
-import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
-import { RpcSerialization, RpcServer } from "@effect/rpc";
-import { env } from "@laborer/env/server";
-import { TerminalRpcs } from "@laborer/shared/rpc";
-import { Effect, Layer } from "effect";
-import { TerminalWsRouteLive } from "./routes/terminal-ws.js";
-import { TerminalRpcsLive } from "./rpc/handlers.js";
-import { PtyHostClient } from "./services/pty-host-client.js";
-import { TerminalManager } from "./services/terminal-manager.js";
+  HttpMiddleware,
+  HttpRouter,
+  HttpServer,
+  HttpServerResponse,
+} from '@effect/platform'
+import { BunHttpServer, BunRuntime } from '@effect/platform-bun'
+import { RpcSerialization, RpcServer } from '@effect/rpc'
+import { env } from '@laborer/env/server'
+import { TerminalRpcs } from '@laborer/shared/rpc'
+import { Effect, Layer } from 'effect'
+import { TerminalWsRouteLive } from './routes/terminal-ws.js'
+import { TerminalRpcsLive } from './rpc/handlers.js'
+import { PtyHostClient } from './services/pty-host-client.js'
+import { TerminalManager } from './services/terminal-manager.js'
 
 /**
  * Health Check Route
@@ -56,18 +56,18 @@ import { TerminalManager } from "./services/terminal-manager.js";
  * confirm the process started successfully.
  */
 const HealthRouteLive = HttpRouter.Default.use((router) =>
-	router.addRoute(
-		HttpRouter.makeRoute(
-			"GET",
-			"/",
-			HttpServerResponse.json({
-				status: "ok",
-				name: "laborer-terminal",
-				port: env.TERMINAL_PORT,
-			})
-		)
-	)
-);
+  router.addRoute(
+    HttpRouter.makeRoute(
+      'GET',
+      '/',
+      HttpServerResponse.json({
+        status: 'ok',
+        name: 'laborer-terminal',
+        port: env.TERMINAL_PORT,
+      })
+    )
+  )
+)
 
 /**
  * RPC Layer — Terminal RPCs over HTTP (POST /rpc)
@@ -79,9 +79,9 @@ const HealthRouteLive = HttpRouter.Default.use((router) =>
  * @see Issue #139: Terminal RPC handlers
  */
 const RpcLive = RpcServer.layer(TerminalRpcs).pipe(
-	Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-	Layer.provide(TerminalRpcsLive)
-);
+  Layer.provide(RpcServer.layerProtocolHttp({ path: '/rpc' })),
+  Layer.provide(TerminalRpcsLive)
+)
 
 /**
  * Server Layer
@@ -89,7 +89,7 @@ const RpcLive = RpcServer.layer(TerminalRpcs).pipe(
  * Provides the Bun HTTP server on TERMINAL_PORT.
  * Port is sourced from env validation (@laborer/env/server).
  */
-const ServerLive = BunHttpServer.layer({ port: env.TERMINAL_PORT });
+const ServerLive = BunHttpServer.layer({ port: env.TERMINAL_PORT })
 
 /**
  * Application Layer
@@ -109,18 +109,18 @@ const ServerLive = BunHttpServer.layer({ port: env.TERMINAL_PORT });
  * @see Issue #140: Terminal WebSocket route
  */
 const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
-	HttpServer.withLogAddress,
-	// --- Route layers (consume services from below) ---
-	Layer.provide(HealthRouteLive),
-	Layer.provide(TerminalWsRouteLive),
-	Layer.provide(RpcLive),
-	// --- Service layers ---
-	Layer.provide(TerminalManager.layer),
-	Layer.provide(PtyHostClient.layer),
-	// --- Infrastructure layers ---
-	Layer.provide(RpcSerialization.layerJson),
-	Layer.provide(ServerLive)
-);
+  HttpServer.withLogAddress,
+  // --- Route layers (consume services from below) ---
+  Layer.provide(HealthRouteLive),
+  Layer.provide(TerminalWsRouteLive),
+  Layer.provide(RpcLive),
+  // --- Service layers ---
+  Layer.provide(TerminalManager.layer),
+  Layer.provide(PtyHostClient.layer),
+  // --- Infrastructure layers ---
+  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(ServerLive)
+)
 
 /**
  * Main program
@@ -130,6 +130,6 @@ const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
  * 2. Keeps running until interrupted
  * 3. On SIGINT/SIGTERM, tears down all layer scopes (kills PTY Host)
  */
-const main = HttpLive.pipe(Layer.launch, Effect.scoped);
+const main = HttpLive.pipe(Layer.launch, Effect.scoped)
 
-BunRuntime.runMain(main);
+BunRuntime.runMain(main)

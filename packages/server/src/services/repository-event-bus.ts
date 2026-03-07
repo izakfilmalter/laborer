@@ -16,8 +16,8 @@
  * @see PRD-opencode-inspired-repo-watching.md — Issue 5
  */
 
-import { relative } from "node:path";
-import { Context, Data, Effect, Layer } from "effect";
+import { relative } from 'node:path'
+import { Context, Data, Effect, Layer } from 'effect'
 
 // ── Event Model ─────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ import { Context, Data, Effect, Layer } from "effect";
  * as best-effort. The system is eventually consistent — missed
  * classifications are corrected by subsequent events.
  */
-type RepositoryFileEventType = "add" | "change" | "delete";
+type RepositoryFileEventType = 'add' | 'change' | 'delete'
 
 /**
  * A normalized repository file event. This is the stable shape that
@@ -44,29 +44,29 @@ type RepositoryFileEventType = "add" | "change" | "delete";
  * backend.
  */
 interface RepositoryFileEvent {
-	/** The absolute path of the changed file */
-	readonly absolutePath: string;
-	/** The project this event belongs to */
-	readonly projectId: string;
-	/** The path of the changed file relative to the repository root */
-	readonly relativePath: string;
-	/** The canonical repository root this event originated from */
-	readonly repoRoot: string;
-	/** The type of change */
-	readonly type: RepositoryFileEventType;
+  /** The absolute path of the changed file */
+  readonly absolutePath: string
+  /** The project this event belongs to */
+  readonly projectId: string
+  /** The path of the changed file relative to the repository root */
+  readonly relativePath: string
+  /** The canonical repository root this event originated from */
+  readonly repoRoot: string
+  /** The type of change */
+  readonly type: RepositoryFileEventType
 }
 
 /**
  * Callback for receiving repository file events.
  */
-type RepositoryFileEventHandler = (event: RepositoryFileEvent) => void;
+type RepositoryFileEventHandler = (event: RepositoryFileEvent) => void
 
 /**
  * A handle to an active event bus subscription.
  * Calling `unsubscribe` removes the handler from the bus.
  */
 interface EventBusSubscription {
-	readonly unsubscribe: () => void;
+  readonly unsubscribe: () => void
 }
 
 // ── Ignore Rules ────────────────────────────────────────────────
@@ -80,56 +80,56 @@ interface EventBusSubscription {
  * segment matches an entry is suppressed.
  */
 const DEFAULT_IGNORED_PREFIXES: readonly string[] = [
-	// Git internals
-	".git",
-	// Dependencies
-	"node_modules",
-	// Build output
-	"dist",
-	"build",
-	"out",
-	".next",
-	".nuxt",
-	".svelte-kit",
-	".turbo",
-	// Package manager caches
-	".yarn",
-	".pnpm-store",
-	// IDE / editor
-	".idea",
-	".vscode",
-	// OS metadata
-	".DS_Store",
-	"Thumbs.db",
-	// Coverage / test artifacts
-	"coverage",
-	".nyc_output",
-];
+  // Git internals
+  '.git',
+  // Dependencies
+  'node_modules',
+  // Build output
+  'dist',
+  'build',
+  'out',
+  '.next',
+  '.nuxt',
+  '.svelte-kit',
+  '.turbo',
+  // Package manager caches
+  '.yarn',
+  '.pnpm-store',
+  // IDE / editor
+  '.idea',
+  '.vscode',
+  // OS metadata
+  '.DS_Store',
+  'Thumbs.db',
+  // Coverage / test artifacts
+  'coverage',
+  '.nyc_output',
+]
 
 /**
  * Determine whether a relative path should be ignored based on
  * prefix matching against the ignore list.
  */
 const shouldIgnore = (
-	relativePath: string,
-	ignoredPrefixes: readonly string[]
+  relativePath: string,
+  ignoredPrefixes: readonly string[]
 ): boolean => {
-	if (relativePath === "") {
-		return true;
-	}
-	// Extract the first path segment for prefix matching
-	const firstSegment = relativePath.split("/")[0] ?? relativePath;
-	return ignoredPrefixes.some(
-		(prefix) => firstSegment === prefix || relativePath === prefix
-	);
-};
+  if (relativePath === '') {
+    return true
+  }
+  // Extract the first path segment for prefix matching
+  const firstSegment = relativePath.split('/')[0] ?? relativePath
+  return ignoredPrefixes.some(
+    (prefix) => firstSegment === prefix || relativePath === prefix
+  )
+}
 
 // ── Error ───────────────────────────────────────────────────────
 
 class RepositoryEventBusError extends Data.TaggedError(
-	"RepositoryEventBusError"
+  'RepositoryEventBusError'
 )<{
-	readonly message: string;
+  readonly message: string
 }> {}
 
 // ── Service ─────────────────────────────────────────────────────
@@ -139,14 +139,14 @@ class RepositoryEventBusError extends Data.TaggedError(
  * prefixes, deduplicating entries.
  */
 const mergeIgnorePrefixes = (
-	additional: readonly string[]
+  additional: readonly string[]
 ): readonly string[] => {
-	if (additional.length === 0) {
-		return DEFAULT_IGNORED_PREFIXES;
-	}
-	const combined = new Set([...DEFAULT_IGNORED_PREFIXES, ...additional]);
-	return [...combined];
-};
+  if (additional.length === 0) {
+    return DEFAULT_IGNORED_PREFIXES
+  }
+  const combined = new Set([...DEFAULT_IGNORED_PREFIXES, ...additional])
+  return [...combined]
+}
 
 /**
  * Convert first-segment ignore prefixes into glob patterns suitable
@@ -156,159 +156,159 @@ const mergeIgnorePrefixes = (
  * backend can suppress events before they reach user-space.
  */
 const toWatcherIgnoreGlobs = (prefixes: readonly string[]): string[] =>
-	prefixes.map((prefix) => `${prefix}/**`);
+  prefixes.map((prefix) => `${prefix}/**`)
 
-class RepositoryEventBus extends Context.Tag("@laborer/RepositoryEventBus")<
-	RepositoryEventBus,
-	{
-		/**
-		 * Subscribe to repository file events. Returns a handle that
-		 * can be used to unsubscribe.
-		 */
-		readonly subscribe: (
-			handler: RepositoryFileEventHandler
-		) => Effect.Effect<EventBusSubscription>;
+class RepositoryEventBus extends Context.Tag('@laborer/RepositoryEventBus')<
+  RepositoryEventBus,
+  {
+    /**
+     * Subscribe to repository file events. Returns a handle that
+     * can be used to unsubscribe.
+     */
+    readonly subscribe: (
+      handler: RepositoryFileEventHandler
+    ) => Effect.Effect<EventBusSubscription>
 
-		/**
-		 * Publish a raw watcher event. The bus normalizes the event,
-		 * applies ignore rules, and fans out to all subscribers.
-		 *
-		 * This is called by the RepositoryWatchCoordinator — not by
-		 * downstream consumers.
-		 */
-		readonly publish: (event: RepositoryFileEvent) => Effect.Effect<void>;
+    /**
+     * Publish a raw watcher event. The bus normalizes the event,
+     * applies ignore rules, and fans out to all subscribers.
+     *
+     * This is called by the RepositoryWatchCoordinator — not by
+     * downstream consumers.
+     */
+    readonly publish: (event: RepositoryFileEvent) => Effect.Effect<void>
 
-		/**
-		 * Create a normalized event from a raw watcher signal.
-		 * Applies ignore rules and returns null if the event should
-		 * be suppressed.
-		 */
-		readonly normalizeEvent: (params: {
-			readonly type: RepositoryFileEventType;
-			readonly fileName: string | null;
-			readonly repoRoot: string;
-			readonly projectId: string;
-		}) => RepositoryFileEvent | null;
+    /**
+     * Create a normalized event from a raw watcher signal.
+     * Applies ignore rules and returns null if the event should
+     * be suppressed.
+     */
+    readonly normalizeEvent: (params: {
+      readonly type: RepositoryFileEventType
+      readonly fileName: string | null
+      readonly repoRoot: string
+      readonly projectId: string
+    }) => RepositoryFileEvent | null
 
-		/**
-		 * The effective ignore prefixes used by this bus instance.
-		 * Includes both defaults and any config-provided additions.
-		 * Exposed so the coordinator can pass these to the watcher backend.
-		 */
-		readonly ignorePrefixes: readonly string[];
+    /**
+     * The effective ignore prefixes used by this bus instance.
+     * Includes both defaults and any config-provided additions.
+     * Exposed so the coordinator can pass these to the watcher backend.
+     */
+    readonly ignorePrefixes: readonly string[]
 
-		/**
-		 * Glob patterns derived from `ignorePrefixes`, suitable for
-		 * passing to native watcher backends that support early filtering.
-		 */
-		readonly ignoreGlobs: readonly string[];
+    /**
+     * Glob patterns derived from `ignorePrefixes`, suitable for
+     * passing to native watcher backends that support early filtering.
+     */
+    readonly ignoreGlobs: readonly string[]
 
-		/**
-		 * Update the effective ignore prefixes by merging additional
-		 * config-provided patterns into the defaults. This is called
-		 * by the coordinator after reading project-level config.
-		 */
-		readonly setAdditionalIgnorePrefixes: (
-			additional: readonly string[]
-		) => void;
-	}
+    /**
+     * Update the effective ignore prefixes by merging additional
+     * config-provided patterns into the defaults. This is called
+     * by the coordinator after reading project-level config.
+     */
+    readonly setAdditionalIgnorePrefixes: (
+      additional: readonly string[]
+    ) => void
+  }
 >() {
-	static readonly layer = Layer.effect(
-		RepositoryEventBus,
-		Effect.sync(() => {
-			// Mutable handler list. Mutations are synchronous and
-			// single-threaded so no fiber coordination is needed.
-			// This avoids Effect.runSync in the synchronous
-			// unsubscribe callback.
-			const handlers: RepositoryFileEventHandler[] = [];
-			let ignoredPrefixes: readonly string[] = DEFAULT_IGNORED_PREFIXES;
-			let ignoreGlobs: readonly string[] = toWatcherIgnoreGlobs(
-				DEFAULT_IGNORED_PREFIXES
-			);
+  static readonly layer = Layer.effect(
+    RepositoryEventBus,
+    Effect.sync(() => {
+      // Mutable handler list. Mutations are synchronous and
+      // single-threaded so no fiber coordination is needed.
+      // This avoids Effect.runSync in the synchronous
+      // unsubscribe callback.
+      const handlers: RepositoryFileEventHandler[] = []
+      let ignoredPrefixes: readonly string[] = DEFAULT_IGNORED_PREFIXES
+      let ignoreGlobs: readonly string[] = toWatcherIgnoreGlobs(
+        DEFAULT_IGNORED_PREFIXES
+      )
 
-			const subscribe = (
-				handler: RepositoryFileEventHandler
-			): Effect.Effect<EventBusSubscription> =>
-				Effect.sync(() => {
-					handlers.push(handler);
+      const subscribe = (
+        handler: RepositoryFileEventHandler
+      ): Effect.Effect<EventBusSubscription> =>
+        Effect.sync(() => {
+          handlers.push(handler)
 
-					return {
-						unsubscribe: () => {
-							const idx = handlers.indexOf(handler);
-							if (idx !== -1) {
-								handlers.splice(idx, 1);
-							}
-						},
-					} satisfies EventBusSubscription;
-				});
+          return {
+            unsubscribe: () => {
+              const idx = handlers.indexOf(handler)
+              if (idx !== -1) {
+                handlers.splice(idx, 1)
+              }
+            },
+          } satisfies EventBusSubscription
+        })
 
-			const publish = (event: RepositoryFileEvent): Effect.Effect<void> =>
-				Effect.sync(() => {
-					for (const handler of [...handlers]) {
-						handler(event);
-					}
-				});
+      const publish = (event: RepositoryFileEvent): Effect.Effect<void> =>
+        Effect.sync(() => {
+          for (const handler of [...handlers]) {
+            handler(event)
+          }
+        })
 
-			const normalizeEvent = (params: {
-				readonly type: RepositoryFileEventType;
-				readonly fileName: string | null;
-				readonly repoRoot: string;
-				readonly projectId: string;
-			}): RepositoryFileEvent | null => {
-				const { type, fileName, repoRoot, projectId } = params;
+      const normalizeEvent = (params: {
+        readonly type: RepositoryFileEventType
+        readonly fileName: string | null
+        readonly repoRoot: string
+        readonly projectId: string
+      }): RepositoryFileEvent | null => {
+        const { type, fileName, repoRoot, projectId } = params
 
-				if (fileName === null) {
-					return null;
-				}
+        if (fileName === null) {
+          return null
+        }
 
-				// Normalize the relative path (watcher may return OS-specific separators)
-				const relativePath = relative(repoRoot, `${repoRoot}/${fileName}`);
+        // Normalize the relative path (watcher may return OS-specific separators)
+        const relativePath = relative(repoRoot, `${repoRoot}/${fileName}`)
 
-				if (shouldIgnore(relativePath, ignoredPrefixes)) {
-					return null;
-				}
+        if (shouldIgnore(relativePath, ignoredPrefixes)) {
+          return null
+        }
 
-				return {
-					type,
-					relativePath,
-					absolutePath: `${repoRoot}/${fileName}`,
-					projectId,
-					repoRoot,
-				};
-			};
+        return {
+          type,
+          relativePath,
+          absolutePath: `${repoRoot}/${fileName}`,
+          projectId,
+          repoRoot,
+        }
+      }
 
-			const setAdditionalIgnorePrefixes = (
-				additional: readonly string[]
-			): void => {
-				ignoredPrefixes = mergeIgnorePrefixes(additional);
-				ignoreGlobs = toWatcherIgnoreGlobs(ignoredPrefixes);
-			};
+      const setAdditionalIgnorePrefixes = (
+        additional: readonly string[]
+      ): void => {
+        ignoredPrefixes = mergeIgnorePrefixes(additional)
+        ignoreGlobs = toWatcherIgnoreGlobs(ignoredPrefixes)
+      }
 
-			return RepositoryEventBus.of({
-				subscribe,
-				publish,
-				normalizeEvent,
-				get ignorePrefixes() {
-					return ignoredPrefixes;
-				},
-				get ignoreGlobs() {
-					return ignoreGlobs;
-				},
-				setAdditionalIgnorePrefixes,
-			});
-		})
-	);
+      return RepositoryEventBus.of({
+        subscribe,
+        publish,
+        normalizeEvent,
+        get ignorePrefixes() {
+          return ignoredPrefixes
+        },
+        get ignoreGlobs() {
+          return ignoreGlobs
+        },
+        setAdditionalIgnorePrefixes,
+      })
+    })
+  )
 }
 
 export {
-	type EventBusSubscription,
-	RepositoryEventBus,
-	RepositoryEventBusError,
-	type RepositoryFileEvent,
-	type RepositoryFileEventHandler,
-	type RepositoryFileEventType,
-	shouldIgnore,
-	DEFAULT_IGNORED_PREFIXES,
-	mergeIgnorePrefixes,
-	toWatcherIgnoreGlobs,
-};
+  type EventBusSubscription,
+  RepositoryEventBus,
+  RepositoryEventBusError,
+  type RepositoryFileEvent,
+  type RepositoryFileEventHandler,
+  type RepositoryFileEventType,
+  shouldIgnore,
+  DEFAULT_IGNORED_PREFIXES,
+  mergeIgnorePrefixes,
+  toWatcherIgnoreGlobs,
+}

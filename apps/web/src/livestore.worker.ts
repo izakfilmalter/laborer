@@ -20,14 +20,14 @@
  * @see Issue #18: LiveStore server-to-client sync
  */
 
-import { schema } from "@laborer/shared/schema";
-import { makeWorker } from "@livestore/adapter-web/worker";
-import { makeWsSync } from "@livestore/sync-cf/client";
+import { schema } from '@laborer/shared/schema'
+import { makeWorker } from '@livestore/adapter-web/worker'
+import { makeWsSync } from '@livestore/sync-cf/client'
 
 makeWorker({
-	schema,
-	sync: {
-		backend: makeWsSync({ url: `${globalThis.location.origin}/rpc` }),
-		initialSyncOptions: { _tag: "Blocking", timeout: 5000 },
-	},
-});
+  schema,
+  sync: {
+    backend: makeWsSync({ url: `${globalThis.location.origin}/rpc` }),
+    initialSyncOptions: { _tag: 'Blocking', timeout: 5000 },
+  },
+})

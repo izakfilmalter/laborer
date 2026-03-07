@@ -8,11 +8,11 @@
  * @see PRD-opencode-inspired-repo-watching.md — Issue 7
  */
 
-const REPO_WATCHING_GIT_CONFIG = ["-c", "core.fsmonitor=false"] as const;
+const REPO_WATCHING_GIT_CONFIG = ['-c', 'core.fsmonitor=false'] as const
 
 const withFsmonitorDisabled = (args: readonly string[]): readonly string[] => [
-	...REPO_WATCHING_GIT_CONFIG,
-	...args,
-];
+  ...REPO_WATCHING_GIT_CONFIG,
+  ...args,
+]
 
-export { REPO_WATCHING_GIT_CONFIG, withFsmonitorDisabled };
+export { REPO_WATCHING_GIT_CONFIG, withFsmonitorDisabled }

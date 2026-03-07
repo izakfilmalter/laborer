@@ -505,6 +505,173 @@ describe("RepositoryWatchCoordinator hardening", () => {
 			}).pipe(Effect.provide(TestLayer));
 		}
 	);
+
+	it.scoped(
+		"watchProject is idempotent — re-calling for the same project replaces previous watchers",
+		() => {
+			const reconcileCalls = { current: 0 };
+			const branchRefreshCalls = { current: 0 };
+			const watchersByPath = new Map<string, RecordedWatcher[]>();
+			const subscribePaths: string[] = [];
+			const closedPaths: string[] = [];
+
+			const TestLayer = createTestLayer({
+				reconcileCalls,
+				branchRefreshCalls,
+				watchersByPath,
+				subscribePaths,
+				closedPaths,
+			});
+
+			return Effect.gen(function* () {
+				const coordinator = yield* RepositoryWatchCoordinator;
+
+				// First watch
+				yield* coordinator.watchProject("project-idempotent", "/input/repo");
+
+				const firstGitWatcher = watchersByPath
+					.get("/virtual/repo/.git")
+					?.at(-1);
+				const firstRepoWatcher = watchersByPath.get("/virtual/repo")?.at(-1);
+				assert.isDefined(firstGitWatcher);
+				assert.isDefined(firstRepoWatcher);
+
+				// Re-watch the same project — should close old watchers and create new ones
+				yield* coordinator.watchProject("project-idempotent", "/input/repo");
+
+				// The first watchers should have been closed
+				assert.isTrue(
+					firstGitWatcher?.closed ?? false,
+					"First git watcher should be closed after re-watch"
+				);
+				assert.isTrue(
+					firstRepoWatcher?.closed ?? false,
+					"First repo watcher should be closed after re-watch"
+				);
+
+				// New watchers should have been created
+				const secondGitWatcher = watchersByPath
+					.get("/virtual/repo/.git")
+					?.at(-1);
+				assert.isDefined(secondGitWatcher);
+				assert.notStrictEqual(
+					secondGitWatcher,
+					firstGitWatcher,
+					"Should have a new git watcher after re-watch"
+				);
+
+				// The new watchers should still work — deliver a branch event
+				secondGitWatcher?.onChange({ type: "change", fileName: "HEAD" });
+
+				yield* Effect.promise(() =>
+					waitFor(() => Promise.resolve(branchRefreshCalls.current === 1))
+				);
+			}).pipe(Effect.provide(TestLayer));
+		}
+	);
+
+	it.scoped(
+		"git event classification routes HEAD and refs to branch refresh, worktrees to reconciliation",
+		() => {
+			const reconcileCalls = { current: 0 };
+			const branchRefreshCalls = { current: 0 };
+			const watchersByPath = new Map<string, RecordedWatcher[]>();
+			const subscribePaths: string[] = [];
+			const closedPaths: string[] = [];
+
+			const TestLayer = createTestLayer({
+				reconcileCalls,
+				branchRefreshCalls,
+				watchersByPath,
+				subscribePaths,
+				closedPaths,
+			});
+
+			return Effect.gen(function* () {
+				const coordinator = yield* RepositoryWatchCoordinator;
+				yield* coordinator.watchProject("project-classify", "/input/repo");
+
+				const gitWatcher = watchersByPath.get("/virtual/repo/.git")?.at(-1);
+				if (gitWatcher === undefined) {
+					throw new Error("Expected git watcher subscription");
+				}
+
+				// Test branch-related events: HEAD, refs/heads/main, MERGE_HEAD,
+				// REBASE_HEAD, ORIG_HEAD, FETCH_HEAD
+				const branchFiles = [
+					"HEAD",
+					"refs/heads/main",
+					"MERGE_HEAD",
+					"REBASE_HEAD",
+					"ORIG_HEAD",
+					"FETCH_HEAD",
+				];
+
+				for (const fileName of branchFiles) {
+					gitWatcher.onChange({ type: "change", fileName });
+				}
+
+				yield* Effect.promise(() =>
+					waitFor(() => Promise.resolve(branchRefreshCalls.current === 1))
+				);
+
+				// All branch events debounce to a single branch refresh
+				assert.strictEqual(
+					branchRefreshCalls.current,
+					1,
+					"Branch-related events should trigger branch refresh"
+				);
+
+				// refs/heads/main also matches isWorktreeRelatedEvent? No —
+				// it starts with "refs" not "worktrees". So reconcile should
+				// not fire for pure branch events (except the ones that are
+				// also worktree-related or have null fileName).
+				// Reset and test worktree-specific events
+				reconcileCalls.current = 0;
+				branchRefreshCalls.current = 0;
+
+				gitWatcher.onChange({
+					type: "rename",
+					fileName: "worktrees/my-feature",
+				});
+
+				yield* Effect.promise(() =>
+					waitFor(() => Promise.resolve(reconcileCalls.current === 1))
+				);
+
+				assert.strictEqual(
+					reconcileCalls.current,
+					1,
+					"Worktree-related events should trigger reconciliation"
+				);
+
+				// Test null fileName — should trigger both branch AND worktree
+				reconcileCalls.current = 0;
+				branchRefreshCalls.current = 0;
+
+				gitWatcher.onChange({ type: "change", fileName: null });
+
+				yield* Effect.promise(() =>
+					waitFor(() =>
+						Promise.resolve(
+							reconcileCalls.current === 1 && branchRefreshCalls.current === 1
+						)
+					)
+				);
+
+				assert.strictEqual(
+					reconcileCalls.current,
+					1,
+					"null fileName should trigger reconciliation"
+				);
+				assert.strictEqual(
+					branchRefreshCalls.current,
+					1,
+					"null fileName should trigger branch refresh"
+				);
+			}).pipe(Effect.provide(TestLayer));
+		}
+	);
 });
 
 describe("repo-watching git command options", () => {

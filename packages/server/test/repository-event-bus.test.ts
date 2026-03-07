@@ -333,6 +333,46 @@ describe("RepositoryEventBus", () => {
 			assert.strictEqual(result?.repoRoot, "/repo");
 		}).pipe(Effect.provide(EventBusTestLayer))
 	);
+
+	it.effect("publish to zero subscribers completes without throwing", () =>
+		Effect.gen(function* () {
+			const bus = yield* RepositoryEventBus;
+
+			// No subscribers registered — publish should be a harmless no-op
+			yield* bus.publish({
+				type: "add",
+				relativePath: "orphan.ts",
+				absolutePath: "/repo/orphan.ts",
+				projectId: "test-project",
+				repoRoot: "/repo",
+			});
+
+			// If we reach here the publish did not throw
+			assert.isTrue(true);
+		}).pipe(Effect.provide(EventBusTestLayer))
+	);
+
+	it.effect(
+		"normalizeEvent constructs absolutePath from repoRoot and fileName",
+		() =>
+			Effect.gen(function* () {
+				const bus = yield* RepositoryEventBus;
+
+				const result = bus.normalizeEvent({
+					type: "add",
+					fileName: "packages/server/src/main.ts",
+					repoRoot: "/workspace/my-project",
+					projectId: "test-project",
+				});
+
+				assert.isNotNull(result);
+				assert.strictEqual(
+					result?.absolutePath,
+					"/workspace/my-project/packages/server/src/main.ts"
+				);
+				assert.strictEqual(result?.relativePath, "packages/server/src/main.ts");
+			}).pipe(Effect.provide(EventBusTestLayer))
+	);
 });
 
 // ── Integration tests: watcher → event bus pipeline ─────────

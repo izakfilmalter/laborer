@@ -458,4 +458,148 @@ describe("DiffService downstream event consumer", () => {
 				}).pipe(Effect.provide(testLayer));
 			})
 	);
+
+	it.scoped(
+		"stopAllPolling interrupts all active fibers and clears polling state",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("diff-stop-all", tempRoots);
+				const recordedWatchers: RecordedWatchersByPath = new Map();
+				const testLayer = createEndToEndTestLayer(repoPath, recordedWatchers);
+
+				yield* Effect.gen(function* () {
+					const coordinator = yield* RepositoryWatchCoordinator;
+					const diffService = yield* DiffService;
+					const { store } = yield* LaborerStore;
+
+					const projectId = "project-stop-all";
+
+					store.commit(
+						events.projectCreated({
+							id: projectId,
+							repoPath,
+							name: "stop-all-test",
+							rlphConfig: null,
+						})
+					);
+
+					// Create two workspaces and start polling both
+					const workspaceIdA = crypto.randomUUID();
+					const workspaceIdB = crypto.randomUUID();
+
+					store.commit(
+						events.workspaceCreated({
+							id: workspaceIdA,
+							projectId,
+							taskSource: null,
+							branchName: "main",
+							worktreePath: repoPath,
+							port: 0,
+							status: "running",
+							origin: "laborer",
+							createdAt: new Date().toISOString(),
+							baseSha: null,
+						})
+					);
+					store.commit(
+						events.workspaceCreated({
+							id: workspaceIdB,
+							projectId,
+							taskSource: null,
+							branchName: "feature-b",
+							worktreePath: repoPath,
+							port: 1,
+							status: "running",
+							origin: "laborer",
+							createdAt: new Date().toISOString(),
+							baseSha: null,
+						})
+					);
+
+					yield* coordinator.watchProject(projectId, repoPath);
+					yield* diffService.startPolling(workspaceIdA, 60_000);
+					yield* diffService.startPolling(workspaceIdB, 60_000);
+
+					const pollingA = yield* diffService.isPolling(workspaceIdA);
+					const pollingB = yield* diffService.isPolling(workspaceIdB);
+					assert.isTrue(pollingA, "Workspace A should be polling");
+					assert.isTrue(pollingB, "Workspace B should be polling");
+
+					// Stop all polling
+					yield* diffService.stopAllPolling();
+
+					const stoppedA = yield* diffService.isPolling(workspaceIdA);
+					const stoppedB = yield* diffService.isPolling(workspaceIdB);
+					assert.isFalse(
+						stoppedA,
+						"Workspace A should not be polling after stopAll"
+					);
+					assert.isFalse(
+						stoppedB,
+						"Workspace B should not be polling after stopAll"
+					);
+				}).pipe(Effect.provide(testLayer));
+			})
+	);
+
+	it.scoped(
+		"startPolling is idempotent — calling twice for the same workspace does not create duplicate fibers",
+		() =>
+			Effect.gen(function* () {
+				const repoPath = initRepo("diff-idempotent-poll", tempRoots);
+				const recordedWatchers: RecordedWatchersByPath = new Map();
+				const testLayer = createEndToEndTestLayer(repoPath, recordedWatchers);
+
+				yield* Effect.gen(function* () {
+					const coordinator = yield* RepositoryWatchCoordinator;
+					const diffService = yield* DiffService;
+					const { store } = yield* LaborerStore;
+
+					const projectId = "project-idempotent-poll";
+
+					store.commit(
+						events.projectCreated({
+							id: projectId,
+							repoPath,
+							name: "idempotent-poll-test",
+							rlphConfig: null,
+						})
+					);
+
+					const workspaceId = crypto.randomUUID();
+					store.commit(
+						events.workspaceCreated({
+							id: workspaceId,
+							projectId,
+							taskSource: null,
+							branchName: "main",
+							worktreePath: repoPath,
+							port: 0,
+							status: "running",
+							origin: "laborer",
+							createdAt: new Date().toISOString(),
+							baseSha: null,
+						})
+					);
+
+					yield* coordinator.watchProject(projectId, repoPath);
+
+					// Start polling twice
+					yield* diffService.startPolling(workspaceId, 60_000);
+					yield* diffService.startPolling(workspaceId, 60_000);
+
+					const isPolling = yield* diffService.isPolling(workspaceId);
+					assert.isTrue(isPolling, "Should be polling after double start");
+
+					// Stop once should fully stop it (no dangling fiber)
+					yield* diffService.stopPolling(workspaceId);
+
+					const stoppedPolling = yield* diffService.isPolling(workspaceId);
+					assert.isFalse(
+						stoppedPolling,
+						"Single stop should fully stop idempotent double-started polling"
+					);
+				}).pipe(Effect.provide(testLayer));
+			})
+	);
 });

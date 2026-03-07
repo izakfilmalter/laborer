@@ -353,4 +353,29 @@ describe("ProjectRegistry canonical deduplication", () => {
 				);
 			}).pipe(Effect.provide(RegistryTestLayer))
 	);
+
+	it.scoped("addProject returns INVALID_PATH error for non-existent path", () =>
+		Effect.gen(function* () {
+			const registry = yield* ProjectRegistry;
+			const error = yield* registry
+				.addProject("/nonexistent/path/that/does/not/exist")
+				.pipe(Effect.flip);
+
+			assert.strictEqual(error.code, "INVALID_PATH");
+			assert.include(error.message, "does not exist");
+		}).pipe(Effect.provide(RegistryTestLayer))
+	);
+
+	it.scoped(
+		"addProject returns NOT_GIT_REPO error for a directory that is not a git repository",
+		() =>
+			Effect.gen(function* () {
+				const nonGitDir = createTempDir("registry-not-git", tempRoots);
+				const registry = yield* ProjectRegistry;
+				const error = yield* registry.addProject(nonGitDir).pipe(Effect.flip);
+
+				assert.strictEqual(error.code, "NOT_GIT_REPO");
+				assert.include(error.message, "not a git repository");
+			}).pipe(Effect.provide(RegistryTestLayer))
+	);
 });

@@ -487,7 +487,11 @@ const mergeDevServerConfig = (
     source: 'default',
   }
   let setupScripts: ResolvedValue<readonly string[]> = {
-    value: ['apt-get update && apt-get install -y python3'],
+    value: [
+      'apt-get update && apt-get install -y python3',
+      'bun add -g pnpm',
+      'exec bash',
+    ],
     source: 'default',
   }
   let startCommand: ResolvedValue<string | null> = {

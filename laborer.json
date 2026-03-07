@@ -1,0 +1,5 @@
+{
+  "devServer": {
+    "startCommand": "bun dev"
+  }
+}

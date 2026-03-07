@@ -9,7 +9,8 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "start": "bun run with-env bun run src/main.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "exports": {
     ".": "./src/main.ts"

@@ -7,11 +7,19 @@
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "outputs": ["dist/**"]
     },
-    "lint": {
-      "dependsOn": ["^lint"]
+    "//#format:fix": {
+      "cache": false
     },
     "typecheck": {
       "dependsOn": ["^typecheck"]
+    },
+    "test": {
+      "dependsOn": ["^typecheck"]
+    },
+    "test:watch": {
+      "dependsOn": ["^typecheck"],
+      "cache": false,
+      "persistent": true
     },
     "dev": {
       "cache": false,

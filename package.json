@@ -33,8 +33,11 @@
     "build": "turbo build",
     "typecheck": "turbo typecheck --ui=stream",
     "dev:native": "turbo -F native dev",
-    "check": "ultracite check",
-    "fix": "ultracite fix",
+    "test": "turbo test --ui=stream",
+    "test:watch": "turbo test:watch --ui=stream",
+    "check": "turbo run //#format:fix typecheck test --ui=stream",
+    "format": "ultracite check",
+    "format:fix": "ultracite fix",
     "prepare": "effect-language-service patch"
   },
   "dependencies": {

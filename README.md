@@ -76,7 +76,8 @@ git gtr list
 
 ## Git Hooks and Formatting
 
-- Format and lint fix: `bun run check`
+- Format and lint check: `bun run format`
+- Format and lint fix: `bun run format:fix`
 
 ## Project Structure
 
@@ -91,7 +92,11 @@ laborer/
 - `bun run dev`: Start all applications in development mode
 - `bun run build`: Build all applications
 - `bun run dev:web`: Start only the web application
-- `bun run check-types`: Check TypeScript types across all apps
-- `bun run check`: Run Biome formatting and linting
+- `bun run typecheck`: Check TypeScript types across all apps
+- `bun run format`: Check Biome formatting and linting
+- `bun run format:fix`: Fix Biome formatting and linting
+- `bun run test`: Run tests across all packages (single pass)
+- `bun run test:watch`: Run tests in watch mode
+- `bun run check`: Run typecheck, format fix, and tests via single turbo invocation
 - `cd apps/web && bun run desktop:dev`: Start Tauri desktop app in development
 - `cd apps/web && bun run desktop:build`: Build Tauri desktop app

@@ -6,7 +6,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "exports": {
     ".": "./src/index.ts",

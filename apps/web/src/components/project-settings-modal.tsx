@@ -61,6 +61,8 @@ function ProjectSettingsForm({
   const [worktreeDir, setWorktreeDir] = useState('')
   const [setupScripts, setSetupScripts] = useState<SetupScriptItem[]>([])
   const [rlphConfig, setRlphConfig] = useState('')
+  const [devServerImage, setDevServerImage] = useState('')
+  const [devServerStartCommand, setDevServerStartCommand] = useState('')
   const [initialized, setInitialized] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const lastLoadErrorMessageRef = useRef<string | null>(null)
@@ -78,6 +80,10 @@ function ProjectSettingsForm({
     setWorktreeDir(configResult.value.worktreeDir.value)
     setSetupScripts(toSetupScriptItems(configResult.value.setupScripts.value))
     setRlphConfig(configResult.value.rlphConfig.value ?? '')
+    setDevServerImage(configResult.value.devServer.image.value ?? '')
+    setDevServerStartCommand(
+      configResult.value.devServer.startCommand.value ?? ''
+    )
     setInitialized(true)
   }, [configResult, initialized])
 
@@ -121,8 +127,12 @@ function ProjectSettingsForm({
 
   const handleSave = async () => {
     const updates = buildConfigUpdates({
+      devServerImage,
+      devServerStartCommand,
       rlphConfig,
       resolvedConfig: {
+        devServerImage: resolvedConfig.devServer.image.value,
+        devServerStartCommand: resolvedConfig.devServer.startCommand.value,
         rlphConfig: resolvedConfig.rlphConfig.value,
         setupScripts: resolvedConfig.setupScripts.value,
         worktreeDir: resolvedConfig.worktreeDir.value,
@@ -246,6 +256,36 @@ function ProjectSettingsForm({
           </Field>
 
           <Field>
+            <FieldLabel htmlFor={`dev-server-image-${projectId}`}>
+              Container image
+            </FieldLabel>
+            <Input
+              id={`dev-server-image-${projectId}`}
+              onChange={(event) => setDevServerImage(event.target.value)}
+              placeholder="oven/bun:latest"
+              value={devServerImage}
+            />
+            <FieldDescription className={provenanceClassName}>
+              Source: {resolvedConfig.devServer.image.source}
+            </FieldDescription>
+          </Field>
+
+          <Field>
+            <FieldLabel htmlFor={`dev-server-start-command-${projectId}`}>
+              Dev command
+            </FieldLabel>
+            <Input
+              id={`dev-server-start-command-${projectId}`}
+              onChange={(event) => setDevServerStartCommand(event.target.value)}
+              placeholder="bun dev"
+              value={devServerStartCommand}
+            />
+            <FieldDescription className={provenanceClassName}>
+              Source: {resolvedConfig.devServer.startCommand.source}
+            </FieldDescription>
+          </Field>
+
+          <Field>
             <FieldLabel htmlFor={`rlph-config-${projectId}`}>
               rlph config
             </FieldLabel>
@@ -295,8 +335,8 @@ function ProjectSettingsModal({
         <DialogHeader>
           <DialogTitle>Project settings</DialogTitle>
           <DialogDescription>
-            Configure worktree path, setup scripts, and rlph config for{' '}
-            {projectName}.
+            Configure dev server, worktree path, setup scripts, and rlph config
+            for {projectName}.
           </DialogDescription>
         </DialogHeader>
         {open && (

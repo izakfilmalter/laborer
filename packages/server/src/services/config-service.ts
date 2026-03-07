@@ -473,7 +473,7 @@ const mergeDevServerConfig = (
   configLayers: ReadonlyArray<{ config: LaborerConfig; path: string }>
 ): ResolvedDevServerConfig => {
   let image: ResolvedValue<string | null> = {
-    value: null,
+    value: 'oven/bun:latest',
     source: 'default',
   }
   let dockerfile: ResolvedValue<string | null> = {
@@ -504,9 +504,17 @@ const mergeDevServerConfig = (
 
     if (ds.image !== undefined) {
       image = { value: ds.image, source: path }
+      // image and dockerfile are mutually exclusive — setting one clears the other
+      if (ds.dockerfile === undefined) {
+        dockerfile = { value: null, source: 'default' }
+      }
     }
     if (ds.dockerfile !== undefined) {
       dockerfile = { value: ds.dockerfile, source: path }
+      // image and dockerfile are mutually exclusive — setting one clears the other
+      if (ds.image === undefined) {
+        image = { value: null, source: 'default' }
+      }
     }
     if (ds.startCommand !== undefined) {
       startCommand = { value: ds.startCommand, source: path }

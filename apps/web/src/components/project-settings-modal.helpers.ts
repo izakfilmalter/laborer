@@ -4,12 +4,18 @@ interface SetupScriptItem {
 }
 
 interface ResolvedConfigSnapshot {
+  readonly devServerImage: string | null
+  readonly devServerStartCommand: string | null
   readonly rlphConfig: string | null
   readonly setupScripts: readonly string[]
   readonly worktreeDir: string
 }
 
 interface ConfigUpdates {
+  devServer?: {
+    image?: string
+    startCommand?: string
+  }
   rlphConfig?: string
   setupScripts?: string[]
   worktreeDir?: string
@@ -40,11 +46,15 @@ const areStringArraysEqual = (
 }
 
 const buildConfigUpdates = ({
+  devServerImage,
+  devServerStartCommand,
   rlphConfig,
   resolvedConfig,
   setupScripts,
   worktreeDir,
 }: {
+  devServerImage: string
+  devServerStartCommand: string
   rlphConfig: string
   resolvedConfig: ResolvedConfigSnapshot
   setupScripts: readonly SetupScriptItem[]
@@ -55,6 +65,8 @@ const buildConfigUpdates = ({
   const normalizedWorktreeDir = worktreeDir.trim()
   const normalizedSetupScripts = normalizeSetupScripts(setupScripts)
   const normalizedRlphConfig = rlphConfig.trim()
+  const normalizedDevServerImage = devServerImage.trim()
+  const normalizedDevServerStartCommand = devServerStartCommand.trim()
 
   if (
     normalizedWorktreeDir.length > 0 &&
@@ -74,6 +86,23 @@ const buildConfigUpdates = ({
     normalizedRlphConfig !== (resolvedConfig.rlphConfig ?? '')
   ) {
     updates.rlphConfig = normalizedRlphConfig
+  }
+
+  const imageChanged =
+    normalizedDevServerImage !== (resolvedConfig.devServerImage ?? '')
+  const startCommandChanged =
+    normalizedDevServerStartCommand !==
+    (resolvedConfig.devServerStartCommand ?? '')
+
+  if (imageChanged || startCommandChanged) {
+    const devServer: ConfigUpdates['devServer'] = {}
+    if (imageChanged) {
+      devServer.image = normalizedDevServerImage
+    }
+    if (startCommandChanged) {
+      devServer.startCommand = normalizedDevServerStartCommand
+    }
+    updates.devServer = devServer
   }
 
   return updates

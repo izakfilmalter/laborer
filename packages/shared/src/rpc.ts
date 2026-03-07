@@ -125,6 +125,7 @@ const ConfigResponse = Schema.Struct({
   worktreeDir: ConfigResolvedValueString,
   setupScripts: ConfigResolvedValueStringArray,
   rlphConfig: ConfigResolvedValueNullableString,
+  watchIgnore: ConfigResolvedValueStringArray,
 })
 
 const TaskResponse = Schema.Struct({

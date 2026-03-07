@@ -104,6 +104,10 @@ describe('LaborerRpcs config management', () => {
               source: canonicalProjectConfigPath,
               value: ['bun install', 'bun test'],
             },
+            watchIgnore: {
+              source: 'default',
+              value: [],
+            },
             worktreeDir: {
               source: canonicalAncestorConfigPath,
               value: join(homedir(), 'ancestor-worktrees'),
@@ -187,6 +191,10 @@ describe('LaborerRpcs config management', () => {
             setupScripts: {
               source: canonicalConfigPath,
               value: ['bun install'],
+            },
+            watchIgnore: {
+              source: 'default',
+              value: [],
             },
             worktreeDir: {
               source: canonicalConfigPath,

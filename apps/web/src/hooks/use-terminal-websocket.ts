@@ -67,6 +67,13 @@ const MAX_RECONNECT_DELAY_MS = 30_000
 const RECONNECT_BACKOFF_FACTOR = 2
 
 /**
+ * Max consecutive connection failures (never reached onopen) before
+ * giving up. Prevents infinite reconnection loops when the terminal
+ * no longer exists on the server (e.g., after a full app restart).
+ */
+const MAX_CONSECUTIVE_FAILURES = 3
+
+/**
  * Number of characters between ack frames sent to the server.
  * Matches the server-side LOW_WATERMARK_CHARS / CharCountAckSize (5,000).
  * @see PRD-terminal-perf.md "Character-Count Flow Control"
@@ -171,6 +178,15 @@ function useTerminalWebSocket({
   /** Characters received since the last ack was sent (flow control). */
   const unackedCharsRef = useRef(0)
 
+  /**
+   * Tracks consecutive connection failures where the WebSocket never
+   * reached the `onopen` state. When this exceeds MAX_CONSECUTIVE_FAILURES,
+   * reconnection is stopped — the terminal likely no longer exists on the
+   * server (e.g., after a full app restart wiped in-memory terminal state).
+   */
+  const consecutiveFailuresRef = useRef(0)
+  const didOpenRef = useRef(false)
+
   // Refs for latest callback/state to avoid stale closures in WebSocket handlers
   const onDataRef = useRef(onData)
   onDataRef.current = onData
@@ -199,12 +215,15 @@ function useTerminalWebSocket({
 
     const ws = new WebSocket(wsUrl)
     wsRef.current = ws
+    didOpenRef.current = false
 
     ws.onopen = () => {
       if (!mountedRef.current) {
         ws.close()
         return
       }
+      didOpenRef.current = true
+      consecutiveFailuresRef.current = 0
       setConnectionStatus('connected')
       // Reset backoff on successful connection
       reconnectDelayRef.current = INITIAL_RECONNECT_DELAY_MS
@@ -247,8 +266,20 @@ function useTerminalWebSocket({
       wsRef.current = null
       setConnectionStatus('disconnected')
 
-      // Only reconnect if the terminal is still running
-      if (terminalStatusRef.current !== 'stopped') {
+      // Track consecutive failures where the connection never opened.
+      // This detects the case where the terminal no longer exists on
+      // the server (404 on WebSocket upgrade) and prevents infinite
+      // reconnection loops.
+      if (!didOpenRef.current) {
+        consecutiveFailuresRef.current += 1
+      }
+
+      // Only reconnect if the terminal is still running AND we haven't
+      // exceeded the max consecutive failure threshold.
+      if (
+        terminalStatusRef.current !== 'stopped' &&
+        consecutiveFailuresRef.current < MAX_CONSECUTIVE_FAILURES
+      ) {
         const delay = reconnectDelayRef.current
         reconnectDelayRef.current = Math.min(
           delay * RECONNECT_BACKOFF_FACTOR,

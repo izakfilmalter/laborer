@@ -5,8 +5,8 @@
   "identifier": "com.tauri.dev",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:3001",
-    "beforeDevCommand": "bun x vite dev",
+    "devUrl": "http://localhost:2101",
+    "beforeDevCommand": "bun run start",
     "beforeBuildCommand": "bun x vite build"
   },
   "app": {

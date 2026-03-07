@@ -741,6 +741,72 @@ function ensureValidActivePaneId(
   return getFirstLeafId(root) ?? null
 }
 
+/**
+ * Collect all leaf nodes from the layout tree whose terminal IDs are
+ * stale (not present in the live terminal set). These are candidates
+ * for respawning after a full app restart.
+ */
+function getStaleTerminalLeaves(
+  node: PanelNode,
+  liveTerminalIds: ReadonlySet<string>
+): readonly LeafNode[] {
+  if (node._tag === 'LeafNode') {
+    if (
+      node.terminalId !== undefined &&
+      !liveTerminalIds.has(node.terminalId)
+    ) {
+      return [node]
+    }
+    return []
+  }
+  return node.children.flatMap((child) =>
+    getStaleTerminalLeaves(child, liveTerminalIds)
+  )
+}
+
+/**
+ * Reconcile a persisted layout tree by replacing stale terminal IDs
+ * with new ones from the provided mapping.
+ *
+ * Used after respawning terminals for stale panes: the mapping contains
+ * `{ oldTerminalId -> newTerminalId }` entries. Leaves whose terminal
+ * ID appears as a key are updated to the new ID. Leaves with stale IDs
+ * that have no mapping entry (e.g., spawn failed) have their terminal
+ * ID cleared.
+ *
+ * Returns the original tree if no changes are needed (referential equality).
+ */
+function reconcileLayout(
+  node: PanelNode,
+  liveTerminalIds: ReadonlySet<string>,
+  respawnedIds?: ReadonlyMap<string, string>
+): PanelNode {
+  if (node._tag === 'LeafNode') {
+    if (
+      node.terminalId !== undefined &&
+      !liveTerminalIds.has(node.terminalId)
+    ) {
+      const newId = respawnedIds?.get(node.terminalId)
+      return {
+        ...node,
+        terminalId: newId,
+      }
+    }
+    return node
+  }
+
+  let changed = false
+  const newChildren = node.children.map((child) => {
+    const reconciled = reconcileLayout(child, liveTerminalIds, respawnedIds)
+    if (reconciled !== child) {
+      changed = true
+    }
+    return reconciled
+  })
+
+  return changed ? { ...node, children: newChildren } : node
+}
+
 export {
   closePane,
   computeResize,
@@ -753,7 +819,9 @@ export {
   generateId,
   getFirstLeafId,
   getLeafIds,
+  getStaleTerminalLeaves,
   getTreeDepth,
+  reconcileLayout,
   replaceNode,
   splitPane,
 }

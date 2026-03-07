@@ -8,7 +8,7 @@
     "build": "tauri build",
     "serve": "vite preview",
     "start": "vite",
-    "check-types": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "tauri": "tauri"

@@ -16,7 +16,9 @@ import { LaborerRpcs, RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Array as Arr, Effect, pipe } from 'effect'
 import { ConfigService } from '../services/config-service.js'
+import { ContainerService } from '../services/container-service.js'
 import { DiffService } from '../services/diff-service.js'
+import { DockerDetection } from '../services/docker-detection.js'
 import { GithubTaskImporter } from '../services/github-task-importer.js'
 import { LaborerStore } from '../services/laborer-store.js'
 import { LinearTaskImporter } from '../services/linear-task-importer.js'
@@ -84,7 +86,17 @@ export const handleConfigGet = ({ projectId }: { projectId: string }) =>
     const configService = yield* ConfigService
 
     const project = yield* registry.getProject(projectId)
-    return yield* configService.resolveConfig(project.repoPath, project.name)
+    return yield* configService
+      .resolveConfig(project.repoPath, project.name)
+      .pipe(
+        Effect.mapError(
+          (e) =>
+            new RpcError({
+              message: e.message,
+              code: 'CONFIG_VALIDATION_ERROR',
+            })
+        )
+      )
   })
 
 export const handleConfigUpdate = ({
@@ -93,6 +105,14 @@ export const handleConfigUpdate = ({
 }: {
   projectId: string
   config: {
+    devServer?:
+      | {
+          dockerfile?: string | undefined
+          image?: string | undefined
+          startCommand?: string | undefined
+          workdir?: string | undefined
+        }
+      | undefined
     prdsDir?: string | undefined
     rlphConfig?: string | undefined
     setupScripts?: readonly string[] | undefined
@@ -105,19 +125,32 @@ export const handleConfigUpdate = ({
       (config.setupScripts.every((script) => typeof script === 'string') &&
         Array.isArray(config.setupScripts))
 
+    const isValidDevServer =
+      config.devServer === undefined ||
+      (typeof config.devServer === 'object' &&
+        (config.devServer.image === undefined ||
+          typeof config.devServer.image === 'string') &&
+        (config.devServer.dockerfile === undefined ||
+          typeof config.devServer.dockerfile === 'string') &&
+        (config.devServer.startCommand === undefined ||
+          typeof config.devServer.startCommand === 'string') &&
+        (config.devServer.workdir === undefined ||
+          typeof config.devServer.workdir === 'string'))
+
     const isValidConfig =
       (config.prdsDir === undefined || typeof config.prdsDir === 'string') &&
       (config.worktreeDir === undefined ||
         typeof config.worktreeDir === 'string') &&
       (config.rlphConfig === undefined ||
         typeof config.rlphConfig === 'string') &&
-      isValidSetupScripts
+      isValidSetupScripts &&
+      isValidDevServer
 
     if (!isValidConfig) {
       return yield* new RpcError({
         code: 'INVALID_INPUT',
         message:
-          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, rlphConfig, and setupScripts as string array.',
+          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, rlphConfig, setupScripts as string array, and devServer with optional string fields.',
       })
     }
 
@@ -554,6 +587,15 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       }),
 
     // -------------------------------------------------------------------
+    // Docker Prerequisite Detection (Issue 2)
+    // -------------------------------------------------------------------
+    'docker.status': () =>
+      Effect.gen(function* () {
+        const dockerDetection = yield* DockerDetection
+        return yield* dockerDetection.check()
+      }),
+
+    // -------------------------------------------------------------------
     // Project RPCs (Issue #21-25)
     // -------------------------------------------------------------------
     'project.add': ({ repoPath }) =>
@@ -641,16 +683,30 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       }),
 
     // -------------------------------------------------------------------
+    // Container RPCs (Issue 10)
+    // -------------------------------------------------------------------
+    'container.pause': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const containerService = yield* ContainerService
+        yield* containerService.pauseContainer(workspaceId)
+      }),
+    'container.unpause': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const containerService = yield* ContainerService
+        yield* containerService.unpauseContainer(workspaceId)
+      }),
+
+    // -------------------------------------------------------------------
     // Terminal RPCs (Issue #50-59, #143)
     // Only terminal.spawn is handled here — it resolves workspace info
     // (cwd, env) before delegating to the terminal service. All other
     // terminal RPCs (write, resize, kill, remove, restart) are called
     // directly from the web app to the terminal service.
     // -------------------------------------------------------------------
-    'terminal.spawn': ({ workspaceId, command }) =>
+    'terminal.spawn': ({ workspaceId, command, autoRun }) =>
       Effect.gen(function* () {
         const tc = yield* TerminalClient
-        return yield* tc.spawnInWorkspace(workspaceId, command)
+        return yield* tc.spawnInWorkspace(workspaceId, command, autoRun)
       }),
 
     // -------------------------------------------------------------------

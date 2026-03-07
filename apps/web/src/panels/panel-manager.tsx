@@ -78,6 +78,7 @@ import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { usePanelActions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
+import { DevServerTerminalPane } from '@/panes/dev-server-terminal-pane'
 import { DiffPane } from '@/panes/diff-pane'
 import { TerminalPane } from '@/panes/terminal-pane'
 
@@ -252,31 +253,94 @@ interface PaneContentProps {
 }
 
 /**
+ * Renders a terminal pane with optional sidebars (diff, dev server terminal).
+ * Extracted to keep PaneContent under complexity limits.
+ */
+function TerminalPaneWithSidebars({ node }: PaneContentProps) {
+  const { paneMin } = useResponsiveLayout()
+
+  const showDiff = node.diffOpen === true && node.workspaceId !== undefined
+  const showDevServer =
+    node.devServerOpen === true && node.devServerTerminalId !== undefined
+
+  // No sidebars — render terminal only
+  if (!(showDiff || showDevServer)) {
+    return <TerminalPane terminalId={node.terminalId as string} />
+  }
+
+  // Diff sidebar only
+  if (showDiff && !showDevServer) {
+    return (
+      <ResizablePanelGroup orientation="horizontal">
+        <ResizablePanel defaultSize="60%" minSize={paneMin}>
+          <TerminalPane terminalId={node.terminalId as string} />
+        </ResizablePanel>
+        <ResizableHandle />
+        <ResizablePanel defaultSize="40%" minSize={paneMin}>
+          <DiffPane workspaceId={node.workspaceId as string} />
+        </ResizablePanel>
+      </ResizablePanelGroup>
+    )
+  }
+
+  // Dev server sidebar only
+  if (showDevServer && !showDiff) {
+    return (
+      <ResizablePanelGroup orientation="vertical">
+        <ResizablePanel defaultSize="60%" minSize={paneMin}>
+          <TerminalPane terminalId={node.terminalId as string} />
+        </ResizablePanel>
+        <ResizableHandle />
+        <ResizablePanel defaultSize="40%" minSize={paneMin}>
+          <DevServerTerminalPane
+            terminalId={node.devServerTerminalId as string}
+          />
+        </ResizablePanel>
+      </ResizablePanelGroup>
+    )
+  }
+
+  // Both sidebars — terminal + diff on right, dev server below terminal
+  return (
+    <ResizablePanelGroup orientation="vertical">
+      <ResizablePanel defaultSize="60%" minSize={paneMin}>
+        <ResizablePanelGroup orientation="horizontal">
+          <ResizablePanel defaultSize="60%" minSize={paneMin}>
+            <TerminalPane terminalId={node.terminalId as string} />
+          </ResizablePanel>
+          <ResizableHandle />
+          <ResizablePanel defaultSize="40%" minSize={paneMin}>
+            <DiffPane workspaceId={node.workspaceId as string} />
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </ResizablePanel>
+      <ResizableHandle />
+      <ResizablePanel defaultSize="40%" minSize={paneMin}>
+        <DevServerTerminalPane
+          terminalId={node.devServerTerminalId as string}
+        />
+      </ResizablePanel>
+    </ResizablePanelGroup>
+  )
+}
+
+/**
  * Renders the content of a single pane based on its type and assigned IDs.
  *
  * Terminal panes with `diffOpen: true` render the diff as an integrated
  * sidebar (resizable) alongside the terminal within the same pane container.
- * This keeps the diff visually coupled to its terminal.
+ * Dev server terminal panes render with `devServerOpen: true` as a vertically
+ * stacked panel below the main terminal. This keeps the dev server terminal
+ * visually coupled to its workspace terminal.
  */
 function PaneContent({ node }: PaneContentProps) {
-  const { paneMin } = useResponsiveLayout()
-
   if (node.paneType === 'terminal' && node.terminalId) {
-    // Terminal with integrated diff sidebar
-    if (node.diffOpen && node.workspaceId) {
-      return (
-        <ResizablePanelGroup orientation="horizontal">
-          <ResizablePanel defaultSize="60%" minSize={paneMin}>
-            <TerminalPane terminalId={node.terminalId} />
-          </ResizablePanel>
-          <ResizableHandle />
-          <ResizablePanel defaultSize="40%" minSize={paneMin}>
-            <DiffPane workspaceId={node.workspaceId} />
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      )
-    }
-    return <TerminalPane terminalId={node.terminalId} />
+    return <TerminalPaneWithSidebars node={node} />
+  }
+
+  // Dev server terminal rendered as a standalone pane
+  if (node.paneType === 'devServerTerminal' && node.terminalId) {
+    return <DevServerTerminalPane terminalId={node.terminalId} />
   }
 
   // Empty pane — use guided empty state with CTA for terminal panes

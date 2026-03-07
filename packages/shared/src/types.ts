@@ -49,10 +49,13 @@ export const TaskStatus = Schema.Literal(
 )
 export type TaskStatus = typeof TaskStatus.Type
 
+export const ContainerStatus = Schema.Literal('running', 'paused')
+export type ContainerStatus = typeof ContainerStatus.Type
+
 export const PrdStatus = Schema.Literal('draft', 'active', 'completed')
 export type PrdStatus = typeof PrdStatus.Type
 
-export const PaneType = Schema.Literal('terminal', 'diff')
+export const PaneType = Schema.Literal('terminal', 'diff', 'devServerTerminal')
 export type PaneType = typeof PaneType.Type
 
 export const SplitDirection = Schema.Literal('horizontal', 'vertical')
@@ -121,6 +124,10 @@ export class Diff extends Schema.Class<Diff>('Diff')({
 
 export interface LeafNode {
   readonly _tag: 'LeafNode'
+  /** Whether the dev server terminal sidebar is open for this pane. */
+  readonly devServerOpen?: boolean | undefined
+  /** Terminal ID for the dev server session inside the container. */
+  readonly devServerTerminalId?: string | undefined
   /** Whether the integrated diff sidebar is open for this pane. */
   readonly diffOpen?: boolean | undefined
   readonly id: string
@@ -142,6 +149,8 @@ export type PanelNode = LeafNode | SplitNode
 export const LeafNodeSchema: Schema.Schema<LeafNode> = Schema.TaggedStruct(
   'LeafNode',
   {
+    devServerOpen: Schema.optional(Schema.Boolean),
+    devServerTerminalId: Schema.optional(Schema.String),
     diffOpen: Schema.optional(Schema.Boolean),
     id: Schema.String,
     paneType: PaneType,

@@ -19,6 +19,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Rows2,
+  Server,
   Terminal,
   X,
 } from 'lucide-react'
@@ -203,28 +204,40 @@ function PanelHeaderBar({
   }, [layout, activePaneId])
 
   // Resolve workspace and project names for the active pane
-  const { projectName, branchName } = useMemo(() => {
+  const { projectName, branchName, isContainerized } = useMemo(() => {
     if (!activeLeaf?.workspaceId) {
-      return { projectName: undefined, branchName: undefined }
+      return {
+        projectName: undefined,
+        branchName: undefined,
+        isContainerized: false,
+      }
     }
     const workspace = workspaceList.find(
       (ws) => ws.id === activeLeaf.workspaceId
     )
     if (!workspace) {
-      return { projectName: undefined, branchName: undefined }
+      return {
+        projectName: undefined,
+        branchName: undefined,
+        isContainerized: false,
+      }
     }
     const project = projectList.find((p) => p.id === workspace.projectId)
     return {
       projectName: project?.name,
       branchName: workspace.branchName,
+      isContainerized: workspace.containerId != null,
     }
   }, [activeLeaf, workspaceList, projectList])
 
-  const showDiffToggle =
+  const isTerminalPane =
     mainView === 'panels' &&
     activeLeaf?.paneType === 'terminal' &&
     activeLeaf.workspaceId !== undefined
+  const showDiffToggle = isTerminalPane
+  const showDevServerToggle = isTerminalPane && isContainerized
   const diffIsOpen = activeLeaf?.diffOpen === true
+  const devServerIsOpen = activeLeaf?.devServerOpen === true
   const hasActivePane = mainView === 'panels' && !!activePaneId && !!activeLeaf
 
   return (
@@ -287,6 +300,29 @@ function PanelHeaderBar({
 
       {/* Right: pane actions */}
       <div className="flex gap-0.5">
+        {showDevServerToggle && (
+          <Button
+            aria-label={
+              devServerIsOpen
+                ? 'Close dev server terminal'
+                : 'Open dev server terminal'
+            }
+            className={devServerIsOpen ? 'bg-accent' : ''}
+            disabled={!hasActivePane}
+            onClick={() =>
+              activePaneId && actions?.toggleDevServerPane(activePaneId)
+            }
+            size="icon-sm"
+            title={
+              devServerIsOpen
+                ? 'Close dev server terminal'
+                : 'Open dev server terminal'
+            }
+            variant="ghost"
+          >
+            <Server className="size-3.5" />
+          </Button>
+        )}
         {showDiffToggle && (
           <Button
             aria-label={diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'}
@@ -729,14 +765,36 @@ function usePanelLayout() {
     [persistedLayoutTree, initialLayout, store]
   )
 
+  /**
+   * Check if a workspace is containerized by looking up its LiveStore record.
+   * Used to auto-open dev server panes for containerized workspaces.
+   */
+  const isWorkspaceContainerized = useCallback(
+    (workspaceId: string): boolean => {
+      const wsList = store.query(allWorkspaces$)
+      const ws = wsList.find((w) => w.id === workspaceId)
+      return ws?.containerId != null
+    },
+    [store]
+  )
+
+  /**
+   * Schedule auto-open of the dev server terminal for a containerized workspace.
+   * Fire-and-forget: errors are logged but do not block the layout assignment.
+   */
+  const autoOpenDevServerRef = useRef<
+    ((paneId: string) => Promise<boolean>) | null
+  >(null)
+
   const handleAssignTerminalToPane = useCallback(
     (terminalId: string, workspaceId: string, paneId?: string) => {
       const base = persistedLayoutTree ?? initialLayout
       if (!base) {
         // No layout at all — create a new single-pane layout for this terminal
+        const newLeafId = generateId('pane')
         const newLeaf: LeafNode = {
           _tag: 'LeafNode' as const,
-          id: generateId('pane'),
+          id: newLeafId,
           paneType: 'terminal' as const,
           terminalId,
           workspaceId,
@@ -748,6 +806,12 @@ function usePanelLayout() {
             activePaneId: newLeaf.id,
           })
         )
+        // Auto-open dev server pane for containerized workspaces
+        if (isWorkspaceContainerized(workspaceId)) {
+          autoOpenDevServerRef.current?.(newLeafId)?.catch((error) => {
+            console.warn('[auto-open] dev server spawn failed:', error)
+          })
+        }
         return
       }
 
@@ -768,6 +832,12 @@ function usePanelLayout() {
             activePaneId: paneId,
           })
         )
+        // Auto-open dev server pane for containerized workspaces
+        if (isWorkspaceContainerized(workspaceId)) {
+          autoOpenDevServerRef.current?.(paneId)?.catch((error) => {
+            console.warn('[auto-open] dev server spawn failed:', error)
+          })
+        }
         return
       }
 
@@ -810,6 +880,12 @@ function usePanelLayout() {
             activePaneId: emptyPane.id,
           })
         )
+        // Auto-open dev server pane for containerized workspaces
+        if (isWorkspaceContainerized(workspaceId)) {
+          autoOpenDevServerRef.current?.(emptyPane.id)?.catch((error) => {
+            console.warn('[auto-open] dev server spawn failed:', error)
+          })
+        }
         return
       }
 
@@ -836,7 +912,13 @@ function usePanelLayout() {
         )
       }
     },
-    [persistedLayoutTree, initialLayout, persistedActivePaneId, store]
+    [
+      persistedLayoutTree,
+      initialLayout,
+      persistedActivePaneId,
+      store,
+      isWorkspaceContainerized,
+    ]
   )
 
   /**
@@ -914,6 +996,124 @@ function usePanelLayout() {
     [persistedLayoutTree, initialLayout, persistedActivePaneId, store]
   )
 
+  /**
+   * Toggle the dev server terminal alongside a terminal pane.
+   *
+   * When toggling ON with no existing dev server terminal: spawns a new
+   * container terminal with `autoRun: true` so setup scripts and the dev
+   * server start command are auto-typed. Sets `devServerTerminalId` and
+   * `devServerOpen` on the leaf node.
+   *
+   * When toggling ON with an existing `devServerTerminalId`: just flips
+   * `devServerOpen` to true (reconnects to the existing terminal).
+   *
+   * When toggling OFF: flips `devServerOpen` to false. The terminal
+   * session stays alive for later reconnection.
+   *
+   * @see Issue #8: Dev server terminal pane type + toggle
+   */
+  const handleToggleDevServerPane = useCallback(
+    async (paneId: string): Promise<boolean> => {
+      const base = persistedLayoutTree ?? initialLayout
+      if (!base) {
+        return false
+      }
+
+      const targetNode = findNodeById(base, paneId)
+      if (
+        !targetNode ||
+        targetNode._tag !== 'LeafNode' ||
+        targetNode.paneType !== 'terminal' ||
+        !targetNode.workspaceId
+      ) {
+        return false
+      }
+
+      // Toggling OFF — just hide the dev server pane
+      if (targetNode.devServerOpen) {
+        const updatedLeaf: LeafNode = {
+          ...targetNode,
+          devServerOpen: false,
+        }
+        const newTree = replaceNode(base, paneId, updatedLeaf)
+        store.commit(
+          layoutPaneAssigned({
+            id: LAYOUT_SESSION_ID,
+            layoutTree: newTree,
+            activePaneId: persistedActivePaneId,
+          })
+        )
+        return false
+      }
+
+      // Toggling ON — reconnect to existing terminal if available
+      if (targetNode.devServerTerminalId) {
+        const updatedLeaf: LeafNode = {
+          ...targetNode,
+          devServerOpen: true,
+        }
+        const newTree = replaceNode(base, paneId, updatedLeaf)
+        store.commit(
+          layoutPaneAssigned({
+            id: LAYOUT_SESSION_ID,
+            layoutTree: newTree,
+            activePaneId: persistedActivePaneId,
+          })
+        )
+        return true
+      }
+
+      // Toggling ON — spawn a new dev server terminal with autoRun
+      const result = await spawnTerminal({
+        payload: {
+          workspaceId: targetNode.workspaceId,
+          autoRun: true,
+        },
+      })
+
+      // Re-read the layout to avoid overwriting concurrent changes
+      const currentRows = store.query(persistedLayout$)
+      const currentRow = currentRows.find((row) => row.id === LAYOUT_SESSION_ID)
+      const currentTree = currentRow?.layoutTree as PanelNode | undefined
+      const currentBase = currentTree ?? initialLayout
+      if (!currentBase) {
+        return false
+      }
+
+      const currentTarget = findNodeById(currentBase, paneId)
+      if (!currentTarget || currentTarget._tag !== 'LeafNode') {
+        return false
+      }
+
+      const updatedLeaf: LeafNode = {
+        ...currentTarget,
+        devServerOpen: true,
+        devServerTerminalId: result.id,
+      }
+      const newTree = replaceNode(currentBase, paneId, updatedLeaf)
+      store.commit(
+        layoutPaneAssigned({
+          id: LAYOUT_SESSION_ID,
+          layoutTree: newTree,
+          activePaneId: currentRow?.activePaneId ?? null,
+        })
+      )
+      return true
+    },
+    [
+      persistedLayoutTree,
+      initialLayout,
+      persistedActivePaneId,
+      spawnTerminal,
+      store,
+    ]
+  )
+
+  // Keep the auto-open ref in sync with the latest toggle handler
+  useEffect(() => {
+    autoOpenDevServerRef.current = handleToggleDevServerPane
+  }, [handleToggleDevServerPane])
+
   const panelActions = useMemo(
     () => ({
       assignTerminalToPane: handleAssignTerminalToPane,
@@ -921,6 +1121,7 @@ function usePanelLayout() {
       closePane: handleClosePane,
       setActivePaneId: handleSetActivePaneId,
       toggleDiffPane: handleToggleDiffPane,
+      toggleDevServerPane: handleToggleDevServerPane,
       resizePane: handleResizePane,
     }),
     [
@@ -929,6 +1130,7 @@ function usePanelLayout() {
       handleClosePane,
       handleSetActivePaneId,
       handleToggleDiffPane,
+      handleToggleDevServerPane,
       handleResizePane,
     ]
   )

@@ -6,6 +6,7 @@ import {
 } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { AtomRegistryProvider } from '@/atoms/provider'
+import { DockerStatusBanner } from '@/components/docker-status-banner'
 import Header from '@/components/header'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
@@ -49,8 +50,9 @@ function RootComponent() {
         <HotkeysProvider>
           <AtomRegistryProvider>
             <LiveStoreProvider>
-              <div className="grid h-svh grid-rows-[auto_1fr]">
+              <div className="grid h-svh grid-rows-[auto_auto_1fr]">
                 <Header />
+                <DockerStatusBanner />
                 <Outlet />
               </div>
             </LiveStoreProvider>

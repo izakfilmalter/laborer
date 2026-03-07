@@ -16,7 +16,14 @@
     },
     "dev": {
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      "env": [
+        "DATA_DIR",
+        "PORT",
+        "TERMINAL_PORT",
+        "VITE_SERVER_URL",
+        "WEB_PORT"
+      ]
     }
   }
 }

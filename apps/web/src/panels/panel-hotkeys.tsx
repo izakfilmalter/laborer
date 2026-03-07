@@ -35,7 +35,7 @@
 
 import type { PanelNode } from '@laborer/shared/types'
 import { useHotkeySequence } from '@tanstack/react-hotkeys'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import { findPaneInDirection } from '@/panels/layout-utils'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
@@ -62,6 +62,29 @@ interface PanelHotkeysProps {
   readonly onMetaWWithoutPane?: (() => void) | undefined
 }
 
+function getResizeDirectionFromEvent(
+  event: KeyboardEvent
+): NavigationDirection | null {
+  if (!event.shiftKey) {
+    return null
+  }
+
+  if (event.key === 'ArrowRight') {
+    return 'right'
+  }
+  if (event.key === 'ArrowLeft') {
+    return 'left'
+  }
+  if (event.key === 'ArrowDown') {
+    return 'down'
+  }
+  if (event.key === 'ArrowUp') {
+    return 'up'
+  }
+
+  return null
+}
+
 /**
  * Registers all panel keyboard shortcuts.
  *
@@ -75,6 +98,10 @@ function PanelHotkeys({
 }: PanelHotkeysProps) {
   const actions = usePanelActions()
   const activePaneId = useActivePaneId()
+  const resizePrefixActiveRef = useRef(false)
+  const resizePrefixTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  )
 
   // Cmd+W (Meta+W) should close panes, not the Tauri window.
   // Capture at the window level so native close behavior is suppressed.
@@ -95,6 +122,62 @@ function PanelHotkeys({
       window.removeEventListener('keydown', handleMetaW)
     }
   }, [])
+
+  useEffect(() => {
+    const clearResizePrefix = () => {
+      resizePrefixActiveRef.current = false
+      if (resizePrefixTimeoutRef.current !== null) {
+        clearTimeout(resizePrefixTimeoutRef.current)
+        resizePrefixTimeoutRef.current = null
+      }
+    }
+
+    const armResizePrefix = () => {
+      clearResizePrefix()
+      resizePrefixActiveRef.current = true
+      resizePrefixTimeoutRef.current = setTimeout(() => {
+        resizePrefixActiveRef.current = false
+        resizePrefixTimeoutRef.current = null
+      }, SEQUENCE_TIMEOUT)
+    }
+
+    const handleResizeShortcut = (event: KeyboardEvent) => {
+      if (
+        event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === 'b'
+      ) {
+        armResizePrefix()
+        return
+      }
+
+      if (!resizePrefixActiveRef.current) {
+        return
+      }
+
+      if (event.key === 'Shift') {
+        return
+      }
+
+      const direction = getResizeDirectionFromEvent(event)
+
+      clearResizePrefix()
+
+      if (!(actions && activePaneId && direction)) {
+        return
+      }
+
+      event.preventDefault()
+      actions.resizePane(activePaneId, direction)
+    }
+
+    window.addEventListener('keydown', handleResizeShortcut)
+    return () => {
+      clearResizePrefix()
+      window.removeEventListener('keydown', handleResizeShortcut)
+    }
+  }, [actions, activePaneId])
 
   // Ctrl+b then h → split active pane horizontally
   useHotkeySequence(
@@ -245,47 +328,6 @@ function PanelHotkeys({
   useHotkeySequence(
     ['Control+B', 'ArrowDown'],
     (event) => navigateDirection(event, 'down'),
-    { timeout: SEQUENCE_TIMEOUT }
-  )
-
-  // --- Resize shortcuts (Ctrl+b then Shift+arrow key) ---
-  // Resize the active pane by growing or shrinking it in the
-  // direction of the arrow key.
-  const resizeDirection = (
-    event: KeyboardEvent,
-    direction: NavigationDirection
-  ) => {
-    event.preventDefault()
-    if (actions && activePaneId) {
-      actions.resizePane(activePaneId, direction)
-    }
-  }
-
-  // Ctrl+b then Shift+ArrowRight → grow active pane horizontally
-  useHotkeySequence(
-    ['Control+B', 'Shift+ArrowRight'],
-    (event) => resizeDirection(event, 'right'),
-    { timeout: SEQUENCE_TIMEOUT }
-  )
-
-  // Ctrl+b then Shift+ArrowLeft → shrink active pane horizontally
-  useHotkeySequence(
-    ['Control+B', 'Shift+ArrowLeft'],
-    (event) => resizeDirection(event, 'left'),
-    { timeout: SEQUENCE_TIMEOUT }
-  )
-
-  // Ctrl+b then Shift+ArrowDown → grow active pane vertically
-  useHotkeySequence(
-    ['Control+B', 'Shift+ArrowDown'],
-    (event) => resizeDirection(event, 'down'),
-    { timeout: SEQUENCE_TIMEOUT }
-  )
-
-  // Ctrl+b then Shift+ArrowUp → shrink active pane vertically
-  useHotkeySequence(
-    ['Control+B', 'Shift+ArrowUp'],
-    (event) => resizeDirection(event, 'up'),
     { timeout: SEQUENCE_TIMEOUT }
   )
 

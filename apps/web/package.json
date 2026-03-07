@@ -10,6 +10,7 @@
     "start": "vite",
     "check-types": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -73,21 +74,22 @@
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@testing-library/react": "^16.3.0",
-    "@testing-library/user-event": "^14.6.1",
     "@laborer/config": "workspace:*",
+    "@playwright/test": "^1.58.2",
     "@tanstack/react-router-devtools": "^1.141.1",
     "@tanstack/router-plugin": "^1.141.1",
     "@tauri-apps/cli": "^2.4.0",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^22.13.14",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^26.1.0",
     "postcss": "^8.5.3",
     "tailwindcss": "^4.0.15",
     "typescript": "catalog:",
     "vite": "^6.2.2",
-    "vitest": "^4.0.18",
-    "jsdom": "^26.1.0"
+    "vitest": "^4.0.18"
   }
 }

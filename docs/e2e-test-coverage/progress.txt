@@ -1,0 +1,382 @@
+## Issue 1: Server DATA_DIR env var — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Added `DATA_DIR` env var to `packages/env/src/server.ts` with `z.string().min(1).default("./data")`
+- Updated `packages/server/src/services/laborer-store.ts` to read `DATA_DIRECTORY` from `env.DATA_DIR` instead of hardcoding `"./data"`
+- Updated `packages/server/src/services/sync-backend.ts` to read `DATA_DIRECTORY` from `env.DATA_DIR` instead of hardcoding `"./data"`, added `import { env } from "@laborer/env/server"`
+
+Verification:
+- Type checks pass for `@laborer/server` and `@laborer/shared` (via `turbo check-types`)
+- All 125 existing server tests pass (22 test files)
+- `ultracite check` clean on changed files (2 pre-existing format issues in unrelated files)
+- Default behavior preserved: when `DATA_DIR` is not set, both files still use `"./data"`
+
+## Issue 2: Browser-mode file picker fallback — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Modified `apps/web/src/components/add-project-form.tsx` to detect Tauri desktop shell at runtime via `__TAURI_INTERNALS__` in window
+- When Tauri is present: unchanged behavior — opens native folder picker via dynamic `import("@tauri-apps/plugin-dialog")`
+- When Tauri is absent (plain browser / E2E tests): renders a text input (`aria-label="Repository path"`) with placeholder `/path/to/git/repo` and a submit button
+- Both code paths share the same `project.add` RPC mutation, toast notifications (success/error), and loading state ("Adding...")
+- Tauri dialog import changed from static to dynamic `import()` to avoid bundling issues when running in a plain browser
+- Extracted shared `submitProject` helper to avoid duplicating mutation/toast/loading logic between the two code paths
+
+Verification:
+- Type checks pass (`tsc --noEmit` in `apps/web`)
+- All 73 existing Vitest tests pass (9 test files)
+- `ultracite check` clean (119 files checked, no issues)
+- Text input fallback only renders when `window.__TAURI_INTERNALS__` is absent (runtime check)
+
+## Issue 3: Playwright infrastructure + tracer bullet test — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Installed `@playwright/test` as dev dependency in `apps/web` (v1.58.2)
+- Installed WebKit browser for Playwright (matching Tauri's engine on macOS)
+- Created `apps/web/playwright.config.ts`: WebKit browser, `e2e/` test dir, base URL localhost:3001, 30s test timeout, 10s assertion timeout, 1 retry, screenshots on failure in `e2e/results/`
+- Created `apps/web/e2e/global-setup.ts`: creates temp git repo with initial commit, detects if services are already running (developer workflow), starts `turbo dev` with isolated DATA_DIR if needed, polls health endpoints on :3000, :3001, :3002 until all healthy
+- Created `apps/web/e2e/global-teardown.ts`: kills turbo dev process tree, removes temp database directory and temp git repo, cleans up state file
+- Created `apps/web/e2e/fixtures/` with skeleton page object helpers:
+  - `sidebar-helper.ts` — search, find projects, server status locators
+  - `panel-helper.ts` — split, close, navigate, resize, view toggle locators
+  - `terminal-helper.ts` — type commands, wait for output in xterm.js
+  - `test-fixtures.ts` — extended Playwright test with all helpers as fixtures
+- Created tracer bullet test `apps/web/e2e/tracer-bullet.spec.ts`:
+  - "app loads and renders basic page structure" — verifies Home link, Reset button, Projects heading, Server Status heading, and "connected" health check status
+  - "page title is set to laborer" — verifies document title
+- Added `test:e2e` script to `apps/web/package.json`
+- Added `/e2e/results` to `apps/web/.gitignore`
+
+Verification:
+- Both tracer bullet E2E tests pass with `bun run test:e2e` (2 passed in 18.5s)
+- All 73 existing Vitest tests still pass (`bun run test`)
+- TypeScript type checks pass (`tsc --noEmit`)
+- `biome check` clean on all new files (0 errors)
+- Global teardown correctly kills processes and cleans up temp directories
+- Temp git repo path accessible to tests via E2E_TEMP_REPO_DIR env var
+
+## Issue 4: E2E — Add project and verify in sidebar — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Created `apps/web/e2e/project-management.spec.ts` with "can add a project and see it in the sidebar" test
+- Test reads the temp git repo path from the global setup state file (`/tmp/laborer-e2e-state.json`)
+- Test navigates to `/?reset`, waits for server connection, fills the browser-mode text input with the temp repo path, clicks "Add", and verifies:
+  - Success toast appears with the project name
+  - Project name appears in the sidebar as a collapsible group button (exact match)
+  - Input field is cleared after successful submission
+- Scoped locators to the sidebar form (near "Projects" heading) to avoid ambiguity with the WelcomeEmptyState form that also renders an AddProjectForm when no projects exist
+- Used `exact: true` on the project name button locator to avoid matching other buttons that contain the project name in their aria-labels (e.g., "Create workspace in <name>", "Remove project <name>")
+
+Verification:
+- All 3 E2E tests pass with `bun run test:e2e` (3 passed in 14.1s)
+- All 73 existing Vitest tests still pass (`bun run test`)
+- TypeScript type checks pass (`tsc --noEmit`)
+- `ultracite check` clean on new file (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)
+
+## Issue 5: E2E — Open and save project settings — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Added "can open project settings, modify a field, save, and verify persistence" test to `apps/web/e2e/project-management.spec.ts`
+- Test flow: adds a project -> opens settings modal via gear icon button (`aria-label="Open settings for <name>"`) -> waits for async config load -> modifies the "Worktree directory" field to a new value -> clicks Save -> verifies success toast ("Saved settings for <name>") -> verifies dialog closes -> re-opens settings -> verifies the saved worktree directory value persists
+- Uses Playwright auto-waiting throughout (no `waitForTimeout`)
+- Validates the full settings round-trip: UI form -> `config.update` RPC mutation -> backend persistence -> `config.get` RPC query -> UI re-render with saved value
+- Updated file header comment to reference Issue 5
+
+Verification:
+- All 4 E2E tests pass with `bun run test:e2e` (4 passed in 18.0s)
+- All 73 existing Vitest tests still pass (`bun run test`)
+- `ultracite check` clean on modified file (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)
+
+## Issue 7: Delete mock-heavy project-settings-modal.test.tsx — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Deleted `apps/web/test/project-settings-modal.test.tsx` — the mock-heavy component test that mocked 6 internal modules (`LaborerClient`, `useAtomSet`, `useAtomValue`, `sonner`, `buildConfigUpdates`, `getSettingsLoadErrorMessage`)
+- This file violated the project's TDD principles by testing implementation details rather than observable behavior
+- Its behavior is now fully covered by the Playwright E2E test from Issue 5 ("can open project settings, modify a field, save, and verify persistence")
+
+Verification:
+- All 8 remaining Vitest test files pass (70 tests) with `bun run test`
+- `ultracite check` clean (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)
+- The 3 pure function test files are unaffected: `layout-utils.test.ts`, `project-settings-modal.helpers.test.ts`, `task-source-picker.test.ts`
+
+## Issue 6: E2E — Delete project — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Added "can delete a project and verify it disappears from the sidebar" test to `apps/web/e2e/project-management.spec.ts`
+- Test flow: adds a project -> clicks the trash icon button (`aria-label="Remove project <name>"`) -> confirms in the AlertDialog (clicks "Remove") -> verifies success toast (`Project "<name>" removed`) -> verifies the project is no longer visible in the sidebar
+- Uses Playwright auto-waiting throughout (no `waitForTimeout`)
+- Validates the full delete flow: trash button -> confirmation dialog -> RPC mutation -> LiveStore sync -> sidebar re-render
+- Updated file header comment to reference Issue 6
+
+Verification:
+- All 5 E2E tests pass with `bun run test:e2e` (5 passed in 21.9s)
+- All 70 existing Vitest tests still pass (`bun run test`)
+- `ultracite check` clean on modified file (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)
+
+## Issue 8: E2E — Create workspace and verify in sidebar — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Created `apps/web/e2e/workspace-lifecycle.spec.ts` with "can create a workspace and see it in the sidebar" test
+- Test flow: navigates to `/?reset` -> waits for server connection -> adds a project using the temp git repo -> clicks the per-project "+" button (`aria-label="Create workspace in <name>"`) -> waits for Create Workspace dialog -> clicks "Create Workspace" submit button -> waits for success toast ("Workspace created on branch ...") -> verifies dialog closes -> verifies "running" status badge appears in sidebar -> verifies "No workspaces" empty state is gone
+- Used `getByRole("heading")` to disambiguate the dialog title from the submit button (both have text "Create Workspace")
+- Updated `apps/web/e2e/global-setup.ts` to add `laborer.json` to `.gitignore` in the temp git repo, preventing `DIRTY_WORKING_TREE` errors when the settings test's `config.update` writes `laborer.json` to the repo before workspace creation tests run
+
+Verification:
+- All 6 E2E tests pass with `bun run test:e2e` (6 passed in 30.5s)
+- All 70 existing Vitest tests still pass (`bun run test`)
+- `ultracite check` clean on new/modified files (only pre-existing format issue in gitignored `e2e/results/.last-run.json`)
+
+## Issue 9: E2E — Verify workspace status and branch display — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Added `shows the created workspace branch name and running status in the sidebar` to `apps/web/e2e/workspace-lifecycle.spec.ts`
+- The new test creates a workspace with an explicit branch name (`e2e-branch-<timestamp>`) instead of relying on the auto-generated branch
+- After creation, the test verifies the success toast includes the chosen branch name, the branch name is visible in the sidebar, and the workspace exposes its destroy action and `running` status indicator
+- Updated the spec header to reflect that `workspace-lifecycle.spec.ts` now covers both Issue 8 and Issue 9
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun run test:e2e e2e/workspace-lifecycle.spec.ts` runs both workspace lifecycle E2E tests successfully (2 passed); Playwright reported success before the dev process teardown returned a non-zero turbo exit during shutdown
+- `bun x ultracite check e2e/workspace-lifecycle.spec.ts` passes
+
+## Issue 10: E2E — Destroy workspace — COMPLETED
+
+Date: 2026-03-06
+
+Changes made:
+- Added `can destroy a workspace and verify it disappears from the sidebar` to `apps/web/e2e/workspace-lifecycle.spec.ts`
+- The new test creates a project, creates a workspace with an explicit branch name (`e2e-destroy-<timestamp>`), opens the workspace destroy confirmation dialog, confirms destruction, and verifies both the branch label and destroy action disappear from the sidebar
+- Updated the spec header so `workspace-lifecycle.spec.ts` now documents coverage for Issues 8, 9, and 10
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun run test:e2e e2e/workspace-lifecycle.spec.ts` runs all 3 workspace lifecycle E2E tests successfully (3 passed); Playwright reported success before the dev process teardown returned a non-zero turbo exit during shutdown
+- `bun x ultracite check e2e/workspace-lifecycle.spec.ts` passes
+
+## Issue 11: E2E — Split panes horizontally and vertically — IN PROGRESS
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 11 as the highest-priority remaining task because it unlocks the rest of the panel-system work (Issues 12, 13, and 14)
+
+Changes made:
+- Added `apps/web/e2e/panel-system.spec.ts` with a focused panel-layout E2E test
+- Reused the temp repo from global setup to add a project and create a workspace so the app seeds an initial pane
+- Verified the horizontal split flow by clicking the toolbar action, asserting two pane regions render, and comparing pane bounding boxes to confirm a side-by-side layout
+- Verified the nested vertical split flow by activating the right pane, splitting it vertically, asserting three pane regions render, and comparing pane bounding boxes to confirm a stacked right column beside the original left pane
+- Used Playwright locator assertions and bounding boxes only; no hardcoded sleeps or direct state manipulation
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check e2e/panel-system.spec.ts` passes
+- `bun run test:e2e e2e/panel-system.spec.ts` is currently blocked in this environment because an unrelated Next.js dev server from another workspace is already listening on port `3000`, which prevents Playwright global setup from starting the required Laborer backend stack on its expected ports
+
+## Issue 11: E2E - Split panes horizontally and vertically - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 11 as the highest-priority remaining task because it unlocks the rest of the panel-system work (Issues 12, 13, and 14)
+
+Changes made:
+- Updated `apps/web/e2e/global-setup.ts` to probe port availability using the same host-binding behavior as the Bun services, so E2E setup no longer treats `3000` or `3002` as free when another process is already bound on a different interface
+- Kept the existing dynamic-port startup flow in place for the server and terminal services, allowing the panel-system spec to boot the stack even when another workspace is already using the default backend ports
+- Reused the panel split spec and proxy/env wiring already in progress so the feature could be verified end-to-end without touching unrelated tasks
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check apps/web/e2e/global-setup.ts apps/web/vite.config.ts turbo.json apps/web/e2e/panel-system.spec.ts` passes
+- `bun run test:e2e e2e/panel-system.spec.ts` passes in `apps/web` (1 passed)
+
+## Issue 12: E2E - Close pane and verify focus transfer - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 12 as the highest-priority remaining task because it extends the newly working panel-system coverage and validates the close-path focus transfer that panel navigation and resize flows depend on
+
+Changes made:
+- Added `can close the active pane and keep focus on the remaining pane` to `apps/web/e2e/panel-system.spec.ts`
+- The new test creates a workspace, splits the initial pane, activates the second pane, closes it with the toolbar action, and verifies only the sibling pane remains
+- Verified focus transfer indirectly through real UI behavior by splitting again immediately after the close without re-clicking any pane; the split succeeding proves the remaining sibling became the active pane
+- Updated the spec header so `panel-system.spec.ts` now documents coverage for Issues 11 and 12
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check apps/web/e2e/panel-system.spec.ts docs/e2e-test-coverage/issues.md docs/e2e-test-coverage/progress.txt` passes
+- `bun run test:e2e e2e/panel-system.spec.ts` executes both panel-system tests successfully (2 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 13: E2E - Keyboard navigate between panes - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 13 as the highest-priority remaining task because it continues the panel-system slice and verifies the keyboard navigation behavior that Issue 14 builds on
+
+Changes made:
+- Added `can use Ctrl+B then arrow keys to move focus between panes` to `apps/web/e2e/panel-system.spec.ts`
+- The new test creates a three-pane layout, clicks the left pane, sends the tmux-style `Ctrl+B` then `ArrowRight` shortcut, and immediately splits vertically from the newly active pane
+- Verified the active pane changed indirectly through real UI behavior by asserting the follow-up split produced three panes in the right column and left the original left column untouched
+- Extended `apps/web/e2e/fixtures/panel-helper.ts` with reusable keyboard shortcut helpers for prefix-sequence panel interactions
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check apps/web/e2e/fixtures/panel-helper.ts apps/web/e2e/panel-system.spec.ts docs/e2e-test-coverage/issues.md docs/e2e-test-coverage/progress.txt` passes
+- `bun run test:e2e e2e/panel-system.spec.ts` executes all three panel-system tests successfully (3 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 15: E2E - Open terminal, type command, verify output - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 15 as the highest-priority remaining task because it covers the real terminal WebSocket + PTY + xterm pipeline, which is the riskiest unfinished runtime behavior in the PRD
+
+Changes made:
+- Added `apps/web/e2e/terminal-interaction.spec.ts` with `can spawn a terminal, run a command, and see the output`
+- The new test creates a project and a dedicated workspace branch, spawns a terminal from that workspace's sidebar terminal controls, and verifies the terminal is assigned to the active pane
+- The test sends `pwd` through the real terminal input and verifies the pane rendering changes after the command completes, covering terminal input delivery and visible output rendering without using mock state or hardcoded sleeps
+- Updated `apps/web/e2e/fixtures/terminal-helper.ts` to focus xterm's accessible terminal input before typing and to expose terminal pane locators more reliably in WebKit
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check e2e/fixtures/terminal-helper.ts e2e/terminal-interaction.spec.ts` passes in `apps/web`
+- `bun run test:e2e e2e/terminal-interaction.spec.ts` executes the terminal interaction E2E test successfully (1 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 14: E2E - Resize panes via keyboard - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 14 as the highest-priority remaining task because it completes the panel-system slice after Issues 11, 12, and 13 and covers the last unfinished keyboard-driven pane behavior in that area
+
+Changes made:
+- Added `can use Ctrl+B then Shift+arrow keys to resize panes` to `apps/web/e2e/panel-system.spec.ts`
+- The new test creates a two-pane layout, records the initial pane bounding boxes, sends the tmux-style resize shortcut, and verifies the active pane grows while its sibling shrinks
+- Extended `apps/web/e2e/fixtures/panel-helper.ts` with a dedicated `resize()` helper for tmux-style resize shortcuts
+- Fixed `apps/web/src/panels/panel-hotkeys.tsx` so resize shortcuts work reliably in the browser: a small manual prefix listener now ignores the standalone `Shift` keydown that occurs before `Shift+Arrow` and then dispatches the correct `resizePane` action
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check src/panels/panel-hotkeys.tsx e2e/fixtures/panel-helper.ts e2e/panel-system.spec.ts src/panels/panel-manager.tsx` passes in `apps/web`
+- `bun run test:e2e e2e/panel-system.spec.ts` executes all 4 panel-system E2E tests successfully (4 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 16: E2E - Sidebar search filters projects and workspaces - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 16 as the highest-priority remaining task because it covers a core sidebar navigation flow and starts the unfinished search/navigation slice that also includes collapse/expand and theme toggle behavior
+
+Changes made:
+- Added `apps/web/e2e/search-navigation.spec.ts` with `filters projects and workspaces in real time and restores them when cleared`
+- The new test adds a project, creates a workspace with a unique branch name, searches for that branch through the sidebar search input, and verifies the matching project/workspace controls remain visible
+- The same test then searches for a guaranteed non-match, verifies the empty-state message appears and the previously visible project/workspace controls are hidden, and finally clears the search via the real clear button to confirm everything reappears
+- Updated `apps/web/e2e/fixtures/sidebar-helper.ts` so `clearSearch()` uses the actual `Clear search` button instead of programmatically clearing the input value
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check e2e/fixtures/sidebar-helper.ts e2e/search-navigation.spec.ts` passes in `apps/web`
+- `bun run test:e2e e2e/search-navigation.spec.ts` executes the search navigation E2E test successfully (1 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 19: E2E - Switch to dashboard view and verify summary - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 19 as the highest-priority remaining task because it opens the unfinished dashboard slice and unlocks Issue 20, which depends on dashboard coverage already being in place
+
+Changes made:
+- Added `apps/web/e2e/dashboard.spec.ts` with `can switch to the dashboard and see the cross-project summary`
+- The new test adds a project, creates a workspace so both the dashboard and panel views have real content, switches to the dashboard, and verifies the `Overview` summary plus the project card render the expected project name, repo path, and workspace branch
+- The same test switches back to the terminal panels view and verifies the pane layout is visible again, covering the full dashboard-toggle round trip through the real UI
+- Tightened `apps/web/e2e/fixtures/panel-helper.ts` so the dashboard and terminal-panel toggle locators use exact button-name matching, avoiding collisions with workspace action buttons whose labels include the word `Dashboard`
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check e2e/fixtures/panel-helper.ts e2e/dashboard.spec.ts` passes in `apps/web`
+- `bun run test:e2e e2e/dashboard.spec.ts` executes the dashboard E2E test successfully (1 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 20: E2E - Verify workspace status badges in dashboard - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 20 as the highest-priority remaining task because it completes the dashboard slice while reusing the existing dashboard setup from Issue 19 and verifies the runtime status signal the dashboard is meant to surface
+
+Changes made:
+- Added `shows workspace status badges in the dashboard` to `apps/web/e2e/dashboard.spec.ts`
+- Reused the existing dashboard setup helper so the new test adds a project, creates a real workspace, switches to the dashboard, and scopes assertions to the matching project card
+- Verified the created workspace branch is rendered in the dashboard and that its row includes the visible `running` status badge, covering the workspace-status flow from backend state through dashboard UI rendering
+- Refactored the spec slightly with a shared `getProjectDashboardCard()` helper so both dashboard tests locate the same project card consistently
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check e2e/dashboard.spec.ts` passes in `apps/web`
+- `bun run test:e2e e2e/dashboard.spec.ts` executes both dashboard E2E tests successfully (2 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 17: E2E - Collapse and expand project groups - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 17 as the highest-priority remaining task because it completes the unfinished sidebar navigation slice before the lower-risk theme toggle coverage
+
+Changes made:
+- Expanded `apps/web/e2e/search-navigation.spec.ts` with a shared setup helper so the search-navigation tests can consistently add a project and create a workspace through the real UI
+- Added `can collapse a project group, keep it collapsed across reload, and expand it again` to verify the project-group toggle hides child workspace controls, preserves that collapsed state after a page reload, and restores the child content when expanded again
+- Kept the assertions fully user-visible by checking the project trigger's `aria-expanded` state and the visibility of the real workspace destroy control instead of touching localStorage or internal state directly
+- Updated the spec header to reflect that `search-navigation.spec.ts` now covers both Issues 16 and 17
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check e2e/search-navigation.spec.ts` passes in `apps/web`
+- `bun run test:e2e e2e/search-navigation.spec.ts` executes both search-navigation E2E tests successfully (2 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown
+
+## Issue 18: E2E - Toggle dark mode - COMPLETED
+
+Date: 2026-03-06
+
+Why this task next:
+- Chose Issue 18 as the highest-priority remaining task because it was the last unfinished user-facing E2E flow in the PRD and completed the search/navigation slice
+
+Changes made:
+- Added `can toggle the theme and restore the original mode` to `apps/web/e2e/search-navigation.spec.ts`
+- The new test opens the header theme menu, switches to the opposite theme from the current mode, and verifies the `html` class reflects the change through the real UI
+- The same test then switches back to the original theme and confirms the root `html` class returns to its starting state, covering the full round trip without touching internal app state
+- Updated the spec header so `search-navigation.spec.ts` now documents coverage for Issues 16, 17, and 18
+
+Verification:
+- `bun run check-types` passes in `apps/web`
+- `bun run test` passes in `apps/web` (70 tests)
+- `bun x ultracite check e2e/search-navigation.spec.ts` passes in `apps/web`
+- `bun run test:e2e e2e/search-navigation.spec.ts` executes all three search-navigation E2E tests successfully (3 passed); Playwright reported success before the dev-process shutdown returned a non-zero turbo exit during teardown

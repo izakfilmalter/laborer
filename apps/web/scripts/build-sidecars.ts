@@ -188,6 +188,183 @@ function makeServerBuildPlugins(): BuildPlugin[] {
 }
 
 // ---------------------------------------------------------------------------
+// Terminal build plugins
+// ---------------------------------------------------------------------------
+
+/**
+ * Build plugins for the terminal sidecar.
+ *
+ * The terminal main service (Bun HTTP server) uses `@effect/platform-bun`
+ * which transitively imports `@effect/platform-node-shared`, bringing in the
+ * same `@parcel/watcher` and `undici` issues as the server sidecar. We apply
+ * the same stubs.
+ */
+function makeTerminalBuildPlugins(): BuildPlugin[] {
+  return [
+    {
+      name: 'sidecar-terminal-plugins',
+      setup(build: BunPluginBuilder) {
+        // Stub @parcel/watcher — not used by the terminal service.
+        build.onResolve({ filter: PARCEL_WATCHER_RE }, (args) => ({
+          path: args.path,
+          namespace: 'sidecar-stub',
+        }))
+
+        // Stub @effect/platform-node's Undici.js re-export module.
+        build.onResolve({ filter: UNDICI_RE }, (args) => {
+          if (args.importer?.includes('@effect/platform-node')) {
+            return { path: 'undici-stub', namespace: 'sidecar-stub' }
+          }
+          return undefined
+        })
+
+        // Generic stub loader — returns an empty default export.
+        build.onLoad(
+          { filter: STUB_NAMESPACE_RE, namespace: 'sidecar-stub' },
+          () => ({
+            contents: 'export default {};',
+            loader: 'js' as const,
+          })
+        )
+      },
+    },
+  ]
+}
+
+// ---------------------------------------------------------------------------
+// Terminal post-build: bundle pty-host.js and copy node-pty
+// ---------------------------------------------------------------------------
+
+/**
+ * Map of OS+arch to node-pty prebuild directory name.
+ *
+ * node-pty uses `process.platform + "-" + process.arch` for prebuild directories:
+ *   - darwin-arm64 (macOS Apple Silicon)
+ *   - darwin-x64 (macOS Intel)
+ */
+const NODE_PTY_PREBUILD_MAP: Record<string, string> = {
+  'aarch64-apple-darwin': 'darwin-arm64',
+  'x86_64-apple-darwin': 'darwin-x64',
+}
+
+/**
+ * Find the node-pty package directory in the monorepo's node_modules.
+ */
+function findNodePtyDir(): string {
+  const candidates = [
+    // bun's cached node_modules
+    join(
+      MONOREPO_ROOT,
+      'node_modules',
+      '.bun',
+      'node-pty@1.1.0',
+      'node_modules',
+      'node-pty'
+    ),
+    // Standard node_modules
+    join(MONOREPO_ROOT, 'node_modules', 'node-pty'),
+  ]
+
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, 'package.json'))) {
+      return candidate
+    }
+  }
+
+  throw new Error(
+    `Could not find node-pty package. Searched:\n${candidates.map((c) => `  - ${c}`).join('\n')}`
+  )
+}
+
+/**
+ * Bundle pty-host.ts into a single pty-host.js file for Node.js execution.
+ *
+ * Uses `bun build` (without `--compile`) to create a standalone JS bundle
+ * that Node.js can run. node-pty is marked as external since it contains
+ * native addons that must be loaded at runtime from the filesystem.
+ */
+function bundlePtyHost(): void {
+  const entryPath = resolve(MONOREPO_ROOT, 'packages/terminal/src/pty-host.ts')
+  const outputPath = join(SIDECARS_DIR, 'pty-host.js')
+
+  const cmd = `bun build "${entryPath}" --target=node --external=node-pty --outfile="${outputPath}"`
+
+  console.log(`  Bundling pty-host.js: ${cmd}\n`)
+
+  execSync(cmd, {
+    cwd: MONOREPO_ROOT,
+    stdio: 'inherit',
+  })
+
+  console.log('  Bundled pty-host.js')
+}
+
+/**
+ * Copy node-pty package files to the sidecars directory.
+ *
+ * Creates `sidecars/node_modules/node-pty/` with:
+ * - package.json (for require resolution)
+ * - lib/ (JavaScript implementation files)
+ * - prebuilds/<platform-arch>/ (native .node addon + spawn-helper binary)
+ *
+ * The bundled pty-host.js uses `createRequire(import.meta.url)('node-pty')`
+ * which resolves from the script's directory, finding the shipped node_modules.
+ */
+function copyNodePty(targetTriple: string): void {
+  const nodePtyDir = findNodePtyDir()
+  const prebuildName = NODE_PTY_PREBUILD_MAP[targetTriple]
+  if (prebuildName === undefined) {
+    throw new Error(
+      `No node-pty prebuild mapping for target triple: ${targetTriple}`
+    )
+  }
+
+  const destDir = join(SIDECARS_DIR, 'node_modules', 'node-pty')
+
+  // Create destination directory
+  mkdirSync(destDir, { recursive: true })
+
+  // Copy package.json
+  copyFileSync(join(nodePtyDir, 'package.json'), join(destDir, 'package.json'))
+  console.log('  Copied node-pty/package.json')
+
+  // Copy lib/ directory (JavaScript implementation)
+  // Remove existing lib/ to avoid nesting issues on re-runs
+  const libDestDir = join(destDir, 'lib')
+  if (existsSync(libDestDir)) {
+    execSync(`rm -rf "${libDestDir}"`)
+  }
+  execSync(`cp -R "${join(nodePtyDir, 'lib')}" "${libDestDir}"`)
+  console.log('  Copied node-pty/lib/')
+
+  // Copy platform-specific prebuilds (pty.node native addon + spawn-helper binary)
+  const prebuildSrcDir = join(nodePtyDir, 'prebuilds', prebuildName)
+  const prebuildDestDir = join(destDir, 'prebuilds', prebuildName)
+  mkdirSync(prebuildDestDir, { recursive: true })
+  // Copy individual files to avoid shell glob issues
+  for (const file of ['pty.node', 'spawn-helper']) {
+    const srcFile = join(prebuildSrcDir, file)
+    if (existsSync(srcFile)) {
+      copyFileSync(srcFile, join(prebuildDestDir, file))
+    }
+  }
+  // Ensure spawn-helper has execute permission
+  execSync(`chmod +x "${join(prebuildDestDir, 'spawn-helper')}"`)
+  console.log(`  Copied node-pty/prebuilds/${prebuildName}/`)
+}
+
+/**
+ * Post-build steps for the terminal sidecar:
+ * 1. Bundle pty-host.ts into pty-host.js (runs under Node.js, not Bun)
+ * 2. Copy node-pty native bindings alongside the sidecar binary
+ */
+function terminalPostBuild(targetTriple: string): void {
+  console.log('\n  --- Terminal post-build steps ---')
+  bundlePtyHost()
+  copyNodePty(targetTriple)
+}
+
+// ---------------------------------------------------------------------------
 // Sidecar definitions
 // ---------------------------------------------------------------------------
 
@@ -210,6 +387,12 @@ interface SidecarDef {
    * instead of the CLI for plugin support.
    */
   plugins?: readonly BuildPlugin[]
+  /**
+   * Post-build hook. Runs after the main binary is compiled and copyFiles
+   * are processed. Used for complex sidecars that need additional build
+   * steps (e.g., terminal bundles pty-host.js and copies node-pty).
+   */
+  postBuild?: (targetTriple: string) => void
 }
 
 /**
@@ -270,6 +453,12 @@ const SIDECARS: Record<string, SidecarDef> = {
         dest: 'wa-sqlite.node.wasm',
       },
     ],
+  },
+  terminal: {
+    name: 'laborer-terminal',
+    entryPoint: 'packages/terminal/src/main.ts',
+    plugins: makeTerminalBuildPlugins(),
+    postBuild: terminalPostBuild,
   },
 }
 
@@ -394,6 +583,11 @@ async function buildSidecar(
       copyFileSync(src, destPath)
       console.log(`  Copied ${dest}`)
     }
+  }
+
+  // Run post-build hook (e.g., terminal bundles pty-host.js and copies node-pty)
+  if (def.postBuild !== undefined) {
+    def.postBuild(targetTriple)
   }
 }
 

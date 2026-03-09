@@ -87,14 +87,14 @@ The hardest compilation target. The terminal service has a unique architecture: 
 
 ### Acceptance criteria
 
-- [ ] The build script compiles `@laborer/terminal` main service into a standalone binary
-- [ ] The compiled binary is placed in `src-tauri/sidecars/laborer-terminal-<target-triple>`
-- [ ] `pty-host.ts` is bundled into a single `pty-host.js` file via `bun build` (not `--compile`)
-- [ ] `pty-host.js` is placed alongside the sidecar binary in the sidecars directory
-- [ ] `node-pty` native bindings (`.node` files, `spawn-helper`) are copied to the correct location
-- [ ] The compiled terminal binary starts, spawns the pty-host Node.js subprocess, and successfully creates PTY sessions
-- [ ] The path resolution in `pty-host-client.ts` detects whether it is running from source or as a compiled binary and resolves `pty-host.js` accordingly
-- [ ] System Node.js is the only external runtime dependency
+- [x] The build script compiles `@laborer/terminal` main service into a standalone binary
+- [x] The compiled binary is placed in `src-tauri/sidecars/laborer-terminal-<target-triple>`
+- [x] `pty-host.ts` is bundled into a single `pty-host.js` file via `bun build` (not `--compile`)
+- [x] `pty-host.js` is placed alongside the sidecar binary in the sidecars directory
+- [x] `node-pty` native bindings (`.node` files, `spawn-helper`) are copied to the correct location
+- [x] The compiled terminal binary starts, spawns the pty-host Node.js subprocess, and successfully creates PTY sessions
+- [x] The path resolution in `pty-host-client.ts` detects whether it is running from source or as a compiled binary and resolves `pty-host.js` accordingly
+- [x] System Node.js is the only external runtime dependency
 
 ### Blocked by
 

@@ -157,3 +157,51 @@ Status: COMPLETED
 - Clean shutdown with state persistence
 - Typecheck passes, biome check passes
 
+## 2026-03-09: Issue 3 — Compile terminal service + pty-host as standalone binary
+
+Status: COMPLETED
+
+### What was done
+- Extended `apps/web/scripts/build-sidecars.ts` with full terminal sidecar support:
+  - **Terminal sidecar definition**: Added `terminal` entry to the SIDECARS map with
+    `makeTerminalBuildPlugins()` for `@parcel/watcher` and `undici` stubs (same as
+    server — `@effect/platform-bun` transitively imports `@effect/platform-node-shared`).
+  - **`postBuild` hook**: Added a new `postBuild` field to `SidecarDef` for complex
+    sidecars requiring additional build steps after the main binary compilation.
+  - **`bundlePtyHost()`**: Bundles `packages/terminal/src/pty-host.ts` into a single
+    `pty-host.js` file via `bun build --target=node --external=node-pty`. This runs
+    under Node.js (not Bun) because Bun's `tty.ReadStream` doesn't fire data events
+    for PTY master file descriptors.
+  - **`copyNodePty()`**: Copies the `node-pty` package to `sidecars/node_modules/node-pty/`
+    with: `package.json`, `lib/` (JavaScript implementation), and platform-specific
+    `prebuilds/darwin-arm64/` (or `darwin-x64`) containing `pty.node` native addon and
+    `spawn-helper` binary. Ensures `spawn-helper` has execute permissions.
+  - **`findNodePtyDir()`**: Locates node-pty in either bun's cached node_modules
+    (`node_modules/.bun/node-pty@1.1.0/...`) or standard `node_modules/`.
+  - **Target triple mapping**: Maps Rust target triples to node-pty prebuild directory
+    names (e.g., `aarch64-apple-darwin` -> `darwin-arm64`).
+
+- Updated `packages/terminal/src/services/pty-host-client.ts`:
+  - **Compiled binary detection**: Uses `import.meta.url.includes('/$bunfs/')` to detect
+    compiled Bun binaries. This is more precise than `!process.execPath.endsWith('/bun')`
+    since vitest runs under Node.js where `execPath` also doesn't end in `/bun`.
+  - **Path resolution**: In compiled mode, resolves `pty-host.js` as a sibling of
+    `process.execPath` (the compiled binary on disk). In source mode, resolves
+    `../pty-host.ts` relative to this file via `import.meta.url` (unchanged behavior).
+
+- **No changes needed to `pty-host.ts`**: The bundled `pty-host.js` output from `bun build`
+  preserves `import.meta.url` as Node.js native ESM semantics, so `createRequire(import.meta.url)`
+  correctly resolves from the script's actual filesystem location. The shipped
+  `node_modules/node-pty/` directory is found via standard Node.js module resolution.
+
+### Verification
+- Binary: `src-tauri/sidecars/laborer-terminal-aarch64-apple-darwin` (59MB, Mach-O 64-bit arm64)
+- Bundle: `src-tauri/sidecars/pty-host.js` (9.75KB)
+- Native: `src-tauri/sidecars/node_modules/node-pty/prebuilds/darwin-arm64/pty.node` (85KB)
+- Native: `src-tauri/sidecars/node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper` (50KB)
+- Compiled binary starts, PTY host spawns under Node.js, health check returns
+  `{"status":"ok","name":"laborer-terminal","port":2102}`
+- All 73 terminal package tests pass (4 test files, 0 failures)
+- Typecheck passes, biome check clean on changed files
+- `cargo check` passes with no errors
+

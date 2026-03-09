@@ -33,6 +33,7 @@
     "build": "turbo build",
     "typecheck": "turbo typecheck --ui=stream",
     "dev:native": "turbo -F native dev",
+    "build:app": "turbo -F web build",
     "test": "turbo test --ui=stream",
     "test:watch": "turbo test:watch --ui=stream",
     "check": "turbo run //#format:fix typecheck test --ui=stream",

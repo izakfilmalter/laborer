@@ -188,10 +188,16 @@ pub fn run() {
                 });
             }
 
-            // In release mode, spawn sidecars in order: terminal first (port 2102),
-            // then server (port 2100, which connects to terminal on startup).
-            // The `await_initialization` command blocks the frontend until both are healthy.
+            // In release mode, create the MCP symlink and spawn sidecars.
             if !cfg!(debug_assertions) {
+                // Create or update the MCP symlink at /usr/local/bin/laborer-mcp
+                // before spawning sidecars, so the server sidecar can detect it
+                // and pass the symlink path to mcp-registrar.ts.
+                sidecar::SidecarManager::create_mcp_symlink(app.handle());
+
+                // Spawn sidecars in order: terminal first (port 2102),
+                // then server (port 2100, which connects to terminal on startup).
+                // The `await_initialization` command blocks the frontend until both are healthy.
                 let app_handle = app.handle().clone();
                 let mgr = manager.clone();
                 tauri::async_runtime::spawn(async move {

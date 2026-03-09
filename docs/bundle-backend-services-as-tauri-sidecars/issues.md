@@ -314,12 +314,12 @@ When the Tauri app launches, create a symlink at `/usr/local/bin/laborer-mcp` po
 
 ### Acceptance criteria
 
-- [ ] On app launch, a symlink is created at `/usr/local/bin/laborer-mcp` pointing to the MCP binary inside the app bundle
-- [ ] If the symlink already exists and points to the correct location, it is not recreated
-- [ ] If the symlink exists but points to a different location, it is updated
-- [ ] If symlink creation fails due to permissions, a warning is logged but app startup is not blocked
-- [ ] The server sidecar receives the MCP binary path via environment variable and the `mcp-registrar.ts` uses it when writing AI agent configurations
-- [ ] AI agent config entries use the symlinked path (e.g., `{ command: "/usr/local/bin/laborer-mcp" }`) instead of `bun run <source-path>`
+- [x] On app launch, a symlink is created at `/usr/local/bin/laborer-mcp` pointing to the MCP binary inside the app bundle
+- [x] If the symlink already exists and points to the correct location, it is not recreated
+- [x] If the symlink exists but points to a different location, it is updated
+- [x] If symlink creation fails due to permissions, a warning is logged but app startup is not blocked
+- [x] The server sidecar receives the MCP binary path via environment variable and the `mcp-registrar.ts` uses it when writing AI agent configurations
+- [x] AI agent config entries use the symlinked path (e.g., `{ command: "/usr/local/bin/laborer-mcp" }`) instead of `bun run <source-path>`
 
 ### Blocked by
 

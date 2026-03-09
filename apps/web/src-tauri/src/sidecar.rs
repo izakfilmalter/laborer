@@ -289,6 +289,9 @@ struct TrackedSidecar {
 /// Maximum number of stderr lines to retain per sidecar for crash diagnostics.
 const MAX_STDERR_LINES: usize = 50;
 
+/// The well-known path where the MCP symlink is created.
+const MCP_SYMLINK_PATH: &str = "/usr/local/bin/laborer-mcp";
+
 /// Manages the lifecycle of sidecar processes.
 ///
 /// Stored in Tauri's managed state so it can be accessed from commands and
@@ -320,9 +323,107 @@ impl SidecarManager {
         dir.join(bin_name)
     }
 
+    /// Resolve the path to the MCP binary inside the app bundle.
+    fn mcp_binary_path(app: &tauri::AppHandle) -> std::path::PathBuf {
+        let binary = tauri::process::current_binary(&app.env())
+            .expect("Failed to get current binary path");
+        let dir = binary.parent().expect("Failed to get binary parent dir");
+        dir.join("laborer-mcp")
+    }
+
+    /// Create or update the MCP symlink at `/usr/local/bin/laborer-mcp`.
+    ///
+    /// - If the symlink already exists and points to the correct target, skip.
+    /// - If the symlink exists but points elsewhere, remove and recreate.
+    /// - If `/usr/local/bin/` is not writable, log a warning but do not block.
+    pub fn create_mcp_symlink(app: &tauri::AppHandle) {
+        let mcp_path = Self::mcp_binary_path(app);
+        let symlink_path = std::path::Path::new(MCP_SYMLINK_PATH);
+
+        // Verify the MCP binary exists in the bundle.
+        if !mcp_path.exists() {
+            log::warn!(
+                "MCP binary not found at {}, skipping symlink creation",
+                mcp_path.display()
+            );
+            return;
+        }
+
+        // Check if the symlink already exists and points to the correct target.
+        if symlink_path.is_symlink() {
+            match std::fs::read_link(symlink_path) {
+                Ok(target) if target == mcp_path => {
+                    log::info!(
+                        "MCP symlink already points to correct target: {} -> {}",
+                        MCP_SYMLINK_PATH,
+                        mcp_path.display()
+                    );
+                    return;
+                }
+                Ok(old_target) => {
+                    log::info!(
+                        "MCP symlink points to old target: {} -> {}, updating",
+                        MCP_SYMLINK_PATH,
+                        old_target.display()
+                    );
+                    if let Err(e) = std::fs::remove_file(symlink_path) {
+                        log::warn!(
+                            "Failed to remove old MCP symlink at {}: {}",
+                            MCP_SYMLINK_PATH,
+                            e
+                        );
+                        return;
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to read MCP symlink at {}: {}",
+                        MCP_SYMLINK_PATH,
+                        e
+                    );
+                    // Try to remove and recreate.
+                    let _ = std::fs::remove_file(symlink_path);
+                }
+            }
+        } else if symlink_path.exists() {
+            // A regular file (not a symlink) exists at the path — don't overwrite.
+            log::warn!(
+                "A non-symlink file exists at {}, skipping MCP symlink creation",
+                MCP_SYMLINK_PATH
+            );
+            return;
+        }
+
+        // Create the symlink.
+        #[cfg(unix)]
+        match std::os::unix::fs::symlink(&mcp_path, symlink_path) {
+            Ok(()) => {
+                log::info!(
+                    "Created MCP symlink: {} -> {}",
+                    MCP_SYMLINK_PATH,
+                    mcp_path.display()
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to create MCP symlink at {} (permission denied? run: sudo ln -sf {} {}): {}",
+                    MCP_SYMLINK_PATH,
+                    mcp_path.display(),
+                    MCP_SYMLINK_PATH,
+                    e
+                );
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            log::warn!("MCP symlink creation is only supported on Unix");
+        }
+    }
+
     /// Build the environment variables to pass to a sidecar.
-    fn sidecar_env(&self, name: SidecarName) -> Vec<(String, String)> {
-        let vars = vec![
+    fn sidecar_env(&self, app: &tauri::AppHandle, name: SidecarName) -> Vec<(String, String)> {
+        let mut vars = vec![
             ("PORT".to_string(), DEFAULT_PORT.to_string()),
             (
                 "TERMINAL_PORT".to_string(),
@@ -331,9 +432,24 @@ impl SidecarManager {
             ("DATA_DIR".to_string(), DEFAULT_DATA_DIR.to_string()),
         ];
 
-        // Terminal service only needs its own port.
-        if name == SidecarName::Terminal {
-            // TERMINAL_PORT is already included above.
+        // Pass the MCP binary path to the server sidecar so that
+        // mcp-registrar.ts writes AI agent configs pointing to it.
+        // Prefer the symlink path if it exists and points to the right target,
+        // otherwise use the binary path inside the app bundle.
+        if name == SidecarName::Server {
+            let mcp_path = Self::mcp_binary_path(app);
+            let symlink_path = std::path::Path::new(MCP_SYMLINK_PATH);
+
+            let laborer_mcp_path = if symlink_path.is_symlink() {
+                // Symlink exists — use the well-known path so AI agents
+                // can find it without knowing the .app bundle internals.
+                MCP_SYMLINK_PATH.to_string()
+            } else {
+                // No symlink — fall back to the binary inside the bundle.
+                mcp_path.to_string_lossy().to_string()
+            };
+
+            vars.push(("LABORER_MCP_PATH".to_string(), laborer_mcp_path));
         }
 
         merge_env(&self.shell_env, vars)
@@ -346,7 +462,7 @@ impl SidecarManager {
         name: SidecarName,
     ) -> std::io::Result<()> {
         let path = Self::sidecar_path(app, name);
-        let envs = self.sidecar_env(name);
+        let envs = self.sidecar_env(app, name);
 
         log::info!("Spawning sidecar: name={name} path={}", path.display());
 
@@ -911,5 +1027,10 @@ mod tests {
         let manager = SidecarManager::new();
         let state = manager.get_state(SidecarName::Server).await;
         assert!(state.is_none());
+    }
+
+    #[test]
+    fn mcp_symlink_path_constant() {
+        assert_eq!(MCP_SYMLINK_PATH, "/usr/local/bin/laborer-mcp");
     }
 }

@@ -324,3 +324,57 @@ Status: COMPLETED
 - `cargo check` passes with no errors
 - Pre-existing `.opencode/package.json` biome issue is unrelated
 
+## 2026-03-09: Issue 8 — MCP symlink creation on app launch
+
+Status: COMPLETED
+
+### What was done
+
+#### Symlink creation (`sidecar.rs`)
+- Added `MCP_SYMLINK_PATH` constant (`/usr/local/bin/laborer-mcp`).
+- Added `SidecarManager::mcp_binary_path()`: Resolves the path to the `laborer-mcp`
+  binary inside the app bundle, as a sibling of the main Tauri binary (via
+  `tauri::process::current_binary()`).
+- Added `SidecarManager::create_mcp_symlink()`: Creates or updates the symlink at
+  `/usr/local/bin/laborer-mcp` pointing to the MCP binary inside the app bundle:
+  - If the symlink already exists and points to the correct target, skips (no-op).
+  - If the symlink exists but points to a different target (old version), removes
+    and recreates it.
+  - If a non-symlink regular file exists at the path, skips to avoid overwriting.
+  - If the MCP binary is not found in the bundle, logs a warning and skips.
+  - If symlink creation fails (e.g., permission denied on `/usr/local/bin/`),
+    logs a warning with a manual `sudo ln -sf` command but does NOT block app startup.
+  - Unix-only implementation (`std::os::unix::fs::symlink`); logs a warning on
+    non-Unix platforms.
+
+#### LABORER_MCP_PATH env var (`sidecar.rs`)
+- Updated `SidecarManager::sidecar_env()` to accept `app: &tauri::AppHandle`
+  (was previously `&self, name` only) so it can resolve the MCP binary path.
+- When building env vars for the **server** sidecar, adds `LABORER_MCP_PATH`:
+  - If the symlink at `/usr/local/bin/laborer-mcp` exists, passes the symlink
+    path so AI agent configs use the well-known stable path.
+  - If the symlink doesn't exist (e.g., permission failure), falls back to the
+    MCP binary path inside the app bundle.
+
+#### App setup orchestration (`lib.rs`)
+- In release mode, calls `SidecarManager::create_mcp_symlink()` BEFORE spawning
+  sidecars, so the symlink exists when `sidecar_env()` checks for it.
+
+#### mcp-registrar.ts (no changes needed)
+- The `DEFAULT_MCP_ENTRY_PATH` already checks `process.env.LABORER_MCP_PATH`
+  first when running as a compiled binary (line 38). The `isMcpBinary()` function
+  correctly detects the symlink path (no `.ts`/`.js` extension) and writes AI agent
+  configs with `{ command: "/usr/local/bin/laborer-mcp" }` instead of `bun run`.
+
+#### Tests
+- Added `mcp_symlink_path_constant` unit test to verify the constant value.
+- All 16 Rust tests pass (was 15 before).
+- All 14 mcp-registrar TypeScript tests pass.
+
+### Verification
+- `cargo check` passes with no errors or warnings
+- `cargo test` passes: 16/16 tests pass
+- `tsc --noEmit` (TypeScript typecheck) passes with no errors
+- `biome check` passes on changed files (pre-existing `.opencode/package.json` issue unrelated)
+- mcp-registrar tests pass: 14/14 tests pass
+

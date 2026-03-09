@@ -5,12 +5,15 @@ import {
   Outlet,
 } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
+import { useEffect, useState } from 'react'
 import { AtomRegistryProvider } from '@/atoms/provider'
 import { DockerStatusBanner } from '@/components/docker-status-banner'
 import Header from '@/components/header'
+import Loader from '@/components/loader'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
+import { waitForSidecars } from '@/lib/tauri'
 import { LiveStoreProvider } from '@/livestore/provider'
 
 import '../index.css'
@@ -44,6 +47,36 @@ function SidecarCrashListener(): null {
   return null
 }
 
+/**
+ * Gate that waits for Tauri sidecar services to become healthy
+ * before rendering children. In non-Tauri or dev mode, renders
+ * children immediately.
+ */
+function SidecarGate({ children }: { children: React.ReactNode }) {
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    console.log('[SidecarGate] origin:', globalThis.location?.origin)
+    console.log('[SidecarGate] Waiting for sidecars...')
+    waitForSidecars().then(
+      () => {
+        console.log('[SidecarGate] Sidecars ready')
+        setReady(true)
+      },
+      (error) => {
+        console.error('[SidecarGate] Sidecar initialization failed:', error)
+        setReady(true)
+      }
+    )
+  }, [])
+
+  if (!ready) {
+    return <Loader />
+  }
+
+  return children
+}
+
 function RootComponent() {
   return (
     <>
@@ -55,15 +88,17 @@ function RootComponent() {
         storageKey="vite-ui-theme"
       >
         <HotkeysProvider>
-          <AtomRegistryProvider>
-            <LiveStoreProvider>
-              <div className="grid h-svh grid-rows-[auto_auto_1fr]">
-                <Header />
-                <DockerStatusBanner />
-                <Outlet />
-              </div>
-            </LiveStoreProvider>
-          </AtomRegistryProvider>
+          <SidecarGate>
+            <AtomRegistryProvider>
+              <LiveStoreProvider>
+                <div className="grid h-svh grid-rows-[auto_auto_1fr]">
+                  <Header />
+                  <DockerStatusBanner />
+                  <Outlet />
+                </div>
+              </LiveStoreProvider>
+            </AtomRegistryProvider>
+          </SidecarGate>
           <Toaster richColors />
           <SidecarCrashListener />
         </HotkeysProvider>

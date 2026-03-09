@@ -423,13 +423,25 @@ impl SidecarManager {
 
     /// Build the environment variables to pass to a sidecar.
     fn sidecar_env(&self, app: &tauri::AppHandle, name: SidecarName) -> Vec<(String, String)> {
+        // Use the Tauri app data directory as the data dir so sidecars
+        // write to ~/Library/Application Support/com.izakfilmalter.laborer/data
+        // instead of a relative path (which fails when CWD is / on macOS).
+        let data_dir = app
+            .path()
+            .app_data_dir()
+            .map(|p| p.join("data"))
+            .unwrap_or_else(|_| std::path::PathBuf::from(DEFAULT_DATA_DIR));
+
         let mut vars = vec![
             ("PORT".to_string(), DEFAULT_PORT.to_string()),
             (
                 "TERMINAL_PORT".to_string(),
                 DEFAULT_TERMINAL_PORT.to_string(),
             ),
-            ("DATA_DIR".to_string(), DEFAULT_DATA_DIR.to_string()),
+            (
+                "DATA_DIR".to_string(),
+                data_dir.to_string_lossy().to_string(),
+            ),
         ];
 
         // Pass the MCP binary path to the server sidecar so that

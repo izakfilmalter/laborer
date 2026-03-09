@@ -100,12 +100,21 @@ pub fn run() {
     // Clone manager before the setup closure captures it.
     let exit_manager = manager.clone();
 
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         // Window state plugin: persists and restores window position, size,
         // maximized/fullscreen state across app restarts.
         // See Issue #117: Tauri window management.
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_window_state::Builder::default().build());
+
+    // In production, serve the frontend via http://localhost:2101 instead of
+    // tauri://localhost. This avoids WebKit's cross-origin restrictions that
+    // block requests from tauri:// to http://localhost:* sidecar services.
+    if !cfg!(debug_assertions) {
+        builder = builder.plugin(tauri_plugin_localhost::Builder::new(2101).build());
+    }
+
+    let app = builder
         .manage(manager.clone())
         .manage(InitState { rx: init_rx })
         .invoke_handler(tauri::generate_handler![
@@ -177,6 +186,9 @@ pub fn run() {
             // The user can quit via the tray menu "Quit" item or Cmd+Q.
             // See Issue #117: Tauri window management.
             if let Some(window) = app.get_webview_window("main") {
+                // Open devtools so we can inspect logs in production builds.
+                window.open_devtools();
+
                 let window_clone = window.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {

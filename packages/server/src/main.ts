@@ -108,7 +108,9 @@ const ServerLive = BunHttpServer.layer({ port: env.PORT })
  * Terminal operations are delegated to the standalone terminal service via
  * TerminalClient, which connects over Effect RPC HTTP.
  */
-const HttpLiveBase = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
+const HttpLiveBase = HttpRouter.Default.serve((httpApp) =>
+  HttpMiddleware.logger(HttpMiddleware.cors()(httpApp))
+).pipe(
   HttpServer.withLogAddress,
   // --- Route layers (consume services from below) ---
   Layer.provide(CustomRoutesLive),

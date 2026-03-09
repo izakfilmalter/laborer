@@ -108,7 +108,9 @@ const ServerLive = BunHttpServer.layer({ port: env.TERMINAL_PORT })
  * @see Issue #139: Terminal RPC handlers
  * @see Issue #140: Terminal WebSocket route
  */
-const HttpLive = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
+const HttpLive = HttpRouter.Default.serve((httpApp) =>
+  HttpMiddleware.logger(HttpMiddleware.cors()(httpApp))
+).pipe(
   HttpServer.withLogAddress,
   // --- Route layers (consume services from below) ---
   Layer.provide(HealthRouteLive),

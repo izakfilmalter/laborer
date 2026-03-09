@@ -25,6 +25,24 @@ const SERVER_PORT = 2100
 const TERMINAL_PORT = 2102
 
 /**
+ * Wait for Tauri sidecar services to become healthy.
+ *
+ * In Tauri production mode, invokes the `await_initialization` command
+ * which blocks until both the server and terminal sidecars pass health
+ * checks. In dev mode or non-Tauri environments, resolves immediately.
+ *
+ * Call this before rendering any components that connect to backend
+ * services (LiveStore, RPC clients, terminal WebSockets).
+ */
+export async function waitForSidecars(): Promise<void> {
+  if (!isTauriProduction()) {
+    return
+  }
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('await_initialization')
+}
+
+/**
  * Check if running inside a Tauri webview.
  * Returns true in both `tauri dev` and `tauri build` modes.
  */
@@ -34,8 +52,11 @@ export function isTauri(): boolean {
 
 /**
  * Check if the frontend is in Tauri production mode where the Vite
- * dev proxy is NOT available. In this mode, `location.origin` is
- * `tauri://localhost` and we must use absolute URLs to reach services.
+ * dev proxy is NOT available. In production, the frontend is served
+ * via tauri-plugin-localhost on http://localhost:2101 (same port as
+ * dev, but without the Vite proxy). We detect this by checking for
+ * the Tauri runtime AND a non-dev origin (tauri:// scheme or the
+ * localhost plugin port without a Vite dev server).
  *
  * Returns false in `tauri dev` mode (where Vite proxy handles routing)
  * and in plain browser mode.
@@ -44,7 +65,16 @@ function isTauriProduction(): boolean {
   if (typeof globalThis.location === 'undefined') {
     return false
   }
-  return globalThis.location.origin.startsWith('tauri://')
+  // tauri:// scheme (fallback if localhost plugin isn't used)
+  if (globalThis.location.origin.startsWith('tauri://')) {
+    return true
+  }
+  // Localhost plugin serves on port 2101. In dev mode, Vite also serves
+  // on 2101 but __TAURI_INTERNALS__ differentiates. The key difference:
+  // in production there is no Vite HMR WebSocket, and the build output
+  // includes a marker. We use a simpler check: Tauri runtime + release
+  // build detection via import.meta.env.
+  return isTauri() && import.meta.env.PROD
 }
 
 /**

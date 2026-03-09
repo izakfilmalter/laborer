@@ -38,6 +38,13 @@
       "sidecars/laborer-server",
       "sidecars/laborer-terminal",
       "sidecars/laborer-mcp"
-    ]
+    ],
+    "macOS": {
+      "files": {
+        "MacOS/wa-sqlite.node.wasm": "sidecars/wa-sqlite.node.wasm",
+        "MacOS/pty-host.js": "sidecars/pty-host.js",
+        "MacOS/node_modules": "sidecars/node_modules"
+      }
+    }
   }
 }

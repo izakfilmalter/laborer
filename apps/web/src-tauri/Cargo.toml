@@ -21,7 +21,7 @@ tauri-build = { version = "2.5.4", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.10.0", features = ["tray-icon"] }
+tauri = { version = "2.10.0", features = ["tray-icon", "devtools"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
@@ -29,3 +29,4 @@ tauri-plugin-window-state = "2"
 tokio = { version = "1", features = ["process", "io-util", "time", "sync", "rt"] }
 process-wrap = { version = "9", features = ["tokio1"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+tauri-plugin-localhost = "2.3.2"

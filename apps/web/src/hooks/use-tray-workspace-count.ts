@@ -16,17 +16,13 @@ import { queryDb } from '@livestore/livestore'
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useRef } from 'react'
 
+import { isTauri } from '@/lib/tauri'
 import { useLaborerStore } from '@/livestore/store'
 
 /** LiveStore query for all non-destroyed workspaces with "running" status. */
 const runningWorkspaces$ = queryDb(workspaces.where({ status: 'running' }), {
   label: 'trayRunningWorkspaces',
 })
-
-/** Check if running inside Tauri desktop shell. */
-function isTauri(): boolean {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-}
 
 /**
  * Sync the running workspace count to the Tauri system tray tooltip.

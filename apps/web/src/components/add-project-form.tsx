@@ -21,14 +21,10 @@ import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { isTauri } from '@/lib/tauri'
 import { extractErrorMessage } from '@/lib/utils'
 
 const addProjectMutation = LaborerClient.mutation('project.add')
-
-/** Check if running inside Tauri desktop shell. */
-function isTauri(): boolean {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-}
 
 function AddProjectForm() {
   const [isAdding, setIsAdding] = useState(false)

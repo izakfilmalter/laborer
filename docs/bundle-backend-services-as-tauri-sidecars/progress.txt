@@ -205,3 +205,75 @@ Status: COMPLETED
 - Typecheck passes, biome check clean on changed files
 - `cargo check` passes with no errors
 
+## 2026-03-09: Issue 6 — Wire sidecars into Tauri app setup and frontend routing
+
+Status: COMPLETED
+
+### What was done
+
+#### Tauri configuration (`tauri.conf.json`)
+- Added `bundle.externalBin` entries for all three sidecars: `sidecars/laborer-server`,
+  `sidecars/laborer-terminal`, `sidecars/laborer-mcp`. This tells Tauri to bundle these
+  binaries alongside the main app binary in the `.app` bundle.
+- Updated `beforeBuildCommand` from `bun x vite build` to
+  `bun run build:sidecars && bun x vite build` so that `tauri build` compiles both
+  the sidecar binaries and the Vite frontend.
+
+#### Sidecar startup orchestration (`lib.rs`)
+- Added `await_initialization` Tauri command: the frontend calls this on load to block
+  until backend services are healthy. Returns `ServiceUrls` with `serverUrl` and
+  `terminalUrl`. In debug mode (tauri dev), returns immediately with empty URLs
+  (frontend uses Vite proxy). In release mode, blocks until sidecars pass health checks.
+- Added `InitState` managed state with a `tokio::sync::watch` channel for signaling
+  initialization completion.
+- In release mode, `setup()` spawns a background async task that:
+  1. Starts terminal sidecar first (port 2102) via `spawn_and_wait_healthy()`
+  2. Starts server sidecar (port 2100) — depends on terminal being up
+  3. Signals initialization complete with service URLs
+- In debug mode (`cfg!(debug_assertions)`), initialization is immediately marked
+  complete so the frontend doesn't block (sidecars run via `turbo dev`).
+- Cloned `manager` Arc before the `setup` closure to avoid move-after-borrow.
+
+#### Frontend URL routing (`src/lib/tauri.ts`)
+- Created `apps/web/src/lib/tauri.ts` — shared utility module for Tauri runtime
+  detection and service URL resolution. Provides:
+  - `isTauri()` — detects Tauri webview (both dev and production)
+  - `serverRpcUrl()` — returns `/rpc` in dev, `http://localhost:2100/rpc` in Tauri prod
+  - `terminalRpcUrl()` — returns `/terminal-rpc` in dev, `http://localhost:2102/rpc` in Tauri prod
+  - `serverWsSyncUrl()` — returns origin-relative WS URL in dev, `ws://localhost:2100/rpc` in Tauri prod
+  - `terminalWsUrl(id)` — returns origin-relative WS URL in dev, `ws://localhost:2102/terminal?id=` in Tauri prod
+- Detection strategy: `globalThis.location.origin.startsWith('tauri://')` distinguishes
+  Tauri production mode (where `location.origin` is `tauri://localhost`) from dev mode
+  (where `location.origin` is `http://localhost:2101`).
+
+#### Frontend file updates
+- **`laborer-client.ts`**: Changed `RPC_URL` from hardcoded `/rpc` to `serverRpcUrl()`.
+- **`terminal-service-client.ts`**: Changed `TERMINAL_RPC_URL` from hardcoded
+  `/terminal-rpc` to `terminalRpcUrl()`.
+- **`livestore.worker.ts`**: Added Tauri production detection in the worker context
+  (workers don't have `window.__TAURI_INTERNALS__` but can check `location.origin`).
+  Uses `ws://localhost:2100/rpc` when origin starts with `tauri://`.
+- **`use-terminal-websocket.ts`**: Replaced inline WebSocket URL construction with
+  `terminalWsUrl(terminalId)` from the shared utility.
+- **`use-terminal-list.ts`**: Replaced hardcoded `/terminal-rpc` fetch URL with
+  `terminalRpcUrl()`.
+
+#### isTauri() deduplication
+- Removed duplicate `isTauri()` function definitions from:
+  - `routes/index.tsx` (line 1130)
+  - `components/add-project-form.tsx` (line 29)
+  - `hooks/use-tray-workspace-count.ts` (line 27)
+- All three files now import `isTauri` from the shared `@/lib/tauri` module.
+
+#### Dev mode compatibility
+- `tauri dev` continues to work: debug builds skip sidecar spawning, the Vite proxy
+  handles all routing via relative URLs, and `await_initialization` returns immediately.
+- Plain browser dev (no Tauri) also works: URL resolvers return relative paths.
+
+### Verification
+- `cargo check` passes with no errors or warnings
+- `cargo test` passes: 15/15 tests pass
+- `tsc --noEmit` (TypeScript typecheck) passes with no errors
+- Biome format check passes on all changed files (pre-existing `.opencode/package.json`
+  issue is unrelated)
+

@@ -70,6 +70,7 @@ import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSidebarWidth } from '@/hooks/use-sidebar-width'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
+import { isTauri } from '@/lib/tauri'
 import { useLaborerStore } from '@/livestore/store'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import {
@@ -1125,10 +1126,6 @@ function WelcomeEmptyState() {
       </EmptyContent>
     </Empty>
   )
-}
-
-function isTauri(): boolean {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
 function CloseAppDialog({

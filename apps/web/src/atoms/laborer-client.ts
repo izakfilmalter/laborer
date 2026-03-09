@@ -20,17 +20,17 @@ import { AtomRpc } from '@effect-atom/atom'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import { Layer } from 'effect'
 
+import { serverRpcUrl } from '@/lib/tauri'
+
 /**
- * Derive the server RPC URL from the current page origin.
+ * Derive the server RPC URL based on the runtime context.
  *
- * In development, the Vite dev server proxies /rpc to the backend server
- * (configured in vite.config.ts). In production, the server serves both
- * the app and the RPC endpoint.
+ * - Dev mode: `/rpc` (Vite proxy routes to backend server on port 2100)
+ * - Tauri production: `http://localhost:2100/rpc` (direct to sidecar)
  *
- * Using same-origin /rpc avoids hardcoding server URLs and works
- * seamlessly with the Vite proxy during development.
+ * @see lib/tauri.ts for runtime context detection
  */
-const RPC_URL = '/rpc'
+const RPC_URL = serverRpcUrl()
 
 /**
  * LaborerClient — typed AtomRpc client for React components.

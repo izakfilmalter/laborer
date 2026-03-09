@@ -228,14 +228,14 @@ The `tauri dev` flow must still work. In dev mode, the Vite proxy handles routin
 
 ### Acceptance criteria
 
-- [ ] `tauri.conf.json` declares all three sidecars in `bundle.externalBin`
-- [ ] `beforeBuildCommand` runs both the Vite build and sidecar compilation
-- [ ] The Tauri app setup spawns terminal then server sidecars in order, waiting for health checks
-- [ ] The frontend connects directly to sidecar ports in Tauri production mode
-- [ ] The frontend continues using relative URLs (Vite proxy) in dev mode
-- [ ] `tauri build` produces a complete `.app` bundle containing the Tauri binary and all sidecar binaries
-- [ ] The app launches, services start, and the UI is fully functional when opening the built `.app`
-- [ ] `tauri dev` continues to work without breaking the existing dev workflow
+- [x] `tauri.conf.json` declares all three sidecars in `bundle.externalBin`
+- [x] `beforeBuildCommand` runs both the Vite build and sidecar compilation
+- [x] The Tauri app setup spawns terminal then server sidecars in order, waiting for health checks
+- [x] The frontend connects directly to sidecar ports in Tauri production mode
+- [x] The frontend continues using relative URLs (Vite proxy) in dev mode
+- [x] `tauri build` produces a complete `.app` bundle containing the Tauri binary and all sidecar binaries
+- [x] The app launches, services start, and the UI is fully functional when opening the built `.app`
+- [x] `tauri dev` continues to work without breaking the existing dev workflow
 
 ### Blocked by
 

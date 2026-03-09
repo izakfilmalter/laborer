@@ -48,6 +48,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { terminalWsUrl } from '@/lib/tauri'
+
 /** WebSocket connection state for UI indicators. */
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
 
@@ -207,9 +209,9 @@ function useTerminalWebSocket({
       return
     }
 
-    // Build WebSocket URL relative to current origin
-    const protocol = globalThis.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${globalThis.location.host}/terminal?id=${encodeURIComponent(terminalId)}`
+    // Build WebSocket URL — uses absolute URL in Tauri production mode,
+    // or relative URL via Vite proxy in dev mode.
+    const wsUrl = terminalWsUrl(terminalId)
 
     setConnectionStatus('connecting')
 

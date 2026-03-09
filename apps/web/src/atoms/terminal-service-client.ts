@@ -19,13 +19,17 @@ import { AtomRpc } from '@effect-atom/atom'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import { Layer } from 'effect'
 
+import { terminalRpcUrl } from '@/lib/tauri'
+
 /**
  * Terminal service RPC URL.
  *
- * In development, Vite proxies /terminal-rpc to the terminal service's
- * /rpc endpoint at TERMINAL_PORT (default 3002).
+ * - Dev mode: `/terminal-rpc` (Vite proxy rewrites to terminal's /rpc)
+ * - Tauri production: `http://localhost:2102/rpc` (direct to sidecar)
+ *
+ * @see lib/tauri.ts for runtime context detection
  */
-const TERMINAL_RPC_URL = '/terminal-rpc'
+const TERMINAL_RPC_URL = terminalRpcUrl()
 
 /**
  * TerminalServiceClient — typed AtomRpc client for the terminal service.

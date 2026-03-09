@@ -8,6 +8,50 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 
 mod sidecar;
 
+/// Data returned by `await_initialization` once backend services are ready.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceUrls {
+    /// HTTP base URL for the main server (e.g., "http://localhost:2100").
+    pub server_url: String,
+    /// HTTP base URL for the terminal service (e.g., "http://localhost:2102").
+    pub terminal_url: String,
+}
+
+/// Shared state for tracking sidecar initialization progress.
+/// The sender is set to `Some(urls)` once both sidecars are healthy.
+struct InitState {
+    rx: tokio::sync::watch::Receiver<Option<ServiceUrls>>,
+}
+
+/// Tauri command that the frontend calls on load to wait for backend services.
+///
+/// In production mode (Tauri build), this blocks until sidecars are healthy
+/// and returns the service URLs. In dev mode (tauri dev), sidecars are not
+/// spawned by the app, so this returns immediately with the default URLs
+/// (the Vite proxy handles routing).
+#[tauri::command]
+async fn await_initialization(
+    state: tauri::State<'_, InitState>,
+) -> Result<ServiceUrls, String> {
+    let mut rx = state.rx.clone();
+
+    // If already initialized, return immediately.
+    if let Some(urls) = rx.borrow().clone() {
+        return Ok(urls);
+    }
+
+    // Wait for the initialization to complete.
+    loop {
+        rx.changed()
+            .await
+            .map_err(|_| "Initialization sender dropped".to_string())?;
+        if let Some(urls) = rx.borrow().clone() {
+            return Ok(urls);
+        }
+    }
+}
+
 /// Update the tray tooltip to reflect the current workspace count.
 /// Called from the frontend when the workspace count changes.
 #[tauri::command]
@@ -40,6 +84,22 @@ pub fn run() {
     // once, before any sidecars are spawned.
     let manager = Arc::new(sidecar::SidecarManager::new());
 
+    // Channel for tracking when sidecar initialization is complete.
+    let (init_tx, init_rx) = tokio::sync::watch::channel::<Option<ServiceUrls>>(None);
+
+    // In dev mode (debug builds), sidecars are run separately via `turbo dev`.
+    // Immediately mark initialization as complete with default URLs so the
+    // frontend doesn't block on `await_initialization`.
+    if cfg!(debug_assertions) {
+        let _ = init_tx.send(Some(ServiceUrls {
+            server_url: String::new(),
+            terminal_url: String::new(),
+        }));
+    }
+
+    // Clone manager before the setup closure captures it.
+    let exit_manager = manager.clone();
+
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         // Window state plugin: persists and restores window position, size,
@@ -47,11 +107,13 @@ pub fn run() {
         // See Issue #117: Tauri window management.
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(manager.clone())
+        .manage(InitState { rx: init_rx })
         .invoke_handler(tauri::generate_handler![
             update_tray_workspace_count,
-            sidecar::restart_sidecar
+            sidecar::restart_sidecar,
+            await_initialization
         ])
-        .setup(|app| {
+        .setup(move |app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -126,13 +188,49 @@ pub fn run() {
                 });
             }
 
+            // In release mode, spawn sidecars in order: terminal first (port 2102),
+            // then server (port 2100, which connects to terminal on startup).
+            // The `await_initialization` command blocks the frontend until both are healthy.
+            if !cfg!(debug_assertions) {
+                let app_handle = app.handle().clone();
+                let mgr = manager.clone();
+                tauri::async_runtime::spawn(async move {
+                    log::info!("Starting sidecar initialization...");
+
+                    // 1. Start terminal service first (server depends on it).
+                    if let Err(e) = mgr
+                        .spawn_and_wait_healthy(&app_handle, sidecar::SidecarName::Terminal)
+                        .await
+                    {
+                        log::error!("Terminal sidecar failed to start: {e}");
+                        // Don't block — the frontend will see the error via sidecar:error event.
+                        // Still try to start the server in case terminal is optional.
+                    }
+
+                    // 2. Start main server (connects to terminal service on startup).
+                    if let Err(e) = mgr
+                        .spawn_and_wait_healthy(&app_handle, sidecar::SidecarName::Server)
+                        .await
+                    {
+                        log::error!("Server sidecar failed to start: {e}");
+                    }
+
+                    // 3. Signal initialization complete with service URLs.
+                    let urls = ServiceUrls {
+                        server_url: "http://localhost:2100".to_string(),
+                        terminal_url: "http://localhost:2102".to_string(),
+                    };
+                    let _ = init_tx.send(Some(urls));
+                    log::info!("Sidecar initialization complete");
+                });
+            }
+
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     // Run with event handler to kill all sidecars on app exit.
-    let exit_manager = manager.clone();
     app.run(move |_app, event| {
         if let RunEvent::Exit = event {
             // Block on killing all sidecars before the process exits.

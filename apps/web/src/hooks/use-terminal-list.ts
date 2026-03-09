@@ -17,6 +17,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { terminalRpcUrl } from '@/lib/tauri'
+
 /** Shape of a terminal from the terminal service's terminal.list RPC. */
 interface TerminalInfo {
   readonly args: readonly string[]
@@ -76,7 +78,7 @@ const tryExtractTerminalList = (
  * `[0, { "_tag": "Success", "value": [...terminals] }]\n` or similar.
  */
 async function fetchTerminalList(): Promise<readonly TerminalInfo[]> {
-  const response = await fetch('/terminal-rpc', {
+  const response = await fetch(terminalRpcUrl(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: '[0,{"_tag":"terminal.list"}]\n',

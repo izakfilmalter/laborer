@@ -527,26 +527,11 @@ function usePanelLayout() {
   )
   const hasReconciled = useRef(false)
   useEffect(() => {
-    console.log('[reconcile] effect fired', {
-      terminalsLoading,
-      hasReconciled: hasReconciled.current,
-      hasPersistedLayout: persistedLayoutTree !== undefined,
-      liveTerminalCount: liveTerminals.length,
-      liveTerminalIds: liveTerminals.map((t) => t.id),
-    })
-
     if (terminalsLoading || hasReconciled.current) {
-      console.log(
-        '[reconcile] skipping — terminalsLoading:',
-        terminalsLoading,
-        'hasReconciled:',
-        hasReconciled.current
-      )
       return
     }
 
     if (!persistedLayoutTree) {
-      console.log('[reconcile] no persisted layout — marking done')
       hasReconciled.current = true
       setIsReconciling(false)
       return
@@ -554,17 +539,8 @@ function usePanelLayout() {
 
     const liveIds = new Set(liveTerminals.map((t) => t.id))
     const staleLeaves = getStaleTerminalLeaves(persistedLayoutTree, liveIds)
-    console.log(
-      '[reconcile] stale leaves:',
-      staleLeaves.map((l) => ({
-        id: l.id,
-        terminalId: l.terminalId,
-        workspaceId: l.workspaceId,
-      }))
-    )
 
     if (staleLeaves.length === 0) {
-      console.log('[reconcile] no stale terminals — marking done')
       hasReconciled.current = true
       setIsReconciling(false)
       return
@@ -573,11 +549,6 @@ function usePanelLayout() {
     // Mark as reconciled immediately to prevent re-entry during the
     // async spawn phase.
     hasReconciled.current = true
-    console.log(
-      '[reconcile] spawning new terminals for',
-      staleLeaves.length,
-      'stale panes'
-    )
 
     // Spawn new terminals for stale panes sequentially, then update the
     // layout tree with the new terminal IDs. Sequential spawning avoids
@@ -587,28 +558,12 @@ function usePanelLayout() {
 
       for (const leaf of staleLeaves) {
         if (!(leaf.workspaceId && leaf.terminalId)) {
-          console.log(
-            '[reconcile] skipping leaf without workspaceId/terminalId:',
-            leaf.id
-          )
           continue
         }
         try {
-          console.log(
-            '[reconcile] spawning terminal for workspace:',
-            leaf.workspaceId,
-            'replacing:',
-            leaf.terminalId
-          )
           const result = await spawnTerminal({
             payload: { workspaceId: leaf.workspaceId },
           })
-          console.log(
-            '[reconcile] spawned new terminal:',
-            result.id,
-            'for workspace:',
-            leaf.workspaceId
-          )
           respawnedIds.set(leaf.terminalId, result.id)
         } catch (error) {
           console.error(
@@ -619,27 +574,18 @@ function usePanelLayout() {
         }
       }
 
-      console.log(
-        '[reconcile] all spawns complete, respawnedIds:',
-        Object.fromEntries(respawnedIds)
-      )
-
       // Re-read the persisted layout to avoid overwriting any changes
       // that occurred during the async spawn phase.
       const currentRows = store.query(persistedLayout$)
       const currentRow = currentRows.find((row) => row.id === LAYOUT_SESSION_ID)
       const currentTree = currentRow?.layoutTree as PanelNode | undefined
       if (!currentTree) {
-        console.log(
-          '[reconcile] no current layout tree after spawn — marking done'
-        )
         setIsReconciling(false)
         return
       }
 
       const reconciled = reconcileLayout(currentTree, liveIds, respawnedIds)
       if (reconciled !== currentTree) {
-        console.log('[reconcile] committing reconciled layout')
         store.commit(
           layoutRestored({
             id: LAYOUT_SESSION_ID,
@@ -650,10 +596,7 @@ function usePanelLayout() {
             ),
           })
         )
-      } else {
-        console.log('[reconcile] layout unchanged after reconciliation')
       }
-      console.log('[reconcile] done — setIsReconciling(false)')
       setIsReconciling(false)
     }
 

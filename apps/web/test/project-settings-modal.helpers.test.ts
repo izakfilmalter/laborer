@@ -31,12 +31,16 @@ describe('project settings modal helpers', () => {
   it('builds update payload with only changed config fields', () => {
     const result = buildConfigUpdates({
       devServerImage: 'node:22',
+      devServerInstallCommand: 'yarn install --frozen-lockfile',
+      devServerNetwork: 'myproject_default',
       devServerSetupScripts: [{ id: '1', value: 'apt-get install -y curl' }],
       devServerStartCommand: 'npm run dev',
       rlphConfig: '.rlph/config.toml',
       resolvedConfig: {
-        devServerImage: 'oven/bun:latest',
-        devServerSetupScripts: ['apt-get update && apt-get install -y python3'],
+        devServerImage: 'node:lts',
+        devServerInstallCommand: null,
+        devServerNetwork: null,
+        devServerSetupScripts: ['corepack enable'],
         devServerStartCommand: null,
         rlphConfig: null,
         setupScripts: ['bun install'],
@@ -52,6 +56,8 @@ describe('project settings modal helpers', () => {
     expect(result).toEqual({
       devServer: {
         image: 'node:22',
+        installCommand: 'yarn install --frozen-lockfile',
+        network: 'myproject_default',
         setupScripts: ['apt-get install -y curl'],
         startCommand: 'npm run dev',
       },
@@ -63,16 +69,20 @@ describe('project settings modal helpers', () => {
 
   it('returns empty updates when normalized values match resolved config', () => {
     const result = buildConfigUpdates({
-      devServerImage: 'oven/bun:latest',
+      devServerImage: 'node:lts',
+      devServerInstallCommand: '',
+      devServerNetwork: '',
       devServerSetupScripts: [
-        { id: '1', value: ' apt-get update && apt-get install -y python3 ' },
+        { id: '1', value: ' corepack enable ' },
         { id: '2', value: '' },
       ],
       devServerStartCommand: '',
       rlphConfig: '  ',
       resolvedConfig: {
-        devServerImage: 'oven/bun:latest',
-        devServerSetupScripts: ['apt-get update && apt-get install -y python3'],
+        devServerImage: 'node:lts',
+        devServerInstallCommand: null,
+        devServerNetwork: null,
+        devServerSetupScripts: ['corepack enable'],
         devServerStartCommand: null,
         rlphConfig: null,
         setupScripts: ['bun install'],

@@ -677,7 +677,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
             | 'destroyed',
         }
       }),
-    'workspace.destroy': ({ workspaceId }) =>
+    'workspace.destroy': ({ workspaceId, force }) =>
       Effect.gen(function* () {
         // Issue #85: Stop diff polling before destroying the workspace.
         const diffService = yield* DiffService
@@ -688,7 +688,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         yield* tc.killAllForWorkspace(workspaceId)
 
         const provider = yield* WorkspaceProvider
-        yield* provider.destroyWorktree(workspaceId)
+        yield* provider.destroyWorktree(workspaceId, force)
       }),
 
     // -------------------------------------------------------------------
@@ -897,7 +897,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
               yield* tc.killAllForWorkspace(workspace.id)
 
               const provider = yield* WorkspaceProvider
-              yield* provider.destroyWorktree(workspace.id)
+              yield* provider.destroyWorktree(workspace.id, true)
             }).pipe(
               Effect.catchAll((error) =>
                 Effect.logWarning(

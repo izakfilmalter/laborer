@@ -39,6 +39,8 @@ export const workspaces = State.SQLite.table({
     containerImage: State.SQLite.text({ nullable: true }),
     /** The current container status: 'running' or 'paused'. Null when no container exists. */
     containerStatus: State.SQLite.text({ nullable: true }),
+    /** Current step of the background container setup process. Null when setup is complete or not started. */
+    containerSetupStep: State.SQLite.text({ nullable: true }),
   },
 })
 
@@ -212,6 +214,15 @@ export const containerUnpaused = Events.synced({
   name: 'v1.ContainerUnpaused',
   schema: Schema.Struct({
     workspaceId: Schema.String,
+  }),
+})
+
+export const containerSetupStepChanged = Events.synced({
+  name: 'v1.ContainerSetupStepChanged',
+  schema: Schema.Struct({
+    workspaceId: Schema.String,
+    /** Current setup step, or null when setup is complete. */
+    step: Schema.NullOr(Schema.String),
   }),
 })
 
@@ -405,6 +416,7 @@ export const events = {
   containerStopped,
   containerPaused,
   containerUnpaused,
+  containerSetupStepChanged,
   terminalSpawned,
   terminalOutput,
   terminalStatusChanged,
@@ -488,6 +500,7 @@ const materializers = State.SQLite.materializers(events, {
       containerUrl: null,
       containerImage: null,
       containerStatus: null,
+      containerSetupStep: null,
     }),
   'v1.WorkspaceStatusChanged': ({ id, status }) =>
     workspaces.update({ status }).where({ id }),
@@ -506,6 +519,7 @@ const materializers = State.SQLite.materializers(events, {
         containerUrl,
         containerImage,
         containerStatus: 'running',
+        containerSetupStep: null,
       })
       .where({ id: workspaceId }),
   'v1.ContainerStopped': ({ workspaceId }) =>
@@ -515,6 +529,7 @@ const materializers = State.SQLite.materializers(events, {
         containerUrl: null,
         containerImage: null,
         containerStatus: null,
+        containerSetupStep: null,
       })
       .where({ id: workspaceId }),
   'v1.ContainerPaused': ({ workspaceId }) =>
@@ -523,6 +538,8 @@ const materializers = State.SQLite.materializers(events, {
     workspaces
       .update({ containerStatus: 'running' })
       .where({ id: workspaceId }),
+  'v1.ContainerSetupStepChanged': ({ workspaceId, step }) =>
+    workspaces.update({ containerSetupStep: step }).where({ id: workspaceId }),
   'v1.TerminalSpawned': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)
   'v1.TerminalOutput': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #143)
   'v1.TerminalStatusChanged': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)

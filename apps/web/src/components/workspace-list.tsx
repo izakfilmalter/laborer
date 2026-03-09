@@ -70,7 +70,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
-import { cn, extractErrorMessage } from '@/lib/utils'
+import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { usePanelActions } from '@/panels/panel-context'
 
@@ -92,6 +92,25 @@ type WorkspaceStatus =
   | 'stopped'
   | 'errored'
   | 'destroyed'
+
+/**
+ * Human-readable label for container setup progress steps.
+ * Handles both coarse steps ("building-image") and granular
+ * Docker build steps ("Step 4/5: RUN pnpm install").
+ */
+const getContainerSetupLabel = (step: string): string => {
+  if (step.startsWith('Step ')) {
+    return step
+  }
+  switch (step) {
+    case 'building-image':
+      return 'Building container image...'
+    case 'starting-container':
+      return 'Starting container...'
+    default:
+      return 'Setting up container...'
+  }
+}
 
 /**
  * Returns Tailwind classes for a status badge based on workspace status.
@@ -241,6 +260,63 @@ function ContainerPauseButton({
   )
 }
 
+/**
+ * Returns the label for the destroy button based on current state.
+ */
+function getDestroyButtonLabel(
+  isDestroying: boolean,
+  hasDirtyWorktree: boolean
+): string {
+  if (isDestroying) {
+    return 'Destroying...'
+  }
+  if (hasDirtyWorktree) {
+    return 'Force Destroy'
+  }
+  return 'Destroy'
+}
+
+/**
+ * Destroy dialog description text. Extracted to avoid nested ternaries.
+ */
+function DestroyDialogDescription({
+  branchName,
+  dirtyFiles,
+}: {
+  readonly branchName: string
+  readonly dirtyFiles: readonly string[]
+}) {
+  if (dirtyFiles.length > 0) {
+    return (
+      <>
+        <AlertDialogDescription>
+          Workspace{' '}
+          <strong className="font-mono text-foreground">{branchName}</strong>{' '}
+          has uncommitted changes that will be lost. Are you sure you want to
+          force destroy it?
+        </AlertDialogDescription>
+        <ul className="max-h-40 list-none overflow-y-auto rounded-md border bg-muted/50 p-2 font-mono text-xs">
+          {dirtyFiles.map((file) => (
+            <li className="truncate py-0.5 text-muted-foreground" key={file}>
+              {file}
+            </li>
+          ))}
+        </ul>
+      </>
+    )
+  }
+
+  return (
+    <AlertDialogDescription>
+      This will permanently destroy workspace{' '}
+      <strong className="font-mono text-foreground">{branchName}</strong>. All
+      running processes (terminals, dev servers, agents) will be killed, the git
+      worktree will be removed, and the allocated port will be freed. This
+      action cannot be undone.
+    </AlertDialogDescription>
+  )
+}
+
 interface WorkspaceItemProps {
   /** The prdId of the plan this workspace is associated with, if any. */
   readonly associatedPrdId?: string | undefined
@@ -257,12 +333,14 @@ interface WorkspaceItemProps {
     readonly containerId: string | null
     readonly containerUrl: string | null
     readonly containerStatus: string | null
+    readonly containerSetupStep: string | null
   }
 }
 
 function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [isDestroying, setIsDestroying] = useState(false)
+  const [dirtyFiles, setDirtyFiles] = useState<string[]>([])
   const [isStartingLoop, setIsStartingLoop] = useState(false)
   const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
     mode: 'promise',
@@ -271,17 +349,34 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
     mode: 'promise',
   })
   const panelActions = usePanelActions()
-  const handleDestroy = async () => {
+  const handleDestroy = async (force?: boolean) => {
     setIsDestroying(true)
     try {
       await destroyWorkspace({
-        payload: { workspaceId: workspace.id },
+        payload: { workspaceId: workspace.id, force },
       })
       toast.success(
         `Workspace "${workspace.branchName}" destroyed successfully`
       )
       setDialogOpen(false)
+      setDirtyFiles([])
     } catch (error: unknown) {
+      const code = extractErrorCode(error)
+      if (code === 'DIRTY_WORKTREE' && !force) {
+        const message = extractErrorMessage(error)
+        // Parse file list from error message (after first newline)
+        const newlineIndex = message.indexOf('\n')
+        const files =
+          newlineIndex !== -1
+            ? message
+                .slice(newlineIndex + 1)
+                .split('\n')
+                .filter((f) => f.length > 0)
+            : []
+        setDirtyFiles(files.length > 0 ? files : ['(unknown files)'])
+        setIsDestroying(false)
+        return
+      }
       const message = extractErrorMessage(error)
       toast.error(message)
       setIsDestroying(false)
@@ -308,7 +403,6 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
 
   const isContainerized = workspace.containerId != null
   const isContainerPaused = workspace.containerStatus === 'paused'
-  const isExternalOrigin = (workspace.origin as WorkspaceOrigin) === 'external'
 
   /**
    * For containerized workspaces, derive the display status from the
@@ -410,7 +504,15 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
             )}
             <ReviewPrForm workspaceId={workspace.id} />
             <FixFindingsForm workspaceId={workspace.id} />
-            <AlertDialog onOpenChange={setDialogOpen} open={dialogOpen}>
+            <AlertDialog
+              onOpenChange={(open) => {
+                setDialogOpen(open)
+                if (!open) {
+                  setDirtyFiles([])
+                }
+              }}
+              open={dialogOpen}
+            >
               <AlertDialogTrigger
                 render={
                   <Button
@@ -424,44 +526,26 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>Destroy workspace?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {isExternalOrigin ? (
-                      <>
-                        This will remove workspace{' '}
-                        <strong className="font-mono text-foreground">
-                          {workspace.branchName}
-                        </strong>{' '}
-                        from Laborer. Running processes in this workspace will
-                        be stopped and any allocated port will be freed, but the
-                        git worktree on disk at{' '}
-                        <strong className="font-mono text-foreground">
-                          {workspace.worktreePath}
-                        </strong>{' '}
-                        will not be changed.
-                      </>
-                    ) : (
-                      <>
-                        This will permanently destroy workspace{' '}
-                        <strong className="font-mono text-foreground">
-                          {workspace.branchName}
-                        </strong>
-                        . All running processes (terminals, dev servers, agents)
-                        will be killed, the git worktree will be removed, and
-                        the allocated port will be freed. This action cannot be
-                        undone.
-                      </>
-                    )}
-                  </AlertDialogDescription>
+                  <AlertDialogTitle>
+                    {dirtyFiles.length > 0
+                      ? 'Uncommitted changes'
+                      : 'Destroy workspace?'}
+                  </AlertDialogTitle>
+                  <DestroyDialogDescription
+                    branchName={workspace.branchName}
+                    dirtyFiles={dirtyFiles}
+                  />
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                   <AlertDialogAction
                     disabled={isDestroying}
-                    onClick={handleDestroy}
+                    onClick={() =>
+                      handleDestroy(dirtyFiles.length > 0 ? true : undefined)
+                    }
                     variant="destructive"
                   >
-                    {isDestroying ? 'Destroying...' : 'Destroy'}
+                    {getDestroyButtonLabel(isDestroying, dirtyFiles.length > 0)}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
@@ -474,6 +558,12 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
           <div className="mb-2 flex items-center gap-2 text-warning text-xs">
             <Spinner className="size-3 text-warning" />
             Setting up workspace...
+          </div>
+        )}
+        {workspace.containerSetupStep != null && (
+          <div className="mb-2 flex items-center gap-2 text-sky-500 text-xs">
+            <Spinner className="size-3 text-sky-500" />
+            {getContainerSetupLabel(workspace.containerSetupStep)}
           </div>
         )}
         <div className="border-t pt-2">

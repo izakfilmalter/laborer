@@ -31,6 +31,7 @@ import { LaborerRpcsLive } from './rpc/handlers.js'
 import { BranchStateTracker } from './services/branch-state-tracker.js'
 import { ConfigService } from './services/config-service.js'
 import { ContainerService } from './services/container-service.js'
+import { DepsImageService } from './services/deps-image-service.js'
 import { DiffService } from './services/diff-service.js'
 import { DockerDetection } from './services/docker-detection.js'
 import { FileWatcher } from './services/file-watcher.js'
@@ -122,6 +123,7 @@ const HttpLiveBase = HttpRouter.Default.serve(HttpMiddleware.logger).pipe(
   Layer.provide(TerminalClient.layer),
   Layer.provide(WorkspaceProvider.layer),
   Layer.provide(ContainerService.layer),
+  Layer.provide(DepsImageService.layer),
   Layer.provide(DockerDetection.layer),
   Layer.provide(ConfigService.layer),
   Layer.provide(McpRegistrar.layer),

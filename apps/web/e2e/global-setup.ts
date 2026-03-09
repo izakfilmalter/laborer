@@ -124,8 +124,6 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
     stdio: 'pipe',
   })
   writeFileSync(join(tempRepoDir, 'README.md'), '# E2E Test Repo\n')
-  // Ignore laborer.json so that config.update writes during settings tests
-  // don't cause DIRTY_WORKING_TREE errors in workspace creation tests.
   writeFileSync(join(tempRepoDir, '.gitignore'), 'laborer.json\n')
   execSync('git add .', { cwd: tempRepoDir, stdio: 'pipe' })
   execSync('git commit -m "Initial commit"', {

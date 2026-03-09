@@ -5,6 +5,7 @@ import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
 import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
 import { ConfigService } from '../../src/services/config-service.js'
 import { ContainerService } from '../../src/services/container-service.js'
+import { DepsImageService } from '../../src/services/deps-image-service.js'
 import { DiffService } from '../../src/services/diff-service.js'
 import { DockerDetection } from '../../src/services/docker-detection.js'
 import { FileWatcher } from '../../src/services/file-watcher.js'
@@ -97,6 +98,18 @@ const TestDockerDetection = Layer.succeed(
   })
 )
 
+/**
+ * Test stub for DepsImageService — always returns null (no lockfile found).
+ * Prevents Docker commands from running in test workers, which would crash
+ * tinypool when the test scope exits before the background fiber finishes.
+ */
+const TestDepsImageService = Layer.succeed(
+  DepsImageService,
+  DepsImageService.of({
+    ensureDepsImage: () => Effect.succeed(null),
+  })
+)
+
 export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(LinearTaskImporter.layer),
   Layer.provide(GithubTaskImporter.layer),
@@ -107,6 +120,7 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
   Layer.provideMerge(TestTerminalClientRecorderLayer),
   Layer.provide(WorkspaceProvider.layer),
   Layer.provide(ContainerService.layer),
+  Layer.provide(TestDepsImageService),
   Layer.provide(TestDockerDetection),
   Layer.provide(ConfigService.layer),
   Layer.provide(ProjectRegistry.layer),
@@ -132,6 +146,7 @@ const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
   Layer.provideMerge(TestTerminalClientRecorderLayer),
   Layer.provide(WorkspaceProvider.layer),
   Layer.provide(ContainerService.layer),
+  Layer.provide(TestDepsImageService),
   Layer.provide(TestDockerDetection),
   Layer.provide(ConfigService.layer),
   Layer.provide(ProjectRegistry.layer),

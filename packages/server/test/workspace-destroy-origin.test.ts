@@ -8,6 +8,7 @@ import { afterAll, beforeAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { ContainerService } from '../src/services/container-service.js'
+import { DepsImageService } from '../src/services/deps-image-service.js'
 import { FileWatcher } from '../src/services/file-watcher.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { PortAllocator } from '../src/services/port-allocator.js'
@@ -24,6 +25,7 @@ import { TestLaborerStore } from './helpers/test-store.js'
 const tempRoots: string[] = []
 
 const TestLayer = WorkspaceProvider.layer.pipe(
+  Layer.provideMerge(DepsImageService.layer),
   Layer.provideMerge(ContainerService.layer),
   Layer.provideMerge(ProjectRegistry.layer),
   Layer.provideMerge(RepositoryWatchCoordinator.layer),

@@ -115,6 +115,7 @@ describe('ContainerService e2e', () => {
     () =>
       Effect.gen(function* () {
         ensureBunSpawnForNodeTests()
+        forceRemoveContainer('e2e-create--test-project')
 
         const tempRoots: string[] = []
         yield* Effect.addFinalizer(() =>
@@ -155,10 +156,12 @@ describe('ContainerService e2e', () => {
           workspaceId,
           worktreePath,
           branchName: 'e2e-create',
+
           projectName: 'test-project',
           devServerConfig: {
             image: 'alpine:latest',
             dockerfile: null,
+            network: null,
             workdir: '/app',
           },
         })
@@ -195,6 +198,7 @@ describe('ContainerService e2e', () => {
     () =>
       Effect.gen(function* () {
         ensureBunSpawnForNodeTests()
+        forceRemoveContainer('e2e-destroy--test-project')
 
         const tempRoots: string[] = []
         yield* Effect.addFinalizer(() =>
@@ -234,10 +238,12 @@ describe('ContainerService e2e', () => {
           workspaceId,
           worktreePath,
           branchName: 'e2e-destroy',
+
           projectName: 'test-project',
           devServerConfig: {
             image: 'alpine:latest',
             dockerfile: null,
+            network: null,
             workdir: '/app',
           },
         })
@@ -275,6 +281,7 @@ describe('ContainerService e2e', () => {
     () =>
       Effect.gen(function* () {
         ensureBunSpawnForNodeTests()
+        forceRemoveContainer('e2e-pause--test-project')
 
         const tempRoots: string[] = []
         yield* Effect.addFinalizer(() =>
@@ -313,10 +320,12 @@ describe('ContainerService e2e', () => {
           workspaceId,
           worktreePath,
           branchName: 'e2e-pause',
+
           projectName: 'test-project',
           devServerConfig: {
             image: 'alpine:latest',
             dockerfile: null,
+            network: null,
             workdir: '/app',
           },
         })
@@ -341,6 +350,7 @@ describe('ContainerService e2e', () => {
     () =>
       Effect.gen(function* () {
         ensureBunSpawnForNodeTests()
+        forceRemoveContainer('e2e-unpause--test-project')
 
         const tempRoots: string[] = []
         yield* Effect.addFinalizer(() =>
@@ -379,10 +389,12 @@ describe('ContainerService e2e', () => {
           workspaceId,
           worktreePath,
           branchName: 'e2e-unpause',
+
           projectName: 'test-project',
           devServerConfig: {
             image: 'alpine:latest',
             dockerfile: null,
+            network: null,
             workdir: '/app',
           },
         })
@@ -423,6 +435,7 @@ describe('ContainerService e2e', () => {
         ensureBunSpawnForNodeTests()
 
         const containerName = 'e2e-lifecycle--test-project'
+        forceRemoveContainer(containerName)
         const tempRoots: string[] = []
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
@@ -471,10 +484,12 @@ describe('ContainerService e2e', () => {
           workspaceId,
           worktreePath,
           branchName: 'e2e-lifecycle',
+
           projectName: 'test-project',
           devServerConfig: {
             image: 'alpine:latest',
             dockerfile: null,
+            network: null,
             workdir: '/app',
           },
         })
@@ -527,6 +542,7 @@ describe('ContainerService e2e', () => {
     () =>
       Effect.gen(function* () {
         ensureBunSpawnForNodeTests()
+        forceRemoveContainer('e2e-bad-image--test-project')
 
         const tempRoots: string[] = []
         yield* Effect.addFinalizer(() =>
@@ -566,10 +582,12 @@ describe('ContainerService e2e', () => {
             workspaceId,
             worktreePath,
             branchName: 'e2e-bad-image',
+
             projectName: 'test-project',
             devServerConfig: {
               image: 'nonexistent-image-that-does-not-exist:9999',
               dockerfile: null,
+              network: null,
               workdir: '/app',
             },
           })

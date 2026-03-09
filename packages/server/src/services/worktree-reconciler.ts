@@ -182,11 +182,9 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
           tables.workspaces.where('projectId', projectId)
         ) as readonly WorkspaceRecord[]
 
-        // Filter out destroyed workspaces so that a worktree whose Laborer
-        // record was destroyed can be re-detected on the next reconciliation
-        // pass. Without this filter, destroyed records would block re-detection
-        // since their worktreePath would match the detected path.
-        // @see Issue #163: Worktree detection polish — stale destroyed records
+        // Filter out destroyed workspaces for the "remove" pass so that
+        // only live workspaces are considered stale when their path
+        // disappears from disk.
         const existingWorkspaces = allWorkspaces.filter(
           (w) => w.status !== 'destroyed'
         )
@@ -194,8 +192,16 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
         // Canonicalize existing workspace paths for comparison so that
         // path representation differences (symlinks, /var vs /private/var)
         // do not cause false adds or removes.
-        const existingByCanonicalPath = new Map(
-          existingWorkspaces.map((workspace) => [
+        //
+        // For the "add" pass, use ALL workspaces (including destroyed
+        // laborer-managed ones). A laborer workspace in "destroyed" status
+        // may still have its worktree directory on disk while cleanup is
+        // in progress (container stop + git worktree remove can take
+        // seconds). Without checking destroyed laborer records, the
+        // reconciler would re-detect the same worktree and create a
+        // duplicate "external" record that immediately reappears in the UI.
+        const allByCanonicalPath = new Map(
+          allWorkspaces.map((workspace) => [
             canonicalize(workspace.worktreePath),
             workspace,
           ])
@@ -210,7 +216,10 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
 
         for (const detected of detectedWorktrees) {
           const canonicalDetectedPath = canonicalize(detected.path)
-          if (existingByCanonicalPath.has(canonicalDetectedPath)) {
+          // Skip if ANY workspace (including destroyed laborer ones) already
+          // has this path. This prevents re-detecting a worktree as
+          // "external" while its laborer-managed destroy is still in progress.
+          if (allByCanonicalPath.has(canonicalDetectedPath)) {
             unchanged += 1
             continue
           }

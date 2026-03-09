@@ -143,6 +143,12 @@ const makeStore = Effect.gen(function* () {
     },
   })
 
+  yield* Effect.logInfo(
+    `${logPrefix} Schema state hash: ${String(schema.state.sqlite.hash)}, ` +
+      `migrations strategy: ${schema.state.sqlite.migrations.strategy}, ` +
+      `tables: ${[...schema.state.sqlite.tables.keys()].join(', ')}`
+  )
+
   const store = yield* createStore({
     adapter,
     schema,

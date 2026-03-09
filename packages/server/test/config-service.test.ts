@@ -653,7 +653,7 @@ describe('ConfigService', () => {
 
         const result = yield* resolveConfig(projectDir, 'no-devserver')
 
-        assert.isNull(result.devServer.image.value)
+        assert.strictEqual(result.devServer.image.value, 'node:lts')
         assert.isNull(result.devServer.dockerfile.value)
         assert.isNull(result.devServer.startCommand.value)
         assert.strictEqual(result.devServer.workdir.value, '/app')
@@ -822,7 +822,7 @@ describe('ConfigService', () => {
     )
 
     it.effect(
-      'should reject config when image and dockerfile come from different layers',
+      'should clear parent image when child sets dockerfile (mutually exclusive)',
       () =>
         Effect.gen(function* () {
           const parent = join(testRoot, 'devserver-crosslayer-exclusive-parent')
@@ -832,22 +832,19 @@ describe('ConfigService', () => {
           writeConfig(parent, {
             devServer: { image: 'node:22' },
           })
-          writeConfig(child, {
+          const childPath = writeConfig(child, {
             devServer: { dockerfile: './Dockerfile.dev' },
           })
 
-          const result = yield* resolveConfig(
-            child,
-            'devserver-crosslayer'
-          ).pipe(Effect.either)
+          const result = yield* resolveConfig(child, 'devserver-crosslayer')
 
-          assert.isTrue(
-            result._tag === 'Left',
-            'Expected validation error when image from parent and dockerfile from child'
+          // Child setting dockerfile should clear parent's image
+          assert.isNull(result.devServer.image.value)
+          assert.strictEqual(
+            result.devServer.dockerfile.value,
+            './Dockerfile.dev'
           )
-          if (result._tag === 'Left') {
-            assert.include(result.left.message, 'mutually exclusive')
-          }
+          assert.strictEqual(result.devServer.dockerfile.source, childPath)
         })
     )
 

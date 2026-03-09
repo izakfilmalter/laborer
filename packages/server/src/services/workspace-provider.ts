@@ -59,9 +59,19 @@ import { existsSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import { Array as Arr, Context, Data, Effect, Layer, pipe } from 'effect'
+import {
+  Array as Arr,
+  Context,
+  Data,
+  Effect,
+  Fiber,
+  Layer,
+  pipe,
+  Ref,
+} from 'effect'
 import { ConfigService } from './config-service.js'
 import { ContainerService } from './container-service.js'
+import { DepsImageService } from './deps-image-service.js'
 import { LaborerStore } from './laborer-store.js'
 import { PortAllocator } from './port-allocator.js'
 import { ProjectRegistry } from './project-registry.js'
@@ -399,103 +409,6 @@ const rollbackWorktree = (
   })
 
 /**
- * Categorize a `git status --porcelain` line by its two-character status code.
- * Returns a category string used for building a human-readable summary.
- */
-const categorizeStatusLine = (line: string): string => {
-  const code = line.slice(0, 2)
-  if (code.includes('M')) {
-    return 'modified'
-  }
-  if (code.includes('A')) {
-    return 'added'
-  }
-  if (code.includes('D')) {
-    return 'deleted'
-  }
-  if (code === '??') {
-    return 'untracked'
-  }
-  return 'other'
-}
-
-/**
- * Build a human-readable summary from an array of `git status --porcelain` lines.
- * Groups by category and returns e.g. "3 modified, 1 untracked".
- */
-const buildDirtySummary = (lines: readonly string[]): string => {
-  const counts: Record<string, number> = {}
-  for (const line of lines) {
-    const category = categorizeStatusLine(line)
-    counts[category] = (counts[category] ?? 0) + 1
-  }
-  const parts: string[] = []
-  for (const cat of ['modified', 'added', 'deleted', 'untracked', 'other']) {
-    const count = counts[cat]
-    if (count !== undefined && count > 0) {
-      parts.push(`${count} ${cat}`)
-    }
-  }
-  return parts.join(', ')
-}
-
-/**
- * Check if the git working directory has uncommitted changes (dirty state).
- * Runs `git status --porcelain` in the repo directory. If the output is
- * non-empty, the working tree or index has modifications.
- *
- * Returns an object with:
- * - `isDirty`: whether there are uncommitted changes
- * - `summary`: a human-readable summary of what's dirty (e.g., "3 modified, 1 untracked")
- *
- * @param repoPath - Path to the git repository to check
- */
-const checkDirtyState = (
-  repoPath: string
-): Effect.Effect<
-  { readonly isDirty: boolean; readonly summary: string },
-  RpcError
-> =>
-  Effect.gen(function* () {
-    const result = yield* Effect.tryPromise({
-      try: async () => {
-        const proc = Bun.spawn(['git', 'status', '--porcelain'], {
-          cwd: repoPath,
-          stdout: 'pipe',
-          stderr: 'pipe',
-        })
-        const exitCode = await proc.exited
-        const stdout = await new Response(proc.stdout).text()
-        const stderr = await new Response(proc.stderr).text()
-        return { exitCode, stdout, stderr }
-      },
-      catch: (error) =>
-        new RpcError({
-          message: `Failed to check git status: ${String(error)}`,
-          code: 'GIT_CHECK_FAILED',
-        }),
-    })
-
-    if (result.exitCode !== 0) {
-      return yield* new RpcError({
-        message: `git status failed (exit ${result.exitCode}): ${result.stderr.trim()}`,
-        code: 'GIT_CHECK_FAILED',
-      })
-    }
-
-    const lines = result.stdout
-      .trim()
-      .split('\n')
-      .filter((line) => line.length > 0)
-
-    if (lines.length === 0) {
-      return { isDirty: false, summary: '' }
-    }
-
-    return { isDirty: true, summary: buildDirtySummary(lines) }
-  })
-
-/**
  * Fetch the latest remote refs before worktree creation. Runs `git fetch --all`
  * to ensure all remote branches are up-to-date. This is important because
  * `git worktree add` creates a branch from the current HEAD — if the local
@@ -778,22 +691,27 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
     ) => Effect.Effect<WorkspaceRecord, RpcError>
 
     /**
-     * Destroy a workspace by removing its git worktree, deleting the branch,
-     * freeing the allocated port, and committing a WorkspaceDestroyed event
-     * to LiveStore.
+     * Destroy a workspace by removing its git worktree, freeing the
+     * allocated port, and committing a WorkspaceDestroyed event to LiveStore.
+     * The branch is kept so it can be reused when creating a new workspace.
+     * All workspaces have their worktree removed regardless of origin.
      *
      * Steps:
      * 1. Look up the workspace in LiveStore
      * 2. Look up the project to get the repo path
      * 3. Run `git worktree remove --force` to remove the worktree directory
-     * 4. Delete the branch via `git branch -D`
-     * 5. Free the allocated port via PortAllocator
-     * 6. Commit WorkspaceDestroyed event to LiveStore
+     * 4. Free the allocated port via PortAllocator
+     * 5. Commit WorkspaceDestroyed event to LiveStore
+     *
+     * If the worktree has uncommitted changes and `force` is not set,
+     * returns a `DIRTY_WORKTREE` error so the client can warn the user.
      *
      * @param workspaceId - ID of the workspace to destroy
+     * @param force - If true, destroy even if there are uncommitted changes
      */
     readonly destroyWorktree: (
-      workspaceId: string
+      workspaceId: string,
+      force?: boolean
     ) => Effect.Effect<void, RpcError>
 
     /**
@@ -814,14 +732,21 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
     ) => Effect.Effect<Record<string, string>, RpcError>
   }
 >() {
-  static readonly layer = Layer.effect(
+  static readonly layer = Layer.scoped(
     WorkspaceProvider,
     Effect.gen(function* () {
+      const scope = yield* Effect.scope
+      // Track background container-setup fibers per workspace so
+      // destroyWorktree can interrupt them before cleaning up.
+      const setupFibers = yield* Ref.make(
+        new Map<string, Fiber.RuntimeFiber<void, never>>()
+      )
       const { store } = yield* LaborerStore
       const portAllocator = yield* PortAllocator
       const registry = yield* ProjectRegistry
       const configService = yield* ConfigService
       const containerService = yield* ContainerService
+      const depsImageService = yield* DepsImageService
 
       const createWorktree = Effect.fn('WorkspaceProvider.createWorktree')(
         function* (projectId: string, branchName?: string, taskId?: string) {
@@ -866,32 +791,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               }),
           })
 
-          if (branchExists) {
-            return yield* new RpcError({
-              message: `Branch already exists: ${resolvedBranch}. Choose a different branch name.`,
-              code: 'BRANCH_EXISTS',
-            })
-          }
-
-          // 3b. Check for dirty git state (Issue #38)
-          // Detect uncommitted changes before creating the worktree.
-          // While `git worktree add` can succeed with a dirty working tree
-          // in some cases, dirty state can cause unexpected behavior:
-          // the worktree may inherit stale or inconsistent state.
-          // We check proactively and return a clear, actionable error.
-          const dirtyState = yield* checkDirtyState(project.repoPath)
-          if (dirtyState.isDirty) {
-            yield* Effect.logWarning(
-              `Dirty git state detected in ${project.repoPath}: ${dirtyState.summary}`
-            ).pipe(Effect.annotateLogs('module', logPrefix))
-
-            return yield* new RpcError({
-              message: `Uncommitted changes prevent worktree creation (${dirtyState.summary}). Commit or stash your changes before creating a workspace.`,
-              code: 'DIRTY_WORKING_TREE',
-            })
-          }
-
-          // 3c. Fetch latest remote refs (Issue #39)
+          // 3b. Fetch latest remote refs (Issue #39)
           // Ensures the local repo has the latest remote state before
           // creating a worktree. Runs before port allocation so no
           // resources need cleanup on failure.
@@ -921,17 +821,60 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               }),
           })
 
-          // 7. Create the git worktree with a new branch
-          const worktreeResult = yield* Effect.tryPromise({
-            try: async () => {
-              const proc = Bun.spawn(
-                ['git', 'worktree', 'add', '-b', resolvedBranch, worktreePath],
-                {
-                  cwd: project.repoPath,
+          // 6b. Clean up stale worktree path if it exists on disk from a
+          //     previous incomplete cleanup. Also prune git's internal worktree
+          //     metadata so `git worktree add` doesn't fail with "already exists".
+          if (existsSync(worktreePath)) {
+            yield* Effect.logWarning(
+              `Worktree path already exists, cleaning up: ${worktreePath}`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+
+            yield* Effect.tryPromise({
+              try: async () => {
+                const proc = Bun.spawn(['rm', '-rf', worktreePath], {
                   stdout: 'pipe',
                   stderr: 'pipe',
-                }
-              )
+                })
+                await proc.exited
+              },
+              catch: () =>
+                new RpcError({
+                  message: `Failed to remove stale worktree directory: ${worktreePath}`,
+                  code: 'FILESYSTEM_ERROR',
+                }),
+            }).pipe(Effect.catchAll(() => Effect.void))
+          }
+
+          // Prune stale git worktree references before creating. This cleans
+          // up .git/worktrees/ entries for paths that no longer exist on disk.
+          yield* Effect.tryPromise({
+            try: async () => {
+              const proc = Bun.spawn(['git', 'worktree', 'prune'], {
+                cwd: project.repoPath,
+                stdout: 'pipe',
+                stderr: 'pipe',
+              })
+              await proc.exited
+            },
+            catch: () =>
+              new RpcError({
+                message: 'Failed to prune worktree references',
+                code: 'GIT_WORKTREE_FAILED',
+              }),
+          }).pipe(Effect.catchAll(() => Effect.void))
+
+          // 7. Create the git worktree, reusing the branch if it already exists
+          const worktreeArgs = branchExists
+            ? ['git', 'worktree', 'add', worktreePath, resolvedBranch]
+            : ['git', 'worktree', 'add', '-b', resolvedBranch, worktreePath]
+
+          const worktreeResult = yield* Effect.tryPromise({
+            try: async () => {
+              const proc = Bun.spawn(worktreeArgs, {
+                cwd: project.repoPath,
+                stdout: 'pipe',
+                stderr: 'pipe',
+              })
               const exitCode = await proc.exited
               const stderr = await new Response(proc.stderr).text()
               return { exitCode, stderr }
@@ -1110,41 +1053,143 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           )
 
           // 12. Start container if devServer config has an image (Issue #5)
+          // Runs as a background fiber so workspace creation returns immediately.
+          // The UI sees the workspace right away; the container appears once ready
+          // (the containerStarted LiveStore event updates containerId reactively).
           const devServerImage = resolvedConfig.devServer.image.value
           if (devServerImage !== null) {
-            yield* containerService
-              .createContainer({
-                workspaceId: id,
-                worktreePath,
-                branchName: resolvedBranch,
-                projectName: project.name,
-                devServerConfig: {
-                  image: devServerImage,
-                  dockerfile: resolvedConfig.devServer.dockerfile.value,
-                  workdir: resolvedConfig.devServer.workdir.value,
-                },
-              })
-              .pipe(
-                Effect.tapError((containerError) =>
-                  Effect.gen(function* () {
-                    yield* Effect.logWarning(
-                      `Container creation failed, rolling back workspace: ${containerError.message}`
-                    ).pipe(Effect.annotateLogs('module', logPrefix))
-
-                    // Full rollback: remove worktree, delete branch, free port
-                    yield* rollbackWorktree(
-                      project.repoPath,
-                      worktreePath,
-                      resolvedBranch,
-                      port,
-                      portAllocator
-                    )
-
-                    // Remove the workspace from LiveStore after rollback
-                    store.commit(events.workspaceDestroyed({ id }))
-                  })
-                )
+            const setupEffect = Effect.gen(function* () {
+              // Signal UI: building deps image
+              store.commit(
+                events.containerSetupStepChanged({
+                  workspaceId: id,
+                  step: 'building-image',
+                })
               )
+
+              // Try to build/reuse a cached deps image with node_modules pre-installed.
+              // Seeds all node_modules (root + workspace packages) into the worktree
+              // so the bind mount carries them into the container.
+              const depsResult = yield* depsImageService
+                .ensureDepsImage({
+                  projectRoot: project.repoPath,
+                  projectName: project.name,
+                  baseImage: devServerImage,
+                  workdir: resolvedConfig.devServer.workdir.value,
+                  worktreePath,
+                  installCommand:
+                    resolvedConfig.devServer.installCommand.value ?? undefined,
+                  setupScripts:
+                    resolvedConfig.devServer.setupScripts.value.length > 0
+                      ? resolvedConfig.devServer.setupScripts.value
+                      : undefined,
+                  onProgress: (step) => {
+                    store.commit(
+                      events.containerSetupStepChanged({
+                        workspaceId: id,
+                        step,
+                      })
+                    )
+                  },
+                })
+                .pipe(
+                  Effect.catchAll((error: RpcError) =>
+                    Effect.gen(function* () {
+                      yield* Effect.logWarning(
+                        `Deps image build failed, falling back to base image: ${error.message}`
+                      ).pipe(Effect.annotateLogs('module', logPrefix))
+                      return null
+                    })
+                  )
+                )
+
+              // Signal UI: starting container
+              store.commit(
+                events.containerSetupStepChanged({
+                  workspaceId: id,
+                  step: 'starting-container',
+                })
+              )
+
+              yield* containerService
+                .createContainer({
+                  workspaceId: id,
+                  worktreePath,
+                  branchName: resolvedBranch,
+                  projectName: project.name,
+                  depsImageName: depsResult?.imageName,
+                  devServerConfig: {
+                    image: devServerImage,
+                    dockerfile: resolvedConfig.devServer.dockerfile.value,
+                    network: resolvedConfig.devServer.network.value,
+                    workdir: resolvedConfig.devServer.workdir.value,
+                  },
+                })
+                .pipe(
+                  Effect.tapError((containerError) =>
+                    Effect.gen(function* () {
+                      yield* Effect.logWarning(
+                        `Container creation failed, rolling back workspace: ${containerError.message}`
+                      ).pipe(Effect.annotateLogs('module', logPrefix))
+
+                      // Clear setup step before rollback
+                      store.commit(
+                        events.containerSetupStepChanged({
+                          workspaceId: id,
+                          step: null,
+                        })
+                      )
+
+                      // Full rollback: remove worktree, delete branch, free port
+                      yield* rollbackWorktree(
+                        project.repoPath,
+                        worktreePath,
+                        resolvedBranch,
+                        port,
+                        portAllocator
+                      )
+
+                      // Remove the workspace from LiveStore after rollback
+                      store.commit(events.workspaceDestroyed({ id }))
+                    })
+                  )
+                )
+
+              // containerStarted materializer clears containerSetupStep automatically
+            }).pipe(
+              Effect.catchAll((err) =>
+                Effect.gen(function* () {
+                  // Clear setup step on unexpected failure
+                  store.commit(
+                    events.containerSetupStepChanged({
+                      workspaceId: id,
+                      step: null,
+                    })
+                  )
+                  yield* Effect.logWarning(
+                    `Background container setup failed for workspace ${id}: ${String(err)}`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
+                })
+              )
+            )
+
+            const fiber = yield* setupEffect.pipe(Effect.forkIn(scope))
+
+            // Track the fiber so destroyWorktree can interrupt it
+            yield* Ref.update(setupFibers, (m) => {
+              const next = new Map(m)
+              next.set(id, fiber)
+              return next
+            })
+
+            // Remove tracking when the fiber completes
+            fiber.addObserver(() => {
+              Ref.update(setupFibers, (m) => {
+                const n = new Map(m)
+                n.delete(id)
+                return n
+              }).pipe(Effect.runSync)
+            })
           }
 
           return workspace
@@ -1152,7 +1197,11 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       )
 
       const destroyWorktree = Effect.fn('WorkspaceProvider.destroyWorktree')(
-        function* (workspaceId: string) {
+        function* (workspaceId: string, force?: boolean) {
+          yield* Effect.logInfo(
+            `destroyWorktree called: workspaceId=${workspaceId}, force=${String(force ?? false)}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
           // 1. Look up the workspace in LiveStore
           const allWorkspaces = store.query(tables.workspaces)
           const workspaceOpt = pipe(
@@ -1161,20 +1210,114 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           )
 
           if (workspaceOpt._tag === 'None') {
-            return yield* new RpcError({
-              message: `Workspace not found: ${workspaceId}`,
-              code: 'NOT_FOUND',
-            })
+            // The workspace row is already gone from LiveStore. This can
+            // happen when a previous destroy partially completed (e.g. the
+            // WorkspaceDestroyed event was committed but the UI still held
+            // a stale reference). Commit a no-op destroy event (SQL DELETE
+            // with WHERE is idempotent) and return successfully so the UI
+            // can clear the stale entry.
+            yield* Effect.logWarning(
+              `Workspace ${workspaceId} not found in LiveStore — committing idempotent WorkspaceDestroyed to clean up stale UI reference`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+            store.commit(events.workspaceDestroyed({ id: workspaceId }))
+            return
           }
 
           const workspace = workspaceOpt.value
 
+          // Interrupt any in-flight background container setup fiber for
+          // this workspace and wait for it to fully stop. This prevents
+          // races where the setup fiber is still running docker commands
+          // (e.g. docker run with a bind mount to the worktree) while we
+          // tear down the worktree directory.
+          const fibers = yield* Ref.get(setupFibers)
+          const setupFiber = fibers.get(workspaceId)
+          if (setupFiber !== undefined) {
+            yield* Effect.logInfo(
+              `Interrupting background container setup for workspace ${workspaceId}`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+            yield* Fiber.interrupt(setupFiber).pipe(Effect.asVoid)
+            yield* Ref.update(setupFibers, (m) => {
+              const next = new Map(m)
+              next.delete(workspaceId)
+              return next
+            })
+          }
+
+          yield* Effect.logInfo(
+            `Destroying workspace: branch=${workspace.branchName}, path=${workspace.worktreePath}, origin=${workspace.origin}, status=${workspace.status}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
           // 2. Look up the project to get the repo path for git commands
           const project = yield* registry.getProject(workspace.projectId)
-          const isExternalWorkspace = workspace.origin === 'external'
+
+          yield* Effect.logInfo(
+            `Project resolved: repoPath=${project.repoPath}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          // 2b. Check for uncommitted changes in the worktree before destroying.
+          //     If the worktree has dirty state and force is not set, return an
+          //     error so the client can warn the user and offer a force option.
+          if (!force) {
+            yield* Effect.logInfo(
+              'Checking worktree for uncommitted changes...'
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+
+            const dirtyFiles = yield* Effect.tryPromise({
+              try: async () => {
+                const proc = Bun.spawn(['git', 'status', '--porcelain'], {
+                  cwd: workspace.worktreePath,
+                  stdout: 'pipe',
+                  stderr: 'pipe',
+                })
+                const exitCode = await proc.exited
+                const stdout = await new Response(proc.stdout).text()
+                if (exitCode !== 0 || stdout.trim().length === 0) {
+                  return [] as string[]
+                }
+                // Parse porcelain output: each line is "XY filename"
+                // Extract just the file paths (skip the 3-char status prefix)
+                return stdout
+                  .trim()
+                  .split('\n')
+                  .map((line) => line.slice(3))
+              },
+              catch: () =>
+                new RpcError({
+                  message: 'Failed to check worktree status',
+                  code: 'GIT_CHECK_FAILED',
+                }),
+            }).pipe(
+              // If we can't check (e.g. directory already gone), skip the check
+              Effect.catchAll((err) =>
+                Effect.logWarning(
+                  `Dirty check failed (skipping): ${String(err)}`
+                ).pipe(
+                  Effect.annotateLogs('module', logPrefix),
+                  Effect.map(() => [] as string[])
+                )
+              )
+            )
+
+            yield* Effect.logInfo(
+              `Dirty check result: ${dirtyFiles.length} changed file(s)`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+
+            if (dirtyFiles.length > 0) {
+              const fileList = dirtyFiles.join('\n')
+              return yield* new RpcError({
+                message: `Workspace "${workspace.branchName}" has uncommitted changes:\n${fileList}`,
+                code: 'DIRTY_WORKTREE',
+              })
+            }
+          }
 
           // 3. Update workspace status to "destroyed" in LiveStore first
           //    (so the UI reflects the state change even if cleanup takes time)
+          yield* Effect.logInfo(
+            'Setting workspace status to destroyed in LiveStore'
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
           store.commit(
             events.workspaceStatusChanged({
               id: workspaceId,
@@ -1187,6 +1330,10 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           //     the container is stopped before its bind-mounted directory
           //     is deleted. Best-effort: logs warnings but continues cleanup.
           if (workspace.containerId !== null) {
+            yield* Effect.logInfo(
+              `Destroying container: ${workspace.containerId}`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+
             yield* containerService
               .destroyContainer(workspaceId)
               .pipe(
@@ -1198,8 +1345,15 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               )
           }
 
-          if (!isExternalWorkspace) {
-            // 4. Remove the git worktree using --force to handle dirty state
+          // 4. Remove the git worktree and branch (laborer-managed only).
+          //    External workspaces (detected from existing worktrees on disk)
+          //    keep their worktree directory and branch intact — we only
+          //    remove the LiveStore record and free the port.
+          if (workspace.origin === 'laborer') {
+            yield* Effect.logInfo(
+              `Running: git worktree remove --force ${workspace.worktreePath} (cwd: ${project.repoPath})`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+
             const removeResult = yield* Effect.tryPromise({
               try: async () => {
                 const proc = Bun.spawn(
@@ -1217,8 +1371,9 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   }
                 )
                 const exitCode = await proc.exited
+                const stdout = await new Response(proc.stdout).text()
                 const stderr = await new Response(proc.stderr).text()
-                return { exitCode, stderr }
+                return { exitCode, stdout, stderr }
               },
               catch: (error) =>
                 new RpcError({
@@ -1227,16 +1382,106 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 }),
             })
 
+            yield* Effect.logInfo(
+              `git worktree remove result: exitCode=${removeResult.exitCode}, stdout=${JSON.stringify(removeResult.stdout.trim())}, stderr=${JSON.stringify(removeResult.stderr.trim())}`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+
             if (removeResult.exitCode !== 0) {
-              // Log the error but continue cleanup — the worktree directory
-              // may have been manually deleted already
               yield* Effect.logWarning(
-                `git worktree remove failed (exit ${removeResult.exitCode}): ${removeResult.stderr.trim()}`
+                'git worktree remove failed, running fallback cleanup...'
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+
+              // Fallback: manually remove the worktree directory and prune
+              // stale worktree references. git worktree remove can fail when
+              // the worktree has modifications even with --force in some git
+              // versions, or when the worktree metadata is inconsistent.
+              yield* Effect.logInfo(
+                `Running: rm -rf ${workspace.worktreePath}`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+
+              yield* Effect.tryPromise({
+                try: async () => {
+                  const proc = Bun.spawn(
+                    ['rm', '-rf', workspace.worktreePath],
+                    {
+                      cwd: project.repoPath,
+                      stdout: 'pipe',
+                      stderr: 'pipe',
+                    }
+                  )
+                  const exitCode = await proc.exited
+                  return exitCode
+                },
+                catch: (err) =>
+                  new RpcError({
+                    message: `Failed to remove worktree directory: ${workspace.worktreePath}: ${String(err)}`,
+                    code: 'FILESYSTEM_ERROR',
+                  }),
+              }).pipe(
+                Effect.tap((exitCode) =>
+                  Effect.logInfo(`rm -rf result: exitCode=${exitCode}`).pipe(
+                    Effect.annotateLogs('module', logPrefix)
+                  )
+                ),
+                Effect.catchAll((err) =>
+                  Effect.logWarning(
+                    `Fallback rm -rf failed: ${String(err)}`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
+                )
+              )
+
+              yield* Effect.logInfo(
+                `Running: git worktree prune (cwd: ${project.repoPath})`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+
+              yield* Effect.tryPromise({
+                try: async () => {
+                  const proc = Bun.spawn(['git', 'worktree', 'prune'], {
+                    cwd: project.repoPath,
+                    stdout: 'pipe',
+                    stderr: 'pipe',
+                  })
+                  const exitCode = await proc.exited
+                  return exitCode
+                },
+                catch: (err) =>
+                  new RpcError({
+                    message: `Failed to prune stale worktree references: ${String(err)}`,
+                    code: 'GIT_WORKTREE_FAILED',
+                  }),
+              }).pipe(
+                Effect.tap((exitCode) =>
+                  Effect.logInfo(
+                    `git worktree prune result: exitCode=${exitCode}`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
+                ),
+                Effect.catchAll((err) =>
+                  Effect.logWarning(
+                    `Fallback git worktree prune failed: ${String(err)}`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
+                )
               )
             }
 
-            // 5. Delete the branch via git branch -D
-            const branchResult = yield* Effect.tryPromise({
+            // Prune stale worktree references after removal
+            yield* Effect.tryPromise({
+              try: async () => {
+                const proc = Bun.spawn(['git', 'worktree', 'prune'], {
+                  cwd: project.repoPath,
+                  stdout: 'pipe',
+                  stderr: 'pipe',
+                })
+                await proc.exited
+              },
+              catch: (err) =>
+                new RpcError({
+                  message: `Failed to prune worktree references: ${String(err)}`,
+                  code: 'GIT_WORKTREE_FAILED',
+                }),
+            }).pipe(Effect.catchAll(() => Effect.void))
+
+            // Delete the branch (laborer workspaces only)
+            yield* Effect.tryPromise({
               try: async () => {
                 const proc = Bun.spawn(
                   ['git', 'branch', '-D', workspace.branchName],
@@ -1250,23 +1495,45 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 const stderr = await new Response(proc.stderr).text()
                 return { exitCode, stderr }
               },
-              catch: (error) =>
+              catch: (err) =>
                 new RpcError({
-                  message: `Failed to spawn git branch delete: ${String(error)}`,
+                  message: `Failed to delete branch ${workspace.branchName}: ${String(err)}`,
                   code: 'GIT_BRANCH_DELETE_FAILED',
                 }),
-            })
-
-            if (branchResult.exitCode !== 0) {
-              // Log but continue — the branch may have been manually deleted
-              yield* Effect.logWarning(
-                `git branch -D failed (exit ${branchResult.exitCode}): ${branchResult.stderr.trim()}`
+            }).pipe(
+              Effect.tap(({ exitCode, stderr }) =>
+                exitCode !== 0
+                  ? Effect.logWarning(
+                      `git branch -D failed (exit ${exitCode}): ${stderr.trim()}`
+                    ).pipe(Effect.annotateLogs('module', logPrefix))
+                  : Effect.logDebug(
+                      `Deleted branch ${workspace.branchName}`
+                    ).pipe(Effect.annotateLogs('module', logPrefix))
+              ),
+              Effect.catchAll((err) =>
+                Effect.logWarning(
+                  `Failed to delete branch: ${String(err)}`
+                ).pipe(Effect.annotateLogs('module', logPrefix))
               )
-            }
+            )
+
+            // Check if directory still exists after cleanup
+            const dirStillExists = existsSync(workspace.worktreePath)
+            yield* Effect.logInfo(
+              `Post-cleanup: directory ${workspace.worktreePath} exists=${String(dirStillExists)}`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+          } else {
+            yield* Effect.logInfo(
+              `Skipping worktree/branch removal for external workspace: ${workspace.branchName}`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
           }
 
           if (workspace.port > 0) {
-            // 6. Free the allocated port
+            // 5. Free the allocated port
+            yield* Effect.logInfo(`Freeing port ${workspace.port}`).pipe(
+              Effect.annotateLogs('module', logPrefix)
+            )
+
             yield* portAllocator
               .free(workspace.port)
               .pipe(
@@ -1278,9 +1545,17 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               )
           }
 
-          // 7. Commit WorkspaceDestroyed event to LiveStore
+          // 6. Commit WorkspaceDestroyed event to LiveStore
           //    This removes the row from the workspaces table
+          yield* Effect.logInfo(
+            `Committing WorkspaceDestroyed event for ${workspaceId}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
           store.commit(events.workspaceDestroyed({ id: workspaceId }))
+
+          yield* Effect.logInfo(
+            `Workspace ${workspaceId} (${workspace.branchName}) destroyed successfully`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
         }
       )
 

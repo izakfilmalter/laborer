@@ -270,7 +270,8 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
        */
       const scheduleAutoRun = (
         terminalId: string,
-        projectId: string
+        projectId: string,
+        containerImage: string | null
       ): Effect.Effect<void, never> =>
         Effect.gen(function* () {
           const project = yield* registry.getProject(projectId)
@@ -288,9 +289,23 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             )
 
           if (resolvedConfig !== null) {
+            // Skip setup scripts when a cached deps image was used —
+            // node_modules and other setup is already baked into the image.
+            const hasCachedDeps =
+              containerImage?.startsWith('laborer-deps/') === true
+            const setupScripts = hasCachedDeps
+              ? []
+              : resolvedConfig.devServer.setupScripts.value
+
+            if (hasCachedDeps) {
+              yield* Effect.logInfo(
+                'Skipping container setup scripts — using cached deps image'
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+            }
+
             yield* autoTypeScripts(
               terminalId,
-              resolvedConfig.devServer.setupScripts.value,
+              setupScripts,
               resolvedConfig.devServer.startCommand.value
             )
           }
@@ -311,6 +326,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       )(function* (
         workspace: {
           readonly containerId: string | null
+          readonly containerImage: string | null
           readonly containerUrl: string | null
           readonly projectId: string
           readonly worktreePath: string
@@ -350,9 +366,11 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         // Runs as a fire-and-forget background fiber so it doesn't block
         // the spawn response back to the client.
         if (autoRun === true && command === undefined) {
-          yield* scheduleAutoRun(terminalInfo.id, workspace.projectId).pipe(
-            Effect.forkDaemon
-          )
+          yield* scheduleAutoRun(
+            terminalInfo.id,
+            workspace.projectId,
+            workspace.containerImage ?? null
+          ).pipe(Effect.forkDaemon)
         }
 
         return {

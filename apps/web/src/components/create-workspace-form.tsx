@@ -9,7 +9,7 @@
  * setup script execution). Dialog cannot be dismissed during submission.
  * Success: workspace appears in the list (via LiveStore), form resets, dialog closes.
  * Error: displays an inline alert within the dialog with a distinct, actionable
- * message for each error type (dirty git state, git fetch failure, setup script
+ * message for each error type (git fetch failure, setup script
  * failure, branch conflict, worktree failure). Also shows a toast for persistence
  * after the dialog is closed.
  *
@@ -23,14 +23,7 @@ import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { projects } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
 import { useForm } from '@tanstack/react-form'
-import {
-  AlertTriangle,
-  GitBranch,
-  Layers,
-  ScrollText,
-  WifiOff,
-  X,
-} from 'lucide-react'
+import { AlertTriangle, Layers, ScrollText, WifiOff, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useState } from 'react'
 import { toast } from 'sonner'
@@ -83,14 +76,10 @@ interface WorkspaceCreationError {
  */
 function getErrorTitle(code: string | undefined): string {
   switch (code) {
-    case 'DIRTY_WORKING_TREE':
-      return 'Uncommitted Changes'
     case 'GIT_FETCH_FAILED':
       return 'Network Error'
     case 'SETUP_SCRIPT_FAILED':
       return 'Setup Script Failed'
-    case 'BRANCH_EXISTS':
-      return 'Branch Already Exists'
     case 'GIT_WORKTREE_FAILED':
       return 'Worktree Creation Failed'
     case 'WORKTREE_VERIFY_FAILED':
@@ -114,14 +103,10 @@ function getErrorTitle(code: string | undefined): string {
  */
 function getErrorGuidance(code: string | undefined): string | undefined {
   switch (code) {
-    case 'DIRTY_WORKING_TREE':
-      return 'Commit or stash your changes in the project repository, then try again.'
     case 'GIT_FETCH_FAILED':
       return 'Check your network connection and remote repository access, then try again.'
     case 'SETUP_SCRIPT_FAILED':
       return "Check the setup scripts in your project's laborer.json file and fix the failing script."
-    case 'BRANCH_EXISTS':
-      return 'Choose a different branch name, or delete the existing branch first.'
     case 'GIT_WORKTREE_FAILED':
       return 'This may indicate a conflict with an existing worktree. Check your git worktree list.'
     case 'NO_PORTS_AVAILABLE':
@@ -136,14 +121,10 @@ function getErrorGuidance(code: string | undefined): string | undefined {
  */
 function getErrorIcon(code: string | undefined) {
   switch (code) {
-    case 'DIRTY_WORKING_TREE':
-      return <GitBranch className="size-4" />
     case 'GIT_FETCH_FAILED':
       return <WifiOff className="size-4" />
     case 'SETUP_SCRIPT_FAILED':
       return <ScrollText className="size-4" />
-    case 'BRANCH_EXISTS':
-      return <GitBranch className="size-4" />
     default:
       return <AlertTriangle className="size-4" />
   }

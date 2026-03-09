@@ -5,6 +5,8 @@ interface SetupScriptItem {
 
 interface ResolvedConfigSnapshot {
   readonly devServerImage: string | null
+  readonly devServerInstallCommand: string | null
+  readonly devServerNetwork: string | null
   readonly devServerSetupScripts: readonly string[]
   readonly devServerStartCommand: string | null
   readonly rlphConfig: string | null
@@ -15,6 +17,8 @@ interface ResolvedConfigSnapshot {
 interface ConfigUpdates {
   devServer?: {
     image?: string
+    installCommand?: string
+    network?: string
     setupScripts?: string[]
     startCommand?: string
   }
@@ -47,8 +51,66 @@ const areStringArraysEqual = (
   return true
 }
 
+/**
+ * Diff dev server fields and return a partial devServer update object,
+ * or undefined if nothing changed.
+ */
+const buildDevServerUpdates = (
+  current: {
+    image: string
+    installCommand: string
+    network: string
+    setupScripts: string[]
+    startCommand: string
+  },
+  resolved: ResolvedConfigSnapshot
+): ConfigUpdates['devServer'] | undefined => {
+  const imageChanged = current.image !== (resolved.devServerImage ?? '')
+  const installCommandChanged =
+    current.installCommand !== (resolved.devServerInstallCommand ?? '')
+  const networkChanged = current.network !== (resolved.devServerNetwork ?? '')
+  const setupScriptsChanged = !areStringArraysEqual(
+    current.setupScripts,
+    resolved.devServerSetupScripts
+  )
+  const startCommandChanged =
+    current.startCommand !== (resolved.devServerStartCommand ?? '')
+
+  if (
+    !(
+      imageChanged ||
+      installCommandChanged ||
+      networkChanged ||
+      setupScriptsChanged ||
+      startCommandChanged
+    )
+  ) {
+    return undefined
+  }
+
+  const devServer: ConfigUpdates['devServer'] = {}
+  if (imageChanged) {
+    devServer.image = current.image
+  }
+  if (installCommandChanged) {
+    devServer.installCommand = current.installCommand
+  }
+  if (networkChanged) {
+    devServer.network = current.network
+  }
+  if (setupScriptsChanged) {
+    devServer.setupScripts = current.setupScripts
+  }
+  if (startCommandChanged) {
+    devServer.startCommand = current.startCommand
+  }
+  return devServer
+}
+
 const buildConfigUpdates = ({
   devServerImage,
+  devServerInstallCommand,
+  devServerNetwork,
   devServerSetupScripts,
   devServerStartCommand,
   rlphConfig,
@@ -57,6 +119,8 @@ const buildConfigUpdates = ({
   worktreeDir,
 }: {
   devServerImage: string
+  devServerInstallCommand: string
+  devServerNetwork: string
   devServerSetupScripts: readonly SetupScriptItem[]
   devServerStartCommand: string
   rlphConfig: string
@@ -69,11 +133,6 @@ const buildConfigUpdates = ({
   const normalizedWorktreeDir = worktreeDir.trim()
   const normalizedSetupScripts = normalizeSetupScripts(setupScripts)
   const normalizedRlphConfig = rlphConfig.trim()
-  const normalizedDevServerImage = devServerImage.trim()
-  const normalizedDevServerSetupScripts = normalizeSetupScripts(
-    devServerSetupScripts
-  )
-  const normalizedDevServerStartCommand = devServerStartCommand.trim()
 
   if (
     normalizedWorktreeDir.length > 0 &&
@@ -95,28 +154,18 @@ const buildConfigUpdates = ({
     updates.rlphConfig = normalizedRlphConfig
   }
 
-  const imageChanged =
-    normalizedDevServerImage !== (resolvedConfig.devServerImage ?? '')
-  const setupScriptsChanged = !areStringArraysEqual(
-    normalizedDevServerSetupScripts,
-    resolvedConfig.devServerSetupScripts
+  const devServerUpdate = buildDevServerUpdates(
+    {
+      image: devServerImage.trim(),
+      installCommand: devServerInstallCommand.trim(),
+      network: devServerNetwork.trim(),
+      setupScripts: normalizeSetupScripts(devServerSetupScripts),
+      startCommand: devServerStartCommand.trim(),
+    },
+    resolvedConfig
   )
-  const startCommandChanged =
-    normalizedDevServerStartCommand !==
-    (resolvedConfig.devServerStartCommand ?? '')
-
-  if (imageChanged || setupScriptsChanged || startCommandChanged) {
-    const devServer: ConfigUpdates['devServer'] = {}
-    if (imageChanged) {
-      devServer.image = normalizedDevServerImage
-    }
-    if (setupScriptsChanged) {
-      devServer.setupScripts = normalizedDevServerSetupScripts
-    }
-    if (startCommandChanged) {
-      devServer.startCommand = normalizedDevServerStartCommand
-    }
-    updates.devServer = devServer
+  if (devServerUpdate !== undefined) {
+    updates.devServer = devServerUpdate
   }
 
   return updates

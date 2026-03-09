@@ -62,6 +62,8 @@ function ProjectSettingsForm({
   const [setupScripts, setSetupScripts] = useState<SetupScriptItem[]>([])
   const [rlphConfig, setRlphConfig] = useState('')
   const [devServerImage, setDevServerImage] = useState('')
+  const [devServerInstallCommand, setDevServerInstallCommand] = useState('')
+  const [devServerNetwork, setDevServerNetwork] = useState('')
   const [devServerSetupScripts, setDevServerSetupScripts] = useState<
     SetupScriptItem[]
   >([])
@@ -84,6 +86,10 @@ function ProjectSettingsForm({
     setSetupScripts(toSetupScriptItems(configResult.value.setupScripts.value))
     setRlphConfig(configResult.value.rlphConfig.value ?? '')
     setDevServerImage(configResult.value.devServer.image.value ?? '')
+    setDevServerInstallCommand(
+      configResult.value.devServer.installCommand.value ?? ''
+    )
+    setDevServerNetwork(configResult.value.devServer.network.value ?? '')
     setDevServerSetupScripts(
       toSetupScriptItems(configResult.value.devServer.setupScripts.value)
     )
@@ -134,11 +140,15 @@ function ProjectSettingsForm({
   const handleSave = async () => {
     const updates = buildConfigUpdates({
       devServerImage,
+      devServerInstallCommand,
+      devServerNetwork,
       devServerSetupScripts,
       devServerStartCommand,
       rlphConfig,
       resolvedConfig: {
         devServerImage: resolvedConfig.devServer.image.value,
+        devServerInstallCommand: resolvedConfig.devServer.installCommand.value,
+        devServerNetwork: resolvedConfig.devServer.network.value,
         devServerSetupScripts: resolvedConfig.devServer.setupScripts.value,
         devServerStartCommand: resolvedConfig.devServer.startCommand.value,
         rlphConfig: resolvedConfig.rlphConfig.value,
@@ -275,6 +285,38 @@ function ProjectSettingsForm({
             />
             <FieldDescription className={provenanceClassName}>
               Source: {resolvedConfig.devServer.image.source}
+            </FieldDescription>
+          </Field>
+
+          <Field>
+            <FieldLabel htmlFor={`dev-server-install-command-${projectId}`}>
+              Install command
+            </FieldLabel>
+            <Input
+              id={`dev-server-install-command-${projectId}`}
+              onChange={(event) =>
+                setDevServerInstallCommand(event.target.value)
+              }
+              placeholder="Auto-detected from lockfile (e.g. pnpm install --frozen-lockfile)"
+              value={devServerInstallCommand}
+            />
+            <FieldDescription className={provenanceClassName}>
+              Source: {resolvedConfig.devServer.installCommand.source}
+            </FieldDescription>
+          </Field>
+
+          <Field>
+            <FieldLabel htmlFor={`dev-server-network-${projectId}`}>
+              Docker network
+            </FieldLabel>
+            <Input
+              id={`dev-server-network-${projectId}`}
+              onChange={(event) => setDevServerNetwork(event.target.value)}
+              placeholder="e.g. myproject_default (leave empty for host network)"
+              value={devServerNetwork}
+            />
+            <FieldDescription className={provenanceClassName}>
+              Source: {resolvedConfig.devServer.network.source}
             </FieldDescription>
           </Field>
 

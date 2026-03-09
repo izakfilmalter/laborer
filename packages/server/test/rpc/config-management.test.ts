@@ -94,7 +94,13 @@ describe('LaborerRpcs config management', () => {
           assert.deepStrictEqual(config, {
             devServer: {
               dockerfile: { source: 'default', value: null },
-              image: { source: 'default', value: null },
+              image: { source: 'default', value: 'node:lts' },
+              installCommand: { source: 'default', value: null },
+              network: { source: 'default', value: null },
+              setupScripts: {
+                source: 'default',
+                value: ['corepack enable', 'pnpm install --force', 'exec bash'],
+              },
               startCommand: { source: 'default', value: null },
               workdir: { source: 'default', value: '/app' },
             },
@@ -188,7 +194,13 @@ describe('LaborerRpcs config management', () => {
           assert.deepStrictEqual(resolved, {
             devServer: {
               dockerfile: { source: 'default', value: null },
-              image: { source: 'default', value: null },
+              image: { source: 'default', value: 'node:lts' },
+              installCommand: { source: 'default', value: null },
+              network: { source: 'default', value: null },
+              setupScripts: {
+                source: 'default',
+                value: ['corepack enable', 'pnpm install --force', 'exec bash'],
+              },
               startCommand: { source: 'default', value: null },
               workdir: { source: 'default', value: '/app' },
             },

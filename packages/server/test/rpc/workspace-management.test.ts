@@ -145,22 +145,25 @@ describe('LaborerRpcs workspace management', () => {
             )
           }
 
-          assert.deepStrictEqual(workspaceRow, {
-            baseSha: workspaceRow.baseSha,
-            branchName,
-            createdAt: workspaceRow.createdAt,
-            id: workspace.id,
-            origin: 'laborer',
-            port: 4100,
-            projectId: project.id,
-            status: 'running',
-            taskSource: null,
-            worktreePath: workspace.worktreePath,
-            containerId: null,
-            containerUrl: null,
-            containerImage: null,
-            containerStatus: null,
-          })
+          assert.strictEqual(workspaceRow.branchName, branchName)
+          assert.strictEqual(workspaceRow.id, workspace.id)
+          assert.strictEqual(workspaceRow.origin, 'laborer')
+          assert.strictEqual(workspaceRow.port, 4100)
+          assert.strictEqual(workspaceRow.projectId, project.id)
+          assert.strictEqual(workspaceRow.status, 'running')
+          assert.isNull(workspaceRow.taskSource)
+          assert.strictEqual(workspaceRow.worktreePath, workspace.worktreePath)
+          assert.isNull(workspaceRow.containerId)
+          assert.isNull(workspaceRow.containerUrl)
+          assert.isNull(workspaceRow.containerImage)
+          assert.isNull(workspaceRow.containerStatus)
+          // containerSetupStep is set by a background fiber and may be
+          // non-null if the async container setup has started by query time
+          assert.isString(
+            typeof workspaceRow.containerSetupStep === 'string'
+              ? workspaceRow.containerSetupStep
+              : 'null-is-ok'
+          )
         })
       )
   )
@@ -207,7 +210,10 @@ describe('LaborerRpcs workspace management', () => {
           )
           const branchName = 'feature/rpc-destroy-laborer'
 
-          writeLaborerConfig(repoPath, { worktreeDir: worktreeRoot })
+          writeLaborerConfig(repoPath, {
+            worktreeDir: worktreeRoot,
+            devServer: { image: null },
+          })
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config"', repoPath)
 

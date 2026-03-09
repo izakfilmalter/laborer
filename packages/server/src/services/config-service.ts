@@ -85,6 +85,10 @@ interface DevServerConfig {
   readonly dockerfile?: string | undefined
   /** Base Docker image name (e.g. "node:22"). */
   readonly image?: string | undefined
+  /** Override the auto-detected install command for cached deps images (e.g. "pnpm install --frozen-lockfile"). */
+  readonly installCommand?: string | undefined
+  /** Docker network to join (e.g. "myproject_default" for docker-compose services). When not set, uses --network=host. */
+  readonly network?: string | undefined
   /** Scripts to run inside the container before the start command (e.g. "apt-get install -y python3"). */
   readonly setupScripts?: readonly string[] | undefined
   /** Command to start the dev server (e.g. "bun dev"). */
@@ -135,6 +139,8 @@ interface ResolvedValue<T> {
 interface ResolvedDevServerConfig {
   readonly dockerfile: ResolvedValue<string | null>
   readonly image: ResolvedValue<string | null>
+  readonly installCommand: ResolvedValue<string | null>
+  readonly network: ResolvedValue<string | null>
   readonly setupScripts: ResolvedValue<readonly string[]>
   readonly startCommand: ResolvedValue<string | null>
   readonly workdir: ResolvedValue<string>
@@ -302,6 +308,40 @@ const readRawConfigObject = (
   })
 
 /**
+ * Merge devServer update fields into an existing devServer config object.
+ */
+const mergeDevServerUpdates = (
+  existing: Record<string, unknown>,
+  updates: NonNullable<ProjectConfigUpdates['devServer']>
+): Record<string, unknown> => {
+  const merged = { ...existing }
+
+  if (updates.image !== undefined) {
+    merged.image = updates.image
+  }
+  if (updates.dockerfile !== undefined) {
+    merged.dockerfile = updates.dockerfile
+  }
+  if (updates.installCommand !== undefined) {
+    merged.installCommand = updates.installCommand
+  }
+  if (updates.network !== undefined) {
+    merged.network = updates.network
+  }
+  if (updates.setupScripts !== undefined) {
+    merged.setupScripts = [...updates.setupScripts]
+  }
+  if (updates.startCommand !== undefined) {
+    merged.startCommand = updates.startCommand
+  }
+  if (updates.workdir !== undefined) {
+    merged.workdir = updates.workdir
+  }
+
+  return merged
+}
+
+/**
  * Apply explicit config updates to an existing config object.
  * Undefined fields in updates are ignored (do not overwrite existing values).
  */
@@ -338,25 +378,7 @@ const applyConfigUpdates = (
       !Array.isArray(existing.devServer)
         ? (existing.devServer as Record<string, unknown>)
         : {}
-    const merged = { ...existingDevServer }
-
-    if (updates.devServer.image !== undefined) {
-      merged.image = updates.devServer.image
-    }
-    if (updates.devServer.dockerfile !== undefined) {
-      merged.dockerfile = updates.devServer.dockerfile
-    }
-    if (updates.devServer.setupScripts !== undefined) {
-      merged.setupScripts = [...updates.devServer.setupScripts]
-    }
-    if (updates.devServer.startCommand !== undefined) {
-      merged.startCommand = updates.devServer.startCommand
-    }
-    if (updates.devServer.workdir !== undefined) {
-      merged.workdir = updates.devServer.workdir
-    }
-
-    next.devServer = merged
+    next.devServer = mergeDevServerUpdates(existingDevServer, updates.devServer)
   }
 
   return next
@@ -479,20 +501,23 @@ const mergeDevServerConfig = (
   configLayers: ReadonlyArray<{ config: LaborerConfig; path: string }>
 ): ResolvedDevServerConfig => {
   let image: ResolvedValue<string | null> = {
-    value: 'oven/bun:latest',
+    value: 'node:lts',
     source: 'default',
   }
   let dockerfile: ResolvedValue<string | null> = {
     value: null,
     source: 'default',
   }
+  let installCommand: ResolvedValue<string | null> = {
+    value: null,
+    source: 'default',
+  }
   let setupScripts: ResolvedValue<readonly string[]> = {
-    value: [
-      'apt-get update && apt-get install -y python3',
-      'bun add -g pnpm',
-      'pnpm install --force',
-      'exec bash',
-    ],
+    value: ['corepack enable', 'pnpm install --force', 'exec bash'],
+    source: 'default',
+  }
+  let network: ResolvedValue<string | null> = {
+    value: null,
     source: 'default',
   }
   let startCommand: ResolvedValue<string | null> = {
@@ -519,6 +544,12 @@ const mergeDevServerConfig = (
         image = { value: null, source: 'default' }
       }
     }
+    if (ds.installCommand !== undefined) {
+      installCommand = { value: ds.installCommand, source: path }
+    }
+    if (ds.network !== undefined) {
+      network = { value: ds.network, source: path }
+    }
     if (ds.setupScripts !== undefined) {
       setupScripts = { value: ds.setupScripts, source: path }
     }
@@ -542,7 +573,15 @@ const mergeDevServerConfig = (
     }
   }
 
-  return { dockerfile, image, setupScripts, startCommand, workdir }
+  return {
+    dockerfile,
+    image,
+    installCommand,
+    network,
+    setupScripts,
+    startCommand,
+    workdir,
+  }
 }
 
 /**

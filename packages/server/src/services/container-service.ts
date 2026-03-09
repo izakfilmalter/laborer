@@ -48,12 +48,19 @@ import { LaborerStore } from './laborer-store.js'
 interface CreateContainerParams {
   /** Branch name used for container naming. */
   readonly branchName: string
+  /**
+   * Override image from DepsImageService (has node_modules pre-installed).
+   * When set, this image is used instead of devServerConfig.image.
+   */
+  readonly depsImageName?: string | undefined
   /** Resolved devServer config fields. */
   readonly devServerConfig: {
     /** Path to a Dockerfile (mutually exclusive with image). */
     readonly dockerfile: string | null
     /** Base Docker image name (e.g. "node:22"). */
     readonly image: string | null
+    /** Docker network to join. When null, uses --network=host. */
+    readonly network: string | null
     /** Mount point inside the container. */
     readonly workdir: string
   }
@@ -141,14 +148,15 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
         function* (params: CreateContainerParams) {
           const {
             branchName,
+            depsImageName,
             devServerConfig,
             projectName,
             workspaceId,
             worktreePath,
           } = params
 
-          // Determine which image to use
-          const image = devServerConfig.image
+          // Determine which image to use: deps image (with pre-installed node_modules) or base image
+          const image = depsImageName ?? devServerConfig.image
           if (image === null) {
             // Dockerfile-based builds are not yet supported (future work).
             // For v1, an image must be specified.
@@ -159,15 +167,28 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
             })
           }
 
-          // Generate container name and URL
+          // Generate container name and OrbStack URL.
+          // The .orb.local URL is always stored as containerUrl because it
+          // doubles as the Docker container name (strip ".orb.local" suffix).
+          // The UI derives the user-facing URL from the network mode and port.
           const { name, url } = containerName(branchName, projectName)
           const workdir = devServerConfig.workdir
 
           yield* Effect.logInfo(
-            `Creating container "${name}" from image "${image}" with worktree mounted at ${workdir}`
+            `Creating container "${name}" from image "${image}"${depsImageName ? ' (cached deps)' : ''} with worktree mounted at ${workdir}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
 
-          // Run: docker run -d --name {name} -v {worktreePath}:{workdir} -w {workdir} {image} sleep infinity
+          // Build network flags: use specified network or fall back to --network=host
+          const networkFlags = devServerConfig.network
+            ? ['--network', devServerConfig.network]
+            : ['--network=host']
+
+          // Build volume flags: bind mount for worktree source code.
+          // node_modules are pre-seeded into the worktree by DepsImageService
+          // so they come through the bind mount naturally.
+          const volumeFlags = ['-v', `${worktreePath}:${workdir}`]
+
+          // Run: docker run -d --name {name} {networkFlags} {volumeFlags} -w {workdir} {image} sleep infinity
           const runResult = yield* Effect.tryPromise({
             try: async () => {
               const proc = Bun.spawn(
@@ -177,9 +198,8 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
                   '-d',
                   '--name',
                   name,
-                  '--add-host=host.docker.internal:host-gateway',
-                  '-v',
-                  `${worktreePath}:${workdir}`,
+                  ...networkFlags,
+                  ...volumeFlags,
                   '-w',
                   workdir,
                   image,

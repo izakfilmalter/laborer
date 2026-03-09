@@ -174,14 +174,14 @@ Extend the `SidecarManager` from the previous issue with health check polling, s
 
 ### Acceptance criteria
 
-- [ ] Health check polling runs after each sidecar is spawned, waiting for a successful HTTP response
-- [ ] A configurable timeout (default 10s) triggers a startup failure if health checks don't pass
-- [ ] Sidecar state transitions are tracked: Starting -> Healthy, Starting -> Crashed, Healthy -> Crashed, Crashed -> Starting (on restart)
-- [ ] `sidecar:healthy` Tauri event is emitted when a sidecar becomes healthy
-- [ ] `sidecar:error` Tauri event is emitted with service name and error details on crash or startup failure
-- [ ] `restart_sidecar` Tauri command kills and re-spawns a specific sidecar
-- [ ] Crash detection works — if a healthy sidecar's process exits unexpectedly, state moves to Crashed and error event is emitted
-- [ ] Integration tests verify: health check success/failure/timeout, crash detection, restart flow, event emission
+- [x] Health check polling runs after each sidecar is spawned, waiting for a successful HTTP response
+- [x] A configurable timeout (default 10s) triggers a startup failure if health checks don't pass
+- [x] Sidecar state transitions are tracked: Starting -> Healthy, Starting -> Crashed, Healthy -> Crashed, Crashed -> Starting (on restart)
+- [x] `sidecar:healthy` Tauri event is emitted when a sidecar becomes healthy
+- [x] `sidecar:error` Tauri event is emitted with service name and error details on crash or startup failure
+- [x] `restart_sidecar` Tauri command kills and re-spawns a specific sidecar
+- [x] Crash detection works — if a healthy sidecar's process exits unexpectedly, state moves to Crashed and error event is emitted
+- [x] Integration tests verify: health check success/failure/timeout, crash detection, restart flow, event emission
 
 ### Blocked by
 

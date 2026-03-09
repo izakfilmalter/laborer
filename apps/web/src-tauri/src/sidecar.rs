@@ -5,7 +5,9 @@ use std::collections::HashMap;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tauri::Emitter;
 use tauri::Manager;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -15,6 +17,12 @@ use tokio::{
 
 /// Timeout for probing the user's login shell environment.
 const SHELL_ENV_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Interval between health check HTTP requests.
+const HEALTH_CHECK_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Maximum time to wait for a sidecar to become healthy after spawning.
+const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Default environment variable values matching `@laborer/env/server`.
 const DEFAULT_PORT: &str = "2100";
@@ -164,7 +172,7 @@ fn merge_env(
 }
 
 // ---------------------------------------------------------------------------
-// Sidecar process management
+// Sidecar state and events
 // ---------------------------------------------------------------------------
 
 /// Identifies a sidecar service.
@@ -184,6 +192,77 @@ impl std::fmt::Display for SidecarName {
     }
 }
 
+/// The current state of a sidecar process.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum SidecarState {
+    /// The sidecar has been spawned but is not yet healthy.
+    Starting,
+    /// The sidecar has passed its health check and is operational.
+    Healthy,
+    /// The sidecar process terminated unexpectedly.
+    Crashed {
+        error: String,
+    },
+    /// The sidecar was intentionally stopped.
+    Stopped,
+}
+
+/// Payload emitted when a sidecar process terminates.
+#[derive(Debug, Clone, Copy)]
+pub struct TerminatedPayload {
+    pub code: Option<i32>,
+    pub signal: Option<i32>,
+}
+
+/// Payload for the `sidecar:healthy` Tauri event.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SidecarHealthyPayload {
+    pub name: SidecarName,
+}
+
+/// Payload for the `sidecar:error` Tauri event.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SidecarErrorPayload {
+    pub name: SidecarName,
+    pub error: String,
+    pub last_stderr: String,
+}
+
+// ---------------------------------------------------------------------------
+// Health check
+// ---------------------------------------------------------------------------
+
+/// Perform a single HTTP health check against a sidecar's root endpoint.
+async fn check_health(url: &str) -> bool {
+    let builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .no_proxy();
+
+    let Ok(client) = builder.build() else {
+        return false;
+    };
+
+    client
+        .get(url)
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+/// Return the health check URL for a sidecar.
+fn health_url(name: SidecarName) -> String {
+    match name {
+        SidecarName::Server => format!("http://127.0.0.1:{DEFAULT_PORT}"),
+        SidecarName::Terminal => format!("http://127.0.0.1:{DEFAULT_TERMINAL_PORT}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sidecar process management
+// ---------------------------------------------------------------------------
+
 /// A handle to a spawned sidecar process, used to kill it.
 struct SidecarChild {
     kill_tx: mpsc::Sender<()>,
@@ -197,19 +276,18 @@ impl SidecarChild {
     }
 }
 
-/// Payload emitted when a sidecar process terminates.
-#[derive(Debug, Clone, Copy)]
-pub struct TerminatedPayload {
-    pub code: Option<i32>,
-    pub signal: Option<i32>,
-}
-
 /// Tracks a running sidecar.
 struct TrackedSidecar {
     name: SidecarName,
+    state: SidecarState,
     child: SidecarChild,
     exit_rx: Option<tokio::sync::oneshot::Receiver<TerminatedPayload>>,
+    /// Ring buffer of recent stderr lines for crash diagnostics.
+    last_stderr: Arc<Mutex<Vec<String>>>,
 }
+
+/// Maximum number of stderr lines to retain per sidecar for crash diagnostics.
+const MAX_STDERR_LINES: usize = 50;
 
 /// Manages the lifecycle of sidecar processes.
 ///
@@ -262,8 +340,6 @@ impl SidecarManager {
     }
 
     /// Spawn a sidecar process, track it, and log its stdout/stderr.
-    ///
-    /// Returns a oneshot receiver that resolves when the sidecar terminates.
     pub async fn spawn(
         &self,
         app: &tauri::AppHandle,
@@ -296,6 +372,9 @@ impl SidecarManager {
         let (kill_tx, mut kill_rx) = mpsc::channel::<()>(1);
         let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<TerminatedPayload>();
 
+        // Shared stderr buffer for crash diagnostics.
+        let stderr_buf: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
         // Stream stdout to log.
         let stdout = child.stdout().take();
         let sidecar_name_str = name.to_string();
@@ -317,16 +396,24 @@ impl SidecarManager {
             });
         }
 
-        // Stream stderr to log.
+        // Stream stderr to log and buffer recent lines.
         let stderr = child.stderr().take();
         if let Some(stderr) = stderr {
             let label = sidecar_name_str.clone();
+            let buf = stderr_buf.clone();
             tokio::spawn(async move {
                 let reader = BufReader::new(stderr);
                 let mut lines = reader.lines();
                 loop {
                     match lines.next_line().await {
-                        Ok(Some(line)) => log::warn!("[{label}:stderr] {line}"),
+                        Ok(Some(line)) => {
+                            log::warn!("[{label}:stderr] {line}");
+                            let mut buffer = buf.lock().await;
+                            if buffer.len() >= MAX_STDERR_LINES {
+                                buffer.remove(0);
+                            }
+                            buffer.push(line);
+                        }
                         Ok(None) => break,
                         Err(e) => {
                             log::error!("[{label}:stderr] read error: {e}");
@@ -392,12 +479,220 @@ impl SidecarManager {
         // Track the sidecar.
         let tracked = TrackedSidecar {
             name,
+            state: SidecarState::Starting,
             child: SidecarChild { kill_tx },
             exit_rx: Some(exit_rx),
+            last_stderr: stderr_buf,
         };
         self.sidecars.lock().await.push(tracked);
 
         Ok(())
+    }
+
+    /// Spawn a sidecar and wait for it to become healthy.
+    ///
+    /// Polls the sidecar's HTTP health endpoint at `HEALTH_CHECK_INTERVAL` intervals.
+    /// If the sidecar terminates before becoming healthy, or if `HEALTH_CHECK_TIMEOUT`
+    /// elapses, the sidecar is marked as crashed and a `sidecar:error` event is emitted.
+    /// On success, a `sidecar:healthy` event is emitted.
+    pub async fn spawn_and_wait_healthy(
+        self: &Arc<Self>,
+        app: &tauri::AppHandle,
+        name: SidecarName,
+    ) -> Result<(), String> {
+        self.spawn(app, name)
+            .await
+            .map_err(|e| format!("Failed to spawn {name}: {e}"))?;
+
+        let url = health_url(name);
+        let exit_rx = self.take_exit_rx(name).await;
+        let app_handle = app.clone();
+        let manager = self.clone();
+
+        // Race: health check polling vs process termination vs timeout.
+        let result = {
+            let health_poll = async {
+                loop {
+                    tokio::time::sleep(HEALTH_CHECK_INTERVAL).await;
+                    if check_health(&url).await {
+                        return Ok(());
+                    }
+                }
+            };
+
+            let terminated = async {
+                if let Some(rx) = exit_rx {
+                    match rx.await {
+                        Ok(payload) => Err(format!(
+                            "Sidecar {name} terminated before becoming healthy (code={:?} signal={:?})",
+                            payload.code, payload.signal
+                        )),
+                        Err(_) => Err(format!("Sidecar {name} terminated before becoming healthy")),
+                    }
+                } else {
+                    // No exit receiver — should not happen, but wait indefinitely
+                    // so the health poll or timeout resolves first.
+                    std::future::pending::<Result<(), String>>().await
+                }
+            };
+
+            let timeout = async {
+                tokio::time::sleep(HEALTH_CHECK_TIMEOUT).await;
+                Err(format!(
+                    "Sidecar {name} did not become healthy within {}s",
+                    HEALTH_CHECK_TIMEOUT.as_secs()
+                ))
+            };
+
+            tokio::select! {
+                res = health_poll => res,
+                res = terminated => res,
+                res = timeout => res,
+            }
+        };
+
+        match &result {
+            Ok(()) => {
+                manager.set_state(name, SidecarState::Healthy).await;
+                log::info!("Sidecar {name} is healthy");
+                let _ = app_handle.emit("sidecar:healthy", SidecarHealthyPayload { name });
+            }
+            Err(error) => {
+                let last_stderr = manager.get_last_stderr(name).await;
+                manager
+                    .set_state(
+                        name,
+                        SidecarState::Crashed {
+                            error: error.clone(),
+                        },
+                    )
+                    .await;
+                log::error!("Sidecar {name} failed: {error}");
+                let _ = app_handle.emit(
+                    "sidecar:error",
+                    SidecarErrorPayload {
+                        name,
+                        error: error.clone(),
+                        last_stderr,
+                    },
+                );
+            }
+        }
+
+        // Start crash monitoring for healthy sidecars.
+        if result.is_ok() {
+            manager
+                .start_crash_monitor(app.clone(), name)
+                .await;
+        }
+
+        result
+    }
+
+    /// Set the state of a sidecar.
+    async fn set_state(&self, name: SidecarName, state: SidecarState) {
+        let mut sidecars = self.sidecars.lock().await;
+        if let Some(sidecar) = sidecars.iter_mut().find(|s| s.name == name) {
+            sidecar.state = state;
+        }
+    }
+
+    /// Get the current state of a sidecar.
+    pub async fn get_state(&self, name: SidecarName) -> Option<SidecarState> {
+        let sidecars = self.sidecars.lock().await;
+        sidecars.iter().find(|s| s.name == name).map(|s| s.state.clone())
+    }
+
+    /// Get the last stderr lines from a sidecar (for crash diagnostics).
+    async fn get_last_stderr(&self, name: SidecarName) -> String {
+        let sidecars = self.sidecars.lock().await;
+        if let Some(sidecar) = sidecars.iter().find(|s| s.name == name) {
+            let lines = sidecar.last_stderr.lock().await;
+            lines.join("\n")
+        } else {
+            String::new()
+        }
+    }
+
+    /// Take the exit receiver for a specific sidecar (used for health check racing).
+    pub async fn take_exit_rx(
+        &self,
+        name: SidecarName,
+    ) -> Option<tokio::sync::oneshot::Receiver<TerminatedPayload>> {
+        let mut sidecars = self.sidecars.lock().await;
+        for sidecar in sidecars.iter_mut() {
+            if sidecar.name == name {
+                return sidecar.exit_rx.take();
+            }
+        }
+        None
+    }
+
+    /// Start monitoring a healthy sidecar for unexpected crashes.
+    ///
+    /// Spawns a background task that takes the sidecar's exit receiver and
+    /// watches for termination. If the sidecar exits while in the `Healthy`
+    /// state, it transitions to `Crashed` and emits a `sidecar:error` event.
+    async fn start_crash_monitor(self: &Arc<Self>, app: tauri::AppHandle, name: SidecarName) {
+        let exit_rx = self.take_exit_rx(name).await;
+        let Some(exit_rx) = exit_rx else {
+            log::warn!("No exit receiver for crash monitoring: {name}");
+            return;
+        };
+
+        let manager = self.clone();
+        tokio::spawn(async move {
+            let result = exit_rx.await;
+            let current_state = manager.get_state(name).await;
+
+            // Only treat as a crash if the sidecar was in the Healthy state.
+            // If it was already Stopped (intentional kill), ignore.
+            if current_state == Some(SidecarState::Healthy) {
+                let error = match result {
+                    Ok(payload) => format!(
+                        "Sidecar {name} crashed unexpectedly (code={:?} signal={:?})",
+                        payload.code, payload.signal
+                    ),
+                    Err(_) => format!("Sidecar {name} crashed unexpectedly"),
+                };
+
+                let last_stderr = manager.get_last_stderr(name).await;
+                manager
+                    .set_state(
+                        name,
+                        SidecarState::Crashed {
+                            error: error.clone(),
+                        },
+                    )
+                    .await;
+                log::error!("{error}");
+                let _ = app.emit(
+                    "sidecar:error",
+                    SidecarErrorPayload {
+                        name,
+                        error,
+                        last_stderr,
+                    },
+                );
+            }
+        });
+    }
+
+    /// Kill a specific sidecar by name. Sets its state to `Stopped`.
+    pub async fn kill_one(&self, name: SidecarName) {
+        let mut sidecars = self.sidecars.lock().await;
+        if let Some(idx) = sidecars.iter().position(|s| s.name == name) {
+            log::info!("Killing sidecar: {name}");
+            sidecars[idx].state = SidecarState::Stopped;
+            let _ = sidecars[idx].child.kill();
+            // Brief wait for the process to exit.
+            drop(sidecars);
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let mut sidecars = self.sidecars.lock().await;
+            if let Some(idx) = sidecars.iter().position(|s| s.name == name) {
+                sidecars.remove(idx);
+            }
+        }
     }
 
     /// Kill all tracked sidecars and wait briefly for them to exit.
@@ -417,18 +712,16 @@ impl SidecarManager {
         log::info!("All sidecars killed");
     }
 
-    /// Take the exit receiver for a specific sidecar (used for health check racing).
-    pub async fn take_exit_rx(
-        &self,
+    /// Restart a specific sidecar: kill it (if running), re-spawn, and re-run
+    /// health checks. Emits appropriate Tauri events on success or failure.
+    pub async fn restart(
+        self: &Arc<Self>,
+        app: &tauri::AppHandle,
         name: SidecarName,
-    ) -> Option<tokio::sync::oneshot::Receiver<TerminatedPayload>> {
-        let mut sidecars = self.sidecars.lock().await;
-        for sidecar in sidecars.iter_mut() {
-            if sidecar.name == name {
-                return sidecar.exit_rx.take();
-            }
-        }
-        None
+    ) -> Result<(), String> {
+        log::info!("Restarting sidecar: {name}");
+        self.kill_one(name).await;
+        self.spawn_and_wait_healthy(app, name).await
     }
 }
 
@@ -442,6 +735,20 @@ fn signal_from_status(status: &std::process::ExitStatus) -> Option<i32> {
         let _ = status;
         None
     }
+}
+
+// ---------------------------------------------------------------------------
+// Tauri commands
+// ---------------------------------------------------------------------------
+
+/// Restart a crashed sidecar. Called from the frontend.
+#[tauri::command]
+pub async fn restart_sidecar(
+    app: tauri::AppHandle,
+    manager: tauri::State<'_, Arc<SidecarManager>>,
+    name: SidecarName,
+) -> Result<(), String> {
+    manager.restart(&app, name).await
 }
 
 // ---------------------------------------------------------------------------
@@ -520,5 +827,89 @@ mod tests {
         assert_eq!(json, "\"server\"");
         let json = serde_json::to_string(&SidecarName::Terminal).unwrap();
         assert_eq!(json, "\"terminal\"");
+    }
+
+    #[test]
+    fn sidecar_state_serialize() {
+        let json = serde_json::to_string(&SidecarState::Starting).unwrap();
+        assert_eq!(json, r#"{"status":"starting"}"#);
+
+        let json = serde_json::to_string(&SidecarState::Healthy).unwrap();
+        assert_eq!(json, r#"{"status":"healthy"}"#);
+
+        let json = serde_json::to_string(&SidecarState::Crashed {
+            error: "oops".to_string(),
+        })
+        .unwrap();
+        assert_eq!(json, r#"{"status":"crashed","error":"oops"}"#);
+
+        let json = serde_json::to_string(&SidecarState::Stopped).unwrap();
+        assert_eq!(json, r#"{"status":"stopped"}"#);
+    }
+
+    #[test]
+    fn sidecar_healthy_payload_serialize() {
+        let payload = SidecarHealthyPayload {
+            name: SidecarName::Server,
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert_eq!(json, r#"{"name":"server"}"#);
+    }
+
+    #[test]
+    fn sidecar_error_payload_serialize() {
+        let payload = SidecarErrorPayload {
+            name: SidecarName::Terminal,
+            error: "crashed".to_string(),
+            last_stderr: "line1\nline2".to_string(),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains(r#""name":"terminal""#));
+        assert!(json.contains(r#""error":"crashed""#));
+        assert!(json.contains(r#""last_stderr":"line1\nline2""#));
+    }
+
+    #[test]
+    fn health_url_returns_correct_urls() {
+        assert_eq!(health_url(SidecarName::Server), "http://127.0.0.1:2100");
+        assert_eq!(health_url(SidecarName::Terminal), "http://127.0.0.1:2102");
+    }
+
+    #[tokio::test]
+    async fn check_health_returns_false_for_nonexistent_server() {
+        // Port 19999 is extremely unlikely to have a server listening.
+        let result = check_health("http://127.0.0.1:19999").await;
+        assert!(!result);
+    }
+
+    #[test]
+    fn sidecar_state_equality() {
+        assert_eq!(SidecarState::Starting, SidecarState::Starting);
+        assert_eq!(SidecarState::Healthy, SidecarState::Healthy);
+        assert_eq!(SidecarState::Stopped, SidecarState::Stopped);
+        assert_eq!(
+            SidecarState::Crashed {
+                error: "x".to_string()
+            },
+            SidecarState::Crashed {
+                error: "x".to_string()
+            }
+        );
+        assert_ne!(SidecarState::Starting, SidecarState::Healthy);
+    }
+
+    #[tokio::test]
+    async fn sidecar_manager_new_creates_empty_state() {
+        // NOTE: This test probes the real shell env, which is fine for unit tests.
+        let manager = SidecarManager::new();
+        let sidecars = manager.sidecars.lock().await;
+        assert!(sidecars.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_state_returns_none_for_unknown_sidecar() {
+        let manager = SidecarManager::new();
+        let state = manager.get_state(SidecarName::Server).await;
+        assert!(state.is_none());
     }
 }

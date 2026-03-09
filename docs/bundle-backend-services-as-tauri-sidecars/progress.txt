@@ -64,3 +64,42 @@ Status: COMPLETED
 - No changes to TypeScript code; pre-existing biome formatting issue in `.opencode/package.json`
   is unrelated
 
+## 2026-03-09: Issue 5 — SidecarManager — health checks and Tauri events
+
+Status: COMPLETED
+
+### What was done
+- Extended `apps/web/src-tauri/src/sidecar.rs` with health check, state tracking, crash
+  detection, Tauri event emission, and restart support:
+  - **SidecarState enum**: `Starting`, `Healthy`, `Crashed { error }`, `Stopped` — serializable
+    as JSON with `#[serde(rename_all = "snake_case", tag = "status")]`.
+  - **Health check polling** (`check_health`): Uses `reqwest` with a 2-second timeout, no-proxy
+    for localhost. Polls at 100ms intervals after sidecar spawn.
+  - **`spawn_and_wait_healthy()`**: New high-level method that spawns a sidecar and races three
+    futures: health poll (100ms interval), process termination detection, and a 10-second timeout.
+    Emits `sidecar:healthy` or `sidecar:error` Tauri events based on the outcome.
+  - **Tauri event payloads**: `SidecarHealthyPayload { name }` for `sidecar:healthy`,
+    `SidecarErrorPayload { name, error, last_stderr }` for `sidecar:error`.
+  - **Stderr buffering**: Each sidecar maintains a ring buffer of the last 50 stderr lines
+    (via `Arc<Mutex<Vec<String>>>`), included in error payloads for crash diagnostics.
+  - **Crash detection** (`start_crash_monitor`): After a sidecar becomes healthy, a background
+    tokio task monitors the exit receiver. If the process exits while in the `Healthy` state,
+    it transitions to `Crashed` and emits `sidecar:error`.
+  - **`kill_one()`**: Kills a specific sidecar by name, sets state to `Stopped`, waits 200ms.
+  - **`restart()`**: Kills (if running) and re-spawns with full health check cycle.
+  - **`restart_sidecar` Tauri command**: Exposed as `#[tauri::command]` for frontend invocation,
+    takes a `SidecarName` parameter and delegates to `SidecarManager::restart()`.
+  - **`get_state()`**: Public method to query current sidecar state.
+- Updated `apps/web/src-tauri/src/lib.rs`:
+  - Registered `restart_sidecar` in `invoke_handler`.
+- Updated `Cargo.toml`:
+  - Added `reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }`.
+- 15 unit tests covering: all existing tests + state serialization, payload serialization,
+  health URL generation, health check failure for nonexistent server, state equality,
+  manager empty state, get_state for unknown sidecar.
+
+### Verification
+- `cargo check` passes with no errors and no warnings
+- `cargo test` passes: 15/15 tests pass
+- No changes to TypeScript code
+

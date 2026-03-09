@@ -47,7 +47,10 @@ pub fn run() {
         // See Issue #117: Tauri window management.
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(manager.clone())
-        .invoke_handler(tauri::generate_handler![update_tray_workspace_count])
+        .invoke_handler(tauri::generate_handler![
+            update_tray_workspace_count,
+            sidecar::restart_sidecar
+        ])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

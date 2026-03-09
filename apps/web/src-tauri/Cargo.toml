@@ -28,3 +28,4 @@ tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"
 tokio = { version = "1", features = ["process", "io-util", "time", "sync", "rt"] }
 process-wrap = { version = "9", features = ["tokio1"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }

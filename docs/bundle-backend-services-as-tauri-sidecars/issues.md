@@ -131,15 +131,15 @@ Follow the OpenCode reference pattern (`cli.rs`, `server.rs`) but adapted for mu
 
 ### Acceptance criteria
 
-- [ ] A `SidecarManager` Rust module exists with the ability to spawn, track, and kill sidecar processes
-- [ ] Shell environment probing works on macOS — sidecars inherit PATH and other login shell variables
-- [ ] Spawned processes are created in their own process group (Unix) for clean group-kill on shutdown
-- [ ] Environment variables (PORT, TERMINAL_PORT, etc.) are passed correctly to sidecar processes
-- [ ] `kill_all()` terminates all tracked sidecar processes and their child process groups
-- [ ] `RunEvent::Exit` triggers `kill_all()` automatically
-- [ ] Stdout/stderr from sidecars is logged via `tauri-plugin-log`
-- [ ] Integration tests verify: spawning a mock binary, passing env vars, killing processes, process group cleanup
-- [ ] New Cargo dependencies are added: `tokio` (with process, io features), `process-wrap`
+- [x] A `SidecarManager` Rust module exists with the ability to spawn, track, and kill sidecar processes
+- [x] Shell environment probing works on macOS — sidecars inherit PATH and other login shell variables
+- [x] Spawned processes are created in their own process group (Unix) for clean group-kill on shutdown
+- [x] Environment variables (PORT, TERMINAL_PORT, etc.) are passed correctly to sidecar processes
+- [x] `kill_all()` terminates all tracked sidecar processes and their child process groups
+- [x] `RunEvent::Exit` triggers `kill_all()` automatically
+- [x] Stdout/stderr from sidecars is logged via `tauri-plugin-log`
+- [x] Integration tests verify: spawning a mock binary, passing env vars, killing processes, process group cleanup
+- [x] New Cargo dependencies are added: `tokio` (with process, io features), `process-wrap`
 
 ### Blocked by
 

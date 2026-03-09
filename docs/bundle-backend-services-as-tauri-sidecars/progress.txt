@@ -24,3 +24,43 @@ Status: COMPLETED
 - Tested: sent JSON-RPC initialize -> received correct protocolVersion, capabilities, serverInfo
 - The binary runs standalone without requiring Bun installed
 
+## 2026-03-09: Issue 4 — SidecarManager Rust module — spawn and kill processes
+
+Status: COMPLETED
+
+### What was done
+- Created `apps/web/src-tauri/src/sidecar.rs` — a new Rust module containing:
+  - **Shell environment probing**: Probes the user's login shell (`$SHELL` or `/bin/zsh`) using
+    `env -0` (NUL-delimited output) to capture PATH and other variables that macOS GUI apps
+    don't inherit. Tries interactive-login (`-il`) first, falls back to login-only (`-l`).
+    Skips nushell (unsupported). 5-second timeout prevents hanging on slow shell configs.
+  - **`SidecarManager` struct**: Stored in Tauri managed state. Probes shell env once at
+    construction. Tracks spawned sidecars via `Mutex<Vec<TrackedSidecar>>`.
+  - **`spawn()`**: Resolves sidecar binary path relative to `tauri::process::current_binary()`.
+    Uses `tokio::process::Command` with `process-wrap` `ProcessGroup::leader()` on Unix for
+    clean group-kill. Passes PORT, TERMINAL_PORT, DATA_DIR env vars merged with shell env.
+    Pipes stdout/stderr to `log::info!`/`log::warn!` via async tokio tasks.
+  - **Process lifecycle monitoring**: Async tokio task polls `child.try_wait()` and listens for
+    kill signals via `mpsc::channel`. Emits `TerminatedPayload` (code + signal) via oneshot
+    channel on exit.
+  - **`kill_all()`**: Sends kill signal to all tracked sidecars and waits 500ms for cleanup.
+  - **`take_exit_rx()`**: Allows taking the exit receiver for health check racing (used by Issue 5).
+- Updated `apps/web/src-tauri/src/lib.rs`:
+  - Added `mod sidecar;` declaration.
+  - Creates `SidecarManager` (via `Arc`) before building the Tauri app.
+  - Registers it as Tauri managed state via `.manage()`.
+  - Changed `.run()` to `.build()` + `app.run()` to capture `RunEvent::Exit`.
+  - On `RunEvent::Exit`, spawns a cleanup thread with a new tokio runtime to `kill_all()`.
+- Updated `Cargo.toml` with new dependencies:
+  - `tokio = { version = "1", features = ["process", "io-util", "time", "sync", "rt"] }`
+  - `process-wrap = { version = "9", features = ["tokio1"] }`
+- 7 unit tests covering: shell env parsing, env merging, nushell detection, SidecarName
+  display/serialization.
+
+### Verification
+- `cargo check` passes (only dead_code warnings for methods not yet called — expected,
+  will be resolved when Issue 5/6 wire spawning into app setup)
+- `cargo test` passes: 7/7 tests pass
+- No changes to TypeScript code; pre-existing biome formatting issue in `.opencode/package.json`
+  is unrelated
+

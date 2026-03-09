@@ -1,9 +1,12 @@
+use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
+    Manager, RunEvent,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+
+mod sidecar;
 
 /// Update the tray tooltip to reflect the current workspace count.
 /// Called from the frontend when the workspace count changes.
@@ -33,12 +36,17 @@ fn focus_main_window(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    // Create the sidecar manager upfront so the shell environment is probed
+    // once, before any sidecars are spawned.
+    let manager = Arc::new(sidecar::SidecarManager::new());
+
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         // Window state plugin: persists and restores window position, size,
         // maximized/fullscreen state across app restarts.
         // See Issue #117: Tauri window management.
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .manage(manager.clone())
         .invoke_handler(tauri::generate_handler![update_tray_workspace_count])
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -117,6 +125,25 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    // Run with event handler to kill all sidecars on app exit.
+    let exit_manager = manager.clone();
+    app.run(move |_app, event| {
+        if let RunEvent::Exit = event {
+            // Block on killing all sidecars before the process exits.
+            // Use a new tokio runtime since the Tauri runtime is shutting down.
+            let mgr = exit_manager.clone();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("Failed to create tokio runtime for cleanup");
+                rt.block_on(mgr.kill_all());
+            })
+            .join()
+            .expect("Sidecar cleanup thread panicked");
+        }
+    });
 }

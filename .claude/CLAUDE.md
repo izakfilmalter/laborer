@@ -125,6 +125,9 @@ The `.reference/` directory contains shallow clones of key dependency repositori
 
 - `.reference/effect/` — [Effect](https://github.com/Effect-TS/effect) monorepo (core, platform, cli, schema, sql, etc.)
 - `.reference/livestore/` — [LiveStore](https://github.com/livestorejs/livestore) local-first reactive data store
+- `.reference/vscode/` — [VS Code](https://github.com/microsoft/vscode) editor (extension API, UI patterns, terminal integration)
+- `.reference/xterm/` — [xterm.js](https://github.com/xtermjs/xterm.js) terminal emulator for the browser
+- `.reference/t3code/` — [t3code](https://github.com/pingdotgg/t3code) AI coding agent CLI
 
 <!-- effect-solutions:start -->
 ## Effect Best Practices

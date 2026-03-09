@@ -1,3 +1,26 @@
 Progress log for: Bundle Backend Services as Tauri Sidecars
 ===========================================================
 
+## 2026-03-09: Issue 1 — Compile MCP service as standalone binary (tracer bullet)
+
+Status: COMPLETED
+
+### What was done
+- Created `apps/web/scripts/build-sidecars.ts` — a reusable build script that:
+  - Determines the Rust target triple from `uname -m` and `uname -s`
+  - Supports macOS arm64 (aarch64-apple-darwin) and x86_64 (x86_64-apple-darwin)
+  - Compiles services using `bun build --compile`
+  - Places output in `src-tauri/sidecars/<name>-<target-triple>`
+  - Accepts CLI args to build specific sidecars (e.g., `bun run scripts/build-sidecars.ts mcp`)
+  - Designed to be extended for server and terminal sidecars
+- Added `build:sidecars` script to `apps/web/package.json`
+- Added `/sidecars/` to `apps/web/src-tauri/.gitignore`
+- Successfully compiled `@laborer/mcp` into a 59MB standalone Mach-O arm64 binary
+- Verified the compiled binary responds correctly to MCP JSON-RPC `initialize` messages over stdio
+- Typecheck passes, formatting passes (biome check clean)
+
+### Verification
+- Binary: `src-tauri/sidecars/laborer-mcp-aarch64-apple-darwin` (59MB, Mach-O 64-bit arm64)
+- Tested: sent JSON-RPC initialize -> received correct protocolVersion, capabilities, serverInfo
+- The binary runs standalone without requiring Bun installed
+

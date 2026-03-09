@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "bash scripts/tauri-dev.sh",
     "build": "tauri build",
+    "build:sidecars": "bun run scripts/build-sidecars.ts",
     "serve": "vite preview",
     "start": "vite",
     "typecheck": "tsc --noEmit",

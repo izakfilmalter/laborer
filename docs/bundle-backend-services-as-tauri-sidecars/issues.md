@@ -16,12 +16,12 @@ This issue does NOT wire the MCP binary into the Tauri app lifecycle — it only
 
 ### Acceptance criteria
 
-- [ ] A build script exists that compiles `@laborer/mcp` into a standalone binary via `bun build --compile`
-- [ ] The compiled binary is placed in `src-tauri/sidecars/laborer-mcp-<target-triple>` with the correct naming convention
-- [ ] The build script correctly determines the Rust target triple for macOS (both arm64 and x86_64)
-- [ ] `src-tauri/sidecars/` is in `.gitignore`
-- [ ] The compiled MCP binary can be executed directly and functions correctly (connects to a running server, responds to MCP protocol over stdio)
-- [ ] The build script is reusable — structured so that later issues can extend it for the server and terminal services
+- [x] A build script exists that compiles `@laborer/mcp` into a standalone binary via `bun build --compile`
+- [x] The compiled binary is placed in `src-tauri/sidecars/laborer-mcp-<target-triple>` with the correct naming convention
+- [x] The build script correctly determines the Rust target triple for macOS (both arm64 and x86_64)
+- [x] `src-tauri/sidecars/` is in `.gitignore`
+- [x] The compiled MCP binary can be executed directly and functions correctly (connects to a running server, responds to MCP protocol over stdio)
+- [x] The build script is reusable — structured so that later issues can extend it for the server and terminal services
 
 ### Blocked by
 

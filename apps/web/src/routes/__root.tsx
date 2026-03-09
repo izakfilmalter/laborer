@@ -10,6 +10,7 @@ import { DockerStatusBanner } from '@/components/docker-status-banner'
 import Header from '@/components/header'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
+import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
 import { LiveStoreProvider } from '@/livestore/provider'
 
 import '../index.css'
@@ -37,6 +38,12 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
   }),
 })
 
+/** Renderless component that listens for sidecar crash/recovery Tauri events. */
+function SidecarCrashListener(): null {
+  useSidecarCrashListener()
+  return null
+}
+
 function RootComponent() {
   return (
     <>
@@ -58,6 +65,7 @@ function RootComponent() {
             </LiveStoreProvider>
           </AtomRegistryProvider>
           <Toaster richColors />
+          <SidecarCrashListener />
         </HotkeysProvider>
       </ThemeProvider>
       <TanStackRouterDevtools position="bottom-left" />

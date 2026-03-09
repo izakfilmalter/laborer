@@ -277,3 +277,50 @@ Status: COMPLETED
 - Biome format check passes on all changed files (pre-existing `.opencode/package.json`
   issue is unrelated)
 
+## 2026-03-09: Issue 7 — Frontend crash notification and restart UI
+
+Status: COMPLETED
+
+### What was done
+- Created `apps/web/src/hooks/use-sidecar-crash-listener.ts` — a React hook that:
+  - **Tauri-only activation**: Checks `isTauri()` before registering any listeners. In
+    browser/non-Tauri mode, the hook is a complete no-op.
+  - **Dynamic imports**: Uses `await import('@tauri-apps/api/event')` and
+    `await import('@tauri-apps/api/core')` to avoid bundling Tauri APIs in non-Tauri builds.
+  - **`sidecar:error` listener**: Listens for crash events with payload
+    `{ name: "server"|"terminal", error: string, last_stderr: string }`.
+    Shows a persistent `toast.error()` with:
+    - Service display name (e.g., "Server service crashed")
+    - Error description from the payload
+    - `duration: Infinity` — toast stays until dismissed or service recovers
+    - "Restart" action button that invokes `restart_sidecar` Tauri command
+  - **`sidecar:healthy` listener**: Listens for recovery events with payload
+    `{ name: "server"|"terminal" }`. Dismisses the error toast for the recovered
+    service and shows a success toast ("Server service recovered").
+  - **Restart flow**: On "Restart" click, dismisses the error toast, shows a loading
+    toast ("Restarting Server..."), invokes `restart_sidecar` Tauri command. On failure,
+    dismisses the loading toast and shows a new error toast with the failure reason.
+  - **Toast ID tracking**: Uses a `Map<SidecarName, string|number>` ref to track active
+    error toast IDs per service, enabling targeted dismissal. If a new error arrives for
+    a service that already has an error toast, the old one is dismissed first.
+  - **Cleanup**: Returns an effect cleanup function that unregisters all Tauri event
+    listeners and sets a `cancelled` flag to prevent late registration from async setup.
+
+- Updated `apps/web/src/routes/__root.tsx`:
+  - Added `SidecarCrashListener` renderless component that calls `useSidecarCrashListener()`.
+  - Mounted it as a sibling to `<Toaster richColors />` inside `<HotkeysProvider>` but
+    outside `<LiveStoreProvider>` (no store access needed).
+  - Import added for `useSidecarCrashListener` from `@/hooks/use-sidecar-crash-listener`.
+
+- **First use of sonner action buttons** in this codebase — the `toast.error(msg, { action: { label, onClick } })`
+  pattern is new. All prior toast usage was simple `toast.success(msg)` / `toast.error(msg)`.
+
+- **First use of `@tauri-apps/api/event`** — this is the first Tauri event listener in the
+  frontend. Prior Tauri integration only used `invoke` (core) and `getCurrentWindow` (window).
+
+### Verification
+- `tsc --noEmit` (TypeScript typecheck) passes with no errors
+- `biome check` passes on both changed files (0 errors, 0 warnings)
+- `cargo check` passes with no errors
+- Pre-existing `.opencode/package.json` biome issue is unrelated
+

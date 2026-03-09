@@ -274,12 +274,12 @@ Add frontend handling for sidecar crash events. When a backend service crashes, 
 
 ### Acceptance criteria
 
-- [ ] The frontend listens for `sidecar:error` Tauri events when running in Tauri mode
-- [ ] A toast notification appears when a sidecar crashes, showing the service name and error details
-- [ ] The toast has a "Restart" action button that invokes the `restart_sidecar` Tauri command
-- [ ] After clicking restart, the toast shows a "Restarting..." state
-- [ ] When the sidecar becomes healthy again (`sidecar:healthy` event), the error toast is dismissed
-- [ ] No Tauri event listeners are registered in non-Tauri mode (web dev)
+- [x] The frontend listens for `sidecar:error` Tauri events when running in Tauri mode
+- [x] A toast notification appears when a sidecar crashes, showing the service name and error details
+- [x] The toast has a "Restart" action button that invokes the `restart_sidecar` Tauri command
+- [x] After clicking restart, the toast shows a "Restarting..." state
+- [x] When the sidecar becomes healthy again (`sidecar:healthy` event), the error toast is dismissed
+- [x] No Tauri event listeners are registered in non-Tauri mode (web dev)
 
 ### Blocked by
 

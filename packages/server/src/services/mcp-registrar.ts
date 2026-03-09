@@ -20,9 +20,24 @@ const logPrefix = 'McpRegistrar'
 
 const MCP_SERVER_NAME = 'laborer'
 
-const DEFAULT_MCP_ENTRY_PATH = fileURLToPath(
-  new URL('../../../mcp/src/main.ts', import.meta.url)
-)
+/**
+ * Detect whether we are running as a compiled Bun binary.
+ * In a compiled binary, `process.execPath` ends with the binary name
+ * (not 'bun'), and `import.meta.url` references the embedded filesystem.
+ */
+const IS_COMPILED_BINARY = !process.execPath.endsWith('/bun')
+
+/**
+ * Resolve the default MCP entry path based on the runtime context:
+ * - Compiled binary: Use `LABORER_MCP_PATH` env var if set, otherwise
+ *   resolve `laborer-mcp` as a sibling of the current executable.
+ * - Source mode: Use the original import.meta.url-based resolution
+ *   to find `packages/mcp/src/main.ts` in the source tree.
+ */
+const DEFAULT_MCP_ENTRY_PATH = IS_COMPILED_BINARY
+  ? (process.env.LABORER_MCP_PATH ??
+    join(dirname(process.execPath), 'laborer-mcp'))
+  : fileURLToPath(new URL('../../../mcp/src/main.ts', import.meta.url))
 
 const OPENCODE_CONFIG_PATH = join(
   homedir(),
@@ -56,20 +71,45 @@ interface OpencodeLocalMcpConfig {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 
+/**
+ * Determine whether the MCP entry path points to a compiled binary
+ * (executable file) or a source script (requires `bun run`).
+ *
+ * When running as a compiled sidecar, the resolved MCP path is a
+ * standalone executable (e.g. `laborer-mcp`), so the config should
+ * invoke it directly. When running from source, it's a .ts file
+ * that requires `bun run`.
+ */
+const isMcpBinary = (mcpEntryPath: string): boolean =>
+  !(mcpEntryPath.endsWith('.ts') || mcpEntryPath.endsWith('.js'))
+
 const getDesiredMcpServerConfig = (
   mcpEntryPath: string = DEFAULT_MCP_ENTRY_PATH
-): McpServerConfig => ({
-  args: ['run', resolve(mcpEntryPath)],
-  command: 'bun',
-  type: 'stdio',
-})
+): McpServerConfig =>
+  isMcpBinary(mcpEntryPath)
+    ? {
+        args: [],
+        command: resolve(mcpEntryPath),
+        type: 'stdio',
+      }
+    : {
+        args: ['run', resolve(mcpEntryPath)],
+        command: 'bun',
+        type: 'stdio',
+      }
 
 const getDesiredOpencodeMcpConfig = (
   mcpEntryPath: string = DEFAULT_MCP_ENTRY_PATH
-): OpencodeLocalMcpConfig => ({
-  command: ['bun', 'run', resolve(mcpEntryPath)],
-  type: 'local',
-})
+): OpencodeLocalMcpConfig =>
+  isMcpBinary(mcpEntryPath)
+    ? {
+        command: [resolve(mcpEntryPath)],
+        type: 'local',
+      }
+    : {
+        command: ['bun', 'run', resolve(mcpEntryPath)],
+        type: 'local',
+      }
 
 const hasMatchingMcpServerConfig = (
   value: unknown,
@@ -182,12 +222,19 @@ const getDesiredCodexMcpConfigBlock = (
   mcpEntryPath: string = DEFAULT_MCP_ENTRY_PATH
 ): string => {
   const resolvedPath = resolve(mcpEntryPath).replaceAll('\\', '\\\\')
-  return [
-    `[mcp_servers.${MCP_SERVER_NAME}]`,
-    'command = "bun"',
-    `args = ["run", "${resolvedPath}"]`,
-    '',
-  ].join('\n')
+  return isMcpBinary(mcpEntryPath)
+    ? [
+        `[mcp_servers.${MCP_SERVER_NAME}]`,
+        `command = "${resolvedPath}"`,
+        'args = []',
+        '',
+      ].join('\n')
+    : [
+        `[mcp_servers.${MCP_SERVER_NAME}]`,
+        'command = "bun"',
+        `args = ["run", "${resolvedPath}"]`,
+        '',
+      ].join('\n')
 }
 
 const mergeCodexConfig = (

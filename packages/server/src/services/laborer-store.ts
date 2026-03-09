@@ -130,10 +130,23 @@ const logPrefix = '[LaborerStore]'
  *
  * @see Issue #129: Graceful shutdown — persist LiveStore state
  */
+/**
+ * Load @livestore/adapter-node via dynamic import.
+ *
+ * The dynamic import is intentional — it avoids eagerly loading
+ * @effect/platform-node (a transitive peer dep of @livestore/utils)
+ * which would cause module resolution conflicts with our
+ * @effect/cluster version at module evaluation time.
+ *
+ * When compiling as a standalone binary, this module is bundled in
+ * (not external). The build script patches wa-sqlite's WASM loader
+ * to resolve relative to `process.execPath`.
+ */
+const loadAdapterNode = (): Promise<typeof import('@livestore/adapter-node')> =>
+  import('@livestore/adapter-node')
+
 const makeStore = Effect.gen(function* () {
-  const { makeAdapter } = yield* Effect.promise(
-    () => import('@livestore/adapter-node')
-  )
+  const { makeAdapter } = yield* Effect.promise(loadAdapterNode)
 
   const adapter = makeAdapter({
     storage: { type: 'fs', baseDirectory: DATA_DIRECTORY },

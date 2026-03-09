@@ -103,3 +103,57 @@ Status: COMPLETED
 - `cargo test` passes: 15/15 tests pass
 - No changes to TypeScript code
 
+## 2026-03-09: Issue 2 — Compile server service as standalone binary
+
+Status: COMPLETED
+
+### What was done
+- Rewrote `apps/web/scripts/build-sidecars.ts` to support the server sidecar compilation:
+  - The server sidecar now uses `Bun.build()` JavaScript API instead of the CLI to enable
+    build plugins for handling native dependencies.
+  - Added `BuildPlugin` interface and inline Bun type declarations (the web app tsconfig
+    doesn't include Bun types).
+  - Removed the `installExternalPackages()` function and `node_modules`-based approach.
+    All dependencies are now bundled directly into the binary.
+  - Added `copyFiles` config to sidecar definitions for shipping companion files alongside
+    the binary (wa-sqlite.node.wasm).
+
+- **Build plugins resolve three native dependency issues:**
+  1. **`@parcel/watcher` stub**: `@effect/platform-node-shared` statically imports `@parcel/watcher`
+     which crashes compiled binaries because the native `.node` addon can't be loaded from
+     Bun's virtual `/$bunfs/root/` filesystem. The plugin stubs it with an empty module.
+     The server's own `file-watcher.ts` gracefully falls back to `fs.watch`.
+  2. **`@effect/platform-node/Undici.js` stub**: This module re-exports `undici` via
+     `export * from "undici"`, but Bun's bundler generates a `__reExport(exports, undici)`
+     call referencing an undeclared `undici` namespace variable (bundler bug). Since the
+     server uses `@effect/platform-bun` (not node), this module is never used at runtime.
+  3. **wa-sqlite WASM path patch**: The Emscripten-generated `wa-sqlite.node.mjs` loader
+     resolves `.wasm` files via `new URL("wa-sqlite.node.wasm", import.meta.url).href`.
+     In compiled binaries, `import.meta.url` points to `/$bunfs/root/...`. The plugin
+     patches this to resolve relative to `process.execPath` (the real binary on disk).
+
+- **wa-sqlite.node.wasm**: The 604KB WASM file is copied alongside the compiled binary
+  via the `copyFiles` config. LiveStore's SQLite adapter loads it at runtime for
+  server-side persistence.
+
+- **mcp-registrar.ts path resolution**: Already handled in a prior commit — uses
+  `IS_COMPILED_BINARY` flag to detect compiled mode and resolves `laborer-mcp` as a
+  sibling of `process.execPath` instead of using `import.meta.url`.
+
+- **Decision: Bundle all JS deps, externalize only `lightningcss`**. The original plan
+  was to mark `@livestore/adapter-node` and `@parcel/watcher` as `--external` and install
+  them in a `node_modules/` directory alongside the binary. This approach failed because
+  Bun compiled binaries cannot resolve external `import()` calls — they resolve from the
+  virtual `/$bunfs/root/` path, not the binary's real directory. The solution is to bundle
+  everything directly and handle native deps via build plugins (stubs + patches).
+
+### Verification
+- Binary: `src-tauri/sidecars/laborer-server-aarch64-apple-darwin` (68MB, Mach-O 64-bit arm64)
+- WASM: `src-tauri/sidecars/wa-sqlite.node.wasm` (604KB)
+- Server starts, LiveStore initializes with SQLite persistence (wa-sqlite WASM loads correctly)
+- Health check: `GET /` returns `{"status":"ok","name":"laborer-server"}`
+- `@parcel/watcher` fallback to `fs.watch` works (tested with and without
+  `LABORER_FILE_WATCHER_BACKEND=fs`)
+- Clean shutdown with state persistence
+- Typecheck passes, biome check passes
+

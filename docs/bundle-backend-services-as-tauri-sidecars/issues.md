@@ -49,13 +49,13 @@ Key changes beyond compilation:
 
 ### Acceptance criteria
 
-- [ ] The build script compiles `@laborer/server` into a standalone binary via `bun build --compile`
-- [ ] The compiled binary is placed in `src-tauri/sidecars/laborer-server-<target-triple>`
-- [ ] The compiled server binary starts successfully and responds to health checks on its configured port
-- [ ] The `mcp-registrar.ts` path resolution works correctly when running as a compiled binary (does not crash on `import.meta.url` resolution)
-- [ ] The server gracefully handles unavailable `@parcel/watcher` (falls back to `fs.watch`)
-- [ ] LiveStore persistence works correctly in the compiled binary (SQLite operations function normally)
-- [ ] Native module files that need to be shipped alongside are identified and copied by the build script
+- [x] The build script compiles `@laborer/server` into a standalone binary via `bun build --compile`
+- [x] The compiled binary is placed in `src-tauri/sidecars/laborer-server-<target-triple>`
+- [x] The compiled server binary starts successfully and responds to health checks on its configured port
+- [x] The `mcp-registrar.ts` path resolution works correctly when running as a compiled binary (does not crash on `import.meta.url` resolution)
+- [x] The server gracefully handles unavailable `@parcel/watcher` (falls back to `fs.watch`)
+- [x] LiveStore persistence works correctly in the compiled binary (SQLite operations function normally)
+- [x] Native module files that need to be shipped alongside are identified and copied by the build script
 
 ### Blocked by
 

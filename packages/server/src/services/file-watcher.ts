@@ -112,7 +112,27 @@ interface FileWatcherDrivers {
 
 type FileWatcherBackendName = 'fs' | 'native'
 
-type ParcelWatcherModule = typeof import('@parcel/watcher')
+/**
+ * Minimal interface for the @parcel/watcher module.
+ *
+ * Defined manually instead of using `typeof import('@parcel/watcher')` to
+ * avoid Bun's bundler emitting a static import for the type-level import
+ * expression, which causes compiled binaries to crash on startup when the
+ * native addon isn't available.
+ */
+interface ParcelWatcherModule {
+  readonly subscribe: (
+    dir: string,
+    fn: (
+      err: Error | null,
+      events: ReadonlyArray<{
+        readonly path: string
+        readonly type: 'create' | 'update' | 'delete'
+      }>
+    ) => void,
+    opts?: { readonly ignore?: readonly string[] }
+  ) => Promise<{ readonly unsubscribe: () => Promise<void> }>
+}
 
 const DEFAULT_FILE_WATCHER_BACKEND: FileWatcherBackendName = 'native'
 

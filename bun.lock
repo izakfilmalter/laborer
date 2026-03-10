@@ -23,6 +23,7 @@
       "name": "@laborer/desktop",
       "version": "0.0.0",
       "dependencies": {
+        "@laborer/shared": "workspace:*",
         "electron": "40.6.0",
       },
       "devDependencies": {

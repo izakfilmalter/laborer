@@ -13,6 +13,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@laborer/shared": "workspace:*",
     "electron": "40.6.0"
   },
   "devDependencies": {

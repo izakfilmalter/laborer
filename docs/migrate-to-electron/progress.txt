@@ -236,8 +236,47 @@
 ## Now Unblocked
 - Issue 10: DesktopBridge contract + service URL passing (blocker Issue 9 done)
 
+### Issue 10: DesktopBridge contract + service URL passing — DONE
+- Created `packages/shared/src/desktop-bridge.ts` — typed contract between preload and renderer:
+  - `DesktopBridge` interface with 10 methods: `getServerUrl()`, `getTerminalUrl()`, `pickFolder()`, `confirm()`, `showContextMenu()`, `openExternal()`, `onMenuAction()`, `updateTrayWorkspaceCount()`, `restartSidecar()`, `onSidecarStatus()`
+  - `ContextMenuItem<T>` generic interface for type-safe context menu items
+  - `SidecarName` type union: `'server' | 'terminal' | 'mcp'`
+  - `SidecarStatusEvent` discriminated union: `starting | healthy | crashed | restarting`
+  - Exported via `@laborer/shared/desktop-bridge` subpath
+- Created `apps/desktop/src/ipc.ts` — IPC handler module:
+  - 6 `ipcMain.handle()` registrations matching preload channels
+  - `desktop:pick-folder` — native folder picker via `dialog.showOpenDialog()` with `openDirectory` + `createDirectory`
+  - `desktop:confirm` — native confirmation dialog with "No"/"Yes" buttons via `dialog.showMessageBox()`
+  - `desktop:context-menu` — builds `Menu` from items array, shows popup, resolves with selected item ID; supports destructive separators and position
+  - `desktop:open-external` — URL validation (only http/https), `shell.openExternal()`
+  - `desktop:update-tray-count` — forwards count to tray callback (wired by Issue 13)
+  - `desktop:restart-sidecar` — validates sidecar name, delegates to health monitor for manual restart
+  - Input validation on all handlers (type checks, URL protocol allowlist, sidecar name validation)
+  - `setTrayCountHandler()` and `setRestartSidecarHandler()` for decoupled wiring
+- Updated `apps/desktop/src/preload.ts` — full DesktopBridge implementation:
+  - `contextBridge.exposeInMainWorld('desktopBridge', { ... } satisfies DesktopBridge)`
+  - Service URLs passed via `additionalArguments` (BrowserWindow webPreferences) since sandbox mode blocks `process.env`
+  - `getArg()` utility parses `--laborer-<key>=<value>` from `process.argv`
+  - Request/response methods delegate to `ipcRenderer.invoke(channel, ...args)`
+  - Event subscriptions (`onMenuAction`, `onSidecarStatus`) use `ipcRenderer.on()` with typed wrapper listeners and return unsubscribe functions
+- Updated `apps/desktop/src/main.ts`:
+  - Imports and calls `registerIpcHandlers(mainWindow)` after window creation
+  - Wires `setRestartSidecarHandler()` to delegate to `healthMonitor.manualRestart()` or `sidecarManager.restart()` 
+  - `buildPreloadArgs()` constructs `--laborer-server-url=` and `--laborer-terminal-url=` from reserved ports
+  - `additionalArguments` added to BrowserWindow `webPreferences`
+- Updated `apps/desktop/tsdown.config.ts` — added `noExternal` for `@laborer/*` on preload entry (preload runs in sandboxed context without node_modules access)
+- Updated `packages/shared/package.json` — added `./desktop-bridge` export subpath
+- Updated `apps/desktop/package.json` — added `@laborer/shared: workspace:*` dependency
+- tsdown build succeeds: main.js 30.10 KB, preload.js 2.09 KB
+- TypeScript compiles without errors across all packages
+- All tests pass: 33 desktop + 280 server + 73 terminal + 19 MCP + 30 shared
+- Formatting clean (279 files checked, 0 fixes)
+
+## Now Unblocked
+- Issue 11: Frontend Tauri-to-Electron migration (blocker Issue 10 done)
+
 ## Ready to start (no blockers):
-- Issue 10: DesktopBridge contract + service URL passing
+- Issue 11: Frontend Tauri-to-Electron migration
 - Issue 13: System tray, global shortcut, close-to-tray
 - Issue 14: Window state persistence + application menu
 - Issue 15: Auto-update system

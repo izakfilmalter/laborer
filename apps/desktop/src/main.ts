@@ -4,6 +4,7 @@ import { app, BrowserWindow } from 'electron'
 
 import { fixPath } from './fix-path.js'
 import { HealthMonitor } from './health.js'
+import { registerIpcHandlers, setRestartSidecarHandler } from './ipc.js'
 import { reserveServicePorts, type ServicePorts } from './ports.js'
 import { SidecarManager } from './sidecar.js'
 
@@ -33,7 +34,7 @@ let mainWindow: BrowserWindow | null = null
 /**
  * Reserved ports and auth token for child process communication.
  * Populated during bootstrap before the window is created.
- * Used by child process spawning and preload bridge (Issue 10).
+ * Used by child process spawning and preload bridge.
  */
 let servicePorts: ServicePorts | null = null
 
@@ -85,6 +86,7 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      additionalArguments: buildPreloadArgs(),
     },
   })
 
@@ -103,6 +105,46 @@ function createWindow(): void {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+
+  // Register IPC handlers for the DesktopBridge contract.
+  registerIpcHandlers(mainWindow)
+
+  // Wire sidecar restart requests from the renderer to the health monitor.
+  setRestartSidecarHandler(async (name) => {
+    const validNames = ['server', 'terminal', 'mcp'] as const
+    type ValidName = (typeof validNames)[number]
+    if (!validNames.includes(name as ValidName)) {
+      return
+    }
+    if (healthMonitor) {
+      await healthMonitor.manualRestart(name as ValidName)
+    } else if (sidecarManager) {
+      await sidecarManager.restart(name as ValidName)
+    }
+  })
+}
+
+/**
+ * Build the `additionalArguments` array for the preload script.
+ *
+ * Electron's sandbox mode blocks access to `process.env` in the preload,
+ * so we pass service URLs as command-line arguments that the preload
+ * can read from `process.argv`.
+ *
+ * Format: `--laborer-<key>=<value>` (prefixed to avoid collisions).
+ */
+function buildPreloadArgs(): string[] {
+  if (!servicePorts) {
+    return []
+  }
+
+  const serverUrl = `http://127.0.0.1:${servicePorts.serverPort}`
+  const terminalUrl = `http://127.0.0.1:${servicePorts.terminalPort}`
+
+  return [
+    `--laborer-server-url=${serverUrl}`,
+    `--laborer-terminal-url=${terminalUrl}`,
+  ]
 }
 
 app
@@ -117,8 +159,7 @@ app
       sidecarManager = new SidecarManager(servicePorts)
       healthMonitor = new HealthMonitor(sidecarManager, servicePorts)
 
-      // Forward sidecar status events to the renderer (Issue 10 will
-      // wire this to the DesktopBridge IPC). For now, log status changes.
+      // Forward sidecar status events to the renderer.
       healthMonitor.setStatusListener((status) => {
         if (status.state === 'crashed') {
           console.error(

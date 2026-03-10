@@ -17,5 +17,6 @@ export default defineConfig([
   {
     ...shared,
     entry: ['src/preload.ts'],
+    noExternal: (id: string) => id.startsWith('@laborer/'),
   },
 ])

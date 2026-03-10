@@ -14,7 +14,8 @@
     "./types": "./src/types.ts",
     "./schema": "./src/schema.ts",
     "./rpc": "./src/rpc.ts",
-    "./container-name": "./src/container-name.ts"
+    "./container-name": "./src/container-name.ts",
+    "./desktop-bridge": "./src/desktop-bridge.ts"
   },
   "dependencies": {
     "@effect/rpc": "catalog:",

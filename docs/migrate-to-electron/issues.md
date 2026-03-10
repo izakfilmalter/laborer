@@ -379,17 +379,17 @@ onSidecarStatus(listener): () => void
 
 ### Acceptance criteria
 
-- [ ] `DesktopBridge` interface defined in packages/shared/ and exported
-- [ ] Preload script implements the full interface with `satisfies DesktopBridge`
-- [ ] `window.desktopBridge` is accessible from the renderer
-- [ ] `getServerUrl()` returns the correct server URL
-- [ ] `getTerminalUrl()` returns the correct terminal URL
-- [ ] `pickFolder()` opens native macOS folder picker and returns selected path
-- [ ] `confirm()` shows native confirmation dialog and returns boolean
-- [ ] `showContextMenu()` shows native context menu and returns selected item ID
-- [ ] `openExternal()` opens URL in default browser with validation (no `javascript:` etc.)
-- [ ] `onMenuAction()` receives menu actions from the application menu
-- [ ] TypeScript enforces the contract (preload satisfies interface, renderer has typed access)
+- [x] `DesktopBridge` interface defined in packages/shared/ and exported
+- [x] Preload script implements the full interface with `satisfies DesktopBridge`
+- [x] `window.desktopBridge` is accessible from the renderer
+- [x] `getServerUrl()` returns the correct server URL
+- [x] `getTerminalUrl()` returns the correct terminal URL
+- [x] `pickFolder()` opens native macOS folder picker and returns selected path
+- [x] `confirm()` shows native confirmation dialog and returns boolean
+- [x] `showContextMenu()` shows native context menu and returns selected item ID
+- [x] `openExternal()` opens URL in default browser with validation (no `javascript:` etc.)
+- [x] `onMenuAction()` receives menu actions from the application menu
+- [x] TypeScript enforces the contract (preload satisfies interface, renderer has typed access)
 
 ### Blocked by
 
@@ -782,8 +782,8 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 7 | Shell environment probing + port allocation | 6 | Done |
 | 8 | Spawn sidecars as child processes | 4, 5, 7 | Done |
 | 9 | Health checking + crash monitoring + restart | 8 | Done |
-| 10 | DesktopBridge contract + service URL passing | 9 | Ready |
-| 11 | Frontend Tauri-to-Electron migration | 10 | Blocked |
+| 10 | DesktopBridge contract + service URL passing | 9 | Done |
+| 11 | Frontend Tauri-to-Electron migration | 10 | Ready |
 | 12 | Custom protocol + production frontend serving | 11 | Blocked |
 | 13 | System tray, global shortcut, close-to-tray | 8 | Ready |
 | 14 | Window state persistence + application menu | 6 | Ready |

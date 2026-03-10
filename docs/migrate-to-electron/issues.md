@@ -42,12 +42,12 @@ Also remove the `ensureBunSpawnForNodeTests()` polyfill from any workspace-provi
 
 ### Acceptance criteria
 
-- [ ] All `Bun.spawn()` calls in `workspace-provider.ts` replaced with the spawn utility
-- [ ] All `await proc.exited` patterns updated
-- [ ] All `new Response(proc.stdout).text()` patterns updated
-- [ ] No references to `Bun` namespace remain in the file
-- [ ] Existing e2e tests for workspace-provider pass (if any)
-- [ ] TypeScript compiles without errors
+- [x] All `Bun.spawn()` calls in `workspace-provider.ts` replaced with the spawn utility
+- [x] All `await proc.exited` patterns updated
+- [x] All `new Response(proc.stdout).text()` patterns updated
+- [x] No references to `Bun` namespace remain in the file
+- [x] Existing e2e tests for workspace-provider pass (if any)
+- [x] TypeScript compiles without errors
 
 ### Blocked by
 
@@ -774,7 +774,7 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
 | 1 | Node.js spawn utility | None | Done |
-| 2 | Migrate workspace-provider Bun.spawn sites | 1 | Ready |
+| 2 | Migrate workspace-provider Bun.spawn sites | 1 | Done |
 | 3 | Migrate remaining server Bun.spawn sites | 1 | Ready |
 | 4 | Server Bun-to-Node runtime swap | 2, 3 | Blocked |
 | 5 | Terminal + MCP Bun-to-Node runtime swap | None | Ready |

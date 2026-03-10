@@ -18,10 +18,21 @@
 - Created `packages/server/test/spawn.test.ts` with 16 unit tests covering all patterns
 - All tests passing, TypeScript compiles, formatting clean
 
+### Issue 2: Migrate workspace-provider Bun.spawn sites — DONE
+- Replaced all 16 `Bun.spawn()` call sites in `packages/server/src/services/workspace-provider.ts` with the `spawn()` utility from `packages/server/src/lib/spawn.ts`
+- Added `import { spawn } from '../lib/spawn.js'` import
+- Updated comment referencing Bun.spawn to reflect the new spawn utility
+- All `await proc.exited` and `new Response(proc.stdout).text()` patterns unchanged (spawn utility returns compatible Web ReadableStreams)
+- No references to `Bun` namespace remain in the file
+- TypeScript compiles without errors
+- All 279 tests pass (1 pre-existing timeout in deps-image-cache.e2e.test.ts unrelated to this change)
+- Formatting clean (no fixes needed)
+
 ## Now Unblocked
-- Issue 2: Migrate workspace-provider Bun.spawn sites
 - Issue 3: Migrate remaining server Bun.spawn sites
+- Issue 4: Server Bun-to-Node runtime swap (blocked by Issue 3)
 
 ## Ready to start (no blockers):
+- Issue 3: Migrate remaining server Bun.spawn sites
 - Issue 5: Terminal + MCP Bun-to-Node runtime swap
 - Issue 6: Electron shell scaffold + dev tooling

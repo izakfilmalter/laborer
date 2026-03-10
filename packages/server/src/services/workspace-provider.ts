@@ -69,6 +69,7 @@ import {
   pipe,
   Ref,
 } from 'effect'
+import { spawn } from '../lib/spawn.js'
 import { ConfigService } from './config-service.js'
 import { ContainerService } from './container-service.js'
 import { DepsImageService } from './deps-image-service.js'
@@ -136,7 +137,7 @@ const runSetupScript = (
 ): Effect.Effect<SetupScriptResult, RpcError> =>
   Effect.tryPromise({
     try: async () => {
-      const proc = Bun.spawn(['sh', '-c', command], {
+      const proc = spawn(['sh', '-c', command], {
         cwd,
         stdout: 'pipe',
         stderr: 'pipe',
@@ -321,7 +322,7 @@ const rollbackWorktree = (
     // 1. Remove the git worktree directory
     yield* Effect.tryPromise({
       try: async () => {
-        const proc = Bun.spawn(
+        const proc = spawn(
           ['git', 'worktree', 'remove', '--force', worktreePath],
           {
             cwd: repoPath,
@@ -358,7 +359,7 @@ const rollbackWorktree = (
     // 2. Delete the branch
     yield* Effect.tryPromise({
       try: async () => {
-        const proc = Bun.spawn(['git', 'branch', '-D', branchName], {
+        const proc = spawn(['git', 'branch', '-D', branchName], {
           cwd: repoPath,
           stdout: 'pipe',
           stderr: 'pipe',
@@ -432,7 +433,7 @@ const fetchRemote = (repoPath: string): Effect.Effect<void, RpcError> =>
 
     const result = yield* Effect.tryPromise({
       try: async () => {
-        const proc = Bun.spawn(['git', 'fetch', '--all'], {
+        const proc = spawn(['git', 'fetch', '--all'], {
           cwd: repoPath,
           stdout: 'pipe',
           stderr: 'pipe',
@@ -508,9 +509,9 @@ interface WorktreeValidation {
  * Issue #34: worktree directory validation
  */
 /**
- * Execute a git command using node:child_process (works in both Bun and Node.js).
- * This is used by `validateWorktree` instead of `Bun.spawn` so the validation
- * logic can be tested under vitest (which runs on Node.js, not Bun).
+ * Execute a git command using node:child_process.
+ * This is used by `validateWorktree` for lightweight git queries where
+ * the full spawn utility is not needed.
  *
  * @param args - Git subcommand and arguments (without "git" prefix)
  * @param cwd - Working directory to run the command in
@@ -773,7 +774,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           // 3. Check if a branch with this name already exists
           const branchExists = yield* Effect.tryPromise({
             try: async () => {
-              const proc = Bun.spawn(
+              const proc = spawn(
                 ['git', 'rev-parse', '--verify', resolvedBranch],
                 {
                   cwd: project.repoPath,
@@ -807,7 +808,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           // 6. Ensure the resolved worktree directory exists
           yield* Effect.tryPromise({
             try: async () => {
-              const proc = Bun.spawn(['mkdir', '-p', worktreeDir], {
+              const proc = spawn(['mkdir', '-p', worktreeDir], {
                 cwd: project.repoPath,
                 stdout: 'pipe',
                 stderr: 'pipe',
@@ -831,7 +832,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
 
             yield* Effect.tryPromise({
               try: async () => {
-                const proc = Bun.spawn(['rm', '-rf', worktreePath], {
+                const proc = spawn(['rm', '-rf', worktreePath], {
                   stdout: 'pipe',
                   stderr: 'pipe',
                 })
@@ -849,7 +850,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           // up .git/worktrees/ entries for paths that no longer exist on disk.
           yield* Effect.tryPromise({
             try: async () => {
-              const proc = Bun.spawn(['git', 'worktree', 'prune'], {
+              const proc = spawn(['git', 'worktree', 'prune'], {
                 cwd: project.repoPath,
                 stdout: 'pipe',
                 stderr: 'pipe',
@@ -870,7 +871,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
 
           const worktreeResult = yield* Effect.tryPromise({
             try: async () => {
-              const proc = Bun.spawn(worktreeArgs, {
+              const proc = spawn(worktreeArgs, {
                 cwd: project.repoPath,
                 stdout: 'pipe',
                 stderr: 'pipe',
@@ -905,7 +906,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           // used by DiffService as the base for `git diff <baseSha>`.
           const baseSha = yield* Effect.tryPromise({
             try: async () => {
-              const proc = Bun.spawn(['git', 'rev-parse', 'HEAD'], {
+              const proc = spawn(['git', 'rev-parse', 'HEAD'], {
                 cwd: project.repoPath,
                 stdout: 'pipe',
                 stderr: 'pipe',
@@ -1265,7 +1266,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
 
             const dirtyFiles = yield* Effect.tryPromise({
               try: async () => {
-                const proc = Bun.spawn(['git', 'status', '--porcelain'], {
+                const proc = spawn(['git', 'status', '--porcelain'], {
                   cwd: workspace.worktreePath,
                   stdout: 'pipe',
                   stderr: 'pipe',
@@ -1356,7 +1357,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
 
           const removeResult = yield* Effect.tryPromise({
             try: async () => {
-              const proc = Bun.spawn(
+              const proc = spawn(
                 [
                   'git',
                   'worktree',
@@ -1401,7 +1402,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
 
             yield* Effect.tryPromise({
               try: async () => {
-                const proc = Bun.spawn(['rm', '-rf', workspace.worktreePath], {
+                const proc = spawn(['rm', '-rf', workspace.worktreePath], {
                   cwd: project.repoPath,
                   stdout: 'pipe',
                   stderr: 'pipe',
@@ -1433,7 +1434,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
 
             yield* Effect.tryPromise({
               try: async () => {
-                const proc = Bun.spawn(['git', 'worktree', 'prune'], {
+                const proc = spawn(['git', 'worktree', 'prune'], {
                   cwd: project.repoPath,
                   stdout: 'pipe',
                   stderr: 'pipe',
@@ -1463,7 +1464,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           // Prune stale worktree references after removal
           yield* Effect.tryPromise({
             try: async () => {
-              const proc = Bun.spawn(['git', 'worktree', 'prune'], {
+              const proc = spawn(['git', 'worktree', 'prune'], {
                 cwd: project.repoPath,
                 stdout: 'pipe',
                 stderr: 'pipe',
@@ -1480,7 +1481,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           // Delete the branch
           yield* Effect.tryPromise({
             try: async () => {
-              const proc = Bun.spawn(
+              const proc = spawn(
                 ['git', 'branch', '-D', workspace.branchName],
                 {
                   cwd: project.repoPath,

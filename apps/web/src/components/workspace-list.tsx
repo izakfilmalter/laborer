@@ -573,8 +573,14 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                 <TooltipContent>Start Ralph Loop</TooltipContent>
               </Tooltip>
             )}
-            <ReviewPrForm workspaceId={workspace.id} />
-            <FixFindingsForm workspaceId={workspace.id} />
+            <ReviewPrForm
+              disabled={workspace.prNumber == null}
+              workspaceId={workspace.id}
+            />
+            <FixFindingsForm
+              disabled={workspace.prNumber == null}
+              workspaceId={workspace.id}
+            />
             <AlertDialog
               onOpenChange={(open) => {
                 setDialogOpen(open)

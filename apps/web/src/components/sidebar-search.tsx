@@ -12,6 +12,11 @@ import { Search, X } from 'lucide-react'
 import type { KeyboardEvent } from 'react'
 import { useCallback, useRef } from 'react'
 import { Input } from '@/components/ui/input'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 interface SidebarSearchProps {
   /** Called when the user types in the search input. */
@@ -52,14 +57,21 @@ function SidebarSearch({ value, onChange }: SidebarSearchProps) {
         value={value}
       />
       {value.length > 0 && (
-        <button
-          aria-label="Clear search"
-          className="absolute top-1/2 right-1.5 flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={handleClear}
-          type="button"
-        >
-          <X className="size-3.5" />
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                aria-label="Clear search"
+                className="absolute top-1/2 right-1.5 flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={handleClear}
+                type="button"
+              />
+            }
+          >
+            <X className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent>Clear search</TooltipContent>
+        </Tooltip>
       )}
     </div>
   )

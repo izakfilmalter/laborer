@@ -46,6 +46,11 @@ import remarkGfm from 'remark-gfm'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { cn, extractErrorMessage } from '@/lib/utils'
 
 // ─── Element Components ────────────────────────────────────────────────
@@ -411,15 +416,21 @@ function EditorHeader({
 }) {
   return (
     <div className="flex h-8 shrink-0 items-center gap-2 border-b px-2">
-      <Button
-        aria-label="Back to panels"
-        onClick={onBack}
-        size="icon-sm"
-        title="Back"
-        variant="ghost"
-      >
-        <ArrowLeft className="size-3.5" />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              aria-label="Back to panels"
+              onClick={onBack}
+              size="icon-sm"
+              variant="ghost"
+            />
+          }
+        >
+          <ArrowLeft className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipContent>Back to panels</TooltipContent>
+      </Tooltip>
       <FileText className="size-3.5 text-muted-foreground" />
       <span className="min-w-0 truncate font-medium text-sm">{title}</span>
       <div className="flex-1" />

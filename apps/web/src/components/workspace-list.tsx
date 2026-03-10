@@ -70,6 +70,11 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { usePanelActions } from '@/panels/panel-context'
@@ -233,30 +238,40 @@ function ContainerPauseButton({
   }, [isPaused, pauseContainer, unpauseContainer, workspaceId])
 
   return (
-    <Button
-      aria-label={isPaused ? 'Resume container' : 'Pause container'}
-      disabled={isLoading}
-      onClick={handleToggle}
-      size="icon-xs"
-      title={isPaused ? 'Resume container' : 'Pause container'}
-      variant="ghost"
-    >
-      {isPaused ? (
-        <Play
-          className={cn(
-            'size-3.5',
-            isLoading ? 'animate-pulse text-muted-foreground' : 'text-success'
-          )}
-        />
-      ) : (
-        <Pause
-          className={cn(
-            'size-3.5',
-            isLoading ? 'animate-pulse text-muted-foreground' : 'text-amber-500'
-          )}
-        />
-      )}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label={isPaused ? 'Resume container' : 'Pause container'}
+            disabled={isLoading}
+            onClick={handleToggle}
+            size="icon-xs"
+            variant="ghost"
+          />
+        }
+      >
+        {isPaused ? (
+          <Play
+            className={cn(
+              'size-3.5',
+              isLoading ? 'animate-pulse text-muted-foreground' : 'text-success'
+            )}
+          />
+        ) : (
+          <Pause
+            className={cn(
+              'size-3.5',
+              isLoading
+                ? 'animate-pulse text-muted-foreground'
+                : 'text-amber-500'
+            )}
+          />
+        )}
+      </TooltipTrigger>
+      <TooltipContent>
+        {isPaused ? 'Resume container' : 'Pause container'}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -484,23 +499,29 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                 workspaceId={workspace.id}
               />
             ) : (
-              <Button
-                aria-label="Start ralph loop"
-                disabled={isStartingLoop}
-                onClick={handleStartLoop}
-                size="icon-xs"
-                title="Start Ralph Loop (rlph --once)"
-                variant="ghost"
-              >
-                <Play
-                  className={cn(
-                    'size-3.5',
-                    isStartingLoop
-                      ? 'animate-pulse text-muted-foreground'
-                      : 'text-success'
-                  )}
-                />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label="Start ralph loop"
+                      disabled={isStartingLoop}
+                      onClick={handleStartLoop}
+                      size="icon-xs"
+                      variant="ghost"
+                    />
+                  }
+                >
+                  <Play
+                    className={cn(
+                      'size-3.5',
+                      isStartingLoop
+                        ? 'animate-pulse text-muted-foreground'
+                        : 'text-success'
+                    )}
+                  />
+                </TooltipTrigger>
+                <TooltipContent>Start Ralph Loop</TooltipContent>
+              </Tooltip>
             )}
             <ReviewPrForm workspaceId={workspace.id} />
             <FixFindingsForm workspaceId={workspace.id} />
@@ -513,17 +534,24 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
               }}
               open={dialogOpen}
             >
-              <AlertDialogTrigger
-                render={
-                  <Button
-                    aria-label={`Destroy workspace ${workspace.branchName}`}
-                    size="icon-xs"
-                    variant="ghost"
-                  />
-                }
-              >
-                <Trash2 className="size-3.5 text-muted-foreground" />
-              </AlertDialogTrigger>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <AlertDialogTrigger
+                      render={
+                        <Button
+                          aria-label={`Destroy workspace ${workspace.branchName}`}
+                          size="icon-xs"
+                          variant="ghost"
+                        />
+                      }
+                    />
+                  }
+                >
+                  <Trash2 className="size-3.5 text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent>Destroy workspace</TooltipContent>
+              </Tooltip>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>

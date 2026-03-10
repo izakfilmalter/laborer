@@ -29,6 +29,11 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import {
   Field,
   FieldDescription,
   FieldError,
@@ -80,18 +85,24 @@ function ReviewPrForm({ workspaceId, onTerminalSpawned }: ReviewPrFormProps) {
 
   return (
     <Dialog onOpenChange={setOpen} open={open}>
-      <DialogTrigger
-        render={
-          <Button
-            aria-label="Review PR"
-            size="icon-xs"
-            title="Review PR (rlph review)"
-            variant="ghost"
-          />
-        }
-      >
-        <Eye className="size-3.5 text-chart-4" />
-      </DialogTrigger>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <DialogTrigger
+              render={
+                <Button
+                  aria-label="Review PR"
+                  size="icon-xs"
+                  variant="ghost"
+                />
+              }
+            />
+          }
+        >
+          <Eye className="size-3.5 text-chart-4" />
+        </TooltipTrigger>
+        <TooltipContent>Review PR</TooltipContent>
+      </Tooltip>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Review PR</DialogTitle>

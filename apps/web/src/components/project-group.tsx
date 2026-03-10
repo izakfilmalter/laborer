@@ -38,6 +38,11 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
@@ -111,19 +116,25 @@ function ProjectGroup({
           <CreateWorkspaceForm
             defaultProjectId={project.id}
             trigger={
-              <DialogTrigger
-                render={
-                  <Button
-                    aria-label={`Create workspace in ${project.name}`}
-                    className="h-7 w-7"
-                    size="icon-sm"
-                    title="Create Workspace"
-                    variant="ghost"
-                  />
-                }
-              >
-                <Plus className="size-3.5 text-muted-foreground" />
-              </DialogTrigger>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <DialogTrigger
+                      render={
+                        <Button
+                          aria-label={`Create workspace in ${project.name}`}
+                          className="h-7 w-7"
+                          size="icon-sm"
+                          variant="ghost"
+                        />
+                      }
+                    />
+                  }
+                >
+                  <Plus className="size-3.5 text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent>Create Workspace</TooltipContent>
+              </Tooltip>
             }
           />
           <ProjectSettingsModal
@@ -131,18 +142,25 @@ function ProjectGroup({
             projectName={project.name}
           />
           <AlertDialog onOpenChange={setDialogOpen} open={dialogOpen}>
-            <AlertDialogTrigger
-              render={
-                <Button
-                  aria-label={`Remove project ${project.name}`}
-                  className="h-7 w-7"
-                  size="icon-sm"
-                  variant="ghost"
-                />
-              }
-            >
-              <Trash2 className="size-3.5 text-muted-foreground" />
-            </AlertDialogTrigger>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <AlertDialogTrigger
+                    render={
+                      <Button
+                        aria-label={`Remove project ${project.name}`}
+                        className="h-7 w-7"
+                        size="icon-sm"
+                        variant="ghost"
+                      />
+                    }
+                  />
+                }
+              >
+                <Trash2 className="size-3.5 text-muted-foreground" />
+              </TooltipTrigger>
+              <TooltipContent>Remove project</TooltipContent>
+            </Tooltip>
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>Remove project?</AlertDialogTitle>

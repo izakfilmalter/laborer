@@ -53,6 +53,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
@@ -223,17 +228,24 @@ function TaskItem({ task }: TaskItemProps) {
               {task.source}
             </Badge>
             <AlertDialog onOpenChange={setDialogOpen} open={dialogOpen}>
-              <AlertDialogTrigger
-                render={
-                  <Button
-                    aria-label={`Remove task ${task.title}`}
-                    size="icon-xs"
-                    variant="ghost"
-                  />
-                }
-              >
-                <Trash2 className="size-3.5 text-muted-foreground" />
-              </AlertDialogTrigger>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <AlertDialogTrigger
+                      render={
+                        <Button
+                          aria-label={`Remove task ${task.title}`}
+                          size="icon-xs"
+                          variant="ghost"
+                        />
+                      }
+                    />
+                  }
+                >
+                  <Trash2 className="size-3.5 text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent>Remove task</TooltipContent>
+              </Tooltip>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Remove task?</AlertDialogTitle>

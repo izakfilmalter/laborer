@@ -7,6 +7,11 @@ import { CheckIcon, ClipboardIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { Button, type buttonVariants } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 interface CopyButtonProps
@@ -39,25 +44,32 @@ export function CopyButton({
   }, [hasCopied])
 
   return (
-    <Button
-      className={cn('relative z-10', className)}
-      onClick={() => {
-        copyToClipboardWithMeta(value).then(() => {
-          setHasCopied(true)
-        })
-      }}
-      size="icon-xs"
-      variant={variant}
-      {...props}
-    >
-      <span className="sr-only">Copy</span>
-      {pipe(
-        hasCopied,
-        Boolean.match({
-          onFalse: () => <ClipboardIcon />,
-          onTrue: () => <CheckIcon />,
-        })
-      )}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            className={cn('relative z-10', className)}
+            onClick={() => {
+              copyToClipboardWithMeta(value).then(() => {
+                setHasCopied(true)
+              })
+            }}
+            size="icon-xs"
+            variant={variant}
+            {...props}
+          />
+        }
+      >
+        <span className="sr-only">Copy</span>
+        {pipe(
+          hasCopied,
+          Boolean.match({
+            onFalse: () => <ClipboardIcon />,
+            onTrue: () => <CheckIcon />,
+          })
+        )}
+      </TooltipTrigger>
+      <TooltipContent>{hasCopied ? 'Copied' : 'Copy'}</TooltipContent>
+    </Tooltip>
   )
 }

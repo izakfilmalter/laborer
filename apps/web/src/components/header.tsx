@@ -3,6 +3,11 @@ import { RotateCcw } from 'lucide-react'
 import { useCallback } from 'react'
 
 import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 import { ModeToggle } from './mode-toggle'
 
@@ -14,10 +19,17 @@ function ResetButton() {
   }, [])
 
   return (
-    <Button onClick={handleReset} size="icon" variant="outline">
-      <RotateCcw className="h-[1.2rem] w-[1.2rem]" />
-      <span className="sr-only">Reset persistence</span>
-    </Button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button onClick={handleReset} size="icon" variant="outline" />
+        }
+      >
+        <RotateCcw className="h-[1.2rem] w-[1.2rem]" />
+        <span className="sr-only">Reset persistence</span>
+      </TooltipTrigger>
+      <TooltipContent>Reset persistence</TooltipContent>
+    </Tooltip>
   )
 }
 

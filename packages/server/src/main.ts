@@ -1,12 +1,12 @@
 /**
  * Laborer Server — Entry Point
  *
- * Bun server running Effect TS services. Manages all side effects:
+ * Node.js server running Effect TS services. Manages all side effects:
  * git operations, file system access, port allocation, and delegates
  * terminal operations to the standalone terminal service.
  *
  * Architecture:
- * - BunRuntime.runMain handles graceful shutdown (SIGINT/SIGTERM)
+ * - NodeRuntime.runMain handles graceful shutdown (SIGINT/SIGTERM)
  * - Layer.launch keeps the server running until interrupted
  * - All services compose via Effect Layers
  * - HttpRouter.Default.serve() creates the HTTP handler from the Default router tag
@@ -16,13 +16,14 @@
  * - Environment variables validated at import time via @laborer/env/server
  */
 
+import { createServer } from 'node:http'
 import {
   HttpMiddleware,
   HttpRouter,
   HttpServer,
   HttpServerResponse,
 } from '@effect/platform'
-import { BunHttpServer, BunRuntime } from '@effect/platform-bun'
+import { NodeHttpServer, NodeRuntime } from '@effect/platform-node'
 import { RpcSerialization, RpcServer } from '@effect/rpc'
 import { env } from '@laborer/env/server'
 import { LaborerRpcs } from '@laborer/shared/rpc'
@@ -87,9 +88,9 @@ const RpcLive = RpcServer.layer(LaborerRpcs).pipe(
 /**
  * Server Layer
  *
- * Provides the Bun HTTP server on the configured port.
+ * Provides the Node.js HTTP server on the configured port.
  */
-const ServerLive = BunHttpServer.layer({ port: env.PORT })
+const ServerLive = NodeHttpServer.layer(createServer, { port: env.PORT })
 
 /**
  * Application Layer
@@ -103,7 +104,7 @@ const ServerLive = BunHttpServer.layer({ port: env.PORT })
  *   + SyncRpcLive — LiveStore sync RPC handler (GET /rpc via layerProtocolWebsocket)
  *   + RpcSerialization.layerJson — wire format for RPC messages
  *   + LaborerStoreLive — LiveStore with SQLite persistence
- *   + ServerLive — Bun HTTP server
+ *   + ServerLive — Node.js HTTP server
  *
  * Issue #143: TerminalManager, PtyHostClient, and TerminalWsRouteLive removed.
  * Terminal operations are delegated to the standalone terminal service via
@@ -160,4 +161,4 @@ const HttpLive = HttpLiveBase.pipe(
  */
 const main = HttpLive.pipe(Layer.launch, Effect.scoped)
 
-BunRuntime.runMain(main)
+NodeRuntime.runMain(main)

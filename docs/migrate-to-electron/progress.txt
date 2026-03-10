@@ -50,10 +50,37 @@
 - All 279 tests pass (1 pre-existing cache-hit flake in deps-image-cache.e2e.test.ts unrelated to this change)
 - Formatting clean (no fixes needed)
 
+### Issue 4: Server Bun-to-Node runtime swap — DONE
+- Replaced `@effect/platform-bun` with `@effect/platform-node` in `packages/server/src/main.ts`:
+  - `BunHttpServer.layer({ port })` → `NodeHttpServer.layer(createServer, { port })`
+  - `BunRuntime.runMain(main)` → `NodeRuntime.runMain(main)`
+  - Added `import { createServer } from 'node:http'`
+  - Updated comments from "Bun server" to "Node.js server"
+- Replaced `bun:sqlite` with `better-sqlite3` in `packages/server/src/services/sync-backend.ts`:
+  - `import { Database } from 'bun:sqlite'` → `import Database from 'better-sqlite3'`
+  - `new Database(path, { create: true })` → `new Database(path)` (better-sqlite3 creates by default)
+  - `db.exec('PRAGMA ...')` → `db.pragma('...')` (idiomatic better-sqlite3 API)
+  - `db.query(...)` → `db.prepare(...)` (all 8 prepared statement sites)
+  - `contextRow === null` → `contextRow === undefined` (better-sqlite3 returns undefined for no match)
+  - All typed generics translated: `db.query<Result, Params>()` → `db.prepare<Params, Result>()` (param order swapped)
+  - WAL mode, prepared statements, transaction-wrapped batch inserts all preserved
+- Updated `packages/server/tsconfig.json`: removed `"bun"` from types array (now `["node"]` only)
+- Updated `packages/server/package.json`:
+  - Swapped `@effect/platform-bun` → `@effect/platform-node` in dependencies
+  - Added `better-sqlite3` (^12.6.2) to dependencies
+  - Removed `@types/bun` from devDependencies
+  - Added `@types/better-sqlite3` (^7.6.13) to devDependencies
+  - Added `tsx` (^4.19.4) to devDependencies
+  - Updated scripts: `bun run --watch src/main.ts` → `tsx --watch src/main.ts`, `bun run src/main.ts` → `tsx src/main.ts`
+- No root package.json changes needed (`@effect/platform-node` already in catalog at 0.103.0)
+- TypeScript compiles without errors
+- All 280 tests pass
+- Formatting clean
+
 ## Now Unblocked
-- Issue 4: Server Bun-to-Node runtime swap (all spawn sites migrated)
+- Issue 8: Spawn sidecars as child processes (server-side blocker resolved)
+- Issue 16: Service bundling for distribution (server-side blocker resolved)
 
 ## Ready to start (no blockers):
-- Issue 4: Server Bun-to-Node runtime swap
 - Issue 5: Terminal + MCP Bun-to-Node runtime swap
 - Issue 6: Electron shell scaffold + dev tooling

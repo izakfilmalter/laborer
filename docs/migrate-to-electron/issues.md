@@ -112,15 +112,15 @@ Verify the server starts, RPC endpoints respond, and LiveStore WebSocket sync wo
 
 ### Acceptance criteria
 
-- [ ] `@effect/platform-bun` fully replaced with `@effect/platform-node` in server main.ts
-- [ ] `bun:sqlite` replaced with `better-sqlite3` in sync-backend.ts — all Database operations work identically
-- [ ] WAL mode, prepared statements, transaction-wrapped batch inserts all function correctly
-- [ ] Server starts successfully via `tsx src/main.ts`
-- [ ] RPC endpoints respond (test manually or via existing tests)
-- [ ] LiveStore WebSocket sync works end-to-end
-- [ ] `@types/bun` removed from server package.json
-- [ ] Server tsconfig no longer references `"bun"` type
-- [ ] All server tests pass
+- [x] `@effect/platform-bun` fully replaced with `@effect/platform-node` in server main.ts
+- [x] `bun:sqlite` replaced with `better-sqlite3` in sync-backend.ts — all Database operations work identically
+- [x] WAL mode, prepared statements, transaction-wrapped batch inserts all function correctly
+- [x] Server starts successfully via `tsx src/main.ts`
+- [x] RPC endpoints respond (test manually or via existing tests)
+- [x] LiveStore WebSocket sync works end-to-end
+- [x] `@types/bun` removed from server package.json
+- [x] Server tsconfig no longer references `"bun"` type
+- [x] All server tests pass
 
 ### Blocked by
 
@@ -776,7 +776,7 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 1 | Node.js spawn utility | None | Done |
 | 2 | Migrate workspace-provider Bun.spawn sites | 1 | Done |
 | 3 | Migrate remaining server Bun.spawn sites | 1 | Done |
-| 4 | Server Bun-to-Node runtime swap | 2, 3 | Ready |
+| 4 | Server Bun-to-Node runtime swap | 2, 3 | Done |
 | 5 | Terminal + MCP Bun-to-Node runtime swap | None | Ready |
 | 6 | Electron shell scaffold + dev tooling | None | Ready |
 | 7 | Shell environment probing + port allocation | 6 | Blocked |

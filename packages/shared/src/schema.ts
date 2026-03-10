@@ -41,6 +41,14 @@ export const workspaces = State.SQLite.table({
     containerStatus: State.SQLite.text({ nullable: true }),
     /** Current step of the background container setup process. Null when setup is complete or not started. */
     containerSetupStep: State.SQLite.text({ nullable: true }),
+    /** Pull request number associated with this workspace's branch. Null when no PR exists. */
+    prNumber: State.SQLite.integer({ nullable: true }),
+    /** Full URL to the pull request on GitHub. Null when no PR exists. */
+    prUrl: State.SQLite.text({ nullable: true }),
+    /** Pull request title. Null when no PR exists. */
+    prTitle: State.SQLite.text({ nullable: true }),
+    /** Pull request state: 'OPEN', 'CLOSED', 'MERGED'. Null when no PR exists. */
+    prState: State.SQLite.text({ nullable: true }),
   },
 })
 
@@ -183,6 +191,17 @@ export const workspaceDestroyed = Events.synced({
   name: 'v1.WorkspaceDestroyed',
   schema: Schema.Struct({
     id: Schema.String,
+  }),
+})
+
+export const workspacePrUpdated = Events.synced({
+  name: 'v1.WorkspacePrUpdated',
+  schema: Schema.Struct({
+    id: Schema.String,
+    prNumber: Schema.NullOr(Schema.Number),
+    prUrl: Schema.NullOr(Schema.String),
+    prTitle: Schema.NullOr(Schema.String),
+    prState: Schema.NullOr(Schema.String),
   }),
 })
 
@@ -412,6 +431,7 @@ export const events = {
   workspaceStatusChanged,
   workspaceBranchChanged,
   workspaceDestroyed,
+  workspacePrUpdated,
   containerStarted,
   containerStopped,
   containerPaused,
@@ -501,12 +521,18 @@ const materializers = State.SQLite.materializers(events, {
       containerImage: null,
       containerStatus: null,
       containerSetupStep: null,
+      prNumber: null,
+      prUrl: null,
+      prTitle: null,
+      prState: null,
     }),
   'v1.WorkspaceStatusChanged': ({ id, status }) =>
     workspaces.update({ status }).where({ id }),
   'v1.WorkspaceBranchChanged': ({ id, branchName }) =>
     workspaces.update({ branchName }).where({ id }),
   'v1.WorkspaceDestroyed': ({ id }) => workspaces.delete().where({ id }),
+  'v1.WorkspacePrUpdated': ({ id, prNumber, prUrl, prTitle, prState }) =>
+    workspaces.update({ prNumber, prUrl, prTitle, prState }).where({ id }),
   'v1.ContainerStarted': ({
     workspaceId,
     containerId,

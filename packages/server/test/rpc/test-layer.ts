@@ -110,55 +110,64 @@ const TestDepsImageService = Layer.succeed(
   })
 )
 
+/**
+ * Leaf layers with no service dependencies (Group 0).
+ */
+const LeafLayers = Layer.mergeAll(
+  ConfigService.layer,
+  RepositoryEventBus.layer,
+  FileWatcher.layer,
+  RepositoryIdentity.layer,
+  WorktreeDetector.layer,
+  TestDepsImageService,
+  TestDockerDetection,
+  PortAllocator.make(4100, 4199)
+)
+
+/**
+ * Layers that depend only on LaborerStore + leaf layers (Group 1).
+ */
+const Group1Layers = Layer.mergeAll(
+  TaskManager.layer,
+  BranchStateTracker.layer,
+  ContainerService.layer,
+  PrdStorageService.layer,
+  DiffService.layer,
+  WorktreeReconciler.layer
+)
+
+/**
+ * Layers that depend on Group 1 (Group 2).
+ */
+const Group2Layers = Layer.mergeAll(
+  GithubTaskImporter.layer,
+  LinearTaskImporter.layer,
+  RepositoryWatchCoordinator.layer
+)
+
+/**
+ * Full service dependency stack built bottom-up.
+ * Each group uses provideMerge so all services remain available as outputs.
+ */
+const ServiceLayers = WorkspaceProvider.layer.pipe(
+  Layer.provideMerge(ProjectRegistry.layer),
+  Layer.provideMerge(Group2Layers),
+  Layer.provideMerge(Group1Layers)
+)
+
 export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
-  Layer.provide(LinearTaskImporter.layer),
-  Layer.provide(GithubTaskImporter.layer),
-  Layer.provide(TaskManager.layer),
-  Layer.provide(PrdStorageService.layer),
-  Layer.provide(DiffService.layer),
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
-  Layer.provide(WorkspaceProvider.layer),
-  Layer.provide(ContainerService.layer),
-  Layer.provide(TestDepsImageService),
-  Layer.provide(TestDockerDetection),
-  Layer.provide(ConfigService.layer),
-  Layer.provide(ProjectRegistry.layer),
-  Layer.provide(RepositoryWatchCoordinator.layer),
-  Layer.provide(BranchStateTracker.layer),
-  Layer.provide(ConfigService.layer),
-  Layer.provide(RepositoryEventBus.layer),
-  Layer.provide(FileWatcher.layer),
-  Layer.provide(WorktreeReconciler.layer),
-  Layer.provide(WorktreeDetector.layer),
-  Layer.provide(RepositoryIdentity.layer),
-  Layer.provide(PortAllocator.make(4100, 4199)),
+  Layer.provide(ServiceLayers),
+  Layer.provide(LeafLayers),
   Layer.provide(TestLaborerStore)
 )
 
 const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
-  Layer.provide(LinearTaskImporter.layer),
-  Layer.provide(GithubTaskImporter.layer),
-  Layer.provide(TaskManager.layer),
-  Layer.provide(PrdStorageService.layer),
-  Layer.provide(DiffService.layer),
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
-  Layer.provide(WorkspaceProvider.layer),
-  Layer.provide(ContainerService.layer),
-  Layer.provide(TestDepsImageService),
-  Layer.provide(TestDockerDetection),
-  Layer.provide(ConfigService.layer),
-  Layer.provide(ProjectRegistry.layer),
-  Layer.provide(RepositoryWatchCoordinator.layer),
-  Layer.provide(BranchStateTracker.layer),
-  Layer.provide(ConfigService.layer),
-  Layer.provide(RepositoryEventBus.layer),
-  Layer.provide(FileWatcher.layer),
-  Layer.provide(WorktreeReconciler.layer),
-  Layer.provide(WorktreeDetector.layer),
-  Layer.provide(RepositoryIdentity.layer),
-  Layer.provide(PortAllocator.make(4100, 4199)),
+  Layer.provide(ServiceLayers),
+  Layer.provide(LeafLayers),
   Layer.provideMerge(TestLaborerStore)
 )
 

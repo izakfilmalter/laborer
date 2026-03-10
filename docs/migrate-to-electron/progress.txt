@@ -1,10 +1,27 @@
 # Progress: Migrate from Tauri to Electron (and Bun to Node.js)
 
-## Status: Not Started
+## Status: In Progress
 
-No work has been done yet. See issues.md for the full breakdown.
+## Completed
 
-Ready to start (no blockers):
-- Issue 1: Node.js spawn utility
+### Issue 1: Node.js spawn utility — DONE
+- Created `packages/server/src/lib/spawn.ts` — a `child_process`-based spawn wrapper with Bun.spawn()-compatible ergonomics
+- Returns Web ReadableStreams for stdout/stderr so existing `new Response(proc.stdout).text()` pattern works unchanged
+- Supports all usage patterns found in the codebase:
+  - Simple command execution with exit code
+  - stdout/stderr capture via ReadableStream
+  - Parallel stdout+stderr reads with Promise.all
+  - Process-to-process piping (stdin: anotherProc.stdout)
+  - stdout: 'ignore' mode
+  - Custom cwd and env options
+  - Process killing
+- Created `packages/server/test/spawn.test.ts` with 16 unit tests covering all patterns
+- All tests passing, TypeScript compiles, formatting clean
+
+## Now Unblocked
+- Issue 2: Migrate workspace-provider Bun.spawn sites
+- Issue 3: Migrate remaining server Bun.spawn sites
+
+## Ready to start (no blockers):
 - Issue 5: Terminal + MCP Bun-to-Node runtime swap
 - Issue 6: Electron shell scaffold + dev tooling

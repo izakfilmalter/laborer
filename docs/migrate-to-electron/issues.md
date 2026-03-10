@@ -14,12 +14,12 @@ This is a foundational module — all ~40 `Bun.spawn()` call sites across the se
 
 ### Acceptance criteria
 
-- [ ] `spawn()` function wraps `child_process.spawn()` and returns `{ exited: Promise<number>, stdout, stderr, kill(), pid }`
-- [ ] stdout/stderr can be collected as full strings via `.text()` or similar
-- [ ] Supports `cwd`, `env`, `stdin` (including piping from another process's stdout) options
-- [ ] Supports `stdout: 'pipe'` and `stderr: 'pipe'` modes
-- [ ] Unit tests cover: successful exit, non-zero exit, stdout/stderr collection, process killing, stdin piping between processes
-- [ ] Tests run and pass under vitest (Node.js)
+- [x] `spawn()` function wraps `child_process.spawn()` and returns `{ exited: Promise<number>, stdout, stderr, kill(), pid }`
+- [x] stdout/stderr can be collected as full strings via `.text()` or similar
+- [x] Supports `cwd`, `env`, `stdin` (including piping from another process's stdout) options
+- [x] Supports `stdout: 'pipe'` and `stderr: 'pipe'` modes
+- [x] Unit tests cover: successful exit, non-zero exit, stdout/stderr collection, process killing, stdin piping between processes
+- [x] Tests run and pass under vitest (Node.js)
 
 ### Blocked by
 
@@ -773,9 +773,9 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
-| 1 | Node.js spawn utility | None | Ready |
-| 2 | Migrate workspace-provider Bun.spawn sites | 1 | Blocked |
-| 3 | Migrate remaining server Bun.spawn sites | 1 | Blocked |
+| 1 | Node.js spawn utility | None | Done |
+| 2 | Migrate workspace-provider Bun.spawn sites | 1 | Ready |
+| 3 | Migrate remaining server Bun.spawn sites | 1 | Ready |
 | 4 | Server Bun-to-Node runtime swap | 2, 3 | Blocked |
 | 5 | Terminal + MCP Bun-to-Node runtime swap | None | Ready |
 | 6 | Electron shell scaffold + dev tooling | None | Ready |

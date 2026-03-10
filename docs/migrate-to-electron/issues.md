@@ -510,16 +510,16 @@ Port the desktop integration features from Tauri's Rust code to Electron:
 
 ### Acceptance criteria
 
-- [ ] Tray icon appears in macOS menu bar
-- [ ] Tray icon is crisp on Retina displays (uses template image)
-- [ ] Tray tooltip shows workspace count
-- [ ] Tray context menu has "Show Laborer" and "Quit" items
-- [ ] "Show Laborer" focuses/shows the window
-- [ ] "Quit" terminates the app (including child processes)
-- [ ] `Cmd+Shift+L` focuses the window from any app
-- [ ] Closing the window hides it (doesn't quit)
-- [ ] `Cmd+Q` actually quits (not just hides)
-- [ ] Tray tooltip updates when workspace count changes
+- [x] Tray icon appears in macOS menu bar
+- [x] Tray icon is crisp on Retina displays (uses template image)
+- [x] Tray tooltip shows workspace count
+- [x] Tray context menu has "Show Laborer" and "Quit" items
+- [x] "Show Laborer" focuses/shows the window
+- [x] "Quit" terminates the app (including child processes)
+- [x] `Cmd+Shift+L` focuses the window from any app
+- [x] Closing the window hides it (doesn't quit)
+- [x] `Cmd+Q` actually quits (not just hides)
+- [x] Tray tooltip updates when workspace count changes
 
 ### Blocked by
 
@@ -785,7 +785,7 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 10 | DesktopBridge contract + service URL passing | 9 | Done |
 | 11 | Frontend Tauri-to-Electron migration | 10 | Done |
 | 12 | Custom protocol + production frontend serving | 11 | Done |
-| 13 | System tray, global shortcut, close-to-tray | 8 | Ready |
+| 13 | System tray, global shortcut, close-to-tray | 8 | Done |
 | 14 | Window state persistence + application menu | 6 | Ready |
 | 15 | Auto-update system | 6 | Ready |
 | 16 | Service bundling for distribution | 4, 5 | Ready |

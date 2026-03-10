@@ -340,8 +340,42 @@
 - TypeScript compiles without errors
 - Formatting clean (281 files checked, 0 errors)
 
+### Issue 13: System tray, global shortcut, close-to-tray — DONE
+- Created `apps/desktop/src/tray.ts` — TrayManager class and global shortcut registration:
+  - `TrayManager` class manages system tray icon lifecycle:
+    - Creates `Tray` with template image on macOS (auto dark/light mode) or full-color icon on other platforms
+    - Dynamic tooltip: "Laborer — N running workspaces" (matching Tauri format)
+    - Context menu: "Show Laborer" (focuses/shows window) and "Quit" (triggers app.quit())
+    - Left-click on tray icon focuses the main window
+    - `updateWorkspaceCount(count)` updates tooltip text
+    - `destroy()` for cleanup during shutdown
+  - `registerGlobalShortcut()` — registers `Cmd+Shift+L` (macOS) / `Ctrl+Shift+L` to focus window from any app
+    - Returns cleanup function that unregisters the shortcut
+    - Logs warning if shortcut is already registered by another app
+  - `formatTrayTooltip(count)` — pure function for tooltip text formatting (tested)
+  - `focusMainWindow()` — shared helper: restore if minimized, show if hidden, focus
+- Created macOS tray template images:
+  - `apps/desktop/resources/trayIconTemplate.png` (22x22) — standard resolution
+  - `apps/desktop/resources/trayIconTemplate@2x.png` (44x44) — Retina resolution
+  - Electron auto-detects "Template" suffix and adapts to dark/light menu bar
+- Updated `apps/desktop/src/main.ts`:
+  - Close-to-tray: intercepts window `close` event, hides instead of closing when not quitting
+  - `isQuitting` flag distinguishes close-button (hide) from Cmd+Q/tray-Quit (actually quit)
+  - `before-quit` event sets `isQuitting = true` so close-to-tray doesn't block real quit
+  - Creates `TrayManager` after window creation, passes `() => mainWindow` callback
+  - Registers global shortcut after window creation, stores cleanup function
+  - Wires `setTrayCountHandler()` from IPC to `trayManager.updateWorkspaceCount()`
+  - `activate` event: shows hidden window on dock click (close-to-tray recovery)
+  - Shutdown: unregisters global shortcut, destroys tray, then kills sidecars
+- Created `apps/desktop/test/tray.test.ts` — 5 unit tests for `formatTrayTooltip`:
+  - Zero count, singular, plural, large count, negative edge case
+- tsdown build succeeds: main.js 41.50 KB, preload.js 2.09 KB
+- All 68 desktop tests pass (63 existing + 5 new tray tests)
+- All 280 server + 73 terminal + 19 MCP tests pass (no regressions)
+- TypeScript compiles without errors
+- Formatting clean (283 files checked, 0 errors)
+
 ## Ready to start (no blockers):
-- Issue 13: System tray, global shortcut, close-to-tray
 - Issue 14: Window state persistence + application menu
 - Issue 15: Auto-update system
 - Issue 16: Service bundling for distribution

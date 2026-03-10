@@ -4,7 +4,11 @@ import { app, BrowserWindow } from 'electron'
 
 import { fixPath } from './fix-path.js'
 import { HealthMonitor } from './health.js'
-import { registerIpcHandlers, setRestartSidecarHandler } from './ipc.js'
+import {
+  registerIpcHandlers,
+  setRestartSidecarHandler,
+  setTrayCountHandler,
+} from './ipc.js'
 import { reserveServicePorts, type ServicePorts } from './ports.js'
 import {
   DESKTOP_SCHEME,
@@ -13,6 +17,7 @@ import {
   resolveStaticRoot,
 } from './protocol.js'
 import { SidecarManager } from './sidecar.js'
+import { registerGlobalShortcut, TrayManager } from './tray.js'
 
 // Fix PATH before anything else — must happen synchronously before
 // any child processes are spawned. On macOS, apps launched from
@@ -61,7 +66,17 @@ let sidecarManager: SidecarManager | null = null
  */
 let healthMonitor: HealthMonitor | null = null
 
-/** Whether the app is in the process of quitting. */
+/** System tray icon manager. */
+const trayManager = new TrayManager()
+
+/** Cleanup function for the global shortcut. */
+let unregisterShortcut: (() => void) | null = null
+
+/**
+ * Whether the app is in the process of quitting.
+ * Used by close-to-tray to distinguish between "hide" (click X) and
+ * "actually quit" (Cmd+Q, tray Quit, or `app.quit()`).
+ */
 let isQuitting = false
 
 /** Get the reserved service ports. Throws if called before bootstrap. */
@@ -113,12 +128,28 @@ function createWindow(): void {
       .catch(console.error)
   }
 
+  // Close-to-tray: when the user clicks the close button (X or Cmd+W),
+  // hide the window instead of quitting. The app continues running in
+  // the system tray. The user can actually quit via Cmd+Q, tray "Quit",
+  // or the app menu "Quit" — those set `isQuitting = true` via `before-quit`.
+  mainWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault()
+      mainWindow?.hide()
+    }
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
 
   // Register IPC handlers for the DesktopBridge contract.
   registerIpcHandlers(mainWindow)
+
+  // Wire tray workspace count updates from the renderer to the tray manager.
+  setTrayCountHandler((count) => {
+    trayManager.updateWorkspaceCount(count)
+  })
 
   // Wire sidecar restart requests from the renderer to the health monitor.
   setRestartSidecarHandler(async (name) => {
@@ -215,10 +246,20 @@ app
 
     createWindow()
 
+    // Create the system tray icon with dynamic tooltip and context menu.
+    trayManager.create(() => mainWindow)
+
+    // Register global shortcut: Cmd+Shift+L (macOS) / Ctrl+Shift+L (other).
+    unregisterShortcut = registerGlobalShortcut(() => mainWindow)
+
     app.on('activate', () => {
       // macOS: re-create window when dock icon is clicked and no windows exist.
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow()
+      } else if (mainWindow && !mainWindow.isVisible()) {
+        // If the window was hidden by close-to-tray, show it again.
+        mainWindow.show()
+        mainWindow.focus()
       }
     })
   })
@@ -236,14 +277,23 @@ app.on('window-all-closed', () => {
 // ---------------------------------------------------------------------------
 
 /**
- * Shutdown handler: cancel pending restarts, then kill all sidecar
- * child processes before the app exits.
+ * Shutdown handler: cancel pending restarts, unregister global shortcut,
+ * destroy the tray, then kill all sidecar child processes before the app exits.
  */
 function shutdown(): void {
   if (isQuitting) {
     return
   }
   isQuitting = true
+
+  // Unregister the global shortcut.
+  if (unregisterShortcut) {
+    unregisterShortcut()
+    unregisterShortcut = null
+  }
+
+  // Destroy the system tray.
+  trayManager.destroy()
 
   // Stop the health monitor first — cancels pending restart timers
   // so killed processes aren't immediately re-spawned.

@@ -1,0 +1,10 @@
+# Progress: Migrate from Tauri to Electron (and Bun to Node.js)
+
+## Status: Not Started
+
+No work has been done yet. See issues.md for the full breakdown.
+
+Ready to start (no blockers):
+- Issue 1: Node.js spawn utility
+- Issue 5: Terminal + MCP Bun-to-Node runtime swap
+- Issue 6: Electron shell scaffold + dev tooling

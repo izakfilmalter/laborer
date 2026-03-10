@@ -30,11 +30,17 @@ import { usePanelActions } from '@/panels/panel-context'
 const reviewPrMutation = LaborerClient.mutation('rlph.review')
 
 interface ReviewPrFormProps {
+  /** Disable the button (e.g., when no PR exists for the branch). */
+  readonly disabled?: boolean
   readonly onTerminalSpawned?: () => void
   readonly workspaceId: string
 }
 
-function ReviewPrForm({ workspaceId, onTerminalSpawned }: ReviewPrFormProps) {
+function ReviewPrForm({
+  workspaceId,
+  onTerminalSpawned,
+  disabled,
+}: ReviewPrFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const reviewPr = useAtomSet(reviewPrMutation, { mode: 'promise' })
   const panelActions = usePanelActions()
@@ -64,7 +70,7 @@ function ReviewPrForm({ workspaceId, onTerminalSpawned }: ReviewPrFormProps) {
         render={
           <Button
             aria-label="Review PR"
-            disabled={isSubmitting}
+            disabled={disabled || isSubmitting}
             onClick={handleClick}
             size="icon-xs"
             variant="ghost"
@@ -73,7 +79,9 @@ function ReviewPrForm({ workspaceId, onTerminalSpawned }: ReviewPrFormProps) {
       >
         <Eye className="size-3.5 text-chart-4" />
       </TooltipTrigger>
-      <TooltipContent>Review PR</TooltipContent>
+      <TooltipContent>
+        {disabled ? 'No PR found for this branch' : 'Review PR'}
+      </TooltipContent>
     </Tooltip>
   )
 }

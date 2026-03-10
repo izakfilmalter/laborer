@@ -40,7 +40,14 @@ import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { prds, workspaces } from '@laborer/shared/schema'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
-import { ExternalLink, GitBranch, Pause, Play, Trash2 } from 'lucide-react'
+import {
+  ExternalLink,
+  GitBranch,
+  GitPullRequest,
+  Pause,
+  Play,
+  Trash2,
+} from 'lucide-react'
 import { type FC, useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -89,6 +96,17 @@ const unpauseContainerMutation = LaborerClient.mutation('container.unpause')
 
 /** Prefix used to associate workspaces with plans by branch name convention. */
 const PLAN_BRANCH_PREFIX = 'plan/'
+
+/** Map PR state to icon color class. */
+function getPrStateColorClass(prState: string | null): string {
+  if (prState === 'MERGED') {
+    return 'text-purple-500'
+  }
+  if (prState === 'CLOSED') {
+    return 'text-destructive'
+  }
+  return 'text-success'
+}
 
 type WorkspaceStatus =
   | 'creating'
@@ -351,6 +369,10 @@ interface WorkspaceItemProps {
     readonly containerUrl: string | null
     readonly containerStatus: string | null
     readonly containerSetupStep: string | null
+    readonly prNumber: number | null
+    readonly prUrl: string | null
+    readonly prTitle: string | null
+    readonly prState: string | null
   }
 }
 
@@ -448,13 +470,38 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
               />
             </CardTitle>
           </div>
-          <Badge
-            className={cn('shrink-0 border', getStatusClasses(displayStatus))}
-            variant="outline"
-          >
-            <StatusDot status={displayStatus} />
-            {displayStatus}
-          </Badge>
+          <div className="flex shrink-0 items-center gap-1">
+            {workspace.prNumber != null && workspace.prUrl != null && (
+              <Tooltip>
+                <TooltipTrigger>
+                  <a
+                    className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-xs transition-colors hover:bg-accent"
+                    href={workspace.prUrl}
+                    rel="noopener"
+                    target="_blank"
+                  >
+                    <GitPullRequest
+                      className={cn(
+                        'size-3',
+                        getPrStateColorClass(workspace.prState)
+                      )}
+                    />
+                    <span>#{workspace.prNumber}</span>
+                  </a>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {workspace.prTitle ?? `PR #${workspace.prNumber}`}
+                </TooltipContent>
+              </Tooltip>
+            )}
+            <Badge
+              className={cn('shrink-0 border', getStatusClasses(displayStatus))}
+              variant="outline"
+            >
+              <StatusDot status={displayStatus} />
+              {displayStatus}
+            </Badge>
+          </div>
         </div>
         <div className="flex items-center justify-between gap-2">
           {workspace.containerUrl ? (
@@ -526,8 +573,14 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                 <TooltipContent>Start Ralph Loop</TooltipContent>
               </Tooltip>
             )}
-            <ReviewPrForm workspaceId={workspace.id} />
-            <FixFindingsForm workspaceId={workspace.id} />
+            <ReviewPrForm
+              disabled={workspace.prNumber == null}
+              workspaceId={workspace.id}
+            />
+            <FixFindingsForm
+              disabled={workspace.prNumber == null}
+              workspaceId={workspace.id}
+            />
             <AlertDialog
               onOpenChange={(open) => {
                 setDialogOpen(open)

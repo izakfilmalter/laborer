@@ -22,6 +22,7 @@ import { DockerDetection } from '../services/docker-detection.js'
 import { GithubTaskImporter } from '../services/github-task-importer.js'
 import { LaborerStore } from '../services/laborer-store.js'
 import { LinearTaskImporter } from '../services/linear-task-importer.js'
+import { PrWatcher } from '../services/pr-watcher.js'
 import {
   type PrdStorageError,
   PrdStorageService,
@@ -81,12 +82,14 @@ const toTaskResponse = (task: {
 })
 
 /**
- * Auto-detect the PR number for a workspace's branch using `gh pr view`.
+ * Detect the PR number for a workspace's branch.
  *
- * Looks up the workspace in LiveStore to get its worktree path, then
- * runs `gh pr view --json number` in that directory. If no PR exists
- * for the branch, yields an RpcError so the caller can surface a clear
- * message to the user.
+ * First checks the LiveStore workspace row for a cached `prNumber`
+ * (populated by PrWatcher polling). If not available yet, falls back
+ * to running `gh pr view --json number` in the worktree directory.
+ *
+ * If no PR exists for the branch, yields an RpcError so the caller
+ * can surface a clear message to the user.
  */
 const detectPrNumber = Effect.fn('detectPrNumber')(function* (
   workspaceId: string
@@ -107,6 +110,12 @@ const detectPrNumber = Effect.fn('detectPrNumber')(function* (
 
   const workspace = workspaceOpt.value
 
+  // Fast path: use cached PR number from PrWatcher polling
+  if (typeof workspace.prNumber === 'number' && workspace.prNumber > 0) {
+    return workspace.prNumber
+  }
+
+  // Slow path: fall back to gh CLI if PrWatcher hasn't polled yet
   const { exitCode, stdout, stderr } = yield* Effect.tryPromise({
     try: async () => {
       const proc = Bun.spawn(['gh', 'pr', 'view', '--json', 'number'], {
@@ -722,9 +731,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         )
 
         // Issue #85: Auto-start diff polling when workspace is created
+        // Also start PR polling to detect associated pull requests
         if (workspace.status === 'running') {
           const diffService = yield* DiffService
           yield* diffService.startPolling(workspace.id)
+          const prWatcher = yield* PrWatcher
+          yield* prWatcher.startPolling(workspace.id)
         }
 
         return {
@@ -746,6 +758,10 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         // Issue #85: Stop diff polling before destroying the workspace.
         const diffService = yield* DiffService
         yield* diffService.stopPolling(workspaceId)
+
+        // Stop PR polling before destroying the workspace.
+        const prWatcher = yield* PrWatcher
+        yield* prWatcher.stopPolling(workspaceId)
 
         // Issue #44/#143: Kill all workspace terminals via terminal service.
         const tc = yield* TerminalClient
@@ -938,6 +954,8 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
             if (workspace.status === 'running') {
               const diffService = yield* DiffService
               yield* diffService.startPolling(workspace.id)
+              const prWatcher = yield* PrWatcher
+              yield* prWatcher.startPolling(workspace.id)
             }
           }
         }
@@ -958,6 +976,9 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
             yield* Effect.gen(function* () {
               const diffService = yield* DiffService
               yield* diffService.stopPolling(workspace.id)
+
+              const prWatcher = yield* PrWatcher
+              yield* prWatcher.stopPolling(workspace.id)
 
               const tc = yield* TerminalClient
               yield* tc.killAllForWorkspace(workspace.id)

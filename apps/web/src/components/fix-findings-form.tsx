@@ -30,6 +30,8 @@ import { usePanelActions } from '@/panels/panel-context'
 const fixFindingsMutation = LaborerClient.mutation('rlph.fix')
 
 interface FixFindingsFormProps {
+  /** Disable the button (e.g., when no PR exists for the branch). */
+  readonly disabled?: boolean
   readonly onTerminalSpawned?: () => void
   readonly workspaceId: string
 }
@@ -37,6 +39,7 @@ interface FixFindingsFormProps {
 function FixFindingsForm({
   workspaceId,
   onTerminalSpawned,
+  disabled,
 }: FixFindingsFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const fixFindings = useAtomSet(fixFindingsMutation, { mode: 'promise' })
@@ -67,7 +70,7 @@ function FixFindingsForm({
         render={
           <Button
             aria-label="Fix Findings"
-            disabled={isSubmitting}
+            disabled={disabled || isSubmitting}
             onClick={handleClick}
             size="icon-xs"
             variant="ghost"
@@ -76,7 +79,9 @@ function FixFindingsForm({
       >
         <Wrench className="size-3.5 text-warning" />
       </TooltipTrigger>
-      <TooltipContent>Fix Findings</TooltipContent>
+      <TooltipContent>
+        {disabled ? 'No PR found for this branch' : 'Fix Findings'}
+      </TooltipContent>
     </Tooltip>
   )
 }

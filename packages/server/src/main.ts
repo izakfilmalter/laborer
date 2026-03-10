@@ -40,6 +40,7 @@ import { LaborerStoreLive } from './services/laborer-store.js'
 import { LinearTaskImporter } from './services/linear-task-importer.js'
 import { McpRegistrar } from './services/mcp-registrar.js'
 import { PortAllocator } from './services/port-allocator.js'
+import { PrWatcher } from './services/pr-watcher.js'
 import { PrdStorageService } from './services/prd-storage-service.js'
 import { ProjectRegistry } from './services/project-registry.js'
 import { RepositoryEventBus } from './services/repository-event-bus.js'
@@ -122,6 +123,7 @@ const HttpLiveBase = HttpRouter.Default.serve((httpApp) =>
   Layer.provide(TaskManager.layer),
   Layer.provide(PrdStorageService.layer),
   Layer.provide(DiffService.layer),
+  Layer.provide(PrWatcher.layer),
   Layer.provide(TerminalClient.layer),
   Layer.provide(WorkspaceProvider.layer),
   Layer.provide(ContainerService.layer),

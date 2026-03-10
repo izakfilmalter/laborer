@@ -169,6 +169,10 @@ describe('LiveStore schema', () => {
           containerImage: null,
           containerStatus: null,
           containerSetupStep: null,
+          prNumber: null,
+          prUrl: null,
+          prTitle: null,
+          prState: null,
         })
 
         store.commit(

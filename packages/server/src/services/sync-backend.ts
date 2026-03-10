@@ -532,7 +532,8 @@ const SyncRpcHandlersLive = SyncWsRpc.toLayer({
 
 /**
  * Data directory for sync SQLite persistence, configurable via DATA_DIR env var.
- * Defaults to `"./data"` when DATA_DIR is not set.
+ * Defaults to `~/.config/laborer/data` when DATA_DIR is not set, ensuring
+ * all worktrees of the same repo share the same database.
  */
 const DATA_DIRECTORY = env.DATA_DIR
 const STORE_ID = 'laborer'

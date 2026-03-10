@@ -6,7 +6,7 @@
  * own sync backend. The store is created as an Effect Layer that provides
  * the LiveStore context to all server services.
  *
- * The store persists events to `./data/<storeId>/` by default, ensuring
+ * The store persists events to `~/.config/laborer/data/<storeId>/` by default, ensuring
  * state survives server restarts. LiveStore tables (projects,
  * workspaces, diffs, tasks, panelLayout) are available for
  * querying and event commits.
@@ -86,7 +86,8 @@ class LaborerStore extends Context.Tag('LaborerStore')<
 /**
  * Data directory for SQLite persistence, configurable via DATA_DIR env var.
  * Database files are stored at `<DATA_DIR>/<storeId>/`.
- * Defaults to `"./data"` when DATA_DIR is not set.
+ * Defaults to `~/.config/laborer/data` when DATA_DIR is not set, ensuring
+ * all worktrees of the same repo share the same database.
  */
 const DATA_DIRECTORY = env.DATA_DIR
 

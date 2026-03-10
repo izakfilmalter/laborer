@@ -310,8 +310,37 @@
 ## Now Unblocked
 - Issue 12: Custom protocol + production frontend serving (blocker Issue 11 done)
 
+### Issue 12: Custom protocol + production frontend serving — DONE
+- Created `apps/desktop/src/protocol.ts` — custom `laborer://` protocol for production frontend serving:
+  - `registerSchemeAsPrivileged()` — registers `laborer` scheme with `standard`, `secure`, `supportFetchAPI`, `corsEnabled` privileges. Called synchronously before `app.whenReady()`.
+  - `registerDesktopProtocol(staticRoot)` — registers a `protocol.handle()` handler (modern Electron 25+ API) that serves static files from the built frontend directory
+  - `resolveStaticPath()` — maps request URLs to filesystem paths with:
+    - URL decoding for encoded characters
+    - Path normalization and leading separator stripping
+    - Path traversal protection (`..` returns index.html)
+    - Root/empty path resolution to `index.html`
+    - Extensionless path handling: checks for nested `index.html`, falls back to SPA root
+  - `isAssetRequest()` — distinguishes asset requests (with file extension) from navigation requests (extensionless). Assets get 404 on miss; navigation gets SPA fallback.
+  - `getMimeType()` — MIME type lookup for 20+ web file types (html, js, css, json, svg, png, jpg, gif, webp, avif, ico, woff, woff2, ttf, otf, eot, wasm, map, txt, xml, webmanifest). Unknown extensions return `application/octet-stream`.
+  - `serveFile()` — reads files from disk and returns `Response` objects with correct Content-Type and Content-Length headers
+  - `resolveStaticRoot()` — finds the built frontend directory by checking `apps/web/dist/` and `web-dist/` fallback paths
+- Updated `apps/desktop/src/main.ts`:
+  - Calls `registerSchemeAsPrivileged()` synchronously before `app.whenReady()`
+  - In production: resolves static root from app directory, calls `registerDesktopProtocol()`
+  - Window loads `laborer://app/index.html` in production instead of `about:blank`
+- Created `apps/desktop/test/protocol.test.ts` — 30 unit tests:
+  - DESKTOP_SCHEME: value verification
+  - getMimeType: 10 tests covering html, js, css, json, svg, png, woff2, wasm, unknown extensions, case insensitivity
+  - isAssetRequest: 6 tests covering .js, .css, .png, extensionless paths, root path, invalid URLs
+  - resolveStaticPath: 9 tests covering root URL, empty path, JS/CSS assets, nested index.html directories, SPA fallback for unknown paths, path traversal blocking, URL decoding, explicit index.html
+  - resolveStaticRoot: 4 tests covering primary path, fallback path, missing root, priority ordering
+- tsdown build succeeds: main.js 36.47 KB (includes protocol module), preload.js 2.09 KB
+- All 63 desktop tests pass (30 protocol + 13 shell + 7 ports + 13 health)
+- All 280 server + 73 terminal + 19 MCP tests pass (no regressions)
+- TypeScript compiles without errors
+- Formatting clean (281 files checked, 0 errors)
+
 ## Ready to start (no blockers):
-- Issue 12: Custom protocol + production frontend serving
 - Issue 13: System tray, global shortcut, close-to-tray
 - Issue 14: Window state persistence + application menu
 - Issue 15: Auto-update system

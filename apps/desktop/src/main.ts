@@ -6,12 +6,22 @@ import { fixPath } from './fix-path.js'
 import { HealthMonitor } from './health.js'
 import { registerIpcHandlers, setRestartSidecarHandler } from './ipc.js'
 import { reserveServicePorts, type ServicePorts } from './ports.js'
+import {
+  DESKTOP_SCHEME,
+  registerDesktopProtocol,
+  registerSchemeAsPrivileged,
+  resolveStaticRoot,
+} from './protocol.js'
 import { SidecarManager } from './sidecar.js'
 
 // Fix PATH before anything else — must happen synchronously before
 // any child processes are spawned. On macOS, apps launched from
 // Finder/Dock inherit a minimal PATH from launchd.
 fixPath()
+
+// Register the custom laborer:// protocol scheme as privileged.
+// MUST happen synchronously before app.whenReady().
+registerSchemeAsPrivileged()
 
 /**
  * Vite dev server URL, set by the dev-electron script.
@@ -97,9 +107,10 @@ function createWindow(): void {
   if (VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(VITE_DEV_SERVER_URL).catch(console.error)
   } else {
-    // Production: custom protocol will be set up in a later issue.
-    // For now, load a placeholder.
-    mainWindow.loadURL('about:blank').catch(console.error)
+    // Production: serve the frontend via the custom laborer:// protocol.
+    mainWindow
+      .loadURL(`${DESKTOP_SCHEME}://app/index.html`)
+      .catch(console.error)
   }
 
   mainWindow.on('closed', () => {
@@ -152,6 +163,22 @@ app
   .then(async () => {
     // Reserve ephemeral ports for services and generate auth token.
     servicePorts = await reserveServicePorts()
+
+    // In production, register the custom laborer:// protocol handler
+    // that serves the built frontend from disk.
+    if (!isDev) {
+      const appRoot = join(import.meta.dirname, '..', '..', '..')
+      const staticRoot = resolveStaticRoot(appRoot)
+
+      if (staticRoot) {
+        registerDesktopProtocol(staticRoot)
+      } else {
+        console.error(
+          '[main] Could not find built frontend (apps/web/dist/). ' +
+            'The laborer:// protocol will not be available.'
+        )
+      }
+    }
 
     // In production, spawn sidecar services with health monitoring.
     // In dev mode, services are run separately via `turbo dev`.

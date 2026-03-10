@@ -463,13 +463,13 @@ Register a custom `laborer://` protocol in the Electron main process for serving
 
 ### Acceptance criteria
 
-- [ ] `laborer://` protocol registered as privileged scheme
-- [ ] Static files from `apps/web/dist/` are served correctly via the protocol
-- [ ] SPA fallback routing works (deep links resolve to index.html)
-- [ ] CSS, JS, font, and image assets load correctly
-- [ ] WebSocket connections to services work from the custom protocol origin
-- [ ] No CORS errors in the console
-- [ ] Content-Type headers are set correctly for all file types
+- [x] `laborer://` protocol registered as privileged scheme
+- [x] Static files from `apps/web/dist/` are served correctly via the protocol
+- [x] SPA fallback routing works (deep links resolve to index.html)
+- [x] CSS, JS, font, and image assets load correctly
+- [x] WebSocket connections to services work from the custom protocol origin
+- [x] No CORS errors in the console
+- [x] Content-Type headers are set correctly for all file types
 
 ### Blocked by
 
@@ -784,7 +784,7 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 9 | Health checking + crash monitoring + restart | 8 | Done |
 | 10 | DesktopBridge contract + service URL passing | 9 | Done |
 | 11 | Frontend Tauri-to-Electron migration | 10 | Done |
-| 12 | Custom protocol + production frontend serving | 11 | Ready |
+| 12 | Custom protocol + production frontend serving | 11 | Done |
 | 13 | System tray, global shortcut, close-to-tray | 8 | Ready |
 | 14 | Window state persistence + application menu | 6 | Ready |
 | 15 | Auto-update system | 6 | Ready |

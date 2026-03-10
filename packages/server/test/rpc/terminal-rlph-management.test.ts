@@ -115,59 +115,67 @@ describe('LaborerRpcs terminal and rlph management', () => {
     )
   )
 
-  it.scoped('rlph.review spawns the review command through RPC', () =>
-    runWithRpcTestContext(({ client, terminalClientRecorder, ...context }) =>
-      Effect.gen(function* () {
-        const tempRoots: string[] = []
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => cleanupTempRoots(tempRoots))
-        )
+  it.scoped(
+    'rlph.review fails with PR_NOT_FOUND when no PR exists for branch',
+    () =>
+      runWithRpcTestContext(({ client, terminalClientRecorder, ...context }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
 
-        const { workspaceId } = yield* makeWorkspaceFixture(
-          { client, terminalClientRecorder, ...context },
-          tempRoots
-        )
-        const terminal = yield* client.rlph.review({
-          workspaceId,
-          prNumber: 42,
+          const { workspaceId } = yield* makeWorkspaceFixture(
+            { client, terminalClientRecorder, ...context },
+            tempRoots
+          )
+          const result = yield* client.rlph
+            .review({ workspaceId })
+            .pipe(Effect.flip)
+
+          assert.ok(
+            result.message.includes('No pull request found') ||
+              result.message.includes('Failed to run gh')
+          )
+
+          // No terminal should have been spawned
+          assert.deepStrictEqual(
+            yield* Ref.get(terminalClientRecorder.spawnInWorkspaceCalls),
+            []
+          )
         })
-
-        assert.strictEqual(terminal.workspaceId, workspaceId)
-        assert.strictEqual(terminal.command, 'rlph review 42')
-        assert.strictEqual(terminal.status, 'running')
-        assert.deepStrictEqual(
-          yield* Ref.get(terminalClientRecorder.spawnInWorkspaceCalls),
-          [{ workspaceId, command: 'rlph review 42' }]
-        )
-      })
-    )
+      )
   )
 
-  it.scoped('rlph.fix spawns the fix command through RPC', () =>
-    runWithRpcTestContext(({ client, terminalClientRecorder, ...context }) =>
-      Effect.gen(function* () {
-        const tempRoots: string[] = []
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => cleanupTempRoots(tempRoots))
-        )
+  it.scoped(
+    'rlph.fix fails with PR_NOT_FOUND when no PR exists for branch',
+    () =>
+      runWithRpcTestContext(({ client, terminalClientRecorder, ...context }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
 
-        const { workspaceId } = yield* makeWorkspaceFixture(
-          { client, terminalClientRecorder, ...context },
-          tempRoots
-        )
-        const terminal = yield* client.rlph.fix({
-          workspaceId,
-          prNumber: 77,
+          const { workspaceId } = yield* makeWorkspaceFixture(
+            { client, terminalClientRecorder, ...context },
+            tempRoots
+          )
+          const result = yield* client.rlph
+            .fix({ workspaceId })
+            .pipe(Effect.flip)
+
+          assert.ok(
+            result.message.includes('No pull request found') ||
+              result.message.includes('Failed to run gh')
+          )
+
+          // No terminal should have been spawned
+          assert.deepStrictEqual(
+            yield* Ref.get(terminalClientRecorder.spawnInWorkspaceCalls),
+            []
+          )
         })
-
-        assert.strictEqual(terminal.workspaceId, workspaceId)
-        assert.strictEqual(terminal.command, 'rlph fix 77')
-        assert.strictEqual(terminal.status, 'running')
-        assert.deepStrictEqual(
-          yield* Ref.get(terminalClientRecorder.spawnInWorkspaceCalls),
-          [{ workspaceId, command: 'rlph fix 77' }]
-        )
-      })
-    )
+      )
   )
 })

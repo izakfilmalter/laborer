@@ -463,7 +463,6 @@ export class LaborerRpcs extends RpcGroup.make(
     error: RpcError,
     payload: {
       workspaceId: Schema.String,
-      prNumber: Schema.Int,
     },
   }),
 
@@ -472,7 +471,6 @@ export class LaborerRpcs extends RpcGroup.make(
     error: RpcError,
     payload: {
       workspaceId: Schema.String,
-      prNumber: Schema.Int,
     },
   }),
 

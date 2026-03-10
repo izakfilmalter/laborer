@@ -80,6 +80,70 @@ const toTaskResponse = (task: {
   status: task.status,
 })
 
+/**
+ * Auto-detect the PR number for a workspace's branch using `gh pr view`.
+ *
+ * Looks up the workspace in LiveStore to get its worktree path, then
+ * runs `gh pr view --json number` in that directory. If no PR exists
+ * for the branch, yields an RpcError so the caller can surface a clear
+ * message to the user.
+ */
+const detectPrNumber = Effect.fn('detectPrNumber')(function* (
+  workspaceId: string
+) {
+  const { store } = yield* LaborerStore
+  const allWorkspaces = store.query(tables.workspaces)
+  const workspaceOpt = pipe(
+    allWorkspaces,
+    Arr.findFirst((w) => w.id === workspaceId)
+  )
+
+  if (workspaceOpt._tag === 'None') {
+    return yield* new RpcError({
+      message: `Workspace not found: ${workspaceId}`,
+      code: 'NOT_FOUND',
+    })
+  }
+
+  const workspace = workspaceOpt.value
+
+  const { exitCode, stdout, stderr } = yield* Effect.tryPromise({
+    try: async () => {
+      const proc = Bun.spawn(['gh', 'pr', 'view', '--json', 'number'], {
+        cwd: workspace.worktreePath,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const exitCode = await proc.exited
+      const stdout = await new Response(proc.stdout).text()
+      const stderr = await new Response(proc.stderr).text()
+      return { exitCode, stdout, stderr }
+    },
+    catch: (error) =>
+      new RpcError({
+        message: `Failed to run gh pr view: ${String(error)}`,
+        code: 'GH_COMMAND_FAILED',
+      }),
+  })
+
+  if (exitCode !== 0) {
+    return yield* new RpcError({
+      message: `No pull request found for branch "${workspace.branchName}". Push the branch and open a PR first.\n${stderr.trim()}`,
+      code: 'PR_NOT_FOUND',
+    })
+  }
+
+  const parsed = JSON.parse(stdout.trim()) as { number?: number }
+  if (typeof parsed.number !== 'number' || parsed.number <= 0) {
+    return yield* new RpcError({
+      message: `Could not parse PR number from gh output: ${stdout.trim()}`,
+      code: 'PR_NOT_FOUND',
+    })
+  }
+
+  return parsed.number
+})
+
 export const handleConfigGet = ({ projectId }: { projectId: string }) =>
   Effect.gen(function* () {
     const registry = yield* ProjectRegistry
@@ -796,16 +860,18 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         const tc = yield* TerminalClient
         return yield* tc.spawnInWorkspace(workspaceId, 'rlph --once')
       }),
-    'rlph.review': ({ workspaceId, prNumber }) =>
+    'rlph.review': ({ workspaceId }) =>
       Effect.gen(function* () {
+        const prNumber = yield* detectPrNumber(workspaceId)
         const tc = yield* TerminalClient
         return yield* tc.spawnInWorkspace(
           workspaceId,
           `rlph review ${prNumber}`
         )
       }),
-    'rlph.fix': ({ workspaceId, prNumber }) =>
+    'rlph.fix': ({ workspaceId }) =>
       Effect.gen(function* () {
+        const prNumber = yield* detectPrNumber(workspaceId)
         const tc = yield* TerminalClient
         return yield* tc.spawnInWorkspace(workspaceId, `rlph fix ${prNumber}`)
       }),

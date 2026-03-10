@@ -383,6 +383,7 @@ describe('Native and fallback backend hardening', () => {
         // Write a laborer.json with custom watchIgnore
         writeFileSync(
           join(repoPath, 'laborer.json'),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
           JSON.stringify({ watchIgnore: ['.myCache', 'tempOutput'] })
         )
 

@@ -256,13 +256,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           yield* Effect.log(
             `Auto-typing complete for terminal ${terminalId}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
-        }).pipe(
-          Effect.catchAll((err) =>
-            Effect.logWarning(`Auto-type scripts failed: ${String(err)}`).pipe(
-              Effect.annotateLogs('module', logPrefix)
-            )
-          )
-        )
+        })
 
       /**
        * Resolve config and schedule auto-typing of setup scripts and start

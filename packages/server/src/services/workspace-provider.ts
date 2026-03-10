@@ -1383,7 +1383,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           })
 
           yield* Effect.logInfo(
-            `git worktree remove result: exitCode=${removeResult.exitCode}, stdout=${JSON.stringify(removeResult.stdout.trim())}, stderr=${JSON.stringify(removeResult.stderr.trim())}`
+            `git worktree remove result: exitCode=${removeResult.exitCode}, stdout="${removeResult.stdout.trim()}", stderr="${removeResult.stderr.trim()}"`
           ).pipe(Effect.annotateLogs('module', logPrefix))
 
           if (removeResult.exitCode !== 0) {

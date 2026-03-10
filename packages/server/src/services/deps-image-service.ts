@@ -970,7 +970,7 @@ class DepsImageService extends Context.Tag('@laborer/DepsImageService')<
             `laborer-deps-build-${projectSlug}-${Date.now()}`
           )
 
-          try {
+          yield* Effect.gen(function* () {
             yield* prepareBuildContext(projectRoot, buildContextDir, lockfile)
 
             yield* buildDepsImage(
@@ -987,18 +987,22 @@ class DepsImageService extends Context.Tag('@laborer/DepsImageService')<
             // Seed all node_modules from the freshly built image into the worktree
             onProgress?.('Seeding node_modules...')
             yield* seedNodeModules(imageName, worktreePath, workdir)
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                // Best-effort cleanup – ignore errors from rmSync
+                try {
+                  rmSync(buildContextDir, { recursive: true, force: true })
+                } catch {
+                  // intentionally ignored
+                }
+              })
+            )
+          )
 
-            return {
-              imageName,
-              wasBuilt: true,
-            }
-          } finally {
-            // Clean up build context
-            try {
-              rmSync(buildContextDir, { recursive: true, force: true })
-            } catch {
-              // Best-effort cleanup
-            }
+          return {
+            imageName,
+            wasBuilt: true,
           }
         }
       ),

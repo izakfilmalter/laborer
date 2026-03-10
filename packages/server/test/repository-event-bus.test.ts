@@ -783,6 +783,7 @@ describe('Config-driven ignore filtering', () => {
         // Create a laborer.json with custom watchIgnore patterns
         writeFileSync(
           join(repoPath, 'laborer.json'),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
           JSON.stringify({ watchIgnore: ['.cache', 'tmp'] })
         )
 

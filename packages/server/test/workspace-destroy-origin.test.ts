@@ -77,7 +77,7 @@ afterAll(() => {
 })
 
 describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
-  it.scoped('keeps git worktree and branch for external workspaces', () =>
+  it.scoped('removes git worktree and branch for external workspaces', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('destroy-external', tempRoots)
       const branchName = 'feature/external'
@@ -117,8 +117,8 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
       const provider = yield* WorkspaceProvider
       yield* provider.destroyWorktree(workspaceId)
 
-      assert.isTrue(existsSync(worktreePath))
-      assert.include(git(`branch --list ${branchName}`, repoPath), branchName)
+      assert.isFalse(existsSync(worktreePath))
+      assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
 
       const workspaceRows = store.query(
         tables.workspaces.where('id', workspaceId)

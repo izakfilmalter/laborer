@@ -12,7 +12,6 @@ type RpcTestContext = Effect.Effect.Success<typeof makeScopedTestRpcContext>
 
 const SETUP_ENV_FILE = '.laborer-setup-env'
 const CREATE_BRANCH_PATTERN = /feature\/rpc-create/
-const EXTERNAL_BRANCH_PATTERN = /feature\/rpc-external/
 
 const cleanupTempRoots = (tempRoots: readonly string[]) => {
   for (const root of tempRoots) {
@@ -240,7 +239,7 @@ describe('LaborerRpcs workspace management', () => {
   )
 
   it.scoped(
-    'workspace.destroy keeps external worktrees on disk while removing store state',
+    'workspace.destroy removes external worktrees from disk and store state',
     () =>
       runWithRpcTestContext(({ client, store, terminalClientRecorder }) =>
         Effect.gen(function* () {
@@ -288,11 +287,8 @@ describe('LaborerRpcs workspace management', () => {
             workspaceId: externalWorkspace.id,
           })
 
-          assert.isTrue(existsSync(externalWorktreePath))
-          assert.match(
-            git(`branch --list ${branchName}`, repoPath),
-            EXTERNAL_BRANCH_PATTERN
-          )
+          assert.isFalse(existsSync(externalWorktreePath))
+          assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
           assert.deepStrictEqual(
             store.query(tables.workspaces.where('id', externalWorkspace.id)),
             []

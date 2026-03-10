@@ -28,9 +28,13 @@ export function CopyButton({
   value,
   className,
   variant = 'ghost',
+  title,
   ...props
 }: CopyButtonProps) {
   const [hasCopied, setHasCopied] = useState(false)
+
+  const label = title ?? 'Copy'
+  const tooltipLabel = hasCopied ? 'Copied' : label
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset after 2s timeout on any copy
   useEffect(() => {
@@ -60,7 +64,7 @@ export function CopyButton({
           />
         }
       >
-        <span className="sr-only">Copy</span>
+        <span className="sr-only">{label}</span>
         {pipe(
           hasCopied,
           Boolean.match({
@@ -69,7 +73,7 @@ export function CopyButton({
           })
         )}
       </TooltipTrigger>
-      <TooltipContent>{hasCopied ? 'Copied' : 'Copy'}</TooltipContent>
+      <TooltipContent>{tooltipLabel}</TooltipContent>
     </Tooltip>
   )
 }

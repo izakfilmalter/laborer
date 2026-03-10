@@ -170,6 +170,8 @@ function StatusDot({ status }: { readonly status: string }) {
 }
 
 interface CopyableValueProps {
+  /** Label for the main copy button tooltip (e.g. "Copy branch name"). */
+  readonly copyLabel: string
   /** Extra values that get their own copy button on hover. */
   readonly extraCopyValues?: ReadonlyArray<{
     readonly value: string
@@ -179,7 +181,7 @@ interface CopyableValueProps {
 }
 
 const CopyableValue: FC<CopyableValueProps> = (props) => {
-  const { value, extraCopyValues } = props
+  const { value, copyLabel, extraCopyValues } = props
 
   return (
     <span className="group/copyable flex w-full min-w-0 items-start justify-between gap-1">
@@ -193,7 +195,7 @@ const CopyableValue: FC<CopyableValueProps> = (props) => {
             value={extra.value}
           />
         ))}
-        <CopyButton title={`Copy ${value}`} value={value} />
+        <CopyButton title={copyLabel} value={value} />
       </span>
     </span>
   )
@@ -435,6 +437,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
             <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <CardTitle className="min-w-0 font-mono text-sm">
               <CopyableValue
+                copyLabel="Copy branch name"
                 extraCopyValues={[
                   {
                     value: workspace.worktreePath,

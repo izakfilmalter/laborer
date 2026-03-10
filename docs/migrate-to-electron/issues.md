@@ -206,16 +206,16 @@ Create a new `apps/desktop/` package that provides a minimal but functional Elec
 
 ### Acceptance criteria
 
-- [ ] `apps/desktop/` exists with package.json, tsconfig, tsdown config
-- [ ] `bun run dev` in apps/desktop opens an Electron window showing the Vite-served frontend
-- [ ] Preload script loads without errors (even though bridge is empty)
-- [ ] Window has hiddenInset title bar with traffic light positioning
-- [ ] `contextIsolation: true` and `sandbox: true` are set
-- [ ] `tsdown --watch` rebuilds on source changes
-- [ ] Electron restarts automatically when main process bundle changes
-- [ ] Vite HMR works inside the Electron window
-- [ ] `turbo dev` orchestrates all processes (web, server, terminal, desktop)
-- [ ] TypeScript compiles without errors
+- [x] `apps/desktop/` exists with package.json, tsconfig, tsdown config
+- [x] `bun run dev` in apps/desktop opens an Electron window showing the Vite-served frontend
+- [x] Preload script loads without errors (even though bridge is empty)
+- [x] Window has hiddenInset title bar with traffic light positioning
+- [x] `contextIsolation: true` and `sandbox: true` are set
+- [x] `tsdown --watch` rebuilds on source changes
+- [x] Electron restarts automatically when main process bundle changes
+- [x] Vite HMR works inside the Electron window
+- [x] `turbo dev` orchestrates all processes (web, server, terminal, desktop)
+- [x] TypeScript compiles without errors
 
 ### Blocked by
 
@@ -778,16 +778,16 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 3 | Migrate remaining server Bun.spawn sites | 1 | Done |
 | 4 | Server Bun-to-Node runtime swap | 2, 3 | Done |
 | 5 | Terminal + MCP Bun-to-Node runtime swap | None | Done |
-| 6 | Electron shell scaffold + dev tooling | None | Ready |
-| 7 | Shell environment probing + port allocation | 6 | Blocked |
+| 6 | Electron shell scaffold + dev tooling | None | Done |
+| 7 | Shell environment probing + port allocation | 6 | Ready |
 | 8 | Spawn sidecars as child processes | 4, 5, 7 | Blocked |
 | 9 | Health checking + crash monitoring + restart | 8 | Blocked |
 | 10 | DesktopBridge contract + service URL passing | 9 | Blocked |
 | 11 | Frontend Tauri-to-Electron migration | 10 | Blocked |
 | 12 | Custom protocol + production frontend serving | 11 | Blocked |
 | 13 | System tray, global shortcut, close-to-tray | 8 | Blocked |
-| 14 | Window state persistence + application menu | 6 | Blocked |
-| 15 | Auto-update system | 6 | Blocked |
+| 14 | Window state persistence + application menu | 6 | Ready |
+| 15 | Auto-update system | 6 | Ready |
 | 16 | Service bundling for distribution | 4, 5 | Ready |
 | 17 | Electron packaging + .dmg distribution | 12, 13, 14, 15, 16 | Blocked |
 | 18 | Cleanup + remove Tauri | 17 | Blocked |

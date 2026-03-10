@@ -101,10 +101,39 @@
 - All 280 server tests still pass (no regressions)
 - Formatting clean
 
+### Issue 6: Electron shell scaffold + dev tooling — DONE
+- Created `apps/desktop/` package with full Electron shell scaffold:
+  - `package.json` with electron 40.6.0, tsdown, wait-on, vitest deps
+  - `tsconfig.json` extending @laborer/config base with node types, DOM lib, ES2023
+  - `tsdown.config.ts` bundling main.ts + preload.ts to CJS in dist-electron/
+- Created `apps/desktop/src/main.ts` — minimal Electron main process:
+  - BrowserWindow with hiddenInset title bar, traffic light positioning at (16, 12)
+  - contextIsolation: true, nodeIntegration: false, sandbox: true
+  - Loads VITE_DEV_SERVER_URL in development (about:blank placeholder in production)
+  - macOS lifecycle handling (stay active until explicit quit, activate re-creates window)
+  - Preload script path resolved via __dirname in CJS output
+- Created `apps/desktop/src/preload.ts` — minimal stub exposing empty desktopBridge
+- Created dev scripts following t3code patterns:
+  - `scripts/electron-launcher.mjs` — resolves Electron binary, on macOS creates patched .app bundle with "Laborer (Dev)" display name and custom icon
+  - `scripts/dev-electron.mjs` — waits for Vite dev server + bundled files, launches Electron, watches dist-electron/ for changes and restarts with 120ms debounce, graceful SIGTERM→SIGKILL shutdown
+- Copied icon resources (icon.icns, icon.png) from src-tauri/icons/ to apps/desktop/resources/
+- Added .gitignore for dist-electron/ and .electron-runtime/
+- Updated turbo.json: added dist-electron/** to build outputs
+- `bun install` — 186 packages installed (Electron + tsdown + wait-on)
+- `tsdown` build produces main.js (1.45 KB) + preload.js (0.32 KB) in dist-electron/
+- TypeScript compiles without errors across all 6 packages
+- All 280 server + 73 terminal + 19 MCP tests pass (no regressions)
+- Formatting clean (0 fixes needed)
+
 ## Now Unblocked
-- Issue 8: Spawn sidecars as child processes (all Bun-to-Node blockers resolved: Issues 4, 5 done; Issue 7 still blocked by Issue 6)
+- Issue 7: Shell environment probing + port allocation (blocker Issue 6 done)
+- Issue 8: Spawn sidecars as child processes (all Bun-to-Node blockers resolved: Issues 4, 5 done; Issue 7 now ready)
+- Issue 14: Window state persistence + application menu (blocker Issue 6 done)
+- Issue 15: Auto-update system (blocker Issue 6 done)
 - Issue 16: Service bundling for distribution (both blockers resolved: Issues 4, 5 done)
 
 ## Ready to start (no blockers):
-- Issue 6: Electron shell scaffold + dev tooling
+- Issue 7: Shell environment probing + port allocation
+- Issue 14: Window state persistence + application menu
+- Issue 15: Auto-update system
 - Issue 16: Service bundling for distribution

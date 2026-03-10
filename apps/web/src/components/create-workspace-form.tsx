@@ -252,7 +252,12 @@ function CreateWorkspaceForm({
                     value={field.state.value || null}
                   >
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select a project" />
+                      <SelectValue placeholder="Select a project">
+                        {field.state.value
+                          ? (projectList.find((p) => p.id === field.state.value)
+                              ?.name ?? field.state.value)
+                          : undefined}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {projectList.map((project) => (

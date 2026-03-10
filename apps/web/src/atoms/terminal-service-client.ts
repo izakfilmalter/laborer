@@ -25,7 +25,7 @@ import { terminalRpcUrl } from '@/lib/tauri'
  * Terminal service RPC URL.
  *
  * - Dev mode: `/terminal-rpc` (Vite proxy rewrites to terminal's /rpc)
- * - Tauri production: `http://localhost:2102/rpc` (direct to sidecar)
+ * - Tauri production: `http://localhost:4102/rpc` (direct to sidecar)
  *
  * @see lib/tauri.ts for runtime context detection
  */

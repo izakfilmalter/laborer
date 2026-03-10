@@ -12,9 +12,9 @@ mod sidecar;
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceUrls {
-    /// HTTP base URL for the main server (e.g., "http://localhost:2100").
+    /// HTTP base URL for the main server (e.g., "http://localhost:4100").
     pub server_url: String,
-    /// HTTP base URL for the terminal service (e.g., "http://localhost:2102").
+    /// HTTP base URL for the terminal service (e.g., "http://localhost:4102").
     pub terminal_url: String,
 }
 
@@ -107,11 +107,12 @@ pub fn run() {
         // See Issue #117: Tauri window management.
         .plugin(tauri_plugin_window_state::Builder::default().build());
 
-    // In production, serve the frontend via http://localhost:2101 instead of
+    // In production, serve the frontend via http://localhost:4101 instead of
     // tauri://localhost. This avoids WebKit's cross-origin restrictions that
     // block requests from tauri:// to http://localhost:* sidecar services.
+    // Uses port 4101 (not 2101) so the built app doesn't conflict with dev mode.
     if !cfg!(debug_assertions) {
-        builder = builder.plugin(tauri_plugin_localhost::Builder::new(2101).build());
+        builder = builder.plugin(tauri_plugin_localhost::Builder::new(4101).build());
     }
 
     let app = builder
@@ -207,8 +208,8 @@ pub fn run() {
                 // and pass the symlink path to mcp-registrar.ts.
                 sidecar::SidecarManager::create_mcp_symlink(app.handle());
 
-                // Spawn sidecars in order: terminal first (port 2102),
-                // then server (port 2100, which connects to terminal on startup).
+                // Spawn sidecars in order: terminal first (port 4102),
+                // then server (port 4100, which connects to terminal on startup).
                 // The `await_initialization` command blocks the frontend until both are healthy.
                 let app_handle = app.handle().clone();
                 let mgr = manager.clone();
@@ -235,8 +236,8 @@ pub fn run() {
 
                     // 3. Signal initialization complete with service URLs.
                     let urls = ServiceUrls {
-                        server_url: "http://localhost:2100".to_string(),
-                        terminal_url: "http://localhost:2102".to_string(),
+                        server_url: "http://localhost:4100".to_string(),
+                        terminal_url: "http://localhost:4102".to_string(),
                     };
                     let _ = init_tx.send(Some(urls));
                     log::info!("Sidecar initialization complete");

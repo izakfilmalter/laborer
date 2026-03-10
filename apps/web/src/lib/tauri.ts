@@ -13,16 +13,20 @@
  * - **Tauri dev** (`tauri dev`): Same as browser dev — Vite dev server
  *   proxies requests. `isTauri()` returns true but `location.origin` is
  *   `http://localhost:2101` so relative URLs still work.
- * - **Tauri production** (`tauri build`): Frontend served from
- *   `tauri://localhost`. Backend services run as sidecars on localhost:2100
- *   and localhost:2102. Must use absolute URLs.
+ * - **Tauri production** (`tauri build`): Frontend served on localhost:4101.
+ *   Backend services run as sidecars on localhost:4100 and localhost:4102.
+ *   Uses port range 4100+ to avoid conflicts with dev mode (2100+).
+ *   Must use absolute URLs.
  *
  * @see Issue 6: Wire sidecars into Tauri app setup and frontend routing
  */
 
-/** Default ports matching `@laborer/env/server`. */
-const SERVER_PORT = 2100
-const TERMINAL_PORT = 2102
+/**
+ * Tauri production sidecar ports.
+ * These use a different range (4100+) than dev mode (2100+) so both can run simultaneously.
+ */
+const SERVER_PORT = 4100
+const TERMINAL_PORT = 4102
 
 /**
  * Wait for Tauri sidecar services to become healthy.
@@ -53,8 +57,8 @@ export function isTauri(): boolean {
 /**
  * Check if the frontend is in Tauri production mode where the Vite
  * dev proxy is NOT available. In production, the frontend is served
- * via tauri-plugin-localhost on http://localhost:2101 (same port as
- * dev, but without the Vite proxy). We detect this by checking for
+ * via tauri-plugin-localhost on http://localhost:4101 (a different port
+ * than dev's 2101 so both can coexist). We detect this by checking for
  * the Tauri runtime AND a non-dev origin (tauri:// scheme or the
  * localhost plugin port without a Vite dev server).
  *
@@ -69,7 +73,7 @@ function isTauriProduction(): boolean {
   if (globalThis.location.origin.startsWith('tauri://')) {
     return true
   }
-  // Localhost plugin serves on port 2101. In dev mode, Vite also serves
+  // Localhost plugin serves on port 4101. In dev mode, Vite serves
   // on 2101 but __TAURI_INTERNALS__ differentiates. The key difference:
   // in production there is no Vite HMR WebSocket, and the build output
   // includes a marker. We use a simpler check: Tauri runtime + release
@@ -81,7 +85,7 @@ function isTauriProduction(): boolean {
  * Resolve the HTTP URL for the main server's RPC endpoint.
  *
  * - Dev mode: `/rpc` (Vite proxy handles routing)
- * - Tauri production: `http://localhost:2100/rpc` (direct to sidecar)
+ * - Tauri production: `http://localhost:4100/rpc` (direct to sidecar)
  */
 export function serverRpcUrl(): string {
   if (isTauriProduction()) {
@@ -107,7 +111,7 @@ export function terminalRpcUrl(): string {
  * Resolve the WebSocket URL for the server's RPC sync endpoint.
  *
  * - Dev mode: `ws://localhost:2101/rpc` (Vite proxy with WS upgrade)
- * - Tauri production: `ws://localhost:2100/rpc` (direct to sidecar)
+ * - Tauri production: `ws://localhost:4100/rpc` (direct to sidecar)
  */
 export function serverWsSyncUrl(): string {
   if (isTauriProduction()) {
@@ -120,7 +124,7 @@ export function serverWsSyncUrl(): string {
  * Resolve the WebSocket URL for a terminal connection.
  *
  * - Dev mode: `ws://localhost:2101/terminal?id=<id>` (Vite proxy)
- * - Tauri production: `ws://localhost:2102/terminal?id=<id>` (direct)
+ * - Tauri production: `ws://localhost:4102/terminal?id=<id>` (direct)
  *
  * @param terminalId - The terminal session ID to connect to.
  */

@@ -24,9 +24,13 @@ const HEALTH_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 /// Maximum time to wait for a sidecar to become healthy after spawning.
 const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Default environment variable values matching `@laborer/env/server`.
-const DEFAULT_PORT: &str = "2100";
-const DEFAULT_TERMINAL_PORT: &str = "2102";
+/// Default environment variable values for Tauri production sidecars.
+/// These use a different port range (4100+) than dev mode (2100+) so that
+/// the built Tauri app and `turbo dev` can run simultaneously.
+const DEFAULT_PORT: &str = "4100";
+const DEFAULT_TERMINAL_PORT: &str = "4102";
+const DEFAULT_PORT_RANGE_START: &str = "4200";
+const DEFAULT_PORT_RANGE_END: &str = "4999";
 const DEFAULT_DATA_DIR: &str = "./data";
 
 // ---------------------------------------------------------------------------
@@ -437,6 +441,14 @@ impl SidecarManager {
             (
                 "TERMINAL_PORT".to_string(),
                 DEFAULT_TERMINAL_PORT.to_string(),
+            ),
+            (
+                "PORT_RANGE_START".to_string(),
+                DEFAULT_PORT_RANGE_START.to_string(),
+            ),
+            (
+                "PORT_RANGE_END".to_string(),
+                DEFAULT_PORT_RANGE_END.to_string(),
             ),
             (
                 "DATA_DIR".to_string(),
@@ -911,7 +923,7 @@ mod tests {
             &Some(shell),
             vec![
                 ("PATH".to_string(), "/override/path".to_string()),
-                ("PORT".to_string(), "2100".to_string()),
+                ("PORT".to_string(), "4100".to_string()),
             ],
         )
         .into_iter()
@@ -919,20 +931,20 @@ mod tests {
 
         assert_eq!(merged.get("PATH"), Some(&"/override/path".to_string()));
         assert_eq!(merged.get("HOME"), Some(&"/tmp/home".to_string()));
-        assert_eq!(merged.get("PORT"), Some(&"2100".to_string()));
+        assert_eq!(merged.get("PORT"), Some(&"4100".to_string()));
     }
 
     #[test]
     fn merge_env_handles_no_shell_env() {
         let merged: HashMap<String, String> = merge_env(
             &None,
-            vec![("PORT".to_string(), "2100".to_string())],
+            vec![("PORT".to_string(), "4100".to_string())],
         )
         .into_iter()
         .collect();
 
         assert_eq!(merged.len(), 1);
-        assert_eq!(merged.get("PORT"), Some(&"2100".to_string()));
+        assert_eq!(merged.get("PORT"), Some(&"4100".to_string()));
     }
 
     #[test]
@@ -999,8 +1011,8 @@ mod tests {
 
     #[test]
     fn health_url_returns_correct_urls() {
-        assert_eq!(health_url(SidecarName::Server), "http://127.0.0.1:2100");
-        assert_eq!(health_url(SidecarName::Terminal), "http://127.0.0.1:2102");
+        assert_eq!(health_url(SidecarName::Server), "http://127.0.0.1:4100");
+        assert_eq!(health_url(SidecarName::Terminal), "http://127.0.0.1:4102");
     }
 
     #[tokio::test]

@@ -28,15 +28,15 @@ import { makeWsSync } from '@livestore/sync-cf/client'
  * Resolve the WebSocket sync URL based on the runtime context.
  *
  * In Tauri production mode, `location.origin` is `tauri://localhost` which
- * can't reach the backend. Use an absolute `ws://localhost:2100/rpc` URL
- * to connect directly to the server sidecar.
+ * can't reach the backend. Use an absolute `ws://localhost:4100/rpc` URL
+ * to connect directly to the server sidecar (port 4100, not dev's 2100).
  *
  * In dev mode (browser or `tauri dev`), `location.origin` is the Vite dev
  * server (e.g., `http://localhost:2101`), so `${origin}/rpc` goes through
  * the Vite WebSocket proxy as before.
  */
 const syncUrl = globalThis.location.origin.startsWith('tauri://')
-  ? 'ws://localhost:2100/rpc'
+  ? 'ws://localhost:4100/rpc'
   : `${globalThis.location.origin}/rpc`
 
 makeWorker({

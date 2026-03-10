@@ -26,7 +26,7 @@ import { serverRpcUrl } from '@/lib/tauri'
  * Derive the server RPC URL based on the runtime context.
  *
  * - Dev mode: `/rpc` (Vite proxy routes to backend server on port 2100)
- * - Tauri production: `http://localhost:2100/rpc` (direct to sidecar)
+ * - Tauri production: `http://localhost:4100/rpc` (direct to sidecar)
  *
  * @see lib/tauri.ts for runtime context detection
  */

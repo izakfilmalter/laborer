@@ -64,6 +64,11 @@ import {
   ResizablePanelGroup,
 } from '@/components/ui/resizable'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { WorkspaceDashboard } from '@/components/workspace-dashboard'
 import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
@@ -159,8 +164,36 @@ const allProjects$ = queryDb(projects, { label: 'headerProjects' })
 /** The two main content views: terminal panels, cross-project dashboard, or plan editor. */
 type MainView = 'panels' | 'dashboard' | 'plan'
 
+/** Displays the contextual label for the current view (project/branch, Dashboard, or Plan). */
+function ViewContextLabel({
+  mainView,
+  projectName,
+  branchName,
+}: {
+  readonly mainView: MainView
+  readonly projectName: string | undefined
+  readonly branchName: string | undefined
+}) {
+  if (mainView === 'panels' && projectName && branchName) {
+    return (
+      <>
+        <span className="text-foreground">{projectName}</span>
+        <span className="mx-1">/</span>
+        <span>{branchName}</span>
+      </>
+    )
+  }
+  if (mainView === 'dashboard') {
+    return <span className="text-foreground">Dashboard</span>
+  }
+  if (mainView === 'plan') {
+    return <span className="text-foreground">Plan</span>
+  }
+  return null
+}
+
 /**
- * Thin header bar rendered above the PanelManager.
+ * Bar rendered at the top of the main content area (right of the sidebar).
  *
  * - Left side: view toggle (panels / dashboard) + `project / branch`
  *   context for the active pane's workspace (in panels view).
@@ -246,129 +279,181 @@ function PanelHeaderBar({
       {/* Left: sidebar toggle + view toggle + project / branch context */}
       <div className="flex items-center gap-2">
         {onToggleSidebar && (
-          <Button
-            aria-label={
-              sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'
-            }
-            onClick={onToggleSidebar}
-            size="icon-sm"
-            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            variant="ghost"
-          >
-            {sidebarCollapsed ? (
-              <PanelLeftOpen className="size-3.5" />
-            ) : (
-              <PanelLeftClose className="size-3.5" />
-            )}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label={
+                    sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'
+                  }
+                  onClick={onToggleSidebar}
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            >
+              {sidebarCollapsed ? (
+                <PanelLeftOpen className="size-3.5" />
+              ) : (
+                <PanelLeftClose className="size-3.5" />
+              )}
+            </TooltipTrigger>
+            <TooltipContent>
+              {sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            </TooltipContent>
+          </Tooltip>
         )}
         <div className="flex gap-0.5">
-          <Button
-            aria-label="Terminal panels"
-            className={mainView === 'panels' ? 'bg-accent' : ''}
-            onClick={() => onViewChange('panels')}
-            size="icon-sm"
-            title="Terminal panels"
-            variant="ghost"
-          >
-            <Terminal className="size-3.5" />
-          </Button>
-          <Button
-            aria-label="Dashboard"
-            className={mainView === 'dashboard' ? 'bg-accent' : ''}
-            onClick={() => onViewChange('dashboard')}
-            size="icon-sm"
-            title="Cross-project dashboard"
-            variant="ghost"
-          >
-            <LayoutDashboard className="size-3.5" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label="Terminal panels"
+                  className={mainView === 'panels' ? 'bg-accent' : ''}
+                  onClick={() => onViewChange('panels')}
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            >
+              <Terminal className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent>Terminal panels</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label="Dashboard"
+                  className={mainView === 'dashboard' ? 'bg-accent' : ''}
+                  onClick={() => onViewChange('dashboard')}
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            >
+              <LayoutDashboard className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent>Dashboard</TooltipContent>
+          </Tooltip>
         </div>
         <div className="min-w-0 truncate text-muted-foreground text-xs">
-          {mainView === 'panels' && projectName && branchName ? (
-            <>
-              <span className="text-foreground">{projectName}</span>
-              <span className="mx-1">/</span>
-              <span>{branchName}</span>
-            </>
-          ) : null}
-          {mainView === 'dashboard' && (
-            <span className="text-foreground">Dashboard</span>
-          )}
-          {mainView === 'plan' && <span className="text-foreground">Plan</span>}
+          <ViewContextLabel
+            branchName={branchName}
+            mainView={mainView}
+            projectName={projectName}
+          />
         </div>
       </div>
 
       {/* Right: pane actions */}
       <div className="flex gap-0.5">
         {showDevServerToggle && (
-          <Button
-            aria-label={
-              devServerIsOpen
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label={
+                    devServerIsOpen
+                      ? 'Close dev server terminal'
+                      : 'Open dev server terminal'
+                  }
+                  className={devServerIsOpen ? 'bg-accent' : ''}
+                  disabled={!hasActivePane}
+                  onClick={() =>
+                    activePaneId && actions?.toggleDevServerPane(activePaneId)
+                  }
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            >
+              <Server className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent>
+              {devServerIsOpen
                 ? 'Close dev server terminal'
-                : 'Open dev server terminal'
-            }
-            className={devServerIsOpen ? 'bg-accent' : ''}
-            disabled={!hasActivePane}
-            onClick={() =>
-              activePaneId && actions?.toggleDevServerPane(activePaneId)
-            }
-            size="icon-sm"
-            title={
-              devServerIsOpen
-                ? 'Close dev server terminal'
-                : 'Open dev server terminal'
-            }
-            variant="ghost"
-          >
-            <Server className="size-3.5" />
-          </Button>
+                : 'Open dev server terminal'}
+            </TooltipContent>
+          </Tooltip>
         )}
         {showDiffToggle && (
-          <Button
-            aria-label={diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'}
-            className={diffIsOpen ? 'bg-accent' : ''}
-            disabled={!hasActivePane}
-            onClick={() =>
-              activePaneId && actions?.toggleDiffPane(activePaneId)
-            }
-            size="icon-sm"
-            variant="ghost"
-          >
-            <FileCode2 className="size-3.5" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label={
+                    diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'
+                  }
+                  className={diffIsOpen ? 'bg-accent' : ''}
+                  disabled={!hasActivePane}
+                  onClick={() =>
+                    activePaneId && actions?.toggleDiffPane(activePaneId)
+                  }
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            >
+              <FileCode2 className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent>
+              {diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'}
+            </TooltipContent>
+          </Tooltip>
         )}
-        <Button
-          aria-label="Split horizontally"
-          disabled={!hasActivePane}
-          onClick={() =>
-            activePaneId && actions?.splitPane(activePaneId, 'horizontal')
-          }
-          size="icon-sm"
-          variant="ghost"
-        >
-          <Columns2 className="size-3.5" />
-        </Button>
-        <Button
-          aria-label="Split vertically"
-          disabled={!hasActivePane}
-          onClick={() =>
-            activePaneId && actions?.splitPane(activePaneId, 'vertical')
-          }
-          size="icon-sm"
-          variant="ghost"
-        >
-          <Rows2 className="size-3.5" />
-        </Button>
-        <Button
-          aria-label="Close pane"
-          disabled={!hasActivePane}
-          onClick={() => activePaneId && actions?.closePane(activePaneId)}
-          size="icon-sm"
-          variant="ghost"
-        >
-          <X className="size-3.5" />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label="Split horizontally"
+                disabled={!hasActivePane}
+                onClick={() =>
+                  activePaneId && actions?.splitPane(activePaneId, 'horizontal')
+                }
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
+          >
+            <Columns2 className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent>Split horizontally</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label="Split vertically"
+                disabled={!hasActivePane}
+                onClick={() =>
+                  activePaneId && actions?.splitPane(activePaneId, 'vertical')
+                }
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
+          >
+            <Rows2 className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent>Split vertically</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label="Close pane"
+                disabled={!hasActivePane}
+                onClick={() => activePaneId && actions?.closePane(activePaneId)}
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
+          >
+            <X className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent>Close pane</TooltipContent>
+        </Tooltip>
       </div>
     </div>
   )

@@ -55,6 +55,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 
@@ -368,14 +373,21 @@ function WorkspaceErrorAlert({
           <p className="mt-1 font-medium text-destructive">{guidance}</p>
         )}
       </AlertDescription>
-      <button
-        aria-label="Dismiss error"
-        className="absolute top-2 right-2 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-        onClick={onDismiss}
-        type="button"
-      >
-        <X className="size-3.5" />
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              aria-label="Dismiss error"
+              className="absolute top-2 right-2 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              onClick={onDismiss}
+              type="button"
+            />
+          }
+        >
+          <X className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipContent>Dismiss</TooltipContent>
+      </Tooltip>
     </Alert>
   )
 }

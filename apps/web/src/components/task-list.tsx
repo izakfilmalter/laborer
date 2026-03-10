@@ -67,6 +67,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 
@@ -223,17 +228,24 @@ function TaskItem({ task }: TaskItemProps) {
               {task.source}
             </Badge>
             <AlertDialog onOpenChange={setDialogOpen} open={dialogOpen}>
-              <AlertDialogTrigger
-                render={
-                  <Button
-                    aria-label={`Remove task ${task.title}`}
-                    size="icon-xs"
-                    variant="ghost"
-                  />
-                }
-              >
-                <Trash2 className="size-3.5 text-muted-foreground" />
-              </AlertDialogTrigger>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <AlertDialogTrigger
+                      render={
+                        <Button
+                          aria-label={`Remove task ${task.title}`}
+                          size="icon-xs"
+                          variant="ghost"
+                        />
+                      }
+                    />
+                  }
+                >
+                  <Trash2 className="size-3.5 text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent>Remove task</TooltipContent>
+              </Tooltip>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Remove task?</AlertDialogTitle>

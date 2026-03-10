@@ -70,6 +70,11 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { usePanelActions } from '@/panels/panel-context'
@@ -165,6 +170,8 @@ function StatusDot({ status }: { readonly status: string }) {
 }
 
 interface CopyableValueProps {
+  /** Label for the main copy button tooltip (e.g. "Copy branch name"). */
+  readonly copyLabel: string
   /** Extra values that get their own copy button on hover. */
   readonly extraCopyValues?: ReadonlyArray<{
     readonly value: string
@@ -174,7 +181,7 @@ interface CopyableValueProps {
 }
 
 const CopyableValue: FC<CopyableValueProps> = (props) => {
-  const { value, extraCopyValues } = props
+  const { value, copyLabel, extraCopyValues } = props
 
   return (
     <span className="group/copyable flex w-full min-w-0 items-start justify-between gap-1">
@@ -188,7 +195,7 @@ const CopyableValue: FC<CopyableValueProps> = (props) => {
             value={extra.value}
           />
         ))}
-        <CopyButton title={`Copy ${value}`} value={value} />
+        <CopyButton title={copyLabel} value={value} />
       </span>
     </span>
   )
@@ -233,30 +240,40 @@ function ContainerPauseButton({
   }, [isPaused, pauseContainer, unpauseContainer, workspaceId])
 
   return (
-    <Button
-      aria-label={isPaused ? 'Resume container' : 'Pause container'}
-      disabled={isLoading}
-      onClick={handleToggle}
-      size="icon-xs"
-      title={isPaused ? 'Resume container' : 'Pause container'}
-      variant="ghost"
-    >
-      {isPaused ? (
-        <Play
-          className={cn(
-            'size-3.5',
-            isLoading ? 'animate-pulse text-muted-foreground' : 'text-success'
-          )}
-        />
-      ) : (
-        <Pause
-          className={cn(
-            'size-3.5',
-            isLoading ? 'animate-pulse text-muted-foreground' : 'text-amber-500'
-          )}
-        />
-      )}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label={isPaused ? 'Resume container' : 'Pause container'}
+            disabled={isLoading}
+            onClick={handleToggle}
+            size="icon-xs"
+            variant="ghost"
+          />
+        }
+      >
+        {isPaused ? (
+          <Play
+            className={cn(
+              'size-3.5',
+              isLoading ? 'animate-pulse text-muted-foreground' : 'text-success'
+            )}
+          />
+        ) : (
+          <Pause
+            className={cn(
+              'size-3.5',
+              isLoading
+                ? 'animate-pulse text-muted-foreground'
+                : 'text-amber-500'
+            )}
+          />
+        )}
+      </TooltipTrigger>
+      <TooltipContent>
+        {isPaused ? 'Resume container' : 'Pause container'}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -420,6 +437,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
             <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <CardTitle className="min-w-0 font-mono text-sm">
               <CopyableValue
+                copyLabel="Copy branch name"
                 extraCopyValues={[
                   {
                     value: workspace.worktreePath,
@@ -484,23 +502,29 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                 workspaceId={workspace.id}
               />
             ) : (
-              <Button
-                aria-label="Start ralph loop"
-                disabled={isStartingLoop}
-                onClick={handleStartLoop}
-                size="icon-xs"
-                title="Start Ralph Loop (rlph --once)"
-                variant="ghost"
-              >
-                <Play
-                  className={cn(
-                    'size-3.5',
-                    isStartingLoop
-                      ? 'animate-pulse text-muted-foreground'
-                      : 'text-success'
-                  )}
-                />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label="Start ralph loop"
+                      disabled={isStartingLoop}
+                      onClick={handleStartLoop}
+                      size="icon-xs"
+                      variant="ghost"
+                    />
+                  }
+                >
+                  <Play
+                    className={cn(
+                      'size-3.5',
+                      isStartingLoop
+                        ? 'animate-pulse text-muted-foreground'
+                        : 'text-success'
+                    )}
+                  />
+                </TooltipTrigger>
+                <TooltipContent>Start Ralph Loop</TooltipContent>
+              </Tooltip>
             )}
             <ReviewPrForm workspaceId={workspace.id} />
             <FixFindingsForm workspaceId={workspace.id} />
@@ -513,17 +537,24 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
               }}
               open={dialogOpen}
             >
-              <AlertDialogTrigger
-                render={
-                  <Button
-                    aria-label={`Destroy workspace ${workspace.branchName}`}
-                    size="icon-xs"
-                    variant="ghost"
-                  />
-                }
-              >
-                <Trash2 className="size-3.5 text-muted-foreground" />
-              </AlertDialogTrigger>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <AlertDialogTrigger
+                      render={
+                        <Button
+                          aria-label={`Destroy workspace ${workspace.branchName}`}
+                          size="icon-xs"
+                          variant="ghost"
+                        />
+                      }
+                    />
+                  }
+                >
+                  <Trash2 className="size-3.5 text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent>Destroy workspace</TooltipContent>
+              </Tooltip>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>

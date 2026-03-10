@@ -21,6 +21,11 @@ import {
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { extractErrorMessage } from '@/lib/utils'
 import {
   buildConfigUpdates,
@@ -235,19 +240,26 @@ function ProjectSettingsForm({
                     placeholder="bun install"
                     value={script.value}
                   />
-                  <Button
-                    aria-label="Remove setup script"
-                    onClick={() => {
-                      setSetupScripts((prev) =>
-                        prev.filter((item) => item.id !== script.id)
-                      )
-                    }}
-                    size="icon-sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <Trash2 className="size-3.5 text-muted-foreground" />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          aria-label="Remove setup script"
+                          onClick={() => {
+                            setSetupScripts((prev) =>
+                              prev.filter((item) => item.id !== script.id)
+                            )
+                          }}
+                          size="icon-sm"
+                          type="button"
+                          variant="ghost"
+                        />
+                      }
+                    >
+                      <Trash2 className="size-3.5 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent>Remove script</TooltipContent>
+                  </Tooltip>
                 </div>
               ))}
             </div>
@@ -351,19 +363,26 @@ function ProjectSettingsForm({
                     placeholder="apt-get install -y python3"
                     value={script.value}
                   />
-                  <Button
-                    aria-label="Remove container setup script"
-                    onClick={() => {
-                      setDevServerSetupScripts((prev) =>
-                        prev.filter((item) => item.id !== script.id)
-                      )
-                    }}
-                    size="icon-sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <Trash2 className="size-3.5 text-muted-foreground" />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          aria-label="Remove container setup script"
+                          onClick={() => {
+                            setDevServerSetupScripts((prev) =>
+                              prev.filter((item) => item.id !== script.id)
+                            )
+                          }}
+                          size="icon-sm"
+                          type="button"
+                          variant="ghost"
+                        />
+                      }
+                    >
+                      <Trash2 className="size-3.5 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent>Remove script</TooltipContent>
+                  </Tooltip>
                 </div>
               ))}
             </div>
@@ -438,18 +457,25 @@ function ProjectSettingsModal({
 
   return (
     <Dialog onOpenChange={setOpen} open={open}>
-      <DialogTrigger
-        render={
-          <Button
-            aria-label={`Open settings for ${projectName}`}
-            className="h-7 w-7"
-            size="icon-sm"
-            variant="ghost"
-          />
-        }
-      >
-        <Settings className="size-3.5 text-muted-foreground" />
-      </DialogTrigger>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <DialogTrigger
+              render={
+                <Button
+                  aria-label={`Open settings for ${projectName}`}
+                  className="h-7 w-7"
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            />
+          }
+        >
+          <Settings className="size-3.5 text-muted-foreground" />
+        </TooltipTrigger>
+        <TooltipContent>Project settings</TooltipContent>
+      </Tooltip>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Project settings</DialogTitle>

@@ -35,6 +35,11 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 
@@ -83,18 +88,24 @@ function FixFindingsForm({
 
   return (
     <Dialog onOpenChange={setOpen} open={open}>
-      <DialogTrigger
-        render={
-          <Button
-            aria-label="Fix Findings"
-            size="icon-xs"
-            title="Fix Findings (rlph fix)"
-            variant="ghost"
-          />
-        }
-      >
-        <Wrench className="size-3.5 text-warning" />
-      </DialogTrigger>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <DialogTrigger
+              render={
+                <Button
+                  aria-label="Fix Findings"
+                  size="icon-xs"
+                  variant="ghost"
+                />
+              }
+            />
+          }
+        >
+          <Wrench className="size-3.5 text-warning" />
+        </TooltipTrigger>
+        <TooltipContent>Fix Findings</TooltipContent>
+      </Tooltip>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Fix Findings</DialogTitle>

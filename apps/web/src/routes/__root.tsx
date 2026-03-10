@@ -12,6 +12,7 @@ import Header from '@/components/header'
 import Loader from '@/components/loader'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
 import { waitForSidecars } from '@/lib/tauri'
 import { LiveStoreProvider } from '@/livestore/provider'
@@ -88,19 +89,21 @@ function RootComponent() {
         storageKey="vite-ui-theme"
       >
         <HotkeysProvider>
-          <SidecarGate>
-            <AtomRegistryProvider>
-              <LiveStoreProvider>
-                <div className="grid h-svh grid-rows-[auto_auto_1fr]">
-                  <Header />
-                  <DockerStatusBanner />
-                  <Outlet />
-                </div>
-              </LiveStoreProvider>
-            </AtomRegistryProvider>
-          </SidecarGate>
-          <Toaster richColors />
-          <SidecarCrashListener />
+          <TooltipProvider>
+            <SidecarGate>
+              <AtomRegistryProvider>
+                <LiveStoreProvider>
+                  <div className="grid h-svh grid-rows-[auto_auto_1fr]">
+                    <Header />
+                    <DockerStatusBanner />
+                    <Outlet />
+                  </div>
+                </LiveStoreProvider>
+              </AtomRegistryProvider>
+            </SidecarGate>
+            <Toaster richColors />
+            <SidecarCrashListener />
+          </TooltipProvider>
         </HotkeysProvider>
       </ThemeProvider>
       <TanStackRouterDevtools position="bottom-left" />

@@ -34,6 +34,11 @@ import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
@@ -294,45 +299,66 @@ function TerminalItem({
       >
         {terminal.status}
       </Badge>
-      <Button
-        aria-label="Restart terminal"
-        className="size-5 shrink-0 text-muted-foreground hover:text-foreground"
-        onClick={(e) => {
-          e.stopPropagation()
-          onRestart(terminal.id)
-        }}
-        size="icon-sm"
-        variant="ghost"
-      >
-        <RotateCw className="size-2.5" />
-      </Button>
-      {isRunning && (
-        <Button
-          aria-label="Stop terminal"
-          className="size-5 shrink-0"
-          onClick={(e) => {
-            e.stopPropagation()
-            onKill(terminal.id)
-          }}
-          size="icon-sm"
-          variant="ghost"
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              aria-label="Restart terminal"
+              className="size-5 shrink-0 text-muted-foreground hover:text-foreground"
+              onClick={(e) => {
+                e.stopPropagation()
+                onRestart(terminal.id)
+              }}
+              size="icon-sm"
+              variant="ghost"
+            />
+          }
         >
-          <Square className="size-2.5" />
-        </Button>
+          <RotateCw className="size-2.5" />
+        </TooltipTrigger>
+        <TooltipContent>Restart</TooltipContent>
+      </Tooltip>
+      {isRunning && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label="Stop terminal"
+                className="size-5 shrink-0"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onKill(terminal.id)
+                }}
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
+          >
+            <Square className="size-2.5" />
+          </TooltipTrigger>
+          <TooltipContent>Stop</TooltipContent>
+        </Tooltip>
       )}
       {!isRunning && (
-        <Button
-          aria-label="Remove terminal"
-          className="size-5 shrink-0 text-muted-foreground hover:text-destructive"
-          onClick={(e) => {
-            e.stopPropagation()
-            onRemove(terminal.id)
-          }}
-          size="icon-sm"
-          variant="ghost"
-        >
-          <Trash2 className="size-2.5" />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label="Remove terminal"
+                className="size-5 shrink-0 text-muted-foreground hover:text-destructive"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onRemove(terminal.id)
+                }}
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
+          >
+            <Trash2 className="size-2.5" />
+          </TooltipTrigger>
+          <TooltipContent>Remove</TooltipContent>
+        </Tooltip>
       )}
     </button>
   )

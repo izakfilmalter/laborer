@@ -4,6 +4,7 @@ import { app, BrowserWindow } from 'electron'
 
 import { fixPath } from './fix-path.js'
 import { reserveServicePorts, type ServicePorts } from './ports.js'
+import { SidecarManager } from './sidecar.js'
 
 // Fix PATH before anything else — must happen synchronously before
 // any child processes are spawned. On macOS, apps launched from
@@ -16,6 +17,13 @@ fixPath()
  */
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 
+/**
+ * Whether we are in development mode.
+ * In dev mode, services are run separately via `turbo dev` and the
+ * Electron shell does NOT spawn them as child processes.
+ */
+const isDev = Boolean(VITE_DEV_SERVER_URL)
+
 /** Traffic light button inset for the hidden title bar. */
 const TRAFFIC_LIGHT_POSITION = { x: 16, y: 12 } as const
 
@@ -24,9 +32,18 @@ let mainWindow: BrowserWindow | null = null
 /**
  * Reserved ports and auth token for child process communication.
  * Populated during bootstrap before the window is created.
- * Used by child process spawning (Issue 8) and preload bridge (Issue 10).
+ * Used by child process spawning and preload bridge (Issue 10).
  */
 let servicePorts: ServicePorts | null = null
+
+/**
+ * Sidecar manager for child process lifecycle.
+ * Only created in production mode (when services need to be spawned).
+ */
+let sidecarManager: SidecarManager | null = null
+
+/** Whether the app is in the process of quitting. */
+let isQuitting = false
 
 /** Get the reserved service ports. Throws if called before bootstrap. */
 export function getServicePorts(): ServicePorts {
@@ -34,6 +51,11 @@ export function getServicePorts(): ServicePorts {
     throw new Error('Service ports not yet initialized')
   }
   return servicePorts
+}
+
+/** Get the sidecar manager (null in dev mode). */
+export function getSidecarManager(): SidecarManager | null {
+  return sidecarManager
 }
 
 function createWindow(): void {
@@ -74,9 +96,28 @@ app
   .whenReady()
   .then(async () => {
     // Reserve ephemeral ports for services and generate auth token.
-    // These will be passed to child processes via env (Issue 8)
-    // and exposed to the renderer via the preload bridge (Issue 10).
     servicePorts = await reserveServicePorts()
+
+    // In production, spawn sidecar services as child processes.
+    // In dev mode, services are run separately via `turbo dev`.
+    if (!isDev) {
+      sidecarManager = new SidecarManager(servicePorts)
+
+      // Log unexpected exits (Issue 9 will emit these to the renderer).
+      sidecarManager.setExitHandler((name, code, signal, lastStderr) => {
+        console.error(
+          `[sidecar:${name}] Unexpected exit: code=${code} signal=${signal}`
+        )
+        if (lastStderr) {
+          console.error(`[sidecar:${name}] Last stderr:\n${lastStderr}`)
+        }
+      })
+
+      // Spawn terminal first (server depends on it), then server.
+      // This blocks until both have had time to start.
+      // Issue 9 will replace the delay-based approach with health checking.
+      await sidecarManager.spawnServices()
+    }
 
     createWindow()
 
@@ -95,3 +136,40 @@ app.on('window-all-closed', () => {
     app.quit()
   }
 })
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown
+// ---------------------------------------------------------------------------
+
+/**
+ * Shutdown handler: kill all sidecar child processes before the app exits.
+ * Uses SIGTERM first, escalates to SIGKILL after a timeout.
+ */
+function shutdown(): void {
+  if (isQuitting) {
+    return
+  }
+  isQuitting = true
+
+  if (sidecarManager) {
+    sidecarManager.killAll()
+  }
+}
+
+app.on('before-quit', () => {
+  shutdown()
+})
+
+// Handle SIGINT and SIGTERM for clean shutdown when the main process
+// is terminated externally (e.g., during development).
+if (process.platform !== 'win32') {
+  process.on('SIGINT', () => {
+    shutdown()
+    app.quit()
+  })
+
+  process.on('SIGTERM', () => {
+    shutdown()
+    app.quit()
+  })
+}

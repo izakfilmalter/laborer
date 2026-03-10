@@ -279,15 +279,15 @@ Add child process spawning to the Electron main process. Spawn the server, termi
 
 ### Acceptance criteria
 
-- [ ] Server child process starts and listens on the allocated port
-- [ ] Terminal child process starts and listens on the allocated port
-- [ ] MCP child process starts (stdio-based, no port)
-- [ ] All child processes receive the correct environment variables
-- [ ] stderr is captured in a ring buffer per child process
-- [ ] On app quit, all child processes are terminated gracefully (SIGTERM -> SIGKILL)
-- [ ] No orphaned processes after app quit (verify with `ps`)
-- [ ] In dev mode, services can be run via tsx; in prod, via bundled entry points
-- [ ] The window waits for services to be ready before showing (initially just a sleep/delay; health checking comes in Issue 9)
+- [x] Server child process starts and listens on the allocated port
+- [x] Terminal child process starts and listens on the allocated port
+- [x] MCP child process starts (stdio-based, no port)
+- [x] All child processes receive the correct environment variables
+- [x] stderr is captured in a ring buffer per child process
+- [x] On app quit, all child processes are terminated gracefully (SIGTERM -> SIGKILL)
+- [x] No orphaned processes after app quit (verify with `ps`)
+- [x] In dev mode, services can be run via tsx; in prod, via bundled entry points
+- [x] The window waits for services to be ready before showing (initially just a sleep/delay; health checking comes in Issue 9)
 
 ### Blocked by
 
@@ -780,12 +780,12 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 5 | Terminal + MCP Bun-to-Node runtime swap | None | Done |
 | 6 | Electron shell scaffold + dev tooling | None | Done |
 | 7 | Shell environment probing + port allocation | 6 | Done |
-| 8 | Spawn sidecars as child processes | 4, 5, 7 | Ready |
-| 9 | Health checking + crash monitoring + restart | 8 | Blocked |
+| 8 | Spawn sidecars as child processes | 4, 5, 7 | Done |
+| 9 | Health checking + crash monitoring + restart | 8 | Ready |
 | 10 | DesktopBridge contract + service URL passing | 9 | Blocked |
 | 11 | Frontend Tauri-to-Electron migration | 10 | Blocked |
 | 12 | Custom protocol + production frontend serving | 11 | Blocked |
-| 13 | System tray, global shortcut, close-to-tray | 8 | Blocked |
+| 13 | System tray, global shortcut, close-to-tray | 8 | Ready |
 | 14 | Window state persistence + application menu | 6 | Ready |
 | 15 | Auto-update system | 6 | Ready |
 | 16 | Service bundling for distribution | 4, 5 | Ready |

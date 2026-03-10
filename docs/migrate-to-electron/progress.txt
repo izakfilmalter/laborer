@@ -157,12 +157,52 @@
 - TypeScript compiles without errors
 - Formatting clean (274 files checked, 0 errors)
 
+### Issue 8: Spawn sidecars as child processes — DONE
+- Created `apps/desktop/src/sidecar.ts` — SidecarManager class for child process lifecycle:
+  - `SidecarName` type: `'server' | 'terminal' | 'mcp'`
+  - `SidecarManager` class tracks all spawned child processes with a Map
+  - `spawn(name)` — spawns a child process with correct entry point and environment
+  - `spawnServices()` — spawns terminal first (server depends on it), then server, with startup delays (Issue 9 replaces with health checking)
+  - `killOne(name)` — graceful shutdown: SIGTERM first, SIGKILL after 2-second timeout
+  - `killAll()` — kills all tracked sidecars
+  - `killAllAndWait(timeoutMs)` — kills all and returns promise that resolves when all exit or timeout
+  - `restart(name)` — kills and re-spawns a sidecar
+  - `setExitHandler(handler)` — registers callback for unexpected exits (used by Issue 9)
+  - `getLastStderr(name)` — returns ring buffer of last 50 stderr lines for crash diagnostics
+  - `isRunning(name)` — checks if a sidecar process is still alive
+  - `getProcess(name)` — returns the raw ChildProcess handle
+- Entry point resolution:
+  - Dev mode: resolves to TypeScript source (e.g., `packages/server/src/main.ts`) run via tsx
+  - Production: resolves to bundled JS (e.g., `packages/server/dist/main.js`) run via `ELECTRON_RUN_AS_NODE=1`
+- Environment construction:
+  - Inherits process.env (with fixed PATH from fix-path.ts)
+  - Overlays PORT, TERMINAL_PORT from reserved ephemeral ports
+  - In production: sets DATA_DIR to app data directory, ELECTRON_RUN_AS_NODE=1
+  - Filters out ELECTRON_RUN_AS_NODE and ELECTRON_RENDERER_PORT from inherited env
+- stdout/stderr capture:
+  - Line-by-line streaming via `readline.createInterface`
+  - stdout logged at info level, stderr at warn level
+  - stderr stored in a 50-line ring buffer per sidecar for crash diagnostics
+- Updated `apps/desktop/src/main.ts`:
+  - Imports and creates SidecarManager after port reservation
+  - In production mode (!isDev): spawns services before creating window
+  - In dev mode: services run via `turbo dev`, not spawned by Electron
+  - Registers unexpected exit handler (logs for now, Issue 9 emits to renderer)
+  - Graceful shutdown on `before-quit`, `SIGINT`, `SIGTERM`
+  - Exports `getSidecarManager()` for use by other modules
+- tsdown build succeeds: main.js 16.14 KB (includes sidecar module)
+- TypeScript compiles without errors
+- All 20 desktop tests pass
+- All 280 server + 73 terminal + 19 MCP tests pass (no regressions)
+- Formatting clean (275 files checked, 0 errors)
+
 ## Now Unblocked
-- Issue 8: Spawn sidecars as child processes (all blockers resolved: Issues 4, 5, 7 done)
-- Issue 13: System tray, global shortcut, close-to-tray (blocker Issue 8 now unblocked)
+- Issue 9: Health checking + crash monitoring + restart (blocker Issue 8 done)
+- Issue 13: System tray, global shortcut, close-to-tray (blocker Issue 8 done)
 
 ## Ready to start (no blockers):
-- Issue 8: Spawn sidecars as child processes
+- Issue 9: Health checking + crash monitoring + restart
+- Issue 13: System tray, global shortcut, close-to-tray
 - Issue 14: Window state persistence + application menu
 - Issue 15: Auto-update system
 - Issue 16: Service bundling for distribution

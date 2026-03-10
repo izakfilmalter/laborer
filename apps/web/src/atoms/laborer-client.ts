@@ -26,9 +26,9 @@ import { serverRpcUrl } from '@/lib/desktop'
  * Derive the server RPC URL based on the runtime context.
  *
  * - Dev mode: `/rpc` (Vite proxy routes to backend server on port 2100)
- * - Tauri production: `http://localhost:4100/rpc` (direct to sidecar)
+ * - Electron production: `http://localhost:<port>/rpc` (direct to sidecar)
  *
- * @see lib/tauri.ts for runtime context detection
+ * @see lib/desktop.ts for runtime context detection
  */
 const RPC_URL = serverRpcUrl()
 

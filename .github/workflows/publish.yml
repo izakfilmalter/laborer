@@ -7,7 +7,7 @@ on:
       - release
 
 jobs:
-  publish-tauri:
+  publish-electron:
     permissions:
       contents: write
     runs-on: macos-latest
@@ -24,28 +24,27 @@ jobs:
         with:
           node-version: lts/*
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "apps/web/src-tauri -> target"
-
-      - name: Install frontend dependencies
+      - name: Install dependencies
         run: bun install
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Build and package desktop app
+        run: bun run dist:desktop:dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          projectPath: apps/web
-          tauriScript: bun run tauri
-          args: "--target aarch64-apple-darwin"
-          tagName: v__VERSION__
-          releaseName: "Laborer v__VERSION__"
-          releaseBody: "See the assets to download and install."
-          releaseDraft: true
+          name: laborer-macos-arm64
+          path: release/*
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: release/*
+          draft: true
           prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

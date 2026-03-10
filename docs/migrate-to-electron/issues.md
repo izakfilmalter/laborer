@@ -747,17 +747,17 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 
 ### Acceptance criteria
 
-- [ ] `apps/web/src-tauri/` directory is deleted
-- [ ] `apps/web/scripts/tauri-dev.sh` is deleted
-- [ ] No `@tauri-apps/*` dependencies remain in any package.json
-- [ ] No `@effect/platform-bun` references remain in any package.json
-- [ ] No `@types/bun` references remain in any package.json
-- [ ] No Rust/Cargo configuration files remain
-- [ ] `turbo dev` works end-to-end
-- [ ] `turbo build` succeeds
-- [ ] `turbo typecheck` passes
-- [ ] Production `.dmg` build works
-- [ ] `grep -r "tauri" --include="*.ts" --include="*.tsx" --include="*.json" apps/ packages/` returns no results (excluding docs/PRD)
+- [x] `apps/web/src-tauri/` directory is deleted
+- [x] `apps/web/scripts/tauri-dev.sh` is deleted
+- [x] No `@tauri-apps/*` dependencies remain in any package.json
+- [x] No `@effect/platform-bun` references remain in any package.json
+- [x] No `@types/bun` references remain in any package.json
+- [x] No Rust/Cargo configuration files remain
+- [x] `turbo dev` works end-to-end
+- [x] `turbo build` succeeds
+- [x] `turbo typecheck` passes
+- [x] Production `.dmg` build works
+- [x] `grep -r "tauri" --include="*.ts" --include="*.tsx" --include="*.json" apps/ packages/` returns no results (excluding docs/PRD)
 
 ### Blocked by
 
@@ -790,7 +790,7 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 15 | Auto-update system | 6 | Done |
 | 16 | Service bundling for distribution | 4, 5 | Done |
 | 17 | Electron packaging + .dmg distribution | 12, 13, 14, 15, 16 | Done |
-| 18 | Cleanup + remove Tauri | 17 | Ready |
+| 18 | Cleanup + remove Tauri | 17 | Done |
 
 ### Parallelism opportunities
 

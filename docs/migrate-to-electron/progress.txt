@@ -1,6 +1,6 @@
 # Progress: Migrate from Tauri to Electron (and Bun to Node.js)
 
-## Status: In Progress
+## Status: Complete
 
 ## Completed
 
@@ -549,5 +549,35 @@
 - All tests pass: 117 desktop + 280 server + 73 terminal + 19 MCP + 30 shared + 73 web
 - Formatting clean (297 files checked, 0 errors)
 
-## Now Unblocked
-- Issue 18: Cleanup + remove Tauri (blocker Issue 17 done)
+### Issue 18: Cleanup + remove Tauri — DONE
+- Deleted `apps/web/src-tauri/` directory entirely (Cargo.toml, Rust source, capabilities, icons, tauri.conf.json — 25+ files)
+- Deleted `apps/web/scripts/tauri-dev.sh` (and now-empty `scripts/` directory)
+- Removed `@effect/platform-bun` from root `package.json`:
+  - Removed from workspace catalog (line 18)
+  - Removed from overrides (line 69)
+- Replaced `.github/workflows/publish.yml` — old Tauri CI pipeline (using `tauri-apps/tauri-action`, Rust toolchain, Cargo cache) with Electron-based pipeline (runs `bun run dist:desktop:dmg`, uploads artifacts, creates GitHub release)
+- Fixed stale `@see lib/tauri.ts` comments in 2 frontend atom files:
+  - `apps/web/src/atoms/terminal-service-client.ts` — updated to `@see lib/desktop.ts`, changed "Tauri production" to "Electron production"
+  - `apps/web/src/atoms/laborer-client.ts` — same updates
+- Updated outdated Bun reference in `packages/server/src/pty-host.ts`:
+  - Removed "Why Node.js instead of Bun" paragraph (no longer relevant — both server and PTY Host run Node.js)
+  - Changed "main Bun HTTP server process" to "main Node.js HTTP server process"
+- Ran `bun install` — lockfile updated cleanly
+- Verification checks all pass:
+  - `grep -r "tauri" --include="*.ts" --include="*.tsx" --include="*.json" apps/ packages/` — zero results
+  - No `@tauri-apps/*` dependencies remain in any package.json
+  - No `@effect/platform-bun` references remain in any package.json
+  - No `@types/bun` references remain in any package.json
+  - No Rust/Cargo configuration files remain (no `.cargo/`, no `rust-toolchain.toml`)
+  - `turbo typecheck` passes across all 6 packages
+  - Formatting clean (297 files checked, 0 errors)
+
+## Migration Status: COMPLETE
+
+All 18 issues from the Tauri-to-Electron migration are now done. The codebase is fully migrated:
+- Electron main process manages windows, tray, global shortcuts, auto-updates
+- Server, terminal, and MCP services run on Node.js (not Bun runtime)
+- Frontend uses DesktopBridge (not Tauri APIs)
+- Custom `laborer://` protocol serves the frontend in production
+- `electron-builder` packages the app as .dmg for macOS
+- No Tauri, Rust, or Bun runtime references remain in the source code

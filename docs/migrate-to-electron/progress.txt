@@ -406,6 +406,39 @@
 - TypeScript compiles without errors
 - Formatting clean (286 files checked, 0 errors)
 
+### Issue 16: Service bundling for distribution — DONE
+- Created `packages/server/tsdown.config.ts` — ESM bundle config:
+  - Entry: `src/main.ts`, output to `dist/`
+  - `noExternal: @laborer/*` bundles workspace packages into the output
+  - Native modules externalized: `better-sqlite3`, `@parcel/watcher`
+  - LiveStore packages externalized: `@livestore/adapter-node`, `@livestore/livestore`, `@livestore/sync-cf` (use wa-sqlite WASM and native SQLite, must resolve from node_modules)
+  - Output: `dist/main.js` (385 KB) + sourcemap
+- Created `packages/terminal/tsdown.config.ts` — ESM bundle config with two entry points:
+  - Entry 1: `src/main.ts` — the HTTP server (158 KB)
+  - Entry 2: `src/pty-host.ts` — the PTY Host subprocess (13 KB), bundled separately because it runs as an independent child process spawned by the terminal server
+  - `node-pty` externalized (native addon)
+  - Output: `dist/main.js`, `dist/pty-host.js` + sourcemaps
+- Created `packages/mcp/tsdown.config.ts` — ESM bundle config:
+  - Entry: `src/main.ts`, output to `dist/`
+  - No native modules to externalize (pure JS/TS)
+  - Output: `dist/main.js` (130 KB) + sourcemap
+- Updated `packages/terminal/src/services/pty-host-client.ts` — PTY Host path resolution:
+  - Replaced obsolete Bun `/$bunfs/` detection with `.js` vs `.ts` extension check
+  - In source mode (tsx/vitest): resolves `../pty-host.ts` relative to source file
+  - In bundled mode (tsdown output): resolves `pty-host.js` as sibling in `dist/` directory
+- Updated all three `package.json` files:
+  - Build scripts: `"build": "tsdown && tsc --noEmit"` (bundle first, then typecheck)
+  - Added `tsdown: ^0.12.5` to devDependencies
+- All output paths match what `apps/desktop/src/sidecar.ts` expects in production mode:
+  - `packages/server/dist/main.js`
+  - `packages/terminal/dist/main.js`
+  - `packages/mcp/dist/main.js`
+- Verified native modules are properly externalized (remain as import/require in output)
+- Verified workspace packages are fully inlined (no `@laborer/` imports in output)
+- `bun install` — tsdown resolved via existing lockfile, 0 new packages needed
+- TypeScript compiles without errors across all 8 packages
+- All tests pass: 280 server + 73 terminal + 19 MCP + 92 desktop + 30 shared
+- Formatting clean (289 files checked, 0 errors)
+
 ## Ready to start (no blockers):
 - Issue 15: Auto-update system
-- Issue 16: Service bundling for distribution

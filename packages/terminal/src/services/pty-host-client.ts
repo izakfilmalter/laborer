@@ -132,23 +132,21 @@ class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
     Effect.gen(function* () {
       // Resolve the PTY Host script path.
       //
-      // In source mode (running via `bun run` or vitest), import.meta.url
-      // points to the real source file, so we resolve pty-host.ts relative
+      // In source mode (running via tsx or vitest), import.meta.url points
+      // to the real .ts source file, so we resolve pty-host.ts relative
       // to this file:
       //   packages/terminal/src/services/pty-host-client.ts -> ../pty-host.ts
       //
-      // In compiled mode (running as a Bun standalone binary), import.meta.url
-      // points to the virtual /$bunfs/root/ filesystem, so we resolve pty-host.js
-      // (the pre-bundled JS file) as a sibling of the compiled binary on disk.
+      // In bundled mode (running as a tsdown-bundled JS file for Electron),
+      // import.meta.url points to dist/main.js. The PTY Host is bundled as
+      // a separate entry (dist/pty-host.js) in the same directory.
       //
-      // Detection: Compiled Bun binaries use a virtual filesystem where
-      // import.meta.url starts with "file:///$bunfs/". This is more precise
-      // than checking process.execPath since vitest runs under Node.js where
-      // execPath also doesn't end in "/bun".
-      const IS_COMPILED_BINARY = import.meta.url.includes('/$bunfs/')
-      const ptyHostPath = IS_COMPILED_BINARY
-        ? join(dirname(process.execPath), 'pty-host.js')
-        : join(dirname(fileURLToPath(import.meta.url)), '..', 'pty-host.ts')
+      // Detection: Source files end in .ts, bundled files end in .js.
+      const currentPath = fileURLToPath(import.meta.url)
+      const IS_BUNDLED = currentPath.endsWith('.js')
+      const ptyHostPath = IS_BUNDLED
+        ? join(dirname(currentPath), 'pty-host.js')
+        : join(dirname(currentPath), '..', 'pty-host.ts')
 
       // Per-terminal callbacks
       const dataCallbacks = new Map<string, DataCallback>()

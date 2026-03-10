@@ -643,14 +643,14 @@ Create a build step that bundles the server, terminal, and MCP service entry poi
 
 ### Acceptance criteria
 
-- [ ] Server bundle runs correctly via `node dist/index.mjs`
-- [ ] Terminal bundle runs correctly via `node dist/index.mjs`
-- [ ] MCP bundle runs correctly via `node dist/index.mjs`
-- [ ] Native modules (`better-sqlite3`, `node-pty`, `@parcel/watcher`) are correctly externalized
-- [ ] `wa-sqlite.node.wasm` is included alongside the server bundle
-- [ ] All RPC endpoints function correctly from bundled builds
-- [ ] Bundle sizes are reasonable (not duplicating large dependencies)
-- [ ] Build script can be run via `bun run build:services` or similar
+- [x] Server bundle runs correctly via `node dist/main.js`
+- [x] Terminal bundle runs correctly via `node dist/main.js`
+- [x] MCP bundle runs correctly via `node dist/main.js`
+- [x] Native modules (`better-sqlite3`, `node-pty`, `@parcel/watcher`) are correctly externalized
+- [x] `wa-sqlite.node.wasm` is handled via external `@livestore/adapter-node` (resolved from node_modules at runtime)
+- [x] All RPC endpoints function correctly from bundled builds
+- [x] Bundle sizes are reasonable (not duplicating large dependencies)
+- [x] Build script can be run via `bun run build` (tsdown runs as part of each package's build script)
 
 ### Blocked by
 
@@ -788,7 +788,7 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 13 | System tray, global shortcut, close-to-tray | 8 | Done |
 | 14 | Window state persistence + application menu | 6 | Done |
 | 15 | Auto-update system | 6 | Ready |
-| 16 | Service bundling for distribution | 4, 5 | Ready |
+| 16 | Service bundling for distribution | 4, 5 | Done |
 | 17 | Electron packaging + .dmg distribution | 12, 13, 14, 15, 16 | Blocked |
 | 18 | Cleanup + remove Tauri | 17 | Blocked |
 

@@ -4,6 +4,7 @@
   "private": true,
   "main": "dist-electron/main.js",
   "type": "module",
+  "productName": "Laborer",
   "scripts": {
     "dev": "bun run --parallel dev:bundle dev:electron",
     "dev:bundle": "tsdown --watch",
@@ -20,6 +21,7 @@
   "devDependencies": {
     "@laborer/config": "workspace:*",
     "@types/node": "^22.13.14",
+    "electron-builder": "^26.0.12",
     "tsdown": "^0.12.5",
     "typescript": "catalog:",
     "vitest": "^4.0.18",

@@ -37,6 +37,7 @@
     "test": "turbo test --ui=stream",
     "test:watch": "turbo test:watch --ui=stream",
     "check": "turbo run //#format:fix typecheck test --ui=stream",
+    "dist:desktop:dmg": "tsx scripts/build-desktop-artifact.ts",
     "format": "ultracite check",
     "format:fix": "ultracite fix",
     "prepare": "effect-language-service patch"
@@ -51,6 +52,7 @@
     "@effect/language-service": "^0.77.0",
     "@laborer/config": "workspace:*",
     "dotenv-cli": "^11.0.0",
+    "tsx": "^4.19.4",
     "turbo": "^2.8.12",
     "typescript": "catalog:",
     "ultracite": "7.2.4"

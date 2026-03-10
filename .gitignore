@@ -6,6 +6,7 @@ node_modules
 # Build outputs
 dist
 build
+release
 *.tsbuildinfo
 
 # Environment variables

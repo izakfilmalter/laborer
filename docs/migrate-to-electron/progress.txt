@@ -508,5 +508,46 @@
 - TypeScript compiles without errors across all packages (desktop, shared, web)
 - Formatting clean (296 files checked, 0 errors)
 
+### Issue 17: Electron packaging + .dmg distribution — DONE
+- Created `scripts/build-desktop-artifact.ts` — dynamic build script (following t3code pattern) that:
+  - Runs `turbo build` to build all packages (web, server, terminal, MCP, desktop)
+  - Creates a temporary staging directory with the following structure:
+    - `apps/desktop/dist-electron/` — main.js + preload.js
+    - `apps/desktop/resources/` — icons (icon.icns, icon.png, tray templates)
+    - `apps/web/dist/` — bundled frontend (served via laborer:// protocol)
+    - `packages/server/dist/` — bundled server service
+    - `packages/terminal/dist/` — bundled terminal service
+    - `packages/mcp/dist/` — bundled MCP service
+  - Generates a production `package.json` with:
+    - `main: "apps/desktop/dist-electron/main.js"` as the Electron entry point
+    - All service production dependencies with `catalog:` specs resolved to concrete versions
+    - `workspace:*` dependencies filtered out (bundled by tsdown's `noExternal`)
+    - `electron` pinned as devDependency (for electron-builder)
+    - Inline `build` config for electron-builder (appId, productName, mac targets, icon)
+  - Runs `bun install --production` in the staging directory to install native modules
+  - Runs `electron-builder --mac --arm64 --publish never` to produce .dmg + .zip
+  - Copies artifact files to `release/` output directory
+  - Cleans up staging directory (unless `--keep-stage`)
+  - Validates bundled client assets (index.html references exist on disk)
+  - Disables code signing by default (`CSC_IDENTITY_AUTO_DISCOVERY=false`)
+- Created `scripts/lib/resolve-catalog.ts` — pure function to resolve `catalog:` dependency specs:
+  - Resolves `catalog:` specs against root `package.json` workspace catalog
+  - Filters out `workspace:*` dependencies (bundled by tsdown)
+  - Throws clear error messages for missing catalog entries
+- CLI flags: `--skip-build` (reuse existing builds), `--keep-stage` (debug staging), `--verbose` (stream subprocess output), `--output-dir` (custom output), `--arch` (default arm64)
+- Environment variable overrides: `LABORER_DESKTOP_SKIP_BUILD`, `LABORER_DESKTOP_KEEP_STAGE`, `LABORER_DESKTOP_VERBOSE`, `LABORER_DESKTOP_OUTPUT_DIR`
+- Updated `apps/desktop/package.json`:
+  - Added `productName: "Laborer"` (used by electron-builder)
+  - Added `electron-builder: ^26.0.12` to devDependencies
+- Updated root `package.json`:
+  - Added `"dist:desktop:dmg": "tsx scripts/build-desktop-artifact.ts"` script
+  - Added `tsx: ^4.19.4` to devDependencies (for running the build script)
+- Added `release/` to `.gitignore` (electron-builder output directory)
+- Deleted `apps/web/scripts/build-sidecars.ts` — old Tauri sidecar build system (629 lines) that compiled Bun standalone binaries. No longer needed with the Electron packaging approach.
+- `bun install` — 283 packages installed (electron-builder + tsx dependencies)
+- TypeScript compiles without errors across all 8 packages
+- All tests pass: 117 desktop + 280 server + 73 terminal + 19 MCP + 30 shared + 73 web
+- Formatting clean (297 files checked, 0 errors)
+
 ## Now Unblocked
-- Issue 17: Electron packaging + .dmg distribution (all blockers done: 12, 13, 14, 15, 16)
+- Issue 18: Cleanup + remove Tauri (blocker Issue 17 done)

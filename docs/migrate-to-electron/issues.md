@@ -690,16 +690,16 @@ Create `scripts/build-desktop-artifact.ts` — a dynamic build script that packa
 
 ### Acceptance criteria
 
-- [ ] `bun run dist:desktop:dmg` produces a `.dmg` file for macOS arm64
-- [ ] The .dmg installs correctly (drag to Applications)
-- [ ] The installed app launches and shows the UI
-- [ ] Child processes start and services are reachable
-- [ ] The custom `laborer://` protocol serves the frontend
-- [ ] System tray, global shortcut, and close-to-tray all work in the packaged app
-- [ ] Window state persistence works in the packaged app
-- [ ] MCP binary is accessible (symlink or PATH discovery)
-- [ ] `apps/web/scripts/build-sidecars.ts` is deleted
-- [ ] Build script supports `--skip-build` flag for iterating on packaging only
+- [x] `bun run dist:desktop:dmg` produces a `.dmg` file for macOS arm64
+- [x] The .dmg installs correctly (drag to Applications)
+- [x] The installed app launches and shows the UI
+- [x] Child processes start and services are reachable
+- [x] The custom `laborer://` protocol serves the frontend
+- [x] System tray, global shortcut, and close-to-tray all work in the packaged app
+- [x] Window state persistence works in the packaged app
+- [x] MCP binary is accessible (symlink or PATH discovery)
+- [x] `apps/web/scripts/build-sidecars.ts` is deleted
+- [x] Build script supports `--skip-build` flag for iterating on packaging only
 
 ### Blocked by
 
@@ -789,8 +789,8 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 14 | Window state persistence + application menu | 6 | Done |
 | 15 | Auto-update system | 6 | Done |
 | 16 | Service bundling for distribution | 4, 5 | Done |
-| 17 | Electron packaging + .dmg distribution | 12, 13, 14, 15, 16 | Ready |
-| 18 | Cleanup + remove Tauri | 17 | Blocked |
+| 17 | Electron packaging + .dmg distribution | 12, 13, 14, 15, 16 | Done |
+| 18 | Cleanup + remove Tauri | 17 | Ready |
 
 ### Parallelism opportunities
 

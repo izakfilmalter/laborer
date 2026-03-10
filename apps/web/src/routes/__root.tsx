@@ -14,7 +14,7 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
-import { waitForSidecars } from '@/lib/tauri'
+import { waitForSidecars } from '@/lib/desktop'
 import { LiveStoreProvider } from '@/livestore/provider'
 
 import '../index.css'
@@ -42,16 +42,17 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
   }),
 })
 
-/** Renderless component that listens for sidecar crash/recovery Tauri events. */
+/** Renderless component that listens for sidecar crash/recovery events via DesktopBridge. */
 function SidecarCrashListener(): null {
   useSidecarCrashListener()
   return null
 }
 
 /**
- * Gate that waits for Tauri sidecar services to become healthy
- * before rendering children. In non-Tauri or dev mode, renders
- * children immediately.
+ * Gate that waits for sidecar services to become healthy before
+ * rendering children. In Electron, the main process handles health
+ * checking before showing the window, so this resolves immediately.
+ * In plain browser mode, also resolves immediately.
  */
 function SidecarGate({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false)

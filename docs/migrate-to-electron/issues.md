@@ -417,15 +417,15 @@ Also update `vite.config.ts` to add explicit HMR config (`protocol: "ws"`, `host
 
 ### Acceptance criteria
 
-- [ ] `src/lib/tauri.ts` replaced with `src/lib/desktop.ts` using DesktopBridge
-- [ ] `isElectron()` correctly detects Electron environment
-- [ ] All 5 Tauri consumer files updated to use DesktopBridge
-- [ ] No `@tauri-apps/*` imports remain anywhere in `apps/web/src/`
-- [ ] All `@tauri-apps/*` deps removed from `apps/web/package.json`
-- [ ] Vite HMR works inside Electron (explicit ws protocol + localhost host)
-- [ ] The app loads and functions in the Electron window with full service connectivity
-- [ ] The app still works in plain browser mode (graceful fallback when `desktopBridge` is absent)
-- [ ] TypeScript compiles without errors
+- [x] `src/lib/tauri.ts` replaced with `src/lib/desktop.ts` using DesktopBridge
+- [x] `isElectron()` correctly detects Electron environment
+- [x] All 5 Tauri consumer files updated to use DesktopBridge
+- [x] No `@tauri-apps/*` imports remain anywhere in `apps/web/src/`
+- [x] All `@tauri-apps/*` deps removed from `apps/web/package.json`
+- [x] Vite HMR works inside Electron (explicit ws protocol + localhost host)
+- [x] The app loads and functions in the Electron window with full service connectivity
+- [x] The app still works in plain browser mode (graceful fallback when `desktopBridge` is absent)
+- [x] TypeScript compiles without errors
 
 ### Blocked by
 
@@ -783,8 +783,8 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 8 | Spawn sidecars as child processes | 4, 5, 7 | Done |
 | 9 | Health checking + crash monitoring + restart | 8 | Done |
 | 10 | DesktopBridge contract + service URL passing | 9 | Done |
-| 11 | Frontend Tauri-to-Electron migration | 10 | Ready |
-| 12 | Custom protocol + production frontend serving | 11 | Blocked |
+| 11 | Frontend Tauri-to-Electron migration | 10 | Done |
+| 12 | Custom protocol + production frontend serving | 11 | Ready |
 | 13 | System tray, global shortcut, close-to-tray | 8 | Ready |
 | 14 | Window state persistence + application menu | 6 | Ready |
 | 15 | Auto-update system | 6 | Ready |

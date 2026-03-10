@@ -19,7 +19,7 @@ import { AtomRpc } from '@effect-atom/atom'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import { Layer } from 'effect'
 
-import { terminalRpcUrl } from '@/lib/tauri'
+import { terminalRpcUrl } from '@/lib/desktop'
 
 /**
  * Terminal service RPC URL.

@@ -275,8 +275,43 @@
 ## Now Unblocked
 - Issue 11: Frontend Tauri-to-Electron migration (blocker Issue 10 done)
 
+### Issue 11: Frontend Tauri-to-Electron migration — DONE
+- Created `apps/web/src/lib/desktop.ts` — replacement for `tauri.ts` using the Electron DesktopBridge:
+  - `isElectron()` — detects Electron via `window.desktopBridge` presence
+  - `isElectronProduction()` — detects production mode (no Vite proxy)
+  - `getDesktopBridge()` — typed accessor for the DesktopBridge
+  - `waitForSidecars()` — resolves immediately (Electron main process handles health checking)
+  - `serverRpcUrl()` — `/rpc` in dev, `${bridge.getServerUrl()}/rpc` in production
+  - `terminalRpcUrl()` — `/terminal-rpc` in dev, `${bridge.getTerminalUrl()}/rpc` in production
+  - `serverWsSyncUrl()` — derives WebSocket URL from server URL
+  - `terminalWsUrl(id)` — derives terminal WebSocket URL from terminal URL
+- Deleted `apps/web/src/lib/tauri.ts` — all functionality ported to desktop.ts
+- Updated all 9 consumer files to import from `@/lib/desktop` instead of `@/lib/tauri`:
+  - `src/routes/index.tsx` — `isTauri()` → `isElectron()`, `getCurrentWindow().hide()` → `window.close()` (main process handles close-to-tray)
+  - `src/routes/__root.tsx` — `waitForSidecars` import updated
+  - `src/hooks/use-sidecar-crash-listener.ts` — fully rewritten to use `desktopBridge.onSidecarStatus()` + `desktopBridge.restartSidecar()` instead of Tauri `listen()` + `invoke()`
+  - `src/hooks/use-tray-workspace-count.ts` — rewritten to use `desktopBridge.updateTrayWorkspaceCount()` instead of Tauri `invoke()`
+  - `src/hooks/use-terminal-websocket.ts` — import updated
+  - `src/hooks/use-terminal-list.ts` — import updated
+  - `src/components/add-project-form.tsx` — rewritten to use `desktopBridge.pickFolder()` instead of `@tauri-apps/plugin-dialog`
+  - `src/atoms/laborer-client.ts` — import updated
+  - `src/atoms/terminal-service-client.ts` — import updated
+- Updated `src/livestore.worker.ts` — sync URL detection changed from `tauri://` to `laborer://` protocol, with `__LABORER_SERVER_URL__` global for Worker context
+- Updated `vite.config.ts` — added explicit HMR config (`protocol: "ws"`, `host: "localhost"`) for Electron compatibility
+- Updated `apps/web/package.json`:
+  - Removed `@tauri-apps/api`, `@tauri-apps/plugin-dialog` from dependencies
+  - Removed `@tauri-apps/cli` from devDependencies
+  - Removed Tauri-specific scripts (`tauri`, `build:sidecars`), updated `dev` → `vite`, `build` → `vite build`
+- Ran `bun install` — lockfile updated (Tauri packages removed)
+- No `@tauri-apps/*` imports remain anywhere in `apps/web/src/`
+- TypeScript compiles without errors across all packages
+- Formatting clean (279 files checked, 0 errors)
+
+## Now Unblocked
+- Issue 12: Custom protocol + production frontend serving (blocker Issue 11 done)
+
 ## Ready to start (no blockers):
-- Issue 11: Frontend Tauri-to-Electron migration
+- Issue 12: Custom protocol + production frontend serving
 - Issue 13: System tray, global shortcut, close-to-tray
 - Issue 14: Window state persistence + application menu
 - Issue 15: Auto-update system

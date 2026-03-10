@@ -75,7 +75,7 @@ import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSidebarWidth } from '@/hooks/use-sidebar-width'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
-import { isTauri } from '@/lib/tauri'
+import { isElectron } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import {
@@ -1220,19 +1220,18 @@ function CloseAppDialog({
   readonly open: boolean
   readonly onOpenChange: (open: boolean) => void
 }) {
-  const handleCloseToTray = useCallback(async () => {
-    if (isTauri()) {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window')
-      await getCurrentWindow().hide()
+  const handleCloseToTray = useCallback(() => {
+    if (isElectron()) {
+      // In Electron, closing the window is intercepted by the main process
+      // which hides it to tray instead of quitting. See Issue 13.
+      window.close()
     }
     onOpenChange(false)
   }, [onOpenChange])
 
   const handleCloseClick = useCallback(() => {
-    handleCloseToTray().catch(() => {
-      onOpenChange(false)
-    })
-  }, [handleCloseToTray, onOpenChange])
+    handleCloseToTray()
+  }, [handleCloseToTray])
 
   return (
     <AlertDialog onOpenChange={onOpenChange} open={open}>
@@ -1263,7 +1262,7 @@ function HomeComponent() {
   const workspaceList = store.useQuery(sidebarWorkspaces$)
   const hasProjects = projectList.length > 0
 
-  // Sync running workspace count to Tauri system tray tooltip (no-op in browser)
+  // Sync running workspace count to Electron system tray tooltip (no-op in browser)
   useTrayWorkspaceCount()
 
   // Responsive sizing — adapts sidebar and pane sizes to viewport width

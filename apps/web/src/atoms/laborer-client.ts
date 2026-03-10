@@ -20,7 +20,7 @@ import { AtomRpc } from '@effect-atom/atom'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import { Layer } from 'effect'
 
-import { serverRpcUrl } from '@/lib/tauri'
+import { serverRpcUrl } from '@/lib/desktop'
 
 /**
  * Derive the server RPC URL based on the runtime context.

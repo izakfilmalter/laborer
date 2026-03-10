@@ -10,6 +10,7 @@
     "includes": [
       "!**/.next",
       "!**/dist",
+      "!**/dist-electron",
       "!**/.turbo",
       "!**/dev-dist",
       "!**/.zed",

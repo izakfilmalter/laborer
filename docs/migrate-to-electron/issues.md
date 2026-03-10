@@ -244,14 +244,14 @@ Reserve two ephemeral ports (for server and terminal) at startup using Node.js `
 
 ### Acceptance criteria
 
-- [ ] `fixPath()` correctly captures PATH from the user's login shell on macOS
-- [ ] Handles both `-il` and `-l` shell flag variants (try `-il` first, fall back to `-l`)
-- [ ] Works with bash, zsh, and fish shells
-- [ ] Two ephemeral ports are reserved at startup without conflicts
-- [ ] A random auth token is generated
-- [ ] Ports and auth token are accessible for passing to child process env
-- [ ] Unit tests for PATH parsing with mock shell output
-- [ ] Unit test for port reservation (verifies ports are valid and distinct)
+- [x] `fixPath()` correctly captures PATH from the user's login shell on macOS
+- [x] Handles both `-il` and `-l` shell flag variants (try `-il` first, fall back to `-l`)
+- [x] Works with bash, zsh, and fish shells
+- [x] Two ephemeral ports are reserved at startup without conflicts
+- [x] A random auth token is generated
+- [x] Ports and auth token are accessible for passing to child process env
+- [x] Unit tests for PATH parsing with mock shell output
+- [x] Unit test for port reservation (verifies ports are valid and distinct)
 
 ### Blocked by
 
@@ -779,8 +779,8 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 4 | Server Bun-to-Node runtime swap | 2, 3 | Done |
 | 5 | Terminal + MCP Bun-to-Node runtime swap | None | Done |
 | 6 | Electron shell scaffold + dev tooling | None | Done |
-| 7 | Shell environment probing + port allocation | 6 | Ready |
-| 8 | Spawn sidecars as child processes | 4, 5, 7 | Blocked |
+| 7 | Shell environment probing + port allocation | 6 | Done |
+| 8 | Spawn sidecars as child processes | 4, 5, 7 | Ready |
 | 9 | Health checking + crash monitoring + restart | 8 | Blocked |
 | 10 | DesktopBridge contract + service URL passing | 9 | Blocked |
 | 11 | Frontend Tauri-to-Electron migration | 10 | Blocked |

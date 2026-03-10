@@ -5,5 +5,5 @@
     "types": ["node"],
     "lib": ["ES2023", "DOM", "ESNext.Disposable"]
   },
-  "include": ["src", "tsdown.config.ts"]
+  "include": ["src", "test", "tsdown.config.ts"]
 }

@@ -2,6 +2,14 @@ import { join } from 'node:path'
 
 import { app, BrowserWindow } from 'electron'
 
+import { fixPath } from './fix-path.js'
+import { reserveServicePorts, type ServicePorts } from './ports.js'
+
+// Fix PATH before anything else — must happen synchronously before
+// any child processes are spawned. On macOS, apps launched from
+// Finder/Dock inherit a minimal PATH from launchd.
+fixPath()
+
 /**
  * Vite dev server URL, set by the dev-electron script.
  * When present, the renderer loads from the dev server instead of a custom protocol.
@@ -12,6 +20,21 @@ const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 const TRAFFIC_LIGHT_POSITION = { x: 16, y: 12 } as const
 
 let mainWindow: BrowserWindow | null = null
+
+/**
+ * Reserved ports and auth token for child process communication.
+ * Populated during bootstrap before the window is created.
+ * Used by child process spawning (Issue 8) and preload bridge (Issue 10).
+ */
+let servicePorts: ServicePorts | null = null
+
+/** Get the reserved service ports. Throws if called before bootstrap. */
+export function getServicePorts(): ServicePorts {
+  if (!servicePorts) {
+    throw new Error('Service ports not yet initialized')
+  }
+  return servicePorts
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -49,7 +72,12 @@ function createWindow(): void {
 
 app
   .whenReady()
-  .then(() => {
+  .then(async () => {
+    // Reserve ephemeral ports for services and generate auth token.
+    // These will be passed to child processes via env (Issue 8)
+    // and exposed to the renderer via the preload bridge (Issue 10).
+    servicePorts = await reserveServicePorts()
+
     createWindow()
 
     app.on('activate', () => {

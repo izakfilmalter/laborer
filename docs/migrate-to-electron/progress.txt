@@ -125,15 +125,44 @@
 - All 280 server + 73 terminal + 19 MCP tests pass (no regressions)
 - Formatting clean (0 fixes needed)
 
+### Issue 7: Shell environment probing + port allocation — DONE
+- Created `apps/desktop/src/shell.ts` — shell environment probing utilities:
+  - `extractPathFromShellOutput()` — extracts PATH value from sentinel-delimited shell output
+  - `readPathFromLoginShell()` — launches user's login shell with `-ilc` to capture full PATH
+  - Uses `__LABORER_PATH_START__` / `__LABORER_PATH_END__` sentinel markers to safely ignore shell startup noise (fish greeting, motd, etc.)
+  - Injectable `execFile` parameter for testability
+  - 5-second timeout to prevent hangs from broken shell configs
+- Created `apps/desktop/src/fix-path.ts` — macOS PATH fix:
+  - `fixPath()` called synchronously at module top-level in main.ts, before any child processes
+  - On macOS, reads user's default shell from `$SHELL` (falls back to `/bin/zsh`)
+  - Silently catches errors to prevent broken shell configs from blocking app launch
+  - No-op on non-macOS platforms
+- Created `apps/desktop/src/ports.ts` — ephemeral port reservation + auth token:
+  - `reservePort()` — binds TCP server to port 0 on 127.0.0.1, records OS-assigned port, closes
+  - `reserveServicePorts()` — reserves two distinct ports (server + terminal) and generates 24-byte random hex auth token
+  - `ServicePorts` interface exported for use by child process spawning (Issue 8)
+- Updated `apps/desktop/src/main.ts`:
+  - `fixPath()` called synchronously before `app.whenReady()`
+  - `reserveServicePorts()` called during bootstrap before window creation
+  - `getServicePorts()` exported for use by other modules (Issue 8, Issue 10)
+- Added `!**/dist-electron` to biome.json ignore list (built output was being linted)
+- Added `test/` to `apps/desktop/tsconfig.json` include
+- Created `apps/desktop/test/shell.test.ts` — 13 unit tests:
+  - extractPathFromShellOutput: marker extraction, noise handling, missing markers, empty value, same-line markers, complex PATH
+  - readPathFromLoginShell: shell invocation with mock, flag/command verification, undefined returns
+- Created `apps/desktop/test/ports.test.ts` — 7 unit tests:
+  - reservePort: positive port, valid range, distinct ports, bindable port
+  - reserveServicePorts: distinct ports, valid auth token format, unique tokens
+- All 20 desktop tests pass
+- TypeScript compiles without errors
+- Formatting clean (274 files checked, 0 errors)
+
 ## Now Unblocked
-- Issue 7: Shell environment probing + port allocation (blocker Issue 6 done)
-- Issue 8: Spawn sidecars as child processes (all Bun-to-Node blockers resolved: Issues 4, 5 done; Issue 7 now ready)
-- Issue 14: Window state persistence + application menu (blocker Issue 6 done)
-- Issue 15: Auto-update system (blocker Issue 6 done)
-- Issue 16: Service bundling for distribution (both blockers resolved: Issues 4, 5 done)
+- Issue 8: Spawn sidecars as child processes (all blockers resolved: Issues 4, 5, 7 done)
+- Issue 13: System tray, global shortcut, close-to-tray (blocker Issue 8 now unblocked)
 
 ## Ready to start (no blockers):
-- Issue 7: Shell environment probing + port allocation
+- Issue 8: Spawn sidecars as child processes
 - Issue 14: Window state persistence + application menu
 - Issue 15: Auto-update system
 - Issue 16: Service bundling for distribution

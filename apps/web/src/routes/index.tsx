@@ -51,11 +51,6 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import {
   Empty,
   EmptyContent,
   EmptyDescription,
@@ -69,6 +64,11 @@ import {
   ResizablePanelGroup,
 } from '@/components/ui/resizable'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { WorkspaceDashboard } from '@/components/workspace-dashboard'
 import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
@@ -164,8 +164,36 @@ const allProjects$ = queryDb(projects, { label: 'headerProjects' })
 /** The two main content views: terminal panels, cross-project dashboard, or plan editor. */
 type MainView = 'panels' | 'dashboard' | 'plan'
 
+/** Displays the contextual label for the current view (project/branch, Dashboard, or Plan). */
+function ViewContextLabel({
+  mainView,
+  projectName,
+  branchName,
+}: {
+  readonly mainView: MainView
+  readonly projectName: string | undefined
+  readonly branchName: string | undefined
+}) {
+  if (mainView === 'panels' && projectName && branchName) {
+    return (
+      <>
+        <span className="text-foreground">{projectName}</span>
+        <span className="mx-1">/</span>
+        <span>{branchName}</span>
+      </>
+    )
+  }
+  if (mainView === 'dashboard') {
+    return <span className="text-foreground">Dashboard</span>
+  }
+  if (mainView === 'plan') {
+    return <span className="text-foreground">Plan</span>
+  }
+  return null
+}
+
 /**
- * Thin header bar rendered above the PanelManager.
+ * Bar rendered at the top of the main content area (right of the sidebar).
  *
  * - Left side: view toggle (panels / dashboard) + `project / branch`
  *   context for the active pane's workspace (in panels view).
@@ -310,17 +338,11 @@ function PanelHeaderBar({
           </Tooltip>
         </div>
         <div className="min-w-0 truncate text-muted-foreground text-xs">
-          {mainView === 'panels' && projectName && branchName ? (
-            <>
-              <span className="text-foreground">{projectName}</span>
-              <span className="mx-1">/</span>
-              <span>{branchName}</span>
-            </>
-          ) : null}
-          {mainView === 'dashboard' && (
-            <span className="text-foreground">Dashboard</span>
-          )}
-          {mainView === 'plan' && <span className="text-foreground">Plan</span>}
+          <ViewContextLabel
+            branchName={branchName}
+            mainView={mainView}
+            projectName={projectName}
+          />
         </div>
       </div>
 
@@ -387,8 +409,7 @@ function PanelHeaderBar({
                 aria-label="Split horizontally"
                 disabled={!hasActivePane}
                 onClick={() =>
-                  activePaneId &&
-                  actions?.splitPane(activePaneId, 'horizontal')
+                  activePaneId && actions?.splitPane(activePaneId, 'horizontal')
                 }
                 size="icon-sm"
                 variant="ghost"
@@ -423,9 +444,7 @@ function PanelHeaderBar({
               <Button
                 aria-label="Close pane"
                 disabled={!hasActivePane}
-                onClick={() =>
-                  activePaneId && actions?.closePane(activePaneId)
-                }
+                onClick={() => activePaneId && actions?.closePane(activePaneId)}
                 size="icon-sm"
                 variant="ghost"
               />

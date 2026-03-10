@@ -29,17 +29,17 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import {
   Field,
   FieldDescription,
   FieldError,
   FieldLabel,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 

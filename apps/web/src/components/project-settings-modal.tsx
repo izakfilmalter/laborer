@@ -5,11 +5,6 @@ import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { Button } from '@/components/ui/button'
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -26,6 +21,11 @@ import {
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { extractErrorMessage } from '@/lib/utils'
 import {
   buildConfigUpdates,

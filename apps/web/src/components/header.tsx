@@ -21,9 +21,7 @@ function ResetButton() {
   return (
     <Tooltip>
       <TooltipTrigger
-        render={
-          <Button onClick={handleReset} size="icon" variant="outline" />
-        }
+        render={<Button onClick={handleReset} size="icon" variant="outline" />}
       >
         <RotateCcw className="h-[1.2rem] w-[1.2rem]" />
         <span className="sr-only">Reset persistence</span>

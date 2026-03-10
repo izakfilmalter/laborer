@@ -165,11 +165,6 @@ class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
       const runFork = Runtime.runFork(runtime)
 
       // Spawn the PTY Host as a Node.js child process via node:child_process.
-      // Uses Node.js instead of Bun because Bun's tty.ReadStream does
-      // not fire data events for PTY master file descriptors, preventing
-      // node-pty's onData callback from working.
-      // Uses node:child_process (not Bun.spawn) for cross-runtime compatibility
-      // so that vitest tests (which run under Node.js) can construct this layer.
       const child = spawnChild('node', [ptyHostPath], {
         stdio: ['pipe', 'pipe', 'inherit'], // PTY Host debug logs go to our stderr
       })

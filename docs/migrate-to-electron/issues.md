@@ -154,14 +154,14 @@ The MCP package uses `BunStream.stdin` and `BunSink.stdout` for stdio-based MCP 
 
 ### Acceptance criteria
 
-- [ ] Terminal service starts successfully via `tsx src/main.ts`
-- [ ] Terminal RPC endpoints respond
-- [ ] Terminal WebSocket PTY I/O works (connect xterm.js, type commands, see output)
-- [ ] MCP server starts and communicates over stdio
-- [ ] `@types/bun` removed from both packages
-- [ ] Both tsconfigs no longer reference `"bun"` type
-- [ ] Terminal tests pass (pty-host integration tests)
-- [ ] No references to `Bun` namespace remain in either package
+- [x] Terminal service starts successfully via `tsx src/main.ts`
+- [x] Terminal RPC endpoints respond
+- [x] Terminal WebSocket PTY I/O works (connect xterm.js, type commands, see output)
+- [x] MCP server starts and communicates over stdio
+- [x] `@types/bun` removed from both packages
+- [x] Both tsconfigs no longer reference `"bun"` type
+- [x] Terminal tests pass (pty-host integration tests)
+- [x] No references to `Bun` namespace remain in either package
 
 ### Blocked by
 
@@ -777,7 +777,7 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 2 | Migrate workspace-provider Bun.spawn sites | 1 | Done |
 | 3 | Migrate remaining server Bun.spawn sites | 1 | Done |
 | 4 | Server Bun-to-Node runtime swap | 2, 3 | Done |
-| 5 | Terminal + MCP Bun-to-Node runtime swap | None | Ready |
+| 5 | Terminal + MCP Bun-to-Node runtime swap | None | Done |
 | 6 | Electron shell scaffold + dev tooling | None | Ready |
 | 7 | Shell environment probing + port allocation | 6 | Blocked |
 | 8 | Spawn sidecars as child processes | 4, 5, 7 | Blocked |
@@ -788,7 +788,7 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 13 | System tray, global shortcut, close-to-tray | 8 | Blocked |
 | 14 | Window state persistence + application menu | 6 | Blocked |
 | 15 | Auto-update system | 6 | Blocked |
-| 16 | Service bundling for distribution | 4, 5 | Blocked |
+| 16 | Service bundling for distribution | 4, 5 | Ready |
 | 17 | Electron packaging + .dmg distribution | 12, 13, 14, 15, 16 | Blocked |
 | 18 | Cleanup + remove Tauri | 17 | Blocked |
 

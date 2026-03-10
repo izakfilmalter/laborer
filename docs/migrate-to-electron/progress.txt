@@ -77,10 +77,34 @@
 - All 280 tests pass
 - Formatting clean
 
+### Issue 5: Terminal + MCP Bun-to-Node runtime swap — DONE
+- Replaced `@effect/platform-bun` with `@effect/platform-node` in `packages/terminal/src/main.ts`:
+  - `BunHttpServer.layer({ port })` → `NodeHttpServer.layer(createServer, { port })`
+  - `BunRuntime.runMain(main)` → `NodeRuntime.runMain(main)`
+  - Added `import { createServer } from 'node:http'`
+  - Updated all comments from "Bun server" to "Node.js server"
+- Replaced `@effect/platform-bun` with `@effect/platform-node` in `packages/mcp/src/main.ts`:
+  - `BunRuntime` → `NodeRuntime`, `BunStream.stdin` → `NodeStream.stdin`, `BunSink.stdout` → `NodeSink.stdout`
+- Updated both `packages/terminal/tsconfig.json` and `packages/mcp/tsconfig.json`: removed `"bun"` from types array (now `["node"]` only)
+- Updated both package.json files:
+  - Swapped `@effect/platform-bun` → `@effect/platform-node` in dependencies
+  - Removed `@types/bun` from devDependencies
+  - Added `tsx` (^4.19.4) to devDependencies
+  - Updated scripts: `bun run --watch src/main.ts` → `tsx --watch src/main.ts`, `bun run src/main.ts` → `tsx src/main.ts`
+- Updated outdated Bun references in comments:
+  - `packages/terminal/src/pty-host.ts` — removed Bun-specific explanation
+  - `packages/terminal/src/services/pty-host-client.ts` — simplified comment about PTY Host spawning
+- No references to `Bun` namespace remain in either package (source files, package.json, tsconfig)
+- TypeScript compiles without errors in both packages
+- All 73 terminal tests pass (pty-host, terminal-manager, rpc-integration, ring-buffer)
+- All 19 MCP tests pass (project-discovery, issue-tools, prd-tools)
+- All 280 server tests still pass (no regressions)
+- Formatting clean
+
 ## Now Unblocked
-- Issue 8: Spawn sidecars as child processes (server-side blocker resolved)
-- Issue 16: Service bundling for distribution (server-side blocker resolved)
+- Issue 8: Spawn sidecars as child processes (all Bun-to-Node blockers resolved: Issues 4, 5 done; Issue 7 still blocked by Issue 6)
+- Issue 16: Service bundling for distribution (both blockers resolved: Issues 4, 5 done)
 
 ## Ready to start (no blockers):
-- Issue 5: Terminal + MCP Bun-to-Node runtime swap
 - Issue 6: Electron shell scaffold + dev tooling
+- Issue 16: Service bundling for distribution

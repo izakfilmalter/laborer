@@ -78,12 +78,12 @@ Remove the `ensureBunSpawnForNodeTests()` polyfills from `docker-detection.e2e.t
 
 ### Acceptance criteria
 
-- [ ] All `Bun.spawn()` calls in the 6 listed files replaced with the spawn utility
-- [ ] The tar pipe pattern in `deps-image-service.ts` works correctly with Node.js streams
-- [ ] All `ensureBunSpawnForNodeTests()` polyfills removed from test files
-- [ ] No references to `Bun` namespace remain in any of the 6 service files or 3 test files
-- [ ] Existing e2e tests pass (docker-detection, container-service, deps-image-cache)
-- [ ] TypeScript compiles without errors
+- [x] All `Bun.spawn()` calls in the 6 listed files replaced with the spawn utility
+- [x] The tar pipe pattern in `deps-image-service.ts` works correctly with Node.js streams
+- [x] All `ensureBunSpawnForNodeTests()` polyfills removed from test files
+- [x] No references to `Bun` namespace remain in any of the 6 service files or 3 test files
+- [x] Existing e2e tests pass (docker-detection, container-service, deps-image-cache)
+- [x] TypeScript compiles without errors
 
 ### Blocked by
 
@@ -775,8 +775,8 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 |---|-------|-----------|--------|
 | 1 | Node.js spawn utility | None | Done |
 | 2 | Migrate workspace-provider Bun.spawn sites | 1 | Done |
-| 3 | Migrate remaining server Bun.spawn sites | 1 | Ready |
-| 4 | Server Bun-to-Node runtime swap | 2, 3 | Blocked |
+| 3 | Migrate remaining server Bun.spawn sites | 1 | Done |
+| 4 | Server Bun-to-Node runtime swap | 2, 3 | Ready |
 | 5 | Terminal + MCP Bun-to-Node runtime swap | None | Ready |
 | 6 | Electron shell scaffold + dev tooling | None | Ready |
 | 7 | Shell environment probing + port allocation | 6 | Blocked |

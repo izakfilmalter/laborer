@@ -8,12 +8,12 @@
  * Requires Docker (OrbStack) to be running on the host.
  */
 
-import { execSync, spawn } from 'node:child_process'
+import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { tables } from '@laborer/shared/schema'
+import { events, tables } from '@laborer/shared/schema'
 import { Effect, Either, Layer } from 'effect'
 import { ContainerService } from '../src/services/container-service.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
@@ -26,47 +26,6 @@ import { TestLaborerStore } from './helpers/test-store.js'
 const TestLayer = ContainerService.layer.pipe(
   Layer.provideMerge(TestLaborerStore)
 )
-
-/** Polyfill Bun.spawn for Node-based vitest. */
-const ensureBunSpawnForNodeTests = (): void => {
-  const runtimeGlobal = globalThis as unknown as { Bun?: unknown }
-
-  if (runtimeGlobal.Bun !== undefined) {
-    return
-  }
-
-  runtimeGlobal.Bun = {
-    spawn: (
-      cmd: string[],
-      options?: {
-        readonly cwd?: string
-        readonly env?: Record<string, string | undefined>
-      }
-    ) => {
-      const child = spawn(cmd[0] ?? '', cmd.slice(1), {
-        cwd: options?.cwd,
-        env: options?.env,
-      })
-
-      return {
-        stdout:
-          child.stdout === null
-            ? new ReadableStream<Uint8Array>()
-            : (Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>),
-        stderr:
-          child.stderr === null
-            ? new ReadableStream<Uint8Array>()
-            : (Readable.toWeb(child.stderr) as ReadableStream<Uint8Array>),
-        exited: new Promise<number>((resolve) => {
-          child.on('close', (code) => resolve(code ?? 1))
-        }),
-      }
-    },
-  }
-}
-
-import { Readable } from 'node:stream'
-import { events } from '@laborer/shared/schema'
 
 /** Create a temp directory, tracking it for cleanup. */
 const createTempDir = (prefix: string, tempRoots: string[]): string => {
@@ -114,7 +73,6 @@ describe('ContainerService e2e', () => {
     'createContainer starts a real Docker container with bind-mounted worktree',
     () =>
       Effect.gen(function* () {
-        ensureBunSpawnForNodeTests()
         forceRemoveContainer('e2e-create--test-project')
 
         const tempRoots: string[] = []
@@ -197,7 +155,6 @@ describe('ContainerService e2e', () => {
     'destroyContainer stops and removes a real running container',
     () =>
       Effect.gen(function* () {
-        ensureBunSpawnForNodeTests()
         forceRemoveContainer('e2e-destroy--test-project')
 
         const tempRoots: string[] = []
@@ -280,7 +237,6 @@ describe('ContainerService e2e', () => {
     'pauseContainer freezes a running container',
     () =>
       Effect.gen(function* () {
-        ensureBunSpawnForNodeTests()
         forceRemoveContainer('e2e-pause--test-project')
 
         const tempRoots: string[] = []
@@ -349,7 +305,6 @@ describe('ContainerService e2e', () => {
     'unpauseContainer resumes a paused container',
     () =>
       Effect.gen(function* () {
-        ensureBunSpawnForNodeTests()
         forceRemoveContainer('e2e-unpause--test-project')
 
         const tempRoots: string[] = []
@@ -432,8 +387,6 @@ describe('ContainerService e2e', () => {
     'full lifecycle: create -> pause -> unpause -> destroy with LiveStore state at each step',
     () =>
       Effect.gen(function* () {
-        ensureBunSpawnForNodeTests()
-
         const containerName = 'e2e-lifecycle--test-project'
         forceRemoveContainer(containerName)
         const tempRoots: string[] = []
@@ -541,7 +494,6 @@ describe('ContainerService e2e', () => {
     'createContainer fails with a clear error for a nonexistent image',
     () =>
       Effect.gen(function* () {
-        ensureBunSpawnForNodeTests()
         forceRemoveContainer('e2e-bad-image--test-project')
 
         const tempRoots: string[] = []
@@ -618,8 +570,6 @@ describe('ContainerService e2e', () => {
     'destroyContainer no-ops gracefully when workspace has no container',
     () =>
       Effect.gen(function* () {
-        ensureBunSpawnForNodeTests()
-
         const workspaceId = crypto.randomUUID()
         const { store } = yield* LaborerStore
 

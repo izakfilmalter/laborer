@@ -34,6 +34,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
 import { Context, Effect, Layer } from 'effect'
+import { spawn } from '../lib/spawn.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -519,7 +520,7 @@ const seedNodeModules = (
     // Start a container so we can docker exec the tar command in it.
     const createResult = yield* Effect.tryPromise({
       try: async () => {
-        const proc = Bun.spawn(
+        const proc = spawn(
           [
             'docker',
             'run',
@@ -553,7 +554,7 @@ const seedNodeModules = (
     // Clean up the temp container when done
     const cleanupContainer = Effect.tryPromise({
       try: async () => {
-        const proc = Bun.spawn(['docker', 'rm', '-f', tempName], {
+        const proc = spawn(['docker', 'rm', '-f', tempName], {
           stdout: 'pipe',
           stderr: 'pipe',
         })
@@ -570,7 +571,7 @@ const seedNodeModules = (
       const tarResult = yield* Effect.tryPromise({
         try: async () => {
           // Container-side: find all node_modules, tar them relative to workdir
-          const tarProc = Bun.spawn(
+          const tarProc = spawn(
             [
               'docker',
               'exec',
@@ -583,14 +584,11 @@ const seedNodeModules = (
           )
 
           // Host-side: extract the tar into the worktree
-          const extractProc = Bun.spawn(
-            ['tar', 'xf', '-', '-C', worktreePath],
-            {
-              stdin: tarProc.stdout,
-              stdout: 'pipe',
-              stderr: 'pipe',
-            }
-          )
+          const extractProc = spawn(['tar', 'xf', '-', '-C', worktreePath], {
+            stdin: tarProc.stdout,
+            stdout: 'pipe',
+            stderr: 'pipe',
+          })
 
           const [tarExit, extractExit] = await Promise.all([
             tarProc.exited,
@@ -630,10 +628,10 @@ const dockerExec = (
 ): Effect.Effect<{ exitCode: number; output: string }, RpcError> =>
   Effect.tryPromise({
     try: async () => {
-      const proc = Bun.spawn(
-        ['docker', 'exec', containerId, 'sh', '-c', command],
-        { stdout: 'pipe', stderr: 'pipe' }
-      )
+      const proc = spawn(['docker', 'exec', containerId, 'sh', '-c', command], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
       const [stdout, stderr] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
@@ -699,7 +697,7 @@ const buildDepsImage = (
     // 1. Create and start a container with package cache mounted
     const createResult = yield* Effect.tryPromise({
       try: async () => {
-        const proc = Bun.spawn(
+        const proc = spawn(
           [
             'docker',
             'run',
@@ -740,7 +738,7 @@ const buildDepsImage = (
     // Clean up the temp container (best-effort, fire-and-forget)
     const cleanupContainer = Effect.tryPromise({
       try: async () => {
-        const proc = Bun.spawn(['docker', 'rm', '-f', tempName], {
+        const proc = spawn(['docker', 'rm', '-f', tempName], {
           stdout: 'pipe',
           stderr: 'pipe',
         })
@@ -755,7 +753,7 @@ const buildDepsImage = (
       onProgress?.('Copying project files...')
       const copyResult = yield* Effect.tryPromise({
         try: async () => {
-          const proc = Bun.spawn(
+          const proc = spawn(
             [
               'docker',
               'cp',
@@ -822,7 +820,7 @@ const buildDepsImage = (
       onProgress?.('Saving image...')
       const commitResult = yield* Effect.tryPromise({
         try: async () => {
-          const proc = Bun.spawn(['docker', 'commit', containerId, imageName], {
+          const proc = spawn(['docker', 'commit', containerId, imageName], {
             stdout: 'pipe',
             stderr: 'pipe',
           })
@@ -931,10 +929,10 @@ class DepsImageService extends Context.Tag('@laborer/DepsImageService')<
           // 2. Check if cached image exists
           const inspectResult = yield* Effect.tryPromise({
             try: async () => {
-              const proc = Bun.spawn(
-                ['docker', 'image', 'inspect', imageName],
-                { stdout: 'pipe', stderr: 'pipe' }
-              )
+              const proc = spawn(['docker', 'image', 'inspect', imageName], {
+                stdout: 'pipe',
+                stderr: 'pipe',
+              })
               const exitCode = await proc.exited
               return { exitCode }
             },

@@ -28,11 +28,32 @@
 - All 279 tests pass (1 pre-existing timeout in deps-image-cache.e2e.test.ts unrelated to this change)
 - Formatting clean (no fixes needed)
 
+### Issue 3: Migrate remaining server Bun.spawn sites — DONE
+- Replaced all `Bun.spawn()` calls across 6 service files with the `spawn()` utility:
+  - `container-service.ts` — 5 calls (docker run/stop/rm/pause/unpause)
+  - `deps-image-service.ts` — 10 calls (docker run/rm/cp/commit/exec/inspect + tar pipe pattern)
+  - `docker-detection.ts` — 2 calls (which docker, docker info)
+  - `diff-service.ts` — 1 call (git diff via spawnGit helper)
+  - `pr-watcher.ts` — 1 call (gh pr view)
+  - `handlers.ts` — 2 calls (gh pr view, editor open)
+- The tar pipe pattern in `deps-image-service.ts` (piping stdout from docker exec tar into tar extract stdin) works correctly using the spawn utility's Web ReadableStream stdin support
+- Removed all `ensureBunSpawnForNodeTests()` polyfills from 5 test files:
+  - `docker-detection.e2e.test.ts`
+  - `container-service.e2e.test.ts`
+  - `deps-image-cache.e2e.test.ts`
+  - `workspace-destroy-origin.test.ts`
+  - `rpc/workspace-management.test.ts`
+- Removed now-unused imports (`spawn` from `node:child_process`, `Readable` from `node:stream`, `beforeAll` from `vitest`) from test files
+- Updated outdated comment in `diff-service-event-consumer.test.ts` referencing Bun.spawn
+- No references to `Bun` namespace remain in any service file or test file (only in comments in spawn.ts and pty-host-client.ts)
+- TypeScript compiles without errors
+- All 279 tests pass (1 pre-existing cache-hit flake in deps-image-cache.e2e.test.ts unrelated to this change)
+- Formatting clean (no fixes needed)
+
 ## Now Unblocked
-- Issue 3: Migrate remaining server Bun.spawn sites
-- Issue 4: Server Bun-to-Node runtime swap (blocked by Issue 3)
+- Issue 4: Server Bun-to-Node runtime swap (all spawn sites migrated)
 
 ## Ready to start (no blockers):
-- Issue 3: Migrate remaining server Bun.spawn sites
+- Issue 4: Server Bun-to-Node runtime swap
 - Issue 5: Terminal + MCP Bun-to-Node runtime swap
 - Issue 6: Electron shell scaffold + dev tooling

@@ -1,10 +1,9 @@
-import { spawn } from 'node:child_process'
 import { existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { events, tables } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
-import { afterAll, beforeAll } from 'vitest'
+import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { ContainerService } from '../src/services/container-service.js'
@@ -39,34 +38,6 @@ const TestLayer = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(PortAllocator.make(4300, 4300)),
   Layer.provideMerge(TestLaborerStore)
 )
-
-const ensureBunSpawnForNodeTests = (): void => {
-  const runtimeGlobal = globalThis as unknown as { Bun?: unknown }
-
-  if (runtimeGlobal.Bun !== undefined) {
-    return
-  }
-
-  runtimeGlobal.Bun = {
-    spawn: (cmd: string[], options?: { readonly cwd?: string }) => {
-      const child = spawn(cmd[0] ?? '', cmd.slice(1), {
-        cwd: options?.cwd,
-      })
-
-      return {
-        stdout: child.stdout,
-        stderr: child.stderr,
-        exited: new Promise<number>((resolve) => {
-          child.on('close', (code) => resolve(code ?? 1))
-        }),
-      }
-    },
-  }
-}
-
-beforeAll(() => {
-  ensureBunSpawnForNodeTests()
-})
 
 afterAll(() => {
   for (const root of tempRoots) {

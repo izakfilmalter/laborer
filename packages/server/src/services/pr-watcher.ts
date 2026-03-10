@@ -30,6 +30,7 @@ import {
   Ref,
   Schedule,
 } from 'effect'
+import { spawn } from '../lib/spawn.js'
 import { LaborerStore } from './laborer-store.js'
 
 /**
@@ -134,7 +135,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
       ) {
         const spawnResult = yield* Effect.tryPromise({
           try: async () => {
-            const proc = Bun.spawn(
+            const proc = spawn(
               ['gh', 'pr', 'view', '--json', 'number,url,title,state'],
               {
                 cwd: worktreePath,

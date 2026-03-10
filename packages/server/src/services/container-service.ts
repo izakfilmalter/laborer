@@ -39,6 +39,7 @@ import { containerName } from '@laborer/shared/container-name'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Array as Arr, Context, Effect, Layer, pipe } from 'effect'
+import { spawn } from '../lib/spawn.js'
 import { LaborerStore } from './laborer-store.js'
 
 /**
@@ -191,7 +192,7 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
           // Run: docker run -d --name {name} {networkFlags} {volumeFlags} -w {workdir} {image} sleep infinity
           const runResult = yield* Effect.tryPromise({
             try: async () => {
-              const proc = Bun.spawn(
+              const proc = spawn(
                 [
                   'docker',
                   'run',
@@ -289,7 +290,7 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
           // Step 1: docker stop (best-effort)
           yield* Effect.tryPromise({
             try: async () => {
-              const proc = Bun.spawn(['docker', 'stop', containerNameValue], {
+              const proc = spawn(['docker', 'stop', containerNameValue], {
                 stdout: 'pipe',
                 stderr: 'pipe',
               })
@@ -322,7 +323,7 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
           // Step 2: docker rm (best-effort)
           yield* Effect.tryPromise({
             try: async () => {
-              const proc = Bun.spawn(['docker', 'rm', containerNameValue], {
+              const proc = spawn(['docker', 'rm', containerNameValue], {
                 stdout: 'pipe',
                 stderr: 'pipe',
               })
@@ -414,7 +415,7 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
 
           const result = yield* Effect.tryPromise({
             try: async () => {
-              const proc = Bun.spawn(['docker', 'pause', containerNameValue], {
+              const proc = spawn(['docker', 'pause', containerNameValue], {
                 stdout: 'pipe',
                 stderr: 'pipe',
               })
@@ -475,13 +476,10 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
 
           const result = yield* Effect.tryPromise({
             try: async () => {
-              const proc = Bun.spawn(
-                ['docker', 'unpause', containerNameValue],
-                {
-                  stdout: 'pipe',
-                  stderr: 'pipe',
-                }
-              )
+              const proc = spawn(['docker', 'unpause', containerNameValue], {
+                stdout: 'pipe',
+                stderr: 'pipe',
+              })
               const exitCode = await proc.exited
               const stderr = await new Response(proc.stderr).text()
               return { exitCode, stderr }

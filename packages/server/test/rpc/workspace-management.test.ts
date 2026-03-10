@@ -1,7 +1,5 @@
-import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Readable } from 'node:stream'
 import { assert, describe, it } from '@effect/vitest'
 import { events, tables } from '@laborer/shared/schema'
 import { Effect, Either, Ref, type Scope } from 'effect'
@@ -21,48 +19,10 @@ const cleanupTempRoots = (tempRoots: readonly string[]) => {
   }
 }
 
-const ensureBunSpawnForNodeTests = (): void => {
-  const runtimeGlobal = globalThis as unknown as { Bun?: unknown }
-
-  if (runtimeGlobal.Bun !== undefined) {
-    return
-  }
-
-  runtimeGlobal.Bun = {
-    spawn: (
-      cmd: string[],
-      options?: {
-        readonly cwd?: string
-        readonly env?: Record<string, string | undefined>
-      }
-    ) => {
-      const child = spawn(cmd[0] ?? '', cmd.slice(1), {
-        cwd: options?.cwd,
-        env: options?.env,
-      })
-
-      return {
-        stdout:
-          child.stdout === null
-            ? new ReadableStream<Uint8Array>()
-            : Readable.toWeb(child.stdout),
-        stderr:
-          child.stderr === null
-            ? new ReadableStream<Uint8Array>()
-            : Readable.toWeb(child.stderr),
-        exited: new Promise<number>((resolve) => {
-          child.on('close', (code) => resolve(code ?? 1))
-        }),
-      }
-    },
-  }
-}
-
 const runWithRpcTestContext = <A, E>(
   run: (context: RpcTestContext) => Effect.Effect<A, E, Scope.Scope>
 ): Effect.Effect<A, E, Scope.Scope> =>
   Effect.gen(function* () {
-    ensureBunSpawnForNodeTests()
     const context = yield* makeScopedTestRpcContext
     return yield* run(context)
   }) as Effect.Effect<A, E, Scope.Scope>

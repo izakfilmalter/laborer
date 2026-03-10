@@ -440,5 +440,73 @@
 - All tests pass: 280 server + 73 terminal + 19 MCP + 92 desktop + 30 shared
 - Formatting clean (289 files checked, 0 errors)
 
-## Ready to start (no blockers):
-- Issue 15: Auto-update system
+### Issue 15: Auto-update system — DONE
+- Created `apps/desktop/src/runtime-arch.ts` — architecture detection utilities:
+  - `resolveDesktopRuntimeInfo()` — detects host and app architecture, including Rosetta translation on macOS
+  - `isArm64HostRunningIntelBuild()` — returns true for Intel builds running under Rosetta on Apple Silicon
+  - Used to disable differential downloads (blockmap diffs fail during arch migration)
+- Created `apps/desktop/src/update-state.ts` — state predicates and helpers:
+  - `shouldBroadcastDownloadProgress()` — throttles IPC broadcasts to 10% bucket boundaries
+  - `nextStatusAfterDownloadFailure()` — returns `"available"` (retry) or `"error"` based on version availability
+  - `getCanRetryAfterDownloadFailure()` — true when version is still known
+  - `getAutoUpdateDisabledReason()` — returns human-readable reason for disabled updates (dev, env override, Linux), or null
+- Created `apps/desktop/src/update-machine.ts` — pure reducer functions for update state machine:
+  - `createInitialUpdateState()` — initial disabled state with runtime info
+  - `reduceOnCheckStart()` — transitions to `checking`, clears transient errors
+  - `reduceOnCheckFailure()` — transitions to `error` with `errorContext: "check"`, allows retry
+  - `reduceOnUpdateAvailable()` — transitions to `available` with version
+  - `reduceOnNoUpdate()` — transitions to `up-to-date`, clears stale state
+  - `reduceOnDownloadStart()` — transitions to `downloading` with 0% progress
+  - `reduceOnDownloadProgress()` — updates download percentage
+  - `reduceOnDownloadFailure()` — falls back to `available` (retry) or `error`
+  - `reduceOnDownloadComplete()` — transitions to `downloaded` with 100%
+  - `reduceOnInstallFailure()` — stays in `downloaded` for retry, sets `errorContext: "install"`
+- Created `apps/desktop/src/auto-updater.ts` — electron-updater integration:
+  - `configureAutoUpdater()` — configures electron-updater with manual control (`autoDownload: false`, `autoInstallOnAppQuit: false`)
+  - 15-second startup delay before first check, 4-hour poll interval
+  - Architecture detection: disables differential downloads for Rosetta builds
+  - Wires electron-updater events (`update-available`, `update-not-available`, `error`, `download-progress`, `update-downloaded`) to state machine reducers
+  - `getUpdateState()`, `triggerDownloadUpdate()`, `triggerInstallUpdate()` — IPC-facing API
+  - `broadcastUpdateStateToWindow()` — sends state to newly loaded pages
+  - `shutdownAutoUpdater()` — cancels all timers during app shutdown
+  - Guards against re-entrant check and download calls
+  - Download progress throttled to 10% buckets via `shouldBroadcastDownloadProgress()`
+- Extended `packages/shared/src/desktop-bridge.ts` — added auto-update types:
+  - `DesktopRuntimeArch` type (`"arm64" | "x64" | "other"`)
+  - `DesktopRuntimeInfo` interface
+  - `DesktopUpdateStatus` discriminated union (8 statuses)
+  - `DesktopUpdateState` full state interface
+  - `DesktopUpdateActionResult` for action responses
+  - Added 4 new `DesktopBridge` methods: `getUpdateState()`, `downloadUpdate()`, `installUpdate()`, `onUpdateState()`
+- Updated `apps/desktop/src/ipc.ts`:
+  - Added 4 new IPC channels: `desktop:update-state`, `desktop:update-get-state`, `desktop:update-download`, `desktop:update-install`
+  - Added 3 new handler callbacks: `setGetUpdateStateHandler`, `setDownloadUpdateHandler`, `setInstallUpdateHandler`
+  - Added 3 new `ipcMain.handle()` registrations for update operations
+- Updated `apps/desktop/src/preload.ts`:
+  - Added 4 new channel constants for update IPC
+  - Implemented `getUpdateState`, `downloadUpdate`, `installUpdate`, `onUpdateState` bridge methods
+  - All delegate to `ipcRenderer.invoke()` or `ipcRenderer.on()` as appropriate
+- Updated `apps/desktop/src/main.ts`:
+  - Imports and wires auto-updater IPC callbacks during bootstrap
+  - Calls `configureAutoUpdater()` after window creation, passing quit callback
+  - Broadcasts update state to window on `did-finish-load`
+  - Calls `shutdownAutoUpdater()` during graceful shutdown
+- Added `electron-updater@^6.8.3` to `apps/desktop/package.json` dependencies
+- Created `apps/desktop/test/runtime-arch.test.ts` — 4 unit tests:
+  - Rosetta detection, native Apple Silicon, non-mac passthrough, unknown arch normalization
+- Created `apps/desktop/test/update-state.test.ts` — 13 unit tests:
+  - shouldBroadcastDownloadProgress: first update, same bucket skip, new bucket, retry reset, final 100%
+  - getAutoUpdateDisabledReason: dev builds, env disabled, linux, macOS enabled
+  - nextStatusAfterDownloadFailure: available vs error
+  - getCanRetryAfterDownloadFailure: with/without version
+- Created `apps/desktop/test/update-machine.test.ts` — 8 unit tests:
+  - Initial state creation, error clearing on check start, check failure, download failure retry,
+    download-to-install lifecycle, stale state clearing, full available→download→progress flow,
+    download failure without version (error state)
+- tsdown build succeeds: main.js 64.94 KB, preload.js 2.88 KB
+- All 117 desktop tests pass (25 new: 4 runtime-arch + 13 update-state + 8 update-machine + 92 existing)
+- TypeScript compiles without errors across all packages (desktop, shared, web)
+- Formatting clean (296 files checked, 0 errors)
+
+## Now Unblocked
+- Issue 17: Electron packaging + .dmg distribution (all blockers done: 12, 13, 14, 15, 16)

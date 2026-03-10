@@ -1,4 +1,8 @@
-import type { ContextMenuItem } from '@laborer/shared/desktop-bridge'
+import type {
+  ContextMenuItem,
+  DesktopUpdateActionResult,
+  DesktopUpdateState,
+} from '@laborer/shared/desktop-bridge'
 import {
   BrowserWindow,
   dialog,
@@ -20,6 +24,10 @@ export const MENU_ACTION_CHANNEL = 'desktop:menu-action'
 export const UPDATE_TRAY_COUNT_CHANNEL = 'desktop:update-tray-count'
 export const RESTART_SIDECAR_CHANNEL = 'desktop:restart-sidecar'
 export const SIDECAR_STATUS_CHANNEL = 'sidecar:status'
+export const UPDATE_STATE_CHANNEL = 'desktop:update-state'
+export const UPDATE_GET_STATE_CHANNEL = 'desktop:update-get-state'
+export const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
+export const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -85,9 +93,15 @@ async function showConfirmDialog(
 
 type TrayCountCallback = (count: number) => void
 type RestartSidecarCallback = (name: string) => Promise<void>
+type GetUpdateStateCallback = () => DesktopUpdateState
+type DownloadUpdateCallback = () => Promise<DesktopUpdateActionResult>
+type InstallUpdateCallback = () => Promise<DesktopUpdateActionResult>
 
 let trayCountCallback: TrayCountCallback | null = null
 let restartSidecarCallback: RestartSidecarCallback | null = null
+let getUpdateStateCallback: GetUpdateStateCallback | null = null
+let downloadUpdateCallback: DownloadUpdateCallback | null = null
+let installUpdateCallback: InstallUpdateCallback | null = null
 
 /** Set the callback invoked when the renderer updates the tray workspace count. */
 export function setTrayCountHandler(cb: TrayCountCallback): void {
@@ -97,6 +111,21 @@ export function setTrayCountHandler(cb: TrayCountCallback): void {
 /** Set the callback invoked when the renderer requests a sidecar restart. */
 export function setRestartSidecarHandler(cb: RestartSidecarCallback): void {
   restartSidecarCallback = cb
+}
+
+/** Set the callback for getting current update state. */
+export function setGetUpdateStateHandler(cb: GetUpdateStateCallback): void {
+  getUpdateStateCallback = cb
+}
+
+/** Set the callback for downloading an available update. */
+export function setDownloadUpdateHandler(cb: DownloadUpdateCallback): void {
+  downloadUpdateCallback = cb
+}
+
+/** Set the callback for installing a downloaded update. */
+export function setInstallUpdateHandler(cb: InstallUpdateCallback): void {
+  installUpdateCallback = cb
 }
 
 // ---------------------------------------------------------------------------
@@ -231,5 +260,23 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return
     }
     await restartSidecarCallback?.(name)
+  })
+
+  // -- Auto-update: get state -----------------------------------------------
+  ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL)
+  ipcMain.handle(UPDATE_GET_STATE_CHANNEL, () => {
+    return getUpdateStateCallback?.() ?? null
+  })
+
+  // -- Auto-update: download ------------------------------------------------
+  ipcMain.removeHandler(UPDATE_DOWNLOAD_CHANNEL)
+  ipcMain.handle(UPDATE_DOWNLOAD_CHANNEL, async () => {
+    return (await downloadUpdateCallback?.()) ?? null
+  })
+
+  // -- Auto-update: install -------------------------------------------------
+  ipcMain.removeHandler(UPDATE_INSTALL_CHANNEL)
+  ipcMain.handle(UPDATE_INSTALL_CHANNEL, async () => {
+    return (await installUpdateCallback?.()) ?? null
   })
 }

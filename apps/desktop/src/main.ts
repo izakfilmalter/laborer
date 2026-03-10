@@ -2,10 +2,21 @@ import { join } from 'node:path'
 
 import { app, BrowserWindow } from 'electron'
 
+import {
+  broadcastUpdateStateToWindow,
+  configureAutoUpdater,
+  getUpdateState,
+  shutdownAutoUpdater,
+  triggerDownloadUpdate,
+  triggerInstallUpdate,
+} from './auto-updater.js'
 import { fixPath } from './fix-path.js'
 import { HealthMonitor } from './health.js'
 import {
   registerIpcHandlers,
+  setDownloadUpdateHandler,
+  setGetUpdateStateHandler,
+  setInstallUpdateHandler,
   setRestartSidecarHandler,
   setTrayCountHandler,
 } from './ipc.js'
@@ -273,6 +284,25 @@ app
     // Register global shortcut: Cmd+Shift+L (macOS) / Ctrl+Shift+L (other).
     unregisterShortcut = registerGlobalShortcut(() => mainWindow)
 
+    // Wire auto-update IPC handlers.
+    setGetUpdateStateHandler(() => getUpdateState())
+    setDownloadUpdateHandler(() => triggerDownloadUpdate())
+    setInstallUpdateHandler(() => triggerInstallUpdate())
+
+    // Configure and start the auto-updater.
+    configureAutoUpdater(() => {
+      isQuitting = true
+    })
+
+    // Broadcast update state to the window when it finishes loading.
+    if (mainWindow) {
+      mainWindow.webContents.on('did-finish-load', () => {
+        if (mainWindow) {
+          broadcastUpdateStateToWindow(mainWindow)
+        }
+      })
+    }
+
     app.on('activate', () => {
       // macOS: re-create window when dock icon is clicked and no windows exist.
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -315,6 +345,9 @@ function shutdown(): void {
 
   // Destroy the system tray.
   trayManager.destroy()
+
+  // Stop auto-update timers.
+  shutdownAutoUpdater()
 
   // Stop the health monitor first — cancels pending restart timers
   // so killed processes aren't immediately re-spawned.

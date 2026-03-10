@@ -13,6 +13,10 @@ const MENU_ACTION_CHANNEL = 'desktop:menu-action'
 const UPDATE_TRAY_COUNT_CHANNEL = 'desktop:update-tray-count'
 const RESTART_SIDECAR_CHANNEL = 'desktop:restart-sidecar'
 const SIDECAR_STATUS_CHANNEL = 'sidecar:status'
+const UPDATE_STATE_CHANNEL = 'desktop:update-state'
+const UPDATE_GET_STATE_CHANNEL = 'desktop:update-get-state'
+const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
+const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
 
 // ---------------------------------------------------------------------------
 // Service URLs — injected via `additionalArguments` from the main process.
@@ -87,6 +91,29 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     ipcRenderer.on(SIDECAR_STATUS_CHANNEL, wrappedListener)
     return () => {
       ipcRenderer.removeListener(SIDECAR_STATUS_CHANNEL, wrappedListener)
+    }
+  },
+
+  getUpdateState: () => ipcRenderer.invoke(UPDATE_GET_STATE_CHANNEL),
+
+  downloadUpdate: () => ipcRenderer.invoke(UPDATE_DOWNLOAD_CHANNEL),
+
+  installUpdate: () => ipcRenderer.invoke(UPDATE_INSTALL_CHANNEL),
+
+  onUpdateState: (listener) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      state: unknown
+    ) => {
+      if (typeof state !== 'object' || state === null) {
+        return
+      }
+      listener(state as Parameters<typeof listener>[0])
+    }
+
+    ipcRenderer.on(UPDATE_STATE_CHANNEL, wrappedListener)
+    return () => {
+      ipcRenderer.removeListener(UPDATE_STATE_CHANNEL, wrappedListener)
     }
   },
 } satisfies DesktopBridge)

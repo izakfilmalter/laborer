@@ -603,15 +603,15 @@ Pure reducer functions managing states: `disabled` -> `idle` -> `checking` -> `a
 
 ### Acceptance criteria
 
-- [ ] Update state machine has pure reducer functions with unit tests
-- [ ] Auto-updater checks for updates 15 seconds after launch
-- [ ] Auto-updater polls every 4 hours
-- [ ] `autoDownload` is false (user must explicitly download)
-- [ ] Update state is broadcast to renderer via IPC
-- [ ] Renderer can get current state, trigger download, and trigger install
-- [ ] Architecture detection works (arm64 vs x64/Rosetta)
-- [ ] Error states are handled with retry capability
-- [ ] State machine unit tests pass
+- [x] Update state machine has pure reducer functions with unit tests
+- [x] Auto-updater checks for updates 15 seconds after launch
+- [x] Auto-updater polls every 4 hours
+- [x] `autoDownload` is false (user must explicitly download)
+- [x] Update state is broadcast to renderer via IPC
+- [x] Renderer can get current state, trigger download, and trigger install
+- [x] Architecture detection works (arm64 vs x64/Rosetta)
+- [x] Error states are handled with retry capability
+- [x] State machine unit tests pass
 
 ### Blocked by
 
@@ -787,9 +787,9 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 12 | Custom protocol + production frontend serving | 11 | Done |
 | 13 | System tray, global shortcut, close-to-tray | 8 | Done |
 | 14 | Window state persistence + application menu | 6 | Done |
-| 15 | Auto-update system | 6 | Ready |
+| 15 | Auto-update system | 6 | Done |
 | 16 | Service bundling for distribution | 4, 5 | Done |
-| 17 | Electron packaging + .dmg distribution | 12, 13, 14, 15, 16 | Blocked |
+| 17 | Electron packaging + .dmg distribution | 12, 13, 14, 15, 16 | Ready |
 | 18 | Cleanup + remove Tauri | 17 | Blocked |
 
 ### Parallelism opportunities

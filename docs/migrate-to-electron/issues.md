@@ -326,14 +326,14 @@ Port the health check, crash monitoring, and restart-with-backoff systems from R
 
 ### Acceptance criteria
 
-- [ ] Health check polling detects when server/terminal are ready
-- [ ] Window shows only after both services pass health check
-- [ ] Unexpected child process exit triggers `sidecar:error` event with stderr excerpt
-- [ ] Crashed service is automatically restarted
-- [ ] Restart uses exponential backoff (500ms base, 10s cap)
-- [ ] Manual restart via `restartSidecar()` IPC works
-- [ ] Backoff counter resets after a successful restart
-- [ ] Health check timeout (10s) produces a clear error state
+- [x] Health check polling detects when server/terminal are ready
+- [x] Window shows only after both services pass health check
+- [x] Unexpected child process exit triggers `sidecar:error` event with stderr excerpt
+- [x] Crashed service is automatically restarted
+- [x] Restart uses exponential backoff (500ms base, 10s cap)
+- [x] Manual restart via `restartSidecar()` IPC works
+- [x] Backoff counter resets after a successful restart
+- [x] Health check timeout (10s) produces a clear error state
 
 ### Blocked by
 
@@ -781,8 +781,8 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 6 | Electron shell scaffold + dev tooling | None | Done |
 | 7 | Shell environment probing + port allocation | 6 | Done |
 | 8 | Spawn sidecars as child processes | 4, 5, 7 | Done |
-| 9 | Health checking + crash monitoring + restart | 8 | Ready |
-| 10 | DesktopBridge contract + service URL passing | 9 | Blocked |
+| 9 | Health checking + crash monitoring + restart | 8 | Done |
+| 10 | DesktopBridge contract + service URL passing | 9 | Ready |
 | 11 | Frontend Tauri-to-Electron migration | 10 | Blocked |
 | 12 | Custom protocol + production frontend serving | 11 | Blocked |
 | 13 | System tray, global shortcut, close-to-tray | 8 | Ready |

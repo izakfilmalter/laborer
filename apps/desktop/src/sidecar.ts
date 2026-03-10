@@ -283,27 +283,16 @@ export class SidecarManager {
   }
 
   /**
-   * Spawn the terminal service, wait for it to be ready (basic delay),
-   * then spawn the server service (which depends on terminal being up).
+   * @deprecated Use `HealthMonitor.spawnServices()` instead, which replaces
+   * delay-based startup with proper HTTP health check polling.
    *
-   * MCP is not spawned here because it communicates over stdio and is
-   * only useful in production when invoked by external AI agents. It
-   * will be handled by the packaging pipeline.
-   *
-   * Note: This uses a simple delay for now. Issue 9 will replace this
-   * with proper HTTP health check polling.
+   * Spawn terminal then server with fixed delays between them.
+   * Kept only as a fallback — the HealthMonitor is the primary interface.
    */
   async spawnServices(): Promise<void> {
-    // Terminal must start first — the server connects to it on startup.
     this.spawn('terminal')
-
-    // Brief delay to let the terminal bind its port.
-    // Issue 9 replaces this with proper health checking.
     await delay(1500)
-
     this.spawn('server')
-
-    // Brief delay to let the server start.
     await delay(1500)
   }
 

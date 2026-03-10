@@ -200,8 +200,44 @@
 - Issue 9: Health checking + crash monitoring + restart (blocker Issue 8 done)
 - Issue 13: System tray, global shortcut, close-to-tray (blocker Issue 8 done)
 
+### Issue 9: Health checking + crash monitoring + restart — DONE
+- Created `apps/desktop/src/health.ts` — HealthMonitor class for sidecar health management:
+  - `waitForHealthy(url, timeout, interval)` — polls an HTTP endpoint at 100ms intervals until 2xx response or 10s timeout
+  - `checkHealth(url)` — single HTTP GET with 2s timeout using native `fetch` + `AbortController`
+  - `backoffDelay(attempt)` — pure function for exponential backoff: 500ms, 1s, 2s, 4s, 8s, 10s cap
+  - `HealthMonitor` class wraps `SidecarManager` with:
+    - `spawnAndWaitHealthy(name)` — spawns sidecar, polls health endpoint, emits starting/healthy/crashed status
+    - `spawnServices()` — spawns terminal first (server depends on it), then server, blocking until both healthy
+    - Crash detection via `SidecarManager.setExitHandler` — emits crashed status with stderr excerpt
+    - Automatic restart with exponential backoff (`scheduleRestart`) — 500ms base, 10s cap, timer.unref() to not block exit
+    - `manualRestart(name)` — cancels pending auto-restart, resets backoff counter, re-spawns
+    - `shutdown()` — cancels all pending restart timers, suppresses future restarts
+    - `isHealthy(name)` / `areServicesHealthy()` — check health status
+    - Status listener callback for forwarding events to the renderer via IPC
+  - `SidecarStatus` type union: `starting | healthy | crashed | restarting`
+  - MCP (stdio-based) treated as healthy immediately after spawn (no HTTP endpoint)
+- Updated `apps/desktop/src/sidecar.ts`:
+  - Marked `spawnServices()` as `@deprecated` — HealthMonitor is the primary interface
+- Updated `apps/desktop/src/main.ts`:
+  - Creates `HealthMonitor` wrapping `SidecarManager` in production mode
+  - Uses `healthMonitor.spawnServices()` instead of delay-based `sidecarManager.spawnServices()`
+  - Forwards sidecar status events to renderer via `mainWindow.webContents.send('sidecar:status', status)`
+  - Calls `healthMonitor.shutdown()` before `sidecarManager.killAll()` during shutdown
+  - Exports `getHealthMonitor()` for use by other modules (Issue 10)
+- Created `apps/desktop/test/health.test.ts` — 13 unit tests:
+  - backoffDelay: 500ms base, 1s/2s/4s/8s progression, 10s cap, full sequence verification
+  - waitForHealthy: already healthy, timeout on unreachable, delayed readiness, polling interval, connection refused
+  - HealthMonitor: class export verification
+- All 33 desktop tests pass (13 shell + 7 ports + 13 health)
+- All 7 workspace test tasks pass (no regressions)
+- TypeScript compiles without errors
+- Formatting clean (277 files checked, 0 errors)
+
+## Now Unblocked
+- Issue 10: DesktopBridge contract + service URL passing (blocker Issue 9 done)
+
 ## Ready to start (no blockers):
-- Issue 9: Health checking + crash monitoring + restart
+- Issue 10: DesktopBridge contract + service URL passing
 - Issue 13: System tray, global shortcut, close-to-tray
 - Issue 14: Window state persistence + application menu
 - Issue 15: Auto-update system

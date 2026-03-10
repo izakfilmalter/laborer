@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { app, BrowserWindow } from 'electron'
 
 import { fixPath } from './fix-path.js'
+import { HealthMonitor } from './health.js'
 import { reserveServicePorts, type ServicePorts } from './ports.js'
 import { SidecarManager } from './sidecar.js'
 
@@ -42,6 +43,13 @@ let servicePorts: ServicePorts | null = null
  */
 let sidecarManager: SidecarManager | null = null
 
+/**
+ * Health monitor for sidecar health checking, crash detection, and
+ * automatic restart with exponential backoff.
+ * Only created in production mode.
+ */
+let healthMonitor: HealthMonitor | null = null
+
 /** Whether the app is in the process of quitting. */
 let isQuitting = false
 
@@ -56,6 +64,11 @@ export function getServicePorts(): ServicePorts {
 /** Get the sidecar manager (null in dev mode). */
 export function getSidecarManager(): SidecarManager | null {
   return sidecarManager
+}
+
+/** Get the health monitor (null in dev mode). */
+export function getHealthMonitor(): HealthMonitor | null {
+  return healthMonitor
 }
 
 function createWindow(): void {
@@ -98,25 +111,38 @@ app
     // Reserve ephemeral ports for services and generate auth token.
     servicePorts = await reserveServicePorts()
 
-    // In production, spawn sidecar services as child processes.
+    // In production, spawn sidecar services with health monitoring.
     // In dev mode, services are run separately via `turbo dev`.
     if (!isDev) {
       sidecarManager = new SidecarManager(servicePorts)
+      healthMonitor = new HealthMonitor(sidecarManager, servicePorts)
 
-      // Log unexpected exits (Issue 9 will emit these to the renderer).
-      sidecarManager.setExitHandler((name, code, signal, lastStderr) => {
-        console.error(
-          `[sidecar:${name}] Unexpected exit: code=${code} signal=${signal}`
-        )
-        if (lastStderr) {
-          console.error(`[sidecar:${name}] Last stderr:\n${lastStderr}`)
+      // Forward sidecar status events to the renderer (Issue 10 will
+      // wire this to the DesktopBridge IPC). For now, log status changes.
+      healthMonitor.setStatusListener((status) => {
+        if (status.state === 'crashed') {
+          console.error(
+            `[main] Sidecar ${status.name} crashed: ${status.error}`
+          )
+        }
+
+        // Forward to renderer window if available.
+        if (mainWindow?.webContents) {
+          mainWindow.webContents.send('sidecar:status', status)
         }
       })
 
       // Spawn terminal first (server depends on it), then server.
-      // This blocks until both have had time to start.
-      // Issue 9 will replace the delay-based approach with health checking.
-      await sidecarManager.spawnServices()
+      // Health monitor polls HTTP endpoints and blocks until healthy.
+      const servicesOk = await healthMonitor.spawnServices()
+
+      if (!servicesOk) {
+        console.error(
+          '[main] One or more services failed to become healthy on startup'
+        )
+        // Continue anyway — the health monitor will keep retrying via
+        // the crash handler's exponential backoff.
+      }
     }
 
     createWindow()
@@ -142,14 +168,20 @@ app.on('window-all-closed', () => {
 // ---------------------------------------------------------------------------
 
 /**
- * Shutdown handler: kill all sidecar child processes before the app exits.
- * Uses SIGTERM first, escalates to SIGKILL after a timeout.
+ * Shutdown handler: cancel pending restarts, then kill all sidecar
+ * child processes before the app exits.
  */
 function shutdown(): void {
   if (isQuitting) {
     return
   }
   isQuitting = true
+
+  // Stop the health monitor first — cancels pending restart timers
+  // so killed processes aren't immediately re-spawned.
+  if (healthMonitor) {
+    healthMonitor.shutdown()
+  }
 
   if (sidecarManager) {
     sidecarManager.killAll()

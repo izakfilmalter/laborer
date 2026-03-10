@@ -555,15 +555,15 @@ Build a macOS-native application menu with standard items:
 
 ### Acceptance criteria
 
-- [ ] Window bounds are saved to disk on move/resize/close
-- [ ] Window bounds are restored on next launch
-- [ ] Maximized state is persisted and restored
-- [ ] If saved bounds are off-screen (display disconnected), window resets to default centered position
-- [ ] First launch uses 800x600 centered on primary display
-- [ ] macOS application menu appears with all standard items
-- [ ] Edit menu items (copy, paste, etc.) work in text fields
-- [ ] View menu items work (reload, devtools in dev, zoom, fullscreen)
-- [ ] "Settings" menu action is sent to renderer via IPC
+- [x] Window bounds are saved to disk on move/resize/close
+- [x] Window bounds are restored on next launch
+- [x] Maximized state is persisted and restored
+- [x] If saved bounds are off-screen (display disconnected), window resets to default centered position
+- [x] First launch uses 800x600 centered on primary display
+- [x] macOS application menu appears with all standard items
+- [x] Edit menu items (copy, paste, etc.) work in text fields
+- [x] View menu items work (reload, devtools in dev, zoom, fullscreen)
+- [x] "Settings" menu action is sent to renderer via IPC
 
 ### Blocked by
 
@@ -786,7 +786,7 @@ Remove all Tauri-related code, configuration, and dependencies from the reposito
 | 11 | Frontend Tauri-to-Electron migration | 10 | Done |
 | 12 | Custom protocol + production frontend serving | 11 | Done |
 | 13 | System tray, global shortcut, close-to-tray | 8 | Done |
-| 14 | Window state persistence + application menu | 6 | Ready |
+| 14 | Window state persistence + application menu | 6 | Done |
 | 15 | Auto-update system | 6 | Ready |
 | 16 | Service bundling for distribution | 4, 5 | Ready |
 | 17 | Electron packaging + .dmg distribution | 12, 13, 14, 15, 16 | Blocked |

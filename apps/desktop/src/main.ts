@@ -9,6 +9,7 @@ import {
   setRestartSidecarHandler,
   setTrayCountHandler,
 } from './ipc.js'
+import { configureApplicationMenu } from './menu.js'
 import { reserveServicePorts, type ServicePorts } from './ports.js'
 import {
   DESKTOP_SCHEME,
@@ -18,6 +19,7 @@ import {
 } from './protocol.js'
 import { SidecarManager } from './sidecar.js'
 import { registerGlobalShortcut, TrayManager } from './tray.js'
+import { WindowStateManager } from './window-state.js'
 
 // Fix PATH before anything else — must happen synchronously before
 // any child processes are spawned. On macOS, apps launched from
@@ -69,6 +71,9 @@ let healthMonitor: HealthMonitor | null = null
 /** System tray icon manager. */
 const trayManager = new TrayManager()
 
+/** Window state manager — persists and restores window bounds across restarts. */
+const windowStateManager = new WindowStateManager()
+
 /** Cleanup function for the global shortcut. */
 let unregisterShortcut: (() => void) | null = null
 
@@ -98,9 +103,11 @@ export function getHealthMonitor(): HealthMonitor | null {
 }
 
 function createWindow(): void {
+  // Restore persisted window bounds (or default to centered 800x600).
+  const savedState = windowStateManager.load()
+
   mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 780,
+    ...savedState.bounds,
     minWidth: 840,
     minHeight: 620,
     show: false,
@@ -114,6 +121,14 @@ function createWindow(): void {
       additionalArguments: buildPreloadArgs(),
     },
   })
+
+  // Restore maximized state after window creation.
+  if (savedState.isMaximized) {
+    mainWindow.maximize()
+  }
+
+  // Track window bounds for persistence — saves on move/resize/close.
+  windowStateManager.track(mainWindow)
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
@@ -245,6 +260,12 @@ app
     }
 
     createWindow()
+
+    // Build the macOS-native application menu (About, Settings, Edit, View, Window).
+    configureApplicationMenu(
+      () => mainWindow,
+      () => createWindow()
+    )
 
     // Create the system tray icon with dynamic tooltip and context menu.
     trayManager.create(() => mainWindow)

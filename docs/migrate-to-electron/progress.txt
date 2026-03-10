@@ -375,7 +375,37 @@
 - TypeScript compiles without errors
 - Formatting clean (283 files checked, 0 errors)
 
+### Issue 14: Window state persistence + application menu — DONE
+- Created `apps/desktop/src/window-state.ts` — WindowStateManager for persisting and restoring window bounds:
+  - `parseWindowState()` — pure function to parse and validate JSON state with bounds validation (finite numbers, positive dimensions, floored values)
+  - `isBoundsOnScreen()` — pure function to check if saved bounds overlap at least one connected display (100px horizontal, 50px vertical minimum overlap)
+  - `defaultWindowState()` — pure function to build default 800x600 state centered on the primary display's work area
+  - `WindowStateManager` class:
+    - `load()` — reads state from `userData/window-state.json`, validates bounds are on-screen, falls back to default if file missing/corrupt/off-screen
+    - `save(state)` — writes state to disk as JSON
+    - `track(window)` — attaches debounced (500ms) move/resize listeners + final close save using `getNormalBounds()` and `isMaximized()`
+  - Edge cases: first launch (default centered), external display disconnected (off-screen detection resets to primary), maximized state persisted and restored
+- Created `apps/desktop/src/menu.ts` — application menu configuration:
+  - `dispatchMenuAction()` — sends menu actions to renderer via IPC; creates window if none exists, defers action if page still loading
+  - `configureApplicationMenu()` — builds platform-aware menu template:
+    - macOS: app-name submenu with About, Settings (Cmd+,), Services, Hide/Hide Others/Unhide, Quit
+    - Non-macOS: Settings under File menu
+    - Standard role menus: Edit (undo/redo/cut/copy/paste/select all), View (reload/devtools/zoom/fullscreen), Window (minimize/zoom/bring all to front)
+    - File menu: Close (macOS) or Quit (other platforms)
+- Updated `apps/desktop/src/main.ts`:
+  - `createWindow()` uses `windowStateManager.load()` for initial bounds instead of hardcoded 1100x780
+  - Restores maximized state after window creation
+  - Calls `windowStateManager.track(mainWindow)` for automatic persistence
+  - Calls `configureApplicationMenu()` after window creation
+- Created `apps/desktop/test/window-state.test.ts` — 24 unit tests:
+  - parseWindowState: 11 tests (valid JSON, default isMaximized, floored values, invalid JSON, non-object, missing bounds, non-number fields, zero width, negative height, NaN, Infinity)
+  - isBoundsOnScreen: 9 tests (fully within, partial overlap, insufficient horizontal/vertical, off-screen, second display, no displays, negative position, entirely left)
+  - defaultWindowState: 4 tests (dimensions, centering, dock offset, small display)
+- tsdown build succeeds: main.js 49.68 KB (includes window-state + menu modules), preload.js 2.09 KB
+- All 92 desktop tests pass (24 window-state + 13 shell + 7 ports + 30 protocol + 13 health + 5 tray)
+- TypeScript compiles without errors
+- Formatting clean (286 files checked, 0 errors)
+
 ## Ready to start (no blockers):
-- Issue 14: Window state persistence + application menu
 - Issue 15: Auto-update system
 - Issue 16: Service bundling for distribution

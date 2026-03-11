@@ -4,6 +4,10 @@
  * Registers tmux-style keyboard shortcuts for panel operations using
  * TanStack Hotkeys' `useHotkeySequence` for prefix-key sequences.
  *
+ * Direct shortcuts:
+ * - Cmd+d → split horizontal (side-by-side)
+ * - Cmd+Shift+d → split vertical (stacked)
+ *
  * Tmux-style prefix key sequences (Ctrl+b then action key):
  * - Ctrl+b then h → split horizontal (side-by-side)
  * - Ctrl+b then v → split vertical (stacked)
@@ -202,6 +206,22 @@ function PanelHotkeys({
     },
     { timeout: SEQUENCE_TIMEOUT }
   )
+
+  // Cmd+d → split active pane horizontally (Ghostty-style)
+  useHotkeySequence(['Meta+D'], (event) => {
+    event.preventDefault()
+    if (actions && activePaneId) {
+      actions.splitPane(activePaneId, 'horizontal')
+    }
+  })
+
+  // Cmd+Shift+d → split active pane vertically (Ghostty-style)
+  useHotkeySequence(['Meta+Shift+D'], (event) => {
+    event.preventDefault()
+    if (actions && activePaneId) {
+      actions.splitPane(activePaneId, 'vertical')
+    }
+  })
 
   // Ctrl+b then x → close active pane
   useHotkeySequence(

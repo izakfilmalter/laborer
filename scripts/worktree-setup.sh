@@ -9,7 +9,7 @@
 #   - Calculating and storing worktree index
 #   - Deriving a stable worktree slug from branch name
 #   - Copying AI tool config directories
-#   - Symlinking .reference directory
+#   - Copying .reference directory
 #   - Updating .env.local with worktree-specific ports
 #   - Running bun install
 
@@ -61,10 +61,10 @@ if [ -d "$ROOT_WORKTREE_PATH/.claude" ]; then
     echo "  Copied .claude directory"
 fi
 
-# Symlink .reference from root worktree (avoids duplicating ~660MB of shallow clones)
+# Copy .reference from root worktree
 if [ -d "$ROOT_WORKTREE_PATH/.reference" ] && [ ! -e ".reference" ]; then
-    ln -s "$ROOT_WORKTREE_PATH/.reference" .reference
-    echo "  Symlinked .reference directory"
+    cp -r "$ROOT_WORKTREE_PATH/.reference" .reference
+    echo "  Copied .reference directory"
 fi
 
 # Append worktree-specific config to .env.local

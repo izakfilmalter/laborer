@@ -69,6 +69,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { Kbd } from '@/components/ui/kbd'
 import { WorkspaceDashboard } from '@/components/workspace-dashboard'
 import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
@@ -418,7 +419,10 @@ function PanelHeaderBar({
           >
             <Columns2 className="size-3.5" />
           </TooltipTrigger>
-          <TooltipContent>Split horizontally</TooltipContent>
+          <TooltipContent className="flex items-center gap-2">
+            Split horizontally
+            <Kbd>&#8984;D</Kbd>
+          </TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
@@ -436,7 +440,10 @@ function PanelHeaderBar({
           >
             <Rows2 className="size-3.5" />
           </TooltipTrigger>
-          <TooltipContent>Split vertically</TooltipContent>
+          <TooltipContent className="flex items-center gap-2">
+            Split vertically
+            <Kbd>&#8984;&#8679;D</Kbd>
+          </TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger

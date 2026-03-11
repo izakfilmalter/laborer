@@ -852,11 +852,101 @@ function findLeafByTerminalId(
   return undefined
 }
 
+/**
+ * Collect all leaf nodes from a panel tree (DFS order).
+ */
+function getLeafNodes(node: PanelNode): LeafNode[] {
+  if (node._tag === 'LeafNode') {
+    return [node]
+  }
+  const leaves: LeafNode[] = []
+  for (const child of node.children) {
+    leaves.push(...getLeafNodes(child))
+  }
+  return leaves
+}
+
+/**
+ * Extract unique workspace IDs from the leaf nodes of a layout tree.
+ * Returns an array of workspace IDs in the order they first appear (DFS).
+ * Leaves without a workspaceId are grouped under `undefined`.
+ */
+function getWorkspaceIds(node: PanelNode): (string | undefined)[] {
+  const leaves = getLeafNodes(node)
+  const seen = new Set<string | undefined>()
+  const ids: (string | undefined)[] = []
+  for (const leaf of leaves) {
+    if (!seen.has(leaf.workspaceId)) {
+      seen.add(leaf.workspaceId)
+      ids.push(leaf.workspaceId)
+    }
+  }
+  return ids
+}
+
+/**
+ * Filter a layout tree to contain only leaves matching a specific workspaceId.
+ *
+ * - If a SplitNode contains no matching leaves, it is removed.
+ * - If a SplitNode is reduced to a single child, it is collapsed to that child.
+ * - Sizes are redistributed proportionally among remaining children.
+ *
+ * Returns undefined if no matching leaves exist in the tree.
+ */
+function filterTreeByWorkspace(
+  node: PanelNode,
+  workspaceId: string | undefined
+): PanelNode | undefined {
+  if (node._tag === 'LeafNode') {
+    return node.workspaceId === workspaceId ? node : undefined
+  }
+
+  const filteredChildren: PanelNode[] = []
+  const retainedIndices: number[] = []
+
+  for (let i = 0; i < node.children.length; i++) {
+    const child = node.children[i]
+    if (!child) {
+      continue
+    }
+    const filtered = filterTreeByWorkspace(child, workspaceId)
+    if (filtered) {
+      filteredChildren.push(filtered)
+      retainedIndices.push(i)
+    }
+  }
+
+  if (filteredChildren.length === 0) {
+    return undefined
+  }
+
+  if (filteredChildren.length === 1) {
+    return filteredChildren[0]
+  }
+
+  // Redistribute sizes proportionally among retained children
+  const retainedSizes = retainedIndices.map(
+    (i) => node.sizes[i] ?? 100 / node.children.length
+  )
+  const totalRetained = retainedSizes.reduce((sum, s) => sum + s, 0)
+  const normalizedSizes =
+    totalRetained > 0
+      ? retainedSizes.map((s) => (s / totalRetained) * 100)
+      : retainedSizes.map(() => 100 / filteredChildren.length)
+
+  return {
+    ...node,
+    children: filteredChildren,
+    sizes: normalizedSizes,
+  }
+}
+
 export {
   closePane,
   computeResize,
   countLeaves,
   ensureValidActivePaneId,
+  filterTreeByWorkspace,
   findEmptyTerminalPane,
   findLeafByTerminalId,
   findNodeById,
@@ -866,8 +956,10 @@ export {
   generateId,
   getFirstLeafId,
   getLeafIds,
+  getLeafNodes,
   getStaleTerminalLeaves,
   getTreeDepth,
+  getWorkspaceIds,
   reconcileLayout,
   replaceNode,
   splitPane,

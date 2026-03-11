@@ -14,9 +14,9 @@ import { desktopDir, resolveElectronPath } from './electron-launcher.mjs'
 
 const port = Number(process.env.VITE_PORT ?? 2101)
 const devServerUrl = `http://localhost:${port}`
-const requiredFiles = ['dist-electron/main.js', 'dist-electron/preload.js']
+const requiredFiles = ['dist-electron/main.cjs', 'dist-electron/preload.cjs']
 const watchedDirectories = [
-  { directory: 'dist-electron', files: new Set(['main.js', 'preload.js']) },
+  { directory: 'dist-electron', files: new Set(['main.cjs', 'preload.cjs']) },
 ]
 const forcedShutdownTimeoutMs = 1500
 const restartDebounceMs = 120
@@ -63,7 +63,7 @@ function startApp() {
 
   const app = spawn(
     resolveElectronPath(),
-    [`--laborer-dev-root=${desktopDir}`, 'dist-electron/main.js'],
+    [`--laborer-dev-root=${desktopDir}`, 'dist-electron/main.cjs'],
     {
       cwd: desktopDir,
       env: {

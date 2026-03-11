@@ -415,7 +415,7 @@ function stage(stageRoot: string): void {
     private: true,
     description: 'Laborer desktop build',
     author: 'Izak Filmalter',
-    main: 'apps/desktop/dist-electron/main.js',
+    main: 'apps/desktop/dist-electron/main.cjs',
     build: createBuildConfig(),
     dependencies: {
       ...resolvedServerDeps,

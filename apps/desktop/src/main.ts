@@ -125,7 +125,7 @@ function createWindow(): void {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: TRAFFIC_LIGHT_POSITION,
     webPreferences: {
-      preload: join(import.meta.dirname, 'preload.js'),
+      preload: join(import.meta.dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,

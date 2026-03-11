@@ -2,7 +2,8 @@
   "name": "@laborer/desktop",
   "version": "0.0.0",
   "private": true,
-  "main": "dist-electron/main.js",
+  "main": "dist-electron/main.cjs",
+  "type": "module",
   "productName": "Laborer",
   "scripts": {
     "dev": "tsdown --watch",

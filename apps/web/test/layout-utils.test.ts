@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ensureValidActivePaneId,
   filterTreeByWorkspace,
+  findLeafByTerminalId,
   findSiblingPaneId,
   getFirstLeafId,
   getLeafIds,
@@ -347,6 +348,108 @@ describe('ensureValidActivePaneId', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Tests: findLeafByTerminalId
+// ---------------------------------------------------------------------------
+
+describe('findLeafByTerminalId', () => {
+  it('returns undefined for a leaf with no terminalId', () => {
+    expect(findLeafByTerminalId(singleLeaf, 'term-1')).toBeUndefined()
+  })
+
+  it('returns the leaf when its terminalId matches', () => {
+    const leaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-X',
+      paneType: 'terminal',
+      terminalId: 'term-1',
+      workspaceId: 'ws-1',
+    }
+    expect(findLeafByTerminalId(leaf, 'term-1')).toBe(leaf)
+  })
+
+  it('returns undefined when no leaf has the requested terminalId', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-A',
+          paneType: 'terminal',
+          terminalId: 'term-1',
+        },
+        {
+          _tag: 'LeafNode',
+          id: 'pane-B',
+          paneType: 'terminal',
+          terminalId: 'term-2',
+        },
+      ],
+      sizes: [50, 50],
+    }
+    expect(findLeafByTerminalId(layout, 'term-999')).toBeUndefined()
+  })
+
+  it('finds a terminal in a nested layout', () => {
+    const withTerminal: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        { _tag: 'LeafNode', id: 'pane-A', paneType: 'terminal' },
+        {
+          _tag: 'SplitNode',
+          id: 'split-right',
+          direction: 'vertical',
+          children: [
+            { _tag: 'LeafNode', id: 'pane-B', paneType: 'terminal' },
+            {
+              _tag: 'LeafNode',
+              id: 'pane-C',
+              paneType: 'terminal',
+              terminalId: 'term-deep',
+              workspaceId: 'ws-1',
+            },
+          ],
+          sizes: [50, 50],
+        },
+      ],
+      sizes: [50, 50],
+    }
+    const result = findLeafByTerminalId(withTerminal, 'term-deep')
+    expect(result).toBeDefined()
+    expect(result?.id).toBe('pane-C')
+    expect(result?.terminalId).toBe('term-deep')
+  })
+
+  it('returns the first match in DFS order when multiple leaves share a terminalId', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-first',
+          paneType: 'terminal',
+          terminalId: 'term-dup',
+        },
+        {
+          _tag: 'LeafNode',
+          id: 'pane-second',
+          paneType: 'terminal',
+          terminalId: 'term-dup',
+        },
+      ],
+      sizes: [50, 50],
+    }
+    const result = findLeafByTerminalId(layout, 'term-dup')
+    expect(result?.id).toBe('pane-first')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Test fixtures with workspaceIds — for workspace grouping tests
 // ---------------------------------------------------------------------------
 
@@ -625,8 +728,6 @@ describe('filterTreeByWorkspace', () => {
   })
 
   it('redistributes sizes proportionally after filtering', () => {
-    // Original sizes: [33, 34, 33]. After removing index 1 (ws-2), retained
-    // indices are [0, 2] with sizes [33, 33]. Normalized to sum 100:
     const result = filterTreeByWorkspace(mixedWorkspaceSplit, 'ws-1')
     expect(result?._tag).toBe('SplitNode')
     const split = result as SplitNode
@@ -637,7 +738,6 @@ describe('filterTreeByWorkspace', () => {
 
   it('collapses a SplitNode to a single child when only one leaf matches', () => {
     const result = filterTreeByWorkspace(mixedWorkspaceSplit, 'ws-2')
-    // Only pane-B matches ws-2 — SplitNode collapses to single leaf
     expect(result?._tag).toBe('LeafNode')
     expect((result as LeafNode).id).toBe('pane-B')
   })
@@ -645,10 +745,6 @@ describe('filterTreeByWorkspace', () => {
   it('filters nested layout correctly for ws-1 (multiple levels)', () => {
     const result = filterTreeByWorkspace(nestedMixedWorkspaces, 'ws-1')
     expect(result).toBeDefined()
-    // ws-1 has pane-A and pane-B. In the original tree:
-    // root H-Split(A, V-Split(B, H-Split(C, D)))
-    // After filtering out ws-2 (C) and ws-3 (D), the bottom-right split is empty.
-    // V-Split(B) collapses to B. So root becomes H-Split(A, B).
     expect(result?._tag).toBe('SplitNode')
     const split = result as SplitNode
     expect(split.children).toHaveLength(2)
@@ -658,7 +754,6 @@ describe('filterTreeByWorkspace', () => {
 
   it('filters nested layout correctly for ws-2 (single leaf deep in tree)', () => {
     const result = filterTreeByWorkspace(nestedMixedWorkspaces, 'ws-2')
-    // Only pane-C matches — should collapse all the way to a single leaf
     expect(result?._tag).toBe('LeafNode')
     expect((result as LeafNode).id).toBe('pane-C')
   })

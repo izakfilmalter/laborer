@@ -725,20 +725,21 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     'workspace.create': ({ projectId, branchName, taskId }) =>
       Effect.gen(function* () {
         const provider = yield* WorkspaceProvider
+        // Pass an onReady callback that starts diff/PR polling once the
+        // background worktree setup completes and the workspace is 'running'.
+        const diffService = yield* DiffService
+        const prWatcher = yield* PrWatcher
+        const onReady = (workspaceId: string) =>
+          Effect.gen(function* () {
+            yield* diffService.startPolling(workspaceId)
+            yield* prWatcher.startPolling(workspaceId)
+          })
         const workspace = yield* provider.createWorktree(
           projectId,
           branchName,
-          taskId
+          taskId,
+          onReady
         )
-
-        // Issue #85: Auto-start diff polling when workspace is created
-        // Also start PR polling to detect associated pull requests
-        if (workspace.status === 'running') {
-          const diffService = yield* DiffService
-          yield* diffService.startPolling(workspace.id)
-          const prWatcher = yield* PrWatcher
-          yield* prWatcher.startPolling(workspace.id)
-        }
 
         return {
           id: workspace.id,
@@ -946,18 +947,19 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
             const branchName = `task/${idPrefix}/${slug}`
 
             const provider = yield* WorkspaceProvider
-            const workspace = yield* provider.createWorktree(
+            const diffService = yield* DiffService
+            const prWatcher = yield* PrWatcher
+            const onReady = (workspaceId: string) =>
+              Effect.gen(function* () {
+                yield* diffService.startPolling(workspaceId)
+                yield* prWatcher.startPolling(workspaceId)
+              })
+            yield* provider.createWorktree(
               task.projectId,
               branchName,
-              taskId
+              taskId,
+              onReady
             )
-
-            if (workspace.status === 'running') {
-              const diffService = yield* DiffService
-              yield* diffService.startPolling(workspace.id)
-              const prWatcher = yield* PrWatcher
-              yield* prWatcher.startPolling(workspace.id)
-            }
           }
         }
 

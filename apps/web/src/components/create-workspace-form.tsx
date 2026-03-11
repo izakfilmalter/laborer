@@ -49,7 +49,6 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { inputClassName } from '@/components/ui/input'
-import { Progress } from '@/components/ui/progress'
 import {
   Select,
   SelectContent,
@@ -179,8 +178,10 @@ function CreateWorkspaceForm({
               : {}),
           },
         })
+        // The RPC now returns immediately with status 'creating'.
+        // The workspace card will show setup progress via worktreeSetupStep.
         toast.success(
-          `Workspace created on branch "${result.branchName}" (port ${result.port})`
+          `Workspace "${result.branchName}" is being set up (port ${result.port})`
         )
         form.reset()
         setOpen(false)
@@ -325,30 +326,18 @@ function CreateWorkspaceForm({
             selector={(state) => [state.canSubmit, state.isSubmitting]}
           >
             {([canSubmit, isSubmitting]) => (
-              <>
-                {isSubmitting && (
-                  <div className="space-y-2 px-1">
-                    <Progress value={null} />
-                    <p className="flex items-center gap-2 text-muted-foreground text-xs">
-                      <Spinner className="size-3" />
-                      Setting up workspace (creating worktree, allocating port,
-                      running setup scripts)...
-                    </p>
-                  </div>
-                )}
-                <DialogFooter>
-                  <Button disabled={!canSubmit || isSubmitting} type="submit">
-                    {isSubmitting && (
-                      <>
-                        <Spinner className="size-3.5" />
-                        Creating...
-                      </>
-                    )}
-                    {!isSubmitting && creationError && 'Retry'}
-                    {!(isSubmitting || creationError) && 'Create Workspace'}
-                  </Button>
-                </DialogFooter>
-              </>
+              <DialogFooter>
+                <Button disabled={!canSubmit || isSubmitting} type="submit">
+                  {isSubmitting && (
+                    <>
+                      <Spinner className="size-3.5" />
+                      Creating...
+                    </>
+                  )}
+                  {!isSubmitting && creationError && 'Retry'}
+                  {!(isSubmitting || creationError) && 'Create Workspace'}
+                </Button>
+              </DialogFooter>
             )}
           </form.Subscribe>
         </form>

@@ -675,20 +675,24 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
     /**
      * Create a new git worktree for a project.
      *
-     * 1. Validates the project exists
-     * 2. Generates a branch name if not provided
-     * 3. Allocates a port from the PortAllocator
-     * 4. Runs `git worktree add` to create the isolated directory
-     * 5. Commits WorkspaceCreated event to LiveStore
+     * Returns immediately with a workspace in 'creating' status.
+     * The heavy setup (git fetch, worktree creation, setup scripts,
+     * optional container setup) runs as a background fiber. Progress
+     * is communicated via `worktreeSetupStepChanged` LiveStore events.
+     * When setup completes, the workspace transitions to 'running'.
      *
      * @param projectId - ID of the registered project
      * @param branchName - Optional branch name (auto-generated if omitted)
      * @param taskId - Optional task ID to link workspace to a task
+     * @param onReady - Optional effect to run when workspace setup completes
+     *   (e.g. start diff polling). Receives the workspace ID. Errors are
+     *   logged but do not affect the workspace status.
      */
     readonly createWorktree: (
       projectId: string,
       branchName?: string,
-      taskId?: string
+      taskId?: string,
+      onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>
     ) => Effect.Effect<WorkspaceRecord, RpcError>
 
     /**
@@ -749,67 +753,66 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       const containerService = yield* ContainerService
       const depsImageService = yield* DepsImageService
 
-      const createWorktree = Effect.fn('WorkspaceProvider.createWorktree')(
-        function* (projectId: string, branchName?: string, taskId?: string) {
-          // 1. Validate the project exists and get its repo path
-          const project = yield* registry.getProject(projectId)
+      /**
+       * Create a git worktree, validate it, and run setup scripts.
+       * Returns the base SHA on success. Communicates progress via
+       * worktreeSetupStepChanged events.
+       */
+      const performWorktreeSetup = (params: {
+        readonly id: string
+        readonly branchName: string
+        readonly port: number
+        readonly repoPath: string
+        readonly worktreeDir: string
+        readonly worktreePath: string
+        readonly setupScripts: readonly string[]
+      }): Effect.Effect<string | null, RpcError> =>
+        Effect.gen(function* () {
+          const { id, branchName, repoPath, worktreeDir, worktreePath, port } =
+            params
 
-          // 1b. Resolve config for worktree location + setup scripts
-          const resolvedConfig = yield* configService
-            .resolveConfig(project.repoPath, project.name)
-            .pipe(
-              Effect.mapError(
-                (e) =>
-                  new RpcError({
-                    message: e.message,
-                    code: 'CONFIG_VALIDATION_ERROR',
-                  })
-              )
-            )
+          // Signal UI: fetching remote refs
+          store.commit(
+            events.worktreeSetupStepChanged({
+              workspaceId: id,
+              step: 'fetching-remote',
+            })
+          )
 
-          // 2. Generate or validate branch name
-          const resolvedBranch =
-            branchName ?? `laborer/${crypto.randomUUID().slice(0, 8)}`
-
-          // 3. Check if a branch with this name already exists
+          // Check if a branch with this name already exists
           const branchExists = yield* Effect.tryPromise({
             try: async () => {
-              const proc = spawn(
-                ['git', 'rev-parse', '--verify', resolvedBranch],
-                {
-                  cwd: project.repoPath,
-                  stdout: 'pipe',
-                  stderr: 'pipe',
-                }
-              )
+              const proc = spawn(['git', 'rev-parse', '--verify', branchName], {
+                cwd: repoPath,
+                stdout: 'pipe',
+                stderr: 'pipe',
+              })
               const exitCode = await proc.exited
               return exitCode === 0
             },
             catch: () =>
               new RpcError({
-                message: `Failed to check branch existence: ${resolvedBranch}`,
+                message: `Failed to check branch existence: ${branchName}`,
                 code: 'GIT_CHECK_FAILED',
               }),
           })
 
-          // 3b. Fetch latest remote refs (Issue #39)
-          // Ensures the local repo has the latest remote state before
-          // creating a worktree. Runs before port allocation so no
-          // resources need cleanup on failure.
-          yield* fetchRemote(project.repoPath)
+          // Fetch latest remote refs (Issue #39)
+          yield* fetchRemote(repoPath)
 
-          // 4. Allocate a port for this workspace
-          const port = yield* portAllocator.allocate()
+          // Signal UI: creating worktree
+          store.commit(
+            events.worktreeSetupStepChanged({
+              workspaceId: id,
+              step: 'creating-worktree',
+            })
+          )
 
-          // 5. Compute worktree path from resolved config
-          const worktreeDir = resolvedConfig.worktreeDir.value
-          const worktreePath = join(worktreeDir, slugify(resolvedBranch))
-
-          // 6. Ensure the resolved worktree directory exists
+          // Ensure the resolved worktree directory exists
           yield* Effect.tryPromise({
             try: async () => {
               const proc = spawn(['mkdir', '-p', worktreeDir], {
-                cwd: project.repoPath,
+                cwd: repoPath,
                 stdout: 'pipe',
                 stderr: 'pipe',
               })
@@ -822,9 +825,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               }),
           })
 
-          // 6b. Clean up stale worktree path if it exists on disk from a
-          //     previous incomplete cleanup. Also prune git's internal worktree
-          //     metadata so `git worktree add` doesn't fail with "already exists".
+          // Clean up stale worktree path if it exists on disk
           if (existsSync(worktreePath)) {
             yield* Effect.logWarning(
               `Worktree path already exists, cleaning up: ${worktreePath}`
@@ -846,12 +847,11 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             }).pipe(Effect.catchAll(() => Effect.void))
           }
 
-          // Prune stale git worktree references before creating. This cleans
-          // up .git/worktrees/ entries for paths that no longer exist on disk.
+          // Prune stale git worktree references
           yield* Effect.tryPromise({
             try: async () => {
               const proc = spawn(['git', 'worktree', 'prune'], {
-                cwd: project.repoPath,
+                cwd: repoPath,
                 stdout: 'pipe',
                 stderr: 'pipe',
               })
@@ -864,15 +864,15 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               }),
           }).pipe(Effect.catchAll(() => Effect.void))
 
-          // 7. Create the git worktree, reusing the branch if it already exists
+          // Create the git worktree, reusing the branch if it exists
           const worktreeArgs = branchExists
-            ? ['git', 'worktree', 'add', worktreePath, resolvedBranch]
-            : ['git', 'worktree', 'add', '-b', resolvedBranch, worktreePath]
+            ? ['git', 'worktree', 'add', worktreePath, branchName]
+            : ['git', 'worktree', 'add', '-b', branchName, worktreePath]
 
           const worktreeResult = yield* Effect.tryPromise({
             try: async () => {
               const proc = spawn(worktreeArgs, {
-                cwd: project.repoPath,
+                cwd: repoPath,
                 stdout: 'pipe',
                 stderr: 'pipe',
               })
@@ -888,35 +888,23 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           })
 
           if (worktreeResult.exitCode !== 0) {
-            // Clean up: free the allocated port since worktree creation failed
-            yield* portAllocator
-              .free(port)
-              .pipe(Effect.catchAll(() => Effect.void))
-
             return yield* new RpcError({
               message: `git worktree add failed (exit ${worktreeResult.exitCode}): ${worktreeResult.stderr.trim()}`,
               code: 'GIT_WORKTREE_FAILED',
             })
           }
 
-          // 7b. Capture the base SHA — the commit the worktree was branched from.
-          // `git worktree add -b <branch> <path>` creates the new branch at HEAD of
-          // the main repo, so `git rev-parse HEAD` in the project repo gives us the
-          // exact commit the worktree diverged from. This is stored in LiveStore and
-          // used by DiffService as the base for `git diff <baseSha>`.
+          // Capture the base SHA
           const baseSha = yield* Effect.tryPromise({
             try: async () => {
               const proc = spawn(['git', 'rev-parse', 'HEAD'], {
-                cwd: project.repoPath,
+                cwd: repoPath,
                 stdout: 'pipe',
                 stderr: 'pipe',
               })
               const exitCode = await proc.exited
               const stdout = await new Response(proc.stdout).text()
-              if (exitCode === 0) {
-                return stdout.trim()
-              }
-              return null
+              return exitCode === 0 ? stdout.trim() : null
             },
             catch: () =>
               new RpcError({
@@ -925,14 +913,16 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               }),
           })
 
-          // 8. Validate the worktree (Issue #34)
-          // Comprehensive validation: directory exists, is a git work tree,
-          // correct branch is checked out, and git toplevel is isolated to
-          // the worktree path (not pointing at the main repo).
-          const validation = yield* validateWorktree(
-            worktreePath,
-            resolvedBranch
+          // Signal UI: validating worktree
+          store.commit(
+            events.worktreeSetupStepChanged({
+              workspaceId: id,
+              step: 'validating-worktree',
+            })
           )
+
+          // Validate the worktree (Issue #34)
+          const validation = yield* validateWorktree(worktreePath, branchName)
 
           const isValid =
             validation.directoryExists &&
@@ -941,15 +931,10 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             validation.isolatedToplevel
 
           if (!isValid) {
-            // Clean up: free port
-            yield* portAllocator
-              .free(port)
-              .pipe(Effect.catchAll(() => Effect.void))
-
             const errorMsg = buildValidationErrorMessage(
               validation,
               worktreePath,
-              resolvedBranch
+              branchName
             )
 
             yield* Effect.logWarning(errorMsg).pipe(
@@ -963,67 +948,200 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           }
 
           yield* Effect.logDebug(
-            `Worktree validated: directory exists, git work tree, branch=${resolvedBranch}, toplevel=${worktreePath}`
+            `Worktree validated: directory exists, git work tree, branch=${branchName}, toplevel=${worktreePath}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
 
-          // 9. Generate workspace ID early (needed for env var injection)
-          const id = crypto.randomUUID()
-          const createdAt = new Date().toISOString()
-
-          // 10. Run setup scripts from resolved config (Issue #35, #37, #156)
-          // Scripts run in the worktree directory with workspace env vars
-          // injected. If any script fails, the workspace is fully rolled
-          // back: worktree removed, port freed, branch deleted.
+          // Run setup scripts from resolved config (Issue #35, #37, #156)
           const scriptEnv = {
             PORT: String(port),
             LABORER_WORKSPACE_ID: id,
             LABORER_WORKSPACE_PATH: worktreePath,
-            LABORER_BRANCH: resolvedBranch,
+            LABORER_BRANCH: branchName,
+          }
+
+          if (params.setupScripts.length > 0) {
+            store.commit(
+              events.worktreeSetupStepChanged({
+                workspaceId: id,
+                step: 'running-setup-scripts',
+              })
+            )
           }
 
           const setupResult = yield* runProjectSetupScripts(
-            resolvedConfig.setupScripts.value,
+            params.setupScripts,
             worktreePath,
             scriptEnv
           )
 
           if (setupResult._tag === 'Failure') {
-            // Commit "errored" status briefly so the UI sees the failure
-            // before rollback removes the workspace
-            store.commit(
-              events.workspaceCreated({
-                id,
-                projectId,
-                taskSource: taskId ?? null,
-                branchName: resolvedBranch,
-                worktreePath,
-                port,
-                status: 'errored',
-                origin: 'laborer',
-                createdAt,
-                baseSha,
-              })
-            )
-
-            // Full rollback: remove worktree, delete branch, free port
-            yield* rollbackWorktree(
-              project.repoPath,
-              worktreePath,
-              resolvedBranch,
-              port,
-              portAllocator
-            )
-
-            // Remove the errored workspace from LiveStore after rollback
-            store.commit(events.workspaceDestroyed({ id }))
-
             return yield* new RpcError({
               message: buildSetupFailureMessage(setupResult),
               code: 'SETUP_SCRIPT_FAILED',
             })
           }
 
-          // 11. Commit to LiveStore
+          return baseSha
+        })
+
+      /**
+       * Run background container setup (deps image build + container creation).
+       * Communicates progress via containerSetupStepChanged events.
+       * Follows the same pattern as the original container setup fiber.
+       */
+      const performContainerSetup = (params: {
+        readonly id: string
+        readonly branchName: string
+        readonly worktreePath: string
+        readonly port: number
+        readonly repoPath: string
+        readonly projectName: string
+        readonly devServerImage: string
+        readonly devServer: {
+          readonly dockerfile: { readonly value: string | null }
+          readonly installCommand: { readonly value: string | null }
+          readonly network: { readonly value: string | null }
+          readonly setupScripts: { readonly value: readonly string[] }
+          readonly workdir: { readonly value: string }
+        }
+      }): Effect.Effect<void, RpcError> =>
+        Effect.gen(function* () {
+          const { id, branchName, worktreePath, repoPath, projectName } = params
+
+          // Signal UI: building deps image
+          store.commit(
+            events.containerSetupStepChanged({
+              workspaceId: id,
+              step: 'building-image',
+            })
+          )
+
+          const depsResult = yield* depsImageService
+            .ensureDepsImage({
+              projectRoot: repoPath,
+              projectName,
+              baseImage: params.devServerImage,
+              workdir: params.devServer.workdir.value,
+              worktreePath,
+              installCommand:
+                params.devServer.installCommand.value ?? undefined,
+              setupScripts:
+                params.devServer.setupScripts.value.length > 0
+                  ? params.devServer.setupScripts.value
+                  : undefined,
+              onProgress: (step) => {
+                store.commit(
+                  events.containerSetupStepChanged({
+                    workspaceId: id,
+                    step,
+                  })
+                )
+              },
+            })
+            .pipe(
+              Effect.catchAll((error: RpcError) =>
+                Effect.gen(function* () {
+                  yield* Effect.logWarning(
+                    `Deps image build failed, falling back to base image: ${error.message}`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
+                  return null
+                })
+              )
+            )
+
+          // Signal UI: starting container
+          store.commit(
+            events.containerSetupStepChanged({
+              workspaceId: id,
+              step: 'starting-container',
+            })
+          )
+
+          yield* containerService
+            .createContainer({
+              workspaceId: id,
+              worktreePath,
+              branchName,
+              projectName,
+              depsImageName: depsResult?.imageName,
+              devServerConfig: {
+                image: params.devServerImage,
+                dockerfile: params.devServer.dockerfile.value,
+                network: params.devServer.network.value,
+                workdir: params.devServer.workdir.value,
+              },
+            })
+            .pipe(
+              Effect.tapError((containerError) =>
+                Effect.gen(function* () {
+                  yield* Effect.logWarning(
+                    `Container creation failed, rolling back workspace: ${containerError.message}`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
+
+                  // Clear setup step before rollback
+                  store.commit(
+                    events.containerSetupStepChanged({
+                      workspaceId: id,
+                      step: null,
+                    })
+                  )
+
+                  // Full rollback
+                  yield* rollbackWorktree(
+                    repoPath,
+                    worktreePath,
+                    branchName,
+                    params.port,
+                    portAllocator
+                  )
+
+                  store.commit(events.workspaceDestroyed({ id }))
+                })
+              )
+            )
+
+          // containerStarted materializer clears containerSetupStep automatically
+        })
+
+      const createWorktree = Effect.fn('WorkspaceProvider.createWorktree')(
+        function* (
+          projectId: string,
+          branchName?: string,
+          taskId?: string,
+          onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>
+        ) {
+          // 1. Validate the project exists and get its repo path
+          const project = yield* registry.getProject(projectId)
+
+          // 1b. Resolve config for worktree location + setup scripts
+          const resolvedConfig = yield* configService
+            .resolveConfig(project.repoPath, project.name)
+            .pipe(
+              Effect.mapError(
+                (e) =>
+                  new RpcError({
+                    message: e.message,
+                    code: 'CONFIG_VALIDATION_ERROR',
+                  })
+              )
+            )
+
+          // 2. Generate or validate branch name
+          const resolvedBranch =
+            branchName ?? `laborer/${crypto.randomUUID().slice(0, 8)}`
+
+          // 3. Allocate a port for this workspace (fast, in-memory)
+          const port = yield* portAllocator.allocate()
+
+          // 4. Compute worktree path from resolved config
+          const worktreeDir = resolvedConfig.worktreeDir.value
+          const worktreePath = join(worktreeDir, slugify(resolvedBranch))
+
+          // 5. Generate workspace ID and commit to LiveStore immediately
+          // with status 'creating'. The UI sees the workspace right away
+          // in the card list; heavy setup runs as a background fiber.
+          const id = crypto.randomUUID()
+          const createdAt = new Date().toISOString()
 
           const workspace: WorkspaceRecord = {
             id,
@@ -1032,10 +1150,10 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             branchName: resolvedBranch,
             worktreePath,
             port,
-            status: 'running',
+            status: 'creating',
             origin: 'laborer',
             createdAt,
-            baseSha,
+            baseSha: null,
           }
 
           store.commit(
@@ -1053,145 +1171,118 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             })
           )
 
-          // 12. Start container if devServer config has an image (Issue #5)
-          // Runs as a background fiber so workspace creation returns immediately.
-          // The UI sees the workspace right away; the container appears once ready
-          // (the containerStarted LiveStore event updates containerId reactively).
-          const devServerImage = resolvedConfig.devServer.image.value
-          if (devServerImage !== null) {
-            const setupEffect = Effect.gen(function* () {
-              // Signal UI: building deps image
-              store.commit(
-                events.containerSetupStepChanged({
-                  workspaceId: id,
-                  step: 'building-image',
-                })
-              )
+          // 6. Fork the heavy setup work into a background fiber.
+          // This includes: git fetch, branch check, worktree creation,
+          // validation, setup scripts, and optional container setup.
+          // Progress is communicated via worktreeSetupStepChanged events.
+          const worktreeSetupEffect = Effect.gen(function* () {
+            // Phase 1: Create and validate worktree, run setup scripts
+            const baseSha = yield* performWorktreeSetup({
+              id,
+              branchName: resolvedBranch,
+              port,
+              repoPath: project.repoPath,
+              worktreeDir,
+              worktreePath,
+              setupScripts: resolvedConfig.setupScripts.value,
+            })
 
-              // Try to build/reuse a cached deps image with node_modules pre-installed.
-              // Seeds all node_modules (root + workspace packages) into the worktree
-              // so the bind mount carries them into the container.
-              const depsResult = yield* depsImageService
-                .ensureDepsImage({
-                  projectRoot: project.repoPath,
-                  projectName: project.name,
-                  baseImage: devServerImage,
-                  workdir: resolvedConfig.devServer.workdir.value,
-                  worktreePath,
-                  installCommand:
-                    resolvedConfig.devServer.installCommand.value ?? undefined,
-                  setupScripts:
-                    resolvedConfig.devServer.setupScripts.value.length > 0
-                      ? resolvedConfig.devServer.setupScripts.value
-                      : undefined,
-                  onProgress: (step) => {
-                    store.commit(
-                      events.containerSetupStepChanged({
-                        workspaceId: id,
-                        step,
-                      })
-                    )
-                  },
-                })
-                .pipe(
-                  Effect.catchAll((error: RpcError) =>
-                    Effect.gen(function* () {
-                      yield* Effect.logWarning(
-                        `Deps image build failed, falling back to base image: ${error.message}`
-                      ).pipe(Effect.annotateLogs('module', logPrefix))
-                      return null
-                    })
-                  )
-                )
+            // Update baseSha now that we have it
+            if (baseSha !== null) {
+              store.commit(events.workspaceBaseShaUpdated({ id, baseSha }))
+            }
 
-              // Signal UI: starting container
-              store.commit(
-                events.containerSetupStepChanged({
-                  workspaceId: id,
-                  step: 'starting-container',
-                })
-              )
-
-              yield* containerService
-                .createContainer({
-                  workspaceId: id,
-                  worktreePath,
-                  branchName: resolvedBranch,
-                  projectName: project.name,
-                  depsImageName: depsResult?.imageName,
-                  devServerConfig: {
-                    image: devServerImage,
-                    dockerfile: resolvedConfig.devServer.dockerfile.value,
-                    network: resolvedConfig.devServer.network.value,
-                    workdir: resolvedConfig.devServer.workdir.value,
-                  },
-                })
-                .pipe(
-                  Effect.tapError((containerError) =>
-                    Effect.gen(function* () {
-                      yield* Effect.logWarning(
-                        `Container creation failed, rolling back workspace: ${containerError.message}`
-                      ).pipe(Effect.annotateLogs('module', logPrefix))
-
-                      // Clear setup step before rollback
-                      store.commit(
-                        events.containerSetupStepChanged({
-                          workspaceId: id,
-                          step: null,
-                        })
-                      )
-
-                      // Full rollback: remove worktree, delete branch, free port
-                      yield* rollbackWorktree(
-                        project.repoPath,
-                        worktreePath,
-                        resolvedBranch,
-                        port,
-                        portAllocator
-                      )
-
-                      // Remove the workspace from LiveStore after rollback
-                      store.commit(events.workspaceDestroyed({ id }))
-                    })
-                  )
-                )
-
-              // containerStarted materializer clears containerSetupStep automatically
-            }).pipe(
-              Effect.catchAll((err) =>
-                Effect.gen(function* () {
-                  // Clear setup step on unexpected failure
-                  store.commit(
-                    events.containerSetupStepChanged({
-                      workspaceId: id,
-                      step: null,
-                    })
-                  )
-                  yield* Effect.logWarning(
-                    `Background container setup failed for workspace ${id}: ${String(err)}`
-                  ).pipe(Effect.annotateLogs('module', logPrefix))
-                })
-              )
+            // Worktree setup complete — transition to 'running'.
+            // Clear worktreeSetupStep via the WorkspaceStatusChanged materializer.
+            store.commit(
+              events.workspaceStatusChanged({ id, status: 'running' })
             )
 
-            const fiber = yield* setupEffect.pipe(Effect.forkIn(scope))
+            // Run the onReady callback (e.g. start diff/PR polling)
+            if (onReady) {
+              yield* onReady(id).pipe(
+                Effect.catchAll((err) =>
+                  Effect.logWarning(
+                    `onReady callback failed for workspace ${id}: ${err.message}`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
+                )
+              )
+            }
 
-            // Track the fiber so destroyWorktree can interrupt it
-            yield* Ref.update(setupFibers, (m) => {
-              const next = new Map(m)
-              next.set(id, fiber)
-              return next
-            })
+            // Phase 2: Start container if devServer config has an image
+            const devServerImage = resolvedConfig.devServer.image.value
+            if (devServerImage !== null) {
+              yield* performContainerSetup({
+                id,
+                branchName: resolvedBranch,
+                worktreePath,
+                port,
+                repoPath: project.repoPath,
+                projectName: project.name,
+                devServerImage,
+                devServer: resolvedConfig.devServer,
+              })
+            }
+          }).pipe(
+            Effect.catchAll((err) =>
+              Effect.gen(function* () {
+                yield* Effect.logWarning(
+                  `Background worktree setup failed for workspace ${id}: ${String(err)}`
+                ).pipe(Effect.annotateLogs('module', logPrefix))
 
-            // Remove tracking when the fiber completes
-            fiber.addObserver(() => {
-              Ref.update(setupFibers, (m) => {
-                const n = new Map(m)
-                n.delete(id)
-                return n
-              }).pipe(Effect.runSync)
-            })
-          }
+                // Clear worktree setup step
+                store.commit(
+                  events.worktreeSetupStepChanged({
+                    workspaceId: id,
+                    step: null,
+                  })
+                )
+
+                // Clear container setup step in case it was set
+                store.commit(
+                  events.containerSetupStepChanged({
+                    workspaceId: id,
+                    step: null,
+                  })
+                )
+
+                // Set workspace to errored status
+                store.commit(
+                  events.workspaceStatusChanged({ id, status: 'errored' })
+                )
+
+                // Full rollback: remove worktree, delete branch, free port
+                yield* rollbackWorktree(
+                  project.repoPath,
+                  worktreePath,
+                  resolvedBranch,
+                  port,
+                  portAllocator
+                ).pipe(Effect.catchAll(() => Effect.void))
+
+                // Remove the errored workspace from LiveStore after rollback
+                store.commit(events.workspaceDestroyed({ id }))
+              })
+            )
+          )
+
+          const fiber = yield* worktreeSetupEffect.pipe(Effect.forkIn(scope))
+
+          // Track the fiber so destroyWorktree can interrupt it
+          yield* Ref.update(setupFibers, (m) => {
+            const next = new Map(m)
+            next.set(id, fiber)
+            return next
+          })
+
+          // Remove tracking when the fiber completes
+          fiber.addObserver(() => {
+            Ref.update(setupFibers, (m) => {
+              const n = new Map(m)
+              n.delete(id)
+              return n
+            }).pipe(Effect.runSync)
+          })
 
           return workspace
         }

@@ -20,7 +20,6 @@ import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
 import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
@@ -96,8 +95,10 @@ function CreatePlanWorkspace({ prdId }: CreatePlanWorkspaceProps) {
           branchName,
         },
       })
+      // The RPC now returns immediately with status 'creating'.
+      // The workspace card will show setup progress via worktreeSetupStep.
       toast.success(
-        `Workspace created on branch "${result.branchName}" (port ${result.port})`
+        `Workspace "${result.branchName}" is being set up (port ${result.port})`
       )
     } catch (err: unknown) {
       const message = extractErrorMessage(err)
@@ -132,16 +133,13 @@ function CreatePlanWorkspace({ prdId }: CreatePlanWorkspaceProps) {
     )
   }
 
-  // Creating state: show progress
+  // Creating state: show spinner
   if (isCreating) {
     return (
-      <div className="grid gap-1.5">
-        <Button disabled size="sm" variant="outline">
-          <Spinner className="size-3.5" />
-          Creating...
-        </Button>
-        <Progress value={null} />
-      </div>
+      <Button disabled size="sm" variant="outline">
+        <Spinner className="size-3.5" />
+        Creating...
+      </Button>
     )
   }
 

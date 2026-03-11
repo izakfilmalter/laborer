@@ -23,10 +23,13 @@ import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { projects } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
 import { useForm } from '@tanstack/react-form'
+import { pipe, String as Str } from 'effect'
 import { AlertTriangle, Layers, ScrollText, WifiOff, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useState } from 'react'
+import { IMaskInput } from 'react-imask'
 import { toast } from 'sonner'
+
 import { LaborerClient } from '@/atoms/laborer-client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -45,7 +48,7 @@ import {
   FieldError,
   FieldLabel,
 } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
+import { inputClassName } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import {
   Select,
@@ -291,13 +294,19 @@ function CreateWorkspaceForm({
                   <FieldLabel htmlFor="branchName">
                     Branch Name (optional)
                   </FieldLabel>
-                  <Input
+                  <IMaskInput
+                    className={inputClassName}
                     disabled={form.state.isSubmitting}
                     id="branchName"
+                    // biome-ignore lint/performance/useTopLevelRegex: required inline for IMaskInput
+                    mask={/^[a-zA-Z0-9\s\-_/]*$/}
                     name={field.name}
+                    onAccept={(value) => field.handleChange(value)}
                     onBlur={field.handleBlur}
-                    onChange={(e) => field.handleChange(e.target.value)}
                     placeholder="laborer/my-feature"
+                    prepare={(str) =>
+                      pipe(str, Str.toLowerCase, Str.replaceAll(' ', '-'))
+                    }
                     value={field.state.value}
                   />
                   <FieldDescription>

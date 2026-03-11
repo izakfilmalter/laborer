@@ -117,6 +117,25 @@ type WorkspaceStatus =
   | 'destroyed'
 
 /**
+ * Human-readable label for worktree setup progress steps.
+ * Displayed in the workspace card during background worktree creation.
+ */
+const getWorktreeSetupLabel = (step: string): string => {
+  switch (step) {
+    case 'fetching-remote':
+      return 'Fetching latest remote refs...'
+    case 'creating-worktree':
+      return 'Creating git worktree...'
+    case 'validating-worktree':
+      return 'Validating worktree...'
+    case 'running-setup-scripts':
+      return 'Running setup scripts...'
+    default:
+      return 'Setting up workspace...'
+  }
+}
+
+/**
  * Human-readable label for container setup progress steps.
  * Handles both coarse steps ("building-image") and granular
  * Docker build steps ("Step 4/5: RUN pnpm install").
@@ -369,6 +388,7 @@ interface WorkspaceItemProps {
     readonly containerUrl: string | null
     readonly containerStatus: string | null
     readonly containerSetupStep: string | null
+    readonly worktreeSetupStep: string | null
     readonly prNumber: number | null
     readonly prUrl: string | null
     readonly prTitle: string | null
@@ -638,10 +658,10 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
         </div>
       </CardHeader>
       <CardContent>
-        {workspace.status === 'creating' && (
+        {workspace.worktreeSetupStep != null && (
           <div className="mb-2 flex items-center gap-2 text-warning text-xs">
             <Spinner className="size-3 text-warning" />
-            Setting up workspace...
+            {getWorktreeSetupLabel(workspace.worktreeSetupStep)}
           </div>
         )}
         {workspace.containerSetupStep != null && (

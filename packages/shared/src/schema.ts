@@ -41,6 +41,8 @@ export const workspaces = State.SQLite.table({
     containerStatus: State.SQLite.text({ nullable: true }),
     /** Current step of the background container setup process. Null when setup is complete or not started. */
     containerSetupStep: State.SQLite.text({ nullable: true }),
+    /** Current step of the background worktree setup process (git fetch, worktree add, setup scripts). Null when setup is complete or not started. */
+    worktreeSetupStep: State.SQLite.text({ nullable: true }),
     /** Pull request number associated with this workspace's branch. Null when no PR exists. */
     prNumber: State.SQLite.integer({ nullable: true }),
     /** Full URL to the pull request on GitHub. Null when no PR exists. */
@@ -187,6 +189,14 @@ export const workspaceBranchChanged = Events.synced({
   }),
 })
 
+export const workspaceBaseShaUpdated = Events.synced({
+  name: 'v1.WorkspaceBaseShaUpdated',
+  schema: Schema.Struct({
+    id: Schema.String,
+    baseSha: Schema.NullOr(Schema.String),
+  }),
+})
+
 export const workspaceDestroyed = Events.synced({
   name: 'v1.WorkspaceDestroyed',
   schema: Schema.Struct({
@@ -241,6 +251,15 @@ export const containerSetupStepChanged = Events.synced({
   schema: Schema.Struct({
     workspaceId: Schema.String,
     /** Current setup step, or null when setup is complete. */
+    step: Schema.NullOr(Schema.String),
+  }),
+})
+
+export const worktreeSetupStepChanged = Events.synced({
+  name: 'v1.WorktreeSetupStepChanged',
+  schema: Schema.Struct({
+    workspaceId: Schema.String,
+    /** Current worktree setup step, or null when setup is complete. */
     step: Schema.NullOr(Schema.String),
   }),
 })
@@ -430,6 +449,7 @@ export const events = {
   workspaceCreated,
   workspaceStatusChanged,
   workspaceBranchChanged,
+  workspaceBaseShaUpdated,
   workspaceDestroyed,
   workspacePrUpdated,
   containerStarted,
@@ -437,6 +457,7 @@ export const events = {
   containerPaused,
   containerUnpaused,
   containerSetupStepChanged,
+  worktreeSetupStepChanged,
   terminalSpawned,
   terminalOutput,
   terminalStatusChanged,
@@ -521,15 +542,20 @@ const materializers = State.SQLite.materializers(events, {
       containerImage: null,
       containerStatus: null,
       containerSetupStep: null,
+      worktreeSetupStep: null,
       prNumber: null,
       prUrl: null,
       prTitle: null,
       prState: null,
     }),
   'v1.WorkspaceStatusChanged': ({ id, status }) =>
-    workspaces.update({ status }).where({ id }),
+    status === 'running'
+      ? workspaces.update({ status, worktreeSetupStep: null }).where({ id })
+      : workspaces.update({ status }).where({ id }),
   'v1.WorkspaceBranchChanged': ({ id, branchName }) =>
     workspaces.update({ branchName }).where({ id }),
+  'v1.WorkspaceBaseShaUpdated': ({ id, baseSha }) =>
+    workspaces.update({ baseSha }).where({ id }),
   'v1.WorkspaceDestroyed': ({ id }) => workspaces.delete().where({ id }),
   'v1.WorkspacePrUpdated': ({ id, prNumber, prUrl, prTitle, prState }) =>
     workspaces.update({ prNumber, prUrl, prTitle, prState }).where({ id }),
@@ -566,6 +592,8 @@ const materializers = State.SQLite.materializers(events, {
       .where({ id: workspaceId }),
   'v1.ContainerSetupStepChanged': ({ workspaceId, step }) =>
     workspaces.update({ containerSetupStep: step }).where({ id: workspaceId }),
+  'v1.WorktreeSetupStepChanged': ({ workspaceId, step }) =>
+    workspaces.update({ worktreeSetupStep: step }).where({ id: workspaceId }),
   'v1.TerminalSpawned': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)
   'v1.TerminalOutput': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #143)
   'v1.TerminalStatusChanged': () => [], // @deprecated — no-op materializer retained for backward compat (Issue #145)

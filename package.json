@@ -28,7 +28,7 @@
   },
   "type": "module",
   "scripts": {
-    "dev": "turbo dev",
+    "dev": "turbo dev dev:electron",
     "build": "turbo build",
     "typecheck": "turbo typecheck --ui=stream",
     "dev:native": "turbo -F native dev",

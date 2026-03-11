@@ -6,18 +6,18 @@
  * of all terminals. Replaces the LiveStore `queryDb(terminals)` pattern
  * for terminal state queries.
  *
- * Uses direct fetch to the `/terminal-rpc` endpoint (proxied by Vite
- * to the terminal service's `/rpc` at TERMINAL_PORT). The Effect RPC
- * JSON protocol sends requests as `[requestId, { _tag, ...payload }]`
- * and receives responses as newline-delimited JSON.
+ * Uses the TerminalServiceClient (AtomRpc) for type-safe RPC calls
+ * instead of raw fetch, ensuring the correct Effect RPC JSON wire
+ * protocol is used.
  *
  * @see Issue #144: Web app LiveStore terminal query replacement
  * @see packages/terminal/src/rpc/handlers.ts — terminal.list handler
  */
 
+import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { terminalRpcUrl } from '@/lib/desktop'
+import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 
 /** Shape of a terminal from the terminal service's terminal.list RPC. */
 interface TerminalInfo {
@@ -34,80 +34,7 @@ type TerminalServiceStatus = 'checking' | 'available' | 'unavailable'
 /** Default polling interval in milliseconds. */
 const DEFAULT_POLL_INTERVAL_MS = 2000
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null
-
-const tryExtractTerminalList = (
-  envelope: unknown
-): readonly TerminalInfo[] | undefined => {
-  if (Array.isArray(envelope)) {
-    return envelope as readonly TerminalInfo[]
-  }
-
-  if (!isRecord(envelope)) {
-    return undefined
-  }
-
-  if (envelope._tag === 'Success' && Array.isArray(envelope.value)) {
-    return envelope.value as readonly TerminalInfo[]
-  }
-
-  if (envelope._tag !== 'Exit' || !isRecord(envelope.value)) {
-    return undefined
-  }
-
-  const nested = envelope.value
-  if (nested._tag === 'Success' && Array.isArray(nested.value)) {
-    return nested.value as readonly TerminalInfo[]
-  }
-
-  return undefined
-}
-
-/**
- * Fetch the terminal list from the terminal service via Effect RPC JSON protocol.
- *
- * The Effect RPC JSON protocol:
- * - Request: newline-delimited JSON, each line is `[requestId, { _tag: "rpc-name" }]`
- * - Response: newline-delimited JSON, each line is `[requestId, responsePayload]`
- *
- * For terminal.list with no payload, the request body is:
- * `[0, { "_tag": "terminal.list" }]\n`
- *
- * The response will be:
- * `[0, { "_tag": "Success", "value": [...terminals] }]\n` or similar.
- */
-async function fetchTerminalList(): Promise<readonly TerminalInfo[]> {
-  const response = await fetch(terminalRpcUrl(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '[0,{"_tag":"terminal.list"}]\n',
-  })
-
-  if (!response.ok) {
-    throw new Error(`Terminal service responded with ${response.status}`)
-  }
-
-  const text = await response.text()
-  const lines = text.trim().split('\n')
-
-  for (const line of lines) {
-    if (!line) {
-      continue
-    }
-    const parsed = JSON.parse(line)
-    if (!Array.isArray(parsed) || parsed.length !== 2) {
-      continue
-    }
-
-    const terminals = tryExtractTerminalList(parsed[1])
-    if (terminals) {
-      return terminals
-    }
-  }
-
-  return []
-}
+const listTerminalsMutation = TerminalServiceClient.mutation('terminal.list')
 
 /**
  * Hook that provides a polled terminal list from the terminal service.
@@ -125,6 +52,9 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
   readonly isLoading: boolean
   readonly serviceStatus: TerminalServiceStatus
 } {
+  const listTerminals = useAtomSet(listTerminalsMutation, {
+    mode: 'promise',
+  })
   const [terminals, setTerminals] = useState<readonly TerminalInfo[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [serviceStatus, setServiceStatus] =
@@ -134,9 +64,9 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
 
   const fetchAndUpdate = useCallback(async () => {
     try {
-      const result = await fetchTerminalList()
+      const result = await listTerminals({ payload: undefined })
       if (mountedRef.current) {
-        setTerminals(result)
+        setTerminals(result as readonly TerminalInfo[])
         setIsLoading(false)
         setServiceStatus('available')
         setErrorMessage(null)
@@ -154,7 +84,7 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
         setErrorMessage(message)
       }
     }
-  }, [])
+  }, [listTerminals])
 
   useEffect(() => {
     mountedRef.current = true

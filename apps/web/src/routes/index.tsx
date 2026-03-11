@@ -33,6 +33,7 @@ import {
 } from 'react'
 import type { PanelImperativeHandle } from 'react-resizable-panels'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { AddProjectForm } from '@/components/add-project-form'
 import { CreatePlanWorkspace } from '@/components/create-plan-workspace'
 import { PlanEditor } from '@/components/plan-editor'
@@ -83,6 +84,8 @@ import {
   closePane,
   computeResize,
   ensureValidActivePaneId,
+  findEmptyTerminalPane,
+  findLeafByTerminalId,
   findNodeById,
   findSiblingPaneId,
   generateId,
@@ -136,6 +139,9 @@ const persistedLayout$ = queryDb(panelLayout, {
 
 /** Mutation atom for spawning terminals via the server's terminal.spawn RPC. */
 const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
+
+/** Mutation atom for removing terminals via the terminal service's terminal.remove RPC. */
+const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
 
 /**
  * Health check query atom — subscribes to the server's health.check RPC.
@@ -612,6 +618,9 @@ function usePanelLayout() {
   const spawnTerminal = useAtomSet(spawnTerminalMutation, {
     mode: 'promise',
   })
+  const removeTerminal = useAtomSet(removeTerminalMutation, {
+    mode: 'promise',
+  })
   // Start as "reconciling" when a persisted layout exists — this prevents
   // rendering TerminalPane components with potentially stale terminal IDs
   // before we've checked them against the live terminal service.
@@ -727,6 +736,17 @@ function usePanelLayout() {
         return
       }
 
+      // Look up the terminal in this pane BEFORE closing, so we can remove
+      // it from the terminal service (making it disappear from the sidebar).
+      const closingNode = findNodeById(base, paneId)
+      if (closingNode?._tag === 'LeafNode' && closingNode.terminalId) {
+        removeTerminal({ payload: { id: closingNode.terminalId } }).catch(
+          (error) => {
+            console.warn('[close-pane] terminal remove failed:', error)
+          }
+        )
+      }
+
       // Compute the sibling BEFORE the close mutation removes the pane.
       // This ensures we can find the correct sibling in the original tree.
       // If the closing pane is the currently active pane, transfer focus
@@ -777,7 +797,13 @@ function usePanelLayout() {
         hasSeeded.current = false
       }
     },
-    [persistedLayoutTree, initialLayout, persistedActivePaneId, store]
+    [
+      persistedLayoutTree,
+      initialLayout,
+      persistedActivePaneId,
+      store,
+      removeTerminal,
+    ]
   )
 
   const handleSetActivePaneId = useCallback(
@@ -822,9 +848,48 @@ function usePanelLayout() {
     ((paneId: string) => Promise<boolean>) | null
   >(null)
 
+  /**
+   * Helper: commit a layout assignment and optionally auto-open the dev
+   * server pane for containerized workspaces. Extracted to reduce cognitive
+   * complexity in `handleAssignTerminalToPane`.
+   */
+  const commitAssignment = useCallback(
+    (
+      layoutTree: PanelNode,
+      activePaneId: string,
+      workspaceId: string,
+      triggerDevServer: boolean
+    ) => {
+      store.commit(
+        layoutPaneAssigned({
+          id: LAYOUT_SESSION_ID,
+          layoutTree,
+          activePaneId,
+        })
+      )
+      if (triggerDevServer && isWorkspaceContainerized(workspaceId)) {
+        autoOpenDevServerRef.current?.(activePaneId)?.catch((error) => {
+          console.warn('[auto-open] dev server spawn failed:', error)
+        })
+      }
+    },
+    [store, isWorkspaceContainerized]
+  )
+
   const handleAssignTerminalToPane = useCallback(
     (terminalId: string, workspaceId: string, paneId?: string) => {
       const base = persistedLayoutTree ?? initialLayout
+
+      // If no specific pane target, check if this terminal already has a pane.
+      // If so, just focus it instead of creating a duplicate.
+      if (!paneId && base) {
+        const existingLeaf = findLeafByTerminalId(base, terminalId)
+        if (existingLeaf) {
+          commitAssignment(base, existingLeaf.id, workspaceId, false)
+          return
+        }
+      }
+
       if (!base) {
         // No layout at all — create a new single-pane layout for this terminal
         const newLeafId = generateId('pane')
@@ -835,19 +900,7 @@ function usePanelLayout() {
           terminalId,
           workspaceId,
         }
-        store.commit(
-          layoutPaneAssigned({
-            id: LAYOUT_SESSION_ID,
-            layoutTree: newLeaf,
-            activePaneId: newLeaf.id,
-          })
-        )
-        // Auto-open dev server pane for containerized workspaces
-        if (isWorkspaceContainerized(workspaceId)) {
-          autoOpenDevServerRef.current?.(newLeafId)?.catch((error) => {
-            console.warn('[auto-open] dev server spawn failed:', error)
-          })
-        }
+        commitAssignment(newLeaf, newLeaf.id, workspaceId, true)
         return
       }
 
@@ -861,46 +914,13 @@ function usePanelLayout() {
           workspaceId,
         }
         const newTree = replaceNode(base, paneId, targetLeaf)
-        store.commit(
-          layoutPaneAssigned({
-            id: LAYOUT_SESSION_ID,
-            layoutTree: newTree,
-            activePaneId: paneId,
-          })
-        )
-        // Auto-open dev server pane for containerized workspaces
-        if (isWorkspaceContainerized(workspaceId)) {
-          autoOpenDevServerRef.current?.(paneId)?.catch((error) => {
-            console.warn('[auto-open] dev server spawn failed:', error)
-          })
-        }
+        commitAssignment(newTree, paneId, workspaceId, true)
         return
       }
 
       // No specific pane — find an empty terminal pane or the first pane
-      const leafIds = getLeafIds(base)
-      const findEmptyTerminalPane = (node: PanelNode): LeafNode | undefined => {
-        if (
-          node._tag === 'LeafNode' &&
-          node.paneType === 'terminal' &&
-          !node.terminalId
-        ) {
-          return node
-        }
-        if (node._tag === 'SplitNode') {
-          for (const child of node.children) {
-            const found = findEmptyTerminalPane(child)
-            if (found) {
-              return found
-            }
-          }
-        }
-        return undefined
-      }
-
       const emptyPane = findEmptyTerminalPane(base)
       if (emptyPane) {
-        // Assign to the empty pane
         const updatedLeaf: LeafNode = {
           _tag: 'LeafNode' as const,
           id: emptyPane.id,
@@ -909,23 +929,12 @@ function usePanelLayout() {
           workspaceId,
         }
         const newTree = replaceNode(base, emptyPane.id, updatedLeaf)
-        store.commit(
-          layoutPaneAssigned({
-            id: LAYOUT_SESSION_ID,
-            layoutTree: newTree,
-            activePaneId: emptyPane.id,
-          })
-        )
-        // Auto-open dev server pane for containerized workspaces
-        if (isWorkspaceContainerized(workspaceId)) {
-          autoOpenDevServerRef.current?.(emptyPane.id)?.catch((error) => {
-            console.warn('[auto-open] dev server spawn failed:', error)
-          })
-        }
+        commitAssignment(newTree, emptyPane.id, workspaceId, true)
         return
       }
 
       // No empty pane — split the first leaf and assign to the new pane
+      const leafIds = getLeafIds(base)
       const firstLeafId = leafIds[0]
       if (firstLeafId) {
         const newPaneContent: Partial<LeafNode> = {
@@ -953,7 +962,7 @@ function usePanelLayout() {
       initialLayout,
       persistedActivePaneId,
       store,
-      isWorkspaceContainerized,
+      commitAssignment,
     ]
   )
 

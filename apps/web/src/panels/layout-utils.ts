@@ -807,11 +807,58 @@ function reconcileLayout(
   return changed ? { ...node, children: newChildren } : node
 }
 
+/**
+ * Find an empty terminal pane in the layout tree.
+ * An empty terminal pane is a LeafNode with paneType 'terminal' and no
+ * terminalId assigned. Returns the first such leaf found in DFS order,
+ * or undefined if all panes are occupied.
+ */
+function findEmptyTerminalPane(node: PanelNode): LeafNode | undefined {
+  if (
+    node._tag === 'LeafNode' &&
+    node.paneType === 'terminal' &&
+    !node.terminalId
+  ) {
+    return node
+  }
+  if (node._tag === 'SplitNode') {
+    for (const child of node.children) {
+      const found = findEmptyTerminalPane(child)
+      if (found) {
+        return found
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Find a leaf node that is displaying a specific terminal.
+ * Returns the LeafNode if found, or undefined.
+ */
+function findLeafByTerminalId(
+  node: PanelNode,
+  terminalId: string
+): LeafNode | undefined {
+  if (node._tag === 'LeafNode') {
+    return node.terminalId === terminalId ? node : undefined
+  }
+  for (const child of node.children) {
+    const found = findLeafByTerminalId(child, terminalId)
+    if (found) {
+      return found
+    }
+  }
+  return undefined
+}
+
 export {
   closePane,
   computeResize,
   countLeaves,
   ensureValidActivePaneId,
+  findEmptyTerminalPane,
+  findLeafByTerminalId,
   findNodeById,
   findPaneInDirection,
   findParent,

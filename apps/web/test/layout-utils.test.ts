@@ -14,6 +14,7 @@ import type { LeafNode, SplitNode } from '@laborer/shared/types'
 import { describe, expect, it } from 'vitest'
 import {
   ensureValidActivePaneId,
+  findLeafByTerminalId,
   findSiblingPaneId,
   getFirstLeafId,
   getLeafIds,
@@ -340,5 +341,109 @@ describe('ensureValidActivePaneId', () => {
     expect(ensureValidActivePaneId(deeplyNested, null)).toBe('pane-A')
     expect(ensureValidActivePaneId(deeplyNested, 'stale')).toBe('pane-A')
     expect(ensureValidActivePaneId(deeplyNested, 'pane-E')).toBe('pane-E')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: findLeafByTerminalId
+// ---------------------------------------------------------------------------
+
+describe('findLeafByTerminalId', () => {
+  it('returns undefined for a leaf with no terminalId', () => {
+    expect(findLeafByTerminalId(singleLeaf, 'term-1')).toBeUndefined()
+  })
+
+  it('returns the leaf when its terminalId matches', () => {
+    const leaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-X',
+      paneType: 'terminal',
+      terminalId: 'term-1',
+      workspaceId: 'ws-1',
+    }
+    expect(findLeafByTerminalId(leaf, 'term-1')).toBe(leaf)
+  })
+
+  it('returns undefined when no leaf has the requested terminalId', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-A',
+          paneType: 'terminal',
+          terminalId: 'term-1',
+        },
+        {
+          _tag: 'LeafNode',
+          id: 'pane-B',
+          paneType: 'terminal',
+          terminalId: 'term-2',
+        },
+      ],
+      sizes: [50, 50],
+    }
+    expect(findLeafByTerminalId(layout, 'term-999')).toBeUndefined()
+  })
+
+  it('finds a terminal in a nested layout', () => {
+    // nestedLayout has panes A, B, C, D — none have terminalIds by default.
+    // Create a version where pane-C has a terminal assigned.
+    const withTerminal: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        { _tag: 'LeafNode', id: 'pane-A', paneType: 'terminal' },
+        {
+          _tag: 'SplitNode',
+          id: 'split-right',
+          direction: 'vertical',
+          children: [
+            { _tag: 'LeafNode', id: 'pane-B', paneType: 'terminal' },
+            {
+              _tag: 'LeafNode',
+              id: 'pane-C',
+              paneType: 'terminal',
+              terminalId: 'term-deep',
+              workspaceId: 'ws-1',
+            },
+          ],
+          sizes: [50, 50],
+        },
+      ],
+      sizes: [50, 50],
+    }
+    const result = findLeafByTerminalId(withTerminal, 'term-deep')
+    expect(result).toBeDefined()
+    expect(result?.id).toBe('pane-C')
+    expect(result?.terminalId).toBe('term-deep')
+  })
+
+  it('returns the first match in DFS order when multiple leaves share a terminalId', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-first',
+          paneType: 'terminal',
+          terminalId: 'term-dup',
+        },
+        {
+          _tag: 'LeafNode',
+          id: 'pane-second',
+          paneType: 'terminal',
+          terminalId: 'term-dup',
+        },
+      ],
+      sizes: [50, 50],
+    }
+    const result = findLeafByTerminalId(layout, 'term-dup')
+    expect(result?.id).toBe('pane-first')
   })
 })

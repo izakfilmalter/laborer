@@ -36,7 +36,7 @@
     "@laborer/config": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.3",
-    "tsdown": "^0.12.5",
+    "tsdown": "^0.20.3",
     "tsx": "^4.19.4",
     "typescript": "catalog:",
     "vitest": "^3.2.4"

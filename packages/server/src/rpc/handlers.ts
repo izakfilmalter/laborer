@@ -14,7 +14,7 @@
 import { join } from 'node:path'
 import { LaborerRpcs, RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import { Array as Arr, Effect, pipe } from 'effect'
+import { Array, Effect, pipe } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { ContainerService } from '../services/container-service.js'
@@ -99,7 +99,7 @@ const detectPrNumber = Effect.fn('detectPrNumber')(function* (
   const allWorkspaces = store.query(tables.workspaces)
   const workspaceOpt = pipe(
     allWorkspaces,
-    Arr.findFirst((w) => w.id === workspaceId)
+    Array.findFirst((w) => w.id === workspaceId)
   )
 
   if (workspaceOpt._tag === 'None') {
@@ -819,7 +819,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         const allWorkspaces = store.query(tables.workspaces)
         const workspaceOpt = pipe(
           allWorkspaces,
-          Arr.findFirst((w) => w.id === workspaceId)
+          Array.findFirst((w) => w.id === workspaceId)
         )
 
         if (workspaceOpt._tag === 'None') {
@@ -931,7 +931,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           const existingWorkspaces = store.query(tables.workspaces)
           const hasWorkspace = pipe(
             existingWorkspaces,
-            Arr.findFirst(
+            Array.findFirst(
               (w) => w.taskSource === taskId && w.status !== 'destroyed'
             )
           )
@@ -968,7 +968,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 
           const linkedWorkspaces = pipe(
             allWorkspaces,
-            Arr.filter(
+            Array.filter(
               (w) => w.taskSource === taskId && w.status !== 'destroyed'
             )
           )

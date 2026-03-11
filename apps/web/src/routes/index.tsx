@@ -58,6 +58,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { Kbd } from '@/components/ui/kbd'
 import {
   ResizableHandle,
   ResizablePanel,
@@ -69,7 +70,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { Kbd } from '@/components/ui/kbd'
 import { WorkspaceDashboard } from '@/components/workspace-dashboard'
 import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'

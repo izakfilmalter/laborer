@@ -64,7 +64,7 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
 
   const fetchAndUpdate = useCallback(async () => {
     try {
-      const result = await listTerminals({ payload: undefined as void })
+      const result = await listTerminals({ payload: undefined })
       if (mountedRef.current) {
         setTerminals(result as readonly TerminalInfo[])
         setIsLoading(false)

@@ -68,7 +68,12 @@ describe('useTerminalList', () => {
   })
 
   it('starts with loading state and empty terminals', () => {
-    listTerminalsFn.mockImplementation(() => new Promise(() => {}))
+    listTerminalsFn.mockImplementation(
+      () =>
+        new Promise(() => {
+          // Never resolves — keeps the hook in loading state
+        })
+    )
     const { result } = renderHook(() => useTerminalList())
 
     expect(result.current.isLoading).toBe(true)
@@ -147,7 +152,7 @@ describe('useTerminalList', () => {
     unmount()
 
     // Resolve after unmount — should not throw or update state
-    await act(async () => {
+    await act(() => {
       resolvePromise([TERMINAL_A])
     })
 
@@ -173,7 +178,7 @@ describe('useTerminalList', () => {
 
     // Advance past one polling interval
     listTerminalsFn.mockResolvedValue([TERMINAL_A, TERMINAL_B])
-    await act(async () => {
+    await act(() => {
       vi.advanceTimersByTime(1000)
     })
 
@@ -196,7 +201,7 @@ describe('useTerminalList', () => {
 
     // Next poll fails
     listTerminalsFn.mockRejectedValue(new Error('Service restarting'))
-    await act(async () => {
+    await act(() => {
       vi.advanceTimersByTime(1000)
     })
 
@@ -221,7 +226,7 @@ describe('useTerminalList', () => {
 
     // Service comes back
     listTerminalsFn.mockResolvedValue([TERMINAL_A])
-    await act(async () => {
+    await act(() => {
       vi.advanceTimersByTime(1000)
     })
 
@@ -246,7 +251,7 @@ describe('useTerminalList', () => {
     unmount()
 
     // Advance timers — should NOT trigger another fetch
-    await act(async () => {
+    await act(() => {
       vi.advanceTimersByTime(3000)
     })
     expect(listTerminalsFn).toHaveBeenCalledTimes(1)
@@ -264,7 +269,7 @@ describe('useTerminalList', () => {
     expect(listTerminalsFn).toHaveBeenCalledTimes(1)
 
     // Advance well past any potential interval
-    await act(async () => {
+    await act(() => {
       vi.advanceTimersByTime(10_000)
     })
     expect(listTerminalsFn).toHaveBeenCalledTimes(1)

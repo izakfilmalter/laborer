@@ -1369,10 +1369,7 @@ function HomeComponent() {
         onOpenChange={setIsCloseAppDialogOpen}
         open={isCloseAppDialogOpen}
       />
-      <ResizablePanelGroup
-        orientation="horizontal"
-        style={{ height: 'calc(100vh - 41px)' }}
-      >
+      <ResizablePanelGroup className="h-full" orientation="horizontal">
         {/* Sidebar — search, project groups, workspace list, health check */}
         <ResizablePanel
           collapsedSize="0%"

@@ -8,6 +8,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { isElectron } from '@/lib/desktop'
 
 import { ModeToggle } from './mode-toggle'
 
@@ -33,10 +34,15 @@ function ResetButton() {
 
 export default function Header() {
   const links = [{ to: '/', label: 'Home' }] as const
+  const electron = isElectron()
 
   return (
-    <div>
-      <div className="flex flex-row items-center justify-between px-2 py-1">
+    <div className={electron ? 'drag-region' : undefined}>
+      <div
+        className={`flex flex-row items-center justify-between px-2 ${
+          electron ? 'h-[52px] pl-[80px]' : 'py-1'
+        }`}
+      >
         <nav className="flex gap-4 text-lg">
           {links.map(({ to, label }) => {
             return (

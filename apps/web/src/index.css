@@ -136,6 +136,19 @@
   }
 }
 
+/* Window drag region (frameless titlebar) */
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+.drag-region button,
+.drag-region input,
+.drag-region textarea,
+.drag-region select,
+.drag-region a {
+  -webkit-app-region: no-drag;
+}
+
 /**
  * Responsive layout adjustments for different screen densities.
  * @see Issue #81: Panel responsive layout

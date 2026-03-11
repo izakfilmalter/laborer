@@ -37,6 +37,7 @@
     "test:watch": "turbo test:watch --ui=stream",
     "check": "turbo run //#format:fix typecheck test --ui=stream",
     "dist:desktop:dmg": "tsx scripts/build-desktop-artifact.ts",
+    "dist:desktop:artifact": "tsx scripts/build-desktop-artifact.ts",
     "format": "ultracite check",
     "format:fix": "ultracite fix",
     "prepare": "effect-language-service patch"

@@ -8,16 +8,20 @@
  * electron-builder to produce a .dmg (macOS arm64).
  *
  * Usage:
- *   bun run dist:desktop:dmg                    # Full build + package
- *   bun run dist:desktop:dmg --skip-build       # Package only (reuse existing build)
- *   bun run dist:desktop:dmg --keep-stage       # Keep staging dir for debugging
- *   bun run dist:desktop:dmg --verbose          # Stream subprocess stdout
+ *   bun run dist:desktop:dmg                          # Full build + package
+ *   bun run dist:desktop:dmg --skip-build             # Package only (reuse existing build)
+ *   bun run dist:desktop:dmg --keep-stage             # Keep staging dir for debugging
+ *   bun run dist:desktop:dmg --verbose                # Stream subprocess stdout
+ *   bun run dist:desktop:dmg --build-version 1.2.3    # Set artifact version
+ *   bun run dist:desktop:dmg --signed                 # Enable code signing
  *
  * Environment variables (override CLI flags):
  *   LABORER_DESKTOP_SKIP_BUILD=true
  *   LABORER_DESKTOP_KEEP_STAGE=true
  *   LABORER_DESKTOP_VERBOSE=true
  *   LABORER_DESKTOP_OUTPUT_DIR=./release
+ *   LABORER_DESKTOP_VERSION=1.2.3
+ *   LABORER_DESKTOP_SIGNED=true
  */
 
 import { spawnSync } from 'node:child_process'
@@ -69,10 +73,13 @@ const { values: cliFlags } = parseArgs({
     'skip-build': { type: 'boolean', default: false },
     'keep-stage': { type: 'boolean', default: false },
     verbose: { type: 'boolean', default: false },
+    signed: { type: 'boolean', default: false },
     'output-dir': { type: 'string' },
+    'build-version': { type: 'string' },
     arch: { type: 'string', default: 'arm64' },
   },
   strict: true,
+  allowPositionals: true,
 })
 
 const SKIP_BUILD =
@@ -81,7 +88,12 @@ const KEEP_STAGE =
   cliFlags['keep-stage'] || process.env.LABORER_DESKTOP_KEEP_STAGE === 'true'
 const VERBOSE =
   cliFlags.verbose || process.env.LABORER_DESKTOP_VERBOSE === 'true'
+const SIGNED = cliFlags.signed || process.env.LABORER_DESKTOP_SIGNED === 'true'
 const ARCH = cliFlags.arch ?? 'arm64'
+const BUILD_VERSION =
+  cliFlags['build-version'] ??
+  process.env.LABORER_DESKTOP_VERSION ??
+  desktopPkg.version
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -355,7 +367,7 @@ function stage(stageRoot: string): void {
   const resolvedDesktopDeps = resolveDesktopRuntimeDeps()
 
   const electronVersion = desktopPkg.dependencies.electron
-  const appVersion = '0.0.0'
+  const appVersion = BUILD_VERSION
   const commitHash = resolveGitCommitHash()
 
   const stagePackageJson: StagePackageJson = {
@@ -391,19 +403,29 @@ function stage(stageRoot: string): void {
   log(`Building mac/dmg+zip (arch=${ARCH}, version=${appVersion})...`)
 
   // Build a clean environment for electron-builder.
-  // Filter out empty values and code-signing vars (unsigned build by default).
+  // When not signed, strip code-signing vars to prevent auto-discovery.
   const buildEnv: Record<string, string> = {}
+  const signingKeysToStrip = SIGNED
+    ? []
+    : [
+        'CSC_LINK',
+        'CSC_KEY_PASSWORD',
+        'APPLE_API_KEY',
+        'APPLE_API_KEY_ID',
+        'APPLE_API_ISSUER',
+      ]
   for (const [key, value] of Object.entries(process.env)) {
     if (
       value !== undefined &&
       value !== '' &&
-      key !== 'CSC_LINK' &&
-      key !== 'CSC_KEY_PASSWORD'
+      !signingKeysToStrip.includes(key)
     ) {
       buildEnv[key] = value
     }
   }
-  buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = 'false'
+  if (!SIGNED) {
+    buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = 'false'
+  }
 
   run(
     'bunx',

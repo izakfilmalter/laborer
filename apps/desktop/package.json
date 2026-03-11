@@ -3,11 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "main": "dist-electron/main.js",
-  "type": "module",
   "productName": "Laborer",
   "scripts": {
-    "dev": "bun run --parallel dev:bundle dev:electron",
-    "dev:bundle": "tsdown --watch",
+    "dev": "tsdown --watch",
     "dev:electron": "bun run scripts/dev-electron.mjs",
     "build": "tsdown",
     "typecheck": "tsc --noEmit",

@@ -12,5 +12,6 @@ export default defineConfig({
     include: ['test/**/*.test.{ts,tsx}'],
     testTimeout: 10_000,
     hookTimeout: 10_000,
+    maxWorkers: 3,
   },
 })

@@ -255,8 +255,39 @@ function resolveDesktopRuntimeDeps(): Record<string, unknown> {
 // biome-ignore lint/style/noUnusedTemplateLiteral: electron-builder variable interpolation syntax
 const ARTIFACT_NAME = `Laborer-\${version}-\${arch}.\${ext}`
 
-function createBuildConfig(): Record<string, unknown> {
+function resolveGitHubPublishConfig():
+  | {
+      readonly provider: 'github'
+      readonly owner: string
+      readonly repo: string
+      readonly releaseType: 'release'
+    }
+  | undefined {
+  const rawRepo =
+    process.env.LABORER_DESKTOP_UPDATE_REPOSITORY?.trim() ||
+    process.env.GITHUB_REPOSITORY?.trim() ||
+    ''
+  if (!rawRepo) {
+    return undefined
+  }
+
+  const parts = rawRepo.split('/')
+  const owner = parts[0]
+  const repo = parts[1]
+  if (!(owner && repo) || parts.length !== 2) {
+    return undefined
+  }
+
   return {
+    provider: 'github',
+    owner,
+    repo,
+    releaseType: 'release',
+  }
+}
+
+function createBuildConfig(): Record<string, unknown> {
+  const config: Record<string, unknown> = {
     appId: 'com.izakfilmalter.laborer',
     productName: 'Laborer',
     artifactName: ARTIFACT_NAME,
@@ -269,6 +300,13 @@ function createBuildConfig(): Record<string, unknown> {
       category: 'public.app-category.developer-tools',
     },
   }
+
+  const publishConfig = resolveGitHubPublishConfig()
+  if (publishConfig) {
+    config.publish = [publishConfig]
+  }
+
+  return config
 }
 
 // ---------------------------------------------------------------------------

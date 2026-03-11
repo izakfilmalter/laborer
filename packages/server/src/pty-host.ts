@@ -2,15 +2,9 @@
  * PTY Host — Isolated child process for managing node-pty instances.
  *
  * This script runs as a standalone Node.js subprocess, completely isolated
- * from the main Bun HTTP server process. It communicates via newline-delimited
+ * from the main Node.js HTTP server process. It communicates via newline-delimited
  * JSON over stdin (commands) and stdout (events). stderr is used for debug
  * logging.
- *
- * Why Node.js instead of Bun: node-pty creates tty.ReadStream on PTY master
- * file descriptors. Bun's tty.ReadStream implementation does not fire data
- * events for these streams, so `onData` never fires — even in an isolated
- * subprocess. Node.js handles tty.ReadStream correctly, so the PTY Host runs
- * under Node.js while the main server continues to run under Bun.
  *
  * Architecture rationale: Running node-pty inside the main HTTP server process
  * causes SIGHUP to kill interactive shells within milliseconds due to event

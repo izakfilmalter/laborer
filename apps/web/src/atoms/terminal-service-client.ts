@@ -19,15 +19,15 @@ import { AtomRpc } from '@effect-atom/atom'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import { Layer } from 'effect'
 
-import { terminalRpcUrl } from '@/lib/tauri'
+import { terminalRpcUrl } from '@/lib/desktop'
 
 /**
  * Terminal service RPC URL.
  *
  * - Dev mode: `/terminal-rpc` (Vite proxy rewrites to terminal's /rpc)
- * - Tauri production: `http://localhost:4102/rpc` (direct to sidecar)
+ * - Electron production: `http://localhost:<port>/rpc` (direct to sidecar)
  *
- * @see lib/tauri.ts for runtime context detection
+ * @see lib/desktop.ts for runtime context detection
  */
 const TERMINAL_RPC_URL = terminalRpcUrl()
 

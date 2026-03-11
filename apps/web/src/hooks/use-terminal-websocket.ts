@@ -48,7 +48,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { terminalWsUrl } from '@/lib/tauri'
+import { terminalWsUrl } from '@/lib/desktop'
 
 /** WebSocket connection state for UI indicators. */
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'

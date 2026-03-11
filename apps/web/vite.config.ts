@@ -17,7 +17,7 @@ const root = path.resolve(import.meta.dirname, '../..')
  *
  * Rollup's tree-shaker removes the `let r;` declaration (only assigned, never
  * read) but keeps the IIFE assignment `(n = {})` in the minified output. In
- * ESM strict mode (WebKit/Tauri), assigning to an undeclared variable throws:
+ * ESM strict mode, assigning to an undeclared variable throws:
  *   `ReferenceError: Can't find variable: n`
  *
  * This plugin rewrites `(r||={})` to `(r||=(r={}))` which forces Rollup to
@@ -66,6 +66,14 @@ export default defineConfig(({ mode }) => {
     server: {
       port: vitePort,
       fs: { strict: false },
+      // Explicit HMR config for Electron compatibility.
+      // Electron loads the Vite dev server via http://localhost, but the
+      // default HMR WebSocket may try to connect via the page origin which
+      // could differ (e.g., file:// or custom protocol). Force ws:// on localhost.
+      hmr: {
+        protocol: 'ws',
+        host: 'localhost',
+      },
       proxy: {
         '/rpc': {
           target: `http://localhost:${serverPort}`,

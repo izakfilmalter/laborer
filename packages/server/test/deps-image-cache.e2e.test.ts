@@ -9,56 +9,13 @@
  * Requires Docker (OrbStack) to be running on the host.
  */
 
-import { execSync, spawn } from 'node:child_process'
+import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Readable } from 'node:stream'
 import { assert, describe, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { DepsImageService } from '../src/services/deps-image-service.js'
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Polyfill Bun.spawn for Node-based vitest. */
-const ensureBunSpawnForNodeTests = (): void => {
-  const runtimeGlobal = globalThis as unknown as { Bun?: unknown }
-
-  if (runtimeGlobal.Bun !== undefined) {
-    return
-  }
-
-  runtimeGlobal.Bun = {
-    spawn: (
-      cmd: string[],
-      options?: {
-        readonly cwd?: string
-        readonly env?: Record<string, string | undefined>
-      }
-    ) => {
-      const child = spawn(cmd[0] ?? '', cmd.slice(1), {
-        cwd: options?.cwd,
-        env: options?.env,
-      })
-
-      return {
-        stdout:
-          child.stdout === null
-            ? new ReadableStream<Uint8Array>()
-            : (Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>),
-        stderr:
-          child.stderr === null
-            ? new ReadableStream<Uint8Array>()
-            : (Readable.toWeb(child.stderr) as ReadableStream<Uint8Array>),
-        exited: new Promise<number>((resolve) => {
-          child.on('close', (code) => resolve(code ?? 1))
-        }),
-      }
-    },
-  }
-}
 
 /** Run a docker command synchronously and return stdout. */
 const docker = (args: string): string =>
@@ -125,8 +82,6 @@ describe('DepsImageService cache volume', () => {
     'pnpm cache volume contains store data after deps image build',
     () =>
       Effect.gen(function* () {
-        ensureBunSpawnForNodeTests()
-
         const tempRoots: string[] = []
 
         yield* Effect.addFinalizer(() =>

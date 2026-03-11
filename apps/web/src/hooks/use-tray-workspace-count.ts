@@ -1,22 +1,21 @@
 /**
- * Tauri system tray workspace count sync hook.
+ * Electron system tray workspace count sync hook.
  *
  * Keeps the system tray tooltip in sync with the number of running workspaces
- * by calling the Rust `update_tray_workspace_count` command whenever the
+ * by calling `desktopBridge.updateTrayWorkspaceCount()` whenever the
  * reactive workspace count changes.
  *
- * Only runs when the app is inside the Tauri desktop shell (detected via
- * `window.__TAURI_INTERNALS__`). In browser mode, the hook is a no-op.
+ * Only runs when the app is inside the Electron desktop shell (detected via
+ * `window.desktopBridge`). In browser mode, the hook is a no-op.
  *
- * @see Issue #115: Tauri system tray
+ * @see packages/shared/src/desktop-bridge.ts — DesktopBridge contract
  */
 
 import { workspaces } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
-import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useRef } from 'react'
 
-import { isTauri } from '@/lib/tauri'
+import { getDesktopBridge } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
 
 /** LiveStore query for all non-destroyed workspaces with "running" status. */
@@ -25,11 +24,11 @@ const runningWorkspaces$ = queryDb(workspaces.where({ status: 'running' }), {
 })
 
 /**
- * Sync the running workspace count to the Tauri system tray tooltip.
+ * Sync the running workspace count to the Electron system tray tooltip.
  *
  * Call this hook once at the app root level. It subscribes to the LiveStore
- * `workspaces` table, counts rows with status "running", and invokes the
- * Rust command `update_tray_workspace_count` when the count changes.
+ * `workspaces` table, counts rows with status "running", and invokes
+ * `desktopBridge.updateTrayWorkspaceCount()` when the count changes.
  */
 function useTrayWorkspaceCount(): void {
   const store = useLaborerStore()
@@ -38,7 +37,8 @@ function useTrayWorkspaceCount(): void {
   const prevCountRef = useRef<number>(-1)
 
   useEffect(() => {
-    if (!isTauri()) {
+    const bridge = getDesktopBridge()
+    if (!bridge) {
       return
     }
     if (count === prevCountRef.current) {
@@ -46,7 +46,7 @@ function useTrayWorkspaceCount(): void {
     }
     prevCountRef.current = count
 
-    invoke('update_tray_workspace_count', { count }).catch(() => {
+    bridge.updateTrayWorkspaceCount(count).catch(() => {
       // Silently ignore — tray may not be available in all environments
     })
   }, [count])

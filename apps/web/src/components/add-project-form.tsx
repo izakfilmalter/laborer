@@ -1,9 +1,9 @@
 /**
  * Add Project button / form component.
  *
- * In the Tauri desktop shell, opens the native OS folder picker (via Tauri
- * dialog plugin). In a plain browser (e.g., during E2E tests), renders a text
- * input where the user can type or paste a repository path.
+ * In the Electron desktop shell, opens the native OS folder picker via
+ * the DesktopBridge. In a plain browser (e.g., during E2E tests), renders
+ * a text input where the user can type or paste a repository path.
  *
  * Both paths call the `project.add` mutation with the selected/entered
  * directory path.
@@ -21,7 +21,7 @@ import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { isTauri } from '@/lib/tauri'
+import { getDesktopBridge, isElectron } from '@/lib/desktop'
 import { extractErrorMessage } from '@/lib/utils'
 
 const addProjectMutation = LaborerClient.mutation('project.add')
@@ -47,14 +47,13 @@ function AddProjectForm() {
     }
   }
 
-  const handleTauriClick = async () => {
+  const handleDesktopClick = async () => {
     try {
-      const { open } = await import('@tauri-apps/plugin-dialog')
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: 'Select a git repository',
-      })
+      const bridge = getDesktopBridge()
+      if (!bridge) {
+        return
+      }
+      const selected = await bridge.pickFolder()
 
       if (!selected) {
         return
@@ -78,11 +77,11 @@ function AddProjectForm() {
     })
   }
 
-  if (isTauri()) {
+  if (isElectron()) {
     return (
       <Button
         disabled={isAdding}
-        onClick={handleTauriClick}
+        onClick={handleDesktopClick}
         size="sm"
         variant="outline"
       >

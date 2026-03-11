@@ -1,0 +1,583 @@
+# Progress: Migrate from Tauri to Electron (and Bun to Node.js)
+
+## Status: Complete
+
+## Completed
+
+### Issue 1: Node.js spawn utility — DONE
+- Created `packages/server/src/lib/spawn.ts` — a `child_process`-based spawn wrapper with Bun.spawn()-compatible ergonomics
+- Returns Web ReadableStreams for stdout/stderr so existing `new Response(proc.stdout).text()` pattern works unchanged
+- Supports all usage patterns found in the codebase:
+  - Simple command execution with exit code
+  - stdout/stderr capture via ReadableStream
+  - Parallel stdout+stderr reads with Promise.all
+  - Process-to-process piping (stdin: anotherProc.stdout)
+  - stdout: 'ignore' mode
+  - Custom cwd and env options
+  - Process killing
+- Created `packages/server/test/spawn.test.ts` with 16 unit tests covering all patterns
+- All tests passing, TypeScript compiles, formatting clean
+
+### Issue 2: Migrate workspace-provider Bun.spawn sites — DONE
+- Replaced all 16 `Bun.spawn()` call sites in `packages/server/src/services/workspace-provider.ts` with the `spawn()` utility from `packages/server/src/lib/spawn.ts`
+- Added `import { spawn } from '../lib/spawn.js'` import
+- Updated comment referencing Bun.spawn to reflect the new spawn utility
+- All `await proc.exited` and `new Response(proc.stdout).text()` patterns unchanged (spawn utility returns compatible Web ReadableStreams)
+- No references to `Bun` namespace remain in the file
+- TypeScript compiles without errors
+- All 279 tests pass (1 pre-existing timeout in deps-image-cache.e2e.test.ts unrelated to this change)
+- Formatting clean (no fixes needed)
+
+### Issue 3: Migrate remaining server Bun.spawn sites — DONE
+- Replaced all `Bun.spawn()` calls across 6 service files with the `spawn()` utility:
+  - `container-service.ts` — 5 calls (docker run/stop/rm/pause/unpause)
+  - `deps-image-service.ts` — 10 calls (docker run/rm/cp/commit/exec/inspect + tar pipe pattern)
+  - `docker-detection.ts` — 2 calls (which docker, docker info)
+  - `diff-service.ts` — 1 call (git diff via spawnGit helper)
+  - `pr-watcher.ts` — 1 call (gh pr view)
+  - `handlers.ts` — 2 calls (gh pr view, editor open)
+- The tar pipe pattern in `deps-image-service.ts` (piping stdout from docker exec tar into tar extract stdin) works correctly using the spawn utility's Web ReadableStream stdin support
+- Removed all `ensureBunSpawnForNodeTests()` polyfills from 5 test files:
+  - `docker-detection.e2e.test.ts`
+  - `container-service.e2e.test.ts`
+  - `deps-image-cache.e2e.test.ts`
+  - `workspace-destroy-origin.test.ts`
+  - `rpc/workspace-management.test.ts`
+- Removed now-unused imports (`spawn` from `node:child_process`, `Readable` from `node:stream`, `beforeAll` from `vitest`) from test files
+- Updated outdated comment in `diff-service-event-consumer.test.ts` referencing Bun.spawn
+- No references to `Bun` namespace remain in any service file or test file (only in comments in spawn.ts and pty-host-client.ts)
+- TypeScript compiles without errors
+- All 279 tests pass (1 pre-existing cache-hit flake in deps-image-cache.e2e.test.ts unrelated to this change)
+- Formatting clean (no fixes needed)
+
+### Issue 4: Server Bun-to-Node runtime swap — DONE
+- Replaced `@effect/platform-bun` with `@effect/platform-node` in `packages/server/src/main.ts`:
+  - `BunHttpServer.layer({ port })` → `NodeHttpServer.layer(createServer, { port })`
+  - `BunRuntime.runMain(main)` → `NodeRuntime.runMain(main)`
+  - Added `import { createServer } from 'node:http'`
+  - Updated comments from "Bun server" to "Node.js server"
+- Replaced `bun:sqlite` with `better-sqlite3` in `packages/server/src/services/sync-backend.ts`:
+  - `import { Database } from 'bun:sqlite'` → `import Database from 'better-sqlite3'`
+  - `new Database(path, { create: true })` → `new Database(path)` (better-sqlite3 creates by default)
+  - `db.exec('PRAGMA ...')` → `db.pragma('...')` (idiomatic better-sqlite3 API)
+  - `db.query(...)` → `db.prepare(...)` (all 8 prepared statement sites)
+  - `contextRow === null` → `contextRow === undefined` (better-sqlite3 returns undefined for no match)
+  - All typed generics translated: `db.query<Result, Params>()` → `db.prepare<Params, Result>()` (param order swapped)
+  - WAL mode, prepared statements, transaction-wrapped batch inserts all preserved
+- Updated `packages/server/tsconfig.json`: removed `"bun"` from types array (now `["node"]` only)
+- Updated `packages/server/package.json`:
+  - Swapped `@effect/platform-bun` → `@effect/platform-node` in dependencies
+  - Added `better-sqlite3` (^12.6.2) to dependencies
+  - Removed `@types/bun` from devDependencies
+  - Added `@types/better-sqlite3` (^7.6.13) to devDependencies
+  - Added `tsx` (^4.19.4) to devDependencies
+  - Updated scripts: `bun run --watch src/main.ts` → `tsx --watch src/main.ts`, `bun run src/main.ts` → `tsx src/main.ts`
+- No root package.json changes needed (`@effect/platform-node` already in catalog at 0.103.0)
+- TypeScript compiles without errors
+- All 280 tests pass
+- Formatting clean
+
+### Issue 5: Terminal + MCP Bun-to-Node runtime swap — DONE
+- Replaced `@effect/platform-bun` with `@effect/platform-node` in `packages/terminal/src/main.ts`:
+  - `BunHttpServer.layer({ port })` → `NodeHttpServer.layer(createServer, { port })`
+  - `BunRuntime.runMain(main)` → `NodeRuntime.runMain(main)`
+  - Added `import { createServer } from 'node:http'`
+  - Updated all comments from "Bun server" to "Node.js server"
+- Replaced `@effect/platform-bun` with `@effect/platform-node` in `packages/mcp/src/main.ts`:
+  - `BunRuntime` → `NodeRuntime`, `BunStream.stdin` → `NodeStream.stdin`, `BunSink.stdout` → `NodeSink.stdout`
+- Updated both `packages/terminal/tsconfig.json` and `packages/mcp/tsconfig.json`: removed `"bun"` from types array (now `["node"]` only)
+- Updated both package.json files:
+  - Swapped `@effect/platform-bun` → `@effect/platform-node` in dependencies
+  - Removed `@types/bun` from devDependencies
+  - Added `tsx` (^4.19.4) to devDependencies
+  - Updated scripts: `bun run --watch src/main.ts` → `tsx --watch src/main.ts`, `bun run src/main.ts` → `tsx src/main.ts`
+- Updated outdated Bun references in comments:
+  - `packages/terminal/src/pty-host.ts` — removed Bun-specific explanation
+  - `packages/terminal/src/services/pty-host-client.ts` — simplified comment about PTY Host spawning
+- No references to `Bun` namespace remain in either package (source files, package.json, tsconfig)
+- TypeScript compiles without errors in both packages
+- All 73 terminal tests pass (pty-host, terminal-manager, rpc-integration, ring-buffer)
+- All 19 MCP tests pass (project-discovery, issue-tools, prd-tools)
+- All 280 server tests still pass (no regressions)
+- Formatting clean
+
+### Issue 6: Electron shell scaffold + dev tooling — DONE
+- Created `apps/desktop/` package with full Electron shell scaffold:
+  - `package.json` with electron 40.6.0, tsdown, wait-on, vitest deps
+  - `tsconfig.json` extending @laborer/config base with node types, DOM lib, ES2023
+  - `tsdown.config.ts` bundling main.ts + preload.ts to CJS in dist-electron/
+- Created `apps/desktop/src/main.ts` — minimal Electron main process:
+  - BrowserWindow with hiddenInset title bar, traffic light positioning at (16, 12)
+  - contextIsolation: true, nodeIntegration: false, sandbox: true
+  - Loads VITE_DEV_SERVER_URL in development (about:blank placeholder in production)
+  - macOS lifecycle handling (stay active until explicit quit, activate re-creates window)
+  - Preload script path resolved via __dirname in CJS output
+- Created `apps/desktop/src/preload.ts` — minimal stub exposing empty desktopBridge
+- Created dev scripts following t3code patterns:
+  - `scripts/electron-launcher.mjs` — resolves Electron binary, on macOS creates patched .app bundle with "Laborer (Dev)" display name and custom icon
+  - `scripts/dev-electron.mjs` — waits for Vite dev server + bundled files, launches Electron, watches dist-electron/ for changes and restarts with 120ms debounce, graceful SIGTERM→SIGKILL shutdown
+- Copied icon resources (icon.icns, icon.png) from src-tauri/icons/ to apps/desktop/resources/
+- Added .gitignore for dist-electron/ and .electron-runtime/
+- Updated turbo.json: added dist-electron/** to build outputs
+- `bun install` — 186 packages installed (Electron + tsdown + wait-on)
+- `tsdown` build produces main.js (1.45 KB) + preload.js (0.32 KB) in dist-electron/
+- TypeScript compiles without errors across all 6 packages
+- All 280 server + 73 terminal + 19 MCP tests pass (no regressions)
+- Formatting clean (0 fixes needed)
+
+### Issue 7: Shell environment probing + port allocation — DONE
+- Created `apps/desktop/src/shell.ts` — shell environment probing utilities:
+  - `extractPathFromShellOutput()` — extracts PATH value from sentinel-delimited shell output
+  - `readPathFromLoginShell()` — launches user's login shell with `-ilc` to capture full PATH
+  - Uses `__LABORER_PATH_START__` / `__LABORER_PATH_END__` sentinel markers to safely ignore shell startup noise (fish greeting, motd, etc.)
+  - Injectable `execFile` parameter for testability
+  - 5-second timeout to prevent hangs from broken shell configs
+- Created `apps/desktop/src/fix-path.ts` — macOS PATH fix:
+  - `fixPath()` called synchronously at module top-level in main.ts, before any child processes
+  - On macOS, reads user's default shell from `$SHELL` (falls back to `/bin/zsh`)
+  - Silently catches errors to prevent broken shell configs from blocking app launch
+  - No-op on non-macOS platforms
+- Created `apps/desktop/src/ports.ts` — ephemeral port reservation + auth token:
+  - `reservePort()` — binds TCP server to port 0 on 127.0.0.1, records OS-assigned port, closes
+  - `reserveServicePorts()` — reserves two distinct ports (server + terminal) and generates 24-byte random hex auth token
+  - `ServicePorts` interface exported for use by child process spawning (Issue 8)
+- Updated `apps/desktop/src/main.ts`:
+  - `fixPath()` called synchronously before `app.whenReady()`
+  - `reserveServicePorts()` called during bootstrap before window creation
+  - `getServicePorts()` exported for use by other modules (Issue 8, Issue 10)
+- Added `!**/dist-electron` to biome.json ignore list (built output was being linted)
+- Added `test/` to `apps/desktop/tsconfig.json` include
+- Created `apps/desktop/test/shell.test.ts` — 13 unit tests:
+  - extractPathFromShellOutput: marker extraction, noise handling, missing markers, empty value, same-line markers, complex PATH
+  - readPathFromLoginShell: shell invocation with mock, flag/command verification, undefined returns
+- Created `apps/desktop/test/ports.test.ts` — 7 unit tests:
+  - reservePort: positive port, valid range, distinct ports, bindable port
+  - reserveServicePorts: distinct ports, valid auth token format, unique tokens
+- All 20 desktop tests pass
+- TypeScript compiles without errors
+- Formatting clean (274 files checked, 0 errors)
+
+### Issue 8: Spawn sidecars as child processes — DONE
+- Created `apps/desktop/src/sidecar.ts` — SidecarManager class for child process lifecycle:
+  - `SidecarName` type: `'server' | 'terminal' | 'mcp'`
+  - `SidecarManager` class tracks all spawned child processes with a Map
+  - `spawn(name)` — spawns a child process with correct entry point and environment
+  - `spawnServices()` — spawns terminal first (server depends on it), then server, with startup delays (Issue 9 replaces with health checking)
+  - `killOne(name)` — graceful shutdown: SIGTERM first, SIGKILL after 2-second timeout
+  - `killAll()` — kills all tracked sidecars
+  - `killAllAndWait(timeoutMs)` — kills all and returns promise that resolves when all exit or timeout
+  - `restart(name)` — kills and re-spawns a sidecar
+  - `setExitHandler(handler)` — registers callback for unexpected exits (used by Issue 9)
+  - `getLastStderr(name)` — returns ring buffer of last 50 stderr lines for crash diagnostics
+  - `isRunning(name)` — checks if a sidecar process is still alive
+  - `getProcess(name)` — returns the raw ChildProcess handle
+- Entry point resolution:
+  - Dev mode: resolves to TypeScript source (e.g., `packages/server/src/main.ts`) run via tsx
+  - Production: resolves to bundled JS (e.g., `packages/server/dist/main.js`) run via `ELECTRON_RUN_AS_NODE=1`
+- Environment construction:
+  - Inherits process.env (with fixed PATH from fix-path.ts)
+  - Overlays PORT, TERMINAL_PORT from reserved ephemeral ports
+  - In production: sets DATA_DIR to app data directory, ELECTRON_RUN_AS_NODE=1
+  - Filters out ELECTRON_RUN_AS_NODE and ELECTRON_RENDERER_PORT from inherited env
+- stdout/stderr capture:
+  - Line-by-line streaming via `readline.createInterface`
+  - stdout logged at info level, stderr at warn level
+  - stderr stored in a 50-line ring buffer per sidecar for crash diagnostics
+- Updated `apps/desktop/src/main.ts`:
+  - Imports and creates SidecarManager after port reservation
+  - In production mode (!isDev): spawns services before creating window
+  - In dev mode: services run via `turbo dev`, not spawned by Electron
+  - Registers unexpected exit handler (logs for now, Issue 9 emits to renderer)
+  - Graceful shutdown on `before-quit`, `SIGINT`, `SIGTERM`
+  - Exports `getSidecarManager()` for use by other modules
+- tsdown build succeeds: main.js 16.14 KB (includes sidecar module)
+- TypeScript compiles without errors
+- All 20 desktop tests pass
+- All 280 server + 73 terminal + 19 MCP tests pass (no regressions)
+- Formatting clean (275 files checked, 0 errors)
+
+## Now Unblocked
+- Issue 9: Health checking + crash monitoring + restart (blocker Issue 8 done)
+- Issue 13: System tray, global shortcut, close-to-tray (blocker Issue 8 done)
+
+### Issue 9: Health checking + crash monitoring + restart — DONE
+- Created `apps/desktop/src/health.ts` — HealthMonitor class for sidecar health management:
+  - `waitForHealthy(url, timeout, interval)` — polls an HTTP endpoint at 100ms intervals until 2xx response or 10s timeout
+  - `checkHealth(url)` — single HTTP GET with 2s timeout using native `fetch` + `AbortController`
+  - `backoffDelay(attempt)` — pure function for exponential backoff: 500ms, 1s, 2s, 4s, 8s, 10s cap
+  - `HealthMonitor` class wraps `SidecarManager` with:
+    - `spawnAndWaitHealthy(name)` — spawns sidecar, polls health endpoint, emits starting/healthy/crashed status
+    - `spawnServices()` — spawns terminal first (server depends on it), then server, blocking until both healthy
+    - Crash detection via `SidecarManager.setExitHandler` — emits crashed status with stderr excerpt
+    - Automatic restart with exponential backoff (`scheduleRestart`) — 500ms base, 10s cap, timer.unref() to not block exit
+    - `manualRestart(name)` — cancels pending auto-restart, resets backoff counter, re-spawns
+    - `shutdown()` — cancels all pending restart timers, suppresses future restarts
+    - `isHealthy(name)` / `areServicesHealthy()` — check health status
+    - Status listener callback for forwarding events to the renderer via IPC
+  - `SidecarStatus` type union: `starting | healthy | crashed | restarting`
+  - MCP (stdio-based) treated as healthy immediately after spawn (no HTTP endpoint)
+- Updated `apps/desktop/src/sidecar.ts`:
+  - Marked `spawnServices()` as `@deprecated` — HealthMonitor is the primary interface
+- Updated `apps/desktop/src/main.ts`:
+  - Creates `HealthMonitor` wrapping `SidecarManager` in production mode
+  - Uses `healthMonitor.spawnServices()` instead of delay-based `sidecarManager.spawnServices()`
+  - Forwards sidecar status events to renderer via `mainWindow.webContents.send('sidecar:status', status)`
+  - Calls `healthMonitor.shutdown()` before `sidecarManager.killAll()` during shutdown
+  - Exports `getHealthMonitor()` for use by other modules (Issue 10)
+- Created `apps/desktop/test/health.test.ts` — 13 unit tests:
+  - backoffDelay: 500ms base, 1s/2s/4s/8s progression, 10s cap, full sequence verification
+  - waitForHealthy: already healthy, timeout on unreachable, delayed readiness, polling interval, connection refused
+  - HealthMonitor: class export verification
+- All 33 desktop tests pass (13 shell + 7 ports + 13 health)
+- All 7 workspace test tasks pass (no regressions)
+- TypeScript compiles without errors
+- Formatting clean (277 files checked, 0 errors)
+
+## Now Unblocked
+- Issue 10: DesktopBridge contract + service URL passing (blocker Issue 9 done)
+
+### Issue 10: DesktopBridge contract + service URL passing — DONE
+- Created `packages/shared/src/desktop-bridge.ts` — typed contract between preload and renderer:
+  - `DesktopBridge` interface with 10 methods: `getServerUrl()`, `getTerminalUrl()`, `pickFolder()`, `confirm()`, `showContextMenu()`, `openExternal()`, `onMenuAction()`, `updateTrayWorkspaceCount()`, `restartSidecar()`, `onSidecarStatus()`
+  - `ContextMenuItem<T>` generic interface for type-safe context menu items
+  - `SidecarName` type union: `'server' | 'terminal' | 'mcp'`
+  - `SidecarStatusEvent` discriminated union: `starting | healthy | crashed | restarting`
+  - Exported via `@laborer/shared/desktop-bridge` subpath
+- Created `apps/desktop/src/ipc.ts` — IPC handler module:
+  - 6 `ipcMain.handle()` registrations matching preload channels
+  - `desktop:pick-folder` — native folder picker via `dialog.showOpenDialog()` with `openDirectory` + `createDirectory`
+  - `desktop:confirm` — native confirmation dialog with "No"/"Yes" buttons via `dialog.showMessageBox()`
+  - `desktop:context-menu` — builds `Menu` from items array, shows popup, resolves with selected item ID; supports destructive separators and position
+  - `desktop:open-external` — URL validation (only http/https), `shell.openExternal()`
+  - `desktop:update-tray-count` — forwards count to tray callback (wired by Issue 13)
+  - `desktop:restart-sidecar` — validates sidecar name, delegates to health monitor for manual restart
+  - Input validation on all handlers (type checks, URL protocol allowlist, sidecar name validation)
+  - `setTrayCountHandler()` and `setRestartSidecarHandler()` for decoupled wiring
+- Updated `apps/desktop/src/preload.ts` — full DesktopBridge implementation:
+  - `contextBridge.exposeInMainWorld('desktopBridge', { ... } satisfies DesktopBridge)`
+  - Service URLs passed via `additionalArguments` (BrowserWindow webPreferences) since sandbox mode blocks `process.env`
+  - `getArg()` utility parses `--laborer-<key>=<value>` from `process.argv`
+  - Request/response methods delegate to `ipcRenderer.invoke(channel, ...args)`
+  - Event subscriptions (`onMenuAction`, `onSidecarStatus`) use `ipcRenderer.on()` with typed wrapper listeners and return unsubscribe functions
+- Updated `apps/desktop/src/main.ts`:
+  - Imports and calls `registerIpcHandlers(mainWindow)` after window creation
+  - Wires `setRestartSidecarHandler()` to delegate to `healthMonitor.manualRestart()` or `sidecarManager.restart()` 
+  - `buildPreloadArgs()` constructs `--laborer-server-url=` and `--laborer-terminal-url=` from reserved ports
+  - `additionalArguments` added to BrowserWindow `webPreferences`
+- Updated `apps/desktop/tsdown.config.ts` — added `noExternal` for `@laborer/*` on preload entry (preload runs in sandboxed context without node_modules access)
+- Updated `packages/shared/package.json` — added `./desktop-bridge` export subpath
+- Updated `apps/desktop/package.json` — added `@laborer/shared: workspace:*` dependency
+- tsdown build succeeds: main.js 30.10 KB, preload.js 2.09 KB
+- TypeScript compiles without errors across all packages
+- All tests pass: 33 desktop + 280 server + 73 terminal + 19 MCP + 30 shared
+- Formatting clean (279 files checked, 0 fixes)
+
+## Now Unblocked
+- Issue 11: Frontend Tauri-to-Electron migration (blocker Issue 10 done)
+
+### Issue 11: Frontend Tauri-to-Electron migration — DONE
+- Created `apps/web/src/lib/desktop.ts` — replacement for `tauri.ts` using the Electron DesktopBridge:
+  - `isElectron()` — detects Electron via `window.desktopBridge` presence
+  - `isElectronProduction()` — detects production mode (no Vite proxy)
+  - `getDesktopBridge()` — typed accessor for the DesktopBridge
+  - `waitForSidecars()` — resolves immediately (Electron main process handles health checking)
+  - `serverRpcUrl()` — `/rpc` in dev, `${bridge.getServerUrl()}/rpc` in production
+  - `terminalRpcUrl()` — `/terminal-rpc` in dev, `${bridge.getTerminalUrl()}/rpc` in production
+  - `serverWsSyncUrl()` — derives WebSocket URL from server URL
+  - `terminalWsUrl(id)` — derives terminal WebSocket URL from terminal URL
+- Deleted `apps/web/src/lib/tauri.ts` — all functionality ported to desktop.ts
+- Updated all 9 consumer files to import from `@/lib/desktop` instead of `@/lib/tauri`:
+  - `src/routes/index.tsx` — `isTauri()` → `isElectron()`, `getCurrentWindow().hide()` → `window.close()` (main process handles close-to-tray)
+  - `src/routes/__root.tsx` — `waitForSidecars` import updated
+  - `src/hooks/use-sidecar-crash-listener.ts` — fully rewritten to use `desktopBridge.onSidecarStatus()` + `desktopBridge.restartSidecar()` instead of Tauri `listen()` + `invoke()`
+  - `src/hooks/use-tray-workspace-count.ts` — rewritten to use `desktopBridge.updateTrayWorkspaceCount()` instead of Tauri `invoke()`
+  - `src/hooks/use-terminal-websocket.ts` — import updated
+  - `src/hooks/use-terminal-list.ts` — import updated
+  - `src/components/add-project-form.tsx` — rewritten to use `desktopBridge.pickFolder()` instead of `@tauri-apps/plugin-dialog`
+  - `src/atoms/laborer-client.ts` — import updated
+  - `src/atoms/terminal-service-client.ts` — import updated
+- Updated `src/livestore.worker.ts` — sync URL detection changed from `tauri://` to `laborer://` protocol, with `__LABORER_SERVER_URL__` global for Worker context
+- Updated `vite.config.ts` — added explicit HMR config (`protocol: "ws"`, `host: "localhost"`) for Electron compatibility
+- Updated `apps/web/package.json`:
+  - Removed `@tauri-apps/api`, `@tauri-apps/plugin-dialog` from dependencies
+  - Removed `@tauri-apps/cli` from devDependencies
+  - Removed Tauri-specific scripts (`tauri`, `build:sidecars`), updated `dev` → `vite`, `build` → `vite build`
+- Ran `bun install` — lockfile updated (Tauri packages removed)
+- No `@tauri-apps/*` imports remain anywhere in `apps/web/src/`
+- TypeScript compiles without errors across all packages
+- Formatting clean (279 files checked, 0 errors)
+
+## Now Unblocked
+- Issue 12: Custom protocol + production frontend serving (blocker Issue 11 done)
+
+### Issue 12: Custom protocol + production frontend serving — DONE
+- Created `apps/desktop/src/protocol.ts` — custom `laborer://` protocol for production frontend serving:
+  - `registerSchemeAsPrivileged()` — registers `laborer` scheme with `standard`, `secure`, `supportFetchAPI`, `corsEnabled` privileges. Called synchronously before `app.whenReady()`.
+  - `registerDesktopProtocol(staticRoot)` — registers a `protocol.handle()` handler (modern Electron 25+ API) that serves static files from the built frontend directory
+  - `resolveStaticPath()` — maps request URLs to filesystem paths with:
+    - URL decoding for encoded characters
+    - Path normalization and leading separator stripping
+    - Path traversal protection (`..` returns index.html)
+    - Root/empty path resolution to `index.html`
+    - Extensionless path handling: checks for nested `index.html`, falls back to SPA root
+  - `isAssetRequest()` — distinguishes asset requests (with file extension) from navigation requests (extensionless). Assets get 404 on miss; navigation gets SPA fallback.
+  - `getMimeType()` — MIME type lookup for 20+ web file types (html, js, css, json, svg, png, jpg, gif, webp, avif, ico, woff, woff2, ttf, otf, eot, wasm, map, txt, xml, webmanifest). Unknown extensions return `application/octet-stream`.
+  - `serveFile()` — reads files from disk and returns `Response` objects with correct Content-Type and Content-Length headers
+  - `resolveStaticRoot()` — finds the built frontend directory by checking `apps/web/dist/` and `web-dist/` fallback paths
+- Updated `apps/desktop/src/main.ts`:
+  - Calls `registerSchemeAsPrivileged()` synchronously before `app.whenReady()`
+  - In production: resolves static root from app directory, calls `registerDesktopProtocol()`
+  - Window loads `laborer://app/index.html` in production instead of `about:blank`
+- Created `apps/desktop/test/protocol.test.ts` — 30 unit tests:
+  - DESKTOP_SCHEME: value verification
+  - getMimeType: 10 tests covering html, js, css, json, svg, png, woff2, wasm, unknown extensions, case insensitivity
+  - isAssetRequest: 6 tests covering .js, .css, .png, extensionless paths, root path, invalid URLs
+  - resolveStaticPath: 9 tests covering root URL, empty path, JS/CSS assets, nested index.html directories, SPA fallback for unknown paths, path traversal blocking, URL decoding, explicit index.html
+  - resolveStaticRoot: 4 tests covering primary path, fallback path, missing root, priority ordering
+- tsdown build succeeds: main.js 36.47 KB (includes protocol module), preload.js 2.09 KB
+- All 63 desktop tests pass (30 protocol + 13 shell + 7 ports + 13 health)
+- All 280 server + 73 terminal + 19 MCP tests pass (no regressions)
+- TypeScript compiles without errors
+- Formatting clean (281 files checked, 0 errors)
+
+### Issue 13: System tray, global shortcut, close-to-tray — DONE
+- Created `apps/desktop/src/tray.ts` — TrayManager class and global shortcut registration:
+  - `TrayManager` class manages system tray icon lifecycle:
+    - Creates `Tray` with template image on macOS (auto dark/light mode) or full-color icon on other platforms
+    - Dynamic tooltip: "Laborer — N running workspaces" (matching Tauri format)
+    - Context menu: "Show Laborer" (focuses/shows window) and "Quit" (triggers app.quit())
+    - Left-click on tray icon focuses the main window
+    - `updateWorkspaceCount(count)` updates tooltip text
+    - `destroy()` for cleanup during shutdown
+  - `registerGlobalShortcut()` — registers `Cmd+Shift+L` (macOS) / `Ctrl+Shift+L` to focus window from any app
+    - Returns cleanup function that unregisters the shortcut
+    - Logs warning if shortcut is already registered by another app
+  - `formatTrayTooltip(count)` — pure function for tooltip text formatting (tested)
+  - `focusMainWindow()` — shared helper: restore if minimized, show if hidden, focus
+- Created macOS tray template images:
+  - `apps/desktop/resources/trayIconTemplate.png` (22x22) — standard resolution
+  - `apps/desktop/resources/trayIconTemplate@2x.png` (44x44) — Retina resolution
+  - Electron auto-detects "Template" suffix and adapts to dark/light menu bar
+- Updated `apps/desktop/src/main.ts`:
+  - Close-to-tray: intercepts window `close` event, hides instead of closing when not quitting
+  - `isQuitting` flag distinguishes close-button (hide) from Cmd+Q/tray-Quit (actually quit)
+  - `before-quit` event sets `isQuitting = true` so close-to-tray doesn't block real quit
+  - Creates `TrayManager` after window creation, passes `() => mainWindow` callback
+  - Registers global shortcut after window creation, stores cleanup function
+  - Wires `setTrayCountHandler()` from IPC to `trayManager.updateWorkspaceCount()`
+  - `activate` event: shows hidden window on dock click (close-to-tray recovery)
+  - Shutdown: unregisters global shortcut, destroys tray, then kills sidecars
+- Created `apps/desktop/test/tray.test.ts` — 5 unit tests for `formatTrayTooltip`:
+  - Zero count, singular, plural, large count, negative edge case
+- tsdown build succeeds: main.js 41.50 KB, preload.js 2.09 KB
+- All 68 desktop tests pass (63 existing + 5 new tray tests)
+- All 280 server + 73 terminal + 19 MCP tests pass (no regressions)
+- TypeScript compiles without errors
+- Formatting clean (283 files checked, 0 errors)
+
+### Issue 14: Window state persistence + application menu — DONE
+- Created `apps/desktop/src/window-state.ts` — WindowStateManager for persisting and restoring window bounds:
+  - `parseWindowState()` — pure function to parse and validate JSON state with bounds validation (finite numbers, positive dimensions, floored values)
+  - `isBoundsOnScreen()` — pure function to check if saved bounds overlap at least one connected display (100px horizontal, 50px vertical minimum overlap)
+  - `defaultWindowState()` — pure function to build default 800x600 state centered on the primary display's work area
+  - `WindowStateManager` class:
+    - `load()` — reads state from `userData/window-state.json`, validates bounds are on-screen, falls back to default if file missing/corrupt/off-screen
+    - `save(state)` — writes state to disk as JSON
+    - `track(window)` — attaches debounced (500ms) move/resize listeners + final close save using `getNormalBounds()` and `isMaximized()`
+  - Edge cases: first launch (default centered), external display disconnected (off-screen detection resets to primary), maximized state persisted and restored
+- Created `apps/desktop/src/menu.ts` — application menu configuration:
+  - `dispatchMenuAction()` — sends menu actions to renderer via IPC; creates window if none exists, defers action if page still loading
+  - `configureApplicationMenu()` — builds platform-aware menu template:
+    - macOS: app-name submenu with About, Settings (Cmd+,), Services, Hide/Hide Others/Unhide, Quit
+    - Non-macOS: Settings under File menu
+    - Standard role menus: Edit (undo/redo/cut/copy/paste/select all), View (reload/devtools/zoom/fullscreen), Window (minimize/zoom/bring all to front)
+    - File menu: Close (macOS) or Quit (other platforms)
+- Updated `apps/desktop/src/main.ts`:
+  - `createWindow()` uses `windowStateManager.load()` for initial bounds instead of hardcoded 1100x780
+  - Restores maximized state after window creation
+  - Calls `windowStateManager.track(mainWindow)` for automatic persistence
+  - Calls `configureApplicationMenu()` after window creation
+- Created `apps/desktop/test/window-state.test.ts` — 24 unit tests:
+  - parseWindowState: 11 tests (valid JSON, default isMaximized, floored values, invalid JSON, non-object, missing bounds, non-number fields, zero width, negative height, NaN, Infinity)
+  - isBoundsOnScreen: 9 tests (fully within, partial overlap, insufficient horizontal/vertical, off-screen, second display, no displays, negative position, entirely left)
+  - defaultWindowState: 4 tests (dimensions, centering, dock offset, small display)
+- tsdown build succeeds: main.js 49.68 KB (includes window-state + menu modules), preload.js 2.09 KB
+- All 92 desktop tests pass (24 window-state + 13 shell + 7 ports + 30 protocol + 13 health + 5 tray)
+- TypeScript compiles without errors
+- Formatting clean (286 files checked, 0 errors)
+
+### Issue 16: Service bundling for distribution — DONE
+- Created `packages/server/tsdown.config.ts` — ESM bundle config:
+  - Entry: `src/main.ts`, output to `dist/`
+  - `noExternal: @laborer/*` bundles workspace packages into the output
+  - Native modules externalized: `better-sqlite3`, `@parcel/watcher`
+  - LiveStore packages externalized: `@livestore/adapter-node`, `@livestore/livestore`, `@livestore/sync-cf` (use wa-sqlite WASM and native SQLite, must resolve from node_modules)
+  - Output: `dist/main.js` (385 KB) + sourcemap
+- Created `packages/terminal/tsdown.config.ts` — ESM bundle config with two entry points:
+  - Entry 1: `src/main.ts` — the HTTP server (158 KB)
+  - Entry 2: `src/pty-host.ts` — the PTY Host subprocess (13 KB), bundled separately because it runs as an independent child process spawned by the terminal server
+  - `node-pty` externalized (native addon)
+  - Output: `dist/main.js`, `dist/pty-host.js` + sourcemaps
+- Created `packages/mcp/tsdown.config.ts` — ESM bundle config:
+  - Entry: `src/main.ts`, output to `dist/`
+  - No native modules to externalize (pure JS/TS)
+  - Output: `dist/main.js` (130 KB) + sourcemap
+- Updated `packages/terminal/src/services/pty-host-client.ts` — PTY Host path resolution:
+  - Replaced obsolete Bun `/$bunfs/` detection with `.js` vs `.ts` extension check
+  - In source mode (tsx/vitest): resolves `../pty-host.ts` relative to source file
+  - In bundled mode (tsdown output): resolves `pty-host.js` as sibling in `dist/` directory
+- Updated all three `package.json` files:
+  - Build scripts: `"build": "tsdown && tsc --noEmit"` (bundle first, then typecheck)
+  - Added `tsdown: ^0.12.5` to devDependencies
+- All output paths match what `apps/desktop/src/sidecar.ts` expects in production mode:
+  - `packages/server/dist/main.js`
+  - `packages/terminal/dist/main.js`
+  - `packages/mcp/dist/main.js`
+- Verified native modules are properly externalized (remain as import/require in output)
+- Verified workspace packages are fully inlined (no `@laborer/` imports in output)
+- `bun install` — tsdown resolved via existing lockfile, 0 new packages needed
+- TypeScript compiles without errors across all 8 packages
+- All tests pass: 280 server + 73 terminal + 19 MCP + 92 desktop + 30 shared
+- Formatting clean (289 files checked, 0 errors)
+
+### Issue 15: Auto-update system — DONE
+- Created `apps/desktop/src/runtime-arch.ts` — architecture detection utilities:
+  - `resolveDesktopRuntimeInfo()` — detects host and app architecture, including Rosetta translation on macOS
+  - `isArm64HostRunningIntelBuild()` — returns true for Intel builds running under Rosetta on Apple Silicon
+  - Used to disable differential downloads (blockmap diffs fail during arch migration)
+- Created `apps/desktop/src/update-state.ts` — state predicates and helpers:
+  - `shouldBroadcastDownloadProgress()` — throttles IPC broadcasts to 10% bucket boundaries
+  - `nextStatusAfterDownloadFailure()` — returns `"available"` (retry) or `"error"` based on version availability
+  - `getCanRetryAfterDownloadFailure()` — true when version is still known
+  - `getAutoUpdateDisabledReason()` — returns human-readable reason for disabled updates (dev, env override, Linux), or null
+- Created `apps/desktop/src/update-machine.ts` — pure reducer functions for update state machine:
+  - `createInitialUpdateState()` — initial disabled state with runtime info
+  - `reduceOnCheckStart()` — transitions to `checking`, clears transient errors
+  - `reduceOnCheckFailure()` — transitions to `error` with `errorContext: "check"`, allows retry
+  - `reduceOnUpdateAvailable()` — transitions to `available` with version
+  - `reduceOnNoUpdate()` — transitions to `up-to-date`, clears stale state
+  - `reduceOnDownloadStart()` — transitions to `downloading` with 0% progress
+  - `reduceOnDownloadProgress()` — updates download percentage
+  - `reduceOnDownloadFailure()` — falls back to `available` (retry) or `error`
+  - `reduceOnDownloadComplete()` — transitions to `downloaded` with 100%
+  - `reduceOnInstallFailure()` — stays in `downloaded` for retry, sets `errorContext: "install"`
+- Created `apps/desktop/src/auto-updater.ts` — electron-updater integration:
+  - `configureAutoUpdater()` — configures electron-updater with manual control (`autoDownload: false`, `autoInstallOnAppQuit: false`)
+  - 15-second startup delay before first check, 4-hour poll interval
+  - Architecture detection: disables differential downloads for Rosetta builds
+  - Wires electron-updater events (`update-available`, `update-not-available`, `error`, `download-progress`, `update-downloaded`) to state machine reducers
+  - `getUpdateState()`, `triggerDownloadUpdate()`, `triggerInstallUpdate()` — IPC-facing API
+  - `broadcastUpdateStateToWindow()` — sends state to newly loaded pages
+  - `shutdownAutoUpdater()` — cancels all timers during app shutdown
+  - Guards against re-entrant check and download calls
+  - Download progress throttled to 10% buckets via `shouldBroadcastDownloadProgress()`
+- Extended `packages/shared/src/desktop-bridge.ts` — added auto-update types:
+  - `DesktopRuntimeArch` type (`"arm64" | "x64" | "other"`)
+  - `DesktopRuntimeInfo` interface
+  - `DesktopUpdateStatus` discriminated union (8 statuses)
+  - `DesktopUpdateState` full state interface
+  - `DesktopUpdateActionResult` for action responses
+  - Added 4 new `DesktopBridge` methods: `getUpdateState()`, `downloadUpdate()`, `installUpdate()`, `onUpdateState()`
+- Updated `apps/desktop/src/ipc.ts`:
+  - Added 4 new IPC channels: `desktop:update-state`, `desktop:update-get-state`, `desktop:update-download`, `desktop:update-install`
+  - Added 3 new handler callbacks: `setGetUpdateStateHandler`, `setDownloadUpdateHandler`, `setInstallUpdateHandler`
+  - Added 3 new `ipcMain.handle()` registrations for update operations
+- Updated `apps/desktop/src/preload.ts`:
+  - Added 4 new channel constants for update IPC
+  - Implemented `getUpdateState`, `downloadUpdate`, `installUpdate`, `onUpdateState` bridge methods
+  - All delegate to `ipcRenderer.invoke()` or `ipcRenderer.on()` as appropriate
+- Updated `apps/desktop/src/main.ts`:
+  - Imports and wires auto-updater IPC callbacks during bootstrap
+  - Calls `configureAutoUpdater()` after window creation, passing quit callback
+  - Broadcasts update state to window on `did-finish-load`
+  - Calls `shutdownAutoUpdater()` during graceful shutdown
+- Added `electron-updater@^6.8.3` to `apps/desktop/package.json` dependencies
+- Created `apps/desktop/test/runtime-arch.test.ts` — 4 unit tests:
+  - Rosetta detection, native Apple Silicon, non-mac passthrough, unknown arch normalization
+- Created `apps/desktop/test/update-state.test.ts` — 13 unit tests:
+  - shouldBroadcastDownloadProgress: first update, same bucket skip, new bucket, retry reset, final 100%
+  - getAutoUpdateDisabledReason: dev builds, env disabled, linux, macOS enabled
+  - nextStatusAfterDownloadFailure: available vs error
+  - getCanRetryAfterDownloadFailure: with/without version
+- Created `apps/desktop/test/update-machine.test.ts` — 8 unit tests:
+  - Initial state creation, error clearing on check start, check failure, download failure retry,
+    download-to-install lifecycle, stale state clearing, full available→download→progress flow,
+    download failure without version (error state)
+- tsdown build succeeds: main.js 64.94 KB, preload.js 2.88 KB
+- All 117 desktop tests pass (25 new: 4 runtime-arch + 13 update-state + 8 update-machine + 92 existing)
+- TypeScript compiles without errors across all packages (desktop, shared, web)
+- Formatting clean (296 files checked, 0 errors)
+
+### Issue 17: Electron packaging + .dmg distribution — DONE
+- Created `scripts/build-desktop-artifact.ts` — dynamic build script (following t3code pattern) that:
+  - Runs `turbo build` to build all packages (web, server, terminal, MCP, desktop)
+  - Creates a temporary staging directory with the following structure:
+    - `apps/desktop/dist-electron/` — main.js + preload.js
+    - `apps/desktop/resources/` — icons (icon.icns, icon.png, tray templates)
+    - `apps/web/dist/` — bundled frontend (served via laborer:// protocol)
+    - `packages/server/dist/` — bundled server service
+    - `packages/terminal/dist/` — bundled terminal service
+    - `packages/mcp/dist/` — bundled MCP service
+  - Generates a production `package.json` with:
+    - `main: "apps/desktop/dist-electron/main.js"` as the Electron entry point
+    - All service production dependencies with `catalog:` specs resolved to concrete versions
+    - `workspace:*` dependencies filtered out (bundled by tsdown's `noExternal`)
+    - `electron` pinned as devDependency (for electron-builder)
+    - Inline `build` config for electron-builder (appId, productName, mac targets, icon)
+  - Runs `bun install --production` in the staging directory to install native modules
+  - Runs `electron-builder --mac --arm64 --publish never` to produce .dmg + .zip
+  - Copies artifact files to `release/` output directory
+  - Cleans up staging directory (unless `--keep-stage`)
+  - Validates bundled client assets (index.html references exist on disk)
+  - Disables code signing by default (`CSC_IDENTITY_AUTO_DISCOVERY=false`)
+- Created `scripts/lib/resolve-catalog.ts` — pure function to resolve `catalog:` dependency specs:
+  - Resolves `catalog:` specs against root `package.json` workspace catalog
+  - Filters out `workspace:*` dependencies (bundled by tsdown)
+  - Throws clear error messages for missing catalog entries
+- CLI flags: `--skip-build` (reuse existing builds), `--keep-stage` (debug staging), `--verbose` (stream subprocess output), `--output-dir` (custom output), `--arch` (default arm64)
+- Environment variable overrides: `LABORER_DESKTOP_SKIP_BUILD`, `LABORER_DESKTOP_KEEP_STAGE`, `LABORER_DESKTOP_VERBOSE`, `LABORER_DESKTOP_OUTPUT_DIR`
+- Updated `apps/desktop/package.json`:
+  - Added `productName: "Laborer"` (used by electron-builder)
+  - Added `electron-builder: ^26.0.12` to devDependencies
+- Updated root `package.json`:
+  - Added `"dist:desktop:dmg": "tsx scripts/build-desktop-artifact.ts"` script
+  - Added `tsx: ^4.19.4` to devDependencies (for running the build script)
+- Added `release/` to `.gitignore` (electron-builder output directory)
+- Deleted `apps/web/scripts/build-sidecars.ts` — old Tauri sidecar build system (629 lines) that compiled Bun standalone binaries. No longer needed with the Electron packaging approach.
+- `bun install` — 283 packages installed (electron-builder + tsx dependencies)
+- TypeScript compiles without errors across all 8 packages
+- All tests pass: 117 desktop + 280 server + 73 terminal + 19 MCP + 30 shared + 73 web
+- Formatting clean (297 files checked, 0 errors)
+
+### Issue 18: Cleanup + remove Tauri — DONE
+- Deleted `apps/web/src-tauri/` directory entirely (Cargo.toml, Rust source, capabilities, icons, tauri.conf.json — 25+ files)
+- Deleted `apps/web/scripts/tauri-dev.sh` (and now-empty `scripts/` directory)
+- Removed `@effect/platform-bun` from root `package.json`:
+  - Removed from workspace catalog (line 18)
+  - Removed from overrides (line 69)
+- Replaced `.github/workflows/publish.yml` — old Tauri CI pipeline (using `tauri-apps/tauri-action`, Rust toolchain, Cargo cache) with Electron-based pipeline (runs `bun run dist:desktop:dmg`, uploads artifacts, creates GitHub release)
+- Fixed stale `@see lib/tauri.ts` comments in 2 frontend atom files:
+  - `apps/web/src/atoms/terminal-service-client.ts` — updated to `@see lib/desktop.ts`, changed "Tauri production" to "Electron production"
+  - `apps/web/src/atoms/laborer-client.ts` — same updates
+- Updated outdated Bun reference in `packages/server/src/pty-host.ts`:
+  - Removed "Why Node.js instead of Bun" paragraph (no longer relevant — both server and PTY Host run Node.js)
+  - Changed "main Bun HTTP server process" to "main Node.js HTTP server process"
+- Ran `bun install` — lockfile updated cleanly
+- Verification checks all pass:
+  - `grep -r "tauri" --include="*.ts" --include="*.tsx" --include="*.json" apps/ packages/` — zero results
+  - No `@tauri-apps/*` dependencies remain in any package.json
+  - No `@effect/platform-bun` references remain in any package.json
+  - No `@types/bun` references remain in any package.json
+  - No Rust/Cargo configuration files remain (no `.cargo/`, no `rust-toolchain.toml`)
+  - `turbo typecheck` passes across all 6 packages
+  - Formatting clean (297 files checked, 0 errors)
+
+## Migration Status: COMPLETE
+
+All 18 issues from the Tauri-to-Electron migration are now done. The codebase is fully migrated:
+- Electron main process manages windows, tray, global shortcuts, auto-updates
+- Server, terminal, and MCP services run on Node.js (not Bun runtime)
+- Frontend uses DesktopBridge (not Tauri APIs)
+- Custom `laborer://` protocol serves the frontend in production
+- `electron-builder` packages the app as .dmg for macOS
+- No Tauri, Rust, or Bun runtime references remain in the source code

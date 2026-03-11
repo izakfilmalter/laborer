@@ -1,0 +1,9 @@
+{
+  "extends": "@laborer/config/tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "types": ["node"],
+    "lib": ["ES2023", "DOM", "ESNext.Disposable"]
+  },
+  "include": ["src", "test", "tsdown.config.ts"]
+}

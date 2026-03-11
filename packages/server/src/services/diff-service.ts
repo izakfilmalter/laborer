@@ -57,6 +57,7 @@ import {
   Runtime,
   Schedule,
 } from 'effect'
+import { spawn } from '../lib/spawn.js'
 import { LaborerStore } from './laborer-store.js'
 import {
   RepositoryEventBus,
@@ -94,21 +95,20 @@ const EVENT_DEBOUNCE_MS = 300
  * Helper: spawn a git command in a worktree and capture stdout/stderr.
  * Returns exit code, stdout text, and stderr text.
  */
-const spawnGit = (
+const spawnGit = async (
   args: readonly string[],
   cwd: string
-): Promise<{ exitCode: number; stdout: string; stderr: string }> =>
-  (async () => {
-    const proc = Bun.spawn(['git', ...args], {
-      cwd,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-    const exitCode = await proc.exited
-    const stdout = await new Response(proc.stdout).text()
-    const stderr = await new Response(proc.stderr).text()
-    return { exitCode, stdout, stderr }
-  })()
+): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
+  const proc = spawn(['git', ...args], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const exitCode = await proc.exited
+  const stdout = await new Response(proc.stdout).text()
+  const stderr = await new Response(proc.stderr).text()
+  return { exitCode, stdout, stderr }
+}
 
 class DiffService extends Context.Tag('@laborer/DiffService')<
   DiffService,

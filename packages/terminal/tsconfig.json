@@ -3,7 +3,7 @@
   "compilerOptions": {
     "noEmit": true,
     "declaration": true,
-    "types": ["bun", "node"]
+    "types": ["node"]
   },
   "include": ["src", "test"]
 }

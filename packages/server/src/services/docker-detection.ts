@@ -17,6 +17,7 @@
  */
 
 import { Context, Effect, Layer, Ref } from 'effect'
+import { spawn } from '../lib/spawn.js'
 
 /**
  * Result of the Docker prerequisite check.
@@ -53,7 +54,7 @@ class DockerDetection extends Context.Tag('@laborer/DockerDetection')<
         // Step 1: Check if `docker` CLI exists on PATH
         const whichExitCode = yield* Effect.promise(async () => {
           try {
-            const proc = Bun.spawn(['which', 'docker'], {
+            const proc = spawn(['which', 'docker'], {
               stdout: 'pipe',
               stderr: 'pipe',
             })
@@ -78,7 +79,7 @@ class DockerDetection extends Context.Tag('@laborer/DockerDetection')<
         // Step 2: Check if Docker daemon is running
         const infoResult = yield* Effect.promise(async () => {
           try {
-            const proc = Bun.spawn(['docker', 'info'], {
+            const proc = spawn(['docker', 'info'], {
               stdout: 'pipe',
               stderr: 'pipe',
             })

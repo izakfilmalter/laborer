@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { terminalRpcUrl } from '@/lib/tauri'
+import { terminalRpcUrl } from '@/lib/desktop'
 
 /** Shape of a terminal from the terminal service's terminal.list RPC. */
 interface TerminalInfo {

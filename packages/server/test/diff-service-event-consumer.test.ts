@@ -205,7 +205,7 @@ describe('DiffService downstream event consumer', () => {
           assert.strictEqual(fileEvent?.repoRoot, repoPath)
 
           // Wait for the debounce timer (300ms) + buffer for the refresh attempt.
-          // getDiff will fail in the vitest env (Bun.spawn unavailable) but
+          // getDiff may fail in the vitest env (no real git worktree) but
           // the error is caught and logged — the mechanism fires without crashing.
           yield* Effect.promise(() => delay(500))
 

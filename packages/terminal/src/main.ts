@@ -1,13 +1,13 @@
 /**
  * Laborer Terminal Service — Entry Point
  *
- * Standalone Bun server for terminal management. Runs as its own
+ * Standalone Node.js server for terminal management. Runs as its own
  * long-lived process on TERMINAL_PORT (default 3002), separate from
  * the main laborer server. This architectural separation ensures
  * terminals survive server restarts during development.
  *
  * Architecture:
- * - BunRuntime.runMain handles graceful shutdown (SIGINT/SIGTERM)
+ * - NodeRuntime.runMain handles graceful shutdown (SIGINT/SIGTERM)
  * - Layer.launch keeps the server running until interrupted
  * - HttpRouter.Default.serve() creates the HTTP handler
  * - GET / returns a health check response
@@ -32,13 +32,14 @@
  * @see PRD-terminal-extraction.md
  */
 
+import { createServer } from 'node:http'
 import {
   HttpMiddleware,
   HttpRouter,
   HttpServer,
   HttpServerResponse,
 } from '@effect/platform'
-import { BunHttpServer, BunRuntime } from '@effect/platform-bun'
+import { NodeHttpServer, NodeRuntime } from '@effect/platform-node'
 import { RpcSerialization, RpcServer } from '@effect/rpc'
 import { env } from '@laborer/env/server'
 import { TerminalRpcs } from '@laborer/shared/rpc'
@@ -86,10 +87,12 @@ const RpcLive = RpcServer.layer(TerminalRpcs).pipe(
 /**
  * Server Layer
  *
- * Provides the Bun HTTP server on TERMINAL_PORT.
+ * Provides the Node.js HTTP server on TERMINAL_PORT.
  * Port is sourced from env validation (@laborer/env/server).
  */
-const ServerLive = BunHttpServer.layer({ port: env.TERMINAL_PORT })
+const ServerLive = NodeHttpServer.layer(createServer, {
+  port: env.TERMINAL_PORT,
+})
 
 /**
  * Application Layer
@@ -103,7 +106,7 @@ const ServerLive = BunHttpServer.layer({ port: env.TERMINAL_PORT })
  *   + RpcSerialization.layerJson — wire format for RPC messages
  *   + TerminalManager — in-memory terminal lifecycle management
  *   + PtyHostClient — PTY Host child process management
- *   + ServerLive — Bun HTTP server
+ *   + ServerLive — Node.js HTTP server
  *
  * @see Issue #139: Terminal RPC handlers
  * @see Issue #140: Terminal WebSocket route
@@ -134,4 +137,4 @@ const HttpLive = HttpRouter.Default.serve((httpApp) =>
  */
 const main = HttpLive.pipe(Layer.launch, Effect.scoped)
 
-BunRuntime.runMain(main)
+NodeRuntime.runMain(main)

@@ -1,8 +1,8 @@
 /**
- * LiveStore Sync Backend — Server-side sync handler for Bun
+ * LiveStore Sync Backend — Server-side sync handler
  *
  * Implements the `SyncWsRpc` protocol from `@livestore/sync-cf` using
- * Bun's built-in SQLite for event storage. This enables real-time
+ * better-sqlite3 for event storage. This enables real-time
  * bidirectional sync between the server LiveStore and web clients
  * over WebSocket.
  *
@@ -14,9 +14,9 @@
  * @see Issue #18: LiveStore server-to-client sync
  */
 
-import { Database } from 'bun:sqlite'
 import { Rpc, RpcGroup, RpcServer } from '@effect/rpc'
 import { env } from '@laborer/env/server'
+import Database from 'better-sqlite3'
 import {
   Context,
   Effect,
@@ -178,9 +178,9 @@ const CONTEXT_TABLE = 'context_1'
  */
 const makeSyncStorage = (dataDir: string, storeId: string) => {
   const dbPath = `${dataDir}/sync-${storeId}.db`
-  const db = new Database(dbPath, { create: true })
-  db.exec('PRAGMA journal_mode = WAL')
-  db.exec('PRAGMA synchronous = NORMAL')
+  const db = new Database(dbPath)
+  db.pragma('journal_mode = WAL')
+  db.pragma('synchronous = NORMAL')
 
   const tableName = makeEventlogTableName(storeId)
 
@@ -205,42 +205,42 @@ const makeSyncStorage = (dataDir: string, storeId: string) => {
   `)
 
   const contextRow = db
-    .query<
-      { storeId: string; currentHead: number; backendId: string },
-      [string]
+    .prepare<
+      [string],
+      { storeId: string; currentHead: number; backendId: string }
     >(`SELECT * FROM "${CONTEXT_TABLE}" WHERE storeId = ?`)
     .get(storeId)
 
   const backendId = contextRow?.backendId ?? crypto.randomUUID()
   let currentHead = contextRow?.currentHead ?? 0
 
-  if (contextRow === null) {
-    db.query(
+  if (contextRow === undefined) {
+    db.prepare(
       `INSERT INTO "${CONTEXT_TABLE}" (storeId, currentHead, backendId) VALUES (?, ?, ?)`
     ).run(storeId, currentHead, backendId)
   }
 
-  const insertStmt = db.query(
+  const insertStmt = db.prepare(
     `INSERT INTO "${tableName}" (seqNum, parentSeqNum, args, name, createdAt, clientId, sessionId) VALUES (?, ?, ?, ?, ?, ?, ?)`
   )
 
-  const selectFromCursorStmt = db.query<SyncStorageRow, [number, number]>(
+  const selectFromCursorStmt = db.prepare<[number, number], SyncStorageRow>(
     `SELECT * FROM "${tableName}" WHERE seqNum > ? ORDER BY seqNum ASC LIMIT ?`
   )
 
-  const selectAllStmt = db.query<SyncStorageRow, [number]>(
+  const selectAllStmt = db.prepare<[number], SyncStorageRow>(
     `SELECT * FROM "${tableName}" ORDER BY seqNum ASC LIMIT ?`
   )
 
-  const countFromCursorStmt = db.query<{ total: number }, [number]>(
+  const countFromCursorStmt = db.prepare<[number], { total: number }>(
     `SELECT COUNT(*) as total FROM "${tableName}" WHERE seqNum > ?`
   )
 
-  const countAllStmt = db.query<{ total: number }, []>(
+  const countAllStmt = db.prepare<[], { total: number }>(
     `SELECT COUNT(*) as total FROM "${tableName}"`
   )
 
-  const updateHeadStmt = db.query(
+  const updateHeadStmt = db.prepare(
     `INSERT OR REPLACE INTO "${CONTEXT_TABLE}" (storeId, currentHead, backendId) VALUES (?, ?, ?)`
   )
 

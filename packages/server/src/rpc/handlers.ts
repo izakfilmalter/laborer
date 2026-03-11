@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import { LaborerRpcs, RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Array as Arr, Effect, pipe } from 'effect'
+import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { ContainerService } from '../services/container-service.js'
 import { DiffService } from '../services/diff-service.js'
@@ -118,7 +119,7 @@ const detectPrNumber = Effect.fn('detectPrNumber')(function* (
   // Slow path: fall back to gh CLI if PrWatcher hasn't polled yet
   const { exitCode, stdout, stderr } = yield* Effect.tryPromise({
     try: async () => {
-      const proc = Bun.spawn(['gh', 'pr', 'view', '--json', 'number'], {
+      const proc = spawn(['gh', 'pr', 'view', '--json', 'number'], {
         cwd: workspace.worktreePath,
         stdout: 'pipe',
         stderr: 'pipe',
@@ -844,7 +845,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         // 4. Execute the editor command
         yield* Effect.tryPromise({
           try: async () => {
-            const proc = Bun.spawn([editorCommand, targetPath], {
+            const proc = spawn([editorCommand, targetPath], {
               stdout: 'ignore',
               stderr: 'pipe',
             })

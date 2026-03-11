@@ -1,5 +1,5 @@
 import { McpServer } from '@effect/ai'
-import { BunRuntime, BunSink, BunStream } from '@effect/platform-bun'
+import { NodeRuntime, NodeSink, NodeStream } from '@effect/platform-node'
 import { Effect, Layer, Logger } from 'effect'
 import { LaborerRpcClient } from './services/laborer-rpc-client.js'
 import { ProjectDiscovery } from './services/project-discovery.js'
@@ -9,8 +9,8 @@ import { PrdToolsLayer } from './tools/prd-tools.js'
 const McpLive = McpServer.layerStdio({
   name: 'laborer',
   version: '0.0.0',
-  stdin: BunStream.stdin,
-  stdout: BunSink.stdout,
+  stdin: NodeStream.stdin,
+  stdout: NodeSink.stdout,
 })
 
 const AppLive = PrdToolsLayer.pipe(
@@ -23,4 +23,4 @@ const AppLive = PrdToolsLayer.pipe(
 
 const main = AppLive.pipe(Layer.launch, Effect.scoped)
 
-BunRuntime.runMain(main)
+NodeRuntime.runMain(main)

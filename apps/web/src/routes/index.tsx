@@ -1183,6 +1183,7 @@ function usePanelLayout() {
     activePaneId: persistedActivePaneId,
     leafPaneIds,
     isReconciling,
+    liveTerminals,
   }
 }
 
@@ -1217,6 +1218,43 @@ function WelcomeEmptyState() {
         <AddProjectForm />
       </EmptyContent>
     </Empty>
+  )
+}
+
+/**
+ * Confirmation dialog shown when attempting to close a terminal pane
+ * that has a running process. Prevents accidental loss of running work.
+ */
+function CloseTerminalDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+}: {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+  readonly onConfirm: () => void
+}) {
+  const handleConfirm = useCallback(() => {
+    onConfirm()
+    onOpenChange(false)
+  }, [onConfirm, onOpenChange])
+
+  return (
+    <AlertDialog onOpenChange={onOpenChange} open={open}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Close terminal?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This terminal has a running process. Closing the pane will leave the
+            process running in the background.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={handleConfirm}>Close</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
@@ -1262,12 +1300,64 @@ function CloseAppDialog({
 }
 
 function HomeComponent() {
-  const { layout, panelActions, activePaneId, leafPaneIds, isReconciling } =
-    usePanelLayout()
+  const {
+    layout,
+    panelActions,
+    activePaneId,
+    leafPaneIds,
+    isReconciling,
+    liveTerminals,
+  } = usePanelLayout()
   const store = useLaborerStore()
   const projectList = store.useQuery(sidebarProjects$)
   const workspaceList = store.useQuery(sidebarWorkspaces$)
   const hasProjects = projectList.length > 0
+
+  // Close-terminal confirmation dialog state
+  const [closeTerminalDialogOpen, setCloseTerminalDialogOpen] = useState(false)
+  const pendingClosePaneIdRef = useRef<string | null>(null)
+
+  /**
+   * Gated closePane that checks if the terminal has a running process.
+   * If running, shows a confirmation dialog. Otherwise closes immediately.
+   */
+  const gatedClosePane = useCallback(
+    (paneId: string) => {
+      // Resolve the leaf node to get its terminalId
+      if (layout) {
+        const node = findNodeById(layout, paneId)
+        if (node && node._tag === 'LeafNode' && node.terminalId) {
+          const terminal = liveTerminals.find((t) => t.id === node.terminalId)
+          if (terminal && terminal.status === 'running') {
+            // Terminal is running — show confirmation dialog
+            pendingClosePaneIdRef.current = paneId
+            setCloseTerminalDialogOpen(true)
+            return
+          }
+        }
+      }
+      // Terminal is stopped or no terminal — close immediately
+      panelActions.closePane(paneId)
+    },
+    [layout, liveTerminals, panelActions]
+  )
+
+  const handleConfirmCloseTerminal = useCallback(() => {
+    const paneId = pendingClosePaneIdRef.current
+    if (paneId) {
+      panelActions.closePane(paneId)
+      pendingClosePaneIdRef.current = null
+    }
+  }, [panelActions])
+
+  // Override panelActions.closePane with the gated version
+  const gatedPanelActions = useMemo(
+    () => ({
+      ...panelActions,
+      closePane: gatedClosePane,
+    }),
+    [panelActions, gatedClosePane]
+  )
 
   // Sync running workspace count to Electron system tray tooltip (no-op in browser)
   useTrayWorkspaceCount()
@@ -1371,7 +1461,12 @@ function HomeComponent() {
   }, [mainView])
 
   return (
-    <PanelActionsProvider activePaneId={activePaneId} value={panelActions}>
+    <PanelActionsProvider activePaneId={activePaneId} value={gatedPanelActions}>
+      <CloseTerminalDialog
+        onConfirm={handleConfirmCloseTerminal}
+        onOpenChange={setCloseTerminalDialogOpen}
+        open={closeTerminalDialogOpen}
+      />
       <CloseAppDialog
         onOpenChange={setIsCloseAppDialogOpen}
         open={isCloseAppDialogOpen}

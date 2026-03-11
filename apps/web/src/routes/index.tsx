@@ -13,7 +13,6 @@ import { queryDb } from '@livestore/livestore'
 import { createFileRoute } from '@tanstack/react-router'
 import {
   Columns2,
-  FileCode2,
   FolderGit2,
   LayoutDashboard,
   PanelLeftClose,
@@ -82,12 +81,15 @@ import {
   closePane,
   computeResize,
   ensureValidActivePaneId,
+  filterTreeByWorkspace,
   findNodeById,
   findSiblingPaneId,
   generateId,
   getFirstLeafId,
   getLeafIds,
+  getLeafNodes,
   getStaleTerminalLeaves,
+  getWorkspaceIds,
   reconcileLayout,
   replaceNode,
   splitPane,
@@ -164,24 +166,10 @@ const allProjects$ = queryDb(projects, { label: 'headerProjects' })
 /** The two main content views: terminal panels, cross-project dashboard, or plan editor. */
 type MainView = 'panels' | 'dashboard' | 'plan'
 
-/** Displays the contextual label for the current view (project/branch, Dashboard, or Plan). */
-function ViewContextLabel({
-  mainView,
-  projectName,
-  branchName,
-}: {
-  readonly mainView: MainView
-  readonly projectName: string | undefined
-  readonly branchName: string | undefined
-}) {
-  if (mainView === 'panels' && projectName && branchName) {
-    return (
-      <>
-        <span className="text-foreground">{projectName}</span>
-        <span className="mx-1">/</span>
-        <span>{branchName}</span>
-      </>
-    )
+/** Displays the contextual label for the current view. */
+function ViewContextLabel({ mainView }: { readonly mainView: MainView }) {
+  if (mainView === 'panels') {
+    return <span className="text-foreground">Panels</span>
   }
   if (mainView === 'dashboard') {
     return <span className="text-foreground">Dashboard</span>
@@ -195,18 +183,13 @@ function ViewContextLabel({
 /**
  * Bar rendered at the top of the main content area (right of the sidebar).
  *
- * - Left side: view toggle (panels / dashboard) + `project / branch`
- *   context for the active pane's workspace (in panels view).
- * - Right side: split horizontal, split vertical, diff toggle, and close
- *   buttons that operate on the active pane (disabled in dashboard view).
- *
- * Uses the PanelActionsContext so it must be rendered inside a
- * PanelActionsProvider.
+ * Shows the sidebar toggle, view toggle (panels / dashboard), and view label.
+ * Per-pane actions (split, close, diff, dev server) are now in per-workspace
+ * frame headers instead.
  *
  * @see Issue #114: Cross-project workspace dashboard
  */
 function PanelHeaderBar({
-  layout,
   mainView,
   onViewChange,
   onToggleSidebar,
@@ -218,65 +201,9 @@ function PanelHeaderBar({
   readonly onToggleSidebar?: (() => void) | undefined
   readonly sidebarCollapsed?: boolean
 }) {
-  const store = useLaborerStore()
-  const activePaneId = useActivePaneId()
-  const actions = usePanelActions()
-
-  const projectList = store.useQuery(allProjects$)
-  const workspaceList = store.useQuery(allWorkspaces$)
-
-  // Resolve the active leaf node from the layout tree
-  const activeLeaf = useMemo((): LeafNode | undefined => {
-    if (!(layout && activePaneId)) {
-      return undefined
-    }
-    const node = findNodeById(layout, activePaneId)
-    if (node && node._tag === 'LeafNode') {
-      return node
-    }
-    return undefined
-  }, [layout, activePaneId])
-
-  // Resolve workspace and project names for the active pane
-  const { projectName, branchName, isContainerized } = useMemo(() => {
-    if (!activeLeaf?.workspaceId) {
-      return {
-        projectName: undefined,
-        branchName: undefined,
-        isContainerized: false,
-      }
-    }
-    const workspace = workspaceList.find(
-      (ws) => ws.id === activeLeaf.workspaceId
-    )
-    if (!workspace) {
-      return {
-        projectName: undefined,
-        branchName: undefined,
-        isContainerized: false,
-      }
-    }
-    const project = projectList.find((p) => p.id === workspace.projectId)
-    return {
-      projectName: project?.name,
-      branchName: workspace.branchName,
-      isContainerized: workspace.containerId != null,
-    }
-  }, [activeLeaf, workspaceList, projectList])
-
-  const isTerminalPane =
-    mainView === 'panels' &&
-    activeLeaf?.paneType === 'terminal' &&
-    activeLeaf.workspaceId !== undefined
-  const showDiffToggle = isTerminalPane
-  const showDevServerToggle = isTerminalPane && isContainerized
-  const diffIsOpen = activeLeaf?.diffOpen === true
-  const devServerIsOpen = activeLeaf?.devServerOpen === true
-  const hasActivePane = mainView === 'panels' && !!activePaneId && !!activeLeaf
-
   return (
     <div className="flex h-8 shrink-0 items-center justify-between border-b px-2">
-      {/* Left: sidebar toggle + view toggle + project / branch context */}
+      {/* Left: sidebar toggle + view toggle + view label */}
       <div className="flex items-center gap-2">
         {onToggleSidebar && (
           <Tooltip>
@@ -338,122 +265,8 @@ function PanelHeaderBar({
           </Tooltip>
         </div>
         <div className="min-w-0 truncate text-muted-foreground text-xs">
-          <ViewContextLabel
-            branchName={branchName}
-            mainView={mainView}
-            projectName={projectName}
-          />
+          <ViewContextLabel mainView={mainView} />
         </div>
-      </div>
-
-      {/* Right: pane actions */}
-      <div className="flex gap-0.5">
-        {showDevServerToggle && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  aria-label={
-                    devServerIsOpen
-                      ? 'Close dev server terminal'
-                      : 'Open dev server terminal'
-                  }
-                  className={devServerIsOpen ? 'bg-accent' : ''}
-                  disabled={!hasActivePane}
-                  onClick={() =>
-                    activePaneId && actions?.toggleDevServerPane(activePaneId)
-                  }
-                  size="icon-sm"
-                  variant="ghost"
-                />
-              }
-            >
-              <Server className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipContent>
-              {devServerIsOpen
-                ? 'Close dev server terminal'
-                : 'Open dev server terminal'}
-            </TooltipContent>
-          </Tooltip>
-        )}
-        {showDiffToggle && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  aria-label={
-                    diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'
-                  }
-                  className={diffIsOpen ? 'bg-accent' : ''}
-                  disabled={!hasActivePane}
-                  onClick={() =>
-                    activePaneId && actions?.toggleDiffPane(activePaneId)
-                  }
-                  size="icon-sm"
-                  variant="ghost"
-                />
-              }
-            >
-              <FileCode2 className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipContent>
-              {diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'}
-            </TooltipContent>
-          </Tooltip>
-        )}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label="Split horizontally"
-                disabled={!hasActivePane}
-                onClick={() =>
-                  activePaneId && actions?.splitPane(activePaneId, 'horizontal')
-                }
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            <Columns2 className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent>Split horizontally</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label="Split vertically"
-                disabled={!hasActivePane}
-                onClick={() =>
-                  activePaneId && actions?.splitPane(activePaneId, 'vertical')
-                }
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            <Rows2 className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent>Split vertically</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label="Close pane"
-                disabled={!hasActivePane}
-                onClick={() => activePaneId && actions?.closePane(activePaneId)}
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            <X className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent>Close pane</TooltipContent>
-        </Tooltip>
       </div>
     </div>
   )
@@ -1254,6 +1067,298 @@ function CloseAppDialog({
   )
 }
 
+/**
+ * Header bar for a single workspace frame. Shows project / branch name
+ * and pane action buttons scoped to this workspace's panes.
+ */
+function WorkspaceFrameHeader({
+  workspaceId,
+}: {
+  readonly workspaceId: string | undefined
+}) {
+  const store = useLaborerStore()
+  const projectList = store.useQuery(allProjects$)
+  const workspaceList = store.useQuery(allWorkspaces$)
+  const activePaneId = useActivePaneId()
+  const actions = usePanelActions()
+
+  const { projectName, branchName, isContainerized } = useMemo(() => {
+    if (!workspaceId) {
+      return {
+        projectName: undefined,
+        branchName: undefined,
+        isContainerized: false,
+      }
+    }
+    const workspace = workspaceList.find((ws) => ws.id === workspaceId)
+    if (!workspace) {
+      return {
+        projectName: undefined,
+        branchName: undefined,
+        isContainerized: false,
+      }
+    }
+    const project = projectList.find((p) => p.id === workspace.projectId)
+    return {
+      projectName: project?.name,
+      branchName: workspace.branchName,
+      isContainerized: workspace.containerId != null,
+    }
+  }, [workspaceId, workspaceList, projectList])
+
+  const hasActivePane = !!activePaneId
+
+  return (
+    <div className="flex h-8 shrink-0 items-center justify-between border-b px-2">
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 text-muted-foreground">
+          <Terminal className="size-3.5" />
+        </div>
+        <div className="min-w-0 truncate text-muted-foreground text-xs">
+          {projectName && branchName ? (
+            <>
+              <span className="text-foreground">{projectName}</span>
+              <span className="mx-1">/</span>
+              <span>{branchName}</span>
+            </>
+          ) : (
+            <span className="text-foreground">Terminal</span>
+          )}
+        </div>
+      </div>
+      <div className="flex gap-0.5">
+        {isContainerized && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label="Toggle dev server terminal"
+                  disabled={!hasActivePane}
+                  onClick={() =>
+                    activePaneId && actions?.toggleDevServerPane(activePaneId)
+                  }
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            >
+              <Server className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent>Toggle dev server terminal</TooltipContent>
+          </Tooltip>
+        )}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label="Split horizontally"
+                disabled={!hasActivePane}
+                onClick={() =>
+                  activePaneId && actions?.splitPane(activePaneId, 'horizontal')
+                }
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
+          >
+            <Columns2 className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent>Split horizontally</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label="Split vertically"
+                disabled={!hasActivePane}
+                onClick={() =>
+                  activePaneId && actions?.splitPane(activePaneId, 'vertical')
+                }
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
+          >
+            <Rows2 className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent>Split vertically</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label="Close pane"
+                disabled={!hasActivePane}
+                onClick={() => activePaneId && actions?.closePane(activePaneId)}
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
+          >
+            <X className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent>Close pane</TooltipContent>
+        </Tooltip>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Renders a single workspace's terminal frame: a bordered container with
+ * a workspace-specific header and the workspace's panel sub-tree.
+ */
+function WorkspaceFrame({
+  workspaceId,
+  subLayout,
+  activePaneId,
+}: {
+  readonly workspaceId: string | undefined
+  readonly subLayout: PanelNode
+  readonly activePaneId: string | null
+}) {
+  // Check if the active pane belongs to this workspace frame
+  const leaves = useMemo(() => getLeafNodes(subLayout), [subLayout])
+  const isActiveFrame = useMemo(
+    () => activePaneId != null && leaves.some((l) => l.id === activePaneId),
+    [activePaneId, leaves]
+  )
+
+  return (
+    <div
+      className={`flex h-full flex-col border-2 ${isActiveFrame ? 'border-primary' : 'border-transparent'}`}
+    >
+      <WorkspaceFrameHeader workspaceId={workspaceId} />
+      <div className="min-h-0 flex-1">
+        <PanelManager layout={subLayout} />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Renders workspace frames stacked vertically. Each workspace's terminals
+ * get their own frame with a header showing the project / branch name.
+ *
+ * When there's only one workspace, renders a single frame without
+ * resizable splitting overhead. With multiple workspaces, uses
+ * ResizablePanelGroup for vertical stacking.
+ */
+function WorkspaceFrames({
+  layout,
+  activePaneId,
+}: {
+  readonly layout: PanelNode
+  readonly activePaneId: string | null
+}) {
+  const workspaceIds = useMemo(() => getWorkspaceIds(layout), [layout])
+
+  const workspaceLayouts = useMemo(() => {
+    const layouts: {
+      workspaceId: string | undefined
+      subLayout: PanelNode
+    }[] = []
+    for (const wsId of workspaceIds) {
+      const subTree = filterTreeByWorkspace(layout, wsId)
+      if (subTree) {
+        layouts.push({ workspaceId: wsId, subLayout: subTree })
+      }
+    }
+    return layouts
+  }, [layout, workspaceIds])
+
+  // Single workspace — no need for resizable splitting
+  if (workspaceLayouts.length <= 1) {
+    const entry = workspaceLayouts[0]
+    if (!entry) {
+      return <PanelManager layout={undefined} />
+    }
+    return (
+      <WorkspaceFrame
+        activePaneId={activePaneId}
+        subLayout={entry.subLayout}
+        workspaceId={entry.workspaceId}
+      />
+    )
+  }
+
+  // Multiple workspaces — stack vertically with resizable handles
+  const equalSize = 100 / workspaceLayouts.length
+  return (
+    <ResizablePanelGroup orientation="vertical">
+      {workspaceLayouts.map((entry, index) => (
+        <WorkspaceFrameResizableChild
+          activePaneId={activePaneId}
+          defaultSize={equalSize}
+          index={index}
+          key={entry.workspaceId ?? 'no-workspace'}
+          subLayout={entry.subLayout}
+          workspaceId={entry.workspaceId}
+        />
+      ))}
+    </ResizablePanelGroup>
+  )
+}
+
+/**
+ * A single resizable child within the WorkspaceFrames vertical stack.
+ * Extracted to keep the map clean and provide stable keys.
+ */
+function WorkspaceFrameResizableChild({
+  workspaceId,
+  subLayout,
+  activePaneId,
+  defaultSize,
+  index,
+}: {
+  readonly workspaceId: string | undefined
+  readonly subLayout: PanelNode
+  readonly activePaneId: string | null
+  readonly defaultSize: number
+  readonly index: number
+}) {
+  return (
+    <>
+      {index > 0 && <ResizableHandle />}
+      <ResizablePanel defaultSize={`${defaultSize}%`} minSize="10%">
+        <WorkspaceFrame
+          activePaneId={activePaneId}
+          subLayout={subLayout}
+          workspaceId={workspaceId}
+        />
+      </ResizablePanel>
+    </>
+  )
+}
+
+/**
+ * Renders the main panel area content, handling the reconciling/loading,
+ * workspace frames, or empty state.
+ */
+function PanelContent({
+  isReconciling,
+  layout,
+  activePaneId,
+}: {
+  readonly isReconciling: boolean
+  readonly layout: PanelNode | undefined
+  readonly activePaneId: string | null
+}) {
+  if (isReconciling) {
+    return (
+      <div className="flex h-full items-center justify-center bg-background">
+        <p className="text-muted-foreground text-sm">
+          Restoring terminal sessions...
+        </p>
+      </div>
+    )
+  }
+  if (layout) {
+    return <WorkspaceFrames activePaneId={activePaneId} layout={layout} />
+  }
+  return <PanelManager layout={undefined} />
+}
+
 function HomeComponent() {
   const { layout, panelActions, activePaneId, leafPaneIds, isReconciling } =
     usePanelLayout()
@@ -1476,9 +1581,7 @@ function HomeComponent() {
             </div>
           )}
           {hasProjects && mainView !== 'plan' && (
-            <div
-              className={`flex h-full flex-col border-2 ${mainView === 'panels' && activePaneId ? 'border-primary' : 'border-transparent'}`}
-            >
+            <div className="flex h-full flex-col">
               <PanelHeaderBar
                 layout={layout}
                 mainView={mainView}
@@ -1495,22 +1598,20 @@ function HomeComponent() {
                     leafPaneIds={leafPaneIds}
                     onMetaWWithoutPane={handleMetaWWithoutPane}
                   />
-                  <div className="min-h-0 flex-1">
-                    {isReconciling ? (
-                      <div className="flex h-full items-center justify-center bg-background">
-                        <p className="text-muted-foreground text-sm">
-                          Restoring terminal sessions...
-                        </p>
-                      </div>
-                    ) : (
-                      <PanelManager layout={layout} />
-                    )}
-                  </div>
+                  <PanelContent
+                    activePaneId={activePaneId}
+                    isReconciling={isReconciling}
+                    layout={layout}
+                  />
                 </>
               )}
               {mainView === 'dashboard' && (
-                <div className="min-h-0 flex-1">
-                  <WorkspaceDashboard />
+                <div
+                  className={`flex h-full flex-col border-2 ${activePaneId ? 'border-primary' : 'border-transparent'}`}
+                >
+                  <div className="min-h-0 flex-1">
+                    <WorkspaceDashboard />
+                  </div>
                 </div>
               )}
             </div>

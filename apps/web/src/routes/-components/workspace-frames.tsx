@@ -90,15 +90,28 @@ function WorkspaceFrame({
       return
     }
 
-    if (isMinimized) {
-      if (!panel.isCollapsed()) {
-        panel.collapse()
+    // Panel constraints may not be registered yet when the ResizablePanelGroup
+    // first mounts (e.g. transitioning from 1 to 2+ workspaces). The library
+    // throws synchronously from isCollapsed/collapse/expand in that case.
+    // This is a transient state — React will re-run this effect once the panel
+    // is fully registered.
+    try {
+      if (isMinimized) {
+        if (!panel.isCollapsed()) {
+          panel.collapse()
+        }
+        return
       }
-      return
-    }
 
-    if (panel.isCollapsed()) {
-      panel.expand()
+      if (panel.isCollapsed()) {
+        panel.expand()
+      }
+    } catch (error) {
+      // Panel not yet registered with its group — will retry on next render.
+      console.warn(
+        '[WorkspaceFrame] Panel constraints not yet available:',
+        error
+      )
     }
   }, [isCollapsible, isMinimized, panelRef])
 

@@ -13,14 +13,17 @@
 import type { LeafNode, SplitNode } from '@laborer/shared/types'
 import { describe, expect, it } from 'vitest'
 import {
+  closePane,
   ensureValidActivePaneId,
   filterTreeByWorkspace,
   findLeafByTerminalId,
+  findNodeById,
   findSiblingPaneId,
   getFirstLeafId,
   getLeafIds,
   getLeafNodes,
   getWorkspaceIds,
+  splitPane,
 } from '../src/panels/layout-utils'
 
 // ---------------------------------------------------------------------------
@@ -772,5 +775,292 @@ describe('filterTreeByWorkspace', () => {
 
   it('returns undefined when filtering for undefined but all leaves have workspaceIds', () => {
     expect(filterTreeByWorkspace(twoWorkspaceSplit, undefined)).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: findNodeById
+// ---------------------------------------------------------------------------
+
+describe('findNodeById', () => {
+  it('finds a root leaf by its ID', () => {
+    const result = findNodeById(singleLeaf, 'pane-A')
+    expect(result).toBe(singleLeaf)
+  })
+
+  it('returns undefined for a non-existent ID on a leaf', () => {
+    expect(findNodeById(singleLeaf, 'nonexistent')).toBeUndefined()
+  })
+
+  it('finds a leaf child in a flat split', () => {
+    const result = findNodeById(twoChildSplit, 'pane-B')
+    expect(result?._tag).toBe('LeafNode')
+    expect(result?.id).toBe('pane-B')
+  })
+
+  it('finds the SplitNode itself by its ID', () => {
+    const result = findNodeById(twoChildSplit, 'split-root')
+    expect(result).toBe(twoChildSplit)
+  })
+
+  it('finds a deeply nested leaf', () => {
+    const result = findNodeById(deeplyNested, 'pane-C')
+    expect(result?._tag).toBe('LeafNode')
+    expect(result?.id).toBe('pane-C')
+  })
+
+  it('finds a nested SplitNode by ID', () => {
+    const result = findNodeById(nestedLayout, 'split-bottom-right')
+    expect(result?._tag).toBe('SplitNode')
+    expect(result?.id).toBe('split-bottom-right')
+  })
+
+  it('returns undefined for a non-existent ID in a nested layout', () => {
+    expect(findNodeById(nestedLayout, 'nonexistent')).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: splitPane
+// ---------------------------------------------------------------------------
+
+describe('splitPane', () => {
+  it('splits a root leaf into a SplitNode with two children', () => {
+    const result = splitPane(singleLeaf, 'pane-A', 'horizontal')
+    expect(result._tag).toBe('SplitNode')
+    const split = result as SplitNode
+    expect(split.direction).toBe('horizontal')
+    expect(split.children).toHaveLength(2)
+    expect(split.sizes).toEqual([50, 50])
+  })
+
+  it('preserves the original pane as the first child', () => {
+    const result = splitPane(singleLeaf, 'pane-A', 'horizontal')
+    const split = result as SplitNode
+    expect(split.children[0]).toBe(singleLeaf)
+  })
+
+  it('creates a new empty terminal pane as the second child', () => {
+    const result = splitPane(singleLeaf, 'pane-A', 'vertical')
+    const split = result as SplitNode
+    const newPane = split.children[1] as LeafNode
+    expect(newPane._tag).toBe('LeafNode')
+    expect(newPane.paneType).toBe('terminal')
+    expect(newPane.terminalId).toBeUndefined()
+    expect(newPane.id).not.toBe('pane-A')
+  })
+
+  it('inherits workspaceId from the source pane', () => {
+    const result = splitPane(leafWithWorkspace, 'pane-A', 'horizontal')
+    const split = result as SplitNode
+    const newPane = split.children[1] as LeafNode
+    expect(newPane.workspaceId).toBe('ws-1')
+  })
+
+  it('splits a pane in a flat split, inserting adjacent when same direction', () => {
+    // Splitting pane-A horizontally in a horizontal split inserts adjacent
+    const result = splitPane(twoChildSplit, 'pane-A', 'horizontal')
+    expect(result._tag).toBe('SplitNode')
+    const split = result as SplitNode
+    // Should have 3 children now (A, new, B) — inserted adjacent, not nested
+    expect(split.children).toHaveLength(3)
+    expect((split.children[0] as LeafNode).id).toBe('pane-A')
+    expect((split.children[2] as LeafNode).id).toBe('pane-B')
+    // New pane inserted after A
+    const newPane = split.children[1] as LeafNode
+    expect(newPane._tag).toBe('LeafNode')
+    expect(newPane.paneType).toBe('terminal')
+  })
+
+  it('splits a pane in a flat split, creating nested split when different direction', () => {
+    // Splitting pane-A vertically in a horizontal split creates a nested V-split
+    const result = splitPane(twoChildSplit, 'pane-A', 'vertical')
+    expect(result._tag).toBe('SplitNode')
+    const split = result as SplitNode
+    // Root should still have 2 children (nested split replaced A, B stays)
+    expect(split.children).toHaveLength(2)
+    expect(split.children[0]._tag).toBe('SplitNode')
+    const nestedSplit = split.children[0] as SplitNode
+    expect(nestedSplit.direction).toBe('vertical')
+    expect(nestedSplit.children).toHaveLength(2)
+    expect((nestedSplit.children[0] as LeafNode).id).toBe('pane-A')
+  })
+
+  it('returns the original tree when the paneId is not found', () => {
+    const result = splitPane(twoChildSplit, 'nonexistent', 'horizontal')
+    expect(result).toBe(twoChildSplit)
+  })
+
+  it('splits a deeply nested pane', () => {
+    // Split pane-C in deeplyNested (which is inside split-3 horizontal)
+    const result = splitPane(deeplyNested, 'pane-C', 'horizontal')
+    // pane-C is a direct child of split-3 (horizontal), same direction →
+    // adjacent insert, split-3 gets a 3rd child
+    const split3 = findNodeById(result, 'split-3')
+    expect(split3?._tag).toBe('SplitNode')
+    expect((split3 as SplitNode).children).toHaveLength(3)
+  })
+
+  it('accepts custom newPaneContent', () => {
+    const result = splitPane(singleLeaf, 'pane-A', 'horizontal', {
+      terminalId: 'term-custom',
+      workspaceId: 'ws-custom',
+    })
+    const split = result as SplitNode
+    const newPane = split.children[1] as LeafNode
+    expect(newPane.terminalId).toBe('term-custom')
+    expect(newPane.workspaceId).toBe('ws-custom')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: closePane
+// ---------------------------------------------------------------------------
+
+describe('closePane', () => {
+  it('returns undefined when closing the only root leaf', () => {
+    expect(closePane(singleLeaf, 'pane-A')).toBeUndefined()
+  })
+
+  it('returns the remaining leaf when closing one child of a 2-child split', () => {
+    const result = closePane(twoChildSplit, 'pane-A')
+    expect(result?._tag).toBe('LeafNode')
+    expect((result as LeafNode).id).toBe('pane-B')
+  })
+
+  it('collapses the split when closing leaves the split with one child', () => {
+    const result = closePane(twoChildSplit, 'pane-B')
+    // Should collapse to just pane-A (not a SplitNode wrapping one child)
+    expect(result?._tag).toBe('LeafNode')
+    expect((result as LeafNode).id).toBe('pane-A')
+  })
+
+  it('keeps a SplitNode with redistributed sizes when closing one of 3 children', () => {
+    const result = closePane(threeChildSplit, 'pane-B')
+    expect(result?._tag).toBe('SplitNode')
+    const split = result as SplitNode
+    expect(split.children).toHaveLength(2)
+    expect((split.children[0] as LeafNode).id).toBe('pane-A')
+    expect((split.children[1] as LeafNode).id).toBe('pane-C')
+    // Sizes should be redistributed evenly
+    expect(split.sizes[0]).toBe(50)
+    expect(split.sizes[1]).toBe(50)
+  })
+
+  it('closes a nested leaf and collapses parent when only one sibling remains', () => {
+    // nestedLayout: H-Split(A, V-Split(B, H-Split(C, D)))
+    // Close pane-C → H-Split(C, D) collapses to just D
+    // V-Split(B, D) remains
+    const result = closePane(nestedLayout, 'pane-C')
+    expect(result?._tag).toBe('SplitNode')
+    const root = result as SplitNode
+    expect(root.children).toHaveLength(2)
+    expect((root.children[0] as LeafNode).id).toBe('pane-A')
+    // Second child should be a V-Split(B, D) after collapse
+    const rightSplit = root.children[1] as SplitNode
+    expect(rightSplit._tag).toBe('SplitNode')
+    expect(rightSplit.direction).toBe('vertical')
+    expect(rightSplit.children).toHaveLength(2)
+    expect((rightSplit.children[0] as LeafNode).id).toBe('pane-B')
+    expect((rightSplit.children[1] as LeafNode).id).toBe('pane-D')
+  })
+
+  it('returns the original tree when paneId is not found', () => {
+    const result = closePane(twoChildSplit, 'nonexistent')
+    expect(result).toBe(twoChildSplit)
+  })
+
+  it('returns the original tree when trying to close a non-leaf ID', () => {
+    // split-root is a SplitNode, not a LeafNode — closePane only closes leaves
+    const result = closePane(twoChildSplit, 'split-root')
+    expect(result).toBe(twoChildSplit)
+  })
+
+  it('closes a deeply nested leaf', () => {
+    // deeplyNested: H-Split(V-Split(H-Split(V-Split(A,B),C),D), E)
+    // Close pane-A → V-Split(A,B) collapses to B → H-Split(B,C)
+    const result = closePane(deeplyNested, 'pane-A')
+    if (!result) {
+      throw new Error('Expected result to be defined')
+    }
+    const leafIds = getLeafIds(result)
+    expect(leafIds).toContain('pane-B')
+    expect(leafIds).toContain('pane-C')
+    expect(leafIds).toContain('pane-D')
+    expect(leafIds).toContain('pane-E')
+    expect(leafIds).not.toContain('pane-A')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: splitPane + getLeafIds — new pane discovery pattern
+//
+// This pattern is used by handleSplitPane in the route component to find
+// the newly created pane after a split so a terminal can be auto-spawned
+// into it. The test verifies the invariant: diffing leaf IDs before and
+// after a split always yields exactly one new pane ID.
+// ---------------------------------------------------------------------------
+
+describe('splitPane + getLeafIds new pane discovery', () => {
+  it('finds exactly one new pane after splitting a root leaf', () => {
+    const oldIds = new Set(getLeafIds(singleLeaf))
+    const newTree = splitPane(singleLeaf, 'pane-A', 'horizontal')
+    const newIds = getLeafIds(newTree)
+    const addedIds = newIds.filter((id) => !oldIds.has(id))
+    expect(addedIds).toHaveLength(1)
+  })
+
+  it('the discovered new pane is an empty terminal leaf', () => {
+    const oldIds = new Set(getLeafIds(singleLeaf))
+    const newTree = splitPane(singleLeaf, 'pane-A', 'vertical')
+    const newIds = getLeafIds(newTree)
+    const newPaneId = newIds.find((id) => !oldIds.has(id))
+    expect(newPaneId).toBeDefined()
+    const newPane = findNodeById(newTree, newPaneId as string)
+    expect(newPane?._tag).toBe('LeafNode')
+    expect((newPane as LeafNode).paneType).toBe('terminal')
+    expect((newPane as LeafNode).terminalId).toBeUndefined()
+  })
+
+  it('the discovered new pane inherits the source pane workspaceId', () => {
+    const oldIds = new Set(getLeafIds(leafWithWorkspace))
+    const newTree = splitPane(leafWithWorkspace, 'pane-A', 'horizontal')
+    const newIds = getLeafIds(newTree)
+    const newPaneId = newIds.find((id) => !oldIds.has(id))
+    expect(newPaneId).toBeDefined()
+    const newPane = findNodeById(newTree, newPaneId as string) as LeafNode
+    expect(newPane.workspaceId).toBe('ws-1')
+  })
+
+  it('finds exactly one new pane after splitting in a flat same-direction split', () => {
+    const oldIds = new Set(getLeafIds(twoChildSplit))
+    const newTree = splitPane(twoChildSplit, 'pane-A', 'horizontal')
+    const newIds = getLeafIds(newTree)
+    const addedIds = newIds.filter((id) => !oldIds.has(id))
+    expect(addedIds).toHaveLength(1)
+  })
+
+  it('finds exactly one new pane after splitting in a nested layout', () => {
+    const oldIds = new Set(getLeafIds(nestedLayout))
+    const newTree = splitPane(nestedLayout, 'pane-D', 'vertical')
+    const newIds = getLeafIds(newTree)
+    const addedIds = newIds.filter((id) => !oldIds.has(id))
+    expect(addedIds).toHaveLength(1)
+  })
+
+  it('finds exactly one new pane after splitting in a deeply nested layout', () => {
+    const oldIds = new Set(getLeafIds(deeplyNested))
+    const newTree = splitPane(deeplyNested, 'pane-B', 'horizontal')
+    const newIds = getLeafIds(newTree)
+    const addedIds = newIds.filter((id) => !oldIds.has(id))
+    expect(addedIds).toHaveLength(1)
+  })
+
+  it('no new pane when splitting a non-existent paneId', () => {
+    const oldIds = new Set(getLeafIds(twoChildSplit))
+    const newTree = splitPane(twoChildSplit, 'nonexistent', 'horizontal')
+    const newIds = getLeafIds(newTree)
+    const addedIds = newIds.filter((id) => !oldIds.has(id))
+    expect(addedIds).toHaveLength(0)
   })
 })

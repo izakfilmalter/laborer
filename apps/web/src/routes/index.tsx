@@ -517,13 +517,35 @@ function usePanelLayout() {
     store,
   ])
 
+  /**
+   * Ref for handleAssignTerminalToPane to break the circular dependency
+   * between handleSplitPane and handleAssignTerminalToPane (which is
+   * defined later). Updated in a useEffect below.
+   */
+  const assignTerminalToPaneRef = useRef<
+    ((terminalId: string, workspaceId: string, paneId?: string) => void) | null
+  >(null)
+
   const handleSplitPane = useCallback(
     (paneId: string, direction: 'horizontal' | 'vertical') => {
       const base = persistedLayoutTree ?? initialLayout
       if (!base) {
         return
       }
+
+      // Resolve the source pane's workspaceId so the new terminal
+      // inherits the same workspace context.
+      const sourceNode = findNodeById(base, paneId)
+      const sourceWorkspaceId =
+        sourceNode?._tag === 'LeafNode' ? sourceNode.workspaceId : undefined
+
+      const oldLeafIds = new Set(getLeafIds(base))
       const newTree = splitPane(base, paneId, direction)
+
+      // Find the newly created pane by diffing leaf IDs
+      const newLeafIds = getLeafIds(newTree)
+      const newPaneId = newLeafIds.find((id) => !oldLeafIds.has(id))
+
       store.commit(
         layoutSplit({
           id: LAYOUT_SESSION_ID,
@@ -531,8 +553,31 @@ function usePanelLayout() {
           activePaneId: persistedActivePaneId,
         })
       )
+
+      // Auto-spawn a terminal in the new pane if we have a workspace
+      if (newPaneId && sourceWorkspaceId) {
+        spawnTerminal({
+          payload: { workspaceId: sourceWorkspaceId },
+        })
+          .then((result) => {
+            assignTerminalToPaneRef.current?.(
+              result.id,
+              sourceWorkspaceId,
+              newPaneId
+            )
+          })
+          .catch((error) => {
+            console.warn('[split-pane] auto-spawn terminal failed:', error)
+          })
+      }
     },
-    [persistedLayoutTree, initialLayout, persistedActivePaneId, store]
+    [
+      persistedLayoutTree,
+      initialLayout,
+      persistedActivePaneId,
+      store,
+      spawnTerminal,
+    ]
   )
 
   const handleClosePane = useCallback(
@@ -771,6 +816,10 @@ function usePanelLayout() {
       commitAssignment,
     ]
   )
+
+  // Keep the assignTerminalToPaneRef in sync with the latest handler
+  // so handleSplitPane can call it without a circular dependency.
+  assignTerminalToPaneRef.current = handleAssignTerminalToPane
 
   /**
    * Resize a pane in the given direction by adjusting the parent split's
@@ -1578,7 +1627,10 @@ function HomeComponent() {
         onOpenChange={setIsCloseAppDialogOpen}
         open={isCloseAppDialogOpen}
       />
-      <ResizablePanelGroup orientation="horizontal" style={{height: 'calc(100vh - 53px)'}}>
+      <ResizablePanelGroup
+        orientation="horizontal"
+        style={{ height: 'calc(100vh - 53px)' }}
+      >
         {/* Sidebar — search, project groups, workspace list, health check */}
         <ResizablePanel
           collapsedSize="0%"

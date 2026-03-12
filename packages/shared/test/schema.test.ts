@@ -606,7 +606,7 @@ describe('LiveStore schema', () => {
         // Seed a layout
         store.commit(
           events.layoutRestored({
-            id: 'session-1',
+            windowId: 'session-1',
             layoutTree: splitLayout,
             activePaneId: 'pane-1',
           })
@@ -615,7 +615,7 @@ describe('LiveStore schema', () => {
         // Reorder workspaces
         store.commit(
           events.layoutWorkspacesReordered({
-            id: 'session-1',
+            windowId: 'session-1',
             workspaceOrder: ['workspace-2', 'workspace-1'],
           })
         )
@@ -629,7 +629,7 @@ describe('LiveStore schema', () => {
         // Now simulate clicking a pane (layoutPaneAssigned)
         store.commit(
           events.layoutPaneAssigned({
-            id: 'session-1',
+            windowId: 'session-1',
             layoutTree: splitLayout,
             activePaneId: 'pane-2',
           })
@@ -638,7 +638,7 @@ describe('LiveStore schema', () => {
         // workspaceOrder must survive the layoutPaneAssigned event
         assert.deepStrictEqual(store.query(tables.panelLayout), [
           {
-            id: 'session-1',
+            windowId: 'session-1',
             layoutTree: splitLayout,
             activePaneId: 'pane-2',
             workspaceOrder: ['workspace-2', 'workspace-1'],
@@ -648,7 +648,7 @@ describe('LiveStore schema', () => {
         // Also verify layoutSplit preserves workspaceOrder
         store.commit(
           events.layoutSplit({
-            id: 'session-1',
+            windowId: 'session-1',
             layoutTree: splitLayout,
             activePaneId: 'pane-1',
           })
@@ -662,7 +662,7 @@ describe('LiveStore schema', () => {
         // Also verify layoutPaneClosed preserves workspaceOrder
         store.commit(
           events.layoutPaneClosed({
-            id: 'session-1',
+            windowId: 'session-1',
             layoutTree: leafPane,
             activePaneId: 'pane-1',
           })
@@ -676,7 +676,7 @@ describe('LiveStore schema', () => {
         // Also verify layoutRestored preserves workspaceOrder
         store.commit(
           events.layoutRestored({
-            id: 'session-1',
+            windowId: 'session-1',
             layoutTree: restoredLayout,
             activePaneId: null,
           })

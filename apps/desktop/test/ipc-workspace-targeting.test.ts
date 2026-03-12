@@ -85,7 +85,7 @@ describe('workspace-to-window targeting', () => {
       registerIpcHandlers,
       REPORT_VISIBLE_WORKSPACES_CHANNEL,
       SEND_NOTIFICATION_CHANNEL,
-      NOTIFICATION_CLICKED_CHANNEL,
+      NOTIFICATION_CLICKED_CHANNEL: _NOTIFICATION_CLICKED_CHANNEL,
     } = await import('../src/ipc.js')
 
     const windowA = createMockWindow(1)
@@ -106,7 +106,7 @@ describe('workspace-to-window targeting', () => {
     expect(reportHandler).toBeDefined()
 
     fromWebContentsMock.mockReturnValue(windowB)
-    reportHandler!({ sender: windowB.webContents }, [
+    reportHandler?.({ sender: windowB.webContents }, [
       'workspace-42',
       'workspace-99',
     ])
@@ -115,17 +115,10 @@ describe('workspace-to-window targeting', () => {
     const sendHandler = ipcHandlers.get(SEND_NOTIFICATION_CHANNEL)
     expect(sendHandler).toBeDefined()
 
-    sendHandler!(
+    sendHandler?.(
       { sender: windowA.webContents },
       { title: 'Test', body: 'Agent done', workspaceId: 'workspace-42' }
     )
-
-    // Extract the click handler from the Notification mock
-    const { Notification } = await import('electron')
-    const notificationInstance = new Notification({
-      title: 'Test',
-      body: 'Agent done',
-    })
 
     // The actual notification was created inside sendHandler — we need to
     // test through the registry directly instead
@@ -156,11 +149,11 @@ describe('workspace-to-window targeting', () => {
           : never
     )
 
-    const reportHandler = ipcHandlers.get(REPORT_VISIBLE_WORKSPACES_CHANNEL)!
+    const reportHandler = ipcHandlers.get(REPORT_VISIBLE_WORKSPACES_CHANNEL)
     fromWebContentsMock.mockReturnValue(window)
 
     // First report: workspace-1 and workspace-2
-    reportHandler({ sender: window.webContents }, [
+    reportHandler?.({ sender: window.webContents }, [
       'workspace-1',
       'workspace-2',
     ])
@@ -170,7 +163,7 @@ describe('workspace-to-window targeting', () => {
     expect(registry.findWindowForWorkspace('workspace-2')).toBe(window)
 
     // Second report: only workspace-3 (workspace-1 and workspace-2 removed)
-    reportHandler({ sender: window.webContents }, ['workspace-3'])
+    reportHandler?.({ sender: window.webContents }, ['workspace-3'])
 
     expect(registry.findWindowForWorkspace('workspace-1')).toBeNull()
     expect(registry.findWindowForWorkspace('workspace-2')).toBeNull()
@@ -195,10 +188,10 @@ describe('workspace-to-window targeting', () => {
           : never
     )
 
-    const reportHandler = ipcHandlers.get(REPORT_VISIBLE_WORKSPACES_CHANNEL)!
+    const reportHandler = ipcHandlers.get(REPORT_VISIBLE_WORKSPACES_CHANNEL)
     fromWebContentsMock.mockReturnValue(window)
 
-    reportHandler({ sender: window.webContents }, ['workspace-alpha'])
+    reportHandler?.({ sender: window.webContents }, ['workspace-alpha'])
 
     const registry = getWorkspaceWindowRegistry()
     expect(registry.findWindowForWorkspace('workspace-alpha')).toBe(window)
@@ -226,10 +219,10 @@ describe('workspace-to-window targeting', () => {
           : never
     )
 
-    const reportHandler = ipcHandlers.get(REPORT_VISIBLE_WORKSPACES_CHANNEL)!
+    const reportHandler = ipcHandlers.get(REPORT_VISIBLE_WORKSPACES_CHANNEL)
     fromWebContentsMock.mockReturnValue(window)
 
-    reportHandler({ sender: window.webContents }, ['workspace-beta'])
+    reportHandler?.({ sender: window.webContents }, ['workspace-beta'])
 
     const registry = getWorkspaceWindowRegistry()
     expect(registry.findWindowForWorkspace('workspace-beta')).toBe(window)
@@ -364,11 +357,11 @@ describe('workspace-to-window targeting', () => {
           : never
     )
 
-    const reportHandler = ipcHandlers.get(REPORT_VISIBLE_WORKSPACES_CHANNEL)!
+    const reportHandler = ipcHandlers.get(REPORT_VISIBLE_WORKSPACES_CHANNEL)
     fromWebContentsMock.mockReturnValue(window)
 
     // Report mixed valid and invalid IDs
-    reportHandler({ sender: window.webContents }, [
+    reportHandler?.({ sender: window.webContents }, [
       'valid-ws',
       '',
       42,

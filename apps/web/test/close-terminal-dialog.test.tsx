@@ -23,7 +23,7 @@ vi.mock('@/components/ui/alert-dialog', () => ({
     onKeyDown,
   }: {
     children: React.ReactNode
-    onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>
+    onKeyDown?: React.KeyboardEventHandler<HTMLDialogElement>
   }) => (
     // biome-ignore lint/a11y/noNoninteractiveElementInteractions: test stub for dialog onKeyDown
     <dialog data-testid="dialog-content" onKeyDown={onKeyDown} open>

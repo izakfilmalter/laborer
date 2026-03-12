@@ -78,10 +78,18 @@ const createBrowserWindowMock = () => {
 
     emit(event: string, ...args: unknown[]): void {
       const handlers = this.eventHandlers.get(event)
-      handlers?.forEach((handler) => handler(...args))
+      if (handlers) {
+        for (const handler of handlers) {
+          handler(...args)
+        }
+      }
 
       const onceHandlers = this.onceEventHandlers.get(event)
-      onceHandlers?.forEach((handler) => handler(...args))
+      if (onceHandlers) {
+        for (const handler of onceHandlers) {
+          handler(...args)
+        }
+      }
       this.onceEventHandlers.delete(event)
     }
   }

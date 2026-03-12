@@ -694,19 +694,19 @@ const materializers = State.SQLite.materializers(events, {
   'v1.LayoutSplit': ({ windowId, layoutTree, activePaneId }) =>
     panelLayout
       .insert({ windowId, layoutTree, activePaneId })
-      .onConflict('windowId', 'replace'),
+      .onConflict('windowId', 'update', { layoutTree, activePaneId }),
   'v1.LayoutPaneClosed': ({ windowId, layoutTree, activePaneId }) =>
     panelLayout
       .insert({ windowId, layoutTree, activePaneId })
-      .onConflict('windowId', 'replace'),
+      .onConflict('windowId', 'update', { layoutTree, activePaneId }),
   'v1.LayoutPaneAssigned': ({ windowId, layoutTree, activePaneId }) =>
     panelLayout
       .insert({ windowId, layoutTree, activePaneId })
-      .onConflict('windowId', 'replace'),
+      .onConflict('windowId', 'update', { layoutTree, activePaneId }),
   'v1.LayoutRestored': ({ windowId, layoutTree, activePaneId }) =>
     panelLayout
       .insert({ windowId, layoutTree, activePaneId })
-      .onConflict('windowId', 'replace'),
+      .onConflict('windowId', 'update', { layoutTree, activePaneId }),
   'v1.LayoutWorkspacesReordered': ({ windowId, workspaceOrder }) =>
     panelLayout.update({ workspaceOrder }).where({ windowId }),
 })

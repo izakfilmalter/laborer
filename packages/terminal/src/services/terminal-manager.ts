@@ -441,8 +441,25 @@ const detectForShellPid = (
   const children = childrenByPid.get(shellPid)
   const hasChildren = children !== undefined && children.length > 0
 
+  // Check if the shell PID has been exec-replaced by a non-shell process.
+  // This happens with `zsh -c opencode` where zsh exec's into opencode,
+  // so the shellPid IS the agent process. We need to include it in the
+  // chain so the UI shows e.g. "OpenCode › Node.js › biome" instead of
+  // just "Node.js › biome".
+  const shellComm = commByPid.get(shellPid) ?? ''
+  const shellClassified = classifyProcess(shellComm)
+  const isExecReplaced =
+    shellClassified !== null && shellClassified.category !== 'shell'
+
   if (hasChildren) {
     const chain: ForegroundProcess[] = []
+
+    // If the shell was exec-replaced (e.g., zsh → opencode), include the
+    // exec'd process as the root of the chain before walking children.
+    if (isExecReplaced) {
+      chain.push(shellClassified)
+    }
+
     const firstChildPid = children[0] ?? shellPid
     walkProcessTree(firstChildPid, childrenByPid, commByPid, chain)
 
@@ -453,19 +470,15 @@ const detectForShellPid = (
     }
   }
 
-  // No children — check if the shell exec'd into something else
-  const shellComm = commByPid.get(shellPid) ?? ''
-  const classified = classifyProcess(shellComm)
-
-  if (classified === null || classified.category === 'shell') {
+  if (!isExecReplaced) {
     return EMPTY_DETECTION
   }
 
   // Shell exec'd into another process (e.g., sh -c cat → cat)
   return {
-    foregroundProcess: classified,
+    foregroundProcess: shellClassified,
     hasChildProcess: false,
-    processChain: [classified],
+    processChain: [shellClassified],
   }
 }
 
@@ -668,22 +681,34 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
       /**
        * Compute the agent status for a terminal based on the current
-       * foreground process and the previous tracked status.
+       * process chain and the previous tracked status.
+       *
+       * An agent is considered "active" if it appears anywhere in the
+       * process chain (typically as the root). This handles the common
+       * case where `zsh -c opencode` exec-replaces into opencode, which
+       * then spawns tool subprocesses like biome via node. The agent is
+       * still running — it just has child processes doing work.
        *
        * State transitions:
-       * - Agent is foreground → `active`
+       * - Agent in chain → `active`
        * - Was `active`, now idle (no foreground or shell) → `waiting_for_input`
        * - Was `waiting_for_input`, agent comes back → `active`
-       * - Non-agent foreground replaces agent → clear to `null`
+       * - No agent in chain, non-shell foreground → clear to `null`
        * - No agent ever seen → `null`
        */
       const computeAgentStatus = (
         terminalId: string,
-        foregroundProcess: ForegroundProcess | null
+        foregroundProcess: ForegroundProcess | null,
+        processChain: readonly ForegroundProcess[]
       ): AgentStatus | null => {
         const previous = agentStatusMap.get(terminalId) ?? null
 
-        if (foregroundProcess?.category === 'agent') {
+        // Check if any process in the chain is an agent (typically the root).
+        // This correctly detects agents that exec-replace the shell and then
+        // spawn child tool processes (e.g., opencode → node → biome).
+        const hasAgentInChain = processChain.some((p) => p.category === 'agent')
+
+        if (hasAgentInChain) {
           agentStatusMap.set(terminalId, 'active')
           return 'active'
         }
@@ -1100,6 +1125,30 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       // listTerminals
       // ---------------------------------------------------------------
 
+      /** Build a TerminalRecord from internal state + detection results. */
+      const toTerminalRecord = (
+        terminal: ManagedTerminal,
+        detected: ProcessDetectionResult | undefined
+      ): TerminalRecord => {
+        const foregroundProcess = detected?.foregroundProcess ?? null
+        const processChain = detected?.processChain ?? []
+        return {
+          id: terminal.id,
+          workspaceId: terminal.workspaceId,
+          command: terminal.command,
+          args: [...terminal.args],
+          cwd: terminal.cwd,
+          agentStatus:
+            terminal.status === 'running'
+              ? computeAgentStatus(terminal.id, foregroundProcess, processChain)
+              : null,
+          foregroundProcess,
+          hasChildProcess: detected?.hasChildProcess ?? false,
+          processChain,
+          status: terminal.status,
+        }
+      }
+
       /**
        * List all terminals with process detection.
        *
@@ -1136,30 +1185,9 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             detectProcessesForPids(shellPids)
           )
 
-          const results: TerminalRecord[] = []
-          for (const terminal of terminalsInScope) {
-            const detected = detectionResults.get(terminal.id)
-            results.push({
-              id: terminal.id,
-              workspaceId: terminal.workspaceId,
-              command: terminal.command,
-              args: [...terminal.args],
-              cwd: terminal.cwd,
-              agentStatus:
-                terminal.status === 'running'
-                  ? computeAgentStatus(
-                      terminal.id,
-                      detected?.foregroundProcess ?? null
-                    )
-                  : null,
-              foregroundProcess: detected?.foregroundProcess ?? null,
-              hasChildProcess: detected?.hasChildProcess ?? false,
-              processChain: detected?.processChain ?? [],
-              status: terminal.status,
-            })
-          }
-
-          return results
+          return terminalsInScope.map((terminal) =>
+            toTerminalRecord(terminal, detectionResults.get(terminal.id))
+          )
         }
       )
 

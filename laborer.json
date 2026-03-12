@@ -2,5 +2,6 @@
   "devServer": {
     "startCommand": "bun dev"
   },
-  "setupScripts": ["sh ./scripts/worktree-setup.sh"]
+  "setupScripts": ["sh ./scripts/worktree-setup.sh"],
+  "agent": "opencode"
 }

@@ -67,3 +67,13 @@
 - Updated `usePanelLayout` to persist repaired sessions back to LiveStore, so stale `activePaneId` pointers and corrupted window-session records self-heal instead of lingering across launches.
 - Added unit coverage for layout repair helpers plus hook coverage for both stale pane references and a corrupted restore record falling back to a safe default window session.
 - Verified with `bun run test` and `bun run typecheck` in `apps/web`.
+
+2026-03-12 - Issue 11: Focus Existing Window for Open Workspace
+- Selected Issue 11 as the highest-priority remaining task because it is the only unblocked issue left and completing it unblocks the final UX-hardening pass (Issue 12).
+- Added `focusWindowForWorkspace` method to the DesktopBridge interface so the renderer can ask the main process whether a workspace is already visible in another window.
+- Added a new `FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL` IPC handler in the main process that uses the existing `WorkspaceWindowRegistry` to find the target window, compares it against the requesting window to avoid self-focus, and sends an `ACTIVATE_WORKSPACE_CHANNEL` message to the target renderer so it can activate the workspace's pane.
+- Added `onActivateWorkspace` subscription to the DesktopBridge so the target renderer receives workspace activation events, and created a `useActivateWorkspace` hook that wires the event to the existing pane-focus logic.
+- Gated `handleAssignTerminalToPane` in the central panel layout hook with the `focusExistingWindowForWorkspace` check, so all eight user-facing call sites (start loop, spawn terminal, spawn agent, select terminal, review PR, fix findings, drag-drop, and empty pane spawn) are covered by a single choke point.
+- Added desktop IPC tests covering cross-window focus, same-window no-op, and unknown-workspace fallback.
+- Added web panel layout tests proving that terminal assignment is skipped when the workspace is open in another window and proceeds normally when it is not.
+- Verified with `bun run test` and `bun run typecheck` in both `apps/desktop` and `apps/web`.

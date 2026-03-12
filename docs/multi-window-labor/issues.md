@@ -231,13 +231,13 @@ Make workspace-targeting flows window-aware so Laborer focuses the already-open 
 
 ## Acceptance criteria
 
-- [ ] When a targeted workspace is already open in another window, Laborer focuses that existing window
-- [ ] The targeting path does not create a duplicate pane for an already-open workspace in v1
-- [ ] Tests cover at least one notification or action resolving to an existing window
+- [x] When a targeted workspace is already open in another window, Laborer focuses that existing window
+- [x] The targeting path does not create a duplicate pane for an already-open workspace in v1
+- [x] Tests cover at least one notification or action resolving to an existing window
 
 ## Blocked by
 
-None - can start immediately
+None - completed
 
 ## User stories addressed
 
@@ -283,5 +283,5 @@ Do a final pass on multi-window edge cases and user feel without expanding scope
 | 8 | Restore All Windows on Relaunch | None | Done |
 | 9 | Invalid Session Repair | None | Done |
 | 10 | Preserve Closed Window Sessions | None | Done |
-| 11 | Focus Existing Window for Open Workspace | 5 | Ready |
-| 12 | Multi-Window UX Hardening | 11 | Blocked |
+| 11 | Focus Existing Window for Open Workspace | 5 | Done |
+| 12 | Multi-Window UX Hardening | 11 | Ready |

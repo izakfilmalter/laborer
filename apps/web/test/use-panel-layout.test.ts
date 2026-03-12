@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   currentWindowIdRef,
+  focusExistingWindowForWorkspaceMock,
   initialLayoutRef,
   layoutPaneAssignedMock,
   layoutPaneClosedMock,
@@ -11,11 +12,16 @@ const {
   layoutSplitMock,
   layoutWorkspacesReorderedMock,
   persistedRowsRef,
+  reportVisibleWorkspacesMock,
   storeCommitMock,
   storeQueryMock,
   storeUseQueryMock,
 } = vi.hoisted(() => ({
   currentWindowIdRef: { current: 'window-a' as string | null },
+  focusExistingWindowForWorkspaceMock: vi.fn(
+    async (_workspaceId: string) => false
+  ),
+  reportVisibleWorkspacesMock: vi.fn(async () => undefined),
   initialLayoutRef: { current: undefined as PanelNode | undefined },
   layoutPaneAssignedMock: vi.fn((payload) => ({
     payload,
@@ -86,7 +92,14 @@ vi.mock('@/hooks/use-terminal-list', () => ({
 }))
 
 vi.mock('@/lib/desktop', () => ({
+  focusExistingWindowForWorkspace: (workspaceId: string) =>
+    focusExistingWindowForWorkspaceMock(workspaceId),
   getCurrentWindowId: vi.fn(() => currentWindowIdRef.current),
+  getDesktopBridge: vi.fn(() =>
+    currentWindowIdRef.current
+      ? { reportVisibleWorkspaces: reportVisibleWorkspacesMock }
+      : undefined
+  ),
 }))
 
 vi.mock('@/livestore/store', () => ({
@@ -212,11 +225,14 @@ describe('usePanelLayout', () => {
     currentWindowIdRef.current = 'window-a'
     initialLayoutRef.current = undefined
     persistedRowsRef.current = []
+    focusExistingWindowForWorkspaceMock.mockReset()
+    focusExistingWindowForWorkspaceMock.mockResolvedValue(false)
     layoutPaneAssignedMock.mockClear()
     layoutPaneClosedMock.mockClear()
     layoutRestoredMock.mockClear()
     layoutSplitMock.mockClear()
     layoutWorkspacesReorderedMock.mockClear()
+    reportVisibleWorkspacesMock.mockClear()
     storeCommitMock.mockReset()
     storeQueryMock.mockReset()
     storeUseQueryMock.mockReset()
@@ -495,7 +511,7 @@ describe('usePanelLayout', () => {
     })
   })
 
-  it('scopes terminal assignment and workspace reorder writes to the current window', () => {
+  it('scopes terminal assignment and workspace reorder writes to the current window', async () => {
     persistedRowsRef.current = [
       {
         activePaneId: 'pane-a-right',
@@ -513,8 +529,8 @@ describe('usePanelLayout', () => {
 
     const { result, rerender } = renderHook(() => usePanelLayout())
 
-    act(() => {
-      result.current.panelActions.assignTerminalToPane(
+    await act(async () => {
+      await result.current.panelActions.assignTerminalToPane(
         'terminal-a-1',
         'workspace-assigned'
       )
@@ -567,5 +583,73 @@ describe('usePanelLayout', () => {
       windowId: 'window-b',
       workspaceOrder: ['workspace-c'],
     })
+  })
+
+  it('skips terminal assignment when the workspace is already open in another window', async () => {
+    persistedRowsRef.current = [
+      {
+        activePaneId: 'pane-a-left',
+        layoutTree: WINDOW_A_LAYOUT,
+        windowId: 'window-a',
+      },
+      {
+        activePaneId: 'pane-b-only',
+        layoutTree: WINDOW_B_LAYOUT,
+        windowId: 'window-b',
+      },
+    ]
+
+    // Simulate the desktop main process reporting that workspace-c
+    // is already open in another window (window-b)
+    focusExistingWindowForWorkspaceMock.mockResolvedValue(true)
+
+    const { result } = renderHook(() => usePanelLayout())
+
+    await act(async () => {
+      await result.current.panelActions.assignTerminalToPane(
+        'terminal-new',
+        'workspace-c'
+      )
+    })
+
+    // The assignment should NOT have been committed because the workspace
+    // was focused in a different window
+    expect(focusExistingWindowForWorkspaceMock).toHaveBeenCalledWith(
+      'workspace-c'
+    )
+    expect(layoutPaneAssignedMock).not.toHaveBeenCalled()
+    // Window A's layout should be unchanged
+    const windowARow = getPersistedRow('window-a')
+    expect(windowARow?.layoutTree).toEqual(WINDOW_A_LAYOUT)
+  })
+
+  it('proceeds with terminal assignment when the workspace is not open elsewhere', async () => {
+    persistedRowsRef.current = [
+      {
+        activePaneId: 'pane-a-left',
+        layoutTree: WINDOW_A_LAYOUT,
+        windowId: 'window-a',
+      },
+    ]
+
+    // No other window has the workspace
+    focusExistingWindowForWorkspaceMock.mockResolvedValue(false)
+
+    const { result } = renderHook(() => usePanelLayout())
+
+    await act(async () => {
+      await result.current.panelActions.assignTerminalToPane(
+        'terminal-new',
+        'workspace-new'
+      )
+    })
+
+    // The assignment should proceed normally
+    expect(focusExistingWindowForWorkspaceMock).toHaveBeenCalledWith(
+      'workspace-new'
+    )
+    expect(layoutPaneAssignedMock).toHaveBeenCalledWith(
+      expect.objectContaining({ windowId: 'window-a' })
+    )
   })
 })

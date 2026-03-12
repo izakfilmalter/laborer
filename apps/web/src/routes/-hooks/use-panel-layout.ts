@@ -17,7 +17,11 @@ import {
   removeTerminalListItem,
   useTerminalList,
 } from '@/hooks/use-terminal-list'
-import { getCurrentWindowId } from '@/lib/desktop'
+import {
+  focusExistingWindowForWorkspace,
+  getCurrentWindowId,
+  getDesktopBridge,
+} from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import {
@@ -32,6 +36,7 @@ import {
   findSiblingPaneId,
   getFirstLeafId,
   getLeafIds,
+  getLeafNodes,
   getStaleTerminalLeaves,
   getTerminalIdsToRemove,
   getWorkspaceTerminalIds,
@@ -304,6 +309,33 @@ export function usePanelLayout() {
     store,
   ])
 
+  // -------------------------------------------------------------------
+  // Report visible workspaces to the desktop main process.
+  // -------------------------------------------------------------------
+  // When the layout changes, extract the set of unique workspace IDs
+  // from all leaf panes and send them to the Electron main process.
+  // The main process uses this to route notification clicks and other
+  // workspace-targeting actions to the correct window.
+  useEffect(() => {
+    const bridge = getDesktopBridge()
+    if (!(bridge && layout)) {
+      return
+    }
+
+    const leafNodes = getLeafNodes(layout)
+    const workspaceIds = [
+      ...new Set(
+        leafNodes
+          .map((leaf) => leaf.workspaceId)
+          .filter((id): id is string => id !== undefined)
+      ),
+    ]
+
+    bridge.reportVisibleWorkspaces(workspaceIds).catch(() => {
+      // Silently ignore — reporting is best-effort
+    })
+  }, [layout])
+
   /**
    * Ref to hold the latest `handleAssignTerminalToPane` callback.
    * Used by `handleSplitPane` to assign a newly spawned terminal
@@ -502,7 +534,15 @@ export function usePanelLayout() {
   )
 
   const handleAssignTerminalToPane = useCallback(
-    (terminalId: string, workspaceId: string, paneId?: string) => {
+    async (terminalId: string, workspaceId: string, paneId?: string) => {
+      // Gate: if the workspace is already visible in another window,
+      // focus that window instead of duplicating the workspace here.
+      const focusedElsewhere =
+        await focusExistingWindowForWorkspace(workspaceId)
+      if (focusedElsewhere) {
+        return
+      }
+
       const base = persistedLayoutTree ?? defaultLayout
       const result = computeTerminalPaneAssignment(
         base,

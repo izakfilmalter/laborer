@@ -29,6 +29,11 @@ export const RESTART_SIDECAR_CHANNEL = 'desktop:restart-sidecar'
 export const SIDECAR_STATUS_CHANNEL = 'sidecar:status'
 export const SEND_NOTIFICATION_CHANNEL = 'desktop:send-notification'
 export const NOTIFICATION_CLICKED_CHANNEL = 'desktop:notification-clicked'
+export const REPORT_VISIBLE_WORKSPACES_CHANNEL =
+  'desktop:report-visible-workspaces'
+export const FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL =
+  'desktop:focus-window-for-workspace'
+export const ACTIVATE_WORKSPACE_CHANNEL = 'desktop:activate-workspace'
 export const UPDATE_STATE_CHANNEL = 'desktop:update-state'
 export const UPDATE_GET_STATE_CHANNEL = 'desktop:update-get-state'
 export const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
@@ -90,6 +95,58 @@ async function showConfirmDialog(
     : await dialog.showMessageBox(options)
 
   return result.response === CONFIRM_BUTTON_INDEX
+}
+
+// ---------------------------------------------------------------------------
+// Workspace-to-window registry
+// ---------------------------------------------------------------------------
+
+/**
+ * Tracks which workspace IDs are visible in which BrowserWindow.
+ * Updated by the renderer via the `reportVisibleWorkspaces` IPC channel.
+ * Used by the notification click handler to route clicks to the correct window.
+ */
+class WorkspaceWindowRegistry {
+  /** Map from BrowserWindow to the set of workspace IDs visible in it. */
+  readonly #windowWorkspaces = new Map<BrowserWindow, Set<string>>()
+
+  /** Update the visible workspace set for a window. */
+  update(window: BrowserWindow, workspaceIds: readonly string[]): void {
+    if (window.isDestroyed()) {
+      this.#windowWorkspaces.delete(window)
+      return
+    }
+    this.#windowWorkspaces.set(window, new Set(workspaceIds))
+  }
+
+  /** Remove a window's entry (e.g., when it closes). */
+  remove(window: BrowserWindow): void {
+    this.#windowWorkspaces.delete(window)
+  }
+
+  /**
+   * Find the BrowserWindow that has the given workspace visible.
+   * Returns null if no window currently shows that workspace.
+   */
+  findWindowForWorkspace(workspaceId: string): BrowserWindow | null {
+    for (const [window, workspaces] of this.#windowWorkspaces) {
+      if (window.isDestroyed()) {
+        this.#windowWorkspaces.delete(window)
+        continue
+      }
+      if (workspaces.has(workspaceId)) {
+        return window
+      }
+    }
+    return null
+  }
+}
+
+const workspaceRegistry = new WorkspaceWindowRegistry()
+
+/** Access the workspace-to-window registry for external wiring (e.g., cleanup). */
+export function getWorkspaceWindowRegistry(): WorkspaceWindowRegistry {
+  return workspaceRegistry
 }
 
 // ---------------------------------------------------------------------------
@@ -295,6 +352,28 @@ export function registerIpcHandlers(
     return (await installUpdateCallback?.()) ?? null
   })
 
+  // -- Report visible workspaces -------------------------------------------
+  ipcMain.removeHandler(REPORT_VISIBLE_WORKSPACES_CHANNEL)
+  ipcMain.handle(
+    REPORT_VISIBLE_WORKSPACES_CHANNEL,
+    (event, workspaceIds: unknown) => {
+      if (!Array.isArray(workspaceIds)) {
+        return
+      }
+
+      const validIds = workspaceIds.filter(
+        (id): id is string => typeof id === 'string' && id.length > 0
+      )
+
+      const senderWindow = BrowserWindow.fromWebContents(event.sender)
+      if (!senderWindow) {
+        return
+      }
+
+      workspaceRegistry.update(senderWindow, validIds)
+    }
+  )
+
   // -- Agent notification ---------------------------------------------------
   ipcMain.removeHandler(SEND_NOTIFICATION_CHANNEL)
   ipcMain.handle(SEND_NOTIFICATION_CHANNEL, (_event, payload: unknown) => {
@@ -325,7 +404,11 @@ export function registerIpcHandlers(
     const notification = new ElectronNotification({ title, body })
 
     notification.on('click', () => {
-      const targetWindow = getFallbackWindow()
+      // Prefer the window that already has this workspace visible.
+      // Fall back to the general fallback window if no match is found.
+      const targetWindow =
+        workspaceRegistry.findWindowForWorkspace(workspaceId) ??
+        getFallbackWindow()
       if (!targetWindow) {
         return
       }
@@ -338,4 +421,32 @@ export function registerIpcHandlers(
 
     notification.show()
   })
+
+  // -- Focus window for workspace ------------------------------------------
+  ipcMain.removeHandler(FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL)
+  ipcMain.handle(
+    FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL,
+    (event, workspaceId: unknown) => {
+      if (typeof workspaceId !== 'string' || workspaceId.length === 0) {
+        return false
+      }
+
+      const targetWindow = workspaceRegistry.findWindowForWorkspace(workspaceId)
+      if (!targetWindow) {
+        return false
+      }
+
+      // Don't focus if the requesting window IS the target window —
+      // the workspace is already open in the caller's own window.
+      const senderWindow = BrowserWindow.fromWebContents(event.sender)
+      if (senderWindow === targetWindow) {
+        return false
+      }
+
+      targetWindow.show()
+      targetWindow.focus()
+      targetWindow.webContents.send(ACTIVATE_WORKSPACE_CHANNEL, workspaceId)
+      return true
+    }
+  )
 }

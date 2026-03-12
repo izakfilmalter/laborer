@@ -170,4 +170,26 @@ export async function openExternalUrl(url: string): Promise<boolean> {
   return openedWindow !== null
 }
 
+/**
+ * Attempt to focus an existing window that has the given workspace open.
+ * Returns true if another window was focused (the caller should abort its
+ * local workspace-opening flow). Returns false if the workspace is not open
+ * in any other window (the caller should proceed normally).
+ *
+ * In non-Electron contexts, always returns false.
+ */
+export async function focusExistingWindowForWorkspace(
+  workspaceId: string
+): Promise<boolean> {
+  const bridge = getDesktopBridge()
+  if (!bridge?.focusWindowForWorkspace) {
+    return false
+  }
+  try {
+    return await bridge.focusWindowForWorkspace(workspaceId)
+  } catch {
+    return false
+  }
+}
+
 export { getDesktopBridge }

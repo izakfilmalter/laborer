@@ -1340,11 +1340,13 @@ function WorkspaceFrame({
   subLayout,
   activePaneId,
   index,
+  onMinimizeChange,
 }: {
   readonly workspaceId: string | undefined
   readonly subLayout: PanelNode
   readonly activePaneId: string | null
   readonly index: number
+  readonly onMinimizeChange?: ((minimized: boolean) => void) | undefined
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null)
   const dragHandleRef = useRef<HTMLDivElement | null>(null)
@@ -1364,6 +1366,7 @@ function WorkspaceFrame({
   const handleHeaderClick = useCallback(() => {
     if (isMinimized) {
       setIsMinimized(false)
+      onMinimizeChange?.(false)
       return
     }
     // Focus the first leaf pane in this workspace frame
@@ -1371,11 +1374,15 @@ function WorkspaceFrame({
     if (firstLeaf) {
       actions?.setActivePaneId(firstLeaf.id)
     }
-  }, [isMinimized, leaves, actions])
+  }, [isMinimized, leaves, actions, onMinimizeChange])
 
   const handleMinimize = useCallback(() => {
-    setIsMinimized((prev) => !prev)
-  }, [])
+    setIsMinimized((prev) => {
+      const next = !prev
+      onMinimizeChange?.(next)
+      return next
+    })
+  }, [onMinimizeChange])
 
   useEffect(() => {
     const frameEl = frameRef.current
@@ -1590,6 +1597,9 @@ function WorkspaceFrames({
 /**
  * A single resizable child within the WorkspaceFrames vertical stack.
  * Extracted to keep the map clean and provide stable keys.
+ *
+ * When the workspace is minimized, the ResizablePanel collapses to 0%
+ * so freed space is redistributed to other workspaces.
  */
 function WorkspaceFrameResizableChild({
   workspaceId,
@@ -1604,13 +1614,34 @@ function WorkspaceFrameResizableChild({
   readonly defaultSize: number
   readonly index: number
 }) {
+  const panelRef = useRef<PanelImperativeHandle | null>(null)
+
+  const handleMinimizeChange = useCallback((minimized: boolean) => {
+    const panel = panelRef.current
+    if (!panel) {
+      return
+    }
+    if (minimized) {
+      panel.collapse()
+    } else {
+      panel.expand()
+    }
+  }, [])
+
   return (
     <>
       {index > 0 && <ResizableHandle />}
-      <ResizablePanel defaultSize={`${defaultSize}%`} minSize="10%">
+      <ResizablePanel
+        collapsedSize="0%"
+        collapsible
+        defaultSize={`${defaultSize}%`}
+        minSize="10%"
+        panelRef={panelRef}
+      >
         <WorkspaceFrame
           activePaneId={activePaneId}
           index={index}
+          onMinimizeChange={handleMinimizeChange}
           subLayout={subLayout}
           workspaceId={workspaceId}
         />

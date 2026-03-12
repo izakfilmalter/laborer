@@ -1,5 +1,5 @@
 {
-  "name": "@laborer/server",
+  "name": "@laborer/file-watcher",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -13,28 +13,22 @@
     "test:watch": "vitest"
   },
   "exports": {
-    ".": "./src/main.ts"
+    ".": "./src/main.ts",
+    "./services/file-watcher": "./src/services/file-watcher.ts",
+    "./services/watcher-manager": "./src/services/watcher-manager.ts"
   },
   "dependencies": {
-    "@effect/cluster": "catalog:",
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/rpc": "catalog:",
-    "@effect/sql": "catalog:",
     "@laborer/env": "workspace:*",
     "@laborer/shared": "workspace:*",
-    "@livestore/adapter-node": "0.4.0-dev.22",
-    "@livestore/livestore": "0.4.0-dev.22",
-    "@livestore/sync-cf": "0.4.0-dev.22",
-    "better-sqlite3": "^12.6.2",
+    "@parcel/watcher": "^2.5.6",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@vitest/coverage-v8": "^3.2.4",
     "@laborer/config": "workspace:*",
-    "@laborer/file-watcher": "workspace:*",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.3",
     "tsdown": "^0.20.3",
     "tsx": "^4.19.4",

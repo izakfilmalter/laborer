@@ -43,7 +43,7 @@
  * Issue #85: start/stop polling on workspace lifecycle — integrated via RPC handlers
  */
 
-import { RpcError } from '@laborer/shared/rpc'
+import { RpcError, type WatchFileEvent } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import {
   Array as Arr,
@@ -58,11 +58,8 @@ import {
   Schedule,
 } from 'effect'
 import { spawn } from '../lib/spawn.js'
+import { FileWatcherClient } from './file-watcher-client.js'
 import { LaborerStore } from './laborer-store.js'
-import {
-  RepositoryEventBus,
-  type RepositoryFileEvent,
-} from './repository-event-bus.js'
 
 /**
  * Shape of a diff result returned by the service.
@@ -178,7 +175,7 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
     DiffService,
     Effect.gen(function* () {
       const { store } = yield* LaborerStore
-      const eventBus = yield* RepositoryEventBus
+      const fileWatcherClient = yield* FileWatcherClient
       const runtime = yield* Effect.runtime<never>()
       const runPromise = Runtime.runPromise(runtime)
 
@@ -506,61 +503,63 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
       >()
 
       /**
-       * Refresh diffs for all actively-polled workspaces in a
-       * project. Errors are logged and swallowed so they never
-       * crash the event handler or the polling loop.
+       * Handle a file event from the FileWatcherClient.
+       * Debounces per-subscription to coalesce rapid changes.
+       *
+       * Since events from the file-watcher service carry a
+       * subscriptionId rather than a projectId, we need to
+       * resolve the projectId by checking which workspaces
+       * have repo roots matching the event's absolutePath.
+       * We debounce by subscription ID to coalesce rapid
+       * changes from the same watched directory, then refresh
+       * all actively-polled workspaces.
        */
-      const refreshProjectDiffs = (projectId: string): void => {
-        const activeWorkspaces = store
-          .query(tables.workspaces)
-          .filter(
-            (w) =>
-              w.projectId === projectId &&
-              (w.status === 'running' || w.status === 'creating')
-          )
-
-        runPromise(Ref.get(pollingFibers))
-          .then((fibers: Map<string, Fiber.RuntimeFiber<void, never>>) => {
-            for (const workspace of activeWorkspaces) {
-              if (fibers.has(workspace.id)) {
-                runPromise(
-                  getDiff(workspace.id).pipe(
-                    Effect.catchAll((error) =>
-                      Effect.logWarning(
-                        `DiffService event-driven refresh error for workspace ${workspace.id}: ${error.message}`
-                      )
-                    )
-                  )
-                ).catch(() => undefined)
-              }
-            }
-          })
-          .catch(() => undefined)
-      }
-
-      /**
-       * Handle a file event from the RepositoryEventBus.
-       * Debounces per project to coalesce rapid changes.
-       */
-      const handleRepoFileEvent = (event: RepositoryFileEvent): void => {
-        const existing = eventDebounceTimers.get(event.projectId)
+      const handleFileEvent = (event: WatchFileEvent): void => {
+        // Debounce by subscription ID
+        const existing = eventDebounceTimers.get(event.subscriptionId)
         if (existing !== undefined) {
           clearTimeout(existing)
         }
 
         eventDebounceTimers.set(
-          event.projectId,
+          event.subscriptionId,
           setTimeout(() => {
-            eventDebounceTimers.delete(event.projectId)
-            refreshProjectDiffs(event.projectId)
+            eventDebounceTimers.delete(event.subscriptionId)
+            // Refresh all actively-polled workspaces (the event affects
+            // at least one project). The polling map naturally filters
+            // to only active workspaces.
+            refreshAllPolledDiffs()
           }, EVENT_DEBOUNCE_MS)
         )
       }
 
-      // Wire the subscription. The bus handler is synchronous
-      // and non-blocking — the actual git work runs in the
-      // background via runPromise.
-      const subscription = yield* eventBus.subscribe(handleRepoFileEvent)
+      /**
+       * Refresh diffs for all actively-polled workspaces regardless
+       * of project. Used when we receive file events but can't easily
+       * map subscription IDs to project IDs.
+       */
+      const refreshAllPolledDiffs = (): void => {
+        runPromise(Ref.get(pollingFibers))
+          .then((fibers: Map<string, Fiber.RuntimeFiber<void, never>>) => {
+            for (const workspaceId of fibers.keys()) {
+              runPromise(
+                getDiff(workspaceId).pipe(
+                  Effect.catchAll((error) =>
+                    Effect.logWarning(
+                      `DiffService event-driven refresh error for workspace ${workspaceId}: ${error.message}`
+                    )
+                  )
+                )
+              ).catch(() => undefined)
+            }
+          })
+          .catch(() => undefined)
+      }
+
+      // Wire the subscription to the FileWatcherClient.
+      // The handler is synchronous and non-blocking — the actual git
+      // work runs in the background via runPromise.
+      const subscription = fileWatcherClient.onFileEvent(handleFileEvent)
 
       // Clean up the subscription when the service scope closes.
       // Also clear any pending debounce timers.

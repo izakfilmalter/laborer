@@ -8,17 +8,16 @@ import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { ContainerService } from '../src/services/container-service.js'
 import { DepsImageService } from '../src/services/deps-image-service.js'
-import { FileWatcher } from '../src/services/file-watcher.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { PortAllocator } from '../src/services/port-allocator.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
-import { RepositoryEventBus } from '../src/services/repository-event-bus.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
 import { WorkspaceProvider } from '../src/services/workspace-provider.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
+import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.js'
 import { TestLaborerStore } from './helpers/test-store.js'
 
 const tempRoots: string[] = []
@@ -29,8 +28,7 @@ const TestLayer = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(ProjectRegistry.layer),
   Layer.provideMerge(RepositoryWatchCoordinator.layer),
   Layer.provideMerge(BranchStateTracker.layer),
-  Layer.provideMerge(RepositoryEventBus.layer),
-  Layer.provideMerge(FileWatcher.layer),
+  Layer.provideMerge(TestFileWatcherClientLayer),
   Layer.provideMerge(WorktreeReconciler.layer),
   Layer.provideMerge(WorktreeDetector.layer),
   Layer.provideMerge(RepositoryIdentity.layer),

@@ -1,16 +1,16 @@
 import { assert, describe, it } from '@effect/vitest'
+import type { WatchFileEvent } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Context, Effect, Exit, Layer, Scope } from 'effect'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
 import {
-  FileWatcher,
-  type WatchEvent,
-  type WatchSubscription,
-} from '../src/services/file-watcher.js'
+  type FileEventHandler,
+  type FileEventSubscription,
+  FileWatcherClient,
+} from '../src/services/file-watcher-client.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { withFsmonitorDisabled } from '../src/services/repo-watching-git.js'
-import { RepositoryEventBus } from '../src/services/repository-event-bus.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import {
   formatWatcherWarning,
@@ -20,10 +20,9 @@ import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { TestLaborerStore } from './helpers/test-store.js'
 import { delay, waitFor } from './helpers/timing-helpers.js'
 
-interface RecordedWatcher {
-  closed: boolean
-  readonly onChange: (event: WatchEvent) => void
-  readonly onError: (error: Error) => void
+interface RecordedSubscription {
+  readonly id: string
+  readonly ignoreGlobs: readonly string[]
   readonly path: string
   readonly recursive: boolean
 }
@@ -31,35 +30,64 @@ interface RecordedWatcher {
 const createTestLayer = (params: {
   readonly branchRefreshCalls: { current: number }
   readonly reconcileCalls: { current: number }
-  readonly watchersByPath: Map<string, RecordedWatcher[]>
-  readonly subscribePaths: string[]
-  readonly closedPaths: string[]
+  readonly subscribedPaths: string[]
+  readonly unsubscribedIds: string[]
+  /**
+   * Emit a synthetic file event to all registered handlers.
+   * Set by the layer construction once handlers are wired.
+   */
+  readonly emitEvent: { current: (event: WatchFileEvent) => void }
+  /**
+   * Map from subscription path to subscription ID, for test code
+   * to look up which subscription ID to use when emitting events.
+   */
+  readonly subscriptionsByPath: Map<string, string>
 }) => {
-  const fileWatcherLayer = Layer.succeed(
-    FileWatcher,
-    FileWatcher.of({
-      subscribe: (path, onChange, onError, options) =>
+  let subCounter = 0
+  const handlers: FileEventHandler[] = []
+
+  const fileWatcherClientLayer = Layer.succeed(
+    FileWatcherClient,
+    FileWatcherClient.of({
+      subscribe: (path, options) =>
         Effect.sync(() => {
-          const recorded: RecordedWatcher = {
-            path,
-            onChange,
-            onError,
-            recursive: options?.recursive ?? false,
-            closed: false,
-          }
-          params.subscribePaths.push(path)
-          const existing = params.watchersByPath.get(path) ?? []
-          existing.push(recorded)
-          params.watchersByPath.set(path, existing)
+          subCounter += 1
+          const id = `test-sub-${subCounter}`
+          params.subscribedPaths.push(path)
+          params.subscriptionsByPath.set(path, id)
           return {
-            close: () => {
-              recorded.closed = true
-              params.closedPaths.push(path)
-            },
-          } satisfies WatchSubscription
+            id,
+            path,
+            recursive: options?.recursive ?? false,
+            ignoreGlobs: options?.ignoreGlobs ?? [],
+          } satisfies RecordedSubscription
         }),
+      unsubscribe: (id) =>
+        Effect.sync(() => {
+          params.unsubscribedIds.push(id)
+        }),
+      updateIgnore: () => Effect.void,
+      onFileEvent: (handler: FileEventHandler): FileEventSubscription => {
+        handlers.push(handler)
+        return {
+          unsubscribe: () => {
+            const idx = handlers.indexOf(handler)
+            if (idx !== -1) {
+              handlers.splice(idx, 1)
+            }
+          },
+        }
+      },
+      listSubscriptions: () => Effect.succeed([]),
     })
   )
+
+  // Wire the emitEvent function so tests can fire events
+  params.emitEvent.current = (event: WatchFileEvent) => {
+    for (const handler of [...handlers]) {
+      handler(event)
+    }
+  }
 
   const repoIdentityLayer = Layer.succeed(
     RepositoryIdentity,
@@ -99,8 +127,7 @@ const createTestLayer = (params: {
   return RepositoryWatchCoordinator.layer.pipe(
     Layer.provide(branchTrackerLayer),
     Layer.provide(ConfigService.layer),
-    Layer.provideMerge(RepositoryEventBus.layer),
-    Layer.provide(fileWatcherLayer),
+    Layer.provide(fileWatcherClientLayer),
     Layer.provide(reconcilerLayer),
     Layer.provide(repoIdentityLayer),
     Layer.provideMerge(TestLaborerStore)
@@ -111,30 +138,42 @@ describe('RepositoryWatchCoordinator hardening', () => {
   it.scoped('coalesces heavy churn into stable refresh behavior', () => {
     const reconcileCalls = { current: 0 }
     const branchRefreshCalls = { current: 0 }
-    const watchersByPath = new Map<string, RecordedWatcher[]>()
-    const subscribePaths: string[] = []
-    const closedPaths: string[] = []
+    const subscribedPaths: string[] = []
+    const unsubscribedIds: string[] = []
+    const emitEvent = { current: (_event: WatchFileEvent) => undefined }
+    const subscriptionsByPath = new Map<string, string>()
 
     const TestLayer = createTestLayer({
       reconcileCalls,
       branchRefreshCalls,
-      watchersByPath,
-      subscribePaths,
-      closedPaths,
+      subscribedPaths,
+      unsubscribedIds,
+      emitEvent,
+      subscriptionsByPath,
     })
 
     return Effect.gen(function* () {
       const coordinator = yield* RepositoryWatchCoordinator
       yield* coordinator.watchProject('project-hardening', '/input/repo')
 
-      const gitWatcher = watchersByPath.get('/virtual/repo/.git')?.at(-1)
-      if (gitWatcher === undefined) {
-        throw new Error('Expected git watcher subscription')
+      const gitSubId = subscriptionsByPath.get('/virtual/repo/.git')
+      if (gitSubId === undefined) {
+        throw new Error('Expected git dir subscription')
       }
 
       for (let index = 0; index < 10; index += 1) {
-        gitWatcher.onChange({ type: 'rename', fileName: 'worktrees/feature' })
-        gitWatcher.onChange({ type: 'change', fileName: 'HEAD' })
+        emitEvent.current({
+          subscriptionId: gitSubId,
+          type: 'rename',
+          fileName: 'worktrees/feature',
+          absolutePath: '/virtual/repo/.git/worktrees/feature',
+        })
+        emitEvent.current({
+          subscriptionId: gitSubId,
+          type: 'change',
+          fileName: 'HEAD',
+          absolutePath: '/virtual/repo/.git/HEAD',
+        })
       }
 
       yield* Effect.promise(() =>
@@ -145,67 +184,11 @@ describe('RepositoryWatchCoordinator hardening', () => {
         )
       )
 
-      assert.deepStrictEqual(subscribePaths, [
+      assert.deepStrictEqual(subscribedPaths, [
         '/virtual/repo/.git',
         '/virtual/repo',
       ])
-      assert.deepStrictEqual(closedPaths, [])
-    }).pipe(Effect.provide(TestLayer))
-  })
-
-  it.scoped('recovers after watcher degradation and resubscribes', () => {
-    const reconcileCalls = { current: 0 }
-    const branchRefreshCalls = { current: 0 }
-    const watchersByPath = new Map<string, RecordedWatcher[]>()
-    const subscribePaths: string[] = []
-    const closedPaths: string[] = []
-
-    const TestLayer = createTestLayer({
-      reconcileCalls,
-      branchRefreshCalls,
-      watchersByPath,
-      subscribePaths,
-      closedPaths,
-    })
-
-    return Effect.gen(function* () {
-      const coordinator = yield* RepositoryWatchCoordinator
-      yield* coordinator.watchProject('project-recovery', '/input/repo')
-
-      const firstGitWatcher = watchersByPath.get('/virtual/repo/.git')?.at(-1)
-      if (firstGitWatcher === undefined) {
-        throw new Error('Expected initial git watcher subscription')
-      }
-
-      firstGitWatcher.onError(new Error('ENOENT: watcher target disappeared'))
-
-      yield* Effect.promise(() =>
-        waitFor(() => Promise.resolve(subscribePaths.length === 4))
-      )
-
-      assert.deepStrictEqual(closedPaths, [
-        '/virtual/repo/.git',
-        '/virtual/repo',
-      ])
-
-      const recoveredGitWatcher = watchersByPath
-        .get('/virtual/repo/.git')
-        ?.at(-1)
-      if (recoveredGitWatcher === undefined) {
-        throw new Error('Expected recovered git watcher subscription')
-      }
-      assert.notStrictEqual(recoveredGitWatcher, firstGitWatcher)
-
-      recoveredGitWatcher.onChange({
-        type: 'rename',
-        fileName: 'worktrees/recreated',
-      })
-
-      yield* Effect.promise(() =>
-        waitFor(() => Promise.resolve(reconcileCalls.current === 1))
-      )
-
-      assert.strictEqual(branchRefreshCalls.current, 1)
+      assert.deepStrictEqual(unsubscribedIds, [])
     }).pipe(Effect.provide(TestLayer))
   })
 
@@ -214,36 +197,54 @@ describe('RepositoryWatchCoordinator hardening', () => {
     () => {
       const reconcileCalls = { current: 0 }
       const branchRefreshCalls = { current: 0 }
-      const watchersByPath = new Map<string, RecordedWatcher[]>()
-      const subscribePaths: string[] = []
-      const closedPaths: string[] = []
+      const subscribedPaths: string[] = []
+      const unsubscribedIds: string[] = []
+      const emitEvent = { current: (_event: WatchFileEvent) => undefined }
+      const subscriptionsByPath = new Map<string, string>()
       const resolveCalls = { current: 0 }
 
-      const fileWatcherLayer = Layer.succeed(
-        FileWatcher,
-        FileWatcher.of({
-          subscribe: (path, onChange, onError, options) =>
+      const handlers: FileEventHandler[] = []
+
+      const fileWatcherClientLayer = Layer.succeed(
+        FileWatcherClient,
+        FileWatcherClient.of({
+          subscribe: (path, options) =>
             Effect.sync(() => {
-              const recorded: RecordedWatcher = {
-                path,
-                onChange,
-                onError,
-                recursive: options?.recursive ?? false,
-                closed: false,
-              }
-              subscribePaths.push(path)
-              const existing = watchersByPath.get(path) ?? []
-              existing.push(recorded)
-              watchersByPath.set(path, existing)
+              const id = `test-sub-${subscribedPaths.length + 1}`
+              subscribedPaths.push(path)
+              subscriptionsByPath.set(path, id)
               return {
-                close: () => {
-                  recorded.closed = true
-                  closedPaths.push(path)
-                },
-              } satisfies WatchSubscription
+                id,
+                path,
+                recursive: options?.recursive ?? false,
+                ignoreGlobs: options?.ignoreGlobs ?? [],
+              }
             }),
+          unsubscribe: (id) =>
+            Effect.sync(() => {
+              unsubscribedIds.push(id)
+            }),
+          updateIgnore: () => Effect.void,
+          onFileEvent: (handler: FileEventHandler): FileEventSubscription => {
+            handlers.push(handler)
+            return {
+              unsubscribe: () => {
+                const idx = handlers.indexOf(handler)
+                if (idx !== -1) {
+                  handlers.splice(idx, 1)
+                }
+              },
+            }
+          },
+          listSubscriptions: () => Effect.succeed([]),
         })
       )
+
+      emitEvent.current = (event: WatchFileEvent) => {
+        for (const handler of [...handlers]) {
+          handler(event)
+        }
+      }
 
       const repoIdentityLayer = Layer.succeed(
         RepositoryIdentity,
@@ -281,8 +282,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
       const TestLayer = RepositoryWatchCoordinator.layer.pipe(
         Layer.provide(branchTrackerLayer),
         Layer.provide(ConfigService.layer),
-        Layer.provideMerge(RepositoryEventBus.layer),
-        Layer.provide(fileWatcherLayer),
+        Layer.provide(fileWatcherClientLayer),
         Layer.provide(reconcilerLayer),
         Layer.provide(repoIdentityLayer),
         Layer.provideMerge(TestLaborerStore)
@@ -320,11 +320,11 @@ describe('RepositoryWatchCoordinator hardening', () => {
             },
           ]
         )
-        assert.deepStrictEqual(subscribePaths, [
+        assert.deepStrictEqual(subscribedPaths, [
           '/persisted/repo/.git',
           '/persisted/repo',
         ])
-        assert.deepStrictEqual(closedPaths, [])
+        assert.deepStrictEqual(unsubscribedIds, [])
       }).pipe(Effect.provide(TestLayer))
     }
   )
@@ -352,63 +352,74 @@ describe('RepositoryWatchCoordinator hardening', () => {
   it.scoped('ignores late watcher callbacks after project teardown', () => {
     const reconcileCalls = { current: 0 }
     const branchRefreshCalls = { current: 0 }
-    const watchersByPath = new Map<string, RecordedWatcher[]>()
-    const subscribePaths: string[] = []
-    const closedPaths: string[] = []
+    const subscribedPaths: string[] = []
+    const unsubscribedIds: string[] = []
+    const emitEvent = { current: (_event: WatchFileEvent) => undefined }
+    const subscriptionsByPath = new Map<string, string>()
 
     const TestLayer = createTestLayer({
       reconcileCalls,
       branchRefreshCalls,
-      watchersByPath,
-      subscribePaths,
-      closedPaths,
+      subscribedPaths,
+      unsubscribedIds,
+      emitEvent,
+      subscriptionsByPath,
     })
 
     return Effect.gen(function* () {
       const coordinator = yield* RepositoryWatchCoordinator
       yield* coordinator.watchProject('project-teardown', '/input/repo')
 
-      const gitWatcher = watchersByPath.get('/virtual/repo/.git')?.at(-1)
-      const repoWatcher = watchersByPath.get('/virtual/repo')?.at(-1)
-      if (gitWatcher === undefined || repoWatcher === undefined) {
-        throw new Error('Expected initial watcher subscriptions')
+      const gitSubId = subscriptionsByPath.get('/virtual/repo/.git')
+      const repoSubId = subscriptionsByPath.get('/virtual/repo')
+      if (gitSubId === undefined || repoSubId === undefined) {
+        throw new Error('Expected initial subscriptions')
       }
 
       yield* coordinator.unwatchProject('project-teardown')
 
-      gitWatcher.onChange({ type: 'change', fileName: 'HEAD' })
-      gitWatcher.onError(new Error('late git callback'))
-      repoWatcher.onChange({ type: 'change', fileName: 'src/index.ts' })
-      repoWatcher.onError(new Error('late repo callback'))
+      // Fire events on the old subscription IDs — should be ignored
+      emitEvent.current({
+        subscriptionId: gitSubId,
+        type: 'change',
+        fileName: 'HEAD',
+        absolutePath: '/virtual/repo/.git/HEAD',
+      })
+      emitEvent.current({
+        subscriptionId: repoSubId,
+        type: 'change',
+        fileName: 'src/index.ts',
+        absolutePath: '/virtual/repo/src/index.ts',
+      })
 
       yield* Effect.promise(() => delay(1600))
 
       assert.strictEqual(reconcileCalls.current, 0)
       assert.strictEqual(branchRefreshCalls.current, 0)
-      assert.deepStrictEqual(subscribePaths, [
+      assert.deepStrictEqual(subscribedPaths, [
         '/virtual/repo/.git',
         '/virtual/repo',
       ])
-      assert.deepStrictEqual(closedPaths, [
-        '/virtual/repo/.git',
-        '/virtual/repo',
-      ])
+      // Unsubscribe should have been called for both subscriptions
+      assert.strictEqual(unsubscribedIds.length, 2)
     }).pipe(Effect.provide(TestLayer))
   })
 
   it.scoped('ignores late watcher callbacks after scope shutdown', () => {
     const reconcileCalls = { current: 0 }
     const branchRefreshCalls = { current: 0 }
-    const watchersByPath = new Map<string, RecordedWatcher[]>()
-    const subscribePaths: string[] = []
-    const closedPaths: string[] = []
+    const subscribedPaths: string[] = []
+    const unsubscribedIds: string[] = []
+    const emitEvent = { current: (_event: WatchFileEvent) => undefined }
+    const subscriptionsByPath = new Map<string, string>()
 
     const TestLayer = createTestLayer({
       reconcileCalls,
       branchRefreshCalls,
-      watchersByPath,
-      subscribePaths,
-      closedPaths,
+      subscribedPaths,
+      unsubscribedIds,
+      emitEvent,
+      subscriptionsByPath,
     })
 
     return Effect.gen(function* () {
@@ -418,109 +429,51 @@ describe('RepositoryWatchCoordinator hardening', () => {
 
       yield* coordinator.watchProject('project-shutdown', '/input/repo')
 
-      const gitWatcher = watchersByPath.get('/virtual/repo/.git')?.at(-1)
-      if (gitWatcher === undefined) {
-        throw new Error('Expected git watcher subscription')
+      const gitSubId = subscriptionsByPath.get('/virtual/repo/.git')
+      if (gitSubId === undefined) {
+        throw new Error('Expected git dir subscription')
       }
 
       yield* Scope.close(scope, Exit.succeed(undefined))
 
-      gitWatcher.onChange({ type: 'rename', fileName: 'worktrees/late' })
-      gitWatcher.onError(new Error('late shutdown callback'))
+      // Fire events after scope shutdown — should be ignored
+      emitEvent.current({
+        subscriptionId: gitSubId,
+        type: 'rename',
+        fileName: 'worktrees/late',
+        absolutePath: '/virtual/repo/.git/worktrees/late',
+      })
 
       yield* Effect.promise(() => delay(1600))
 
       assert.strictEqual(reconcileCalls.current, 0)
       assert.strictEqual(branchRefreshCalls.current, 0)
-      assert.deepStrictEqual(subscribePaths, [
+      assert.deepStrictEqual(subscribedPaths, [
         '/virtual/repo/.git',
         '/virtual/repo',
       ])
-      assert.deepStrictEqual(closedPaths, [
-        '/virtual/repo/.git',
-        '/virtual/repo',
-      ])
+      // Unsubscribe should have been called for both subscriptions
+      assert.strictEqual(unsubscribedIds.length, 2)
     })
   })
-
-  it.scoped(
-    'ignored repo-root paths stay quiet without triggering refresh work',
-    () => {
-      const reconcileCalls = { current: 0 }
-      const branchRefreshCalls = { current: 0 }
-      const watchersByPath = new Map<string, RecordedWatcher[]>()
-      const subscribePaths: string[] = []
-      const closedPaths: string[] = []
-
-      const TestLayer = createTestLayer({
-        reconcileCalls,
-        branchRefreshCalls,
-        watchersByPath,
-        subscribePaths,
-        closedPaths,
-      })
-
-      return Effect.gen(function* () {
-        const coordinator = yield* RepositoryWatchCoordinator
-        const eventBus = yield* RepositoryEventBus
-        const receivedRelativePaths: string[] = []
-
-        yield* eventBus.subscribe((event) => {
-          receivedRelativePaths.push(event.relativePath)
-        })
-
-        yield* coordinator.watchProject('project-ignored-noise', '/input/repo')
-
-        const repoWatcher = watchersByPath.get('/virtual/repo')?.at(-1)
-        if (repoWatcher === undefined) {
-          throw new Error('Expected repo watcher subscription')
-        }
-
-        repoWatcher.onChange({
-          type: 'change',
-          fileName: 'node_modules/lodash/index.js',
-        })
-        repoWatcher.onChange({
-          type: 'rename',
-          fileName: 'dist/bundle.js',
-        })
-        repoWatcher.onChange({
-          type: 'change',
-          fileName: 'src/canary.ts',
-        })
-
-        yield* Effect.promise(() =>
-          waitFor(() => Promise.resolve(receivedRelativePaths.length === 1))
-        )
-        yield* Effect.promise(() => delay(700))
-
-        assert.deepStrictEqual(receivedRelativePaths, ['src/canary.ts'])
-        assert.strictEqual(reconcileCalls.current, 0)
-        assert.strictEqual(branchRefreshCalls.current, 0)
-        assert.deepStrictEqual(subscribePaths, [
-          '/virtual/repo/.git',
-          '/virtual/repo',
-        ])
-        assert.deepStrictEqual(closedPaths, [])
-      }).pipe(Effect.provide(TestLayer))
-    }
-  )
 
   it.scoped(
     'watchProject is idempotent — re-calling for the same project replaces previous watchers',
     () => {
       const reconcileCalls = { current: 0 }
       const branchRefreshCalls = { current: 0 }
-      const watchersByPath = new Map<string, RecordedWatcher[]>()
-      const subscribePaths: string[] = []
-      const closedPaths: string[] = []
+      const subscribedPaths: string[] = []
+      const unsubscribedIds: string[] = []
+      const emitEvent = { current: (_event: WatchFileEvent) => undefined }
+      const subscriptionsByPath = new Map<string, string>()
 
       const TestLayer = createTestLayer({
         reconcileCalls,
         branchRefreshCalls,
-        watchersByPath,
-        subscribePaths,
-        closedPaths,
+        subscribedPaths,
+        unsubscribedIds,
+        emitEvent,
+        subscriptionsByPath,
       })
 
       return Effect.gen(function* () {
@@ -529,37 +482,45 @@ describe('RepositoryWatchCoordinator hardening', () => {
         // First watch
         yield* coordinator.watchProject('project-idempotent', '/input/repo')
 
-        const firstGitWatcher = watchersByPath.get('/virtual/repo/.git')?.at(-1)
-        const firstRepoWatcher = watchersByPath.get('/virtual/repo')?.at(-1)
-        assert.isDefined(firstGitWatcher)
-        assert.isDefined(firstRepoWatcher)
+        const firstGitSubId = subscriptionsByPath.get('/virtual/repo/.git')
+        const firstRepoSubId = subscriptionsByPath.get('/virtual/repo')
+        assert.isDefined(firstGitSubId)
+        assert.isDefined(firstRepoSubId)
 
-        // Re-watch the same project — should close old watchers and create new ones
+        // Re-watch the same project — should unsubscribe old and create new
         yield* coordinator.watchProject('project-idempotent', '/input/repo')
 
-        // The first watchers should have been closed
+        // The first subscriptions should have been unsubscribed
+        if (firstGitSubId === undefined || firstRepoSubId === undefined) {
+          throw new Error('Expected first subscription IDs')
+        }
         assert.isTrue(
-          firstGitWatcher?.closed ?? false,
-          'First git watcher should be closed after re-watch'
+          unsubscribedIds.includes(firstGitSubId),
+          'First git subscription should be unsubscribed after re-watch'
         )
         assert.isTrue(
-          firstRepoWatcher?.closed ?? false,
-          'First repo watcher should be closed after re-watch'
+          unsubscribedIds.includes(firstRepoSubId),
+          'First repo subscription should be unsubscribed after re-watch'
         )
 
-        // New watchers should have been created
-        const secondGitWatcher = watchersByPath
-          .get('/virtual/repo/.git')
-          ?.at(-1)
-        assert.isDefined(secondGitWatcher)
+        // New subscriptions should have been created
+        const secondGitSubId = subscriptionsByPath.get('/virtual/repo/.git')
+        if (secondGitSubId === undefined) {
+          throw new Error('Expected second git subscription')
+        }
         assert.notStrictEqual(
-          secondGitWatcher,
-          firstGitWatcher,
-          'Should have a new git watcher after re-watch'
+          secondGitSubId,
+          firstGitSubId,
+          'Should have a new git subscription after re-watch'
         )
 
-        // The new watchers should still work — deliver a branch event
-        secondGitWatcher?.onChange({ type: 'change', fileName: 'HEAD' })
+        // The new subscriptions should still work — deliver a branch event
+        emitEvent.current({
+          subscriptionId: secondGitSubId,
+          type: 'change',
+          fileName: 'HEAD',
+          absolutePath: '/virtual/repo/.git/HEAD',
+        })
 
         yield* Effect.promise(() =>
           waitFor(() => Promise.resolve(branchRefreshCalls.current === 1))
@@ -573,25 +534,27 @@ describe('RepositoryWatchCoordinator hardening', () => {
     () => {
       const reconcileCalls = { current: 0 }
       const branchRefreshCalls = { current: 0 }
-      const watchersByPath = new Map<string, RecordedWatcher[]>()
-      const subscribePaths: string[] = []
-      const closedPaths: string[] = []
+      const subscribedPaths: string[] = []
+      const unsubscribedIds: string[] = []
+      const emitEvent = { current: (_event: WatchFileEvent) => undefined }
+      const subscriptionsByPath = new Map<string, string>()
 
       const TestLayer = createTestLayer({
         reconcileCalls,
         branchRefreshCalls,
-        watchersByPath,
-        subscribePaths,
-        closedPaths,
+        subscribedPaths,
+        unsubscribedIds,
+        emitEvent,
+        subscriptionsByPath,
       })
 
       return Effect.gen(function* () {
         const coordinator = yield* RepositoryWatchCoordinator
         yield* coordinator.watchProject('project-classify', '/input/repo')
 
-        const gitWatcher = watchersByPath.get('/virtual/repo/.git')?.at(-1)
-        if (gitWatcher === undefined) {
-          throw new Error('Expected git watcher subscription')
+        const gitSubId = subscriptionsByPath.get('/virtual/repo/.git')
+        if (gitSubId === undefined) {
+          throw new Error('Expected git dir subscription')
         }
 
         // Test branch-related events: HEAD, refs/heads/main, MERGE_HEAD,
@@ -606,7 +569,12 @@ describe('RepositoryWatchCoordinator hardening', () => {
         ]
 
         for (const fileName of branchFiles) {
-          gitWatcher.onChange({ type: 'change', fileName })
+          emitEvent.current({
+            subscriptionId: gitSubId,
+            type: 'change',
+            fileName,
+            absolutePath: `/virtual/repo/.git/${fileName}`,
+          })
         }
 
         yield* Effect.promise(() =>
@@ -620,17 +588,15 @@ describe('RepositoryWatchCoordinator hardening', () => {
           'Branch-related events should trigger branch refresh'
         )
 
-        // refs/heads/main also matches isWorktreeRelatedEvent? No —
-        // it starts with "refs" not "worktrees". So reconcile should
-        // not fire for pure branch events (except the ones that are
-        // also worktree-related or have null fileName).
         // Reset and test worktree-specific events
         reconcileCalls.current = 0
         branchRefreshCalls.current = 0
 
-        gitWatcher.onChange({
+        emitEvent.current({
+          subscriptionId: gitSubId,
           type: 'rename',
           fileName: 'worktrees/my-feature',
+          absolutePath: '/virtual/repo/.git/worktrees/my-feature',
         })
 
         yield* Effect.promise(() =>
@@ -647,7 +613,12 @@ describe('RepositoryWatchCoordinator hardening', () => {
         reconcileCalls.current = 0
         branchRefreshCalls.current = 0
 
-        gitWatcher.onChange({ type: 'change', fileName: null })
+        emitEvent.current({
+          subscriptionId: gitSubId,
+          type: 'change',
+          fileName: null,
+          absolutePath: '/virtual/repo/.git',
+        })
 
         yield* Effect.promise(() =>
           waitFor(() =>

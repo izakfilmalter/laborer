@@ -6,15 +6,14 @@ import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
-import { FileWatcher } from '../src/services/file-watcher.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { PortAllocator } from '../src/services/port-allocator.js'
-import { RepositoryEventBus } from '../src/services/repository-event-bus.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
+import { TestFileWatcherClientRealLayer } from './helpers/test-file-watcher-client.js'
 import { TestLaborerStore } from './helpers/test-store.js'
 import { waitFor } from './helpers/timing-helpers.js'
 
@@ -27,8 +26,7 @@ const TestLayer = BranchStateTracker.layer.pipe(
 const CoordinatorTestLayer = RepositoryWatchCoordinator.layer.pipe(
   Layer.provide(BranchStateTracker.layer),
   Layer.provide(ConfigService.layer),
-  Layer.provide(RepositoryEventBus.layer),
-  Layer.provide(FileWatcher.layer),
+  Layer.provide(TestFileWatcherClientRealLayer),
   Layer.provide(WorktreeReconciler.layer),
   Layer.provide(WorktreeDetector.layer),
   Layer.provide(RepositoryIdentity.layer),

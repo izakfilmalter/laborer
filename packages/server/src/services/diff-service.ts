@@ -229,7 +229,7 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
       // when no merge-base is available.
       const computeFallbackDiff = Effect.fn('DiffService.computeFallbackDiff')(
         function* (workspaceId: string, worktreePath: string) {
-          yield* Effect.log(
+          yield* Effect.logDebug(
             `[DiffService] workspace=${workspaceId} no merge-base found, falling back to unstaged+staged diff`
           )
 
@@ -269,7 +269,7 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
             .filter((s) => s.length > 0)
             .join('\n')
 
-          yield* Effect.log(
+          yield* Effect.logDebug(
             `[DiffService] workspace=${workspaceId} fallback diffLen=${combinedDiff.length}`
           )
 
@@ -350,7 +350,7 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
 
           combinedDiff = fullDiffResult.stdout
 
-          yield* Effect.log(
+          yield* Effect.logDebug(
             `[DiffService] workspace=${workspaceId} base=${mergeBase.slice(0, 8)}${baseSha ? ' (baseSha)' : ' (merge-base fallback)'} diffLen=${combinedDiff.length}`
           )
         } else {

@@ -26,7 +26,14 @@ import {
   PanelLeftOpen,
   Terminal,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { PanelImperativeHandle } from 'react-resizable-panels'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
@@ -55,6 +62,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { Kbd } from '@/components/ui/kbd'
 import {
   ResizableHandle,
   ResizablePanel,
@@ -74,6 +82,7 @@ import { useSidebarWidth } from '@/hooks/use-sidebar-width'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
 import { isElectron } from '@/lib/desktop'
+import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { useLaborerStore } from '@/livestore/store'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import {
@@ -1120,7 +1129,19 @@ function CloseTerminalDialog({
 
   return (
     <AlertDialog onOpenChange={onOpenChange} open={open}>
-      <AlertDialogContent>
+      <AlertDialogContent
+        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+          if (isExactEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            return
+          }
+          if (isMetaEnter(event.nativeEvent)) {
+            event.preventDefault()
+            handleConfirm()
+          }
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>Close terminal?</AlertDialogTitle>
           <AlertDialogDescription>
@@ -1129,8 +1150,13 @@ function CloseTerminalDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={handleConfirm}>Close</AlertDialogAction>
+          <AlertDialogCancel>
+            Cancel <Kbd>Esc</Kbd>
+          </AlertDialogCancel>
+          <AlertDialogAction onClick={handleConfirm}>
+            Close <Kbd>⌘</Kbd>
+            <Kbd>↵</Kbd>
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -1158,7 +1184,19 @@ function CloseWorkspaceDialog({
 
   return (
     <AlertDialog onOpenChange={onOpenChange} open={open}>
-      <AlertDialogContent>
+      <AlertDialogContent
+        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+          if (isExactEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            return
+          }
+          if (isMetaEnter(event.nativeEvent)) {
+            event.preventDefault()
+            handleConfirm()
+          }
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>Close workspace?</AlertDialogTitle>
           <AlertDialogDescription>
@@ -1167,9 +1205,12 @@ function CloseWorkspaceDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel>
+            Cancel <Kbd>Esc</Kbd>
+          </AlertDialogCancel>
           <AlertDialogAction onClick={handleConfirm}>
-            Close workspace
+            Close workspace <Kbd>⌘</Kbd>
+            <Kbd>↵</Kbd>
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

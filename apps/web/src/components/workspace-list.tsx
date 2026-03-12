@@ -50,7 +50,13 @@ import {
   Play,
   Trash2,
 } from 'lucide-react'
-import { type FC, useCallback, useMemo, useState } from 'react'
+import {
+  type FC,
+  type KeyboardEvent,
+  useCallback,
+  useMemo,
+  useState,
+} from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { CopyButton } from '@/components/copy-button'
@@ -78,12 +84,14 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { usePanelActions } from '@/panels/panel-context'
@@ -386,7 +394,7 @@ function DestroyDialogDescription({
         </AlertDialogDescription>
         <ul className="max-h-40 list-none overflow-y-auto rounded-md border bg-muted/50 p-2 font-mono text-xs">
           {dirtyFiles.map((file) => (
-            <li className="truncate py-0.5 text-muted-foreground" key={file}>
+            <li className="break-all py-0.5 text-muted-foreground" key={file}>
               {file}
             </li>
           ))}
@@ -676,7 +684,19 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                 </TooltipTrigger>
                 <TooltipContent>Destroy workspace</TooltipContent>
               </Tooltip>
-              <AlertDialogContent>
+              <AlertDialogContent
+                onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+                  if (isExactEnter(event.nativeEvent)) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    return
+                  }
+                  if (isMetaEnter(event.nativeEvent) && !isCheckingDirty) {
+                    event.preventDefault()
+                    handleDestroy(dirtyFiles.length > 0 ? true : undefined)
+                  }
+                }}
+              >
                 <AlertDialogHeader>
                   <AlertDialogTitle>
                     {dirtyFiles.length > 0
@@ -690,7 +710,9 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                   />
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogCancel>
+                    Cancel <Kbd>Esc</Kbd>
+                  </AlertDialogCancel>
                   <AlertDialogAction
                     disabled={isCheckingDirty}
                     onClick={() =>
@@ -699,6 +721,8 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                     variant="destructive"
                   >
                     {dirtyFiles.length > 0 ? 'Force Destroy' : 'Destroy'}
+                    <Kbd>⌘</Kbd>
+                    <Kbd>↵</Kbd>
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>

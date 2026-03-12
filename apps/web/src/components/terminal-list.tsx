@@ -48,8 +48,15 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import type { AgentStatus, ForegroundProcess } from '@/hooks/use-terminal-list'
-import { useTerminalList } from '@/hooks/use-terminal-list'
+import type {
+  AgentStatus,
+  ForegroundProcess,
+  TerminalInfo,
+} from '@/hooks/use-terminal-list'
+import {
+  upsertTerminalListItem,
+  useTerminalList,
+} from '@/hooks/use-terminal-list'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
 import { usePanelActions } from '@/panels/panel-context'
@@ -68,6 +75,23 @@ interface TerminalListProps {
   /** The workspace ID to filter terminals for. */
   readonly workspaceId: string
 }
+
+const buildOptimisticTerminalInfo = (terminal: {
+  readonly command: string
+  readonly id: string
+  readonly status: 'running' | 'stopped'
+  readonly workspaceId: string
+}): TerminalInfo => ({
+  agentStatus: null,
+  args: [],
+  command: terminal.command,
+  cwd: '',
+  foregroundProcess: null,
+  hasChildProcess: false,
+  id: terminal.id,
+  status: terminal.status,
+  workspaceId: terminal.workspaceId,
+})
 
 /**
  * Terminal list for a single workspace.
@@ -135,6 +159,7 @@ function TerminalList({
       const result = await spawnTerminal({
         payload: { workspaceId },
       })
+      upsertTerminalListItem(buildOptimisticTerminalInfo(result))
       toast.success(`Terminal spawned: ${result.command}`)
       // Auto-assign the new terminal to a pane
       if (panelActions) {
@@ -157,6 +182,7 @@ function TerminalList({
       const result = await spawnTerminal({
         payload: { workspaceId, command: agentProvider },
       })
+      upsertTerminalListItem(buildOptimisticTerminalInfo(result))
       toast.success(`Agent spawned: ${agentProvider}`)
       if (panelActions) {
         panelActions.assignTerminalToPane(result.id, workspaceId)

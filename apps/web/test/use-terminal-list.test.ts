@@ -29,7 +29,12 @@ vi.mock('@/atoms/terminal-service-client', () => ({
 }))
 
 // Import AFTER mocks are set up
-import { useTerminalList } from '../src/hooks/use-terminal-list'
+import {
+  removeTerminalListItem,
+  resetTerminalListStore,
+  upsertTerminalListItem,
+  useTerminalList,
+} from '../src/hooks/use-terminal-list'
 
 // ---------------------------------------------------------------------------
 // Test data
@@ -66,11 +71,13 @@ const TERMINAL_B = {
 describe('useTerminalList', () => {
   afterEach(() => {
     cleanup()
+    resetTerminalListStore()
     vi.useRealTimers()
   })
 
   beforeEach(() => {
     vi.clearAllMocks()
+    resetTerminalListStore()
   })
 
   it('starts with loading state and empty terminals', () => {
@@ -193,6 +200,42 @@ describe('useTerminalList', () => {
     })
     expect(listTerminalsFn).toHaveBeenCalledTimes(2)
     expect(result.current.terminals).toEqual([TERMINAL_A, TERMINAL_B])
+  })
+
+  it('shows a newly created terminal immediately before the next poll', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    listTerminalsFn.mockResolvedValue([TERMINAL_A])
+
+    const { result } = renderHook(() => useTerminalList(1000))
+
+    await waitFor(() => {
+      expect(result.current.terminals).toEqual([TERMINAL_A])
+    })
+
+    act(() => {
+      upsertTerminalListItem(TERMINAL_B)
+    })
+
+    expect(result.current.terminals).toEqual([TERMINAL_A, TERMINAL_B])
+    expect(listTerminalsFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('removes a closed terminal immediately before the next poll', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    listTerminalsFn.mockResolvedValue([TERMINAL_A, TERMINAL_B])
+
+    const { result } = renderHook(() => useTerminalList(1000))
+
+    await waitFor(() => {
+      expect(result.current.terminals).toEqual([TERMINAL_A, TERMINAL_B])
+    })
+
+    act(() => {
+      removeTerminalListItem(TERMINAL_B.id)
+    })
+
+    expect(result.current.terminals).toEqual([TERMINAL_A])
+    expect(listTerminalsFn).toHaveBeenCalledTimes(1)
   })
 
   it('keeps last known terminals when a subsequent poll fails', async () => {

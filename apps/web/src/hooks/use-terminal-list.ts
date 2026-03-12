@@ -70,6 +70,56 @@ interface TerminalInfo {
 
 type TerminalServiceStatus = 'checking' | 'available' | 'unavailable'
 
+type TerminalListListener = (terminals: readonly TerminalInfo[]) => void
+
+const terminalListListeners = new Set<TerminalListListener>()
+
+let sharedTerminalList: readonly TerminalInfo[] = []
+let hasSharedTerminalListSnapshot = false
+
+const getSharedTerminalListSnapshot = (): readonly TerminalInfo[] | null => {
+  return hasSharedTerminalListSnapshot ? sharedTerminalList : null
+}
+
+const publishTerminalList = (terminals: readonly TerminalInfo[]) => {
+  sharedTerminalList = terminals
+  hasSharedTerminalListSnapshot = true
+
+  for (const listener of terminalListListeners) {
+    listener(terminals)
+  }
+}
+
+const subscribeToTerminalList = (listener: TerminalListListener) => {
+  terminalListListeners.add(listener)
+
+  return () => {
+    terminalListListeners.delete(listener)
+  }
+}
+
+const upsertTerminalListItem = (terminal: TerminalInfo) => {
+  const nextTerminals = [...sharedTerminalList]
+  const terminalIndex = nextTerminals.findIndex(({ id }) => id === terminal.id)
+
+  if (terminalIndex === -1) {
+    nextTerminals.push(terminal)
+  } else {
+    nextTerminals[terminalIndex] = terminal
+  }
+
+  publishTerminalList(nextTerminals)
+}
+
+const removeTerminalListItem = (terminalId: string) => {
+  publishTerminalList(sharedTerminalList.filter(({ id }) => id !== terminalId))
+}
+
+const resetTerminalListStore = () => {
+  sharedTerminalList = []
+  hasSharedTerminalListSnapshot = false
+}
+
 /**
  * Default polling interval in milliseconds.
  *
@@ -109,10 +159,14 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
   const listTerminals = useAtomSet(listTerminalsMutation, {
     mode: 'promise',
   })
-  const [terminals, setTerminals] = useState<readonly TerminalInfo[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [serviceStatus, setServiceStatus] =
-    useState<TerminalServiceStatus>('checking')
+  const initialSnapshot = getSharedTerminalListSnapshot()
+  const [terminals, setTerminals] = useState<readonly TerminalInfo[]>(
+    initialSnapshot ?? []
+  )
+  const [isLoading, setIsLoading] = useState(initialSnapshot === null)
+  const [serviceStatus, setServiceStatus] = useState<TerminalServiceStatus>(
+    initialSnapshot === null ? 'checking' : 'available'
+  )
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const mountedRef = useRef(true)
 
@@ -120,7 +174,7 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
     try {
       const result = await listTerminals({ payload: undefined })
       if (mountedRef.current) {
-        setTerminals(result as readonly TerminalInfo[])
+        publishTerminalList(result as readonly TerminalInfo[])
         setIsLoading(false)
         setServiceStatus('available')
         setErrorMessage(null)
@@ -142,18 +196,31 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
 
   useEffect(() => {
     mountedRef.current = true
+    const unsubscribe = subscribeToTerminalList((nextTerminals) => {
+      if (!mountedRef.current) {
+        return
+      }
+
+      setTerminals(nextTerminals)
+      setIsLoading(false)
+      setServiceStatus('available')
+      setErrorMessage(null)
+    })
+
     fetchAndUpdate()
 
     if (pollIntervalMs > 0) {
       const timer = setInterval(fetchAndUpdate, pollIntervalMs)
       return () => {
         mountedRef.current = false
+        unsubscribe()
         clearInterval(timer)
       }
     }
 
     return () => {
       mountedRef.current = false
+      unsubscribe()
     }
   }, [fetchAndUpdate, pollIntervalMs])
 
@@ -167,6 +234,11 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
 }
 
 export { useTerminalList }
+export {
+  removeTerminalListItem,
+  resetTerminalListStore,
+  upsertTerminalListItem,
+}
 export type {
   AgentStatus,
   ForegroundProcess,

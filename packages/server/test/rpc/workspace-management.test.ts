@@ -11,6 +11,27 @@ type RpcTestContext = Effect.Effect.Success<typeof makeScopedTestRpcContext>
 const SETUP_ENV_FILE = '.laborer-setup-env'
 const CREATE_BRANCH_PATTERN = /feature\/rpc-create/
 
+/**
+ * Poll until the workspace row is removed from LiveStore.
+ * destroyWorktree forks cleanup into a background daemon fiber, so the
+ * workspace row deletion (the last step) signals that all cleanup is done.
+ */
+const waitForWorkspaceRemoval = (
+  store: RpcTestContext['store'],
+  workspaceId: string
+) =>
+  Effect.gen(function* () {
+    const maxAttempts = 100
+    for (let i = 0; i < maxAttempts; i++) {
+      yield* Effect.sleep('100 millis')
+      const rows = store.query(tables.workspaces.where('id', workspaceId))
+      if (rows.length === 0) {
+        return
+      }
+    }
+    assert.fail('Timed out waiting for workspace row to be removed')
+  })
+
 const cleanupTempRoots = (tempRoots: readonly string[]) => {
   for (const root of tempRoots) {
     if (existsSync(root)) {
@@ -186,7 +207,7 @@ describe('LaborerRpcs workspace management', () => {
     )
   )
 
-  it.scoped(
+  it.scopedLive(
     'workspace.destroy removes laborer-managed worktrees and records terminal cleanup',
     () =>
       runWithRpcTestContext(({ client, store, terminalClientRecorder }) =>
@@ -218,12 +239,12 @@ describe('LaborerRpcs workspace management', () => {
 
           yield* client.workspace.destroy({ workspaceId: workspace.id })
 
+          // destroyWorktree forks cleanup into a background daemon fiber.
+          // Poll until the workspace row is removed (last step in the fiber).
+          yield* waitForWorkspaceRemoval(store, workspace.id)
+
           assert.isFalse(existsSync(workspace.worktreePath))
           assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
-          assert.deepStrictEqual(
-            store.query(tables.workspaces.where('id', workspace.id)),
-            []
-          )
           assert.deepStrictEqual(
             yield* Ref.get(terminalClientRecorder.killAllForWorkspaceCalls),
             [workspace.id]
@@ -232,7 +253,7 @@ describe('LaborerRpcs workspace management', () => {
       )
   )
 
-  it.scoped(
+  it.scopedLive(
     'workspace.destroy removes external worktrees from disk and store state',
     () =>
       runWithRpcTestContext(({ client, store, terminalClientRecorder }) =>
@@ -281,12 +302,12 @@ describe('LaborerRpcs workspace management', () => {
             workspaceId: externalWorkspace.id,
           })
 
+          // destroyWorktree forks cleanup into a background daemon fiber.
+          // Poll until the workspace row is removed (last step in the fiber).
+          yield* waitForWorkspaceRemoval(store, externalWorkspace.id)
+
           assert.isFalse(existsSync(externalWorktreePath))
           assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
-          assert.deepStrictEqual(
-            store.query(tables.workspaces.where('id', externalWorkspace.id)),
-            []
-          )
           assert.deepStrictEqual(
             yield* Ref.get(terminalClientRecorder.killAllForWorkspaceCalls),
             [externalWorkspace.id]

@@ -390,6 +390,14 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
+  Rpc.make('workspace.checkDirty', {
+    success: Schema.Array(Schema.String),
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
   // -----------------------------------------------------------------------
   // Container RPCs (Issue 10)
   // -----------------------------------------------------------------------

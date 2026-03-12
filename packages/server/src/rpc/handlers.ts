@@ -787,6 +787,11 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         const provider = yield* WorkspaceProvider
         yield* provider.destroyWorktree(workspaceId, force)
       }),
+    'workspace.checkDirty': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const provider = yield* WorkspaceProvider
+        return yield* provider.checkDirtyFiles(workspaceId)
+      }),
 
     // -------------------------------------------------------------------
     // Container RPCs (Issue 10)

@@ -720,6 +720,18 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
     ) => Effect.Effect<void, RpcError>
 
     /**
+     * Check a workspace worktree for uncommitted changes.
+     *
+     * Returns a list of dirty file paths (empty array if clean).
+     * This is a lightweight check that does not modify any state.
+     *
+     * @param workspaceId - ID of the workspace to check
+     */
+    readonly checkDirtyFiles: (
+      workspaceId: string
+    ) => Effect.Effect<readonly string[], RpcError>
+
+    /**
      * Get environment variables for a workspace.
      *
      * Returns a Record of env vars that should be injected into all
@@ -1643,6 +1655,68 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         }
       )
 
+      const checkDirtyFiles = Effect.fn('WorkspaceProvider.checkDirtyFiles')(
+        function* (workspaceId: string) {
+          const allWorkspaces = store.query(tables.workspaces)
+          const workspaceOpt = pipe(
+            allWorkspaces,
+            Arr.findFirst((w) => w.id === workspaceId)
+          )
+
+          if (workspaceOpt._tag === 'None') {
+            return yield* new RpcError({
+              message: `Workspace not found: ${workspaceId}`,
+              code: 'NOT_FOUND',
+            })
+          }
+
+          const workspace = workspaceOpt.value
+
+          yield* Effect.logInfo(
+            `Checking worktree for uncommitted changes: workspace=${workspaceId}, path=${workspace.worktreePath}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          const dirtyFiles = yield* Effect.tryPromise({
+            try: async () => {
+              const proc = spawn(['git', 'status', '--porcelain'], {
+                cwd: workspace.worktreePath,
+                stdout: 'pipe',
+                stderr: 'pipe',
+              })
+              const exitCode = await proc.exited
+              const stdout = await new Response(proc.stdout).text()
+              if (exitCode !== 0 || stdout.trim().length === 0) {
+                return [] as string[]
+              }
+              return stdout
+                .trim()
+                .split('\n')
+                .map((line) => line.slice(3))
+            },
+            catch: () =>
+              new RpcError({
+                message: 'Failed to check worktree status',
+                code: 'GIT_CHECK_FAILED',
+              }),
+          }).pipe(
+            Effect.catchAll((err) =>
+              Effect.logWarning(
+                `Dirty check failed (skipping): ${String(err)}`
+              ).pipe(
+                Effect.annotateLogs('module', logPrefix),
+                Effect.map(() => [] as string[])
+              )
+            )
+          )
+
+          yield* Effect.logInfo(
+            `Dirty check result: ${dirtyFiles.length} changed file(s)`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          return dirtyFiles as readonly string[]
+        }
+      )
+
       const getWorkspaceEnv = Effect.fn('WorkspaceProvider.getWorkspaceEnv')(
         function* (workspaceId: string) {
           // Look up the workspace from LiveStore
@@ -1690,6 +1764,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       return WorkspaceProvider.of({
         createWorktree,
         destroyWorktree,
+        checkDirtyFiles,
         getWorkspaceEnv,
       })
     })

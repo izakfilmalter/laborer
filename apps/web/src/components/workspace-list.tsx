@@ -82,7 +82,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
+import { cn, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { usePanelActions } from '@/panels/panel-context'
 
@@ -90,6 +90,7 @@ const allWorkspaces$ = queryDb(workspaces, { label: 'workspaceList' })
 const allPrds$ = queryDb(prds, { label: 'workspaceList.prds' })
 
 const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
+const checkDirtyMutation = LaborerClient.mutation('workspace.checkDirty')
 const startLoopMutation = LaborerClient.mutation('rlph.startLoop')
 const pauseContainerMutation = LaborerClient.mutation('container.pause')
 const unpauseContainerMutation = LaborerClient.mutation('container.unpause')
@@ -317,29 +318,31 @@ function ContainerPauseButton({
 /**
  * Returns the label for the destroy button based on current state.
  */
-function getDestroyButtonLabel(
-  isDestroying: boolean,
-  hasDirtyWorktree: boolean
-): string {
-  if (isDestroying) {
-    return 'Destroying...'
-  }
-  if (hasDirtyWorktree) {
-    return 'Force Destroy'
-  }
-  return 'Destroy'
-}
-
 /**
  * Destroy dialog description text. Extracted to avoid nested ternaries.
  */
 function DestroyDialogDescription({
   branchName,
   dirtyFiles,
+  isCheckingDirty,
 }: {
   readonly branchName: string
   readonly dirtyFiles: readonly string[]
+  readonly isCheckingDirty: boolean
 }) {
+  if (isCheckingDirty) {
+    return (
+      <AlertDialogDescription>
+        <span className="flex items-center gap-2">
+          <Spinner className="size-3" />
+          Checking workspace{' '}
+          <strong className="font-mono text-foreground">{branchName}</strong>{' '}
+          for uncommitted changes...
+        </span>
+      </AlertDialogDescription>
+    )
+  }
+
   if (dirtyFiles.length > 0) {
     return (
       <>
@@ -398,48 +401,62 @@ interface WorkspaceItemProps {
 
 function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [isDestroying, setIsDestroying] = useState(false)
+  const [isCheckingDirty, setIsCheckingDirty] = useState(false)
   const [dirtyFiles, setDirtyFiles] = useState<string[]>([])
   const [isStartingLoop, setIsStartingLoop] = useState(false)
   const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
+    mode: 'promise',
+  })
+  const checkDirty = useAtomSet(checkDirtyMutation, {
     mode: 'promise',
   })
   const startLoop = useAtomSet(startLoopMutation, {
     mode: 'promise',
   })
   const panelActions = usePanelActions()
-  const handleDestroy = async (force?: boolean) => {
-    setIsDestroying(true)
-    try {
-      await destroyWorkspace({
-        payload: { workspaceId: workspace.id, force },
-      })
-      toast.success(
-        `Workspace "${workspace.branchName}" destroyed successfully`
-      )
-      setDialogOpen(false)
+
+  const handleDialogOpen = (open: boolean) => {
+    setDialogOpen(open)
+    if (!open) {
       setDirtyFiles([])
-    } catch (error: unknown) {
-      const code = extractErrorCode(error)
-      if (code === 'DIRTY_WORKTREE' && !force) {
-        const message = extractErrorMessage(error)
-        // Parse file list from error message (after first newline)
-        const newlineIndex = message.indexOf('\n')
-        const files =
-          newlineIndex !== -1
-            ? message
-                .slice(newlineIndex + 1)
-                .split('\n')
-                .filter((f) => f.length > 0)
-            : []
-        setDirtyFiles(files.length > 0 ? files : ['(unknown files)'])
-        setIsDestroying(false)
-        return
-      }
-      const message = extractErrorMessage(error)
-      toast.error(message)
-      setIsDestroying(false)
+      setIsCheckingDirty(false)
+      return
     }
+    // Check for dirty files when the dialog opens
+    setIsCheckingDirty(true)
+    checkDirty({ payload: { workspaceId: workspace.id } })
+      .then((files) => {
+        setDirtyFiles(files.length > 0 ? [...files] : [])
+        setIsCheckingDirty(false)
+      })
+      .catch(() => {
+        // If check fails, allow destroy without dirty warning
+        setIsCheckingDirty(false)
+      })
+  }
+
+  const handleDestroy = (force?: boolean) => {
+    // Close dialog immediately and run destruction in the background
+    setDialogOpen(false)
+    setDirtyFiles([])
+
+    const toastId = toast.loading(
+      `Destroying workspace "${workspace.branchName}"...`
+    )
+
+    destroyWorkspace({
+      payload: { workspaceId: workspace.id, force },
+    })
+      .then(() => {
+        toast.success(
+          `Workspace "${workspace.branchName}" destroyed successfully`,
+          { id: toastId }
+        )
+      })
+      .catch((error: unknown) => {
+        const message = extractErrorMessage(error)
+        toast.error(message, { id: toastId })
+      })
   }
 
   const handleStartLoop = useCallback(async () => {
@@ -601,15 +618,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
               disabled={workspace.prNumber == null}
               workspaceId={workspace.id}
             />
-            <AlertDialog
-              onOpenChange={(open) => {
-                setDialogOpen(open)
-                if (!open) {
-                  setDirtyFiles([])
-                }
-              }}
-              open={dialogOpen}
-            >
+            <AlertDialog onOpenChange={handleDialogOpen} open={dialogOpen}>
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -638,18 +647,19 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                   <DestroyDialogDescription
                     branchName={workspace.branchName}
                     dirtyFiles={dirtyFiles}
+                    isCheckingDirty={isCheckingDirty}
                   />
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                   <AlertDialogAction
-                    disabled={isDestroying}
+                    disabled={isCheckingDirty}
                     onClick={() =>
                       handleDestroy(dirtyFiles.length > 0 ? true : undefined)
                     }
                     variant="destructive"
                   >
-                    {getDestroyButtonLabel(isDestroying, dirtyFiles.length > 0)}
+                    {dirtyFiles.length > 0 ? 'Force Destroy' : 'Destroy'}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>

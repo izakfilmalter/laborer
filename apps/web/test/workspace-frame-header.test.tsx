@@ -17,7 +17,13 @@ vi.mock('@/components/ui/tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="tooltip-wrapper">{children}</div>
   ),
-  TooltipTrigger: ({ render }: { render: React.ReactElement }) => render,
+  TooltipTrigger: ({
+    children,
+    render,
+  }: {
+    children?: React.ReactNode
+    render?: React.ReactElement
+  }) => <>{render ?? children}</>,
   TooltipContent: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="tooltip-content">{children}</div>
   ),
@@ -46,6 +52,8 @@ function mockActions(): PanelActions {
 const DIFF_VIEWER_RE = /diff viewer/i
 const MINIMIZE_RE = /minimize/i
 const FULLSCREEN_RE = /fullscreen/i
+const MERGED_PR_RE = /#42 merged/i
+const CLOSED_PR_RE = /#17 closed/i
 
 /** Default props for a typical active pane scenario. */
 const BASE_PROPS = {
@@ -59,7 +67,6 @@ const BASE_PROPS = {
   prUrl: null,
   projectName: 'my-project',
   workspaceId: 'ws-1',
-  workspaceStatus: 'running',
 } as const
 
 describe('WorkspaceFrameHeader', () => {
@@ -431,6 +438,40 @@ describe('WorkspaceFrameHeader', () => {
     expect(
       screen.getByRole('button', { name: 'Minimize workspace' })
     ).toBeTruthy()
+  })
+
+  it('renders the GitHub PR status badge in the header', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        prNumber={42}
+        prState="MERGED"
+        prTitle="Ship the fix"
+        prUrl="https://github.com/example/repo/pull/42"
+      />
+    )
+
+    expect(screen.getByRole('link', { name: MERGED_PR_RE })).toBeTruthy()
+    expect(screen.queryByText('running')).toBeNull()
+  })
+
+  it('renders GitHub PR status without a link when the URL is missing', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        prNumber={17}
+        prState="CLOSED"
+        prTitle="Closed PR"
+      />
+    )
+
+    expect(screen.getByText('#17')).toBeTruthy()
+    expect(screen.getByText('closed')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: CLOSED_PR_RE })).toBeNull()
   })
 
   // ---------------------------------------------------------------------------

@@ -36,6 +36,7 @@ import {
   getTerminalIdsToRemove,
   getWorkspaceTerminalIds,
   reconcileLayout,
+  repairPanelLayoutTree,
   replaceNode,
   splitPane,
 } from '@/panels/layout-utils'
@@ -98,9 +99,19 @@ export function usePanelLayout() {
   const persistedRow = persistedRows.find(
     (row) => row.windowId === panelWindowId
   )
+  const persistedLayoutRepair = useMemo(() => {
+    if (!persistedRow?.layoutTree) {
+      return {
+        layoutTree: undefined as PanelNode | undefined,
+        wasRepaired: false,
+      }
+    }
+
+    return repairPanelLayoutTree(persistedRow.layoutTree)
+  }, [persistedRow])
 
   // The persisted layout tree, if one exists in LiveStore.
-  const persistedLayoutTree = persistedRow?.layoutTree as PanelNode | undefined
+  const persistedLayoutTree = persistedLayoutRepair.layoutTree
   const rawPersistedActivePaneId = persistedRow?.activePaneId ?? null
   const persistedWorkspaceOrder = (persistedRow?.workspaceOrder ?? null) as
     | string[]
@@ -118,13 +129,43 @@ export function usePanelLayout() {
     ? ensureValidActivePaneId(layout, rawPersistedActivePaneId)
     : null
 
+  useEffect(() => {
+    if (!(persistedRow && layout)) {
+      return
+    }
+
+    const shouldRepairPersistedSession =
+      persistedLayoutRepair.wasRepaired ||
+      persistedActivePaneId !== rawPersistedActivePaneId
+
+    if (!shouldRepairPersistedSession) {
+      return
+    }
+
+    store.commit(
+      layoutRestored({
+        windowId: panelWindowId,
+        layoutTree: layout,
+        activePaneId: persistedActivePaneId,
+      })
+    )
+  }, [
+    layout,
+    panelWindowId,
+    persistedActivePaneId,
+    persistedLayoutRepair.wasRepaired,
+    persistedRow,
+    rawPersistedActivePaneId,
+    store,
+  ])
+
   // Seed LiveStore with the initial layout when there's no persisted layout
   // but we have an auto-generated one from terminals/workspaces.
   // Sets activePaneId to the first leaf so keyboard shortcuts work immediately.
   // @see Issue #150: Guaranteed active pane invariant
   const hasSeeded = useRef(false)
   useEffect(() => {
-    if (!persistedLayoutTree && defaultLayout && !hasSeeded.current) {
+    if (!persistedRow && defaultLayout && !hasSeeded.current) {
       hasSeeded.current = true
       store.commit(
         layoutRestored({
@@ -134,7 +175,7 @@ export function usePanelLayout() {
         })
       )
     }
-  }, [defaultLayout, persistedLayoutTree, panelWindowId, store])
+  }, [defaultLayout, panelWindowId, persistedRow, store])
 
   // -------------------------------------------------------------------
   // Reconcile persisted layout against live terminal state on startup.

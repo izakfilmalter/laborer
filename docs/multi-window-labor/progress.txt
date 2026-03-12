@@ -60,3 +60,10 @@
 - Kept each restored native window bound to its own persisted `windowId`, so bootstrap arguments continue to hydrate the matching window-scoped panel session in the renderer.
 - Added a desktop main-process test that exercises a multi-window relaunch and verifies both restored windows are recreated with their own bounds, `windowId`, and maximized state.
 - Verified with `bun run test` and `bun run typecheck` in `apps/desktop`.
+
+2026-03-12 - Issue 9: Invalid Session Repair
+- Selected Issue 9 as the highest-priority remaining task because restore repair is the most foundational remaining slice: it hardens multi-window relaunch correctness before window-targeting flows and unblocks the final UX-hardening pass.
+- Added panel-layout repair logic that sanitizes persisted pane trees on restore, drops invalid leaf metadata, collapses malformed split nodes, and falls back to the deterministic blank native-window session when a saved layout cannot be repaired.
+- Updated `usePanelLayout` to persist repaired sessions back to LiveStore, so stale `activePaneId` pointers and corrupted window-session records self-heal instead of lingering across launches.
+- Added unit coverage for layout repair helpers plus hook coverage for both stale pane references and a corrupted restore record falling back to a safe default window session.
+- Verified with `bun run test` and `bun run typecheck` in `apps/web`.

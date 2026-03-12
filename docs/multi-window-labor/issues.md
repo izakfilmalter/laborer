@@ -189,13 +189,13 @@ Harden restore so invalid, stale, or partially corrupt window-session data repai
 
 ## Acceptance criteria
 
-- [ ] Invalid or stale pane references do not prevent window restoration
-- [ ] A broken window session falls back to a safe default session for that window
-- [ ] Tests cover at least one corrupted restore record and one stale pane reference case
+- [x] Invalid or stale pane references do not prevent window restoration
+- [x] A broken window session falls back to a safe default session for that window
+- [x] Tests cover at least one corrupted restore record and one stale pane reference case
 
 ## Blocked by
 
-None - ready
+None - completed
 
 ## User stories addressed
 
@@ -281,7 +281,7 @@ Do a final pass on multi-window edge cases and user feel without expanding scope
 | 6 | Default Blank Session Seeding | 4 | Done |
 | 7 | Persist Window Records | 1 | Done |
 | 8 | Restore All Windows on Relaunch | None | Done |
-| 9 | Invalid Session Repair | None | Ready |
+| 9 | Invalid Session Repair | None | Done |
 | 10 | Preserve Closed Window Sessions | None | Done |
 | 11 | Focus Existing Window for Open Workspace | 5 | Ready |
-| 12 | Multi-Window UX Hardening | 9, 11 | Blocked |
+| 12 | Multi-Window UX Hardening | 11 | Blocked |

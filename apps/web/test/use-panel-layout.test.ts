@@ -146,6 +146,14 @@ const DEFAULT_NEW_WINDOW_LAYOUT: PanelNode = {
   workspaceId: undefined,
 }
 
+const CORRUPTED_LAYOUT = {
+  _tag: 'SplitNode',
+  children: [],
+  direction: 'horizontal',
+  id: 'split-corrupted',
+  sizes: [],
+} as unknown as PanelNode
+
 type PersistedLayoutRow = (typeof persistedRowsRef.current)[number]
 
 type PersistedLayoutEvent =
@@ -272,6 +280,33 @@ describe('usePanelLayout', () => {
     expect(result.current.activePaneId).not.toBe('pane-b-only')
   })
 
+  it('repairs stale active-pane pointers during restore', () => {
+    persistedRowsRef.current = [
+      {
+        activePaneId: 'pane-missing',
+        layoutTree: WINDOW_A_LAYOUT,
+        windowId: 'window-a',
+      },
+    ]
+
+    const { result, rerender } = renderHook(() => usePanelLayout())
+
+    rerender()
+
+    expect(result.current.layout).toEqual(WINDOW_A_LAYOUT)
+    expect(result.current.activePaneId).toBe('pane-a-left')
+    expect(layoutRestoredMock).toHaveBeenCalledWith({
+      activePaneId: 'pane-a-left',
+      layoutTree: WINDOW_A_LAYOUT,
+      windowId: 'window-a',
+    })
+    expect(getPersistedRow('window-a')).toEqual({
+      activePaneId: 'pane-a-left',
+      layoutTree: WINDOW_A_LAYOUT,
+      windowId: 'window-a',
+    })
+  })
+
   it('reads a different persisted session when bootstrapped with another window id', () => {
     persistedRowsRef.current = [
       {
@@ -292,6 +327,35 @@ describe('usePanelLayout', () => {
     expect(result.current.layout).toEqual(WINDOW_B_LAYOUT)
     expect(result.current.activePaneId).toBe('pane-b-only')
     expect(result.current.leafPaneIds).toEqual(['pane-b-only'])
+  })
+
+  it('falls back to the default session when the persisted layout is corrupted', () => {
+    currentWindowIdRef.current = 'window-corrupted'
+    initialLayoutRef.current = WINDOW_A_LAYOUT
+    persistedRowsRef.current = [
+      {
+        activePaneId: 'pane-corrupted',
+        layoutTree: CORRUPTED_LAYOUT,
+        windowId: 'window-corrupted',
+      },
+    ]
+
+    const { result, rerender } = renderHook(() => usePanelLayout())
+
+    rerender()
+
+    expect(result.current.layout).toEqual(DEFAULT_NEW_WINDOW_LAYOUT)
+    expect(result.current.activePaneId).toBe('pane-default')
+    expect(layoutRestoredMock).toHaveBeenCalledWith({
+      activePaneId: 'pane-default',
+      layoutTree: DEFAULT_NEW_WINDOW_LAYOUT,
+      windowId: 'window-corrupted',
+    })
+    expect(getPersistedRow('window-corrupted')).toEqual({
+      activePaneId: 'pane-default',
+      layoutTree: DEFAULT_NEW_WINDOW_LAYOUT,
+      windowId: 'window-corrupted',
+    })
   })
 
   it('seeds a new native window with the blank default session instead of cloning existing layout state', () => {

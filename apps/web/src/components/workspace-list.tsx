@@ -83,6 +83,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { isElectron, openExternalUrl } from '@/lib/desktop'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
@@ -473,6 +474,9 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
 
   const isContainerized = workspace.containerId != null
   const isContainerPaused = workspace.containerStatus === 'paused'
+  const containerLink = workspace.containerUrl
+    ? `https://${workspace.containerUrl}`
+    : null
 
   /**
    * For containerized workspaces, derive the display status from the
@@ -483,6 +487,17 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
     isContainerized && isContainerPaused ? 'paused' : workspace.status
 
   const needsAttention = workspaceAgentStatus === 'waiting_for_input'
+
+  const handleContainerLinkClick = async (
+    event: React.MouseEvent<HTMLAnchorElement>
+  ) => {
+    if (!(isElectron() && containerLink)) {
+      return
+    }
+
+    event.preventDefault()
+    await openExternalUrl(containerLink)
+  }
 
   return (
     <Card
@@ -526,29 +541,28 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
           </div>
         </div>
         <div className="flex min-w-0 items-center justify-between gap-2">
-          {workspace.containerUrl ? (
+          {containerLink ? (
             <CardDescription className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
               <span className="group/copyable flex min-w-0 items-center gap-1 overflow-hidden">
                 <a
                   className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
-                  href={`https://${workspace.containerUrl}`}
+                  href={containerLink}
+                  onClick={handleContainerLinkClick}
                   rel="noopener"
                   target="_blank"
-                  title={`Open https://${workspace.containerUrl}`}
+                  title={`Open ${containerLink}`}
                 >
                   {workspace.containerUrl}
                 </a>
                 <span className="-mr-14 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
-                  <CopyButton
-                    title="Copy URL"
-                    value={`https://${workspace.containerUrl}`}
-                  />
+                  <CopyButton title="Copy URL" value={containerLink} />
                   <Tooltip>
                     <TooltipTrigger>
                       <a
                         aria-label="Open in browser"
                         className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                        href={`https://${workspace.containerUrl}`}
+                        href={containerLink}
+                        onClick={handleContainerLinkClick}
                         rel="noopener"
                         target="_blank"
                       >

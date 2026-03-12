@@ -7,21 +7,30 @@
  * @see Issue #193: Plan workspace scoped task list and rlph integration
  */
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   destroyFn,
+  isElectronMock,
   startLoopFn,
   mutationMap,
+  openExternalUrlMock,
   queryDbMock,
   useLaborerStoreMock,
 } = vi.hoisted(() => ({
   destroyFn: vi.fn(),
+  isElectronMock: vi.fn(() => false),
   startLoopFn: vi.fn(),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+  openExternalUrlMock: vi.fn(async () => true),
   queryDbMock: vi.fn((_table, options: { label: string }) => options),
   useLaborerStoreMock: vi.fn(),
+}))
+
+vi.mock('@/lib/desktop', () => ({
+  isElectron: isElectronMock,
+  openExternalUrl: openExternalUrlMock,
 }))
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
@@ -193,6 +202,7 @@ describe('WorkspaceList plan association', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    isElectronMock.mockReturnValue(false)
   })
 
   it('detects plan-associated workspace and shows scoped task list', () => {
@@ -413,5 +423,35 @@ describe('WorkspaceList plan association', () => {
 
     expect(screen.getByText('#77')).toBeTruthy()
     expect(screen.getByText('closed')).toBeTruthy()
+  })
+
+  it('opens container links in the OS browser when running in Electron', () => {
+    isElectronMock.mockReturnValue(true)
+    useLaborerStoreMock.mockReturnValue({
+      useQuery: (query: { label: string }) => {
+        if (query.label === 'workspaceList') {
+          return [
+            {
+              ...WORKSPACE_REGULAR,
+              containerId: 'container-1',
+              containerStatus: 'running',
+              containerUrl: 'preview.example.com',
+            },
+          ]
+        }
+        if (query.label === 'workspaceList.prds') {
+          return []
+        }
+        return []
+      },
+    })
+
+    render(<WorkspaceList projectId="project-1" />)
+
+    fireEvent.click(screen.getByRole('link', { name: 'preview.example.com' }))
+
+    expect(openExternalUrlMock).toHaveBeenCalledWith(
+      'https://preview.example.com'
+    )
   })
 })

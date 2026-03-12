@@ -11,6 +11,16 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const { isElectronMock, openExternalUrlMock } = vi.hoisted(() => ({
+  isElectronMock: vi.fn(() => false),
+  openExternalUrlMock: vi.fn(async () => true),
+}))
+
+vi.mock('@/lib/desktop', () => ({
+  isElectron: isElectronMock,
+  openExternalUrl: openExternalUrlMock,
+}))
+
 // Stub tooltip — the @base-ui/react tooltip uses a portal that isn't
 // available in jsdom. We just need the trigger to render its content.
 vi.mock('@/components/ui/tooltip', () => ({
@@ -76,6 +86,7 @@ describe('WorkspaceFrameHeader', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    isElectronMock.mockReturnValue(false)
   })
 
   // --- Diff viewer toggle ---
@@ -455,6 +466,27 @@ describe('WorkspaceFrameHeader', () => {
 
     expect(screen.getByRole('link', { name: MERGED_PR_RE })).toBeTruthy()
     expect(screen.queryByText('running')).toBeNull()
+  })
+
+  it('opens PR links in the OS browser when running in Electron', () => {
+    isElectronMock.mockReturnValue(true)
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        prNumber={42}
+        prState="MERGED"
+        prTitle="Ship the fix"
+        prUrl="https://github.com/example/repo/pull/42"
+      />
+    )
+
+    fireEvent.click(screen.getByRole('link', { name: MERGED_PR_RE }))
+
+    expect(openExternalUrlMock).toHaveBeenCalledWith(
+      'https://github.com/example/repo/pull/42'
+    )
   })
 
   it('renders GitHub PR status without a link when the URL is missing', () => {

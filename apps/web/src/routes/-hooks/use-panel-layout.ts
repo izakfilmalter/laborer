@@ -17,6 +17,7 @@ import {
   removeTerminalListItem,
   useTerminalList,
 } from '@/hooks/use-terminal-list'
+import { getCurrentWindowId } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import {
@@ -41,8 +42,8 @@ import {
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import { useInitialLayout } from './use-initial-layout'
 
-/** Session ID for the persisted panel layout row. Single-user, single-session. */
-const LAYOUT_SESSION_ID = 'default'
+/** Browser fallback until every renderer boot path has a native window ID. */
+const DEFAULT_PANEL_WINDOW_ID = 'default'
 
 /** Query the persisted panel layout from LiveStore. */
 const persistedLayout$ = queryDb(panelLayout, {
@@ -76,11 +77,14 @@ export function usePanelLayout() {
   const store = useLaborerStore()
   const initialLayout = useInitialLayout()
   const registry = usePanelGroupRegistry()
+  const panelWindowId = getCurrentWindowId() ?? DEFAULT_PANEL_WINDOW_ID
 
   // Read the persisted layout from LiveStore reactively.
-  // Returns all rows (should be 0 or 1 for the "default" session).
+  // Returns all rows; this hook still targets a single window-scoped row.
   const persistedRows = store.useQuery(persistedLayout$)
-  const persistedRow = persistedRows.find((row) => row.id === LAYOUT_SESSION_ID)
+  const persistedRow = persistedRows.find(
+    (row) => row.windowId === panelWindowId
+  )
 
   // The persisted layout tree, if one exists in LiveStore.
   const persistedLayoutTree = persistedRow?.layoutTree as PanelNode | undefined
@@ -111,13 +115,13 @@ export function usePanelLayout() {
       hasSeeded.current = true
       store.commit(
         layoutRestored({
-          id: LAYOUT_SESSION_ID,
+          windowId: panelWindowId,
           layoutTree: initialLayout,
           activePaneId: getFirstLeafId(initialLayout) ?? null,
         })
       )
     }
-  }, [persistedLayoutTree, initialLayout, store])
+  }, [persistedLayoutTree, initialLayout, panelWindowId, store])
 
   // -------------------------------------------------------------------
   // Reconcile persisted layout against live terminal state on startup.
@@ -211,7 +215,9 @@ export function usePanelLayout() {
       // Re-read the persisted layout to avoid overwriting any changes
       // that occurred during the async spawn phase.
       const currentRows = store.query(persistedLayout$)
-      const currentRow = currentRows.find((row) => row.id === LAYOUT_SESSION_ID)
+      const currentRow = currentRows.find(
+        (row) => row.windowId === panelWindowId
+      )
       const currentTree = currentRow?.layoutTree as PanelNode | undefined
       if (!currentTree) {
         setIsReconciling(false)
@@ -222,7 +228,7 @@ export function usePanelLayout() {
       if (reconciled !== currentTree) {
         store.commit(
           layoutRestored({
-            id: LAYOUT_SESSION_ID,
+            windowId: panelWindowId,
             layoutTree: reconciled,
             activePaneId: ensureValidActivePaneId(
               reconciled,
@@ -238,6 +244,7 @@ export function usePanelLayout() {
   }, [
     terminalsLoading,
     liveTerminals,
+    panelWindowId,
     persistedLayoutTree,
     spawnTerminal,
     store,
@@ -263,7 +270,7 @@ export function usePanelLayout() {
 
       store.commit(
         layoutSplit({
-          id: LAYOUT_SESSION_ID,
+          windowId: panelWindowId,
           layoutTree: newTree,
           activePaneId: persistedActivePaneId,
         })
@@ -289,6 +296,7 @@ export function usePanelLayout() {
     [
       persistedLayoutTree,
       initialLayout,
+      panelWindowId,
       persistedActivePaneId,
       store,
       spawnTerminal,
@@ -331,7 +339,7 @@ export function usePanelLayout() {
 
         store.commit(
           layoutPaneClosed({
-            id: LAYOUT_SESSION_ID,
+            windowId: panelWindowId,
             layoutTree: newTree,
             activePaneId: nextActivePaneId,
           })
@@ -341,7 +349,7 @@ export function usePanelLayout() {
         // empty state renders and a new initial layout can seed.
         store.commit(
           layoutPaneClosed({
-            id: LAYOUT_SESSION_ID,
+            windowId: panelWindowId,
             // Commit a single empty leaf as a placeholder since
             // the schema requires a valid PanelNode.
             // The PanelManager will show the empty state because
@@ -362,6 +370,7 @@ export function usePanelLayout() {
     [
       persistedLayoutTree,
       initialLayout,
+      panelWindowId,
       persistedActivePaneId,
       store,
       removeTerminalOptimistically,
@@ -380,13 +389,13 @@ export function usePanelLayout() {
       const validatedPaneId = ensureValidActivePaneId(base, paneId)
       store.commit(
         layoutPaneAssigned({
-          id: LAYOUT_SESSION_ID,
+          windowId: panelWindowId,
           layoutTree: base,
           activePaneId: validatedPaneId,
         })
       )
     },
-    [persistedLayoutTree, initialLayout, store]
+    [persistedLayoutTree, initialLayout, panelWindowId, store]
   )
 
   /**
@@ -424,7 +433,7 @@ export function usePanelLayout() {
     ) => {
       store.commit(
         layoutPaneAssigned({
-          id: LAYOUT_SESSION_ID,
+          windowId: panelWindowId,
           layoutTree,
           activePaneId,
         })
@@ -435,7 +444,7 @@ export function usePanelLayout() {
         })
       }
     },
-    [store, isWorkspaceContainerized]
+    [panelWindowId, store, isWorkspaceContainerized]
   )
 
   const handleAssignTerminalToPane = useCallback(
@@ -527,14 +536,20 @@ export function usePanelLayout() {
       const newTree = replaceNode(base, paneId, updatedLeaf)
       store.commit(
         layoutPaneAssigned({
-          id: LAYOUT_SESSION_ID,
+          windowId: panelWindowId,
           layoutTree: newTree,
           activePaneId: persistedActivePaneId,
         })
       )
       return nowOpen
     },
-    [persistedLayoutTree, initialLayout, persistedActivePaneId, store]
+    [
+      persistedLayoutTree,
+      initialLayout,
+      panelWindowId,
+      persistedActivePaneId,
+      store,
+    ]
   )
 
   /**
@@ -579,7 +594,7 @@ export function usePanelLayout() {
         const newTree = replaceNode(base, paneId, updatedLeaf)
         store.commit(
           layoutPaneAssigned({
-            id: LAYOUT_SESSION_ID,
+            windowId: panelWindowId,
             layoutTree: newTree,
             activePaneId: persistedActivePaneId,
           })
@@ -596,7 +611,7 @@ export function usePanelLayout() {
         const newTree = replaceNode(base, paneId, updatedLeaf)
         store.commit(
           layoutPaneAssigned({
-            id: LAYOUT_SESSION_ID,
+            windowId: panelWindowId,
             layoutTree: newTree,
             activePaneId: persistedActivePaneId,
           })
@@ -614,7 +629,9 @@ export function usePanelLayout() {
 
       // Re-read the layout to avoid overwriting concurrent changes
       const currentRows = store.query(persistedLayout$)
-      const currentRow = currentRows.find((row) => row.id === LAYOUT_SESSION_ID)
+      const currentRow = currentRows.find(
+        (row) => row.windowId === panelWindowId
+      )
       const currentTree = currentRow?.layoutTree as PanelNode | undefined
       const currentBase = currentTree ?? initialLayout
       if (!currentBase) {
@@ -634,7 +651,7 @@ export function usePanelLayout() {
       const newTree = replaceNode(currentBase, paneId, updatedLeaf)
       store.commit(
         layoutPaneAssigned({
-          id: LAYOUT_SESSION_ID,
+          windowId: panelWindowId,
           layoutTree: newTree,
           activePaneId: currentRow?.activePaneId ?? null,
         })
@@ -644,6 +661,7 @@ export function usePanelLayout() {
     [
       persistedLayoutTree,
       initialLayout,
+      panelWindowId,
       persistedActivePaneId,
       spawnTerminal,
       store,
@@ -707,7 +725,7 @@ export function usePanelLayout() {
         )
         store.commit(
           layoutPaneClosed({
-            id: LAYOUT_SESSION_ID,
+            windowId: panelWindowId,
             layoutTree: newTree,
             activePaneId: nextActivePaneId,
           })
@@ -716,7 +734,7 @@ export function usePanelLayout() {
         // All panes closed — commit an empty placeholder
         store.commit(
           layoutPaneClosed({
-            id: LAYOUT_SESSION_ID,
+            windowId: panelWindowId,
             layoutTree: {
               _tag: 'LeafNode' as const,
               id: 'pane-empty',
@@ -733,6 +751,7 @@ export function usePanelLayout() {
     [
       persistedLayoutTree,
       initialLayout,
+      panelWindowId,
       persistedActivePaneId,
       store,
       removeTerminalOptimistically,
@@ -751,12 +770,12 @@ export function usePanelLayout() {
       )
       store.commit(
         layoutWorkspacesReordered({
-          id: LAYOUT_SESSION_ID,
+          windowId: panelWindowId,
           workspaceOrder: order,
         })
       )
     },
-    [store]
+    [panelWindowId, store]
   )
 
   const panelActions = useMemo(

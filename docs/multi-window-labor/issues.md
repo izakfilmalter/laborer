@@ -53,9 +53,9 @@ Replace the current single-session panel layout persistence model with a window-
 
 ## Acceptance criteria
 
-- [ ] Panel layout persistence is keyed by `windowId` instead of one global default session id
-- [ ] Existing layout events/materializers support multiple independent window-scoped layout rows
-- [ ] Tests cover storing two different panel sessions without either one overwriting the other
+- [x] Panel layout persistence is keyed by `windowId` instead of one global default session id
+- [x] Existing layout events/materializers support multiple independent window-scoped layout rows
+- [x] Tests cover storing two different panel sessions without either one overwriting the other
 
 ## Blocked by
 
@@ -276,8 +276,8 @@ Do a final pass on multi-window edge cases and user feel without expanding scope
 |---|-------|-----------|--------|
 | 1 | Window Identity Plumbing | None | Done |
 | 2 | New Window Command | 1 | Done |
-| 3 | Panel Layout Storage by Window | 1 | Ready |
-| 4 | Renderer Reads Only Its Own Session | 3 | Blocked |
+| 3 | Panel Layout Storage by Window | 1 | Done |
+| 4 | Renderer Reads Only Its Own Session | 3 | Ready |
 | 5 | Renderer Writes Only Its Own Session | 4 | Blocked |
 | 6 | Default Blank Session Seeding | 4 | Blocked |
 | 7 | Persist Window Records | 1 | Ready |

@@ -102,8 +102,9 @@ export const prds = State.SQLite.table({
 
 /**
  * PanelLayout stores the recursive tree structure of splits and panes.
- * Uses a single row per session (keyed by `id`) with the full tree serialized
- * as JSON. The `activePaneId` tracks which pane currently has focus.
+ * Uses a single row per window session (keyed by `windowId`) with the full
+ * tree serialized as JSON. The `activePaneId` tracks which pane currently has
+ * focus.
  *
  * The `layoutTree` column uses `State.SQLite.json` which automatically handles
  * JSON serialization/deserialization via Effect Schema's `parseJson`.
@@ -111,7 +112,7 @@ export const prds = State.SQLite.table({
 export const panelLayout = State.SQLite.table({
   name: 'panel_layout',
   columns: {
-    id: State.SQLite.text({ primaryKey: true }),
+    windowId: State.SQLite.text({ primaryKey: true }),
     layoutTree: State.SQLite.json({
       schema: PanelNodeSchema,
     }),
@@ -428,7 +429,7 @@ export const prdRemoved = Events.synced({
  */
 
 const layoutEventSchema = Schema.Struct({
-  id: Schema.String,
+  windowId: Schema.String,
   layoutTree: PanelNodeSchema,
   activePaneId: Schema.NullOr(Schema.String),
 })
@@ -460,7 +461,7 @@ export const layoutRestored = Events.synced({
 export const layoutWorkspacesReordered = Events.synced({
   name: 'v1.LayoutWorkspacesReordered',
   schema: Schema.Struct({
-    id: Schema.String,
+    windowId: Schema.String,
     workspaceOrder: Schema.Array(Schema.String),
   }),
 })
@@ -690,24 +691,24 @@ const materializers = State.SQLite.materializers(events, {
   'v1.PrdStatusChanged': ({ id, status }) =>
     prds.update({ status }).where({ id }),
   'v1.PrdRemoved': ({ id }) => prds.delete().where({ id }),
-  'v1.LayoutSplit': ({ id, layoutTree, activePaneId }) =>
+  'v1.LayoutSplit': ({ windowId, layoutTree, activePaneId }) =>
     panelLayout
-      .insert({ id, layoutTree, activePaneId })
-      .onConflict('id', 'replace'),
-  'v1.LayoutPaneClosed': ({ id, layoutTree, activePaneId }) =>
+      .insert({ windowId, layoutTree, activePaneId })
+      .onConflict('windowId', 'replace'),
+  'v1.LayoutPaneClosed': ({ windowId, layoutTree, activePaneId }) =>
     panelLayout
-      .insert({ id, layoutTree, activePaneId })
-      .onConflict('id', 'replace'),
-  'v1.LayoutPaneAssigned': ({ id, layoutTree, activePaneId }) =>
+      .insert({ windowId, layoutTree, activePaneId })
+      .onConflict('windowId', 'replace'),
+  'v1.LayoutPaneAssigned': ({ windowId, layoutTree, activePaneId }) =>
     panelLayout
-      .insert({ id, layoutTree, activePaneId })
-      .onConflict('id', 'replace'),
-  'v1.LayoutRestored': ({ id, layoutTree, activePaneId }) =>
+      .insert({ windowId, layoutTree, activePaneId })
+      .onConflict('windowId', 'replace'),
+  'v1.LayoutRestored': ({ windowId, layoutTree, activePaneId }) =>
     panelLayout
-      .insert({ id, layoutTree, activePaneId })
-      .onConflict('id', 'replace'),
-  'v1.LayoutWorkspacesReordered': ({ id, workspaceOrder }) =>
-    panelLayout.update({ workspaceOrder }).where({ id }),
+      .insert({ windowId, layoutTree, activePaneId })
+      .onConflict('windowId', 'replace'),
+  'v1.LayoutWorkspacesReordered': ({ windowId, workspaceOrder }) =>
+    panelLayout.update({ workspaceOrder }).where({ windowId }),
 })
 
 // ---------------------------------------------------------------------------

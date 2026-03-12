@@ -12,3 +12,11 @@
 - Refactored desktop window creation to keep each `BrowserWindow` instance self-contained, which lets opening a second window leave the originating window alive and untouched.
 - Switched desktop IPC fallback window selection to resolve dynamically so menu actions, dialogs, and notification clicks still target a valid open window after additional windows are created.
 - Added desktop tests covering the new menu item wiring and re-verified `apps/desktop` with `bun run test` and `bun run typecheck`.
+
+2026-03-12 - Issue 3: Panel Layout Storage by Window
+- Selected Issue 3 as the highest-priority remaining task because it is the next unblocked storage slice in the PRD's delivery order and it unlocks renderer isolation work for reads, writes, and default seeding.
+- Renamed persisted panel-layout identity from a generic session `id` to explicit `windowId` keys in the shared schema, layout events, and materializers so panel state is modeled as window-scoped data.
+- Updated the web panel-layout hook to use the new `windowId` storage contract, with a `default` fallback for non-desktop contexts while the rest of the multi-window renderer work lands.
+- Added shared schema coverage proving two window-scoped panel layout rows can be stored at the same time without overwriting each other.
+- Verified with `bun run typecheck` and `bun x vitest run --pool=threads` in `packages/shared`, plus `bun run test` and `bun run typecheck` in `apps/web`.
+- `bun run test` in `packages/shared` still hits a pre-existing Vitest worker/process issue in this environment, so I used `bun x vitest run --pool=threads` to complete the feedback loop successfully.

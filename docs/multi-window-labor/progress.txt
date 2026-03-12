@@ -20,3 +20,22 @@
 - Added shared schema coverage proving two window-scoped panel layout rows can be stored at the same time without overwriting each other.
 - Verified with `bun run typecheck` and `bun x vitest run --pool=threads` in `packages/shared`, plus `bun run test` and `bun run typecheck` in `apps/web`.
 - `bun run test` in `packages/shared` still hits a pre-existing Vitest worker/process issue in this environment, so I used `bun x vitest run --pool=threads` to complete the feedback loop successfully.
+
+2026-03-12 - Issue 4: Renderer Reads Only Its Own Session
+- Selected Issue 4 as the highest-priority remaining task because it is the next renderer isolation slice in the PRD's delivery order and it directly unblocks renderer-scoped writes plus default blank session seeding.
+- Added a focused `usePanelLayout` hook test suite that boots the renderer against multiple persisted panel-layout rows and proves it hydrates only the row for the current `windowId`.
+- Added coverage showing active-pane fallback is derived from the current window's layout only, so a stale pane id in one session does not leak focus state from another window.
+- Added coverage for booting a second renderer window id against the same persisted data set, proving each renderer instance reads its own session independently.
+- Verified with `bun run test` and `bun run typecheck` in `apps/web`.
+
+2026-03-12 - Issue 5: Renderer Writes Only Its Own Session
+- Selected Issue 5 as the highest-priority remaining task because window-scoped write isolation is the next unblocked vertical slice, and it is the prerequisite for workspace-targeting flows to behave safely across multiple windows.
+- Extended the `usePanelLayout` hook tests to exercise split, close, terminal-assignment, and workspace-reorder actions against two persisted window sessions at once.
+- Added commit-side test harness behavior that replays window-scoped layout events into mocked persisted rows, proving writes for window A leave window B unchanged.
+- Verified with `bun run test` and `bun run typecheck` in `apps/web`.
+
+2026-03-12 - Issue 6: Default Blank Session Seeding
+- Selected Issue 6 as the highest-priority remaining task because it is the next unblocked restore prerequisite after write isolation, and it prevents newly opened windows from inheriting unrelated terminal or workspace context.
+- Updated `usePanelLayout` so native windows seed from a deterministic blank panel session instead of deriving a layout from the current global terminal and workspace state.
+- Extended the hook tests to prove a fresh native window does not clone another window's pane tree and that repeated new-window creation always seeds the same blank session.
+- Verified with `bun run test` and `bun run typecheck` in `apps/web`.

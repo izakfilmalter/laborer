@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   currentWindowIdRef,
+  initialLayoutRef,
   layoutPaneAssignedMock,
   layoutPaneClosedMock,
   layoutRestoredMock,
@@ -14,7 +15,8 @@ const {
   storeQueryMock,
   storeUseQueryMock,
 } = vi.hoisted(() => ({
-  currentWindowIdRef: { current: 'window-a' },
+  currentWindowIdRef: { current: 'window-a' as string | null },
+  initialLayoutRef: { current: undefined as PanelNode | undefined },
   layoutPaneAssignedMock: vi.fn((payload) => ({
     payload,
     type: 'layoutPaneAssigned',
@@ -100,7 +102,7 @@ vi.mock('@/panels/panel-group-registry', () => ({
 }))
 
 vi.mock('../src/routes/-hooks/use-initial-layout', () => ({
-  useInitialLayout: vi.fn(() => undefined),
+  useInitialLayout: vi.fn(() => initialLayoutRef.current),
 }))
 
 import { usePanelLayout } from '../src/routes/-hooks/use-panel-layout'
@@ -134,6 +136,14 @@ const WINDOW_B_LAYOUT: PanelNode = {
   paneType: 'terminal',
   terminalId: undefined,
   workspaceId: 'workspace-c',
+}
+
+const DEFAULT_NEW_WINDOW_LAYOUT: PanelNode = {
+  _tag: 'LeafNode',
+  id: 'pane-default',
+  paneType: 'terminal',
+  terminalId: undefined,
+  workspaceId: undefined,
 }
 
 type PersistedLayoutRow = (typeof persistedRowsRef.current)[number]
@@ -192,6 +202,7 @@ const applyPersistedLayoutEvent = (event: PersistedLayoutEvent) => {
 describe('usePanelLayout', () => {
   beforeEach(() => {
     currentWindowIdRef.current = 'window-a'
+    initialLayoutRef.current = undefined
     persistedRowsRef.current = []
     layoutPaneAssignedMock.mockClear()
     layoutPaneClosedMock.mockClear()
@@ -281,6 +292,61 @@ describe('usePanelLayout', () => {
     expect(result.current.layout).toEqual(WINDOW_B_LAYOUT)
     expect(result.current.activePaneId).toBe('pane-b-only')
     expect(result.current.leafPaneIds).toEqual(['pane-b-only'])
+  })
+
+  it('seeds a new native window with the blank default session instead of cloning existing layout state', () => {
+    currentWindowIdRef.current = 'window-new'
+    initialLayoutRef.current = WINDOW_A_LAYOUT
+    persistedRowsRef.current = [
+      {
+        activePaneId: 'pane-a-right',
+        layoutTree: WINDOW_A_LAYOUT,
+        windowId: 'window-a',
+      },
+    ]
+
+    const { result, rerender } = renderHook(() => usePanelLayout())
+
+    rerender()
+
+    expect(result.current.layout).toEqual(DEFAULT_NEW_WINDOW_LAYOUT)
+    expect(result.current.activePaneId).toBe('pane-default')
+    expect(layoutRestoredMock).toHaveBeenCalledWith({
+      activePaneId: 'pane-default',
+      layoutTree: DEFAULT_NEW_WINDOW_LAYOUT,
+      windowId: 'window-new',
+    })
+    expect(getPersistedRow('window-new')).toEqual({
+      activePaneId: 'pane-default',
+      layoutTree: DEFAULT_NEW_WINDOW_LAYOUT,
+      windowId: 'window-new',
+    })
+    expect(getPersistedRow('window-a')).toEqual({
+      activePaneId: 'pane-a-right',
+      layoutTree: WINDOW_A_LAYOUT,
+      windowId: 'window-a',
+    })
+  })
+
+  it('gives repeated native windows the same default starting session', () => {
+    initialLayoutRef.current = WINDOW_A_LAYOUT
+
+    currentWindowIdRef.current = 'window-new-a'
+    renderHook(() => usePanelLayout())
+
+    currentWindowIdRef.current = 'window-new-b'
+    renderHook(() => usePanelLayout())
+
+    expect(getPersistedRow('window-new-a')).toEqual({
+      activePaneId: 'pane-default',
+      layoutTree: DEFAULT_NEW_WINDOW_LAYOUT,
+      windowId: 'window-new-a',
+    })
+    expect(getPersistedRow('window-new-b')).toEqual({
+      activePaneId: 'pane-default',
+      layoutTree: DEFAULT_NEW_WINDOW_LAYOUT,
+      windowId: 'window-new-b',
+    })
   })
 
   it('writes split operations back only to the current window session', () => {

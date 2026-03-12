@@ -77,9 +77,9 @@ Update the renderer boot and selector path so each window reads only the panel s
 
 ## Acceptance criteria
 
-- [ ] A renderer instance hydrates only the panel session matching its `windowId`
-- [ ] Active-pane selection is derived from the current window's session only
-- [ ] Tests cover two windows reading different persisted panel sessions correctly
+- [x] A renderer instance hydrates only the panel session matching its `windowId`
+- [x] Active-pane selection is derived from the current window's session only
+- [x] Tests cover two windows reading different persisted panel sessions correctly
 
 ## Blocked by
 
@@ -100,13 +100,13 @@ Update panel actions and layout mutations so every split, close, assign, and reo
 
 ## Acceptance criteria
 
-- [ ] Splitting or closing panes in one window updates only that window's persisted panel session
-- [ ] Pane assignment and workspace reorder operations are scoped to the current window
-- [ ] Tests prove that edits in window A do not mutate window B
+- [x] Splitting or closing panes in one window updates only that window's persisted panel session
+- [x] Pane assignment and workspace reorder operations are scoped to the current window
+- [x] Tests prove that edits in window A do not mutate window B
 
 ## Blocked by
 
-- Blocked by "Renderer Reads Only Its Own Session"
+None - completed
 
 ## User stories addressed
 
@@ -125,13 +125,13 @@ Define and implement the v1 default new-window session. Every newly opened windo
 
 ## Acceptance criteria
 
-- [ ] A newly opened window always starts from the same blank default panel session
-- [ ] New-window creation does not clone the current pane tree
-- [ ] Tests cover repeated window creation producing the same default starting session
+- [x] A newly opened window always starts from the same blank default panel session
+- [x] New-window creation does not clone the current pane tree
+- [x] Tests cover repeated window creation producing the same default starting session
 
 ## Blocked by
 
-- Blocked by "Renderer Reads Only Its Own Session"
+None - completed
 
 ## User stories addressed
 
@@ -174,7 +174,6 @@ Restore all previously open Laborer windows on relaunch, wiring persisted window
 
 ## Blocked by
 
-- Blocked by "Default Blank Session Seeding"
 - Blocked by "Persist Window Records"
 
 ## User stories addressed
@@ -238,7 +237,7 @@ Make workspace-targeting flows window-aware so Laborer focuses the already-open 
 
 ## Blocked by
 
-- Blocked by "Renderer Writes Only Its Own Session"
+None - can start immediately
 
 ## User stories addressed
 
@@ -277,12 +276,12 @@ Do a final pass on multi-window edge cases and user feel without expanding scope
 | 1 | Window Identity Plumbing | None | Done |
 | 2 | New Window Command | 1 | Done |
 | 3 | Panel Layout Storage by Window | 1 | Done |
-| 4 | Renderer Reads Only Its Own Session | 3 | Ready |
-| 5 | Renderer Writes Only Its Own Session | 4 | Blocked |
-| 6 | Default Blank Session Seeding | 4 | Blocked |
+| 4 | Renderer Reads Only Its Own Session | 3 | Done |
+| 5 | Renderer Writes Only Its Own Session | 4 | Done |
+| 6 | Default Blank Session Seeding | 4 | Done |
 | 7 | Persist Window Records | 1 | Ready |
-| 8 | Restore All Windows on Relaunch | 6, 7 | Blocked |
+| 8 | Restore All Windows on Relaunch | 7 | Blocked |
 | 9 | Invalid Session Repair | 8 | Blocked |
 | 10 | Preserve Closed Window Sessions | 7 | Blocked |
-| 11 | Focus Existing Window for Open Workspace | 5 | Blocked |
+| 11 | Focus Existing Window for Open Workspace | 5 | Ready |
 | 12 | Multi-Window UX Hardening | 8, 9, 10, 11 | Blocked |

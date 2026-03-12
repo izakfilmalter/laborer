@@ -45,6 +45,15 @@ import { useInitialLayout } from './use-initial-layout'
 /** Browser fallback until every renderer boot path has a native window ID. */
 const DEFAULT_PANEL_WINDOW_ID = 'default'
 
+/** Deterministic blank session used for newly created native windows in v1. */
+const DEFAULT_NEW_WINDOW_LAYOUT: LeafNode = {
+  _tag: 'LeafNode',
+  id: 'pane-default',
+  paneType: 'terminal',
+  terminalId: undefined,
+  workspaceId: undefined,
+}
+
 /** Query the persisted panel layout from LiveStore. */
 const persistedLayout$ = queryDb(panelLayout, {
   label: 'persistedPanelLayout',
@@ -77,7 +86,11 @@ export function usePanelLayout() {
   const store = useLaborerStore()
   const initialLayout = useInitialLayout()
   const registry = usePanelGroupRegistry()
-  const panelWindowId = getCurrentWindowId() ?? DEFAULT_PANEL_WINDOW_ID
+  const nativeWindowId = getCurrentWindowId()
+  const panelWindowId = nativeWindowId ?? DEFAULT_PANEL_WINDOW_ID
+  const defaultLayout = nativeWindowId
+    ? DEFAULT_NEW_WINDOW_LAYOUT
+    : initialLayout
 
   // Read the persisted layout from LiveStore reactively.
   // Returns all rows; this hook still targets a single window-scoped row.
@@ -95,7 +108,7 @@ export function usePanelLayout() {
 
   // Determine the effective layout: persisted layout takes priority,
   // otherwise fall back to the auto-generated layout from terminals/workspaces.
-  const layout = persistedLayoutTree ?? initialLayout
+  const layout = persistedLayoutTree ?? defaultLayout
 
   // Enforce the guaranteed active pane invariant: when a layout exists,
   // activePaneId must reference a valid leaf node. If it's null or stale
@@ -111,17 +124,17 @@ export function usePanelLayout() {
   // @see Issue #150: Guaranteed active pane invariant
   const hasSeeded = useRef(false)
   useEffect(() => {
-    if (!persistedLayoutTree && initialLayout && !hasSeeded.current) {
+    if (!persistedLayoutTree && defaultLayout && !hasSeeded.current) {
       hasSeeded.current = true
       store.commit(
         layoutRestored({
           windowId: panelWindowId,
-          layoutTree: initialLayout,
-          activePaneId: getFirstLeafId(initialLayout) ?? null,
+          layoutTree: defaultLayout,
+          activePaneId: getFirstLeafId(defaultLayout) ?? null,
         })
       )
     }
-  }, [persistedLayoutTree, initialLayout, panelWindowId, store])
+  }, [defaultLayout, persistedLayoutTree, panelWindowId, store])
 
   // -------------------------------------------------------------------
   // Reconcile persisted layout against live terminal state on startup.
@@ -261,7 +274,7 @@ export function usePanelLayout() {
 
   const handleSplitPane = useCallback(
     (paneId: string, direction: 'horizontal' | 'vertical') => {
-      const base = persistedLayoutTree ?? initialLayout
+      const base = persistedLayoutTree ?? defaultLayout
       if (!base) {
         return
       }
@@ -295,7 +308,7 @@ export function usePanelLayout() {
     },
     [
       persistedLayoutTree,
-      initialLayout,
+      defaultLayout,
       panelWindowId,
       persistedActivePaneId,
       store,
@@ -305,7 +318,7 @@ export function usePanelLayout() {
 
   const handleClosePane = useCallback(
     (paneId: string) => {
-      const base = persistedLayoutTree ?? initialLayout
+      const base = persistedLayoutTree ?? defaultLayout
       if (!base) {
         return
       }
@@ -369,7 +382,7 @@ export function usePanelLayout() {
     },
     [
       persistedLayoutTree,
-      initialLayout,
+      defaultLayout,
       panelWindowId,
       persistedActivePaneId,
       store,
@@ -379,7 +392,7 @@ export function usePanelLayout() {
 
   const handleSetActivePaneId = useCallback(
     (paneId: string | null) => {
-      const base = persistedLayoutTree ?? initialLayout
+      const base = persistedLayoutTree ?? defaultLayout
       if (!base) {
         return
       }
@@ -395,7 +408,7 @@ export function usePanelLayout() {
         })
       )
     },
-    [persistedLayoutTree, initialLayout, panelWindowId, store]
+    [persistedLayoutTree, defaultLayout, panelWindowId, store]
   )
 
   /**
@@ -449,7 +462,7 @@ export function usePanelLayout() {
 
   const handleAssignTerminalToPane = useCallback(
     (terminalId: string, workspaceId: string, paneId?: string) => {
-      const base = persistedLayoutTree ?? initialLayout
+      const base = persistedLayoutTree ?? defaultLayout
       const result = computeTerminalPaneAssignment(
         base,
         terminalId,
@@ -463,7 +476,7 @@ export function usePanelLayout() {
         result.triggerDevServer
       )
     },
-    [persistedLayoutTree, initialLayout, commitAssignment]
+    [persistedLayoutTree, defaultLayout, commitAssignment]
   )
 
   // Keep the assign-terminal ref in sync with the latest handler
@@ -482,7 +495,7 @@ export function usePanelLayout() {
    */
   const handleResizePane = useCallback(
     (paneId: string, direction: NavigationDirection) => {
-      const base = persistedLayoutTree ?? initialLayout
+      const base = persistedLayoutTree ?? defaultLayout
       if (!base) {
         return
       }
@@ -499,7 +512,7 @@ export function usePanelLayout() {
 
       groupHandle.setLayout(result.newSizes)
     },
-    [persistedLayoutTree, initialLayout, registry]
+    [persistedLayoutTree, defaultLayout, registry]
   )
 
   /**
@@ -513,7 +526,7 @@ export function usePanelLayout() {
    */
   const handleToggleDiffPane = useCallback(
     (paneId: string): boolean => {
-      const base = persistedLayoutTree ?? initialLayout
+      const base = persistedLayoutTree ?? defaultLayout
       if (!base) {
         return false
       }
@@ -545,7 +558,7 @@ export function usePanelLayout() {
     },
     [
       persistedLayoutTree,
-      initialLayout,
+      defaultLayout,
       panelWindowId,
       persistedActivePaneId,
       store,
@@ -570,7 +583,7 @@ export function usePanelLayout() {
    */
   const handleToggleDevServerPane = useCallback(
     async (paneId: string): Promise<boolean> => {
-      const base = persistedLayoutTree ?? initialLayout
+      const base = persistedLayoutTree ?? defaultLayout
       if (!base) {
         return false
       }
@@ -633,7 +646,7 @@ export function usePanelLayout() {
         (row) => row.windowId === panelWindowId
       )
       const currentTree = currentRow?.layoutTree as PanelNode | undefined
-      const currentBase = currentTree ?? initialLayout
+      const currentBase = currentTree ?? defaultLayout
       if (!currentBase) {
         return false
       }
@@ -660,7 +673,7 @@ export function usePanelLayout() {
     },
     [
       persistedLayoutTree,
-      initialLayout,
+      defaultLayout,
       panelWindowId,
       persistedActivePaneId,
       spawnTerminal,
@@ -679,7 +692,7 @@ export function usePanelLayout() {
    */
   const handleCloseTerminalPane = useCallback(
     (terminalId: string) => {
-      const base = persistedLayoutTree ?? initialLayout
+      const base = persistedLayoutTree ?? defaultLayout
       if (base) {
         const leaf = findLeafByTerminalId(base, terminalId)
         if (leaf) {
@@ -692,7 +705,7 @@ export function usePanelLayout() {
     },
     [
       persistedLayoutTree,
-      initialLayout,
+      defaultLayout,
       handleClosePane,
       removeTerminalOptimistically,
     ]
@@ -705,7 +718,7 @@ export function usePanelLayout() {
    */
   const handleCloseWorkspace = useCallback(
     (workspaceId: string) => {
-      const base = persistedLayoutTree ?? initialLayout
+      const base = persistedLayoutTree ?? defaultLayout
       if (!base) {
         return
       }
@@ -750,7 +763,7 @@ export function usePanelLayout() {
     },
     [
       persistedLayoutTree,
-      initialLayout,
+      defaultLayout,
       panelWindowId,
       persistedActivePaneId,
       store,

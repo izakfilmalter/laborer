@@ -92,6 +92,7 @@ import {
   findSiblingPaneId,
   generateId,
   getFirstLeafId,
+  getLastLeafId,
   getLeafIds,
   getLeafNodes,
   getStaleTerminalLeaves,
@@ -765,10 +766,12 @@ function usePanelLayout() {
         return
       }
 
-      // No empty pane — split the first leaf and assign to the new pane
-      const leafIds = getLeafIds(base)
-      const firstLeafId = leafIds[0]
-      if (firstLeafId) {
+      // No empty pane — split the last leaf and assign to the new pane.
+      // Splitting the last leaf (instead of the first) ensures the new
+      // workspace panel appears at the bottom of the workspace stack,
+      // because workspace frame order follows DFS traversal order.
+      const lastLeafId = getLastLeafId(base)
+      if (lastLeafId) {
         const newPaneContent: Partial<LeafNode> = {
           paneType: 'terminal' as const,
           terminalId,
@@ -776,7 +779,7 @@ function usePanelLayout() {
         }
         const newTree = splitPane(
           base,
-          firstLeafId,
+          lastLeafId,
           'horizontal',
           newPaneContent
         )

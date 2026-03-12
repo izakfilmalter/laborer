@@ -301,9 +301,10 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
        * OpenCode plugin JS that reports agent lifecycle events to laborer.
        *
        * Reads LABORER_TERMINAL_ID and LABORER_HOOK_URL from the process
-       * environment. On `session.idle` and `session.error`, posts a
-       * `waiting_for_input` event. On `session.created`, posts
-       * `active`. Uses `fetch` to POST status to the terminal service.
+       * environment. Tracks root vs sub-agent sessions via `session.created`
+       * events. Uses `session.status` (not deprecated `session.idle`) to
+       * detect idle/busy transitions. Only root sessions (no parentID)
+       * trigger status changes — sub-agent completions are ignored.
        *
        * @see .reference/opencode/packages/web/src/content/docs/plugins.mdx
        */
@@ -312,6 +313,8 @@ export const LaborerHookPlugin = async () => {
   const terminalId = process.env.LABORER_TERMINAL_ID
   const hookUrl = process.env.LABORER_HOOK_URL
   if (!terminalId || !hookUrl) return {}
+
+  const children = new Set()
 
   const post = async (event) => {
     try {
@@ -325,11 +328,30 @@ export const LaborerHookPlugin = async () => {
 
   return {
     event: async ({ event }) => {
-      if (event.type === "session.idle" || event.type === "session.error") {
-        await post("waiting_for_input")
-      }
       if (event.type === "session.created") {
-        await post("active")
+        if (event.properties.info.parentID) {
+          children.add(event.properties.info.id)
+        } else {
+          await post("active")
+        }
+        return
+      }
+
+      if (event.type === "session.status") {
+        const sid = event.properties.sessionID
+        if (children.has(sid)) return
+        if (event.properties.status.type === "busy") {
+          await post("active")
+        } else if (event.properties.status.type === "idle") {
+          await post("waiting_for_input")
+        }
+        return
+      }
+
+      if (event.type === "session.error") {
+        const sid = event.properties.sessionID
+        if (sid && children.has(sid)) return
+        await post("waiting_for_input")
       }
     },
   }

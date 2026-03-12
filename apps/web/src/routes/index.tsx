@@ -90,6 +90,7 @@ import {
   getLeafIds,
   getLeafNodes,
   getStaleTerminalLeaves,
+  getTerminalIdsToRemove,
   getWorkspaceIds,
   reconcileLayout,
   replaceNode,
@@ -554,9 +555,14 @@ function usePanelLayout() {
         return
       }
 
-      // Closing a pane only removes it from the layout tree. The terminal
-      // process stays alive and remains in the sidebar terminal list so the
-      // user can re-attach it to another pane later.
+      // Kill terminal processes associated with the pane being closed.
+      // You shouldn't have running terminals that aren't in a pane.
+      const terminalIds = getTerminalIdsToRemove(base, paneId)
+      for (const terminalId of terminalIds) {
+        removeTerminal({ payload: { id: terminalId } }).catch((error) => {
+          console.warn('[close-pane] terminal remove failed:', error)
+        })
+      }
 
       // Compute the sibling BEFORE the close mutation removes the pane.
       // This ensures we can find the correct sibling in the original tree.
@@ -608,7 +614,13 @@ function usePanelLayout() {
         hasSeeded.current = false
       }
     },
-    [persistedLayoutTree, initialLayout, persistedActivePaneId, store]
+    [
+      persistedLayoutTree,
+      initialLayout,
+      persistedActivePaneId,
+      store,
+      removeTerminal,
+    ]
   )
 
   const handleSetActivePaneId = useCallback(
@@ -1090,8 +1102,8 @@ function CloseTerminalDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Close terminal?</AlertDialogTitle>
           <AlertDialogDescription>
-            This terminal has a running process. Closing the pane will leave the
-            process running in the background.
+            This terminal has a running process. Closing the pane will kill the
+            process.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

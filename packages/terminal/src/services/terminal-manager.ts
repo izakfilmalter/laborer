@@ -128,6 +128,12 @@ interface TerminalRecord {
    */
   readonly hasChildProcess: boolean
   readonly id: string
+  /**
+   * Classified processes along the tree from the shell's first child
+   * down to the deepest leaf. Used by the UI to show the full chain,
+   * e.g. "OpenCode › biome". Empty when the shell is idle or stopped.
+   */
+  readonly processChain: readonly ForegroundProcess[]
   readonly status: 'running' | 'stopped'
   readonly workspaceId: string
 }
@@ -324,12 +330,20 @@ const execAsync = (command: string): Promise<string | null> =>
 interface ProcessDetectionResult {
   readonly foregroundProcess: ForegroundProcess | null
   readonly hasChildProcess: boolean
+  /**
+   * Classified processes along the tree from the shell's first child
+   * down to the deepest leaf. Used by the UI to show the full chain,
+   * e.g. "OpenCode › biome". Only includes non-shell processes that
+   * classified successfully; shells in the middle are skipped.
+   */
+  readonly processChain: readonly ForegroundProcess[]
 }
 
 /** Default detection result when process info is unavailable. */
 const EMPTY_DETECTION: ProcessDetectionResult = {
   foregroundProcess: null,
   hasChildProcess: false,
+  processChain: [],
 }
 
 /**
@@ -383,8 +397,49 @@ const parsePsOutput = (
 }
 
 /**
+ * Classify a PID and push to chain if it's a non-shell process.
+ */
+const classifyAndCollect = (
+  pid: number,
+  commByPid: ReadonlyMap<number, string>,
+  chain: ForegroundProcess[]
+): void => {
+  const comm = commByPid.get(pid) ?? ''
+  const classified = classifyProcess(comm)
+  if (classified !== null && classified.category !== 'shell') {
+    chain.push(classified)
+  }
+}
+
+/**
+ * Walk the process tree from a shell PID down to the deepest first-child,
+ * collecting all non-shell classified processes along the way into a chain
+ * for display (e.g., "OpenCode › biome"). Returns the deepest child PID.
+ */
+const walkProcessTree = (
+  startPid: number,
+  childrenByPid: ReadonlyMap<number, number[]>,
+  commByPid: ReadonlyMap<number, string>,
+  chain: ForegroundProcess[]
+): void => {
+  let targetPid = startPid
+  classifyAndCollect(targetPid, commByPid, chain)
+
+  for (let depth = 0; depth < 10; depth++) {
+    const grandchildren = childrenByPid.get(targetPid)
+    if (grandchildren === undefined || grandchildren.length === 0) {
+      break
+    }
+    targetPid = grandchildren[0] ?? targetPid
+    classifyAndCollect(targetPid, commByPid, chain)
+  }
+}
+
+/**
  * Walk the process tree from a shell PID to find the deepest child and
- * classify it. Uses the pre-built maps from parsePsOutput.
+ * classify it. Collects all classified non-shell processes along the
+ * chain for display (e.g., "OpenCode › biome"). Uses the pre-built
+ * maps from parsePsOutput.
  */
 const detectForShellPid = (
   shellPid: number,
@@ -395,20 +450,14 @@ const detectForShellPid = (
   const hasChildren = children !== undefined && children.length > 0
 
   if (hasChildren) {
-    // Walk to deepest child (first child at each level)
-    let targetPid = children[0] ?? shellPid
-    for (let depth = 0; depth < 10; depth++) {
-      const grandchildren = childrenByPid.get(targetPid)
-      if (grandchildren === undefined || grandchildren.length === 0) {
-        break
-      }
-      targetPid = grandchildren[0] ?? targetPid
-    }
+    const chain: ForegroundProcess[] = []
+    const firstChildPid = children[0] ?? shellPid
+    walkProcessTree(firstChildPid, childrenByPid, commByPid, chain)
 
-    const comm = commByPid.get(targetPid) ?? ''
     return {
-      foregroundProcess: classifyProcess(comm),
+      foregroundProcess: chain.at(-1) ?? null,
       hasChildProcess: true,
+      processChain: chain,
     }
   }
 
@@ -421,7 +470,11 @@ const detectForShellPid = (
   }
 
   // Shell exec'd into another process (e.g., sh -c cat → cat)
-  return { foregroundProcess: classified, hasChildProcess: false }
+  return {
+    foregroundProcess: classified,
+    hasChildProcess: false,
+    processChain: [classified],
+  }
 }
 
 /**
@@ -931,6 +984,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           agentStatus: null,
           foregroundProcess: null,
           hasChildProcess: false,
+          processChain: [],
           status: 'running',
         }
 
@@ -1142,6 +1196,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
               agentStatus,
               foregroundProcess: detected?.foregroundProcess ?? null,
               hasChildProcess: detected?.hasChildProcess ?? false,
+              processChain: detected?.processChain ?? [],
               status: terminal.status,
             })
           }
@@ -1276,6 +1331,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           agentStatus: null,
           foregroundProcess: null,
           hasChildProcess: false,
+          processChain: [],
           status: 'running',
         }
 

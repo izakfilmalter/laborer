@@ -89,6 +89,7 @@ const buildOptimisticTerminalInfo = (terminal: {
   foregroundProcess: null,
   hasChildProcess: false,
   id: terminal.id,
+  processChain: [],
   status: terminal.status,
   workspaceId: terminal.workspaceId,
 })
@@ -365,6 +366,7 @@ interface TerminalItemProps {
     readonly command: string
     readonly agentStatus: AgentStatus | null
     readonly foregroundProcess: ForegroundProcess | null
+    readonly processChain: readonly ForegroundProcess[]
     readonly status: string
   }
 }
@@ -389,37 +391,119 @@ const AGENT_ICON_BY_RAW_NAME: Record<
 }
 
 /**
+ * Get the icon for a process based on its category and raw name.
+ */
+function getProcessIcon(
+  category: ForegroundProcess['category'],
+  rawName: string
+): ReactNode {
+  switch (category) {
+    case 'agent': {
+      const AgentIcon = AGENT_ICON_BY_RAW_NAME[rawName]
+      return AgentIcon ? (
+        <AgentIcon className="size-3.5 shrink-0" />
+      ) : (
+        <MonitorDot className="size-3.5 shrink-0 text-blue-400" />
+      )
+    }
+    case 'editor':
+      return <FileCode className="size-3.5 shrink-0 text-amber-400" />
+    case 'devServer':
+      return <AppWindow className="size-3.5 shrink-0 text-emerald-400" />
+    default:
+      return <TerminalIcon className="size-3.5 shrink-0 text-success" />
+  }
+}
+
+/**
+ * Build a display label from the process chain. Shows the root process
+ * label followed by " › subprocess" for each deeper process in the chain.
+ * e.g. "OpenCode › biome", "OpenCode › Node.js"
+ */
+function buildChainLabel(processChain: readonly ForegroundProcess[]): string {
+  return processChain.map((p) => p.label).join(' \u203A ')
+}
+
+/**
+ * Get the badge info for a process category.
+ */
+function getCategoryBadge(category: ForegroundProcess['category']): {
+  badgeLabel: string
+  badgeClassName: string
+} {
+  switch (category) {
+    case 'agent':
+      return {
+        badgeLabel: 'agent',
+        badgeClassName: 'border-blue-400/30 bg-blue-400/10 text-blue-400',
+      }
+    case 'editor':
+      return {
+        badgeLabel: 'editor',
+        badgeClassName: 'border-amber-400/30 bg-amber-400/10 text-amber-400',
+      }
+    case 'devServer':
+      return {
+        badgeLabel: 'running',
+        badgeClassName:
+          'border-emerald-400/30 bg-emerald-400/10 text-emerald-400',
+      }
+    case 'shell':
+      return {
+        badgeLabel: 'idle',
+        badgeClassName: 'border-success/30 bg-success/10 text-success',
+      }
+    default:
+      return {
+        badgeLabel: 'running',
+        badgeClassName: 'border-success/30 bg-success/10 text-success',
+      }
+  }
+}
+
+/**
  * Get the icon and label to display for a terminal based on its
- * foreground process and agent status. Falls back to the terminal command name.
+ * process chain and agent status. Uses the root process (first in chain)
+ * for the icon, and shows the full chain as "root › sub › sub" in the label.
+ * Falls back to the terminal command name when idle.
  */
 function getTerminalDisplay(
   command: string,
   foregroundProcess: ForegroundProcess | null,
   isRunning: boolean,
-  agentStatus: AgentStatus | null
+  agentStatus: AgentStatus | null,
+  processChain: readonly ForegroundProcess[] = []
 ): {
   icon: ReactNode
   label: string
   badgeLabel: string | null
   badgeClassName: string | null
 } {
+  const rootProcess = processChain[0] ?? null
+  const commandLabel = command || 'shell'
+
   if (!isRunning) {
     return {
       icon: (
         <TerminalIcon className="size-3.5 shrink-0 text-muted-foreground" />
       ),
-      label: command || 'shell',
+      label: commandLabel,
       badgeLabel: 'stopped',
       badgeClassName:
         'border-muted-foreground/30 bg-muted text-muted-foreground',
     }
   }
 
-  // Agent finished / waiting for user input — pulsing amber badge
+  // Agent finished / waiting for user input — pulsing amber badge.
+  // Show the root process label if available, otherwise the command name.
   if (agentStatus === 'waiting_for_input') {
     return {
-      icon: <TerminalIcon className="size-3.5 shrink-0 text-amber-400" />,
-      label: command || 'shell',
+      icon: rootProcess ? (
+        getProcessIcon(rootProcess.category, rootProcess.rawName)
+      ) : (
+        <TerminalIcon className="size-3.5 shrink-0 text-amber-400" />
+      ),
+      label: rootProcess ? rootProcess.label : commandLabel,
       badgeLabel: 'needs input',
       badgeClassName:
         'animate-pulse border-amber-400/30 bg-amber-400/10 text-amber-400',
@@ -430,58 +514,36 @@ function getTerminalDisplay(
   if (foregroundProcess === null) {
     return {
       icon: <TerminalIcon className="size-3.5 shrink-0 text-success" />,
-      label: command || 'shell',
+      label: commandLabel,
       badgeLabel: 'idle',
       badgeClassName: 'border-success/30 bg-success/10 text-success',
     }
   }
 
-  const { category, label: processLabel, rawName } = foregroundProcess
+  // Use the root process for the icon, the full chain for the label,
+  // and the deepest (foreground) process for the badge category.
+  const displayRoot = rootProcess ?? foregroundProcess
+  const icon = getProcessIcon(displayRoot.category, displayRoot.rawName)
+  const label =
+    processChain.length > 0
+      ? buildChainLabel(processChain)
+      : foregroundProcess.label
 
-  switch (category) {
-    case 'agent': {
-      const AgentIcon = AGENT_ICON_BY_RAW_NAME[rawName]
-      return {
-        icon: AgentIcon ? (
-          <AgentIcon className="size-3.5 shrink-0" />
-        ) : (
-          <MonitorDot className="size-3.5 shrink-0 text-blue-400" />
-        ),
-        label: processLabel,
-        badgeLabel: 'agent',
-        badgeClassName: 'border-blue-400/30 bg-blue-400/10 text-blue-400',
-      }
+  // Shell category means idle at prompt
+  if (foregroundProcess.category === 'shell') {
+    return {
+      icon: <TerminalIcon className="size-3.5 shrink-0 text-success" />,
+      label: commandLabel,
+      badgeLabel: 'idle',
+      badgeClassName: 'border-success/30 bg-success/10 text-success',
     }
-    case 'editor':
-      return {
-        icon: <FileCode className="size-3.5 shrink-0 text-amber-400" />,
-        label: processLabel,
-        badgeLabel: 'editor',
-        badgeClassName: 'border-amber-400/30 bg-amber-400/10 text-amber-400',
-      }
-    case 'devServer':
-      return {
-        icon: <AppWindow className="size-3.5 shrink-0 text-emerald-400" />,
-        label: processLabel,
-        badgeLabel: 'running',
-        badgeClassName:
-          'border-emerald-400/30 bg-emerald-400/10 text-emerald-400',
-      }
-    case 'shell':
-      return {
-        icon: <TerminalIcon className="size-3.5 shrink-0 text-success" />,
-        label: command || 'shell',
-        badgeLabel: 'idle',
-        badgeClassName: 'border-success/30 bg-success/10 text-success',
-      }
-    default:
-      return {
-        icon: <TerminalIcon className="size-3.5 shrink-0 text-success" />,
-        label: processLabel,
-        badgeLabel: 'running',
-        badgeClassName: 'border-success/30 bg-success/10 text-success',
-      }
   }
+
+  const { badgeLabel, badgeClassName } = getCategoryBadge(
+    foregroundProcess.category
+  )
+
+  return { icon, label, badgeLabel, badgeClassName }
 }
 
 function TerminalItem({
@@ -495,7 +557,8 @@ function TerminalItem({
     terminal.command,
     terminal.foregroundProcess,
     isRunning,
-    terminal.agentStatus
+    terminal.agentStatus,
+    terminal.processChain
   )
 
   const handleDragStart = useCallback(

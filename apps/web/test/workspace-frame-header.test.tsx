@@ -145,4 +145,106 @@ describe('WorkspaceFrameHeader', () => {
     const button = screen.getByRole('button', { name: 'Close diff viewer' })
     expect(button).toBeTruthy()
   })
+
+  describe('focus shift on button click', () => {
+    it('calls setActivePaneId before toggling diff pane', () => {
+      const actions = mockActions()
+      render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+      const button = screen.getByRole('button', { name: DIFF_VIEWER_RE })
+      fireEvent.click(button)
+
+      expect(actions.setActivePaneId).toHaveBeenCalledWith('pane-1')
+      // setActivePaneId should be called before toggleDiffPane
+      const setActiveOrder = (
+        actions.setActivePaneId as ReturnType<typeof vi.fn>
+      ).mock.invocationCallOrder[0] as number
+      const toggleOrder = (actions.toggleDiffPane as ReturnType<typeof vi.fn>)
+        .mock.invocationCallOrder[0] as number
+      expect(setActiveOrder).toBeLessThan(toggleOrder)
+    })
+
+    it('calls setActivePaneId before splitting horizontally', () => {
+      const actions = mockActions()
+      render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+      const button = screen.getByRole('button', {
+        name: 'Split horizontally',
+      })
+      fireEvent.click(button)
+
+      expect(actions.setActivePaneId).toHaveBeenCalledWith('pane-1')
+      const setActiveOrder = (
+        actions.setActivePaneId as ReturnType<typeof vi.fn>
+      ).mock.invocationCallOrder[0] as number
+      const splitOrder = (actions.splitPane as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0] as number
+      expect(setActiveOrder).toBeLessThan(splitOrder)
+    })
+
+    it('calls setActivePaneId before splitting vertically', () => {
+      const actions = mockActions()
+      render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+      const button = screen.getByRole('button', { name: 'Split vertically' })
+      fireEvent.click(button)
+
+      expect(actions.setActivePaneId).toHaveBeenCalledWith('pane-1')
+      const setActiveOrder = (
+        actions.setActivePaneId as ReturnType<typeof vi.fn>
+      ).mock.invocationCallOrder[0] as number
+      const splitOrder = (actions.splitPane as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0] as number
+      expect(setActiveOrder).toBeLessThan(splitOrder)
+    })
+
+    it('calls setActivePaneId before closing pane', () => {
+      const actions = mockActions()
+      render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+      const button = screen.getByRole('button', { name: 'Close pane' })
+      fireEvent.click(button)
+
+      expect(actions.setActivePaneId).toHaveBeenCalledWith('pane-1')
+      const setActiveOrder = (
+        actions.setActivePaneId as ReturnType<typeof vi.fn>
+      ).mock.invocationCallOrder[0] as number
+      const closeOrder = (actions.closePane as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0] as number
+      expect(setActiveOrder).toBeLessThan(closeOrder)
+    })
+
+    it('calls setActivePaneId before toggling fullscreen', () => {
+      const actions = mockActions()
+      render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+      const button = screen.getByRole('button', { name: 'Fullscreen pane' })
+      fireEvent.click(button)
+
+      expect(actions.setActivePaneId).toHaveBeenCalledWith('pane-1')
+      const setActiveOrder = (
+        actions.setActivePaneId as ReturnType<typeof vi.fn>
+      ).mock.invocationCallOrder[0] as number
+      const fullscreenOrder = (
+        actions.toggleFullscreenPane as ReturnType<typeof vi.fn>
+      ).mock.invocationCallOrder[0] as number
+      expect(setActiveOrder).toBeLessThan(fullscreenOrder)
+    })
+
+    it('does not call setActivePaneId when no active pane', () => {
+      const actions = mockActions()
+      render(
+        <WorkspaceFrameHeader
+          {...BASE_PROPS}
+          actions={actions}
+          activePaneId={null}
+        />
+      )
+
+      const button = screen.getByRole('button', { name: DIFF_VIEWER_RE })
+      fireEvent.click(button)
+
+      expect(actions.setActivePaneId).not.toHaveBeenCalled()
+    })
+  })
 })

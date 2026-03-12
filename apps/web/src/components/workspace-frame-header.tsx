@@ -60,6 +60,15 @@ function WorkspaceFrameHeader({
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
 
+  /** Shift focus to this workspace's pane before performing a panel action. */
+  const withFocus = (fn: (paneId: string) => void) => () => {
+    if (!activePaneId) {
+      return
+    }
+    actions?.setActivePaneId(activePaneId)
+    fn(activePaneId)
+  }
+
   return (
     <div
       className="flex h-8 shrink-0 items-center justify-between border-b px-2"
@@ -89,9 +98,9 @@ function WorkspaceFrameHeader({
                 <Button
                   aria-label="Toggle dev server terminal"
                   disabled={!hasActivePane}
-                  onClick={() =>
-                    activePaneId && actions?.toggleDevServerPane(activePaneId)
-                  }
+                  onClick={withFocus((paneId) =>
+                    actions?.toggleDevServerPane(paneId)
+                  )}
                   size="icon-sm"
                   variant="ghost"
                 />
@@ -111,9 +120,7 @@ function WorkspaceFrameHeader({
                 }
                 className={diffIsOpen ? 'bg-accent' : ''}
                 disabled={!hasActivePane}
-                onClick={() =>
-                  activePaneId && actions?.toggleDiffPane(activePaneId)
-                }
+                onClick={withFocus((paneId) => actions?.toggleDiffPane(paneId))}
                 size="icon-sm"
                 variant="ghost"
               />
@@ -131,9 +138,9 @@ function WorkspaceFrameHeader({
               <Button
                 aria-label="Split horizontally"
                 disabled={!hasActivePane}
-                onClick={() =>
-                  activePaneId && actions?.splitPane(activePaneId, 'horizontal')
-                }
+                onClick={withFocus((paneId) =>
+                  actions?.splitPane(paneId, 'horizontal')
+                )}
                 size="icon-sm"
                 variant="ghost"
               />
@@ -155,9 +162,9 @@ function WorkspaceFrameHeader({
               <Button
                 aria-label="Split vertically"
                 disabled={!hasActivePane}
-                onClick={() =>
-                  activePaneId && actions?.splitPane(activePaneId, 'vertical')
-                }
+                onClick={withFocus((paneId) =>
+                  actions?.splitPane(paneId, 'vertical')
+                )}
                 size="icon-sm"
                 variant="ghost"
               />
@@ -182,7 +189,7 @@ function WorkspaceFrameHeader({
                   isFullscreen ? 'Exit fullscreen' : 'Fullscreen pane'
                 }
                 disabled={!hasActivePane}
-                onClick={() => actions?.toggleFullscreenPane()}
+                onClick={withFocus(() => actions?.toggleFullscreenPane())}
                 size="icon-sm"
                 variant="ghost"
               />
@@ -209,7 +216,7 @@ function WorkspaceFrameHeader({
               <Button
                 aria-label="Close pane"
                 disabled={!hasActivePane}
-                onClick={() => activePaneId && actions?.closePane(activePaneId)}
+                onClick={withFocus((paneId) => actions?.closePane(paneId))}
                 size="icon-sm"
                 variant="ghost"
               />

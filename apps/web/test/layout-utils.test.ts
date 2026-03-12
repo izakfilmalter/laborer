@@ -24,6 +24,7 @@ import {
   getLastLeafId,
   getLeafIds,
   getLeafNodes,
+  getScopedActivePaneId,
   getWorkspaceIds,
   isWorkspaceFrameData,
   shouldConfirmClose,
@@ -1363,5 +1364,62 @@ describe('isWorkspaceFrameData', () => {
 
   it('returns false when type is missing', () => {
     expect(isWorkspaceFrameData({ workspaceId: 'ws-1', index: 0 })).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getScopedActivePaneId
+// ---------------------------------------------------------------------------
+
+describe('getScopedActivePaneId', () => {
+  const wsALeaf1: LeafNode = {
+    _tag: 'LeafNode',
+    id: 'ws-a-pane-1',
+    paneType: 'terminal',
+    workspaceId: 'ws-a',
+  }
+  const wsALeaf2: LeafNode = {
+    _tag: 'LeafNode',
+    id: 'ws-a-pane-2',
+    paneType: 'terminal',
+    workspaceId: 'ws-a',
+  }
+  const wsBLeaf1: LeafNode = {
+    _tag: 'LeafNode',
+    id: 'ws-b-pane-1',
+    paneType: 'terminal',
+    workspaceId: 'ws-b',
+  }
+
+  const wsASubLayout: SplitNode = {
+    _tag: 'SplitNode',
+    id: 'split-ws-a',
+    direction: 'horizontal',
+    children: [wsALeaf1, wsALeaf2],
+    sizes: [50, 50],
+  }
+
+  it('returns the global activePaneId when it belongs to this workspace', () => {
+    expect(getScopedActivePaneId(wsASubLayout, 'ws-a-pane-2')).toBe(
+      'ws-a-pane-2'
+    )
+  })
+
+  it('falls back to the first leaf when the global activePaneId belongs to a different workspace', () => {
+    expect(getScopedActivePaneId(wsASubLayout, 'ws-b-pane-1')).toBe(
+      'ws-a-pane-1'
+    )
+  })
+
+  it('falls back to the first leaf when the global activePaneId is null', () => {
+    expect(getScopedActivePaneId(wsASubLayout, null)).toBe('ws-a-pane-1')
+  })
+
+  it('works with a single leaf sub-layout', () => {
+    expect(getScopedActivePaneId(wsBLeaf1, null)).toBe('ws-b-pane-1')
+  })
+
+  it('returns the first leaf for a single-leaf layout when active is elsewhere', () => {
+    expect(getScopedActivePaneId(wsBLeaf1, 'ws-a-pane-1')).toBe('ws-b-pane-1')
   })
 })

@@ -887,6 +887,28 @@ function getLeafNodes(node: PanelNode): LeafNode[] {
 }
 
 /**
+ * Resolve the active pane ID scoped to a specific workspace's sub-layout.
+ *
+ * If the global `activePaneId` belongs to one of this workspace's leaves,
+ * it is returned as-is. Otherwise, falls back to the first leaf in the
+ * workspace's sub-layout so that header buttons always operate on a pane
+ * within their own workspace.
+ */
+function getScopedActivePaneId(
+  subLayout: PanelNode,
+  globalActivePaneId: string | null
+): string | null {
+  const leaves = getLeafNodes(subLayout)
+  if (
+    globalActivePaneId != null &&
+    leaves.some((l) => l.id === globalActivePaneId)
+  ) {
+    return globalActivePaneId
+  }
+  return leaves[0]?.id ?? null
+}
+
+/**
  * Extract unique workspace IDs from the leaf nodes of a layout tree.
  * Returns an array of workspace IDs in the order they first appear (DFS).
  * Leaves without a workspaceId are grouped under `undefined`.
@@ -1063,6 +1085,143 @@ function findNewLeafAfterSplit(
 }
 
 // ---------------------------------------------------------------------------
+// Terminal pane assignment — pure computation
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of computing where a terminal should be assigned in the layout.
+ *
+ * @see computeTerminalPaneAssignment
+ */
+interface TerminalPaneAssignmentResult {
+  /** The pane ID that should receive focus (the pane displaying the terminal). */
+  readonly activePaneId: string
+  /** The updated layout tree with the terminal assigned. */
+  readonly layoutTree: PanelNode
+  /**
+   * Whether the dev server auto-open logic should fire for this assignment.
+   * True for new pane creation / replacement, false when just focusing an
+   * existing pane that already has the terminal.
+   */
+  readonly triggerDevServer: boolean
+}
+
+/**
+ * Compute the layout tree mutation and focus target for assigning a terminal
+ * to a pane.
+ *
+ * This is the pure logic extracted from `handleAssignTerminalToPane` in the
+ * route component, making it testable without React hooks or LiveStore.
+ *
+ * Resolution strategy (in order):
+ * 1. If no `paneId` and the terminal already has a pane → focus it.
+ * 2. If no layout exists → create a single-pane layout.
+ * 3. If a specific `paneId` is given → replace that pane's content.
+ * 4. If an empty terminal pane exists → assign to it.
+ * 5. Otherwise → split the last leaf horizontally and assign to the new pane.
+ *
+ * In ALL cases the returned `activePaneId` points to the pane displaying the
+ * terminal, ensuring newly spawned terminals are immediately focused.
+ *
+ * @param base - The current layout tree, or undefined if no layout exists
+ * @param terminalId - The terminal to display
+ * @param workspaceId - The workspace the terminal belongs to
+ * @param paneId - Optional specific pane to assign to
+ * @returns The new layout tree, active pane ID, and dev-server trigger flag
+ */
+function computeTerminalPaneAssignment(
+  base: PanelNode | undefined,
+  terminalId: string,
+  workspaceId: string,
+  paneId?: string
+): TerminalPaneAssignmentResult {
+  // 1. If no specific pane target, check if this terminal already has a pane.
+  if (!paneId && base) {
+    const existingLeaf = findLeafByTerminalId(base, terminalId)
+    if (existingLeaf) {
+      return {
+        layoutTree: base,
+        activePaneId: existingLeaf.id,
+        triggerDevServer: false,
+      }
+    }
+  }
+
+  // 2. No layout at all — create a new single-pane layout.
+  if (!base) {
+    const newLeafId = generateId('pane')
+    const newLeaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: newLeafId,
+      paneType: 'terminal',
+      terminalId,
+      workspaceId,
+    }
+    return {
+      layoutTree: newLeaf,
+      activePaneId: newLeafId,
+      triggerDevServer: true,
+    }
+  }
+
+  // 3. Specific pane ID given — replace that pane's content.
+  if (paneId) {
+    const targetLeaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: paneId,
+      paneType: 'terminal',
+      terminalId,
+      workspaceId,
+    }
+    const newTree = replaceNode(base, paneId, targetLeaf)
+    return { layoutTree: newTree, activePaneId: paneId, triggerDevServer: true }
+  }
+
+  // 4. Find an empty terminal pane.
+  const emptyPane = findEmptyTerminalPane(base)
+  if (emptyPane) {
+    const updatedLeaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: emptyPane.id,
+      paneType: 'terminal',
+      terminalId,
+      workspaceId,
+    }
+    const newTree = replaceNode(base, emptyPane.id, updatedLeaf)
+    return {
+      layoutTree: newTree,
+      activePaneId: emptyPane.id,
+      triggerDevServer: true,
+    }
+  }
+
+  // 5. No empty pane — split the last leaf and assign to the new pane.
+  const lastLeafId = getLastLeafId(base)
+  if (lastLeafId) {
+    const newPaneContent: Partial<LeafNode> = {
+      paneType: 'terminal',
+      terminalId,
+      workspaceId,
+    }
+    const newTree = splitPane(base, lastLeafId, 'horizontal', newPaneContent)
+    const newLeaf = findNewLeafAfterSplit(base, newTree)
+    const newActivePaneId = newLeaf?.id ?? lastLeafId
+    return {
+      layoutTree: newTree,
+      activePaneId: newActivePaneId,
+      triggerDevServer: true,
+    }
+  }
+
+  // Fallback — should not happen for valid trees, but return base unchanged.
+  return {
+    layoutTree: base,
+    activePaneId: getFirstLeafId(base) ?? '',
+    triggerDevServer: false,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Workspace frame drag-and-drop helpers
 // ---------------------------------------------------------------------------
 
@@ -1090,6 +1249,87 @@ function isWorkspaceFrameData(data: Record<string, unknown>): data is {
  *
  * Returns a new array — does not mutate the input.
  */
+/**
+ * Collect all terminal IDs (including dev server terminals) from leaves
+ * that belong to the given workspace.
+ *
+ * Returns an array of terminal IDs that should be removed when closing
+ * all panes for a workspace.
+ */
+function getWorkspaceTerminalIds(
+  layout: PanelNode | undefined,
+  workspaceId: string
+): readonly string[] {
+  if (!layout) {
+    return []
+  }
+  const leaves = getLeafNodes(layout)
+  const ids: string[] = []
+  for (const leaf of leaves) {
+    if (leaf.workspaceId !== workspaceId) {
+      continue
+    }
+    if (leaf.terminalId) {
+      ids.push(leaf.terminalId)
+    }
+    if (leaf.devServerTerminalId) {
+      ids.push(leaf.devServerTerminalId)
+    }
+  }
+  return ids
+}
+
+/**
+ * Determine whether closing a workspace should show a confirmation dialog.
+ *
+ * Returns true when the workspace has any terminal with a running child
+ * process. This prevents accidental loss of running work (e.g., a dev
+ * server, vim, or an AI agent) when the user clicks "Close workspace".
+ *
+ * @param layout - The current panel layout tree (may be undefined)
+ * @param workspaceId - The workspace being closed
+ * @param terminals - The live terminal list from useTerminalList
+ * @returns Whether the close confirmation dialog should be shown
+ */
+function shouldConfirmCloseWorkspace(
+  layout: PanelNode | undefined,
+  workspaceId: string,
+  terminals: ReadonlyArray<{
+    readonly id: string
+    readonly hasChildProcess: boolean
+  }>
+): boolean {
+  const terminalIds = getWorkspaceTerminalIds(layout, workspaceId)
+  return terminalIds.some((id) => {
+    const terminal = terminals.find((t) => t.id === id)
+    return terminal?.hasChildProcess === true
+  })
+}
+
+/**
+ * Remove all leaf nodes belonging to a workspace from the layout tree.
+ *
+ * Sequentially closes each workspace leaf. Returns the resulting tree
+ * (or undefined if all panes were removed).
+ */
+function closeWorkspacePanes(
+  layout: PanelNode,
+  workspaceId: string
+): PanelNode | undefined {
+  let current: PanelNode | undefined = layout
+  // Iteratively close workspace leaves until none remain.
+  // Each closePane call may restructure the tree, so we re-scan after each.
+  while (current) {
+    const leaves = getLeafNodes(current)
+    const workspaceLeaf = leaves.find((l) => l.workspaceId === workspaceId)
+    if (!workspaceLeaf) {
+      break
+    }
+    current = closePane(current, workspaceLeaf.id)
+  }
+  return current
+}
+
 function sortWorkspaceLayouts<
   T extends { readonly workspaceId: string | undefined },
 >(layouts: readonly T[], workspaceOrder: string[] | null): T[] {
@@ -1115,7 +1355,9 @@ function sortWorkspaceLayouts<
 
 export {
   closePane,
+  closeWorkspacePanes,
   computeResize,
+  computeTerminalPaneAssignment,
   countLeaves,
   ensureValidActivePaneId,
   filterTreeByWorkspace,
@@ -1131,14 +1373,17 @@ export {
   getLastLeafId,
   getLeafIds,
   getLeafNodes,
+  getScopedActivePaneId,
   getStaleTerminalLeaves,
   getTerminalIdsToRemove,
   getTreeDepth,
   getWorkspaceIds,
+  getWorkspaceTerminalIds,
   isWorkspaceFrameData,
   reconcileLayout,
   replaceNode,
   shouldConfirmClose,
+  shouldConfirmCloseWorkspace,
   sortWorkspaceLayouts,
   splitPane,
   WORKSPACE_FRAME_TYPE,

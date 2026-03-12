@@ -114,7 +114,7 @@ function ProjectGroup({
         </CollapsibleTrigger>
         <div className="flex shrink-0 items-center gap-0.5">
           <CreateWorkspaceForm
-            defaultProjectId={project.id}
+            projectId={project.id}
             trigger={
               <Tooltip>
                 <TooltipTrigger

@@ -2,7 +2,7 @@
  * Create Workspace form component.
  *
  * A dialog with a TanStack Form for creating a new workspace.
- * Fields: project selector (required), optional branch name.
+ * Fields: optional branch name (autofocused on open).
  * On submit, calls the `workspace.create` mutation via AtomRpc.
  * Shows a loading state with spinner and indeterminate progress bar
  * during workspace creation (worktree creation, port allocation,
@@ -20,8 +20,6 @@
  */
 
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
-import { projects } from '@laborer/shared/schema'
-import { queryDb } from '@livestore/livestore'
 import { useForm } from '@tanstack/react-form'
 import { pipe, String as Str } from 'effect'
 import { AlertTriangle, Layers, ScrollText, WifiOff, X } from 'lucide-react'
@@ -42,20 +40,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import {
-  Field,
-  FieldDescription,
-  FieldError,
-  FieldLabel,
-} from '@/components/ui/field'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { inputClassName } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
@@ -63,9 +49,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { extractErrorCode, extractErrorMessage } from '@/lib/utils'
-import { useLaborerStore } from '@/livestore/store'
-
-const allProjects$ = queryDb(projects, { label: 'createWorkspaceProjects' })
 
 const createWorkspaceMutation = LaborerClient.mutation('workspace.create')
 
@@ -138,24 +121,24 @@ function getErrorIcon(code: string | undefined) {
 }
 
 interface CreateWorkspaceFormProps {
-  /** Pre-select a project in the form. The user can still change the selection. */
-  readonly defaultProjectId?: string | undefined
+  /** The project to create a workspace in. */
+  readonly projectId: string
   /** Custom trigger element. Defaults to a "Create Workspace" button. */
   readonly trigger?: ReactNode | undefined
 }
 
-function CreateWorkspaceForm({
-  defaultProjectId,
-  trigger,
-}: CreateWorkspaceFormProps) {
+function CreateWorkspaceForm({ projectId, trigger }: CreateWorkspaceFormProps) {
   const [open, setOpen] = useState(false)
   const [creationError, setCreationError] =
     useState<WorkspaceCreationError | null>(null)
   const createWorkspace = useAtomSet(createWorkspaceMutation, {
     mode: 'promise',
   })
-  const store = useLaborerStore()
-  const projectList = store.useQuery(allProjects$)
+  const branchInputRef = useCallback((el: HTMLInputElement | null) => {
+    if (el) {
+      el.focus()
+    }
+  }, [])
 
   const clearError = useCallback(() => {
     setCreationError(null)
@@ -163,7 +146,6 @@ function CreateWorkspaceForm({
 
   const form = useForm({
     defaultValues: {
-      projectId: defaultProjectId ?? '',
       branchName: '',
     },
     onSubmit: async ({ value }) => {
@@ -172,7 +154,7 @@ function CreateWorkspaceForm({
       try {
         const result = await createWorkspace({
           payload: {
-            projectId: value.projectId,
+            projectId,
             ...(value.branchName.trim()
               ? { branchName: value.branchName.trim() }
               : {}),
@@ -201,9 +183,8 @@ function CreateWorkspaceForm({
         if (!form.state.isSubmitting) {
           setOpen(value)
           if (value) {
-            // Reset form with the defaultProjectId when dialog opens
+            // Reset form when dialog opens
             form.reset({
-              projectId: defaultProjectId ?? '',
               branchName: '',
             })
           }
@@ -236,59 +217,6 @@ function CreateWorkspaceForm({
           }}
         >
           <div className="grid gap-4 py-2">
-            <form.Field
-              name="projectId"
-              validators={{
-                onChange: ({ value }) => {
-                  if (!value) {
-                    return 'Project is required'
-                  }
-                  return undefined
-                },
-              }}
-            >
-              {(field) => (
-                <Field data-invalid={field.state.meta.errors.length > 0}>
-                  <FieldLabel>Project</FieldLabel>
-                  <Select
-                    disabled={form.state.isSubmitting}
-                    onValueChange={(value) => {
-                      if (value !== null) {
-                        field.handleChange(value)
-                      }
-                    }}
-                    required
-                    value={field.state.value || null}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select a project">
-                        {field.state.value
-                          ? (projectList.find((p) => p.id === field.state.value)
-                              ?.name ?? field.state.value)
-                          : undefined}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {projectList.map((project) => (
-                        <SelectItem key={project.id} value={project.id}>
-                          {project.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FieldDescription>
-                    The project repository to create a workspace in.
-                  </FieldDescription>
-                  {field.state.meta.isTouched &&
-                    field.state.meta.errors.length > 0 && (
-                      <FieldError>
-                        {field.state.meta.errors.join(', ')}
-                      </FieldError>
-                    )}
-                </Field>
-              )}
-            </form.Field>
-
             <form.Field name="branchName">
               {(field) => (
                 <Field>
@@ -299,6 +227,7 @@ function CreateWorkspaceForm({
                     className={inputClassName}
                     disabled={form.state.isSubmitting}
                     id="branchName"
+                    inputRef={branchInputRef}
                     // biome-ignore lint/performance/useTopLevelRegex: required inline for IMaskInput
                     mask={/^[a-zA-Z0-9\s\-_/]*$/}
                     name={field.name}

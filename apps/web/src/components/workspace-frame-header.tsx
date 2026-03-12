@@ -1,27 +1,21 @@
 /**
  * Presentational header bar for a single workspace frame.
  *
- * Shows project / branch name and pane action buttons scoped to this
- * workspace's panes. All data is received via props — no store coupling.
+ * Shows project / branch name, workspace-level action buttons (diff toggle,
+ * dev server toggle), and a close-workspace button that kills all terminals
+ * for this workspace.
+ *
+ * Per-pane actions (split, fullscreen, close pane) are rendered as an
+ * overlay toolbar on each terminal pane instead.
  *
  * The data-fetching wrapper lives in routes/index.tsx and queries
  * LiveStore for the project, workspace, and layout data.
+ *
+ * @see components/terminal-overlay-toolbar.tsx — per-pane floating toolbar
  */
 
-import {
-  Columns2,
-  FileCode2,
-  Maximize,
-  Minimize,
-  Minus,
-  Plus,
-  Rows2,
-  Server,
-  Terminal,
-  X,
-} from 'lucide-react'
+import { FileCode2, Minus, Plus, Server, Terminal, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import {
   Tooltip,
   TooltipContent,
@@ -44,8 +38,6 @@ interface WorkspaceFrameHeaderProps {
     | undefined
   /** Whether the workspace runs in a container (shows dev server toggle). */
   readonly isContainerized: boolean
-  /** Whether the active pane is in fullscreen mode. */
-  readonly isFullscreen: boolean
   /** Whether the workspace frame is minimized (collapsed to header only). */
   readonly isMinimized?: boolean | undefined
   /** Called when the header area is clicked (focus pane or expand if minimized). */
@@ -54,6 +46,8 @@ interface WorkspaceFrameHeaderProps {
   readonly onMinimize?: (() => void) | undefined
   /** The project name for the workspace (shown in the header). */
   readonly projectName: string | undefined
+  /** The workspace ID, used for the close-workspace action. */
+  readonly workspaceId: string | undefined
 }
 
 function WorkspaceFrameHeader({
@@ -63,13 +57,22 @@ function WorkspaceFrameHeader({
   diffIsOpen,
   dragHandleRef,
   isContainerized,
-  isFullscreen,
   isMinimized,
   onHeaderClick,
   onMinimize,
   projectName,
+  workspaceId,
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
+
+  /** Shift focus to this workspace's pane before performing a panel action. */
+  const withFocus = (fn: (paneId: string) => void) => () => {
+    if (!activePaneId) {
+      return
+    }
+    actions?.setActivePaneId(activePaneId)
+    fn(activePaneId)
+  }
 
   return (
     <div
@@ -110,10 +113,9 @@ function WorkspaceFrameHeader({
                     <Button
                       aria-label="Toggle dev server terminal"
                       disabled={!hasActivePane}
-                      onClick={() =>
-                        activePaneId &&
-                        actions?.toggleDevServerPane(activePaneId)
-                      }
+                      onClick={withFocus((paneId) =>
+                        actions?.toggleDevServerPane(paneId)
+                      )}
                       size="icon-sm"
                       variant="ghost"
                     />
@@ -133,9 +135,9 @@ function WorkspaceFrameHeader({
                     }
                     className={diffIsOpen ? 'bg-accent' : ''}
                     disabled={!hasActivePane}
-                    onClick={() =>
-                      activePaneId && actions?.toggleDiffPane(activePaneId)
-                    }
+                    onClick={withFocus((paneId) =>
+                      actions?.toggleDiffPane(paneId)
+                    )}
                     size="icon-sm"
                     variant="ghost"
                   />
@@ -151,90 +153,10 @@ function WorkspaceFrameHeader({
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Split horizontally"
-                    disabled={!hasActivePane}
+                    aria-label="Close workspace"
+                    disabled={!workspaceId}
                     onClick={() =>
-                      activePaneId &&
-                      actions?.splitPane(activePaneId, 'horizontal')
-                    }
-                    size="icon-sm"
-                    variant="ghost"
-                  />
-                }
-              >
-                <Columns2 className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipContent>
-                Split horizontally
-                <KbdGroup>
-                  <Kbd>⌘</Kbd>
-                  <Kbd>D</Kbd>
-                </KbdGroup>
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label="Split vertically"
-                    disabled={!hasActivePane}
-                    onClick={() =>
-                      activePaneId &&
-                      actions?.splitPane(activePaneId, 'vertical')
-                    }
-                    size="icon-sm"
-                    variant="ghost"
-                  />
-                }
-              >
-                <Rows2 className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipContent>
-                Split vertically
-                <KbdGroup>
-                  <Kbd>⇧</Kbd>
-                  <Kbd>⌘</Kbd>
-                  <Kbd>D</Kbd>
-                </KbdGroup>
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label={
-                      isFullscreen ? 'Exit fullscreen' : 'Fullscreen pane'
-                    }
-                    disabled={!hasActivePane}
-                    onClick={() => actions?.toggleFullscreenPane()}
-                    size="icon-sm"
-                    variant="ghost"
-                  />
-                }
-              >
-                {isFullscreen ? (
-                  <Minimize className="size-3.5" />
-                ) : (
-                  <Maximize className="size-3.5" />
-                )}
-              </TooltipTrigger>
-              <TooltipContent>
-                {isFullscreen ? 'Exit fullscreen' : 'Fullscreen pane'}
-                <KbdGroup>
-                  <Kbd>⇧</Kbd>
-                  <Kbd>⌘</Kbd>
-                  <Kbd>↵</Kbd>
-                </KbdGroup>
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label="Close pane"
-                    disabled={!hasActivePane}
-                    onClick={() =>
-                      activePaneId && actions?.closePane(activePaneId)
+                      workspaceId && actions?.closeWorkspace(workspaceId)
                     }
                     size="icon-sm"
                     variant="ghost"
@@ -243,13 +165,7 @@ function WorkspaceFrameHeader({
               >
                 <X className="size-3.5" />
               </TooltipTrigger>
-              <TooltipContent>
-                Close pane
-                <KbdGroup>
-                  <Kbd>⌘</Kbd>
-                  <Kbd>W</Kbd>
-                </KbdGroup>
-              </TooltipContent>
+              <TooltipContent>Close workspace</TooltipContent>
             </Tooltip>
           </>
         )}

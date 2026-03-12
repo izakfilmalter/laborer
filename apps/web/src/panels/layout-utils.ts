@@ -712,6 +712,26 @@ function getFirstLeafId(root: PanelNode): string | undefined {
 }
 
 /**
+ * Get the last leaf ID in a layout tree (DFS order).
+ * Returns undefined if the tree has no leaves (should not happen for valid trees).
+ */
+function getLastLeafId(root: PanelNode): string | undefined {
+  if (root._tag === 'LeafNode') {
+    return root.id
+  }
+  for (let i = root.children.length - 1; i >= 0; i--) {
+    const child = root.children[i]
+    if (child) {
+      const leafId = getLastLeafId(child)
+      if (leafId) {
+        return leafId
+      }
+    }
+  }
+  return undefined
+}
+
+/**
  * Validate that an activePaneId references an existing leaf node in the
  * layout tree. If it does not (stale reference, null when panes exist),
  * falls back to the first leaf in the tree.
@@ -1013,6 +1033,7 @@ export {
   findSiblingPaneId,
   generateId,
   getFirstLeafId,
+  getLastLeafId,
   getLeafIds,
   getLeafNodes,
   getStaleTerminalLeaves,

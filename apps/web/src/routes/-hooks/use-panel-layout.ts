@@ -543,7 +543,8 @@ export function usePanelLayout() {
    * When toggling ON with no existing dev server terminal: spawns a new
    * container terminal with `autoRun: true` so setup scripts and the dev
    * server start command are auto-typed. Sets `devServerTerminalId` and
-   * `devServerOpen` on the leaf node.
+   * `devServerOpen` on the leaf node so the UI renders it in the right-hand
+   * sidebar.
    *
    * When toggling ON with an existing `devServerTerminalId`: just flips
    * `devServerOpen` to true (reconnects to the existing terminal).

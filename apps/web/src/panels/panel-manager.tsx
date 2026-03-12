@@ -79,9 +79,8 @@ import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { useFullscreenPaneId, usePanelActions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
+import { TerminalPaneWithSidebars } from '@/panels/terminal-pane-with-sidebars'
 import { DevServerTerminalPane } from '@/panes/dev-server-terminal-pane'
-import { DiffPane } from '@/panes/diff-pane'
-import { TerminalPane } from '@/panes/terminal-pane'
 
 const allWorkspaces$ = queryDb(workspaces, { label: 'paneWorkspaces' })
 const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
@@ -256,99 +255,13 @@ interface PaneContentProps {
 }
 
 /**
- * Renders a terminal pane with optional sidebars (diff, dev server terminal).
- * Extracted to keep PaneContent under complexity limits.
- */
-function TerminalPaneWithSidebars({ node, onTerminalExit }: PaneContentProps) {
-  const { paneMin } = useResponsiveLayout()
-
-  const showDiff = node.diffOpen === true && node.workspaceId !== undefined
-  const showDevServer =
-    node.devServerOpen === true && node.devServerTerminalId !== undefined
-
-  // No sidebars — render terminal only
-  if (!(showDiff || showDevServer)) {
-    return (
-      <TerminalPane
-        onTerminalExit={onTerminalExit}
-        terminalId={node.terminalId as string}
-      />
-    )
-  }
-
-  // Diff sidebar only
-  if (showDiff && !showDevServer) {
-    return (
-      <ResizablePanelGroup orientation="horizontal">
-        <ResizablePanel defaultSize="60%" minSize={paneMin}>
-          <TerminalPane
-            onTerminalExit={onTerminalExit}
-            terminalId={node.terminalId as string}
-          />
-        </ResizablePanel>
-        <ResizableHandle />
-        <ResizablePanel defaultSize="40%" minSize={paneMin}>
-          <DiffPane workspaceId={node.workspaceId as string} />
-        </ResizablePanel>
-      </ResizablePanelGroup>
-    )
-  }
-
-  // Dev server sidebar only
-  if (showDevServer && !showDiff) {
-    return (
-      <ResizablePanelGroup orientation="vertical">
-        <ResizablePanel defaultSize="60%" minSize={paneMin}>
-          <TerminalPane
-            onTerminalExit={onTerminalExit}
-            terminalId={node.terminalId as string}
-          />
-        </ResizablePanel>
-        <ResizableHandle />
-        <ResizablePanel defaultSize="40%" minSize={paneMin}>
-          <DevServerTerminalPane
-            terminalId={node.devServerTerminalId as string}
-          />
-        </ResizablePanel>
-      </ResizablePanelGroup>
-    )
-  }
-
-  // Both sidebars — terminal + diff on right, dev server below terminal
-  return (
-    <ResizablePanelGroup orientation="vertical">
-      <ResizablePanel defaultSize="60%" minSize={paneMin}>
-        <ResizablePanelGroup orientation="horizontal">
-          <ResizablePanel defaultSize="60%" minSize={paneMin}>
-            <TerminalPane
-              onTerminalExit={onTerminalExit}
-              terminalId={node.terminalId as string}
-            />
-          </ResizablePanel>
-          <ResizableHandle />
-          <ResizablePanel defaultSize="40%" minSize={paneMin}>
-            <DiffPane workspaceId={node.workspaceId as string} />
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      </ResizablePanel>
-      <ResizableHandle />
-      <ResizablePanel defaultSize="40%" minSize={paneMin}>
-        <DevServerTerminalPane
-          terminalId={node.devServerTerminalId as string}
-        />
-      </ResizablePanel>
-    </ResizablePanelGroup>
-  )
-}
-
-/**
  * Renders the content of a single pane based on its type and assigned IDs.
  *
  * Terminal panes with `diffOpen: true` render the diff as an integrated
  * sidebar (resizable) alongside the terminal within the same pane container.
- * Dev server terminal panes render with `devServerOpen: true` as a vertically
- * stacked panel below the main terminal. This keeps the dev server terminal
- * visually coupled to its workspace terminal.
+ * Dev server terminal panes render with `devServerOpen: true` as a right-hand
+ * sidebar beside the main terminal. This matches the diff viewer placement
+ * while keeping the dev server terminal visually coupled to its workspace.
  */
 function PaneContent({ node, onTerminalExit }: PaneContentProps) {
   if (node.paneType === 'terminal' && node.terminalId) {

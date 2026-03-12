@@ -559,6 +559,98 @@ describe('LiveStore schema', () => {
       })
   )
 
+  it.scoped(
+    'preserves workspaceOrder when layout events fire after a reorder',
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTestStore
+
+        // Seed a layout
+        store.commit(
+          events.layoutRestored({
+            id: 'session-1',
+            layoutTree: splitLayout,
+            activePaneId: 'pane-1',
+          })
+        )
+
+        // Reorder workspaces
+        store.commit(
+          events.layoutWorkspacesReordered({
+            id: 'session-1',
+            workspaceOrder: ['workspace-2', 'workspace-1'],
+          })
+        )
+
+        // Verify reorder was persisted
+        assert.deepStrictEqual(
+          store.query(tables.panelLayout)[0]?.workspaceOrder,
+          ['workspace-2', 'workspace-1']
+        )
+
+        // Now simulate clicking a pane (layoutPaneAssigned)
+        store.commit(
+          events.layoutPaneAssigned({
+            id: 'session-1',
+            layoutTree: splitLayout,
+            activePaneId: 'pane-2',
+          })
+        )
+
+        // workspaceOrder must survive the layoutPaneAssigned event
+        assert.deepStrictEqual(store.query(tables.panelLayout), [
+          {
+            id: 'session-1',
+            layoutTree: splitLayout,
+            activePaneId: 'pane-2',
+            workspaceOrder: ['workspace-2', 'workspace-1'],
+          },
+        ])
+
+        // Also verify layoutSplit preserves workspaceOrder
+        store.commit(
+          events.layoutSplit({
+            id: 'session-1',
+            layoutTree: splitLayout,
+            activePaneId: 'pane-1',
+          })
+        )
+
+        assert.deepStrictEqual(
+          store.query(tables.panelLayout)[0]?.workspaceOrder,
+          ['workspace-2', 'workspace-1']
+        )
+
+        // Also verify layoutPaneClosed preserves workspaceOrder
+        store.commit(
+          events.layoutPaneClosed({
+            id: 'session-1',
+            layoutTree: leafPane,
+            activePaneId: 'pane-1',
+          })
+        )
+
+        assert.deepStrictEqual(
+          store.query(tables.panelLayout)[0]?.workspaceOrder,
+          ['workspace-2', 'workspace-1']
+        )
+
+        // Also verify layoutRestored preserves workspaceOrder
+        store.commit(
+          events.layoutRestored({
+            id: 'session-1',
+            layoutTree: restoredLayout,
+            activePaneId: null,
+          })
+        )
+
+        assert.deepStrictEqual(
+          store.query(tables.panelLayout)[0]?.workspaceOrder,
+          ['workspace-2', 'workspace-1']
+        )
+      })
+  )
+
   it.scoped('keeps deprecated terminal events as no-op materializers', () =>
     Effect.gen(function* () {
       const store = yield* makeTestStore

@@ -68,6 +68,7 @@ const writeProjectConfig = (
   updates: {
     devServer?:
       | {
+          autoOpen?: boolean | undefined
           dockerfile?: string | undefined
           image?: string | undefined
           startCommand?: string | undefined
@@ -597,6 +598,7 @@ describe('ConfigService', () => {
 
         yield* writeProjectConfig(projectDir, {
           devServer: {
+            autoOpen: true,
             image: 'node:22',
             startCommand: 'bun dev',
             workdir: '/workspace',
@@ -605,6 +607,7 @@ describe('ConfigService', () => {
 
         const result = yield* resolveConfig(projectDir, 'devserver-roundtrip')
 
+        assert.strictEqual(result.devServer.autoOpen.value, true)
         assert.strictEqual(result.devServer.image.value, 'node:22')
         assert.strictEqual(result.devServer.startCommand.value, 'bun dev')
         assert.strictEqual(result.devServer.workdir.value, '/workspace')
@@ -653,14 +656,31 @@ describe('ConfigService', () => {
 
         const result = yield* resolveConfig(projectDir, 'no-devserver')
 
+        assert.strictEqual(result.devServer.autoOpen.value, false)
         assert.strictEqual(result.devServer.image.value, 'node:lts')
         assert.isNull(result.devServer.dockerfile.value)
         assert.isNull(result.devServer.startCommand.value)
         assert.strictEqual(result.devServer.workdir.value, '/app')
         assert.strictEqual(result.devServer.image.source, 'default')
         assert.strictEqual(result.devServer.dockerfile.source, 'default')
+        assert.strictEqual(result.devServer.autoOpen.source, 'default')
         assert.strictEqual(result.devServer.startCommand.source, 'default')
         assert.strictEqual(result.devServer.workdir.source, 'default')
+      })
+    )
+
+    it.effect('should read devServer.autoOpen from project config', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'devserver-auto-open')
+        mkdirSync(projectDir, { recursive: true })
+        const configPath = writeConfig(projectDir, {
+          devServer: { autoOpen: true, image: 'node:22' },
+        })
+
+        const result = yield* resolveConfig(projectDir, 'devserver-auto-open')
+
+        assert.strictEqual(result.devServer.autoOpen.value, true)
+        assert.strictEqual(result.devServer.autoOpen.source, configPath)
       })
     )
 

@@ -115,12 +115,18 @@ const ConfigResolvedValueStringArray = Schema.Struct({
   source: Schema.String,
 })
 
+const ConfigResolvedValueBoolean = Schema.Struct({
+  value: Schema.Boolean,
+  source: Schema.String,
+})
+
 const ConfigResolvedValueNullableString = Schema.Struct({
   value: Schema.NullOr(Schema.String),
   source: Schema.String,
 })
 
 const DevServerConfigResponse = Schema.Struct({
+  autoOpen: ConfigResolvedValueBoolean,
   image: ConfigResolvedValueNullableString,
   dockerfile: ConfigResolvedValueNullableString,
   installCommand: ConfigResolvedValueNullableString,
@@ -280,6 +286,7 @@ export class LaborerRpcs extends RpcGroup.make(
         agent: Schema.optional(AgentProviderSchema),
         devServer: Schema.optional(
           Schema.Struct({
+            autoOpen: Schema.optional(Schema.Boolean),
             image: Schema.optional(Schema.String),
             dockerfile: Schema.optional(Schema.String),
             installCommand: Schema.optional(Schema.String),
@@ -816,6 +823,13 @@ export class TerminalRpcs extends RpcGroup.make(
       env: Schema.optional(
         Schema.Record({ key: Schema.String, value: Schema.String })
       ),
+      /**
+       * Optional pre-generated terminal ID. When provided, the terminal
+       * manager uses this ID instead of generating a new UUID. Allows the
+       * caller to inject the terminal ID into the environment before spawn
+       * (needed for agent hook scripts to identify their terminal).
+       */
+      id: Schema.optional(Schema.String),
       /** Initial terminal column count. */
       cols: Schema.Int,
       /** Initial terminal row count. */

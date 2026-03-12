@@ -42,6 +42,7 @@ interface ConfigResult {
       readonly source: string
     }
     readonly devServer: {
+      readonly autoOpen: { readonly value: boolean; readonly source: string }
       readonly image: { readonly value: string | null; readonly source: string }
       readonly installCommand: {
         readonly value: string | null
@@ -129,11 +130,12 @@ describe('ProjectSettingsModal', () => {
     configResult = {
       _tag: 'Success',
       value: {
-        agent: { value: 'claude', source: 'default' },
+        agent: { value: 'opencode', source: 'default' },
         worktreeDir: { value: '/tmp/worktrees', source: 'laborer.json' },
         setupScripts: { value: ['bun install'], source: 'laborer.json' },
         rlphConfig: { value: '.rlph/config.toml', source: 'laborer.json' },
         devServer: {
+          autoOpen: { value: false, source: 'default' },
           image: { value: null, source: 'default' },
           installCommand: { value: null, source: 'default' },
           network: { value: null, source: 'default' },

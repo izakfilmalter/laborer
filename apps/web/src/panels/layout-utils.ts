@@ -1261,6 +1261,10 @@ interface TerminalPaneAssignmentResult {
   readonly triggerDevServer: boolean
 }
 
+interface TerminalPaneAssignmentOptions {
+  readonly autoOpenDevServer?: boolean | undefined
+}
+
 /**
  * Compute the layout tree mutation and focus target for assigning a terminal
  * to a pane.
@@ -1273,7 +1277,7 @@ interface TerminalPaneAssignmentResult {
  * 2. If no layout exists → create a single-pane layout.
  * 3. If a specific `paneId` is given → replace that pane's content.
  * 4. If an empty terminal pane exists → assign to it.
- * 5. Otherwise → split the last leaf horizontally and assign to the new pane.
+ * 5. Otherwise → split the last leaf vertically and assign to the new pane.
  *
  * In ALL cases the returned `activePaneId` points to the pane displaying the
  * terminal, ensuring newly spawned terminals are immediately focused.
@@ -1288,8 +1292,11 @@ function computeTerminalPaneAssignment(
   base: PanelNode | undefined,
   terminalId: string,
   workspaceId: string,
-  paneId?: string
+  paneId?: string,
+  options?: TerminalPaneAssignmentOptions
 ): TerminalPaneAssignmentResult {
+  const shouldAutoOpenDevServer = options?.autoOpenDevServer === true
+
   // 1. If no specific pane target, check if this terminal already has a pane.
   if (!paneId && base) {
     const existingLeaf = findLeafByTerminalId(base, terminalId)
@@ -1315,7 +1322,7 @@ function computeTerminalPaneAssignment(
     return {
       layoutTree: newLeaf,
       activePaneId: newLeafId,
-      triggerDevServer: true,
+      triggerDevServer: shouldAutoOpenDevServer,
     }
   }
 
@@ -1329,7 +1336,11 @@ function computeTerminalPaneAssignment(
       workspaceId,
     }
     const newTree = replaceNode(base, paneId, targetLeaf)
-    return { layoutTree: newTree, activePaneId: paneId, triggerDevServer: true }
+    return {
+      layoutTree: newTree,
+      activePaneId: paneId,
+      triggerDevServer: shouldAutoOpenDevServer,
+    }
   }
 
   // 4. Find an empty terminal pane.
@@ -1346,7 +1357,7 @@ function computeTerminalPaneAssignment(
     return {
       layoutTree: newTree,
       activePaneId: emptyPane.id,
-      triggerDevServer: true,
+      triggerDevServer: shouldAutoOpenDevServer,
     }
   }
 
@@ -1358,13 +1369,13 @@ function computeTerminalPaneAssignment(
       terminalId,
       workspaceId,
     }
-    const newTree = splitPane(base, lastLeafId, 'horizontal', newPaneContent)
+    const newTree = splitPane(base, lastLeafId, 'vertical', newPaneContent)
     const newLeaf = findNewLeafAfterSplit(base, newTree)
     const newActivePaneId = newLeaf?.id ?? lastLeafId
     return {
       layoutTree: newTree,
       activePaneId: newActivePaneId,
-      triggerDevServer: true,
+      triggerDevServer: shouldAutoOpenDevServer,
     }
   }
 

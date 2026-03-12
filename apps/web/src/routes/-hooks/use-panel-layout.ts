@@ -45,6 +45,7 @@ import {
   replaceNode,
   splitPane,
 } from '@/panels/layout-utils'
+import type { AssignTerminalToPaneOptions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import { useInitialLayout } from './use-initial-layout'
 
@@ -197,8 +198,11 @@ export function usePanelLayout() {
   // gets immediately usable terminals instead of empty panes or error
   // states. Panes without a workspaceId (or where the spawn fails) fall
   // back to the EmptyTerminalPane CTA.
-  const { terminals: liveTerminals, isLoading: terminalsLoading } =
-    useTerminalList()
+  const {
+    terminals: liveTerminals,
+    isLoading: terminalsLoading,
+    refresh: refreshTerminals,
+  } = useTerminalList()
   const spawnTerminal = useAtomSet(spawnTerminalMutation, {
     mode: 'promise',
   })
@@ -342,7 +346,13 @@ export function usePanelLayout() {
    * without creating a circular useCallback dependency.
    */
   const assignTerminalToPaneRef = useRef<
-    ((terminalId: string, workspaceId: string, paneId?: string) => void) | null
+    | ((
+        terminalId: string,
+        workspaceId: string,
+        paneId?: string,
+        options?: AssignTerminalToPaneOptions
+      ) => void)
+    | null
   >(null)
 
   const handleSplitPane = useCallback(
@@ -534,7 +544,12 @@ export function usePanelLayout() {
   )
 
   const handleAssignTerminalToPane = useCallback(
-    async (terminalId: string, workspaceId: string, paneId?: string) => {
+    async (
+      terminalId: string,
+      workspaceId: string,
+      paneId?: string,
+      options?: AssignTerminalToPaneOptions
+    ) => {
       // Gate: if the workspace is already visible in another window,
       // focus that window instead of duplicating the workspace here.
       const focusedElsewhere =
@@ -548,7 +563,8 @@ export function usePanelLayout() {
         base,
         terminalId,
         workspaceId,
-        paneId
+        paneId,
+        options
       )
       commitAssignment(
         result.layoutTree,
@@ -652,7 +668,8 @@ export function usePanelLayout() {
    * When toggling ON with no existing dev server terminal: spawns a new
    * container terminal with `autoRun: true` so setup scripts and the dev
    * server start command are auto-typed. Sets `devServerTerminalId` and
-   * `devServerOpen` on the leaf node.
+   * `devServerOpen` on the leaf node so the UI renders it in the right-hand
+   * sidebar.
    *
    * When toggling ON with an existing `devServerTerminalId`: just flips
    * `devServerOpen` to true (reconnects to the existing terminal).
@@ -912,6 +929,7 @@ export function usePanelLayout() {
     leafPaneIds,
     isReconciling,
     liveTerminals,
+    refreshTerminals,
     workspaceOrder: persistedWorkspaceOrder,
   }
 }

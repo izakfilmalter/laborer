@@ -92,8 +92,9 @@ describe('LaborerRpcs config management', () => {
           const canonicalAncestorConfigPath = realpathSync(ancestorConfigPath)
 
           assert.deepStrictEqual(config, {
-            agent: { source: 'default', value: 'claude' },
+            agent: { source: 'default', value: 'opencode' },
             devServer: {
+              autoOpen: { source: 'default', value: false },
               dockerfile: { source: 'default', value: null },
               image: { source: 'default', value: 'node:lts' },
               installCommand: { source: 'default', value: null },
@@ -173,6 +174,9 @@ describe('LaborerRpcs config management', () => {
           yield* client.config.update({
             projectId: project.id,
             config: {
+              devServer: {
+                autoOpen: true,
+              },
               rlphConfig: 'rlph/project.json',
               setupScripts: ['bun install'],
               worktreeDir: '~/updated-worktrees',
@@ -193,8 +197,9 @@ describe('LaborerRpcs config management', () => {
           const resolved = yield* client.config.get({ projectId: project.id })
 
           assert.deepStrictEqual(resolved, {
-            agent: { source: 'default', value: 'claude' },
+            agent: { source: 'default', value: 'opencode' },
             devServer: {
+              autoOpen: { source: canonicalConfigPath, value: true },
               dockerfile: { source: 'default', value: null },
               image: { source: 'default', value: 'node:lts' },
               installCommand: { source: 'default', value: null },

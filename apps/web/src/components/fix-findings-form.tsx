@@ -13,11 +13,11 @@
  * @see Issue #98: rlph.fix RPC handler
  */
 
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { Wrench } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { LaborerClient } from '@/atoms/laborer-client'
+import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -33,10 +33,12 @@ interface FixFindingsFormProps {
   /** Disable the button (e.g., when no PR exists for the branch). */
   readonly disabled?: boolean
   readonly onTerminalSpawned?: () => void
+  readonly projectId: string
   readonly workspaceId: string
 }
 
 function FixFindingsForm({
+  projectId,
   workspaceId,
   onTerminalSpawned,
   disabled,
@@ -44,6 +46,20 @@ function FixFindingsForm({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const fixFindings = useAtomSet(fixFindingsMutation, { mode: 'promise' })
   const panelActions = usePanelActions()
+  const configGet$ = useMemo(
+    () =>
+      LaborerClient.query(
+        'config.get',
+        { projectId },
+        { reactivityKeys: ConfigReactivityKeys }
+      ),
+    [projectId]
+  )
+  const configResult = useAtomValue(configGet$)
+  const autoOpenDevServer =
+    configResult._tag === 'Success'
+      ? configResult.value.devServer.autoOpen.value
+      : false
 
   const handleClick = useCallback(async () => {
     setIsSubmitting(true)
@@ -53,7 +69,9 @@ function FixFindingsForm({
       })
       toast.success('Fix started')
       if (panelActions) {
-        panelActions.assignTerminalToPane(result.id, workspaceId)
+        panelActions.assignTerminalToPane(result.id, workspaceId, undefined, {
+          autoOpenDevServer,
+        })
       }
       onTerminalSpawned?.()
     } catch (error: unknown) {
@@ -62,7 +80,13 @@ function FixFindingsForm({
     } finally {
       setIsSubmitting(false)
     }
-  }, [workspaceId, fixFindings, panelActions, onTerminalSpawned])
+  }, [
+    autoOpenDevServer,
+    workspaceId,
+    fixFindings,
+    panelActions,
+    onTerminalSpawned,
+  ])
 
   return (
     <Tooltip>

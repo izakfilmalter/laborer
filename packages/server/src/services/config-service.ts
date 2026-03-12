@@ -81,6 +81,8 @@ const logPrefix = 'ConfigService'
  * `image` and `dockerfile` are mutually exclusive.
  */
 interface DevServerConfig {
+  /** Automatically open the dev server sidebar when a workspace terminal is spawned. */
+  readonly autoOpen?: boolean | undefined
   /** Path to a Dockerfile for building the container image. */
   readonly dockerfile?: string | undefined
   /** Base Docker image name (e.g. "node:22"). */
@@ -153,6 +155,7 @@ interface ResolvedValue<T> {
  * All fields have concrete values (no undefined).
  */
 interface ResolvedDevServerConfig {
+  readonly autoOpen: ResolvedValue<boolean>
   readonly dockerfile: ResolvedValue<string | null>
   readonly image: ResolvedValue<string | null>
   readonly installCommand: ResolvedValue<string | null>
@@ -167,7 +170,7 @@ interface ResolvedDevServerConfig {
  * All fields have concrete values (no undefined).
  */
 interface ResolvedLaborerConfig {
-  /** Preferred AI coding agent CLI command (defaults to "claude"). */
+  /** Preferred AI coding agent CLI command (defaults to "opencode"). */
   readonly agent: ResolvedValue<AgentProvider>
   readonly devServer: ResolvedDevServerConfig
   /** Absolute path with `~` already expanded. */
@@ -334,6 +337,9 @@ const mergeDevServerUpdates = (
 ): Record<string, unknown> => {
   const merged = { ...existing }
 
+  if (updates.autoOpen !== undefined) {
+    merged.autoOpen = updates.autoOpen
+  }
   if (updates.image !== undefined) {
     merged.image = updates.image
   }
@@ -522,6 +528,10 @@ const ensureGlobalConfigDir = (): Effect.Effect<void, never> =>
 const mergeDevServerConfig = (
   configLayers: ReadonlyArray<{ config: LaborerConfig; path: string }>
 ): ResolvedDevServerConfig => {
+  let autoOpen: ResolvedValue<boolean> = {
+    value: false,
+    source: 'default',
+  }
   let image: ResolvedValue<string | null> = {
     value: 'node:lts',
     source: 'default',
@@ -551,36 +561,52 @@ const mergeDevServerConfig = (
     source: 'default',
   }
 
+  const applyImage = (value: string, path: string) => {
+    image = { value, source: path }
+    if (dockerfile.source === path) {
+      return
+    }
+    dockerfile = { value: null, source: 'default' }
+  }
+
+  const applyDockerfile = (value: string, path: string) => {
+    dockerfile = { value, source: path }
+    if (image.source === path) {
+      return
+    }
+    image = { value: null, source: 'default' }
+  }
+
+  const applyOptionalField = <T>(
+    value: T | undefined,
+    apply: (resolvedValue: T) => void
+  ) => {
+    if (value !== undefined) {
+      apply(value)
+    }
+  }
+
   const applyDevServerLayer = (ds: DevServerConfig, path: string) => {
-    if (ds.image !== undefined) {
-      image = { value: ds.image, source: path }
-      // image and dockerfile are mutually exclusive — setting one clears the other
-      if (ds.dockerfile === undefined) {
-        dockerfile = { value: null, source: 'default' }
-      }
-    }
-    if (ds.dockerfile !== undefined) {
-      dockerfile = { value: ds.dockerfile, source: path }
-      // image and dockerfile are mutually exclusive — setting one clears the other
-      if (ds.image === undefined) {
-        image = { value: null, source: 'default' }
-      }
-    }
-    if (ds.installCommand !== undefined) {
-      installCommand = { value: ds.installCommand, source: path }
-    }
-    if (ds.network !== undefined) {
-      network = { value: ds.network, source: path }
-    }
-    if (ds.setupScripts !== undefined) {
-      setupScripts = { value: ds.setupScripts, source: path }
-    }
-    if (ds.startCommand !== undefined) {
-      startCommand = { value: ds.startCommand, source: path }
-    }
-    if (ds.workdir !== undefined) {
-      workdir = { value: ds.workdir, source: path }
-    }
+    applyOptionalField(ds.autoOpen, (value) => {
+      autoOpen = { value, source: path }
+    })
+    applyOptionalField(ds.image, (value) => applyImage(value, path))
+    applyOptionalField(ds.dockerfile, (value) => applyDockerfile(value, path))
+    applyOptionalField(ds.installCommand, (value) => {
+      installCommand = { value, source: path }
+    })
+    applyOptionalField(ds.network, (value) => {
+      network = { value, source: path }
+    })
+    applyOptionalField(ds.setupScripts, (value) => {
+      setupScripts = { value, source: path }
+    })
+    applyOptionalField(ds.startCommand, (value) => {
+      startCommand = { value, source: path }
+    })
+    applyOptionalField(ds.workdir, (value) => {
+      workdir = { value, source: path }
+    })
   }
 
   for (let i = configLayers.length - 1; i >= 0; i--) {
@@ -596,6 +622,7 @@ const mergeDevServerConfig = (
   }
 
   return {
+    autoOpen,
     dockerfile,
     image,
     installCommand,
@@ -630,7 +657,7 @@ const mergeConfigs = (
   const defaultPrdsDir = join(defaultWorktreeDir, 'prds')
 
   let agent: ResolvedValue<AgentProvider> = {
-    value: 'claude',
+    value: 'opencode',
     source: 'default',
   }
   let worktreeDir: ResolvedValue<string> = {

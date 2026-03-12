@@ -20,6 +20,11 @@ import { createContext, useContext } from 'react'
  */
 type ResizeDirection = 'left' | 'right' | 'up' | 'down'
 
+interface AssignTerminalToPaneOptions {
+  /** Whether assigning this terminal should auto-open the workspace dev server. */
+  readonly autoOpenDevServer?: boolean | undefined
+}
+
 interface PanelActions {
   /**
    * Assign a terminal to an existing pane or the first available empty pane.
@@ -33,7 +38,8 @@ interface PanelActions {
   readonly assignTerminalToPane: (
     terminalId: string,
     workspaceId: string,
-    paneId?: string
+    paneId?: string,
+    options?: AssignTerminalToPaneOptions
   ) => void
   /**
    * Close a pane and remove it from the layout.
@@ -112,8 +118,8 @@ interface PanelActions {
   /**
    * Toggle the dev server terminal alongside a terminal pane.
    *
-   * When toggled ON: the dev server terminal pane is rendered below the
-   * main terminal in a vertical split. If no dev server terminal session
+   * When toggled ON: the dev server terminal pane is rendered to the right of
+   * the main terminal in a horizontal split. If no dev server terminal session
    * exists yet, one is spawned via `terminal.spawn` with `autoRun: true`.
    * When toggled OFF: hides the dev server terminal pane but keeps the
    * terminal session alive for later reconnection.
@@ -215,4 +221,4 @@ export {
   useFullscreenPaneId,
   usePanelActions,
 }
-export type { PanelActions }
+export type { AssignTerminalToPaneOptions, PanelActions }

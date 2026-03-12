@@ -1,25 +1,21 @@
 /**
  * Presentational header bar for a single workspace frame.
  *
- * Shows project / branch name and pane action buttons scoped to this
- * workspace's panes. All data is received via props — no store coupling.
+ * Shows project / branch name, workspace-level action buttons (diff toggle,
+ * dev server toggle), and a close-workspace button that kills all terminals
+ * for this workspace.
+ *
+ * Per-pane actions (split, fullscreen, close pane) are rendered as an
+ * overlay toolbar on each terminal pane instead.
  *
  * The data-fetching wrapper lives in routes/index.tsx and queries
  * LiveStore for the project, workspace, and layout data.
+ *
+ * @see components/terminal-overlay-toolbar.tsx — per-pane floating toolbar
  */
 
-import {
-  Columns2,
-  FileCode2,
-  Maximize,
-  Minimize,
-  Rows2,
-  Server,
-  Terminal,
-  X,
-} from 'lucide-react'
+import { FileCode2, Server, Terminal, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import {
   Tooltip,
   TooltipContent,
@@ -42,10 +38,10 @@ interface WorkspaceFrameHeaderProps {
     | undefined
   /** Whether the workspace runs in a container (shows dev server toggle). */
   readonly isContainerized: boolean
-  /** Whether the active pane is in fullscreen mode. */
-  readonly isFullscreen: boolean
   /** The project name for the workspace (shown in the header). */
   readonly projectName: string | undefined
+  /** The workspace ID, used for the close-workspace action. */
+  readonly workspaceId: string | undefined
 }
 
 function WorkspaceFrameHeader({
@@ -55,8 +51,8 @@ function WorkspaceFrameHeader({
   diffIsOpen,
   dragHandleRef,
   isContainerized,
-  isFullscreen,
   projectName,
+  workspaceId,
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
 
@@ -129,87 +125,11 @@ function WorkspaceFrameHeader({
           <TooltipTrigger
             render={
               <Button
-                aria-label="Split horizontally"
-                disabled={!hasActivePane}
+                aria-label="Close workspace"
+                disabled={!workspaceId}
                 onClick={() =>
-                  activePaneId && actions?.splitPane(activePaneId, 'horizontal')
+                  workspaceId && actions?.closeWorkspace(workspaceId)
                 }
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            <Columns2 className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent>
-            Split horizontally
-            <KbdGroup>
-              <Kbd>⌘</Kbd>
-              <Kbd>D</Kbd>
-            </KbdGroup>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label="Split vertically"
-                disabled={!hasActivePane}
-                onClick={() =>
-                  activePaneId && actions?.splitPane(activePaneId, 'vertical')
-                }
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            <Rows2 className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent>
-            Split vertically
-            <KbdGroup>
-              <Kbd>⇧</Kbd>
-              <Kbd>⌘</Kbd>
-              <Kbd>D</Kbd>
-            </KbdGroup>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label={
-                  isFullscreen ? 'Exit fullscreen' : 'Fullscreen pane'
-                }
-                disabled={!hasActivePane}
-                onClick={() => actions?.toggleFullscreenPane()}
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            {isFullscreen ? (
-              <Minimize className="size-3.5" />
-            ) : (
-              <Maximize className="size-3.5" />
-            )}
-          </TooltipTrigger>
-          <TooltipContent>
-            {isFullscreen ? 'Exit fullscreen' : 'Fullscreen pane'}
-            <KbdGroup>
-              <Kbd>⇧</Kbd>
-              <Kbd>⌘</Kbd>
-              <Kbd>↵</Kbd>
-            </KbdGroup>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label="Close pane"
-                disabled={!hasActivePane}
-                onClick={() => activePaneId && actions?.closePane(activePaneId)}
                 size="icon-sm"
                 variant="ghost"
               />
@@ -217,13 +137,7 @@ function WorkspaceFrameHeader({
           >
             <X className="size-3.5" />
           </TooltipTrigger>
-          <TooltipContent>
-            Close pane
-            <KbdGroup>
-              <Kbd>⌘</Kbd>
-              <Kbd>W</Kbd>
-            </KbdGroup>
-          </TooltipContent>
+          <TooltipContent>Close workspace</TooltipContent>
         </Tooltip>
       </div>
     </div>

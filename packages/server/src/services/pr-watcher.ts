@@ -9,7 +9,7 @@
  * Responsibilities:
  * - Run `gh pr view --json number,url,title,state` in a workspace's worktree
  * - Commit WorkspacePrUpdated events to LiveStore when PR state changes
- * - Poll on interval (default 60s) for active workspaces
+ * - Poll on interval (default 5s) for active workspaces
  * - Start/stop polling per workspace
  * - Deduplicate unchanged PR state to avoid unnecessary LiveStore events
  *
@@ -58,9 +58,9 @@ const EMPTY_PR: PrData = {
 
 /**
  * Default polling interval in milliseconds.
- * PR state changes infrequently so 60 seconds is sufficient.
+ * Keep PR status reasonably fresh while avoiding excessive `gh` churn.
  */
-const DEFAULT_POLL_INTERVAL_MS = 60_000
+const DEFAULT_POLL_INTERVAL_MS = 5000
 
 class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
   PrWatcher,
@@ -78,11 +78,11 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
     /**
      * Start polling PR status for a workspace on an interval.
      *
-     * Runs `checkPr` every `intervalMs` milliseconds (default 60000).
+     * Runs `checkPr` every `intervalMs` milliseconds (default 5000).
      * Calling on an already-polled workspace is a no-op.
      *
      * @param workspaceId - ID of the workspace to poll
-     * @param intervalMs - Polling interval in milliseconds (default 60000)
+     * @param intervalMs - Polling interval in milliseconds (default 5000)
      */
     readonly startPolling: (
       workspaceId: string,

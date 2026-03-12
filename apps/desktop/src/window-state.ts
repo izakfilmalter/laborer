@@ -15,6 +15,16 @@ export interface WindowState {
   isMaximized: boolean
 }
 
+/** Persisted window record keyed by a stable Laborer window identity. */
+export interface WindowRecord extends WindowState {
+  /** Stable application-level identity for the native window. */
+  windowId: string
+}
+
+interface WindowRecordCollection {
+  windows: WindowRecord[]
+}
+
 // ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------
@@ -34,60 +44,67 @@ const STATE_FILE_NAME = 'window-state.json'
  */
 export function parseWindowState(raw: string): WindowState | null {
   try {
+    return parseWindowStateValue(JSON.parse(raw) as unknown)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Parse a raw JSON string into persisted window records.
+ *
+ * When `legacyWindowId` is provided, older single-window payloads are upgraded
+ * into a one-record collection so existing saved bounds remain restorable.
+ */
+export function parseWindowRecords(
+  raw: string,
+  legacyWindowId?: string
+): WindowRecord[] | null {
+  try {
     const data = JSON.parse(raw) as unknown
+
+    const legacyRecord =
+      legacyWindowId === undefined
+        ? null
+        : parseLegacyWindowRecord(data, legacyWindowId)
+
+    if (legacyRecord) {
+      return [legacyRecord]
+    }
 
     if (typeof data !== 'object' || data === null) {
       return null
     }
 
     const obj = data as Record<string, unknown>
-    const bounds = obj.bounds as Record<string, unknown> | undefined
-
-    if (typeof bounds !== 'object' || bounds === null) {
+    if (!Array.isArray(obj.windows)) {
       return null
     }
 
-    const x = bounds.x
-    const y = bounds.y
-    const width = bounds.width
-    const height = bounds.height
+    const windows: WindowRecord[] = []
 
-    if (
-      typeof x !== 'number' ||
-      typeof y !== 'number' ||
-      typeof width !== 'number' ||
-      typeof height !== 'number'
-    ) {
-      return null
+    for (const entry of obj.windows) {
+      const parsedRecord = parseWindowRecordValue(entry)
+
+      if (!parsedRecord) {
+        return null
+      }
+
+      windows.push(parsedRecord)
     }
 
-    if (
-      !(
-        Number.isFinite(x) &&
-        Number.isFinite(y) &&
-        Number.isFinite(width) &&
-        Number.isFinite(height)
-      )
-    ) {
-      return null
-    }
-
-    if (width <= 0 || height <= 0) {
-      return null
-    }
-
-    return {
-      bounds: {
-        x: Math.floor(x),
-        y: Math.floor(y),
-        width: Math.floor(width),
-        height: Math.floor(height),
-      },
-      isMaximized:
-        typeof obj.isMaximized === 'boolean' ? obj.isMaximized : false,
-    }
+    return windows
   } catch {
     return null
+  }
+}
+
+/** Build the on-disk payload for persisted window records. */
+export function serializeWindowRecords(
+  records: readonly WindowRecord[]
+): WindowRecordCollection {
+  return {
+    windows: [...records],
   }
 }
 
@@ -157,15 +174,6 @@ export function defaultWindowState(primaryWorkArea: Rectangle): WindowState {
  * Manages persisting and restoring window bounds across app restarts.
  *
  * State is stored as a JSON file in the Electron `userData` directory.
- *
- * Usage:
- * ```ts
- * const wsm = new WindowStateManager()
- * const state = wsm.load()
- * const win = new BrowserWindow({ ...state.bounds })
- * if (state.isMaximized) win.maximize()
- * wsm.track(win)
- * ```
  */
 export class WindowStateManager {
   private readonly filePath: string
@@ -176,64 +184,99 @@ export class WindowStateManager {
   }
 
   /**
-   * Load the persisted window state from disk, validating that the
-   * saved bounds are still visible on a connected display.
+   * Load the first persisted window state from disk.
    *
-   * If the file is missing, corrupt, or the bounds are off-screen
-   * (e.g., an external monitor was disconnected), returns the default
-   * state centered on the primary display.
+   * This remains as a compatibility helper for the current single-window boot
+   * path until the full multi-window restore flow lands.
    */
   load(): WindowState {
+    const savedWindow = this.loadWindowRecords()[0]
+
+    if (savedWindow) {
+      return {
+        bounds: savedWindow.bounds,
+        isMaximized: savedWindow.isMaximized,
+      }
+    }
+
+    return this.defaultState()
+  }
+
+  /**
+   * Load all persisted window records from disk, repairing off-screen bounds
+   * to a safe default while preserving each window's stable identity.
+   */
+  loadWindowRecords(): WindowRecord[] {
     try {
       if (!existsSync(this.filePath)) {
-        return this.defaultState()
+        return []
       }
 
       const raw = readFileSync(this.filePath, 'utf-8')
-      const state = parseWindowState(raw)
+      const records = parseWindowRecords(raw, crypto.randomUUID())
 
-      if (!state) {
-        return this.defaultState()
+      if (!records || records.length === 0) {
+        return []
       }
 
-      // Verify the saved bounds are still visible on at least one display.
       const displays = screen.getAllDisplays()
-      if (!isBoundsOnScreen(state.bounds, displays)) {
-        return this.defaultState()
-      }
-
-      return state
+      return records.map((record) => this.repairWindowRecord(record, displays))
     } catch {
-      return this.defaultState()
+      return []
     }
   }
 
   /**
    * Save the current window state to disk.
    *
-   * @param state — the window state to persist
+   * This remains as a compatibility helper for callers that still think in
+   * terms of one restored window.
    */
   save(state: WindowState): void {
+    const existingWindowId =
+      this.loadWindowRecords()[0]?.windowId ?? crypto.randomUUID()
+
+    this.saveWindowRecords([
+      {
+        windowId: existingWindowId,
+        bounds: state.bounds,
+        isMaximized: state.isMaximized,
+      },
+    ])
+  }
+
+  /** Save the full persisted window record collection to disk. */
+  saveWindowRecords(records: readonly WindowRecord[]): void {
     try {
       const dir = join(this.filePath, '..')
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true })
       }
 
-      writeFileSync(this.filePath, JSON.stringify(state, null, 2), 'utf-8')
+      writeFileSync(
+        this.filePath,
+        JSON.stringify(serializeWindowRecords(records), null, 2),
+        'utf-8'
+      )
     } catch (error) {
       console.error('[window-state] Failed to save window state:', error)
     }
   }
 
   /**
-   * Attach event listeners to the window that automatically save
-   * bounds on move/resize and save final state on close.
-   *
-   * This is the primary API — call once after creating the window.
+   * Attach event listeners to the window that automatically save window-record
+   * metadata on move/resize and on close.
    */
-  track(window: Electron.BrowserWindow): void {
+  track(window: Electron.BrowserWindow, windowId: string): void {
     let saveTimeout: ReturnType<typeof setTimeout> | null = null
+
+    const saveWindowRecord = () => {
+      this.upsertWindowRecord({
+        windowId,
+        bounds: window.getNormalBounds(),
+        isMaximized: window.isMaximized(),
+      })
+    }
 
     const debouncedSave = () => {
       if (saveTimeout) {
@@ -243,12 +286,11 @@ export class WindowStateManager {
         if (window.isDestroyed()) {
           return
         }
-        this.save({
-          bounds: window.getNormalBounds(),
-          isMaximized: window.isMaximized(),
-        })
+        saveWindowRecord()
       }, 500)
     }
+
+    saveWindowRecord()
 
     window.on('resize', debouncedSave)
     window.on('move', debouncedSave)
@@ -259,10 +301,7 @@ export class WindowStateManager {
         clearTimeout(saveTimeout)
       }
       if (!window.isDestroyed()) {
-        this.save({
-          bounds: window.getNormalBounds(),
-          isMaximized: window.isMaximized(),
-        })
+        saveWindowRecord()
       }
     })
   }
@@ -270,5 +309,117 @@ export class WindowStateManager {
   /** Build the default state centered on the primary display. */
   private defaultState(): WindowState {
     return defaultWindowState(screen.getPrimaryDisplay().workArea)
+  }
+
+  private repairWindowRecord(
+    record: WindowRecord,
+    displays: ReadonlyArray<{ workArea: Rectangle }>
+  ): WindowRecord {
+    if (isBoundsOnScreen(record.bounds, displays)) {
+      return record
+    }
+
+    return {
+      windowId: record.windowId,
+      ...this.defaultState(),
+    }
+  }
+
+  private upsertWindowRecord(nextRecord: WindowRecord): void {
+    const records = this.loadWindowRecords().filter(
+      (record) => record.windowId !== nextRecord.windowId
+    )
+
+    records.push(nextRecord)
+    this.saveWindowRecords(records)
+  }
+}
+
+function parseWindowStateValue(data: unknown): WindowState | null {
+  if (typeof data !== 'object' || data === null) {
+    return null
+  }
+
+  const obj = data as Record<string, unknown>
+  const bounds = obj.bounds as Record<string, unknown> | undefined
+
+  if (typeof bounds !== 'object' || bounds === null) {
+    return null
+  }
+
+  const x = bounds.x
+  const y = bounds.y
+  const width = bounds.width
+  const height = bounds.height
+
+  if (
+    typeof x !== 'number' ||
+    typeof y !== 'number' ||
+    typeof width !== 'number' ||
+    typeof height !== 'number'
+  ) {
+    return null
+  }
+
+  if (
+    !(
+      Number.isFinite(x) &&
+      Number.isFinite(y) &&
+      Number.isFinite(width) &&
+      Number.isFinite(height)
+    )
+  ) {
+    return null
+  }
+
+  if (width <= 0 || height <= 0) {
+    return null
+  }
+
+  return {
+    bounds: {
+      x: Math.floor(x),
+      y: Math.floor(y),
+      width: Math.floor(width),
+      height: Math.floor(height),
+    },
+    isMaximized: typeof obj.isMaximized === 'boolean' ? obj.isMaximized : false,
+  }
+}
+
+function parseWindowRecordValue(data: unknown): WindowRecord | null {
+  if (typeof data !== 'object' || data === null) {
+    return null
+  }
+
+  const obj = data as Record<string, unknown>
+  if (typeof obj.windowId !== 'string' || obj.windowId.length === 0) {
+    return null
+  }
+
+  const state = parseWindowStateValue(data)
+  if (!state) {
+    return null
+  }
+
+  return {
+    windowId: obj.windowId,
+    ...state,
+  }
+}
+
+function parseLegacyWindowRecord(
+  data: unknown,
+  windowId: string
+): WindowRecord | null {
+  const state = parseWindowStateValue(data)
+
+  if (!state) {
+    return null
+  }
+
+  return {
+    windowId,
+    ...state,
   }
 }

@@ -131,6 +131,17 @@ export interface DesktopBridge {
   /** Triggers download of an available update. */
   downloadUpdate: () => Promise<DesktopUpdateActionResult>
 
+  /**
+   * Checks if a workspace is already visible in another window.
+   * If so, focuses that window, tells the target renderer to activate
+   * the workspace's pane, and returns true. If not, returns false so
+   * the caller can proceed with opening the workspace in the current window.
+   *
+   * Returns false when the workspace is only in the requesting window
+   * or is not open in any window.
+   */
+  focusWindowForWorkspace: (workspaceId: string) => Promise<boolean>
+
   /** Returns the HTTP base URL for the server service (e.g., "http://127.0.0.1:12345"). */
   getServerUrl: () => string
 
@@ -140,8 +151,20 @@ export interface DesktopBridge {
   /** Returns the current auto-update state. */
   getUpdateState: () => Promise<DesktopUpdateState>
 
+  /** Returns the stable identity of the current native window. */
+  getWindowId: () => string
+
   /** Triggers quit-and-install of a downloaded update. */
   installUpdate: () => Promise<DesktopUpdateActionResult>
+
+  /**
+   * Subscribes to workspace activation events from the main process.
+   * Fired when another window's `focusWindowForWorkspace` call determined
+   * this window owns the target workspace. The callback receives the
+   * `workspaceId` so the renderer can focus the appropriate pane.
+   * Returns an unsubscribe function.
+   */
+  onActivateWorkspace: (listener: (workspaceId: string) => void) => () => void
 
   /**
    * Subscribes to application menu actions (e.g., "settings").
@@ -176,6 +199,13 @@ export interface DesktopBridge {
 
   /** Opens a native macOS folder picker dialog. Returns the selected path, or null if cancelled. */
   pickFolder: () => Promise<string | null>
+
+  /**
+   * Reports the workspace IDs currently visible in this window's panel layout.
+   * The main process uses this to route notification clicks and other
+   * workspace-targeting actions to the correct window.
+   */
+  reportVisibleWorkspaces: (workspaceIds: readonly string[]) => Promise<void>
 
   /** Manually restarts a sidecar service by name. */
   restartSidecar: (name: SidecarName) => Promise<void>

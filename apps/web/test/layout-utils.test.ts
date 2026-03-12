@@ -28,6 +28,7 @@ import {
   getScopedActivePaneId,
   getWorkspaceIds,
   isWorkspaceFrameData,
+  repairPanelLayoutTree,
   shouldConfirmClose,
   sortWorkspaceLayouts,
   splitPane,
@@ -381,6 +382,57 @@ describe('ensureValidActivePaneId', () => {
     expect(ensureValidActivePaneId(deeplyNested, null)).toBe('pane-A')
     expect(ensureValidActivePaneId(deeplyNested, 'stale')).toBe('pane-A')
     expect(ensureValidActivePaneId(deeplyNested, 'pane-E')).toBe('pane-E')
+  })
+})
+
+describe('repairPanelLayoutTree', () => {
+  it('collapses broken split nodes with only one valid child', () => {
+    const brokenSplit = {
+      _tag: 'SplitNode',
+      children: [{ _tag: 'LeafNode', id: 'pane-A', paneType: 'terminal' }],
+      direction: 'horizontal',
+      id: 'split-broken',
+      sizes: [100],
+    }
+
+    expect(repairPanelLayoutTree(brokenSplit)).toEqual({
+      layoutTree: { _tag: 'LeafNode', id: 'pane-A', paneType: 'terminal' },
+      wasRepaired: true,
+    })
+  })
+
+  it('drops invalid optional leaf fields instead of rejecting the whole pane', () => {
+    const brokenLeaf = {
+      _tag: 'LeafNode',
+      devServerOpen: 'yes',
+      id: 'pane-A',
+      paneType: 'terminal',
+      terminalId: 'term-1',
+      workspaceId: 'workspace-a',
+    }
+
+    expect(repairPanelLayoutTree(brokenLeaf)).toEqual({
+      layoutTree: {
+        _tag: 'LeafNode',
+        id: 'pane-A',
+        paneType: 'terminal',
+        terminalId: 'term-1',
+        workspaceId: 'workspace-a',
+      },
+      wasRepaired: true,
+    })
+  })
+
+  it('returns undefined when no valid layout tree can be repaired', () => {
+    expect(
+      repairPanelLayoutTree({
+        _tag: 'SplitNode',
+        children: [],
+        direction: 'horizontal',
+        id: 'split-empty',
+        sizes: [],
+      })
+    ).toEqual({ layoutTree: undefined, wasRepaired: true })
   })
 })
 

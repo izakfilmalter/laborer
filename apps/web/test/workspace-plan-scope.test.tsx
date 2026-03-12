@@ -45,9 +45,14 @@ vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => {
     return mutationMap.get(atom) ?? vi.fn()
   },
+  useAtomValue: () => ({
+    _tag: 'Success',
+    value: { devServer: { autoOpen: { value: false } } },
+  }),
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
+  ConfigReactivityKeys: ['config'] as const,
   LaborerClient: {
     mutation: (name: string) => {
       const sentinel = Symbol.for(`mutation:${name}`)
@@ -62,6 +67,7 @@ vi.mock('@/atoms/laborer-client', () => ({
       }
       return sentinel
     },
+    query: () => Symbol.for('query:stub'),
   },
 }))
 

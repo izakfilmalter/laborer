@@ -438,7 +438,7 @@ describe('LiveStore schema', () => {
 
         store.commit(
           events.layoutSplit({
-            id: 'session-1',
+            windowId: 'window-1',
             layoutTree: splitLayout,
             activePaneId: 'pane-1',
           })
@@ -446,7 +446,7 @@ describe('LiveStore schema', () => {
 
         assert.deepStrictEqual(store.query(tables.panelLayout), [
           {
-            id: 'session-1',
+            windowId: 'window-1',
             layoutTree: splitLayout,
             activePaneId: 'pane-1',
             workspaceOrder: null,
@@ -455,7 +455,7 @@ describe('LiveStore schema', () => {
 
         store.commit(
           events.layoutPaneClosed({
-            id: 'session-1',
+            windowId: 'window-1',
             layoutTree: leafPane,
             activePaneId: 'pane-1',
           })
@@ -463,7 +463,7 @@ describe('LiveStore schema', () => {
 
         assert.deepStrictEqual(store.query(tables.panelLayout), [
           {
-            id: 'session-1',
+            windowId: 'window-1',
             layoutTree: leafPane,
             activePaneId: 'pane-1',
             workspaceOrder: null,
@@ -472,7 +472,7 @@ describe('LiveStore schema', () => {
 
         store.commit(
           events.layoutPaneAssigned({
-            id: 'session-1',
+            windowId: 'window-1',
             layoutTree: {
               ...leafPane,
               terminalId: 'terminal-3',
@@ -484,7 +484,7 @@ describe('LiveStore schema', () => {
 
         assert.deepStrictEqual(store.query(tables.panelLayout), [
           {
-            id: 'session-1',
+            windowId: 'window-1',
             layoutTree: {
               ...leafPane,
               terminalId: 'terminal-3',
@@ -497,7 +497,7 @@ describe('LiveStore schema', () => {
 
         store.commit(
           events.layoutRestored({
-            id: 'session-1',
+            windowId: 'window-1',
             layoutTree: restoredLayout,
             activePaneId: null,
           })
@@ -505,9 +505,47 @@ describe('LiveStore schema', () => {
 
         assert.deepStrictEqual(store.query(tables.panelLayout), [
           {
-            id: 'session-1',
+            windowId: 'window-1',
             layoutTree: restoredLayout,
             activePaneId: null,
+            workspaceOrder: null,
+          },
+        ])
+      })
+  )
+
+  it.scoped(
+    'stores multiple window-scoped panel layouts without overwriting each other',
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTestStore
+
+        store.commit(
+          events.layoutRestored({
+            windowId: 'window-1',
+            layoutTree: splitLayout,
+            activePaneId: 'pane-1',
+          })
+        )
+        store.commit(
+          events.layoutRestored({
+            windowId: 'window-2',
+            layoutTree: restoredLayout,
+            activePaneId: 'pane-restored',
+          })
+        )
+
+        assert.deepStrictEqual(store.query(tables.panelLayout), [
+          {
+            windowId: 'window-1',
+            layoutTree: splitLayout,
+            activePaneId: 'pane-1',
+            workspaceOrder: null,
+          },
+          {
+            windowId: 'window-2',
+            layoutTree: restoredLayout,
+            activePaneId: 'pane-restored',
             workspaceOrder: null,
           },
         ])
@@ -523,7 +561,7 @@ describe('LiveStore schema', () => {
         // Seed a layout first
         store.commit(
           events.layoutRestored({
-            id: 'session-1',
+            windowId: 'window-1',
             layoutTree: splitLayout,
             activePaneId: 'pane-1',
           })
@@ -532,7 +570,7 @@ describe('LiveStore schema', () => {
         // Existing row should have null workspaceOrder
         assert.deepStrictEqual(store.query(tables.panelLayout), [
           {
-            id: 'session-1',
+            windowId: 'window-1',
             layoutTree: splitLayout,
             activePaneId: 'pane-1',
             workspaceOrder: null,
@@ -542,7 +580,7 @@ describe('LiveStore schema', () => {
         // Reorder workspaces
         store.commit(
           events.layoutWorkspacesReordered({
-            id: 'session-1',
+            windowId: 'window-1',
             workspaceOrder: ['workspace-2', 'workspace-1'],
           })
         )
@@ -550,7 +588,7 @@ describe('LiveStore schema', () => {
         // workspaceOrder should be updated, layout and activePaneId preserved
         assert.deepStrictEqual(store.query(tables.panelLayout), [
           {
-            id: 'session-1',
+            windowId: 'window-1',
             layoutTree: splitLayout,
             activePaneId: 'pane-1',
             workspaceOrder: ['workspace-2', 'workspace-1'],
@@ -568,7 +606,7 @@ describe('LiveStore schema', () => {
         // Seed a layout
         store.commit(
           events.layoutRestored({
-            id: 'session-1',
+            windowId: 'session-1',
             layoutTree: splitLayout,
             activePaneId: 'pane-1',
           })
@@ -577,7 +615,7 @@ describe('LiveStore schema', () => {
         // Reorder workspaces
         store.commit(
           events.layoutWorkspacesReordered({
-            id: 'session-1',
+            windowId: 'session-1',
             workspaceOrder: ['workspace-2', 'workspace-1'],
           })
         )
@@ -591,7 +629,7 @@ describe('LiveStore schema', () => {
         // Now simulate clicking a pane (layoutPaneAssigned)
         store.commit(
           events.layoutPaneAssigned({
-            id: 'session-1',
+            windowId: 'session-1',
             layoutTree: splitLayout,
             activePaneId: 'pane-2',
           })
@@ -600,7 +638,7 @@ describe('LiveStore schema', () => {
         // workspaceOrder must survive the layoutPaneAssigned event
         assert.deepStrictEqual(store.query(tables.panelLayout), [
           {
-            id: 'session-1',
+            windowId: 'session-1',
             layoutTree: splitLayout,
             activePaneId: 'pane-2',
             workspaceOrder: ['workspace-2', 'workspace-1'],
@@ -610,7 +648,7 @@ describe('LiveStore schema', () => {
         // Also verify layoutSplit preserves workspaceOrder
         store.commit(
           events.layoutSplit({
-            id: 'session-1',
+            windowId: 'session-1',
             layoutTree: splitLayout,
             activePaneId: 'pane-1',
           })
@@ -624,7 +662,7 @@ describe('LiveStore schema', () => {
         // Also verify layoutPaneClosed preserves workspaceOrder
         store.commit(
           events.layoutPaneClosed({
-            id: 'session-1',
+            windowId: 'session-1',
             layoutTree: leafPane,
             activePaneId: 'pane-1',
           })
@@ -638,7 +676,7 @@ describe('LiveStore schema', () => {
         // Also verify layoutRestored preserves workspaceOrder
         store.commit(
           events.layoutRestored({
-            id: 'session-1',
+            windowId: 'session-1',
             layoutTree: restoredLayout,
             activePaneId: null,
           })
@@ -708,7 +746,7 @@ describe('LiveStore schema', () => {
       )
       store.commit(
         events.layoutRestored({
-          id: 'session-1',
+          windowId: 'window-1',
           layoutTree: restoredLayout,
           activePaneId: 'pane-restored',
         })

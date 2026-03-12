@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/resizable'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { WorkspaceDashboard } from '@/components/workspace-dashboard'
+import { useActivateWorkspace } from '@/hooks/use-activate-workspace'
 import { useAgentNotifications } from '@/hooks/use-agent-notifications'
 import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
@@ -273,6 +274,11 @@ function HomeComponent() {
     notificationWorkspaces,
     handleNotificationClicked
   )
+
+  // Subscribe to workspace-activation events from other windows.
+  // When another window calls focusWindowForWorkspace, the main process
+  // focuses this window and sends an activate-workspace event.
+  useActivateWorkspace(handleNotificationClicked)
 
   // Responsive sizing — adapts sidebar and pane sizes to viewport width
   const responsiveSizes = useResponsiveLayout()

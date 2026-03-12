@@ -129,6 +129,19 @@ function getMainWindow(): BrowserWindow | null {
   return BrowserWindow.getAllWindows()[0] ?? null
 }
 
+function shouldHideOnClose(window: BrowserWindow): boolean {
+  if (isQuitting) {
+    return false
+  }
+
+  const otherVisibleWindows = BrowserWindow.getAllWindows().filter(
+    (candidate) =>
+      candidate !== window && !candidate.isDestroyed() && candidate.isVisible()
+  )
+
+  return otherVisibleWindows.length === 0
+}
+
 function createWindow(record?: WindowRecord): BrowserWindow {
   const savedState = record ?? windowStateManager.load()
   const windowId = record?.windowId ?? createWindowId()
@@ -175,12 +188,10 @@ function createWindow(record?: WindowRecord): BrowserWindow {
     broadcastUpdateStateToWindow(window)
   })
 
-  // Close-to-tray: when the user clicks the close button (X or Cmd+W),
-  // hide the window instead of quitting. The app continues running in
-  // the system tray. The user can actually quit via Cmd+Q, tray "Quit",
-  // or the app menu "Quit" — those set `isQuitting = true` via `before-quit`.
+  // Preserve the last visible window's existing close-to-tray behavior, but
+  // let non-last windows close normally so their sessions stay restorable.
   window.on('close', (event) => {
-    if (!isQuitting) {
+    if (shouldHideOnClose(window)) {
       event.preventDefault()
       window.hide()
     }

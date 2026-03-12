@@ -35,8 +35,14 @@ const createBrowserWindowMock = () => {
       send: vi.fn(),
     }
 
-    readonly once = vi.fn()
-    readonly on = vi.fn()
+    readonly eventHandlers = new Map<
+      string,
+      Set<(...args: unknown[]) => void>
+    >()
+    readonly onceEventHandlers = new Map<
+      string,
+      Set<(...args: unknown[]) => void>
+    >()
     readonly show = vi.fn()
     readonly hide = vi.fn()
     readonly focus = vi.fn()
@@ -52,6 +58,31 @@ const createBrowserWindowMock = () => {
     constructor(options: Record<string, unknown>) {
       this.options = options
       MockBrowserWindow.instances.push(this)
+    }
+
+    readonly once = vi.fn(
+      (event: string, handler: (...args: unknown[]) => void) => {
+        const handlers = this.onceEventHandlers.get(event) ?? new Set()
+        handlers.add(handler)
+        this.onceEventHandlers.set(event, handlers)
+      }
+    )
+
+    readonly on = vi.fn(
+      (event: string, handler: (...args: unknown[]) => void) => {
+        const handlers = this.eventHandlers.get(event) ?? new Set()
+        handlers.add(handler)
+        this.eventHandlers.set(event, handlers)
+      }
+    )
+
+    emit(event: string, ...args: unknown[]): void {
+      const handlers = this.eventHandlers.get(event)
+      handlers?.forEach((handler) => handler(...args))
+
+      const onceHandlers = this.onceEventHandlers.get(event)
+      onceHandlers?.forEach((handler) => handler(...args))
+      this.onceEventHandlers.delete(event)
     }
   }
 
@@ -231,5 +262,53 @@ describe('main multi-window restore', () => {
       },
     })
     expect(BrowserWindow.instances[1]?.maximize).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes a non-last visible window instead of hiding it to the tray', async () => {
+    const savedWindowRecords = [
+      {
+        windowId: 'window-alpha',
+        bounds: { x: 10, y: 20, width: 800, height: 600 },
+        isMaximized: false,
+      },
+      {
+        windowId: 'window-beta',
+        bounds: { x: 120, y: 240, width: 1024, height: 768 },
+        isMaximized: false,
+      },
+    ]
+
+    const { BrowserWindow } = await loadMainWithRecords(savedWindowRecords)
+    const closeEvent = { preventDefault: vi.fn() }
+
+    BrowserWindow.instances[0]?.emit('close', closeEvent)
+
+    expect(closeEvent.preventDefault).not.toHaveBeenCalled()
+    expect(BrowserWindow.instances[0]?.hide).not.toHaveBeenCalled()
+  })
+
+  it('keeps the last visible window on the existing close-to-tray path', async () => {
+    const savedWindowRecords = [
+      {
+        windowId: 'window-alpha',
+        bounds: { x: 10, y: 20, width: 800, height: 600 },
+        isMaximized: false,
+      },
+      {
+        windowId: 'window-beta',
+        bounds: { x: 120, y: 240, width: 1024, height: 768 },
+        isMaximized: false,
+      },
+    ]
+
+    const { BrowserWindow } = await loadMainWithRecords(savedWindowRecords)
+
+    BrowserWindow.instances[1]?.isVisible.mockReturnValue(false)
+
+    const closeEvent = { preventDefault: vi.fn() }
+    BrowserWindow.instances[0]?.emit('close', closeEvent)
+
+    expect(closeEvent.preventDefault).toHaveBeenCalledTimes(1)
+    expect(BrowserWindow.instances[0]?.hide).toHaveBeenCalledTimes(1)
   })
 })

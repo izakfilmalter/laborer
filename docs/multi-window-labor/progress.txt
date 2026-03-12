@@ -47,6 +47,13 @@
 - Added desktop tests for parsing/serializing multi-window record payloads plus a disk-backed manager test that saves and reloads multiple window records successfully.
 - Verified with `bun run test` and `bun run typecheck` in `apps/desktop`.
 
+2026-03-12 - Issue 10: Preserve Closed Window Sessions
+- Selected Issue 10 as the highest-priority remaining task because close semantics are a core multi-window lifecycle behavior, and preserving non-last window sessions on close is more foundational to the v1 desktop model than window-aware workspace targeting.
+- Updated the desktop close handler so only the last visible window follows the existing close-to-tray path; closing any other window now closes it normally while leaving its persisted session intact for relaunch restore.
+- Added desktop main-process tests covering both branches of the close behavior: non-last windows close without being hidden, while the last visible window still prevents close and hides to the tray.
+- Added a `WindowStateManager` test that tracks a closing window and proves its persisted record remains on disk alongside the rest of the saved window set for later restore.
+- Verified with `bun run test` and `bun run typecheck` in `apps/desktop`.
+
 2026-03-12 - Issue 8: Restore All Windows on Relaunch
 - Selected Issue 8 as the highest-priority remaining task because it is the next slice in the PRD's recommended delivery order and it unblocks invalid-session repair plus final multi-window UX hardening.
 - Updated desktop startup to restore every persisted window record on relaunch instead of only reopening the first saved window.

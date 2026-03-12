@@ -195,7 +195,7 @@ Harden restore so invalid, stale, or partially corrupt window-session data repai
 
 ## Blocked by
 
-- Blocked by "Restore All Windows on Relaunch"
+None - ready
 
 ## User stories addressed
 
@@ -209,13 +209,13 @@ Implement the agreed v1 close semantics: closing a non-last window preserves its
 
 ## Acceptance criteria
 
-- [ ] Closing a non-last window does not delete its persisted session
-- [ ] Preserved closed-window sessions are restored on relaunch
-- [ ] Tests cover closing one of multiple windows and later restoring it
+- [x] Closing a non-last window does not delete its persisted session
+- [x] Preserved closed-window sessions are restored on relaunch
+- [x] Tests cover closing one of multiple windows and later restoring it
 
 ## Blocked by
 
-None - ready
+None - completed
 
 ## User stories addressed
 
@@ -281,7 +281,7 @@ Do a final pass on multi-window edge cases and user feel without expanding scope
 | 6 | Default Blank Session Seeding | 4 | Done |
 | 7 | Persist Window Records | 1 | Done |
 | 8 | Restore All Windows on Relaunch | None | Done |
-| 9 | Invalid Session Repair | 8 | Blocked |
-| 10 | Preserve Closed Window Sessions | None | Ready |
+| 9 | Invalid Session Repair | None | Ready |
+| 10 | Preserve Closed Window Sessions | None | Done |
 | 11 | Focus Existing Window for Open Workspace | 5 | Ready |
-| 12 | Multi-Window UX Hardening | 8, 9, 10, 11 | Blocked |
+| 12 | Multi-Window UX Hardening | 9, 11 | Blocked |

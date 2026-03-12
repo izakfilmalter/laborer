@@ -212,6 +212,13 @@ const DiffResponse = Schema.Struct({
   lastUpdated: Schema.String,
 })
 
+const PrStatusResponse = Schema.Struct({
+  number: Schema.NullOr(Schema.Int),
+  state: Schema.NullOr(Schema.String),
+  title: Schema.NullOr(Schema.String),
+  url: Schema.NullOr(Schema.String),
+})
+
 // ---------------------------------------------------------------------------
 // RPC Definitions
 // ---------------------------------------------------------------------------
@@ -403,6 +410,14 @@ export class LaborerRpcs extends RpcGroup.make(
 
   Rpc.make('workspace.checkDirty', {
     success: Schema.Array(Schema.String),
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  Rpc.make('workspace.refreshPr', {
+    success: PrStatusResponse,
     error: RpcError,
     payload: {
       workspaceId: Schema.String,

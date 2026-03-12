@@ -798,6 +798,18 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         const provider = yield* WorkspaceProvider
         return yield* provider.checkDirtyFiles(workspaceId)
       }),
+    'workspace.refreshPr': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const prWatcher = yield* PrWatcher
+        const prData = yield* prWatcher.checkPr(workspaceId)
+
+        return {
+          number: prData.number,
+          state: prData.state,
+          title: prData.title,
+          url: prData.url,
+        }
+      }),
 
     // -------------------------------------------------------------------
     // Container RPCs (Issue 10)

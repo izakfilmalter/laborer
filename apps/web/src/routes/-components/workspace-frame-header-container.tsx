@@ -1,7 +1,9 @@
+import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { projects, workspaces } from '@laborer/shared/schema'
 import type { PanelNode } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
+import { LaborerClient } from '@/atoms/laborer-client'
 import { WorkspaceFrameHeader } from '@/components/workspace-frame-header'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
@@ -14,6 +16,8 @@ const allProjects$ = queryDb(projects, { label: 'headerProjects' })
 
 /** LiveStore query for workspaces. */
 const allWorkspaces$ = queryDb(workspaces, { label: 'homePanelWorkspaces' })
+
+const refreshPrMutation = LaborerClient.mutation('workspace.refreshPr')
 
 /**
  * Data-fetching wrapper for WorkspaceFrameHeader. Queries LiveStore for
@@ -42,6 +46,7 @@ export function WorkspaceFrameHeaderContainer({
   const workspaceList = store.useQuery(allWorkspaces$)
   const globalActivePaneId = useActivePaneId()
   const actions = usePanelActions()
+  const refreshPr = useAtomSet(refreshPrMutation, { mode: 'promise' })
 
   // Scope the active pane to this workspace's sub-tree so header buttons
   // always operate on a pane within their own workspace, not the globally
@@ -107,6 +112,16 @@ export function WorkspaceFrameHeaderContainer({
       prState: workspace.prState ?? null,
     }
   }, [workspaceId, workspaceList, projectList])
+
+  useEffect(() => {
+    if (!(workspaceId && scopedActivePaneId)) {
+      return
+    }
+
+    refreshPr({ payload: { workspaceId } }).catch(() => {
+      // Silently ignore refresh failures; polling will retry in the background.
+    })
+  }, [refreshPr, scopedActivePaneId, workspaceId])
 
   return (
     <WorkspaceFrameHeader

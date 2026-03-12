@@ -130,7 +130,7 @@ describe('ProjectSettingsModal', () => {
     configResult = {
       _tag: 'Success',
       value: {
-        agent: { value: 'claude', source: 'default' },
+        agent: { value: 'opencode', source: 'default' },
         worktreeDir: { value: '/tmp/worktrees', source: 'laborer.json' },
         setupScripts: { value: ['bun install'], source: 'laborer.json' },
         rlphConfig: { value: '.rlph/config.toml', source: 'laborer.json' },

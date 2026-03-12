@@ -325,4 +325,71 @@ describe('useTerminalList', () => {
     })
     expect(listTerminalsFn).toHaveBeenCalledTimes(1)
   })
+
+  // -------------------------------------------------------------------------
+  // Imperative refresh — used by close-confirmation gating to bypass the
+  // poll interval and get real-time process state.
+  // -------------------------------------------------------------------------
+
+  it('refresh() returns fresh terminal data from the server', async () => {
+    listTerminalsFn.mockResolvedValue([TERMINAL_A])
+
+    const { result } = renderHook(() => useTerminalList())
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false)
+    })
+
+    // Server now reports a child process running
+    const updatedTerminal = { ...TERMINAL_A, hasChildProcess: true }
+    listTerminalsFn.mockResolvedValue([updatedTerminal])
+
+    let freshData: unknown
+    await act(async () => {
+      freshData = await result.current.refresh()
+    })
+
+    expect(freshData).toEqual([updatedTerminal])
+  })
+
+  it('refresh() publishes to all subscribers so hook state updates', async () => {
+    listTerminalsFn.mockResolvedValue([TERMINAL_A])
+
+    const { result } = renderHook(() => useTerminalList())
+
+    await waitFor(() => {
+      expect(result.current.terminals).toEqual([TERMINAL_A])
+    })
+
+    // Server reports the process has exited (hasChildProcess flipped)
+    const updatedTerminal = { ...TERMINAL_A, hasChildProcess: true }
+    listTerminalsFn.mockResolvedValue([updatedTerminal])
+
+    await act(async () => {
+      await result.current.refresh()
+    })
+
+    // The hook's own terminals state should reflect the refreshed data
+    expect(result.current.terminals).toEqual([updatedTerminal])
+  })
+
+  it('refresh() propagates errors so callers can fall back to cached data', async () => {
+    listTerminalsFn.mockResolvedValue([TERMINAL_A])
+
+    const { result } = renderHook(() => useTerminalList())
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false)
+    })
+
+    // Server is down
+    listTerminalsFn.mockRejectedValue(new Error('Connection refused'))
+
+    await expect(act(() => result.current.refresh())).rejects.toThrow(
+      'Connection refused'
+    )
+
+    // Cached terminals should still be available from the hook
+    expect(result.current.terminals).toEqual([TERMINAL_A])
+  })
 })

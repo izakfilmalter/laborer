@@ -160,6 +160,17 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
   readonly isServiceAvailable: boolean
   readonly terminals: readonly TerminalInfo[]
   readonly isLoading: boolean
+  /**
+   * Force a fresh `terminal.list` RPC call, bypassing the poll interval.
+   *
+   * Returns the up-to-date terminal list directly so callers can make
+   * decisions based on the freshest process state (e.g., checking
+   * `hasChildProcess` right before showing a close confirmation dialog).
+   *
+   * Also publishes the result to the shared store, so all subscribers
+   * (sidebar, other hooks) get the update immediately.
+   */
+  readonly refresh: () => Promise<readonly TerminalInfo[]>
   readonly serviceStatus: TerminalServiceStatus
 } {
   const listTerminals = useAtomSet(listTerminalsMutation, {
@@ -200,6 +211,22 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
     }
   }, [listTerminals])
 
+  /**
+   * Imperative refresh: fetches the latest terminal list from the server,
+   * publishes it to all subscribers, and returns the fresh data.
+   *
+   * Used by close-confirmation gating to get real-time process state
+   * instead of relying on the 5-second poll cache, which can be stale
+   * when the user exits a process (e.g., Ctrl+C) and immediately
+   * closes the terminal (Cmd+W).
+   */
+  const refresh = useCallback(async (): Promise<readonly TerminalInfo[]> => {
+    const result = await listTerminals({ payload: undefined })
+    const terminals = result as readonly TerminalInfo[]
+    publishTerminalList(terminals)
+    return terminals
+  }, [listTerminals])
+
   useEffect(() => {
     mountedRef.current = true
     const unsubscribe = subscribeToTerminalList((nextTerminals) => {
@@ -235,6 +262,7 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
     isServiceAvailable: serviceStatus === 'available',
     terminals,
     isLoading,
+    refresh,
     serviceStatus,
   }
 }

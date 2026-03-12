@@ -562,5 +562,27 @@ describe(
 
       await run(client.terminal.remove({ id: terminal.id }))
     })
+
+    // -----------------------------------------------------------------------
+    // terminal.spawn with pre-generated id
+    // -----------------------------------------------------------------------
+
+    it('terminal.spawn with id field uses the provided ID', async () => {
+      const customId = 'rpc-custom-id-test-12345'
+      const terminal = await run(
+        client.terminal.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+          id: customId,
+        })
+      )
+
+      assert.strictEqual(terminal.id, customId)
+
+      await run(client.terminal.kill({ id: terminal.id }))
+    })
   }
 )

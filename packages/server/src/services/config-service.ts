@@ -170,7 +170,7 @@ interface ResolvedDevServerConfig {
  * All fields have concrete values (no undefined).
  */
 interface ResolvedLaborerConfig {
-  /** Preferred AI coding agent CLI command (defaults to "claude"). */
+  /** Preferred AI coding agent CLI command (defaults to "opencode"). */
   readonly agent: ResolvedValue<AgentProvider>
   readonly devServer: ResolvedDevServerConfig
   /** Absolute path with `~` already expanded. */
@@ -657,7 +657,7 @@ const mergeConfigs = (
   const defaultPrdsDir = join(defaultWorktreeDir, 'prds')
 
   let agent: ResolvedValue<AgentProvider> = {
-    value: 'claude',
+    value: 'opencode',
     source: 'default',
   }
   let worktreeDir: ResolvedValue<string> = {

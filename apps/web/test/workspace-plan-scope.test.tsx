@@ -39,15 +39,32 @@ const {
 vi.mock('@/lib/desktop', () => ({
   isElectron: isElectronMock,
   openExternalUrl: openExternalUrlMock,
+  terminalRpcUrl: () => 'http://localhost:2101',
+}))
+
+vi.mock('@/hooks/use-terminal-list', () => ({
+  useTerminalList: () => ({
+    terminals: [],
+    refresh: vi.fn(async () => []),
+    errorMessage: null,
+    isServiceAvailable: true,
+    isLoading: false,
+    serviceStatus: 'available' as const,
+  }),
 }))
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => {
     return mutationMap.get(atom) ?? vi.fn()
   },
+  useAtomValue: () => ({
+    _tag: 'Success',
+    value: { devServer: { autoOpen: { value: false } } },
+  }),
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
+  ConfigReactivityKeys: ['config'] as const,
   LaborerClient: {
     mutation: (name: string) => {
       const sentinel = Symbol.for(`mutation:${name}`)
@@ -62,6 +79,7 @@ vi.mock('@/atoms/laborer-client', () => ({
       }
       return sentinel
     },
+    query: () => Symbol.for('query:stub'),
   },
 }))
 
@@ -86,6 +104,7 @@ vi.mock('sonner', () => ({
 vi.mock('@/panels/panel-context', () => ({
   usePanelActions: () => ({
     closeWorkspace: closeWorkspaceMock,
+    forceCloseWorkspace: closeWorkspaceMock,
   }),
 }))
 

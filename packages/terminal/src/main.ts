@@ -44,6 +44,7 @@ import { RpcSerialization, RpcServer } from '@effect/rpc'
 import { env } from '@laborer/env/server'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import { Effect, Layer } from 'effect'
+import { AgentHookRouteLive } from './routes/agent-hook.js'
 import { TerminalWsRouteLive } from './routes/terminal-ws.js'
 import { TerminalRpcsLive } from './rpc/handlers.js'
 import { PtyHostClient } from './services/pty-host-client.js'
@@ -102,6 +103,7 @@ const ServerLive = NodeHttpServer.layer(createServer, {
  *   HttpRouter.Default.serve() — serves the Default router with logging
  *   + HealthRouteLive — adds GET / to the router
  *   + TerminalWsRouteLive — adds GET /terminal WebSocket endpoint
+ *   + AgentHookRouteLive — adds POST /hook/agent-status for agent lifecycle hooks
  *   + RpcLive — Terminal RPC handling (POST /rpc via layerProtocolHttp)
  *   + RpcSerialization.layerJson — wire format for RPC messages
  *   + TerminalManager — in-memory terminal lifecycle management
@@ -118,6 +120,7 @@ const HttpLive = HttpRouter.Default.serve((httpApp) =>
   // --- Route layers (consume services from below) ---
   Layer.provide(HealthRouteLive),
   Layer.provide(TerminalWsRouteLive),
+  Layer.provide(AgentHookRouteLive),
   Layer.provide(RpcLive),
   // --- Service layers ---
   Layer.provide(TerminalManager.layer),

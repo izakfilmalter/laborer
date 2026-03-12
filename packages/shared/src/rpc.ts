@@ -829,6 +829,13 @@ export class TerminalRpcs extends RpcGroup.make(
       env: Schema.optional(
         Schema.Record({ key: Schema.String, value: Schema.String })
       ),
+      /**
+       * Optional pre-generated terminal ID. When provided, the terminal
+       * manager uses this ID instead of generating a new UUID. Allows the
+       * caller to inject the terminal ID into the environment before spawn
+       * (needed for agent hook scripts to identify their terminal).
+       */
+      id: Schema.optional(Schema.String),
       /** Initial terminal column count. */
       cols: Schema.Int,
       /** Initial terminal row count. */

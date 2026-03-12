@@ -148,6 +148,14 @@ interface SpawnPayload {
   readonly command: string
   readonly cwd: string
   readonly env?: Record<string, string> | undefined
+  /**
+   * Optional pre-generated terminal ID. When provided, the terminal
+   * manager uses this ID instead of generating a new UUID. This allows
+   * the caller to inject the terminal ID into the PTY's environment
+   * variables before spawn (e.g., for agent hook scripts that need
+   * to report back to the terminal service with their terminal ID).
+   */
+  readonly id?: string | undefined
   readonly rows: number
   readonly workspaceId: string
 }
@@ -644,6 +652,24 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
     /** Check if a terminal exists (running or stopped). */
     readonly terminalExists: (terminalId: string) => Effect.Effect<boolean>
 
+    /**
+     * Set agent status for a terminal from an external hook.
+     *
+     * Agent CLIs (Claude Code, OpenCode, etc.) call this via the
+     * `POST /hook/agent-status` HTTP endpoint to report lifecycle
+     * transitions. Hook-reported status takes priority over the
+     * ps-based detection in `listTerminals`.
+     *
+     * Valid events:
+     * - `'active'` — agent is actively working (session started, prompt submitted)
+     * - `'waiting_for_input'` — agent is idle / needs user input (notification, stop)
+     * - `'clear'` — clear hook override, revert to ps-based detection
+     */
+    readonly setAgentStatusFromHook: (
+      terminalId: string,
+      event: 'active' | 'waiting_for_input' | 'clear'
+    ) => Effect.Effect<void, TerminalRpcError>
+
     /** The PubSub for lifecycle events. Consumers subscribe to receive events. */
     readonly lifecycleEvents: PubSub.PubSub<TerminalLifecycleEvent>
   }
@@ -666,6 +692,12 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       // previously the foreground process so we can detect the transition
       // from "agent active" → "shell idle" (waiting for input / completed).
       const agentStatusMap = new Map<string, AgentStatus | null>()
+
+      // Hook-reported agent status overrides. When an agent CLI reports
+      // its lifecycle state via the hook endpoint, that status takes
+      // priority over the ps-based detection. Set to `undefined` (or
+      // deleted) to revert to ps-based detection.
+      const hookAgentStatusMap = new Map<string, AgentStatus>()
 
       // Per-terminal ring buffer and subscriber state.
       const bufferStates = new Map<string, TerminalBufferState>()
@@ -876,11 +908,12 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           cwd,
           env = {},
           cols,
+          id: providedId,
           rows,
           workspaceId,
         } = payload
 
-        const id = crypto.randomUUID()
+        const id = providedId ?? crypto.randomUUID()
 
         // Parse command into shell + args for PTY Host.
         // If args are provided, use the command directly with args.
@@ -1113,6 +1146,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
         bufferStates.delete(terminalId)
         agentStatusMap.delete(terminalId)
+        hookAgentStatusMap.delete(terminalId)
 
         emitEvent({ _tag: 'Removed', id: terminalId })
 
@@ -1132,16 +1166,24 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       ): TerminalRecord => {
         const foregroundProcess = detected?.foregroundProcess ?? null
         const processChain = detected?.processChain ?? []
+
+        // Hook-reported status takes priority over ps-based detection.
+        // If an agent CLI has reported its state via the hook endpoint,
+        // use that. Otherwise fall back to the ps-based state machine.
+        const hookStatus = hookAgentStatusMap.get(terminal.id)
+        const agentStatus =
+          terminal.status === 'running'
+            ? (hookStatus ??
+              computeAgentStatus(terminal.id, foregroundProcess, processChain))
+            : null
+
         return {
           id: terminal.id,
           workspaceId: terminal.workspaceId,
           command: terminal.command,
           args: [...terminal.args],
           cwd: terminal.cwd,
-          agentStatus:
-            terminal.status === 'running'
-              ? computeAgentStatus(terminal.id, foregroundProcess, processChain)
-              : null,
+          agentStatus,
           foregroundProcess,
           hasChildProcess: detected?.hasChildProcess ?? false,
           processChain,
@@ -1167,16 +1209,17 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
           for (const terminal of map.values()) {
             if (
-              workspaceId === undefined ||
-              terminal.workspaceId === workspaceId
+              workspaceId !== undefined &&
+              terminal.workspaceId !== workspaceId
             ) {
-              terminalsInScope.push(terminal)
-              if (
-                terminal.status === 'running' &&
-                terminal.shellPid !== undefined
-              ) {
-                shellPids.set(terminal.id, terminal.shellPid)
-              }
+              continue
+            }
+            terminalsInScope.push(terminal)
+            if (
+              terminal.status === 'running' &&
+              terminal.shellPid !== undefined
+            ) {
+              shellPids.set(terminal.id, terminal.shellPid)
             }
           }
 
@@ -1306,6 +1349,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
         // Reset agent status tracking on restart
         agentStatusMap.delete(terminalId)
+        hookAgentStatusMap.delete(terminalId)
 
         const record: TerminalRecord = {
           id: terminalId,
@@ -1511,6 +1555,41 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         }
       )
 
+      // ---------------------------------------------------------------
+      // setAgentStatusFromHook — external hook status override
+      // ---------------------------------------------------------------
+      const setAgentStatusFromHook = Effect.fn(
+        'TerminalManager.setAgentStatusFromHook'
+      )(function* (
+        terminalId: string,
+        event: 'active' | 'waiting_for_input' | 'clear'
+      ) {
+        const map = yield* Ref.get(terminalsRef)
+        const terminal = map.get(terminalId)
+
+        if (terminal === undefined) {
+          return yield* new TerminalRpcError({
+            message: `Terminal not found: ${terminalId}`,
+            code: 'TERMINAL_NOT_FOUND',
+          })
+        }
+
+        if (event === 'clear') {
+          hookAgentStatusMap.delete(terminalId)
+          yield* Effect.log(
+            `Hook: cleared agent status override for terminal ${terminalId}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+        } else {
+          hookAgentStatusMap.set(terminalId, event)
+          // Also sync the ps-based map so transitions are consistent
+          // when the hook override is later cleared
+          agentStatusMap.set(terminalId, event)
+          yield* Effect.log(
+            `Hook: set agent status to '${event}' for terminal ${terminalId}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+        }
+      })
+
       return TerminalManager.of({
         spawn,
         write,
@@ -1523,6 +1602,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         subscribe,
         unsubscribe,
         terminalExists,
+        setAgentStatusFromHook,
         lifecycleEvents: lifecyclePubSub,
       })
     })

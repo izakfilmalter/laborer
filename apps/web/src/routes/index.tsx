@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/resizable'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { WorkspaceDashboard } from '@/components/workspace-dashboard'
+import { useActivateWorkspace } from '@/hooks/use-activate-workspace'
 import { useAgentNotifications } from '@/hooks/use-agent-notifications'
 import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
@@ -30,12 +31,14 @@ import {
   shouldConfirmClose,
   shouldConfirmCloseWorkspace,
 } from '@/panels/layout-utils'
-import { PanelActionsProvider } from '@/panels/panel-context'
+import {
+  PanelActionsProvider,
+  type PendingCloseState,
+} from '@/panels/panel-context'
 import { PanelGroupRegistryProvider } from '@/panels/panel-group-registry'
 import { PanelHotkeys } from '@/panels/panel-hotkeys'
 import {
   CloseAppDialog,
-  CloseTerminalDialog,
   CloseWorkspaceDialog,
 } from './-components/close-dialogs'
 import { PanelContent } from './-components/panel-content'
@@ -78,6 +81,7 @@ function HomeComponent() {
     leafPaneIds,
     isReconciling,
     liveTerminals,
+    refreshTerminals,
     workspaceOrder,
   } = usePanelLayout()
   const store = useLaborerStore()
@@ -112,37 +116,65 @@ function HomeComponent() {
     })
   }, [activePaneId])
 
-  // Close-terminal confirmation dialog state
-  const [closeTerminalDialogOpen, setCloseTerminalDialogOpen] = useState(false)
-  const pendingClosePaneIdRef = useRef<string | null>(null)
+  // Close-terminal confirmation dialog state — the pane ID is stored in
+  // state (not a ref) so that changes trigger a re-render, allowing the
+  // LeafPaneRenderer to show the inline confirmation dialog via context.
+  const [pendingClosePaneId, setPendingClosePaneId] = useState<string | null>(
+    null
+  )
 
   /**
    * Gated closePane that checks if the terminal has a running child process.
    * Only shows the confirmation dialog when an actual program (e.g., vim,
    * dev server, opencode) is running inside the shell — not when the shell
    * is idle at a prompt.
+   *
+   * Forces a fresh `terminal.list` RPC call so the process state is
+   * up-to-date. Without this, a user who exits a process (Ctrl+C) and
+   * immediately closes the terminal (Cmd+W) would see a stale
+   * confirmation dialog because the 5-second poll hadn't refreshed yet.
    */
   const gatedClosePane = useCallback(
-    (paneId: string) => {
-      if (shouldConfirmClose(layout, paneId, liveTerminals)) {
-        // Terminal has an active child process — show confirmation dialog
-        pendingClosePaneIdRef.current = paneId
-        setCloseTerminalDialogOpen(true)
-        return
+    async (paneId: string) => {
+      try {
+        const freshTerminals = await refreshTerminals()
+        if (shouldConfirmClose(layout, paneId, freshTerminals)) {
+          setPendingClosePaneId(paneId)
+          return
+        }
+      } catch {
+        // If the refresh fails, fall back to the cached poll data
+        if (shouldConfirmClose(layout, paneId, liveTerminals)) {
+          setPendingClosePaneId(paneId)
+          return
+        }
       }
       // No active child process or no terminal — close immediately
       panelActions.closePane(paneId)
     },
-    [layout, liveTerminals, panelActions]
+    [layout, liveTerminals, refreshTerminals, panelActions]
   )
 
   const handleConfirmCloseTerminal = useCallback(() => {
-    const paneId = pendingClosePaneIdRef.current
-    if (paneId) {
-      panelActions.closePane(paneId)
-      pendingClosePaneIdRef.current = null
+    if (pendingClosePaneId) {
+      panelActions.closePane(pendingClosePaneId)
+      setPendingClosePaneId(null)
     }
-  }, [panelActions])
+  }, [panelActions, pendingClosePaneId])
+
+  const handleCancelCloseTerminal = useCallback(() => {
+    setPendingClosePaneId(null)
+  }, [])
+
+  /** Context value for the pane-scoped close confirmation dialog. */
+  const pendingCloseState: PendingCloseState = useMemo(
+    () => ({
+      paneId: pendingClosePaneId,
+      onConfirm: handleConfirmCloseTerminal,
+      onCancel: handleCancelCloseTerminal,
+    }),
+    [pendingClosePaneId, handleConfirmCloseTerminal, handleCancelCloseTerminal]
+  )
 
   /**
    * Close a terminal and its associated pane.
@@ -174,17 +206,30 @@ function HomeComponent() {
    * Gated closeWorkspace that checks if any terminal in the workspace has
    * a running child process. Shows a confirmation dialog when there are
    * active processes to prevent accidental loss of running work.
+   *
+   * Forces a fresh `terminal.list` RPC call for the same reason as
+   * gatedClosePane — see its comment for details.
    */
   const gatedCloseWorkspace = useCallback(
-    (workspaceId: string) => {
-      if (shouldConfirmCloseWorkspace(layout, workspaceId, liveTerminals)) {
-        pendingCloseWorkspaceIdRef.current = workspaceId
-        setCloseWorkspaceDialogOpen(true)
-        return
+    async (workspaceId: string) => {
+      try {
+        const freshTerminals = await refreshTerminals()
+        if (shouldConfirmCloseWorkspace(layout, workspaceId, freshTerminals)) {
+          pendingCloseWorkspaceIdRef.current = workspaceId
+          setCloseWorkspaceDialogOpen(true)
+          return
+        }
+      } catch {
+        // If the refresh fails, fall back to the cached poll data
+        if (shouldConfirmCloseWorkspace(layout, workspaceId, liveTerminals)) {
+          pendingCloseWorkspaceIdRef.current = workspaceId
+          setCloseWorkspaceDialogOpen(true)
+          return
+        }
       }
       panelActions.closeWorkspace(workspaceId)
     },
-    [layout, liveTerminals, panelActions]
+    [layout, liveTerminals, refreshTerminals, panelActions]
   )
 
   const handleConfirmCloseWorkspace = useCallback(() => {
@@ -195,13 +240,16 @@ function HomeComponent() {
     }
   }, [panelActions])
 
-  // Override panelActions.closePane with the gated version and add fullscreen toggle
+  // Override panelActions.closePane with the gated version and add fullscreen toggle.
+  // forceCloseWorkspace bypasses the confirmation gate — used by workspace
+  // destruction which has its own confirmation dialog.
   const gatedPanelActions = useMemo(
     () => ({
       ...panelActions,
       closePane: gatedClosePane,
       closeTerminalPane: gatedCloseTerminalPane,
       closeWorkspace: gatedCloseWorkspace,
+      forceCloseWorkspace: panelActions.closeWorkspace,
       toggleFullscreenPane,
     }),
     [
@@ -245,6 +293,11 @@ function HomeComponent() {
     notificationWorkspaces,
     handleNotificationClicked
   )
+
+  // Subscribe to workspace-activation events from other windows.
+  // When another window calls focusWindowForWorkspace, the main process
+  // focuses this window and sends an activate-workspace event.
+  useActivateWorkspace(handleNotificationClicked)
 
   // Responsive sizing — adapts sidebar and pane sizes to viewport width
   const responsiveSizes = useResponsiveLayout()
@@ -348,13 +401,9 @@ function HomeComponent() {
     <PanelActionsProvider
       activePaneId={activePaneId}
       fullscreenPaneId={fullscreenPaneId}
+      pendingClose={pendingCloseState}
       value={gatedPanelActions}
     >
-      <CloseTerminalDialog
-        onConfirm={handleConfirmCloseTerminal}
-        onOpenChange={setCloseTerminalDialogOpen}
-        open={closeTerminalDialogOpen}
-      />
       <CloseWorkspaceDialog
         onConfirm={handleConfirmCloseWorkspace}
         onOpenChange={setCloseWorkspaceDialogOpen}

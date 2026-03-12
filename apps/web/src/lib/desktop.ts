@@ -43,6 +43,14 @@ export function isElectron(): boolean {
 }
 
 /**
+ * Returns the stable identity of the current native window when running in
+ * Electron. Browser-based development does not have a native window ID.
+ */
+export function getCurrentWindowId(): string | null {
+  return getDesktopBridge()?.getWindowId() ?? null
+}
+
+/**
  * Check if the frontend is in Electron production mode where the Vite
  * dev proxy is NOT available.
  *
@@ -160,6 +168,28 @@ export async function openExternalUrl(url: string): Promise<boolean> {
 
   const openedWindow = window.open(url, '_blank', 'noopener,noreferrer')
   return openedWindow !== null
+}
+
+/**
+ * Attempt to focus an existing window that has the given workspace open.
+ * Returns true if another window was focused (the caller should abort its
+ * local workspace-opening flow). Returns false if the workspace is not open
+ * in any other window (the caller should proceed normally).
+ *
+ * In non-Electron contexts, always returns false.
+ */
+export async function focusExistingWindowForWorkspace(
+  workspaceId: string
+): Promise<boolean> {
+  const bridge = getDesktopBridge()
+  if (!bridge?.focusWindowForWorkspace) {
+    return false
+  }
+  try {
+    return await bridge.focusWindowForWorkspace(workspaceId)
+  } catch {
+    return false
+  }
 }
 
 export { getDesktopBridge }

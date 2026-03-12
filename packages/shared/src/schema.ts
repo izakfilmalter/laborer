@@ -124,6 +124,7 @@ export const panelLayout = State.SQLite.table({
      */
     workspaceOrder: State.SQLite.json({
       schema: Schema.NullOr(Schema.Array(Schema.String)),
+      nullable: true,
       default: null,
     }),
   },

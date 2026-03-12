@@ -712,6 +712,26 @@ function getFirstLeafId(root: PanelNode): string | undefined {
 }
 
 /**
+ * Get the last leaf ID in a layout tree (DFS order).
+ * Returns undefined if the tree has no leaves (should not happen for valid trees).
+ */
+function getLastLeafId(root: PanelNode): string | undefined {
+  if (root._tag === 'LeafNode') {
+    return root.id
+  }
+  for (let i = root.children.length - 1; i >= 0; i--) {
+    const child = root.children[i]
+    if (child) {
+      const leafId = getLastLeafId(child)
+      if (leafId) {
+        return leafId
+      }
+    }
+  }
+  return undefined
+}
+
+/**
  * Validate that an activePaneId references an existing leaf node in the
  * layout tree. If it does not (stale reference, null when panes exist),
  * falls back to the first leaf in the tree.
@@ -942,6 +962,50 @@ function filterTreeByWorkspace(
 }
 
 /**
+ * Collect terminal IDs that should be removed when a pane is closed.
+ *
+ * When closing a pane, any terminal processes displayed in that pane
+ * must be killed — you shouldn't have running terminals that aren't
+ * in a pane. This function finds:
+ * 1. The pane's main terminal (terminalId)
+ * 2. The pane's dev server terminal (devServerTerminalId), if any
+ *
+ * Returns an empty array when:
+ * - The layout is undefined
+ * - The paneId doesn't exist in the layout
+ * - The pane is not a LeafNode
+ * - The pane has no terminal assigned
+ *
+ * This is the pure logic extracted from `handleClosePane` in
+ * HomeComponent, making it testable without React component
+ * infrastructure.
+ *
+ * @param layout - The current panel layout tree (may be undefined)
+ * @param paneId - The ID of the pane being closed
+ * @returns Array of terminal IDs that should be removed from the service
+ */
+function getTerminalIdsToRemove(
+  layout: PanelNode | undefined,
+  paneId: string
+): readonly string[] {
+  if (!layout) {
+    return []
+  }
+  const node = findNodeById(layout, paneId)
+  if (!node || node._tag !== 'LeafNode') {
+    return []
+  }
+  const ids: string[] = []
+  if (node.terminalId) {
+    ids.push(node.terminalId)
+  }
+  if (node.devServerTerminalId) {
+    ids.push(node.devServerTerminalId)
+  }
+  return ids
+}
+
+/**
  * Determine whether closing a pane should show a confirmation dialog.
  *
  * Returns true only when ALL of these conditions hold:
@@ -1064,9 +1128,11 @@ export {
   findSiblingPaneId,
   generateId,
   getFirstLeafId,
+  getLastLeafId,
   getLeafIds,
   getLeafNodes,
   getStaleTerminalLeaves,
+  getTerminalIdsToRemove,
   getTreeDepth,
   getWorkspaceIds,
   isWorkspaceFrameData,

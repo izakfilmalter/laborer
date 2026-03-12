@@ -286,7 +286,7 @@ vi.mock('@tanstack/react-hotkeys', () => ({
   useHotkeys: vi.fn(),
 }))
 
-vi.mock('lucide-react', async () => {
+vi.mock('lucide-react', () => {
   const Icon = ({ className }: { className?: string }) => (
     <span className={className} />
   )

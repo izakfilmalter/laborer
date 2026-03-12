@@ -5,7 +5,7 @@ import {
   monitorForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import { reorder } from '@atlaskit/pragmatic-drag-and-drop/reorder'
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import {
   layoutPaneAssigned,
   layoutPaneClosed,
@@ -20,26 +20,13 @@ import type { LeafNode, PanelNode, SplitNode } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  Columns2,
   FolderGit2,
   LayoutDashboard,
-  Maximize,
-  Minimize,
   PanelLeftClose,
   PanelLeftOpen,
-  Rows2,
-  Server,
   Terminal,
-  X,
 } from 'lucide-react'
-import {
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PanelImperativeHandle } from 'react-resizable-panels'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
@@ -80,6 +67,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { WorkspaceDashboard } from '@/components/workspace-dashboard'
+import { WorkspaceFrameHeader } from '@/components/workspace-frame-header'
 import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSidebarWidth } from '@/hooks/use-sidebar-width'
@@ -100,9 +88,11 @@ import {
   findSiblingPaneId,
   generateId,
   getFirstLeafId,
+  getLastLeafId,
   getLeafIds,
   getLeafNodes,
   getStaleTerminalLeaves,
+  getTerminalIdsToRemove,
   getWorkspaceIds,
   isWorkspaceFrameData,
   reconcileLayout,
@@ -159,28 +149,6 @@ const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
 
 /** Mutation atom for removing terminals via the terminal service's terminal.remove RPC. */
 const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
-
-/**
- * Health check query atom — subscribes to the server's health.check RPC.
- * Returns a Result<HealthCheckResponse, RpcError>.
- */
-// biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
-const healthCheck$ = LaborerClient.query('health.check', undefined as void)
-
-function HealthCheckStatus() {
-  const result = useAtomValue(healthCheck$)
-  if (result._tag === 'Initial' || result.waiting) {
-    return <span className="text-muted-foreground">connecting...</span>
-  }
-  if (result._tag === 'Failure') {
-    return <span className="text-destructive">disconnected</span>
-  }
-  return (
-    <span className="text-success">
-      connected (uptime: {Math.round(result.value.uptime)}s)
-    </span>
-  )
-}
 
 /** LiveStore query for projects (used by PanelHeaderBar to resolve names). */
 const allProjects$ = queryDb(projects, { label: 'headerProjects' })
@@ -595,9 +563,14 @@ function usePanelLayout() {
         return
       }
 
-      // Closing a pane only removes it from the layout tree. The terminal
-      // process stays alive and remains in the sidebar terminal list so the
-      // user can re-attach it to another pane later.
+      // Kill terminal processes associated with the pane being closed.
+      // You shouldn't have running terminals that aren't in a pane.
+      const terminalIds = getTerminalIdsToRemove(base, paneId)
+      for (const terminalId of terminalIds) {
+        removeTerminal({ payload: { id: terminalId } }).catch((error) => {
+          console.warn('[close-pane] terminal remove failed:', error)
+        })
+      }
 
       // Compute the sibling BEFORE the close mutation removes the pane.
       // This ensures we can find the correct sibling in the original tree.
@@ -649,7 +622,13 @@ function usePanelLayout() {
         hasSeeded.current = false
       }
     },
-    [persistedLayoutTree, initialLayout, persistedActivePaneId, store]
+    [
+      persistedLayoutTree,
+      initialLayout,
+      persistedActivePaneId,
+      store,
+      removeTerminal,
+    ]
   )
 
   const handleSetActivePaneId = useCallback(
@@ -779,10 +758,12 @@ function usePanelLayout() {
         return
       }
 
-      // No empty pane — split the first leaf and assign to the new pane
-      const leafIds = getLeafIds(base)
-      const firstLeafId = leafIds[0]
-      if (firstLeafId) {
+      // No empty pane — split the last leaf and assign to the new pane.
+      // Splitting the last leaf (instead of the first) ensures the new
+      // workspace panel appears at the bottom of the workspace stack,
+      // because workspace frame order follows DFS traversal order.
+      const lastLeafId = getLastLeafId(base)
+      if (lastLeafId) {
         const newPaneContent: Partial<LeafNode> = {
           paneType: 'terminal' as const,
           terminalId,
@@ -790,7 +771,7 @@ function usePanelLayout() {
         }
         const newTree = splitPane(
           base,
-          firstLeafId,
+          lastLeafId,
           'horizontal',
           newPaneContent
         )
@@ -1152,8 +1133,8 @@ function CloseTerminalDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Close terminal?</AlertDialogTitle>
           <AlertDialogDescription>
-            This terminal has a running process. Closing the pane will leave the
-            process running in the background.
+            This terminal has a running process. Closing the pane will kill the
+            process.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -1207,10 +1188,11 @@ function CloseAppDialog({
 }
 
 /**
- * Header bar for a single workspace frame. Shows project / branch name
- * and pane action buttons scoped to this workspace's panes.
+ * Data-fetching wrapper for WorkspaceFrameHeader. Queries LiveStore for
+ * project, workspace, and layout data, then delegates to the presentational
+ * component.
  */
-function WorkspaceFrameHeader({
+function WorkspaceFrameHeaderContainer({
   workspaceId,
   dragHandleRef,
 }: {
@@ -1226,6 +1208,18 @@ function WorkspaceFrameHeader({
   const actions = usePanelActions()
   const fullscreenPaneId = useFullscreenPaneId()
   const isFullscreen = fullscreenPaneId !== null
+
+  const persistedRows = store.useQuery(persistedLayout$)
+  const persistedRow = persistedRows.find((row) => row.id === LAYOUT_SESSION_ID)
+  const layout = persistedRow?.layoutTree as PanelNode | undefined
+
+  const diffIsOpen = useMemo(() => {
+    if (!(activePaneId && layout)) {
+      return false
+    }
+    const node = findNodeById(layout, activePaneId)
+    return node?._tag === 'LeafNode' && node.diffOpen === true
+  }, [activePaneId, layout])
 
   const { projectName, branchName, isContainerized } = useMemo(() => {
     if (!workspaceId) {
@@ -1251,128 +1245,17 @@ function WorkspaceFrameHeader({
     }
   }, [workspaceId, workspaceList, projectList])
 
-  const hasActivePane = !!activePaneId
-
   return (
-    <div
-      className="flex h-8 shrink-0 items-center justify-between border-b px-2"
-      ref={dragHandleRef}
-    >
-      <div className="flex cursor-grab items-center gap-2 active:cursor-grabbing">
-        <div className="flex items-center gap-1 text-muted-foreground">
-          <Terminal className="size-3.5" />
-        </div>
-        <div className="min-w-0 truncate text-muted-foreground text-xs">
-          {projectName && branchName ? (
-            <>
-              <span className="text-foreground">{projectName}</span>
-              <span className="mx-1">/</span>
-              <span>{branchName}</span>
-            </>
-          ) : (
-            <span className="text-foreground">Terminal</span>
-          )}
-        </div>
-      </div>
-      <div className="flex gap-0.5">
-        {isContainerized && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  aria-label="Toggle dev server terminal"
-                  disabled={!hasActivePane}
-                  onClick={() =>
-                    activePaneId && actions?.toggleDevServerPane(activePaneId)
-                  }
-                  size="icon-sm"
-                  variant="ghost"
-                />
-              }
-            >
-              <Server className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipContent>Toggle dev server terminal</TooltipContent>
-          </Tooltip>
-        )}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label="Split horizontally"
-                disabled={!hasActivePane}
-                onClick={() =>
-                  activePaneId && actions?.splitPane(activePaneId, 'horizontal')
-                }
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            <Columns2 className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent>Split horizontally</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label="Split vertically"
-                disabled={!hasActivePane}
-                onClick={() =>
-                  activePaneId && actions?.splitPane(activePaneId, 'vertical')
-                }
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            <Rows2 className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent>Split vertically</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label={
-                  isFullscreen ? 'Exit fullscreen' : 'Fullscreen pane'
-                }
-                disabled={!hasActivePane}
-                onClick={() => actions?.toggleFullscreenPane()}
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            {isFullscreen ? (
-              <Minimize className="size-3.5" />
-            ) : (
-              <Maximize className="size-3.5" />
-            )}
-          </TooltipTrigger>
-          <TooltipContent>
-            {isFullscreen ? 'Exit fullscreen' : 'Fullscreen pane'}
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label="Close pane"
-                disabled={!hasActivePane}
-                onClick={() => activePaneId && actions?.closePane(activePaneId)}
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            <X className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent>Close pane</TooltipContent>
-        </Tooltip>
-      </div>
-    </div>
+    <WorkspaceFrameHeader
+      actions={actions}
+      activePaneId={activePaneId}
+      branchName={branchName}
+      diffIsOpen={diffIsOpen}
+      dragHandleRef={dragHandleRef}
+      isContainerized={isContainerized}
+      isFullscreen={isFullscreen}
+      projectName={projectName}
+    />
   )
 }
 
@@ -1460,7 +1343,7 @@ function WorkspaceFrame({
       {closestEdge === 'top' && (
         <div className="absolute inset-x-0 top-0 z-10 h-0.5 bg-primary" />
       )}
-      <WorkspaceFrameHeader
+      <WorkspaceFrameHeaderContainer
         dragHandleRef={dragHandleRef}
         workspaceId={workspaceId}
       />
@@ -1959,19 +1842,6 @@ function HomeComponent() {
                   )}
               </div>
             </ScrollArea>
-            {/* Server Status — sticky footer, always visible outside scroll area */}
-            <section className="shrink-0 border-t p-3">
-              <h2 className="mb-1 font-medium text-sm">Server Status</h2>
-              <p className="text-xs">
-                <Suspense
-                  fallback={
-                    <span className="text-muted-foreground">loading...</span>
-                  }
-                >
-                  <HealthCheckStatus />
-                </Suspense>
-              </p>
-            </section>
           </div>
         </ResizablePanel>
 

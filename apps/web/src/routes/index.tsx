@@ -32,7 +32,9 @@ import {
   useRef,
   useState,
 } from 'react'
+import type { PanelImperativeHandle } from 'react-resizable-panels'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { AddProjectForm } from '@/components/add-project-form'
 import { CreatePlanWorkspace } from '@/components/create-plan-workspace'
 import { PlanEditor } from '@/components/plan-editor'
@@ -70,7 +72,11 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { WorkspaceDashboard } from '@/components/workspace-dashboard'
+import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
+import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
+import { useSidebarWidth } from '@/hooks/use-sidebar-width'
 import { useTerminalList } from '@/hooks/use-terminal-list'
+import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
 import { isElectron } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
 import type { NavigationDirection } from '@/panels/layout-utils'
@@ -139,6 +145,9 @@ const persistedLayout$ = queryDb(panelLayout, {
 
 /** Mutation atom for spawning terminals via the server's terminal.spawn RPC. */
 const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
+
+/** Mutation atom for removing terminals via the terminal service's terminal.remove RPC. */
+const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
 
 /**
  * Health check query atom — subscribes to the server's health.check RPC.
@@ -418,6 +427,9 @@ function usePanelLayout() {
   const { terminals: liveTerminals, isLoading: terminalsLoading } =
     useTerminalList()
   const spawnTerminal = useAtomSet(spawnTerminalMutation, {
+    mode: 'promise',
+  })
+  const removeTerminal = useAtomSet(removeTerminalMutation, {
     mode: 'promise',
   })
   // Start as "reconciling" when a persisted layout exists — this prevents

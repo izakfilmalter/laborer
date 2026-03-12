@@ -90,6 +90,7 @@ import {
   getFirstLeafId,
   getLeafIds,
   getLeafNodes,
+  getScopedActivePaneId,
   getStaleTerminalLeaves,
   getTerminalIdsToRemove,
   getWorkspaceIds,
@@ -1224,9 +1225,11 @@ function CloseAppDialog({
  */
 function WorkspaceFrameHeaderContainer({
   workspaceId,
+  subLayout,
   dragHandleRef,
 }: {
   readonly workspaceId: string | undefined
+  readonly subLayout: PanelNode
   readonly dragHandleRef?:
     | { readonly current: HTMLDivElement | null }
     | undefined
@@ -1234,19 +1237,24 @@ function WorkspaceFrameHeaderContainer({
   const store = useLaborerStore()
   const projectList = store.useQuery(allProjects$)
   const workspaceList = store.useQuery(allWorkspaces$)
-  const activePaneId = useActivePaneId()
+  const globalActivePaneId = useActivePaneId()
   const actions = usePanelActions()
-  const persistedRows = store.useQuery(persistedLayout$)
-  const persistedRow = persistedRows.find((row) => row.id === LAYOUT_SESSION_ID)
-  const layout = persistedRow?.layoutTree as PanelNode | undefined
+
+  // Scope the active pane to this workspace's sub-tree so header buttons
+  // always operate on a pane within their own workspace, not the globally
+  // focused one that may belong to a different workspace.
+  const scopedActivePaneId = useMemo(
+    () => getScopedActivePaneId(subLayout, globalActivePaneId),
+    [subLayout, globalActivePaneId]
+  )
 
   const diffIsOpen = useMemo(() => {
-    if (!(activePaneId && layout)) {
+    if (!scopedActivePaneId) {
       return false
     }
-    const node = findNodeById(layout, activePaneId)
+    const node = findNodeById(subLayout, scopedActivePaneId)
     return node?._tag === 'LeafNode' && node.diffOpen === true
-  }, [activePaneId, layout])
+  }, [scopedActivePaneId, subLayout])
 
   const { projectName, branchName, isContainerized } = useMemo(() => {
     if (!workspaceId) {
@@ -1275,7 +1283,7 @@ function WorkspaceFrameHeaderContainer({
   return (
     <WorkspaceFrameHeader
       actions={actions}
-      activePaneId={activePaneId}
+      activePaneId={scopedActivePaneId}
       branchName={branchName}
       diffIsOpen={diffIsOpen}
       dragHandleRef={dragHandleRef}
@@ -1372,6 +1380,7 @@ function WorkspaceFrame({
       )}
       <WorkspaceFrameHeaderContainer
         dragHandleRef={dragHandleRef}
+        subLayout={subLayout}
         workspaceId={workspaceId}
       />
       <div className="min-h-0 flex-1">

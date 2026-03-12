@@ -150,6 +150,43 @@ describe('WorkspaceFrameHeader', () => {
     expect(button).toBeTruthy()
   })
 
+  // --- Focus shift on button click ---
+
+  describe('focus shift on button click', () => {
+    it('calls setActivePaneId before toggling diff pane', () => {
+      const actions = mockActions()
+      render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+      const button = screen.getByRole('button', { name: DIFF_VIEWER_RE })
+      fireEvent.click(button)
+
+      expect(actions.setActivePaneId).toHaveBeenCalledWith('pane-1')
+      // setActivePaneId should be called before toggleDiffPane
+      const setActiveOrder = (
+        actions.setActivePaneId as ReturnType<typeof vi.fn>
+      ).mock.invocationCallOrder[0] as number
+      const toggleOrder = (actions.toggleDiffPane as ReturnType<typeof vi.fn>)
+        .mock.invocationCallOrder[0] as number
+      expect(setActiveOrder).toBeLessThan(toggleOrder)
+    })
+
+    it('does not call setActivePaneId when no active pane', () => {
+      const actions = mockActions()
+      render(
+        <WorkspaceFrameHeader
+          {...BASE_PROPS}
+          actions={actions}
+          activePaneId={null}
+        />
+      )
+
+      const button = screen.getByRole('button', { name: DIFF_VIEWER_RE })
+      fireEvent.click(button)
+
+      expect(actions.setActivePaneId).not.toHaveBeenCalled()
+    })
+  })
+
   // --- Close workspace button ---
 
   it('renders a close workspace button', () => {

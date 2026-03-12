@@ -56,6 +56,15 @@ function WorkspaceFrameHeader({
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
 
+  /** Shift focus to this workspace's pane before performing a panel action. */
+  const withFocus = (fn: (paneId: string) => void) => () => {
+    if (!activePaneId) {
+      return
+    }
+    actions?.setActivePaneId(activePaneId)
+    fn(activePaneId)
+  }
+
   return (
     <div
       className="flex h-8 shrink-0 items-center justify-between border-b px-2"
@@ -85,9 +94,9 @@ function WorkspaceFrameHeader({
                 <Button
                   aria-label="Toggle dev server terminal"
                   disabled={!hasActivePane}
-                  onClick={() =>
-                    activePaneId && actions?.toggleDevServerPane(activePaneId)
-                  }
+                  onClick={withFocus((paneId) =>
+                    actions?.toggleDevServerPane(paneId)
+                  )}
                   size="icon-sm"
                   variant="ghost"
                 />
@@ -107,9 +116,7 @@ function WorkspaceFrameHeader({
                 }
                 className={diffIsOpen ? 'bg-accent' : ''}
                 disabled={!hasActivePane}
-                onClick={() =>
-                  activePaneId && actions?.toggleDiffPane(activePaneId)
-                }
+                onClick={withFocus((paneId) => actions?.toggleDiffPane(paneId))}
                 size="icon-sm"
                 variant="ghost"
               />

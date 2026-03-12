@@ -887,6 +887,28 @@ function getLeafNodes(node: PanelNode): LeafNode[] {
 }
 
 /**
+ * Resolve the active pane ID scoped to a specific workspace's sub-layout.
+ *
+ * If the global `activePaneId` belongs to one of this workspace's leaves,
+ * it is returned as-is. Otherwise, falls back to the first leaf in the
+ * workspace's sub-layout so that header buttons always operate on a pane
+ * within their own workspace.
+ */
+function getScopedActivePaneId(
+  subLayout: PanelNode,
+  globalActivePaneId: string | null
+): string | null {
+  const leaves = getLeafNodes(subLayout)
+  if (
+    globalActivePaneId != null &&
+    leaves.some((l) => l.id === globalActivePaneId)
+  ) {
+    return globalActivePaneId
+  }
+  return leaves[0]?.id ?? null
+}
+
+/**
  * Extract unique workspace IDs from the leaf nodes of a layout tree.
  * Returns an array of workspace IDs in the order they first appear (DFS).
  * Leaves without a workspaceId are grouped under `undefined`.
@@ -1351,6 +1373,7 @@ export {
   getLastLeafId,
   getLeafIds,
   getLeafNodes,
+  getScopedActivePaneId,
   getStaleTerminalLeaves,
   getTerminalIdsToRemove,
   getTreeDepth,

@@ -250,13 +250,15 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
 interface PaneContentProps {
   /** The leaf node describing this pane's content. */
   readonly node: LeafNode
+  /** Callback invoked when the terminal process exits. */
+  readonly onTerminalExit?: (() => void) | undefined
 }
 
 /**
  * Renders a terminal pane with optional sidebars (diff, dev server terminal).
  * Extracted to keep PaneContent under complexity limits.
  */
-function TerminalPaneWithSidebars({ node }: PaneContentProps) {
+function TerminalPaneWithSidebars({ node, onTerminalExit }: PaneContentProps) {
   const { paneMin } = useResponsiveLayout()
 
   const showDiff = node.diffOpen === true && node.workspaceId !== undefined
@@ -265,7 +267,12 @@ function TerminalPaneWithSidebars({ node }: PaneContentProps) {
 
   // No sidebars — render terminal only
   if (!(showDiff || showDevServer)) {
-    return <TerminalPane terminalId={node.terminalId as string} />
+    return (
+      <TerminalPane
+        onTerminalExit={onTerminalExit}
+        terminalId={node.terminalId as string}
+      />
+    )
   }
 
   // Diff sidebar only
@@ -273,7 +280,10 @@ function TerminalPaneWithSidebars({ node }: PaneContentProps) {
     return (
       <ResizablePanelGroup orientation="horizontal">
         <ResizablePanel defaultSize="60%" minSize={paneMin}>
-          <TerminalPane terminalId={node.terminalId as string} />
+          <TerminalPane
+            onTerminalExit={onTerminalExit}
+            terminalId={node.terminalId as string}
+          />
         </ResizablePanel>
         <ResizableHandle />
         <ResizablePanel defaultSize="40%" minSize={paneMin}>
@@ -288,7 +298,10 @@ function TerminalPaneWithSidebars({ node }: PaneContentProps) {
     return (
       <ResizablePanelGroup orientation="vertical">
         <ResizablePanel defaultSize="60%" minSize={paneMin}>
-          <TerminalPane terminalId={node.terminalId as string} />
+          <TerminalPane
+            onTerminalExit={onTerminalExit}
+            terminalId={node.terminalId as string}
+          />
         </ResizablePanel>
         <ResizableHandle />
         <ResizablePanel defaultSize="40%" minSize={paneMin}>
@@ -306,7 +319,10 @@ function TerminalPaneWithSidebars({ node }: PaneContentProps) {
       <ResizablePanel defaultSize="60%" minSize={paneMin}>
         <ResizablePanelGroup orientation="horizontal">
           <ResizablePanel defaultSize="60%" minSize={paneMin}>
-            <TerminalPane terminalId={node.terminalId as string} />
+            <TerminalPane
+              onTerminalExit={onTerminalExit}
+              terminalId={node.terminalId as string}
+            />
           </ResizablePanel>
           <ResizableHandle />
           <ResizablePanel defaultSize="40%" minSize={paneMin}>
@@ -333,9 +349,11 @@ function TerminalPaneWithSidebars({ node }: PaneContentProps) {
  * stacked panel below the main terminal. This keeps the dev server terminal
  * visually coupled to its workspace terminal.
  */
-function PaneContent({ node }: PaneContentProps) {
+function PaneContent({ node, onTerminalExit }: PaneContentProps) {
   if (node.paneType === 'terminal' && node.terminalId) {
-    return <TerminalPaneWithSidebars node={node} />
+    return (
+      <TerminalPaneWithSidebars node={node} onTerminalExit={onTerminalExit} />
+    )
   }
 
   // Dev server terminal rendered as a standalone pane
@@ -487,6 +505,15 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
   const actions = usePanelActions()
   const [isDragOver, setIsDragOver] = useState(false)
 
+  /**
+   * Auto-close the pane when the terminal process exits.
+   * Invoked by TerminalPane when it receives a "stopped" status
+   * control message from the WebSocket.
+   */
+  const handleTerminalExit = useCallback(() => {
+    actions?.closePane(node.id)
+  }, [actions, node.id])
+
   const isEmptyTerminalPane = node.paneType === 'terminal' && !node.terminalId
 
   const handleDragOver = useCallback(
@@ -558,7 +585,7 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
       onMouseDownCapture={() => actions?.setActivePaneId(node.id)}
       role="region"
     >
-      <PaneContent node={node} />
+      <PaneContent node={node} onTerminalExit={handleTerminalExit} />
     </div>
   )
 }

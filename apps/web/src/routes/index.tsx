@@ -527,6 +527,7 @@ function usePanelLayout() {
       }
 
       const newTree = splitPane(base, paneId, direction)
+
       store.commit(
         layoutSplit({
           id: LAYOUT_SESSION_ID,

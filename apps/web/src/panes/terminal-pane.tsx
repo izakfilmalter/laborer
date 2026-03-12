@@ -201,6 +201,11 @@ const PREFIX_MODE_TIMEOUT = 1500
 import { isExactCtrlB, shouldBypassTerminal } from '@/panes/terminal-keys'
 
 interface TerminalPaneProps {
+  /**
+   * Callback invoked when the terminal process exits (status becomes "stopped").
+   * Used by the panel system to auto-close the pane when a terminal is closed.
+   */
+  readonly onTerminalExit?: (() => void) | undefined
   /** The terminal ID to subscribe to for output events. */
   readonly terminalId: string
 }
@@ -228,7 +233,7 @@ interface TerminalPaneProps {
  * to the server PTY via the `terminal.resize` RPC mutation. This ensures
  * the PTY sends SIGWINCH to the running process so it can reflow output.
  */
-function TerminalPane({ terminalId }: TerminalPaneProps) {
+function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
   const resizeTerminal = useAtomSet(terminalResizeMutation)
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -289,6 +294,7 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
    * Callback for terminal status control messages received via WebSocket.
    * Handles "restarted" status by clearing the xterm.js buffer, replacing
    * the previous LiveStore `v1.TerminalRestarted` event subscription.
+   * Handles "stopped" status by invoking onTerminalExit to auto-close the pane.
    *
    * @see Issue #141: WebSocket-derived terminal status
    */
@@ -300,8 +306,11 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
           terminal.clear()
         }
       }
+      if (status === 'stopped') {
+        onTerminalExit?.()
+      }
     },
-    []
+    [onTerminalExit]
   )
 
   /**

@@ -1090,6 +1090,87 @@ function isWorkspaceFrameData(data: Record<string, unknown>): data is {
  *
  * Returns a new array — does not mutate the input.
  */
+/**
+ * Collect all terminal IDs (including dev server terminals) from leaves
+ * that belong to the given workspace.
+ *
+ * Returns an array of terminal IDs that should be removed when closing
+ * all panes for a workspace.
+ */
+function getWorkspaceTerminalIds(
+  layout: PanelNode | undefined,
+  workspaceId: string
+): readonly string[] {
+  if (!layout) {
+    return []
+  }
+  const leaves = getLeafNodes(layout)
+  const ids: string[] = []
+  for (const leaf of leaves) {
+    if (leaf.workspaceId !== workspaceId) {
+      continue
+    }
+    if (leaf.terminalId) {
+      ids.push(leaf.terminalId)
+    }
+    if (leaf.devServerTerminalId) {
+      ids.push(leaf.devServerTerminalId)
+    }
+  }
+  return ids
+}
+
+/**
+ * Determine whether closing a workspace should show a confirmation dialog.
+ *
+ * Returns true when the workspace has any terminal with a running child
+ * process. This prevents accidental loss of running work (e.g., a dev
+ * server, vim, or an AI agent) when the user clicks "Close workspace".
+ *
+ * @param layout - The current panel layout tree (may be undefined)
+ * @param workspaceId - The workspace being closed
+ * @param terminals - The live terminal list from useTerminalList
+ * @returns Whether the close confirmation dialog should be shown
+ */
+function shouldConfirmCloseWorkspace(
+  layout: PanelNode | undefined,
+  workspaceId: string,
+  terminals: ReadonlyArray<{
+    readonly id: string
+    readonly hasChildProcess: boolean
+  }>
+): boolean {
+  const terminalIds = getWorkspaceTerminalIds(layout, workspaceId)
+  return terminalIds.some((id) => {
+    const terminal = terminals.find((t) => t.id === id)
+    return terminal?.hasChildProcess === true
+  })
+}
+
+/**
+ * Remove all leaf nodes belonging to a workspace from the layout tree.
+ *
+ * Sequentially closes each workspace leaf. Returns the resulting tree
+ * (or undefined if all panes were removed).
+ */
+function closeWorkspacePanes(
+  layout: PanelNode,
+  workspaceId: string
+): PanelNode | undefined {
+  let current: PanelNode | undefined = layout
+  // Iteratively close workspace leaves until none remain.
+  // Each closePane call may restructure the tree, so we re-scan after each.
+  while (current) {
+    const leaves = getLeafNodes(current)
+    const workspaceLeaf = leaves.find((l) => l.workspaceId === workspaceId)
+    if (!workspaceLeaf) {
+      break
+    }
+    current = closePane(current, workspaceLeaf.id)
+  }
+  return current
+}
+
 function sortWorkspaceLayouts<
   T extends { readonly workspaceId: string | undefined },
 >(layouts: readonly T[], workspaceOrder: string[] | null): T[] {
@@ -1115,6 +1196,7 @@ function sortWorkspaceLayouts<
 
 export {
   closePane,
+  closeWorkspacePanes,
   computeResize,
   countLeaves,
   ensureValidActivePaneId,
@@ -1135,10 +1217,12 @@ export {
   getTerminalIdsToRemove,
   getTreeDepth,
   getWorkspaceIds,
+  getWorkspaceTerminalIds,
   isWorkspaceFrameData,
   reconcileLayout,
   replaceNode,
   shouldConfirmClose,
+  shouldConfirmCloseWorkspace,
   sortWorkspaceLayouts,
   splitPane,
   WORKSPACE_FRAME_TYPE,

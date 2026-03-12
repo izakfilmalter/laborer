@@ -54,6 +54,17 @@ interface PanelActions {
    */
   readonly closeTerminalPane: (terminalId: string) => void
   /**
+   * Close all panes belonging to a workspace, killing their terminals.
+   *
+   * Finds every leaf node with the given workspaceId and closes them,
+   * removing the associated terminals from the terminal service. If
+   * the workspace has running child processes, callers should show a
+   * confirmation dialog before invoking this action.
+   *
+   * @param workspaceId - The workspace whose panes should be closed
+   */
+  readonly closeWorkspace: (workspaceId: string) => void
+  /**
    * Reorder workspace frames in the panel view.
    *
    * Persists a new explicit ordering of workspace IDs, overriding the

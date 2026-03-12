@@ -78,6 +78,7 @@ import { useLaborerStore } from '@/livestore/store'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import {
   closePane,
+  closeWorkspacePanes,
   computeResize,
   ensureValidActivePaneId,
   filterTreeByWorkspace,
@@ -94,10 +95,12 @@ import {
   getStaleTerminalLeaves,
   getTerminalIdsToRemove,
   getWorkspaceIds,
+  getWorkspaceTerminalIds,
   isWorkspaceFrameData,
   reconcileLayout,
   replaceNode,
   shouldConfirmClose,
+  shouldConfirmCloseWorkspace,
   sortWorkspaceLayouts,
   splitPane,
   WORKSPACE_FRAME_TYPE,
@@ -105,7 +108,6 @@ import {
 import {
   PanelActionsProvider,
   useActivePaneId,
-  useFullscreenPaneId,
   usePanelActions,
 } from '@/panels/panel-context'
 import {
@@ -1014,6 +1016,67 @@ function usePanelLayout() {
   )
 
   /**
+   * Close all panes belonging to a workspace and kill their terminals.
+   * This is the ungated version — callers should check for running
+   * child processes and show a confirmation dialog before invoking.
+   */
+  const handleCloseWorkspace = useCallback(
+    (workspaceId: string) => {
+      const base = persistedLayoutTree ?? initialLayout
+      if (!base) {
+        return
+      }
+
+      // Kill all terminals belonging to this workspace
+      const terminalIds = getWorkspaceTerminalIds(base, workspaceId)
+      for (const terminalId of terminalIds) {
+        removeTerminal({ payload: { id: terminalId } }).catch((error) => {
+          console.warn('[close-workspace] terminal remove failed:', error)
+        })
+      }
+
+      // Remove all workspace panes from the layout tree
+      const newTree = closeWorkspacePanes(base, workspaceId)
+      if (newTree) {
+        const nextActivePaneId = ensureValidActivePaneId(
+          newTree,
+          persistedActivePaneId
+        )
+        store.commit(
+          layoutPaneClosed({
+            id: LAYOUT_SESSION_ID,
+            layoutTree: newTree,
+            activePaneId: nextActivePaneId,
+          })
+        )
+      } else {
+        // All panes closed — commit an empty placeholder
+        store.commit(
+          layoutPaneClosed({
+            id: LAYOUT_SESSION_ID,
+            layoutTree: {
+              _tag: 'LeafNode' as const,
+              id: 'pane-empty',
+              paneType: 'terminal' as const,
+              terminalId: undefined,
+              workspaceId: undefined,
+            },
+            activePaneId: null,
+          })
+        )
+        hasSeeded.current = false
+      }
+    },
+    [
+      persistedLayoutTree,
+      initialLayout,
+      persistedActivePaneId,
+      store,
+      removeTerminal,
+    ]
+  )
+
+  /**
    * Reorder workspace frames by persisting an explicit workspace ID ordering.
    * Called when the user drag-and-drops workspace frames to rearrange them.
    */
@@ -1038,6 +1101,7 @@ function usePanelLayout() {
       assignTerminalToPane: handleAssignTerminalToPane,
       splitPane: handleSplitPane,
       closePane: handleClosePane,
+      closeWorkspace: handleCloseWorkspace,
       setActivePaneId: handleSetActivePaneId,
       toggleDiffPane: handleToggleDiffPane,
       toggleDevServerPane: handleToggleDevServerPane,
@@ -1049,6 +1113,7 @@ function usePanelLayout() {
       handleAssignTerminalToPane,
       handleSplitPane,
       handleClosePane,
+      handleCloseWorkspace,
       handleSetActivePaneId,
       handleToggleDiffPane,
       handleToggleDevServerPane,
@@ -1146,6 +1211,46 @@ function CloseTerminalDialog({
   )
 }
 
+/**
+ * Confirmation dialog shown when attempting to close a workspace that has
+ * terminals with running processes. Warns the user that all terminals in
+ * the workspace will be killed.
+ */
+function CloseWorkspaceDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+}: {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+  readonly onConfirm: () => void
+}) {
+  const handleConfirm = useCallback(() => {
+    onConfirm()
+    onOpenChange(false)
+  }, [onConfirm, onOpenChange])
+
+  return (
+    <AlertDialog onOpenChange={onOpenChange} open={open}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Close workspace?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This workspace has terminals with running processes. Closing the
+            workspace will kill all of them.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={handleConfirm}>
+            Close workspace
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
 function CloseAppDialog({
   open,
   onOpenChange,
@@ -1206,9 +1311,6 @@ function WorkspaceFrameHeaderContainer({
   const workspaceList = store.useQuery(allWorkspaces$)
   const activePaneId = useActivePaneId()
   const actions = usePanelActions()
-  const fullscreenPaneId = useFullscreenPaneId()
-  const isFullscreen = fullscreenPaneId !== null
-
   const persistedRows = store.useQuery(persistedLayout$)
   const persistedRow = persistedRows.find((row) => row.id === LAYOUT_SESSION_ID)
   const layout = persistedRow?.layoutTree as PanelNode | undefined
@@ -1253,8 +1355,8 @@ function WorkspaceFrameHeaderContainer({
       diffIsOpen={diffIsOpen}
       dragHandleRef={dragHandleRef}
       isContainerized={isContainerized}
-      isFullscreen={isFullscreen}
       projectName={projectName}
+      workspaceId={workspaceId}
     />
   )
 }
@@ -1656,15 +1758,52 @@ function HomeComponent() {
     [layout, gatedClosePane, panelActions]
   )
 
+  // Close-workspace confirmation dialog state
+  const [closeWorkspaceDialogOpen, setCloseWorkspaceDialogOpen] =
+    useState(false)
+  const pendingCloseWorkspaceIdRef = useRef<string | null>(null)
+
+  /**
+   * Gated closeWorkspace that checks if any terminal in the workspace has
+   * a running child process. Shows a confirmation dialog when there are
+   * active processes to prevent accidental loss of running work.
+   */
+  const gatedCloseWorkspace = useCallback(
+    (workspaceId: string) => {
+      if (shouldConfirmCloseWorkspace(layout, workspaceId, liveTerminals)) {
+        pendingCloseWorkspaceIdRef.current = workspaceId
+        setCloseWorkspaceDialogOpen(true)
+        return
+      }
+      panelActions.closeWorkspace(workspaceId)
+    },
+    [layout, liveTerminals, panelActions]
+  )
+
+  const handleConfirmCloseWorkspace = useCallback(() => {
+    const workspaceId = pendingCloseWorkspaceIdRef.current
+    if (workspaceId) {
+      panelActions.closeWorkspace(workspaceId)
+      pendingCloseWorkspaceIdRef.current = null
+    }
+  }, [panelActions])
+
   // Override panelActions.closePane with the gated version and add fullscreen toggle
   const gatedPanelActions = useMemo(
     () => ({
       ...panelActions,
       closePane: gatedClosePane,
       closeTerminalPane: gatedCloseTerminalPane,
+      closeWorkspace: gatedCloseWorkspace,
       toggleFullscreenPane,
     }),
-    [panelActions, gatedClosePane, gatedCloseTerminalPane, toggleFullscreenPane]
+    [
+      panelActions,
+      gatedClosePane,
+      gatedCloseTerminalPane,
+      gatedCloseWorkspace,
+      toggleFullscreenPane,
+    ]
   )
 
   // Sync running workspace count to Electron system tray tooltip (no-op in browser)
@@ -1778,6 +1917,11 @@ function HomeComponent() {
         onConfirm={handleConfirmCloseTerminal}
         onOpenChange={setCloseTerminalDialogOpen}
         open={closeTerminalDialogOpen}
+      />
+      <CloseWorkspaceDialog
+        onConfirm={handleConfirmCloseWorkspace}
+        onOpenChange={setCloseWorkspaceDialogOpen}
+        open={closeWorkspaceDialogOpen}
       />
       <CloseAppDialog
         onOpenChange={setIsCloseAppDialogOpen}

@@ -24,6 +24,7 @@ import { assert, describe } from '@effect/vitest'
 import {
   type Context,
   Effect,
+  Either,
   Exit,
   Fiber,
   Layer,
@@ -1062,6 +1063,331 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
       Effect.gen(function* () {
         const tm = yield* TerminalManager
         yield* tm.remove(result.id)
+      })
+    )
+  })
+
+  // -------------------------------------------------------------------------
+  // Hook-based agent status overrides
+  // -------------------------------------------------------------------------
+
+  it('setAgentStatusFromHook("active") makes listTerminals return agentStatus "active"', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.setAgentStatusFromHook(result.id, 'active')
+      })
+    )
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.agentStatus, 'active')
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('setAgentStatusFromHook("waiting_for_input") makes listTerminals return agentStatus "waiting_for_input"', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.setAgentStatusFromHook(result.id, 'waiting_for_input')
+      })
+    )
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.agentStatus, 'waiting_for_input')
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('setAgentStatusFromHook("clear") reverts to ps-based detection', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Set a hook override, then clear it
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.setAgentStatusFromHook(result.id, 'active')
+        yield* tm.setAgentStatusFromHook(result.id, 'clear')
+      })
+    )
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    // After clearing, ps-based detection takes over. The agentStatusMap
+    // was synced to 'active' by the hook, so the ps-based state machine
+    // sees "was active, now idle" → 'waiting_for_input'. This is correct:
+    // clearing a hook doesn't erase the agent context, it just removes
+    // the override so the ps-based transitions resume naturally.
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.agentStatus, 'waiting_for_input')
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('hook status takes priority over ps-based detection', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Without a hook, 'cat' has null agentStatus (not an agent)
+    const beforeHook = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+    const beforeTerminal = beforeHook.find((t) => t.id === result.id)
+    assert.isDefined(beforeTerminal)
+    assert.strictEqual(beforeTerminal?.agentStatus, null)
+
+    // Hook override should take priority
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.setAgentStatusFromHook(result.id, 'waiting_for_input')
+      })
+    )
+
+    const afterHook = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+    const afterTerminal = afterHook.find((t) => t.id === result.id)
+    assert.isDefined(afterTerminal)
+    assert.strictEqual(afterTerminal?.agentStatus, 'waiting_for_input')
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('setAgentStatusFromHook on non-existent terminal returns error', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* Effect.either(
+          tm.setAgentStatusFromHook('non-existent-terminal-id', 'active')
+        )
+      })
+    )
+
+    assert.isTrue(Either.isLeft(result))
+  })
+
+  it('remove() clears hook status override', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Set a hook override, then remove the terminal
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.setAgentStatusFromHook(result.id, 'active')
+        yield* tm.remove(result.id)
+      })
+    )
+
+    // Respawn with the same workspace — the old hook status should not leak
+    const respawned = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === respawned.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.agentStatus, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(respawned.id)
+      })
+    )
+  })
+
+  it('restart() clears hook status override', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Set a hook override, then restart the terminal
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.setAgentStatusFromHook(result.id, 'active')
+      })
+    )
+
+    const restarted = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.restart(result.id)
+      })
+    )
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === restarted.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.agentStatus, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(restarted.id)
+      })
+    )
+  })
+
+  it('spawn() with pre-generated id uses that ID', async () => {
+    const customId = 'custom-test-terminal-id-12345'
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+          id: customId,
+        })
+      })
+    )
+
+    assert.strictEqual(result.id, customId)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
       })
     )
   })

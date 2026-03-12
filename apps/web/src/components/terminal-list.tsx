@@ -132,7 +132,9 @@ function TerminalList({
   )
   const configResult = useAtomValue(configGet$)
   const agentProvider =
-    configResult._tag === 'Success' ? configResult.value.agent.value : 'claude'
+    configResult._tag === 'Success'
+      ? configResult.value.agent.value
+      : 'opencode'
   const autoOpenDevServer =
     configResult._tag === 'Success'
       ? configResult.value.devServer.autoOpen.value

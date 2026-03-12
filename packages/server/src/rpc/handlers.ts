@@ -197,6 +197,7 @@ export const handleConfigUpdate = ({
     agent?: 'opencode' | 'claude' | 'codex' | undefined
     devServer?:
       | {
+          autoOpen?: boolean | undefined
           dockerfile?: string | undefined
           image?: string | undefined
           setupScripts?: readonly string[] | undefined
@@ -230,6 +231,8 @@ export const handleConfigUpdate = ({
     const isValidDevServer =
       config.devServer === undefined ||
       (typeof config.devServer === 'object' &&
+        (config.devServer.autoOpen === undefined ||
+          typeof config.devServer.autoOpen === 'boolean') &&
         (config.devServer.image === undefined ||
           typeof config.devServer.image === 'string') &&
         (config.devServer.dockerfile === undefined ||

@@ -1438,6 +1438,21 @@ describe('computeTerminalPaneAssignment', () => {
     expect(leaf.terminalId).toBe('term-1')
     expect(leaf.workspaceId).toBe('ws-1')
     expect(result.activePaneId).toBe(leaf.id)
+    expect(result.triggerDevServer).toBe(false)
+  })
+
+  it('can opt into auto-opening the dev server when assigning a terminal', () => {
+    const result = computeTerminalPaneAssignment(
+      undefined,
+      'term-1',
+      'ws-1',
+      undefined,
+      {
+        autoOpenDevServer: true,
+      }
+    )
+
+    expect(result.triggerDevServer).toBe(true)
   })
 
   it('focuses existing pane when terminal already has one', () => {
@@ -1515,7 +1530,7 @@ describe('computeTerminalPaneAssignment', () => {
     expect(leaf.terminalId).toBe('term-new')
   })
 
-  it('splits the last leaf and focuses the NEW pane when all panes are occupied', () => {
+  it('splits the last leaf below the current pane when all panes are occupied', () => {
     const layout: SplitNode = {
       _tag: 'SplitNode',
       id: 'split-root',
@@ -1554,6 +1569,14 @@ describe('computeTerminalPaneAssignment', () => {
     const newLeaf = findNodeById(result.layoutTree, newPaneId) as LeafNode
     expect(newLeaf.terminalId).toBe('term-new')
     expect(newLeaf.workspaceId).toBe('ws-2')
+
+    const paneBSplit = findNodeById(result.layoutTree, 'pane-B')
+    expect(paneBSplit?._tag).toBe('LeafNode')
+
+    const root = result.layoutTree as SplitNode
+    const nestedSplit = root.children[1]
+    expect(nestedSplit?._tag).toBe('SplitNode')
+    expect((nestedSplit as SplitNode).direction).toBe('vertical')
   })
 
   it('focuses the new pane when splitting a single occupied leaf', () => {

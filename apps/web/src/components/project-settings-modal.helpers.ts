@@ -5,6 +5,7 @@ interface SetupScriptItem {
 
 interface ResolvedConfigSnapshot {
   readonly agent: 'opencode' | 'claude' | 'codex'
+  readonly devServerAutoOpen: boolean
   readonly devServerImage: string | null
   readonly devServerInstallCommand: string | null
   readonly devServerNetwork: string | null
@@ -18,6 +19,7 @@ interface ResolvedConfigSnapshot {
 interface ConfigUpdates {
   agent?: 'opencode' | 'claude' | 'codex'
   devServer?: {
+    autoOpen?: boolean
     image?: string
     installCommand?: string
     network?: string
@@ -59,6 +61,7 @@ const areStringArraysEqual = (
  */
 const buildDevServerUpdates = (
   current: {
+    autoOpen: boolean
     image: string
     installCommand: string
     network: string
@@ -67,6 +70,7 @@ const buildDevServerUpdates = (
   },
   resolved: ResolvedConfigSnapshot
 ): ConfigUpdates['devServer'] | undefined => {
+  const autoOpenChanged = current.autoOpen !== resolved.devServerAutoOpen
   const imageChanged = current.image !== (resolved.devServerImage ?? '')
   const installCommandChanged =
     current.installCommand !== (resolved.devServerInstallCommand ?? '')
@@ -80,6 +84,7 @@ const buildDevServerUpdates = (
 
   if (
     !(
+      autoOpenChanged ||
       imageChanged ||
       installCommandChanged ||
       networkChanged ||
@@ -91,6 +96,9 @@ const buildDevServerUpdates = (
   }
 
   const devServer: ConfigUpdates['devServer'] = {}
+  if (autoOpenChanged) {
+    devServer.autoOpen = current.autoOpen
+  }
   if (imageChanged) {
     devServer.image = current.image
   }
@@ -111,6 +119,7 @@ const buildDevServerUpdates = (
 
 const buildConfigUpdates = ({
   agent,
+  devServerAutoOpen,
   devServerImage,
   devServerInstallCommand,
   devServerNetwork,
@@ -122,6 +131,7 @@ const buildConfigUpdates = ({
   worktreeDir,
 }: {
   agent: 'opencode' | 'claude' | 'codex'
+  devServerAutoOpen: boolean
   devServerImage: string
   devServerInstallCommand: string
   devServerNetwork: string
@@ -164,6 +174,7 @@ const buildConfigUpdates = ({
 
   const devServerUpdate = buildDevServerUpdates(
     {
+      autoOpen: devServerAutoOpen,
       image: devServerImage.trim(),
       installCommand: devServerInstallCommand.trim(),
       network: devServerNetwork.trim(),

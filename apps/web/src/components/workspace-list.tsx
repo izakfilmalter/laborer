@@ -36,7 +36,7 @@
  * @see Issue #193: Plan workspace scoped task list and rlph integration
  */
 
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { prds, workspaces } from '@laborer/shared/schema'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
@@ -49,7 +49,7 @@ import {
   useState,
 } from 'react'
 import { toast } from 'sonner'
-import { LaborerClient } from '@/atoms/laborer-client'
+import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { CopyButton } from '@/components/copy-button'
 import { FixFindingsForm } from '@/components/fix-findings-form'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
@@ -409,6 +409,20 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
     mode: 'promise',
   })
   const panelActions = usePanelActions()
+  const configGet$ = useMemo(
+    () =>
+      LaborerClient.query(
+        'config.get',
+        { projectId: workspace.projectId },
+        { reactivityKeys: ConfigReactivityKeys }
+      ),
+    [workspace.projectId]
+  )
+  const configResult = useAtomValue(configGet$)
+  const autoOpenDevServer =
+    configResult._tag === 'Success'
+      ? configResult.value.devServer.autoOpen.value
+      : false
 
   const handleDialogOpen = (open: boolean) => {
     setDialogOpen(open)
@@ -464,14 +478,16 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
       toast.success('Ralph loop started')
       // Auto-assign the spawned terminal to a pane
       if (panelActions) {
-        panelActions.assignTerminalToPane(result.id, workspace.id)
+        panelActions.assignTerminalToPane(result.id, workspace.id, undefined, {
+          autoOpenDevServer,
+        })
       }
     } catch (error: unknown) {
       toast.error(`Failed to start ralph loop: ${extractErrorMessage(error)}`)
     } finally {
       setIsStartingLoop(false)
     }
-  }, [startLoop, workspace.id, panelActions])
+  }, [autoOpenDevServer, startLoop, workspace.id, panelActions])
 
   const isContainerized = workspace.containerId != null
   const isContainerPaused = workspace.containerStatus === 'paused'
@@ -617,10 +633,12 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
             )}
             <ReviewPrForm
               disabled={workspace.prNumber == null}
+              projectId={workspace.projectId}
               workspaceId={workspace.id}
             />
             <FixFindingsForm
               disabled={workspace.prNumber == null}
+              projectId={workspace.projectId}
               workspaceId={workspace.id}
             />
             <AlertDialog onOpenChange={handleDialogOpen} open={dialogOpen}>

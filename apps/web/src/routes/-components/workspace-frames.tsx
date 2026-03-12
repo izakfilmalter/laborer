@@ -7,6 +7,7 @@ import {
 import { reorder } from '@atlaskit/pragmatic-drag-and-drop/reorder'
 import type { PanelNode } from '@laborer/shared/types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { PanelImperativeHandle } from 'react-resizable-panels'
 import {
   ResizableHandle,
   ResizablePanel,
@@ -38,11 +39,15 @@ function WorkspaceFrame({
   subLayout,
   activePaneId,
   index,
+  isCollapsible = false,
+  panelRef,
 }: {
   readonly workspaceId: string | undefined
   readonly subLayout: PanelNode
   readonly activePaneId: string | null
   readonly index: number
+  readonly isCollapsible?: boolean
+  readonly panelRef?: { readonly current: PanelImperativeHandle | null }
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null)
   const dragHandleRef = useRef<HTMLDivElement | null>(null)
@@ -74,6 +79,28 @@ function WorkspaceFrame({
   const handleMinimize = useCallback(() => {
     setIsMinimized((prev) => !prev)
   }, [])
+
+  useEffect(() => {
+    if (!isCollapsible) {
+      return
+    }
+
+    const panel = panelRef?.current
+    if (!panel) {
+      return
+    }
+
+    if (isMinimized) {
+      if (!panel.isCollapsed()) {
+        panel.collapse()
+      }
+      return
+    }
+
+    if (panel.isCollapsed()) {
+      panel.expand()
+    }
+  }, [isCollapsible, isMinimized, panelRef])
 
   useEffect(() => {
     const frameEl = frameRef.current
@@ -169,13 +196,23 @@ function WorkspaceFrameResizableChild({
   readonly defaultSize: number
   readonly index: number
 }) {
+  const panelRef = useRef<PanelImperativeHandle | null>(null)
+
   return (
     <>
       {index > 0 && <ResizableHandle />}
-      <ResizablePanel defaultSize={`${defaultSize}%`} minSize="10%">
+      <ResizablePanel
+        collapsedSize="2.5rem"
+        collapsible
+        defaultSize={`${defaultSize}%`}
+        minSize="10%"
+        panelRef={panelRef}
+      >
         <WorkspaceFrame
           activePaneId={activePaneId}
           index={index}
+          isCollapsible
+          panelRef={panelRef}
           subLayout={subLayout}
           workspaceId={workspaceId}
         />

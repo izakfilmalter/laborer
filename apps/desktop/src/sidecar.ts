@@ -21,7 +21,7 @@ const KILL_GRACE_MS = 2000
 // ---------------------------------------------------------------------------
 
 /** Identifies a sidecar service. */
-export type SidecarName = 'server' | 'terminal' | 'mcp'
+export type SidecarName = 'server' | 'terminal' | 'file-watcher' | 'mcp'
 
 /** A tracked child process with its stderr ring buffer. */
 interface TrackedSidecar {
@@ -76,6 +76,8 @@ function resolveEntryPath(name: SidecarName): string {
         return join(root, 'packages/server/src/main.ts')
       case 'terminal':
         return join(root, 'packages/terminal/src/main.ts')
+      case 'file-watcher':
+        return join(root, 'packages/file-watcher/src/main.ts')
       default:
         return join(root, 'packages/mcp/src/main.ts')
     }
@@ -87,6 +89,8 @@ function resolveEntryPath(name: SidecarName): string {
       return join(root, 'packages/server/dist/main.js')
     case 'terminal':
       return join(root, 'packages/terminal/dist/main.js')
+    case 'file-watcher':
+      return join(root, 'packages/file-watcher/dist/main.js')
     default:
       return join(root, 'packages/mcp/dist/main.js')
   }
@@ -138,6 +142,7 @@ function buildSidecarEnv(
     ...filterEnv(process.env),
     PORT: String(ports.serverPort),
     TERMINAL_PORT: String(ports.terminalPort),
+    FILE_WATCHER_PORT: String(ports.fileWatcherPort),
   }
 
   // In production, set ELECTRON_RUN_AS_NODE so the Electron binary

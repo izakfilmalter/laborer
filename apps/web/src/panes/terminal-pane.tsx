@@ -198,6 +198,23 @@ const terminalResizeMutation = TerminalServiceClient.mutation('terminal.resize')
  */
 const PREFIX_MODE_TIMEOUT = 1500
 
+/**
+ * Debounce delay for ResizeObserver callbacks (ms).
+ *
+ * During panel drag-resizing, the ResizeObserver fires at up to 60fps.
+ * Without debouncing, each observation triggers `fitAddon.fit()` (which
+ * measures the DOM) and a `terminal.resize` RPC call (which sends a
+ * command through: RPC → terminal service → PTY Host → pty.resize() →
+ * SIGWINCH). This floods the event loop and network with unnecessary
+ * resize operations.
+ *
+ * VS Code uses a 100ms debounce for horizontal resizes (which trigger
+ * text reflow) and applies vertical resizes immediately (cheap). We use
+ * a simpler 100ms debounce for all resizes since the fit addon handles
+ * both dimensions together.
+ */
+const RESIZE_DEBOUNCE_MS = 100
+
 import { isExactCtrlB, shouldBypassTerminal } from '@/panes/terminal-keys'
 
 interface TerminalPaneProps {
@@ -620,6 +637,10 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
   /**
    * Observe the container element for size changes using ResizeObserver.
    * This handles allotment pane resizing, window resizing, etc.
+   *
+   * Debounced at 100ms to avoid flooding the resize RPC during drag
+   * operations. Without debouncing, the ResizeObserver fires at up to
+   * 60fps, each triggering fitAddon.fit() + an RPC round-trip.
    */
   useEffect(() => {
     const container = containerRef.current
@@ -627,13 +648,24 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
       return
     }
 
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null
+
     const resizeObserver = new ResizeObserver(() => {
-      handleResize()
+      if (resizeTimer !== null) {
+        clearTimeout(resizeTimer)
+      }
+      resizeTimer = setTimeout(() => {
+        resizeTimer = null
+        handleResize()
+      }, RESIZE_DEBOUNCE_MS)
     })
 
     resizeObserver.observe(container)
 
     return () => {
+      if (resizeTimer !== null) {
+        clearTimeout(resizeTimer)
+      }
       resizeObserver.disconnect()
     }
   }, [handleResize])

@@ -1221,12 +1221,17 @@ function WorkspaceFrameHeaderContainer({
     return node?._tag === 'LeafNode' && node.diffOpen === true
   }, [activePaneId, layout])
 
-  const { projectName, branchName, isContainerized } = useMemo(() => {
+  const workspaceData = useMemo(() => {
     if (!workspaceId) {
       return {
         projectName: undefined,
         branchName: undefined,
         isContainerized: false,
+        prNumber: null,
+        prUrl: null,
+        prTitle: null,
+        prState: null,
+        workspaceStatus: undefined,
       }
     }
     const workspace = workspaceList.find((ws) => ws.id === workspaceId)
@@ -1235,13 +1240,27 @@ function WorkspaceFrameHeaderContainer({
         projectName: undefined,
         branchName: undefined,
         isContainerized: false,
+        prNumber: null,
+        prUrl: null,
+        prTitle: null,
+        prState: null,
+        workspaceStatus: undefined,
       }
     }
     const project = projectList.find((p) => p.id === workspace.projectId)
+    const isContainerized = workspace.containerId != null
+    const isContainerPaused = workspace.containerStatus === 'paused'
+    const displayStatus =
+      isContainerized && isContainerPaused ? 'paused' : workspace.status
     return {
       projectName: project?.name,
       branchName: workspace.branchName,
-      isContainerized: workspace.containerId != null,
+      isContainerized,
+      prNumber: workspace.prNumber ?? null,
+      prUrl: workspace.prUrl ?? null,
+      prTitle: workspace.prTitle ?? null,
+      prState: workspace.prState ?? null,
+      workspaceStatus: displayStatus,
     }
   }, [workspaceId, workspaceList, projectList])
 
@@ -1249,12 +1268,17 @@ function WorkspaceFrameHeaderContainer({
     <WorkspaceFrameHeader
       actions={actions}
       activePaneId={activePaneId}
-      branchName={branchName}
+      branchName={workspaceData.branchName}
       diffIsOpen={diffIsOpen}
       dragHandleRef={dragHandleRef}
-      isContainerized={isContainerized}
+      isContainerized={workspaceData.isContainerized}
       isFullscreen={isFullscreen}
-      projectName={projectName}
+      prNumber={workspaceData.prNumber}
+      projectName={workspaceData.projectName}
+      prState={workspaceData.prState}
+      prTitle={workspaceData.prTitle}
+      prUrl={workspaceData.prUrl}
+      workspaceStatus={workspaceData.workspaceStatus}
     />
   )
 }

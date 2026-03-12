@@ -50,7 +50,12 @@ const BASE_PROPS = {
   diffIsOpen: false,
   isContainerized: false,
   isFullscreen: false,
+  prNumber: null,
+  prState: null,
+  prTitle: null,
+  prUrl: null,
   projectName: 'my-project',
+  workspaceStatus: 'running',
 } as const
 
 describe('WorkspaceFrameHeader', () => {

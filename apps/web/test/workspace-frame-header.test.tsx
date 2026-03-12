@@ -1,8 +1,9 @@
 /**
  * Unit tests for the WorkspaceFrameHeader presentational component.
  *
- * Verifies the toolbar button behaviors — particularly the diff viewer
- * toggle that was accidentally dropped during a prior refactor.
+ * Verifies the toolbar button behaviors — diff viewer toggle, header
+ * click focus, minimize/expand toggle, close-workspace button, and
+ * action button visibility based on minimized state.
  *
  * @see apps/web/src/components/workspace-frame-header.tsx
  */
@@ -31,6 +32,7 @@ function mockActions(): PanelActions {
     assignTerminalToPane: vi.fn(),
     closePane: vi.fn(),
     closeTerminalPane: vi.fn(),
+    closeWorkspace: vi.fn(),
     reorderWorkspaces: vi.fn(),
     resizePane: vi.fn(),
     setActivePaneId: vi.fn(),
@@ -42,6 +44,8 @@ function mockActions(): PanelActions {
 }
 
 const DIFF_VIEWER_RE = /diff viewer/i
+const MINIMIZE_RE = /minimize/i
+const FULLSCREEN_RE = /fullscreen/i
 
 /** Default props for a typical active pane scenario. */
 const BASE_PROPS = {
@@ -49,8 +53,13 @@ const BASE_PROPS = {
   branchName: 'main',
   diffIsOpen: false,
   isContainerized: false,
-  isFullscreen: false,
+  prNumber: null,
+  prState: null,
+  prTitle: null,
+  prUrl: null,
   projectName: 'my-project',
+  workspaceId: 'ws-1',
+  workspaceStatus: 'running',
 } as const
 
 describe('WorkspaceFrameHeader', () => {
@@ -61,6 +70,8 @@ describe('WorkspaceFrameHeader', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
+
+  // --- Diff viewer toggle ---
 
   it('renders the diff viewer toggle button', () => {
     const actions = mockActions()
@@ -144,5 +155,242 @@ describe('WorkspaceFrameHeader', () => {
 
     const button = screen.getByRole('button', { name: 'Close diff viewer' })
     expect(button).toBeTruthy()
+  })
+
+  // --- Focus shift on button click ---
+
+  describe('focus shift on button click', () => {
+    it('calls setActivePaneId before toggling diff pane', () => {
+      const actions = mockActions()
+      render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+      const button = screen.getByRole('button', { name: DIFF_VIEWER_RE })
+      fireEvent.click(button)
+
+      expect(actions.setActivePaneId).toHaveBeenCalledWith('pane-1')
+      // setActivePaneId should be called before toggleDiffPane
+      const setActiveOrder = (
+        actions.setActivePaneId as ReturnType<typeof vi.fn>
+      ).mock.invocationCallOrder[0] as number
+      const toggleOrder = (actions.toggleDiffPane as ReturnType<typeof vi.fn>)
+        .mock.invocationCallOrder[0] as number
+      expect(setActiveOrder).toBeLessThan(toggleOrder)
+    })
+
+    it('does not call setActivePaneId when no active pane', () => {
+      const actions = mockActions()
+      render(
+        <WorkspaceFrameHeader
+          {...BASE_PROPS}
+          actions={actions}
+          activePaneId={null}
+        />
+      )
+
+      const button = screen.getByRole('button', { name: DIFF_VIEWER_RE })
+      fireEvent.click(button)
+
+      expect(actions.setActivePaneId).not.toHaveBeenCalled()
+    })
+  })
+
+  // --- Close workspace button ---
+
+  it('renders a close workspace button', () => {
+    const actions = mockActions()
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+    const button = screen.getByRole('button', { name: 'Close workspace' })
+    expect(button).toBeTruthy()
+  })
+
+  it('calls closeWorkspace with workspace ID when clicked', () => {
+    const actions = mockActions()
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+    const button = screen.getByRole('button', { name: 'Close workspace' })
+    fireEvent.click(button)
+
+    expect(actions.closeWorkspace).toHaveBeenCalledWith('ws-1')
+  })
+
+  it('disables close workspace button when workspaceId is undefined', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        workspaceId={undefined}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: 'Close workspace' })
+    expect(button).toHaveProperty('disabled', true)
+  })
+
+  it('does not call closeWorkspace when workspaceId is undefined', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        workspaceId={undefined}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: 'Close workspace' })
+    fireEvent.click(button)
+
+    expect(actions.closeWorkspace).not.toHaveBeenCalled()
+  })
+
+  // --- Removed buttons should not be present ---
+
+  it('does not render split or fullscreen buttons (moved to terminal overlay)', () => {
+    const actions = mockActions()
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+    expect(
+      screen.queryByRole('button', { name: 'Split horizontally' })
+    ).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: 'Split vertically' })
+    ).toBeNull()
+    expect(screen.queryByRole('button', { name: FULLSCREEN_RE })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Close pane' })).toBeNull()
+  })
+
+  // ---------------------------------------------------------------------------
+  // Header click → onHeaderClick
+  // ---------------------------------------------------------------------------
+
+  it('calls onHeaderClick when the header label area is clicked', () => {
+    const actions = mockActions()
+    const onHeaderClick = vi.fn()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        onHeaderClick={onHeaderClick}
+      />
+    )
+
+    // Click the project name / branch name area
+    const label = screen.getByText('my-project')
+    fireEvent.click(label)
+
+    expect(onHeaderClick).toHaveBeenCalledOnce()
+  })
+
+  // ---------------------------------------------------------------------------
+  // Minimize button
+  // ---------------------------------------------------------------------------
+
+  it('renders a minimize button and calls onMinimize when clicked', () => {
+    const actions = mockActions()
+    const onMinimize = vi.fn()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        onMinimize={onMinimize}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: MINIMIZE_RE })
+    fireEvent.click(button)
+
+    expect(onMinimize).toHaveBeenCalledOnce()
+  })
+
+  it('labels minimize button "Minimize workspace" when expanded', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isMinimized={false}
+        onMinimize={vi.fn()}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: 'Minimize workspace' })
+    expect(button).toBeTruthy()
+  })
+
+  it('labels minimize button "Expand workspace" when minimized', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isMinimized
+        onMinimize={vi.fn()}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: 'Expand workspace' })
+    expect(button).toBeTruthy()
+  })
+
+  it('calls onHeaderClick when header label is clicked while minimized', () => {
+    const actions = mockActions()
+    const onHeaderClick = vi.fn()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isMinimized
+        onHeaderClick={onHeaderClick}
+      />
+    )
+
+    const label = screen.getByText('my-project')
+    fireEvent.click(label)
+
+    expect(onHeaderClick).toHaveBeenCalledOnce()
+  })
+
+  // ---------------------------------------------------------------------------
+  // Minimized state hides action buttons
+  // ---------------------------------------------------------------------------
+
+  it('hides diff, close workspace, and dev server buttons when minimized', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isMinimized
+        onMinimize={vi.fn()}
+      />
+    )
+
+    // These action buttons should not be present when minimized
+    expect(screen.queryByRole('button', { name: DIFF_VIEWER_RE })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Close workspace' })).toBeNull()
+
+    // But the minimize/expand button should still be visible
+    expect(
+      screen.getByRole('button', { name: 'Expand workspace' })
+    ).toBeTruthy()
+  })
+
+  it('shows all action buttons when not minimized', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isMinimized={false}
+        onMinimize={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: DIFF_VIEWER_RE })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Close workspace' })).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Minimize workspace' })
+    ).toBeTruthy()
   })
 })

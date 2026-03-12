@@ -43,7 +43,9 @@ import { queryDb } from '@livestore/livestore'
 import {
   ExternalLink,
   GitBranch,
+  GitMerge,
   GitPullRequest,
+  GitPullRequestClosed,
   Pause,
   Play,
   Trash2,
@@ -98,15 +100,45 @@ const unpauseContainerMutation = LaborerClient.mutation('container.unpause')
 /** Prefix used to associate workspaces with plans by branch name convention. */
 const PLAN_BRANCH_PREFIX = 'plan/'
 
-/** Map PR state to icon color class. */
-function getPrStateColorClass(prState: string | null): string {
+/** Returns the appropriate icon component for a PR state. */
+function PrStateIcon({
+  prState,
+  className,
+}: {
+  readonly prState: string | null
+  readonly className?: string
+}) {
   if (prState === 'MERGED') {
-    return 'text-purple-500'
+    return <GitMerge className={cn('text-purple-500', className)} />
   }
   if (prState === 'CLOSED') {
-    return 'text-destructive'
+    return (
+      <GitPullRequestClosed className={cn('text-destructive', className)} />
+    )
   }
-  return 'text-success'
+  return <GitPullRequest className={cn('text-success', className)} />
+}
+
+/** Returns the human-readable label for a PR state. */
+function getPrStateLabel(prState: string | null): string {
+  if (prState === 'MERGED') {
+    return 'merged'
+  }
+  if (prState === 'CLOSED') {
+    return 'closed'
+  }
+  return 'open'
+}
+
+/** Returns Tailwind classes for PR state badge styling. */
+function getPrStateClasses(prState: string | null): string {
+  if (prState === 'MERGED') {
+    return 'border-purple-500/30 bg-purple-500/10 text-purple-500'
+  }
+  if (prState === 'CLOSED') {
+    return 'border-destructive/30 bg-destructive/10 text-destructive'
+  }
+  return 'border-success/30 bg-success/10 text-success'
 }
 
 type WorkspaceStatus =
@@ -512,18 +544,20 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
               <Tooltip>
                 <TooltipTrigger>
                   <a
-                    className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-xs transition-colors hover:bg-accent"
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-xs transition-colors hover:bg-accent',
+                      getPrStateClasses(workspace.prState)
+                    )}
                     href={workspace.prUrl}
                     rel="noopener"
                     target="_blank"
                   >
-                    <GitPullRequest
-                      className={cn(
-                        'size-3',
-                        getPrStateColorClass(workspace.prState)
-                      )}
+                    <PrStateIcon
+                      className="size-3"
+                      prState={workspace.prState}
                     />
                     <span>#{workspace.prNumber}</span>
+                    <span>{getPrStateLabel(workspace.prState)}</span>
                   </a>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -558,15 +592,20 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                     title="Copy URL"
                     value={`https://${workspace.containerUrl}`}
                   />
-                  <a
-                    className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                    href={`https://${workspace.containerUrl}`}
-                    rel="noopener"
-                    target="_blank"
-                    title="Open in browser"
-                  >
-                    <ExternalLink className="size-3" />
-                  </a>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <a
+                        aria-label="Open in browser"
+                        className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                        href={`https://${workspace.containerUrl}`}
+                        rel="noopener"
+                        target="_blank"
+                      >
+                        <ExternalLink className="size-3" />
+                      </a>
+                    </TooltipTrigger>
+                    <TooltipContent>Open in browser</TooltipContent>
+                  </Tooltip>
                 </span>
               </span>
             </CardDescription>

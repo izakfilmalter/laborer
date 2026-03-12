@@ -52,6 +52,7 @@ import { useCallback, useState } from 'react'
 import type { GroupImperativeHandle } from 'react-resizable-panels'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { TerminalOverlayToolbar } from '@/components/terminal-overlay-toolbar'
 import { Button } from '@/components/ui/button'
 import {
   Empty,
@@ -76,7 +77,7 @@ import {
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
-import { usePanelActions } from '@/panels/panel-context'
+import { useFullscreenPaneId, usePanelActions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import { DevServerTerminalPane } from '@/panes/dev-server-terminal-pane'
 import { DiffPane } from '@/panes/diff-pane'
@@ -503,6 +504,7 @@ function SplitChild({
  */
 function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
   const actions = usePanelActions()
+  const fullscreenPaneId = useFullscreenPaneId()
   const [isDragOver, setIsDragOver] = useState(false)
 
   /**
@@ -515,6 +517,8 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
   }, [actions, node.id])
 
   const isEmptyTerminalPane = node.paneType === 'terminal' && !node.terminalId
+  const isOccupiedTerminalPane =
+    node.paneType === 'terminal' && !!node.terminalId
 
   const handleDragOver = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
@@ -586,6 +590,13 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
       role="region"
     >
       <PaneContent node={node} onTerminalExit={handleTerminalExit} />
+      {isOccupiedTerminalPane && (
+        <TerminalOverlayToolbar
+          actions={actions}
+          isFullscreen={fullscreenPaneId === node.id}
+          paneId={node.id}
+        />
+      )}
     </div>
   )
 }

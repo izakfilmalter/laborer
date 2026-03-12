@@ -51,8 +51,13 @@ const BASE_PROPS = {
   branchName: 'main',
   diffIsOpen: false,
   isContainerized: false,
+  prNumber: null,
+  prState: null,
+  prTitle: null,
+  prUrl: null,
   projectName: 'my-project',
   workspaceId: 'ws-1',
+  workspaceStatus: 'running',
 } as const
 
 describe('WorkspaceFrameHeader', () => {

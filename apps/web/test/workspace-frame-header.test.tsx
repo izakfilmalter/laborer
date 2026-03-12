@@ -393,4 +393,48 @@ describe('WorkspaceFrameHeader', () => {
       screen.getByRole('button', { name: 'Minimize workspace' })
     ).toBeTruthy()
   })
+
+  // ---------------------------------------------------------------------------
+  // Agent status: needs input indicator
+  // ---------------------------------------------------------------------------
+
+  it('shows "needs input" badge when agentStatus is waiting_for_input', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus="waiting_for_input"
+      />
+    )
+
+    const badge = screen.getByText('needs input')
+    expect(badge).toBeTruthy()
+  })
+
+  it('does not show "needs input" badge when agentStatus is null', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus={null}
+      />
+    )
+
+    expect(screen.queryByText('needs input')).toBeNull()
+  })
+
+  it('does not show "needs input" badge when agentStatus is active', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus="active"
+      />
+    )
+
+    expect(screen.queryByText('needs input')).toBeNull()
+  })
 })

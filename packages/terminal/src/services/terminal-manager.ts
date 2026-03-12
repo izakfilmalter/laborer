@@ -96,10 +96,20 @@ interface TerminalBufferState {
 }
 
 /**
+ * Agent status for a terminal, derived from foreground process transitions.
+ *
+ * - `active` — an AI agent is currently the foreground process
+ * - `waiting_for_input` — an agent was running but is now idle (needs user input or completed)
+ * - `null` — no agent has been detected in this terminal
+ */
+type AgentStatus = 'active' | 'waiting_for_input'
+
+/**
  * Shape of a terminal record returned by the manager.
  * Matches the TerminalInfo RPC schema fields.
  */
 interface TerminalRecord {
+  readonly agentStatus: AgentStatus | null
   readonly args: readonly string[]
   readonly command: string
   readonly cwd: string
@@ -528,6 +538,11 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       // Both running AND stopped terminals are stored here.
       const terminalsRef = yield* Ref.make(new Map<string, ManagedTerminal>())
 
+      // Per-terminal agent status tracking. Tracks whether an agent was
+      // previously the foreground process so we can detect the transition
+      // from "agent active" → "shell idle" (waiting for input / completed).
+      const agentStatusMap = new Map<string, AgentStatus | null>()
+
       // Per-terminal ring buffer and subscriber state.
       const bufferStates = new Map<string, TerminalBufferState>()
       const graceTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
@@ -538,6 +553,55 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       /** Publish a lifecycle event (fire-and-forget). */
       const emitEvent = (event: TerminalLifecycleEvent): void => {
         runFork(lifecyclePubSub.publish(event))
+      }
+
+      /**
+       * Compute the agent status for a terminal based on the current
+       * foreground process and the previous tracked status.
+       *
+       * State transitions:
+       * - Agent is foreground → `active`
+       * - Was `active`, now idle (no foreground or shell) → `waiting_for_input`
+       * - Was `waiting_for_input`, agent comes back → `active`
+       * - Non-agent foreground replaces agent → clear to `null`
+       * - No agent ever seen → `null`
+       */
+      const computeAgentStatus = (
+        terminalId: string,
+        foregroundProcess: ForegroundProcess | null
+      ): AgentStatus | null => {
+        const previous = agentStatusMap.get(terminalId) ?? null
+
+        if (foregroundProcess?.category === 'agent') {
+          agentStatusMap.set(terminalId, 'active')
+          return 'active'
+        }
+
+        // Agent was active, now idle (shell at prompt or no foreground process)
+        if (
+          previous === 'active' &&
+          (foregroundProcess === null || foregroundProcess.category === 'shell')
+        ) {
+          agentStatusMap.set(terminalId, 'waiting_for_input')
+          return 'waiting_for_input'
+        }
+
+        // Stay in waiting_for_input until a non-agent process takes over
+        // or the user dismisses it (by running another command)
+        if (
+          previous === 'waiting_for_input' &&
+          (foregroundProcess === null || foregroundProcess.category === 'shell')
+        ) {
+          return 'waiting_for_input'
+        }
+
+        // A non-agent, non-shell process is now foreground — clear agent status
+        if (previous !== null && foregroundProcess !== null) {
+          agentStatusMap.set(terminalId, null)
+          return null
+        }
+
+        return previous
       }
 
       const getOrCreateBufferState = (
@@ -773,6 +837,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           command,
           args: [...args],
           cwd,
+          agentStatus: null,
           foregroundProcess: null,
           hasChildProcess: false,
           status: 'running',
@@ -910,6 +975,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         })
 
         bufferStates.delete(terminalId)
+        agentStatusMap.delete(terminalId)
 
         emitEvent({ _tag: 'Removed', id: terminalId })
 
@@ -932,15 +998,19 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
               terminal.workspaceId === workspaceId
             ) {
               const isRunning = terminal.status === 'running'
+              const foregroundProcess = isRunning
+                ? getForegroundProcess(terminal.shellPid)
+                : null
               results.push({
                 id: terminal.id,
                 workspaceId: terminal.workspaceId,
                 command: terminal.command,
                 args: [...terminal.args],
                 cwd: terminal.cwd,
-                foregroundProcess: isRunning
-                  ? getForegroundProcess(terminal.shellPid)
+                agentStatus: isRunning
+                  ? computeAgentStatus(terminal.id, foregroundProcess)
                   : null,
+                foregroundProcess,
                 hasChildProcess: isRunning
                   ? checkHasChildProcess(terminal.shellPid)
                   : false,
@@ -1066,12 +1136,16 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           }
         )
 
+        // Reset agent status tracking on restart
+        agentStatusMap.delete(terminalId)
+
         const record: TerminalRecord = {
           id: terminalId,
           workspaceId: terminal.workspaceId,
           command: terminal.command,
           args: [...terminal.args],
           cwd: terminal.cwd,
+          agentStatus: null,
           foregroundProcess: null,
           hasChildProcess: false,
           status: 'running',
@@ -1288,6 +1362,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
 export { TerminalManager }
 export type {
+  AgentStatus,
   ForegroundProcess,
   ManagedTerminal,
   OutputSubscriber,

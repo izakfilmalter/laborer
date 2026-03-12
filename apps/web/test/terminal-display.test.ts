@@ -1,7 +1,7 @@
 /**
  * Unit tests for getTerminalDisplay — the pure classification function
  * that determines what icon, label, and badge to show for each terminal
- * in the sidebar based on its foreground process.
+ * in the sidebar based on its foreground process and agent status.
  *
  * @see apps/web/src/components/terminal-list.tsx — getTerminalDisplay
  */
@@ -11,21 +11,21 @@ import { getTerminalDisplay } from '../src/components/terminal-list'
 
 describe('getTerminalDisplay', () => {
   it('shows "stopped" badge for a stopped terminal', () => {
-    const result = getTerminalDisplay('/bin/zsh', null, false)
+    const result = getTerminalDisplay('/bin/zsh', null, false, null)
 
     expect(result.label).toBe('/bin/zsh')
     expect(result.badgeLabel).toBe('stopped')
   })
 
   it('shows "idle" badge when shell is running with no foreground process', () => {
-    const result = getTerminalDisplay('/bin/zsh', null, true)
+    const result = getTerminalDisplay('/bin/zsh', null, true, null)
 
     expect(result.label).toBe('/bin/zsh')
     expect(result.badgeLabel).toBe('idle')
   })
 
   it('falls back to "shell" label when command is empty', () => {
-    const result = getTerminalDisplay('', null, true)
+    const result = getTerminalDisplay('', null, true, null)
 
     expect(result.label).toBe('shell')
     expect(result.badgeLabel).toBe('idle')
@@ -39,7 +39,8 @@ describe('getTerminalDisplay', () => {
         label: 'Claude',
         rawName: 'claude',
       },
-      true
+      true,
+      'active'
     )
 
     expect(result.label).toBe('Claude')
@@ -54,7 +55,8 @@ describe('getTerminalDisplay', () => {
         label: 'Aider',
         rawName: 'aider',
       },
-      true
+      true,
+      'active'
     )
 
     expect(result.label).toBe('Aider')
@@ -69,7 +71,8 @@ describe('getTerminalDisplay', () => {
         label: 'Neovim',
         rawName: 'nvim',
       },
-      true
+      true,
+      null
     )
 
     expect(result.label).toBe('Neovim')
@@ -84,7 +87,8 @@ describe('getTerminalDisplay', () => {
         label: 'Node.js',
         rawName: 'node',
       },
-      true
+      true,
+      null
     )
 
     expect(result.label).toBe('Node.js')
@@ -99,7 +103,8 @@ describe('getTerminalDisplay', () => {
         label: 'zsh',
         rawName: 'zsh',
       },
-      true
+      true,
+      null
     )
 
     expect(result.label).toBe('/bin/zsh')
@@ -114,10 +119,61 @@ describe('getTerminalDisplay', () => {
         label: 'my-custom-tool',
         rawName: 'my-custom-tool',
       },
-      true
+      true,
+      null
     )
 
     expect(result.label).toBe('my-custom-tool')
     expect(result.badgeLabel).toBe('running')
+  })
+
+  // -------------------------------------------------------------------------
+  // Agent status: waiting_for_input
+  // -------------------------------------------------------------------------
+
+  it('shows "needs input" badge when agent status is waiting_for_input', () => {
+    const result = getTerminalDisplay(
+      '/bin/zsh',
+      null,
+      true,
+      'waiting_for_input'
+    )
+
+    expect(result.badgeLabel).toBe('needs input')
+    expect(result.badgeClassName).toContain('animate-pulse')
+  })
+
+  it('uses the command name as label when waiting_for_input with no foreground process', () => {
+    const result = getTerminalDisplay('claude', null, true, 'waiting_for_input')
+
+    expect(result.label).toBe('claude')
+    expect(result.badgeLabel).toBe('needs input')
+  })
+
+  it('does not show needs-input badge for active agents', () => {
+    const result = getTerminalDisplay(
+      '/bin/zsh',
+      {
+        category: 'agent',
+        label: 'Claude',
+        rawName: 'claude',
+      },
+      true,
+      'active'
+    )
+
+    expect(result.badgeLabel).toBe('agent')
+    expect(result.badgeClassName).not.toContain('animate-pulse')
+  })
+
+  it('does not show needs-input for stopped terminals even with waiting status', () => {
+    const result = getTerminalDisplay(
+      '/bin/zsh',
+      null,
+      false,
+      'waiting_for_input'
+    )
+
+    expect(result.badgeLabel).toBe('stopped')
   })
 })

@@ -29,7 +29,13 @@ import {
   X,
 } from 'lucide-react'
 import type React from 'react'
-import { type ReactNode, useCallback, useMemo, useState } from 'react'
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react'
 import { toast } from 'sonner'
 import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
@@ -42,9 +48,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import type { ForegroundProcess } from '@/hooks/use-terminal-list'
+import type { AgentStatus, ForegroundProcess } from '@/hooks/use-terminal-list'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { cn, extractErrorMessage } from '@/lib/utils'
+import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
 import { usePanelActions } from '@/panels/panel-context'
 
 const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
@@ -52,6 +59,10 @@ const restartTerminalMutation =
   TerminalServiceClient.mutation('terminal.restart')
 
 interface TerminalListProps {
+  /** Called when the aggregate agent status for this workspace changes. */
+  readonly onAgentStatusChange?:
+    | ((status: AgentStatus | null) => void)
+    | undefined
   /** The project ID this workspace belongs to (for agent config resolution). */
   readonly projectId: string
   /** The workspace ID to filter terminals for. */
@@ -65,7 +76,11 @@ interface TerminalListProps {
  * button, an "Agent" button (spawns the configured AI agent), and
  * click-to-select behavior for switching the active panel pane.
  */
-function TerminalList({ projectId, workspaceId }: TerminalListProps) {
+function TerminalList({
+  onAgentStatusChange,
+  projectId,
+  workspaceId,
+}: TerminalListProps) {
   const {
     errorMessage,
     isServiceAvailable,
@@ -96,10 +111,19 @@ function TerminalList({ projectId, workspaceId }: TerminalListProps) {
     configResult._tag === 'Success' ? configResult.value.agent.value : 'claude'
   const AgentIcon = AGENT_ICONS[agentProvider]
 
-  // Filter terminals for this workspace
+  // Filter terminals for this workspace and derive aggregate agent status
   const workspaceTerminals = terminalList.filter(
     (t) => t.workspaceId === workspaceId
   )
+
+  const workspaceAgentStatus = useMemo(
+    () => deriveWorkspaceAgentStatus(workspaceTerminals),
+    [workspaceTerminals]
+  )
+
+  useEffect(() => {
+    onAgentStatusChange?.(workspaceAgentStatus)
+  }, [onAgentStatusChange, workspaceAgentStatus])
 
   const handleSpawnTerminal = useCallback(async () => {
     if (!isServiceAvailable) {
@@ -296,6 +320,7 @@ interface TerminalItemProps {
     readonly id: string
     readonly workspaceId: string
     readonly command: string
+    readonly agentStatus: AgentStatus | null
     readonly foregroundProcess: ForegroundProcess | null
     readonly status: string
   }
@@ -322,12 +347,13 @@ const AGENT_ICON_BY_RAW_NAME: Record<
 
 /**
  * Get the icon and label to display for a terminal based on its
- * foreground process. Falls back to the terminal command name.
+ * foreground process and agent status. Falls back to the terminal command name.
  */
 function getTerminalDisplay(
   command: string,
   foregroundProcess: ForegroundProcess | null,
-  isRunning: boolean
+  isRunning: boolean,
+  agentStatus: AgentStatus | null
 ): {
   icon: ReactNode
   label: string
@@ -343,6 +369,17 @@ function getTerminalDisplay(
       badgeLabel: 'stopped',
       badgeClassName:
         'border-muted-foreground/30 bg-muted text-muted-foreground',
+    }
+  }
+
+  // Agent finished / waiting for user input — pulsing amber badge
+  if (agentStatus === 'waiting_for_input') {
+    return {
+      icon: <TerminalIcon className="size-3.5 shrink-0 text-amber-400" />,
+      label: command || 'shell',
+      badgeLabel: 'needs input',
+      badgeClassName:
+        'animate-pulse border-amber-400/30 bg-amber-400/10 text-amber-400',
     }
   }
 
@@ -414,7 +451,8 @@ function TerminalItem({
   const { icon, label, badgeLabel, badgeClassName } = getTerminalDisplay(
     terminal.command,
     terminal.foregroundProcess,
-    isRunning
+    isRunning,
+    terminal.agentStatus
   )
 
   const handleDragStart = useCallback(

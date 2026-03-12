@@ -13,6 +13,8 @@ const MENU_ACTION_CHANNEL = 'desktop:menu-action'
 const UPDATE_TRAY_COUNT_CHANNEL = 'desktop:update-tray-count'
 const RESTART_SIDECAR_CHANNEL = 'desktop:restart-sidecar'
 const SIDECAR_STATUS_CHANNEL = 'sidecar:status'
+const SEND_NOTIFICATION_CHANNEL = 'desktop:send-notification'
+const NOTIFICATION_CLICKED_CHANNEL = 'desktop:notification-clicked'
 const UPDATE_STATE_CHANNEL = 'desktop:update-state'
 const UPDATE_GET_STATE_CHANNEL = 'desktop:update-get-state'
 const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
@@ -76,6 +78,26 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     ipcRenderer.invoke(UPDATE_TRAY_COUNT_CHANNEL, count),
 
   restartSidecar: (name) => ipcRenderer.invoke(RESTART_SIDECAR_CHANNEL, name),
+
+  sendNotification: (payload) =>
+    ipcRenderer.invoke(SEND_NOTIFICATION_CHANNEL, payload),
+
+  onNotificationClicked: (listener) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      workspaceId: unknown
+    ) => {
+      if (typeof workspaceId !== 'string') {
+        return
+      }
+      listener(workspaceId)
+    }
+
+    ipcRenderer.on(NOTIFICATION_CLICKED_CHANNEL, wrappedListener)
+    return () => {
+      ipcRenderer.removeListener(NOTIFICATION_CLICKED_CHANNEL, wrappedListener)
+    }
+  },
 
   onSidecarStatus: (listener) => {
     const wrappedListener = (

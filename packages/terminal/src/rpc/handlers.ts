@@ -94,6 +94,7 @@ const toLifecycleEventSchema = (
  * compile time.
  */
 const toTerminalInfo = (record: {
+  readonly agentStatus: 'active' | 'waiting_for_input' | null
   readonly args: readonly string[]
   readonly command: string
   readonly cwd: string
@@ -112,6 +113,7 @@ const toTerminalInfo = (record: {
   command: record.command,
   args: [...record.args],
   cwd: record.cwd,
+  agentStatus: record.agentStatus,
   foregroundProcess: record.foregroundProcess,
   hasChildProcess: record.hasChildProcess,
   status: record.status,

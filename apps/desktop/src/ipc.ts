@@ -1,4 +1,5 @@
 import type {
+  AgentNotificationPayload,
   ContextMenuItem,
   DesktopUpdateActionResult,
   DesktopUpdateState,
@@ -6,6 +7,7 @@ import type {
 import {
   BrowserWindow,
   dialog,
+  Notification as ElectronNotification,
   ipcMain,
   Menu,
   type MenuItemConstructorOptions,
@@ -24,6 +26,8 @@ export const MENU_ACTION_CHANNEL = 'desktop:menu-action'
 export const UPDATE_TRAY_COUNT_CHANNEL = 'desktop:update-tray-count'
 export const RESTART_SIDECAR_CHANNEL = 'desktop:restart-sidecar'
 export const SIDECAR_STATUS_CHANNEL = 'sidecar:status'
+export const SEND_NOTIFICATION_CHANNEL = 'desktop:send-notification'
+export const NOTIFICATION_CLICKED_CHANNEL = 'desktop:notification-clicked'
 export const UPDATE_STATE_CHANNEL = 'desktop:update-state'
 export const UPDATE_GET_STATE_CHANNEL = 'desktop:update-get-state'
 export const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
@@ -278,5 +282,44 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.removeHandler(UPDATE_INSTALL_CHANNEL)
   ipcMain.handle(UPDATE_INSTALL_CHANNEL, async () => {
     return (await installUpdateCallback?.()) ?? null
+  })
+
+  // -- Agent notification ---------------------------------------------------
+  ipcMain.removeHandler(SEND_NOTIFICATION_CHANNEL)
+  ipcMain.handle(SEND_NOTIFICATION_CHANNEL, (_event, payload: unknown) => {
+    if (
+      typeof payload !== 'object' ||
+      payload === null ||
+      !('title' in payload) ||
+      !('body' in payload) ||
+      !('workspaceId' in payload)
+    ) {
+      return
+    }
+
+    const { title, body, workspaceId } = payload as AgentNotificationPayload
+
+    if (
+      typeof title !== 'string' ||
+      typeof body !== 'string' ||
+      typeof workspaceId !== 'string'
+    ) {
+      return
+    }
+
+    if (!ElectronNotification.isSupported()) {
+      return
+    }
+
+    const notification = new ElectronNotification({ title, body })
+
+    notification.on('click', () => {
+      // Focus the main window and tell the renderer which workspace was clicked
+      mainWindow.show()
+      mainWindow.focus()
+      mainWindow.webContents.send(NOTIFICATION_CLICKED_CHANNEL, workspaceId)
+    })
+
+    notification.show()
   })
 }

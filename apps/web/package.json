@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "with-env": "dotenv -e ../../.env.local --",
+    "dev": "bun run with-env wait-on \"tcp:${VITE_SERVER_PORT:-2100}\" && vite",
     "build": "vite build",
     "serve": "vite preview",
     "start": "vite",
@@ -84,11 +85,13 @@
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "^4.3.4",
+    "dotenv-cli": "^11.0.0",
     "jsdom": "^26.1.0",
     "postcss": "^8.5.3",
     "tailwindcss": "^4.0.15",
     "typescript": "catalog:",
     "vite": "^6.2.2",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "wait-on": "^9.0.4"
   }
 }

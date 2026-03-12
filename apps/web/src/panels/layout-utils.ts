@@ -1318,6 +1318,44 @@ function shouldConfirmCloseWorkspace(
 }
 
 /**
+ * Return active terminals (those with running child processes) for a
+ * workspace, including their human-readable foreground process labels.
+ *
+ * Used by the destroy workspace dialog to show which terminals will be
+ * killed, so the user can make an informed decision without a second
+ * confirmation modal.
+ *
+ * @param layout - The current panel layout tree (may be undefined)
+ * @param workspaceId - The workspace being destroyed
+ * @param terminals - The live terminal list from useTerminalList
+ * @returns Array of active terminal descriptors with id and display label
+ */
+function getWorkspaceActiveTerminals(
+  layout: PanelNode | undefined,
+  workspaceId: string,
+  terminals: ReadonlyArray<{
+    readonly id: string
+    readonly hasChildProcess: boolean
+    readonly foregroundProcess: {
+      readonly label: string
+    } | null
+  }>
+): ReadonlyArray<{ readonly id: string; readonly label: string }> {
+  const terminalIds = getWorkspaceTerminalIds(layout, workspaceId)
+  const result: { readonly id: string; readonly label: string }[] = []
+  for (const id of terminalIds) {
+    const terminal = terminals.find((t) => t.id === id)
+    if (terminal?.hasChildProcess === true) {
+      result.push({
+        id,
+        label: terminal.foregroundProcess?.label ?? 'Running process',
+      })
+    }
+  }
+  return result
+}
+
+/**
  * Remove all leaf nodes belonging to a workspace from the layout tree.
  *
  * Sequentially closes each workspace leaf. Returns the resulting tree
@@ -1388,6 +1426,7 @@ export {
   getStaleTerminalLeaves,
   getTerminalIdsToRemove,
   getTreeDepth,
+  getWorkspaceActiveTerminals,
   getWorkspaceIds,
   getWorkspaceTerminalIds,
   isWorkspaceFrameData,

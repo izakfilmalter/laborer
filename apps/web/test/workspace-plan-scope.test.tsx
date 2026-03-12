@@ -39,6 +39,18 @@ const {
 vi.mock('@/lib/desktop', () => ({
   isElectron: isElectronMock,
   openExternalUrl: openExternalUrlMock,
+  terminalRpcUrl: () => 'http://localhost:2101',
+}))
+
+vi.mock('@/hooks/use-terminal-list', () => ({
+  useTerminalList: () => ({
+    terminals: [],
+    refresh: vi.fn(async () => []),
+    errorMessage: null,
+    isServiceAvailable: true,
+    isLoading: false,
+    serviceStatus: 'available' as const,
+  }),
 }))
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({

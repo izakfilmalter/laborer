@@ -43,6 +43,7 @@ vi.mock('@/panels/panel-context', () => {
     closePane: vi.fn(),
     closeTerminalPane: vi.fn(),
     closeWorkspace: vi.fn(),
+    forceCloseWorkspace: vi.fn(),
     reorderWorkspaces: vi.fn(),
     resizePane: vi.fn(),
     setActivePaneId: vi.fn(),

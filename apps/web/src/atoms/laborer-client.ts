@@ -50,3 +50,13 @@ export class LaborerClient extends AtomRpc.Tag<LaborerClient>()(
     ),
   }
 ) {}
+
+/**
+ * Reactivity keys for automatic cache invalidation.
+ *
+ * Pass these keys to both `LaborerClient.query` (via `options.reactivityKeys`)
+ * and `LaborerClient.mutation` calls (via the `reactivityKeys` field in the
+ * setter argument) so that a successful mutation automatically re-fetches
+ * any subscribed query atoms.
+ */
+export const ConfigReactivityKeys = ['config'] as const

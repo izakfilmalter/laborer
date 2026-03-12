@@ -28,7 +28,7 @@ import {
 import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { LaborerClient } from '@/atoms/laborer-client'
+import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -79,7 +79,12 @@ function TerminalList({ projectId, workspaceId }: TerminalListProps) {
 
   // Fetch the project config to determine which agent to use
   const configGet$ = useMemo(
-    () => LaborerClient.query('config.get', { projectId }),
+    () =>
+      LaborerClient.query(
+        'config.get',
+        { projectId },
+        { reactivityKeys: ConfigReactivityKeys }
+      ),
     [projectId]
   )
   const configResult = useAtomValue(configGet$)

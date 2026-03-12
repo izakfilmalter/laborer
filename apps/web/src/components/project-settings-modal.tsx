@@ -2,7 +2,7 @@ import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { Plus, Settings, Trash2 } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { LaborerClient } from '@/atoms/laborer-client'
+import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { Button } from '@/components/ui/button'
 import {
@@ -76,7 +76,12 @@ function ProjectSettingsForm({
   readonly onSaved: () => void
 }) {
   const configGet$ = useMemo(
-    () => LaborerClient.query('config.get', { projectId }),
+    () =>
+      LaborerClient.query(
+        'config.get',
+        { projectId },
+        { reactivityKeys: ConfigReactivityKeys }
+      ),
     [projectId]
   )
   const configResult = useAtomValue(configGet$)
@@ -199,6 +204,7 @@ function ProjectSettingsForm({
           projectId,
           config: updates,
         },
+        reactivityKeys: ConfigReactivityKeys,
       })
       toast.success(`Saved settings for ${projectName}`)
       onSaved()

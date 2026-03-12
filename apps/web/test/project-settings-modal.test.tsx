@@ -66,6 +66,7 @@ interface ConfigResult {
 let configResult: ConfigResult
 
 vi.mock('@/atoms/laborer-client', () => ({
+  ConfigReactivityKeys: ['config'],
   LaborerClient: {
     mutation: mutationMock,
     query: queryMock,
@@ -163,9 +164,11 @@ describe('ProjectSettingsModal', () => {
     expect(screen.getByDisplayValue('/tmp/worktrees')).toBeTruthy()
     expect(screen.getByDisplayValue('bun install')).toBeTruthy()
     expect(screen.getByDisplayValue('.rlph/config.toml')).toBeTruthy()
-    expect(queryMock).toHaveBeenCalledWith('config.get', {
-      projectId: 'project-1',
-    })
+    expect(queryMock).toHaveBeenCalledWith(
+      'config.get',
+      { projectId: 'project-1' },
+      { reactivityKeys: ['config'] }
+    )
   })
 
   it('saves updated fields and shows success toast', async () => {
@@ -185,6 +188,7 @@ describe('ProjectSettingsModal', () => {
             worktreeDir: '~/dev/worktrees',
           },
         },
+        reactivityKeys: ['config'],
       })
     })
 

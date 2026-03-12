@@ -13,7 +13,10 @@ import { queryDb } from '@livestore/livestore'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
-import { useTerminalList } from '@/hooks/use-terminal-list'
+import {
+  removeTerminalListItem,
+  useTerminalList,
+} from '@/hooks/use-terminal-list'
 import { useLaborerStore } from '@/livestore/store'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import {
@@ -146,6 +149,17 @@ export function usePanelLayout() {
     () => persistedLayoutTree !== undefined
   )
   const hasReconciled = useRef(false)
+
+  const removeTerminalOptimistically = useCallback(
+    (terminalId: string, logContext: string) => {
+      removeTerminalListItem(terminalId)
+      removeTerminal({ payload: { id: terminalId } }).catch((error) => {
+        console.warn(`${logContext} terminal remove failed:`, error)
+      })
+    },
+    [removeTerminal]
+  )
+
   useEffect(() => {
     if (terminalsLoading || hasReconciled.current) {
       return
@@ -292,9 +306,7 @@ export function usePanelLayout() {
       // You shouldn't have running terminals that aren't in a pane.
       const terminalIds = getTerminalIdsToRemove(base, paneId)
       for (const terminalId of terminalIds) {
-        removeTerminal({ payload: { id: terminalId } }).catch((error) => {
-          console.warn('[close-pane] terminal remove failed:', error)
-        })
+        removeTerminalOptimistically(terminalId, '[close-pane]')
       }
 
       // Compute the sibling BEFORE the close mutation removes the pane.
@@ -352,7 +364,7 @@ export function usePanelLayout() {
       initialLayout,
       persistedActivePaneId,
       store,
-      removeTerminal,
+      removeTerminalOptimistically,
     ]
   )
 
@@ -658,11 +670,14 @@ export function usePanelLayout() {
         }
       }
       // No pane found — remove the terminal from the service directly
-      removeTerminal({ payload: { id: terminalId } }).catch((error) => {
-        console.warn('[close-terminal-pane] terminal remove failed:', error)
-      })
+      removeTerminalOptimistically(terminalId, '[close-terminal-pane]')
     },
-    [persistedLayoutTree, initialLayout, handleClosePane, removeTerminal]
+    [
+      persistedLayoutTree,
+      initialLayout,
+      handleClosePane,
+      removeTerminalOptimistically,
+    ]
   )
 
   /**
@@ -680,9 +695,7 @@ export function usePanelLayout() {
       // Kill all terminals belonging to this workspace
       const terminalIds = getWorkspaceTerminalIds(base, workspaceId)
       for (const terminalId of terminalIds) {
-        removeTerminal({ payload: { id: terminalId } }).catch((error) => {
-          console.warn('[close-workspace] terminal remove failed:', error)
-        })
+        removeTerminalOptimistically(terminalId, '[close-workspace]')
       }
 
       // Remove all workspace panes from the layout tree
@@ -722,7 +735,7 @@ export function usePanelLayout() {
       initialLayout,
       persistedActivePaneId,
       store,
-      removeTerminal,
+      removeTerminalOptimistically,
     ]
   )
 

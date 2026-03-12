@@ -1063,6 +1063,143 @@ function findNewLeafAfterSplit(
 }
 
 // ---------------------------------------------------------------------------
+// Terminal pane assignment — pure computation
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of computing where a terminal should be assigned in the layout.
+ *
+ * @see computeTerminalPaneAssignment
+ */
+interface TerminalPaneAssignmentResult {
+  /** The pane ID that should receive focus (the pane displaying the terminal). */
+  readonly activePaneId: string
+  /** The updated layout tree with the terminal assigned. */
+  readonly layoutTree: PanelNode
+  /**
+   * Whether the dev server auto-open logic should fire for this assignment.
+   * True for new pane creation / replacement, false when just focusing an
+   * existing pane that already has the terminal.
+   */
+  readonly triggerDevServer: boolean
+}
+
+/**
+ * Compute the layout tree mutation and focus target for assigning a terminal
+ * to a pane.
+ *
+ * This is the pure logic extracted from `handleAssignTerminalToPane` in the
+ * route component, making it testable without React hooks or LiveStore.
+ *
+ * Resolution strategy (in order):
+ * 1. If no `paneId` and the terminal already has a pane → focus it.
+ * 2. If no layout exists → create a single-pane layout.
+ * 3. If a specific `paneId` is given → replace that pane's content.
+ * 4. If an empty terminal pane exists → assign to it.
+ * 5. Otherwise → split the last leaf horizontally and assign to the new pane.
+ *
+ * In ALL cases the returned `activePaneId` points to the pane displaying the
+ * terminal, ensuring newly spawned terminals are immediately focused.
+ *
+ * @param base - The current layout tree, or undefined if no layout exists
+ * @param terminalId - The terminal to display
+ * @param workspaceId - The workspace the terminal belongs to
+ * @param paneId - Optional specific pane to assign to
+ * @returns The new layout tree, active pane ID, and dev-server trigger flag
+ */
+function computeTerminalPaneAssignment(
+  base: PanelNode | undefined,
+  terminalId: string,
+  workspaceId: string,
+  paneId?: string
+): TerminalPaneAssignmentResult {
+  // 1. If no specific pane target, check if this terminal already has a pane.
+  if (!paneId && base) {
+    const existingLeaf = findLeafByTerminalId(base, terminalId)
+    if (existingLeaf) {
+      return {
+        layoutTree: base,
+        activePaneId: existingLeaf.id,
+        triggerDevServer: false,
+      }
+    }
+  }
+
+  // 2. No layout at all — create a new single-pane layout.
+  if (!base) {
+    const newLeafId = generateId('pane')
+    const newLeaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: newLeafId,
+      paneType: 'terminal',
+      terminalId,
+      workspaceId,
+    }
+    return {
+      layoutTree: newLeaf,
+      activePaneId: newLeafId,
+      triggerDevServer: true,
+    }
+  }
+
+  // 3. Specific pane ID given — replace that pane's content.
+  if (paneId) {
+    const targetLeaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: paneId,
+      paneType: 'terminal',
+      terminalId,
+      workspaceId,
+    }
+    const newTree = replaceNode(base, paneId, targetLeaf)
+    return { layoutTree: newTree, activePaneId: paneId, triggerDevServer: true }
+  }
+
+  // 4. Find an empty terminal pane.
+  const emptyPane = findEmptyTerminalPane(base)
+  if (emptyPane) {
+    const updatedLeaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: emptyPane.id,
+      paneType: 'terminal',
+      terminalId,
+      workspaceId,
+    }
+    const newTree = replaceNode(base, emptyPane.id, updatedLeaf)
+    return {
+      layoutTree: newTree,
+      activePaneId: emptyPane.id,
+      triggerDevServer: true,
+    }
+  }
+
+  // 5. No empty pane — split the last leaf and assign to the new pane.
+  const lastLeafId = getLastLeafId(base)
+  if (lastLeafId) {
+    const newPaneContent: Partial<LeafNode> = {
+      paneType: 'terminal',
+      terminalId,
+      workspaceId,
+    }
+    const newTree = splitPane(base, lastLeafId, 'horizontal', newPaneContent)
+    const newLeaf = findNewLeafAfterSplit(base, newTree)
+    const newActivePaneId = newLeaf?.id ?? lastLeafId
+    return {
+      layoutTree: newTree,
+      activePaneId: newActivePaneId,
+      triggerDevServer: true,
+    }
+  }
+
+  // Fallback — should not happen for valid trees, but return base unchanged.
+  return {
+    layoutTree: base,
+    activePaneId: getFirstLeafId(base) ?? '',
+    triggerDevServer: false,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Workspace frame drag-and-drop helpers
 // ---------------------------------------------------------------------------
 
@@ -1116,6 +1253,7 @@ function sortWorkspaceLayouts<
 export {
   closePane,
   computeResize,
+  computeTerminalPaneAssignment,
   countLeaves,
   ensureValidActivePaneId,
   filterTreeByWorkspace,

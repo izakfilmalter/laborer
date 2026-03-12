@@ -79,16 +79,14 @@ import type { NavigationDirection } from '@/panels/layout-utils'
 import {
   closePane,
   computeResize,
+  computeTerminalPaneAssignment,
   ensureValidActivePaneId,
   filterTreeByWorkspace,
-  findEmptyTerminalPane,
   findLeafByTerminalId,
   findNewLeafAfterSplit,
   findNodeById,
   findSiblingPaneId,
-  generateId,
   getFirstLeafId,
-  getLastLeafId,
   getLeafIds,
   getLeafNodes,
   getStaleTerminalLeaves,
@@ -704,93 +702,20 @@ function usePanelLayout() {
   const handleAssignTerminalToPane = useCallback(
     (terminalId: string, workspaceId: string, paneId?: string) => {
       const base = persistedLayoutTree ?? initialLayout
-
-      // If no specific pane target, check if this terminal already has a pane.
-      // If so, just focus it instead of creating a duplicate.
-      if (!paneId && base) {
-        const existingLeaf = findLeafByTerminalId(base, terminalId)
-        if (existingLeaf) {
-          commitAssignment(base, existingLeaf.id, workspaceId, false)
-          return
-        }
-      }
-
-      if (!base) {
-        // No layout at all — create a new single-pane layout for this terminal
-        const newLeafId = generateId('pane')
-        const newLeaf: LeafNode = {
-          _tag: 'LeafNode' as const,
-          id: newLeafId,
-          paneType: 'terminal' as const,
-          terminalId,
-          workspaceId,
-        }
-        commitAssignment(newLeaf, newLeaf.id, workspaceId, true)
-        return
-      }
-
-      // If a specific pane ID is given, replace that pane's content
-      if (paneId) {
-        const targetLeaf: LeafNode = {
-          _tag: 'LeafNode' as const,
-          id: paneId,
-          paneType: 'terminal' as const,
-          terminalId,
-          workspaceId,
-        }
-        const newTree = replaceNode(base, paneId, targetLeaf)
-        commitAssignment(newTree, paneId, workspaceId, true)
-        return
-      }
-
-      // No specific pane — find an empty terminal pane or the first pane
-      const emptyPane = findEmptyTerminalPane(base)
-      if (emptyPane) {
-        const updatedLeaf: LeafNode = {
-          _tag: 'LeafNode' as const,
-          id: emptyPane.id,
-          paneType: 'terminal' as const,
-          terminalId,
-          workspaceId,
-        }
-        const newTree = replaceNode(base, emptyPane.id, updatedLeaf)
-        commitAssignment(newTree, emptyPane.id, workspaceId, true)
-        return
-      }
-
-      // No empty pane — split the last leaf and assign to the new pane.
-      // Splitting the last leaf (instead of the first) ensures the new
-      // workspace panel appears at the bottom of the workspace stack,
-      // because workspace frame order follows DFS traversal order.
-      const lastLeafId = getLastLeafId(base)
-      if (lastLeafId) {
-        const newPaneContent: Partial<LeafNode> = {
-          paneType: 'terminal' as const,
-          terminalId,
-          workspaceId,
-        }
-        const newTree = splitPane(
-          base,
-          lastLeafId,
-          'horizontal',
-          newPaneContent
-        )
-        store.commit(
-          layoutPaneAssigned({
-            id: LAYOUT_SESSION_ID,
-            layoutTree: newTree,
-            activePaneId: persistedActivePaneId,
-          })
-        )
-      }
+      const result = computeTerminalPaneAssignment(
+        base,
+        terminalId,
+        workspaceId,
+        paneId
+      )
+      commitAssignment(
+        result.layoutTree,
+        result.activePaneId,
+        workspaceId,
+        result.triggerDevServer
+      )
     },
-    [
-      persistedLayoutTree,
-      initialLayout,
-      persistedActivePaneId,
-      store,
-      commitAssignment,
-    ]
+    [persistedLayoutTree, initialLayout, commitAssignment]
   )
 
   // Keep the assign-terminal ref in sync with the latest handler

@@ -48,8 +48,8 @@ const AGENT_OPTIONS: ReadonlyArray<{
   readonly label: string
   readonly value: AgentProvider
 }> = [
-  { label: 'Claude', value: 'claude' },
   { label: 'OpenCode', value: 'opencode' },
+  { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
 ]
 
@@ -88,7 +88,7 @@ function ProjectSettingsForm({
   const configResult = useAtomValue(configGet$)
   const updateConfig = useAtomSet(updateConfigMutation, { mode: 'promise' })
 
-  const [agent, setAgent] = useState<AgentProvider>('claude')
+  const [agent, setAgent] = useState<AgentProvider>('opencode')
   const [worktreeDir, setWorktreeDir] = useState('')
   const [setupScripts, setSetupScripts] = useState<SetupScriptItem[]>([])
   const [rlphConfig, setRlphConfig] = useState('')

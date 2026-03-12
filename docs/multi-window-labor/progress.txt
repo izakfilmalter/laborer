@@ -46,3 +46,10 @@
 - Updated desktop window tracking so every created Laborer window writes its own restoration metadata, including `windowId`, bounds, and maximized state, into the shared persisted record set.
 - Added desktop tests for parsing/serializing multi-window record payloads plus a disk-backed manager test that saves and reloads multiple window records successfully.
 - Verified with `bun run test` and `bun run typecheck` in `apps/desktop`.
+
+2026-03-12 - Issue 8: Restore All Windows on Relaunch
+- Selected Issue 8 as the highest-priority remaining task because it is the next slice in the PRD's recommended delivery order and it unblocks invalid-session repair plus final multi-window UX hardening.
+- Updated desktop startup to restore every persisted window record on relaunch instead of only reopening the first saved window.
+- Kept each restored native window bound to its own persisted `windowId`, so bootstrap arguments continue to hydrate the matching window-scoped panel session in the renderer.
+- Added a desktop main-process test that exercises a multi-window relaunch and verifies both restored windows are recreated with their own bounds, `windowId`, and maximized state.
+- Verified with `bun run test` and `bun run typecheck` in `apps/desktop`.

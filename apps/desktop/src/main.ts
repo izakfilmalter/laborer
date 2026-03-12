@@ -295,7 +295,13 @@ app
 
     const savedWindowRecords = windowStateManager.loadWindowRecords()
 
-    createWindow(savedWindowRecords[0])
+    if (savedWindowRecords.length > 0) {
+      for (const savedWindowRecord of savedWindowRecords) {
+        createWindow(savedWindowRecord)
+      }
+    } else {
+      createWindow()
+    }
 
     // Build the macOS-native application menu (About, Settings, Edit, View, Window).
     configureApplicationMenu(

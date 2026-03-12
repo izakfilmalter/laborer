@@ -168,9 +168,9 @@ Restore all previously open Laborer windows on relaunch, wiring persisted window
 
 ## Acceptance criteria
 
-- [ ] Relaunch restores all previously open windows, not just one
-- [ ] Each restored window hydrates the correct persisted panel session
-- [ ] Tests cover a multi-window relaunch flow end-to-end
+- [x] Relaunch restores all previously open windows, not just one
+- [x] Each restored window hydrates the correct persisted panel session
+- [x] Tests cover a multi-window relaunch flow end-to-end
 
 ## Blocked by
 
@@ -280,7 +280,7 @@ Do a final pass on multi-window edge cases and user feel without expanding scope
 | 5 | Renderer Writes Only Its Own Session | 4 | Done |
 | 6 | Default Blank Session Seeding | 4 | Done |
 | 7 | Persist Window Records | 1 | Done |
-| 8 | Restore All Windows on Relaunch | None | Ready |
+| 8 | Restore All Windows on Relaunch | None | Done |
 | 9 | Invalid Session Repair | 8 | Blocked |
 | 10 | Preserve Closed Window Sessions | None | Ready |
 | 11 | Focus Existing Window for Open Workspace | 5 | Ready |

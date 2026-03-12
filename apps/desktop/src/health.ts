@@ -127,7 +127,11 @@ export function backoffDelay(attempt: number): number {
  */
 export class HealthMonitor {
   private readonly sidecarManager: SidecarManager
-  private readonly ports: { serverPort: number; terminalPort: number }
+  private readonly ports: {
+    fileWatcherPort: number
+    serverPort: number
+    terminalPort: number
+  }
   private listener: StatusListener | null = null
 
   /** Per-sidecar restart attempt counter for exponential backoff. */
@@ -147,7 +151,11 @@ export class HealthMonitor {
 
   constructor(
     sidecarManager: SidecarManager,
-    ports: { serverPort: number; terminalPort: number }
+    ports: {
+      fileWatcherPort: number
+      serverPort: number
+      terminalPort: number
+    }
   ) {
     this.sidecarManager = sidecarManager
     this.ports = ports
@@ -178,6 +186,8 @@ export class HealthMonitor {
         return `http://127.0.0.1:${this.ports.serverPort}`
       case 'terminal':
         return `http://127.0.0.1:${this.ports.terminalPort}`
+      case 'file-watcher':
+        return `http://127.0.0.1:${this.ports.fileWatcherPort}`
       default:
         // MCP communicates over stdio — no HTTP health check.
         return null
@@ -227,19 +237,30 @@ export class HealthMonitor {
   }
 
   /**
-   * Spawn the terminal and server services, waiting for each to become
-   * healthy before proceeding. Terminal starts first because the server
-   * connects to it on startup.
+   * Spawn the terminal, file-watcher, and server services, waiting for
+   * each to become healthy before proceeding. Terminal and file-watcher
+   * start first (in parallel) because the server connects to both on
+   * startup.
    *
    * Replaces the delay-based `SidecarManager.spawnServices()`.
    *
-   * @returns `true` if both services are healthy.
+   * @returns `true` if all services are healthy.
    */
   async spawnServices(): Promise<boolean> {
-    // Terminal must start first — the server connects to it on startup.
-    const terminalOk = await this.spawnAndWaitHealthy('terminal')
+    // Terminal and file-watcher can start in parallel — the server
+    // depends on both but they are independent of each other.
+    const [terminalOk, fileWatcherOk] = await Promise.all([
+      this.spawnAndWaitHealthy('terminal'),
+      this.spawnAndWaitHealthy('file-watcher'),
+    ])
+
     if (!terminalOk) {
       console.error('[health] Terminal failed to become healthy')
+      return false
+    }
+
+    if (!fileWatcherOk) {
+      console.error('[health] File-watcher failed to become healthy')
       return false
     }
 
@@ -353,10 +374,14 @@ export class HealthMonitor {
   }
 
   /**
-   * Check if both server and terminal are healthy.
+   * Check if all core services (server, terminal, file-watcher) are healthy.
    */
   areServicesHealthy(): boolean {
-    return this.healthySet.has('server') && this.healthySet.has('terminal')
+    return (
+      this.healthySet.has('server') &&
+      this.healthySet.has('terminal') &&
+      this.healthySet.has('file-watcher')
+    )
   }
 
   /**

@@ -210,7 +210,7 @@ describe('DiffService downstream event consumer', () => {
 
           emitEvent.current({
             subscriptionId: repoSubId,
-            type: 'rename',
+            type: 'add',
             fileName: 'new-file.ts',
             absolutePath: join(repoPath, 'new-file.ts'),
           })
@@ -290,7 +290,7 @@ describe('DiffService downstream event consumer', () => {
 
           emitEvent.current({
             subscriptionId: repoSubId,
-            type: 'rename',
+            type: 'add',
             fileName: 'ignored-file.ts',
             absolutePath: join(repoPath, 'ignored-file.ts'),
           })
@@ -307,7 +307,7 @@ describe('DiffService downstream event consumer', () => {
       const repoPath = initRepo('diff-event-debounce', tempRoots)
       const subscriptionsByPath = new Map<string, string>()
       const emitEvent = {
-        current: (_event: WatchFileEvent) => undefined as void,
+        current: (_event: WatchFileEvent) => undefined as undefined,
       }
       const testLayer = createEndToEndTestLayer(repoPath, {
         subscriptionsByPath,
@@ -358,7 +358,7 @@ describe('DiffService downstream event consumer', () => {
         for (let i = 0; i < 10; i++) {
           emitEvent.current({
             subscriptionId: repoSubId,
-            type: 'rename',
+            type: 'add',
             fileName: `burst-${i}.ts`,
             absolutePath: join(repoPath, `burst-${i}.ts`),
           })

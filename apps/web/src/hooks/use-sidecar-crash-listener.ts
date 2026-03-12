@@ -23,6 +23,7 @@ import { getDesktopBridge } from '@/lib/desktop'
 const DISPLAY_NAMES: Record<SidecarName, string> = {
   server: 'Server',
   terminal: 'Terminal',
+  'file-watcher': 'File Watcher',
   mcp: 'MCP',
 }
 

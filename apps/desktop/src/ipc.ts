@@ -260,7 +260,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     if (typeof name !== 'string') {
       return
     }
-    if (name !== 'server' && name !== 'terminal' && name !== 'mcp') {
+    if (
+      name !== 'server' &&
+      name !== 'terminal' &&
+      name !== 'file-watcher' &&
+      name !== 'mcp'
+    ) {
       return
     }
     await restartSidecarCallback?.(name)

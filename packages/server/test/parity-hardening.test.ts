@@ -413,7 +413,7 @@ describe('FileWatcherClient ignore passthrough hardening', () => {
         // Write a laborer.json with custom watchIgnore
         writeFileSync(
           join(repoPath, 'laborer.json'),
-          JSON.stringify({ watchIgnore: ['.myCache', 'tempOutput'] })
+          '{"watchIgnore":[".myCache","tempOutput"]}'
         )
 
         const subscribedPaths: RecordedSubscription[] = []
@@ -608,7 +608,7 @@ describe('End-to-end downstream invalidation hardening', () => {
 
           emitEvent.current({
             subscriptionId: repoSubId,
-            type: 'rename',
+            type: 'add',
             fileName: 'new-feature.ts',
             absolutePath: join(repoPath, 'new-feature.ts'),
           })
@@ -690,7 +690,7 @@ describe('End-to-end downstream invalidation hardening', () => {
           for (let i = 0; i < 5; i++) {
             emitEvent.current({
               subscriptionId: repoSubId,
-              type: 'rename',
+              type: 'add',
               fileName: `burst-${i}.ts`,
               absolutePath: join(repoPath, `burst-${i}.ts`),
             })

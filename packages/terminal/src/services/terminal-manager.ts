@@ -18,7 +18,7 @@
  * @see Issue #138: Move + simplify TerminalManager
  */
 
-import { execSync } from 'node:child_process'
+import { exec } from 'node:child_process'
 import { TerminalRpcError } from '@laborer/shared/rpc'
 import { Cause, Context, Effect, Layer, PubSub, Ref, Runtime } from 'effect'
 import { RingBuffer } from '../lib/ring-buffer.js'
@@ -42,6 +42,9 @@ const DEFAULT_TERMINAL_GRACE_PERIOD_MS = 60_000
 
 /** UTF-8 text encoder shared across all terminal data callbacks. */
 const textEncoder = new TextEncoder()
+
+/** Regex for splitting whitespace in ps output lines. Defined at module level for performance. */
+const PS_WHITESPACE_REGEX = /\s+/
 
 const parseGracePeriodMs = (): number => {
   const raw = process.env.TERMINAL_GRACE_PERIOD_MS
@@ -143,31 +146,8 @@ interface SpawnPayload {
   readonly workspaceId: string
 }
 
-/**
- * Check if a process has child processes by using `pgrep -P <pid>`.
- *
- * Returns true if the shell process has at least one child process
- * (e.g., vim, node, cargo, opencode). Returns false if the shell is
- * idle at a prompt or if the PID is unknown/invalid.
- *
- * Uses `pgrep` which is available on macOS and Linux. The call is
- * synchronous but extremely fast (~1-2ms per check).
- */
-const checkHasChildProcess = (shellPid: number | undefined): boolean => {
-  if (shellPid === undefined) {
-    return false
-  }
-  try {
-    // pgrep -P <pid> exits with 0 if children found, 1 if none
-    execSync(`pgrep -P ${shellPid}`, { stdio: 'ignore' })
-    return true
-  } catch {
-    return false
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Foreground Process Detection
+// Async Process Detection
 // ---------------------------------------------------------------------------
 
 /**
@@ -286,16 +266,6 @@ const KNOWN_PROCESSES: ReadonlyMap<
 ])
 
 /**
- * Get the foreground process for a shell by walking the process tree.
- *
- * Uses `ps -o pid=,ppid=,comm= -g <pid>` to get the entire process
- * group in a single call, then walks the tree to find the deepest
- * child (the actual foreground process).
- *
- * Returns null if the PID is unknown or the process tree can't be read.
- * Synchronous but fast (~2-4ms).
- */
-/**
  * Classify a process name into a ForegroundProcess descriptor.
  * Returns null if the name is empty.
  */
@@ -324,85 +294,173 @@ const classifyProcess = (processName: string): ForegroundProcess | null => {
   }
 }
 
-const getForegroundProcess = (
-  shellPid: number | undefined
-): ForegroundProcess | null => {
-  if (shellPid === undefined) {
-    return null
-  }
-
-  try {
-    // First, try to find child processes of the shell PID.
-    // This handles interactive shells (zsh/bash) where the user runs
-    // a command that becomes a child process.
-    let targetPid: number | undefined
-    try {
-      const childPidsRaw = execSync(`pgrep -P ${shellPid}`, {
-        encoding: 'utf-8',
-        timeout: 3000,
-      }).trim()
-
-      if (childPidsRaw !== '') {
-        const childPids = childPidsRaw.split('\n').map(Number)
-        targetPid = childPids[0]
-
-        // Walk deeper: handles zsh -> node -> next.js chains
-        for (let depth = 0; depth < 10; depth++) {
-          try {
-            const grandchildRaw = execSync(`pgrep -P ${targetPid}`, {
-              encoding: 'utf-8',
-              timeout: 3000,
-            }).trim()
-
-            if (grandchildRaw === '') {
-              break
-            }
-
-            targetPid = Number(grandchildRaw.split('\n')[0])
-          } catch {
-            break
-          }
-        }
+/**
+ * Run a shell command asynchronously and return stdout.
+ * Returns null if the command fails (e.g., pgrep with no matches exits 1).
+ */
+const execAsync = (command: string): Promise<string | null> =>
+  new Promise((resolve) => {
+    exec(command, { encoding: 'utf-8', timeout: 3000 }, (error, stdout) => {
+      if (error !== null) {
+        resolve(null)
+        return
       }
-    } catch {
-      // pgrep exits non-zero when no children found — expected
+      resolve(stdout.trim())
+    })
+  })
+
+/**
+ * Result of process detection for a single terminal.
+ * Computed asynchronously and cached on the TerminalRecord.
+ */
+interface ProcessDetectionResult {
+  readonly foregroundProcess: ForegroundProcess | null
+  readonly hasChildProcess: boolean
+}
+
+/** Default detection result when process info is unavailable. */
+const EMPTY_DETECTION: ProcessDetectionResult = {
+  foregroundProcess: null,
+  hasChildProcess: false,
+}
+
+/**
+ * Parse `ps -eo pid=,ppid=,comm=` output into lookup maps.
+ *
+ * Returns a parent→children map and a pid→comm map for in-memory
+ * process tree walking.
+ */
+const parsePsOutput = (
+  psOutput: string
+): {
+  childrenByPid: Map<number, number[]>
+  commByPid: Map<number, string>
+} => {
+  const childrenByPid = new Map<number, number[]>()
+  const commByPid = new Map<number, string>()
+
+  for (const line of psOutput.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed === '') {
+      continue
     }
 
-    if (targetPid !== undefined) {
-      // Found a child process — classify it
-      const processName = execSync(`ps -o comm= -p ${targetPid}`, {
-        encoding: 'utf-8',
-        timeout: 3000,
-      }).trim()
-
-      return classifyProcess(processName)
+    // Format: "  PID  PPID COMM" — fields are whitespace-separated
+    // PID and PPID are numeric, COMM may contain spaces
+    const parts = trimmed.split(PS_WHITESPACE_REGEX)
+    if (parts.length < 3) {
+      continue
     }
 
-    // No children found. This happens when:
-    // 1. The shell is idle at a prompt (sh/zsh/bash with no foreground job)
-    // 2. The shell exec'd the command (e.g., `sh -c cat` becomes `cat`)
-    //
-    // Check what the shell PID is actually running. If it's still a shell,
-    // the user is idle. If it's something else, the shell exec'd into it.
-    const shellProcessName = execSync(`ps -o comm= -p ${shellPid}`, {
-      encoding: 'utf-8',
-      timeout: 3000,
-    }).trim()
+    const pid = Number(parts[0])
+    const ppid = Number(parts[1])
+    // comm is everything after pid and ppid — rejoin in case of spaces
+    const comm = parts.slice(2).join(' ')
 
-    const classified = classifyProcess(shellProcessName)
-
-    // If the shell PID is running a shell, the user is idle — return null
-    // to indicate no foreground process. This avoids showing "zsh" as the
-    // foreground process when the user is just sitting at a prompt.
-    if (classified === null || classified.category === 'shell') {
-      return null
+    if (!(Number.isFinite(pid) && Number.isFinite(ppid))) {
+      continue
     }
 
-    // The shell exec'd into something else (e.g., cat, vim, node)
-    return classified
-  } catch {
-    return null
+    commByPid.set(pid, comm)
+
+    const existing = childrenByPid.get(ppid)
+    if (existing !== undefined) {
+      existing.push(pid)
+    } else {
+      childrenByPid.set(ppid, [pid])
+    }
   }
+
+  return { childrenByPid, commByPid }
+}
+
+/**
+ * Walk the process tree from a shell PID to find the deepest child and
+ * classify it. Uses the pre-built maps from parsePsOutput.
+ */
+const detectForShellPid = (
+  shellPid: number,
+  childrenByPid: ReadonlyMap<number, number[]>,
+  commByPid: ReadonlyMap<number, string>
+): ProcessDetectionResult => {
+  const children = childrenByPid.get(shellPid)
+  const hasChildren = children !== undefined && children.length > 0
+
+  if (hasChildren) {
+    // Walk to deepest child (first child at each level)
+    let targetPid = children[0] ?? shellPid
+    for (let depth = 0; depth < 10; depth++) {
+      const grandchildren = childrenByPid.get(targetPid)
+      if (grandchildren === undefined || grandchildren.length === 0) {
+        break
+      }
+      targetPid = grandchildren[0] ?? targetPid
+    }
+
+    const comm = commByPid.get(targetPid) ?? ''
+    return {
+      foregroundProcess: classifyProcess(comm),
+      hasChildProcess: true,
+    }
+  }
+
+  // No children — check if the shell exec'd into something else
+  const shellComm = commByPid.get(shellPid) ?? ''
+  const classified = classifyProcess(shellComm)
+
+  if (classified === null || classified.category === 'shell') {
+    return EMPTY_DETECTION
+  }
+
+  // Shell exec'd into another process (e.g., sh -c cat → cat)
+  return { foregroundProcess: classified, hasChildProcess: false }
+}
+
+/**
+ * Detect foreground process and child process status for all given shell PIDs
+ * using a single async `ps` call, then walk the process tree in memory.
+ *
+ * Instead of spawning N×12 synchronous `execSync` calls per terminal (which
+ * blocks the event loop), this function:
+ * 1. Collects all shell PIDs
+ * 2. Runs ONE async `ps` to get the full process tree for all PIDs
+ * 3. Builds a parent→children map in memory
+ * 4. Walks the tree per terminal to find the deepest child
+ *
+ * This turns O(N×12) synchronous shell spawns into O(1) async shell spawn,
+ * keeping the Node.js event loop free for terminal data throughput.
+ */
+const detectProcessesForPids = async (
+  shellPids: ReadonlyMap<string, number>
+): Promise<ReadonlyMap<string, ProcessDetectionResult>> => {
+  const results = new Map<string, ProcessDetectionResult>()
+
+  if (shellPids.size === 0) {
+    return results
+  }
+
+  // Single async ps call to get the full process table.
+  // `ps -eo pid=,ppid=,comm=` is faster than multiple targeted calls
+  // because it's a single fork+exec. We then filter in memory.
+  const psOutput = await execAsync('ps -eo pid=,ppid=,comm=')
+
+  if (psOutput === null) {
+    for (const terminalId of shellPids.keys()) {
+      results.set(terminalId, EMPTY_DETECTION)
+    }
+    return results
+  }
+
+  const { childrenByPid, commByPid } = parsePsOutput(psOutput)
+
+  for (const [terminalId, shellPid] of shellPids) {
+    results.set(
+      terminalId,
+      detectForShellPid(shellPid, childrenByPid, commByPid)
+    )
+  }
+
+  return results
 }
 
 // ---------------------------------------------------------------------------
@@ -987,36 +1045,63 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       // ---------------------------------------------------------------
       // listTerminals
       // ---------------------------------------------------------------
+
+      /**
+       * List all terminals with process detection.
+       *
+       * Process detection is async — a single `ps -eo pid=,ppid=,comm=`
+       * call fetches the full process tree, then walks it in memory per
+       * terminal. This replaces the previous O(N×12) synchronous
+       * `execSync` calls that blocked the event loop.
+       */
       const listTerminals = Effect.fn('TerminalManager.listTerminals')(
         function* (workspaceId?: string) {
           const map = yield* Ref.get(terminalsRef)
-          const results: TerminalRecord[] = []
+
+          // Collect shell PIDs for all running terminals in scope
+          const shellPids = new Map<string, number>()
+          const terminalsInScope: ManagedTerminal[] = []
 
           for (const terminal of map.values()) {
             if (
               workspaceId === undefined ||
               terminal.workspaceId === workspaceId
             ) {
-              const isRunning = terminal.status === 'running'
-              const foregroundProcess = isRunning
-                ? getForegroundProcess(terminal.shellPid)
-                : null
-              results.push({
-                id: terminal.id,
-                workspaceId: terminal.workspaceId,
-                command: terminal.command,
-                args: [...terminal.args],
-                cwd: terminal.cwd,
-                agentStatus: isRunning
-                  ? computeAgentStatus(terminal.id, foregroundProcess)
-                  : null,
-                foregroundProcess,
-                hasChildProcess: isRunning
-                  ? checkHasChildProcess(terminal.shellPid)
-                  : false,
-                status: terminal.status,
-              })
+              terminalsInScope.push(terminal)
+              if (
+                terminal.status === 'running' &&
+                terminal.shellPid !== undefined
+              ) {
+                shellPids.set(terminal.id, terminal.shellPid)
+              }
             }
+          }
+
+          // Single async ps call for all terminals at once
+          const detectionResults = yield* Effect.promise(() =>
+            detectProcessesForPids(shellPids)
+          )
+
+          const results: TerminalRecord[] = []
+          for (const terminal of terminalsInScope) {
+            const detected = detectionResults.get(terminal.id)
+            results.push({
+              id: terminal.id,
+              workspaceId: terminal.workspaceId,
+              command: terminal.command,
+              args: [...terminal.args],
+              cwd: terminal.cwd,
+              agentStatus:
+                terminal.status === 'running'
+                  ? computeAgentStatus(
+                      terminal.id,
+                      detected?.foregroundProcess ?? null
+                    )
+                  : null,
+              foregroundProcess: detected?.foregroundProcess ?? null,
+              hasChildProcess: detected?.hasChildProcess ?? false,
+              status: terminal.status,
+            })
           }
 
           return results

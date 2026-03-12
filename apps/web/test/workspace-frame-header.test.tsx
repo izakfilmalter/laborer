@@ -1,8 +1,8 @@
 /**
  * Unit tests for the WorkspaceFrameHeader presentational component.
  *
- * Verifies the toolbar button behaviors — particularly the diff viewer
- * toggle that was accidentally dropped during a prior refactor.
+ * Verifies the toolbar button behaviors — diff viewer toggle and
+ * the new close-workspace button that replaced the per-pane buttons.
  *
  * @see apps/web/src/components/workspace-frame-header.tsx
  */
@@ -31,6 +31,7 @@ function mockActions(): PanelActions {
     assignTerminalToPane: vi.fn(),
     closePane: vi.fn(),
     closeTerminalPane: vi.fn(),
+    closeWorkspace: vi.fn(),
     reorderWorkspaces: vi.fn(),
     resizePane: vi.fn(),
     setActivePaneId: vi.fn(),
@@ -42,6 +43,7 @@ function mockActions(): PanelActions {
 }
 
 const DIFF_VIEWER_RE = /diff viewer/i
+const FULLSCREEN_RE = /fullscreen/i
 
 /** Default props for a typical active pane scenario. */
 const BASE_PROPS = {
@@ -49,8 +51,8 @@ const BASE_PROPS = {
   branchName: 'main',
   diffIsOpen: false,
   isContainerized: false,
-  isFullscreen: false,
   projectName: 'my-project',
+  workspaceId: 'ws-1',
 } as const
 
 describe('WorkspaceFrameHeader', () => {
@@ -61,6 +63,8 @@ describe('WorkspaceFrameHeader', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
+
+  // --- Diff viewer toggle ---
 
   it('renders the diff viewer toggle button', () => {
     const actions = mockActions()
@@ -146,6 +150,8 @@ describe('WorkspaceFrameHeader', () => {
     expect(button).toBeTruthy()
   })
 
+  // --- Focus shift on button click ---
+
   describe('focus shift on button click', () => {
     it('calls setActivePaneId before toggling diff pane', () => {
       const actions = mockActions()
@@ -164,73 +170,6 @@ describe('WorkspaceFrameHeader', () => {
       expect(setActiveOrder).toBeLessThan(toggleOrder)
     })
 
-    it('calls setActivePaneId before splitting horizontally', () => {
-      const actions = mockActions()
-      render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
-
-      const button = screen.getByRole('button', {
-        name: 'Split horizontally',
-      })
-      fireEvent.click(button)
-
-      expect(actions.setActivePaneId).toHaveBeenCalledWith('pane-1')
-      const setActiveOrder = (
-        actions.setActivePaneId as ReturnType<typeof vi.fn>
-      ).mock.invocationCallOrder[0] as number
-      const splitOrder = (actions.splitPane as ReturnType<typeof vi.fn>).mock
-        .invocationCallOrder[0] as number
-      expect(setActiveOrder).toBeLessThan(splitOrder)
-    })
-
-    it('calls setActivePaneId before splitting vertically', () => {
-      const actions = mockActions()
-      render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
-
-      const button = screen.getByRole('button', { name: 'Split vertically' })
-      fireEvent.click(button)
-
-      expect(actions.setActivePaneId).toHaveBeenCalledWith('pane-1')
-      const setActiveOrder = (
-        actions.setActivePaneId as ReturnType<typeof vi.fn>
-      ).mock.invocationCallOrder[0] as number
-      const splitOrder = (actions.splitPane as ReturnType<typeof vi.fn>).mock
-        .invocationCallOrder[0] as number
-      expect(setActiveOrder).toBeLessThan(splitOrder)
-    })
-
-    it('calls setActivePaneId before closing pane', () => {
-      const actions = mockActions()
-      render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
-
-      const button = screen.getByRole('button', { name: 'Close pane' })
-      fireEvent.click(button)
-
-      expect(actions.setActivePaneId).toHaveBeenCalledWith('pane-1')
-      const setActiveOrder = (
-        actions.setActivePaneId as ReturnType<typeof vi.fn>
-      ).mock.invocationCallOrder[0] as number
-      const closeOrder = (actions.closePane as ReturnType<typeof vi.fn>).mock
-        .invocationCallOrder[0] as number
-      expect(setActiveOrder).toBeLessThan(closeOrder)
-    })
-
-    it('calls setActivePaneId before toggling fullscreen', () => {
-      const actions = mockActions()
-      render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
-
-      const button = screen.getByRole('button', { name: 'Fullscreen pane' })
-      fireEvent.click(button)
-
-      expect(actions.setActivePaneId).toHaveBeenCalledWith('pane-1')
-      const setActiveOrder = (
-        actions.setActivePaneId as ReturnType<typeof vi.fn>
-      ).mock.invocationCallOrder[0] as number
-      const fullscreenOrder = (
-        actions.toggleFullscreenPane as ReturnType<typeof vi.fn>
-      ).mock.invocationCallOrder[0] as number
-      expect(setActiveOrder).toBeLessThan(fullscreenOrder)
-    })
-
     it('does not call setActivePaneId when no active pane', () => {
       const actions = mockActions()
       render(
@@ -246,5 +185,71 @@ describe('WorkspaceFrameHeader', () => {
 
       expect(actions.setActivePaneId).not.toHaveBeenCalled()
     })
+  })
+
+  // --- Close workspace button ---
+
+  it('renders a close workspace button', () => {
+    const actions = mockActions()
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+    const button = screen.getByRole('button', { name: 'Close workspace' })
+    expect(button).toBeTruthy()
+  })
+
+  it('calls closeWorkspace with workspace ID when clicked', () => {
+    const actions = mockActions()
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+    const button = screen.getByRole('button', { name: 'Close workspace' })
+    fireEvent.click(button)
+
+    expect(actions.closeWorkspace).toHaveBeenCalledWith('ws-1')
+  })
+
+  it('disables close workspace button when workspaceId is undefined', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        workspaceId={undefined}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: 'Close workspace' })
+    expect(button).toHaveProperty('disabled', true)
+  })
+
+  it('does not call closeWorkspace when workspaceId is undefined', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        workspaceId={undefined}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: 'Close workspace' })
+    fireEvent.click(button)
+
+    expect(actions.closeWorkspace).not.toHaveBeenCalled()
+  })
+
+  // --- Removed buttons should not be present ---
+
+  it('does not render split or fullscreen buttons (moved to terminal overlay)', () => {
+    const actions = mockActions()
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+    expect(
+      screen.queryByRole('button', { name: 'Split horizontally' })
+    ).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: 'Split vertically' })
+    ).toBeNull()
+    expect(screen.queryByRole('button', { name: FULLSCREEN_RE })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Close pane' })).toBeNull()
   })
 })

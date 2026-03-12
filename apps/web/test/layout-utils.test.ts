@@ -14,6 +14,7 @@ import type { LeafNode, SplitNode } from '@laborer/shared/types'
 import { describe, expect, it } from 'vitest'
 import {
   closePane,
+  computeTerminalPaneAssignment,
   ensureValidActivePaneId,
   filterTreeByWorkspace,
   findLeafByTerminalId,
@@ -1421,5 +1422,157 @@ describe('getScopedActivePaneId', () => {
 
   it('returns the first leaf for a single-leaf layout when active is elsewhere', () => {
     expect(getScopedActivePaneId(wsBLeaf1, 'ws-a-pane-1')).toBe('ws-b-pane-1')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: computeTerminalPaneAssignment
+// ---------------------------------------------------------------------------
+
+describe('computeTerminalPaneAssignment', () => {
+  it('creates a new single-pane layout when no base layout exists', () => {
+    const result = computeTerminalPaneAssignment(undefined, 'term-1', 'ws-1')
+    expect(result).toBeDefined()
+    expect(result.layoutTree._tag).toBe('LeafNode')
+    const leaf = result.layoutTree as LeafNode
+    expect(leaf.terminalId).toBe('term-1')
+    expect(leaf.workspaceId).toBe('ws-1')
+    expect(result.activePaneId).toBe(leaf.id)
+  })
+
+  it('focuses existing pane when terminal already has one', () => {
+    const layout: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-existing',
+      paneType: 'terminal',
+      terminalId: 'term-1',
+      workspaceId: 'ws-1',
+    }
+    const result = computeTerminalPaneAssignment(layout, 'term-1', 'ws-1')
+    expect(result.activePaneId).toBe('pane-existing')
+    // Layout should be unchanged (same reference)
+    expect(result.layoutTree).toBe(layout)
+  })
+
+  it('replaces content of a specific target pane and focuses it', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-A',
+          paneType: 'terminal',
+          terminalId: 'term-A',
+          workspaceId: 'ws-1',
+        },
+        {
+          _tag: 'LeafNode',
+          id: 'pane-B',
+          paneType: 'terminal',
+          workspaceId: 'ws-1',
+        },
+      ],
+      sizes: [50, 50],
+    }
+    const result = computeTerminalPaneAssignment(
+      layout,
+      'term-new',
+      'ws-1',
+      'pane-B'
+    )
+    expect(result.activePaneId).toBe('pane-B')
+    const leaf = findNodeById(result.layoutTree, 'pane-B') as LeafNode
+    expect(leaf.terminalId).toBe('term-new')
+  })
+
+  it('assigns terminal to an empty pane and focuses it', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-A',
+          paneType: 'terminal',
+          terminalId: 'term-A',
+          workspaceId: 'ws-1',
+        },
+        {
+          _tag: 'LeafNode',
+          id: 'pane-empty',
+          paneType: 'terminal',
+          workspaceId: 'ws-1',
+        },
+      ],
+      sizes: [50, 50],
+    }
+    const result = computeTerminalPaneAssignment(layout, 'term-new', 'ws-1')
+    expect(result.activePaneId).toBe('pane-empty')
+    const leaf = findNodeById(result.layoutTree, 'pane-empty') as LeafNode
+    expect(leaf.terminalId).toBe('term-new')
+  })
+
+  it('splits the last leaf and focuses the NEW pane when all panes are occupied', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-A',
+          paneType: 'terminal',
+          terminalId: 'term-A',
+          workspaceId: 'ws-1',
+        },
+        {
+          _tag: 'LeafNode',
+          id: 'pane-B',
+          paneType: 'terminal',
+          terminalId: 'term-B',
+          workspaceId: 'ws-1',
+        },
+      ],
+      sizes: [50, 50],
+    }
+    const result = computeTerminalPaneAssignment(layout, 'term-new', 'ws-2')
+
+    // The new pane should be the active pane — NOT the old active pane
+    const newLeafIds = getLeafIds(result.layoutTree).filter(
+      (id) => id !== 'pane-A' && id !== 'pane-B'
+    )
+    expect(newLeafIds).toHaveLength(1)
+    const newPaneId = newLeafIds[0] as string
+
+    // The active pane should be the newly created pane
+    expect(result.activePaneId).toBe(newPaneId)
+
+    // The new pane should contain the assigned terminal
+    const newLeaf = findNodeById(result.layoutTree, newPaneId) as LeafNode
+    expect(newLeaf.terminalId).toBe('term-new')
+    expect(newLeaf.workspaceId).toBe('ws-2')
+  })
+
+  it('focuses the new pane when splitting a single occupied leaf', () => {
+    const layout: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-A',
+      paneType: 'terminal',
+      terminalId: 'term-A',
+      workspaceId: 'ws-1',
+    }
+    const result = computeTerminalPaneAssignment(layout, 'term-new', 'ws-2')
+
+    // Find the new pane (not pane-A)
+    const newLeafIds = getLeafIds(result.layoutTree).filter(
+      (id) => id !== 'pane-A'
+    )
+    expect(newLeafIds).toHaveLength(1)
+    const newPaneId = newLeafIds[0] as string
+
+    expect(result.activePaneId).toBe(newPaneId)
   })
 })

@@ -80,9 +80,9 @@ test.describe('workspace lifecycle', () => {
     })
     await expect(dialogTitle).toBeVisible({ timeout: 10_000 })
 
-    // --- Step 3: Verify the project is pre-selected and submit the form ---
-    // The project should be pre-selected because we used the per-project "+" button
-    // (defaultProjectId is set). Leave branch name empty to auto-generate.
+    // --- Step 3: Submit the form ---
+    // The project is determined by the per-project "+" button (projectId prop).
+    // Leave branch name empty to auto-generate.
 
     // Click the "Create Workspace" submit button
     const submitButton = page.getByRole('button', {

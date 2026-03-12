@@ -112,8 +112,8 @@ interface PanelActions {
   /**
    * Toggle the dev server terminal alongside a terminal pane.
    *
-   * When toggled ON: the dev server terminal pane is rendered below the
-   * main terminal in a vertical split. If no dev server terminal session
+   * When toggled ON: the dev server terminal pane is rendered to the right of
+   * the main terminal in a horizontal split. If no dev server terminal session
    * exists yet, one is spawned via `terminal.spawn` with `autoRun: true`.
    * When toggled OFF: hides the dev server terminal pane but keeps the
    * terminal session alive for later reconnection.

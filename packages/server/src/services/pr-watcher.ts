@@ -345,6 +345,26 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         return currentFibers.has(workspaceId)
       })
 
+      const bootstrapPolling = Effect.fn('PrWatcher.bootstrapPolling')(
+        function* () {
+          const activeWorkspaces = store
+            .query(tables.workspaces)
+            .filter(
+              (workspace) =>
+                workspace.status === 'running' ||
+                workspace.status === 'creating'
+            )
+
+          yield* Effect.forEach(
+            activeWorkspaces,
+            (workspace) => startPolling(workspace.id),
+            { discard: true }
+          )
+        }
+      )
+
+      yield* bootstrapPolling()
+
       // Clean up all polling fibers on service shutdown
       yield* Effect.addFinalizer(() => stopAllPolling())
 

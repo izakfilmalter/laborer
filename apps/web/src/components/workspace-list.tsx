@@ -340,11 +340,13 @@ function DestroyDialogDescription({
   if (isChecking) {
     return (
       <AlertDialogDescription>
-        <span className="flex items-center gap-2">
+        <span className="flex flex-col items-center gap-2">
           <Spinner className="size-3" />
-          Checking workspace{' '}
-          <strong className="font-mono text-foreground">{branchName}</strong>{' '}
-          for uncommitted changes...
+          <span>
+            Checking workspace{' '}
+            <strong className="font-mono text-foreground">{branchName}</strong>{' '}
+            for uncommitted changes...
+          </span>
         </span>
       </AlertDialogDescription>
     )

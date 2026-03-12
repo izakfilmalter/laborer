@@ -182,11 +182,15 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
           tables.workspaces.where('projectId', projectId)
         ) as readonly WorkspaceRecord[]
 
-        // Filter out destroyed workspaces for the "remove" pass so that
-        // only live workspaces are considered stale when their path
-        // disappears from disk.
+        // Filter out destroyed and creating workspaces for the "remove"
+        // pass.  Destroyed workspaces are already gone.  Creating
+        // workspaces have been committed to the store but their
+        // `git worktree add` has not executed yet, so the directory
+        // will not appear in `git worktree list`.  Removing them here
+        // would race with the background setup fiber that is still
+        // running.
         const existingWorkspaces = allWorkspaces.filter(
-          (w) => w.status !== 'destroyed'
+          (w) => w.status !== 'destroyed' && w.status !== 'creating'
         )
 
         // Canonicalize existing workspace paths for comparison so that

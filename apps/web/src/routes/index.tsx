@@ -1,4 +1,4 @@
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import {
   layoutPaneAssigned,
   layoutPaneClosed,
@@ -24,14 +24,7 @@ import {
   Terminal,
   X,
 } from 'lucide-react'
-import {
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PanelImperativeHandle } from 'react-resizable-panels'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
@@ -148,28 +141,6 @@ const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
 
 /** Mutation atom for removing terminals via the terminal service's terminal.remove RPC. */
 const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
-
-/**
- * Health check query atom — subscribes to the server's health.check RPC.
- * Returns a Result<HealthCheckResponse, RpcError>.
- */
-// biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
-const healthCheck$ = LaborerClient.query('health.check', undefined as void)
-
-function HealthCheckStatus() {
-  const result = useAtomValue(healthCheck$)
-  if (result._tag === 'Initial' || result.waiting) {
-    return <span className="text-muted-foreground">connecting...</span>
-  }
-  if (result._tag === 'Failure') {
-    return <span className="text-destructive">disconnected</span>
-  }
-  return (
-    <span className="text-success">
-      connected (uptime: {Math.round(result.value.uptime)}s)
-    </span>
-  )
-}
 
 /** LiveStore query for projects (used by PanelHeaderBar to resolve names). */
 const allProjects$ = queryDb(projects, { label: 'headerProjects' })
@@ -1808,19 +1779,6 @@ function HomeComponent() {
                   )}
               </div>
             </ScrollArea>
-            {/* Server Status — sticky footer, always visible outside scroll area */}
-            <section className="shrink-0 border-t p-3">
-              <h2 className="mb-1 font-medium text-sm">Server Status</h2>
-              <p className="text-xs">
-                <Suspense
-                  fallback={
-                    <span className="text-muted-foreground">loading...</span>
-                  }
-                >
-                  <HealthCheckStatus />
-                </Suspense>
-              </p>
-            </section>
           </div>
         </ResizablePanel>
 

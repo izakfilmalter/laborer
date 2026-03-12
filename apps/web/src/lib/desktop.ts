@@ -43,6 +43,14 @@ export function isElectron(): boolean {
 }
 
 /**
+ * Returns the stable identity of the current native window when running in
+ * Electron. Browser-based development does not have a native window ID.
+ */
+export function getCurrentWindowId(): string | null {
+  return getDesktopBridge()?.getWindowId() ?? null
+}
+
+/**
  * Check if the frontend is in Electron production mode where the Vite
  * dev proxy is NOT available.
  *

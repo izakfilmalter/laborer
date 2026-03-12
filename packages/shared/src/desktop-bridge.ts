@@ -140,6 +140,9 @@ export interface DesktopBridge {
   /** Returns the current auto-update state. */
   getUpdateState: () => Promise<DesktopUpdateState>
 
+  /** Returns the stable identity of the current native window. */
+  getWindowId: () => string
+
   /** Triggers quit-and-install of a downloaded update. */
   installUpdate: () => Promise<DesktopUpdateActionResult>
 

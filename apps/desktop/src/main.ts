@@ -30,6 +30,7 @@ import {
 } from './protocol.js'
 import { SidecarManager } from './sidecar.js'
 import { registerGlobalShortcut, TrayManager } from './tray.js'
+import { buildWindowBootstrapArgs, createWindowId } from './window-identity.js'
 import { WindowStateManager } from './window-state.js'
 
 // Fix PATH before anything else — must happen synchronously before
@@ -116,6 +117,7 @@ export function getHealthMonitor(): HealthMonitor | null {
 function createWindow(): void {
   // Restore persisted window bounds (or default to centered 800x600).
   const savedState = windowStateManager.load()
+  const windowId = createWindowId()
 
   mainWindow = new BrowserWindow({
     ...savedState.bounds,
@@ -129,7 +131,7 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      additionalArguments: buildPreloadArgs(),
+      additionalArguments: buildPreloadArgs(windowId),
     },
   })
 
@@ -201,18 +203,16 @@ function createWindow(): void {
  *
  * Format: `--laborer-<key>=<value>` (prefixed to avoid collisions).
  */
-function buildPreloadArgs(): string[] {
+function buildPreloadArgs(windowId: string): string[] {
   if (!servicePorts) {
     return []
   }
 
-  const serverUrl = `http://127.0.0.1:${servicePorts.serverPort}`
-  const terminalUrl = `http://127.0.0.1:${servicePorts.terminalPort}`
-
-  return [
-    `--laborer-server-url=${serverUrl}`,
-    `--laborer-terminal-url=${terminalUrl}`,
-  ]
+  return buildWindowBootstrapArgs({
+    serverUrl: `http://127.0.0.1:${servicePorts.serverPort}`,
+    terminalUrl: `http://127.0.0.1:${servicePorts.terminalPort}`,
+    windowId,
+  })
 }
 
 app

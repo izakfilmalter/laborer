@@ -1,6 +1,8 @@
 import type { DesktopBridge } from '@laborer/shared/desktop-bridge'
 import { contextBridge, ipcRenderer } from 'electron'
 
+import { parseWindowBootstrapArgs } from './window-identity.js'
+
 // ---------------------------------------------------------------------------
 // IPC channel constants (must match ipc.ts)
 // ---------------------------------------------------------------------------
@@ -28,17 +30,9 @@ const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
 // `webPreferences.additionalArguments`. These appear in `process.argv`.
 // ---------------------------------------------------------------------------
 
-function getArg(prefix: string): string {
-  for (const arg of process.argv) {
-    if (arg.startsWith(prefix)) {
-      return arg.slice(prefix.length)
-    }
-  }
-  return ''
-}
-
-const serverUrl = getArg('--laborer-server-url=')
-const terminalUrl = getArg('--laborer-terminal-url=')
+const { serverUrl, terminalUrl, windowId } = parseWindowBootstrapArgs(
+  process.argv
+)
 
 // ---------------------------------------------------------------------------
 // DesktopBridge implementation
@@ -47,6 +41,7 @@ const terminalUrl = getArg('--laborer-terminal-url=')
 contextBridge.exposeInMainWorld('desktopBridge', {
   getServerUrl: () => serverUrl,
   getTerminalUrl: () => terminalUrl,
+  getWindowId: () => windowId,
 
   pickFolder: () => ipcRenderer.invoke(PICK_FOLDER_CHANNEL),
 

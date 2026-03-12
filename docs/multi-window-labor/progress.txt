@@ -1,0 +1,7 @@
+2026-03-12 - Issue 1: Window Identity Plumbing
+- Selected Issue 1 as the highest-priority task because it unblocks the new-window command, window-scoped panel storage, and persisted window records.
+- Added `windowId` bootstrap plumbing in the desktop shell by generating a stable ID per created window and passing it through Electron preload arguments.
+- Exposed `getWindowId()` on the shared desktop bridge and added a renderer helper so the web app can read the current native window identity during bootstrap.
+- Added desktop and web tests covering preload arg round-tripping and renderer bootstrap access to the correct `windowId`.
+- Verified with `bun run test` and `bun run typecheck` in `apps/desktop`, plus `bun run test` and `bun run typecheck` in `apps/web`.
+- `bun run format` at the repo root still fails because of a pre-existing formatting issue in `.opencode/package.json` unrelated to this feature.

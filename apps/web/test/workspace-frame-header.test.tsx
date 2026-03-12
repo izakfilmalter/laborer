@@ -358,6 +358,45 @@ describe('WorkspaceFrameHeader', () => {
     expect(onHeaderClick).toHaveBeenCalledOnce()
   })
 
+  it('calls onHeaderClick when clicking anywhere on the header bar while minimized', () => {
+    const actions = mockActions()
+    const onHeaderClick = vi.fn()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isMinimized
+        onHeaderClick={onHeaderClick}
+      />
+    )
+
+    // Click the outer header bar itself, not the inner label button
+    const headerBar = screen.getByTestId('workspace-frame-header')
+    fireEvent.click(headerBar)
+
+    expect(onHeaderClick).toHaveBeenCalledOnce()
+  })
+
+  it('does not call onHeaderClick when clicking the header bar background while expanded', () => {
+    const actions = mockActions()
+    const onHeaderClick = vi.fn()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isMinimized={false}
+        onHeaderClick={onHeaderClick}
+      />
+    )
+
+    // Click the outer header bar itself (not the label button)
+    const headerBar = screen.getByTestId('workspace-frame-header')
+    fireEvent.click(headerBar)
+
+    // Should NOT trigger onHeaderClick — only the inner label button triggers it
+    expect(onHeaderClick).not.toHaveBeenCalled()
+  })
+
   // ---------------------------------------------------------------------------
   // Minimized state hides action buttons
   // ---------------------------------------------------------------------------
@@ -433,5 +472,49 @@ describe('WorkspaceFrameHeader', () => {
     expect(screen.getByText('#17')).toBeTruthy()
     expect(screen.getByText('closed')).toBeTruthy()
     expect(screen.queryByRole('link', { name: CLOSED_PR_RE })).toBeNull()
+  })
+
+  // ---------------------------------------------------------------------------
+  // Agent status: needs input indicator
+  // ---------------------------------------------------------------------------
+
+  it('shows "needs input" badge when agentStatus is waiting_for_input', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus="waiting_for_input"
+      />
+    )
+
+    const badge = screen.getByText('needs input')
+    expect(badge).toBeTruthy()
+  })
+
+  it('does not show "needs input" badge when agentStatus is null', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus={null}
+      />
+    )
+
+    expect(screen.queryByText('needs input')).toBeNull()
+  })
+
+  it('does not show "needs input" badge when agentStatus is active', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus="active"
+      />
+    )
+
+    expect(screen.queryByText('needs input')).toBeNull()
   })
 })

@@ -16,14 +16,17 @@ import {
 } from '@/components/ui/resizable'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { WorkspaceDashboard } from '@/components/workspace-dashboard'
+import { useAgentNotifications } from '@/hooks/use-agent-notifications'
 import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSidebarWidth } from '@/hooks/use-sidebar-width'
+import { useTerminalList } from '@/hooks/use-terminal-list'
 import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
 import { useLaborerStore } from '@/livestore/store'
 import {
   findLeafByTerminalId,
   findNodeById,
+  getLeafNodes,
   shouldConfirmClose,
   shouldConfirmCloseWorkspace,
 } from '@/panels/layout-utils'
@@ -212,6 +215,36 @@ function HomeComponent() {
 
   // Sync running workspace count to Electron system tray tooltip (no-op in browser)
   useTrayWorkspaceCount()
+
+  // Desktop notifications for agent status transitions (no-op in browser)
+  const { terminals: notificationTerminals } = useTerminalList()
+
+  const notificationWorkspaces = useMemo(
+    () => workspaceList.map((ws) => ({ id: ws.id, branchName: ws.branchName })),
+    [workspaceList]
+  )
+
+  const handleNotificationClicked = useCallback(
+    (workspaceId: string) => {
+      if (!layout) {
+        return
+      }
+      // Find the first leaf pane belonging to this workspace and activate it
+      const leaf = getLeafNodes(layout).find(
+        (l) => l.workspaceId === workspaceId
+      )
+      if (leaf) {
+        panelActions.setActivePaneId(leaf.id)
+      }
+    },
+    [layout, panelActions]
+  )
+
+  useAgentNotifications(
+    notificationTerminals,
+    notificationWorkspaces,
+    handleNotificationClicked
+  )
 
   // Responsive sizing — adapts sidebar and pane sizes to viewport width
   const responsiveSizes = useResponsiveLayout()

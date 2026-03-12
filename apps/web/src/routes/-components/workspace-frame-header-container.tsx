@@ -3,6 +3,8 @@ import type { PanelNode } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import { useMemo } from 'react'
 import { WorkspaceFrameHeader } from '@/components/workspace-frame-header'
+import { useTerminalList } from '@/hooks/use-terminal-list'
+import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
 import { useLaborerStore } from '@/livestore/store'
 import { findNodeById, getScopedActivePaneId } from '@/panels/layout-utils'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
@@ -57,6 +59,18 @@ export function WorkspaceFrameHeaderContainer({
     return node?._tag === 'LeafNode' && node.diffOpen === true
   }, [scopedActivePaneId, subLayout])
 
+  // Derive workspace-level agent status from the terminal list
+  const { terminals } = useTerminalList()
+  const workspaceAgentStatus = useMemo(() => {
+    if (!workspaceId) {
+      return null
+    }
+    const workspaceTerminals = terminals.filter(
+      (t) => t.workspaceId === workspaceId
+    )
+    return deriveWorkspaceAgentStatus(workspaceTerminals)
+  }, [terminals, workspaceId])
+
   const workspaceData = useMemo(() => {
     if (!workspaceId) {
       return {
@@ -98,6 +112,7 @@ export function WorkspaceFrameHeaderContainer({
     <WorkspaceFrameHeader
       actions={actions}
       activePaneId={scopedActivePaneId}
+      agentStatus={workspaceAgentStatus}
       branchName={workspaceData.branchName}
       diffIsOpen={diffIsOpen}
       dragHandleRef={dragHandleRef}

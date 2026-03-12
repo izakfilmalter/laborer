@@ -16,12 +16,14 @@
 
 import { FileCode2, Minus, Plus, Server, Terminal, X } from 'lucide-react'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import type { PanelActions } from '@/panels/panel-context'
 
 interface WorkspaceFrameHeaderProps {
@@ -29,6 +31,8 @@ interface WorkspaceFrameHeaderProps {
   readonly actions: PanelActions | null
   /** The active pane ID, or null if no pane is active. */
   readonly activePaneId: string | null
+  /** Aggregate agent status for the workspace (null, active, or waiting_for_input). */
+  readonly agentStatus?: 'active' | 'waiting_for_input' | null | undefined
   /** The branch name for the workspace (shown in the header). */
   readonly branchName: string | undefined
   /** Whether the diff viewer is currently open for the active pane. */
@@ -62,6 +66,7 @@ interface WorkspaceFrameHeaderProps {
 function WorkspaceFrameHeader({
   activePaneId,
   actions,
+  agentStatus,
   branchName,
   diffIsOpen,
   dragHandleRef,
@@ -77,6 +82,7 @@ function WorkspaceFrameHeader({
   workspaceId,
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
+  const needsAttention = agentStatus === 'waiting_for_input'
 
   /** Shift focus to this workspace's pane before performing a panel action. */
   const withFocus = (fn: (paneId: string) => void) => () => {
@@ -88,14 +94,33 @@ function WorkspaceFrameHeader({
   }
 
   return (
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Conditional onClick when minimized as fallback for padding gaps; the inner button handles keyboard a11y.
+    // biome-ignore lint/a11y/useKeyWithClickEvents: The inner button handles keyboard events; this div onClick is only a mouse fallback for padding gaps.
+    // biome-ignore lint/a11y/noStaticElementInteractions: Conditionally interactive div — only has onClick when minimized.
     <div
-      className="flex h-8 shrink-0 items-center justify-between border-b px-2"
+      className={cn(
+        'flex h-8 shrink-0 items-center justify-between border-b px-2',
+        needsAttention && 'border-b-amber-400/50 bg-amber-400/5',
+        isMinimized && 'cursor-pointer'
+      )}
       data-testid="workspace-frame-header"
+      onClick={
+        isMinimized
+          ? () => {
+              onHeaderClick?.()
+            }
+          : undefined
+      }
       ref={dragHandleRef}
     >
       <div className="flex min-w-0 items-center gap-2">
         <button
-          className="flex min-w-0 cursor-grab items-center gap-2 active:cursor-grabbing"
+          className={cn(
+            'flex min-w-0 items-center gap-2',
+            isMinimized
+              ? 'flex-1 cursor-pointer'
+              : 'cursor-grab active:cursor-grabbing'
+          )}
           onClick={(e) => {
             e.stopPropagation()
             onHeaderClick?.()
@@ -124,6 +149,14 @@ function WorkspaceFrameHeader({
           prTitle={prTitle}
           prUrl={prUrl}
         />
+        {needsAttention && (
+          <Badge
+            className="shrink-0 animate-pulse border border-amber-400/30 bg-amber-400/10 text-[10px] text-amber-400 leading-none"
+            variant="outline"
+          >
+            needs input
+          </Badge>
+        )}
       </div>
       <div className="flex gap-0.5">
         {!isMinimized && (

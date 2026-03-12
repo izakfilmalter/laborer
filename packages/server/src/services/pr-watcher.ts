@@ -214,8 +214,10 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
 
         const workspace = workspaceOpt.value
 
-        // Only check active workspaces
-        if (workspace.status !== 'running' && workspace.status !== 'creating') {
+        // Skip destroyed workspaces (worktree is removed).
+        // All other statuses (running, creating, stopped, errored) still have
+        // a valid worktree path where `gh pr view` can run.
+        if (workspace.status === 'destroyed') {
           return EMPTY_PR
         }
 
@@ -347,17 +349,33 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
 
       const bootstrapPolling = Effect.fn('PrWatcher.bootstrapPolling')(
         function* () {
-          const activeWorkspaces = store
+          const allWorkspaces = store
             .query(tables.workspaces)
-            .filter(
-              (workspace) =>
-                workspace.status === 'running' ||
-                workspace.status === 'creating'
-            )
+            .filter((workspace) => workspace.status !== 'destroyed')
 
+          const activeWorkspaces = allWorkspaces.filter(
+            (workspace) =>
+              workspace.status === 'running' || workspace.status === 'creating'
+          )
+
+          const inactiveWorkspaces = allWorkspaces.filter(
+            (workspace) =>
+              workspace.status !== 'running' && workspace.status !== 'creating'
+          )
+
+          // Start continuous polling for active workspaces
           yield* Effect.forEach(
             activeWorkspaces,
             (workspace) => startPolling(workspace.id),
+            { discard: true }
+          )
+
+          // Run a one-time PR check for inactive (stopped/errored) workspaces
+          // so their PR status is populated on startup without continuous polling.
+          yield* Effect.forEach(
+            inactiveWorkspaces,
+            (workspace) =>
+              checkPr(workspace.id).pipe(Effect.catchAll(() => Effect.void)),
             { discard: true }
           )
         }

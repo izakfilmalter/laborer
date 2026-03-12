@@ -558,15 +558,20 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                     title="Copy URL"
                     value={`https://${workspace.containerUrl}`}
                   />
-                  <a
-                    className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                    href={`https://${workspace.containerUrl}`}
-                    rel="noopener"
-                    target="_blank"
-                    title="Open in browser"
-                  >
-                    <ExternalLink className="size-3" />
-                  </a>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <a
+                        aria-label="Open in browser"
+                        className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                        href={`https://${workspace.containerUrl}`}
+                        rel="noopener"
+                        target="_blank"
+                      >
+                        <ExternalLink className="size-3" />
+                      </a>
+                    </TooltipTrigger>
+                    <TooltipContent>Open in browser</TooltipContent>
+                  </Tooltip>
                 </span>
               </span>
             </CardDescription>

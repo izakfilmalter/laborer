@@ -1152,16 +1152,17 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
           for (const terminal of map.values()) {
             if (
-              workspaceId === undefined ||
-              terminal.workspaceId === workspaceId
+              workspaceId !== undefined &&
+              terminal.workspaceId !== workspaceId
             ) {
-              terminalsInScope.push(terminal)
-              if (
-                terminal.status === 'running' &&
-                terminal.shellPid !== undefined
-              ) {
-                shellPids.set(terminal.id, terminal.shellPid)
-              }
+              continue
+            }
+            terminalsInScope.push(terminal)
+            if (
+              terminal.status === 'running' &&
+              terminal.shellPid !== undefined
+            ) {
+              shellPids.set(terminal.id, terminal.shellPid)
             }
           }
 

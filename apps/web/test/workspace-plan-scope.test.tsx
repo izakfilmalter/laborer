@@ -104,6 +104,7 @@ vi.mock('sonner', () => ({
 vi.mock('@/panels/panel-context', () => ({
   usePanelActions: () => ({
     closeWorkspace: closeWorkspaceMock,
+    forceCloseWorkspace: closeWorkspaceMock,
   }),
 }))
 

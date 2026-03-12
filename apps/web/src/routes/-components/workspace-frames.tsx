@@ -51,6 +51,7 @@ function WorkspaceFrame({
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null)
   const dragHandleRef = useRef<HTMLDivElement | null>(null)
+  const hasSyncedCollapsedState = useRef(false)
   const [isDragging, setIsDragging] = useState(false)
   const [closestEdge, setClosestEdge] = useState<'top' | 'bottom' | null>(null)
   const [isMinimized, setIsMinimized] = useState(false)
@@ -83,6 +84,14 @@ function WorkspaceFrame({
   useEffect(() => {
     if (!isCollapsible) {
       return
+    }
+
+    if (!hasSyncedCollapsedState.current) {
+      hasSyncedCollapsedState.current = true
+
+      if (!isMinimized) {
+        return
+      }
     }
 
     const panel = panelRef?.current

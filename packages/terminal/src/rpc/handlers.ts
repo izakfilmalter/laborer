@@ -97,6 +97,7 @@ const toTerminalInfo = (record: {
   readonly args: readonly string[]
   readonly command: string
   readonly cwd: string
+  readonly hasChildProcess: boolean
   readonly id: string
   readonly status: 'running' | 'stopped'
   readonly workspaceId: string
@@ -106,6 +107,7 @@ const toTerminalInfo = (record: {
   command: record.command,
   args: [...record.args],
   cwd: record.cwd,
+  hasChildProcess: record.hasChildProcess,
   status: record.status,
 })
 

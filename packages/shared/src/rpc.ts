@@ -551,6 +551,12 @@ export const TerminalInfo = Schema.Struct({
   command: Schema.String,
   args: Schema.Array(Schema.String),
   cwd: Schema.String,
+  /**
+   * Whether the shell has child processes running (e.g., vim, dev server,
+   * opencode). False when the shell is idle at a prompt. Used by the UI
+   * to decide whether to show a close confirmation dialog.
+   */
+  hasChildProcess: Schema.Boolean,
   status: TerminalStatus,
 })
 

@@ -24,6 +24,11 @@ interface TerminalInfo {
   readonly args: readonly string[]
   readonly command: string
   readonly cwd: string
+  /**
+   * Whether the shell has child processes running (e.g., vim, dev server,
+   * opencode). False when the shell is idle at a prompt.
+   */
+  readonly hasChildProcess: boolean
   readonly id: string
   readonly status: 'running' | 'stopped'
   readonly workspaceId: string

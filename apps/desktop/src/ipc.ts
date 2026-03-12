@@ -11,6 +11,7 @@ import {
   ipcMain,
   Menu,
   type MenuItemConstructorOptions,
+  type OpenDialogOptions,
   shell,
 } from 'electron'
 
@@ -142,14 +143,19 @@ export function setInstallUpdateHandler(cb: InstallUpdateCallback): void {
  *
  * Each handler mirrors a method on the `DesktopBridge` interface.
  */
-export function registerIpcHandlers(mainWindow: BrowserWindow): void {
+export function registerIpcHandlers(
+  getFallbackWindow: () => BrowserWindow | null
+): void {
   // -- Folder picker -------------------------------------------------------
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL)
   ipcMain.handle(PICK_FOLDER_CHANNEL, async () => {
-    const owner = BrowserWindow.getFocusedWindow() ?? mainWindow
-    const result = await dialog.showOpenDialog(owner, {
+    const owner = BrowserWindow.getFocusedWindow() ?? getFallbackWindow()
+    const options: OpenDialogOptions = {
       properties: ['openDirectory', 'createDirectory'],
-    })
+    }
+    const result = owner
+      ? await dialog.showOpenDialog(owner, options)
+      : await dialog.showOpenDialog(options)
     if (result.canceled) {
       return null
     }
@@ -162,7 +168,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     if (typeof message !== 'string') {
       return false
     }
-    const owner = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const owner = BrowserWindow.getFocusedWindow() ?? getFallbackWindow()
     return await showConfirmDialog(message, owner)
   })
 
@@ -195,7 +201,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           ? { x: Math.floor(position.x), y: Math.floor(position.y) }
           : null
 
-      const window = BrowserWindow.getFocusedWindow() ?? mainWindow
+      const window = BrowserWindow.getFocusedWindow() ?? getFallbackWindow()
       if (!window) {
         return null
       }
@@ -319,10 +325,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     const notification = new ElectronNotification({ title, body })
 
     notification.on('click', () => {
-      // Focus the main window and tell the renderer which workspace was clicked
-      mainWindow.show()
-      mainWindow.focus()
-      mainWindow.webContents.send(NOTIFICATION_CLICKED_CHANNEL, workspaceId)
+      const targetWindow = getFallbackWindow()
+      if (!targetWindow) {
+        return
+      }
+
+      // Focus the selected window and tell the renderer which workspace was clicked.
+      targetWindow.show()
+      targetWindow.focus()
+      targetWindow.webContents.send(NOTIFICATION_CLICKED_CHANNEL, workspaceId)
     })
 
     notification.show()

@@ -30,9 +30,9 @@ Add the narrow end-to-end flow for opening a second Laborer window from `Cmd+N` 
 
 ## Acceptance criteria
 
-- [ ] `Cmd+N` opens a new Laborer window
-- [ ] An application menu action opens a new Laborer window
-- [ ] Opening a new window does not close, reset, or steal layout state from the originating window
+- [x] `Cmd+N` opens a new Laborer window
+- [x] An application menu action opens a new Laborer window
+- [x] Opening a new window does not close, reset, or steal layout state from the originating window
 
 ## Blocked by
 
@@ -275,7 +275,7 @@ Do a final pass on multi-window edge cases and user feel without expanding scope
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
 | 1 | Window Identity Plumbing | None | Done |
-| 2 | New Window Command | 1 | Ready |
+| 2 | New Window Command | 1 | Done |
 | 3 | Panel Layout Storage by Window | 1 | Ready |
 | 4 | Renderer Reads Only Its Own Session | 3 | Blocked |
 | 5 | Renderer Writes Only Its Own Session | 4 | Blocked |

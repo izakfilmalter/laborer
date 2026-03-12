@@ -5,3 +5,10 @@
 - Added desktop and web tests covering preload arg round-tripping and renderer bootstrap access to the correct `windowId`.
 - Verified with `bun run test` and `bun run typecheck` in `apps/desktop`, plus `bun run test` and `bun run typecheck` in `apps/web`.
 - `bun run format` at the repo root still fails because of a pre-existing formatting issue in `.opencode/package.json` unrelated to this feature.
+
+2026-03-12 - Issue 2: New Window Command
+- Selected Issue 2 as the highest-priority remaining task because it is the next vertical slice from the PRD's recommended delivery order and unlocks real multi-window workflows without waiting for persistence work.
+- Added a dedicated `New Window` application menu item with the standard `CmdOrCtrl+N` accelerator so window creation is available from both keyboard and menu paths.
+- Refactored desktop window creation to keep each `BrowserWindow` instance self-contained, which lets opening a second window leave the originating window alive and untouched.
+- Switched desktop IPC fallback window selection to resolve dynamically so menu actions, dialogs, and notification clicks still target a valid open window after additional windows are created.
+- Added desktop tests covering the new menu item wiring and re-verified `apps/desktop` with `bun run test` and `bun run typecheck`.

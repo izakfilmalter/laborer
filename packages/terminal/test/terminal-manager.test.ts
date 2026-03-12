@@ -965,4 +965,104 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
       })
     )
   })
+
+  // -------------------------------------------------------------------------
+  // Agent status tracking
+  // -------------------------------------------------------------------------
+
+  it('spawn() returns agentStatus as null initially', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    assert.strictEqual(result.agentStatus, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('listTerminals() returns null agentStatus for non-agent processes', async () => {
+    // Spawn 'cat' — not an agent
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    await delay(1000)
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.agentStatus, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('listTerminals() returns null agentStatus for stopped terminals', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'echo "done"',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    await delay(2000)
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.status, 'stopped')
+    assert.strictEqual(terminal?.agentStatus, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.remove(result.id)
+      })
+    )
+  })
 })

@@ -444,6 +444,9 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
   const [isCheckingDirty, setIsCheckingDirty] = useState(false)
   const [dirtyFiles, setDirtyFiles] = useState<string[]>([])
   const [isStartingLoop, setIsStartingLoop] = useState(false)
+  const [workspaceAgentStatus, setWorkspaceAgentStatus] = useState<
+    'active' | 'waiting_for_input' | null
+  >(null)
   const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
     mode: 'promise',
   })
@@ -528,8 +531,16 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
   const displayStatus =
     isContainerized && isContainerPaused ? 'paused' : workspace.status
 
+  const needsAttention = workspaceAgentStatus === 'waiting_for_input'
+
   return (
-    <Card size="sm">
+    <Card
+      className={cn(
+        needsAttention &&
+          'animate-pulse border-amber-400/50 shadow-[0_0_8px_rgba(251,191,36,0.15)]'
+      )}
+      size="sm"
+    >
       <CardHeader className="gap-2">
         <div className="flex min-w-0 flex-wrap items-start gap-2">
           <div className="flex min-w-0 flex-1 items-start gap-2 overflow-hidden">
@@ -745,6 +756,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
         )}
         <div className="border-t pt-2">
           <TerminalList
+            onAgentStatusChange={setWorkspaceAgentStatus}
             projectId={workspace.projectId}
             workspaceId={workspace.id}
           />

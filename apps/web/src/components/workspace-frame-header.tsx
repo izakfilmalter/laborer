@@ -136,6 +136,8 @@ interface WorkspaceFrameHeaderProps {
   readonly actions: PanelActions | null
   /** The active pane ID, or null if no pane is active. */
   readonly activePaneId: string | null
+  /** Aggregate agent status for the workspace (null, active, or waiting_for_input). */
+  readonly agentStatus?: 'active' | 'waiting_for_input' | null | undefined
   /** The branch name for the workspace (shown in the header). */
   readonly branchName: string | undefined
   /** Whether the diff viewer is currently open for the active pane. */
@@ -171,6 +173,7 @@ interface WorkspaceFrameHeaderProps {
 function WorkspaceFrameHeader({
   activePaneId,
   actions,
+  agentStatus,
   branchName,
   diffIsOpen,
   dragHandleRef,
@@ -187,6 +190,7 @@ function WorkspaceFrameHeader({
   workspaceStatus,
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
+  const needsAttention = agentStatus === 'waiting_for_input'
 
   /** Shift focus to this workspace's pane before performing a panel action. */
   const withFocus = (fn: (paneId: string) => void) => () => {
@@ -204,6 +208,7 @@ function WorkspaceFrameHeader({
     <div
       className={cn(
         'flex h-8 shrink-0 items-center justify-between border-b px-2',
+        needsAttention && 'border-b-amber-400/50 bg-amber-400/5',
         isMinimized && 'cursor-pointer'
       )}
       data-testid="workspace-frame-header"
@@ -273,6 +278,14 @@ function WorkspaceFrameHeader({
           >
             <StatusDot status={workspaceStatus} />
             {workspaceStatus}
+          </Badge>
+        )}
+        {needsAttention && (
+          <Badge
+            className="shrink-0 animate-pulse border border-amber-400/30 bg-amber-400/10 text-[10px] text-amber-400 leading-none"
+            variant="outline"
+          >
+            needs input
           </Badge>
         )}
       </button>

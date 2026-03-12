@@ -720,6 +720,17 @@ export const ForegroundProcessSchema = Schema.Struct({
 export type ForegroundProcess = typeof ForegroundProcessSchema.Type
 
 /**
+ * Agent status for a terminal, derived from foreground process transitions.
+ *
+ * - `active` — an AI agent is currently the foreground process
+ * - `waiting_for_input` — an agent was running but is now idle
+ *   (needs user input or has completed its task)
+ */
+export const AgentStatusSchema = Schema.Literal('active', 'waiting_for_input')
+
+export type AgentStatus = typeof AgentStatusSchema.Type
+
+/**
  * Information about a single terminal instance, returned by spawn, restart,
  * and list operations. Includes the opaque `workspaceId` metadata that the
  * caller passed at spawn time.
@@ -730,6 +741,11 @@ export const TerminalInfo = Schema.Struct({
   command: Schema.String,
   args: Schema.Array(Schema.String),
   cwd: Schema.String,
+  /**
+   * Agent status derived from foreground process transitions.
+   * Null when no agent has been detected in this terminal.
+   */
+  agentStatus: Schema.NullOr(AgentStatusSchema),
   /**
    * Information about the foreground process running in the terminal.
    * Null when the shell is idle at a prompt or the terminal is stopped.

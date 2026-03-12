@@ -95,6 +95,24 @@ export interface DesktopUpdateActionResult {
 }
 
 // ---------------------------------------------------------------------------
+// Agent notification types
+// ---------------------------------------------------------------------------
+
+/**
+ * Payload for a desktop notification triggered by agent status transitions.
+ * The renderer sends this to the main process via IPC; clicking the resulting
+ * OS notification sends `workspaceId` back so the renderer can focus the pane.
+ */
+export interface AgentNotificationPayload {
+  /** Notification body text (e.g., "Claude is waiting for input"). */
+  readonly body: string
+  /** Notification title (e.g., workspace branch name). */
+  readonly title: string
+  /** Workspace that triggered the notification — used to focus the right pane on click. */
+  readonly workspaceId: string
+}
+
+// ---------------------------------------------------------------------------
 // DesktopBridge interface
 // ---------------------------------------------------------------------------
 
@@ -132,6 +150,14 @@ export interface DesktopBridge {
   onMenuAction: (listener: (action: string) => void) => () => void
 
   /**
+   * Subscribes to notification click events.
+   * Fired when the user clicks an OS notification created by `sendNotification`.
+   * The callback receives the `workspaceId` so the renderer can focus that pane.
+   * Returns an unsubscribe function.
+   */
+  onNotificationClicked: (listener: (workspaceId: string) => void) => () => void
+
+  /**
    * Subscribes to sidecar status change events.
    * Returns an unsubscribe function.
    */
@@ -153,6 +179,13 @@ export interface DesktopBridge {
 
   /** Manually restarts a sidecar service by name. */
   restartSidecar: (name: SidecarName) => Promise<void>
+
+  /**
+   * Sends a native OS notification for an agent status change.
+   * The main process creates an Electron `Notification`; clicking it
+   * fires the `onNotificationClicked` listener with the workspace ID.
+   */
+  sendNotification: (payload: AgentNotificationPayload) => Promise<void>
 
   /**
    * Shows a native context menu at the cursor or specified position.

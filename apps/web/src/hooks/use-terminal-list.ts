@@ -34,8 +34,22 @@ interface ForegroundProcess {
   readonly rawName: string
 }
 
+/**
+ * Agent status for a terminal, derived from foreground process transitions.
+ *
+ * - `active` — an AI agent is currently the foreground process
+ * - `waiting_for_input` — an agent was running but is now idle
+ *   (needs user input or has completed its task)
+ */
+type AgentStatus = 'active' | 'waiting_for_input'
+
 /** Shape of a terminal from the terminal service's terminal.list RPC. */
 interface TerminalInfo {
+  /**
+   * Agent status derived from foreground process transitions.
+   * Null when no agent has been detected in this terminal.
+   */
+  readonly agentStatus: AgentStatus | null
   readonly args: readonly string[]
   readonly command: string
   readonly cwd: string
@@ -154,6 +168,7 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
 
 export { useTerminalList }
 export type {
+  AgentStatus,
   ForegroundProcess,
   ProcessCategory,
   TerminalInfo,

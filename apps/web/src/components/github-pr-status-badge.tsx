@@ -4,6 +4,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { isElectron, openExternalUrl } from '@/lib/desktop'
 import { cn } from '@/lib/utils'
 
 interface GitHubPrStatusBadgeProps {
@@ -63,6 +64,15 @@ function GitHubPrStatusBadge({
     return null
   }
 
+  const handleClick = async (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!isElectron()) {
+      return
+    }
+
+    event.preventDefault()
+    await openExternalUrl(prUrl ?? '')
+  }
+
   const content = (
     <>
       <PrStateIcon className="size-3" prState={prState} />
@@ -84,6 +94,7 @@ function GitHubPrStatusBadge({
           <a
             className={badgeClassName}
             href={prUrl}
+            onClick={handleClick}
             rel="noopener"
             target="_blank"
           >

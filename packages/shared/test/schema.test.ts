@@ -173,6 +173,7 @@ describe('LiveStore schema', () => {
           prUrl: null,
           prTitle: null,
           prState: null,
+          worktreeSetupStep: null,
         })
 
         store.commit(

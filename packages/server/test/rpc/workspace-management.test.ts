@@ -38,7 +38,7 @@ const writeLaborerConfig = (
 }
 
 describe('LaborerRpcs workspace management', () => {
-  it.scoped(
+  it.scopedLive(
     'workspace.create creates a worktree, allocates a port, and runs setup scripts',
     () =>
       runWithRpcTestContext(({ client, store }) =>
@@ -70,11 +70,45 @@ describe('LaborerRpcs workspace management', () => {
           assert.strictEqual(workspace.projectId, project.id)
           assert.strictEqual(workspace.branchName, branchName)
           assert.strictEqual(workspace.port, 4100)
-          assert.strictEqual(workspace.status, 'running')
+          // workspace.create returns immediately with 'creating' status;
+          // the background fiber transitions to 'running' asynchronously.
+          assert.strictEqual(workspace.status, 'creating')
           assert.strictEqual(
             workspace.worktreePath,
             join(worktreeRoot, 'feature-rpc-create')
           )
+
+          // Wait for the background setup fiber to finish and transition
+          // the workspace to 'running' before asserting on side effects.
+          // The fiber is forked into the layer scope so we poll the store,
+          // yielding via Effect.sleep to let the background fiber progress.
+          yield* Effect.gen(function* () {
+            const maxAttempts = 200
+            for (let i = 0; i < maxAttempts; i++) {
+              yield* Effect.sleep('100 millis')
+              const rows = store.query(
+                tables.workspaces.where('id', workspace.id)
+              )
+              const row = rows[0]
+              if (row === undefined) {
+                return assert.fail(
+                  'Workspace row deleted — setup likely errored and rolled back'
+                )
+              }
+              if (row.status === 'errored') {
+                return assert.fail(
+                  `Workspace errored (worktreeSetupStep=${row.worktreeSetupStep})`
+                )
+              }
+              if (row.status === 'running') {
+                return
+              }
+            }
+            assert.fail(
+              'Timed out waiting for workspace to transition to running'
+            )
+          })
+
           assert.isTrue(existsSync(workspace.worktreePath))
           assert.match(
             git(`branch --list ${branchName}`, repoPath),

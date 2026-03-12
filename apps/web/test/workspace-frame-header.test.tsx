@@ -351,6 +351,45 @@ describe('WorkspaceFrameHeader', () => {
     expect(onHeaderClick).toHaveBeenCalledOnce()
   })
 
+  it('calls onHeaderClick when clicking anywhere on the header bar while minimized', () => {
+    const actions = mockActions()
+    const onHeaderClick = vi.fn()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isMinimized
+        onHeaderClick={onHeaderClick}
+      />
+    )
+
+    // Click the outer header bar itself, not the inner label button
+    const headerBar = screen.getByTestId('workspace-frame-header')
+    fireEvent.click(headerBar)
+
+    expect(onHeaderClick).toHaveBeenCalledOnce()
+  })
+
+  it('does not call onHeaderClick when clicking the header bar background while expanded', () => {
+    const actions = mockActions()
+    const onHeaderClick = vi.fn()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isMinimized={false}
+        onHeaderClick={onHeaderClick}
+      />
+    )
+
+    // Click the outer header bar itself (not the label button)
+    const headerBar = screen.getByTestId('workspace-frame-header')
+    fireEvent.click(headerBar)
+
+    // Should NOT trigger onHeaderClick — only the inner label button triggers it
+    expect(onHeaderClick).not.toHaveBeenCalled()
+  })
+
   // ---------------------------------------------------------------------------
   // Minimized state hides action buttons
   // ---------------------------------------------------------------------------

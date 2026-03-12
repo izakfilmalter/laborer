@@ -941,6 +941,63 @@ function filterTreeByWorkspace(
   }
 }
 
+/**
+ * Determine whether closing a pane should show a confirmation dialog.
+ *
+ * Returns true only when ALL of these conditions hold:
+ * 1. A layout tree exists
+ * 2. The pane ID references a LeafNode in the tree
+ * 3. The leaf has a terminalId assigned
+ * 4. That terminal appears in the live terminal list with
+ *    `hasChildProcess === true`
+ *
+ * This is the pure logic extracted from HomeComponent's `gatedClosePane`
+ * callback, making it testable without React component infrastructure.
+ *
+ * @param layout - The current panel layout tree (may be undefined)
+ * @param paneId - The ID of the pane being closed
+ * @param terminals - The live terminal list from useTerminalList
+ * @returns Whether the close confirmation dialog should be shown
+ */
+function shouldConfirmClose(
+  layout: PanelNode | undefined,
+  paneId: string,
+  terminals: ReadonlyArray<{
+    readonly id: string
+    readonly hasChildProcess: boolean
+  }>
+): boolean {
+  if (!layout) {
+    return false
+  }
+  const node = findNodeById(layout, paneId)
+  if (!node || node._tag !== 'LeafNode' || !node.terminalId) {
+    return false
+  }
+  const terminal = terminals.find((t) => t.id === node.terminalId)
+  return terminal?.hasChildProcess === true
+}
+
+/**
+ * Find the newly created leaf after a split operation.
+ *
+ * Compares the leaf IDs before and after the split to identify which
+ * leaf is new. This is the pure logic extracted from `handleSplitPane`
+ * in HomeComponent, enabling unit testing without React hooks.
+ *
+ * @param before - The layout tree before the split
+ * @param after - The layout tree after the split
+ * @returns The new LeafNode, or undefined if no new leaf was created
+ */
+function findNewLeafAfterSplit(
+  before: PanelNode,
+  after: PanelNode
+): LeafNode | undefined {
+  const beforeIds = new Set(getLeafIds(before))
+  const afterLeaves = getLeafNodes(after)
+  return afterLeaves.find((leaf) => !beforeIds.has(leaf.id))
+}
+
 export {
   closePane,
   computeResize,
@@ -949,6 +1006,7 @@ export {
   filterTreeByWorkspace,
   findEmptyTerminalPane,
   findLeafByTerminalId,
+  findNewLeafAfterSplit,
   findNodeById,
   findPaneInDirection,
   findParent,
@@ -962,6 +1020,7 @@ export {
   getWorkspaceIds,
   reconcileLayout,
   replaceNode,
+  shouldConfirmClose,
   splitPane,
 }
 export type { NavigationDirection }

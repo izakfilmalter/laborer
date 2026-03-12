@@ -17,12 +17,14 @@ import {
   ensureValidActivePaneId,
   filterTreeByWorkspace,
   findLeafByTerminalId,
+  findNewLeafAfterSplit,
   findNodeById,
   findSiblingPaneId,
   getFirstLeafId,
   getLeafIds,
   getLeafNodes,
   getWorkspaceIds,
+  shouldConfirmClose,
   splitPane,
 } from '../src/panels/layout-utils'
 
@@ -879,7 +881,7 @@ describe('splitPane', () => {
     const split = result as SplitNode
     // Root should still have 2 children (nested split replaced A, B stays)
     expect(split.children).toHaveLength(2)
-    expect(split.children[0]._tag).toBe('SplitNode')
+    expect(split.children[0]?._tag).toBe('SplitNode')
     const nestedSplit = split.children[0] as SplitNode
     expect(nestedSplit.direction).toBe('vertical')
     expect(nestedSplit.children).toHaveLength(2)
@@ -993,6 +995,110 @@ describe('closePane', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Tests: shouldConfirmClose
+// ---------------------------------------------------------------------------
+
+describe('shouldConfirmClose', () => {
+  /**
+   * Minimal terminal info interface matching useTerminalList's output.
+   * Only the fields that shouldConfirmClose needs.
+   */
+  interface TerminalInfo {
+    readonly hasChildProcess: boolean
+    readonly id: string
+    readonly status: string
+  }
+
+  it('returns true when the pane has a terminal with an active child process', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-A',
+          paneType: 'terminal',
+          terminalId: 'term-1',
+          workspaceId: 'ws-1',
+        },
+        { _tag: 'LeafNode', id: 'pane-B', paneType: 'terminal' },
+      ],
+      sizes: [50, 50],
+    }
+    const terminals: TerminalInfo[] = [
+      { id: 'term-1', hasChildProcess: true, status: 'running' },
+    ]
+
+    expect(shouldConfirmClose(layout, 'pane-A', terminals)).toBe(true)
+  })
+
+  it('returns false when the pane has a terminal with no child process', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-A',
+          paneType: 'terminal',
+          terminalId: 'term-1',
+          workspaceId: 'ws-1',
+        },
+        { _tag: 'LeafNode', id: 'pane-B', paneType: 'terminal' },
+      ],
+      sizes: [50, 50],
+    }
+    const terminals: TerminalInfo[] = [
+      { id: 'term-1', hasChildProcess: false, status: 'running' },
+    ]
+
+    expect(shouldConfirmClose(layout, 'pane-A', terminals)).toBe(false)
+  })
+
+  it('returns false when the pane has no terminal assigned', () => {
+    const layout: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-empty',
+      paneType: 'terminal',
+    }
+    const terminals: TerminalInfo[] = []
+
+    expect(shouldConfirmClose(layout, 'pane-empty', terminals)).toBe(false)
+  })
+
+  it('returns false when the pane ID does not exist in the layout', () => {
+    const terminals: TerminalInfo[] = [
+      { id: 'term-1', hasChildProcess: true, status: 'running' },
+    ]
+
+    expect(shouldConfirmClose(singleLeaf, 'nonexistent', terminals)).toBe(false)
+  })
+
+  it('returns false when layout is undefined', () => {
+    const terminals: TerminalInfo[] = [
+      { id: 'term-1', hasChildProcess: true, status: 'running' },
+    ]
+
+    expect(shouldConfirmClose(undefined, 'pane-A', terminals)).toBe(false)
+  })
+
+  it('returns false when the terminal is not in the live terminal list', () => {
+    const layout: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-A',
+      paneType: 'terminal',
+      terminalId: 'term-stale',
+      workspaceId: 'ws-1',
+    }
+    const terminals: TerminalInfo[] = []
+
+    expect(shouldConfirmClose(layout, 'pane-A', terminals)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Tests: splitPane + getLeafIds — new pane discovery pattern
 //
 // This pattern is used by handleSplitPane in the route component to find
@@ -1062,5 +1168,55 @@ describe('splitPane + getLeafIds new pane discovery', () => {
     const newIds = getLeafIds(newTree)
     const addedIds = newIds.filter((id) => !oldIds.has(id))
     expect(addedIds).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: findNewLeafAfterSplit
+// ---------------------------------------------------------------------------
+
+describe('findNewLeafAfterSplit', () => {
+  it('returns the new leaf created by splitting a single leaf', () => {
+    const before = singleLeaf
+    const after = splitPane(before, 'pane-A', 'horizontal')
+
+    const newLeaf = findNewLeafAfterSplit(before, after)
+
+    expect(newLeaf).toBeDefined()
+    expect(newLeaf?.id).not.toBe('pane-A')
+    expect(newLeaf?._tag).toBe('LeafNode')
+    expect(newLeaf?.paneType).toBe('terminal')
+  })
+
+  it('returns the new leaf when splitting within a flat split', () => {
+    const before = twoChildSplit
+    const after = splitPane(before, 'pane-B', 'horizontal')
+
+    const newLeaf = findNewLeafAfterSplit(before, after)
+
+    expect(newLeaf).toBeDefined()
+    expect(newLeaf?.id).not.toBe('pane-A')
+    expect(newLeaf?.id).not.toBe('pane-B')
+  })
+
+  it('returns undefined when before and after have the same leaves', () => {
+    // No actual split occurred (e.g., paneId not found)
+    const newLeaf = findNewLeafAfterSplit(twoChildSplit, twoChildSplit)
+    expect(newLeaf).toBeUndefined()
+  })
+
+  it('inherits the workspaceId from the split source pane', () => {
+    const leafWithWs: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-A',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    const after = splitPane(leafWithWs, 'pane-A', 'vertical')
+
+    const newLeaf = findNewLeafAfterSplit(leafWithWs, after)
+
+    expect(newLeaf).toBeDefined()
+    expect(newLeaf?.workspaceId).toBe('ws-1')
   })
 })

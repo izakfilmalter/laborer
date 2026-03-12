@@ -770,4 +770,91 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
       )
     })
   })
+
+  it('listTerminals() reports hasChildProcess true when a child process is running', async () => {
+    // Spawn an interactive shell that then has a child process.
+    // Using `/bin/sh -c 'sleep 999 & wait'` keeps the shell alive with
+    // `sleep` as a backgrounded child. The `& wait` prevents sh from
+    // exec-replacing itself with sleep (which would make sleep the PID
+    // itself instead of a child).
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: '/bin/sh',
+          args: ['-c', 'sleep 999 & wait'],
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Give time for the PTY to start and the spawned event to set shellPid
+    await delay(1500)
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.status, 'running')
+    assert.strictEqual(terminal?.hasChildProcess, true)
+
+    // Clean up
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('listTerminals() reports hasChildProcess false for an idle shell', async () => {
+    // Spawn an interactive shell — no child process, just sitting at a prompt.
+    // `cat` is a good stand-in: it reads stdin but doesn't fork children.
+    // However, `cat` IS the shell process itself, so shellPid points at it.
+    // A better test: spawn `/bin/sh` interactively (no `-c`). The shell
+    // process itself won't have any children until the user runs something.
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: '/bin/sh',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Give time for the PTY to start and the spawned event to set shellPid
+    await delay(1500)
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.status, 'running')
+    assert.strictEqual(terminal?.hasChildProcess, false)
+
+    // Clean up
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
 })

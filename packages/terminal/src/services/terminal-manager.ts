@@ -18,6 +18,7 @@
  * @see Issue #138: Move + simplify TerminalManager
  */
 
+import { execSync } from 'node:child_process'
 import { TerminalRpcError } from '@laborer/shared/rpc'
 import { Cause, Context, Effect, Layer, PubSub, Ref, Runtime } from 'effect'
 import { RingBuffer } from '../lib/ring-buffer.js'
@@ -74,6 +75,12 @@ interface ManagedTerminal {
   readonly cwd: string
   readonly env: Record<string, string>
   readonly id: string
+  /**
+   * PID of the shell process inside the PTY. Set when the PTY Host
+   * confirms the spawn. Used to detect whether the shell has child
+   * processes running (e.g., vim, dev server, opencode).
+   */
+  readonly shellPid: number | undefined
   readonly status: 'running' | 'stopped'
   readonly workspaceId: string
 }
@@ -96,6 +103,12 @@ interface TerminalRecord {
   readonly args: readonly string[]
   readonly command: string
   readonly cwd: string
+  /**
+   * Whether the shell has child processes running. True when processes
+   * like vim, dev servers, or AI agents are active inside the terminal.
+   * False when the shell is idle at a prompt.
+   */
+  readonly hasChildProcess: boolean
   readonly id: string
   readonly status: 'running' | 'stopped'
   readonly workspaceId: string
@@ -113,6 +126,29 @@ interface SpawnPayload {
   readonly env?: Record<string, string> | undefined
   readonly rows: number
   readonly workspaceId: string
+}
+
+/**
+ * Check if a process has child processes by using `pgrep -P <pid>`.
+ *
+ * Returns true if the shell process has at least one child process
+ * (e.g., vim, node, cargo, opencode). Returns false if the shell is
+ * idle at a prompt or if the PID is unknown/invalid.
+ *
+ * Uses `pgrep` which is available on macOS and Linux. The call is
+ * synchronous but extremely fast (~1-2ms per check).
+ */
+const checkHasChildProcess = (shellPid: number | undefined): boolean => {
+  if (shellPid === undefined) {
+    return false
+  }
+  try {
+    // pgrep -P <pid> exits with 0 if children found, 1 if none
+    execSync(`pgrep -P ${shellPid}`, { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -415,6 +451,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           args: [...args],
           cwd,
           env: { ...env },
+          shellPid: undefined,
           status: 'running',
         }
 
@@ -470,6 +507,19 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
             emitEvent({ _tag: 'StatusChanged', id, status: 'stopped' })
             emitEvent({ _tag: 'Exited', id, exitCode, signal })
+          },
+          // Spawned callback: store the shell PID for child process detection
+          (pid: number) => {
+            runSync(
+              Ref.update(terminalsRef, (map) => {
+                const next = new Map(map)
+                const existing = next.get(id)
+                if (existing !== undefined) {
+                  next.set(id, { ...existing, shellPid: pid })
+                }
+                return next
+              })
+            )
           }
         )
 
@@ -479,6 +529,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           command,
           args: [...args],
           cwd,
+          hasChildProcess: false,
           status: 'running',
         }
 
@@ -641,6 +692,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
                 command: terminal.command,
                 args: [...terminal.args],
                 cwd: terminal.cwd,
+                hasChildProcess:
+                  terminal.status === 'running'
+                    ? checkHasChildProcess(terminal.shellPid)
+                    : false,
                 status: terminal.status,
               })
             }
@@ -680,9 +735,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             ? [...terminal.args]
             : ['-c', terminal.command]
 
-        // Update status to running
+        // Update status to running, reset shellPid (will be set by spawned callback)
         const updated: ManagedTerminal = {
           ...terminal,
+          shellPid: undefined,
           status: 'running' as const,
         }
 
@@ -746,6 +802,19 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
               status: 'stopped',
             })
             emitEvent({ _tag: 'Exited', id: terminalId, exitCode, signal })
+          },
+          // Spawned callback: store the shell PID for child process detection
+          (pid: number) => {
+            runSync(
+              Ref.update(terminalsRef, (m) => {
+                const next = new Map(m)
+                const existing = next.get(terminalId)
+                if (existing !== undefined) {
+                  next.set(terminalId, { ...existing, shellPid: pid })
+                }
+                return next
+              })
+            )
           }
         )
 
@@ -755,6 +824,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           command: terminal.command,
           args: [...terminal.args],
           cwd: terminal.cwd,
+          hasChildProcess: false,
           status: 'running',
         }
 

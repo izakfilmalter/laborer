@@ -119,6 +119,8 @@ describe(
       assert.strictEqual(result.cwd, TEST_CWD)
       assert.strictEqual(result.status, 'running')
       assert.deepStrictEqual(result.args, [])
+      // hasChildProcess must be a boolean in the RPC response
+      assert.strictEqual(typeof result.hasChildProcess, 'boolean')
 
       // Wait for the short-lived echo to exit
       await delay(2000)
@@ -346,6 +348,7 @@ describe(
       assert.strictEqual(restarted.cwd, TEST_CWD)
       assert.strictEqual(restarted.status, 'running')
       assert.strictEqual(restarted.workspaceId, TEST_WORKSPACE_ID)
+      assert.strictEqual(typeof restarted.hasChildProcess, 'boolean')
 
       // Verify it's alive by writing
       await run(
@@ -411,9 +414,12 @@ describe(
 
       assert.isDefined(runningTerminal)
       assert.strictEqual(runningTerminal?.status, 'running')
+      assert.strictEqual(typeof runningTerminal?.hasChildProcess, 'boolean')
 
       assert.isDefined(stoppedTerminal)
       assert.strictEqual(stoppedTerminal?.status, 'stopped')
+      // Stopped terminals always report hasChildProcess as false
+      assert.strictEqual(stoppedTerminal?.hasChildProcess, false)
 
       // Clean up
       await run(client.terminal.kill({ id: running.id }))

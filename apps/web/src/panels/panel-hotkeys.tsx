@@ -7,6 +7,7 @@
  * Direct shortcuts:
  * - Cmd+d → split horizontal (side-by-side)
  * - Cmd+Shift+d → split vertical (stacked)
+ * - Cmd+Shift+Enter → toggle fullscreen for active terminal pane
  *
  * Tmux-style prefix key sequences (Ctrl+b then action key):
  * - Ctrl+b then h → split horizontal (side-by-side)
@@ -16,6 +17,7 @@
  * - Ctrl+b then p → cycle focus to previous pane
  * - Ctrl+b then d → toggle diff viewer alongside active terminal pane
  * - Ctrl+b then s → toggle dev server terminal alongside active terminal pane
+ * - Ctrl+b then z → toggle fullscreen for active terminal pane (zoom)
  * - Ctrl+b then ArrowLeft → move focus left
  * - Ctrl+b then ArrowRight → move focus right
  * - Ctrl+b then ArrowUp → move focus up
@@ -301,6 +303,26 @@ function PanelHotkeys({
       event.preventDefault()
       if (actions && activePaneId) {
         actions.toggleDevServerPane(activePaneId)
+      }
+    },
+    { timeout: SEQUENCE_TIMEOUT }
+  )
+
+  // Cmd+Shift+Enter → toggle fullscreen for active terminal pane
+  useHotkeySequence(['Shift+Meta+Enter'], (event) => {
+    event.preventDefault()
+    if (actions) {
+      actions.toggleFullscreenPane()
+    }
+  })
+
+  // Ctrl+b then z → toggle fullscreen for active terminal pane (tmux-style zoom)
+  useHotkeySequence(
+    ['Control+B', 'Z'],
+    (event) => {
+      event.preventDefault()
+      if (actions) {
+        actions.toggleFullscreenPane()
       }
     },
     { timeout: SEQUENCE_TIMEOUT }

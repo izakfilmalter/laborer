@@ -1,8 +1,9 @@
 /**
  * Unit tests for the WorkspaceFrameHeader presentational component.
  *
- * Verifies the toolbar button behaviors — diff viewer toggle and
- * the new close-workspace button that replaced the per-pane buttons.
+ * Verifies the toolbar button behaviors — diff viewer toggle, header
+ * click focus, minimize/expand toggle, close-workspace button, and
+ * action button visibility based on minimized state.
  *
  * @see apps/web/src/components/workspace-frame-header.tsx
  */
@@ -43,6 +44,7 @@ function mockActions(): PanelActions {
 }
 
 const DIFF_VIEWER_RE = /diff viewer/i
+const MINIMIZE_RE = /minimize/i
 const FULLSCREEN_RE = /fullscreen/i
 
 /** Default props for a typical active pane scenario. */
@@ -256,5 +258,139 @@ describe('WorkspaceFrameHeader', () => {
     ).toBeNull()
     expect(screen.queryByRole('button', { name: FULLSCREEN_RE })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Close pane' })).toBeNull()
+  })
+
+  // ---------------------------------------------------------------------------
+  // Header click → onHeaderClick
+  // ---------------------------------------------------------------------------
+
+  it('calls onHeaderClick when the header label area is clicked', () => {
+    const actions = mockActions()
+    const onHeaderClick = vi.fn()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        onHeaderClick={onHeaderClick}
+      />
+    )
+
+    // Click the project name / branch name area
+    const label = screen.getByText('my-project')
+    fireEvent.click(label)
+
+    expect(onHeaderClick).toHaveBeenCalledOnce()
+  })
+
+  // ---------------------------------------------------------------------------
+  // Minimize button
+  // ---------------------------------------------------------------------------
+
+  it('renders a minimize button and calls onMinimize when clicked', () => {
+    const actions = mockActions()
+    const onMinimize = vi.fn()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        onMinimize={onMinimize}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: MINIMIZE_RE })
+    fireEvent.click(button)
+
+    expect(onMinimize).toHaveBeenCalledOnce()
+  })
+
+  it('labels minimize button "Minimize workspace" when expanded', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isMinimized={false}
+        onMinimize={vi.fn()}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: 'Minimize workspace' })
+    expect(button).toBeTruthy()
+  })
+
+  it('labels minimize button "Expand workspace" when minimized', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isMinimized
+        onMinimize={vi.fn()}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: 'Expand workspace' })
+    expect(button).toBeTruthy()
+  })
+
+  it('calls onHeaderClick when header label is clicked while minimized', () => {
+    const actions = mockActions()
+    const onHeaderClick = vi.fn()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isMinimized
+        onHeaderClick={onHeaderClick}
+      />
+    )
+
+    const label = screen.getByText('my-project')
+    fireEvent.click(label)
+
+    expect(onHeaderClick).toHaveBeenCalledOnce()
+  })
+
+  // ---------------------------------------------------------------------------
+  // Minimized state hides action buttons
+  // ---------------------------------------------------------------------------
+
+  it('hides diff, close workspace, and dev server buttons when minimized', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isMinimized
+        onMinimize={vi.fn()}
+      />
+    )
+
+    // These action buttons should not be present when minimized
+    expect(screen.queryByRole('button', { name: DIFF_VIEWER_RE })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Close workspace' })).toBeNull()
+
+    // But the minimize/expand button should still be visible
+    expect(
+      screen.getByRole('button', { name: 'Expand workspace' })
+    ).toBeTruthy()
+  })
+
+  it('shows all action buttons when not minimized', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isMinimized={false}
+        onMinimize={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: DIFF_VIEWER_RE })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Close workspace' })).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Minimize workspace' })
+    ).toBeTruthy()
   })
 })

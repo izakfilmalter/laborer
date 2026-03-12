@@ -19,6 +19,8 @@ import {
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
+  Minus,
+  Plus,
   Server,
   Terminal,
   X,
@@ -144,6 +146,12 @@ interface WorkspaceFrameHeaderProps {
     | undefined
   /** Whether the workspace runs in a container (shows dev server toggle). */
   readonly isContainerized: boolean
+  /** Whether the workspace frame is minimized (collapsed to header only). */
+  readonly isMinimized?: boolean | undefined
+  /** Called when the header area is clicked (focus pane or expand if minimized). */
+  readonly onHeaderClick?: (() => void) | undefined
+  /** Called when the minimize/expand button is clicked. */
+  readonly onMinimize?: (() => void) | undefined
   /** PR number, if the workspace has an associated pull request. */
   readonly prNumber: number | null
   /** The project name for the workspace (shown in the header). */
@@ -167,6 +175,9 @@ function WorkspaceFrameHeader({
   diffIsOpen,
   dragHandleRef,
   isContainerized,
+  isMinimized,
+  onHeaderClick,
+  onMinimize,
   prNumber,
   prState,
   prTitle,
@@ -189,9 +200,17 @@ function WorkspaceFrameHeader({
   return (
     <div
       className="flex h-8 shrink-0 items-center justify-between border-b px-2"
+      data-testid="workspace-frame-header"
       ref={dragHandleRef}
     >
-      <div className="flex cursor-grab items-center gap-2 active:cursor-grabbing">
+      <button
+        className="flex cursor-grab items-center gap-2 active:cursor-grabbing"
+        onClick={(e) => {
+          e.stopPropagation()
+          onHeaderClick?.()
+        }}
+        type="button"
+      >
         <div className="flex items-center gap-1 text-muted-foreground">
           <Terminal className="size-3.5" />
         </div>
@@ -238,66 +257,98 @@ function WorkspaceFrameHeader({
             {workspaceStatus}
           </Badge>
         )}
-      </div>
+      </button>
       <div className="flex gap-0.5">
-        {isContainerized && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  aria-label="Toggle dev server terminal"
-                  disabled={!hasActivePane}
-                  onClick={withFocus((paneId) =>
-                    actions?.toggleDevServerPane(paneId)
-                  )}
-                  size="icon-sm"
-                  variant="ghost"
-                />
-              }
-            >
-              <Server className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipContent>Toggle dev server terminal</TooltipContent>
-          </Tooltip>
+        {!isMinimized && (
+          <>
+            {isContainerized && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label="Toggle dev server terminal"
+                      disabled={!hasActivePane}
+                      onClick={withFocus((paneId) =>
+                        actions?.toggleDevServerPane(paneId)
+                      )}
+                      size="icon-sm"
+                      variant="ghost"
+                    />
+                  }
+                >
+                  <Server className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipContent>Toggle dev server terminal</TooltipContent>
+              </Tooltip>
+            )}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={
+                      diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'
+                    }
+                    className={diffIsOpen ? 'bg-accent' : ''}
+                    disabled={!hasActivePane}
+                    onClick={withFocus((paneId) =>
+                      actions?.toggleDiffPane(paneId)
+                    )}
+                    size="icon-sm"
+                    variant="ghost"
+                  />
+                }
+              >
+                <FileCode2 className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipContent>
+                {diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label="Close workspace"
+                    disabled={!workspaceId}
+                    onClick={() =>
+                      workspaceId && actions?.closeWorkspace(workspaceId)
+                    }
+                    size="icon-sm"
+                    variant="ghost"
+                  />
+                }
+              >
+                <X className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipContent>Close workspace</TooltipContent>
+            </Tooltip>
+          </>
         )}
         <Tooltip>
           <TooltipTrigger
             render={
               <Button
                 aria-label={
-                  diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'
+                  isMinimized ? 'Expand workspace' : 'Minimize workspace'
                 }
-                className={diffIsOpen ? 'bg-accent' : ''}
-                disabled={!hasActivePane}
-                onClick={withFocus((paneId) => actions?.toggleDiffPane(paneId))}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onMinimize?.()
+                }}
                 size="icon-sm"
                 variant="ghost"
               />
             }
           >
-            <FileCode2 className="size-3.5" />
+            {isMinimized ? (
+              <Plus className="size-3.5" />
+            ) : (
+              <Minus className="size-3.5" />
+            )}
           </TooltipTrigger>
           <TooltipContent>
-            {diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'}
+            {isMinimized ? 'Expand workspace' : 'Minimize workspace'}
           </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label="Close workspace"
-                disabled={!workspaceId}
-                onClick={() =>
-                  workspaceId && actions?.closeWorkspace(workspaceId)
-                }
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            <X className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent>Close workspace</TooltipContent>
         </Tooltip>
       </div>
     </div>

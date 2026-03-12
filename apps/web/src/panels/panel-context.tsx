@@ -42,6 +42,17 @@ interface PanelActions {
    * @param paneId - The ID of the LeafNode to close
    */
   readonly closePane: (paneId: string) => void
+
+  /**
+   * Close a terminal and remove its pane from the layout.
+   *
+   * Finds the pane associated with the given terminal, then closes it
+   * (which also removes the terminal from the service). If no pane is
+   * found, the terminal is removed from the service directly.
+   *
+   * @param terminalId - The ID of the terminal to close
+   */
+  readonly closeTerminalPane: (terminalId: string) => void
   /**
    * Resize the active pane in the given direction.
    *

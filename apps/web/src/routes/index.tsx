@@ -32,7 +32,6 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { PanelImperativeHandle } from 'react-resizable-panels'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { AddProjectForm } from '@/components/add-project-form'
 import { CreatePlanWorkspace } from '@/components/create-plan-workspace'
@@ -71,11 +70,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { WorkspaceDashboard } from '@/components/workspace-dashboard'
-import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
-import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
-import { useSidebarWidth } from '@/hooks/use-sidebar-width'
 import { useTerminalList } from '@/hooks/use-terminal-list'
-import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
 import { isElectron } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
 import type { NavigationDirection } from '@/panels/layout-utils'
@@ -988,6 +983,28 @@ function usePanelLayout() {
     autoOpenDevServerRef.current = handleToggleDevServerPane
   }, [handleToggleDevServerPane])
 
+  /**
+   * Close a terminal and its associated pane (ungated — no confirmation).
+   * If the terminal has no pane, removes it from the service directly.
+   */
+  const handleCloseTerminalPane = useCallback(
+    (terminalId: string) => {
+      const base = persistedLayoutTree ?? initialLayout
+      if (base) {
+        const leaf = findLeafByTerminalId(base, terminalId)
+        if (leaf) {
+          handleClosePane(leaf.id)
+          return
+        }
+      }
+      // No pane found — remove the terminal from the service directly
+      removeTerminal({ payload: { id: terminalId } }).catch((error) => {
+        console.warn('[close-terminal-pane] terminal remove failed:', error)
+      })
+    },
+    [persistedLayoutTree, initialLayout, handleClosePane, removeTerminal]
+  )
+
   const panelActions = useMemo(
     () => ({
       assignTerminalToPane: handleAssignTerminalToPane,
@@ -997,6 +1014,7 @@ function usePanelLayout() {
       toggleDiffPane: handleToggleDiffPane,
       toggleDevServerPane: handleToggleDevServerPane,
       resizePane: handleResizePane,
+      closeTerminalPane: handleCloseTerminalPane,
     }),
     [
       handleAssignTerminalToPane,
@@ -1006,6 +1024,7 @@ function usePanelLayout() {
       handleToggleDiffPane,
       handleToggleDevServerPane,
       handleResizePane,
+      handleCloseTerminalPane,
     ]
   )
 
@@ -1569,14 +1588,36 @@ function HomeComponent() {
     }
   }, [panelActions])
 
+  /**
+   * Close a terminal and its associated pane.
+   * If the terminal is running, shows a confirmation dialog first.
+   * If the terminal has no pane, falls back to the ungated handler
+   * which removes it from the service directly.
+   */
+  const gatedCloseTerminalPane = useCallback(
+    (terminalId: string) => {
+      if (layout) {
+        const leaf = findLeafByTerminalId(layout, terminalId)
+        if (leaf) {
+          gatedClosePane(leaf.id)
+          return
+        }
+      }
+      // No pane found — delegate to the ungated handler
+      panelActions.closeTerminalPane(terminalId)
+    },
+    [layout, gatedClosePane, panelActions]
+  )
+
   // Override panelActions.closePane with the gated version and add fullscreen toggle
   const gatedPanelActions = useMemo(
     () => ({
       ...panelActions,
       closePane: gatedClosePane,
+      closeTerminalPane: gatedCloseTerminalPane,
       toggleFullscreenPane,
     }),
-    [panelActions, gatedClosePane, toggleFullscreenPane]
+    [panelActions, gatedClosePane, gatedCloseTerminalPane, toggleFullscreenPane]
   )
 
   // Sync running workspace count to Electron system tray tooltip (no-op in browser)

@@ -22,9 +22,8 @@ import {
   AlertTriangle,
   Plus,
   RotateCw,
-  Square,
   Terminal as TerminalIcon,
-  Trash2,
+  X,
 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
@@ -45,8 +44,6 @@ import { cn, extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 
 const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
-const killTerminalMutation = TerminalServiceClient.mutation('terminal.kill')
-const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
 const restartTerminalMutation =
   TerminalServiceClient.mutation('terminal.restart')
 
@@ -72,12 +69,6 @@ function TerminalList({ projectId, workspaceId }: TerminalListProps) {
   } = useTerminalList()
   const panelActions = usePanelActions()
   const spawnTerminal = useAtomSet(spawnTerminalMutation, {
-    mode: 'promise',
-  })
-  const killTerminal = useAtomSet(killTerminalMutation, {
-    mode: 'promise',
-  })
-  const removeTerminal = useAtomSet(removeTerminalMutation, {
     mode: 'promise',
   })
   const restartTerminal = useAtomSet(restartTerminalMutation, {
@@ -150,32 +141,13 @@ function TerminalList({ projectId, workspaceId }: TerminalListProps) {
     agentProvider,
   ])
 
-  const handleKillTerminal = useCallback(
-    async (terminalId: string) => {
-      try {
-        await killTerminal({
-          payload: { id: terminalId },
-        })
-        toast.success('Terminal stopped')
-      } catch (error) {
-        toast.error(`Failed to stop terminal: ${extractErrorMessage(error)}`)
+  const handleCloseTerminal = useCallback(
+    (terminalId: string) => {
+      if (panelActions) {
+        panelActions.closeTerminalPane(terminalId)
       }
     },
-    [killTerminal]
-  )
-
-  const handleRemoveTerminal = useCallback(
-    async (terminalId: string) => {
-      try {
-        await removeTerminal({
-          payload: { id: terminalId },
-        })
-        toast.success('Terminal removed')
-      } catch (error) {
-        toast.error(`Failed to remove terminal: ${extractErrorMessage(error)}`)
-      }
-    },
-    [removeTerminal]
+    [panelActions]
   )
 
   const handleRestartTerminal = useCallback(
@@ -297,8 +269,7 @@ function TerminalList({ projectId, workspaceId }: TerminalListProps) {
       {workspaceTerminals.map((terminal) => (
         <TerminalItem
           key={terminal.id}
-          onKill={handleKillTerminal}
-          onRemove={handleRemoveTerminal}
+          onClose={handleCloseTerminal}
           onRestart={handleRestartTerminal}
           onSelect={handleSelectTerminal}
           terminal={terminal}
@@ -309,8 +280,7 @@ function TerminalList({ projectId, workspaceId }: TerminalListProps) {
 }
 
 interface TerminalItemProps {
-  readonly onKill: (terminalId: string) => void
-  readonly onRemove: (terminalId: string) => void
+  readonly onClose: (terminalId: string) => void
   readonly onRestart: (terminalId: string) => void
   readonly onSelect: (terminalId: string) => void
   readonly terminal: {
@@ -330,8 +300,7 @@ const TERMINAL_DRAG_MIME = 'application/x-laborer-terminal'
 function TerminalItem({
   terminal,
   onSelect,
-  onKill,
-  onRemove,
+  onClose,
   onRestart,
 }: TerminalItemProps) {
   const isRunning = terminal.status === 'running'
@@ -402,48 +371,25 @@ function TerminalItem({
         </TooltipTrigger>
         <TooltipContent>Restart</TooltipContent>
       </Tooltip>
-      {isRunning && (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label="Stop terminal"
-                className="size-5 shrink-0"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onKill(terminal.id)
-                }}
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            <Square className="size-2.5" />
-          </TooltipTrigger>
-          <TooltipContent>Stop</TooltipContent>
-        </Tooltip>
-      )}
-      {!isRunning && (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label="Remove terminal"
-                className="size-5 shrink-0 text-muted-foreground hover:text-destructive"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onRemove(terminal.id)
-                }}
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            <Trash2 className="size-2.5" />
-          </TooltipTrigger>
-          <TooltipContent>Remove</TooltipContent>
-        </Tooltip>
-      )}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              aria-label="Close terminal"
+              className="size-5 shrink-0 text-muted-foreground hover:text-destructive"
+              onClick={(e) => {
+                e.stopPropagation()
+                onClose(terminal.id)
+              }}
+              size="icon-sm"
+              variant="ghost"
+            />
+          }
+        >
+          <X className="size-2.5" />
+        </TooltipTrigger>
+        <TooltipContent>Close</TooltipContent>
+      </Tooltip>
     </button>
   )
 }

@@ -216,7 +216,7 @@ function PanelHotkeys({
   })
 
   // Cmd+Shift+d → split active pane vertically (Ghostty-style)
-  useHotkeySequence(['Meta+Shift+D'], (event) => {
+  useHotkeySequence(['Shift+Meta+D'], (event) => {
     event.preventDefault()
     if (actions && activePaneId) {
       actions.splitPane(activePaneId, 'vertical')

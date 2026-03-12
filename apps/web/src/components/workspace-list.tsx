@@ -40,21 +40,13 @@ import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { prds, workspaces } from '@laborer/shared/schema'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
-import {
-  ExternalLink,
-  GitBranch,
-  GitMerge,
-  GitPullRequest,
-  GitPullRequestClosed,
-  Pause,
-  Play,
-  Trash2,
-} from 'lucide-react'
+import { ExternalLink, GitBranch, Pause, Play, Trash2 } from 'lucide-react'
 import { type FC, useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { CopyButton } from '@/components/copy-button'
 import { FixFindingsForm } from '@/components/fix-findings-form'
+import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { PlanIssuesList } from '@/components/plan-issues-list'
 import { ReviewPrForm } from '@/components/review-pr-form'
 import { TerminalList } from '@/components/terminal-list'
@@ -99,47 +91,6 @@ const unpauseContainerMutation = LaborerClient.mutation('container.unpause')
 
 /** Prefix used to associate workspaces with plans by branch name convention. */
 const PLAN_BRANCH_PREFIX = 'plan/'
-
-/** Returns the appropriate icon component for a PR state. */
-function PrStateIcon({
-  prState,
-  className,
-}: {
-  readonly prState: string | null
-  readonly className?: string
-}) {
-  if (prState === 'MERGED') {
-    return <GitMerge className={cn('text-purple-500', className)} />
-  }
-  if (prState === 'CLOSED') {
-    return (
-      <GitPullRequestClosed className={cn('text-destructive', className)} />
-    )
-  }
-  return <GitPullRequest className={cn('text-success', className)} />
-}
-
-/** Returns the human-readable label for a PR state. */
-function getPrStateLabel(prState: string | null): string {
-  if (prState === 'MERGED') {
-    return 'merged'
-  }
-  if (prState === 'CLOSED') {
-    return 'closed'
-  }
-  return 'open'
-}
-
-/** Returns Tailwind classes for PR state badge styling. */
-function getPrStateClasses(prState: string | null): string {
-  if (prState === 'MERGED') {
-    return 'border-purple-500/30 bg-purple-500/10 text-purple-500'
-  }
-  if (prState === 'CLOSED') {
-    return 'border-destructive/30 bg-destructive/10 text-destructive'
-  }
-  return 'border-success/30 bg-success/10 text-success'
-}
 
 type WorkspaceStatus =
   | 'creating'
@@ -540,31 +491,12 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
             </CardTitle>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {workspace.prNumber != null && workspace.prUrl != null && (
-              <Tooltip>
-                <TooltipTrigger>
-                  <a
-                    className={cn(
-                      'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-xs transition-colors hover:bg-accent',
-                      getPrStateClasses(workspace.prState)
-                    )}
-                    href={workspace.prUrl}
-                    rel="noopener"
-                    target="_blank"
-                  >
-                    <PrStateIcon
-                      className="size-3"
-                      prState={workspace.prState}
-                    />
-                    <span>#{workspace.prNumber}</span>
-                    <span>{getPrStateLabel(workspace.prState)}</span>
-                  </a>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {workspace.prTitle ?? `PR #${workspace.prNumber}`}
-                </TooltipContent>
-              </Tooltip>
-            )}
+            <GitHubPrStatusBadge
+              prNumber={workspace.prNumber}
+              prState={workspace.prState}
+              prTitle={workspace.prTitle}
+              prUrl={workspace.prUrl}
+            />
             <Badge
               className={cn('shrink-0 border', getStatusClasses(displayStatus))}
               variant="outline"

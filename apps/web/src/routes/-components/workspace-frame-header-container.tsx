@@ -67,7 +67,6 @@ export function WorkspaceFrameHeaderContainer({
         prUrl: null,
         prTitle: null,
         prState: null,
-        workspaceStatus: undefined,
       }
     }
     const workspace = workspaceList.find((ws) => ws.id === workspaceId)
@@ -80,14 +79,10 @@ export function WorkspaceFrameHeaderContainer({
         prUrl: null,
         prTitle: null,
         prState: null,
-        workspaceStatus: undefined,
       }
     }
     const project = projectList.find((p) => p.id === workspace.projectId)
     const isContainerized = workspace.containerId != null
-    const isContainerPaused = workspace.containerStatus === 'paused'
-    const displayStatus =
-      isContainerized && isContainerPaused ? 'paused' : workspace.status
     return {
       projectName: project?.name,
       branchName: workspace.branchName,
@@ -96,7 +91,6 @@ export function WorkspaceFrameHeaderContainer({
       prUrl: workspace.prUrl ?? null,
       prTitle: workspace.prTitle ?? null,
       prState: workspace.prState ?? null,
-      workspaceStatus: displayStatus,
     }
   }, [workspaceId, workspaceList, projectList])
 
@@ -117,7 +111,6 @@ export function WorkspaceFrameHeaderContainer({
       prTitle={workspaceData.prTitle}
       prUrl={workspaceData.prUrl}
       workspaceId={workspaceId}
-      workspaceStatus={workspaceData.workspaceStatus}
     />
   )
 }

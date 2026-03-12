@@ -145,6 +145,16 @@ const WORKSPACE_REGULAR = {
   taskSource: null,
 }
 
+const WORKSPACE_WITH_CLOSED_PR = {
+  ...WORKSPACE_REGULAR,
+  id: 'ws-3',
+  branchName: 'feature/has-pr',
+  prNumber: 77,
+  prState: 'CLOSED',
+  prTitle: 'Closed bug fix',
+  prUrl: null,
+}
+
 const PRD = {
   id: 'prd-1',
   projectId: 'project-1',
@@ -384,5 +394,24 @@ describe('WorkspaceList plan association', () => {
       name: START_RALPH_LOOP_RE,
     })
     expect(startButton).toBeTruthy()
+  })
+
+  it('shows the GitHub status badge in the sidebar even when the PR URL is missing', () => {
+    useLaborerStoreMock.mockReturnValue({
+      useQuery: (query: { label: string }) => {
+        if (query.label === 'workspaceList') {
+          return [WORKSPACE_WITH_CLOSED_PR]
+        }
+        if (query.label === 'workspaceList.prds') {
+          return []
+        }
+        return []
+      },
+    })
+
+    render(<WorkspaceList projectId="project-1" />)
+
+    expect(screen.getByText('#77')).toBeTruthy()
+    expect(screen.getByText('closed')).toBeTruthy()
   })
 })

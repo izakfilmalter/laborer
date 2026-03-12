@@ -2,9 +2,14 @@
  * useTerminalList — reactive terminal list from the terminal service.
  *
  * Polls the terminal service's `terminal.list` RPC endpoint at a
- * configurable interval (default 2 seconds) to provide a reactive list
+ * configurable interval (default 5 seconds) to provide a reactive list
  * of all terminals. Replaces the LiveStore `queryDb(terminals)` pattern
  * for terminal state queries.
+ *
+ * The poll interval is aligned with the server-side process detection
+ * cache refresh (5 seconds) since the server caches foreground process
+ * info asynchronously. Polling faster would return stale cache data
+ * without benefit.
  *
  * Uses the TerminalServiceClient (AtomRpc) for type-safe RPC calls
  * instead of raw fetch, ensuring the correct Effect RPC JSON wire
@@ -51,8 +56,19 @@ interface TerminalInfo {
 
 type TerminalServiceStatus = 'checking' | 'available' | 'unavailable'
 
-/** Default polling interval in milliseconds. */
-const DEFAULT_POLL_INTERVAL_MS = 2000
+/**
+ * Default polling interval in milliseconds.
+ *
+ * Set to 5 seconds to align with the server-side process detection cache
+ * refresh interval. The server detects foreground processes (for sidebar
+ * display) via a background timer using a single async `ps` call. Polling
+ * faster than the cache refresh provides no benefit — results would be
+ * identical — and reduces unnecessary network + RPC overhead.
+ *
+ * Prior value was 2000ms, which with the old synchronous `execSync`-based
+ * process detection caused O(N×12) event loop blocking per poll cycle.
+ */
+const DEFAULT_POLL_INTERVAL_MS = 5000
 
 const listTerminalsMutation = TerminalServiceClient.mutation('terminal.list')
 
@@ -62,7 +78,11 @@ const listTerminalsMutation = TerminalServiceClient.mutation('terminal.list')
  * Calls `terminal.list` on mount and at each poll interval to keep
  * the terminal list in sync with the terminal service state.
  *
- * @param pollIntervalMs - Polling interval in ms (default 2000).
+ * The server-side `listTerminals()` is now non-blocking — it reads from
+ * a pre-computed process detection cache instead of spawning synchronous
+ * shell commands. This makes polling safe at any interval.
+ *
+ * @param pollIntervalMs - Polling interval in ms (default 5000).
  * @returns Object with `terminals` array and `isLoading` flag.
  */
 function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {

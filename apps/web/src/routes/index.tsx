@@ -31,12 +31,14 @@ import {
   shouldConfirmClose,
   shouldConfirmCloseWorkspace,
 } from '@/panels/layout-utils'
-import { PanelActionsProvider } from '@/panels/panel-context'
+import {
+  PanelActionsProvider,
+  type PendingCloseState,
+} from '@/panels/panel-context'
 import { PanelGroupRegistryProvider } from '@/panels/panel-group-registry'
 import { PanelHotkeys } from '@/panels/panel-hotkeys'
 import {
   CloseAppDialog,
-  CloseTerminalDialog,
   CloseWorkspaceDialog,
 } from './-components/close-dialogs'
 import { PanelContent } from './-components/panel-content'
@@ -114,9 +116,12 @@ function HomeComponent() {
     })
   }, [activePaneId])
 
-  // Close-terminal confirmation dialog state
-  const [closeTerminalDialogOpen, setCloseTerminalDialogOpen] = useState(false)
-  const pendingClosePaneIdRef = useRef<string | null>(null)
+  // Close-terminal confirmation dialog state — the pane ID is stored in
+  // state (not a ref) so that changes trigger a re-render, allowing the
+  // LeafPaneRenderer to show the inline confirmation dialog via context.
+  const [pendingClosePaneId, setPendingClosePaneId] = useState<string | null>(
+    null
+  )
 
   /**
    * Gated closePane that checks if the terminal has a running child process.
@@ -134,15 +139,13 @@ function HomeComponent() {
       try {
         const freshTerminals = await refreshTerminals()
         if (shouldConfirmClose(layout, paneId, freshTerminals)) {
-          pendingClosePaneIdRef.current = paneId
-          setCloseTerminalDialogOpen(true)
+          setPendingClosePaneId(paneId)
           return
         }
       } catch {
         // If the refresh fails, fall back to the cached poll data
         if (shouldConfirmClose(layout, paneId, liveTerminals)) {
-          pendingClosePaneIdRef.current = paneId
-          setCloseTerminalDialogOpen(true)
+          setPendingClosePaneId(paneId)
           return
         }
       }
@@ -153,12 +156,25 @@ function HomeComponent() {
   )
 
   const handleConfirmCloseTerminal = useCallback(() => {
-    const paneId = pendingClosePaneIdRef.current
-    if (paneId) {
-      panelActions.closePane(paneId)
-      pendingClosePaneIdRef.current = null
+    if (pendingClosePaneId) {
+      panelActions.closePane(pendingClosePaneId)
+      setPendingClosePaneId(null)
     }
-  }, [panelActions])
+  }, [panelActions, pendingClosePaneId])
+
+  const handleCancelCloseTerminal = useCallback(() => {
+    setPendingClosePaneId(null)
+  }, [])
+
+  /** Context value for the pane-scoped close confirmation dialog. */
+  const pendingCloseState: PendingCloseState = useMemo(
+    () => ({
+      paneId: pendingClosePaneId,
+      onConfirm: handleConfirmCloseTerminal,
+      onCancel: handleCancelCloseTerminal,
+    }),
+    [pendingClosePaneId, handleConfirmCloseTerminal, handleCancelCloseTerminal]
+  )
 
   /**
    * Close a terminal and its associated pane.
@@ -385,13 +401,9 @@ function HomeComponent() {
     <PanelActionsProvider
       activePaneId={activePaneId}
       fullscreenPaneId={fullscreenPaneId}
+      pendingClose={pendingCloseState}
       value={gatedPanelActions}
     >
-      <CloseTerminalDialog
-        onConfirm={handleConfirmCloseTerminal}
-        onOpenChange={setCloseTerminalDialogOpen}
-        open={closeTerminalDialogOpen}
-      />
       <CloseWorkspaceDialog
         onConfirm={handleConfirmCloseWorkspace}
         onOpenChange={setCloseWorkspaceDialogOpen}

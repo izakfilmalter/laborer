@@ -77,10 +77,15 @@ import {
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
-import { useFullscreenPaneId, usePanelActions } from '@/panels/panel-context'
+import {
+  useFullscreenPaneId,
+  usePanelActions,
+  usePendingClosePane,
+} from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import { TerminalPaneWithSidebars } from '@/panels/terminal-pane-with-sidebars'
 import { DevServerTerminalPane } from '@/panes/dev-server-terminal-pane'
+import { PaneCloseConfirmDialog } from '@/routes/-components/close-dialogs'
 
 const allWorkspaces$ = queryDb(workspaces, { label: 'paneWorkspaces' })
 const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
@@ -418,6 +423,7 @@ function SplitChild({
 function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
   const actions = usePanelActions()
   const fullscreenPaneId = useFullscreenPaneId()
+  const pendingClose = usePendingClosePane()
   const [isDragOver, setIsDragOver] = useState(false)
 
   /**
@@ -508,6 +514,12 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
           actions={actions}
           isFullscreen={fullscreenPaneId === node.id}
           paneId={node.id}
+        />
+      )}
+      {pendingClose.paneId === node.id && (
+        <PaneCloseConfirmDialog
+          onCancel={pendingClose.onCancel}
+          onConfirm={pendingClose.onConfirm}
         />
       )}
     </div>

@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/resizable'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { WorkspaceDashboard } from '@/components/workspace-dashboard'
+import { useActivateWorkspace } from '@/hooks/use-activate-workspace'
 import { useAgentNotifications } from '@/hooks/use-agent-notifications'
 import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
@@ -30,12 +31,14 @@ import {
   shouldConfirmClose,
   shouldConfirmCloseWorkspace,
 } from '@/panels/layout-utils'
-import { PanelActionsProvider } from '@/panels/panel-context'
+import {
+  PanelActionsProvider,
+  type PendingCloseState,
+} from '@/panels/panel-context'
 import { PanelGroupRegistryProvider } from '@/panels/panel-group-registry'
 import { PanelHotkeys } from '@/panels/panel-hotkeys'
 import {
   CloseAppDialog,
-  CloseTerminalDialog,
   CloseWorkspaceDialog,
 } from './-components/close-dialogs'
 import { PanelContent } from './-components/panel-content'
@@ -113,9 +116,12 @@ function HomeComponent() {
     })
   }, [activePaneId])
 
-  // Close-terminal confirmation dialog state
-  const [closeTerminalDialogOpen, setCloseTerminalDialogOpen] = useState(false)
-  const pendingClosePaneIdRef = useRef<string | null>(null)
+  // Close-terminal confirmation dialog state — the pane ID is stored in
+  // state (not a ref) so that changes trigger a re-render, allowing the
+  // LeafPaneRenderer to show the inline confirmation dialog via context.
+  const [pendingClosePaneId, setPendingClosePaneId] = useState<string | null>(
+    null
+  )
 
   /**
    * Gated closePane that checks if the terminal has a running child process.
@@ -133,15 +139,13 @@ function HomeComponent() {
       try {
         const freshTerminals = await refreshTerminals()
         if (shouldConfirmClose(layout, paneId, freshTerminals)) {
-          pendingClosePaneIdRef.current = paneId
-          setCloseTerminalDialogOpen(true)
+          setPendingClosePaneId(paneId)
           return
         }
       } catch {
         // If the refresh fails, fall back to the cached poll data
         if (shouldConfirmClose(layout, paneId, liveTerminals)) {
-          pendingClosePaneIdRef.current = paneId
-          setCloseTerminalDialogOpen(true)
+          setPendingClosePaneId(paneId)
           return
         }
       }
@@ -152,12 +156,25 @@ function HomeComponent() {
   )
 
   const handleConfirmCloseTerminal = useCallback(() => {
-    const paneId = pendingClosePaneIdRef.current
-    if (paneId) {
-      panelActions.closePane(paneId)
-      pendingClosePaneIdRef.current = null
+    if (pendingClosePaneId) {
+      panelActions.closePane(pendingClosePaneId)
+      setPendingClosePaneId(null)
     }
-  }, [panelActions])
+  }, [panelActions, pendingClosePaneId])
+
+  const handleCancelCloseTerminal = useCallback(() => {
+    setPendingClosePaneId(null)
+  }, [])
+
+  /** Context value for the pane-scoped close confirmation dialog. */
+  const pendingCloseState: PendingCloseState = useMemo(
+    () => ({
+      paneId: pendingClosePaneId,
+      onConfirm: handleConfirmCloseTerminal,
+      onCancel: handleCancelCloseTerminal,
+    }),
+    [pendingClosePaneId, handleConfirmCloseTerminal, handleCancelCloseTerminal]
+  )
 
   /**
    * Close a terminal and its associated pane.
@@ -223,13 +240,16 @@ function HomeComponent() {
     }
   }, [panelActions])
 
-  // Override panelActions.closePane with the gated version and add fullscreen toggle
+  // Override panelActions.closePane with the gated version and add fullscreen toggle.
+  // forceCloseWorkspace bypasses the confirmation gate — used by workspace
+  // destruction which has its own confirmation dialog.
   const gatedPanelActions = useMemo(
     () => ({
       ...panelActions,
       closePane: gatedClosePane,
       closeTerminalPane: gatedCloseTerminalPane,
       closeWorkspace: gatedCloseWorkspace,
+      forceCloseWorkspace: panelActions.closeWorkspace,
       toggleFullscreenPane,
     }),
     [
@@ -273,6 +293,11 @@ function HomeComponent() {
     notificationWorkspaces,
     handleNotificationClicked
   )
+
+  // Subscribe to workspace-activation events from other windows.
+  // When another window calls focusWindowForWorkspace, the main process
+  // focuses this window and sends an activate-workspace event.
+  useActivateWorkspace(handleNotificationClicked)
 
   // Responsive sizing — adapts sidebar and pane sizes to viewport width
   const responsiveSizes = useResponsiveLayout()
@@ -376,13 +401,9 @@ function HomeComponent() {
     <PanelActionsProvider
       activePaneId={activePaneId}
       fullscreenPaneId={fullscreenPaneId}
+      pendingClose={pendingCloseState}
       value={gatedPanelActions}
     >
-      <CloseTerminalDialog
-        onConfirm={handleConfirmCloseTerminal}
-        onOpenChange={setCloseTerminalDialogOpen}
-        open={closeTerminalDialogOpen}
-      />
       <CloseWorkspaceDialog
         onConfirm={handleConfirmCloseWorkspace}
         onOpenChange={setCloseWorkspaceDialogOpen}

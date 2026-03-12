@@ -7,6 +7,8 @@ import {
 
 import { MENU_ACTION_CHANNEL } from './ipc.js'
 
+type CreateWindowFn = () => void
+
 // ---------------------------------------------------------------------------
 // Menu action dispatch
 // ---------------------------------------------------------------------------
@@ -80,12 +82,24 @@ export function dispatchMenuAction(
  */
 export function configureApplicationMenu(
   getMainWindow: () => BrowserWindow | null,
-  createWindowFn?: () => void
+  createWindowFn?: CreateWindowFn
 ): void {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(
+      buildApplicationMenuTemplate(getMainWindow, createWindowFn)
+    )
+  )
+}
+
+export function buildApplicationMenuTemplate(
+  getMainWindow: () => BrowserWindow | null,
+  createWindowFn?: CreateWindowFn,
+  platform: NodeJS.Platform = process.platform
+): MenuItemConstructorOptions[] {
   const template: MenuItemConstructorOptions[] = []
 
   // macOS app-name menu
-  if (process.platform === 'darwin') {
+  if (platform === 'darwin') {
     template.push({
       label: app.name,
       submenu: [
@@ -110,11 +124,19 @@ export function configureApplicationMenu(
   }
 
   // File menu
+  const fileMenu: MenuItemConstructorOptions[] = []
+  const newWindowMenuItem = createNewWindowMenuItem(createWindowFn)
+
+  if (newWindowMenuItem) {
+    fileMenu.push(newWindowMenuItem, { type: 'separator' })
+  }
+
   template.push({
     label: 'File',
     submenu: [
+      ...fileMenu,
       // On non-macOS, put Settings in the File menu.
-      ...(process.platform === 'darwin'
+      ...(platform === 'darwin'
         ? []
         : [
             {
@@ -130,9 +152,7 @@ export function configureApplicationMenu(
             { type: 'separator' as const },
           ]),
       {
-        role: (process.platform === 'darwin' ? 'close' : 'quit') as
-          | 'close'
-          | 'quit',
+        role: (platform === 'darwin' ? 'close' : 'quit') as 'close' | 'quit',
       },
     ],
   })
@@ -144,5 +164,19 @@ export function configureApplicationMenu(
     { role: 'windowMenu' }
   )
 
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+  return template
+}
+
+function createNewWindowMenuItem(
+  createWindowFn?: CreateWindowFn
+): MenuItemConstructorOptions | null {
+  if (!createWindowFn) {
+    return null
+  }
+
+  return {
+    label: 'New Window',
+    accelerator: 'CmdOrCtrl+N',
+    click: () => createWindowFn(),
+  }
 }

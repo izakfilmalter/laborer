@@ -71,6 +71,17 @@ interface PanelActions {
    */
   readonly closeWorkspace: (workspaceId: string) => void
   /**
+   * Close all panes belonging to a workspace without confirmation.
+   *
+   * Identical to closeWorkspace but bypasses the running-process
+   * confirmation gate. Used by workspace destruction which has its own
+   * confirmation dialog that already warns the user about active
+   * terminals.
+   *
+   * @param workspaceId - The workspace whose panes should be closed
+   */
+  readonly forceCloseWorkspace: (workspaceId: string) => void
+  /**
    * Reorder workspace frames in the panel view.
    *
    * Persists a new explicit ordering of workspace IDs, overriding the
@@ -166,25 +177,58 @@ const PanelActionsContext = createContext<PanelActions | null>(null)
 const ActivePaneIdContext = createContext<string | null>(null)
 
 /**
+ * State for the pane-scoped close confirmation dialog.
+ * When a pane has a running process and the user attempts to close it,
+ * the pane ID is stored here so the LeafPaneRenderer can render an
+ * inline confirmation dialog within that specific pane's bounds.
+ */
+interface PendingCloseState {
+  /** Cancel the close — dismisses the dialog. */
+  readonly onCancel: () => void
+  /** Confirm the close — kills the process and removes the pane. */
+  readonly onConfirm: () => void
+  /** The pane ID awaiting close confirmation, or null if none. */
+  readonly paneId: string | null
+}
+
+const noop = () => undefined
+
+const defaultPendingClose: PendingCloseState = {
+  paneId: null,
+  onConfirm: noop,
+  onCancel: noop,
+}
+
+const PendingClosePaneContext =
+  createContext<PendingCloseState>(defaultPendingClose)
+
+/**
  * Provider component that makes panel actions, active pane state,
- * and fullscreen pane state available to all pane components in the tree.
+ * fullscreen pane state, and pending close confirmation state available
+ * to all pane components in the tree.
  */
 function PanelActionsProvider({
   activePaneId,
   children,
   fullscreenPaneId,
+  pendingClose,
   value,
 }: {
   readonly activePaneId: string | null
   readonly children: React.ReactNode
   readonly fullscreenPaneId: string | null
+  readonly pendingClose?: PendingCloseState | undefined
   readonly value: PanelActions
 }) {
   return (
     <PanelActionsContext.Provider value={value}>
       <ActivePaneIdContext.Provider value={activePaneId}>
         <FullscreenPaneIdContext.Provider value={fullscreenPaneId}>
-          {children}
+          <PendingClosePaneContext.Provider
+            value={pendingClose ?? defaultPendingClose}
+          >
+            {children}
+          </PendingClosePaneContext.Provider>
         </FullscreenPaneIdContext.Provider>
       </ActivePaneIdContext.Provider>
     </PanelActionsContext.Provider>
@@ -215,10 +259,20 @@ function useFullscreenPaneId(): string | null {
   return useContext(FullscreenPaneIdContext)
 }
 
+/**
+ * Hook to read the pending close confirmation state.
+ * Used by LeafPaneRenderer to render an inline confirmation dialog
+ * within the pane that is awaiting close confirmation.
+ */
+function usePendingClosePane(): PendingCloseState {
+  return useContext(PendingClosePaneContext)
+}
+
 export {
   PanelActionsProvider,
   useActivePaneId,
   useFullscreenPaneId,
   usePanelActions,
+  usePendingClosePane,
 }
-export type { AssignTerminalToPaneOptions, PanelActions }
+export type { AssignTerminalToPaneOptions, PanelActions, PendingCloseState }

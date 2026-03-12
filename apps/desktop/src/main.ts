@@ -13,6 +13,7 @@ import {
 import { fixPath } from './fix-path.js'
 import { HealthMonitor } from './health.js'
 import {
+  getWorkspaceWindowRegistry,
   registerIpcHandlers,
   setDownloadUpdateHandler,
   setGetUpdateStateHandler,
@@ -30,7 +31,8 @@ import {
 } from './protocol.js'
 import { SidecarManager } from './sidecar.js'
 import { registerGlobalShortcut, TrayManager } from './tray.js'
-import { WindowStateManager } from './window-state.js'
+import { buildWindowBootstrapArgs, createWindowId } from './window-identity.js'
+import { type WindowRecord, WindowStateManager } from './window-state.js'
 
 // Fix PATH before anything else — must happen synchronously before
 // any child processes are spawned. On macOS, apps launched from
@@ -57,6 +59,7 @@ const isDev = Boolean(VITE_DEV_SERVER_URL)
 /** Traffic light button inset for the hidden title bar. */
 const TRAFFIC_LIGHT_POSITION = { x: 16, y: 12 } as const
 
+const openWindows = new Set<BrowserWindow>()
 let mainWindow: BrowserWindow | null = null
 
 /**
@@ -113,11 +116,38 @@ export function getHealthMonitor(): HealthMonitor | null {
   return healthMonitor
 }
 
-function createWindow(): void {
-  // Restore persisted window bounds (or default to centered 800x600).
-  const savedState = windowStateManager.load()
+function getMainWindow(): BrowserWindow | null {
+  const focusedWindow = BrowserWindow.getFocusedWindow()
 
-  mainWindow = new BrowserWindow({
+  if (focusedWindow && !focusedWindow.isDestroyed()) {
+    return focusedWindow
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    return mainWindow
+  }
+
+  return BrowserWindow.getAllWindows()[0] ?? null
+}
+
+function shouldHideOnClose(window: BrowserWindow): boolean {
+  if (isQuitting) {
+    return false
+  }
+
+  const otherVisibleWindows = BrowserWindow.getAllWindows().filter(
+    (candidate) =>
+      candidate !== window && !candidate.isDestroyed() && candidate.isVisible()
+  )
+
+  return otherVisibleWindows.length === 0
+}
+
+function createWindow(record?: WindowRecord): BrowserWindow {
+  const savedState = record ?? windowStateManager.load()
+  const windowId = record?.windowId ?? createWindowId()
+
+  const window = new BrowserWindow({
     ...savedState.bounds,
     minWidth: 840,
     minHeight: 620,
@@ -129,67 +159,55 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      additionalArguments: buildPreloadArgs(),
+      additionalArguments: buildPreloadArgs(windowId),
     },
   })
 
+  openWindows.add(window)
+  mainWindow ??= window
+
   // Restore maximized state after window creation.
   if (savedState.isMaximized) {
-    mainWindow.maximize()
+    window.maximize()
   }
 
   // Track window bounds for persistence — saves on move/resize/close.
-  windowStateManager.track(mainWindow)
+  windowStateManager.track(window, windowId)
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show()
+  window.once('ready-to-show', () => {
+    window.show()
   })
 
   if (VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(VITE_DEV_SERVER_URL).catch(console.error)
+    window.loadURL(VITE_DEV_SERVER_URL).catch(console.error)
   } else {
     // Production: serve the frontend via the custom laborer:// protocol.
-    mainWindow
-      .loadURL(`${DESKTOP_SCHEME}://app/index.html`)
-      .catch(console.error)
+    window.loadURL(`${DESKTOP_SCHEME}://app/index.html`).catch(console.error)
   }
 
-  // Close-to-tray: when the user clicks the close button (X or Cmd+W),
-  // hide the window instead of quitting. The app continues running in
-  // the system tray. The user can actually quit via Cmd+Q, tray "Quit",
-  // or the app menu "Quit" — those set `isQuitting = true` via `before-quit`.
-  mainWindow.on('close', (event) => {
-    if (!isQuitting) {
+  window.webContents.on('did-finish-load', () => {
+    broadcastUpdateStateToWindow(window)
+  })
+
+  // Preserve the last visible window's existing close-to-tray behavior, but
+  // let non-last windows close normally so their sessions stay restorable.
+  window.on('close', (event) => {
+    if (shouldHideOnClose(window)) {
       event.preventDefault()
-      mainWindow?.hide()
+      window.hide()
     }
   })
 
-  mainWindow.on('closed', () => {
-    mainWindow = null
-  })
+  window.on('closed', () => {
+    openWindows.delete(window)
+    getWorkspaceWindowRegistry().remove(window)
 
-  // Register IPC handlers for the DesktopBridge contract.
-  registerIpcHandlers(mainWindow)
-
-  // Wire tray workspace count updates from the renderer to the tray manager.
-  setTrayCountHandler((count) => {
-    trayManager.updateWorkspaceCount(count)
-  })
-
-  // Wire sidecar restart requests from the renderer to the health monitor.
-  setRestartSidecarHandler(async (name) => {
-    const validNames = ['server', 'terminal', 'file-watcher', 'mcp'] as const
-    type ValidName = (typeof validNames)[number]
-    if (!validNames.includes(name as ValidName)) {
-      return
-    }
-    if (healthMonitor) {
-      await healthMonitor.manualRestart(name as ValidName)
-    } else if (sidecarManager) {
-      await sidecarManager.restart(name as ValidName)
+    if (mainWindow === window) {
+      mainWindow = openWindows.values().next().value ?? null
     }
   })
+
+  return window
 }
 
 /**
@@ -201,18 +219,16 @@ function createWindow(): void {
  *
  * Format: `--laborer-<key>=<value>` (prefixed to avoid collisions).
  */
-function buildPreloadArgs(): string[] {
+function buildPreloadArgs(windowId: string): string[] {
   if (!servicePorts) {
     return []
   }
 
-  const serverUrl = `http://127.0.0.1:${servicePorts.serverPort}`
-  const terminalUrl = `http://127.0.0.1:${servicePorts.terminalPort}`
-
-  return [
-    `--laborer-server-url=${serverUrl}`,
-    `--laborer-terminal-url=${terminalUrl}`,
-  ]
+  return buildWindowBootstrapArgs({
+    serverUrl: `http://127.0.0.1:${servicePorts.serverPort}`,
+    terminalUrl: `http://127.0.0.1:${servicePorts.terminalPort}`,
+    windowId,
+  })
 }
 
 app
@@ -251,9 +267,8 @@ app
           )
         }
 
-        // Forward to renderer window if available.
-        if (mainWindow?.webContents) {
-          mainWindow.webContents.send('sidecar:status', status)
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.webContents.send('sidecar:status', status)
         }
       })
 
@@ -270,47 +285,74 @@ app
       }
     }
 
-    createWindow()
+    // Register IPC handlers once for the DesktopBridge contract.
+    // Handlers use event.sender to resolve the requesting window,
+    // so they work correctly regardless of which window invokes them.
+    registerIpcHandlers(() => getMainWindow())
 
-    // Build the macOS-native application menu (About, Settings, Edit, View, Window).
-    configureApplicationMenu(
-      () => mainWindow,
-      () => createWindow()
-    )
+    // Wire tray workspace count updates from the renderer to the tray manager.
+    setTrayCountHandler((count) => {
+      trayManager.updateWorkspaceCount(count)
+    })
 
-    // Create the system tray icon with dynamic tooltip and context menu.
-    trayManager.create(() => mainWindow)
-
-    // Register global shortcut: Cmd+Shift+L (macOS) / Ctrl+Shift+L (other).
-    unregisterShortcut = registerGlobalShortcut(() => mainWindow)
+    // Wire sidecar restart requests from the renderer to the health monitor.
+    setRestartSidecarHandler(async (name) => {
+      const validNames = ['server', 'terminal', 'file-watcher', 'mcp'] as const
+      type ValidName = (typeof validNames)[number]
+      if (!validNames.includes(name as ValidName)) {
+        return
+      }
+      if (healthMonitor) {
+        await healthMonitor.manualRestart(name as ValidName)
+      } else if (sidecarManager) {
+        await sidecarManager.restart(name as ValidName)
+      }
+    })
 
     // Wire auto-update IPC handlers.
     setGetUpdateStateHandler(() => getUpdateState())
     setDownloadUpdateHandler(() => triggerDownloadUpdate())
     setInstallUpdateHandler(() => triggerInstallUpdate())
 
+    const savedWindowRecords = windowStateManager.loadWindowRecords()
+
+    if (savedWindowRecords.length > 0) {
+      for (const savedWindowRecord of savedWindowRecords) {
+        createWindow(savedWindowRecord)
+      }
+    } else {
+      createWindow()
+    }
+
+    // Build the macOS-native application menu (About, Settings, Edit, View, Window).
+    configureApplicationMenu(
+      () => getMainWindow(),
+      () => createWindow()
+    )
+
+    // Create the system tray icon with dynamic tooltip and context menu.
+    trayManager.create(() => getMainWindow())
+
+    // Register global shortcut: Cmd+Shift+L (macOS) / Ctrl+Shift+L (other).
+    unregisterShortcut = registerGlobalShortcut(() => getMainWindow())
+
     // Configure and start the auto-updater.
     configureAutoUpdater(() => {
       isQuitting = true
     })
 
-    // Broadcast update state to the window when it finishes loading.
-    if (mainWindow) {
-      mainWindow.webContents.on('did-finish-load', () => {
-        if (mainWindow) {
-          broadcastUpdateStateToWindow(mainWindow)
-        }
-      })
-    }
-
     app.on('activate', () => {
       // macOS: re-create window when dock icon is clicked and no windows exist.
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow()
-      } else if (mainWindow && !mainWindow.isVisible()) {
+      } else {
+        const window = getMainWindow()
+
         // If the window was hidden by close-to-tray, show it again.
-        mainWindow.show()
-        mainWindow.focus()
+        if (window && !window.isVisible()) {
+          window.show()
+          window.focus()
+        }
       }
     })
   })

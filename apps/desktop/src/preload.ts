@@ -1,6 +1,8 @@
 import type { DesktopBridge } from '@laborer/shared/desktop-bridge'
 import { contextBridge, ipcRenderer } from 'electron'
 
+import { parseWindowBootstrapArgs } from './window-identity.js'
+
 // ---------------------------------------------------------------------------
 // IPC channel constants (must match ipc.ts)
 // ---------------------------------------------------------------------------
@@ -15,6 +17,9 @@ const RESTART_SIDECAR_CHANNEL = 'desktop:restart-sidecar'
 const SIDECAR_STATUS_CHANNEL = 'sidecar:status'
 const SEND_NOTIFICATION_CHANNEL = 'desktop:send-notification'
 const NOTIFICATION_CLICKED_CHANNEL = 'desktop:notification-clicked'
+const REPORT_VISIBLE_WORKSPACES_CHANNEL = 'desktop:report-visible-workspaces'
+const FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL = 'desktop:focus-window-for-workspace'
+const ACTIVATE_WORKSPACE_CHANNEL = 'desktop:activate-workspace'
 const UPDATE_STATE_CHANNEL = 'desktop:update-state'
 const UPDATE_GET_STATE_CHANNEL = 'desktop:update-get-state'
 const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
@@ -28,17 +33,9 @@ const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
 // `webPreferences.additionalArguments`. These appear in `process.argv`.
 // ---------------------------------------------------------------------------
 
-function getArg(prefix: string): string {
-  for (const arg of process.argv) {
-    if (arg.startsWith(prefix)) {
-      return arg.slice(prefix.length)
-    }
-  }
-  return ''
-}
-
-const serverUrl = getArg('--laborer-server-url=')
-const terminalUrl = getArg('--laborer-terminal-url=')
+const { serverUrl, terminalUrl, windowId } = parseWindowBootstrapArgs(
+  process.argv
+)
 
 // ---------------------------------------------------------------------------
 // DesktopBridge implementation
@@ -47,15 +44,36 @@ const terminalUrl = getArg('--laborer-terminal-url=')
 contextBridge.exposeInMainWorld('desktopBridge', {
   getServerUrl: () => serverUrl,
   getTerminalUrl: () => terminalUrl,
+  getWindowId: () => windowId,
 
   pickFolder: () => ipcRenderer.invoke(PICK_FOLDER_CHANNEL),
 
   confirm: (message) => ipcRenderer.invoke(CONFIRM_CHANNEL, message),
 
+  focusWindowForWorkspace: (workspaceId) =>
+    ipcRenderer.invoke(FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL, workspaceId),
+
   showContextMenu: (items, position) =>
     ipcRenderer.invoke(CONTEXT_MENU_CHANNEL, items, position),
 
   openExternal: (url) => ipcRenderer.invoke(OPEN_EXTERNAL_CHANNEL, url),
+
+  onActivateWorkspace: (listener) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      workspaceId: unknown
+    ) => {
+      if (typeof workspaceId !== 'string') {
+        return
+      }
+      listener(workspaceId)
+    }
+
+    ipcRenderer.on(ACTIVATE_WORKSPACE_CHANNEL, wrappedListener)
+    return () => {
+      ipcRenderer.removeListener(ACTIVATE_WORKSPACE_CHANNEL, wrappedListener)
+    }
+  },
 
   onMenuAction: (listener) => {
     const wrappedListener = (
@@ -78,6 +96,9 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     ipcRenderer.invoke(UPDATE_TRAY_COUNT_CHANNEL, count),
 
   restartSidecar: (name) => ipcRenderer.invoke(RESTART_SIDECAR_CHANNEL, name),
+
+  reportVisibleWorkspaces: (workspaceIds) =>
+    ipcRenderer.invoke(REPORT_VISIBLE_WORKSPACES_CHANNEL, workspaceIds),
 
   sendNotification: (payload) =>
     ipcRenderer.invoke(SEND_NOTIFICATION_CHANNEL, payload),

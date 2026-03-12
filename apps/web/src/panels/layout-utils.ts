@@ -761,6 +761,161 @@ function ensureValidActivePaneId(
   return getFirstLeafId(root) ?? null
 }
 
+interface RepairPanelLayoutTreeResult {
+  readonly layoutTree: PanelNode | undefined
+  readonly wasRepaired: boolean
+}
+
+const VALID_PANE_TYPES = new Set(['terminal', 'diff', 'devServerTerminal'])
+const VALID_SPLIT_DIRECTIONS = new Set(['horizontal', 'vertical'])
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function hasInvalidLeafOptionalFields(node: Record<string, unknown>): boolean {
+  return (
+    ('devServerOpen' in node &&
+      node.devServerOpen !== undefined &&
+      typeof node.devServerOpen !== 'boolean') ||
+    ('devServerTerminalId' in node &&
+      node.devServerTerminalId !== undefined &&
+      typeof node.devServerTerminalId !== 'string') ||
+    ('diffOpen' in node &&
+      node.diffOpen !== undefined &&
+      typeof node.diffOpen !== 'boolean') ||
+    ('terminalId' in node &&
+      node.terminalId !== undefined &&
+      typeof node.terminalId !== 'string') ||
+    ('workspaceId' in node &&
+      node.workspaceId !== undefined &&
+      typeof node.workspaceId !== 'string')
+  )
+}
+
+function repairLeafNode(
+  node: Record<string, unknown>
+): RepairPanelLayoutTreeResult {
+  if (
+    typeof node.id !== 'string' ||
+    node.id.length === 0 ||
+    typeof node.paneType !== 'string' ||
+    !VALID_PANE_TYPES.has(node.paneType)
+  ) {
+    return { layoutTree: undefined, wasRepaired: true }
+  }
+
+  if (!hasInvalidLeafOptionalFields(node)) {
+    return { layoutTree: node as unknown as PanelNode, wasRepaired: false }
+  }
+
+  const repairedLeaf: LeafNode = {
+    _tag: 'LeafNode',
+    id: node.id,
+    paneType: node.paneType as LeafNode['paneType'],
+    ...(typeof node.devServerOpen === 'boolean'
+      ? { devServerOpen: node.devServerOpen }
+      : {}),
+    ...(typeof node.devServerTerminalId === 'string'
+      ? { devServerTerminalId: node.devServerTerminalId }
+      : {}),
+    ...(typeof node.diffOpen === 'boolean' ? { diffOpen: node.diffOpen } : {}),
+    ...(typeof node.terminalId === 'string'
+      ? { terminalId: node.terminalId }
+      : {}),
+    ...(typeof node.workspaceId === 'string'
+      ? { workspaceId: node.workspaceId }
+      : {}),
+  }
+
+  return { layoutTree: repairedLeaf, wasRepaired: true }
+}
+
+function hasValidSplitSizes(
+  sizes: unknown,
+  childCount: number
+): sizes is readonly number[] {
+  return (
+    Array.isArray(sizes) &&
+    sizes.length === childCount &&
+    sizes.every(
+      (size) => typeof size === 'number' && Number.isFinite(size) && size > 0
+    )
+  )
+}
+
+function repairSplitNode(
+  node: Record<string, unknown>
+): RepairPanelLayoutTreeResult {
+  if (
+    typeof node.id !== 'string' ||
+    node.id.length === 0 ||
+    typeof node.direction !== 'string' ||
+    !VALID_SPLIT_DIRECTIONS.has(node.direction) ||
+    !Array.isArray(node.children)
+  ) {
+    return { layoutTree: undefined, wasRepaired: true }
+  }
+
+  const repairedChildren: PanelNode[] = []
+  let didRepairChildren = false
+
+  for (const child of node.children) {
+    const repairedChild = repairPanelLayoutTree(child)
+    if (repairedChild.wasRepaired) {
+      didRepairChildren = true
+    }
+    if (repairedChild.layoutTree) {
+      repairedChildren.push(repairedChild.layoutTree)
+    }
+  }
+
+  if (repairedChildren.length === 0) {
+    return { layoutTree: undefined, wasRepaired: true }
+  }
+
+  if (repairedChildren.length === 1) {
+    return { layoutTree: repairedChildren[0], wasRepaired: true }
+  }
+
+  if (
+    !didRepairChildren &&
+    hasValidSplitSizes(node.sizes, repairedChildren.length)
+  ) {
+    return { layoutTree: node as unknown as PanelNode, wasRepaired: false }
+  }
+
+  const equalSize = 100 / repairedChildren.length
+  return {
+    layoutTree: {
+      _tag: 'SplitNode',
+      id: node.id,
+      direction: node.direction as SplitNode['direction'],
+      children: repairedChildren,
+      sizes: hasValidSplitSizes(node.sizes, repairedChildren.length)
+        ? node.sizes
+        : repairedChildren.map(() => equalSize),
+    },
+    wasRepaired: true,
+  }
+}
+
+function repairPanelLayoutTree(node: unknown): RepairPanelLayoutTreeResult {
+  if (!isRecord(node) || typeof node._tag !== 'string') {
+    return { layoutTree: undefined, wasRepaired: true }
+  }
+
+  if (node._tag === 'LeafNode') {
+    return repairLeafNode(node)
+  }
+
+  if (node._tag !== 'SplitNode') {
+    return { layoutTree: undefined, wasRepaired: true }
+  }
+
+  return repairSplitNode(node)
+}
+
 /**
  * Collect all leaf nodes from the layout tree whose terminal IDs are
  * stale (not present in the live terminal set). These are candidates
@@ -1318,6 +1473,44 @@ function shouldConfirmCloseWorkspace(
 }
 
 /**
+ * Return active terminals (those with running child processes) for a
+ * workspace, including their human-readable foreground process labels.
+ *
+ * Used by the destroy workspace dialog to show which terminals will be
+ * killed, so the user can make an informed decision without a second
+ * confirmation modal.
+ *
+ * @param layout - The current panel layout tree (may be undefined)
+ * @param workspaceId - The workspace being destroyed
+ * @param terminals - The live terminal list from useTerminalList
+ * @returns Array of active terminal descriptors with id and display label
+ */
+function getWorkspaceActiveTerminals(
+  layout: PanelNode | undefined,
+  workspaceId: string,
+  terminals: ReadonlyArray<{
+    readonly id: string
+    readonly hasChildProcess: boolean
+    readonly foregroundProcess: {
+      readonly label: string
+    } | null
+  }>
+): ReadonlyArray<{ readonly id: string; readonly label: string }> {
+  const terminalIds = getWorkspaceTerminalIds(layout, workspaceId)
+  const result: { readonly id: string; readonly label: string }[] = []
+  for (const id of terminalIds) {
+    const terminal = terminals.find((t) => t.id === id)
+    if (terminal?.hasChildProcess === true) {
+      result.push({
+        id,
+        label: terminal.foregroundProcess?.label ?? 'Running process',
+      })
+    }
+  }
+  return result
+}
+
+/**
  * Remove all leaf nodes belonging to a workspace from the layout tree.
  *
  * Sequentially closes each workspace leaf. Returns the resulting tree
@@ -1388,9 +1581,11 @@ export {
   getStaleTerminalLeaves,
   getTerminalIdsToRemove,
   getTreeDepth,
+  getWorkspaceActiveTerminals,
   getWorkspaceIds,
   getWorkspaceTerminalIds,
   isWorkspaceFrameData,
+  repairPanelLayoutTree,
   reconcileLayout,
   replaceNode,
   shouldConfirmClose,

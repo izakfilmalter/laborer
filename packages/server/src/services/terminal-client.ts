@@ -19,7 +19,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FetchHttpClient } from '@effect/platform'
 import { RpcClient, RpcSerialization } from '@effect/rpc'
@@ -359,13 +359,13 @@ export const LaborerHookPlugin = async () => {
 `.trim()
 
       /**
-       * Ensure the OpenCode hook plugin exists in the workspace's
-       * `.opencode/plugins/` directory. Creates the directory and
-       * writes the file if it doesn't exist or if the content is
-       * outdated.
+       * Ensure the OpenCode hook plugin exists in the global
+       * `~/.config/opencode/plugins/` directory so it's available
+       * to every workspace without polluting individual repos.
+       * Idempotent — skips if the file already has the correct content.
        */
-      const ensureOpencodePlugin = (worktreePath: string): void => {
-        const pluginDir = join(worktreePath, '.opencode', 'plugins')
+      const ensureOpencodePlugin = (): void => {
+        const pluginDir = join(homedir(), '.config', 'opencode', 'plugins')
         const pluginPath = join(pluginDir, 'laborer-hook.js')
 
         if (existsSync(pluginPath)) {
@@ -597,12 +597,13 @@ export const LaborerHookPlugin = async () => {
           // inject it into the hook settings/env before the PTY starts.
           const terminalId = isAgent ? crypto.randomUUID() : undefined
 
-          // Ensure the OpenCode hook plugin exists in the workspace
-          // before spawning. The plugin reads env vars to report state.
+          // Ensure the OpenCode hook plugin exists in the global
+          // ~/.config/opencode/plugins/ directory before spawning.
+          // The plugin reads env vars to report state.
           if (command === 'opencode') {
-            yield* Effect.try(() =>
-              ensureOpencodePlugin(workspace.worktreePath)
-            ).pipe(Effect.catchAll(() => Effect.void))
+            yield* Effect.try(() => ensureOpencodePlugin()).pipe(
+              Effect.catchAll(() => Effect.void)
+            )
           }
 
           // Build the command, potentially wrapping it with hook settings

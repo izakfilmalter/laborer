@@ -49,6 +49,7 @@ const TERMINAL_A = {
   agentStatus: null,
   foregroundProcess: null,
   hasChildProcess: false,
+  processChain: [],
   status: 'running' as const,
 }
 
@@ -61,6 +62,7 @@ const TERMINAL_B = {
   agentStatus: null,
   foregroundProcess: null,
   hasChildProcess: false,
+  processChain: [],
   status: 'stopped' as const,
 }
 

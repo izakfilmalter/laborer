@@ -21,6 +21,7 @@ function makeTerminal(
     foregroundProcess: null,
     hasChildProcess: false,
     id: `term-${Math.random().toString(36).slice(2, 8)}`,
+    processChain: [],
     status: 'running',
     ...overrides,
   }

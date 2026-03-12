@@ -64,6 +64,12 @@ interface TerminalInfo {
    */
   readonly hasChildProcess: boolean
   readonly id: string
+  /**
+   * Classified processes along the tree from the shell's first child
+   * down to the deepest leaf. Used by the UI to show the full chain,
+   * e.g. "OpenCode › biome". Empty when the shell is idle or stopped.
+   */
+  readonly processChain: readonly ForegroundProcess[]
   readonly status: 'running' | 'stopped'
   readonly workspaceId: string
 }

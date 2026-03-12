@@ -225,4 +225,41 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       })
     })
   })
+
+  it('replaces forward slashes with hyphens on submit', async () => {
+    const user = userEvent.setup()
+    createWorkspaceFn.mockResolvedValue({
+      id: 'ws-new',
+      projectId: 'project-1',
+      branchName: 'if-batch-column-variant-prd',
+      worktreePath: '/path/to/worktree',
+      port: 3001,
+      status: 'running',
+    })
+
+    render(<CreateWorkspaceForm projectId="project-1" />)
+    const input = getBranchInput()
+
+    await user.type(input, 'if/batch-column-variant-prd')
+
+    await waitFor(() => {
+      expect((input as HTMLInputElement).value).toBe(
+        'if/batch-column-variant-prd'
+      )
+    })
+
+    const submitButton = screen.getByRole('button', {
+      name: CREATE_WORKSPACE_RE,
+    })
+    await user.click(submitButton)
+
+    await waitFor(() => {
+      expect(createWorkspaceFn).toHaveBeenCalledWith({
+        payload: {
+          projectId: 'project-1',
+          branchName: 'if-batch-column-variant-prd',
+        },
+      })
+    })
+  })
 })

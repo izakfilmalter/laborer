@@ -35,7 +35,7 @@ import { ContainerService } from './services/container-service.js'
 import { DepsImageService } from './services/deps-image-service.js'
 import { DiffService } from './services/diff-service.js'
 import { DockerDetection } from './services/docker-detection.js'
-import { FileWatcher } from './services/file-watcher.js'
+import { FileWatcherClient } from './services/file-watcher-client.js'
 import { GithubTaskImporter } from './services/github-task-importer.js'
 import { LaborerStoreLive } from './services/laborer-store.js'
 import { LinearTaskImporter } from './services/linear-task-importer.js'
@@ -44,7 +44,7 @@ import { PortAllocator } from './services/port-allocator.js'
 import { PrWatcher } from './services/pr-watcher.js'
 import { PrdStorageService } from './services/prd-storage-service.js'
 import { ProjectRegistry } from './services/project-registry.js'
-import { RepositoryEventBus } from './services/repository-event-bus.js'
+
 import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
 import { SyncRpcLive } from './services/sync-backend.js'
@@ -139,8 +139,7 @@ const HttpLive = HttpLiveBase.pipe(
   Layer.provide(RepositoryWatchCoordinator.layer),
   Layer.provide(BranchStateTracker.layer),
   Layer.provide(ConfigService.layer),
-  Layer.provide(RepositoryEventBus.layer),
-  Layer.provide(FileWatcher.layer),
+  Layer.provide(FileWatcherClient.layer),
   Layer.provide(WorktreeReconciler.layer),
   Layer.provide(WorktreeDetector.layer),
   Layer.provide(PortAllocator.layer),

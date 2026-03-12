@@ -540,6 +540,140 @@ export class LaborerRpcs extends RpcGroup.make(
 ) {}
 
 // ---------------------------------------------------------------------------
+// File Watcher Service RPC Contract
+// ---------------------------------------------------------------------------
+// The file-watcher service runs as a separate HTTP server process. These RPCs
+// define the contract between the server (or any client) and the file-watcher
+// service. Defined here in @laborer/shared so both @laborer/server and
+// @laborer/file-watcher can import the same types.
+//
+// @see PRD-file-watcher-extraction.md
+// ---------------------------------------------------------------------------
+
+/**
+ * Tagged error type for file-watcher service RPC operations.
+ *
+ * Error codes:
+ * - `SUBSCRIBE_FAILED` — failed to start watching a path
+ * - `NOT_FOUND` — no subscription with the given ID
+ * - `INTERNAL_ERROR` — unexpected internal failure
+ */
+export class FileWatcherRpcError extends Schema.TaggedError<FileWatcherRpcError>()(
+  'FileWatcherRpcError',
+  {
+    message: Schema.String,
+    code: Schema.optional(Schema.String),
+  }
+) {}
+
+/**
+ * Information about an active watch subscription.
+ */
+export const WatchSubscriptionInfo = Schema.Struct({
+  id: Schema.String,
+  path: Schema.String,
+  recursive: Schema.Boolean,
+  ignoreGlobs: Schema.Array(Schema.String),
+})
+
+export type WatchSubscriptionInfo = typeof WatchSubscriptionInfo.Type
+
+/**
+ * A normalized file event emitted by the file-watcher service.
+ *
+ * Events are classified as add/change/delete. When the native
+ * `@parcel/watcher` backend is active, classification is authoritative.
+ * When the `fs.watch` fallback is in use, add/delete are inferred from
+ * `existsSync` checks and should be treated as best-effort.
+ */
+export const WatchFileEvent = Schema.Struct({
+  /** Which subscription generated this event */
+  subscriptionId: Schema.String,
+  /** The type of file change */
+  type: Schema.Literal('add', 'change', 'delete'),
+  /** Relative path of the changed file within the watched directory */
+  fileName: Schema.NullOr(Schema.String),
+  /** Absolute path of the changed file */
+  absolutePath: Schema.String,
+})
+
+export type WatchFileEvent = typeof WatchFileEvent.Type
+
+/**
+ * RPC group for the standalone file-watcher service (`@laborer/file-watcher`).
+ *
+ * Endpoints:
+ * - `watcher.subscribe` — start watching a directory path
+ * - `watcher.unsubscribe` — stop watching by subscription ID
+ * - `watcher.updateIgnore` — update ignore patterns for an active subscription
+ * - `watcher.list` — list all active subscriptions
+ * - `watcher.events` — streaming endpoint pushing file change events
+ *
+ * @see PRD-file-watcher-extraction.md
+ */
+export class FileWatcherRpcs extends RpcGroup.make(
+  // -----------------------------------------------------------------------
+  // watcher.subscribe — start watching a directory
+  // -----------------------------------------------------------------------
+  Rpc.make('watcher.subscribe', {
+    success: WatchSubscriptionInfo,
+    error: FileWatcherRpcError,
+    payload: {
+      /** Absolute path of the directory to watch. */
+      path: Schema.String,
+      /** Whether to watch recursively (default true). */
+      recursive: Schema.optional(Schema.Boolean),
+      /** Glob patterns to ignore (e.g. "node_modules/**"). */
+      ignoreGlobs: Schema.optional(Schema.Array(Schema.String)),
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // watcher.unsubscribe — stop watching by subscription ID
+  // -----------------------------------------------------------------------
+  Rpc.make('watcher.unsubscribe', {
+    error: FileWatcherRpcError,
+    payload: {
+      id: Schema.String,
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // watcher.updateIgnore — update ignore patterns for a subscription
+  // -----------------------------------------------------------------------
+  Rpc.make('watcher.updateIgnore', {
+    error: FileWatcherRpcError,
+    payload: {
+      id: Schema.String,
+      ignoreGlobs: Schema.Array(Schema.String),
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // watcher.list — list all active subscriptions
+  // -----------------------------------------------------------------------
+  Rpc.make('watcher.list', {
+    success: Schema.Array(WatchSubscriptionInfo),
+    error: FileWatcherRpcError,
+  }),
+
+  // -----------------------------------------------------------------------
+  // watcher.events — streaming file change events
+  // -----------------------------------------------------------------------
+  /**
+   * Streaming RPC that pushes normalized file change events as they occur.
+   *
+   * Events include: add, change, delete with file path and subscription ID.
+   * The stream stays open until the client disconnects.
+   */
+  Rpc.make('watcher.events', {
+    success: WatchFileEvent,
+    error: FileWatcherRpcError,
+    stream: true,
+  })
+) {}
+
+// ---------------------------------------------------------------------------
 // Terminal Service RPC Contract
 // ---------------------------------------------------------------------------
 // The terminal service runs as a separate Bun HTTP server process. These RPCs

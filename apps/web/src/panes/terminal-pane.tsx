@@ -198,19 +198,7 @@ const terminalResizeMutation = TerminalServiceClient.mutation('terminal.resize')
  */
 const PREFIX_MODE_TIMEOUT = 1500
 
-const isExactMetaW = (event: KeyboardEvent): boolean =>
-  event.key === 'w' &&
-  event.metaKey &&
-  !event.ctrlKey &&
-  !event.shiftKey &&
-  !event.altKey
-
-const isExactCtrlB = (event: KeyboardEvent): boolean =>
-  event.key === 'b' &&
-  event.ctrlKey &&
-  !event.shiftKey &&
-  !event.altKey &&
-  !event.metaKey
+import { isExactCtrlB, shouldBypassTerminal } from '@/panes/terminal-keys'
 
 interface TerminalPaneProps {
   /** The terminal ID to subscribe to for output events. */
@@ -498,6 +486,28 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
     //
     // After the action key (or PREFIX_MODE_TIMEOUT), all keys go to
     // the terminal again.
+    const enterPrefixMode = () => {
+      prefixModeRef.current = true
+      setPrefixMode(true)
+      if (prefixTimeoutRef.current !== null) {
+        clearTimeout(prefixTimeoutRef.current)
+      }
+      prefixTimeoutRef.current = setTimeout(() => {
+        prefixModeRef.current = false
+        setPrefixMode(false)
+        prefixTimeoutRef.current = null
+      }, PREFIX_MODE_TIMEOUT)
+    }
+
+    const exitPrefixMode = () => {
+      prefixModeRef.current = false
+      setPrefixMode(false)
+      if (prefixTimeoutRef.current !== null) {
+        clearTimeout(prefixTimeoutRef.current)
+        prefixTimeoutRef.current = null
+      }
+    }
+
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       // Only intercept keydown events — keyup should pass through
       // to avoid breaking key state tracking in the browser.
@@ -505,47 +515,20 @@ function TerminalPane({ terminalId }: TerminalPaneProps) {
         return true
       }
 
-      // Let Cmd+W bubble so the global close-pane hotkey can run.
-      if (isExactMetaW(event)) {
-        return false
-      }
-
-      // Check for Ctrl+B (the panel prefix key).
-      // Must be exactly Ctrl+B — not Ctrl+Shift+B, not Ctrl+Alt+B.
-      if (isExactCtrlB(event)) {
-        // Enter prefix mode: the next keydown will also be passed
-        // through to TanStack Hotkeys.
-        prefixModeRef.current = true
-        setPrefixMode(true)
-
-        // Auto-exit prefix mode after timeout (matches SEQUENCE_TIMEOUT
-        // in panel-hotkeys.tsx). If the user presses Ctrl+B but doesn't
-        // follow up with an action key, the terminal resumes normal input.
-        if (prefixTimeoutRef.current !== null) {
-          clearTimeout(prefixTimeoutRef.current)
+      // Let global shortcuts (Cmd+W, Cmd+Shift+Enter) bubble to
+      // TanStack Hotkeys on document.
+      if (shouldBypassTerminal(event)) {
+        // Ctrl+B additionally enters prefix mode for tmux-style sequences.
+        if (isExactCtrlB(event)) {
+          enterPrefixMode()
         }
-        prefixTimeoutRef.current = setTimeout(() => {
-          prefixModeRef.current = false
-          setPrefixMode(false)
-          prefixTimeoutRef.current = null
-        }, PREFIX_MODE_TIMEOUT)
-
-        // Let Ctrl+B bubble to document for TanStack Hotkeys
         return false
       }
 
       // In prefix mode: pass the action key through to TanStack Hotkeys.
       // This is the second key in the Ctrl+B -> action sequence.
       if (prefixModeRef.current) {
-        // Exit prefix mode — the action key has been consumed.
-        prefixModeRef.current = false
-        setPrefixMode(false)
-        if (prefixTimeoutRef.current !== null) {
-          clearTimeout(prefixTimeoutRef.current)
-          prefixTimeoutRef.current = null
-        }
-
-        // Let the action key bubble to document
+        exitPrefixMode()
         return false
       }
 

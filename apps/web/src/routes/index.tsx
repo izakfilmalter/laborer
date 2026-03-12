@@ -15,6 +15,8 @@ import {
   Columns2,
   FolderGit2,
   LayoutDashboard,
+  Maximize,
+  Minimize,
   PanelLeftClose,
   PanelLeftOpen,
   Rows2,
@@ -101,6 +103,7 @@ import {
 import {
   PanelActionsProvider,
   useActivePaneId,
+  useFullscreenPaneId,
   usePanelActions,
 } from '@/panels/panel-context'
 import {
@@ -1148,6 +1151,8 @@ function WorkspaceFrameHeader({
   const workspaceList = store.useQuery(allWorkspaces$)
   const activePaneId = useActivePaneId()
   const actions = usePanelActions()
+  const fullscreenPaneId = useFullscreenPaneId()
+  const isFullscreen = fullscreenPaneId !== null
 
   const { projectName, branchName, isContainerized } = useMemo(() => {
     if (!workspaceId) {
@@ -1254,6 +1259,30 @@ function WorkspaceFrameHeader({
           <TooltipTrigger
             render={
               <Button
+                aria-label={
+                  isFullscreen ? 'Exit fullscreen' : 'Fullscreen pane'
+                }
+                disabled={!hasActivePane}
+                onClick={() => actions?.toggleFullscreenPane()}
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
+          >
+            {isFullscreen ? (
+              <Minimize className="size-3.5" />
+            ) : (
+              <Maximize className="size-3.5" />
+            )}
+          </TooltipTrigger>
+          <TooltipContent>
+            {isFullscreen ? 'Exit fullscreen' : 'Fullscreen pane'}
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
                 aria-label="Close pane"
                 disabled={!hasActivePane}
                 onClick={() => activePaneId && actions?.closePane(activePaneId)}
@@ -1314,9 +1343,11 @@ function WorkspaceFrame({
 function WorkspaceFrames({
   layout,
   activePaneId,
+  fullscreenPaneId,
 }: {
   readonly layout: PanelNode
   readonly activePaneId: string | null
+  readonly fullscreenPaneId: string | null
 }) {
   const workspaceIds = useMemo(() => getWorkspaceIds(layout), [layout])
 
@@ -1333,6 +1364,37 @@ function WorkspaceFrames({
     }
     return layouts
   }, [layout, workspaceIds])
+
+  // When a pane is fullscreened, find the workspace it belongs to and
+  // render only that workspace with just the fullscreened pane's LeafNode.
+  const fullscreenLayout = useMemo(() => {
+    if (!fullscreenPaneId) {
+      return null
+    }
+    const node = findNodeById(layout, fullscreenPaneId)
+    if (!node || node._tag !== 'LeafNode') {
+      return null
+    }
+    // Find which workspace this pane belongs to
+    const wsEntry = workspaceLayouts.find((entry) => {
+      const leaves = getLeafNodes(entry.subLayout)
+      return leaves.some((l) => l.id === fullscreenPaneId)
+    })
+    return wsEntry
+      ? { workspaceId: wsEntry.workspaceId, subLayout: node }
+      : null
+  }, [fullscreenPaneId, layout, workspaceLayouts])
+
+  // Fullscreen mode — render only the fullscreened pane in its workspace frame
+  if (fullscreenLayout) {
+    return (
+      <WorkspaceFrame
+        activePaneId={activePaneId}
+        subLayout={fullscreenLayout.subLayout}
+        workspaceId={fullscreenLayout.workspaceId}
+      />
+    )
+  }
 
   // Single workspace — no need for resizable splitting
   if (workspaceLayouts.length <= 1) {
@@ -1406,10 +1468,12 @@ function PanelContent({
   isReconciling,
   layout,
   activePaneId,
+  fullscreenPaneId,
 }: {
   readonly isReconciling: boolean
   readonly layout: PanelNode | undefined
   readonly activePaneId: string | null
+  readonly fullscreenPaneId: string | null
 }) {
   if (isReconciling) {
     return (
@@ -1421,7 +1485,13 @@ function PanelContent({
     )
   }
   if (layout) {
-    return <WorkspaceFrames activePaneId={activePaneId} layout={layout} />
+    return (
+      <WorkspaceFrames
+        activePaneId={activePaneId}
+        fullscreenPaneId={fullscreenPaneId}
+        layout={layout}
+      />
+    )
   }
   return <PanelManager layout={undefined} />
 }
@@ -1439,6 +1509,33 @@ function HomeComponent() {
   const projectList = store.useQuery(sidebarProjects$)
   const workspaceList = store.useQuery(sidebarWorkspaces$)
   const hasProjects = projectList.length > 0
+
+  // Fullscreen pane state — transient UI mode (not persisted to LiveStore).
+  // When set, only the fullscreened pane is shown, hiding all other
+  // workspaces and sibling panes. The workspace bar header remains visible.
+  const [fullscreenPaneId, setFullscreenPaneId] = useState<string | null>(null)
+
+  // Auto-exit fullscreen when the fullscreened pane no longer exists in the layout
+  // (e.g., if the pane was closed while fullscreened).
+  useEffect(() => {
+    if (fullscreenPaneId && layout) {
+      const node = findNodeById(layout, fullscreenPaneId)
+      if (!node) {
+        setFullscreenPaneId(null)
+      }
+    }
+  }, [fullscreenPaneId, layout])
+
+  const toggleFullscreenPane = useCallback(() => {
+    setFullscreenPaneId((current) => {
+      if (current) {
+        // Already fullscreened — exit fullscreen
+        return null
+      }
+      // Enter fullscreen for the active pane
+      return activePaneId
+    })
+  }, [activePaneId])
 
   // Close-terminal confirmation dialog state
   const [closeTerminalDialogOpen, setCloseTerminalDialogOpen] = useState(false)
@@ -1472,13 +1569,14 @@ function HomeComponent() {
     }
   }, [panelActions])
 
-  // Override panelActions.closePane with the gated version
+  // Override panelActions.closePane with the gated version and add fullscreen toggle
   const gatedPanelActions = useMemo(
     () => ({
       ...panelActions,
       closePane: gatedClosePane,
+      toggleFullscreenPane,
     }),
-    [panelActions, gatedClosePane]
+    [panelActions, gatedClosePane, toggleFullscreenPane]
   )
 
   // Sync running workspace count to Electron system tray tooltip (no-op in browser)
@@ -1583,7 +1681,11 @@ function HomeComponent() {
   }, [mainView])
 
   return (
-    <PanelActionsProvider activePaneId={activePaneId} value={gatedPanelActions}>
+    <PanelActionsProvider
+      activePaneId={activePaneId}
+      fullscreenPaneId={fullscreenPaneId}
+      value={gatedPanelActions}
+    >
       <CloseTerminalDialog
         onConfirm={handleConfirmCloseTerminal}
         onOpenChange={setCloseTerminalDialogOpen}
@@ -1722,6 +1824,7 @@ function HomeComponent() {
                   />
                   <PanelContent
                     activePaneId={activePaneId}
+                    fullscreenPaneId={fullscreenPaneId}
                     isReconciling={isReconciling}
                     layout={layout}
                   />

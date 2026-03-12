@@ -60,6 +60,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import {
   ResizableHandle,
   ResizablePanel,
@@ -1267,7 +1268,13 @@ function WorkspaceFrameHeader({
           >
             <Columns2 className="size-3.5" />
           </TooltipTrigger>
-          <TooltipContent>Split horizontally</TooltipContent>
+          <TooltipContent>
+            Split horizontally
+            <KbdGroup>
+              <Kbd>⌘</Kbd>
+              <Kbd>D</Kbd>
+            </KbdGroup>
+          </TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
@@ -1285,7 +1292,14 @@ function WorkspaceFrameHeader({
           >
             <Rows2 className="size-3.5" />
           </TooltipTrigger>
-          <TooltipContent>Split vertically</TooltipContent>
+          <TooltipContent>
+            Split vertically
+            <KbdGroup>
+              <Kbd>⇧</Kbd>
+              <Kbd>⌘</Kbd>
+              <Kbd>D</Kbd>
+            </KbdGroup>
+          </TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
@@ -1309,6 +1323,11 @@ function WorkspaceFrameHeader({
           </TooltipTrigger>
           <TooltipContent>
             {isFullscreen ? 'Exit fullscreen' : 'Fullscreen pane'}
+            <KbdGroup>
+              <Kbd>⇧</Kbd>
+              <Kbd>⌘</Kbd>
+              <Kbd>↵</Kbd>
+            </KbdGroup>
           </TooltipContent>
         </Tooltip>
         <Tooltip>
@@ -1325,7 +1344,13 @@ function WorkspaceFrameHeader({
           >
             <X className="size-3.5" />
           </TooltipTrigger>
-          <TooltipContent>Close pane</TooltipContent>
+          <TooltipContent>
+            Close pane
+            <KbdGroup>
+              <Kbd>⌘</Kbd>
+              <Kbd>W</Kbd>
+            </KbdGroup>
+          </TooltipContent>
         </Tooltip>
       </div>
     </div>

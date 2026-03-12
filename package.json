@@ -29,6 +29,7 @@
   "type": "module",
   "scripts": {
     "dev": "turbo dev dev:electron",
+    "dev:web": "turbo dev --filter=!@laborer/desktop",
     "build": "turbo build",
     "typecheck": "turbo typecheck --ui=stream",
     "dev:native": "turbo -F native dev",

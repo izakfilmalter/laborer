@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from 'react'
 import { useCallback } from 'react'
 import {
   AlertDialog,
@@ -9,7 +10,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Kbd } from '@/components/ui/kbd'
 import { isElectron } from '@/lib/desktop'
+import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 
 /**
  * Confirmation dialog shown when attempting to close a terminal pane
@@ -31,7 +34,19 @@ export function CloseTerminalDialog({
 
   return (
     <AlertDialog onOpenChange={onOpenChange} open={open}>
-      <AlertDialogContent>
+      <AlertDialogContent
+        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+          if (isExactEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            return
+          }
+          if (isMetaEnter(event.nativeEvent)) {
+            event.preventDefault()
+            handleConfirm()
+          }
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>Close terminal?</AlertDialogTitle>
           <AlertDialogDescription>
@@ -40,8 +55,14 @@ export function CloseTerminalDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={handleConfirm}>Close</AlertDialogAction>
+          <AlertDialogCancel>
+            Cancel <Kbd>Esc</Kbd>
+          </AlertDialogCancel>
+          <AlertDialogAction onClick={handleConfirm}>
+            Close
+            <Kbd>⌘</Kbd>
+            <Kbd>↵</Kbd>
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -94,6 +95,7 @@ function ProjectSettingsForm({
   const [devServerImage, setDevServerImage] = useState('')
   const [devServerInstallCommand, setDevServerInstallCommand] = useState('')
   const [devServerNetwork, setDevServerNetwork] = useState('')
+  const [devServerAutoOpen, setDevServerAutoOpen] = useState(false)
   const [devServerSetupScripts, setDevServerSetupScripts] = useState<
     SetupScriptItem[]
   >([])
@@ -116,6 +118,7 @@ function ProjectSettingsForm({
     setWorktreeDir(configResult.value.worktreeDir.value)
     setSetupScripts(toSetupScriptItems(configResult.value.setupScripts.value))
     setRlphConfig(configResult.value.rlphConfig.value ?? '')
+    setDevServerAutoOpen(configResult.value.devServer.autoOpen.value)
     setDevServerImage(configResult.value.devServer.image.value ?? '')
     setDevServerInstallCommand(
       configResult.value.devServer.installCommand.value ?? ''
@@ -171,6 +174,7 @@ function ProjectSettingsForm({
   const handleSave = async () => {
     const updates = buildConfigUpdates({
       agent,
+      devServerAutoOpen,
       devServerImage,
       devServerInstallCommand,
       devServerNetwork,
@@ -179,6 +183,7 @@ function ProjectSettingsForm({
       rlphConfig,
       resolvedConfig: {
         agent: resolvedConfig.agent.value,
+        devServerAutoOpen: resolvedConfig.devServer.autoOpen.value,
         devServerImage: resolvedConfig.devServer.image.value,
         devServerInstallCommand: resolvedConfig.devServer.installCommand.value,
         devServerNetwork: resolvedConfig.devServer.network.value,
@@ -348,6 +353,30 @@ function ProjectSettingsForm({
                 <Plus className="size-3.5" />
                 Add script
               </Button>
+            </div>
+          </Field>
+
+          <Field>
+            <div className="flex items-start justify-between gap-3">
+              <div className="grid gap-1">
+                <FieldLabel htmlFor={`dev-server-auto-open-${projectId}`}>
+                  Auto-open dev server
+                </FieldLabel>
+                <FieldDescription>
+                  Open the dev server on the right when spawning a workspace
+                  terminal.
+                </FieldDescription>
+                <FieldDescription className={provenanceClassName}>
+                  Source: {resolvedConfig.devServer.autoOpen.source}
+                </FieldDescription>
+              </div>
+              <Checkbox
+                checked={devServerAutoOpen}
+                id={`dev-server-auto-open-${projectId}`}
+                onCheckedChange={(checked) =>
+                  setDevServerAutoOpen(checked === true)
+                }
+              />
             </div>
           </Field>
 

@@ -38,6 +38,7 @@ import {
   replaceNode,
   splitPane,
 } from '@/panels/layout-utils'
+import type { AssignTerminalToPaneOptions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import { useInitialLayout } from './use-initial-layout'
 
@@ -249,7 +250,13 @@ export function usePanelLayout() {
    * without creating a circular useCallback dependency.
    */
   const assignTerminalToPaneRef = useRef<
-    ((terminalId: string, workspaceId: string, paneId?: string) => void) | null
+    | ((
+        terminalId: string,
+        workspaceId: string,
+        paneId?: string,
+        options?: AssignTerminalToPaneOptions
+      ) => void)
+    | null
   >(null)
 
   const handleSplitPane = useCallback(
@@ -439,13 +446,19 @@ export function usePanelLayout() {
   )
 
   const handleAssignTerminalToPane = useCallback(
-    (terminalId: string, workspaceId: string, paneId?: string) => {
+    (
+      terminalId: string,
+      workspaceId: string,
+      paneId?: string,
+      options?: AssignTerminalToPaneOptions
+    ) => {
       const base = persistedLayoutTree ?? initialLayout
       const result = computeTerminalPaneAssignment(
         base,
         terminalId,
         workspaceId,
-        paneId
+        paneId,
+        options
       )
       commitAssignment(
         result.layoutTree,

@@ -133,6 +133,10 @@ function TerminalList({
   const configResult = useAtomValue(configGet$)
   const agentProvider =
     configResult._tag === 'Success' ? configResult.value.agent.value : 'claude'
+  const autoOpenDevServer =
+    configResult._tag === 'Success'
+      ? configResult.value.devServer.autoOpen.value
+      : false
   const AgentIcon = AGENT_ICONS[agentProvider]
 
   // Filter terminals for this workspace and derive aggregate agent status
@@ -163,14 +167,22 @@ function TerminalList({
       toast.success(`Terminal spawned: ${result.command}`)
       // Auto-assign the new terminal to a pane
       if (panelActions) {
-        panelActions.assignTerminalToPane(result.id, workspaceId)
+        panelActions.assignTerminalToPane(result.id, workspaceId, undefined, {
+          autoOpenDevServer,
+        })
       }
     } catch (error) {
       toast.error(`Failed to spawn terminal: ${extractErrorMessage(error)}`)
     } finally {
       setIsSpawning(false)
     }
-  }, [isServiceAvailable, spawnTerminal, workspaceId, panelActions])
+  }, [
+    autoOpenDevServer,
+    isServiceAvailable,
+    spawnTerminal,
+    workspaceId,
+    panelActions,
+  ])
 
   const handleSpawnAgent = useCallback(async () => {
     if (!isServiceAvailable) {
@@ -185,7 +197,9 @@ function TerminalList({
       upsertTerminalListItem(buildOptimisticTerminalInfo(result))
       toast.success(`Agent spawned: ${agentProvider}`)
       if (panelActions) {
-        panelActions.assignTerminalToPane(result.id, workspaceId)
+        panelActions.assignTerminalToPane(result.id, workspaceId, undefined, {
+          autoOpenDevServer,
+        })
       }
     } catch (error) {
       toast.error(`Failed to spawn agent: ${extractErrorMessage(error)}`)
@@ -198,6 +212,7 @@ function TerminalList({
     workspaceId,
     panelActions,
     agentProvider,
+    autoOpenDevServer,
   ])
 
   const handleCloseTerminal = useCallback(

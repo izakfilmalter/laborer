@@ -20,6 +20,11 @@ import { createContext, useContext } from 'react'
  */
 type ResizeDirection = 'left' | 'right' | 'up' | 'down'
 
+interface AssignTerminalToPaneOptions {
+  /** Whether assigning this terminal should auto-open the workspace dev server. */
+  readonly autoOpenDevServer?: boolean | undefined
+}
+
 interface PanelActions {
   /**
    * Assign a terminal to an existing pane or the first available empty pane.
@@ -33,7 +38,8 @@ interface PanelActions {
   readonly assignTerminalToPane: (
     terminalId: string,
     workspaceId: string,
-    paneId?: string
+    paneId?: string,
+    options?: AssignTerminalToPaneOptions
   ) => void
   /**
    * Close a pane and remove it from the layout.
@@ -215,4 +221,4 @@ export {
   useFullscreenPaneId,
   usePanelActions,
 }
-export type { PanelActions }
+export type { AssignTerminalToPaneOptions, PanelActions }

@@ -8,7 +8,6 @@ import { ContainerService } from '../../src/services/container-service.js'
 import { DepsImageService } from '../../src/services/deps-image-service.js'
 import { DiffService } from '../../src/services/diff-service.js'
 import { DockerDetection } from '../../src/services/docker-detection.js'
-import { FileWatcher } from '../../src/services/file-watcher.js'
 import { GithubTaskImporter } from '../../src/services/github-task-importer.js'
 import { LaborerStore } from '../../src/services/laborer-store.js'
 import { LinearTaskImporter } from '../../src/services/linear-task-importer.js'
@@ -16,7 +15,6 @@ import { PortAllocator } from '../../src/services/port-allocator.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { PrdStorageService } from '../../src/services/prd-storage-service.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
-import { RepositoryEventBus } from '../../src/services/repository-event-bus.js'
 import { RepositoryIdentity } from '../../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../../src/services/repository-watch-coordinator.js'
 import { TaskManager } from '../../src/services/task-manager.js'
@@ -24,6 +22,7 @@ import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
 import { WorktreeDetector } from '../../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../../src/services/worktree-reconciler.js'
+import { TestFileWatcherClientLayer } from '../helpers/test-file-watcher-client.js'
 import { TestLaborerStore } from '../helpers/test-store.js'
 
 class TestTerminalClientRecorder extends Context.Tag(
@@ -116,8 +115,7 @@ const TestDepsImageService = Layer.succeed(
  */
 const LeafLayers = Layer.mergeAll(
   ConfigService.layer,
-  RepositoryEventBus.layer,
-  FileWatcher.layer,
+  TestFileWatcherClientLayer,
   RepositoryIdentity.layer,
   WorktreeDetector.layer,
   TestDepsImageService,

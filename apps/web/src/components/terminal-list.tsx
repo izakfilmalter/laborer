@@ -20,13 +20,16 @@
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import {
   AlertTriangle,
+  AppWindow,
+  FileCode,
+  MonitorDot,
   Plus,
   RotateCw,
   Terminal as TerminalIcon,
   X,
 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useMemo, useState } from 'react'
+import { type ReactNode, useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
@@ -39,6 +42,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import type { ForegroundProcess } from '@/hooks/use-terminal-list'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
@@ -292,6 +296,7 @@ interface TerminalItemProps {
     readonly id: string
     readonly workspaceId: string
     readonly command: string
+    readonly foregroundProcess: ForegroundProcess | null
     readonly status: string
   }
 }
@@ -302,6 +307,103 @@ interface TerminalItemProps {
  */
 const TERMINAL_DRAG_MIME = 'application/x-laborer-terminal'
 
+/**
+ * Map from agent rawName to its icon component for sidebar display.
+ * Only includes agents that have dedicated icons.
+ */
+const AGENT_ICON_BY_RAW_NAME: Record<
+  string,
+  ((props: { className?: string }) => ReactNode) | undefined
+> = {
+  claude: AGENT_ICONS.claude,
+  opencode: AGENT_ICONS.opencode,
+  codex: AGENT_ICONS.codex,
+}
+
+/**
+ * Get the icon and label to display for a terminal based on its
+ * foreground process. Falls back to the terminal command name.
+ */
+function getTerminalDisplay(
+  command: string,
+  foregroundProcess: ForegroundProcess | null,
+  isRunning: boolean
+): {
+  icon: ReactNode
+  label: string
+  badgeLabel: string | null
+  badgeClassName: string | null
+} {
+  if (!isRunning) {
+    return {
+      icon: (
+        <TerminalIcon className="size-3.5 shrink-0 text-muted-foreground" />
+      ),
+      label: command || 'shell',
+      badgeLabel: 'stopped',
+      badgeClassName:
+        'border-muted-foreground/30 bg-muted text-muted-foreground',
+    }
+  }
+
+  // No foreground process detected — shell is idle at prompt
+  if (foregroundProcess === null) {
+    return {
+      icon: <TerminalIcon className="size-3.5 shrink-0 text-success" />,
+      label: command || 'shell',
+      badgeLabel: 'idle',
+      badgeClassName: 'border-success/30 bg-success/10 text-success',
+    }
+  }
+
+  const { category, label: processLabel, rawName } = foregroundProcess
+
+  switch (category) {
+    case 'agent': {
+      const AgentIcon = AGENT_ICON_BY_RAW_NAME[rawName]
+      return {
+        icon: AgentIcon ? (
+          <AgentIcon className="size-3.5 shrink-0" />
+        ) : (
+          <MonitorDot className="size-3.5 shrink-0 text-blue-400" />
+        ),
+        label: processLabel,
+        badgeLabel: 'agent',
+        badgeClassName: 'border-blue-400/30 bg-blue-400/10 text-blue-400',
+      }
+    }
+    case 'editor':
+      return {
+        icon: <FileCode className="size-3.5 shrink-0 text-amber-400" />,
+        label: processLabel,
+        badgeLabel: 'editor',
+        badgeClassName: 'border-amber-400/30 bg-amber-400/10 text-amber-400',
+      }
+    case 'devServer':
+      return {
+        icon: <AppWindow className="size-3.5 shrink-0 text-emerald-400" />,
+        label: processLabel,
+        badgeLabel: 'running',
+        badgeClassName:
+          'border-emerald-400/30 bg-emerald-400/10 text-emerald-400',
+      }
+    case 'shell':
+      return {
+        icon: <TerminalIcon className="size-3.5 shrink-0 text-success" />,
+        label: command || 'shell',
+        badgeLabel: 'idle',
+        badgeClassName: 'border-success/30 bg-success/10 text-success',
+      }
+    default:
+      return {
+        icon: <TerminalIcon className="size-3.5 shrink-0 text-success" />,
+        label: processLabel,
+        badgeLabel: 'running',
+        badgeClassName: 'border-success/30 bg-success/10 text-success',
+      }
+  }
+}
+
 function TerminalItem({
   terminal,
   onSelect,
@@ -309,6 +411,11 @@ function TerminalItem({
   onRestart,
 }: TerminalItemProps) {
   const isRunning = terminal.status === 'running'
+  const { icon, label, badgeLabel, badgeClassName } = getTerminalDisplay(
+    terminal.command,
+    terminal.foregroundProcess,
+    isRunning
+  )
 
   const handleDragStart = useCallback(
     (e: React.DragEvent<HTMLButtonElement>) => {
@@ -337,26 +444,19 @@ function TerminalItem({
       onDragStart={handleDragStart}
       type="button"
     >
-      <TerminalIcon
-        className={cn(
-          'size-3.5 shrink-0',
-          isRunning ? 'text-success' : 'text-muted-foreground'
-        )}
-      />
-      <span className="min-w-0 flex-1 truncate font-mono">
-        {terminal.command || 'shell'}
-      </span>
-      <Badge
-        className={cn(
-          'shrink-0 border text-[10px] leading-none',
-          isRunning
-            ? 'border-success/30 bg-success/10 text-success'
-            : 'border-muted-foreground/30 bg-muted text-muted-foreground'
-        )}
-        variant="outline"
-      >
-        {terminal.status}
-      </Badge>
+      {icon}
+      <span className="min-w-0 flex-1 truncate font-mono">{label}</span>
+      {badgeLabel !== null && badgeClassName !== null && (
+        <Badge
+          className={cn(
+            'shrink-0 border text-[10px] leading-none',
+            badgeClassName
+          )}
+          variant="outline"
+        >
+          {badgeLabel}
+        </Badge>
+      )}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -399,4 +499,4 @@ function TerminalItem({
   )
 }
 
-export { TerminalList }
+export { getTerminalDisplay, TerminalList }

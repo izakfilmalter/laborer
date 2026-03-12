@@ -18,7 +18,7 @@
  * @see Issue #138: Move + simplify TerminalManager
  */
 
-import { execSync } from 'node:child_process'
+import { exec } from 'node:child_process'
 import { TerminalRpcError } from '@laborer/shared/rpc'
 import { Cause, Context, Effect, Layer, PubSub, Ref, Runtime } from 'effect'
 import { RingBuffer } from '../lib/ring-buffer.js'
@@ -42,6 +42,9 @@ const DEFAULT_TERMINAL_GRACE_PERIOD_MS = 60_000
 
 /** UTF-8 text encoder shared across all terminal data callbacks. */
 const textEncoder = new TextEncoder()
+
+/** Regex for splitting whitespace in ps output lines. Defined at module level for performance. */
+const PS_WHITESPACE_REGEX = /\s+/
 
 const parseGracePeriodMs = (): number => {
   const raw = process.env.TERMINAL_GRACE_PERIOD_MS
@@ -104,6 +107,11 @@ interface TerminalRecord {
   readonly command: string
   readonly cwd: string
   /**
+   * Information about the foreground process running in the terminal.
+   * Null when the shell is idle at a prompt or the terminal is stopped.
+   */
+  readonly foregroundProcess: ForegroundProcess | null
+  /**
    * Whether the shell has child processes running. True when processes
    * like vim, dev servers, or AI agents are active inside the terminal.
    * False when the shell is idle at a prompt.
@@ -128,27 +136,321 @@ interface SpawnPayload {
   readonly workspaceId: string
 }
 
+// ---------------------------------------------------------------------------
+// Async Process Detection
+// ---------------------------------------------------------------------------
+
 /**
- * Check if a process has child processes by using `pgrep -P <pid>`.
+ * Known process categories for terminal sidebar display.
  *
- * Returns true if the shell process has at least one child process
- * (e.g., vim, node, cargo, opencode). Returns false if the shell is
- * idle at a prompt or if the PID is unknown/invalid.
- *
- * Uses `pgrep` which is available on macOS and Linux. The call is
- * synchronous but extremely fast (~1-2ms per check).
+ * - `agent` — AI coding agents (claude, opencode, codex, aider, goose, etc.)
+ * - `editor` — Text editors (vim, nvim, nano, emacs, helix, etc.)
+ * - `devServer` — Dev servers and build tools (node, bun, deno, python, ruby, etc.)
+ * - `shell` — The shell itself (zsh, bash, fish, etc.) — means idle at prompt
+ * - `unknown` — A process is running but we don't recognize it
  */
-const checkHasChildProcess = (shellPid: number | undefined): boolean => {
-  if (shellPid === undefined) {
-    return false
+type ProcessCategory = 'agent' | 'editor' | 'devServer' | 'shell' | 'unknown'
+
+/**
+ * Information about the foreground process running in a terminal.
+ * Returned alongside terminal records for sidebar display.
+ */
+interface ForegroundProcess {
+  /** The category of the detected process. */
+  readonly category: ProcessCategory
+  /** Human-readable label for display (e.g., "Claude", "vim", "node"). */
+  readonly label: string
+  /** Raw process name from ps (e.g., "claude", "nvim", "node"). */
+  readonly rawName: string
+}
+
+/**
+ * Map of process names to their display info. The key is the basename
+ * of the process (output of `ps -o comm=`). Order doesn't matter since
+ * this is a lookup table.
+ */
+const KNOWN_PROCESSES: ReadonlyMap<
+  string,
+  { readonly category: ProcessCategory; readonly label: string }
+> = new Map([
+  // AI Agents
+  ['claude', { category: 'agent', label: 'Claude' }],
+  ['opencode', { category: 'agent', label: 'OpenCode' }],
+  ['codex', { category: 'agent', label: 'Codex' }],
+  ['aider', { category: 'agent', label: 'Aider' }],
+  ['goose', { category: 'agent', label: 'Goose' }],
+  ['cursor', { category: 'agent', label: 'Cursor' }],
+  ['cline', { category: 'agent', label: 'Cline' }],
+  ['continue', { category: 'agent', label: 'Continue' }],
+  ['amp', { category: 'agent', label: 'Amp' }],
+  ['kilo-code', { category: 'agent', label: 'Kilo Code' }],
+  ['roo-code', { category: 'agent', label: 'Roo Code' }],
+  ['gemini', { category: 'agent', label: 'Gemini' }],
+
+  // Editors
+  ['vim', { category: 'editor', label: 'vim' }],
+  ['nvim', { category: 'editor', label: 'Neovim' }],
+  ['vi', { category: 'editor', label: 'vi' }],
+  ['nano', { category: 'editor', label: 'nano' }],
+  ['emacs', { category: 'editor', label: 'Emacs' }],
+  ['helix', { category: 'editor', label: 'Helix' }],
+  ['hx', { category: 'editor', label: 'Helix' }],
+  ['micro', { category: 'editor', label: 'micro' }],
+  ['kakoune', { category: 'editor', label: 'Kakoune' }],
+  ['kak', { category: 'editor', label: 'Kakoune' }],
+  ['code', { category: 'editor', label: 'VS Code' }],
+
+  // Dev servers / runtimes / build tools
+  ['node', { category: 'devServer', label: 'Node.js' }],
+  ['bun', { category: 'devServer', label: 'Bun' }],
+  ['deno', { category: 'devServer', label: 'Deno' }],
+  ['python', { category: 'devServer', label: 'Python' }],
+  ['python3', { category: 'devServer', label: 'Python' }],
+  ['ruby', { category: 'devServer', label: 'Ruby' }],
+  ['cargo', { category: 'devServer', label: 'Cargo' }],
+  ['go', { category: 'devServer', label: 'Go' }],
+  ['java', { category: 'devServer', label: 'Java' }],
+  ['docker', { category: 'devServer', label: 'Docker' }],
+  ['docker-compose', { category: 'devServer', label: 'Docker Compose' }],
+  ['npm', { category: 'devServer', label: 'npm' }],
+  ['npx', { category: 'devServer', label: 'npx' }],
+  ['pnpm', { category: 'devServer', label: 'pnpm' }],
+  ['yarn', { category: 'devServer', label: 'yarn' }],
+  ['turbo', { category: 'devServer', label: 'Turbo' }],
+  ['tsx', { category: 'devServer', label: 'tsx' }],
+  ['ts-node', { category: 'devServer', label: 'ts-node' }],
+  ['vite', { category: 'devServer', label: 'Vite' }],
+  ['next', { category: 'devServer', label: 'Next.js' }],
+  ['webpack', { category: 'devServer', label: 'Webpack' }],
+  ['esbuild', { category: 'devServer', label: 'esbuild' }],
+  ['rollup', { category: 'devServer', label: 'Rollup' }],
+  ['jest', { category: 'devServer', label: 'Jest' }],
+  ['vitest', { category: 'devServer', label: 'Vitest' }],
+  ['pytest', { category: 'devServer', label: 'pytest' }],
+  ['make', { category: 'devServer', label: 'make' }],
+
+  // Git tools
+  ['git', { category: 'devServer', label: 'git' }],
+  ['lazygit', { category: 'devServer', label: 'Lazygit' }],
+  ['tig', { category: 'devServer', label: 'tig' }],
+  ['gh', { category: 'devServer', label: 'GitHub CLI' }],
+
+  // System tools
+  ['ssh', { category: 'devServer', label: 'SSH' }],
+  ['htop', { category: 'devServer', label: 'htop' }],
+  ['btop', { category: 'devServer', label: 'btop' }],
+  ['top', { category: 'devServer', label: 'top' }],
+  ['less', { category: 'devServer', label: 'less' }],
+  ['man', { category: 'devServer', label: 'man' }],
+  ['tmux', { category: 'devServer', label: 'tmux' }],
+
+  // Shells (idle at prompt)
+  ['zsh', { category: 'shell', label: 'zsh' }],
+  ['bash', { category: 'shell', label: 'bash' }],
+  ['fish', { category: 'shell', label: 'fish' }],
+  ['sh', { category: 'shell', label: 'sh' }],
+  ['dash', { category: 'shell', label: 'dash' }],
+  ['nushell', { category: 'shell', label: 'Nushell' }],
+  ['nu', { category: 'shell', label: 'Nushell' }],
+  ['pwsh', { category: 'shell', label: 'PowerShell' }],
+])
+
+/**
+ * Classify a process name into a ForegroundProcess descriptor.
+ * Returns null if the name is empty.
+ */
+const classifyProcess = (processName: string): ForegroundProcess | null => {
+  if (processName === '') {
+    return null
   }
-  try {
-    // pgrep -P <pid> exits with 0 if children found, 1 if none
-    execSync(`pgrep -P ${shellPid}`, { stdio: 'ignore' })
-    return true
-  } catch {
-    return false
+
+  // Extract basename (ps -o comm= may return full path on some systems)
+  const basename = processName.split('/').pop() ?? processName
+
+  const known = KNOWN_PROCESSES.get(basename)
+  if (known !== undefined) {
+    return {
+      category: known.category,
+      label: known.label,
+      rawName: basename,
+    }
   }
+
+  // Unknown process — still return it with the raw name
+  return {
+    category: 'unknown',
+    label: basename,
+    rawName: basename,
+  }
+}
+
+/**
+ * Run a shell command asynchronously and return stdout.
+ * Returns null if the command fails (e.g., pgrep with no matches exits 1).
+ */
+const execAsync = (command: string): Promise<string | null> =>
+  new Promise((resolve) => {
+    exec(command, { encoding: 'utf-8', timeout: 3000 }, (error, stdout) => {
+      if (error !== null) {
+        resolve(null)
+        return
+      }
+      resolve(stdout.trim())
+    })
+  })
+
+/**
+ * Result of process detection for a single terminal.
+ * Computed asynchronously and cached on the TerminalRecord.
+ */
+interface ProcessDetectionResult {
+  readonly foregroundProcess: ForegroundProcess | null
+  readonly hasChildProcess: boolean
+}
+
+/** Default detection result when process info is unavailable. */
+const EMPTY_DETECTION: ProcessDetectionResult = {
+  foregroundProcess: null,
+  hasChildProcess: false,
+}
+
+/**
+ * Parse `ps -eo pid=,ppid=,comm=` output into lookup maps.
+ *
+ * Returns a parent→children map and a pid→comm map for in-memory
+ * process tree walking.
+ */
+const parsePsOutput = (
+  psOutput: string
+): {
+  childrenByPid: Map<number, number[]>
+  commByPid: Map<number, string>
+} => {
+  const childrenByPid = new Map<number, number[]>()
+  const commByPid = new Map<number, string>()
+
+  for (const line of psOutput.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed === '') {
+      continue
+    }
+
+    // Format: "  PID  PPID COMM" — fields are whitespace-separated
+    // PID and PPID are numeric, COMM may contain spaces
+    const parts = trimmed.split(PS_WHITESPACE_REGEX)
+    if (parts.length < 3) {
+      continue
+    }
+
+    const pid = Number(parts[0])
+    const ppid = Number(parts[1])
+    // comm is everything after pid and ppid — rejoin in case of spaces
+    const comm = parts.slice(2).join(' ')
+
+    if (!(Number.isFinite(pid) && Number.isFinite(ppid))) {
+      continue
+    }
+
+    commByPid.set(pid, comm)
+
+    const existing = childrenByPid.get(ppid)
+    if (existing !== undefined) {
+      existing.push(pid)
+    } else {
+      childrenByPid.set(ppid, [pid])
+    }
+  }
+
+  return { childrenByPid, commByPid }
+}
+
+/**
+ * Walk the process tree from a shell PID to find the deepest child and
+ * classify it. Uses the pre-built maps from parsePsOutput.
+ */
+const detectForShellPid = (
+  shellPid: number,
+  childrenByPid: ReadonlyMap<number, number[]>,
+  commByPid: ReadonlyMap<number, string>
+): ProcessDetectionResult => {
+  const children = childrenByPid.get(shellPid)
+  const hasChildren = children !== undefined && children.length > 0
+
+  if (hasChildren) {
+    // Walk to deepest child (first child at each level)
+    let targetPid = children[0] ?? shellPid
+    for (let depth = 0; depth < 10; depth++) {
+      const grandchildren = childrenByPid.get(targetPid)
+      if (grandchildren === undefined || grandchildren.length === 0) {
+        break
+      }
+      targetPid = grandchildren[0] ?? targetPid
+    }
+
+    const comm = commByPid.get(targetPid) ?? ''
+    return {
+      foregroundProcess: classifyProcess(comm),
+      hasChildProcess: true,
+    }
+  }
+
+  // No children — check if the shell exec'd into something else
+  const shellComm = commByPid.get(shellPid) ?? ''
+  const classified = classifyProcess(shellComm)
+
+  if (classified === null || classified.category === 'shell') {
+    return EMPTY_DETECTION
+  }
+
+  // Shell exec'd into another process (e.g., sh -c cat → cat)
+  return { foregroundProcess: classified, hasChildProcess: false }
+}
+
+/**
+ * Detect foreground process and child process status for all given shell PIDs
+ * using a single async `ps` call, then walk the process tree in memory.
+ *
+ * Instead of spawning N×12 synchronous `execSync` calls per terminal (which
+ * blocks the event loop), this function:
+ * 1. Collects all shell PIDs
+ * 2. Runs ONE async `ps` to get the full process tree for all PIDs
+ * 3. Builds a parent→children map in memory
+ * 4. Walks the tree per terminal to find the deepest child
+ *
+ * This turns O(N×12) synchronous shell spawns into O(1) async shell spawn,
+ * keeping the Node.js event loop free for terminal data throughput.
+ */
+const detectProcessesForPids = async (
+  shellPids: ReadonlyMap<string, number>
+): Promise<ReadonlyMap<string, ProcessDetectionResult>> => {
+  const results = new Map<string, ProcessDetectionResult>()
+
+  if (shellPids.size === 0) {
+    return results
+  }
+
+  // Single async ps call to get the full process table.
+  // `ps -eo pid=,ppid=,comm=` is faster than multiple targeted calls
+  // because it's a single fork+exec. We then filter in memory.
+  const psOutput = await execAsync('ps -eo pid=,ppid=,comm=')
+
+  if (psOutput === null) {
+    for (const terminalId of shellPids.keys()) {
+      results.set(terminalId, EMPTY_DETECTION)
+    }
+    return results
+  }
+
+  const { childrenByPid, commByPid } = parsePsOutput(psOutput)
+
+  for (const [terminalId, shellPid] of shellPids) {
+    results.set(
+      terminalId,
+      detectForShellPid(shellPid, childrenByPid, commByPid)
+    )
+  }
+
+  return results
 }
 
 // ---------------------------------------------------------------------------
@@ -529,6 +831,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           command,
           args: [...args],
           cwd,
+          foregroundProcess: null,
           hasChildProcess: false,
           status: 'running',
         }
@@ -676,29 +979,56 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       // ---------------------------------------------------------------
       // listTerminals
       // ---------------------------------------------------------------
+
+      /**
+       * List all terminals with process detection.
+       *
+       * Process detection is async — a single `ps -eo pid=,ppid=,comm=`
+       * call fetches the full process tree, then walks it in memory per
+       * terminal. This replaces the previous O(N×12) synchronous
+       * `execSync` calls that blocked the event loop.
+       */
       const listTerminals = Effect.fn('TerminalManager.listTerminals')(
         function* (workspaceId?: string) {
           const map = yield* Ref.get(terminalsRef)
-          const results: TerminalRecord[] = []
+
+          // Collect shell PIDs for all running terminals in scope
+          const shellPids = new Map<string, number>()
+          const terminalsInScope: ManagedTerminal[] = []
 
           for (const terminal of map.values()) {
             if (
               workspaceId === undefined ||
               terminal.workspaceId === workspaceId
             ) {
-              results.push({
-                id: terminal.id,
-                workspaceId: terminal.workspaceId,
-                command: terminal.command,
-                args: [...terminal.args],
-                cwd: terminal.cwd,
-                hasChildProcess:
-                  terminal.status === 'running'
-                    ? checkHasChildProcess(terminal.shellPid)
-                    : false,
-                status: terminal.status,
-              })
+              terminalsInScope.push(terminal)
+              if (
+                terminal.status === 'running' &&
+                terminal.shellPid !== undefined
+              ) {
+                shellPids.set(terminal.id, terminal.shellPid)
+              }
             }
+          }
+
+          // Single async ps call for all terminals at once
+          const detectionResults = yield* Effect.promise(() =>
+            detectProcessesForPids(shellPids)
+          )
+
+          const results: TerminalRecord[] = []
+          for (const terminal of terminalsInScope) {
+            const detected = detectionResults.get(terminal.id)
+            results.push({
+              id: terminal.id,
+              workspaceId: terminal.workspaceId,
+              command: terminal.command,
+              args: [...terminal.args],
+              cwd: terminal.cwd,
+              foregroundProcess: detected?.foregroundProcess ?? null,
+              hasChildProcess: detected?.hasChildProcess ?? false,
+              status: terminal.status,
+            })
           }
 
           return results
@@ -824,6 +1154,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           command: terminal.command,
           args: [...terminal.args],
           cwd: terminal.cwd,
+          foregroundProcess: null,
           hasChildProcess: false,
           status: 'running',
         }
@@ -1039,8 +1370,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
 export { TerminalManager }
 export type {
+  ForegroundProcess,
   ManagedTerminal,
   OutputSubscriber,
+  ProcessCategory,
   SpawnPayload,
   TerminalBufferState,
   TerminalExitedEvent,

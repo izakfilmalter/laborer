@@ -97,6 +97,11 @@ const toTerminalInfo = (record: {
   readonly args: readonly string[]
   readonly command: string
   readonly cwd: string
+  readonly foregroundProcess: {
+    readonly category: 'agent' | 'editor' | 'devServer' | 'shell' | 'unknown'
+    readonly label: string
+    readonly rawName: string
+  } | null
   readonly hasChildProcess: boolean
   readonly id: string
   readonly status: 'running' | 'stopped'
@@ -107,6 +112,7 @@ const toTerminalInfo = (record: {
   command: record.command,
   args: [...record.args],
   cwd: record.cwd,
+  foregroundProcess: record.foregroundProcess,
   hasChildProcess: record.hasChildProcess,
   status: record.status,
 })

@@ -6,20 +6,20 @@
  *
  * 1. Persisted identity migration/backfill and direct dedupe behavior
  *    are robust under edge cases.
- * 2. Native watcher backend and fs.watch fallback behave correctly,
- *    including ignore option passthrough.
- * 3. Ignore filtering at watcher-boundary and event-bus-boundary
- *    levels work in concert without gaps.
- * 4. End-to-end downstream invalidation (watcher → event bus →
- *    DiffService) operates correctly with native event semantics.
- * 5. Coverage reporting includes the updated repo-watching areas.
+ * 2. FileWatcherClient subscribe calls include proper ignore globs
+ *    when passed by the coordinator.
+ * 3. End-to-end downstream invalidation (FileWatcherClient events →
+ *    DiffService) operates correctly.
+ * 4. Coverage reporting includes the updated repo-watching areas.
  *
  * @see PRD-opencode-repo-watching-alignment — Issue 7
+ * @see PRD-file-watcher-extraction.md
  */
 
 import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
+import type { WatchFileEvent } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
@@ -27,18 +27,15 @@ import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { DiffService } from '../src/services/diff-service.js'
 import {
-  FileWatcher,
-  type FileWatcherSubscribeOptions,
-  type WatchEvent,
-  type WatchSubscription,
-} from '../src/services/file-watcher.js'
+  type FileEventHandler,
+  type FileEventSubscription,
+  FileWatcherClient,
+} from '../src/services/file-watcher-client.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { PortAllocator } from '../src/services/port-allocator.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import {
   DEFAULT_IGNORED_PREFIXES,
-  RepositoryEventBus,
-  type RepositoryFileEvent,
   shouldIgnore,
 } from '../src/services/repository-event-bus.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
@@ -46,8 +43,9 @@ import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coo
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
+import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.js'
 import { TestLaborerStore } from './helpers/test-store.js'
-import { delay, waitFor } from './helpers/timing-helpers.js'
+import { delay } from './helpers/timing-helpers.js'
 
 const tempRoots: string[] = []
 
@@ -63,40 +61,71 @@ afterAll(() => {
 
 // ── Shared test layer factories ─────────────────────────────────
 
-/**
- * Records all subscribe calls including path, options, and
- * provides a way to deliver synthetic watcher events.
- */
 interface RecordedSubscription {
-  readonly onChange: (event: WatchEvent) => void
-  readonly onError: (error: Error) => void
-  readonly options: FileWatcherSubscribeOptions | undefined
+  readonly id: string
+  readonly ignoreGlobs: readonly string[]
   readonly path: string
+  readonly recursive: boolean
 }
 
-type RecordedSubscriptions = RecordedSubscription[]
+const createRecordingFileWatcherClientLayer = (params: {
+  readonly subscribedPaths: RecordedSubscription[]
+  readonly emitEvent: { current: (event: WatchFileEvent) => void }
+  readonly subscriptionsByPath: Map<string, string>
+}) => {
+  let subCounter = 0
+  const handlers: FileEventHandler[] = []
 
-const createRecordingFileWatcherLayer = (
-  subscriptions: RecordedSubscriptions
-) =>
-  Layer.succeed(
-    FileWatcher,
-    FileWatcher.of({
-      subscribe: (path, onChange, onError, options) =>
+  params.emitEvent.current = (event: WatchFileEvent) => {
+    for (const handler of [...handlers]) {
+      handler(event)
+    }
+  }
+
+  return Layer.succeed(
+    FileWatcherClient,
+    FileWatcherClient.of({
+      subscribe: (path, options) =>
         Effect.sync(() => {
-          subscriptions.push({ path, onChange, onError, options })
-          return {
-            close: () => undefined,
-          } satisfies WatchSubscription
+          subCounter += 1
+          const id = `test-sub-${subCounter}`
+          const sub: RecordedSubscription = {
+            id,
+            path,
+            recursive: options?.recursive ?? false,
+            ignoreGlobs: options?.ignoreGlobs ?? [],
+          }
+          params.subscribedPaths.push(sub)
+          params.subscriptionsByPath.set(path, id)
+          return sub
         }),
+      unsubscribe: () => Effect.void,
+      updateIgnore: () => Effect.void,
+      onFileEvent: (handler: FileEventHandler): FileEventSubscription => {
+        handlers.push(handler)
+        return {
+          unsubscribe: () => {
+            const idx = handlers.indexOf(handler)
+            if (idx !== -1) {
+              handlers.splice(idx, 1)
+            }
+          },
+        }
+      },
+      listSubscriptions: () => Effect.succeed([]),
     })
   )
+}
 
 const createCoordinatorTestLayer = (
   repoPath: string,
-  subscriptions: RecordedSubscriptions
+  params: {
+    readonly subscribedPaths: RecordedSubscription[]
+    readonly emitEvent: { current: (event: WatchFileEvent) => void }
+    readonly subscriptionsByPath: Map<string, string>
+  }
 ) => {
-  const fileWatcherLayer = createRecordingFileWatcherLayer(subscriptions)
+  const fileWatcherClientLayer = createRecordingFileWatcherClientLayer(params)
 
   return RepositoryWatchCoordinator.layer.pipe(
     Layer.provide(
@@ -108,8 +137,7 @@ const createCoordinatorTestLayer = (
       )
     ),
     Layer.provide(ConfigService.layer),
-    Layer.provideMerge(RepositoryEventBus.layer),
-    Layer.provide(fileWatcherLayer),
+    Layer.provide(fileWatcherClientLayer),
     Layer.provide(
       Layer.succeed(
         WorktreeReconciler,
@@ -139,9 +167,13 @@ const createCoordinatorTestLayer = (
 
 const createEndToEndLayerWithDiffService = (
   repoPath: string,
-  subscriptions: RecordedSubscriptions
+  params: {
+    readonly subscribedPaths: RecordedSubscription[]
+    readonly emitEvent: { current: (event: WatchFileEvent) => void }
+    readonly subscriptionsByPath: Map<string, string>
+  }
 ) => {
-  const fileWatcherLayer = createRecordingFileWatcherLayer(subscriptions)
+  const fileWatcherClientLayer = createRecordingFileWatcherClientLayer(params)
 
   return DiffService.layer.pipe(
     Layer.provideMerge(RepositoryWatchCoordinator.layer),
@@ -154,8 +186,7 @@ const createEndToEndLayerWithDiffService = (
       )
     ),
     Layer.provide(ConfigService.layer),
-    Layer.provideMerge(RepositoryEventBus.layer),
-    Layer.provide(fileWatcherLayer),
+    Layer.provide(fileWatcherClientLayer),
     Layer.provide(
       Layer.succeed(
         WorktreeReconciler,
@@ -194,8 +225,7 @@ describe('Persisted identity migration and dedupe hardening', () => {
     Layer.provide(RepositoryWatchCoordinator.layer),
     Layer.provide(BranchStateTracker.layer),
     Layer.provide(ConfigService.layer),
-    Layer.provideMerge(RepositoryEventBus.layer),
-    Layer.provide(FileWatcher.layer),
+    Layer.provide(TestFileWatcherClientLayer),
     Layer.provide(WorktreeReconciler.layer),
     Layer.provide(WorktreeDetector.layer),
     Layer.provide(RepositoryIdentity.layer),
@@ -323,16 +353,26 @@ describe('Persisted identity migration and dedupe hardening', () => {
   )
 })
 
-// ── 2. Native backend and fallback behavior ─────────────────────
+// ── 2. FileWatcherClient ignore passthrough ─────────────────────
 
-describe('Native and fallback backend hardening', () => {
+describe('FileWatcherClient ignore passthrough hardening', () => {
   it.scoped(
-    'ignore globs are passed to FileWatcher.subscribe for repo-root subscription',
+    'repo-root subscription is created with recursive watching enabled',
     () =>
       Effect.gen(function* () {
         const repoPath = initRepo('hardening-ignore-passthrough', tempRoots)
-        const subscriptions: RecordedSubscriptions = []
-        const testLayer = createCoordinatorTestLayer(repoPath, subscriptions)
+        const subscribedPaths: RecordedSubscription[] = []
+        const emitEvent = {
+          current: (_event: WatchFileEvent) => {
+            // no-op initial stub
+          },
+        }
+        const subscriptionsByPath = new Map<string, string>()
+        const testLayer = createCoordinatorTestLayer(repoPath, {
+          subscribedPaths,
+          emitEvent,
+          subscriptionsByPath,
+        })
 
         yield* Effect.gen(function* () {
           const coordinator = yield* RepositoryWatchCoordinator
@@ -342,33 +382,23 @@ describe('Native and fallback backend hardening', () => {
           )
 
           // Find the repo-root subscription (not the .git subscription)
-          const repoRootSub = subscriptions.find((sub) => sub.path === repoPath)
+          const repoRootSub = subscribedPaths.find(
+            (sub) => sub.path === repoPath
+          )
           assert.isDefined(repoRootSub, 'Should have a repo-root subscription')
-
-          // Verify ignore globs were passed
-          assert.isDefined(
-            repoRootSub?.options?.ignore,
-            'Repo-root subscription should include ignore options'
+          assert.isTrue(
+            repoRootSub?.recursive ?? false,
+            'Repo-root subscription should be recursive'
           )
-          assert.isAbove(
-            repoRootSub?.options?.ignore?.length ?? 0,
+
+          // Without config-driven watchIgnore, the coordinator passes
+          // no ignore globs — default filtering is handled by the
+          // file-watcher service's WatcherManager.
+          const ignoreGlobs = repoRootSub?.ignoreGlobs ?? []
+          assert.strictEqual(
+            ignoreGlobs.length,
             0,
-            'Ignore globs should not be empty'
-          )
-
-          // Verify that default ignore patterns are represented
-          const ignoreGlobs = repoRootSub?.options?.ignore ?? []
-          assert.isTrue(
-            ignoreGlobs.some((g) => g.includes('node_modules')),
-            'node_modules should be in ignore globs'
-          )
-          assert.isTrue(
-            ignoreGlobs.some((g) => g.includes('.git')),
-            '.git should be in ignore globs'
-          )
-          assert.isTrue(
-            ignoreGlobs.some((g) => g.includes('dist')),
-            'dist should be in ignore globs'
+            'Without config watchIgnore, coordinator should pass no ignore globs (defaults applied by file-watcher service)'
           )
         }).pipe(Effect.provide(testLayer))
       })
@@ -383,12 +413,21 @@ describe('Native and fallback backend hardening', () => {
         // Write a laborer.json with custom watchIgnore
         writeFileSync(
           join(repoPath, 'laborer.json'),
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
-          JSON.stringify({ watchIgnore: ['.myCache', 'tempOutput'] })
+          '{"watchIgnore":[".myCache","tempOutput"]}'
         )
 
-        const subscriptions: RecordedSubscriptions = []
-        const testLayer = createCoordinatorTestLayer(repoPath, subscriptions)
+        const subscribedPaths: RecordedSubscription[] = []
+        const emitEvent = {
+          current: (_event: WatchFileEvent) => {
+            // no-op initial stub
+          },
+        }
+        const subscriptionsByPath = new Map<string, string>()
+        const testLayer = createCoordinatorTestLayer(repoPath, {
+          subscribedPaths,
+          emitEvent,
+          subscriptionsByPath,
+        })
 
         yield* Effect.gen(function* () {
           const coordinator = yield* RepositoryWatchCoordinator
@@ -398,8 +437,10 @@ describe('Native and fallback backend hardening', () => {
             'config-ignore-globs-test'
           )
 
-          const repoRootSub = subscriptions.find((sub) => sub.path === repoPath)
-          const ignoreGlobs = repoRootSub?.options?.ignore ?? []
+          const repoRootSub = subscribedPaths.find(
+            (sub) => sub.path === repoPath
+          )
+          const ignoreGlobs = repoRootSub?.ignoreGlobs ?? []
 
           // Custom config patterns should be in the globs
           assert.isTrue(
@@ -411,10 +452,13 @@ describe('Native and fallback backend hardening', () => {
             'tempOutput should be in watcher ignore globs from config'
           )
 
-          // Default patterns should still be present
-          assert.isTrue(
-            ignoreGlobs.some((g) => g.includes('node_modules')),
-            'Default node_modules should still be in globs'
+          // Default patterns are NOT passed by the coordinator —
+          // they are applied by the file-watcher service's
+          // WatcherManager. Only config-driven patterns appear here.
+          assert.strictEqual(
+            ignoreGlobs.length,
+            2,
+            'Only config-driven ignore globs should be passed by coordinator'
           )
         }).pipe(Effect.provide(testLayer))
       })
@@ -425,169 +469,40 @@ describe('Native and fallback backend hardening', () => {
     () =>
       Effect.gen(function* () {
         const repoPath = initRepo('hardening-gitdir-no-ignore', tempRoots)
-        const subscriptions: RecordedSubscriptions = []
-        const testLayer = createCoordinatorTestLayer(repoPath, subscriptions)
+        const subscribedPaths: RecordedSubscription[] = []
+        const emitEvent = {
+          current: (_event: WatchFileEvent) => {
+            // no-op initial stub
+          },
+        }
+        const subscriptionsByPath = new Map<string, string>()
+        const testLayer = createCoordinatorTestLayer(repoPath, {
+          subscribedPaths,
+          emitEvent,
+          subscriptionsByPath,
+        })
 
         yield* Effect.gen(function* () {
           const coordinator = yield* RepositoryWatchCoordinator
           yield* coordinator.watchProject('project-gitdir-no-ignore', repoPath)
 
-          const gitDirSub = subscriptions.find((sub) =>
+          const gitDirSub = subscribedPaths.find((sub) =>
             sub.path.endsWith('.git')
           )
           assert.isDefined(gitDirSub, 'Should have a .git subscription')
 
           // Git dir subscription should not have ignore globs
-          assert.isUndefined(
-            gitDirSub?.options?.ignore,
+          assert.strictEqual(
+            gitDirSub?.ignoreGlobs.length ?? 0,
+            0,
             'Git dir subscription should not have ignore globs'
           )
         }).pipe(Effect.provide(testLayer))
       })
   )
-
-  it.scoped(
-    'fallback watcher produces correct normalized events without nativeKind',
-    () =>
-      Effect.gen(function* () {
-        const repoPath = initRepo('hardening-fallback-events', tempRoots)
-        const subscriptions: RecordedSubscriptions = []
-        const testLayer = createCoordinatorTestLayer(repoPath, subscriptions)
-
-        yield* Effect.gen(function* () {
-          const coordinator = yield* RepositoryWatchCoordinator
-          const bus = yield* RepositoryEventBus
-
-          const received: RepositoryFileEvent[] = []
-          yield* bus.subscribe((event) => {
-            received.push(event)
-          })
-
-          yield* coordinator.watchProject('project-fallback-events', repoPath)
-
-          // Simulate fs.watch fallback events (no nativeKind)
-          const repoRootSub = subscriptions.find((sub) => sub.path === repoPath)
-
-          // File exists on disk → should be classified as "add"
-          writeFileSync(
-            join(repoPath, 'fallback-file.ts'),
-            'export const x = 1;\n'
-          )
-          repoRootSub?.onChange({
-            type: 'rename',
-            fileName: 'fallback-file.ts',
-          })
-
-          // change event without nativeKind → "change"
-          repoRootSub?.onChange({
-            type: 'change',
-            fileName: 'fallback-file.ts',
-          })
-
-          // File does NOT exist → should be classified as "delete"
-          repoRootSub?.onChange({
-            type: 'rename',
-            fileName: 'nonexistent-fallback.ts',
-          })
-
-          yield* Effect.promise(() =>
-            waitFor(() => Promise.resolve(received.length >= 3))
-          )
-
-          const addEvent = received.find(
-            (e) => e.relativePath === 'fallback-file.ts' && e.type === 'add'
-          )
-          const changeEvent = received.find(
-            (e) => e.relativePath === 'fallback-file.ts' && e.type === 'change'
-          )
-          const deleteEvent = received.find(
-            (e) => e.relativePath === 'nonexistent-fallback.ts'
-          )
-
-          assert.isDefined(addEvent, 'Should have an add event')
-          assert.isDefined(changeEvent, 'Should have a change event')
-          assert.isDefined(deleteEvent, 'Should have a delete event')
-          assert.strictEqual(deleteEvent?.type, 'delete')
-
-          // All events should have the normalized shape
-          for (const event of received) {
-            assert.isString(event.absolutePath)
-            assert.isString(event.relativePath)
-            assert.isString(event.projectId)
-            assert.isString(event.repoRoot)
-            assert.oneOf(event.type, ['add', 'change', 'delete'])
-            assert.notProperty(event, 'nativeKind')
-          }
-        }).pipe(Effect.provide(testLayer))
-      })
-  )
-
-  it.scoped(
-    'native backend events with nativeKind produce correct normalized events',
-    () =>
-      Effect.gen(function* () {
-        const repoPath = initRepo('hardening-native-events', tempRoots)
-        const subscriptions: RecordedSubscriptions = []
-        const testLayer = createCoordinatorTestLayer(repoPath, subscriptions)
-
-        yield* Effect.gen(function* () {
-          const coordinator = yield* RepositoryWatchCoordinator
-          const bus = yield* RepositoryEventBus
-
-          const received: RepositoryFileEvent[] = []
-          yield* bus.subscribe((event) => {
-            received.push(event)
-          })
-
-          yield* coordinator.watchProject('project-native-events', repoPath)
-
-          const repoRootSub = subscriptions.find((sub) => sub.path === repoPath)
-
-          // Deliver native events with authoritative nativeKind
-          repoRootSub?.onChange({
-            type: 'rename',
-            nativeKind: 'create',
-            fileName: 'native-created.ts',
-          })
-          repoRootSub?.onChange({
-            type: 'change',
-            nativeKind: 'update',
-            fileName: 'native-updated.ts',
-          })
-          repoRootSub?.onChange({
-            type: 'rename',
-            nativeKind: 'delete',
-            fileName: 'native-deleted.ts',
-          })
-
-          yield* Effect.promise(() =>
-            waitFor(() => Promise.resolve(received.length >= 3))
-          )
-
-          const createEvent = received.find(
-            (e) => e.relativePath === 'native-created.ts'
-          )
-          const updateEvent = received.find(
-            (e) => e.relativePath === 'native-updated.ts'
-          )
-          const deleteEvent = received.find(
-            (e) => e.relativePath === 'native-deleted.ts'
-          )
-
-          assert.strictEqual(createEvent?.type, 'add')
-          assert.strictEqual(updateEvent?.type, 'change')
-          assert.strictEqual(deleteEvent?.type, 'delete')
-
-          // No backend-specific fields should leak
-          for (const event of received) {
-            assert.notProperty(event, 'nativeKind')
-          }
-        }).pipe(Effect.provide(testLayer))
-      })
-  )
 })
 
-// ── 3. Ignore filtering at watcher and event-bus boundaries ─────
+// ── 3. Ignore filtering pure functions ──────────────────────────
 
 describe('Ignore filtering boundary hardening', () => {
   it.effect('shouldIgnore handles deeply nested ignored paths', () =>
@@ -627,236 +542,32 @@ describe('Ignore filtering boundary hardening', () => {
       assert.isFalse(shouldIgnore('outreach/docs.md', DEFAULT_IGNORED_PREFIXES))
     })
   )
-
-  it.scoped(
-    'ignored events never trigger branch refresh or worktree reconciliation',
-    () =>
-      Effect.gen(function* () {
-        const repoPath = initRepo('hardening-ignore-no-refresh', tempRoots)
-        const reconcileCalls = { current: 0 }
-        const branchRefreshCalls = { current: 0 }
-
-        const subscriptions: RecordedSubscriptions = []
-        const fileWatcherLayer = createRecordingFileWatcherLayer(subscriptions)
-
-        const testLayer = RepositoryWatchCoordinator.layer.pipe(
-          Layer.provide(
-            Layer.succeed(
-              BranchStateTracker,
-              BranchStateTracker.of({
-                refreshBranches: () =>
-                  Effect.sync(() => {
-                    branchRefreshCalls.current += 1
-                    return { checked: 0, updated: 0 }
-                  }),
-              })
-            )
-          ),
-          Layer.provide(ConfigService.layer),
-          Layer.provideMerge(RepositoryEventBus.layer),
-          Layer.provide(fileWatcherLayer),
-          Layer.provide(
-            Layer.succeed(
-              WorktreeReconciler,
-              WorktreeReconciler.of({
-                reconcile: () =>
-                  Effect.sync(() => {
-                    reconcileCalls.current += 1
-                    return { added: 0, removed: 0, unchanged: 0 }
-                  }),
-              })
-            )
-          ),
-          Layer.provide(
-            Layer.succeed(
-              RepositoryIdentity,
-              RepositoryIdentity.of({
-                resolve: () =>
-                  Effect.succeed({
-                    canonicalRoot: repoPath,
-                    canonicalGitCommonDir: join(repoPath, '.git'),
-                    repoId: `${repoPath}-repo`,
-                    isMainWorktree: true,
-                  }),
-              })
-            )
-          ),
-          Layer.provideMerge(TestLaborerStore)
-        )
-
-        yield* Effect.gen(function* () {
-          const coordinator = yield* RepositoryWatchCoordinator
-          const bus = yield* RepositoryEventBus
-
-          const receivedEvents: RepositoryFileEvent[] = []
-          yield* bus.subscribe((event) => {
-            receivedEvents.push(event)
-          })
-
-          yield* coordinator.watchProject('project-ignore-refresh', repoPath)
-
-          const repoRootSub = subscriptions.find((sub) => sub.path === repoPath)
-
-          // Deliver a burst of ignored-path events
-          const ignoredPaths = [
-            'node_modules/react/index.js',
-            'node_modules/@types/node/index.d.ts',
-            'dist/bundle.js',
-            'dist/bundle.js.map',
-            '.next/cache/webpack.js',
-            'coverage/lcov.info',
-            '.DS_Store',
-          ]
-
-          for (const path of ignoredPaths) {
-            repoRootSub?.onChange({
-              type: 'change',
-              nativeKind: 'update',
-              fileName: path,
-            })
-          }
-
-          // Deliver one non-ignored event as canary
-          writeFileSync(
-            join(repoPath, 'canary-hardening.ts'),
-            'export const x = 1;\n'
-          )
-          repoRootSub?.onChange({
-            type: 'rename',
-            nativeKind: 'create',
-            fileName: 'canary-hardening.ts',
-          })
-
-          yield* Effect.promise(() =>
-            waitFor(() =>
-              Promise.resolve(
-                receivedEvents.some(
-                  (e) => e.relativePath === 'canary-hardening.ts'
-                )
-              )
-            )
-          )
-
-          // Wait for any potential debounced activity
-          yield* Effect.promise(() => delay(700))
-
-          // No ignored events should have reached the bus
-          assert.strictEqual(
-            receivedEvents.length,
-            1,
-            `Only canary event should reach bus, got: ${receivedEvents.map((e) => e.relativePath).join(', ')}`
-          )
-          assert.strictEqual(
-            receivedEvents[0]?.relativePath,
-            'canary-hardening.ts'
-          )
-
-          // The repo-root watcher events for ignored paths should
-          // NOT trigger branch refresh or worktree reconciliation
-          // (only git-dir events do that). Verify counters are 0.
-          assert.strictEqual(
-            reconcileCalls.current,
-            0,
-            'Ignored repo-root events should not trigger reconciliation'
-          )
-          assert.strictEqual(
-            branchRefreshCalls.current,
-            0,
-            'Ignored repo-root events should not trigger branch refresh'
-          )
-        }).pipe(Effect.provide(testLayer))
-      })
-  )
-
-  it.scoped(
-    'watcher-boundary and event-bus-boundary filtering complement each other',
-    () =>
-      Effect.gen(function* () {
-        const repoPath = initRepo('hardening-dual-boundary', tempRoots)
-        const subscriptions: RecordedSubscriptions = []
-        const testLayer = createCoordinatorTestLayer(repoPath, subscriptions)
-
-        yield* Effect.gen(function* () {
-          const coordinator = yield* RepositoryWatchCoordinator
-          const bus = yield* RepositoryEventBus
-
-          const received: RepositoryFileEvent[] = []
-          yield* bus.subscribe((event) => {
-            received.push(event)
-          })
-
-          yield* coordinator.watchProject('project-dual-boundary', repoPath)
-
-          // Verify watcher-level ignore globs were set
-          const repoRootSub = subscriptions.find((sub) => sub.path === repoPath)
-          const ignoreGlobs = repoRootSub?.options?.ignore ?? []
-          assert.isAbove(
-            ignoreGlobs.length,
-            0,
-            'Watcher-level ignore globs should be set'
-          )
-
-          // Even if a watcher-level-ignored event "leaks" through
-          // (e.g., because the backend doesn't support ignore),
-          // the event bus should still catch it.
-          // Simulate this by delivering an ignored-path event directly.
-          repoRootSub?.onChange({
-            type: 'change',
-            nativeKind: 'update',
-            fileName: 'node_modules/leaked-event.js',
-          })
-
-          // Also deliver a valid source event
-          writeFileSync(
-            join(repoPath, 'valid-source.ts'),
-            'export const y = 2;\n'
-          )
-          repoRootSub?.onChange({
-            type: 'rename',
-            nativeKind: 'create',
-            fileName: 'valid-source.ts',
-          })
-
-          yield* Effect.promise(() =>
-            waitFor(() =>
-              Promise.resolve(
-                received.some((e) => e.relativePath === 'valid-source.ts')
-              )
-            )
-          )
-
-          // The leaked ignored event should have been caught by the bus
-          const leakedEvents = received.filter((e) =>
-            e.relativePath.startsWith('node_modules')
-          )
-          assert.strictEqual(
-            leakedEvents.length,
-            0,
-            'Event bus should catch ignored events that leak through watcher-level filtering'
-          )
-        }).pipe(Effect.provide(testLayer))
-      })
-  )
 })
 
 // ── 4. End-to-end downstream invalidation ───────────────────────
 
 describe('End-to-end downstream invalidation hardening', () => {
   it.scoped(
-    'native-kind create event triggers DiffService invalidation through full pipeline',
+    'file event triggers DiffService invalidation through full pipeline',
     () =>
       Effect.gen(function* () {
         const repoPath = initRepo('hardening-e2e-native', tempRoots)
-        const subscriptions: RecordedSubscriptions = []
-        const testLayer = createEndToEndLayerWithDiffService(
-          repoPath,
-          subscriptions
-        )
+        const subscribedPaths: RecordedSubscription[] = []
+        const emitEvent = {
+          current: (_event: WatchFileEvent) => {
+            // no-op initial stub
+          },
+        }
+        const subscriptionsByPath = new Map<string, string>()
+        const testLayer = createEndToEndLayerWithDiffService(repoPath, {
+          subscribedPaths,
+          emitEvent,
+          subscriptionsByPath,
+        })
 
         yield* Effect.gen(function* () {
           const coordinator = yield* RepositoryWatchCoordinator
           const diffService = yield* DiffService
-          const bus = yield* RepositoryEventBus
           const { store } = yield* LaborerStore
 
           const projectId = 'project-e2e-native'
@@ -889,35 +600,18 @@ describe('End-to-end downstream invalidation hardening', () => {
           yield* coordinator.watchProject(projectId, repoPath)
           yield* diffService.startPolling(workspaceId, 60_000)
 
-          // Track events on the bus
-          const busEvents: RepositoryFileEvent[] = []
-          yield* bus.subscribe((event) => {
-            busEvents.push(event)
-          })
+          // Deliver a file event through the FileWatcherClient
+          const repoSubId = subscriptionsByPath.get(repoPath)
+          if (repoSubId === undefined) {
+            throw new Error('Expected repo root subscription')
+          }
 
-          // Deliver a native create event through the pipeline
-          const repoRootSub = subscriptions.find((sub) => sub.path === repoPath)
-          repoRootSub?.onChange({
-            type: 'rename',
-            nativeKind: 'create',
+          emitEvent.current({
+            subscriptionId: repoSubId,
+            type: 'add',
             fileName: 'new-feature.ts',
+            absolutePath: join(repoPath, 'new-feature.ts'),
           })
-
-          yield* Effect.promise(() =>
-            waitFor(() =>
-              Promise.resolve(
-                busEvents.some((e) => e.relativePath === 'new-feature.ts')
-              )
-            )
-          )
-
-          // Verify the event reached the bus with correct native-derived type
-          const fileEvent = busEvents.find(
-            (e) => e.relativePath === 'new-feature.ts'
-          )
-          assert.isDefined(fileEvent)
-          assert.strictEqual(fileEvent?.type, 'add')
-          assert.strictEqual(fileEvent?.projectId, projectId)
 
           // Wait for debounce to fire
           yield* Effect.promise(() => delay(500))
@@ -926,7 +620,7 @@ describe('End-to-end downstream invalidation hardening', () => {
           const stillPolling = yield* diffService.isPolling(workspaceId)
           assert.isTrue(
             stillPolling,
-            'DiffService should remain operational after native-kind event processing'
+            'DiffService should remain operational after event processing'
           )
 
           yield* diffService.stopPolling(workspaceId)
@@ -935,20 +629,26 @@ describe('End-to-end downstream invalidation hardening', () => {
   )
 
   it.scoped(
-    'mixed native and fallback events coalesce correctly in DiffService debounce',
+    'rapid file events coalesce correctly in DiffService debounce',
     () =>
       Effect.gen(function* () {
         const repoPath = initRepo('hardening-e2e-mixed', tempRoots)
-        const subscriptions: RecordedSubscriptions = []
-        const testLayer = createEndToEndLayerWithDiffService(
-          repoPath,
-          subscriptions
-        )
+        const subscribedPaths: RecordedSubscription[] = []
+        const emitEvent = {
+          current: (_event: WatchFileEvent) => {
+            // no-op initial stub
+          },
+        }
+        const subscriptionsByPath = new Map<string, string>()
+        const testLayer = createEndToEndLayerWithDiffService(repoPath, {
+          subscribedPaths,
+          emitEvent,
+          subscriptionsByPath,
+        })
 
         yield* Effect.gen(function* () {
           const coordinator = yield* RepositoryWatchCoordinator
           const diffService = yield* DiffService
-          const bus = yield* RepositoryEventBus
           const { store } = yield* LaborerStore
 
           const projectId = 'project-e2e-mixed'
@@ -981,59 +681,25 @@ describe('End-to-end downstream invalidation hardening', () => {
           yield* coordinator.watchProject(projectId, repoPath)
           yield* diffService.startPolling(workspaceId, 60_000)
 
-          let busEventCount = 0
-          yield* bus.subscribe(() => {
-            busEventCount++
-          })
+          // Deliver a burst of file events
+          const repoSubId = subscriptionsByPath.get(repoPath)
+          if (repoSubId === undefined) {
+            throw new Error('Expected repo root subscription')
+          }
 
-          const repoRootSub = subscriptions.find((sub) => sub.path === repoPath)
-
-          // Deliver a burst of mixed native and fallback events
-          repoRootSub?.onChange({
-            type: 'rename',
-            nativeKind: 'create',
-            fileName: 'native-new.ts',
-          })
-          writeFileSync(
-            join(repoPath, 'fallback-exists.ts'),
-            'export const x = 1;\n'
-          )
-          repoRootSub?.onChange({
-            type: 'rename',
-            fileName: 'fallback-exists.ts',
-          })
-          repoRootSub?.onChange({
-            type: 'change',
-            nativeKind: 'update',
-            fileName: 'native-updated.ts',
-          })
-          repoRootSub?.onChange({
-            type: 'change',
-            fileName: 'fallback-changed.ts',
-          })
-          repoRootSub?.onChange({
-            type: 'rename',
-            nativeKind: 'delete',
-            fileName: 'native-deleted.ts',
-          })
-
-          // Wait for all events to propagate
-          yield* Effect.promise(() =>
-            waitFor(() => Promise.resolve(busEventCount >= 5))
-          )
+          for (let i = 0; i < 5; i++) {
+            emitEvent.current({
+              subscriptionId: repoSubId,
+              type: 'add',
+              fileName: `burst-${i}.ts`,
+              absolutePath: join(repoPath, `burst-${i}.ts`),
+            })
+          }
 
           // Wait for debounce + processing
           yield* Effect.promise(() => delay(600))
 
-          // All 5 events should reach the bus
-          assert.strictEqual(
-            busEventCount,
-            5,
-            'All mixed events should reach the bus'
-          )
-
           // DiffService should coalesce them via debounce
-          // The key assertion is completion without timeout
           const stillPolling = yield* diffService.isPolling(workspaceId)
           assert.isTrue(stillPolling)
 
@@ -1050,16 +716,10 @@ describe('Coverage configuration', () => {
     'vitest config includes src/**/*.ts in coverage include pattern',
     () =>
       Effect.sync(() => {
-        // This test verifies that the coverage configuration is
-        // correctly set up to include all repo-watching source files.
-        // The actual coverage inclusion is validated by vitest.config.ts
-        // having `include: ["src/**/*.ts"]` and `provider: "v8"`.
-        //
         // Key source files that MUST be included in coverage:
         const coveredFiles = [
           'src/services/repository-identity.ts',
-          'src/services/file-watcher.ts',
-          'src/services/repository-event-bus.ts',
+          'src/services/file-watcher-client.ts',
           'src/services/repository-watch-coordinator.ts',
           'src/services/project-registry.ts',
           'src/services/diff-service.ts',

@@ -965,6 +965,28 @@ function usePanelLayout() {
     autoOpenDevServerRef.current = handleToggleDevServerPane
   }, [handleToggleDevServerPane])
 
+  /**
+   * Close a terminal and its associated pane (ungated — no confirmation).
+   * If the terminal has no pane, removes it from the service directly.
+   */
+  const handleCloseTerminalPane = useCallback(
+    (terminalId: string) => {
+      const base = persistedLayoutTree ?? initialLayout
+      if (base) {
+        const leaf = findLeafByTerminalId(base, terminalId)
+        if (leaf) {
+          handleClosePane(leaf.id)
+          return
+        }
+      }
+      // No pane found — remove the terminal from the service directly
+      removeTerminal({ payload: { id: terminalId } }).catch((error) => {
+        console.warn('[close-terminal-pane] terminal remove failed:', error)
+      })
+    },
+    [persistedLayoutTree, initialLayout, handleClosePane, removeTerminal]
+  )
+
   const panelActions = useMemo(
     () => ({
       assignTerminalToPane: handleAssignTerminalToPane,
@@ -974,6 +996,7 @@ function usePanelLayout() {
       toggleDiffPane: handleToggleDiffPane,
       toggleDevServerPane: handleToggleDevServerPane,
       resizePane: handleResizePane,
+      closeTerminalPane: handleCloseTerminalPane,
     }),
     [
       handleAssignTerminalToPane,
@@ -983,6 +1006,7 @@ function usePanelLayout() {
       handleToggleDiffPane,
       handleToggleDevServerPane,
       handleResizePane,
+      handleCloseTerminalPane,
     ]
   )
 
@@ -1457,13 +1481,35 @@ function HomeComponent() {
     }
   }, [panelActions])
 
+  /**
+   * Close a terminal and its associated pane.
+   * If the terminal is running, shows a confirmation dialog first.
+   * If the terminal has no pane, falls back to the ungated handler
+   * which removes it from the service directly.
+   */
+  const gatedCloseTerminalPane = useCallback(
+    (terminalId: string) => {
+      if (layout) {
+        const leaf = findLeafByTerminalId(layout, terminalId)
+        if (leaf) {
+          gatedClosePane(leaf.id)
+          return
+        }
+      }
+      // No pane found — delegate to the ungated handler
+      panelActions.closeTerminalPane(terminalId)
+    },
+    [layout, gatedClosePane, panelActions]
+  )
+
   // Override panelActions.closePane with the gated version
   const gatedPanelActions = useMemo(
     () => ({
       ...panelActions,
       closePane: gatedClosePane,
+      closeTerminalPane: gatedCloseTerminalPane,
     }),
-    [panelActions, gatedClosePane]
+    [panelActions, gatedClosePane, gatedCloseTerminalPane]
   )
 
   // Sync running workspace count to Electron system tray tooltip (no-op in browser)
@@ -1578,7 +1624,10 @@ function HomeComponent() {
         onOpenChange={setIsCloseAppDialogOpen}
         open={isCloseAppDialogOpen}
       />
-      <ResizablePanelGroup orientation="horizontal" style={{height: 'calc(100vh - 53px)'}}>
+      <ResizablePanelGroup
+        orientation="horizontal"
+        style={{ height: 'calc(100vh - 53px)' }}
+      >
         {/* Sidebar — search, project groups, workspace list, health check */}
         <ResizablePanel
           collapsedSize="0%"

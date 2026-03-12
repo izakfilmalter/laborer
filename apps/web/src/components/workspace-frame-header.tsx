@@ -198,13 +198,31 @@ function WorkspaceFrameHeader({
   }
 
   return (
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Conditional onClick when minimized as fallback for padding gaps; the inner button handles keyboard a11y.
+    // biome-ignore lint/a11y/useKeyWithClickEvents: The inner button handles keyboard events; this div onClick is only a mouse fallback for padding gaps.
+    // biome-ignore lint/a11y/noStaticElementInteractions: Conditionally interactive div — only has onClick when minimized.
     <div
-      className="flex h-8 shrink-0 items-center justify-between border-b px-2"
+      className={cn(
+        'flex h-8 shrink-0 items-center justify-between border-b px-2',
+        isMinimized && 'cursor-pointer'
+      )}
       data-testid="workspace-frame-header"
+      onClick={
+        isMinimized
+          ? () => {
+              onHeaderClick?.()
+            }
+          : undefined
+      }
       ref={dragHandleRef}
     >
       <button
-        className="flex cursor-grab items-center gap-2 active:cursor-grabbing"
+        className={cn(
+          'flex items-center gap-2',
+          isMinimized
+            ? 'flex-1 cursor-pointer'
+            : 'cursor-grab active:cursor-grabbing'
+        )}
         onClick={(e) => {
           e.stopPropagation()
           onHeaderClick?.()

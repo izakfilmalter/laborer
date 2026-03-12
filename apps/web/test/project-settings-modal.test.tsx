@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
@@ -27,6 +28,10 @@ const {
 interface ConfigResult {
   readonly _tag: 'Success'
   readonly value: {
+    readonly agent: {
+      readonly value: 'opencode' | 'claude' | 'codex'
+      readonly source: string
+    }
     readonly worktreeDir: { readonly value: string; readonly source: string }
     readonly setupScripts: {
       readonly value: readonly string[]
@@ -85,6 +90,34 @@ vi.mock('sonner', () => ({
   },
 }))
 
+vi.mock('@/components/agent-icons', () => ({
+  AGENT_ICONS: {
+    opencode: (props: Record<string, unknown>) => <span {...props}>OC</span>,
+    claude: (props: Record<string, unknown>) => <span {...props}>CL</span>,
+    codex: (props: Record<string, unknown>) => <span {...props}>CX</span>,
+  },
+}))
+
+vi.mock('@/components/ui/select', () => ({
+  Select: ({
+    children,
+  }: {
+    children: React.ReactNode
+    onValueChange: (value: string) => void
+    value: string
+  }) => <div>{children}</div>,
+  SelectContent: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+  SelectItem: ({ children }: { children: React.ReactNode; value: string }) => (
+    <div>{children}</div>
+  ),
+  SelectTrigger: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+  SelectValue: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
 import { toast } from 'sonner'
 import { ProjectSettingsModal } from '../src/components/project-settings-modal'
 
@@ -95,6 +128,7 @@ describe('ProjectSettingsModal', () => {
     configResult = {
       _tag: 'Success',
       value: {
+        agent: { value: 'claude', source: 'default' },
         worktreeDir: { value: '/tmp/worktrees', source: 'laborer.json' },
         setupScripts: { value: ['bun install'], source: 'laborer.json' },
         rlphConfig: { value: '.rlph/config.toml', source: 'laborer.json' },

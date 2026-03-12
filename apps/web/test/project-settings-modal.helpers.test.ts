@@ -30,6 +30,7 @@ describe('project settings modal helpers', () => {
 
   it('builds update payload with only changed config fields', () => {
     const result = buildConfigUpdates({
+      agent: 'opencode',
       devServerImage: 'node:22',
       devServerInstallCommand: 'yarn install --frozen-lockfile',
       devServerNetwork: 'myproject_default',
@@ -37,6 +38,7 @@ describe('project settings modal helpers', () => {
       devServerStartCommand: 'npm run dev',
       rlphConfig: '.rlph/config.toml',
       resolvedConfig: {
+        agent: 'claude',
         devServerImage: 'node:lts',
         devServerInstallCommand: null,
         devServerNetwork: null,
@@ -54,6 +56,7 @@ describe('project settings modal helpers', () => {
     })
 
     expect(result).toEqual({
+      agent: 'opencode',
       devServer: {
         image: 'node:22',
         installCommand: 'yarn install --frozen-lockfile',
@@ -69,6 +72,7 @@ describe('project settings modal helpers', () => {
 
   it('returns empty updates when normalized values match resolved config', () => {
     const result = buildConfigUpdates({
+      agent: 'claude',
       devServerImage: 'node:lts',
       devServerInstallCommand: '',
       devServerNetwork: '',
@@ -79,6 +83,7 @@ describe('project settings modal helpers', () => {
       devServerStartCommand: '',
       rlphConfig: '  ',
       resolvedConfig: {
+        agent: 'claude',
         devServerImage: 'node:lts',
         devServerInstallCommand: null,
         devServerNetwork: null,

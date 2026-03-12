@@ -17,7 +17,7 @@
  * @see Issue #144: Web app LiveStore terminal query replacement
  */
 
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import {
   AlertTriangle,
   Plus,
@@ -27,10 +27,11 @@ import {
   Trash2,
 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
+import { AGENT_ICONS } from '@/components/agent-icons'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -50,6 +51,8 @@ const restartTerminalMutation =
   TerminalServiceClient.mutation('terminal.restart')
 
 interface TerminalListProps {
+  /** The project ID this workspace belongs to (for agent config resolution). */
+  readonly projectId: string
   /** The workspace ID to filter terminals for. */
   readonly workspaceId: string
 }
@@ -58,9 +61,10 @@ interface TerminalListProps {
  * Terminal list for a single workspace.
  *
  * Shows all terminals belonging to the workspace, with a "New Terminal"
- * button and click-to-select behavior for switching the active panel pane.
+ * button, an "Agent" button (spawns the configured AI agent), and
+ * click-to-select behavior for switching the active panel pane.
  */
-function TerminalList({ workspaceId }: TerminalListProps) {
+function TerminalList({ projectId, workspaceId }: TerminalListProps) {
   const {
     errorMessage,
     isServiceAvailable,
@@ -80,6 +84,17 @@ function TerminalList({ workspaceId }: TerminalListProps) {
     mode: 'promise',
   })
   const [isSpawning, setIsSpawning] = useState(false)
+  const [isSpawningAgent, setIsSpawningAgent] = useState(false)
+
+  // Fetch the project config to determine which agent to use
+  const configGet$ = useMemo(
+    () => LaborerClient.query('config.get', { projectId }),
+    [projectId]
+  )
+  const configResult = useAtomValue(configGet$)
+  const agentProvider =
+    configResult._tag === 'Success' ? configResult.value.agent.value : 'claude'
+  const AgentIcon = AGENT_ICONS[agentProvider]
 
   // Filter terminals for this workspace
   const workspaceTerminals = terminalList.filter(
@@ -107,6 +122,33 @@ function TerminalList({ workspaceId }: TerminalListProps) {
       setIsSpawning(false)
     }
   }, [isServiceAvailable, spawnTerminal, workspaceId, panelActions])
+
+  const handleSpawnAgent = useCallback(async () => {
+    if (!isServiceAvailable) {
+      toast.error('Terminal service unavailable')
+      return
+    }
+    setIsSpawningAgent(true)
+    try {
+      const result = await spawnTerminal({
+        payload: { workspaceId, command: agentProvider },
+      })
+      toast.success(`Agent spawned: ${agentProvider}`)
+      if (panelActions) {
+        panelActions.assignTerminalToPane(result.id, workspaceId)
+      }
+    } catch (error) {
+      toast.error(`Failed to spawn agent: ${extractErrorMessage(error)}`)
+    } finally {
+      setIsSpawningAgent(false)
+    }
+  }, [
+    isServiceAvailable,
+    spawnTerminal,
+    workspaceId,
+    panelActions,
+    agentProvider,
+  ])
 
   const handleKillTerminal = useCallback(
     async (terminalId: string) => {
@@ -177,16 +219,37 @@ function TerminalList({ workspaceId }: TerminalListProps) {
         {unavailableAlert}
         <div className="flex items-center justify-between gap-2">
           <span className="text-muted-foreground text-xs">No terminals</span>
-          <Button
-            aria-label="New terminal"
-            disabled={isSpawning || !isServiceAvailable}
-            onClick={handleSpawnTerminal}
-            size="xs"
-            variant="outline"
-          >
-            <Plus className="size-3" />
-            {isSpawning ? 'Spawning...' : 'New'}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={`Start ${agentProvider} agent`}
+                    disabled={isSpawningAgent || !isServiceAvailable}
+                    onClick={handleSpawnAgent}
+                    size="xs"
+                    variant="outline"
+                  />
+                }
+              >
+                <AgentIcon className="size-3" />
+                {isSpawningAgent ? 'Starting...' : 'Agent'}
+              </TooltipTrigger>
+              <TooltipContent>
+                Start {agentProvider} in a new terminal
+              </TooltipContent>
+            </Tooltip>
+            <Button
+              aria-label="New terminal"
+              disabled={isSpawning || !isServiceAvailable}
+              onClick={handleSpawnTerminal}
+              size="xs"
+              variant="outline"
+            >
+              <Plus className="size-3" />
+              {isSpawning ? 'Spawning...' : 'New'}
+            </Button>
+          </div>
         </div>
       </div>
     )
@@ -199,16 +262,37 @@ function TerminalList({ workspaceId }: TerminalListProps) {
         <span className="font-medium text-muted-foreground text-xs">
           Terminals ({workspaceTerminals.length})
         </span>
-        <Button
-          aria-label="New terminal"
-          disabled={isSpawning || !isServiceAvailable}
-          onClick={handleSpawnTerminal}
-          size="xs"
-          variant="outline"
-        >
-          <Plus className="size-3" />
-          {isSpawning ? 'Spawning...' : 'New'}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label={`Start ${agentProvider} agent`}
+                  disabled={isSpawningAgent || !isServiceAvailable}
+                  onClick={handleSpawnAgent}
+                  size="xs"
+                  variant="outline"
+                />
+              }
+            >
+              <AgentIcon className="size-3" />
+              {isSpawningAgent ? 'Starting...' : 'Agent'}
+            </TooltipTrigger>
+            <TooltipContent>
+              Start {agentProvider} in a new terminal
+            </TooltipContent>
+          </Tooltip>
+          <Button
+            aria-label="New terminal"
+            disabled={isSpawning || !isServiceAvailable}
+            onClick={handleSpawnTerminal}
+            size="xs"
+            variant="outline"
+          >
+            <Plus className="size-3" />
+            {isSpawning ? 'Spawning...' : 'New'}
+          </Button>
+        </div>
       </div>
       {workspaceTerminals.map((terminal) => (
         <TerminalItem

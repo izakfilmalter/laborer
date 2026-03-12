@@ -194,6 +194,7 @@ export const handleConfigUpdate = ({
 }: {
   projectId: string
   config: {
+    agent?: 'opencode' | 'claude' | 'codex' | undefined
     devServer?:
       | {
           dockerfile?: string | undefined
@@ -210,6 +211,10 @@ export const handleConfigUpdate = ({
   }
 }) =>
   Effect.gen(function* () {
+    const validAgents = ['opencode', 'claude', 'codex'] as const
+    const isValidAgent =
+      config.agent === undefined || validAgents.some((a) => a === config.agent)
+
     const isValidSetupScripts =
       config.setupScripts === undefined ||
       (config.setupScripts.every((script) => typeof script === 'string') &&
@@ -236,6 +241,7 @@ export const handleConfigUpdate = ({
           typeof config.devServer.workdir === 'string'))
 
     const isValidConfig =
+      isValidAgent &&
       (config.prdsDir === undefined || typeof config.prdsDir === 'string') &&
       (config.worktreeDir === undefined ||
         typeof config.worktreeDir === 'string') &&
@@ -248,7 +254,7 @@ export const handleConfigUpdate = ({
       return yield* new RpcError({
         code: 'INVALID_INPUT',
         message:
-          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, rlphConfig, setupScripts as string array, and devServer with optional string fields.',
+          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, rlphConfig, agent (opencode/claude/codex), setupScripts as string array, and devServer with optional string fields.',
       })
     }
 

@@ -3,6 +3,7 @@ import { Plus, Settings, Trash2 } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { AGENT_ICONS } from '@/components/agent-icons'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -20,6 +21,13 @@ import {
   FieldSet,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
@@ -32,6 +40,17 @@ import {
   getSettingsLoadErrorMessage,
   type SetupScriptItem,
 } from './project-settings-modal.helpers'
+
+type AgentProvider = 'opencode' | 'claude' | 'codex'
+
+const AGENT_OPTIONS: ReadonlyArray<{
+  readonly label: string
+  readonly value: AgentProvider
+}> = [
+  { label: 'Claude', value: 'claude' },
+  { label: 'OpenCode', value: 'opencode' },
+  { label: 'Codex', value: 'codex' },
+]
 
 const updateConfigMutation = LaborerClient.mutation('config.update')
 const provenanceClassName = 'text-[11px] leading-tight text-muted-foreground/70'
@@ -63,6 +82,7 @@ function ProjectSettingsForm({
   const configResult = useAtomValue(configGet$)
   const updateConfig = useAtomSet(updateConfigMutation, { mode: 'promise' })
 
+  const [agent, setAgent] = useState<AgentProvider>('claude')
   const [worktreeDir, setWorktreeDir] = useState('')
   const [setupScripts, setSetupScripts] = useState<SetupScriptItem[]>([])
   const [rlphConfig, setRlphConfig] = useState('')
@@ -87,6 +107,7 @@ function ProjectSettingsForm({
       return
     }
 
+    setAgent(configResult.value.agent.value)
     setWorktreeDir(configResult.value.worktreeDir.value)
     setSetupScripts(toSetupScriptItems(configResult.value.setupScripts.value))
     setRlphConfig(configResult.value.rlphConfig.value ?? '')
@@ -144,6 +165,7 @@ function ProjectSettingsForm({
 
   const handleSave = async () => {
     const updates = buildConfigUpdates({
+      agent,
       devServerImage,
       devServerInstallCommand,
       devServerNetwork,
@@ -151,6 +173,7 @@ function ProjectSettingsForm({
       devServerStartCommand,
       rlphConfig,
       resolvedConfig: {
+        agent: resolvedConfig.agent.value,
         devServerImage: resolvedConfig.devServer.image.value,
         devServerInstallCommand: resolvedConfig.devServer.installCommand.value,
         devServerNetwork: resolvedConfig.devServer.network.value,
@@ -194,6 +217,43 @@ function ProjectSettingsForm({
     <form className="contents" onSubmit={handleSubmit}>
       <div className="grid gap-4 py-2">
         <FieldSet>
+          <Field>
+            <FieldLabel>Agent</FieldLabel>
+            <Select
+              onValueChange={(value) => setAgent(value as AgentProvider)}
+              value={agent}
+            >
+              <SelectTrigger>
+                <SelectValue>
+                  {(() => {
+                    const option = AGENT_OPTIONS.find((o) => o.value === agent)
+                    const Icon = AGENT_ICONS[agent]
+                    return (
+                      <>
+                        <Icon className="size-3.5" />
+                        {option?.label ?? agent}
+                      </>
+                    )
+                  })()}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {AGENT_OPTIONS.map((option) => {
+                  const Icon = AGENT_ICONS[option.value]
+                  return (
+                    <SelectItem key={option.value} value={option.value}>
+                      <Icon className="size-3.5" />
+                      {option.label}
+                    </SelectItem>
+                  )
+                })}
+              </SelectContent>
+            </Select>
+            <FieldDescription className={provenanceClassName}>
+              Source: {resolvedConfig.agent.source}
+            </FieldDescription>
+          </Field>
+
           <Field>
             <FieldLabel htmlFor={`worktree-dir-${projectId}`}>
               Worktree directory

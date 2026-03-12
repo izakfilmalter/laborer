@@ -98,11 +98,26 @@ interface DevServerConfig {
 }
 
 /**
+ * Valid agent provider values.
+ * Each value is also the CLI command used to launch the agent.
+ */
+type AgentProvider = 'opencode' | 'claude' | 'codex'
+
+/** All valid agent provider values for runtime validation. */
+const VALID_AGENT_PROVIDERS: readonly AgentProvider[] = [
+  'opencode',
+  'claude',
+  'codex',
+]
+
+/**
  * Shape of a `laborer.json` config file.
  * All fields are optional — missing fields are resolved from ancestor
  * configs or hardcoded defaults.
  */
 interface LaborerConfig {
+  /** Preferred AI coding agent. The value is also the CLI command to run. */
+  readonly agent?: AgentProvider
   readonly devServer?: DevServerConfig
   readonly prdsDir?: string
   readonly rlphConfig?: string
@@ -113,6 +128,7 @@ interface LaborerConfig {
 
 /** Partial updates accepted by writeProjectConfig(). */
 interface ProjectConfigUpdates {
+  readonly agent?: AgentProvider | undefined
   readonly devServer?: DevServerConfig | undefined
   readonly prdsDir?: string | undefined
   readonly rlphConfig?: string | undefined
@@ -151,6 +167,8 @@ interface ResolvedDevServerConfig {
  * All fields have concrete values (no undefined).
  */
 interface ResolvedLaborerConfig {
+  /** Preferred AI coding agent CLI command (defaults to "claude"). */
+  readonly agent: ResolvedValue<AgentProvider>
   readonly devServer: ResolvedDevServerConfig
   /** Absolute path with `~` already expanded. */
   readonly prdsDir: ResolvedValue<string>
@@ -350,6 +368,10 @@ const applyConfigUpdates = (
   updates: ProjectConfigUpdates
 ): Record<string, unknown> => {
   const next = { ...existing }
+
+  if (updates.agent !== undefined) {
+    next.agent = updates.agent
+  }
 
   if (updates.prdsDir !== undefined) {
     next.prdsDir = updates.prdsDir
@@ -607,6 +629,10 @@ const mergeConfigs = (
   const defaultWorktreeDir = join(GLOBAL_CONFIG_DIR, projectName)
   const defaultPrdsDir = join(defaultWorktreeDir, 'prds')
 
+  let agent: ResolvedValue<AgentProvider> = {
+    value: 'claude',
+    source: 'default',
+  }
   let worktreeDir: ResolvedValue<string> = {
     value: defaultWorktreeDir,
     source: 'default',
@@ -636,6 +662,13 @@ const mergeConfigs = (
       continue
     }
     const { config, path } = layer
+
+    if (config.agent !== undefined) {
+      agent = {
+        value: config.agent,
+        source: path,
+      }
+    }
 
     if (config.worktreeDir !== undefined) {
       worktreeDir = {
@@ -682,6 +715,7 @@ const mergeConfigs = (
   const devServer = mergeDevServerConfig(configLayers)
 
   return {
+    agent,
     devServer,
     prdsDir,
     worktreeDir,
@@ -771,7 +805,7 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
         }
 
         yield* Effect.logDebug(
-          `Resolved config for "${projectName}": worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), prdsDir="${resolved.prdsDir.value}" (from ${resolved.prdsDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), rlphConfig=${resolved.rlphConfig.value ?? 'null'} (from ${resolved.rlphConfig.source}), devServer.image=${resolved.devServer.image.value ?? 'null'} (from ${resolved.devServer.image.source}), devServer.workdir="${resolved.devServer.workdir.value}" (from ${resolved.devServer.workdir.source})`
+          `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), prdsDir="${resolved.prdsDir.value}" (from ${resolved.prdsDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), rlphConfig=${resolved.rlphConfig.value ?? 'null'} (from ${resolved.rlphConfig.source}), devServer.image=${resolved.devServer.image.value ?? 'null'} (from ${resolved.devServer.image.source}), devServer.workdir="${resolved.devServer.workdir.value}" (from ${resolved.devServer.workdir.source})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
         return resolved
@@ -813,6 +847,7 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
 export {
   ConfigService,
   ConfigValidationError,
+  VALID_AGENT_PROVIDERS,
   // Exported for testing
   CONFIG_FILE_NAME,
   expandTilde,
@@ -829,6 +864,7 @@ export {
 }
 
 export type {
+  AgentProvider,
   DevServerConfig,
   LaborerConfig,
   ProjectConfigUpdates,

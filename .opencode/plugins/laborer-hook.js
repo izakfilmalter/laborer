@@ -1,4 +1,4 @@
-export const LaborerHookPlugin = async () => {
+export const LaborerHookPlugin = () => {
   const terminalId = process.env.LABORER_TERMINAL_ID
   const hookUrl = process.env.LABORER_HOOK_URL
   if (!(terminalId && hookUrl)) {
@@ -14,7 +14,9 @@ export const LaborerHookPlugin = async () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ terminalId, event }),
       })
-    } catch {}
+    } catch {
+      // Intentionally swallow network errors — hook delivery is best-effort
+    }
   }
 
   return {

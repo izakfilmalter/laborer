@@ -374,8 +374,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
           // so their PR status is populated on startup without continuous polling.
           yield* Effect.forEach(
             inactiveWorkspaces,
-            (workspace) =>
-              checkPr(workspace.id).pipe(Effect.catchAll(() => Effect.void)),
+            (workspace) => checkPr(workspace.id),
             { discard: true }
           )
         }

@@ -7,7 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { homedir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
@@ -22,10 +22,8 @@ import {
 
 const createTempDir = (prefix: string): string => {
   const dir = join(
-    homedir(),
-    '.config',
-    'laborer-test',
-    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    tmpdir(),
+    `laborer-test-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   )
   mkdirSync(dir, { recursive: true })
   return dir

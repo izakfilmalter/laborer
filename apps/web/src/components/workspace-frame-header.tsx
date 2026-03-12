@@ -36,6 +36,10 @@ interface WorkspaceFrameHeaderProps {
   readonly branchName: string | undefined
   /** Whether the diff viewer is currently open for the active pane. */
   readonly diffIsOpen: boolean
+  /** Ref attached to the header element so it can serve as a drag handle. */
+  readonly dragHandleRef?:
+    | { readonly current: HTMLDivElement | null }
+    | undefined
   /** Whether the workspace runs in a container (shows dev server toggle). */
   readonly isContainerized: boolean
   /** Whether the active pane is in fullscreen mode. */
@@ -49,6 +53,7 @@ function WorkspaceFrameHeader({
   actions,
   branchName,
   diffIsOpen,
+  dragHandleRef,
   isContainerized,
   isFullscreen,
   projectName,
@@ -56,8 +61,11 @@ function WorkspaceFrameHeader({
   const hasActivePane = !!activePaneId
 
   return (
-    <div className="flex h-8 shrink-0 items-center justify-between border-b px-2">
-      <div className="flex items-center gap-2">
+    <div
+      className="flex h-8 shrink-0 items-center justify-between border-b px-2"
+      ref={dragHandleRef}
+    >
+      <div className="flex cursor-grab items-center gap-2 active:cursor-grabbing">
         <div className="flex items-center gap-1 text-muted-foreground">
           <Terminal className="size-3.5" />
         </div>

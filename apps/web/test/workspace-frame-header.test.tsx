@@ -31,6 +31,7 @@ function mockActions(): PanelActions {
     assignTerminalToPane: vi.fn(),
     closePane: vi.fn(),
     closeTerminalPane: vi.fn(),
+    reorderWorkspaces: vi.fn(),
     resizePane: vi.fn(),
     setActivePaneId: vi.fn(),
     splitPane: vi.fn(),

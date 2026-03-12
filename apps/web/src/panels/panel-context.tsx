@@ -54,6 +54,16 @@ interface PanelActions {
    */
   readonly closeTerminalPane: (terminalId: string) => void
   /**
+   * Reorder workspace frames in the panel view.
+   *
+   * Persists a new explicit ordering of workspace IDs, overriding the
+   * default DFS-derived order from the layout tree. Called when the user
+   * drag-and-drops workspace frames to rearrange them.
+   *
+   * @param workspaceOrder - The new ordered array of workspace IDs
+   */
+  readonly reorderWorkspaces: (workspaceOrder: (string | undefined)[]) => void
+  /**
    * Resize the active pane in the given direction.
    *
    * Grows or shrinks the active pane by a fixed step (5%), taking from

@@ -449,6 +449,7 @@ describe('LiveStore schema', () => {
             id: 'session-1',
             layoutTree: splitLayout,
             activePaneId: 'pane-1',
+            workspaceOrder: null,
           },
         ])
 
@@ -465,6 +466,7 @@ describe('LiveStore schema', () => {
             id: 'session-1',
             layoutTree: leafPane,
             activePaneId: 'pane-1',
+            workspaceOrder: null,
           },
         ])
 
@@ -489,6 +491,7 @@ describe('LiveStore schema', () => {
               id: 'pane-assigned',
             },
             activePaneId: 'pane-assigned',
+            workspaceOrder: null,
           },
         ])
 
@@ -505,6 +508,52 @@ describe('LiveStore schema', () => {
             id: 'session-1',
             layoutTree: restoredLayout,
             activePaneId: null,
+            workspaceOrder: null,
+          },
+        ])
+      })
+  )
+
+  it.scoped(
+    'materializes layoutWorkspacesReordered into the panel_layout table',
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTestStore
+
+        // Seed a layout first
+        store.commit(
+          events.layoutRestored({
+            id: 'session-1',
+            layoutTree: splitLayout,
+            activePaneId: 'pane-1',
+          })
+        )
+
+        // Existing row should have null workspaceOrder
+        assert.deepStrictEqual(store.query(tables.panelLayout), [
+          {
+            id: 'session-1',
+            layoutTree: splitLayout,
+            activePaneId: 'pane-1',
+            workspaceOrder: null,
+          },
+        ])
+
+        // Reorder workspaces
+        store.commit(
+          events.layoutWorkspacesReordered({
+            id: 'session-1',
+            workspaceOrder: ['workspace-2', 'workspace-1'],
+          })
+        )
+
+        // workspaceOrder should be updated, layout and activePaneId preserved
+        assert.deepStrictEqual(store.query(tables.panelLayout), [
+          {
+            id: 'session-1',
+            layoutTree: splitLayout,
+            activePaneId: 'pane-1',
+            workspaceOrder: ['workspace-2', 'workspace-1'],
           },
         ])
       })

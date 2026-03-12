@@ -25,8 +25,11 @@ import {
   getLeafIds,
   getLeafNodes,
   getWorkspaceIds,
+  isWorkspaceFrameData,
   shouldConfirmClose,
+  sortWorkspaceLayouts,
   splitPane,
+  WORKSPACE_FRAME_TYPE,
 } from '../src/panels/layout-utils'
 
 // ---------------------------------------------------------------------------
@@ -1245,5 +1248,120 @@ describe('findNewLeafAfterSplit', () => {
 
     expect(newLeaf).toBeDefined()
     expect(newLeaf?.workspaceId).toBe('ws-1')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: sortWorkspaceLayouts
+// ---------------------------------------------------------------------------
+
+describe('sortWorkspaceLayouts', () => {
+  const wsA: LeafNode = {
+    _tag: 'LeafNode',
+    id: 'pane-A',
+    paneType: 'terminal',
+    workspaceId: 'ws-1',
+  }
+  const wsB: LeafNode = {
+    _tag: 'LeafNode',
+    id: 'pane-B',
+    paneType: 'terminal',
+    workspaceId: 'ws-2',
+  }
+  const wsC: LeafNode = {
+    _tag: 'LeafNode',
+    id: 'pane-C',
+    paneType: 'terminal',
+    workspaceId: 'ws-3',
+  }
+
+  const layouts = [
+    { workspaceId: 'ws-1' as string | undefined, subLayout: wsA },
+    { workspaceId: 'ws-2' as string | undefined, subLayout: wsB },
+    { workspaceId: 'ws-3' as string | undefined, subLayout: wsC },
+  ]
+
+  it('preserves original order when workspaceOrder is null', () => {
+    const result = sortWorkspaceLayouts(layouts, null)
+    expect(result.map((l) => l.workspaceId)).toEqual(['ws-1', 'ws-2', 'ws-3'])
+  })
+
+  it('sorts workspaces by explicit order', () => {
+    const result = sortWorkspaceLayouts(layouts, ['ws-3', 'ws-1', 'ws-2'])
+    expect(result.map((l) => l.workspaceId)).toEqual(['ws-3', 'ws-1', 'ws-2'])
+  })
+
+  it('appends workspaces not in the explicit order at the end', () => {
+    // ws-3 is not in the order — it should appear after ws-2, ws-1
+    const result = sortWorkspaceLayouts(layouts, ['ws-2', 'ws-1'])
+    expect(result.map((l) => l.workspaceId)).toEqual(['ws-2', 'ws-1', 'ws-3'])
+  })
+
+  it('preserves original order when workspaceOrder is empty', () => {
+    const result = sortWorkspaceLayouts(layouts, [])
+    expect(result.map((l) => l.workspaceId)).toEqual(['ws-1', 'ws-2', 'ws-3'])
+  })
+
+  it('places undefined workspaceId entries at the end', () => {
+    const withUndefined = [
+      ...layouts,
+      {
+        workspaceId: undefined as string | undefined,
+        subLayout: {
+          _tag: 'LeafNode' as const,
+          id: 'pane-empty',
+          paneType: 'terminal' as const,
+        },
+      },
+    ]
+    const result = sortWorkspaceLayouts(withUndefined, ['ws-3', 'ws-2', 'ws-1'])
+    expect(result.map((l) => l.workspaceId)).toEqual([
+      'ws-3',
+      'ws-2',
+      'ws-1',
+      undefined,
+    ])
+  })
+
+  it('does not mutate the input array', () => {
+    const original = [...layouts]
+    sortWorkspaceLayouts(layouts, ['ws-3', 'ws-2', 'ws-1'])
+    expect(layouts.map((l) => l.workspaceId)).toEqual(
+      original.map((l) => l.workspaceId)
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: isWorkspaceFrameData
+// ---------------------------------------------------------------------------
+
+describe('isWorkspaceFrameData', () => {
+  it('returns true for valid workspace frame drag data', () => {
+    expect(
+      isWorkspaceFrameData({
+        type: WORKSPACE_FRAME_TYPE,
+        workspaceId: 'ws-1',
+        index: 0,
+      })
+    ).toBe(true)
+  })
+
+  it('returns false when type does not match', () => {
+    expect(
+      isWorkspaceFrameData({
+        type: 'something-else',
+        workspaceId: 'ws-1',
+        index: 0,
+      })
+    ).toBe(false)
+  })
+
+  it('returns false for empty object', () => {
+    expect(isWorkspaceFrameData({})).toBe(false)
+  })
+
+  it('returns false when type is missing', () => {
+    expect(isWorkspaceFrameData({ workspaceId: 'ws-1', index: 0 })).toBe(false)
   })
 })

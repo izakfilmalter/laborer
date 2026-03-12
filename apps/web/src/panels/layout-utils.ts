@@ -998,6 +998,57 @@ function findNewLeafAfterSplit(
   return afterLeaves.find((leaf) => !beforeIds.has(leaf.id))
 }
 
+// ---------------------------------------------------------------------------
+// Workspace frame drag-and-drop helpers
+// ---------------------------------------------------------------------------
+
+/** Custom data type identifier for workspace frame drag operations. */
+const WORKSPACE_FRAME_TYPE = 'workspace-frame'
+
+/** Type guard: check if drag source data is a workspace frame. */
+function isWorkspaceFrameData(data: Record<string, unknown>): data is {
+  type: typeof WORKSPACE_FRAME_TYPE
+  workspaceId: string
+  index: number
+} {
+  return data.type === WORKSPACE_FRAME_TYPE
+}
+
+/**
+ * Sort workspace layouts by an explicit ordering.
+ *
+ * When `workspaceOrder` is non-null, workspaces are sorted to match
+ * the given ID order. Workspaces not in the order array are appended
+ * at the end, preserving their relative order.
+ *
+ * When `workspaceOrder` is null, the original array is returned as-is
+ * (DFS traversal order from the layout tree).
+ *
+ * Returns a new array — does not mutate the input.
+ */
+function sortWorkspaceLayouts<
+  T extends { readonly workspaceId: string | undefined },
+>(layouts: readonly T[], workspaceOrder: string[] | null): T[] {
+  const result = [...layouts]
+  if (!workspaceOrder || workspaceOrder.length === 0) {
+    return result
+  }
+
+  const orderIndex = new Map(workspaceOrder.map((id, idx) => [id, idx]))
+  result.sort((a, b) => {
+    const aIdx =
+      a.workspaceId != null
+        ? (orderIndex.get(a.workspaceId) ?? Number.MAX_SAFE_INTEGER)
+        : Number.MAX_SAFE_INTEGER
+    const bIdx =
+      b.workspaceId != null
+        ? (orderIndex.get(b.workspaceId) ?? Number.MAX_SAFE_INTEGER)
+        : Number.MAX_SAFE_INTEGER
+    return aIdx - bIdx
+  })
+  return result
+}
+
 export {
   closePane,
   computeResize,
@@ -1018,9 +1069,12 @@ export {
   getStaleTerminalLeaves,
   getTreeDepth,
   getWorkspaceIds,
+  isWorkspaceFrameData,
   reconcileLayout,
   replaceNode,
   shouldConfirmClose,
+  sortWorkspaceLayouts,
   splitPane,
+  WORKSPACE_FRAME_TYPE,
 }
 export type { NavigationDirection }

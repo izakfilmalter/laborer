@@ -116,6 +116,16 @@ export const panelLayout = State.SQLite.table({
       schema: PanelNodeSchema,
     }),
     activePaneId: State.SQLite.text({ nullable: true }),
+    /**
+     * Explicit ordering of workspace frames in the panel view.
+     * Stored as a JSON array of workspace IDs. When null, the order
+     * is derived from the DFS traversal of the layout tree.
+     * Updated when the user drag-and-drops workspace frames to reorder.
+     */
+    workspaceOrder: State.SQLite.json({
+      schema: Schema.NullOr(Schema.Array(Schema.String)),
+      default: null,
+    }),
   },
 })
 
@@ -442,6 +452,18 @@ export const layoutRestored = Events.synced({
   schema: layoutEventSchema,
 })
 
+/**
+ * Fired when the user reorders workspace frames via drag-and-drop.
+ * Persists the new workspace ordering alongside the existing layout tree.
+ */
+export const layoutWorkspacesReordered = Events.synced({
+  name: 'v1.LayoutWorkspacesReordered',
+  schema: Schema.Struct({
+    id: Schema.String,
+    workspaceOrder: Schema.Array(Schema.String),
+  }),
+})
+
 export const events = {
   projectCreated,
   projectRepositoryIdentityBackfilled,
@@ -477,6 +499,7 @@ export const events = {
   layoutPaneClosed,
   layoutPaneAssigned,
   layoutRestored,
+  layoutWorkspacesReordered,
 }
 
 // ---------------------------------------------------------------------------
@@ -682,6 +705,8 @@ const materializers = State.SQLite.materializers(events, {
     panelLayout
       .insert({ id, layoutTree, activePaneId })
       .onConflict('id', 'replace'),
+  'v1.LayoutWorkspacesReordered': ({ id, workspaceOrder }) =>
+    panelLayout.update({ workspaceOrder }).where({ id }),
 })
 
 // ---------------------------------------------------------------------------

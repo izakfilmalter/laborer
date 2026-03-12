@@ -1,9 +1,17 @@
+import { combine } from '@atlaskit/pragmatic-drag-and-drop/combine'
+import {
+  draggable,
+  dropTargetForElements,
+  monitorForElements,
+} from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
+import { reorder } from '@atlaskit/pragmatic-drag-and-drop/reorder'
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import {
   layoutPaneAssigned,
   layoutPaneClosed,
   layoutRestored,
   layoutSplit,
+  layoutWorkspacesReordered,
   panelLayout,
   projects,
   workspaces,
@@ -96,10 +104,13 @@ import {
   getLeafNodes,
   getStaleTerminalLeaves,
   getWorkspaceIds,
+  isWorkspaceFrameData,
   reconcileLayout,
   replaceNode,
   shouldConfirmClose,
+  sortWorkspaceLayouts,
   splitPane,
+  WORKSPACE_FRAME_TYPE,
 } from '@/panels/layout-utils'
 import {
   PanelActionsProvider,
@@ -378,6 +389,9 @@ function usePanelLayout() {
   // The persisted layout tree, if one exists in LiveStore.
   const persistedLayoutTree = persistedRow?.layoutTree as PanelNode | undefined
   const rawPersistedActivePaneId = persistedRow?.activePaneId ?? null
+  const persistedWorkspaceOrder = (persistedRow?.workspaceOrder ?? null) as
+    | string[]
+    | null
 
   // Determine the effective layout: persisted layout takes priority,
   // otherwise fall back to the auto-generated layout from terminals/workspaces.
@@ -1018,6 +1032,26 @@ function usePanelLayout() {
     [persistedLayoutTree, initialLayout, handleClosePane, removeTerminal]
   )
 
+  /**
+   * Reorder workspace frames by persisting an explicit workspace ID ordering.
+   * Called when the user drag-and-drops workspace frames to rearrange them.
+   */
+  const handleReorderWorkspaces = useCallback(
+    (workspaceOrder: (string | undefined)[]) => {
+      // Filter out undefined entries — only persist concrete workspace IDs
+      const order = workspaceOrder.filter(
+        (id): id is string => id !== undefined
+      )
+      store.commit(
+        layoutWorkspacesReordered({
+          id: LAYOUT_SESSION_ID,
+          workspaceOrder: order,
+        })
+      )
+    },
+    [store]
+  )
+
   const panelActions = useMemo(
     () => ({
       assignTerminalToPane: handleAssignTerminalToPane,
@@ -1028,6 +1062,7 @@ function usePanelLayout() {
       toggleDevServerPane: handleToggleDevServerPane,
       resizePane: handleResizePane,
       closeTerminalPane: handleCloseTerminalPane,
+      reorderWorkspaces: handleReorderWorkspaces,
     }),
     [
       handleAssignTerminalToPane,
@@ -1038,6 +1073,7 @@ function usePanelLayout() {
       handleToggleDevServerPane,
       handleResizePane,
       handleCloseTerminalPane,
+      handleReorderWorkspaces,
     ]
   )
 
@@ -1054,6 +1090,7 @@ function usePanelLayout() {
     leafPaneIds,
     isReconciling,
     liveTerminals,
+    workspaceOrder: persistedWorkspaceOrder,
   }
 }
 
@@ -1175,8 +1212,12 @@ function CloseAppDialog({
  */
 function WorkspaceFrameHeader({
   workspaceId,
+  dragHandleRef,
 }: {
   readonly workspaceId: string | undefined
+  readonly dragHandleRef?:
+    | { readonly current: HTMLDivElement | null }
+    | undefined
 }) {
   const store = useLaborerStore()
   const projectList = store.useQuery(allProjects$)
@@ -1213,8 +1254,11 @@ function WorkspaceFrameHeader({
   const hasActivePane = !!activePaneId
 
   return (
-    <div className="flex h-8 shrink-0 items-center justify-between border-b px-2">
-      <div className="flex items-center gap-2">
+    <div
+      className="flex h-8 shrink-0 items-center justify-between border-b px-2"
+      ref={dragHandleRef}
+    >
+      <div className="flex cursor-grab items-center gap-2 active:cursor-grabbing">
         <div className="flex items-center gap-1 text-muted-foreground">
           <Terminal className="size-3.5" />
         </div>
@@ -1340,11 +1384,18 @@ function WorkspaceFrame({
   workspaceId,
   subLayout,
   activePaneId,
+  index,
 }: {
   readonly workspaceId: string | undefined
   readonly subLayout: PanelNode
   readonly activePaneId: string | null
+  readonly index: number
 }) {
+  const frameRef = useRef<HTMLDivElement | null>(null)
+  const dragHandleRef = useRef<HTMLDivElement | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const [closestEdge, setClosestEdge] = useState<'top' | 'bottom' | null>(null)
+
   // Check if the active pane belongs to this workspace frame
   const leaves = useMemo(() => getLeafNodes(subLayout), [subLayout])
   const isActiveFrame = useMemo(
@@ -1352,14 +1403,73 @@ function WorkspaceFrame({
     [activePaneId, leaves]
   )
 
+  useEffect(() => {
+    const frameEl = frameRef.current
+    const handleEl = dragHandleRef.current
+    if (!(frameEl && handleEl && workspaceId)) {
+      return
+    }
+
+    return combine(
+      draggable({
+        element: frameEl,
+        dragHandle: handleEl,
+        getInitialData: () => ({
+          type: WORKSPACE_FRAME_TYPE,
+          workspaceId,
+          index,
+        }),
+        onDragStart: () => setIsDragging(true),
+        onDrop: () => setIsDragging(false),
+      }),
+      dropTargetForElements({
+        element: frameEl,
+        canDrop: ({ source }) => isWorkspaceFrameData(source.data),
+        getData: () => ({
+          type: WORKSPACE_FRAME_TYPE,
+          workspaceId,
+          index,
+        }),
+        onDragEnter: ({ self, source }) => {
+          if (!isWorkspaceFrameData(source.data)) {
+            return
+          }
+          const sourceIdx = source.data.index
+          const targetIdx = self.data.index as number
+          setClosestEdge(sourceIdx < targetIdx ? 'bottom' : 'top')
+        },
+        onDrag: ({ self, source }) => {
+          if (!isWorkspaceFrameData(source.data)) {
+            return
+          }
+          const sourceIdx = source.data.index
+          const targetIdx = self.data.index as number
+          setClosestEdge(sourceIdx < targetIdx ? 'bottom' : 'top')
+        },
+        onDragLeave: () => setClosestEdge(null),
+        onDrop: () => setClosestEdge(null),
+      })
+    )
+  }, [workspaceId, index])
+
   return (
     <div
-      className={`flex h-full flex-col border-2 ${isActiveFrame ? 'border-primary' : 'border-transparent'}`}
+      className={`relative flex h-full flex-col border-2 ${isActiveFrame ? 'border-primary' : 'border-transparent'} ${isDragging ? 'opacity-40' : ''}`}
+      ref={frameRef}
     >
-      <WorkspaceFrameHeader workspaceId={workspaceId} />
+      {closestEdge === 'top' && (
+        <div className="absolute inset-x-0 top-0 z-10 h-0.5 bg-primary" />
+      )}
+      <WorkspaceFrameHeader
+        dragHandleRef={dragHandleRef}
+        workspaceId={workspaceId}
+      />
       <div className="min-h-0 flex-1">
         <PanelManager layout={subLayout} />
       </div>
+      {closestEdge === 'bottom' && (
+        <div className="absolute inset-x-0 bottom-0 z-10 h-0.5 bg-primary" />
+      )}
     </div>
   )
 }
@@ -1376,10 +1486,12 @@ function WorkspaceFrames({
   layout,
   activePaneId,
   fullscreenPaneId,
+  workspaceOrder,
 }: {
   readonly layout: PanelNode
   readonly activePaneId: string | null
   readonly fullscreenPaneId: string | null
+  readonly workspaceOrder: string[] | null
 }) {
   const workspaceIds = useMemo(() => getWorkspaceIds(layout), [layout])
 
@@ -1394,8 +1506,9 @@ function WorkspaceFrames({
         layouts.push({ workspaceId: wsId, subLayout: subTree })
       }
     }
-    return layouts
-  }, [layout, workspaceIds])
+
+    return sortWorkspaceLayouts(layouts, workspaceOrder)
+  }, [layout, workspaceIds, workspaceOrder])
 
   // When a pane is fullscreened, find the workspace it belongs to and
   // render only that workspace with just the fullscreened pane's LeafNode.
@@ -1417,11 +1530,43 @@ function WorkspaceFrames({
       : null
   }, [fullscreenPaneId, layout, workspaceLayouts])
 
+  // Wire up the monitor to handle workspace frame drops (reordering)
+  const actions = usePanelActions()
+  useEffect(() => {
+    return monitorForElements({
+      canMonitor: ({ source }) => isWorkspaceFrameData(source.data),
+      onDrop: ({ source, location }) => {
+        const destination = location.current.dropTargets[0]
+        if (!destination) {
+          return
+        }
+        const sourceData = source.data
+        const destData = destination.data
+        if (
+          !(isWorkspaceFrameData(sourceData) && isWorkspaceFrameData(destData))
+        ) {
+          return
+        }
+        if (sourceData.index === destData.index) {
+          return
+        }
+
+        const reordered = reorder({
+          list: workspaceLayouts.map((entry) => entry.workspaceId),
+          startIndex: sourceData.index,
+          finishIndex: destData.index,
+        })
+        actions?.reorderWorkspaces(reordered)
+      },
+    })
+  }, [workspaceLayouts, actions])
+
   // Fullscreen mode — render only the fullscreened pane in its workspace frame
   if (fullscreenLayout) {
     return (
       <WorkspaceFrame
         activePaneId={activePaneId}
+        index={0}
         subLayout={fullscreenLayout.subLayout}
         workspaceId={fullscreenLayout.workspaceId}
       />
@@ -1437,6 +1582,7 @@ function WorkspaceFrames({
     return (
       <WorkspaceFrame
         activePaneId={activePaneId}
+        index={0}
         subLayout={entry.subLayout}
         workspaceId={entry.workspaceId}
       />
@@ -1484,6 +1630,7 @@ function WorkspaceFrameResizableChild({
       <ResizablePanel defaultSize={`${defaultSize}%`} minSize="10%">
         <WorkspaceFrame
           activePaneId={activePaneId}
+          index={index}
           subLayout={subLayout}
           workspaceId={workspaceId}
         />
@@ -1501,11 +1648,13 @@ function PanelContent({
   layout,
   activePaneId,
   fullscreenPaneId,
+  workspaceOrder,
 }: {
   readonly isReconciling: boolean
   readonly layout: PanelNode | undefined
   readonly activePaneId: string | null
   readonly fullscreenPaneId: string | null
+  readonly workspaceOrder: string[] | null
 }) {
   if (isReconciling) {
     return (
@@ -1522,6 +1671,7 @@ function PanelContent({
         activePaneId={activePaneId}
         fullscreenPaneId={fullscreenPaneId}
         layout={layout}
+        workspaceOrder={workspaceOrder}
       />
     )
   }
@@ -1536,6 +1686,7 @@ function HomeComponent() {
     leafPaneIds,
     isReconciling,
     liveTerminals,
+    workspaceOrder,
   } = usePanelLayout()
   const store = useLaborerStore()
   const projectList = store.useQuery(sidebarProjects$)
@@ -1881,6 +2032,7 @@ function HomeComponent() {
                     fullscreenPaneId={fullscreenPaneId}
                     isReconciling={isReconciling}
                     layout={layout}
+                    workspaceOrder={workspaceOrder}
                   />
                 </>
               )}

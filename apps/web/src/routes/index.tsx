@@ -1195,11 +1195,17 @@ function CloseAppDialog({
 function WorkspaceFrameHeaderContainer({
   workspaceId,
   dragHandleRef,
+  isMinimized,
+  onHeaderClick,
+  onMinimize,
 }: {
   readonly workspaceId: string | undefined
   readonly dragHandleRef?:
     | { readonly current: HTMLDivElement | null }
     | undefined
+  readonly isMinimized: boolean
+  readonly onHeaderClick: () => void
+  readonly onMinimize: () => void
 }) {
   const store = useLaborerStore()
   const projectList = store.useQuery(allProjects$)
@@ -1254,6 +1260,9 @@ function WorkspaceFrameHeaderContainer({
       dragHandleRef={dragHandleRef}
       isContainerized={isContainerized}
       isFullscreen={isFullscreen}
+      isMinimized={isMinimized}
+      onHeaderClick={onHeaderClick}
+      onMinimize={onMinimize}
       projectName={projectName}
     />
   )
@@ -1262,6 +1271,10 @@ function WorkspaceFrameHeaderContainer({
 /**
  * Renders a single workspace's terminal frame: a bordered container with
  * a workspace-specific header and the workspace's panel sub-tree.
+ *
+ * Supports minimized mode where only the header is visible.
+ * Clicking the header focuses the first pane in this workspace frame.
+ * When minimized, clicking the header expands the frame instead.
  */
 function WorkspaceFrame({
   workspaceId,
@@ -1278,6 +1291,8 @@ function WorkspaceFrame({
   const dragHandleRef = useRef<HTMLDivElement | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [closestEdge, setClosestEdge] = useState<'top' | 'bottom' | null>(null)
+  const [isMinimized, setIsMinimized] = useState(false)
+  const actions = usePanelActions()
 
   // Check if the active pane belongs to this workspace frame
   const leaves = useMemo(() => getLeafNodes(subLayout), [subLayout])
@@ -1285,6 +1300,23 @@ function WorkspaceFrame({
     () => activePaneId != null && leaves.some((l) => l.id === activePaneId),
     [activePaneId, leaves]
   )
+
+  // Handle header click: if minimized, expand; otherwise focus the first pane
+  const handleHeaderClick = useCallback(() => {
+    if (isMinimized) {
+      setIsMinimized(false)
+      return
+    }
+    // Focus the first leaf pane in this workspace frame
+    const firstLeaf = leaves[0]
+    if (firstLeaf) {
+      actions?.setActivePaneId(firstLeaf.id)
+    }
+  }, [isMinimized, leaves, actions])
+
+  const handleMinimize = useCallback(() => {
+    setIsMinimized((prev) => !prev)
+  }, [])
 
   useEffect(() => {
     const frameEl = frameRef.current
@@ -1337,7 +1369,7 @@ function WorkspaceFrame({
 
   return (
     <div
-      className={`relative flex h-full flex-col border-2 ${isActiveFrame ? 'border-primary' : 'border-transparent'} ${isDragging ? 'opacity-40' : ''}`}
+      className={`relative flex ${isMinimized ? 'h-auto' : 'h-full'} flex-col border-2 ${isActiveFrame ? 'border-primary' : 'border-transparent'} ${isDragging ? 'opacity-40' : ''}`}
       ref={frameRef}
     >
       {closestEdge === 'top' && (
@@ -1345,11 +1377,16 @@ function WorkspaceFrame({
       )}
       <WorkspaceFrameHeaderContainer
         dragHandleRef={dragHandleRef}
+        isMinimized={isMinimized}
+        onHeaderClick={handleHeaderClick}
+        onMinimize={handleMinimize}
         workspaceId={workspaceId}
       />
-      <div className="min-h-0 flex-1">
-        <PanelManager layout={subLayout} />
-      </div>
+      {!isMinimized && (
+        <div className="min-h-0 flex-1">
+          <PanelManager layout={subLayout} />
+        </div>
+      )}
       {closestEdge === 'bottom' && (
         <div className="absolute inset-x-0 bottom-0 z-10 h-0.5 bg-primary" />
       )}

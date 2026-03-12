@@ -7,13 +7,20 @@
  * @see Issue #193: Plan workspace scoped task list and rlph integration
  */
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   destroyFn,
   isElectronMock,
   startLoopFn,
+  closeWorkspaceMock,
   mutationMap,
   openExternalUrlMock,
   queryDbMock,
@@ -22,6 +29,7 @@ const {
   destroyFn: vi.fn(),
   isElectronMock: vi.fn(() => false),
   startLoopFn: vi.fn(),
+  closeWorkspaceMock: vi.fn(),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
   openExternalUrlMock: vi.fn(async () => true),
   queryDbMock: vi.fn((_table, options: { label: string }) => options),
@@ -72,11 +80,13 @@ vi.mock('@laborer/shared/schema', () => ({
 }))
 
 vi.mock('sonner', () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
+  toast: { error: vi.fn(), loading: vi.fn(() => 'toast-id'), success: vi.fn() },
 }))
 
 vi.mock('@/panels/panel-context', () => ({
-  usePanelActions: () => null,
+  usePanelActions: () => ({
+    closeWorkspace: closeWorkspaceMock,
+  }),
 }))
 
 // Stub terminal list to avoid complex nested mocking
@@ -118,17 +128,28 @@ vi.mock('@/components/ui/alert-dialog', () => ({
   AlertDialogFooter: ({ children }: { children: React.ReactNode }) => (
     <div>{children}</div>
   ),
-  AlertDialogAction: ({ children }: { children: React.ReactNode }) => (
-    <button type="button">{children}</button>
+  AlertDialogAction: ({
+    children,
+    ...props
+  }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button type="button" {...props}>
+      {children}
+    </button>
   ),
-  AlertDialogCancel: ({ children }: { children: React.ReactNode }) => (
-    <button type="button">{children}</button>
+  AlertDialogCancel: ({
+    children,
+    ...props
+  }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button type="button" {...props}>
+      {children}
+    </button>
   ),
 }))
 
 import { WorkspaceList } from '../src/components/workspace-list'
 
 const START_RALPH_LOOP_RE = /start ralph loop/i
+const DESTROY_ACTION_RE = /destroy ⌘ ↵/i
 
 const WORKSPACE_PLAN = {
   id: 'ws-1',
@@ -203,6 +224,32 @@ describe('WorkspaceList plan association', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     isElectronMock.mockReturnValue(false)
+    destroyFn.mockResolvedValue(undefined)
+  })
+
+  it('closes open workspace panels after a successful destroy', async () => {
+    useLaborerStoreMock.mockReturnValue({
+      useQuery: (query: { label: string }) => {
+        if (query.label === 'workspaceList') {
+          return [WORKSPACE_REGULAR]
+        }
+        if (query.label === 'workspaceList.prds') {
+          return []
+        }
+        return []
+      },
+    })
+
+    render(<WorkspaceList projectId="project-1" />)
+
+    fireEvent.click(screen.getByRole('button', { name: DESTROY_ACTION_RE }))
+
+    await waitFor(() => {
+      expect(destroyFn).toHaveBeenCalledWith({
+        payload: { workspaceId: 'ws-2', force: undefined },
+      })
+      expect(closeWorkspaceMock).toHaveBeenCalledWith('ws-2')
+    })
   })
 
   it('detects plan-associated workspace and shows scoped task list', () => {

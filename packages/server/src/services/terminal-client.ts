@@ -18,7 +18,9 @@
  * @see Issue #163: Worktree detection polish — worktree existence check before spawn
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { FetchHttpClient } from '@effect/platform'
 import { RpcClient, RpcSerialization } from '@effect/rpc'
 import { RpcError, TerminalRpcs } from '@laborer/shared/rpc'
@@ -179,6 +181,178 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       ).pipe(Effect.annotateLogs('module', logPrefix))
 
       const defaultShell = process.env.SHELL ?? '/bin/sh'
+
+      /**
+       * Known agent commands that support hook-based lifecycle reporting.
+       * Each agent has a different mechanism:
+       * - `claude` — supports `--settings` with hooks JSON
+       * - `opencode` — supports plugins via `.opencode/plugins/` directory
+       *   (plugin is created at workspace setup, not per-spawn)
+       */
+      const HOOKABLE_AGENTS = new Set(['claude', 'opencode'])
+
+      /**
+       * Build the Claude Code `--settings` JSON for agent hook injection.
+       * The hooks fire `curl` to the terminal service's hook endpoint
+       * on lifecycle transitions (SessionStart, Stop, Notification).
+       *
+       * @see .reference/cmux/Resources/bin/claude — cmux's approach
+       */
+      /**
+       * Build the Claude Code hooks settings JSON object.
+       *
+       * The hook commands use curl to POST to the terminal service.
+       * Commands read LABORER_TERMINAL_ID and LABORER_HOOK_URL from the
+       * environment (set on the PTY process), avoiding the need to embed
+       * the terminal ID and URL in the JSON itself.
+       *
+       * @see .reference/cmux/Resources/bin/claude — cmux's approach
+       */
+      const buildClaudeHooksSettings = (): Record<string, unknown> => ({
+        hooks: {
+          SessionStart: [
+            {
+              matcher: '',
+              hooks: [
+                {
+                  type: 'command',
+                  command:
+                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"event\\":\\"active\\"}" > /dev/null 2>&1',
+                  timeout: 10,
+                },
+              ],
+            },
+          ],
+          Stop: [
+            {
+              matcher: '',
+              hooks: [
+                {
+                  type: 'command',
+                  command:
+                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"event\\":\\"waiting_for_input\\"}" > /dev/null 2>&1',
+                  timeout: 10,
+                },
+              ],
+            },
+          ],
+          Notification: [
+            {
+              matcher: '',
+              hooks: [
+                {
+                  type: 'command',
+                  command:
+                    'curl -s -X POST "$LABORER_HOOK_URL" -H "Content-Type: application/json" -d "{\\"terminalId\\":\\"$LABORER_TERMINAL_ID\\",\\"event\\":\\"waiting_for_input\\"}" > /dev/null 2>&1',
+                  timeout: 10,
+                },
+              ],
+            },
+          ],
+        },
+      })
+
+      /**
+       * Write a Claude Code settings file with hooks and return the
+       * path. The file is written to a temp location so it persists
+       * for the lifetime of the terminal session.
+       */
+      const writeClaudeSettings = (terminalId: string): string => {
+        const settingsDir = join(tmpdir(), 'laborer-agent-hooks')
+        mkdirSync(settingsDir, { recursive: true })
+        const settingsPath = join(settingsDir, `${terminalId}.json`)
+        writeFileSync(
+          settingsPath,
+          JSON.stringify(buildClaudeHooksSettings()),
+          'utf-8'
+        )
+        return settingsPath
+      }
+
+      /**
+       * Build the shell command string for spawning an agent with hooks.
+       * Returns the modified command and any extra env vars needed.
+       */
+      const buildAgentCommand = (
+        agentCommand: string,
+        terminalId: string
+      ): { command: string; extraEnv: Record<string, string> } => {
+        const hookUrl = `http://localhost:${env.TERMINAL_PORT}/hook/agent-status`
+        const extraEnv: Record<string, string> = {
+          LABORER_TERMINAL_ID: terminalId,
+          LABORER_HOOK_URL: hookUrl,
+        }
+
+        if (agentCommand === 'claude') {
+          const settingsPath = writeClaudeSettings(terminalId)
+          return {
+            command: `claude --settings ${settingsPath}`,
+            extraEnv,
+          }
+        }
+
+        // For opencode and other agents, spawn them normally.
+        // OpenCode hooks are handled via a plugin file that reads
+        // LABORER_TERMINAL_ID and LABORER_HOOK_URL from the environment.
+        return { command: agentCommand, extraEnv }
+      }
+
+      /**
+       * OpenCode plugin JS that reports agent lifecycle events to laborer.
+       *
+       * Reads LABORER_TERMINAL_ID and LABORER_HOOK_URL from the process
+       * environment. On `session.idle` and `session.error`, posts a
+       * `waiting_for_input` event. On `session.created`, posts
+       * `active`. Uses `fetch` to POST status to the terminal service.
+       *
+       * @see .reference/opencode/packages/web/src/content/docs/plugins.mdx
+       */
+      const OPENCODE_HOOK_PLUGIN = `
+export const LaborerHookPlugin = async () => {
+  const terminalId = process.env.LABORER_TERMINAL_ID
+  const hookUrl = process.env.LABORER_HOOK_URL
+  if (!terminalId || !hookUrl) return {}
+
+  const post = async (event) => {
+    try {
+      await fetch(hookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ terminalId, event }),
+      })
+    } catch {}
+  }
+
+  return {
+    event: async ({ event }) => {
+      if (event.type === "session.idle" || event.type === "session.error") {
+        await post("waiting_for_input")
+      }
+      if (event.type === "session.created") {
+        await post("active")
+      }
+    },
+  }
+}
+`.trim()
+
+      /**
+       * Ensure the OpenCode hook plugin exists in the workspace's
+       * `.opencode/plugins/` directory. Creates the directory and
+       * file if they don't exist. Idempotent — skips if the file
+       * already exists with the correct content.
+       */
+      const ensureOpencodePlugin = (worktreePath: string): void => {
+        const pluginDir = join(worktreePath, '.opencode', 'plugins')
+        const pluginPath = join(pluginDir, 'laborer-hook.js')
+
+        if (existsSync(pluginPath)) {
+          return
+        }
+
+        mkdirSync(pluginDir, { recursive: true })
+        writeFileSync(pluginPath, OPENCODE_HOOK_PLUGIN, 'utf-8')
+      }
 
       /**
        * Convert a TerminalRpcError from the terminal service into a
@@ -377,6 +551,11 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
 
       /**
        * Spawn a terminal on the host for a non-containerized workspace.
+       *
+       * When the command is a known agent CLI (claude, opencode), hook
+       * settings are injected so the agent reports its lifecycle state
+       * back to the terminal service. This enables accurate "needs input"
+       * detection for agents that stay running as interactive CLIs.
        */
       const spawnHostTerminal = Effect.fn('TerminalClient.spawnHostTerminal')(
         function* (
@@ -387,9 +566,29 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           const workspaceEnv =
             yield* workspaceProvider.getWorkspaceEnv(workspaceId)
 
+          const isAgent = command !== undefined && HOOKABLE_AGENTS.has(command)
+
+          // Pre-generate terminal ID when spawning an agent so we can
+          // inject it into the hook settings/env before the PTY starts.
+          const terminalId = isAgent ? crypto.randomUUID() : undefined
+
+          // Ensure the OpenCode hook plugin exists in the workspace
+          // before spawning. The plugin reads env vars to report state.
+          if (command === 'opencode') {
+            yield* Effect.try(() =>
+              ensureOpencodePlugin(workspace.worktreePath)
+            ).pipe(Effect.catchAll(() => Effect.void))
+          }
+
+          // Build the command, potentially wrapping it with hook settings
+          const { command: agentCmd, extraEnv } =
+            isAgent && terminalId !== undefined
+              ? buildAgentCommand(command, terminalId)
+              : { command: command ?? defaultShell, extraEnv: {} }
+
           const resolvedCommand = command ?? defaultShell
           const shellPath = command ? defaultShell : resolvedCommand
-          const shellArgs = command ? ['-c', resolvedCommand] : []
+          const shellArgs = command ? ['-c', agentCmd] : []
 
           const terminalInfo = yield* rpcClient.terminal
             .spawn({
@@ -399,9 +598,11 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
               env: {
                 ...process.env,
                 ...workspaceEnv,
+                ...extraEnv,
                 TERM: 'xterm-256color',
                 COLORTERM: 'truecolor',
               } as Record<string, string>,
+              id: terminalId,
               cols: 80,
               rows: 24,
               workspaceId,

@@ -39,6 +39,25 @@ const TestLayer = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(TestLaborerStore)
 )
 
+/**
+ * Poll until the workspace row is removed from LiveStore.
+ * destroyWorktree forks cleanup into a background daemon fiber, so the
+ * workspace row deletion (the last step) signals that all cleanup is done.
+ */
+const waitForWorkspaceRemoval = (workspaceId: string) =>
+  Effect.gen(function* () {
+    const { store } = yield* LaborerStore
+    const maxAttempts = 100
+    for (let i = 0; i < maxAttempts; i++) {
+      yield* Effect.sleep('100 millis')
+      const rows = store.query(tables.workspaces.where('id', workspaceId))
+      if (rows.length === 0) {
+        return
+      }
+    }
+    assert.fail('Timed out waiting for workspace row to be removed')
+  })
+
 afterAll(() => {
   for (const root of tempRoots) {
     if (existsSync(root)) {
@@ -48,7 +67,7 @@ afterAll(() => {
 })
 
 describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
-  it.scoped('removes git worktree and branch for external workspaces', () =>
+  it.scopedLive('removes git worktree and branch for external workspaces', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('destroy-external', tempRoots)
       const branchName = 'feature/external'
@@ -88,20 +107,19 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
       const provider = yield* WorkspaceProvider
       yield* provider.destroyWorktree(workspaceId)
 
+      // destroyWorktree forks cleanup into a background daemon fiber.
+      // Poll until the workspace row is removed (last step in the fiber).
+      yield* waitForWorkspaceRemoval(workspaceId)
+
       assert.isFalse(existsSync(worktreePath))
       assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
-
-      const workspaceRows = store.query(
-        tables.workspaces.where('id', workspaceId)
-      )
-      assert.strictEqual(workspaceRows.length, 0)
 
       const reallocatedPort = yield* allocator.allocate()
       assert.strictEqual(reallocatedPort, allocatedPort)
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('removes git worktree and branch for laborer workspaces', () =>
+  it.scopedLive('removes git worktree and branch for laborer workspaces', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('destroy-laborer', tempRoots)
       const branchName = 'feature/laborer'
@@ -138,13 +156,12 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
       const provider = yield* WorkspaceProvider
       yield* provider.destroyWorktree(workspaceId)
 
+      // destroyWorktree forks cleanup into a background daemon fiber.
+      // Poll until the workspace row is removed (last step in the fiber).
+      yield* waitForWorkspaceRemoval(workspaceId)
+
       assert.isFalse(existsSync(worktreePath))
       assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
-
-      const workspaceRows = store.query(
-        tables.workspaces.where('id', workspaceId)
-      )
-      assert.strictEqual(workspaceRows.length, 0)
     }).pipe(Effect.provide(TestLayer))
   )
 })

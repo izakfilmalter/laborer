@@ -78,26 +78,28 @@ import { useLaborerStore } from '@/livestore/store'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import {
   closePane,
+  closeWorkspacePanes,
   computeResize,
+  computeTerminalPaneAssignment,
   ensureValidActivePaneId,
   filterTreeByWorkspace,
-  findEmptyTerminalPane,
   findLeafByTerminalId,
   findNewLeafAfterSplit,
   findNodeById,
   findSiblingPaneId,
-  generateId,
   getFirstLeafId,
-  getLastLeafId,
   getLeafIds,
   getLeafNodes,
+  getScopedActivePaneId,
   getStaleTerminalLeaves,
   getTerminalIdsToRemove,
   getWorkspaceIds,
+  getWorkspaceTerminalIds,
   isWorkspaceFrameData,
   reconcileLayout,
   replaceNode,
   shouldConfirmClose,
+  shouldConfirmCloseWorkspace,
   sortWorkspaceLayouts,
   splitPane,
   WORKSPACE_FRAME_TYPE,
@@ -105,7 +107,6 @@ import {
 import {
   PanelActionsProvider,
   useActivePaneId,
-  useFullscreenPaneId,
   usePanelActions,
 } from '@/panels/panel-context'
 import {
@@ -704,93 +705,20 @@ function usePanelLayout() {
   const handleAssignTerminalToPane = useCallback(
     (terminalId: string, workspaceId: string, paneId?: string) => {
       const base = persistedLayoutTree ?? initialLayout
-
-      // If no specific pane target, check if this terminal already has a pane.
-      // If so, just focus it instead of creating a duplicate.
-      if (!paneId && base) {
-        const existingLeaf = findLeafByTerminalId(base, terminalId)
-        if (existingLeaf) {
-          commitAssignment(base, existingLeaf.id, workspaceId, false)
-          return
-        }
-      }
-
-      if (!base) {
-        // No layout at all — create a new single-pane layout for this terminal
-        const newLeafId = generateId('pane')
-        const newLeaf: LeafNode = {
-          _tag: 'LeafNode' as const,
-          id: newLeafId,
-          paneType: 'terminal' as const,
-          terminalId,
-          workspaceId,
-        }
-        commitAssignment(newLeaf, newLeaf.id, workspaceId, true)
-        return
-      }
-
-      // If a specific pane ID is given, replace that pane's content
-      if (paneId) {
-        const targetLeaf: LeafNode = {
-          _tag: 'LeafNode' as const,
-          id: paneId,
-          paneType: 'terminal' as const,
-          terminalId,
-          workspaceId,
-        }
-        const newTree = replaceNode(base, paneId, targetLeaf)
-        commitAssignment(newTree, paneId, workspaceId, true)
-        return
-      }
-
-      // No specific pane — find an empty terminal pane or the first pane
-      const emptyPane = findEmptyTerminalPane(base)
-      if (emptyPane) {
-        const updatedLeaf: LeafNode = {
-          _tag: 'LeafNode' as const,
-          id: emptyPane.id,
-          paneType: 'terminal' as const,
-          terminalId,
-          workspaceId,
-        }
-        const newTree = replaceNode(base, emptyPane.id, updatedLeaf)
-        commitAssignment(newTree, emptyPane.id, workspaceId, true)
-        return
-      }
-
-      // No empty pane — split the last leaf and assign to the new pane.
-      // Splitting the last leaf (instead of the first) ensures the new
-      // workspace panel appears at the bottom of the workspace stack,
-      // because workspace frame order follows DFS traversal order.
-      const lastLeafId = getLastLeafId(base)
-      if (lastLeafId) {
-        const newPaneContent: Partial<LeafNode> = {
-          paneType: 'terminal' as const,
-          terminalId,
-          workspaceId,
-        }
-        const newTree = splitPane(
-          base,
-          lastLeafId,
-          'horizontal',
-          newPaneContent
-        )
-        store.commit(
-          layoutPaneAssigned({
-            id: LAYOUT_SESSION_ID,
-            layoutTree: newTree,
-            activePaneId: persistedActivePaneId,
-          })
-        )
-      }
+      const result = computeTerminalPaneAssignment(
+        base,
+        terminalId,
+        workspaceId,
+        paneId
+      )
+      commitAssignment(
+        result.layoutTree,
+        result.activePaneId,
+        workspaceId,
+        result.triggerDevServer
+      )
     },
-    [
-      persistedLayoutTree,
-      initialLayout,
-      persistedActivePaneId,
-      store,
-      commitAssignment,
-    ]
+    [persistedLayoutTree, initialLayout, commitAssignment]
   )
 
   // Keep the assign-terminal ref in sync with the latest handler
@@ -1014,6 +942,67 @@ function usePanelLayout() {
   )
 
   /**
+   * Close all panes belonging to a workspace and kill their terminals.
+   * This is the ungated version — callers should check for running
+   * child processes and show a confirmation dialog before invoking.
+   */
+  const handleCloseWorkspace = useCallback(
+    (workspaceId: string) => {
+      const base = persistedLayoutTree ?? initialLayout
+      if (!base) {
+        return
+      }
+
+      // Kill all terminals belonging to this workspace
+      const terminalIds = getWorkspaceTerminalIds(base, workspaceId)
+      for (const terminalId of terminalIds) {
+        removeTerminal({ payload: { id: terminalId } }).catch((error) => {
+          console.warn('[close-workspace] terminal remove failed:', error)
+        })
+      }
+
+      // Remove all workspace panes from the layout tree
+      const newTree = closeWorkspacePanes(base, workspaceId)
+      if (newTree) {
+        const nextActivePaneId = ensureValidActivePaneId(
+          newTree,
+          persistedActivePaneId
+        )
+        store.commit(
+          layoutPaneClosed({
+            id: LAYOUT_SESSION_ID,
+            layoutTree: newTree,
+            activePaneId: nextActivePaneId,
+          })
+        )
+      } else {
+        // All panes closed — commit an empty placeholder
+        store.commit(
+          layoutPaneClosed({
+            id: LAYOUT_SESSION_ID,
+            layoutTree: {
+              _tag: 'LeafNode' as const,
+              id: 'pane-empty',
+              paneType: 'terminal' as const,
+              terminalId: undefined,
+              workspaceId: undefined,
+            },
+            activePaneId: null,
+          })
+        )
+        hasSeeded.current = false
+      }
+    },
+    [
+      persistedLayoutTree,
+      initialLayout,
+      persistedActivePaneId,
+      store,
+      removeTerminal,
+    ]
+  )
+
+  /**
    * Reorder workspace frames by persisting an explicit workspace ID ordering.
    * Called when the user drag-and-drops workspace frames to rearrange them.
    */
@@ -1038,6 +1027,7 @@ function usePanelLayout() {
       assignTerminalToPane: handleAssignTerminalToPane,
       splitPane: handleSplitPane,
       closePane: handleClosePane,
+      closeWorkspace: handleCloseWorkspace,
       setActivePaneId: handleSetActivePaneId,
       toggleDiffPane: handleToggleDiffPane,
       toggleDevServerPane: handleToggleDevServerPane,
@@ -1049,6 +1039,7 @@ function usePanelLayout() {
       handleAssignTerminalToPane,
       handleSplitPane,
       handleClosePane,
+      handleCloseWorkspace,
       handleSetActivePaneId,
       handleToggleDiffPane,
       handleToggleDevServerPane,
@@ -1146,6 +1137,46 @@ function CloseTerminalDialog({
   )
 }
 
+/**
+ * Confirmation dialog shown when attempting to close a workspace that has
+ * terminals with running processes. Warns the user that all terminals in
+ * the workspace will be killed.
+ */
+function CloseWorkspaceDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+}: {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+  readonly onConfirm: () => void
+}) {
+  const handleConfirm = useCallback(() => {
+    onConfirm()
+    onOpenChange(false)
+  }, [onConfirm, onOpenChange])
+
+  return (
+    <AlertDialog onOpenChange={onOpenChange} open={open}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Close workspace?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This workspace has terminals with running processes. Closing the
+            workspace will kill all of them.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={handleConfirm}>
+            Close workspace
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
 function CloseAppDialog({
   open,
   onOpenChange,
@@ -1194,9 +1225,11 @@ function CloseAppDialog({
  */
 function WorkspaceFrameHeaderContainer({
   workspaceId,
+  subLayout,
   dragHandleRef,
 }: {
   readonly workspaceId: string | undefined
+  readonly subLayout: PanelNode
   readonly dragHandleRef?:
     | { readonly current: HTMLDivElement | null }
     | undefined
@@ -1204,22 +1237,24 @@ function WorkspaceFrameHeaderContainer({
   const store = useLaborerStore()
   const projectList = store.useQuery(allProjects$)
   const workspaceList = store.useQuery(allWorkspaces$)
-  const activePaneId = useActivePaneId()
+  const globalActivePaneId = useActivePaneId()
   const actions = usePanelActions()
-  const fullscreenPaneId = useFullscreenPaneId()
-  const isFullscreen = fullscreenPaneId !== null
 
-  const persistedRows = store.useQuery(persistedLayout$)
-  const persistedRow = persistedRows.find((row) => row.id === LAYOUT_SESSION_ID)
-  const layout = persistedRow?.layoutTree as PanelNode | undefined
+  // Scope the active pane to this workspace's sub-tree so header buttons
+  // always operate on a pane within their own workspace, not the globally
+  // focused one that may belong to a different workspace.
+  const scopedActivePaneId = useMemo(
+    () => getScopedActivePaneId(subLayout, globalActivePaneId),
+    [subLayout, globalActivePaneId]
+  )
 
   const diffIsOpen = useMemo(() => {
-    if (!(activePaneId && layout)) {
+    if (!scopedActivePaneId) {
       return false
     }
-    const node = findNodeById(layout, activePaneId)
+    const node = findNodeById(subLayout, scopedActivePaneId)
     return node?._tag === 'LeafNode' && node.diffOpen === true
-  }, [activePaneId, layout])
+  }, [scopedActivePaneId, subLayout])
 
   const workspaceData = useMemo(() => {
     if (!workspaceId) {
@@ -1267,17 +1302,17 @@ function WorkspaceFrameHeaderContainer({
   return (
     <WorkspaceFrameHeader
       actions={actions}
-      activePaneId={activePaneId}
+      activePaneId={scopedActivePaneId}
       branchName={workspaceData.branchName}
       diffIsOpen={diffIsOpen}
       dragHandleRef={dragHandleRef}
       isContainerized={workspaceData.isContainerized}
-      isFullscreen={isFullscreen}
       prNumber={workspaceData.prNumber}
       projectName={workspaceData.projectName}
       prState={workspaceData.prState}
       prTitle={workspaceData.prTitle}
       prUrl={workspaceData.prUrl}
+      workspaceId={workspaceId}
       workspaceStatus={workspaceData.workspaceStatus}
     />
   )
@@ -1369,6 +1404,7 @@ function WorkspaceFrame({
       )}
       <WorkspaceFrameHeaderContainer
         dragHandleRef={dragHandleRef}
+        subLayout={subLayout}
         workspaceId={workspaceId}
       />
       <div className="min-h-0 flex-1">
@@ -1680,15 +1716,52 @@ function HomeComponent() {
     [layout, gatedClosePane, panelActions]
   )
 
+  // Close-workspace confirmation dialog state
+  const [closeWorkspaceDialogOpen, setCloseWorkspaceDialogOpen] =
+    useState(false)
+  const pendingCloseWorkspaceIdRef = useRef<string | null>(null)
+
+  /**
+   * Gated closeWorkspace that checks if any terminal in the workspace has
+   * a running child process. Shows a confirmation dialog when there are
+   * active processes to prevent accidental loss of running work.
+   */
+  const gatedCloseWorkspace = useCallback(
+    (workspaceId: string) => {
+      if (shouldConfirmCloseWorkspace(layout, workspaceId, liveTerminals)) {
+        pendingCloseWorkspaceIdRef.current = workspaceId
+        setCloseWorkspaceDialogOpen(true)
+        return
+      }
+      panelActions.closeWorkspace(workspaceId)
+    },
+    [layout, liveTerminals, panelActions]
+  )
+
+  const handleConfirmCloseWorkspace = useCallback(() => {
+    const workspaceId = pendingCloseWorkspaceIdRef.current
+    if (workspaceId) {
+      panelActions.closeWorkspace(workspaceId)
+      pendingCloseWorkspaceIdRef.current = null
+    }
+  }, [panelActions])
+
   // Override panelActions.closePane with the gated version and add fullscreen toggle
   const gatedPanelActions = useMemo(
     () => ({
       ...panelActions,
       closePane: gatedClosePane,
       closeTerminalPane: gatedCloseTerminalPane,
+      closeWorkspace: gatedCloseWorkspace,
       toggleFullscreenPane,
     }),
-    [panelActions, gatedClosePane, gatedCloseTerminalPane, toggleFullscreenPane]
+    [
+      panelActions,
+      gatedClosePane,
+      gatedCloseTerminalPane,
+      gatedCloseWorkspace,
+      toggleFullscreenPane,
+    ]
   )
 
   // Sync running workspace count to Electron system tray tooltip (no-op in browser)
@@ -1802,6 +1875,11 @@ function HomeComponent() {
         onConfirm={handleConfirmCloseTerminal}
         onOpenChange={setCloseTerminalDialogOpen}
         open={closeTerminalDialogOpen}
+      />
+      <CloseWorkspaceDialog
+        onConfirm={handleConfirmCloseWorkspace}
+        onOpenChange={setCloseWorkspaceDialogOpen}
+        open={closeWorkspaceDialogOpen}
       />
       <CloseAppDialog
         onOpenChange={setIsCloseAppDialogOpen}

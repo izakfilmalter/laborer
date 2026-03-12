@@ -78,6 +78,7 @@ function HomeComponent() {
     leafPaneIds,
     isReconciling,
     liveTerminals,
+    refreshTerminals,
     workspaceOrder,
   } = usePanelLayout()
   const store = useLaborerStore()
@@ -121,19 +122,33 @@ function HomeComponent() {
    * Only shows the confirmation dialog when an actual program (e.g., vim,
    * dev server, opencode) is running inside the shell — not when the shell
    * is idle at a prompt.
+   *
+   * Forces a fresh `terminal.list` RPC call so the process state is
+   * up-to-date. Without this, a user who exits a process (Ctrl+C) and
+   * immediately closes the terminal (Cmd+W) would see a stale
+   * confirmation dialog because the 5-second poll hadn't refreshed yet.
    */
   const gatedClosePane = useCallback(
-    (paneId: string) => {
-      if (shouldConfirmClose(layout, paneId, liveTerminals)) {
-        // Terminal has an active child process — show confirmation dialog
-        pendingClosePaneIdRef.current = paneId
-        setCloseTerminalDialogOpen(true)
-        return
+    async (paneId: string) => {
+      try {
+        const freshTerminals = await refreshTerminals()
+        if (shouldConfirmClose(layout, paneId, freshTerminals)) {
+          pendingClosePaneIdRef.current = paneId
+          setCloseTerminalDialogOpen(true)
+          return
+        }
+      } catch {
+        // If the refresh fails, fall back to the cached poll data
+        if (shouldConfirmClose(layout, paneId, liveTerminals)) {
+          pendingClosePaneIdRef.current = paneId
+          setCloseTerminalDialogOpen(true)
+          return
+        }
       }
       // No active child process or no terminal — close immediately
       panelActions.closePane(paneId)
     },
-    [layout, liveTerminals, panelActions]
+    [layout, liveTerminals, refreshTerminals, panelActions]
   )
 
   const handleConfirmCloseTerminal = useCallback(() => {
@@ -174,17 +189,30 @@ function HomeComponent() {
    * Gated closeWorkspace that checks if any terminal in the workspace has
    * a running child process. Shows a confirmation dialog when there are
    * active processes to prevent accidental loss of running work.
+   *
+   * Forces a fresh `terminal.list` RPC call for the same reason as
+   * gatedClosePane — see its comment for details.
    */
   const gatedCloseWorkspace = useCallback(
-    (workspaceId: string) => {
-      if (shouldConfirmCloseWorkspace(layout, workspaceId, liveTerminals)) {
-        pendingCloseWorkspaceIdRef.current = workspaceId
-        setCloseWorkspaceDialogOpen(true)
-        return
+    async (workspaceId: string) => {
+      try {
+        const freshTerminals = await refreshTerminals()
+        if (shouldConfirmCloseWorkspace(layout, workspaceId, freshTerminals)) {
+          pendingCloseWorkspaceIdRef.current = workspaceId
+          setCloseWorkspaceDialogOpen(true)
+          return
+        }
+      } catch {
+        // If the refresh fails, fall back to the cached poll data
+        if (shouldConfirmCloseWorkspace(layout, workspaceId, liveTerminals)) {
+          pendingCloseWorkspaceIdRef.current = workspaceId
+          setCloseWorkspaceDialogOpen(true)
+          return
+        }
       }
       panelActions.closeWorkspace(workspaceId)
     },
-    [layout, liveTerminals, panelActions]
+    [layout, liveTerminals, refreshTerminals, panelActions]
   )
 
   const handleConfirmCloseWorkspace = useCallback(() => {

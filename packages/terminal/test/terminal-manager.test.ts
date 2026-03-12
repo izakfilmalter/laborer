@@ -857,4 +857,112 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
       })
     )
   })
+
+  // -------------------------------------------------------------------------
+  // Foreground process detection
+  // -------------------------------------------------------------------------
+
+  it('listTerminals() detects foregroundProcess for a running child process', async () => {
+    // Spawn 'cat' which blocks on stdin — it becomes the foreground process.
+    // The shell runs 'cat' via `sh -c cat`, so the process tree is:
+    // sh -> cat
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Give cat time to start and shell PID to be set
+    await delay(1000)
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.isDefined(terminal?.foregroundProcess)
+    // cat is not in our known processes list, so it should be 'unknown'
+    assert.strictEqual(terminal?.foregroundProcess?.category, 'unknown')
+    assert.strictEqual(terminal?.foregroundProcess?.rawName, 'cat')
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('listTerminals() returns null foregroundProcess for stopped terminals', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'echo "done"',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Wait for the echo to finish and terminal to stop
+    await delay(2000)
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.status, 'stopped')
+    assert.strictEqual(terminal?.foregroundProcess, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.remove(result.id)
+      })
+    )
+  })
+
+  it('spawn() returns foregroundProcess as null initially', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // spawn() returns immediately before the process tree is established
+    assert.strictEqual(result.foregroundProcess, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
 })

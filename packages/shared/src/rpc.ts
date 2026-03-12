@@ -552,6 +552,40 @@ export class LaborerRpcs extends RpcGroup.make(
 // ---------------------------------------------------------------------------
 
 /**
+ * Category of a detected foreground process.
+ *
+ * - `agent` — AI coding agents (claude, opencode, codex, aider, etc.)
+ * - `editor` — Text editors (vim, nvim, nano, emacs, helix, etc.)
+ * - `devServer` — Dev servers, runtimes, build tools (node, bun, python, etc.)
+ * - `shell` — The shell itself (zsh, bash, fish) — means idle at prompt
+ * - `unknown` — A process is running but not in the known list
+ */
+export const ProcessCategorySchema = Schema.Literal(
+  'agent',
+  'editor',
+  'devServer',
+  'shell',
+  'unknown'
+)
+
+export type ProcessCategory = typeof ProcessCategorySchema.Type
+
+/**
+ * Information about the foreground process running in a terminal.
+ * Used by the sidebar to show what's actually happening in each terminal.
+ */
+export const ForegroundProcessSchema = Schema.Struct({
+  /** The category of the detected process. */
+  category: ProcessCategorySchema,
+  /** Human-readable label for display (e.g., "Claude", "vim", "Node.js"). */
+  label: Schema.String,
+  /** Raw process name from ps (e.g., "claude", "nvim", "node"). */
+  rawName: Schema.String,
+})
+
+export type ForegroundProcess = typeof ForegroundProcessSchema.Type
+
+/**
  * Information about a single terminal instance, returned by spawn, restart,
  * and list operations. Includes the opaque `workspaceId` metadata that the
  * caller passed at spawn time.
@@ -562,6 +596,11 @@ export const TerminalInfo = Schema.Struct({
   command: Schema.String,
   args: Schema.Array(Schema.String),
   cwd: Schema.String,
+  /**
+   * Information about the foreground process running in the terminal.
+   * Null when the shell is idle at a prompt or the terminal is stopped.
+   */
+  foregroundProcess: Schema.NullOr(ForegroundProcessSchema),
   /**
    * Whether the shell has child processes running (e.g., vim, dev server,
    * opencode). False when the shell is idle at a prompt. Used by the UI

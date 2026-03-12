@@ -19,11 +19,26 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 
+/** Category of a detected foreground process. */
+type ProcessCategory = 'agent' | 'editor' | 'devServer' | 'shell' | 'unknown'
+
+/** Information about the foreground process running in a terminal. */
+interface ForegroundProcess {
+  readonly category: ProcessCategory
+  readonly label: string
+  readonly rawName: string
+}
+
 /** Shape of a terminal from the terminal service's terminal.list RPC. */
 interface TerminalInfo {
   readonly args: readonly string[]
   readonly command: string
   readonly cwd: string
+  /**
+   * Information about the foreground process running in the terminal.
+   * Null when the shell is idle at a prompt or the terminal is stopped.
+   */
+  readonly foregroundProcess: ForegroundProcess | null
   /**
    * Whether the shell has child processes running (e.g., vim, dev server,
    * opencode). False when the shell is idle at a prompt.
@@ -118,4 +133,9 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
 }
 
 export { useTerminalList }
-export type { TerminalInfo, TerminalServiceStatus }
+export type {
+  ForegroundProcess,
+  ProcessCategory,
+  TerminalInfo,
+  TerminalServiceStatus,
+}

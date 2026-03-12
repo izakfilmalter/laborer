@@ -488,5 +488,79 @@ describe(
         assert.strictEqual(spawnedEvent.status, 'running')
       }
     })
+
+    // -----------------------------------------------------------------------
+    // foregroundProcess in terminal.list and terminal.spawn
+    // -----------------------------------------------------------------------
+
+    it('terminal.list includes foregroundProcess field through the RPC schema', async () => {
+      // Spawn 'cat' which blocks on stdin — the shell execs into cat
+      const terminal = await run(
+        client.terminal.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      )
+
+      // Give the process time to start
+      await delay(1000)
+
+      const terminals = await run(client.terminal.list())
+      const found = terminals.find((t) => t.id === terminal.id)
+
+      assert.isDefined(found)
+      // foregroundProcess should be present in the schema response
+      assert.isDefined(found?.foregroundProcess)
+      assert.strictEqual(found?.foregroundProcess?.rawName, 'cat')
+      assert.strictEqual(found?.foregroundProcess?.category, 'unknown')
+      assert.strictEqual(typeof found?.foregroundProcess?.label, 'string')
+
+      await run(client.terminal.kill({ id: terminal.id }))
+    })
+
+    it('terminal.spawn returns foregroundProcess as null initially', async () => {
+      const terminal = await run(
+        client.terminal.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      )
+
+      // spawn() returns before process tree is fully established
+      assert.strictEqual(terminal.foregroundProcess, null)
+
+      await delay(500)
+      await run(client.terminal.kill({ id: terminal.id }))
+    })
+
+    it('terminal.list returns null foregroundProcess for stopped terminals', async () => {
+      const terminal = await run(
+        client.terminal.spawn({
+          command: 'echo "rpc-fg-stopped"',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      )
+
+      // Wait for echo to finish
+      await delay(2000)
+
+      const terminals = await run(client.terminal.list())
+      const found = terminals.find((t) => t.id === terminal.id)
+
+      assert.isDefined(found)
+      assert.strictEqual(found?.status, 'stopped')
+      assert.strictEqual(found?.foregroundProcess, null)
+
+      await run(client.terminal.remove({ id: terminal.id }))
+    })
   }
 )

@@ -51,7 +51,7 @@ const createMockFileWatcher = () => {
         const sub: MockSubscription = {
           onChange,
           onError,
-          options,
+          ...(options !== undefined ? { options } : {}),
           closed: false,
         }
         const existing = subscriptions.get(path) ?? []

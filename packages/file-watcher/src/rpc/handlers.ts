@@ -12,7 +12,7 @@
  * @see PRD-file-watcher-extraction.md
  */
 
-import { FileWatcherRpcError, FileWatcherRpcs } from '@laborer/shared/rpc'
+import { FileWatcherRpcs } from '@laborer/shared/rpc'
 import { Effect, Stream } from 'effect'
 import { WatcherManager } from '../services/watcher-manager.js'
 
@@ -31,46 +31,19 @@ export const FileWatcherRpcsLive = FileWatcherRpcs.toLayer(
             path: sub.path,
             recursive: sub.recursive,
             ignoreGlobs: [...sub.ignoreGlobs],
-          })),
-          Effect.catchAll((error) =>
-            Effect.fail(
-              new FileWatcherRpcError({
-                message: String(error),
-                code: 'SUBSCRIBE_FAILED',
-              })
-            )
-          )
+          }))
         ),
 
       // -------------------------------------------------------------------
       // watcher.unsubscribe — stop watching by subscription ID
       // -------------------------------------------------------------------
-      'watcher.unsubscribe': ({ id }) =>
-        wm.unsubscribe(id).pipe(
-          Effect.catchAll((error) =>
-            Effect.fail(
-              new FileWatcherRpcError({
-                message: String(error),
-                code: 'NOT_FOUND',
-              })
-            )
-          )
-        ),
+      'watcher.unsubscribe': ({ id }) => wm.unsubscribe(id),
 
       // -------------------------------------------------------------------
       // watcher.updateIgnore — update ignore patterns
       // -------------------------------------------------------------------
       'watcher.updateIgnore': ({ id, ignoreGlobs }) =>
-        wm.updateIgnore(id, ignoreGlobs).pipe(
-          Effect.catchAll((error) =>
-            Effect.fail(
-              new FileWatcherRpcError({
-                message: String(error),
-                code: 'NOT_FOUND',
-              })
-            )
-          )
-        ),
+        wm.updateIgnore(id, ignoreGlobs),
 
       // -------------------------------------------------------------------
       // watcher.list — list all active subscriptions

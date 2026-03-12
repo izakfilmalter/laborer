@@ -164,7 +164,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
       for (let index = 0; index < 10; index += 1) {
         emitEvent.current({
           subscriptionId: gitSubId,
-          type: 'rename',
+          type: 'add',
           fileName: 'worktrees/feature',
           absolutePath: '/virtual/repo/.git/worktrees/feature',
         })
@@ -439,7 +439,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
       // Fire events after scope shutdown — should be ignored
       emitEvent.current({
         subscriptionId: gitSubId,
-        type: 'rename',
+        type: 'add',
         fileName: 'worktrees/late',
         absolutePath: '/virtual/repo/.git/worktrees/late',
       })
@@ -594,7 +594,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
 
         emitEvent.current({
           subscriptionId: gitSubId,
-          type: 'rename',
+          type: 'add',
           fileName: 'worktrees/my-feature',
           absolutePath: '/virtual/repo/.git/worktrees/my-feature',
         })

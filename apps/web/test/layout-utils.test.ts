@@ -21,6 +21,7 @@ import {
   findNodeById,
   findSiblingPaneId,
   getFirstLeafId,
+  getLastLeafId,
   getLeafIds,
   getLeafNodes,
   getWorkspaceIds,
@@ -300,6 +301,32 @@ describe('getFirstLeafId', () => {
 
   it('returns the DFS-first leaf for a deeply nested layout', () => {
     expect(getFirstLeafId(deeplyNested)).toBe('pane-A')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: getLastLeafId
+// ---------------------------------------------------------------------------
+
+describe('getLastLeafId', () => {
+  it('returns the leaf ID for a single leaf', () => {
+    expect(getLastLeafId(singleLeaf)).toBe('pane-A')
+  })
+
+  it('returns the last child for a flat split', () => {
+    expect(getLastLeafId(twoChildSplit)).toBe('pane-B')
+  })
+
+  it('returns the last child for a 3-child split', () => {
+    expect(getLastLeafId(threeChildSplit)).toBe('pane-C')
+  })
+
+  it('returns the DFS-last leaf for a nested layout', () => {
+    expect(getLastLeafId(nestedLayout)).toBe('pane-D')
+  })
+
+  it('returns the DFS-last leaf for a deeply nested layout', () => {
+    expect(getLastLeafId(deeplyNested)).toBe('pane-E')
   })
 })
 

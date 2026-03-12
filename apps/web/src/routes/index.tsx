@@ -1,4 +1,4 @@
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import {
   layoutPaneAssigned,
   layoutPaneClosed,
@@ -18,14 +18,7 @@ import {
   PanelLeftOpen,
   Terminal,
 } from 'lucide-react'
-import {
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PanelImperativeHandle } from 'react-resizable-panels'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
@@ -87,9 +80,11 @@ import {
   findSiblingPaneId,
   generateId,
   getFirstLeafId,
+  getLastLeafId,
   getLeafIds,
   getLeafNodes,
   getStaleTerminalLeaves,
+  getTerminalIdsToRemove,
   getWorkspaceIds,
   reconcileLayout,
   replaceNode,
@@ -143,28 +138,6 @@ const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
 
 /** Mutation atom for removing terminals via the terminal service's terminal.remove RPC. */
 const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
-
-/**
- * Health check query atom — subscribes to the server's health.check RPC.
- * Returns a Result<HealthCheckResponse, RpcError>.
- */
-// biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
-const healthCheck$ = LaborerClient.query('health.check', undefined as void)
-
-function HealthCheckStatus() {
-  const result = useAtomValue(healthCheck$)
-  if (result._tag === 'Initial' || result.waiting) {
-    return <span className="text-muted-foreground">connecting...</span>
-  }
-  if (result._tag === 'Failure') {
-    return <span className="text-destructive">disconnected</span>
-  }
-  return (
-    <span className="text-success">
-      connected (uptime: {Math.round(result.value.uptime)}s)
-    </span>
-  )
-}
 
 /** LiveStore query for projects (used by PanelHeaderBar to resolve names). */
 const allProjects$ = queryDb(projects, { label: 'headerProjects' })
@@ -576,9 +549,14 @@ function usePanelLayout() {
         return
       }
 
-      // Closing a pane only removes it from the layout tree. The terminal
-      // process stays alive and remains in the sidebar terminal list so the
-      // user can re-attach it to another pane later.
+      // Kill terminal processes associated with the pane being closed.
+      // You shouldn't have running terminals that aren't in a pane.
+      const terminalIds = getTerminalIdsToRemove(base, paneId)
+      for (const terminalId of terminalIds) {
+        removeTerminal({ payload: { id: terminalId } }).catch((error) => {
+          console.warn('[close-pane] terminal remove failed:', error)
+        })
+      }
 
       // Compute the sibling BEFORE the close mutation removes the pane.
       // This ensures we can find the correct sibling in the original tree.
@@ -630,7 +608,13 @@ function usePanelLayout() {
         hasSeeded.current = false
       }
     },
-    [persistedLayoutTree, initialLayout, persistedActivePaneId, store]
+    [
+      persistedLayoutTree,
+      initialLayout,
+      persistedActivePaneId,
+      store,
+      removeTerminal,
+    ]
   )
 
   const handleSetActivePaneId = useCallback(
@@ -760,10 +744,12 @@ function usePanelLayout() {
         return
       }
 
-      // No empty pane — split the first leaf and assign to the new pane
-      const leafIds = getLeafIds(base)
-      const firstLeafId = leafIds[0]
-      if (firstLeafId) {
+      // No empty pane — split the last leaf and assign to the new pane.
+      // Splitting the last leaf (instead of the first) ensures the new
+      // workspace panel appears at the bottom of the workspace stack,
+      // because workspace frame order follows DFS traversal order.
+      const lastLeafId = getLastLeafId(base)
+      if (lastLeafId) {
         const newPaneContent: Partial<LeafNode> = {
           paneType: 'terminal' as const,
           terminalId,
@@ -771,7 +757,7 @@ function usePanelLayout() {
         }
         const newTree = splitPane(
           base,
-          firstLeafId,
+          lastLeafId,
           'horizontal',
           newPaneContent
         )
@@ -1110,8 +1096,8 @@ function CloseTerminalDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Close terminal?</AlertDialogTitle>
           <AlertDialogDescription>
-            This terminal has a running process. Closing the pane will leave the
-            process running in the background.
+            This terminal has a running process. Closing the pane will kill the
+            process.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -1707,19 +1693,6 @@ function HomeComponent() {
                   )}
               </div>
             </ScrollArea>
-            {/* Server Status — sticky footer, always visible outside scroll area */}
-            <section className="shrink-0 border-t p-3">
-              <h2 className="mb-1 font-medium text-sm">Server Status</h2>
-              <p className="text-xs">
-                <Suspense
-                  fallback={
-                    <span className="text-muted-foreground">loading...</span>
-                  }
-                >
-                  <HealthCheckStatus />
-                </Suspense>
-              </p>
-            </section>
           </div>
         </ResizablePanel>
 

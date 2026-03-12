@@ -1,4 +1,3 @@
-import { Link } from '@tanstack/react-router'
 import { RotateCcw } from 'lucide-react'
 import { useCallback } from 'react'
 
@@ -10,6 +9,7 @@ import {
 } from '@/components/ui/tooltip'
 import { isElectron } from '@/lib/desktop'
 
+import { HealthCheckStatus } from './health-check-status'
 import { ModeToggle } from './mode-toggle'
 
 function ResetButton() {
@@ -33,7 +33,6 @@ function ResetButton() {
 }
 
 export default function Header() {
-  const links = [{ to: '/', label: 'Home' }] as const
   const electron = isElectron()
 
   return (
@@ -43,16 +42,11 @@ export default function Header() {
           electron ? 'h-[52px] pl-[80px]' : 'py-1'
         }`}
       >
-        <nav className="flex gap-4 text-lg">
-          {links.map(({ to, label }) => {
-            return (
-              <Link key={to} to={to}>
-                {label}
-              </Link>
-            )
-          })}
-        </nav>
+        <span className="font-medium text-lg">laborer</span>
         <div className="flex items-center gap-2">
+          <span className="text-xs">
+            <HealthCheckStatus />
+          </span>
           <ResetButton />
           <ModeToggle />
         </div>

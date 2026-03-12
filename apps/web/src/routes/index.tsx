@@ -32,7 +32,6 @@ import {
 } from 'react'
 import type { PanelImperativeHandle } from 'react-resizable-panels'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { AddProjectForm } from '@/components/add-project-form'
 import { CreatePlanWorkspace } from '@/components/create-plan-workspace'
 import { PlanEditor } from '@/components/plan-editor'
@@ -85,6 +84,7 @@ import {
   filterTreeByWorkspace,
   findEmptyTerminalPane,
   findLeafByTerminalId,
+  findNewLeafAfterSplit,
   findNodeById,
   findSiblingPaneId,
   generateId,
@@ -95,6 +95,7 @@ import {
   getWorkspaceIds,
   reconcileLayout,
   replaceNode,
+  shouldConfirmClose,
   splitPane,
 } from '@/panels/layout-utils'
 import {
@@ -140,9 +141,6 @@ const persistedLayout$ = queryDb(panelLayout, {
 
 /** Mutation atom for spawning terminals via the server's terminal.spawn RPC. */
 const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
-
-/** Mutation atom for removing terminals via the terminal service's terminal.remove RPC. */
-const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
 
 /**
  * Health check query atom — subscribes to the server's health.check RPC.
@@ -424,9 +422,6 @@ function usePanelLayout() {
   const spawnTerminal = useAtomSet(spawnTerminalMutation, {
     mode: 'promise',
   })
-  const removeTerminal = useAtomSet(removeTerminalMutation, {
-    mode: 'promise',
-  })
   // Start as "reconciling" when a persisted layout exists — this prevents
   // rendering TerminalPane components with potentially stale terminal IDs
   // before we've checked them against the live terminal service.
@@ -517,12 +512,22 @@ function usePanelLayout() {
     store,
   ])
 
+  /**
+   * Ref to hold the latest `handleAssignTerminalToPane` callback.
+   * Used by `handleSplitPane` to assign a newly spawned terminal
+   * without creating a circular useCallback dependency.
+   */
+  const assignTerminalToPaneRef = useRef<
+    ((terminalId: string, workspaceId: string, paneId?: string) => void) | null
+  >(null)
+
   const handleSplitPane = useCallback(
     (paneId: string, direction: 'horizontal' | 'vertical') => {
       const base = persistedLayoutTree ?? initialLayout
       if (!base) {
         return
       }
+
       const newTree = splitPane(base, paneId, direction)
       store.commit(
         layoutSplit({
@@ -531,8 +536,31 @@ function usePanelLayout() {
           activePaneId: persistedActivePaneId,
         })
       )
+
+      // Find the newly created pane via leaf-diffing
+      const newLeaf = findNewLeafAfterSplit(base, newTree)
+      if (!newLeaf?.workspaceId) {
+        return
+      }
+
+      // Auto-spawn a terminal in the new pane
+      const wsId = newLeaf.workspaceId
+      const newPaneId = newLeaf.id
+      spawnTerminal({ payload: { workspaceId: wsId } })
+        .then((result) => {
+          assignTerminalToPaneRef.current?.(result.id, wsId, newPaneId)
+        })
+        .catch((error) => {
+          console.warn('[split-pane] auto-spawn failed:', error)
+        })
     },
-    [persistedLayoutTree, initialLayout, persistedActivePaneId, store]
+    [
+      persistedLayoutTree,
+      initialLayout,
+      persistedActivePaneId,
+      store,
+      spawnTerminal,
+    ]
   )
 
   const handleClosePane = useCallback(
@@ -542,16 +570,9 @@ function usePanelLayout() {
         return
       }
 
-      // Look up the terminal in this pane BEFORE closing, so we can remove
-      // it from the terminal service (making it disappear from the sidebar).
-      const closingNode = findNodeById(base, paneId)
-      if (closingNode?._tag === 'LeafNode' && closingNode.terminalId) {
-        removeTerminal({ payload: { id: closingNode.terminalId } }).catch(
-          (error) => {
-            console.warn('[close-pane] terminal remove failed:', error)
-          }
-        )
-      }
+      // Closing a pane only removes it from the layout tree. The terminal
+      // process stays alive and remains in the sidebar terminal list so the
+      // user can re-attach it to another pane later.
 
       // Compute the sibling BEFORE the close mutation removes the pane.
       // This ensures we can find the correct sibling in the original tree.
@@ -603,13 +624,7 @@ function usePanelLayout() {
         hasSeeded.current = false
       }
     },
-    [
-      persistedLayoutTree,
-      initialLayout,
-      persistedActivePaneId,
-      store,
-      removeTerminal,
-    ]
+    [persistedLayoutTree, initialLayout, persistedActivePaneId, store]
   )
 
   const handleSetActivePaneId = useCallback(
@@ -771,6 +786,11 @@ function usePanelLayout() {
       commitAssignment,
     ]
   )
+
+  // Keep the assign-terminal ref in sync with the latest handler
+  useEffect(() => {
+    assignTerminalToPaneRef.current = handleAssignTerminalToPane
+  }, [handleAssignTerminalToPane])
 
   /**
    * Resize a pane in the given direction by adjusting the parent split's
@@ -1425,25 +1445,20 @@ function HomeComponent() {
   const pendingClosePaneIdRef = useRef<string | null>(null)
 
   /**
-   * Gated closePane that checks if the terminal has a running process.
-   * If running, shows a confirmation dialog. Otherwise closes immediately.
+   * Gated closePane that checks if the terminal has a running child process.
+   * Only shows the confirmation dialog when an actual program (e.g., vim,
+   * dev server, opencode) is running inside the shell — not when the shell
+   * is idle at a prompt.
    */
   const gatedClosePane = useCallback(
     (paneId: string) => {
-      // Resolve the leaf node to get its terminalId
-      if (layout) {
-        const node = findNodeById(layout, paneId)
-        if (node && node._tag === 'LeafNode' && node.terminalId) {
-          const terminal = liveTerminals.find((t) => t.id === node.terminalId)
-          if (terminal && terminal.status === 'running') {
-            // Terminal is running — show confirmation dialog
-            pendingClosePaneIdRef.current = paneId
-            setCloseTerminalDialogOpen(true)
-            return
-          }
-        }
+      if (shouldConfirmClose(layout, paneId, liveTerminals)) {
+        // Terminal has an active child process — show confirmation dialog
+        pendingClosePaneIdRef.current = paneId
+        setCloseTerminalDialogOpen(true)
+        return
       }
-      // Terminal is stopped or no terminal — close immediately
+      // No active child process or no terminal — close immediately
       panelActions.closePane(paneId)
     },
     [layout, liveTerminals, panelActions]
@@ -1578,7 +1593,10 @@ function HomeComponent() {
         onOpenChange={setIsCloseAppDialogOpen}
         open={isCloseAppDialogOpen}
       />
-      <ResizablePanelGroup orientation="horizontal" style={{height: 'calc(100vh - 53px)'}}>
+      <ResizablePanelGroup
+        orientation="horizontal"
+        style={{ height: 'calc(100vh - 53px)' }}
+      >
         {/* Sidebar — search, project groups, workspace list, health check */}
         <ResizablePanel
           collapsedSize="0%"

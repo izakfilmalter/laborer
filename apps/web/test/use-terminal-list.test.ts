@@ -41,6 +41,7 @@ const TERMINAL_A = {
   command: '/bin/zsh',
   args: [],
   cwd: '/home/user/project',
+  hasChildProcess: false,
   status: 'running' as const,
 }
 
@@ -50,6 +51,7 @@ const TERMINAL_B = {
   command: 'npm run dev',
   args: [],
   cwd: '/home/user/other',
+  hasChildProcess: false,
   status: 'stopped' as const,
 }
 

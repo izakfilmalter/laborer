@@ -176,4 +176,106 @@ describe('getTerminalDisplay', () => {
 
     expect(result.badgeLabel).toBe('stopped')
   })
+
+  // -------------------------------------------------------------------------
+  // Process chain display
+  // -------------------------------------------------------------------------
+
+  it('shows root process label when chain has a single entry', () => {
+    const opencode = {
+      category: 'agent' as const,
+      label: 'OpenCode',
+      rawName: 'opencode',
+    }
+    const result = getTerminalDisplay('/bin/zsh', opencode, true, 'active', [
+      opencode,
+    ])
+
+    expect(result.label).toBe('OpenCode')
+    expect(result.badgeLabel).toBe('agent')
+  })
+
+  it('shows chain label with separator when agent spawns a subprocess', () => {
+    const opencode = {
+      category: 'agent' as const,
+      label: 'OpenCode',
+      rawName: 'opencode',
+    }
+    const biome = {
+      category: 'unknown' as const,
+      label: 'biome',
+      rawName: 'biome',
+    }
+    const result = getTerminalDisplay('/bin/zsh', biome, true, null, [
+      opencode,
+      biome,
+    ])
+
+    expect(result.label).toBe('OpenCode \u203A biome')
+    expect(result.badgeLabel).toBe('running')
+  })
+
+  it('shows multi-level chain label for deeply nested subprocesses', () => {
+    const opencode = {
+      category: 'agent' as const,
+      label: 'OpenCode',
+      rawName: 'opencode',
+    }
+    const node = {
+      category: 'devServer' as const,
+      label: 'Node.js',
+      rawName: 'node',
+    }
+    const esbuild = {
+      category: 'unknown' as const,
+      label: 'esbuild',
+      rawName: 'esbuild',
+    }
+    const result = getTerminalDisplay('/bin/zsh', esbuild, true, null, [
+      opencode,
+      node,
+      esbuild,
+    ])
+
+    expect(result.label).toBe('OpenCode \u203A Node.js \u203A esbuild')
+  })
+
+  it('uses root process icon when chain has multiple entries', () => {
+    const claude = {
+      category: 'agent' as const,
+      label: 'Claude',
+      rawName: 'claude',
+    }
+    const biome = {
+      category: 'unknown' as const,
+      label: 'biome',
+      rawName: 'biome',
+    }
+    // Badge comes from the deepest process (unknown -> running)
+    const result = getTerminalDisplay('/bin/zsh', biome, true, null, [
+      claude,
+      biome,
+    ])
+
+    expect(result.label).toBe('Claude \u203A biome')
+    expect(result.badgeLabel).toBe('running')
+  })
+
+  it('shows root process label when waiting_for_input with a process chain', () => {
+    const opencode = {
+      category: 'agent' as const,
+      label: 'OpenCode',
+      rawName: 'opencode',
+    }
+    const result = getTerminalDisplay(
+      '/bin/zsh',
+      null,
+      true,
+      'waiting_for_input',
+      [opencode]
+    )
+
+    expect(result.label).toBe('OpenCode')
+    expect(result.badgeLabel).toBe('needs input')
+  })
 })

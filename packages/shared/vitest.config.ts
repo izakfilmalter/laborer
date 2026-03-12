@@ -5,9 +5,10 @@ export default defineConfig({
     include: ['test/**/*.test.ts'],
     testTimeout: 30_000,
     hookTimeout: 30_000,
+    pool: 'threads',
     poolOptions: {
-      forks: {
-        maxForks: 3,
+      threads: {
+        maxThreads: 3,
       },
     },
     server: {

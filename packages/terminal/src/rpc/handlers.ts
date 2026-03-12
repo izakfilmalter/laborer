@@ -105,6 +105,11 @@ const toTerminalInfo = (record: {
   } | null
   readonly hasChildProcess: boolean
   readonly id: string
+  readonly processChain: readonly {
+    readonly category: 'agent' | 'editor' | 'devServer' | 'shell' | 'unknown'
+    readonly label: string
+    readonly rawName: string
+  }[]
   readonly status: 'running' | 'stopped'
   readonly workspaceId: string
 }) => ({
@@ -116,6 +121,7 @@ const toTerminalInfo = (record: {
   agentStatus: record.agentStatus,
   foregroundProcess: record.foregroundProcess,
   hasChildProcess: record.hasChildProcess,
+  processChain: [...record.processChain],
   status: record.status,
 })
 

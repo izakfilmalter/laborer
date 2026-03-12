@@ -779,6 +779,12 @@ export const TerminalInfo = Schema.Struct({
    * to decide whether to show a close confirmation dialog.
    */
   hasChildProcess: Schema.Boolean,
+  /**
+   * Classified processes along the tree from the shell's first child
+   * down to the deepest leaf. Used by the UI to show the full chain,
+   * e.g. "OpenCode › biome". Empty when the shell is idle or stopped.
+   */
+  processChain: Schema.Array(ForegroundProcessSchema),
   status: TerminalStatus,
 })
 

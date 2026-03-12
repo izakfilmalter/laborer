@@ -1188,6 +1188,35 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           // validation, setup scripts, and optional container setup.
           // Progress is communicated via worktreeSetupStepChanged events.
           const worktreeSetupEffect = Effect.gen(function* () {
+            // Phase 0: Wait for any in-flight destroy cleanup that targets
+            // the same worktree path. When the user destroys a workspace
+            // and immediately creates a new one for the same branch, the
+            // old destroy's background fiber (git worktree remove, git
+            // branch -D) races with this setup fiber. We poll until no
+            // 'destroyed' workspace exists at this path — the row is
+            // deleted as the last step of the destroy fiber, so its
+            // absence means cleanup is complete.
+            const maxWaitAttempts = 100
+            for (let i = 0; i < maxWaitAttempts; i++) {
+              const conflicting = (
+                store.query(
+                  tables.workspaces.where('projectId', projectId)
+                ) as readonly WorkspaceRecord[]
+              ).find(
+                (w) =>
+                  w.id !== id &&
+                  w.worktreePath === worktreePath &&
+                  w.status === 'destroyed'
+              )
+              if (conflicting === undefined) {
+                break
+              }
+              yield* Effect.logDebug(
+                `Waiting for in-flight destroy of workspace ${conflicting.id} at ${worktreePath}`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+              yield* Effect.sleep('100 millis')
+            }
+
             // Phase 1: Create and validate worktree, run setup scripts
             const baseSha = yield* performWorktreeSetup({
               id,

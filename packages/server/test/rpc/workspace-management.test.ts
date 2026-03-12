@@ -315,4 +315,121 @@ describe('LaborerRpcs workspace management', () => {
         })
       )
   )
+
+  it.scopedLive(
+    'workspace.create succeeds for a branch whose previous workspace was just destroyed',
+    () =>
+      runWithRpcTestContext(({ client, store }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
+
+          const repoPath = initRepo('rpc-recreate-after-destroy', tempRoots)
+          const worktreeRoot = createTempDir(
+            'rpc-recreate-after-destroy-root',
+            tempRoots
+          )
+          const branchName = 'feature/rpc-recreate'
+
+          writeLaborerConfig(repoPath, {
+            worktreeDir: worktreeRoot,
+            devServer: { image: null },
+          })
+          git('add laborer.json', repoPath)
+          git('commit -m "add laborer config"', repoPath)
+
+          const project = yield* client.project.add({ repoPath })
+
+          // 1. Create the first workspace and wait for it to be running
+          const first = yield* client.workspace.create({
+            branchName,
+            projectId: project.id,
+          })
+
+          yield* Effect.gen(function* () {
+            const maxAttempts = 200
+            for (let i = 0; i < maxAttempts; i++) {
+              yield* Effect.sleep('100 millis')
+              const rows = store.query(tables.workspaces.where('id', first.id))
+              const row = rows[0]
+              if (row === undefined) {
+                return assert.fail(
+                  'First workspace row deleted — setup errored and rolled back'
+                )
+              }
+              if (row.status === 'errored') {
+                return assert.fail(
+                  `First workspace errored (worktreeSetupStep=${row.worktreeSetupStep})`
+                )
+              }
+              if (row.status === 'running') {
+                return
+              }
+            }
+            assert.fail(
+              'Timed out waiting for first workspace to reach running'
+            )
+          })
+
+          // 2. Destroy the first workspace — do NOT wait for background
+          //    cleanup to finish. This is the real-world scenario: the
+          //    user destroys a workspace and immediately creates a new one
+          //    for the same branch.
+          yield* client.workspace.destroy({
+            workspaceId: first.id,
+            force: true,
+          })
+
+          // 3. Immediately create a second workspace for the same branch.
+          //    The old destroy's background fiber is still running
+          //    (git worktree remove, git branch -D, etc.) — the create
+          //    must not race with it.
+          const second = yield* client.workspace.create({
+            branchName,
+            projectId: project.id,
+          })
+
+          assert.notStrictEqual(second.id, first.id)
+          assert.strictEqual(second.branchName, branchName)
+          assert.strictEqual(second.status, 'creating')
+
+          // 4. Wait for the second workspace to reach 'running'
+          yield* Effect.gen(function* () {
+            const maxAttempts = 200
+            for (let i = 0; i < maxAttempts; i++) {
+              yield* Effect.sleep('100 millis')
+              const rows = store.query(tables.workspaces.where('id', second.id))
+              const row = rows[0]
+              if (row === undefined) {
+                return assert.fail(
+                  'Second workspace row deleted — setup likely raced with destroy cleanup'
+                )
+              }
+              if (row.status === 'errored') {
+                return assert.fail(
+                  `Second workspace errored (worktreeSetupStep=${row.worktreeSetupStep})`
+                )
+              }
+              if (row.status === 'running') {
+                return
+              }
+            }
+            assert.fail(
+              'Timed out waiting for second workspace to reach running'
+            )
+          })
+
+          // 5. Verify the second workspace is healthy
+          assert.isTrue(existsSync(second.worktreePath))
+
+          const finalRows = store.query(
+            tables.workspaces.where('id', second.id)
+          )
+          assert.strictEqual(finalRows.length, 1)
+          assert.strictEqual(finalRows[0]?.status, 'running')
+        })
+      )
+  )
 })

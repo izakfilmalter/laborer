@@ -205,8 +205,9 @@ export function registerIpcHandlers(
 ): void {
   // -- Folder picker -------------------------------------------------------
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL)
-  ipcMain.handle(PICK_FOLDER_CHANNEL, async () => {
-    const owner = BrowserWindow.getFocusedWindow() ?? getFallbackWindow()
+  ipcMain.handle(PICK_FOLDER_CHANNEL, async (event) => {
+    const owner =
+      BrowserWindow.fromWebContents(event.sender) ?? getFallbackWindow()
     const options: OpenDialogOptions = {
       properties: ['openDirectory', 'createDirectory'],
     }
@@ -221,11 +222,12 @@ export function registerIpcHandlers(
 
   // -- Confirm dialog ------------------------------------------------------
   ipcMain.removeHandler(CONFIRM_CHANNEL)
-  ipcMain.handle(CONFIRM_CHANNEL, async (_event, message: unknown) => {
+  ipcMain.handle(CONFIRM_CHANNEL, async (event, message: unknown) => {
     if (typeof message !== 'string') {
       return false
     }
-    const owner = BrowserWindow.getFocusedWindow() ?? getFallbackWindow()
+    const owner =
+      BrowserWindow.fromWebContents(event.sender) ?? getFallbackWindow()
     return await showConfirmDialog(message, owner)
   })
 
@@ -233,7 +235,7 @@ export function registerIpcHandlers(
   ipcMain.removeHandler(CONTEXT_MENU_CHANNEL)
   ipcMain.handle(
     CONTEXT_MENU_CHANNEL,
-    (_event, items: ContextMenuItem[], position?: { x: number; y: number }) => {
+    (event, items: ContextMenuItem[], position?: { x: number; y: number }) => {
       const normalizedItems = items
         .filter(
           (item) =>
@@ -258,7 +260,8 @@ export function registerIpcHandlers(
           ? { x: Math.floor(position.x), y: Math.floor(position.y) }
           : null
 
-      const window = BrowserWindow.getFocusedWindow() ?? getFallbackWindow()
+      const window =
+        BrowserWindow.fromWebContents(event.sender) ?? getFallbackWindow()
       if (!window) {
         return null
       }

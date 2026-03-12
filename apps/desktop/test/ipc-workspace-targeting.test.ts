@@ -382,3 +382,159 @@ describe('workspace-to-window targeting', () => {
     expect(registry.findWindowForWorkspace('')).toBeNull()
   })
 })
+
+describe('IPC handler window targeting after repeated switches', () => {
+  beforeEach(() => {
+    ipcHandlers.clear()
+    fromWebContentsMock.mockReset()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('folder picker targets the sender window, not the focused window', async () => {
+    const { dialog } = await import('electron')
+    const { registerIpcHandlers, PICK_FOLDER_CHANNEL } = await import(
+      '../src/ipc.js'
+    )
+
+    const windowA = createMockWindow(500)
+    const windowB = createMockWindow(501)
+
+    registerIpcHandlers(
+      () =>
+        windowA as unknown as Parameters<
+          typeof registerIpcHandlers
+        >[0] extends () => infer R
+          ? R
+          : never
+    )
+
+    const pickHandler = ipcHandlers.get(PICK_FOLDER_CHANNEL)
+    expect(pickHandler).toBeDefined()
+
+    // Window B sends the request, but window A is focused
+    fromWebContentsMock.mockReturnValue(windowB)
+
+    await pickHandler?.({ sender: windowB.webContents })
+
+    // The dialog should have been called with window B as the owner,
+    // not window A (the fallback).
+    expect(dialog.showOpenDialog).toHaveBeenCalledWith(
+      windowB,
+      expect.objectContaining({
+        properties: expect.arrayContaining(['openDirectory']),
+      })
+    )
+  })
+
+  it('confirm dialog targets the sender window, not the focused window', async () => {
+    const { dialog } = await import('electron')
+    const { registerIpcHandlers, CONFIRM_CHANNEL } = await import(
+      '../src/ipc.js'
+    )
+
+    const windowA = createMockWindow(600)
+    const windowB = createMockWindow(601)
+
+    registerIpcHandlers(
+      () =>
+        windowA as unknown as Parameters<
+          typeof registerIpcHandlers
+        >[0] extends () => infer R
+          ? R
+          : never
+    )
+
+    const confirmHandler = ipcHandlers.get(CONFIRM_CHANNEL)
+    expect(confirmHandler).toBeDefined()
+
+    // Window B sends the confirm request
+    fromWebContentsMock.mockReturnValue(windowB)
+
+    await confirmHandler?.({ sender: windowB.webContents }, 'Delete this?')
+
+    // The message box should have been called with window B as the owner
+    expect(dialog.showMessageBox).toHaveBeenCalledWith(
+      windowB,
+      expect.objectContaining({ message: 'Delete this?' })
+    )
+  })
+
+  it('context menu targets the sender window, not the focused window', async () => {
+    const { Menu } = await import('electron')
+    const { registerIpcHandlers, CONTEXT_MENU_CHANNEL } = await import(
+      '../src/ipc.js'
+    )
+
+    const windowA = createMockWindow(700)
+    const windowB = createMockWindow(701)
+
+    registerIpcHandlers(
+      () =>
+        windowA as unknown as Parameters<
+          typeof registerIpcHandlers
+        >[0] extends () => infer R
+          ? R
+          : never
+    )
+
+    const contextMenuHandler = ipcHandlers.get(CONTEXT_MENU_CHANNEL)
+    expect(contextMenuHandler).toBeDefined()
+
+    // Window B sends the context menu request
+    fromWebContentsMock.mockReturnValue(windowB)
+
+    // Fire-and-forget — the handler returns a promise that resolves when a
+    // menu item is clicked or the menu is dismissed. We don't need to await
+    // it since we only verify the popup target.
+    contextMenuHandler?.(
+      { sender: windowB.webContents },
+      [{ id: 'copy', label: 'Copy' }],
+      { x: 100, y: 200 }
+    )
+
+    // The menu should have been popped up on window B
+    expect(Menu.buildFromTemplate).toHaveBeenCalled()
+    const builtMenu = (Menu.buildFromTemplate as ReturnType<typeof vi.fn>).mock
+      .results[0]?.value
+    expect(builtMenu.popup).toHaveBeenCalledWith(
+      expect.objectContaining({ window: windowB })
+    )
+  })
+
+  it('falls back to the fallback window when sender window cannot be resolved', async () => {
+    const { dialog } = await import('electron')
+    const { registerIpcHandlers, PICK_FOLDER_CHANNEL } = await import(
+      '../src/ipc.js'
+    )
+
+    const fallbackWindow = createMockWindow(800)
+
+    registerIpcHandlers(
+      () =>
+        fallbackWindow as unknown as Parameters<
+          typeof registerIpcHandlers
+        >[0] extends () => infer R
+          ? R
+          : never
+    )
+
+    const pickHandler = ipcHandlers.get(PICK_FOLDER_CHANNEL)
+    expect(pickHandler).toBeDefined()
+
+    // Sender cannot be resolved (e.g., destroyed between request and handler)
+    fromWebContentsMock.mockReturnValue(null)
+
+    await pickHandler?.({ sender: {} })
+
+    // Should fall back to the fallback window
+    expect(dialog.showOpenDialog).toHaveBeenCalledWith(
+      fallbackWindow,
+      expect.objectContaining({
+        properties: expect.arrayContaining(['openDirectory']),
+      })
+    )
+  })
+})

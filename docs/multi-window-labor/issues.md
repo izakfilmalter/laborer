@@ -252,16 +252,13 @@ Do a final pass on multi-window edge cases and user feel without expanding scope
 
 ## Acceptance criteria
 
-- [ ] Manual verification covers multi-monitor and Spaces restore behavior
-- [ ] Focus-sensitive actions continue targeting the correct window after repeated switches
-- [ ] No known window-isolation regressions remain after end-to-end verification of the v1 flow
+- [x] Manual verification covers multi-monitor and Spaces restore behavior
+- [x] Focus-sensitive actions continue targeting the correct window after repeated switches
+- [x] No known window-isolation regressions remain after end-to-end verification of the v1 flow
 
 ## Blocked by
 
-- Blocked by "Restore All Windows on Relaunch"
-- Blocked by "Invalid Session Repair"
-- Blocked by "Preserve Closed Window Sessions"
-- Blocked by "Focus Existing Window for Open Workspace"
+None - completed
 
 ## User stories addressed
 
@@ -284,4 +281,4 @@ Do a final pass on multi-window edge cases and user feel without expanding scope
 | 9 | Invalid Session Repair | None | Done |
 | 10 | Preserve Closed Window Sessions | None | Done |
 | 11 | Focus Existing Window for Open Workspace | 5 | Done |
-| 12 | Multi-Window UX Hardening | 11 | Ready |
+| 12 | Multi-Window UX Hardening | 11 | Done |

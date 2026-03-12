@@ -77,3 +77,12 @@
 - Added desktop IPC tests covering cross-window focus, same-window no-op, and unknown-workspace fallback.
 - Added web panel layout tests proving that terminal assignment is skipped when the workspace is open in another window and proceeds normally when it is not.
 - Verified with `bun run test` and `bun run typecheck` in both `apps/desktop` and `apps/web`.
+
+2026-03-12 - Issue 12: Multi-Window UX Hardening
+- Selected Issue 12 as the only remaining task; all blockers (Issues 8, 9, 10, 11) were already complete.
+- Fixed focus-sensitive IPC handlers (folder picker, confirm dialog, context menu) to resolve the owner window from `BrowserWindow.fromWebContents(event.sender)` instead of `BrowserWindow.getFocusedWindow()`, so dialogs and menus always target the window that initiated the request even after repeated window switches.
+- Moved `registerIpcHandlers` and callback wiring (`setTrayCountHandler`, `setRestartSidecarHandler`) out of `createWindow` and into the one-time bootstrap sequence, eliminating redundant `removeHandler`/`handle` re-registration on every window creation.
+- Added desktop IPC tests proving the folder picker, confirm dialog, and context menu all resolve to the sender window rather than the focused or fallback window, plus a fallback test for when the sender window cannot be resolved.
+- Added a main-process test proving IPC handlers are registered exactly once even when multiple windows are created on startup.
+- Verified with `bun run test` (144 pass) and `bun run typecheck` in `apps/desktop`, plus `bun run test` (343 pass) and `bun run typecheck` in `apps/web`.
+- `bun run format` at the repo root reports only pre-existing lint issues unrelated to this feature.

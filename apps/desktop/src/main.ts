@@ -13,6 +13,7 @@ import {
 import { fixPath } from './fix-path.js'
 import { HealthMonitor } from './health.js'
 import {
+  getWorkspaceWindowRegistry,
   registerIpcHandlers,
   setDownloadUpdateHandler,
   setGetUpdateStateHandler,
@@ -199,33 +200,13 @@ function createWindow(record?: WindowRecord): BrowserWindow {
 
   window.on('closed', () => {
     openWindows.delete(window)
+    getWorkspaceWindowRegistry().remove(window)
 
     if (mainWindow === window) {
       mainWindow = openWindows.values().next().value ?? null
     }
   })
 
-  // Register IPC handlers for the DesktopBridge contract.
-  registerIpcHandlers(() => getMainWindow())
-
-  // Wire tray workspace count updates from the renderer to the tray manager.
-  setTrayCountHandler((count) => {
-    trayManager.updateWorkspaceCount(count)
-  })
-
-  // Wire sidecar restart requests from the renderer to the health monitor.
-  setRestartSidecarHandler(async (name) => {
-    const validNames = ['server', 'terminal', 'file-watcher', 'mcp'] as const
-    type ValidName = (typeof validNames)[number]
-    if (!validNames.includes(name as ValidName)) {
-      return
-    }
-    if (healthMonitor) {
-      await healthMonitor.manualRestart(name as ValidName)
-    } else if (sidecarManager) {
-      await sidecarManager.restart(name as ValidName)
-    }
-  })
   return window
 }
 
@@ -304,6 +285,35 @@ app
       }
     }
 
+    // Register IPC handlers once for the DesktopBridge contract.
+    // Handlers use event.sender to resolve the requesting window,
+    // so they work correctly regardless of which window invokes them.
+    registerIpcHandlers(() => getMainWindow())
+
+    // Wire tray workspace count updates from the renderer to the tray manager.
+    setTrayCountHandler((count) => {
+      trayManager.updateWorkspaceCount(count)
+    })
+
+    // Wire sidecar restart requests from the renderer to the health monitor.
+    setRestartSidecarHandler(async (name) => {
+      const validNames = ['server', 'terminal', 'file-watcher', 'mcp'] as const
+      type ValidName = (typeof validNames)[number]
+      if (!validNames.includes(name as ValidName)) {
+        return
+      }
+      if (healthMonitor) {
+        await healthMonitor.manualRestart(name as ValidName)
+      } else if (sidecarManager) {
+        await sidecarManager.restart(name as ValidName)
+      }
+    })
+
+    // Wire auto-update IPC handlers.
+    setGetUpdateStateHandler(() => getUpdateState())
+    setDownloadUpdateHandler(() => triggerDownloadUpdate())
+    setInstallUpdateHandler(() => triggerInstallUpdate())
+
     const savedWindowRecords = windowStateManager.loadWindowRecords()
 
     if (savedWindowRecords.length > 0) {
@@ -325,11 +335,6 @@ app
 
     // Register global shortcut: Cmd+Shift+L (macOS) / Ctrl+Shift+L (other).
     unregisterShortcut = registerGlobalShortcut(() => getMainWindow())
-
-    // Wire auto-update IPC handlers.
-    setGetUpdateStateHandler(() => getUpdateState())
-    setDownloadUpdateHandler(() => triggerDownloadUpdate())
-    setInstallUpdateHandler(() => triggerInstallUpdate())
 
     // Configure and start the auto-updater.
     configureAutoUpdater(() => {

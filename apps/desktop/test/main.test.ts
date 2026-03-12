@@ -97,6 +97,7 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
   const BrowserWindow = createBrowserWindowMock()
   const appOn = vi.fn()
   const track = vi.fn()
+  const registerIpcHandlersMock = vi.fn()
 
   vi.doMock('electron', () => ({
     app: {
@@ -129,7 +130,8 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     },
   }))
   vi.doMock('../src/ipc.js', () => ({
-    registerIpcHandlers: vi.fn(),
+    getWorkspaceWindowRegistry: () => ({ remove: vi.fn() }),
+    registerIpcHandlers: registerIpcHandlersMock,
     setDownloadUpdateHandler: vi.fn(),
     setGetUpdateStateHandler: vi.fn(),
     setInstallUpdateHandler: vi.fn(),
@@ -198,7 +200,7 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
   await import('../src/main.js')
   await waitForBootstrap()
 
-  return { BrowserWindow, track }
+  return { BrowserWindow, registerIpcHandlers: registerIpcHandlersMock, track }
 }
 
 afterEach(() => {
@@ -310,5 +312,26 @@ describe('main multi-window restore', () => {
 
     expect(closeEvent.preventDefault).toHaveBeenCalledTimes(1)
     expect(BrowserWindow.instances[0]?.hide).toHaveBeenCalledTimes(1)
+  })
+
+  it('registers IPC handlers exactly once even when multiple windows are created', async () => {
+    const savedWindowRecords = [
+      {
+        windowId: 'window-alpha',
+        bounds: { x: 10, y: 20, width: 800, height: 600 },
+        isMaximized: false,
+      },
+      {
+        windowId: 'window-beta',
+        bounds: { x: 120, y: 240, width: 1024, height: 768 },
+        isMaximized: false,
+      },
+    ]
+
+    const { BrowserWindow, registerIpcHandlers } =
+      await loadMainWithRecords(savedWindowRecords)
+
+    expect(BrowserWindow.instances).toHaveLength(2)
+    expect(registerIpcHandlers).toHaveBeenCalledTimes(1)
   })
 })

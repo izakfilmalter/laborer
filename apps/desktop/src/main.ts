@@ -31,7 +31,7 @@ import {
 import { SidecarManager } from './sidecar.js'
 import { registerGlobalShortcut, TrayManager } from './tray.js'
 import { buildWindowBootstrapArgs, createWindowId } from './window-identity.js'
-import { WindowStateManager } from './window-state.js'
+import { type WindowRecord, WindowStateManager } from './window-state.js'
 
 // Fix PATH before anything else — must happen synchronously before
 // any child processes are spawned. On macOS, apps launched from
@@ -129,10 +129,9 @@ function getMainWindow(): BrowserWindow | null {
   return BrowserWindow.getAllWindows()[0] ?? null
 }
 
-function createWindow(): BrowserWindow {
-  // Restore persisted window bounds (or default to centered 800x600).
-  const savedState = windowStateManager.load()
-  const windowId = createWindowId()
+function createWindow(record?: WindowRecord): BrowserWindow {
+  const savedState = record ?? windowStateManager.load()
+  const windowId = record?.windowId ?? createWindowId()
 
   const window = new BrowserWindow({
     ...savedState.bounds,
@@ -159,7 +158,7 @@ function createWindow(): BrowserWindow {
   }
 
   // Track window bounds for persistence — saves on move/resize/close.
-  windowStateManager.track(window)
+  windowStateManager.track(window, windowId)
 
   window.once('ready-to-show', () => {
     window.show()
@@ -294,7 +293,9 @@ app
       }
     }
 
-    createWindow()
+    const savedWindowRecords = windowStateManager.loadWindowRecords()
+
+    createWindow(savedWindowRecords[0])
 
     // Build the macOS-native application menu (About, Settings, Edit, View, Window).
     configureApplicationMenu(

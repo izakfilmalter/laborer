@@ -6,7 +6,9 @@ import {
   DEFAULT_WIDTH,
   defaultWindowState,
   isBoundsOnScreen,
+  parseWindowRecords,
   parseWindowState,
+  serializeWindowRecords,
 } from '../src/window-state.js'
 
 // ---------------------------------------------------------------------------
@@ -92,6 +94,112 @@ describe('parseWindowState', () => {
     const raw = '{"bounds":{"x":0,"y":0,"width":800,"height":1e309}}'
     // 1e309 overflows to Infinity in JSON.parse
     expect(parseWindowState(raw)).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// parseWindowRecords
+// ---------------------------------------------------------------------------
+
+describe('parseWindowRecords', () => {
+  it('parses a persisted multi-window payload', () => {
+    const raw = JSON.stringify({
+      windows: [
+        {
+          windowId: 'window-alpha',
+          bounds: { x: 10, y: 20, width: 800, height: 600 },
+          isMaximized: false,
+        },
+        {
+          windowId: 'window-beta',
+          bounds: { x: 100, y: 200, width: 1200, height: 900 },
+          isMaximized: true,
+        },
+      ],
+    })
+
+    expect(parseWindowRecords(raw)).toEqual([
+      {
+        windowId: 'window-alpha',
+        bounds: { x: 10, y: 20, width: 800, height: 600 },
+        isMaximized: false,
+      },
+      {
+        windowId: 'window-beta',
+        bounds: { x: 100, y: 200, width: 1200, height: 900 },
+        isMaximized: true,
+      },
+    ])
+  })
+
+  it('upgrades legacy single-window state when a fallback id is provided', () => {
+    const raw = JSON.stringify({
+      bounds: { x: 10, y: 20, width: 800, height: 600 },
+      isMaximized: true,
+    })
+
+    expect(parseWindowRecords(raw, 'window-legacy')).toEqual([
+      {
+        windowId: 'window-legacy',
+        bounds: { x: 10, y: 20, width: 800, height: 600 },
+        isMaximized: true,
+      },
+    ])
+  })
+
+  it('returns null when any record is malformed', () => {
+    const raw = JSON.stringify({
+      windows: [
+        {
+          windowId: 'window-alpha',
+          bounds: { x: 10, y: 20, width: 800, height: 600 },
+          isMaximized: false,
+        },
+        {
+          windowId: '',
+          bounds: { x: 100, y: 200, width: 1200, height: 900 },
+          isMaximized: true,
+        },
+      ],
+    })
+
+    expect(parseWindowRecords(raw)).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// serializeWindowRecords
+// ---------------------------------------------------------------------------
+
+describe('serializeWindowRecords', () => {
+  it('preserves multiple window records for disk persistence', () => {
+    expect(
+      serializeWindowRecords([
+        {
+          windowId: 'window-alpha',
+          bounds: { x: 10, y: 20, width: 800, height: 600 },
+          isMaximized: false,
+        },
+        {
+          windowId: 'window-beta',
+          bounds: { x: 100, y: 200, width: 1200, height: 900 },
+          isMaximized: true,
+        },
+      ])
+    ).toEqual({
+      windows: [
+        {
+          windowId: 'window-alpha',
+          bounds: { x: 10, y: 20, width: 800, height: 600 },
+          isMaximized: false,
+        },
+        {
+          windowId: 'window-beta',
+          bounds: { x: 100, y: 200, width: 1200, height: 900 },
+          isMaximized: true,
+        },
+      ],
+    })
   })
 })
 

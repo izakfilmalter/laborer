@@ -39,3 +39,10 @@
 - Updated `usePanelLayout` so native windows seed from a deterministic blank panel session instead of deriving a layout from the current global terminal and workspace state.
 - Extended the hook tests to prove a fresh native window does not clone another window's pane tree and that repeated new-window creation always seeds the same blank session.
 - Verified with `bun run test` and `bun run typecheck` in `apps/web`.
+
+2026-03-12 - Issue 7: Persist Window Records
+- Selected Issue 7 as the highest-priority remaining task because it is the next unblocked slice in the PRD's recommended delivery order and it unlocks both full multi-window relaunch restore and preserved closed-window sessions.
+- Reworked desktop window-state persistence from a single saved main-window payload into a multi-window record collection keyed by stable `windowId`, while keeping the current boot path compatible by restoring the first saved record until full multi-window relaunch lands.
+- Updated desktop window tracking so every created Laborer window writes its own restoration metadata, including `windowId`, bounds, and maximized state, into the shared persisted record set.
+- Added desktop tests for parsing/serializing multi-window record payloads plus a disk-backed manager test that saves and reloads multiple window records successfully.
+- Verified with `bun run test` and `bun run typecheck` in `apps/desktop`.

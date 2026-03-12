@@ -146,13 +146,13 @@ Persist the set of Laborer windows as first-class records rather than treating t
 
 ## Acceptance criteria
 
-- [ ] Laborer persists multiple window records rather than a single main-window record
-- [ ] Persisted window records contain enough identity and restoration metadata to reopen the session set later
-- [ ] Tests cover saving and reloading multiple window records from disk
+- [x] Laborer persists multiple window records rather than a single main-window record
+- [x] Persisted window records contain enough identity and restoration metadata to reopen the session set later
+- [x] Tests cover saving and reloading multiple window records from disk
 
 ## Blocked by
 
-- Blocked by "Window Identity Plumbing"
+None - completed
 
 ## User stories addressed
 
@@ -174,7 +174,7 @@ Restore all previously open Laborer windows on relaunch, wiring persisted window
 
 ## Blocked by
 
-- Blocked by "Persist Window Records"
+None - ready
 
 ## User stories addressed
 
@@ -215,7 +215,7 @@ Implement the agreed v1 close semantics: closing a non-last window preserves its
 
 ## Blocked by
 
-- Blocked by "Persist Window Records"
+None - ready
 
 ## User stories addressed
 
@@ -279,9 +279,9 @@ Do a final pass on multi-window edge cases and user feel without expanding scope
 | 4 | Renderer Reads Only Its Own Session | 3 | Done |
 | 5 | Renderer Writes Only Its Own Session | 4 | Done |
 | 6 | Default Blank Session Seeding | 4 | Done |
-| 7 | Persist Window Records | 1 | Ready |
-| 8 | Restore All Windows on Relaunch | 7 | Blocked |
+| 7 | Persist Window Records | 1 | Done |
+| 8 | Restore All Windows on Relaunch | None | Ready |
 | 9 | Invalid Session Repair | 8 | Blocked |
-| 10 | Preserve Closed Window Sessions | 7 | Blocked |
+| 10 | Preserve Closed Window Sessions | None | Ready |
 | 11 | Focus Existing Window for Open Workspace | 5 | Ready |
 | 12 | Multi-Window UX Hardening | 8, 9, 10, 11 | Blocked |

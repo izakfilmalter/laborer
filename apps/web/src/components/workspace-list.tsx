@@ -443,6 +443,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
       payload: { workspaceId: workspace.id, force },
     })
       .then(() => {
+        panelActions?.closeWorkspace(workspace.id)
         toast.success(
           `Workspace "${workspace.branchName}" destroyed successfully`,
           { id: toastId }

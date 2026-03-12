@@ -152,12 +152,16 @@ function CreateWorkspaceForm({ projectId, trigger }: CreateWorkspaceFormProps) {
       // Clear any previous error when retrying
       setCreationError(null)
       try {
+        // Replace forward slashes with hyphens so the branch name
+        // is safe as a directory name on the filesystem.
+        const sanitized = pipe(
+          value.branchName.trim(),
+          Str.replaceAll('/', '-')
+        )
         const result = await createWorkspace({
           payload: {
             projectId,
-            ...(value.branchName.trim()
-              ? { branchName: value.branchName.trim() }
-              : {}),
+            ...(sanitized ? { branchName: sanitized } : {}),
           },
         })
         // The RPC now returns immediately with status 'creating'.

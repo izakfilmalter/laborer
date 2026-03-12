@@ -196,6 +196,98 @@ test.describe('workspace lifecycle', () => {
     })
   })
 
+  test('converts forward slashes to hyphens in branch name on create and shows correctly in sidebar', async ({
+    page,
+  }) => {
+    const tempRepoDir = getTempRepoDir()
+    const expectedProjectName = basename(tempRepoDir)
+    const timestamp = Date.now()
+    const inputBranchName = `e2e-slash/branch-${timestamp}`
+    const expectedBranchName = `e2e-slash-branch-${timestamp}`
+
+    await page.goto('/?reset')
+
+    const connectedStatus = page.getByText('connected', { exact: false })
+    await expect(connectedStatus).toBeVisible({ timeout: 15_000 })
+
+    const projectsHeading = page.getByRole('heading', { name: 'Projects' })
+    await expect(projectsHeading).toBeVisible()
+
+    const sidebarForm = projectsHeading
+      .locator('..')
+      .getByLabel('Repository path')
+    await sidebarForm.fill(tempRepoDir)
+
+    const addButton = projectsHeading
+      .locator('..')
+      .getByRole('button', { name: 'Add', exact: true })
+    await addButton.click()
+
+    const projectInSidebar = page.getByRole('button', {
+      name: expectedProjectName,
+      exact: true,
+    })
+    await expect(projectInSidebar).toBeVisible({ timeout: 10_000 })
+
+    // Open the Create Workspace dialog
+    const createWorkspaceButton = page.getByRole('button', {
+      name: `Create workspace in ${expectedProjectName}`,
+    })
+    await createWorkspaceButton.click()
+
+    const dialogTitle = page.getByRole('heading', {
+      name: 'Create Workspace',
+    })
+    await expect(dialogTitle).toBeVisible({ timeout: 10_000 })
+
+    // Type a branch name with a forward slash
+    const branchNameInput = page.getByRole('textbox', {
+      name: 'Branch Name (optional)',
+    })
+    await branchNameInput.fill(inputBranchName)
+
+    // Verify the input displays the slash as typed
+    await expect(branchNameInput).toHaveValue(inputBranchName)
+
+    // Submit — the form should transform / to -
+    const submitButton = page.getByRole('button', {
+      name: 'Create Workspace',
+      exact: true,
+    })
+    await submitButton.click()
+
+    // Wait for the success toast — it should contain the transformed branch name
+    const successToast = page.getByText('is being set up', {
+      exact: false,
+    })
+    await expect(successToast).toBeVisible({ timeout: 30_000 })
+    await expect(successToast).toContainText(expectedBranchName)
+
+    // Dialog should close on success
+    await expect(dialogTitle).not.toBeVisible()
+
+    // The workspace should appear in the sidebar with the transformed branch name (hyphens, not slashes)
+    await expect(
+      page.getByText(expectedBranchName, { exact: true })
+    ).toBeVisible({
+      timeout: 15_000,
+    })
+
+    // The destroy button should reference the transformed branch name
+    await expect(
+      page.getByRole('button', {
+        name: `Destroy workspace ${expectedBranchName}`,
+      })
+    ).toBeVisible({ timeout: 15_000 })
+
+    // The workspace should reach running status
+    await expect(
+      page.getByText('running', { exact: true }).first()
+    ).toBeVisible({
+      timeout: 15_000,
+    })
+  })
+
   test('can destroy a workspace and verify it disappears from the sidebar', async ({
     page,
   }) => {

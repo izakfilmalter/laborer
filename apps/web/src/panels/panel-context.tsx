@@ -114,28 +114,51 @@ interface PanelActions {
    * @returns Whether the diff pane is now visible (true = toggled on)
    */
   readonly toggleDiffPane: (paneId: string) => boolean
+  /**
+   * Toggle fullscreen mode for the active terminal pane.
+   *
+   * When toggled ON: hides all other workspaces and all sibling panes
+   * within the current workspace, showing only the active terminal pane
+   * at full size. The workspace bar header remains visible.
+   *
+   * When toggled OFF: restores the normal multi-pane, multi-workspace view.
+   *
+   * This is a transient UI state (not persisted to LiveStore).
+   */
+  readonly toggleFullscreenPane: () => void
 }
+
+/**
+ * The ID of the pane currently in fullscreen mode, or null if no pane
+ * is fullscreened. Provided alongside PanelActions for UI components
+ * that need to adjust rendering based on fullscreen state.
+ */
+const FullscreenPaneIdContext = createContext<string | null>(null)
 
 const PanelActionsContext = createContext<PanelActions | null>(null)
 const ActivePaneIdContext = createContext<string | null>(null)
 
 /**
- * Provider component that makes panel actions and active pane state
- * available to all pane components in the tree.
+ * Provider component that makes panel actions, active pane state,
+ * and fullscreen pane state available to all pane components in the tree.
  */
 function PanelActionsProvider({
   activePaneId,
   children,
+  fullscreenPaneId,
   value,
 }: {
   readonly activePaneId: string | null
   readonly children: React.ReactNode
+  readonly fullscreenPaneId: string | null
   readonly value: PanelActions
 }) {
   return (
     <PanelActionsContext.Provider value={value}>
       <ActivePaneIdContext.Provider value={activePaneId}>
-        {children}
+        <FullscreenPaneIdContext.Provider value={fullscreenPaneId}>
+          {children}
+        </FullscreenPaneIdContext.Provider>
       </ActivePaneIdContext.Provider>
     </PanelActionsContext.Provider>
   )
@@ -157,5 +180,18 @@ function useActivePaneId(): string | null {
   return useContext(ActivePaneIdContext)
 }
 
-export { PanelActionsProvider, useActivePaneId, usePanelActions }
+/**
+ * Hook to read the pane ID that is currently in fullscreen mode.
+ * Returns null if no pane is fullscreened or no provider is present.
+ */
+function useFullscreenPaneId(): string | null {
+  return useContext(FullscreenPaneIdContext)
+}
+
+export {
+  PanelActionsProvider,
+  useActivePaneId,
+  useFullscreenPaneId,
+  usePanelActions,
+}
 export type { PanelActions }

@@ -130,7 +130,17 @@ const DevServerConfigResponse = Schema.Struct({
   workdir: ConfigResolvedValueString,
 })
 
+export const AgentProviderSchema = Schema.Literal('opencode', 'claude', 'codex')
+
+export type AgentProvider = typeof AgentProviderSchema.Type
+
+const ConfigResolvedValueAgent = Schema.Struct({
+  value: AgentProviderSchema,
+  source: Schema.String,
+})
+
 const ConfigResponse = Schema.Struct({
+  agent: ConfigResolvedValueAgent,
   devServer: DevServerConfigResponse,
   prdsDir: ConfigResolvedValueString,
   worktreeDir: ConfigResolvedValueString,
@@ -260,6 +270,7 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       projectId: Schema.String,
       config: Schema.Struct({
+        agent: Schema.optional(AgentProviderSchema),
         devServer: Schema.optional(
           Schema.Struct({
             image: Schema.optional(Schema.String),
@@ -551,6 +562,12 @@ export const TerminalInfo = Schema.Struct({
   command: Schema.String,
   args: Schema.Array(Schema.String),
   cwd: Schema.String,
+  /**
+   * Whether the shell has child processes running (e.g., vim, dev server,
+   * opencode). False when the shell is idle at a prompt. Used by the UI
+   * to decide whether to show a close confirmation dialog.
+   */
+  hasChildProcess: Schema.Boolean,
   status: TerminalStatus,
 })
 

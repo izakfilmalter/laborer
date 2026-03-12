@@ -491,7 +491,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
   return (
     <Card size="sm">
       <CardHeader className="gap-2">
-        <div className="flex items-start gap-2">
+        <div className="flex min-w-0 flex-wrap items-start gap-2">
           <div className="flex min-w-0 flex-1 items-start gap-2 overflow-hidden">
             <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <CardTitle className="min-w-0 font-mono text-sm">
@@ -540,10 +540,10 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
             </Badge>
           </div>
         </div>
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center justify-between gap-2">
           {workspace.containerUrl ? (
-            <CardDescription className="flex min-w-0 items-center gap-2">
-              <span className="group/copyable flex min-w-0 items-center gap-1">
+            <CardDescription className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+              <span className="group/copyable flex min-w-0 items-center gap-1 overflow-hidden">
                 <a
                   className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
                   href={`https://${workspace.containerUrl}`}
@@ -553,7 +553,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                 >
                   {workspace.containerUrl}
                 </a>
-                <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:opacity-100">
+                <span className="-mr-14 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
                   <CopyButton
                     title="Copy URL"
                     value={`https://${workspace.containerUrl}`}
@@ -579,7 +579,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
               </CardDescription>
             )
           )}
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             {isContainerized ? (
               <ContainerPauseButton
                 isPaused={isContainerPaused}
@@ -681,7 +681,10 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
           </div>
         )}
         <div className="border-t pt-2">
-          <TerminalList workspaceId={workspace.id} />
+          <TerminalList
+            projectId={workspace.projectId}
+            workspaceId={workspace.id}
+          />
         </div>
         {associatedPrdId && (
           <div className="border-t pt-2">

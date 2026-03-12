@@ -15,6 +15,8 @@ import {
   Columns2,
   FolderGit2,
   LayoutDashboard,
+  Maximize,
+  Minimize,
   PanelLeftClose,
   PanelLeftOpen,
   Rows2,
@@ -30,9 +32,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { PanelImperativeHandle } from 'react-resizable-panels'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { AddProjectForm } from '@/components/add-project-form'
 import { CreatePlanWorkspace } from '@/components/create-plan-workspace'
 import { PlanEditor } from '@/components/plan-editor'
@@ -70,11 +70,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { WorkspaceDashboard } from '@/components/workspace-dashboard'
-import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
-import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
-import { useSidebarWidth } from '@/hooks/use-sidebar-width'
 import { useTerminalList } from '@/hooks/use-terminal-list'
-import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
 import { isElectron } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
 import type { NavigationDirection } from '@/panels/layout-utils'
@@ -85,6 +81,7 @@ import {
   filterTreeByWorkspace,
   findEmptyTerminalPane,
   findLeafByTerminalId,
+  findNewLeafAfterSplit,
   findNodeById,
   findSiblingPaneId,
   generateId,
@@ -95,11 +92,13 @@ import {
   getWorkspaceIds,
   reconcileLayout,
   replaceNode,
+  shouldConfirmClose,
   splitPane,
 } from '@/panels/layout-utils'
 import {
   PanelActionsProvider,
   useActivePaneId,
+  useFullscreenPaneId,
   usePanelActions,
 } from '@/panels/panel-context'
 import {
@@ -140,9 +139,6 @@ const persistedLayout$ = queryDb(panelLayout, {
 
 /** Mutation atom for spawning terminals via the server's terminal.spawn RPC. */
 const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
-
-/** Mutation atom for removing terminals via the terminal service's terminal.remove RPC. */
-const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
 
 /**
  * Health check query atom — subscribes to the server's health.check RPC.
@@ -424,9 +420,6 @@ function usePanelLayout() {
   const spawnTerminal = useAtomSet(spawnTerminalMutation, {
     mode: 'promise',
   })
-  const removeTerminal = useAtomSet(removeTerminalMutation, {
-    mode: 'promise',
-  })
   // Start as "reconciling" when a persisted layout exists — this prevents
   // rendering TerminalPane components with potentially stale terminal IDs
   // before we've checked them against the live terminal service.
@@ -517,12 +510,22 @@ function usePanelLayout() {
     store,
   ])
 
+  /**
+   * Ref to hold the latest `handleAssignTerminalToPane` callback.
+   * Used by `handleSplitPane` to assign a newly spawned terminal
+   * without creating a circular useCallback dependency.
+   */
+  const assignTerminalToPaneRef = useRef<
+    ((terminalId: string, workspaceId: string, paneId?: string) => void) | null
+  >(null)
+
   const handleSplitPane = useCallback(
     (paneId: string, direction: 'horizontal' | 'vertical') => {
       const base = persistedLayoutTree ?? initialLayout
       if (!base) {
         return
       }
+
       const newTree = splitPane(base, paneId, direction)
       store.commit(
         layoutSplit({
@@ -531,8 +534,31 @@ function usePanelLayout() {
           activePaneId: persistedActivePaneId,
         })
       )
+
+      // Find the newly created pane via leaf-diffing
+      const newLeaf = findNewLeafAfterSplit(base, newTree)
+      if (!newLeaf?.workspaceId) {
+        return
+      }
+
+      // Auto-spawn a terminal in the new pane
+      const wsId = newLeaf.workspaceId
+      const newPaneId = newLeaf.id
+      spawnTerminal({ payload: { workspaceId: wsId } })
+        .then((result) => {
+          assignTerminalToPaneRef.current?.(result.id, wsId, newPaneId)
+        })
+        .catch((error) => {
+          console.warn('[split-pane] auto-spawn failed:', error)
+        })
     },
-    [persistedLayoutTree, initialLayout, persistedActivePaneId, store]
+    [
+      persistedLayoutTree,
+      initialLayout,
+      persistedActivePaneId,
+      store,
+      spawnTerminal,
+    ]
   )
 
   const handleClosePane = useCallback(
@@ -542,16 +568,9 @@ function usePanelLayout() {
         return
       }
 
-      // Look up the terminal in this pane BEFORE closing, so we can remove
-      // it from the terminal service (making it disappear from the sidebar).
-      const closingNode = findNodeById(base, paneId)
-      if (closingNode?._tag === 'LeafNode' && closingNode.terminalId) {
-        removeTerminal({ payload: { id: closingNode.terminalId } }).catch(
-          (error) => {
-            console.warn('[close-pane] terminal remove failed:', error)
-          }
-        )
-      }
+      // Closing a pane only removes it from the layout tree. The terminal
+      // process stays alive and remains in the sidebar terminal list so the
+      // user can re-attach it to another pane later.
 
       // Compute the sibling BEFORE the close mutation removes the pane.
       // This ensures we can find the correct sibling in the original tree.
@@ -603,13 +622,7 @@ function usePanelLayout() {
         hasSeeded.current = false
       }
     },
-    [
-      persistedLayoutTree,
-      initialLayout,
-      persistedActivePaneId,
-      store,
-      removeTerminal,
-    ]
+    [persistedLayoutTree, initialLayout, persistedActivePaneId, store]
   )
 
   const handleSetActivePaneId = useCallback(
@@ -771,6 +784,11 @@ function usePanelLayout() {
       commitAssignment,
     ]
   )
+
+  // Keep the assign-terminal ref in sync with the latest handler
+  useEffect(() => {
+    assignTerminalToPaneRef.current = handleAssignTerminalToPane
+  }, [handleAssignTerminalToPane])
 
   /**
    * Resize a pane in the given direction by adjusting the parent split's
@@ -1152,6 +1170,8 @@ function WorkspaceFrameHeader({
   const workspaceList = store.useQuery(allWorkspaces$)
   const activePaneId = useActivePaneId()
   const actions = usePanelActions()
+  const fullscreenPaneId = useFullscreenPaneId()
+  const isFullscreen = fullscreenPaneId !== null
 
   const { projectName, branchName, isContainerized } = useMemo(() => {
     if (!workspaceId) {
@@ -1258,6 +1278,30 @@ function WorkspaceFrameHeader({
           <TooltipTrigger
             render={
               <Button
+                aria-label={
+                  isFullscreen ? 'Exit fullscreen' : 'Fullscreen pane'
+                }
+                disabled={!hasActivePane}
+                onClick={() => actions?.toggleFullscreenPane()}
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
+          >
+            {isFullscreen ? (
+              <Minimize className="size-3.5" />
+            ) : (
+              <Maximize className="size-3.5" />
+            )}
+          </TooltipTrigger>
+          <TooltipContent>
+            {isFullscreen ? 'Exit fullscreen' : 'Fullscreen pane'}
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
                 aria-label="Close pane"
                 disabled={!hasActivePane}
                 onClick={() => activePaneId && actions?.closePane(activePaneId)}
@@ -1318,9 +1362,11 @@ function WorkspaceFrame({
 function WorkspaceFrames({
   layout,
   activePaneId,
+  fullscreenPaneId,
 }: {
   readonly layout: PanelNode
   readonly activePaneId: string | null
+  readonly fullscreenPaneId: string | null
 }) {
   const workspaceIds = useMemo(() => getWorkspaceIds(layout), [layout])
 
@@ -1337,6 +1383,37 @@ function WorkspaceFrames({
     }
     return layouts
   }, [layout, workspaceIds])
+
+  // When a pane is fullscreened, find the workspace it belongs to and
+  // render only that workspace with just the fullscreened pane's LeafNode.
+  const fullscreenLayout = useMemo(() => {
+    if (!fullscreenPaneId) {
+      return null
+    }
+    const node = findNodeById(layout, fullscreenPaneId)
+    if (!node || node._tag !== 'LeafNode') {
+      return null
+    }
+    // Find which workspace this pane belongs to
+    const wsEntry = workspaceLayouts.find((entry) => {
+      const leaves = getLeafNodes(entry.subLayout)
+      return leaves.some((l) => l.id === fullscreenPaneId)
+    })
+    return wsEntry
+      ? { workspaceId: wsEntry.workspaceId, subLayout: node }
+      : null
+  }, [fullscreenPaneId, layout, workspaceLayouts])
+
+  // Fullscreen mode — render only the fullscreened pane in its workspace frame
+  if (fullscreenLayout) {
+    return (
+      <WorkspaceFrame
+        activePaneId={activePaneId}
+        subLayout={fullscreenLayout.subLayout}
+        workspaceId={fullscreenLayout.workspaceId}
+      />
+    )
+  }
 
   // Single workspace — no need for resizable splitting
   if (workspaceLayouts.length <= 1) {
@@ -1410,10 +1487,12 @@ function PanelContent({
   isReconciling,
   layout,
   activePaneId,
+  fullscreenPaneId,
 }: {
   readonly isReconciling: boolean
   readonly layout: PanelNode | undefined
   readonly activePaneId: string | null
+  readonly fullscreenPaneId: string | null
 }) {
   if (isReconciling) {
     return (
@@ -1425,7 +1504,13 @@ function PanelContent({
     )
   }
   if (layout) {
-    return <WorkspaceFrames activePaneId={activePaneId} layout={layout} />
+    return (
+      <WorkspaceFrames
+        activePaneId={activePaneId}
+        fullscreenPaneId={fullscreenPaneId}
+        layout={layout}
+      />
+    )
   }
   return <PanelManager layout={undefined} />
 }
@@ -1444,30 +1529,52 @@ function HomeComponent() {
   const workspaceList = store.useQuery(sidebarWorkspaces$)
   const hasProjects = projectList.length > 0
 
+  // Fullscreen pane state — transient UI mode (not persisted to LiveStore).
+  // When set, only the fullscreened pane is shown, hiding all other
+  // workspaces and sibling panes. The workspace bar header remains visible.
+  const [fullscreenPaneId, setFullscreenPaneId] = useState<string | null>(null)
+
+  // Auto-exit fullscreen when the fullscreened pane no longer exists in the layout
+  // (e.g., if the pane was closed while fullscreened).
+  useEffect(() => {
+    if (fullscreenPaneId && layout) {
+      const node = findNodeById(layout, fullscreenPaneId)
+      if (!node) {
+        setFullscreenPaneId(null)
+      }
+    }
+  }, [fullscreenPaneId, layout])
+
+  const toggleFullscreenPane = useCallback(() => {
+    setFullscreenPaneId((current) => {
+      if (current) {
+        // Already fullscreened — exit fullscreen
+        return null
+      }
+      // Enter fullscreen for the active pane
+      return activePaneId
+    })
+  }, [activePaneId])
+
   // Close-terminal confirmation dialog state
   const [closeTerminalDialogOpen, setCloseTerminalDialogOpen] = useState(false)
   const pendingClosePaneIdRef = useRef<string | null>(null)
 
   /**
-   * Gated closePane that checks if the terminal has a running process.
-   * If running, shows a confirmation dialog. Otherwise closes immediately.
+   * Gated closePane that checks if the terminal has a running child process.
+   * Only shows the confirmation dialog when an actual program (e.g., vim,
+   * dev server, opencode) is running inside the shell — not when the shell
+   * is idle at a prompt.
    */
   const gatedClosePane = useCallback(
     (paneId: string) => {
-      // Resolve the leaf node to get its terminalId
-      if (layout) {
-        const node = findNodeById(layout, paneId)
-        if (node && node._tag === 'LeafNode' && node.terminalId) {
-          const terminal = liveTerminals.find((t) => t.id === node.terminalId)
-          if (terminal && terminal.status === 'running') {
-            // Terminal is running — show confirmation dialog
-            pendingClosePaneIdRef.current = paneId
-            setCloseTerminalDialogOpen(true)
-            return
-          }
-        }
+      if (shouldConfirmClose(layout, paneId, liveTerminals)) {
+        // Terminal has an active child process — show confirmation dialog
+        pendingClosePaneIdRef.current = paneId
+        setCloseTerminalDialogOpen(true)
+        return
       }
-      // Terminal is stopped or no terminal — close immediately
+      // No active child process or no terminal — close immediately
       panelActions.closePane(paneId)
     },
     [layout, liveTerminals, panelActions]
@@ -1502,14 +1609,15 @@ function HomeComponent() {
     [layout, gatedClosePane, panelActions]
   )
 
-  // Override panelActions.closePane with the gated version
+  // Override panelActions.closePane with the gated version and add fullscreen toggle
   const gatedPanelActions = useMemo(
     () => ({
       ...panelActions,
       closePane: gatedClosePane,
       closeTerminalPane: gatedCloseTerminalPane,
+      toggleFullscreenPane,
     }),
-    [panelActions, gatedClosePane, gatedCloseTerminalPane]
+    [panelActions, gatedClosePane, gatedCloseTerminalPane, toggleFullscreenPane]
   )
 
   // Sync running workspace count to Electron system tray tooltip (no-op in browser)
@@ -1614,7 +1722,11 @@ function HomeComponent() {
   }, [mainView])
 
   return (
-    <PanelActionsProvider activePaneId={activePaneId} value={gatedPanelActions}>
+    <PanelActionsProvider
+      activePaneId={activePaneId}
+      fullscreenPaneId={fullscreenPaneId}
+      value={gatedPanelActions}
+    >
       <CloseTerminalDialog
         onConfirm={handleConfirmCloseTerminal}
         onOpenChange={setCloseTerminalDialogOpen}
@@ -1753,6 +1865,7 @@ function HomeComponent() {
                   />
                   <PanelContent
                     activePaneId={activePaneId}
+                    fullscreenPaneId={fullscreenPaneId}
                     isReconciling={isReconciling}
                     layout={layout}
                   />

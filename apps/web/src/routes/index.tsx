@@ -224,13 +224,16 @@ function HomeComponent() {
     }
   }, [panelActions])
 
-  // Override panelActions.closePane with the gated version and add fullscreen toggle
+  // Override panelActions.closePane with the gated version and add fullscreen toggle.
+  // forceCloseWorkspace bypasses the confirmation gate — used by workspace
+  // destruction which has its own confirmation dialog.
   const gatedPanelActions = useMemo(
     () => ({
       ...panelActions,
       closePane: gatedClosePane,
       closeTerminalPane: gatedCloseTerminalPane,
       closeWorkspace: gatedCloseWorkspace,
+      forceCloseWorkspace: panelActions.closeWorkspace,
       toggleFullscreenPane,
     }),
     [

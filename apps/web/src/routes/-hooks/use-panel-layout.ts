@@ -895,6 +895,7 @@ export function usePanelLayout() {
       splitPane: handleSplitPane,
       closePane: handleClosePane,
       closeWorkspace: handleCloseWorkspace,
+      forceCloseWorkspace: handleCloseWorkspace,
       setActivePaneId: handleSetActivePaneId,
       toggleDiffPane: handleToggleDiffPane,
       toggleDevServerPane: handleToggleDevServerPane,

@@ -71,6 +71,17 @@ interface PanelActions {
    */
   readonly closeWorkspace: (workspaceId: string) => void
   /**
+   * Close all panes belonging to a workspace without confirmation.
+   *
+   * Identical to closeWorkspace but bypasses the running-process
+   * confirmation gate. Used by workspace destruction which has its own
+   * confirmation dialog that already warns the user about active
+   * terminals.
+   *
+   * @param workspaceId - The workspace whose panes should be closed
+   */
+  readonly forceCloseWorkspace: (workspaceId: string) => void
+  /**
    * Reorder workspace frames in the panel view.
    *
    * Persists a new explicit ordering of workspace IDs, overriding the

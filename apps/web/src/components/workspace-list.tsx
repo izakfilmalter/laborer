@@ -83,6 +83,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { useTerminalList } from '@/hooks/use-terminal-list'
 import { isElectron, openExternalUrl } from '@/lib/desktop'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { cn, extractErrorMessage } from '@/lib/utils'
@@ -311,18 +312,32 @@ function ContainerPauseButton({
  * Returns the label for the destroy button based on current state.
  */
 /**
+ * Descriptor for an active terminal to display in the destroy dialog.
+ */
+interface ActiveTerminal {
+  readonly id: string
+  readonly label: string
+}
+
+/**
  * Destroy dialog description text. Extracted to avoid nested ternaries.
+ *
+ * Shows a checking spinner while dirty/terminal state is loading, then
+ * displays any uncommitted files and active terminal sessions that will
+ * be lost. When there are no warnings, shows a generic confirmation.
  */
 function DestroyDialogDescription({
+  activeTerminals,
   branchName,
   dirtyFiles,
-  isCheckingDirty,
+  isChecking,
 }: {
+  readonly activeTerminals: readonly ActiveTerminal[]
   readonly branchName: string
   readonly dirtyFiles: readonly string[]
-  readonly isCheckingDirty: boolean
+  readonly isChecking: boolean
 }) {
-  if (isCheckingDirty) {
+  if (isChecking) {
     return (
       <AlertDialogDescription>
         <span className="flex items-center gap-2">
@@ -335,22 +350,42 @@ function DestroyDialogDescription({
     )
   }
 
-  if (dirtyFiles.length > 0) {
+  const hasWarnings = dirtyFiles.length > 0 || activeTerminals.length > 0
+
+  if (hasWarnings) {
     return (
       <>
         <AlertDialogDescription>
           Workspace{' '}
           <strong className="font-mono text-foreground">{branchName}</strong>{' '}
-          has uncommitted changes that will be lost. Are you sure you want to
-          force destroy it?
+          has{dirtyFiles.length > 0 ? ' uncommitted changes' : ''}
+          {dirtyFiles.length > 0 && activeTerminals.length > 0 ? ' and' : ''}
+          {activeTerminals.length > 0
+            ? ` ${activeTerminals.length} active terminal${activeTerminals.length > 1 ? 's' : ''}`
+            : ''}{' '}
+          that will be lost. Are you sure you want to force destroy it?
         </AlertDialogDescription>
-        <ul className="max-h-40 list-none overflow-y-auto rounded-md border bg-muted/50 p-2 font-mono text-xs">
-          {dirtyFiles.map((file) => (
-            <li className="break-all py-0.5 text-muted-foreground" key={file}>
-              {file}
-            </li>
-          ))}
-        </ul>
+        {dirtyFiles.length > 0 && (
+          <ul className="max-h-40 list-none overflow-y-auto rounded-md border bg-muted/50 p-2 font-mono text-xs">
+            {dirtyFiles.map((file) => (
+              <li className="break-all py-0.5 text-muted-foreground" key={file}>
+                {file}
+              </li>
+            ))}
+          </ul>
+        )}
+        {activeTerminals.length > 0 && (
+          <ul className="max-h-40 list-none overflow-y-auto rounded-md border bg-muted/50 p-2 font-mono text-xs">
+            {activeTerminals.map((terminal) => (
+              <li
+                className="break-all py-0.5 text-muted-foreground"
+                key={terminal.id}
+              >
+                {terminal.label}
+              </li>
+            ))}
+          </ul>
+        )}
       </>
     )
   }
@@ -395,6 +430,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [isCheckingDirty, setIsCheckingDirty] = useState(false)
   const [dirtyFiles, setDirtyFiles] = useState<string[]>([])
+  const [activeTerminals, setActiveTerminals] = useState<ActiveTerminal[]>([])
   const [isStartingLoop, setIsStartingLoop] = useState(false)
   const [workspaceAgentStatus, setWorkspaceAgentStatus] = useState<
     'active' | 'waiting_for_input' | null
@@ -409,6 +445,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
     mode: 'promise',
   })
   const panelActions = usePanelActions()
+  const { refresh: refreshTerminals } = useTerminalList()
   const configGet$ = useMemo(
     () =>
       LaborerClient.query(
@@ -428,26 +465,46 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
     setDialogOpen(open)
     if (!open) {
       setDirtyFiles([])
+      setActiveTerminals([])
       setIsCheckingDirty(false)
       return
     }
-    // Check for dirty files when the dialog opens
+    // Check for dirty files and active terminals when the dialog opens
     setIsCheckingDirty(true)
-    checkDirty({ payload: { workspaceId: workspace.id } })
-      .then((files) => {
-        setDirtyFiles(files.length > 0 ? [...files] : [])
-        setIsCheckingDirty(false)
-      })
-      .catch(() => {
-        // If check fails, allow destroy without dirty warning
-        setIsCheckingDirty(false)
-      })
+    Promise.all([
+      checkDirty({ payload: { workspaceId: workspace.id } }).catch(
+        () => [] as string[]
+      ),
+      refreshTerminals().catch(
+        () =>
+          [] as readonly {
+            id: string
+            workspaceId: string
+            hasChildProcess: boolean
+            foregroundProcess: { label: string } | null
+          }[]
+      ),
+    ]).then(([files, terminals]) => {
+      setDirtyFiles(files.length > 0 ? [...files] : [])
+      // Filter terminals to only those belonging to this workspace with active processes
+      const active: ActiveTerminal[] = terminals
+        .filter(
+          (t) => t.workspaceId === workspace.id && t.hasChildProcess === true
+        )
+        .map((t) => ({
+          id: t.id,
+          label: t.foregroundProcess?.label ?? 'Running process',
+        }))
+      setActiveTerminals(active)
+      setIsCheckingDirty(false)
+    })
   }
 
   const handleDestroy = (force?: boolean) => {
     // Close dialog immediately and run destruction in the background
     setDialogOpen(false)
     setDirtyFiles([])
+    setActiveTerminals([])
 
     const toastId = toast.loading(
       `Destroying workspace "${workspace.branchName}"...`
@@ -457,7 +514,10 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
       payload: { workspaceId: workspace.id, force },
     })
       .then(() => {
-        panelActions?.closeWorkspace(workspace.id)
+        // Use forceCloseWorkspace to bypass the running-process confirmation
+        // gate — the user already confirmed destruction in this dialog which
+        // warned about active terminals.
+        panelActions?.forceCloseWorkspace(workspace.id)
         toast.success(
           `Workspace "${workspace.branchName}" destroyed successfully`,
           { id: toastId }
@@ -504,6 +564,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
     isContainerized && isContainerPaused ? 'paused' : workspace.status
 
   const needsAttention = workspaceAgentStatus === 'waiting_for_input'
+  const hasWarnings = dirtyFiles.length > 0 || activeTerminals.length > 0
 
   const handleContainerLinkClick = async (
     event: React.MouseEvent<HTMLAnchorElement>
@@ -669,20 +730,19 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                   }
                   if (isMetaEnter(event.nativeEvent) && !isCheckingDirty) {
                     event.preventDefault()
-                    handleDestroy(dirtyFiles.length > 0 ? true : undefined)
+                    handleDestroy(hasWarnings ? true : undefined)
                   }
                 }}
               >
                 <AlertDialogHeader>
                   <AlertDialogTitle>
-                    {dirtyFiles.length > 0
-                      ? 'Uncommitted changes'
-                      : 'Destroy workspace?'}
+                    {hasWarnings ? 'Unsaved work' : 'Destroy workspace?'}
                   </AlertDialogTitle>
                   <DestroyDialogDescription
+                    activeTerminals={activeTerminals}
                     branchName={workspace.branchName}
                     dirtyFiles={dirtyFiles}
-                    isCheckingDirty={isCheckingDirty}
+                    isChecking={isCheckingDirty}
                   />
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -692,11 +752,11 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                   <AlertDialogAction
                     disabled={isCheckingDirty}
                     onClick={() =>
-                      handleDestroy(dirtyFiles.length > 0 ? true : undefined)
+                      handleDestroy(hasWarnings ? true : undefined)
                     }
                     variant="destructive"
                   >
-                    {dirtyFiles.length > 0 ? 'Force Destroy' : 'Destroy'}
+                    {hasWarnings ? 'Force Destroy' : 'Destroy'}
                     <Kbd>⌘</Kbd>
                     <Kbd>↵</Kbd>
                   </AlertDialogAction>

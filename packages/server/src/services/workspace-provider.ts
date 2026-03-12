@@ -1258,7 +1258,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   resolvedBranch,
                   port,
                   portAllocator
-                ).pipe(Effect.catchAll(() => Effect.void))
+                )
 
                 // Remove the errored workspace from LiveStore after rollback
                 store.commit(events.workspaceDestroyed({ id }))

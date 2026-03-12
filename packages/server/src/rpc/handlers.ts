@@ -14,7 +14,7 @@
 import { join } from 'node:path'
 import { LaborerRpcs, RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import { Array, Effect, pipe } from 'effect'
+import { Array, Effect, pipe, Schema } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { ContainerService } from '../services/container-service.js'
@@ -36,6 +36,10 @@ import { WorkspaceProvider } from '../services/workspace-provider.js'
 
 const startTime = Date.now()
 const PRD_ISSUE_EXTERNAL_ID_REGEX = /:issue:(\d+)$/u
+
+const GhPrViewOutput = Schema.Struct({
+  number: Schema.optional(Schema.Number),
+})
 
 const toRpcError = (
   error: PrdStorageError,
@@ -143,7 +147,18 @@ const detectPrNumber = Effect.fn('detectPrNumber')(function* (
     })
   }
 
-  const parsed = JSON.parse(stdout.trim()) as { number?: number }
+  const parsed = yield* Schema.decodeUnknown(Schema.parseJson(GhPrViewOutput))(
+    stdout.trim()
+  ).pipe(
+    Effect.mapError(
+      () =>
+        new RpcError({
+          message: `Could not parse PR number from gh output: ${stdout.trim()}`,
+          code: 'PR_NOT_FOUND',
+        })
+    )
+  )
+
   if (typeof parsed.number !== 'number' || parsed.number <= 0) {
     return yield* new RpcError({
       message: `Could not parse PR number from gh output: ${stdout.trim()}`,

@@ -4,6 +4,7 @@ interface SetupScriptItem {
 }
 
 interface ResolvedConfigSnapshot {
+  readonly agent: 'opencode' | 'claude' | 'codex'
   readonly devServerImage: string | null
   readonly devServerInstallCommand: string | null
   readonly devServerNetwork: string | null
@@ -15,6 +16,7 @@ interface ResolvedConfigSnapshot {
 }
 
 interface ConfigUpdates {
+  agent?: 'opencode' | 'claude' | 'codex'
   devServer?: {
     image?: string
     installCommand?: string
@@ -108,6 +110,7 @@ const buildDevServerUpdates = (
 }
 
 const buildConfigUpdates = ({
+  agent,
   devServerImage,
   devServerInstallCommand,
   devServerNetwork,
@@ -118,6 +121,7 @@ const buildConfigUpdates = ({
   setupScripts,
   worktreeDir,
 }: {
+  agent: 'opencode' | 'claude' | 'codex'
   devServerImage: string
   devServerInstallCommand: string
   devServerNetwork: string
@@ -129,6 +133,10 @@ const buildConfigUpdates = ({
   worktreeDir: string
 }): ConfigUpdates => {
   const updates: ConfigUpdates = {}
+
+  if (agent !== resolvedConfig.agent) {
+    updates.agent = agent
+  }
 
   const normalizedWorktreeDir = worktreeDir.trim()
   const normalizedSetupScripts = normalizeSetupScripts(setupScripts)

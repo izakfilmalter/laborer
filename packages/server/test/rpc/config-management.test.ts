@@ -92,6 +92,7 @@ describe('LaborerRpcs config management', () => {
           const canonicalAncestorConfigPath = realpathSync(ancestorConfigPath)
 
           assert.deepStrictEqual(config, {
+            agent: { source: 'default', value: 'claude' },
             devServer: {
               dockerfile: { source: 'default', value: null },
               image: { source: 'default', value: 'node:lts' },
@@ -192,6 +193,7 @@ describe('LaborerRpcs config management', () => {
           const resolved = yield* client.config.get({ projectId: project.id })
 
           assert.deepStrictEqual(resolved, {
+            agent: { source: 'default', value: 'claude' },
             devServer: {
               dockerfile: { source: 'default', value: null },
               image: { source: 'default', value: 'node:lts' },

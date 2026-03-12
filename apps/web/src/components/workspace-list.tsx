@@ -681,7 +681,10 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
           </div>
         )}
         <div className="border-t pt-2">
-          <TerminalList workspaceId={workspace.id} />
+          <TerminalList
+            projectId={workspace.projectId}
+            workspaceId={workspace.id}
+          />
         </div>
         {associatedPrdId && (
           <div className="border-t pt-2">

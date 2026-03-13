@@ -40,7 +40,7 @@ None - can start immediately
 
 ---
 
-## Issue 2: Vendor and build Ghostty through a pinned native toolchain — DONE
+## Issue 2: Vendor and build Ghostty through a pinned native toolchain
 
 ### Parent PRD
 
@@ -58,11 +58,11 @@ This slice should introduce the Ghostty submodule, wire up `node-gyp` and `node-
 
 ### Acceptance criteria
 
-- [x] Ghostty is vendored as a pinned git submodule in the repo
-- [x] A new native addon package builds with `node-gyp` and `node-addon-api`
-- [x] The package can link against the pinned Ghostty source successfully
-- [x] Native addon build steps are documented in package scripts or repo docs
-- [x] A minimal native test harness can load the built addon in CI/dev
+- [ ] Ghostty is vendored as a pinned git submodule in the repo
+- [ ] A new native addon package builds with `node-gyp` and `node-addon-api`
+- [ ] The package can link against the pinned Ghostty source successfully
+- [ ] Native addon build steps are documented in package scripts or repo docs
+- [ ] A minimal native test harness can load the built addon in CI/dev
 
 ### Blocked by
 

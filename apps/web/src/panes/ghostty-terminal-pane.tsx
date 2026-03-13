@@ -6,12 +6,12 @@
  * - Creating a Ghostty surface via the DesktopBridge IPC when the pane mounts
  * - Setting focus on the surface when the pane gains/loses focus
  * - Forwarding keyboard input to the native Ghostty surface (Issue 5)
+ * - Forwarding mouse input to the native Ghostty surface (Issue 6)
  * - Propagating resize events from the pane layout to the surface (Issue 5)
  * - Destroying the surface cleanly when the pane unmounts
  * - Showing loading, error, and placeholder states
  *
  * The component does NOT handle:
- * - Mouse input routing (Issue 6)
  * - Zero-copy rendering via WebGPU/IOSurface (Issue 3)
  * - Action callbacks like title changes (Issue 7)
  *
@@ -25,6 +25,13 @@
  * - Panel shortcuts (Ctrl+B prefix, Cmd+W, Cmd+Shift+Enter) bypass the
  *   terminal and bubble to the global hotkey layer
  *
+ * Mouse input routing:
+ * - Mouse button events (click, release) are translated to Ghostty button
+ *   enums and forwarded via DesktopBridge
+ * - Mouse move events are forwarded as position updates
+ * - Wheel events are forwarded as scroll events
+ * - Context menu is prevented within the terminal surface
+ *
  * Resize routing:
  * - A ResizeObserver watches the container div and sends pixel dimensions
  *   to the native surface via DesktopBridge.ghosttySetSize
@@ -34,9 +41,15 @@
  * @see apps/desktop/src/ghostty-bridge.ts — Main process IPC relay
  * @see Issue 4: Ghostty terminal lifecycle and pane integration
  * @see Issue 5: Keyboard, focus, and resize routing
+ * @see Issue 6: Mouse input and interactive terminal behavior
  */
 
-import type { GhosttyKeyEvent } from '@laborer/shared/desktop-bridge'
+import type {
+  GhosttyKeyEvent,
+  GhosttyMouseButtonEvent,
+  GhosttyMousePosEvent,
+  GhosttyMouseScrollEvent,
+} from '@laborer/shared/desktop-bridge'
 import { Ghost, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getDesktopBridge } from '@/lib/desktop'
@@ -45,6 +58,12 @@ import {
   RESIZE_DEBOUNCE_MS,
   translateModifiers,
 } from './ghostty-keys.js'
+import {
+  GHOSTTY_MOUSE_PRESS,
+  GHOSTTY_MOUSE_RELEASE,
+  translateMouseButton,
+  translateMouseModifiers,
+} from './ghostty-mouse.js'
 import { shouldBypassTerminal } from './terminal-keys.js'
 
 /** Target render rate for the pixel readback polling loop (ms). */
@@ -386,6 +405,104 @@ function GhosttyTerminalPane({
     [sendKeyEvent]
   )
 
+  // Mouse event handlers — forward mouse input to the native Ghostty surface
+
+  const handleMouseDown = useCallback((event: React.MouseEvent) => {
+    const id = surfaceIdRef.current
+    if (id === null) {
+      return
+    }
+
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    const mouseEvent: GhosttyMouseButtonEvent = {
+      state: GHOSTTY_MOUSE_PRESS,
+      button: translateMouseButton(event.button),
+      mods: translateMouseModifiers(event),
+    }
+
+    const bridge = getDesktopBridge()
+    bridge?.ghosttySendMouseButton(id, mouseEvent).catch(() => {
+      // Best effort
+    })
+
+    // Also send position with the button press
+    const posEvent: GhosttyMousePosEvent = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+      mods: translateMouseModifiers(event),
+    }
+    bridge?.ghosttySendMousePos(id, posEvent).catch(() => {
+      // Best effort
+    })
+  }, [])
+
+  const handleMouseUp = useCallback((event: React.MouseEvent) => {
+    const id = surfaceIdRef.current
+    if (id === null) {
+      return
+    }
+
+    const mouseEvent: GhosttyMouseButtonEvent = {
+      state: GHOSTTY_MOUSE_RELEASE,
+      button: translateMouseButton(event.button),
+      mods: translateMouseModifiers(event),
+    }
+
+    const bridge = getDesktopBridge()
+    bridge?.ghosttySendMouseButton(id, mouseEvent).catch(() => {
+      // Best effort
+    })
+  }, [])
+
+  const handleMouseMove = useCallback((event: React.MouseEvent) => {
+    const id = surfaceIdRef.current
+    if (id === null) {
+      return
+    }
+
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    const posEvent: GhosttyMousePosEvent = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+      mods: translateMouseModifiers(event),
+    }
+
+    const bridge = getDesktopBridge()
+    bridge?.ghosttySendMousePos(id, posEvent).catch(() => {
+      // Best effort
+    })
+  }, [])
+
+  const handleWheel = useCallback((event: React.WheelEvent) => {
+    const id = surfaceIdRef.current
+    if (id === null) {
+      return
+    }
+
+    // Normalize scroll deltas. Browser WheelEvent.deltaX/deltaY are in
+    // pixels (for deltaMode 0). Ghostty expects scroll amounts where
+    // positive Y means scrolling content up (opposite of browser convention).
+    const scrollEvent: GhosttyMouseScrollEvent = {
+      dx: event.deltaX,
+      dy: event.deltaY,
+      scrollMods: 0,
+    }
+
+    const bridge = getDesktopBridge()
+    bridge?.ghosttySendMouseScroll(id, scrollEvent).catch(() => {
+      // Best effort
+    })
+
+    // Prevent the page from scrolling
+    event.preventDefault()
+  }, [])
+
+  const handleContextMenu = useCallback((event: React.MouseEvent) => {
+    // Prevent the browser context menu inside the terminal surface.
+    // Right-click events are forwarded to Ghostty as mouse button events.
+    event.preventDefault()
+  }, [])
+
   // Handle the exit callback when the surface is destroyed
   const handleExit = useCallback(() => {
     onSurfaceExit?.()
@@ -449,13 +566,18 @@ function GhosttyTerminalPane({
   // div acts as a keyboard capture surface for the terminal, similar to how
   // xterm.js uses a <textarea> for input capture.
   return (
-    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Terminal keyboard event handlers for input forwarding
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Terminal keyboard and mouse event handlers for input forwarding
     <div
       aria-label={`Ghostty Terminal Surface #${surfaceState.surfaceId}`}
       className="flex h-full w-full flex-col bg-black outline-none"
       data-ghostty-surface-id={surfaceState.surfaceId}
+      onContextMenu={handleContextMenu}
       onKeyDown={handleKeyDown}
       onKeyUp={handleKeyUp}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onWheel={handleWheel}
       ref={containerRef}
       role="document"
       tabIndex={-1}

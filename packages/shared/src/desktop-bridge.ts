@@ -160,6 +160,51 @@ export interface GhosttyKeyEvent {
   readonly unshiftedCodepoint: number
 }
 
+/**
+ * Mouse button event payload for Ghostty surface input.
+ * Matches the ghostty_surface_mouse_button parameters from the Ghostty C API.
+ *
+ * State: 0 = release, 1 = press.
+ * Button: 0 = unknown, 1 = left, 2 = right, 3 = middle, 4-11 = extra.
+ * Mods: bitmask of SHIFT(1), CTRL(2), ALT(4), SUPER(8), etc.
+ */
+export interface GhosttyMouseButtonEvent {
+  /** Ghostty mouse button (ghostty_input_mouse_button_e value). */
+  readonly button: number
+  /** Modifier bitmask. */
+  readonly mods: number
+  /** 0 = release, 1 = press. */
+  readonly state: number
+}
+
+/**
+ * Mouse position event payload for Ghostty surface input.
+ * Coordinates are in pixels relative to the surface origin.
+ */
+export interface GhosttyMousePosEvent {
+  /** Modifier bitmask. */
+  readonly mods: number
+  /** X position in pixels. */
+  readonly x: number
+  /** Y position in pixels. */
+  readonly y: number
+}
+
+/**
+ * Mouse scroll event payload for Ghostty surface input.
+ */
+export interface GhosttyMouseScrollEvent {
+  /** Horizontal scroll delta. */
+  readonly dx: number
+  /** Vertical scroll delta. */
+  readonly dy: number
+  /**
+   * Packed scroll modifiers (ghostty_input_scroll_mods_t).
+   * Pass 0 for standard wheel events.
+   */
+  readonly scrollMods: number
+}
+
 export interface DesktopBridge {
   /** Shows a native confirmation dialog with Yes/No buttons. Returns true if confirmed. */
   confirm: (message: string) => Promise<boolean>
@@ -221,11 +266,41 @@ export interface DesktopBridge {
   ghosttyListSurfaces: () => Promise<readonly number[]>
 
   /**
+   * Check whether a Ghostty surface has captured the mouse.
+   * When captured, mouse events should be forwarded to the terminal.
+   */
+  ghosttyMouseCaptured: (surfaceId: number) => Promise<boolean>
+
+  /**
    * Send a key event to a Ghostty surface.
    */
   ghosttySendKey: (
     surfaceId: number,
     keyEvent: GhosttyKeyEvent
+  ) => Promise<void>
+
+  /**
+   * Send a mouse button event to a Ghostty surface.
+   */
+  ghosttySendMouseButton: (
+    surfaceId: number,
+    mouseEvent: GhosttyMouseButtonEvent
+  ) => Promise<void>
+
+  /**
+   * Send a mouse position update to a Ghostty surface.
+   */
+  ghosttySendMousePos: (
+    surfaceId: number,
+    mouseEvent: GhosttyMousePosEvent
+  ) => Promise<void>
+
+  /**
+   * Send a mouse scroll event to a Ghostty surface.
+   */
+  ghosttySendMouseScroll: (
+    surfaceId: number,
+    mouseEvent: GhosttyMouseScrollEvent
   ) => Promise<void>
 
   /**

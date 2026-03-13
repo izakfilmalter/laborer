@@ -34,6 +34,10 @@ const GHOSTTY_SET_FOCUS_CHANNEL = 'ghostty:set-focus'
 const GHOSTTY_LIST_SURFACES_CHANNEL = 'ghostty:list-surfaces'
 const GHOSTTY_SEND_KEY_CHANNEL = 'ghostty:send-key'
 const GHOSTTY_SEND_TEXT_CHANNEL = 'ghostty:send-text'
+const GHOSTTY_SEND_MOUSE_BUTTON_CHANNEL = 'ghostty:send-mouse-button'
+const GHOSTTY_SEND_MOUSE_POS_CHANNEL = 'ghostty:send-mouse-pos'
+const GHOSTTY_SEND_MOUSE_SCROLL_CHANNEL = 'ghostty:send-mouse-scroll'
+const GHOSTTY_MOUSE_CAPTURED_CHANNEL = 'ghostty:mouse-captured'
 
 // ---------------------------------------------------------------------------
 // Service URLs — injected via `additionalArguments` from the main process.
@@ -194,4 +198,24 @@ contextBridge.exposeInMainWorld('desktopBridge', {
 
   ghosttySetSize: (surfaceId, width, height) =>
     ipcRenderer.invoke(GHOSTTY_SET_SIZE_CHANNEL, surfaceId, width, height),
+
+  ghosttyMouseCaptured: (surfaceId) =>
+    ipcRenderer.invoke(GHOSTTY_MOUSE_CAPTURED_CHANNEL, surfaceId),
+
+  ghosttySendMouseButton: (surfaceId, mouseEvent) =>
+    ipcRenderer.invoke(
+      GHOSTTY_SEND_MOUSE_BUTTON_CHANNEL,
+      surfaceId,
+      mouseEvent
+    ),
+
+  ghosttySendMousePos: (surfaceId, mouseEvent) =>
+    ipcRenderer.invoke(GHOSTTY_SEND_MOUSE_POS_CHANNEL, surfaceId, mouseEvent),
+
+  ghosttySendMouseScroll: (surfaceId, mouseEvent) =>
+    ipcRenderer.invoke(
+      GHOSTTY_SEND_MOUSE_SCROLL_CHANNEL,
+      surfaceId,
+      mouseEvent
+    ),
 } satisfies DesktopBridge)

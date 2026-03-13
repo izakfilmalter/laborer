@@ -37,6 +37,10 @@ export const GHOSTTY_SET_FOCUS_CHANNEL = 'ghostty:set-focus'
 export const GHOSTTY_LIST_SURFACES_CHANNEL = 'ghostty:list-surfaces'
 export const GHOSTTY_SEND_KEY_CHANNEL = 'ghostty:send-key'
 export const GHOSTTY_SEND_TEXT_CHANNEL = 'ghostty:send-text'
+export const GHOSTTY_SEND_MOUSE_BUTTON_CHANNEL = 'ghostty:send-mouse-button'
+export const GHOSTTY_SEND_MOUSE_POS_CHANNEL = 'ghostty:send-mouse-pos'
+export const GHOSTTY_SEND_MOUSE_SCROLL_CHANNEL = 'ghostty:send-mouse-scroll'
+export const GHOSTTY_MOUSE_CAPTURED_CHANNEL = 'ghostty:mouse-captured'
 
 // ---------------------------------------------------------------------------
 // Pending request tracking
@@ -206,6 +210,68 @@ export class GhosttyBridge {
         return await this.sendText(surfaceId, text)
       }
     )
+
+    ipcMain.removeHandler(GHOSTTY_SEND_MOUSE_BUTTON_CHANNEL)
+    ipcMain.handle(
+      GHOSTTY_SEND_MOUSE_BUTTON_CHANNEL,
+      async (_event, surfaceId: unknown, mouseEvent: unknown) => {
+        if (typeof surfaceId !== 'number') {
+          throw new Error('surfaceId must be a number')
+        }
+        if (typeof mouseEvent !== 'object' || mouseEvent === null) {
+          throw new Error('mouseEvent must be an object')
+        }
+        return await this.sendMouseButton(
+          surfaceId,
+          mouseEvent as Record<string, unknown>
+        )
+      }
+    )
+
+    ipcMain.removeHandler(GHOSTTY_SEND_MOUSE_POS_CHANNEL)
+    ipcMain.handle(
+      GHOSTTY_SEND_MOUSE_POS_CHANNEL,
+      async (_event, surfaceId: unknown, mouseEvent: unknown) => {
+        if (typeof surfaceId !== 'number') {
+          throw new Error('surfaceId must be a number')
+        }
+        if (typeof mouseEvent !== 'object' || mouseEvent === null) {
+          throw new Error('mouseEvent must be an object')
+        }
+        return await this.sendMousePos(
+          surfaceId,
+          mouseEvent as Record<string, unknown>
+        )
+      }
+    )
+
+    ipcMain.removeHandler(GHOSTTY_SEND_MOUSE_SCROLL_CHANNEL)
+    ipcMain.handle(
+      GHOSTTY_SEND_MOUSE_SCROLL_CHANNEL,
+      async (_event, surfaceId: unknown, mouseEvent: unknown) => {
+        if (typeof surfaceId !== 'number') {
+          throw new Error('surfaceId must be a number')
+        }
+        if (typeof mouseEvent !== 'object' || mouseEvent === null) {
+          throw new Error('mouseEvent must be an object')
+        }
+        return await this.sendMouseScroll(
+          surfaceId,
+          mouseEvent as Record<string, unknown>
+        )
+      }
+    )
+
+    ipcMain.removeHandler(GHOSTTY_MOUSE_CAPTURED_CHANNEL)
+    ipcMain.handle(
+      GHOSTTY_MOUSE_CAPTURED_CHANNEL,
+      async (_event, surfaceId: unknown) => {
+        if (typeof surfaceId !== 'number') {
+          throw new Error('surfaceId must be a number')
+        }
+        return await this.mouseCaptured(surfaceId)
+      }
+    )
   }
 
   // -----------------------------------------------------------------------
@@ -297,6 +363,58 @@ export class GhosttyBridge {
     await this.sendRequest<void>({ type: 'send_text', id, surfaceId, text })
   }
 
+  async sendMouseButton(
+    surfaceId: number,
+    mouseEvent: Record<string, unknown>
+  ): Promise<void> {
+    this.ensureReady()
+    const id = this.generateId()
+    await this.sendRequest<void>({
+      type: 'send_mouse_button',
+      id,
+      surfaceId,
+      mouseEvent,
+    })
+  }
+
+  async sendMousePos(
+    surfaceId: number,
+    mouseEvent: Record<string, unknown>
+  ): Promise<void> {
+    this.ensureReady()
+    const id = this.generateId()
+    await this.sendRequest<void>({
+      type: 'send_mouse_pos',
+      id,
+      surfaceId,
+      mouseEvent,
+    })
+  }
+
+  async sendMouseScroll(
+    surfaceId: number,
+    mouseEvent: Record<string, unknown>
+  ): Promise<void> {
+    this.ensureReady()
+    const id = this.generateId()
+    await this.sendRequest<void>({
+      type: 'send_mouse_scroll',
+      id,
+      surfaceId,
+      mouseEvent,
+    })
+  }
+
+  async mouseCaptured(surfaceId: number): Promise<boolean> {
+    this.ensureReady()
+    const id = this.generateId()
+    return await this.sendRequest<boolean>({
+      type: 'mouse_captured',
+      id,
+      surfaceId,
+    })
+  }
+
   async listSurfaces(): Promise<readonly number[]> {
     this.ensureReady()
     return await this.sendRequest<readonly number[]>({
@@ -382,6 +500,11 @@ export class GhosttyBridge {
         break
       case 'surfaces_list':
         this.resolveRequest('list', event.surfaces)
+        break
+      case 'mouse_captured_result':
+        if (id) {
+          this.resolveRequest(id, event.captured)
+        }
         break
       case 'error':
         if (id) {

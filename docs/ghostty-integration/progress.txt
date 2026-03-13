@@ -325,3 +325,47 @@ Date: 2026-03-13
 - Ctrl+B prefix mode reuses shouldBypassTerminal from terminal-keys.ts — same shortcut scope isolation as xterm.js terminals
 - tabIndex={-1} used instead of tabIndex={0} to avoid adding the terminal div to tab navigation order — focus is managed programmatically via containerRef.focus()
 - Modifier translation uses addition (+=) instead of bitwise OR (|=) to satisfy biome's no-bitwise-operators lint rule — functionally equivalent since modifier flags don't overlap
+
+---
+
+## Issue 6: Mouse input and interactive terminal behavior
+Status: COMPLETE
+Date: 2026-03-13
+
+### What was done
+- Added mouse input pipeline across all 8 layers (native addon → host IPC → Effect client → bridge → preload → renderer):
+  - Layer 1 (Native addon — addon.mm): Added SurfaceMouseCaptured wrapping ghostty_surface_mouse_captured(), SendSurfaceMouseButton wrapping ghostty_surface_mouse_button(), SendSurfaceMousePos wrapping ghostty_surface_mouse_pos(), SendSurfaceMouseScroll wrapping ghostty_surface_mouse_scroll(). Registered all 4 functions in the module initialization.
+  - Layer 2 (TypeScript interface — index.ts): Added MouseState, MouseButton, MouseButtonEvent, MousePosEvent, MouseScrollEvent types. Added surfaceMouseCaptured(), sendSurfaceMouseButton(), sendSurfaceMousePos(), sendSurfaceMouseScroll() exported functions.
+  - Layer 3 (Host IPC — ghostty-host.ts): Added send_mouse_button, send_mouse_pos, send_mouse_scroll, mouse_captured command types. Added MouseCapturedResultEvent event type. Added handlers, validation, and dispatch for all 4 commands.
+  - Layer 4 (Effect client — ghostty-host-client.ts): Added mouseCaptured(), sendMouseButton(), sendMousePos(), sendMouseScroll() methods to GhosttyHostClient service interface and implementation. Added MouseCapturedResultEvent to event routing.
+  - Layer 5 (Shared types — desktop-bridge.ts): Added GhosttyMouseButtonEvent, GhosttyMousePosEvent, GhosttyMouseScrollEvent interfaces. Added ghosttyMouseCaptured, ghosttySendMouseButton, ghosttySendMousePos, ghosttySendMouseScroll to DesktopBridge interface.
+  - Layer 6 (IPC bridge — ghostty-bridge.ts): Added GHOSTTY_SEND_MOUSE_BUTTON_CHANNEL, GHOSTTY_SEND_MOUSE_POS_CHANNEL, GHOSTTY_SEND_MOUSE_SCROLL_CHANNEL, GHOSTTY_MOUSE_CAPTURED_CHANNEL. Added sendMouseButton/sendMousePos/sendMouseScroll/mouseCaptured public methods and ipcMain.handle() registrations. Added mouse_captured_result to event routing.
+  - Layer 7 (Preload — preload.ts): Added ghosttyMouseCaptured, ghosttySendMouseButton, ghosttySendMousePos, ghosttySendMouseScroll implementations using ipcRenderer.invoke.
+- Created ghostty-mouse.ts mouse mapping module (apps/web/src/panes/ghostty-mouse.ts):
+  - translateMouseButton(): Maps browser MouseEvent.button (0-4) to Ghostty ghostty_input_mouse_button_e enum values (left=1, middle=3, right=2, four=4, five=5).
+  - translateMouseModifiers(): Converts browser modifier flags to Ghostty modifier bitmask (SHIFT=1, CTRL=2, ALT=4, SUPER=8).
+  - GHOSTTY_MOUSE_PRESS/GHOSTTY_MOUSE_RELEASE constants.
+- Updated GhosttyTerminalPane (apps/web/src/panes/ghostty-terminal-pane.tsx):
+  - Added onMouseDown handler: sends mouse button press + position to native surface
+  - Added onMouseUp handler: sends mouse button release to native surface
+  - Added onMouseMove handler: sends mouse position updates to native surface
+  - Added onWheel handler: sends scroll events (deltaX/deltaY) to native surface, prevents page scrolling
+  - Added onContextMenu handler: prevents browser context menu in terminal (right-click forwarded as mouse button)
+  - All mouse event handlers use fire-and-forget pattern matching keyboard input
+- Added 15 unit tests (apps/web/test/ghostty-mouse.test.ts):
+  - translateMouseButton: left, middle, right, back, forward buttons, unknown button fallback
+  - translateMouseModifiers: no mods (0), SHIFT (1), CTRL (2), ALT (4), SUPER (8), all mods (15), CTRL+SHIFT (3)
+  - Mouse state constants: GHOSTTY_MOUSE_RELEASE (0), GHOSTTY_MOUSE_PRESS (1)
+- All 8 packages typecheck successfully
+- All 513 web tests pass (455 existing + 15 new ghostty-mouse + 43 other)
+- All 42 ghostty package tests pass
+- Format check passes (385 files)
+
+### Key decisions
+- Mouse button mapping accounts for the browser→Ghostty mismatch: browser uses 0=main,1=aux,2=secondary while Ghostty uses 1=left,2=right,3=middle
+- Mouse events use fire-and-forget IPC (same as keyboard) — lost events are acceptable since terminal input is best-effort
+- Context menu is prevented within the terminal surface — right-click is forwarded to Ghostty as a mouse button event for terminal apps that need it
+- Scroll events forward raw deltaX/deltaY from browser WheelEvent — Ghostty handles the actual scrollback interpretation
+- scrollMods is 0 for standard wheel events — precision trackpad/momentum scrolling is not yet wired from the browser
+- Mouse position is computed relative to the container element's bounding rect (clientX - rect.left) for correct surface-local coordinates
+- Mouse position is sent alongside button press events since Ghostty needs both the position and button state for correct click handling

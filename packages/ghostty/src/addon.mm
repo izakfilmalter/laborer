@@ -838,6 +838,153 @@ Napi::Value SendSurfaceText(const Napi::CallbackInfo& info) {
 }
 
 // ---------------------------------------------------------------------------
+// N-API functions: Mouse input
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether the Ghostty surface has captured the mouse.
+ * When captured, mouse events should be forwarded to the terminal
+ * rather than handled by the surrounding UI (e.g., for selection).
+ *
+ * Args: surfaceId
+ * Returns boolean.
+ */
+Napi::Value SurfaceMouseCaptured(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 1 || !info[0].IsNumber()) {
+    Napi::TypeError::New(env, "Expected surface ID (number)")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
+
+  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+  auto it = g_surfaces.find(surface_id);
+  if (it == g_surfaces.end()) {
+    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  bool captured = ghostty_surface_mouse_captured(it->second.surface);
+  return Napi::Boolean::New(env, captured);
+}
+
+/**
+ * Send a mouse button event to a Ghostty surface.
+ *
+ * Args: surfaceId, state (0=release, 1=press), button (ghostty_input_mouse_button_e),
+ *       mods (ghostty_input_mods_e bitmask)
+ *
+ * Returns true if the button event was consumed by Ghostty.
+ */
+Napi::Value SendSurfaceMouseButton(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 4 || !info[0].IsNumber() || !info[1].IsNumber() ||
+      !info[2].IsNumber() || !info[3].IsNumber()) {
+    Napi::TypeError::New(env, "Expected (surfaceId, state, button, mods)")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
+  int state = info[1].As<Napi::Number>().Int32Value();
+  int button = info[2].As<Napi::Number>().Int32Value();
+  int mods = info[3].As<Napi::Number>().Int32Value();
+
+  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+  auto it = g_surfaces.find(surface_id);
+  if (it == g_surfaces.end()) {
+    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  bool consumed = ghostty_surface_mouse_button(
+    it->second.surface,
+    static_cast<ghostty_input_mouse_state_e>(state),
+    static_cast<ghostty_input_mouse_button_e>(button),
+    static_cast<ghostty_input_mods_e>(mods));
+  return Napi::Boolean::New(env, consumed);
+}
+
+/**
+ * Send a mouse position update to a Ghostty surface.
+ *
+ * Args: surfaceId, x (double, pixels), y (double, pixels),
+ *       mods (ghostty_input_mods_e bitmask)
+ */
+Napi::Value SendSurfaceMousePos(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 4 || !info[0].IsNumber() || !info[1].IsNumber() ||
+      !info[2].IsNumber() || !info[3].IsNumber()) {
+    Napi::TypeError::New(env, "Expected (surfaceId, x, y, mods)")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
+  double x = info[1].As<Napi::Number>().DoubleValue();
+  double y = info[2].As<Napi::Number>().DoubleValue();
+  int mods = info[3].As<Napi::Number>().Int32Value();
+
+  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+  auto it = g_surfaces.find(surface_id);
+  if (it == g_surfaces.end()) {
+    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  ghostty_surface_mouse_pos(
+    it->second.surface, x, y,
+    static_cast<ghostty_input_mods_e>(mods));
+  return env.Undefined();
+}
+
+/**
+ * Send a mouse scroll event to a Ghostty surface.
+ *
+ * Args: surfaceId, dx (double), dy (double), scrollMods (int, packed scroll mods)
+ *
+ * scrollMods is a packed int (ghostty_input_scroll_mods_t) that encodes
+ * precision scrolling state and momentum phase. For standard wheel events
+ * from the browser, pass 0.
+ */
+Napi::Value SendSurfaceMouseScroll(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 4 || !info[0].IsNumber() || !info[1].IsNumber() ||
+      !info[2].IsNumber() || !info[3].IsNumber()) {
+    Napi::TypeError::New(env, "Expected (surfaceId, dx, dy, scrollMods)")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
+  double dx = info[1].As<Napi::Number>().DoubleValue();
+  double dy = info[2].As<Napi::Number>().DoubleValue();
+  int scroll_mods = info[3].As<Napi::Number>().Int32Value();
+
+  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+  auto it = g_surfaces.find(surface_id);
+  if (it == g_surfaces.end()) {
+    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  ghostty_surface_mouse_scroll(
+    it->second.surface, dx, dy,
+    static_cast<ghostty_input_scroll_mods_t>(scroll_mods));
+  return env.Undefined();
+}
+
+// ---------------------------------------------------------------------------
 // N-API functions: Pixel readback
 // ---------------------------------------------------------------------------
 
@@ -973,6 +1120,16 @@ Napi::Object InitModule(Napi::Env env, Napi::Object exports) {
   // Keyboard and text input
   exports.Set("sendSurfaceKey", Napi::Function::New(env, SendSurfaceKey));
   exports.Set("sendSurfaceText", Napi::Function::New(env, SendSurfaceText));
+
+  // Mouse input
+  exports.Set("surfaceMouseCaptured",
+              Napi::Function::New(env, SurfaceMouseCaptured));
+  exports.Set("sendSurfaceMouseButton",
+              Napi::Function::New(env, SendSurfaceMouseButton));
+  exports.Set("sendSurfaceMousePos",
+              Napi::Function::New(env, SendSurfaceMousePos));
+  exports.Set("sendSurfaceMouseScroll",
+              Napi::Function::New(env, SendSurfaceMouseScroll));
 
   // IOSurface extraction
   exports.Set("getSurfaceIOSurfaceId",

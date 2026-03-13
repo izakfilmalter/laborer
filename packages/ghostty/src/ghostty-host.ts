@@ -45,6 +45,9 @@ import type {
   CreateSurfaceOptions,
   IOSurfaceInfo,
   KeyEvent,
+  MouseButtonEvent,
+  MousePosEvent,
+  MouseScrollEvent,
   SurfaceSize,
 } from './index.ts'
 import {
@@ -60,9 +63,13 @@ import {
   init,
   listSurfaces,
   sendSurfaceKey,
+  sendSurfaceMouseButton,
+  sendSurfaceMousePos,
+  sendSurfaceMouseScroll,
   sendSurfaceText,
   setSurfaceFocus,
   setSurfaceSize,
+  surfaceMouseCaptured,
 } from './index.ts'
 
 // ---------------------------------------------------------------------------
@@ -135,6 +142,33 @@ interface SendTextCommand {
   readonly type: 'send_text'
 }
 
+interface SendMouseButtonCommand {
+  readonly id: string
+  readonly mouseEvent: MouseButtonEvent
+  readonly surfaceId: number
+  readonly type: 'send_mouse_button'
+}
+
+interface SendMousePosCommand {
+  readonly id: string
+  readonly mouseEvent: MousePosEvent
+  readonly surfaceId: number
+  readonly type: 'send_mouse_pos'
+}
+
+interface SendMouseScrollCommand {
+  readonly id: string
+  readonly mouseEvent: MouseScrollEvent
+  readonly surfaceId: number
+  readonly type: 'send_mouse_scroll'
+}
+
+interface MouseCapturedCommand {
+  readonly id: string
+  readonly surfaceId: number
+  readonly type: 'mouse_captured'
+}
+
 interface ListSurfacesCommand {
   readonly type: 'list_surfaces'
 }
@@ -149,6 +183,10 @@ type Command =
   | GetSizeCommand
   | SendKeyCommand
   | SendTextCommand
+  | SendMouseButtonCommand
+  | SendMousePosCommand
+  | SendMouseScrollCommand
+  | MouseCapturedCommand
   | ListSurfacesCommand
 
 // ---------------------------------------------------------------------------
@@ -207,6 +245,13 @@ interface SurfacesListEvent {
   readonly type: 'surfaces_list'
 }
 
+interface MouseCapturedResultEvent {
+  readonly captured: boolean
+  readonly id: string
+  readonly surfaceId: number
+  readonly type: 'mouse_captured_result'
+}
+
 interface OkEvent {
   readonly id: string
   readonly type: 'ok'
@@ -226,6 +271,7 @@ type GhosttyEvent =
   | IOSurfaceResultEvent
   | PixelsResultEvent
   | PixelsNullEvent
+  | MouseCapturedResultEvent
   | SurfacesListEvent
   | OkEvent
   | ErrorEvent
@@ -406,6 +452,63 @@ function handleSendText(cmd: SendTextCommand): void {
   }
 }
 
+function handleSendMouseButton(cmd: SendMouseButtonCommand): void {
+  try {
+    sendSurfaceMouseButton(cmd.surfaceId, cmd.mouseEvent)
+    emit({ type: 'ok', id: cmd.id })
+  } catch (error) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `Failed to send mouse button to surface ${cmd.surfaceId}: ${String(error)}`,
+    })
+  }
+}
+
+function handleSendMousePos(cmd: SendMousePosCommand): void {
+  try {
+    sendSurfaceMousePos(cmd.surfaceId, cmd.mouseEvent)
+    emit({ type: 'ok', id: cmd.id })
+  } catch (error) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `Failed to send mouse pos to surface ${cmd.surfaceId}: ${String(error)}`,
+    })
+  }
+}
+
+function handleSendMouseScroll(cmd: SendMouseScrollCommand): void {
+  try {
+    sendSurfaceMouseScroll(cmd.surfaceId, cmd.mouseEvent)
+    emit({ type: 'ok', id: cmd.id })
+  } catch (error) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `Failed to send mouse scroll to surface ${cmd.surfaceId}: ${String(error)}`,
+    })
+  }
+}
+
+function handleMouseCaptured(cmd: MouseCapturedCommand): void {
+  try {
+    const captured = surfaceMouseCaptured(cmd.surfaceId)
+    emit({
+      type: 'mouse_captured_result',
+      id: cmd.id,
+      surfaceId: cmd.surfaceId,
+      captured,
+    })
+  } catch (error) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `Failed to check mouse captured for surface ${cmd.surfaceId}: ${String(error)}`,
+    })
+  }
+}
+
 function handleListSurfaces(): void {
   try {
     const surfaces = listSurfaces()
@@ -468,6 +571,29 @@ function isValidCommand(parsed: unknown): parsed is Command {
         typeof obj.surfaceId === 'number' &&
         typeof obj.text === 'string'
       )
+    case 'send_mouse_button':
+      return (
+        typeof obj.id === 'string' &&
+        typeof obj.surfaceId === 'number' &&
+        typeof obj.mouseEvent === 'object' &&
+        obj.mouseEvent !== null
+      )
+    case 'send_mouse_pos':
+      return (
+        typeof obj.id === 'string' &&
+        typeof obj.surfaceId === 'number' &&
+        typeof obj.mouseEvent === 'object' &&
+        obj.mouseEvent !== null
+      )
+    case 'send_mouse_scroll':
+      return (
+        typeof obj.id === 'string' &&
+        typeof obj.surfaceId === 'number' &&
+        typeof obj.mouseEvent === 'object' &&
+        obj.mouseEvent !== null
+      )
+    case 'mouse_captured':
+      return typeof obj.id === 'string' && typeof obj.surfaceId === 'number'
     case 'list_surfaces':
       return true
     default:
@@ -527,6 +653,18 @@ function processLine(line: string): void {
       break
     case 'send_text':
       handleSendText(parsed)
+      break
+    case 'send_mouse_button':
+      handleSendMouseButton(parsed)
+      break
+    case 'send_mouse_pos':
+      handleSendMousePos(parsed)
+      break
+    case 'send_mouse_scroll':
+      handleSendMouseScroll(parsed)
+      break
+    case 'mouse_captured':
+      handleMouseCaptured(parsed)
       break
     case 'list_surfaces':
       handleListSurfaces()

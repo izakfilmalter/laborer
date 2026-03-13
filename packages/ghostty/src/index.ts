@@ -86,6 +86,58 @@ interface SurfacePixels {
 type KeyAction = 0 | 1 | 2
 
 /**
+ * Mouse button state (matches ghostty_input_mouse_state_e).
+ * 0 = release, 1 = press.
+ */
+type MouseState = 0 | 1
+
+/**
+ * Mouse button identifier (matches ghostty_input_mouse_button_e).
+ * 0 = unknown, 1 = left, 2 = right, 3 = middle, 4-11 = extra buttons.
+ */
+type MouseButton = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11
+
+/**
+ * Mouse button event to send to a Ghostty surface.
+ */
+interface MouseButtonEvent {
+  /** Ghostty mouse button (ghostty_input_mouse_button_e value). */
+  readonly button: MouseButton
+  /** Modifier bitmask (ghostty_input_mods_e flags). */
+  readonly mods: number
+  /** 0 = release, 1 = press. */
+  readonly state: MouseState
+}
+
+/**
+ * Mouse position event to send to a Ghostty surface.
+ */
+interface MousePosEvent {
+  /** Modifier bitmask (ghostty_input_mods_e flags). */
+  readonly mods: number
+  /** X position in pixels relative to the surface. */
+  readonly x: number
+  /** Y position in pixels relative to the surface. */
+  readonly y: number
+}
+
+/**
+ * Mouse scroll event to send to a Ghostty surface.
+ */
+interface MouseScrollEvent {
+  /** Horizontal scroll delta. */
+  readonly dx: number
+  /** Vertical scroll delta. */
+  readonly dy: number
+  /**
+   * Packed scroll modifiers (ghostty_input_scroll_mods_t).
+   * Encodes precision scrolling state and momentum phase.
+   * Pass 0 for standard wheel events.
+   */
+  readonly scrollMods: number
+}
+
+/**
  * Key event to send to a Ghostty surface.
  * Matches the fields of ghostty_input_key_s from the Ghostty C API.
  */
@@ -143,10 +195,31 @@ interface GhosttyAddon {
     unshiftedCodepoint: number,
     composing: boolean
   ): boolean
+
+  // Mouse input
+  sendSurfaceMouseButton(
+    surfaceId: number,
+    state: number,
+    button: number,
+    mods: number
+  ): boolean
+  sendSurfaceMousePos(
+    surfaceId: number,
+    x: number,
+    y: number,
+    mods: number
+  ): void
+  sendSurfaceMouseScroll(
+    surfaceId: number,
+    dx: number,
+    dy: number,
+    scrollMods: number
+  ): void
   sendSurfaceText(surfaceId: number, text: string): boolean
 
   setSurfaceFocus(surfaceId: number, focused: boolean): boolean
   setSurfaceSize(surfaceId: number, width: number, height: number): boolean
+  surfaceMouseCaptured(surfaceId: number): boolean
   validateConfig(): GhosttyConfigValidation
 }
 
@@ -353,6 +426,67 @@ const sendSurfaceText = (surfaceId: number, text: string): boolean => {
   return getAddon().sendSurfaceText(surfaceId, text)
 }
 
+// ---------------------------------------------------------------------------
+// Mouse input
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether a Ghostty surface has captured the mouse.
+ * When captured, mouse events should be forwarded to the terminal rather
+ * than handled by the surrounding UI (e.g., for TUI applications that
+ * request mouse tracking).
+ *
+ * @throws If the surface is not found.
+ */
+const surfaceMouseCaptured = (surfaceId: number): boolean => {
+  return getAddon().surfaceMouseCaptured(surfaceId)
+}
+
+/**
+ * Send a mouse button event to a Ghostty surface.
+ *
+ * @returns `true` if the event was consumed by Ghostty.
+ * @throws If the surface is not found.
+ */
+const sendSurfaceMouseButton = (
+  surfaceId: number,
+  event: MouseButtonEvent
+): boolean => {
+  return getAddon().sendSurfaceMouseButton(
+    surfaceId,
+    event.state,
+    event.button,
+    event.mods
+  )
+}
+
+/**
+ * Send a mouse position update to a Ghostty surface.
+ * Coordinates are in pixels relative to the surface origin.
+ *
+ * @throws If the surface is not found.
+ */
+const sendSurfaceMousePos = (surfaceId: number, event: MousePosEvent): void => {
+  getAddon().sendSurfaceMousePos(surfaceId, event.x, event.y, event.mods)
+}
+
+/**
+ * Send a mouse scroll event to a Ghostty surface.
+ *
+ * @throws If the surface is not found.
+ */
+const sendSurfaceMouseScroll = (
+  surfaceId: number,
+  event: MouseScrollEvent
+): void => {
+  getAddon().sendSurfaceMouseScroll(
+    surfaceId,
+    event.dx,
+    event.dy,
+    event.scrollMods
+  )
+}
+
 /**
  * Set focus state of a Ghostty surface.
  * Controls cursor state and keyboard routing in the terminal.
@@ -423,9 +557,13 @@ export {
   isInitialized,
   listSurfaces,
   sendSurfaceKey,
+  sendSurfaceMouseButton,
+  sendSurfaceMousePos,
+  sendSurfaceMouseScroll,
   sendSurfaceText,
   setSurfaceFocus,
   setSurfaceSize,
+  surfaceMouseCaptured,
   validateConfig,
 }
 export type {
@@ -435,6 +573,11 @@ export type {
   IOSurfaceInfo,
   KeyAction,
   KeyEvent,
+  MouseButton,
+  MouseButtonEvent,
+  MousePosEvent,
+  MouseScrollEvent,
+  MouseState,
   SurfaceHandle,
   SurfacePixels,
   SurfaceSize,

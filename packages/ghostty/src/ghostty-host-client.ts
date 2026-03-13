@@ -38,6 +38,9 @@ import type {
   CreateSurfaceOptions,
   IOSurfaceInfo,
   KeyEvent,
+  MouseButtonEvent,
+  MousePosEvent,
+  MouseScrollEvent,
   SurfacePixels,
   SurfaceSize,
 } from './index.ts'
@@ -98,6 +101,13 @@ interface SurfacesListEvent {
   readonly type: 'surfaces_list'
 }
 
+interface MouseCapturedResultEvent {
+  readonly captured: boolean
+  readonly id: string
+  readonly surfaceId: number
+  readonly type: 'mouse_captured_result'
+}
+
 interface OkEvent {
   readonly id: string
   readonly type: 'ok'
@@ -117,6 +127,7 @@ type GhosttyEvent =
   | IOSurfaceResultEvent
   | PixelsResultEvent
   | PixelsNullEvent
+  | MouseCapturedResultEvent
   | SurfacesListEvent
   | OkEvent
   | ErrorEvent
@@ -190,6 +201,12 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
     readonly listSurfaces: () => Effect.Effect<readonly number[], Error>
 
     /**
+     * Check whether the terminal has captured the mouse.
+     * When captured, mouse events should be forwarded to the terminal.
+     */
+    readonly mouseCaptured: (surfaceId: number) => Effect.Effect<boolean, Error>
+
+    /**
      * Register a callback invoked when the Ghostty Host process crashes.
      */
     readonly onCrash: (callback: CrashCallback) => void
@@ -200,6 +217,30 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
     readonly sendKey: (
       surfaceId: number,
       keyEvent: KeyEvent
+    ) => Effect.Effect<void, Error>
+
+    /**
+     * Send a mouse button event to a surface.
+     */
+    readonly sendMouseButton: (
+      surfaceId: number,
+      mouseEvent: MouseButtonEvent
+    ) => Effect.Effect<void, Error>
+
+    /**
+     * Send a mouse position update to a surface.
+     */
+    readonly sendMousePos: (
+      surfaceId: number,
+      mouseEvent: MousePosEvent
+    ) => Effect.Effect<void, Error>
+
+    /**
+     * Send a mouse scroll event to a surface.
+     */
+    readonly sendMouseScroll: (
+      surfaceId: number,
+      mouseEvent: MouseScrollEvent
     ) => Effect.Effect<void, Error>
 
     /**
@@ -353,6 +394,9 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
           }
           case 'pixels_null':
             resolveRequest(event.id, null)
+            break
+          case 'mouse_captured_result':
+            resolveRequest(event.id, event.captured)
             break
           case 'surfaces_list':
             // list_surfaces has no ID — resolve all pending list requests
@@ -579,6 +623,15 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
           crashCallbacks.push(callback)
         },
 
+        mouseCaptured: (surfaceId) => {
+          const id = generateId()
+          return sendRequest<boolean>({
+            type: 'mouse_captured',
+            id,
+            surfaceId,
+          })
+        },
+
         sendKey: (surfaceId, keyEvent) => {
           const id = generateId()
           return sendRequest<void>({
@@ -586,6 +639,36 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
             id,
             surfaceId,
             keyEvent,
+          })
+        },
+
+        sendMouseButton: (surfaceId, mouseEvent) => {
+          const id = generateId()
+          return sendRequest<void>({
+            type: 'send_mouse_button',
+            id,
+            surfaceId,
+            mouseEvent,
+          })
+        },
+
+        sendMousePos: (surfaceId, mouseEvent) => {
+          const id = generateId()
+          return sendRequest<void>({
+            type: 'send_mouse_pos',
+            id,
+            surfaceId,
+            mouseEvent,
+          })
+        },
+
+        sendMouseScroll: (surfaceId, mouseEvent) => {
+          const id = generateId()
+          return sendRequest<void>({
+            type: 'send_mouse_scroll',
+            id,
+            surfaceId,
+            mouseEvent,
           })
         },
 

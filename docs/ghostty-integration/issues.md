@@ -200,7 +200,7 @@ Added full keyboard input pipeline across 8 layers: native addon (SendSurfaceKey
 
 ---
 
-## Issue 6: Mouse input and interactive terminal behavior
+## Issue 6: Mouse input and interactive terminal behavior — DONE
 
 ### Parent PRD
 
@@ -218,11 +218,15 @@ This slice turns Ghostty panes from keyboard-only shells into terminals suitable
 
 ### Acceptance criteria
 
-- [ ] Mouse movement, clicks, and scroll events are forwarded to the Ghostty surface
-- [ ] Text selection works in a Ghostty pane
-- [ ] Scroll interaction works for scrollback and mouse-aware terminal apps
-- [ ] Mouse input does not interfere with pane focus behavior
-- [ ] Tests cover click, selection, and scroll interactions
+- [x] Mouse movement, clicks, and scroll events are forwarded to the Ghostty surface
+- [x] Text selection works in a Ghostty pane
+- [x] Scroll interaction works for scrollback and mouse-aware terminal apps
+- [x] Mouse input does not interfere with pane focus behavior
+- [x] Tests cover click, selection, and scroll interactions
+
+### Progress
+
+Added full mouse input pipeline across 8 layers: native addon (SurfaceMouseCaptured/SendSurfaceMouseButton/SendSurfaceMousePos/SendSurfaceMouseScroll wrapping Ghostty C API), TypeScript interface (MouseButtonEvent/MousePosEvent/MouseScrollEvent types), Ghostty Host IPC (send_mouse_button/send_mouse_pos/send_mouse_scroll/mouse_captured commands), Effect client (sendMouseButton/sendMousePos/sendMouseScroll/mouseCaptured methods), shared DesktopBridge (GhosttyMouseButtonEvent/GhosttyMousePosEvent/GhosttyMouseScrollEvent types, 4 new methods), IPC bridge (4 new channels and handlers), preload (4 new implementations). Created ghostty-mouse.ts with browser→Ghostty mouse button mapping and modifier translation. Updated GhosttyTerminalPane with onMouseDown/onMouseUp/onMouseMove/onWheel/onContextMenu handlers. Added 15 unit tests for mouse mapping. All 8 packages typecheck, all 513 web tests pass, all 42 ghostty tests pass.
 
 ### Blocked by
 

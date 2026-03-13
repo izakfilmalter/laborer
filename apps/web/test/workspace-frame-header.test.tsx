@@ -67,6 +67,8 @@ const FULLSCREEN_RE = /fullscreen/i
 const MERGED_PR_RE = /#42 merged/i
 const CLOSED_PR_RE = /#17 closed/i
 
+const REVIEW_PANE_RE = /review pane/i
+
 /** Default props for a typical active pane scenario. */
 const BASE_PROPS = {
   activePaneId: 'pane-1',
@@ -78,6 +80,7 @@ const BASE_PROPS = {
   prTitle: null,
   prUrl: null,
   projectName: 'my-project',
+  reviewIsOpen: false,
   workspaceId: 'ws-1',
 } as const
 
@@ -174,6 +177,76 @@ describe('WorkspaceFrameHeader', () => {
     )
 
     const button = screen.getByRole('button', { name: 'Close diff viewer' })
+    expect(button).toBeTruthy()
+  })
+
+  // --- Review pane toggle ---
+
+  it('renders the review pane toggle button', () => {
+    const actions = mockActions()
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+    const button = screen.getByRole('button', { name: REVIEW_PANE_RE })
+    expect(button).toBeTruthy()
+  })
+
+  it('calls toggleReviewPane with the active pane ID when clicked', () => {
+    const actions = mockActions()
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+    const button = screen.getByRole('button', { name: REVIEW_PANE_RE })
+    fireEvent.click(button)
+
+    expect(actions.toggleReviewPane).toHaveBeenCalledWith('pane-1')
+  })
+
+  it('applies bg-accent class to review toggle when review is open', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader {...BASE_PROPS} actions={actions} reviewIsOpen />
+    )
+
+    const button = screen.getByRole('button', { name: REVIEW_PANE_RE })
+    expect(button.className).toContain('bg-accent')
+  })
+
+  it('does not apply bg-accent class to review toggle when review is closed', () => {
+    const actions = mockActions()
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+    const button = screen.getByRole('button', { name: REVIEW_PANE_RE })
+    expect(button.className).not.toContain('bg-accent')
+  })
+
+  it('disables the review toggle button when no pane is active', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        activePaneId={null}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: REVIEW_PANE_RE })
+    expect(button).toHaveProperty('disabled', true)
+  })
+
+  it('labels the review button "Open review pane" when review is closed', () => {
+    const actions = mockActions()
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+    const button = screen.getByRole('button', { name: 'Open review pane' })
+    expect(button).toBeTruthy()
+  })
+
+  it('labels the review button "Close review pane" when review is open', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader {...BASE_PROPS} actions={actions} reviewIsOpen />
+    )
+
+    const button = screen.getByRole('button', { name: 'Close review pane' })
     expect(button).toBeTruthy()
   })
 
@@ -414,7 +487,7 @@ describe('WorkspaceFrameHeader', () => {
   // Minimized state hides action buttons
   // ---------------------------------------------------------------------------
 
-  it('hides diff, close workspace, and dev server buttons when minimized', () => {
+  it('hides diff, review, close workspace, and dev server buttons when minimized', () => {
     const actions = mockActions()
     render(
       <WorkspaceFrameHeader
@@ -427,6 +500,7 @@ describe('WorkspaceFrameHeader', () => {
 
     // These action buttons should not be present when minimized
     expect(screen.queryByRole('button', { name: DIFF_VIEWER_RE })).toBeNull()
+    expect(screen.queryByRole('button', { name: REVIEW_PANE_RE })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Close workspace' })).toBeNull()
 
     // But the minimize/expand button should still be visible
@@ -447,6 +521,7 @@ describe('WorkspaceFrameHeader', () => {
     )
 
     expect(screen.getByRole('button', { name: DIFF_VIEWER_RE })).toBeTruthy()
+    expect(screen.getByRole('button', { name: REVIEW_PANE_RE })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Close workspace' })).toBeTruthy()
     expect(
       screen.getByRole('button', { name: 'Minimize workspace' })

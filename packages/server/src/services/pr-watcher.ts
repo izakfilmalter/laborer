@@ -207,8 +207,17 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
 
         if (workspaceOpt._tag === 'None') {
           yield* Effect.logWarning(
-            `[PrWatcher] Workspace not found: ${workspaceId}`
+            `[PrWatcher] Workspace not found in LiveStore, cleaning up. workspaceId=${workspaceId}`
           )
+
+          // Commit a workspaceDestroyed event to ensure any stale references
+          // are cleaned up. This is idempotent — the materializer is a
+          // DELETE WHERE, safe even if the row is already gone.
+          store.commit(events.workspaceDestroyed({ id: workspaceId }))
+
+          // Stop the polling fiber so this warning doesn't repeat every interval.
+          yield* stopPolling(workspaceId)
+
           return EMPTY_PR
         }
 

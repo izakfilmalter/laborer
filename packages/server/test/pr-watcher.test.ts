@@ -5,6 +5,18 @@ import { LaborerStore } from '../src/services/laborer-store.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
 import { TestLaborerStore } from './helpers/test-store.js'
 
+/**
+ * Helper: build a PrWatcher from a pre-built store context.
+ * Returns both the PrWatcher service and the underlying store for assertions.
+ */
+const buildPrWatcher = (storeContext: Context.Context<LaborerStore>) =>
+  Effect.gen(function* () {
+    const prWatcherContext = yield* Layer.build(
+      PrWatcher.layer.pipe(Layer.provide(Layer.succeedContext(storeContext)))
+    )
+    return Context.get(prWatcherContext, PrWatcher)
+  })
+
 describe('PrWatcher', () => {
   it.scoped(
     'bootstraps polling for persisted active workspaces on startup',
@@ -209,6 +221,59 @@ describe('PrWatcher', () => {
           after?.prState,
           null,
           'bootstrapPolling should have run a one-time checkPr for stopped workspaces'
+        )
+      })
+  )
+
+  it.scoped(
+    'checkPr removes workspace from LiveStore and stops polling when workspace is not found',
+    () =>
+      Effect.gen(function* () {
+        const storeContext = yield* Layer.build(TestLaborerStore)
+        const { store } = Context.get(storeContext, LaborerStore)
+
+        // Create a running workspace so PrWatcher starts polling for it.
+        store.commit(
+          events.workspaceCreated({
+            id: 'workspace-vanishing',
+            projectId: 'project-1',
+            taskSource: null,
+            branchName: 'feature/vanish',
+            worktreePath: '/tmp/workspace-vanishing',
+            port: 4200,
+            status: 'running',
+            origin: 'laborer',
+            createdAt: new Date().toISOString(),
+            baseSha: null,
+          })
+        )
+
+        // Build PrWatcher — bootstrapPolling starts continuous polling
+        const prWatcher = yield* buildPrWatcher(storeContext)
+
+        // Verify polling is active
+        const pollingBefore = yield* prWatcher.isPolling('workspace-vanishing')
+        assert.isTrue(pollingBefore, 'should be polling after bootstrap')
+
+        // Now destroy the workspace externally (simulating another service
+        // removing it from LiveStore while PrWatcher is still polling).
+        store.commit(events.workspaceDestroyed({ id: 'workspace-vanishing' }))
+
+        // Confirm it's gone from LiveStore
+        const wsGone = store
+          .query(tables.workspaces)
+          .find((w) => w.id === 'workspace-vanishing')
+        assert.isUndefined(wsGone, 'workspace should be removed from store')
+
+        // Call checkPr directly — this should detect the workspace is gone,
+        // log the situation, and stop the polling fiber.
+        yield* prWatcher.checkPr('workspace-vanishing')
+
+        // Polling should now be stopped for this workspace.
+        const pollingAfter = yield* prWatcher.isPolling('workspace-vanishing')
+        assert.isFalse(
+          pollingAfter,
+          'polling should stop when workspace is not found in LiveStore'
         )
       })
   )

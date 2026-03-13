@@ -148,14 +148,14 @@ class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
       //   packages/terminal/src/services/pty-host-client.ts -> ../pty-host.ts
       //
       // In bundled mode (running as a tsdown-bundled JS file for Electron),
-      // import.meta.url points to dist/main.js. The PTY Host is bundled as
-      // a separate entry (dist/pty-host.js) in the same directory.
+      // import.meta.url points to dist/main.mjs. The PTY Host is bundled as
+      // a separate entry (dist/pty-host.mjs) in the same directory.
       //
-      // Detection: Source files end in .ts, bundled files end in .js.
+      // Detection: Source files end in .ts, bundled files end in .mjs/.js.
       const currentPath = fileURLToPath(import.meta.url)
-      const IS_BUNDLED = currentPath.endsWith('.js')
+      const IS_BUNDLED = !currentPath.endsWith('.ts')
       const ptyHostPath = IS_BUNDLED
-        ? join(dirname(currentPath), 'pty-host.js')
+        ? join(dirname(currentPath), 'pty-host.mjs')
         : join(dirname(currentPath), '..', 'pty-host.ts')
 
       // Per-terminal callbacks

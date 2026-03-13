@@ -21,6 +21,7 @@
       "@effect/rpc": "0.72.2",
       "@effect/sql": "0.48.6",
       "@effect/typeclass": "0.38.0",
+      "@effect/workflow": "0.15.2",
       "@effect/vitest": "0.27.0",
       "zod": "^4.1.13",
       "typescript": "^5"
@@ -73,6 +74,7 @@
     "@effect/printer-ansi": "0.47.0",
     "@effect/rpc": "0.72.2",
     "@effect/sql": "0.48.6",
-    "@effect/typeclass": "0.38.0"
+    "@effect/typeclass": "0.38.0",
+    "@effect/workflow": "0.15.2"
   }
 }

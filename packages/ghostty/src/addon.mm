@@ -138,9 +138,19 @@ bool RuntimeAction(ghostty_app_t app, ghostty_target_s target,
   }
 
   switch (action.tag) {
-    case GHOSTTY_ACTION_RENDER:
+    case GHOSTTY_ACTION_RENDER: {
       // Render requests are handled by the Metal layer automatically.
+      // Queue a render_frame notification so the host process can notify
+      // the Electron main process that a new frame is ready for import.
+      QueuedAction qa;
+      qa.action_type = "render_frame";
+      qa.surface_id = surface_id;
+      qa.num_value_1 = 0;
+      qa.num_value_2 = 0;
+      std::lock_guard<std::mutex> lock(g_action_queue_mutex);
+      g_action_queue.push_back(std::move(qa));
       return true;
+    }
 
     case GHOSTTY_ACTION_SET_TITLE: {
       QueuedAction qa;
@@ -1192,6 +1202,96 @@ Napi::Value SendSurfaceMouseScroll(const Napi::CallbackInfo& info) {
 }
 
 // ---------------------------------------------------------------------------
+// N-API functions: IOSurface handle extraction (for Electron sharedTexture)
+// ---------------------------------------------------------------------------
+
+/**
+ * Get the raw IOSurfaceRef as a Node.js Buffer for a Ghostty surface.
+ *
+ * This extracts the IOSurfaceRef pointer from the CAMetalLayer's contents
+ * and returns it as a Buffer that can be passed directly to Electron's
+ * sharedTexture.importSharedTexture({ handle: { ioSurface: buffer } }).
+ *
+ * The IOSurfaceRef is process-local on macOS but can be shared via
+ * Electron's sharedTexture API which handles cross-process GPU texture
+ * sharing internally.
+ *
+ * Returns { ioSurfaceHandle: Buffer | null, width: number, height: number }
+ * or null if the IOSurface is not yet available.
+ */
+Napi::Value GetSurfaceIOSurfaceHandle(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 1 || !info[0].IsNumber()) {
+    Napi::TypeError::New(env, "Expected surface ID (number)")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
+
+  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+  auto it = g_surfaces.find(surface_id);
+  if (it == g_surfaces.end()) {
+    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  @autoreleasepool {
+    TrackedSurface& tracked = it->second;
+    CALayer* layer = [tracked.view layer];
+
+    if (layer == nil || ![layer isKindOfClass:[CAMetalLayer class]]) {
+      return env.Null();
+    }
+
+    id contents = [layer contents];
+    if (contents == nil) {
+      return env.Null();
+    }
+
+    CFTypeRef contentsRef = (__bridge CFTypeRef)contents;
+    if (CFGetTypeID(contentsRef) != IOSurfaceGetTypeID()) {
+      return env.Null();
+    }
+
+    IOSurfaceRef ioSurface = (IOSurfaceRef)contentsRef;
+    size_t width = IOSurfaceGetWidth(ioSurface);
+    size_t height = IOSurfaceGetHeight(ioSurface);
+
+    if (width == 0 || height == 0) {
+      return env.Null();
+    }
+
+    // Create a Buffer containing the raw IOSurfaceRef pointer.
+    // Electron's sharedTexture API on macOS expects an IOSurfaceRef
+    // wrapped in a Buffer for the handle.ioSurface field.
+    // We also CFRetain the surface to keep it alive while the main
+    // process imports it.
+    CFRetain(ioSurface);
+
+    // The Buffer holds the IOSurfaceRef as a raw pointer (sizeof(void*) bytes).
+    // When the Buffer is garbage collected, we release the IOSurface.
+    auto buffer = Napi::Buffer<uint8_t>::New(
+      env,
+      reinterpret_cast<uint8_t*>(ioSurface),
+      sizeof(IOSurfaceRef),
+      [](Napi::Env /*env*/, uint8_t* data) {
+        IOSurfaceRef surface = reinterpret_cast<IOSurfaceRef>(data);
+        CFRelease(surface);
+      }
+    );
+
+    Napi::Object result = Napi::Object::New(env);
+    result.Set("ioSurfaceHandle", buffer);
+    result.Set("width", Napi::Number::New(env, static_cast<double>(width)));
+    result.Set("height", Napi::Number::New(env, static_cast<double>(height)));
+    return result;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // N-API functions: Pixel readback
 // ---------------------------------------------------------------------------
 
@@ -1383,6 +1483,10 @@ Napi::Object InitModule(Napi::Env env, Napi::Object exports) {
   // IOSurface extraction
   exports.Set("getSurfaceIOSurfaceId",
               Napi::Function::New(env, GetSurfaceIOSurfaceId));
+
+  // IOSurface handle for Electron sharedTexture
+  exports.Set("getSurfaceIOSurfaceHandle",
+              Napi::Function::New(env, GetSurfaceIOSurfaceHandle));
 
   // Pixel readback
   exports.Set("getSurfacePixels",

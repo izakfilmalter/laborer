@@ -92,7 +92,8 @@ const GHOSTTY_ACTION_REGISTRY: Record<string, ActionStatus> = {
   // -----------------------------------------------------------------------
   render: {
     status: 'handled_internally',
-    description: 'Render requests handled by the Metal layer automatically',
+    description:
+      'Render requests handled by Metal layer; queues render_frame push event for shared texture pipeline',
   },
 
   // -----------------------------------------------------------------------

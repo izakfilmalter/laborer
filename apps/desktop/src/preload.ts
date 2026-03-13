@@ -1,7 +1,32 @@
 import type { DesktopBridge } from '@laborer/shared/desktop-bridge'
 import { contextBridge, ipcRenderer } from 'electron'
 
+// sharedTexture is available in the renderer process for receiving
+// shared textures sent from the main process via sendSharedTexture.
+// It's imported from electron like other modules. The types may not
+// be fully available yet since this is an experimental API.
+// biome-ignore lint/suspicious/noExplicitAny: Electron's experimental sharedTexture API
+let electronSharedTexture: any = null
+try {
+  // biome-ignore lint/suspicious/noExplicitAny: Electron dynamic module access
+  electronSharedTexture = (require('electron') as any).sharedTexture ?? null
+} catch {
+  // sharedTexture not available in this Electron version
+}
+
 import { parseWindowBootstrapArgs } from './window-identity.js'
+
+// ---------------------------------------------------------------------------
+// Shared texture frame listener management
+// ---------------------------------------------------------------------------
+
+type FrameListener = (
+  surfaceId: number,
+  importedSharedTexture: { getVideoFrame: () => unknown; release: () => void }
+) => void
+
+const frameListeners = new Set<FrameListener>()
+let frameReceiverSetUp = false
 
 // ---------------------------------------------------------------------------
 // IPC channel constants (must match ipc.ts)
@@ -38,6 +63,7 @@ const GHOSTTY_SEND_MOUSE_BUTTON_CHANNEL = 'ghostty:send-mouse-button'
 const GHOSTTY_SEND_MOUSE_POS_CHANNEL = 'ghostty:send-mouse-pos'
 const GHOSTTY_SEND_MOUSE_SCROLL_CHANNEL = 'ghostty:send-mouse-scroll'
 const GHOSTTY_MOUSE_CAPTURED_CHANNEL = 'ghostty:mouse-captured'
+const GHOSTTY_GET_IOSURFACE_HANDLE_CHANNEL = 'ghostty:get-iosurface-handle'
 const GHOSTTY_ACTION_CHANNEL = 'ghostty:action'
 
 // ---------------------------------------------------------------------------
@@ -238,4 +264,53 @@ contextBridge.exposeInMainWorld('desktopBridge', {
       surfaceId,
       mouseEvent
     ),
+
+  ghosttyGetIOSurfaceHandle: (surfaceId) =>
+    ipcRenderer.invoke(GHOSTTY_GET_IOSURFACE_HANDLE_CHANNEL, surfaceId),
+
+  onGhosttyFrame: (listener) => {
+    // Set up the shared texture receiver in the renderer process.
+    // The main process sends SharedTextureImported objects via
+    // sharedTexture.sendSharedTexture(). The receiver is called
+    // with the imported texture and the surfaceId.
+    //
+    // We use a Set of listeners so multiple panes can subscribe.
+    frameListeners.add(listener)
+
+    // Set up the global receiver if not already done
+    if (!frameReceiverSetUp && electronSharedTexture !== null) {
+      frameReceiverSetUp = true
+      electronSharedTexture.setSharedTextureReceiver(
+        async (
+          data: {
+            importedSharedTexture: {
+              getVideoFrame: () => unknown
+              release: () => void
+            }
+          },
+          ...args: unknown[]
+        ) => {
+          const surfaceId = args[0] as number
+          const imported = data.importedSharedTexture
+          // Notify all listeners
+          for (const cb of frameListeners) {
+            try {
+              cb(surfaceId, {
+                getVideoFrame: () => imported.getVideoFrame(),
+                release: () => imported.release(),
+              })
+            } catch {
+              // Best effort — listener may throw
+            }
+          }
+          // Yield to allow frame processing to complete
+          await Promise.resolve()
+        }
+      )
+    }
+
+    return () => {
+      frameListeners.delete(listener)
+    }
+  },
 } satisfies DesktopBridge)

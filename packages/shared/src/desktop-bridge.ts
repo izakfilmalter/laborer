@@ -292,6 +292,18 @@ export interface DesktopBridge {
   ghosttyDestroySurface: (surfaceId: number) => Promise<void>
 
   /**
+   * Get the IOSurface handle for a Ghostty surface's Metal layer.
+   * Returns the handle as a base64-encoded Buffer for the main process
+   * to import via Electron's sharedTexture API.
+   * Returns null if the IOSurface is not yet available.
+   */
+  ghosttyGetIOSurfaceHandle: (surfaceId: number) => Promise<{
+    readonly height: number
+    readonly ioSurfaceHandle: string
+    readonly width: number
+  } | null>
+
+  /**
    * Read the current pixel data from a Ghostty surface.
    * Returns null if the surface has no rendered content yet.
    * The pixels are BGRA-format base64-encoded data.
@@ -382,6 +394,23 @@ export interface DesktopBridge {
    * Returns an unsubscribe function.
    */
   onGhosttyAction: (listener: (event: GhosttyActionEvent) => void) => () => void
+
+  /**
+   * Subscribes to Ghostty shared texture frame events.
+   * The listener receives a SharedTextureImported object and the surfaceId.
+   * The caller should call getVideoFrame() on the imported texture,
+   * draw it to a canvas, then close the VideoFrame and release the texture.
+   * Returns an unsubscribe function.
+   */
+  onGhosttyFrame: (
+    listener: (
+      surfaceId: number,
+      importedSharedTexture: {
+        getVideoFrame: () => unknown
+        release: () => void
+      }
+    ) => void
+  ) => () => void
 
   /**
    * Subscribes to application menu actions (e.g., "settings").

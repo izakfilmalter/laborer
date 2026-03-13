@@ -23,7 +23,7 @@ import {
   type Interface as ReadlineInterface,
 } from 'node:readline'
 
-import { BrowserWindow, ipcMain } from 'electron'
+import { BrowserWindow, ipcMain, sharedTexture } from 'electron'
 
 // ---------------------------------------------------------------------------
 // IPC channel constants (must match preload.ts)
@@ -41,9 +41,14 @@ export const GHOSTTY_SEND_MOUSE_BUTTON_CHANNEL = 'ghostty:send-mouse-button'
 export const GHOSTTY_SEND_MOUSE_POS_CHANNEL = 'ghostty:send-mouse-pos'
 export const GHOSTTY_SEND_MOUSE_SCROLL_CHANNEL = 'ghostty:send-mouse-scroll'
 export const GHOSTTY_MOUSE_CAPTURED_CHANNEL = 'ghostty:mouse-captured'
+export const GHOSTTY_GET_IOSURFACE_HANDLE_CHANNEL =
+  'ghostty:get-iosurface-handle'
 
 /** Push channel for Ghostty action events (title, pwd, bell, exit, etc.). */
 export const GHOSTTY_ACTION_CHANNEL = 'ghostty:action'
+
+/** Push channel for Ghostty shared texture frames. */
+export const GHOSTTY_FRAME_CHANNEL = 'ghostty:frame'
 
 /** Event types that are push action events (not request/response). */
 const PUSH_ACTION_TYPES = new Set([
@@ -55,6 +60,7 @@ const PUSH_ACTION_TYPES = new Set([
   'cell_size',
   'renderer_health',
   'unsupported_action',
+  'render_frame',
 ])
 
 // ---------------------------------------------------------------------------
@@ -287,6 +293,17 @@ export class GhosttyBridge {
         return await this.mouseCaptured(surfaceId)
       }
     )
+
+    ipcMain.removeHandler(GHOSTTY_GET_IOSURFACE_HANDLE_CHANNEL)
+    ipcMain.handle(
+      GHOSTTY_GET_IOSURFACE_HANDLE_CHANNEL,
+      async (_event, surfaceId: unknown) => {
+        if (typeof surfaceId !== 'number') {
+          throw new Error('surfaceId must be a number')
+        }
+        return await this.getIOSurfaceHandle(surfaceId)
+      }
+    )
   }
 
   // -----------------------------------------------------------------------
@@ -430,6 +447,28 @@ export class GhosttyBridge {
     })
   }
 
+  async getIOSurfaceHandle(surfaceId: number): Promise<{
+    readonly height: number
+    readonly ioSurfaceHandle: string
+    readonly width: number
+  } | null> {
+    this.ensureReady()
+    const id = this.generateId()
+    const result = await this.sendRequest<Record<string, unknown>>({
+      type: 'get_iosurface_handle',
+      id,
+      surfaceId,
+    })
+    if (result.type === 'iosurface_handle_null') {
+      return null
+    }
+    return {
+      height: result.height as number,
+      ioSurfaceHandle: result.ioSurfaceHandle as string,
+      width: result.width as number,
+    }
+  }
+
   async listSurfaces(): Promise<readonly number[]> {
     this.ensureReady()
     return await this.sendRequest<readonly number[]>({
@@ -500,6 +539,14 @@ export class GhosttyBridge {
     // Check if this is a push action event (no request ID).
     // Forward to all renderer windows via webContents.send().
     if (PUSH_ACTION_TYPES.has(eventType)) {
+      // render_frame events trigger shared texture import and transfer
+      if (eventType === 'render_frame') {
+        const surfaceId = event.surfaceId as number
+        this.handleRenderFrame(surfaceId).catch(() => {
+          // Best effort — texture import or transfer may fail
+        })
+        return
+      }
       for (const window of BrowserWindow.getAllWindows()) {
         window.webContents.send(GHOSTTY_ACTION_CHANNEL, event)
       }
@@ -538,8 +585,8 @@ export class GhosttyBridge {
         }
         break
       default:
-        // Other events (size_result, iosurface_result, etc.) are not used
-        // by the renderer bridge currently.
+        // Other events (size_result, iosurface_result, iosurface_handle_result,
+        // iosurface_handle_null, etc.) are resolved to their pending request.
         if (id && typeof id === 'string') {
           this.resolveRequest(id, event)
         }
@@ -560,6 +607,62 @@ export class GhosttyBridge {
     if (pending) {
       this.pendingRequests.delete(id)
       pending.reject(error)
+    }
+  }
+
+  /**
+   * Handle a render_frame push event by requesting the IOSurface handle
+   * from the sidecar, importing it via Electron's sharedTexture API,
+   * and sending the resulting VideoFrame to all renderer windows.
+   */
+  private async handleRenderFrame(surfaceId: number): Promise<void> {
+    // Request the IOSurface handle from the sidecar
+    const handleResult = await this.getIOSurfaceHandle(surfaceId)
+    if (handleResult === null) {
+      return
+    }
+
+    // Decode the base64-encoded IOSurfaceRef buffer
+    const ioSurfaceBuffer = Buffer.from(handleResult.ioSurfaceHandle, 'base64')
+
+    try {
+      // Import the IOSurface via Electron's sharedTexture API
+      const imported = sharedTexture.importSharedTexture({
+        textureInfo: {
+          pixelFormat: 'bgra',
+          codedSize: {
+            width: handleResult.width,
+            height: handleResult.height,
+          },
+          handle: {
+            ioSurface: ioSurfaceBuffer,
+          },
+        },
+      })
+
+      // Send the imported texture to all renderer windows
+      const windows = BrowserWindow.getAllWindows()
+      const sendPromises = windows.map(async (window) => {
+        try {
+          await sharedTexture.sendSharedTexture(
+            {
+              frame: window.webContents.mainFrame,
+              importedSharedTexture: imported,
+            },
+            surfaceId
+          )
+        } catch {
+          // Best effort — renderer may not have receiver set up yet
+        }
+      })
+
+      await Promise.all(sendPromises)
+
+      // Release the imported shared texture after sending
+      imported.release()
+    } catch {
+      // Best effort — sharedTexture API may not be available
+      // or the IOSurface handle may be invalid
     }
   }
 

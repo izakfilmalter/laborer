@@ -59,6 +59,7 @@ import {
   destroySurface,
   drainActions,
   getInfo,
+  getSurfaceIOSurfaceHandle,
   getSurfaceIOSurfaceId,
   getSurfacePixels,
   getSurfaceSize,
@@ -117,6 +118,12 @@ interface GetIOSurfaceCommand {
   readonly id: string
   readonly surfaceId: number
   readonly type: 'get_iosurface'
+}
+
+interface GetIOSurfaceHandleCommand {
+  readonly id: string
+  readonly surfaceId: number
+  readonly type: 'get_iosurface_handle'
 }
 
 interface GetPixelsCommand {
@@ -182,6 +189,7 @@ type Command =
   | SetSizeCommand
   | SetFocusCommand
   | GetIOSurfaceCommand
+  | GetIOSurfaceHandleCommand
   | GetPixelsCommand
   | GetSizeCommand
   | SendKeyCommand
@@ -225,6 +233,22 @@ interface IOSurfaceResultEvent {
   readonly info: IOSurfaceInfo
   readonly surfaceId: number
   readonly type: 'iosurface_result'
+}
+
+interface IOSurfaceHandleResultEvent {
+  readonly height: number
+  readonly id: string
+  /** Base64-encoded IOSurfaceRef Buffer for Electron sharedTexture API. */
+  readonly ioSurfaceHandle: string
+  readonly surfaceId: number
+  readonly type: 'iosurface_handle_result'
+  readonly width: number
+}
+
+interface IOSurfaceHandleNullEvent {
+  readonly id: string
+  readonly surfaceId: number
+  readonly type: 'iosurface_handle_null'
 }
 
 interface PixelsResultEvent {
@@ -309,6 +333,11 @@ interface RendererHealthEvent {
   readonly type: 'renderer_health'
 }
 
+interface RenderFrameEvent {
+  readonly surfaceId: number
+  readonly type: 'render_frame'
+}
+
 interface UnsupportedActionEvent {
   /** The unsupported action name (e.g., "mouse_shape", "new_split"). */
   readonly action: string
@@ -324,6 +353,8 @@ type GhosttyEvent =
   | SurfaceDestroyedEvent
   | SizeResultEvent
   | IOSurfaceResultEvent
+  | IOSurfaceHandleResultEvent
+  | IOSurfaceHandleNullEvent
   | PixelsResultEvent
   | PixelsNullEvent
   | MouseCapturedResultEvent
@@ -336,6 +367,7 @@ type GhosttyEvent =
   | ChildExitedEvent
   | CloseWindowEvent
   | CellSizeChangedEvent
+  | RenderFrameEvent
   | RendererHealthEvent
   | UnsupportedActionEvent
 
@@ -437,6 +469,34 @@ function handleGetIOSurface(cmd: GetIOSurfaceCommand): void {
       type: 'error',
       id: cmd.id,
       message: `Failed to get IOSurface for surface ${cmd.surfaceId}: ${String(error)}`,
+    })
+  }
+}
+
+function handleGetIOSurfaceHandle(cmd: GetIOSurfaceHandleCommand): void {
+  try {
+    const result = getSurfaceIOSurfaceHandle(cmd.surfaceId)
+    if (result === null) {
+      emit({
+        type: 'iosurface_handle_null',
+        id: cmd.id,
+        surfaceId: cmd.surfaceId,
+      })
+    } else {
+      emit({
+        type: 'iosurface_handle_result',
+        id: cmd.id,
+        surfaceId: cmd.surfaceId,
+        width: result.width,
+        height: result.height,
+        ioSurfaceHandle: result.ioSurfaceHandle.toString('base64'),
+      })
+    }
+  } catch (error) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `Failed to get IOSurface handle for surface ${cmd.surfaceId}: ${String(error)}`,
     })
   }
 }
@@ -617,6 +677,8 @@ function isValidCommand(parsed: unknown): parsed is Command {
       )
     case 'get_iosurface':
       return typeof obj.id === 'string' && typeof obj.surfaceId === 'number'
+    case 'get_iosurface_handle':
+      return typeof obj.id === 'string' && typeof obj.surfaceId === 'number'
     case 'get_pixels':
       return typeof obj.id === 'string' && typeof obj.surfaceId === 'number'
     case 'get_size':
@@ -705,6 +767,9 @@ function processLine(line: string): void {
     case 'get_iosurface':
       handleGetIOSurface(parsed)
       break
+    case 'get_iosurface_handle':
+      handleGetIOSurfaceHandle(parsed)
+      break
     case 'get_pixels':
       handleGetPixels(parsed)
       break
@@ -791,6 +856,12 @@ function emitActionEvent(action: ActionEvent): void {
         surfaceId: action.surfaceId,
         width: action.num1,
         height: action.num2,
+      })
+      break
+    case 'render_frame':
+      emit({
+        type: 'render_frame',
+        surfaceId: action.surfaceId,
       })
       break
     case 'renderer_health':

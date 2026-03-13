@@ -67,6 +67,20 @@ interface IOSurfaceInfo {
 }
 
 /**
+ * IOSurface handle for zero-copy rendering via Electron's sharedTexture API.
+ * The ioSurfaceHandle is a Buffer containing the raw IOSurfaceRef pointer
+ * that can be passed directly to sharedTexture.importSharedTexture().
+ */
+interface IOSurfaceHandle {
+  /** Surface height in pixels. */
+  readonly height: number
+  /** Raw IOSurfaceRef as a Buffer for Electron's sharedTexture API. */
+  readonly ioSurfaceHandle: Buffer
+  /** Surface width in pixels. */
+  readonly width: number
+}
+
+/**
  * Pixel data read back from a Ghostty surface's IOSurface.
  * Contains BGRA pixel data (4 bytes per pixel), tightly packed.
  */
@@ -206,6 +220,7 @@ interface GhosttyAddon {
   getInfo(): GhosttyInfo
 
   // Surface control
+  getSurfaceIOSurfaceHandle(surfaceId: number): IOSurfaceHandle | null
   getSurfaceIOSurfaceId(surfaceId: number): IOSurfaceInfo
   getSurfacePixels(surfaceId: number): SurfacePixels | null
   getSurfaceSize(surfaceId: number): SurfaceSize
@@ -550,6 +565,25 @@ const getSurfaceSize = (surfaceId: number): SurfaceSize => {
 }
 
 /**
+ * Get the IOSurface handle for a Ghostty surface's Metal layer.
+ *
+ * Returns a Buffer containing the raw IOSurfaceRef pointer suitable for
+ * passing to Electron's sharedTexture.importSharedTexture() API. This
+ * enables zero-copy GPU texture sharing between the Ghostty helper
+ * process and the Electron renderer.
+ *
+ * Returns null if the IOSurface is not yet available (Ghostty hasn't
+ * rendered a frame yet).
+ *
+ * @throws If the surface is not found.
+ */
+const getSurfaceIOSurfaceHandle = (
+  surfaceId: number
+): IOSurfaceHandle | null => {
+  return getAddon().getSurfaceIOSurfaceHandle(surfaceId)
+}
+
+/**
  * Get the IOSurface ID for a Ghostty surface's Metal layer.
  *
  * The IOSurface ID can be used by another process (Electron) to import
@@ -593,6 +627,7 @@ export {
   destroySurface,
   drainActions,
   getInfo,
+  getSurfaceIOSurfaceHandle,
   getSurfaceIOSurfaceId,
   getSurfacePixels,
   getSurfaceSize,
@@ -615,6 +650,7 @@ export type {
   CreateSurfaceOptions,
   GhosttyConfigValidation,
   GhosttyInfo,
+  IOSurfaceHandle,
   IOSurfaceInfo,
   KeyAction,
   KeyEvent,

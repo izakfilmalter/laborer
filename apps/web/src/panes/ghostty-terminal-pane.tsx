@@ -13,11 +13,9 @@
  *
  * - Handling Ghostty action events (title, pwd, bell, child exit) (Issue 7)
  *
- * The component does NOT handle:
- * - Zero-copy rendering via WebGPU/IOSurface (Issue 3)
- *
- * The rendered output is currently a placeholder. Issue 3 will replace this
- * with shared-surface WebGPU rendering.
+ * Rendering:
+ * - Zero-copy rendering via Electron's sharedTexture API (IOSurface → VideoFrame → canvas)
+ * - Falls back to pixel readback polling at ~30fps when shared texture is not available
  *
  * Keyboard input routing:
  * - The container div receives keyboard events via tabIndex={0}
@@ -74,6 +72,7 @@ const RENDER_INTERVAL_MS = 33 // ~30fps
 /**
  * Decode base64-encoded BGRA pixel data and draw it to a canvas.
  * Converts BGRA → RGBA in-place before creating ImageData.
+ * This is the fallback path when shared texture rendering is not available.
  */
 function drawPixelsToCanvas(
   canvas: HTMLCanvasElement,
@@ -106,6 +105,34 @@ function drawPixelsToCanvas(
   const imageData = new ImageData(rgba, width, height)
   const ctx = canvas.getContext('2d')
   ctx?.putImageData(imageData, 0, 0)
+}
+
+/**
+ * Draw a VideoFrame from Electron's sharedTexture API to a canvas.
+ * This is the zero-copy rendering path — the VideoFrame wraps a GPU
+ * texture (IOSurface on macOS) without CPU pixel copies.
+ */
+function drawVideoFrameToCanvas(
+  canvas: HTMLCanvasElement,
+  videoFrame: VideoFrame
+): void {
+  const width = videoFrame.displayWidth
+  const height = videoFrame.displayHeight
+
+  // Resize canvas if dimensions changed
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width
+    canvas.height = height
+  }
+
+  const ctx = canvas.getContext('2d')
+  if (ctx === null) {
+    return
+  }
+
+  // drawImage supports VideoFrame directly — the browser composites
+  // the GPU texture onto the canvas without CPU readback.
+  ctx.drawImage(videoFrame, 0, 0, width, height)
 }
 
 type SurfaceState =
@@ -272,15 +299,51 @@ function GhosttyTerminalPane({
     }
   }, [])
 
-  // Pixel readback rendering loop — polls the Ghostty host for pixel data
-  // and draws it to the canvas. This is the tracer-bullet path; Issue 3
-  // will replace this with zero-copy WebGPU shared-texture rendering.
+  // Shared texture rendering — subscribes to frame events from the main
+  // process. The main process imports the IOSurface via Electron's
+  // sharedTexture API and sends VideoFrames to the renderer. This is
+  // the zero-copy GPU path that avoids CPU pixel readback.
+  //
+  // Falls back to pixel readback polling if shared texture is not available.
   useEffect(() => {
     if (surfaceState.status !== 'active') {
       return
     }
 
     const { surfaceId } = surfaceState
+    const bridge = getDesktopBridge()
+
+    // Try to use the shared texture path first
+    if (bridge?.onGhosttyFrame) {
+      const unsubscribe = bridge.onGhosttyFrame(
+        (frameSurfaceId, importedSharedTexture) => {
+          if (frameSurfaceId !== surfaceId) {
+            return
+          }
+
+          const canvas = canvasRef.current
+          if (canvas === null) {
+            importedSharedTexture.release()
+            return
+          }
+
+          try {
+            const videoFrame =
+              importedSharedTexture.getVideoFrame() as VideoFrame
+            drawVideoFrameToCanvas(canvas, videoFrame)
+            videoFrame.close()
+          } catch {
+            // Best effort — frame may be invalid
+          } finally {
+            importedSharedTexture.release()
+          }
+        }
+      )
+
+      return unsubscribe
+    }
+
+    // Fallback: pixel readback polling loop
     let timerId: ReturnType<typeof setTimeout> | null = null
     let stopped = false
 
@@ -291,8 +354,8 @@ function GhosttyTerminalPane({
       renderingRef.current = true
 
       try {
-        const bridge = getDesktopBridge()
-        const result = await bridge?.ghosttyGetPixels(surfaceId)
+        const currentBridge = getDesktopBridge()
+        const result = await currentBridge?.ghosttyGetPixels(surfaceId)
 
         if (stopped || result === null || result === undefined) {
           return
@@ -623,9 +686,9 @@ function GhosttyTerminalPane({
     )
   }
 
-  // Active state — renders the native Ghostty surface via pixel readback.
-  // The canvas displays BGRA pixel data polled from the Ghostty host at ~30fps.
-  // Issue 3 will replace this with zero-copy WebGPU shared-texture rendering.
+  // Active state — renders the native Ghostty surface via shared texture
+  // (zero-copy IOSurface → VideoFrame → canvas.drawImage) when available,
+  // falling back to pixel readback polling at ~30fps.
   //
   // The container div must be focusable (tabIndex) and receive keyboard events
   // to forward them to the native Ghostty surface. This is intentional — the

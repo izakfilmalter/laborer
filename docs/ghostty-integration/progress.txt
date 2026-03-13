@@ -477,3 +477,76 @@ Date: 2026-03-13
 - Registry uses descriptive reason categories from the PRD: split_management, search_ui, key_overlay, url_handling, notification, progress_reporting, scrollbar_ui
 - UnsupportedActionEvent includes a running count — enables future prioritization based on frequency
 - The 'render' action is classified as 'handled_internally' (not 'supported') since Metal handles it directly without JS involvement
+
+---
+
+## Issue 3: Shared surface bridge from Ghostty to Electron renderer
+Status: IN PROGRESS (shared texture pipeline implemented, not yet end-to-end tested)
+Date: 2026-03-13
+
+### What was done
+- Added `GetSurfaceIOSurfaceHandle` to native addon (addon.mm):
+  - Extracts IOSurfaceRef from CAMetalLayer contents as a raw pointer Buffer
+  - CFRetains the IOSurfaceRef to keep it alive during transit; releases on GC via Buffer destructor
+  - Returns `{ ioSurfaceHandle: Buffer, width: number, height: number }` or null if not yet rendered
+  - Registered as `getSurfaceIOSurfaceHandle` in module exports
+- Modified `GHOSTTY_ACTION_RENDER` handler in native addon:
+  - Previously returned true silently (Metal handles rendering)
+  - Now queues a `render_frame` action into the action queue so the host process can notify the parent that a new frame is ready for import
+- Added `IOSurfaceHandle` interface and `getSurfaceIOSurfaceHandle()` function to TypeScript wrapper (index.ts):
+  - Added to `GhosttyAddon` interface for type-safe native addon access
+- Added `get_iosurface_handle` command to ghostty-host.ts IPC protocol:
+  - New `GetIOSurfaceHandleCommand` type
+  - New `IOSurfaceHandleResultEvent` (base64-encoded IOSurfaceRef Buffer + dimensions) and `IOSurfaceHandleNullEvent`
+  - New `RenderFrameEvent` push event type
+  - Handler extracts IOSurface handle and base64-encodes the Buffer for JSON transport
+  - `render_frame` case added to `emitActionEvent()` switch
+  - Validation and dispatch wired into command processing
+- Added shared texture pipeline to GhosttyBridge (ghostty-bridge.ts):
+  - Imports `sharedTexture` from electron
+  - Added `GHOSTTY_GET_IOSURFACE_HANDLE_CHANNEL` and `GHOSTTY_FRAME_CHANNEL` constants
+  - Added `render_frame` to `PUSH_ACTION_TYPES` set
+  - Added `getIOSurfaceHandle()` public method for request/response IOSurface retrieval
+  - Added `handleRenderFrame()` private method:
+    1. Requests IOSurface handle from sidecar via `getIOSurfaceHandle()`
+    2. Decodes base64 Buffer back to raw IOSurfaceRef
+    3. Imports via `sharedTexture.importSharedTexture({ textureInfo: { handle: { ioSurface }, pixelFormat: 'bgra', codedSize } })`
+    4. Sends to all renderer windows via `sharedTexture.sendSharedTexture()`
+    5. Releases the imported texture after send
+  - Added IPC handler for `get-iosurface-handle` channel
+  - `render_frame` events are intercepted in `routeEvent()` and trigger `handleRenderFrame()` instead of being broadcast
+- Added `ghosttyGetIOSurfaceHandle` and `onGhosttyFrame` to DesktopBridge (desktop-bridge.ts):
+  - `ghosttyGetIOSurfaceHandle`: request/response for IOSurface handle retrieval
+  - `onGhosttyFrame`: subscription method for shared texture frame events
+  - Shared texture type uses `{ getVideoFrame: () => unknown; release: () => void }` because VideoFrame isn't available in the shared package's Node type environment
+- Added shared texture receiver to preload script (preload.ts):
+  - Dynamic import of `electronSharedTexture` with fallback for versions without sharedTexture API
+  - `frameListeners` Set for multiple pane subscribers
+  - `frameReceiverSetUp` flag for one-time global receiver setup
+  - `onGhosttyFrame` implementation using `electronSharedTexture.setSharedTextureReceiver()`:
+    - Receives imported texture and surfaceId from main process
+    - Dispatches to all registered listeners
+    - Best-effort error handling per listener
+  - `ghosttyGetIOSurfaceHandle` implementation using `ipcRenderer.invoke`
+- Updated GhosttyTerminalPane (ghostty-terminal-pane.tsx):
+  - Added `drawVideoFrameToCanvas()` function: draws a VideoFrame to canvas via `ctx.drawImage()` (zero-copy GPU compositing)
+  - Updated rendering useEffect to try shared texture path first:
+    - If `bridge.onGhosttyFrame` is available, subscribes to frame events filtered by surfaceId
+    - On each frame: gets VideoFrame, draws to canvas, closes VideoFrame, releases shared texture
+    - Falls back to pixel readback polling loop if shared texture is not available
+  - Updated JSDoc comments to reflect dual rendering paths
+- Updated unsupported-actions.ts registry:
+  - `render` action description updated to reflect `render_frame` push event pipeline
+
+### What remains for Issue 3 completion
+- End-to-end testing: shared texture pipeline needs live Electron testing to verify IOSurface import/send works correctly across process boundaries
+- Frame throttling: `handleRenderFrame` currently processes every render event; may need per-surface throttling under heavy rendering load
+- Native addon rebuild: `bun run build:native` should be run to compile the new `GetSurfaceIOSurfaceHandle` function
+
+### Key decisions
+- IOSurfaceRef is transmitted as a base64-encoded Buffer over JSON IPC: the raw pointer is process-local but Electron's sharedTexture API handles cross-process GPU texture sharing internally
+- CFRetain/CFRelease lifecycle management ensures the IOSurface stays alive during transit and is released when the Buffer is garbage collected
+- render_frame is a push event (not request/response): Ghostty fires it during appTick() and the bridge asynchronously imports and sends the texture
+- Pixel readback is retained as a fallback: not all Electron versions support sharedTexture, and the fallback ensures terminals remain visible
+- No throttling implemented yet: the tick timer already limits render events to ~60fps, and handleRenderFrame catches and ignores failures gracefully
+- VideoFrame type not available in @laborer/shared: used `unknown` type with cast at the rendering site (ghostty-terminal-pane.tsx)

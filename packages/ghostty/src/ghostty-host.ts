@@ -58,6 +58,8 @@ import {
   destroyApp,
   destroySurface,
   drainActions,
+  getConfigDiagnostics,
+  getConfigPath,
   getInfo,
   getSurfaceIOSurfaceHandle,
   getSurfaceIOSurfaceId,
@@ -183,6 +185,16 @@ interface ListSurfacesCommand {
   readonly type: 'list_surfaces'
 }
 
+interface GetConfigPathCommand {
+  readonly id: string
+  readonly type: 'get_config_path'
+}
+
+interface GetConfigDiagnosticsCommand {
+  readonly id: string
+  readonly type: 'get_config_diagnostics'
+}
+
 type Command =
   | CreateSurfaceCommand
   | DestroySurfaceCommand
@@ -199,6 +211,8 @@ type Command =
   | SendMouseScrollCommand
   | MouseCapturedCommand
   | ListSurfacesCommand
+  | GetConfigPathCommand
+  | GetConfigDiagnosticsCommand
 
 // ---------------------------------------------------------------------------
 // Types — Events
@@ -347,6 +361,28 @@ interface UnsupportedActionEvent {
   readonly type: 'unsupported_action'
 }
 
+interface ConfigPathResultEvent {
+  readonly configPath: string | null
+  readonly id: string
+  readonly type: 'config_path_result'
+}
+
+interface ConfigDiagnosticsResultEvent {
+  readonly diagnostics: readonly string[]
+  readonly diagnosticsCount: number
+  readonly id: string
+  readonly type: 'config_diagnostics_result'
+}
+
+interface ConfigLoadedEvent {
+  /** Path to the config file that was loaded. */
+  readonly configPath: string | null
+  /** Any diagnostics (parse errors, warnings) from config loading. */
+  readonly diagnostics: readonly string[]
+  readonly diagnosticsCount: number
+  readonly type: 'config_loaded'
+}
+
 type GhosttyEvent =
   | ReadyEvent
   | SurfaceCreatedEvent
@@ -370,6 +406,9 @@ type GhosttyEvent =
   | RenderFrameEvent
   | RendererHealthEvent
   | UnsupportedActionEvent
+  | ConfigPathResultEvent
+  | ConfigDiagnosticsResultEvent
+  | ConfigLoadedEvent
 
 // ---------------------------------------------------------------------------
 // State
@@ -644,6 +683,41 @@ function handleListSurfaces(): void {
   }
 }
 
+function handleGetConfigPath(cmd: GetConfigPathCommand): void {
+  try {
+    const configPath = getConfigPath()
+    emit({
+      type: 'config_path_result',
+      id: cmd.id,
+      configPath,
+    })
+  } catch (error) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `Failed to get config path: ${String(error)}`,
+    })
+  }
+}
+
+function handleGetConfigDiagnostics(cmd: GetConfigDiagnosticsCommand): void {
+  try {
+    const result = getConfigDiagnostics()
+    emit({
+      type: 'config_diagnostics_result',
+      id: cmd.id,
+      diagnostics: result.diagnostics,
+      diagnosticsCount: result.diagnosticsCount,
+    })
+  } catch (error) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `Failed to get config diagnostics: ${String(error)}`,
+    })
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Command validation and dispatch
 // ---------------------------------------------------------------------------
@@ -721,6 +795,10 @@ function isValidCommand(parsed: unknown): parsed is Command {
       return typeof obj.id === 'string' && typeof obj.surfaceId === 'number'
     case 'list_surfaces':
       return true
+    case 'get_config_path':
+      return typeof obj.id === 'string'
+    case 'get_config_diagnostics':
+      return typeof obj.id === 'string'
     default:
       return false
   }
@@ -796,6 +874,12 @@ function processLine(line: string): void {
       break
     case 'list_surfaces':
       handleListSurfaces()
+      break
+    case 'get_config_path':
+      handleGetConfigPath(parsed)
+      break
+    case 'get_config_diagnostics':
+      handleGetConfigDiagnostics(parsed)
       break
     default:
       emit({
@@ -994,10 +1078,36 @@ async function main(): Promise<void> {
   const info = getInfo()
   debug('Ghostty version: %s (%s)', info.version, info.buildMode)
 
-  // Create the Ghostty app runtime
+  // Determine the config file path for diagnostic logging
+  let configPath: string | null = null
   try {
-    createApp()
-    debug('Ghostty app created')
+    configPath = getConfigPath()
+    debug('Ghostty config path: %s', configPath ?? '(not available)')
+  } catch {
+    debug('Could not determine Ghostty config path')
+  }
+
+  // Create the Ghostty app runtime with config loading.
+  // Default config files (~/.config/ghostty/config) are loaded automatically.
+  // Config file parse errors are reported as diagnostics, not fatal errors.
+  let configResult: { diagnostics: readonly string[]; diagnosticsCount: number }
+  try {
+    const result = createApp()
+    configResult = {
+      diagnostics: result.diagnostics,
+      diagnosticsCount: result.diagnosticsCount,
+    }
+    debug(
+      'Ghostty app created (config diagnostics: %d)',
+      result.diagnosticsCount
+    )
+
+    // Log config diagnostics as warnings (parse errors in config file)
+    if (result.diagnosticsCount > 0) {
+      for (const diag of result.diagnostics) {
+        debug('Config diagnostic: %s', diag)
+      }
+    }
   } catch (error) {
     emit({
       type: 'error',
@@ -1021,6 +1131,16 @@ async function main(): Promise<void> {
   // Signal readiness to the parent process
   emit({ type: 'ready', version: info.version })
   debug('Ready')
+
+  // Emit config_loaded after ready so the parent can subscribe to events
+  // before receiving the config info. This ordering ensures the parent
+  // can first receive 'ready', then immediately listen for 'config_loaded'.
+  emit({
+    type: 'config_loaded',
+    configPath,
+    diagnostics: configResult.diagnostics,
+    diagnosticsCount: configResult.diagnosticsCount,
+  })
 
   // Start reading commands from stdin
   await readStdin()

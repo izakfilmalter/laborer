@@ -171,6 +171,37 @@ interface UnsupportedActionEvent {
   readonly type: 'unsupported_action'
 }
 
+// Config events
+
+interface ConfigPathResultEvent {
+  readonly configPath: string | null
+  readonly id: string
+  readonly type: 'config_path_result'
+}
+
+interface ConfigDiagnosticsResultEvent {
+  readonly diagnostics: readonly string[]
+  readonly diagnosticsCount: number
+  readonly id: string
+  readonly type: 'config_diagnostics_result'
+}
+
+interface ConfigLoadedEvent {
+  readonly configPath: string | null
+  readonly diagnostics: readonly string[]
+  readonly diagnosticsCount: number
+  readonly type: 'config_loaded'
+}
+
+/**
+ * Config info received during Ghostty Host startup.
+ */
+interface GhosttyConfigInfo {
+  readonly configPath: string | null
+  readonly diagnostics: readonly string[]
+  readonly diagnosticsCount: number
+}
+
 /**
  * Union of all push action events emitted by the Ghostty Host.
  * These are unsolicited (not in response to a command) and are forwarded
@@ -198,6 +229,9 @@ type GhosttyEvent =
   | SurfacesListEvent
   | OkEvent
   | ErrorEvent
+  | ConfigPathResultEvent
+  | ConfigDiagnosticsResultEvent
+  | ConfigLoadedEvent
   | GhosttyActionEvent
 
 /** Callback invoked when the Ghostty Host process crashes. */
@@ -359,6 +393,22 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
     ) => Effect.Effect<void, Error>
 
     /**
+     * Get the Ghostty config file path from the host process.
+     */
+    readonly getConfigPath: () => Effect.Effect<string | null, Error>
+
+    /**
+     * Get config diagnostics from the host process.
+     */
+    readonly getConfigDiagnostics: () => Effect.Effect<GhosttyConfigInfo, Error>
+
+    /**
+     * Config info received during Ghostty Host startup.
+     * Populated when the host process emits the config_loaded event.
+     */
+    readonly configInfo: GhosttyConfigInfo
+
+    /**
      * The Ghostty version reported by the host process at startup.
      */
     readonly version: string
@@ -382,6 +432,13 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
       const pendingRequests = new Map<string, PendingRequest>()
       const crashCallbacks: CrashCallback[] = []
       const actionCallbacks: ActionCallback[] = []
+
+      // Config info received during startup (populated by config_loaded event)
+      let configInfo: GhosttyConfigInfo = {
+        configPath: null,
+        diagnostics: [],
+        diagnosticsCount: 0,
+      }
 
       // Monotonic counter for generating unique command IDs
       let nextId = 1
@@ -515,6 +572,25 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
               rejectRequest(event.id, new Error(event.message))
             } else {
               console.error(`[GhosttyHostClient] Host error: ${event.message}`)
+            }
+            break
+
+          // Config events
+          case 'config_path_result':
+            resolveRequest(event.id, event.configPath)
+            break
+          case 'config_diagnostics_result':
+            resolveRequest(event.id, {
+              diagnostics: event.diagnostics,
+              diagnosticsCount: event.diagnosticsCount,
+            })
+            break
+          case 'config_loaded':
+            // Config loaded push event — update stored config info
+            configInfo = {
+              configPath: event.configPath,
+              diagnostics: event.diagnostics,
+              diagnosticsCount: event.diagnosticsCount,
             }
             break
 
@@ -668,6 +744,26 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
       return GhosttyHostClient.of({
         version,
 
+        get configInfo() {
+          return configInfo
+        },
+
+        getConfigPath: () => {
+          const id = generateId()
+          return sendRequest<string | null>({
+            type: 'get_config_path',
+            id,
+          })
+        },
+
+        getConfigDiagnostics: () => {
+          const id = generateId()
+          return sendRequest<GhosttyConfigInfo>({
+            type: 'get_config_diagnostics',
+            id,
+          })
+        },
+
         createSurface: (options) => {
           const id = generateId()
           return sendRequest<number>({
@@ -812,4 +908,9 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
 }
 
 export { GhosttyHostClient }
-export type { ActionCallback, CrashCallback, GhosttyActionEvent }
+export type {
+  ActionCallback,
+  CrashCallback,
+  GhosttyActionEvent,
+  GhosttyConfigInfo,
+}

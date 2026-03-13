@@ -585,3 +585,72 @@ Date: 2026-03-13
 - Polling pattern used for GPU-dependent tests (100ms intervals) matching the existing e2e first-frame test pattern
 - render_frame events are collected passively (not requested) since they're push events from the Ghostty runtime — tests verify at least 2-3 arrive to prove continuous rendering
 - Post-resize test verifies the full cycle: create → wait → resize → verify render_frame continues → verify IOSurface handle has valid dimensions
+
+---
+
+## Issue 9: Ghostty config file ownership and startup loading
+Status: COMPLETE
+Date: 2026-03-13
+
+### What was done
+- Updated native addon CreateApp() to support config file loading (addon.mm):
+  - Accepts optional options object with `configFile` (path) and `loadDefaultConfig` (boolean)
+  - Loads default config files (~/.config/ghostty/config) by default via `ghostty_config_load_default_files()`
+  - Supports loading custom config files via `ghostty_config_load_file()`
+  - Calls `ghostty_config_load_recursive_files()` to follow `config-file` directives within loaded configs
+  - Returns `{ success, diagnostics, diagnosticsCount }` instead of bare boolean — config parse errors are surfaced as diagnostics, not fatal errors
+  - Idempotent: returns success with empty diagnostics if app already created
+- Added GetConfigPath() to native addon:
+  - Wraps `ghostty_config_open_path()` from the Ghostty C API
+  - Returns the standard config file path (e.g., `~/.config/ghostty/config` or `~/Library/Application Support/com.mitchellh.ghostty/config`)
+  - Returns null if the path cannot be determined
+  - Properly frees the ghostty_string_s via `ghostty_string_free()`
+- Added GetConfigDiagnostics() to native addon:
+  - Queries `ghostty_config_diagnostics_count()` and `ghostty_config_get_diagnostic()` on the live app config
+  - Returns `{ diagnostics: string[], diagnosticsCount: number }`
+  - Returns empty diagnostics if no app is created
+- Updated TypeScript wrapper (index.ts):
+  - Added CreateAppOptions, CreateAppResult, ConfigDiagnostics types
+  - Updated createApp() to accept optional CreateAppOptions and return CreateAppResult
+  - Added getConfigPath() and getConfigDiagnostics() functions
+  - Added GhosttyAddon interface entries for getConfigPath/getConfigDiagnostics
+  - All new types and functions exported
+- Updated Ghostty Host process (ghostty-host.ts):
+  - Added get_config_path and get_config_diagnostics IPC commands
+  - Added ConfigPathResultEvent, ConfigDiagnosticsResultEvent, ConfigLoadedEvent event types
+  - Emits config_loaded push event after ready (includes configPath and diagnostics)
+  - Logs config path and diagnostics at startup for debugging
+  - Config diagnostics are logged as warnings via stderr
+- Updated GhosttyHostClient Effect service (ghostty-host-client.ts):
+  - Added GhosttyConfigInfo type
+  - Added configInfo property (populated by config_loaded push event)
+  - Added getConfigPath() and getConfigDiagnostics() methods
+  - Routes config_path_result, config_diagnostics_result, and config_loaded events
+- Created user-facing docs at docs/ghostty-integration/ghostty-config.md:
+  - Explains config file location and how config loading works
+  - Lists what config controls (fonts, themes, keybindings, terminal behavior)
+  - Documents diagnostics behavior and troubleshooting
+  - Documents limitations (no live reload, no Laborer settings UI, no per-terminal config)
+- Added 3 new addon tests (test/addon.test.ts):
+  - getConfigPath returns a string path or null
+  - getConfigDiagnostics returns empty diagnostics before app creation
+  - getConfigDiagnostics returns diagnostics with correct shape after app creation
+- Updated existing addon createApp test to validate the new result shape (success, diagnostics, diagnosticsCount)
+- Added 4 new host integration tests (test/ghostty-host.test.ts):
+  - config_loaded event emitted on startup with correct shape
+  - get_config_path IPC command returns valid config path
+  - get_config_diagnostics IPC command returns diagnostics with correct shape
+  - config_loaded diagnosticsCount matches diagnostics array length
+- All 81 ghostty package tests pass (39 addon + 25 host + 19 unsupported-actions)
+- All 8 packages typecheck successfully
+- Format check passes (387 files)
+
+### Key decisions
+- Config is loaded during createApp(), not as a separate step — this matches Ghostty's lifecycle where config must be loaded before the app runtime is created
+- Default config loading is enabled by default (loadDefaultConfig: true) — users get their Ghostty config applied without any additional setup
+- Config file parse errors are non-fatal: they produce diagnostics but the app still starts with defaults for unparseable settings
+- Missing config files are not an error: Ghostty works with built-in defaults when no config file exists
+- config_loaded is emitted as a push event after ready (not before) — this ensures the parent process has time to subscribe before receiving config info
+- ghostty_config_load_recursive_files() is called after all explicit config loading — this handles `config-file` directives within the loaded config
+- CreateApp returns a result object instead of boolean — breaking change from the previous API, but necessary to surface diagnostics
+- getConfigPath uses ghostty_config_open_path() which returns the macOS-appropriate path (may vary between ~/.config/ghostty/config and ~/Library/Application Support/)

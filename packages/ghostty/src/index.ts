@@ -23,6 +23,42 @@ interface GhosttyConfigValidation {
 }
 
 /**
+ * Options for creating the Ghostty app runtime.
+ */
+interface CreateAppOptions {
+  /**
+   * Path to a Ghostty config file to load.
+   * When provided, this file is loaded in addition to (or instead of)
+   * the default config files, depending on `loadDefaultConfig`.
+   */
+  readonly configFile?: string
+  /**
+   * Whether to load default Ghostty config files (~/.config/ghostty/config).
+   * Defaults to true. Set to false to skip default config loading when
+   * providing a custom configFile.
+   */
+  readonly loadDefaultConfig?: boolean
+}
+
+/**
+ * Result of creating the Ghostty app runtime, including any config
+ * diagnostics (parse errors, warnings) from the loaded config files.
+ */
+interface CreateAppResult {
+  readonly diagnostics: readonly string[]
+  readonly diagnosticsCount: number
+  readonly success: boolean
+}
+
+/**
+ * Config diagnostics from the currently loaded Ghostty app config.
+ */
+interface ConfigDiagnostics {
+  readonly diagnostics: readonly string[]
+  readonly diagnosticsCount: number
+}
+
+/**
  * Options for creating a new Ghostty terminal surface.
  */
 interface CreateSurfaceOptions {
@@ -207,7 +243,7 @@ interface KeyEvent {
 interface GhosttyAddon {
   // App lifecycle
   appTick(): void
-  createApp(): boolean
+  createApp(options?: CreateAppOptions): CreateAppResult
 
   // Surface lifecycle
   createSurface(options?: CreateSurfaceOptions): SurfaceHandle
@@ -215,6 +251,10 @@ interface GhosttyAddon {
   destroySurface(surfaceId: number): boolean
   // Action queue
   drainActions(): ActionEvent[]
+
+  // Config
+  getConfigDiagnostics(): ConfigDiagnostics
+  getConfigPath(): string | null
 
   // Runtime initialization
   getInfo(): GhosttyInfo
@@ -343,20 +383,47 @@ const validateConfig = (): GhosttyConfigValidation => {
   return getAddon().validateConfig()
 }
 
+/**
+ * Get the path to the Ghostty config file.
+ *
+ * Returns the standard config file path that Ghostty uses for loading
+ * configuration (typically ~/.config/ghostty/config on macOS).
+ *
+ * @returns The config file path, or null if the path cannot be determined.
+ * @throws If Ghostty is not initialized.
+ */
+const getConfigPath = (): string | null => {
+  return getAddon().getConfigPath()
+}
+
+/**
+ * Get diagnostics from the currently loaded app config.
+ *
+ * Returns any parse errors or warnings from the config files that were
+ * loaded during createApp(). Returns empty diagnostics if no app exists.
+ */
+const getConfigDiagnostics = (): ConfigDiagnostics => {
+  return getAddon().getConfigDiagnostics()
+}
+
 // ---------------------------------------------------------------------------
 // App lifecycle
 // ---------------------------------------------------------------------------
 
 /**
- * Create the Ghostty app runtime with callbacks.
+ * Create the Ghostty app runtime with callbacks and config loading.
  * Only one app instance is supported. Must be called after init()
  * and before any surfaces can be created.
  *
- * @returns `true` if app creation succeeded.
- * @throws If Ghostty is not initialized or app creation fails.
+ * Loads Ghostty config files during creation. By default, loads the
+ * standard config files (~/.config/ghostty/config). A custom config
+ * file can be specified via options.configFile.
+ *
+ * @returns A result object indicating success and any config diagnostics.
+ * @throws If Ghostty is not initialized or app creation fails fatally.
  */
-const createApp = (): boolean => {
-  return getAddon().createApp()
+const createApp = (options?: CreateAppOptions): CreateAppResult => {
+  return getAddon().createApp(options)
 }
 
 /**
@@ -626,6 +693,8 @@ export {
   destroyApp,
   destroySurface,
   drainActions,
+  getConfigDiagnostics,
+  getConfigPath,
   getInfo,
   getSurfaceIOSurfaceHandle,
   getSurfaceIOSurfaceId,
@@ -647,6 +716,9 @@ export {
 }
 export type {
   ActionEvent,
+  ConfigDiagnostics,
+  CreateAppOptions,
+  CreateAppResult,
   CreateSurfaceOptions,
   GhosttyConfigValidation,
   GhosttyInfo,

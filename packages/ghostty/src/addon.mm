@@ -493,7 +493,18 @@ Napi::Value ValidateConfig(const Napi::CallbackInfo& info) {
  * Only one app instance is supported. Must be called after init()
  * and before any surfaces can be created.
  *
- * Returns true on success.
+ * Accepts an optional options object:
+ *   - configFile: string — path to a Ghostty config file to load
+ *                          instead of (or in addition to) the default files.
+ *                          If not specified, loads only default config files
+ *                          (~/.config/ghostty/config).
+ *   - loadDefaultConfig: boolean — whether to load default config files.
+ *                                  Defaults to true. Set to false to skip
+ *                                  loading default files when providing a
+ *                                  custom configFile.
+ *
+ * Returns an object:
+ *   { success: boolean, diagnostics: string[], diagnosticsCount: number }
  */
 Napi::Value CreateApp(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
@@ -505,19 +516,60 @@ Napi::Value CreateApp(const Napi::CallbackInfo& info) {
   }
 
   if (g_app != nullptr) {
-    return Napi::Boolean::New(env, true);
+    // App already created — return success with empty diagnostics
+    Napi::Object result = Napi::Object::New(env);
+    result.Set("success", Napi::Boolean::New(env, true));
+    result.Set("diagnostics", Napi::Array::New(env, 0));
+    result.Set("diagnosticsCount", Napi::Number::New(env, 0));
+    return result;
   }
 
-  // Create and finalize config
+  // Parse options
+  std::string config_file;
+  bool load_default_config = true;
+
+  if (info.Length() > 0 && info[0].IsObject()) {
+    Napi::Object opts = info[0].As<Napi::Object>();
+
+    if (opts.Has("configFile") && opts.Get("configFile").IsString()) {
+      config_file = opts.Get("configFile").As<Napi::String>().Utf8Value();
+    }
+    if (opts.Has("loadDefaultConfig") && opts.Get("loadDefaultConfig").IsBoolean()) {
+      load_default_config = opts.Get("loadDefaultConfig").As<Napi::Boolean>().Value();
+    }
+  }
+
+  // Create and configure config
   ghostty_config_t config = ghostty_config_new();
   if (config == nullptr) {
     Napi::Error::New(env, "Failed to create Ghostty config")
         .ThrowAsJavaScriptException();
-    return Napi::Boolean::New(env, false);
+    return env.Undefined();
   }
 
-  ghostty_config_load_default_files(config);
+  // Load config files based on options
+  if (load_default_config) {
+    ghostty_config_load_default_files(config);
+  }
+
+  if (!config_file.empty()) {
+    ghostty_config_load_file(config, config_file.c_str());
+  }
+
+  // Load recursive files (follows config-file directives within loaded configs)
+  ghostty_config_load_recursive_files(config);
+
   ghostty_config_finalize(config);
+
+  // Collect diagnostics before app creation (config parse errors)
+  uint32_t diag_count = ghostty_config_diagnostics_count(config);
+  std::vector<std::string> diagnostics;
+  for (uint32_t i = 0; i < diag_count; i++) {
+    ghostty_diagnostic_s diag = ghostty_config_get_diagnostic(config, i);
+    if (diag.message != nullptr) {
+      diagnostics.push_back(std::string(diag.message));
+    }
+  }
 
   // Set up runtime config with callbacks
   ghostty_runtime_config_s runtime_config = {};
@@ -532,22 +584,30 @@ Napi::Value CreateApp(const Napi::CallbackInfo& info) {
 
   ghostty_app_t app = ghostty_app_new(&runtime_config, config);
   if (app == nullptr) {
-    uint32_t diag_count = ghostty_config_diagnostics_count(config);
     std::string error_msg = "Failed to create Ghostty app";
-    if (diag_count > 0) {
-      ghostty_diagnostic_s diag = ghostty_config_get_diagnostic(config, 0);
-      if (diag.message != nullptr) {
-        error_msg += ": " + std::string(diag.message);
-      }
+    if (diag_count > 0 && !diagnostics.empty()) {
+      error_msg += ": " + diagnostics[0];
     }
     ghostty_config_free(config);
     Napi::Error::New(env, error_msg).ThrowAsJavaScriptException();
-    return Napi::Boolean::New(env, false);
+    return env.Undefined();
   }
 
   g_app = app;
   g_app_config = config;
-  return Napi::Boolean::New(env, true);
+
+  // Return success with diagnostics
+  Napi::Object result = Napi::Object::New(env);
+  result.Set("success", Napi::Boolean::New(env, true));
+  result.Set("diagnosticsCount", Napi::Number::New(env, diag_count));
+
+  Napi::Array diagArray = Napi::Array::New(env, diagnostics.size());
+  for (uint32_t i = 0; i < diagnostics.size(); i++) {
+    diagArray.Set(i, Napi::String::New(env, diagnostics[i]));
+  }
+  result.Set("diagnostics", diagArray);
+
+  return result;
 }
 
 /**
@@ -1398,6 +1458,71 @@ Napi::Value GetSurfacePixels(const Napi::CallbackInfo& info) {
 }
 
 // ---------------------------------------------------------------------------
+// N-API functions: Config
+// ---------------------------------------------------------------------------
+
+/**
+ * Get the path to the Ghostty config file.
+ *
+ * Returns the standard config file path that Ghostty uses for loading
+ * configuration (typically ~/.config/ghostty/config on macOS).
+ *
+ * Returns the path as a string, or null if the path cannot be determined.
+ */
+Napi::Value GetConfigPath(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (!g_initialized) {
+    Napi::Error::New(env, "Ghostty is not initialized. Call init() first.")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  ghostty_string_s path = ghostty_config_open_path();
+  if (path.ptr == nullptr || path.len == 0) {
+    return env.Null();
+  }
+
+  Napi::String result = Napi::String::New(env, path.ptr, path.len);
+  ghostty_string_free(path);
+  return result;
+}
+
+/**
+ * Get diagnostics from the currently loaded app config.
+ *
+ * Returns an object:
+ *   { diagnostics: string[], diagnosticsCount: number }
+ *
+ * If no app is created, returns an empty diagnostics array.
+ */
+Napi::Value GetConfigDiagnostics(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  Napi::Object result = Napi::Object::New(env);
+
+  if (g_app_config == nullptr) {
+    result.Set("diagnosticsCount", Napi::Number::New(env, 0));
+    result.Set("diagnostics", Napi::Array::New(env, 0));
+    return result;
+  }
+
+  uint32_t diag_count = ghostty_config_diagnostics_count(g_app_config);
+  result.Set("diagnosticsCount", Napi::Number::New(env, diag_count));
+
+  Napi::Array diagnostics = Napi::Array::New(env, diag_count);
+  for (uint32_t i = 0; i < diag_count; i++) {
+    ghostty_diagnostic_s diag = ghostty_config_get_diagnostic(g_app_config, i);
+    if (diag.message != nullptr) {
+      diagnostics.Set(i, Napi::String::New(env, diag.message));
+    }
+  }
+  result.Set("diagnostics", diagnostics);
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // N-API functions: Action queue
 // ---------------------------------------------------------------------------
 
@@ -1449,6 +1574,11 @@ Napi::Object InitModule(Napi::Env env, Napi::Object exports) {
   exports.Set("isInitialized", Napi::Function::New(env, IsInitialized));
   exports.Set("getInfo", Napi::Function::New(env, GetInfo));
   exports.Set("validateConfig", Napi::Function::New(env, ValidateConfig));
+
+  // Config
+  exports.Set("getConfigPath", Napi::Function::New(env, GetConfigPath));
+  exports.Set("getConfigDiagnostics",
+              Napi::Function::New(env, GetConfigDiagnostics));
 
   // App lifecycle
   exports.Set("createApp", Napi::Function::New(env, CreateApp));

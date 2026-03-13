@@ -320,7 +320,7 @@ Created unsupported-actions.ts registry module classifying all 64 Ghostty action
 
 ---
 
-## Issue 9: Ghostty config file ownership and startup loading
+## Issue 9: Ghostty config file ownership and startup loading — DONE
 
 ### Parent PRD
 
@@ -338,11 +338,15 @@ This slice makes the embedded Ghostty experience predictable for users already f
 
 ### Acceptance criteria
 
-- [ ] The Ghostty runtime host loads Ghostty config files on startup
-- [ ] Fonts, themes, or keybinding changes from Ghostty config affect new terminal surfaces
-- [ ] Missing or invalid config files fail with clear diagnostics rather than silent misbehavior
-- [ ] User-facing docs explain how Ghostty config applies inside Laborer
-- [ ] Tests cover config loading success and failure cases
+- [x] The Ghostty runtime host loads Ghostty config files on startup
+- [x] Fonts, themes, or keybinding changes from Ghostty config affect new terminal surfaces
+- [x] Missing or invalid config files fail with clear diagnostics rather than silent misbehavior
+- [x] User-facing docs explain how Ghostty config applies inside Laborer
+- [x] Tests cover config loading success and failure cases
+
+### Progress
+
+Updated native addon CreateApp() to load config files on startup (default files + optional custom file), with config diagnostics surfaced to the caller. Added GetConfigPath() and GetConfigDiagnostics() N-API functions. Updated TypeScript wrapper with CreateAppOptions/CreateAppResult/ConfigDiagnostics types and new getConfigPath/getConfigDiagnostics exports. Updated Ghostty Host IPC with get_config_path and get_config_diagnostics commands plus config_loaded push event emitted after ready. Updated GhosttyHostClient Effect service with configInfo property, getConfigPath/getConfigDiagnostics methods, and config event routing. Created user-facing docs at docs/ghostty-integration/ghostty-config.md. Added 7 new tests (3 addon + 4 host). All 81 ghostty tests pass, all 8 packages typecheck, format passes.
 
 ### Blocked by
 

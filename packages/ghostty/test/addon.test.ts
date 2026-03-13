@@ -7,6 +7,8 @@ import {
   destroyApp,
   destroySurface,
   drainActions,
+  getConfigDiagnostics,
+  getConfigPath,
   getInfo,
   getSurfaceIOSurfaceHandle,
   getSurfaceIOSurfaceId,
@@ -67,6 +69,31 @@ describe('ghostty native addon', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // Config (Issue 9)
+  // ---------------------------------------------------------------------------
+
+  describe('config', () => {
+    it('returns a config path', () => {
+      const configPath = getConfigPath()
+      // configPath should be a string path or null
+      expect(configPath === null || typeof configPath === 'string').toBe(true)
+      if (configPath !== null) {
+        // Should contain a recognizable path component
+        expect(configPath.length).toBeGreaterThan(0)
+        expect(configPath).toContain('ghostty')
+      }
+    })
+
+    it('returns empty config diagnostics before app creation', () => {
+      const diag = getConfigDiagnostics()
+      expect(diag).toBeDefined()
+      expect(diag.diagnosticsCount).toBe(0)
+      expect(Array.isArray(diag.diagnostics)).toBe(true)
+      expect(diag.diagnostics.length).toBe(0)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // App lifecycle (Issue 1)
   // ---------------------------------------------------------------------------
 
@@ -84,9 +111,12 @@ describe('ghostty native addon', () => {
       expect(isAppCreated()).toBe(false)
     })
 
-    it('creates the ghostty app runtime', () => {
+    it('creates the ghostty app runtime with config loading', () => {
       const result = createApp()
-      expect(result).toBe(true)
+      expect(result).toBeDefined()
+      expect(result.success).toBe(true)
+      expect(typeof result.diagnosticsCount).toBe('number')
+      expect(Array.isArray(result.diagnostics)).toBe(true)
     })
 
     it('reports app created after createApp()', () => {
@@ -95,7 +125,17 @@ describe('ghostty native addon', () => {
 
     it('returns idempotent success on repeated createApp()', () => {
       const result = createApp()
-      expect(result).toBe(true)
+      expect(result).toBeDefined()
+      expect(result.success).toBe(true)
+    })
+
+    it('returns config diagnostics after app creation', () => {
+      const diag = getConfigDiagnostics()
+      expect(diag).toBeDefined()
+      expect(typeof diag.diagnosticsCount).toBe('number')
+      expect(Array.isArray(diag.diagnostics)).toBe(true)
+      // diagnosticsCount and diagnostics array should match
+      expect(diag.diagnostics.length).toBe(diag.diagnosticsCount)
     })
 
     it('can tick the app without error', () => {

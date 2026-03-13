@@ -136,6 +136,26 @@ interface IOSurfaceHandleNullEvent {
   readonly type: 'iosurface_handle_null'
 }
 
+interface ConfigPathResultEvent {
+  readonly configPath: string | null
+  readonly id: string
+  readonly type: 'config_path_result'
+}
+
+interface ConfigDiagnosticsResultEvent {
+  readonly diagnostics: readonly string[]
+  readonly diagnosticsCount: number
+  readonly id: string
+  readonly type: 'config_diagnostics_result'
+}
+
+interface ConfigLoadedEvent {
+  readonly configPath: string | null
+  readonly diagnostics: readonly string[]
+  readonly diagnosticsCount: number
+  readonly type: 'config_loaded'
+}
+
 type GhosttyActionEvent =
   | TitleChangedEvent
   | PwdChangedEvent
@@ -158,6 +178,9 @@ type GhosttyEvent =
   | SurfacesListEvent
   | OkEvent
   | ErrorEvent
+  | ConfigPathResultEvent
+  | ConfigDiagnosticsResultEvent
+  | ConfigLoadedEvent
   | GhosttyActionEvent
 
 // ---------------------------------------------------------------------------
@@ -348,6 +371,103 @@ describe('ghostty host process', () => {
     expect((event as ReadyEvent).version).toBeDefined()
     expect(typeof (event as ReadyEvent).version).toBe('string')
     expect((event as ReadyEvent).version.length).toBeGreaterThan(0)
+  })
+
+  // -------------------------------------------------------------------------
+  // Config loading (Issue 9)
+  // -------------------------------------------------------------------------
+
+  it('emits config_loaded event on startup', async () => {
+    handle = spawnGhosttyHost()
+    await waitForEvent(handle.events, (e) => e.type === 'ready')
+
+    // config_loaded should be emitted shortly after ready
+    const event = (await waitForEvent(
+      handle.events,
+      (e) => e.type === 'config_loaded',
+      5000
+    )) as ConfigLoadedEvent
+
+    expect(event.type).toBe('config_loaded')
+    // configPath should be a string or null
+    expect(
+      event.configPath === null || typeof event.configPath === 'string'
+    ).toBe(true)
+    expect(typeof event.diagnosticsCount).toBe('number')
+    expect(Array.isArray(event.diagnostics)).toBe(true)
+    expect(event.diagnostics.length).toBe(event.diagnosticsCount)
+  })
+
+  it('can query config path via IPC', async () => {
+    handle = spawnGhosttyHost()
+    await waitForEvent(handle.events, (e) => e.type === 'ready')
+
+    handle.sendCommand({
+      type: 'get_config_path',
+      id: 'cfg-path-1',
+    })
+
+    const event = (await waitForEvent(
+      handle.events,
+      (e) =>
+        e.type === 'config_path_result' && 'id' in e && e.id === 'cfg-path-1'
+    )) as ConfigPathResultEvent
+
+    expect(event.type).toBe('config_path_result')
+    expect(event.id).toBe('cfg-path-1')
+    // configPath should be a string path or null
+    expect(
+      event.configPath === null || typeof event.configPath === 'string'
+    ).toBe(true)
+    if (event.configPath !== null) {
+      expect(event.configPath).toContain('ghostty')
+    }
+  })
+
+  it('can query config diagnostics via IPC', async () => {
+    handle = spawnGhosttyHost()
+    await waitForEvent(handle.events, (e) => e.type === 'ready')
+    // Wait for config_loaded so we know config is loaded
+    await waitForEvent(handle.events, (e) => e.type === 'config_loaded', 5000)
+
+    handle.sendCommand({
+      type: 'get_config_diagnostics',
+      id: 'cfg-diag-1',
+    })
+
+    const event = (await waitForEvent(
+      handle.events,
+      (e) =>
+        e.type === 'config_diagnostics_result' &&
+        'id' in e &&
+        e.id === 'cfg-diag-1'
+    )) as ConfigDiagnosticsResultEvent
+
+    expect(event.type).toBe('config_diagnostics_result')
+    expect(event.id).toBe('cfg-diag-1')
+    expect(typeof event.diagnosticsCount).toBe('number')
+    expect(Array.isArray(event.diagnostics)).toBe(true)
+    expect(event.diagnostics.length).toBe(event.diagnosticsCount)
+  })
+
+  it('config_loaded reports diagnostics count matching diagnostics array', async () => {
+    handle = spawnGhosttyHost()
+    await waitForEvent(handle.events, (e) => e.type === 'ready')
+
+    const event = (await waitForEvent(
+      handle.events,
+      (e) => e.type === 'config_loaded',
+      5000
+    )) as ConfigLoadedEvent
+
+    // The diagnosticsCount should match the length of the diagnostics array
+    expect(event.diagnosticsCount).toBe(event.diagnostics.length)
+
+    // Each diagnostic should be a non-empty string (if any exist)
+    for (const diag of event.diagnostics) {
+      expect(typeof diag).toBe('string')
+      expect(diag.length).toBeGreaterThan(0)
+    }
   })
 
   // -------------------------------------------------------------------------

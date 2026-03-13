@@ -18,6 +18,10 @@
  * a `brrr fix` terminal. "Unqueue" removes the rocket reaction from a
  * single finding.
  *
+ * File:line references in finding cards and inline comment cards are
+ * clickable — clicking opens the file in the user's configured editor
+ * via the `editor.open` RPC.
+ *
  * Polls the server every 30 seconds while mounted and provides a manual
  * refresh button. Polling stops automatically when the pane is unmounted.
  *
@@ -27,6 +31,7 @@
  * @see Issue #6: Polling + manual refresh
  * @see Issue #8: Checkbox selection + reaction state display
  * @see Issue #9: Rocket reaction RPCs + Fix Selected action
+ * @see Issue #10: Click-to-open-in-editor
  */
 
 import {
@@ -89,6 +94,7 @@ import { usePanelActions } from '@/panels/panel-context'
 const addReactionMutation = LaborerClient.mutation('review.addReaction')
 const removeReactionMutation = LaborerClient.mutation('review.removeReaction')
 const fixFindingsMutation = LaborerClient.mutation('brrr.fix')
+const editorOpenMutation = LaborerClient.mutation('editor.open')
 
 /** Polling interval in milliseconds (30 seconds). */
 const POLL_INTERVAL_MS = 30_000
@@ -247,12 +253,14 @@ function ReactionIndicators({
 function FindingCard({
   finding,
   isUnqueuing,
+  onOpenFile,
   onToggleSelection,
   onUnqueue,
   selected,
 }: {
   readonly finding: ReviewFinding
   readonly isUnqueuing?: boolean
+  readonly onOpenFile: (filePath: string) => void
   readonly onToggleSelection: (commentId: number) => void
   readonly onUnqueue?: (finding: ReviewFinding) => void
   readonly selected: boolean
@@ -307,13 +315,19 @@ function FindingCard({
             )}
           </div>
 
-          {/* File:line reference */}
-          <div className="mt-1 flex items-center gap-1 text-muted-foreground text-xs">
+          {/* File:line reference — clickable to open in editor */}
+          <button
+            className="mt-1 flex items-center gap-1 rounded text-muted-foreground text-xs underline decoration-muted-foreground/40 underline-offset-2 transition-colors hover:text-foreground hover:decoration-foreground/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            data-testid="file-line-link"
+            onClick={() => onOpenFile(finding.file)}
+            title={`Open ${finding.file}:${finding.line} in editor`}
+            type="button"
+          >
             <FileCode className="size-3 shrink-0" />
             <span className="truncate">
               {finding.file}:{finding.line}
             </span>
-          </div>
+          </button>
 
           {/* Description */}
           <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed">
@@ -358,7 +372,18 @@ function FindingCard({
  * Renders a single PR comment card with author info, body, and optional
  * file:line reference for inline review comments.
  */
-function CommentCard({ comment }: { readonly comment: PrComment }) {
+function CommentCard({
+  comment,
+  onOpenFile,
+}: {
+  readonly comment: PrComment
+  readonly onOpenFile: (filePath: string) => void
+}) {
+  const fileRef =
+    comment.filePath !== null
+      ? `${comment.filePath}${comment.line !== null ? `:${comment.line}` : ''}`
+      : null
+
   return (
     <div className="border-b px-3 py-2.5 last:border-b-0">
       <div className="flex items-start gap-2">
@@ -379,13 +404,16 @@ function CommentCard({ comment }: { readonly comment: PrComment }) {
             </span>
           </div>
           {comment.filePath !== null && (
-            <div className="mt-0.5 flex items-center gap-1 text-muted-foreground text-xs">
+            <button
+              className="mt-0.5 flex items-center gap-1 rounded text-muted-foreground text-xs underline decoration-muted-foreground/40 underline-offset-2 transition-colors hover:text-foreground hover:decoration-foreground/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              data-testid="file-line-link"
+              onClick={() => onOpenFile(comment.filePath as string)}
+              title={`Open ${fileRef} in editor`}
+              type="button"
+            >
               <FileCode className="size-3 shrink-0" />
-              <span className="truncate">
-                {comment.filePath}
-                {comment.line !== null ? `:${comment.line}` : ''}
-              </span>
-            </div>
+              <span className="truncate">{fileRef}</span>
+            </button>
           )}
           <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed">
             {comment.body}
@@ -520,12 +548,17 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   const allSelected = findings.length > 0 && selectedCount === findings.length
 
   // -----------------------------------------------------------------------
-  // Mutation hooks for rocket reactions and brrr fix.
+  // Mutation hooks for rocket reactions, brrr fix, and editor open.
   // -----------------------------------------------------------------------
   const addReaction = useAtomSet(addReactionMutation, { mode: 'promise' })
   const removeReaction = useAtomSet(removeReactionMutation, { mode: 'promise' })
   const fixFindings = useAtomSet(fixFindingsMutation, { mode: 'promise' })
+  const openEditor = useAtomSet(editorOpenMutation, { mode: 'promise' })
   const panelActions = usePanelActions()
+
+  // Ref to avoid stale closures in the onOpenFile callback passed to cards.
+  const openEditorRef = useRef(openEditor)
+  openEditorRef.current = openEditor
 
   const [isFixing, setIsFixing] = useState(false)
   const [unqueuingCommentId, setUnqueuingCommentId] = useState<number | null>(
@@ -617,6 +650,24 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
       }
     },
     [refresh, removeReaction, startPolling, workspaceId]
+  )
+
+  /**
+   * Open a file in the user's configured editor via the `editor.open` RPC.
+   * Uses a ref to avoid stale closures.
+   */
+  const handleOpenFile = useCallback(
+    async (filePath: string) => {
+      try {
+        await openEditorRef.current({
+          payload: { workspaceId, filePath },
+        })
+        toast.success(`Opened ${filePath} in editor`)
+      } catch (error: unknown) {
+        toast.error(`Failed to open file: ${extractErrorMessage(error)}`)
+      }
+    },
+    [workspaceId]
   )
 
   // Determine whether we're in the initial loading state (no data yet)
@@ -744,6 +795,7 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
                 finding={finding}
                 isUnqueuing={unqueuingCommentId === finding.commentId}
                 key={finding.commentId}
+                onOpenFile={handleOpenFile}
                 onToggleSelection={handleToggleSelection}
                 onUnqueue={handleUnqueue}
                 selected={selectedIds.has(finding.commentId)}
@@ -760,7 +812,11 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
             title="Comments"
           >
             {comments.map((comment) => (
-              <CommentCard comment={comment} key={comment.id} />
+              <CommentCard
+                comment={comment}
+                key={comment.id}
+                onOpenFile={handleOpenFile}
+              />
             ))}
           </ReviewSection>
         )}

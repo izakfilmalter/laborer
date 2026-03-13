@@ -351,3 +351,38 @@ Completed all acceptance criteria:
   - Unqueue button not rendered on findings without rocket reaction
   - Unqueue button not rendered on findings with only thumbs-up reaction
 - All 736 tests pass (web: 448, server: 288), TypeScript clean, formatting clean
+
+## Issue 10: Click-to-open-in-editor — DONE
+
+Completed all acceptance criteria:
+
+- File:line references in finding cards are now clickable buttons
+  (previously static `<span>` elements, now `<button>` with
+  `data-testid="file-line-link"`)
+- File:line references in inline comment cards are now clickable buttons
+  (same pattern, only rendered when `comment.filePath !== null`)
+- Clicking calls `editor.open` RPC with the workspace ID and file path
+  via the existing `LaborerClient.mutation('editor.open')` pattern
+  (matches diff-pane.tsx implementation)
+- Uses `useRef` for stable `openEditorRef` to avoid stale closures,
+  same pattern as diff pane's `openEditorRef`
+- Toast feedback: "Opened {filePath} in editor" on success,
+  "Failed to open file: {message}" on error
+- Visual affordance: underline with `decoration-muted-foreground/40`,
+  `underline-offset-2`, hover transitions to `text-foreground` with
+  `decoration-foreground/40`, focus-visible ring for keyboard access
+- Title attribute shows "Open {file}:{line} in editor" for tooltip
+- `onOpenFile` callback threaded from `ReviewPaneContent` through
+  `FindingCard` and `CommentCard` as required prop
+- Module-level `editorOpenMutation` atom defined alongside existing
+  mutation atoms (addReaction, removeReaction, fixFindings)
+- `handleOpenFile` async callback in `ReviewPaneContent` using
+  `useCallback` with `[workspaceId]` dependency
+- Added 6 new tests in review-pane.test.tsx (57 total) covering:
+  - Renders file:line references as clickable links in finding cards
+  - Renders file:line references as clickable links in inline comment cards
+  - Clicking file:line in finding card triggers editor.open RPC
+  - Clicking file:line in comment card triggers editor.open RPC
+  - Does not render file:line link for issue comments without file path
+  - File:line link has visual affordance (underline styling)
+- All 454 web tests pass, all server tests pass, TypeScript clean, formatting clean

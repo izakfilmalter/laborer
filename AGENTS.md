@@ -154,3 +154,18 @@ When working with LiveStore, search `.reference/livestore/` for schema definitio
 - `packages/@livestore/react/` — React bindings and hooks
 - `packages/@livestore/wa-sqlite/` — SQLite adapter for web
 - Look at the examples in the repo for full integration patterns
+
+### Event Schema Evolution
+
+The eventlog is immutable and append-only — old events are never rewritten. State tables are automatically rematerialized from the eventlog when their schema changes, but event definitions must always be **backward-compatible** with previously persisted data.
+
+Rules when modifying event schemas:
+
+- **Adding a field:** Must use `Schema.optional(...)` or `Schema.withDefault(...)` so old events without the field still decode.
+- **Removing a field:** Allowed — old events with the extra field still decode fine.
+- **Renaming/changing a field type:** Not safe — create a new event version instead (e.g. `v2.EventName`).
+- **Deleting an event definition:** Not allowed — LiveStore validates that all previously used event definitions still exist.
+
+In materializers, use `?? null` (or a suitable default) for optional fields to convert `undefined` to the value expected by the SQLite column.
+
+**Never add a required field to an existing event.** This breaks rematerialization for any user with old events in their eventlog.

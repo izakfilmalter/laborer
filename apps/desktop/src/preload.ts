@@ -28,6 +28,7 @@ const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
 // Ghostty surface lifecycle channels
 const GHOSTTY_CREATE_SURFACE_CHANNEL = 'ghostty:create-surface'
 const GHOSTTY_DESTROY_SURFACE_CHANNEL = 'ghostty:destroy-surface'
+const GHOSTTY_GET_PIXELS_CHANNEL = 'ghostty:get-pixels'
 const GHOSTTY_SET_SIZE_CHANNEL = 'ghostty:set-size'
 const GHOSTTY_SET_FOCUS_CHANNEL = 'ghostty:set-focus'
 const GHOSTTY_LIST_SURFACES_CHANNEL = 'ghostty:list-surfaces'
@@ -176,6 +177,9 @@ contextBridge.exposeInMainWorld('desktopBridge', {
 
   ghosttyDestroySurface: (surfaceId) =>
     ipcRenderer.invoke(GHOSTTY_DESTROY_SURFACE_CHANNEL, surfaceId),
+
+  ghosttyGetPixels: (surfaceId) =>
+    ipcRenderer.invoke(GHOSTTY_GET_PIXELS_CHANNEL, surfaceId),
 
   ghosttyListSurfaces: () => ipcRenderer.invoke(GHOSTTY_LIST_SURFACES_CHANNEL),
 

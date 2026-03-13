@@ -272,17 +272,27 @@ app
       }
     }
 
-    // In production, spawn sidecar services with health monitoring.
-    // In dev mode, services are run separately via `turbo dev`.
-    if (!isDev) {
+    // Create the Ghostty IPC bridge and register its handlers early
+    // so the renderer can call Ghostty methods as soon as the sidecar
+    // is ready. The bridge will reject commands until attached.
+    // Unlike other services (server, terminal, file-watcher) which use
+    // HTTP and run separately in dev mode via `turbo dev`, Ghostty uses
+    // stdin/stdout IPC and must always be spawned by the main process.
+    ghosttyBridge = new GhosttyBridge()
+    ghosttyBridge.registerIpcHandlers()
+
+    // In production, spawn all sidecar services with health monitoring.
+    // In dev mode, only spawn Ghostty (other services run via `turbo dev`).
+    if (isDev) {
+      // Dev mode: spawn only the Ghostty sidecar directly.
+      // Other services (server, terminal, file-watcher) run separately
+      // via `turbo dev` and communicate over HTTP.
+      sidecarManager = new SidecarManager(servicePorts)
+      const ghosttyProcess = sidecarManager.spawn('ghostty')
+      ghosttyBridge.attach(ghosttyProcess)
+    } else {
       sidecarManager = new SidecarManager(servicePorts)
       healthMonitor = new HealthMonitor(sidecarManager, servicePorts)
-
-      // Create the Ghostty IPC bridge and register its handlers early
-      // so the renderer can call Ghostty methods as soon as the sidecar
-      // is ready. The bridge will reject commands until attached.
-      ghosttyBridge = new GhosttyBridge()
-      ghosttyBridge.registerIpcHandlers()
 
       // Forward sidecar status events to the renderer.
       // Also re-attach the Ghostty bridge when the sidecar restarts.

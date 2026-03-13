@@ -56,7 +56,7 @@ const DEFAULT_PANEL_WINDOW_ID = 'default'
 const DEFAULT_NEW_WINDOW_LAYOUT: LeafNode = {
   _tag: 'LeafNode',
   id: 'pane-default',
-  paneType: 'terminal',
+  paneType: 'ghosttyTerminal',
   terminalId: undefined,
   workspaceId: undefined,
 }
@@ -375,6 +375,11 @@ export function usePanelLayout() {
         return
       }
 
+      // Ghostty panes self-initialize — no need to spawn a backend terminal
+      if (newLeaf.paneType === 'ghosttyTerminal') {
+        return
+      }
+
       // Auto-spawn a terminal in the new pane
       const wsId = newLeaf.workspaceId
       const newPaneId = newLeaf.id
@@ -450,7 +455,7 @@ export function usePanelLayout() {
             layoutTree: {
               _tag: 'LeafNode' as const,
               id: 'pane-empty',
-              paneType: 'terminal' as const,
+              paneType: 'ghosttyTerminal' as const,
               terminalId: undefined,
               workspaceId: undefined,
             },
@@ -846,7 +851,7 @@ export function usePanelLayout() {
             layoutTree: {
               _tag: 'LeafNode' as const,
               id: 'pane-empty',
-              paneType: 'terminal' as const,
+              paneType: 'ghosttyTerminal' as const,
               terminalId: undefined,
               workspaceId: undefined,
             },

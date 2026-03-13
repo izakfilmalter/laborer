@@ -31,6 +31,7 @@ import { ipcMain } from 'electron'
 
 export const GHOSTTY_CREATE_SURFACE_CHANNEL = 'ghostty:create-surface'
 export const GHOSTTY_DESTROY_SURFACE_CHANNEL = 'ghostty:destroy-surface'
+export const GHOSTTY_GET_PIXELS_CHANNEL = 'ghostty:get-pixels'
 export const GHOSTTY_SET_SIZE_CHANNEL = 'ghostty:set-size'
 export const GHOSTTY_SET_FOCUS_CHANNEL = 'ghostty:set-focus'
 export const GHOSTTY_LIST_SURFACES_CHANNEL = 'ghostty:list-surfaces'
@@ -132,6 +133,17 @@ export class GhosttyBridge {
       }
     )
 
+    ipcMain.removeHandler(GHOSTTY_GET_PIXELS_CHANNEL)
+    ipcMain.handle(
+      GHOSTTY_GET_PIXELS_CHANNEL,
+      async (_event, surfaceId: unknown) => {
+        if (typeof surfaceId !== 'number') {
+          throw new Error('surfaceId must be a number')
+        }
+        return await this.getPixels(surfaceId)
+      }
+    )
+
     ipcMain.removeHandler(GHOSTTY_SET_SIZE_CHANNEL)
     ipcMain.handle(
       GHOSTTY_SET_SIZE_CHANNEL,
@@ -213,6 +225,28 @@ export class GhosttyBridge {
       id,
       options,
     })
+  }
+
+  async getPixels(surfaceId: number): Promise<{
+    readonly height: number
+    readonly pixels: string
+    readonly width: number
+  } | null> {
+    this.ensureReady()
+    const id = this.generateId()
+    const result = await this.sendRequest<Record<string, unknown>>({
+      type: 'get_pixels',
+      id,
+      surfaceId,
+    })
+    if (result.type === 'pixels_null') {
+      return null
+    }
+    return {
+      height: result.height as number,
+      pixels: result.pixels as string,
+      width: result.width as number,
+    }
   }
 
   async destroySurface(surfaceId: number): Promise<void> {

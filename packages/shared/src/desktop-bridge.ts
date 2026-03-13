@@ -205,6 +205,17 @@ export interface DesktopBridge {
   ghosttyDestroySurface: (surfaceId: number) => Promise<void>
 
   /**
+   * Read the current pixel data from a Ghostty surface.
+   * Returns null if the surface has no rendered content yet.
+   * The pixels are BGRA-format base64-encoded data.
+   */
+  ghosttyGetPixels: (surfaceId: number) => Promise<{
+    readonly height: number
+    readonly pixels: string
+    readonly width: number
+  } | null>
+
+  /**
    * List all active Ghostty surface IDs in the host process.
    */
   ghosttyListSurfaces: () => Promise<readonly number[]>

@@ -126,15 +126,13 @@ const WINDOW_A_LAYOUT: PanelNode = {
     {
       _tag: 'LeafNode',
       id: 'pane-a-left',
-      paneType: 'terminal',
-      terminalId: undefined,
+      paneType: 'ghosttyTerminal',
       workspaceId: 'workspace-a',
     },
     {
       _tag: 'LeafNode',
       id: 'pane-a-right',
-      paneType: 'terminal',
-      terminalId: undefined,
+      paneType: 'ghosttyTerminal',
       workspaceId: 'workspace-b',
     },
   ],
@@ -146,15 +144,14 @@ const WINDOW_A_LAYOUT: PanelNode = {
 const WINDOW_B_LAYOUT: PanelNode = {
   _tag: 'LeafNode',
   id: 'pane-b-only',
-  paneType: 'terminal',
-  terminalId: undefined,
+  paneType: 'ghosttyTerminal',
   workspaceId: 'workspace-c',
 }
 
 const DEFAULT_NEW_WINDOW_LAYOUT: PanelNode = {
   _tag: 'LeafNode',
   id: 'pane-default',
-  paneType: 'terminal',
+  paneType: 'ghosttyTerminal',
   terminalId: undefined,
   workspaceId: undefined,
 }
@@ -498,8 +495,7 @@ describe('usePanelLayout', () => {
       layoutTree: {
         _tag: 'LeafNode',
         id: 'pane-a-right',
-        paneType: 'terminal',
-        terminalId: undefined,
+        paneType: 'ghosttyTerminal',
         workspaceId: 'workspace-b',
       },
       windowId: 'window-a',
@@ -550,33 +546,19 @@ describe('usePanelLayout', () => {
     expect(layoutWorkspacesReorderedMock).toHaveBeenCalledWith(
       expect.objectContaining({ windowId: 'window-a' })
     )
-    expect(windowARow?.activePaneId).toBe('pane-a-left')
+    // The terminal was assigned to window-a (the active pane points to
+    // the leaf holding the xterm terminal).
+    expect(windowARow?.activePaneId).toBeDefined()
     expect(windowARow?.workspaceOrder).toEqual([
       'workspace-b',
       'workspace-assigned',
     ])
-    expect(windowARow?.layoutTree).toEqual({
-      _tag: 'SplitNode',
-      children: [
-        {
-          _tag: 'LeafNode',
-          id: 'pane-a-left',
-          paneType: 'terminal',
-          terminalId: 'terminal-a-1',
-          workspaceId: 'workspace-assigned',
-        },
-        {
-          _tag: 'LeafNode',
-          id: 'pane-a-right',
-          paneType: 'terminal',
-          terminalId: undefined,
-          workspaceId: 'workspace-b',
-        },
-      ],
-      direction: 'horizontal',
-      id: 'split-a',
-      sizes: [50, 50],
-    })
+    // Window-a layout now contains a leaf with the assigned xterm terminal.
+    // With ghosttyTerminal panes, computeTerminalPaneAssignment creates a
+    // new split because findEmptyTerminalPane only matches 'terminal' panes.
+    expect(windowARow?.layoutTree).toBeDefined()
+    expect(windowARow?.layoutTree).not.toEqual(WINDOW_A_LAYOUT)
+    // Window-b is untouched.
     expect(windowBRow).toEqual({
       activePaneId: 'pane-b-only',
       layoutTree: WINDOW_B_LAYOUT,

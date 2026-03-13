@@ -397,7 +397,11 @@ describe('repairPanelLayoutTree', () => {
     }
 
     expect(repairPanelLayoutTree(brokenSplit)).toEqual({
-      layoutTree: { _tag: 'LeafNode', id: 'pane-A', paneType: 'terminal' },
+      layoutTree: {
+        _tag: 'LeafNode',
+        id: 'pane-A',
+        paneType: 'ghosttyTerminal',
+      },
       wasRepaired: true,
     })
   })
@@ -416,8 +420,7 @@ describe('repairPanelLayoutTree', () => {
       layoutTree: {
         _tag: 'LeafNode',
         id: 'pane-A',
-        paneType: 'terminal',
-        terminalId: 'term-1',
+        paneType: 'ghosttyTerminal',
         workspaceId: 'workspace-a',
       },
       wasRepaired: true,
@@ -932,7 +935,7 @@ describe('splitPane', () => {
     const split = result as SplitNode
     const newPane = split.children[1] as LeafNode
     expect(newPane._tag).toBe('LeafNode')
-    expect(newPane.paneType).toBe('terminal')
+    expect(newPane.paneType).toBe('ghosttyTerminal')
     expect(newPane.terminalId).toBeUndefined()
     expect(newPane.id).not.toBe('pane-A')
   })
@@ -956,7 +959,7 @@ describe('splitPane', () => {
     // New pane inserted after A
     const newPane = split.children[1] as LeafNode
     expect(newPane._tag).toBe('LeafNode')
-    expect(newPane.paneType).toBe('terminal')
+    expect(newPane.paneType).toBe('ghosttyTerminal')
   })
 
   it('splits a pane in a flat split, creating nested split when different direction', () => {
@@ -1209,7 +1212,7 @@ describe('splitPane + getLeafIds new pane discovery', () => {
     expect(newPaneId).toBeDefined()
     const newPane = findNodeById(newTree, newPaneId as string)
     expect(newPane?._tag).toBe('LeafNode')
-    expect((newPane as LeafNode).paneType).toBe('terminal')
+    expect((newPane as LeafNode).paneType).toBe('ghosttyTerminal')
     expect((newPane as LeafNode).terminalId).toBeUndefined()
   })
 
@@ -1270,7 +1273,7 @@ describe('findNewLeafAfterSplit', () => {
     expect(newLeaf).toBeDefined()
     expect(newLeaf?.id).not.toBe('pane-A')
     expect(newLeaf?._tag).toBe('LeafNode')
-    expect(newLeaf?.paneType).toBe('terminal')
+    expect(newLeaf?.paneType).toBe('ghosttyTerminal')
   })
 
   it('returns the new leaf when splitting within a flat split', () => {
@@ -1695,8 +1698,23 @@ describe('review pane type', () => {
     }
 
     const result = repairPanelLayoutTree(layout)
-    expect(result.wasRepaired).toBe(false)
-    expect(result.layoutTree).toEqual(layout)
+    // The 'terminal' pane is migrated to 'ghosttyTerminal', so wasRepaired is true.
+    expect(result.wasRepaired).toBe(true)
+    expect(result.layoutTree).toEqual({
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        { _tag: 'LeafNode', id: 'pane-A', paneType: 'ghosttyTerminal' },
+        {
+          _tag: 'LeafNode',
+          id: 'pane-review',
+          paneType: 'review',
+          workspaceId: 'ws-1',
+        },
+      ],
+      sizes: [50, 50],
+    })
   })
 
   it('splitPane creates a review pane when newPaneContent specifies review type', () => {

@@ -88,7 +88,7 @@ function splitPaneRecursive(
     const newPane: LeafNode = {
       _tag: 'LeafNode',
       id: generateId('pane'),
-      paneType: newPaneContent?.paneType ?? 'terminal',
+      paneType: newPaneContent?.paneType ?? 'ghosttyTerminal',
       terminalId: newPaneContent?.terminalId,
       workspaceId: newPaneContent?.workspaceId ?? node.workspaceId,
     }
@@ -114,7 +114,7 @@ function splitPaneRecursive(
         const newPane: LeafNode = {
           _tag: 'LeafNode',
           id: generateId('pane'),
-          paneType: newPaneContent?.paneType ?? 'terminal',
+          paneType: newPaneContent?.paneType ?? 'ghosttyTerminal',
           terminalId: newPaneContent?.terminalId,
           workspaceId:
             newPaneContent?.workspaceId ??
@@ -814,14 +814,21 @@ function repairLeafNode(
     return { layoutTree: undefined, wasRepaired: true }
   }
 
-  if (!hasInvalidLeafOptionalFields(node)) {
+  // Migrate persisted 'terminal' panes to 'ghosttyTerminal'.
+  // Ghostty is now the default terminal renderer; old xterm.js panes
+  // from prior sessions are upgraded during layout repair.
+  const migratedPaneType =
+    node.paneType === 'terminal' ? 'ghosttyTerminal' : node.paneType
+  const paneTypeMigrated = migratedPaneType !== node.paneType
+
+  if (!(hasInvalidLeafOptionalFields(node) || paneTypeMigrated)) {
     return { layoutTree: node as unknown as PanelNode, wasRepaired: false }
   }
 
   const repairedLeaf: LeafNode = {
     _tag: 'LeafNode',
     id: node.id,
-    paneType: node.paneType as LeafNode['paneType'],
+    paneType: migratedPaneType as LeafNode['paneType'],
     ...(typeof node.devServerOpen === 'boolean'
       ? { devServerOpen: node.devServerOpen }
       : {}),
@@ -832,7 +839,9 @@ function repairLeafNode(
     ...(typeof node.ghosttySurfaceId === 'number'
       ? { ghosttySurfaceId: node.ghosttySurfaceId }
       : {}),
-    ...(typeof node.terminalId === 'string'
+    // Strip terminalId when migrating to ghosttyTerminal — ghostty panes
+    // self-initialize and don't use xterm terminal IDs.
+    ...(!paneTypeMigrated && typeof node.terminalId === 'string'
       ? { terminalId: node.terminalId }
       : {}),
     ...(typeof node.workspaceId === 'string'
@@ -938,6 +947,11 @@ function getStaleTerminalLeaves(
   liveTerminalIds: ReadonlySet<string>
 ): readonly LeafNode[] {
   if (node._tag === 'LeafNode') {
+    // Ghostty panes self-initialize their own surfaces and don't use
+    // xterm terminal IDs — skip them during stale-terminal detection.
+    if (node.paneType === 'ghosttyTerminal') {
+      return []
+    }
     if (
       node.terminalId !== undefined &&
       !liveTerminalIds.has(node.terminalId)
@@ -999,6 +1013,9 @@ function reconcileLayout(
  * An empty terminal pane is a LeafNode with paneType 'terminal' and no
  * terminalId assigned. Returns the first such leaf found in DFS order,
  * or undefined if all panes are occupied.
+ *
+ * Note: ghosttyTerminal panes are NOT matched — they self-initialize
+ * and should not be repurposed for xterm.js terminal assignment.
  */
 function findEmptyTerminalPane(node: PanelNode): LeafNode | undefined {
   if (

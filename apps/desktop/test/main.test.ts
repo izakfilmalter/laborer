@@ -114,6 +114,10 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
       quit: vi.fn(),
     },
     BrowserWindow,
+    ipcMain: {
+      handle: vi.fn(),
+      removeHandler: vi.fn(),
+    },
   }))
 
   vi.doMock('../src/auto-updater.js', () => ({
@@ -163,6 +167,9 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
   }))
   vi.doMock('../src/sidecar.js', () => ({
     SidecarManager: class {
+      spawn(): { stdout: null; stdin: null; once: typeof vi.fn } {
+        return { stdout: null, stdin: null, once: vi.fn() }
+      }
       restart(): Promise<void> {
         return Promise.resolve()
       }

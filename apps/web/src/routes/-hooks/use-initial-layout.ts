@@ -31,8 +31,8 @@ export function useInitialLayout(): PanelNode | undefined {
       const children: readonly LeafNode[] = runningTerminals.map((t) => ({
         _tag: 'LeafNode' as const,
         id: `pane-${t.id}`,
-        paneType: 'terminal' as const,
-        terminalId: t.id,
+        paneType: 'ghosttyTerminal' as const,
+        terminalId: undefined,
         workspaceId: t.workspaceId,
       }))
       const equalSize = 100 / children.length
@@ -52,13 +52,13 @@ export function useInitialLayout(): PanelNode | undefined {
       return {
         _tag: 'LeafNode' as const,
         id: `pane-${runningTerminal.id}`,
-        paneType: 'terminal' as const,
-        terminalId: runningTerminal.id,
+        paneType: 'ghosttyTerminal' as const,
+        terminalId: undefined,
         workspaceId: runningTerminal.workspaceId,
       } satisfies LeafNode
     }
 
-    // Active workspaces but no terminals -> empty terminal pane
+    // Active workspaces but no terminals -> empty ghostty terminal pane
     const activeWorkspace = workspaceList.find(
       (ws) => ws.status === 'running' || ws.status === 'creating'
     )
@@ -66,7 +66,7 @@ export function useInitialLayout(): PanelNode | undefined {
       return {
         _tag: 'LeafNode' as const,
         id: `pane-empty-${activeWorkspace.id}`,
-        paneType: 'terminal' as const,
+        paneType: 'ghosttyTerminal' as const,
         terminalId: undefined,
         workspaceId: activeWorkspace.id,
       } satisfies LeafNode

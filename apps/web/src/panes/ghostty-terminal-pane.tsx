@@ -47,6 +47,46 @@ import {
 } from './ghostty-keys.js'
 import { shouldBypassTerminal } from './terminal-keys.js'
 
+/** Target render rate for the pixel readback polling loop (ms). */
+const RENDER_INTERVAL_MS = 33 // ~30fps
+
+/**
+ * Decode base64-encoded BGRA pixel data and draw it to a canvas.
+ * Converts BGRA → RGBA in-place before creating ImageData.
+ */
+function drawPixelsToCanvas(
+  canvas: HTMLCanvasElement,
+  base64Pixels: string,
+  width: number,
+  height: number
+): void {
+  // Resize canvas if dimensions changed
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width
+    canvas.height = height
+  }
+
+  // Decode base64 → binary
+  const binaryString = atob(base64Pixels)
+  const byteLength = binaryString.length
+  const rgba = new Uint8ClampedArray(byteLength)
+  for (let i = 0; i < byteLength; i++) {
+    rgba[i] = binaryString.charCodeAt(i)
+  }
+
+  // Convert BGRA → RGBA (swap B and R channels)
+  for (let i = 0; i < byteLength; i += 4) {
+    const b = rgba[i] ?? 0
+    rgba[i] = rgba[i + 2] ?? 0 // R = B
+    rgba[i + 2] = b // B = R
+    // G and A stay in place
+  }
+
+  const imageData = new ImageData(rgba, width, height)
+  const ctx = canvas.getContext('2d')
+  ctx?.putImageData(imageData, 0, 0)
+}
+
 type SurfaceState =
   | { readonly status: 'idle' }
   | { readonly status: 'creating' }
@@ -77,9 +117,11 @@ function GhosttyTerminalPane({
   const surfaceIdRef = useRef<number | null>(null)
   const mountedRef = useRef(true)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const prefixActiveRef = useRef(false)
   const prefixTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const renderingRef = useRef(false)
 
   // Create the Ghostty surface on mount
   useEffect(() => {
@@ -200,6 +242,60 @@ function GhosttyTerminalPane({
       }
     }
   }, [])
+
+  // Pixel readback rendering loop — polls the Ghostty host for pixel data
+  // and draws it to the canvas. This is the tracer-bullet path; Issue 3
+  // will replace this with zero-copy WebGPU shared-texture rendering.
+  useEffect(() => {
+    if (surfaceState.status !== 'active') {
+      return
+    }
+
+    const { surfaceId } = surfaceState
+    let timerId: ReturnType<typeof setTimeout> | null = null
+    let stopped = false
+
+    const renderFrame = async () => {
+      if (stopped || renderingRef.current) {
+        return
+      }
+      renderingRef.current = true
+
+      try {
+        const bridge = getDesktopBridge()
+        const result = await bridge?.ghosttyGetPixels(surfaceId)
+
+        if (stopped || result === null || result === undefined) {
+          return
+        }
+
+        const canvas = canvasRef.current
+        if (canvas === null) {
+          return
+        }
+
+        drawPixelsToCanvas(canvas, result.pixels, result.width, result.height)
+      } catch {
+        // Best effort — surface may have been destroyed or bridge disconnected
+      } finally {
+        renderingRef.current = false
+      }
+
+      if (!stopped) {
+        timerId = setTimeout(renderFrame, RENDER_INTERVAL_MS)
+      }
+    }
+
+    // Start the render loop
+    timerId = setTimeout(renderFrame, RENDER_INTERVAL_MS)
+
+    return () => {
+      stopped = true
+      if (timerId !== null) {
+        clearTimeout(timerId)
+      }
+    }
+  }, [surfaceState])
 
   // Translate a browser KeyboardEvent to a GhosttyKeyEvent and send it
   const sendKeyEvent = useCallback(
@@ -344,14 +440,14 @@ function GhosttyTerminalPane({
     )
   }
 
-  // Active state — placeholder for the native surface rendering.
-  // Issue 3 will replace this with WebGPU shared-texture display.
+  // Active state — renders the native Ghostty surface via pixel readback.
+  // The canvas displays BGRA pixel data polled from the Ghostty host at ~30fps.
+  // Issue 3 will replace this with zero-copy WebGPU shared-texture rendering.
   //
   // The container div must be focusable (tabIndex) and receive keyboard events
   // to forward them to the native Ghostty surface. This is intentional — the
   // div acts as a keyboard capture surface for the terminal, similar to how
-  // xterm.js uses a <textarea> for input capture. Once Issue 3 adds WebGPU
-  // rendering, this will be replaced with a proper canvas element.
+  // xterm.js uses a <textarea> for input capture.
   return (
     // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Terminal keyboard event handlers for input forwarding
     <div
@@ -364,23 +460,11 @@ function GhosttyTerminalPane({
       role="document"
       tabIndex={-1}
     >
-      <div className="flex h-6 shrink-0 items-center gap-1.5 border-border/50 border-b bg-zinc-900 px-2">
-        <Ghost className="size-3 text-purple-400" />
-        <span className="font-medium text-purple-400 text-xs">
-          Ghostty Surface #{surfaceState.surfaceId}
-        </span>
-      </div>
-      <div className="flex min-h-0 flex-1 items-center justify-center">
-        <div className="flex flex-col items-center gap-2 text-zinc-500">
-          <Ghost className="size-8" />
-          <span className="text-sm">
-            Ghostty surface active — rendering pending (Issue 3)
-          </span>
-          <span className="text-xs">
-            Keyboard input active — type to send commands
-          </span>
-        </div>
-      </div>
+      <canvas
+        className="min-h-0 flex-1"
+        ref={canvasRef}
+        style={{ imageRendering: 'pixelated' }}
+      />
     </div>
   )
 }

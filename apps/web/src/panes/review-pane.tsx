@@ -86,6 +86,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { Markdown } from '@/components/ui/markdown'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
@@ -435,9 +436,9 @@ function CommentCard({
               <span className="truncate">{fileRef}</span>
             </button>
           )}
-          <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed">
+          <Markdown className="mt-1 text-xs leading-relaxed">
             {comment.body}
-          </p>
+          </Markdown>
         </div>
       </div>
     </div>
@@ -717,10 +718,9 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   if (isInitialLoading) {
     return (
       <>
-        <ReviewHeaderBar
+        <ReviewPaneHeader
           isRefreshing={false}
           onRefresh={handleManualRefresh}
-          selectedCount={0}
         />
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-2 text-muted-foreground">
@@ -741,10 +741,9 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
     if (errorCode === 'PR_NOT_FOUND') {
       return (
         <>
-          <ReviewHeaderBar
+          <ReviewPaneHeader
             isRefreshing={false}
             onRefresh={handleManualRefresh}
-            selectedCount={0}
           />
           <Empty className="flex-1">
             <EmptyHeader>
@@ -768,10 +767,9 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
     // Other errors
     return (
       <>
-        <ReviewHeaderBar
+        <ReviewPaneHeader
           isRefreshing={false}
           onRefresh={handleManualRefresh}
-          selectedCount={0}
         />
         <div className="p-3">
           <Alert variant="destructive">
@@ -795,10 +793,9 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   if (comments.length === 0 && findings.length === 0) {
     return (
       <>
-        <ReviewHeaderBar
+        <ReviewPaneHeader
           isRefreshing={isRefreshing}
           onRefresh={handleManualRefresh}
-          selectedCount={0}
         />
         <Empty className="flex-1">
           <EmptyHeader>
@@ -820,17 +817,21 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
 
   return (
     <>
-      <ReviewHeaderBar
-        allSelected={allSelected}
-        findingsCount={findings.length}
-        isFixing={isFixing}
+      <ReviewPaneHeader
         isRefreshing={isRefreshing}
-        onDeselectAll={handleDeselectAll}
-        {...(findings.length > 0 ? { onFixSelected: handleFixSelected } : {})}
         onRefresh={handleManualRefresh}
-        onSelectAll={handleSelectAll}
-        selectedCount={selectedCount}
       />
+      {findings.length > 0 && (
+        <ReviewActionsBar
+          allSelected={allSelected}
+          findingsCount={findings.length}
+          isFixing={isFixing}
+          onDeselectAll={handleDeselectAll}
+          {...(findings.length > 0 ? { onFixSelected: handleFixSelected } : {})}
+          onSelectAll={handleSelectAll}
+          selectedCount={selectedCount}
+        />
+      )}
       <ScrollArea className="flex-1">
         {/* Findings section */}
         {findings.length > 0 && (
@@ -871,28 +872,63 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
 }
 
 /**
- * Header bar for the review pane content area.
- * Shows a selected count, select all/deselect all control, a subtle
- * refreshing indicator, a "Fix Selected" button, and a manual refresh button.
+ * The review pane header — combines the "Review" title with refresh controls.
+ * Replaces the old static header + separate ReviewHeaderBar refresh row.
  */
-function ReviewHeaderBar({
+function ReviewPaneHeader({
+  isRefreshing,
+  onRefresh,
+}: {
+  readonly isRefreshing: boolean
+  readonly onRefresh: () => void
+}) {
+  return (
+    <div className="flex h-8 shrink-0 items-center gap-1.5 border-b bg-muted/30 px-3">
+      <ClipboardCheck className="size-3.5 text-muted-foreground" />
+      <span className="font-medium text-muted-foreground text-xs">Review</span>
+      <div className="ml-auto flex items-center gap-1">
+        {isRefreshing && (
+          <div
+            className="flex items-center gap-1 text-muted-foreground text-xs"
+            data-testid="refresh-indicator"
+          >
+            <RefreshCw className="size-3 animate-spin" />
+            <span>Refreshing...</span>
+          </div>
+        )}
+        <Button
+          aria-label="Refresh comments"
+          className="size-6"
+          data-testid="refresh-button"
+          onClick={onRefresh}
+          size="icon"
+          variant="ghost"
+        >
+          <RefreshCw className="size-3" />
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Selection/actions bar for findings. Only rendered when there are findings
+ * with selection controls.
+ */
+function ReviewActionsBar({
   allSelected = false,
   findingsCount = 0,
   isFixing = false,
-  isRefreshing,
   onDeselectAll,
   onFixSelected,
-  onRefresh,
   onSelectAll,
   selectedCount,
 }: {
   readonly allSelected?: boolean
   readonly findingsCount?: number
   readonly isFixing?: boolean
-  readonly isRefreshing: boolean
   readonly onDeselectAll?: () => void
   readonly onFixSelected?: () => void | Promise<void>
-  readonly onRefresh: () => void
   readonly onSelectAll?: () => void
   readonly selectedCount: number
 }) {
@@ -933,15 +969,6 @@ function ReviewHeaderBar({
             {selectedCount} selected
           </span>
         )}
-        {isRefreshing && (
-          <div
-            className="flex items-center gap-1 text-muted-foreground text-xs"
-            data-testid="refresh-indicator"
-          >
-            <RefreshCw className="size-3 animate-spin" />
-            <span>Refreshing...</span>
-          </div>
-        )}
       </div>
       <div className="flex items-center gap-1">
         {/* Fix Selected button */}
@@ -959,16 +986,6 @@ function ReviewHeaderBar({
             Fix{selectedCount > 0 ? ` (${selectedCount})` : ''}
           </Button>
         )}
-        <Button
-          aria-label="Refresh comments"
-          className="size-6"
-          data-testid="refresh-button"
-          onClick={onRefresh}
-          size="icon"
-          variant="ghost"
-        >
-          <RefreshCw className="size-3" />
-        </Button>
       </div>
     </div>
   )
@@ -977,20 +994,22 @@ function ReviewHeaderBar({
 function ReviewPane({ workspaceId }: ReviewPaneProps) {
   return (
     <div className="flex h-full w-full flex-col">
-      <div className="flex h-8 shrink-0 items-center gap-1.5 border-b bg-muted/30 px-3">
-        <ClipboardCheck className="size-3.5 text-muted-foreground" />
-        <span className="font-medium text-muted-foreground text-xs">
-          Review
-        </span>
-      </div>
       <Suspense
         fallback={
-          <div className="flex flex-1 items-center justify-center">
-            <div className="flex flex-col items-center gap-2 text-muted-foreground">
-              <Spinner className="size-5" />
-              <span className="text-xs">Loading comments...</span>
+          <>
+            <div className="flex h-8 shrink-0 items-center gap-1.5 border-b bg-muted/30 px-3">
+              <ClipboardCheck className="size-3.5 text-muted-foreground" />
+              <span className="font-medium text-muted-foreground text-xs">
+                Review
+              </span>
             </div>
-          </div>
+            <div className="flex flex-1 items-center justify-center">
+              <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                <Spinner className="size-5" />
+                <span className="text-xs">Loading comments...</span>
+              </div>
+            </div>
+          </>
         }
       >
         <ReviewPaneContent workspaceId={workspaceId} />

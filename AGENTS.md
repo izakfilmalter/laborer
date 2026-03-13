@@ -130,6 +130,7 @@ The `.reference/` directory contains shallow clones of key dependency repositori
 - `.reference/desktop/` — [GitHub Desktop](https://github.com/desktop/desktop) Git GUI client (Electron, TypeScript, React)
 - `.reference/t3code/` — [t3code](https://github.com/pingdotgg/t3code) AI coding agent CLI
 - `.reference/cmux/` — [cmux](https://github.com/manaflow-ai/cmux) terminal multiplexer
+- `.reference/brrr/` — [brrr](https://github.com/hsubra89/brrr) autonomous AI development loop CLI (ralph-loops, task orchestration)
 
 <!-- effect-solutions:start -->
 ## Effect Best Practices

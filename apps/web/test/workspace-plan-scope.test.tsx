@@ -167,7 +167,7 @@ vi.mock('@/components/ui/alert-dialog', () => ({
 
 import { WorkspaceList } from '../src/components/workspace-list'
 
-const START_BRRR_LOOP_RE = /start brrr loop/i
+const START_RALPH_LOOP_RE = /start ralph loop/i
 const DESTROY_ACTION_RE = /destroy ⌘ ↵/i
 
 const WORKSPACE_PLAN = {
@@ -447,7 +447,7 @@ describe('WorkspaceList plan association', () => {
     expect(screen.getByText('No workspaces')).toBeTruthy()
   })
 
-  it('brrr start loop button is present on plan-associated workspace', () => {
+  it('ralph start loop button is present on plan-associated workspace', () => {
     useLaborerStoreMock.mockReturnValue({
       useQuery: (query: { label: string }) => {
         if (query.label === 'workspaceList') {
@@ -465,9 +465,9 @@ describe('WorkspaceList plan association', () => {
 
     render(<WorkspaceList projectId="project-1" />)
 
-    // The brrr start loop button should be present
+    // The ralph start loop button should be present
     const startButton = screen.getByRole('button', {
-      name: START_BRRR_LOOP_RE,
+      name: START_RALPH_LOOP_RE,
     })
     expect(startButton).toBeTruthy()
   })

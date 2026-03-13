@@ -10,7 +10,7 @@
  * are in progress.
  * Updates reactively when workspace state changes.
  * Includes a destroy button with confirmation dialog per workspace.
- * Includes brrr action buttons (Start Brrr Loop, Review PR,
+ * Includes brrr action buttons (Start Ralph Loop, Review PR,
  * Fix Findings) on every non-destroyed workspace for triggering agent
  * workflows.
  *
@@ -26,7 +26,7 @@
  *
  * @see Issue #41: Workspace list UI component
  * @see Issue #48: Destroy Workspace button + confirmation dialog
- * @see Issue #93: "Start Brrr Loop" button UI
+ * @see Issue #93: "Start Ralph Loop" button UI
  * @see Issue #97: "Review PR" button + PR number input
  * @see Issue #99: "Fix Findings" button + PR number input
  * @see Issue #119: Empty state — no workspaces
@@ -520,7 +520,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
       const result = await startLoop({
         payload: { workspaceId: workspace.id },
       })
-      toast.success('Brrr loop started')
+      toast.success('Ralph loop started')
       // Auto-assign the spawned terminal to a pane
       if (panelActions) {
         panelActions.assignTerminalToPane(result.id, workspace.id, undefined, {
@@ -528,7 +528,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
         })
       }
     } catch (error: unknown) {
-      toast.error(`Failed to start brrr loop: ${extractErrorMessage(error)}`)
+      toast.error(`Failed to start ralph loop: ${extractErrorMessage(error)}`)
     } finally {
       setIsStartingLoop(false)
     }
@@ -658,7 +658,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                 <TooltipTrigger
                   render={
                     <Button
-                      aria-label="Start brrr loop"
+                      aria-label="Start ralph loop"
                       disabled={isStartingLoop}
                       onClick={handleStartLoop}
                       size="icon-xs"
@@ -675,7 +675,7 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
                     )}
                   />
                 </TooltipTrigger>
-                <TooltipContent>Start Brrr Loop</TooltipContent>
+                <TooltipContent>Start Ralph Loop</TooltipContent>
               </Tooltip>
             )}
             <ReviewPrForm

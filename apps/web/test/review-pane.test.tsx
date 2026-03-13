@@ -1230,4 +1230,123 @@ describe('ReviewPane', () => {
 
     expect(screen.queryByTestId('unqueue-button')).toBeNull()
   })
+
+  // -------------------------------------------------------------------------
+  // Issue #10: Click-to-open-in-editor
+  // -------------------------------------------------------------------------
+
+  it('renders file:line references as clickable links in finding cards', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const fileLink = screen.getByTestId('file-line-link')
+    expect(fileLink).toBeTruthy()
+    expect(fileLink.tagName).toBe('BUTTON')
+    expect(fileLink.textContent).toContain('src/db/query.ts:15')
+    expect(fileLink.getAttribute('title')).toBe(
+      'Open src/db/query.ts:15 in editor'
+    )
+  })
+
+  it('renders file:line references as clickable links in inline comment cards', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [],
+        comments: [REVIEW_COMMENT],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const fileLink = screen.getByTestId('file-line-link')
+    expect(fileLink).toBeTruthy()
+    expect(fileLink.tagName).toBe('BUTTON')
+    expect(fileLink.textContent).toContain('src/utils/parser.ts:42')
+    expect(fileLink.getAttribute('title')).toBe(
+      'Open src/utils/parser.ts:42 in editor'
+    )
+  })
+
+  it('clicking file:line in finding card triggers editor.open RPC', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const fileLink = screen.getByTestId('file-line-link')
+    await user.click(fileLink)
+
+    expect(mockAtomSet).toHaveBeenCalledWith({
+      payload: { workspaceId: 'ws-1', filePath: 'src/db/query.ts' },
+    })
+  })
+
+  it('clicking file:line in comment card triggers editor.open RPC', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [],
+        comments: [REVIEW_COMMENT],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const fileLink = screen.getByTestId('file-line-link')
+    await user.click(fileLink)
+
+    expect(mockAtomSet).toHaveBeenCalledWith({
+      payload: { workspaceId: 'ws-1', filePath: 'src/utils/parser.ts' },
+    })
+  })
+
+  it('does not render file:line link for issue comments without file path', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [],
+        comments: [ISSUE_COMMENT],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.queryByTestId('file-line-link')).toBeNull()
+  })
+
+  it('file:line link has visual affordance (underline styling)', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const fileLink = screen.getByTestId('file-line-link')
+    expect(fileLink.className).toContain('underline')
+  })
 })

@@ -79,6 +79,31 @@ interface SurfacePixels {
   readonly width: number
 }
 
+/**
+ * Key input action (matches ghostty_input_action_e).
+ * 0 = release, 1 = press, 2 = repeat.
+ */
+type KeyAction = 0 | 1 | 2
+
+/**
+ * Key event to send to a Ghostty surface.
+ * Matches the fields of ghostty_input_key_s from the Ghostty C API.
+ */
+interface KeyEvent {
+  /** 0 = release, 1 = press, 2 = repeat. */
+  readonly action: KeyAction
+  /** Whether this is part of an IME compose sequence. */
+  readonly composing: boolean
+  /** Ghostty key code (ghostty_input_key_e enum value). */
+  readonly keycode: number
+  /** Modifier bitmask (ghostty_input_mods_e flags OR'd together). */
+  readonly mods: number
+  /** UTF-8 text produced by the key, or null. */
+  readonly text: string | null
+  /** Codepoint of the key without shift modifier applied. */
+  readonly unshiftedCodepoint: number
+}
+
 // ---------------------------------------------------------------------------
 // Native addon interface
 // ---------------------------------------------------------------------------
@@ -107,6 +132,19 @@ interface GhosttyAddon {
   isAppCreated(): boolean
   isInitialized(): boolean
   listSurfaces(): number[]
+
+  // Keyboard and text input
+  sendSurfaceKey(
+    surfaceId: number,
+    action: number,
+    mods: number,
+    keycode: number,
+    text: string | null,
+    unshiftedCodepoint: number,
+    composing: boolean
+  ): boolean
+  sendSurfaceText(surfaceId: number, text: string): boolean
+
   setSurfaceFocus(surfaceId: number, focused: boolean): boolean
   setSurfaceSize(surfaceId: number, width: number, height: number): boolean
   validateConfig(): GhosttyConfigValidation
@@ -285,6 +323,37 @@ const setSurfaceSize = (
 }
 
 /**
+ * Send a key event to a Ghostty surface.
+ *
+ * Translates from the KeyEvent structure to the native addon's positional
+ * arguments matching ghostty_input_key_s.
+ *
+ * @returns `true` if the key was consumed by Ghostty.
+ * @throws If the surface is not found.
+ */
+const sendSurfaceKey = (surfaceId: number, event: KeyEvent): boolean => {
+  return getAddon().sendSurfaceKey(
+    surfaceId,
+    event.action,
+    event.mods,
+    event.keycode,
+    event.text,
+    event.unshiftedCodepoint,
+    event.composing
+  )
+}
+
+/**
+ * Send composed text input to a Ghostty surface.
+ *
+ * @returns `true` on success.
+ * @throws If the surface is not found.
+ */
+const sendSurfaceText = (surfaceId: number, text: string): boolean => {
+  return getAddon().sendSurfaceText(surfaceId, text)
+}
+
+/**
  * Set focus state of a Ghostty surface.
  * Controls cursor state and keyboard routing in the terminal.
  *
@@ -353,6 +422,8 @@ export {
   isAppCreated,
   isInitialized,
   listSurfaces,
+  sendSurfaceKey,
+  sendSurfaceText,
   setSurfaceFocus,
   setSurfaceSize,
   validateConfig,
@@ -362,6 +433,8 @@ export type {
   GhosttyConfigValidation,
   GhosttyInfo,
   IOSurfaceInfo,
+  KeyAction,
+  KeyEvent,
   SurfaceHandle,
   SurfacePixels,
   SurfaceSize,

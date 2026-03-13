@@ -137,6 +137,29 @@ export interface GhosttyCreateSurfaceOptions {
   readonly workingDirectory?: string | undefined
 }
 
+/**
+ * Key event payload for Ghostty surface input.
+ * Matches the ghostty_input_key_s struct from the Ghostty C API.
+ *
+ * Action: 0 = release, 1 = press, 2 = repeat.
+ * Mods: bitmask of SHIFT(1), CTRL(2), ALT(4), SUPER(8), etc.
+ * Keycode: ghostty_input_key_e enum value (W3C UIEvents code mapping).
+ */
+export interface GhosttyKeyEvent {
+  /** 0 = release, 1 = press, 2 = repeat. */
+  readonly action: number
+  /** Whether this is part of an IME compose sequence. */
+  readonly composing: boolean
+  /** Ghostty key code (ghostty_input_key_e enum value). */
+  readonly keycode: number
+  /** Modifier bitmask (ghostty_input_mods_e flags OR'd together). */
+  readonly mods: number
+  /** UTF-8 text produced by the key, or null. */
+  readonly text: string | null
+  /** Codepoint of the key without shift modifier applied. */
+  readonly unshiftedCodepoint: number
+}
+
 export interface DesktopBridge {
   /** Shows a native confirmation dialog with Yes/No buttons. Returns true if confirmed. */
   confirm: (message: string) => Promise<boolean>
@@ -185,6 +208,19 @@ export interface DesktopBridge {
    * List all active Ghostty surface IDs in the host process.
    */
   ghosttyListSurfaces: () => Promise<readonly number[]>
+
+  /**
+   * Send a key event to a Ghostty surface.
+   */
+  ghosttySendKey: (
+    surfaceId: number,
+    keyEvent: GhosttyKeyEvent
+  ) => Promise<void>
+
+  /**
+   * Send composed text input to a Ghostty surface.
+   */
+  ghosttySendText: (surfaceId: number, text: string) => Promise<void>
 
   /**
    * Set the focus state of a Ghostty surface.

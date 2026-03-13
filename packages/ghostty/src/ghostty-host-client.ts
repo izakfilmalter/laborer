@@ -37,6 +37,7 @@ import { Context, Deferred, Effect, Layer, Runtime } from 'effect'
 import type {
   CreateSurfaceOptions,
   IOSurfaceInfo,
+  KeyEvent,
   SurfacePixels,
   SurfaceSize,
 } from './index.ts'
@@ -192,6 +193,22 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
      * Register a callback invoked when the Ghostty Host process crashes.
      */
     readonly onCrash: (callback: CrashCallback) => void
+
+    /**
+     * Send a key event to a surface.
+     */
+    readonly sendKey: (
+      surfaceId: number,
+      keyEvent: KeyEvent
+    ) => Effect.Effect<void, Error>
+
+    /**
+     * Send composed text input to a surface.
+     */
+    readonly sendText: (
+      surfaceId: number,
+      text: string
+    ) => Effect.Effect<void, Error>
 
     /**
      * Set the focus state of a surface.
@@ -560,6 +577,26 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
 
         onCrash: (callback) => {
           crashCallbacks.push(callback)
+        },
+
+        sendKey: (surfaceId, keyEvent) => {
+          const id = generateId()
+          return sendRequest<void>({
+            type: 'send_key',
+            id,
+            surfaceId,
+            keyEvent,
+          })
+        },
+
+        sendText: (surfaceId, text) => {
+          const id = generateId()
+          return sendRequest<void>({
+            type: 'send_text',
+            id,
+            surfaceId,
+            text,
+          })
         },
       })
     })

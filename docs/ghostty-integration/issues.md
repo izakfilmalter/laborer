@@ -159,7 +159,7 @@ Added 'ghosttyTerminal' PaneType alongside existing terminal types. Created Ghos
 
 ---
 
-## Issue 5: Keyboard, focus, and resize routing for Ghostty panes
+## Issue 5: Keyboard, focus, and resize routing for Ghostty panes — DONE
 
 ### Parent PRD
 
@@ -177,11 +177,15 @@ The completed slice should let a user click into a Ghostty pane, type commands, 
 
 ### Acceptance criteria
 
-- [ ] Focused Ghostty panes receive keyboard input and unfocused panes do not
-- [ ] Resize events propagate from the pane layout to the native Ghostty surface
-- [ ] The terminal shell responds correctly to typed input after focus changes
-- [ ] Resizing does not leave the terminal in a stale size state
-- [ ] Tests cover focus handoff, typing, and resize behavior
+- [x] Focused Ghostty panes receive keyboard input and unfocused panes do not
+- [x] Resize events propagate from the pane layout to the native Ghostty surface
+- [x] The terminal shell responds correctly to typed input after focus changes
+- [x] Resizing does not leave the terminal in a stale size state
+- [x] Tests cover focus handoff, typing, and resize behavior
+
+### Progress
+
+Added full keyboard input pipeline across 8 layers: native addon (SendSurfaceKey/SendSurfaceText wrapping ghostty_surface_key/ghostty_surface_text), TypeScript interface (KeyEvent type, sendSurfaceKey/sendSurfaceText exports), Ghostty Host IPC (send_key/send_text commands), Effect client (sendKey/sendText methods), shared DesktopBridge (GhosttyKeyEvent type, ghosttySendKey/ghosttySendText), IPC bridge (two new channels and handlers), preload (two new implementations). Created ghostty-keys.ts with W3C UIEvents Code → Ghostty key enum mapping table (175 keys) and modifier flag translation. Updated GhosttyTerminalPane with keyboard handlers (onKeyDown/onKeyUp with Ghostty key translation), shortcut scope isolation (Ctrl+B prefix mode, Cmd+W/Cmd+Shift+Enter bypass), ResizeObserver with 100ms debounce, and auto-focus management. Added 19 unit tests for key mapping, modifier translation, and resize debounce. All 8 packages typecheck, all 455 tests pass.
 
 ### Blocked by
 

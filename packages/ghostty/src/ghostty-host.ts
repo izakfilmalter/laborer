@@ -44,6 +44,7 @@
 import type {
   CreateSurfaceOptions,
   IOSurfaceInfo,
+  KeyEvent,
   SurfaceSize,
 } from './index.ts'
 import {
@@ -58,6 +59,8 @@ import {
   getSurfaceSize,
   init,
   listSurfaces,
+  sendSurfaceKey,
+  sendSurfaceText,
   setSurfaceFocus,
   setSurfaceSize,
 } from './index.ts'
@@ -118,6 +121,20 @@ interface GetSizeCommand {
   readonly type: 'get_size'
 }
 
+interface SendKeyCommand {
+  readonly id: string
+  readonly keyEvent: KeyEvent
+  readonly surfaceId: number
+  readonly type: 'send_key'
+}
+
+interface SendTextCommand {
+  readonly id: string
+  readonly surfaceId: number
+  readonly text: string
+  readonly type: 'send_text'
+}
+
 interface ListSurfacesCommand {
   readonly type: 'list_surfaces'
 }
@@ -130,6 +147,8 @@ type Command =
   | GetIOSurfaceCommand
   | GetPixelsCommand
   | GetSizeCommand
+  | SendKeyCommand
+  | SendTextCommand
   | ListSurfacesCommand
 
 // ---------------------------------------------------------------------------
@@ -359,6 +378,34 @@ function handleGetSize(cmd: GetSizeCommand): void {
   }
 }
 
+function handleSendKey(cmd: SendKeyCommand): void {
+  try {
+    // sendSurfaceKey returns whether Ghostty consumed the key.
+    // For now we always return ok; the renderer doesn't need to know.
+    sendSurfaceKey(cmd.surfaceId, cmd.keyEvent)
+    emit({ type: 'ok', id: cmd.id })
+  } catch (error) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `Failed to send key to surface ${cmd.surfaceId}: ${String(error)}`,
+    })
+  }
+}
+
+function handleSendText(cmd: SendTextCommand): void {
+  try {
+    sendSurfaceText(cmd.surfaceId, cmd.text)
+    emit({ type: 'ok', id: cmd.id })
+  } catch (error) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `Failed to send text to surface ${cmd.surfaceId}: ${String(error)}`,
+    })
+  }
+}
+
 function handleListSurfaces(): void {
   try {
     const surfaces = listSurfaces()
@@ -408,6 +455,19 @@ function isValidCommand(parsed: unknown): parsed is Command {
       return typeof obj.id === 'string' && typeof obj.surfaceId === 'number'
     case 'get_size':
       return typeof obj.id === 'string' && typeof obj.surfaceId === 'number'
+    case 'send_key':
+      return (
+        typeof obj.id === 'string' &&
+        typeof obj.surfaceId === 'number' &&
+        typeof obj.keyEvent === 'object' &&
+        obj.keyEvent !== null
+      )
+    case 'send_text':
+      return (
+        typeof obj.id === 'string' &&
+        typeof obj.surfaceId === 'number' &&
+        typeof obj.text === 'string'
+      )
     case 'list_surfaces':
       return true
     default:
@@ -462,13 +522,19 @@ function processLine(line: string): void {
     case 'get_size':
       handleGetSize(parsed)
       break
+    case 'send_key':
+      handleSendKey(parsed)
+      break
+    case 'send_text':
+      handleSendText(parsed)
+      break
     case 'list_surfaces':
       handleListSurfaces()
       break
     default:
       emit({
         type: 'error',
-        message: `Unknown command type: ${(parsed as Record<string, unknown>).type}`,
+        message: `Unknown command type: ${String((parsed as unknown as Record<string, unknown>).type)}`,
       })
       break
   }

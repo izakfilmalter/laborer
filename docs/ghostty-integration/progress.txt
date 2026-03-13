@@ -283,3 +283,45 @@ Date: 2026-03-13
 - GhosttyTerminalPane creates/destroys surfaces via component lifecycle (useEffect) — surface ownership is tied to component mounting, matching React's declarative model
 - Surface cleanup on unmount is fire-and-forget (.catch(() => {})) — the host process will clean up if the bridge call fails
 - The bridge attaches to the sidecar stdout for event parsing — this means the SidecarManager's stdout logging sees the same events, which is acceptable for debugging
+
+---
+
+## Issue 5: Keyboard, focus, and resize routing for Ghostty panes
+Status: COMPLETE
+Date: 2026-03-13
+
+### What was done
+- Added keyboard input pipeline across all layers (native addon → host IPC → bridge → renderer):
+  - Layer 1 (Native addon — addon.mm): Added SendSurfaceKey wrapping ghostty_surface_key() and SendSurfaceText wrapping ghostty_surface_text(). Accepts surfaceId + key event fields, returns whether key was consumed.
+  - Layer 2 (TypeScript interface — index.ts): Added KeyEvent and KeyAction types matching ghostty_input_key_s. Added sendSurfaceKey() and sendSurfaceText() exported functions.
+  - Layer 3 (Host IPC — ghostty-host.ts): Added send_key and send_text command types, handlers, validation, and dispatch in the stdin processing pipeline.
+  - Layer 4 (Effect client — ghostty-host-client.ts): Added sendKey() and sendText() methods to GhosttyHostClient service interface and implementation.
+  - Layer 5 (Shared types — desktop-bridge.ts): Added GhosttyKeyEvent interface matching the Ghostty C API struct. Added ghosttySendKey and ghosttySendText to DesktopBridge interface.
+  - Layer 6 (IPC bridge — ghostty-bridge.ts): Added GHOSTTY_SEND_KEY_CHANNEL and GHOSTTY_SEND_TEXT_CHANNEL. Added sendKey/sendText public methods and ipcMain.handle() registrations.
+  - Layer 7 (Preload — preload.ts): Added ghosttySendKey and ghosttySendText implementations using ipcRenderer.invoke.
+- Created ghostty-keys.ts key mapping module (apps/web/src/panes/ghostty-keys.ts):
+  - GHOSTTY_KEY_MAP: Maps browser KeyboardEvent.code strings to ghostty_input_key_e enum values (0-175). Covers writing system keys, functional keys, control pad, arrows, numpad, function keys, and special keys.
+  - translateModifiers(): Converts browser modifier flags (shiftKey, ctrlKey, altKey, metaKey) to Ghostty modifier bitmask (SHIFT=1, CTRL=2, ALT=4, SUPER=8).
+  - RESIZE_DEBOUNCE_MS: 100ms debounce constant matching existing terminal pane.
+- Updated GhosttyTerminalPane (apps/web/src/panes/ghostty-terminal-pane.tsx):
+  - Added tabIndex={-1} and role="document" for keyboard focusability
+  - Added onKeyDown/onKeyUp handlers that translate KeyboardEvent to GhosttyKeyEvent and send via DesktopBridge
+  - Added shortcut scope isolation: Ctrl+B prefix mode (1500ms timeout), Cmd+W and Cmd+Shift+Enter bypass using shouldBypassTerminal from terminal-keys.ts
+  - Added ResizeObserver with 100ms debounce that sends container pixel dimensions to native surface via ghosttySetSize
+  - Added auto-focus when pane becomes focused (containerRef.focus())
+  - Updated placeholder text to reflect active keyboard input routing
+- Added 19 unit tests (apps/web/test/ghostty-keys.test.ts):
+  - GHOSTTY_KEY_MAP: letter keys, digit keys, functional keys, modifier keys, arrow keys, control pad, function keys, punctuation, numpad, unknown keys
+  - translateModifiers: no mods (0), SHIFT (1), CTRL (2), ALT (4), SUPER (8), CTRL+SHIFT (3), all mods (15), SUPER+ALT (12)
+  - RESIZE_DEBOUNCE_MS: verifies 100ms constant
+- All 8 packages typecheck successfully
+- All 455 web tests pass (436 existing + 19 new ghostty-keys tests)
+- Format check passes (378 files, no fixes needed)
+
+### Key decisions
+- Key mapping uses W3C UIEvents Code spec which maps directly to Ghostty's ghostty_input_key_e enum — no platform-specific keycode translation needed
+- Keyboard events use fire-and-forget IPC (no response needed) — dropped keys are acceptable since the terminal renders what it receives
+- Resize uses same 100ms debounce as existing xterm.js terminal pane for consistency
+- Ctrl+B prefix mode reuses shouldBypassTerminal from terminal-keys.ts — same shortcut scope isolation as xterm.js terminals
+- tabIndex={-1} used instead of tabIndex={0} to avoid adding the terminal div to tab navigation order — focus is managed programmatically via containerRef.focus()
+- Modifier translation uses addition (+=) instead of bitwise OR (|=) to satisfy biome's no-bitwise-operators lint rule — functionally equivalent since modifier flags don't overlap

@@ -742,6 +742,102 @@ Napi::Value GetSurfaceIOSurfaceId(const Napi::CallbackInfo& info) {
 }
 
 // ---------------------------------------------------------------------------
+// N-API functions: Keyboard and text input
+// ---------------------------------------------------------------------------
+
+/**
+ * Send a key event to a Ghostty surface.
+ *
+ * Args: surfaceId, action (0=release, 1=press, 2=repeat), mods (bitmask),
+ *       keycode (ghostty_input_key_e value), text (string|null),
+ *       unshiftedCodepoint (number), composing (boolean)
+ *
+ * Returns true if the key was consumed by Ghostty.
+ */
+Napi::Value SendSurfaceKey(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 7) {
+    Napi::TypeError::New(env,
+        "Expected (surfaceId, action, mods, keycode, text, unshiftedCodepoint, composing)")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  if (!info[0].IsNumber() || !info[1].IsNumber() || !info[2].IsNumber() ||
+      !info[3].IsNumber() || !info[5].IsNumber() || !info[6].IsBoolean()) {
+    Napi::TypeError::New(env, "Invalid argument types for sendSurfaceKey")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
+  int action = info[1].As<Napi::Number>().Int32Value();
+  int mods = info[2].As<Napi::Number>().Int32Value();
+  int keycode = info[3].As<Napi::Number>().Int32Value();
+  // info[4] is text (string or null)
+  uint32_t unshifted_codepoint = info[5].As<Napi::Number>().Uint32Value();
+  bool composing = info[6].As<Napi::Boolean>().Value();
+
+  std::string text_str;
+  const char* text_ptr = nullptr;
+  if (info[4].IsString()) {
+    text_str = info[4].As<Napi::String>().Utf8Value();
+    if (!text_str.empty()) {
+      text_ptr = text_str.c_str();
+    }
+  }
+
+  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+  auto it = g_surfaces.find(surface_id);
+  if (it == g_surfaces.end()) {
+    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  ghostty_input_key_s key_event = {};
+  key_event.action = static_cast<ghostty_input_action_e>(action);
+  key_event.mods = static_cast<ghostty_input_mods_e>(mods);
+  key_event.consumed_mods = GHOSTTY_MODS_NONE;
+  key_event.keycode = static_cast<uint32_t>(keycode);
+  key_event.text = text_ptr;
+  key_event.unshifted_codepoint = unshifted_codepoint;
+  key_event.composing = composing;
+
+  bool consumed = ghostty_surface_key(it->second.surface, key_event);
+  return Napi::Boolean::New(env, consumed);
+}
+
+/**
+ * Send composed text input to a Ghostty surface.
+ * Args: surfaceId, text (UTF-8 string)
+ */
+Napi::Value SendSurfaceText(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsString()) {
+    Napi::TypeError::New(env, "Expected (surfaceId, text)")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
+  std::string text = info[1].As<Napi::String>().Utf8Value();
+
+  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+  auto it = g_surfaces.find(surface_id);
+  if (it == g_surfaces.end()) {
+    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  ghostty_surface_text(it->second.surface, text.c_str(), text.size());
+  return Napi::Boolean::New(env, true);
+}
+
+// ---------------------------------------------------------------------------
 // N-API functions: Pixel readback
 // ---------------------------------------------------------------------------
 
@@ -873,6 +969,10 @@ Napi::Object InitModule(Napi::Env env, Napi::Object exports) {
   exports.Set("setSurfaceSize", Napi::Function::New(env, SetSurfaceSize));
   exports.Set("setSurfaceFocus", Napi::Function::New(env, SetSurfaceFocus));
   exports.Set("getSurfaceSize", Napi::Function::New(env, GetSurfaceSize));
+
+  // Keyboard and text input
+  exports.Set("sendSurfaceKey", Napi::Function::New(env, SendSurfaceKey));
+  exports.Set("sendSurfaceText", Napi::Function::New(env, SendSurfaceText));
 
   // IOSurface extraction
   exports.Set("getSurfaceIOSurfaceId",

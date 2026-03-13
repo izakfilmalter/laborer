@@ -34,6 +34,8 @@ export const GHOSTTY_DESTROY_SURFACE_CHANNEL = 'ghostty:destroy-surface'
 export const GHOSTTY_SET_SIZE_CHANNEL = 'ghostty:set-size'
 export const GHOSTTY_SET_FOCUS_CHANNEL = 'ghostty:set-focus'
 export const GHOSTTY_LIST_SURFACES_CHANNEL = 'ghostty:list-surfaces'
+export const GHOSTTY_SEND_KEY_CHANNEL = 'ghostty:send-key'
+export const GHOSTTY_SEND_TEXT_CHANNEL = 'ghostty:send-text'
 
 // ---------------------------------------------------------------------------
 // Pending request tracking
@@ -162,6 +164,36 @@ export class GhosttyBridge {
     ipcMain.handle(GHOSTTY_LIST_SURFACES_CHANNEL, async () => {
       return await this.listSurfaces()
     })
+
+    ipcMain.removeHandler(GHOSTTY_SEND_KEY_CHANNEL)
+    ipcMain.handle(
+      GHOSTTY_SEND_KEY_CHANNEL,
+      async (_event, surfaceId: unknown, keyEvent: unknown) => {
+        if (typeof surfaceId !== 'number') {
+          throw new Error('surfaceId must be a number')
+        }
+        if (typeof keyEvent !== 'object' || keyEvent === null) {
+          throw new Error('keyEvent must be an object')
+        }
+        return await this.sendKey(
+          surfaceId,
+          keyEvent as Record<string, unknown>
+        )
+      }
+    )
+
+    ipcMain.removeHandler(GHOSTTY_SEND_TEXT_CHANNEL)
+    ipcMain.handle(
+      GHOSTTY_SEND_TEXT_CHANNEL,
+      async (_event, surfaceId: unknown, text: unknown) => {
+        if (typeof surfaceId !== 'number' || typeof text !== 'string') {
+          throw new Error(
+            'surfaceId must be a number and text must be a string'
+          )
+        }
+        return await this.sendText(surfaceId, text)
+      }
+    )
   }
 
   // -----------------------------------------------------------------------
@@ -209,6 +241,26 @@ export class GhosttyBridge {
     this.ensureReady()
     const id = this.generateId()
     await this.sendRequest<void>({ type: 'set_focus', id, surfaceId, focused })
+  }
+
+  async sendKey(
+    surfaceId: number,
+    keyEvent: Record<string, unknown>
+  ): Promise<void> {
+    this.ensureReady()
+    const id = this.generateId()
+    await this.sendRequest<void>({
+      type: 'send_key',
+      id,
+      surfaceId,
+      keyEvent,
+    })
+  }
+
+  async sendText(surfaceId: number, text: string): Promise<void> {
+    this.ensureReady()
+    const id = this.generateId()
+    await this.sendRequest<void>({ type: 'send_text', id, surfaceId, text })
   }
 
   async listSurfaces(): Promise<readonly number[]> {

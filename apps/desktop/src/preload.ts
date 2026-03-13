@@ -31,6 +31,8 @@ const GHOSTTY_DESTROY_SURFACE_CHANNEL = 'ghostty:destroy-surface'
 const GHOSTTY_SET_SIZE_CHANNEL = 'ghostty:set-size'
 const GHOSTTY_SET_FOCUS_CHANNEL = 'ghostty:set-focus'
 const GHOSTTY_LIST_SURFACES_CHANNEL = 'ghostty:list-surfaces'
+const GHOSTTY_SEND_KEY_CHANNEL = 'ghostty:send-key'
+const GHOSTTY_SEND_TEXT_CHANNEL = 'ghostty:send-text'
 
 // ---------------------------------------------------------------------------
 // Service URLs — injected via `additionalArguments` from the main process.
@@ -179,6 +181,12 @@ contextBridge.exposeInMainWorld('desktopBridge', {
 
   ghosttySetFocus: (surfaceId, focused) =>
     ipcRenderer.invoke(GHOSTTY_SET_FOCUS_CHANNEL, surfaceId, focused),
+
+  ghosttySendKey: (surfaceId, keyEvent) =>
+    ipcRenderer.invoke(GHOSTTY_SEND_KEY_CHANNEL, surfaceId, keyEvent),
+
+  ghosttySendText: (surfaceId, text) =>
+    ipcRenderer.invoke(GHOSTTY_SEND_TEXT_CHANNEL, surfaceId, text),
 
   ghosttySetSize: (surfaceId, width, height) =>
     ipcRenderer.invoke(GHOSTTY_SET_SIZE_CHANNEL, surfaceId, width, height),

@@ -191,8 +191,11 @@ function createWindow(record?: WindowRecord): BrowserWindow {
 
   // Preserve the last visible window's existing close-to-tray behavior, but
   // let non-last windows close normally so their sessions stay restorable.
+  let hiddenToTray = false
+
   window.on('close', (event) => {
     if (shouldHideOnClose(window)) {
+      hiddenToTray = true
       event.preventDefault()
       window.hide()
     }
@@ -201,6 +204,14 @@ function createWindow(record?: WindowRecord): BrowserWindow {
   window.on('closed', () => {
     openWindows.delete(window)
     getWorkspaceWindowRegistry().remove(window)
+
+    // Remove the persisted record for windows the user intentionally closed.
+    // During app quit, only windows that were previously hidden to tray
+    // (i.e. the user already closed them) get their records removed.
+    // Windows that were still open at quit time keep their records for restore.
+    if (!isQuitting || hiddenToTray) {
+      windowStateManager.removeWindowRecord(windowId)
+    }
 
     if (mainWindow === window) {
       mainWindow = openWindows.values().next().value ?? null

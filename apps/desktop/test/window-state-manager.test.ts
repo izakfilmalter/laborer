@@ -119,6 +119,61 @@ describe('WindowStateManager', () => {
     ])
   })
 
+  it('removeWindowRecord deletes a single record from the persisted collection', () => {
+    const userDataDir = mkdtempSync(join(tmpdir(), 'laborer-window-state-'))
+    tempDirs.push(userDataDir)
+
+    const manager = new WindowStateManager(userDataDir)
+
+    manager.saveWindowRecords([
+      {
+        windowId: 'window-alpha',
+        bounds: { x: 10, y: 20, width: 800, height: 600 },
+        isMaximized: false,
+      },
+      {
+        windowId: 'window-beta',
+        bounds: { x: 100, y: 200, width: 1200, height: 900 },
+        isMaximized: true,
+      },
+    ])
+
+    manager.removeWindowRecord('window-alpha')
+
+    expect(manager.loadWindowRecords()).toEqual([
+      {
+        windowId: 'window-beta',
+        bounds: { x: 100, y: 200, width: 1200, height: 900 },
+        isMaximized: true,
+      },
+    ])
+  })
+
+  it('removeWindowRecord is a no-op when the window id does not exist', () => {
+    const userDataDir = mkdtempSync(join(tmpdir(), 'laborer-window-state-'))
+    tempDirs.push(userDataDir)
+
+    const manager = new WindowStateManager(userDataDir)
+
+    manager.saveWindowRecords([
+      {
+        windowId: 'window-alpha',
+        bounds: { x: 10, y: 20, width: 800, height: 600 },
+        isMaximized: false,
+      },
+    ])
+
+    manager.removeWindowRecord('nonexistent')
+
+    expect(manager.loadWindowRecords()).toEqual([
+      {
+        windowId: 'window-alpha',
+        bounds: { x: 10, y: 20, width: 800, height: 600 },
+        isMaximized: false,
+      },
+    ])
+  })
+
   it('preserves a closed window session for later restore', () => {
     const userDataDir = mkdtempSync(join(tmpdir(), 'laborer-window-state-'))
     tempDirs.push(userDataDir)

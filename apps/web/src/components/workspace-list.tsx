@@ -420,6 +420,12 @@ function DestroyDialogDescription({
 interface WorkspaceItemProps {
   /** The prdId of the plan this workspace is associated with, if any. */
   readonly associatedPrdId?: string | undefined
+  /**
+   * Whether this workspace is the root workspace (main git checkout).
+   * Root workspaces cannot be destroyed as they represent the original
+   * repository clone.
+   */
+  readonly isRootWorkspace?: boolean | undefined
   readonly workspace: {
     readonly id: string
     readonly projectId: string
@@ -442,7 +448,11 @@ interface WorkspaceItemProps {
   }
 }
 
-function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
+function WorkspaceItem({
+  workspace,
+  associatedPrdId,
+  isRootWorkspace,
+}: WorkspaceItemProps) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [isStartingLoop, setIsStartingLoop] = useState(false)
   const [workspaceAgentStatus, setWorkspaceAgentStatus] = useState<
@@ -695,71 +705,73 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
               projectId={workspace.projectId}
               workspaceId={workspace.id}
             />
-            <AlertDialog onOpenChange={handleDialogOpen} open={dialogOpen}>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <AlertDialogTrigger
-                      render={
-                        <Button
-                          aria-label={`Destroy workspace ${workspace.branchName}`}
-                          size="icon-xs"
-                          variant="ghost"
-                        />
-                      }
-                    />
-                  }
-                >
-                  <Trash2 className="size-3.5 text-muted-foreground" />
-                </TooltipTrigger>
-                <TooltipContent>Destroy workspace</TooltipContent>
-              </Tooltip>
-              <AlertDialogContent
-                onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
-                  if (isExactEnter(event.nativeEvent)) {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    return
-                  }
-                  if (
-                    isMetaEnter(event.nativeEvent) &&
-                    !isCheckingDestroyState
-                  ) {
-                    event.preventDefault()
-                    handleDestroy(hasWarnings ? true : undefined)
-                  }
-                }}
-              >
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    {hasWarnings ? 'Unsaved work' : 'Destroy workspace?'}
-                  </AlertDialogTitle>
-                  <DestroyDialogDescription
-                    activeTerminals={activeTerminals}
-                    branchName={workspace.branchName}
-                    dirtyFiles={dirtyFiles}
-                    isCheckingDirtyFiles={isCheckingDirtyFiles}
-                    isCheckingTerminals={isCheckingTerminals}
-                  />
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>
-                    Cancel <Kbd>Esc</Kbd>
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    disabled={isCheckingDestroyState}
-                    onClick={() =>
+            {!isRootWorkspace && (
+              <AlertDialog onOpenChange={handleDialogOpen} open={dialogOpen}>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <AlertDialogTrigger
+                        render={
+                          <Button
+                            aria-label={`Destroy workspace ${workspace.branchName}`}
+                            size="icon-xs"
+                            variant="ghost"
+                          />
+                        }
+                      />
+                    }
+                  >
+                    <Trash2 className="size-3.5 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent>Destroy workspace</TooltipContent>
+                </Tooltip>
+                <AlertDialogContent
+                  onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+                    if (isExactEnter(event.nativeEvent)) {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      return
+                    }
+                    if (
+                      isMetaEnter(event.nativeEvent) &&
+                      !isCheckingDestroyState
+                    ) {
+                      event.preventDefault()
                       handleDestroy(hasWarnings ? true : undefined)
                     }
-                    variant="destructive"
-                  >
-                    {hasWarnings ? 'Force Destroy' : 'Destroy'}
-                    <Kbd>⌘</Kbd>
-                    <Kbd>↵</Kbd>
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+                  }}
+                >
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      {hasWarnings ? 'Unsaved work' : 'Destroy workspace?'}
+                    </AlertDialogTitle>
+                    <DestroyDialogDescription
+                      activeTerminals={activeTerminals}
+                      branchName={workspace.branchName}
+                      dirtyFiles={dirtyFiles}
+                      isCheckingDirtyFiles={isCheckingDirtyFiles}
+                      isCheckingTerminals={isCheckingTerminals}
+                    />
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>
+                      Cancel <Kbd>Esc</Kbd>
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={isCheckingDestroyState}
+                      onClick={() =>
+                        handleDestroy(hasWarnings ? true : undefined)
+                      }
+                      variant="destructive"
+                    >
+                      {hasWarnings ? 'Force Destroy' : 'Destroy'}
+                      <Kbd>⌘</Kbd>
+                      <Kbd>↵</Kbd>
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
           </div>
         </div>
       </CardHeader>
@@ -799,9 +811,14 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
 interface WorkspaceListProps {
   /** Only workspaces belonging to this project are shown. */
   readonly projectId: string
+  /**
+   * The repository path (project.repoPath) used to identify the root workspace.
+   * The root workspace is the one where worktreePath matches this path.
+   */
+  readonly repoPath?: string | undefined
 }
 
-function WorkspaceList({ projectId }: WorkspaceListProps) {
+function WorkspaceList({ projectId, repoPath }: WorkspaceListProps) {
   const store = useLaborerStore()
   const workspaceList = store.useQuery(allWorkspaces$)
   const prdList = store.useQuery(allPrds$)
@@ -832,6 +849,9 @@ function WorkspaceList({ projectId }: WorkspaceListProps) {
       {activeWorkspaces.map((workspace) => (
         <WorkspaceItem
           associatedPrdId={branchToPrdId.get(workspace.branchName)}
+          isRootWorkspace={
+            repoPath != null && workspace.worktreePath === repoPath
+          }
           key={workspace.id}
           workspace={workspace}
         />

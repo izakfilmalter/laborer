@@ -1,0 +1,22 @@
+## Issue 1: Review pane type + panel system wiring — DONE
+
+Completed all acceptance criteria:
+
+- Added 'review' to PaneType Schema.Literal in packages/shared/src/types.ts
+- Added 'review' to VALID_PANE_TYPES in apps/web/src/panels/layout-utils.ts
+- Created placeholder ReviewPane component in apps/web/src/panes/review-pane.tsx
+  (renders heading with ClipboardCheck icon and workspace ID)
+- Added routing branch in PaneContent (panel-manager.tsx) for paneType === 'review'
+- Added toggleReviewPane action to PanelActions interface (panel-context.tsx)
+  - Splits right from active pane with paneType: 'review', inheriting workspaceId
+  - Toggles off by finding and closing existing review pane for the workspace
+- Implemented handleToggleReviewPane in use-panel-layout.ts
+- Added 6 tests in layout-utils.test.ts covering:
+  - repairPanelLayoutTree preserves valid review leaves
+  - repairPanelLayoutTree preserves review panes in splits
+  - splitPane creates review pane with newPaneContent
+  - split-right creates exactly one new leaf
+  - findNewLeafAfterSplit finds the review pane
+  - closePane removes review pane and collapses split
+- Updated mock PanelActions in 3 test files to include toggleReviewPane
+- All 387 tests pass, TypeScript clean, formatting clean

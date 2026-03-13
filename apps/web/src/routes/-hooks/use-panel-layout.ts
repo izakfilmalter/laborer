@@ -867,6 +867,99 @@ export function usePanelLayout() {
   )
 
   /**
+   * Toggle a standalone review pane for a workspace.
+   *
+   * When toggled ON: splits right from the given pane with a new review
+   * pane inheriting the same workspaceId. Unlike diff/dev server which
+   * are sidebars on a terminal leaf, the review pane is its own leaf in
+   * the layout tree.
+   *
+   * When toggled OFF: finds and closes the existing review pane for the
+   * workspace.
+   */
+  const handleToggleReviewPane = useCallback(
+    (paneId: string): boolean => {
+      const base = persistedLayoutTree ?? defaultLayout
+      if (!base) {
+        return false
+      }
+
+      // Find the source pane to get its workspaceId
+      const sourcePane = findNodeById(base, paneId)
+      if (
+        !sourcePane ||
+        sourcePane._tag !== 'LeafNode' ||
+        !sourcePane.workspaceId
+      ) {
+        return false
+      }
+
+      const workspaceId = sourcePane.workspaceId
+
+      // Check if a review pane already exists for this workspace
+      const existingReview = getLeafNodes(base).find(
+        (leaf) => leaf.paneType === 'review' && leaf.workspaceId === workspaceId
+      )
+
+      if (existingReview) {
+        // Close the existing review pane
+        const newTree = closePane(base, existingReview.id)
+        if (newTree) {
+          const nextActivePaneId = ensureValidActivePaneId(
+            newTree,
+            persistedActivePaneId
+          )
+          store.commit(
+            layoutPaneClosed({
+              windowId: panelWindowId,
+              layoutTree: newTree,
+              activePaneId: nextActivePaneId,
+            })
+          )
+        }
+        return false
+      }
+
+      // Split right (horizontal) from the source pane with a review pane
+      const newTree = splitPane(base, paneId, 'horizontal', {
+        _tag: 'LeafNode',
+        id: '',
+        paneType: 'review',
+        workspaceId,
+      })
+
+      store.commit(
+        layoutSplit({
+          windowId: panelWindowId,
+          layoutTree: newTree,
+          activePaneId: persistedActivePaneId,
+        })
+      )
+
+      // Focus the newly created review pane
+      const newLeaf = findNewLeafAfterSplit(base, newTree)
+      if (newLeaf) {
+        store.commit(
+          layoutPaneAssigned({
+            windowId: panelWindowId,
+            layoutTree: newTree,
+            activePaneId: newLeaf.id,
+          })
+        )
+      }
+
+      return true
+    },
+    [
+      persistedLayoutTree,
+      defaultLayout,
+      panelWindowId,
+      persistedActivePaneId,
+      store,
+    ]
+  )
+
+  /**
    * Reorder workspace frames by persisting an explicit workspace ID ordering.
    * Called when the user drag-and-drops workspace frames to rearrange them.
    */
@@ -896,6 +989,7 @@ export function usePanelLayout() {
       setActivePaneId: handleSetActivePaneId,
       toggleDiffPane: handleToggleDiffPane,
       toggleDevServerPane: handleToggleDevServerPane,
+      toggleReviewPane: handleToggleReviewPane,
       resizePane: handleResizePane,
       closeTerminalPane: handleCloseTerminalPane,
       reorderWorkspaces: handleReorderWorkspaces,
@@ -908,6 +1002,7 @@ export function usePanelLayout() {
       handleSetActivePaneId,
       handleToggleDiffPane,
       handleToggleDevServerPane,
+      handleToggleReviewPane,
       handleResizePane,
       handleCloseTerminalPane,
       handleReorderWorkspaces,

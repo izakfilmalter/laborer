@@ -4,7 +4,7 @@ Parent PRD: [PRD-review-findings-panel.md](./PRD-review-findings-panel.md)
 
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
-| 1 | Review pane type + panel system wiring | None | pending |
+| 1 | Review pane type + panel system wiring | None | done |
 | 2 | PR comment fetching RPC + server service | None | pending |
 | 3 | Review pane renders fetched comments | 1, 2 | pending |
 | 4 | Finding extraction (server-side parsing) | 2 | pending |

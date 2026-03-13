@@ -766,7 +766,12 @@ interface RepairPanelLayoutTreeResult {
   readonly wasRepaired: boolean
 }
 
-const VALID_PANE_TYPES = new Set(['terminal', 'diff', 'devServerTerminal'])
+const VALID_PANE_TYPES = new Set([
+  'terminal',
+  'diff',
+  'devServerTerminal',
+  'review',
+])
 const VALID_SPLIT_DIRECTIONS = new Set(['horizontal', 'vertical'])
 
 function isRecord(value: unknown): value is Record<string, unknown> {

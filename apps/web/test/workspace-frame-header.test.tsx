@@ -57,6 +57,7 @@ function mockActions(): PanelActions {
     toggleDevServerPane: vi.fn(),
     toggleDiffPane: vi.fn(),
     toggleFullscreenPane: vi.fn(),
+    toggleReviewPane: vi.fn(),
   }
 }
 

@@ -55,7 +55,12 @@ export type ContainerStatus = typeof ContainerStatus.Type
 export const PrdStatus = Schema.Literal('draft', 'active', 'completed')
 export type PrdStatus = typeof PrdStatus.Type
 
-export const PaneType = Schema.Literal('terminal', 'diff', 'devServerTerminal')
+export const PaneType = Schema.Literal(
+  'terminal',
+  'diff',
+  'devServerTerminal',
+  'review'
+)
 export type PaneType = typeof PaneType.Type
 
 export const SplitDirection = Schema.Literal('horizontal', 'vertical')

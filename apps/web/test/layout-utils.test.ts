@@ -1651,3 +1651,146 @@ describe('computeTerminalPaneAssignment', () => {
     expect(result.activePaneId).toBe(newPaneId)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Tests: Review pane type — panel system wiring
+//
+// Validates that the 'review' pane type is accepted throughout the panel
+// layout system: repair logic preserves review panes, splitPane can create
+// review panes via newPaneContent, and review leaves coexist with terminal
+// leaves without corruption.
+// ---------------------------------------------------------------------------
+
+describe('review pane type', () => {
+  it('repairPanelLayoutTree preserves a valid review leaf', () => {
+    const reviewLeaf = {
+      _tag: 'LeafNode',
+      id: 'pane-review',
+      paneType: 'review',
+      workspaceId: 'ws-1',
+    }
+
+    expect(repairPanelLayoutTree(reviewLeaf)).toEqual({
+      layoutTree: reviewLeaf,
+      wasRepaired: false,
+    })
+  })
+
+  it('repairPanelLayoutTree preserves review panes in a split', () => {
+    const layout = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        { _tag: 'LeafNode', id: 'pane-A', paneType: 'terminal' },
+        {
+          _tag: 'LeafNode',
+          id: 'pane-review',
+          paneType: 'review',
+          workspaceId: 'ws-1',
+        },
+      ],
+      sizes: [50, 50],
+    }
+
+    const result = repairPanelLayoutTree(layout)
+    expect(result.wasRepaired).toBe(false)
+    expect(result.layoutTree).toEqual(layout)
+  })
+
+  it('splitPane creates a review pane when newPaneContent specifies review type', () => {
+    const root: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-A',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+
+    const newTree = splitPane(root, 'pane-A', 'horizontal', {
+      _tag: 'LeafNode',
+      id: '',
+      paneType: 'review',
+      workspaceId: 'ws-1',
+    })
+
+    expect(newTree._tag).toBe('SplitNode')
+    const split = newTree as SplitNode
+    expect(split.direction).toBe('horizontal')
+    expect(split.children).toHaveLength(2)
+
+    // Original pane is preserved
+    expect(split.children[0]).toEqual(root)
+
+    // New pane is a review pane with same workspace
+    const reviewPane = split.children[1] as LeafNode
+    expect(reviewPane.paneType).toBe('review')
+    expect(reviewPane.workspaceId).toBe('ws-1')
+  })
+
+  it('split-right with review pane creates exactly one new leaf', () => {
+    const root: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-A',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+
+    const oldIds = new Set(getLeafIds(root))
+    const newTree = splitPane(root, 'pane-A', 'horizontal', {
+      _tag: 'LeafNode',
+      id: '',
+      paneType: 'review',
+      workspaceId: 'ws-1',
+    })
+    const newIds = getLeafIds(newTree)
+    const addedIds = newIds.filter((id) => !oldIds.has(id))
+
+    expect(addedIds).toHaveLength(1)
+  })
+
+  it('findNewLeafAfterSplit finds the review pane after split', () => {
+    const root: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-A',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+
+    const newTree = splitPane(root, 'pane-A', 'horizontal', {
+      _tag: 'LeafNode',
+      id: '',
+      paneType: 'review',
+      workspaceId: 'ws-1',
+    })
+
+    const newLeaf = findNewLeafAfterSplit(root, newTree)
+    expect(newLeaf).toBeDefined()
+    expect(newLeaf?.paneType).toBe('review')
+    expect(newLeaf?.workspaceId).toBe('ws-1')
+  })
+
+  it('closePane removes a review pane and collapses the split', () => {
+    const terminalLeaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-A',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    const reviewLeaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-review',
+      paneType: 'review',
+      workspaceId: 'ws-1',
+    }
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [terminalLeaf, reviewLeaf],
+      sizes: [50, 50],
+    }
+
+    const result = closePane(layout, 'pane-review')
+    expect(result).toEqual(terminalLeaf)
+  })
+})

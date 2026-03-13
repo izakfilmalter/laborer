@@ -325,6 +325,14 @@ export class WindowStateManager {
     }
   }
 
+  /** Remove a window record from the persisted collection (e.g. when the user closes a window). */
+  removeWindowRecord(windowId: string): void {
+    const records = this.loadWindowRecords().filter(
+      (record) => record.windowId !== windowId
+    )
+    this.saveWindowRecords(records)
+  }
+
   private upsertWindowRecord(nextRecord: WindowRecord): void {
     const records = this.loadWindowRecords().filter(
       (record) => record.windowId !== nextRecord.windowId

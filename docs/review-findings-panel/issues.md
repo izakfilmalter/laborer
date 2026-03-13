@@ -8,7 +8,7 @@ Parent PRD: [PRD-review-findings-panel.md](./PRD-review-findings-panel.md)
 | 2 | PR comment fetching RPC + server service | None | done |
 | 3 | Review pane renders fetched comments | 1, 2 | done |
 | 4 | Finding extraction (server-side parsing) | 2 | done |
-| 5 | Grouped display with severity badges | 3, 4 | pending |
+| 5 | Grouped display with severity badges | 3, 4 | done |
 | 6 | Polling + manual refresh | 3 | pending |
 | 7 | Verdict badge on workspace card | 4 | pending |
 | 8 | Checkbox selection + reaction state display | 5 | pending |

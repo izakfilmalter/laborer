@@ -121,3 +121,43 @@ Completed all acceptance criteria:
   - Renders empty state when PR has no comments or findings
   - Renders the review header bar
 - All 398 tests pass, TypeScript clean, formatting clean
+
+## Issue 5: Grouped display with severity badges — DONE
+
+Completed all acceptance criteria:
+
+- Replaced flat comment list with two grouped sections: "Findings" and "Comments"
+- Each section uses a collapsible ReviewSection component with:
+  - ChevronRight toggle icon with rotate-90 transition (matching project-group pattern)
+  - Section icon (Search for Findings, MessageSquare for Comments)
+  - Section heading and count Badge
+- FindingCard component renders structured finding data:
+  - SeverityBadge with data-severity attribute and brrr-convention colors:
+    red (bg-red-500/10 text-red-600) for critical,
+    yellow (bg-yellow-500/10 text-yellow-700) for warning,
+    blue (bg-blue-500/10 text-blue-600) for info
+  - Category tag as secondary Badge (hidden when category is null)
+  - File:line reference with FileCode icon
+  - Description text with whitespace preservation
+  - Collapsible suggested fixes using Collapsible component
+    (collapsed by default, shows "Suggested fix(es) (N)" trigger)
+- Findings sorted by severity: critical first, then warning, then info
+  via SEVERITY_ORDER lookup and Array.sort
+- CommentCard retained from Issue 3 (author avatar, login, timestamp,
+  file:line for inline comments, body)
+- Sections conditionally rendered: Findings section hidden when no findings,
+  Comments section hidden when no comments
+- Added 12 new tests in review-pane.test.tsx (23 total) covering:
+  - Findings render with correct severity badges
+  - Finding cards show file:line reference, category, and description
+  - Findings and Comments appear as separate grouped sections
+  - Section counts displayed in badges
+  - Findings sorted by severity (critical > warning > info)
+  - Collapsible suggested fixes expand on click
+  - No suggested fixes trigger when finding has no fixes
+  - Findings section hidden when no findings
+  - Comments section hidden when no comments
+  - Finding without category renders without category badge
+  - Severity badges have correct data-severity attributes
+  - Comments render with author info in Comments section
+- All 410 tests pass (web: 410, server: 276), TypeScript clean, formatting clean

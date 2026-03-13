@@ -1,14 +1,16 @@
 /**
  * Tests for ReviewPane component.
  *
- * Verifies that the review pane correctly renders fetched PR comments with
- * author info, handles loading/empty/error states, and displays file:line
- * references for inline review comments.
+ * Verifies that the review pane correctly renders fetched PR comments and
+ * findings in grouped sections with severity badges. Tests loading, empty,
+ * and error states, finding cards with severity sorting, collapsible
+ * suggested fixes, and comment cards with author info.
  *
- * @see Issue #3: Review pane renders fetched comments
+ * @see Issue #5: Grouped display with severity badges
  */
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 type ResultState =
@@ -97,6 +99,48 @@ const REVIEW_COMMENT_NO_LINE = {
   reactions: [],
 }
 
+const CRITICAL_FINDING = {
+  id: 'sql-injection',
+  file: 'src/db/query.ts',
+  line: 15,
+  severity: 'critical' as const,
+  description: 'SQL injection vulnerability in user input handling.',
+  suggestedFixes: [
+    'Use parameterized queries instead of string concatenation.',
+    'Validate and sanitize user input before use.',
+  ],
+  category: 'security',
+  dependsOn: [],
+  commentId: 100,
+  reactions: [],
+}
+
+const WARNING_FINDING = {
+  id: 'missing-error-handling',
+  file: 'src/api/handler.ts',
+  line: 42,
+  severity: 'warning' as const,
+  description: 'Missing error handling for network request.',
+  suggestedFixes: ['Wrap the fetch call in a try-catch block.'],
+  category: 'correctness',
+  dependsOn: [],
+  commentId: 101,
+  reactions: [],
+}
+
+const INFO_FINDING = {
+  id: 'naming-convention',
+  file: 'src/utils/helpers.ts',
+  line: 8,
+  severity: 'info' as const,
+  description: 'Function name does not follow camelCase convention.',
+  suggestedFixes: [],
+  category: null,
+  dependsOn: [],
+  commentId: 102,
+  reactions: [],
+}
+
 describe('ReviewPane', () => {
   afterEach(() => {
     cleanup()
@@ -145,7 +189,7 @@ describe('ReviewPane', () => {
     expect(screen.getByText('Authentication required')).toBeTruthy()
   })
 
-  it('renders comments with author info and body', () => {
+  it('renders comments with author info and body in Comments section', () => {
     currentResult = {
       _tag: 'Success',
       waiting: false,
@@ -157,6 +201,7 @@ describe('ReviewPane', () => {
     }
     render(<ReviewPane workspaceId="ws-1" />)
 
+    expect(screen.getByText('Comments')).toBeTruthy()
     expect(screen.getByText('octocat')).toBeTruthy()
     expect(screen.getByText('Looks good to me!')).toBeTruthy()
     expect(screen.getByTestId('avatar-image').getAttribute('src')).toBe(
@@ -251,5 +296,256 @@ describe('ReviewPane', () => {
     render(<ReviewPane workspaceId="ws-1" />)
 
     expect(screen.getByText('Review')).toBeTruthy()
+  })
+
+  // -------------------------------------------------------------------------
+  // Issue #5: Grouped display with severity badges
+  // -------------------------------------------------------------------------
+
+  it('renders findings with correct severity badges', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING, WARNING_FINDING, INFO_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.getByText('critical')).toBeTruthy()
+    expect(screen.getByText('warning')).toBeTruthy()
+    expect(screen.getByText('info')).toBeTruthy()
+  })
+
+  it('renders finding cards with file:line reference, category, and description', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.getByText('src/db/query.ts:15')).toBeTruthy()
+    expect(screen.getByText('security')).toBeTruthy()
+    expect(
+      screen.getByText('SQL injection vulnerability in user input handling.')
+    ).toBeTruthy()
+  })
+
+  it('renders Findings and Comments as separate grouped sections', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [WARNING_FINDING],
+        comments: [ISSUE_COMMENT],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.getByText('Findings')).toBeTruthy()
+    expect(screen.getByText('Comments')).toBeTruthy()
+  })
+
+  it('shows section counts in badges', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING, WARNING_FINDING],
+        comments: [ISSUE_COMMENT, REVIEW_COMMENT, REVIEW_COMMENT_NO_LINE],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    // Findings section trigger should show count 2
+    const findingsTrigger = screen.getByTestId('section-trigger-findings')
+    expect(within(findingsTrigger).getByText('2')).toBeTruthy()
+
+    // Comments section trigger should show count 3
+    const commentsTrigger = screen.getByTestId('section-trigger-comments')
+    expect(within(commentsTrigger).getByText('3')).toBeTruthy()
+  })
+
+  it('sorts findings by severity: critical first, then warning, then info', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        // Provide findings in reverse order
+        findings: [INFO_FINDING, WARNING_FINDING, CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const findingCards = screen.getAllByTestId('finding-card')
+    expect(findingCards).toHaveLength(3)
+
+    const firstCard = findingCards[0]
+    const secondCard = findingCards[1]
+    const thirdCard = findingCards[2]
+
+    if (!(firstCard && secondCard && thirdCard)) {
+      throw new Error('Expected 3 finding cards')
+    }
+
+    // First card should be the critical finding
+    expect(within(firstCard).getByText('critical')).toBeTruthy()
+    // Second card should be the warning finding
+    expect(within(secondCard).getByText('warning')).toBeTruthy()
+    // Third card should be the info finding
+    expect(within(thirdCard).getByText('info')).toBeTruthy()
+  })
+
+  it('renders collapsible suggested fixes on finding cards', async () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    // The trigger should be visible
+    const trigger = screen.getByTestId('suggested-fixes-trigger')
+    expect(trigger).toBeTruthy()
+    expect(screen.getByText('Suggested fixes (2)')).toBeTruthy()
+
+    // Click to expand
+    const user = userEvent.setup()
+    await user.click(trigger)
+
+    // Suggested fixes should now be visible
+    expect(
+      screen.getByText(
+        'Use parameterized queries instead of string concatenation.'
+      )
+    ).toBeTruthy()
+    expect(
+      screen.getByText('Validate and sanitize user input before use.')
+    ).toBeTruthy()
+  })
+
+  it('does not show suggested fixes trigger when no fixes exist', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [INFO_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.queryByTestId('suggested-fixes-trigger')).toBeNull()
+  })
+
+  it('does not render Findings section when there are no findings', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [],
+        comments: [ISSUE_COMMENT],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.queryByText('Findings')).toBeNull()
+    expect(screen.getByText('Comments')).toBeTruthy()
+  })
+
+  it('does not render Comments section when there are no comments', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.getByText('Findings')).toBeTruthy()
+    expect(screen.queryByText('Comments')).toBeNull()
+  })
+
+  it('renders finding without category when category is null', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [INFO_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    // INFO_FINDING has category: null, so no category badge
+    // Only severity badge should be in the badge row
+    const findingCard = screen.getByTestId('finding-card')
+    expect(within(findingCard).getByText('info')).toBeTruthy()
+    // Should not have security/correctness/etc
+    expect(within(findingCard).queryByText('security')).toBeNull()
+    expect(within(findingCard).queryByText('correctness')).toBeNull()
+  })
+
+  it('renders severity badges with correct data-severity attributes', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING, WARNING_FINDING, INFO_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const criticalBadge = screen.getByText('critical')
+    expect(criticalBadge.getAttribute('data-severity')).toBe('critical')
+
+    const warningBadge = screen.getByText('warning')
+    expect(warningBadge.getAttribute('data-severity')).toBe('warning')
+
+    const infoBadge = screen.getByText('info')
+    expect(infoBadge.getAttribute('data-severity')).toBe('info')
+  })
+
+  it('renders comments with author info in Comments section', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [],
+        comments: [REVIEW_COMMENT],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.getByText('Comments')).toBeTruthy()
+    expect(screen.getByText('reviewer')).toBeTruthy()
+    expect(
+      screen.getByText('This function should handle the edge case.')
+    ).toBeTruthy()
+    expect(screen.getByText('src/utils/parser.ts:42')).toBeTruthy()
   })
 })

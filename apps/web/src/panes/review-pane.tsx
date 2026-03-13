@@ -9,6 +9,11 @@
  * Findings are sorted by severity: critical first, then warning, then info.
  * Both sections are collapsible with heading counts.
  *
+ * Each finding card has a checkbox for triage selection. Reaction state
+ * indicators show which findings are queued (rocket), fixed (thumbs-up),
+ * or won't-fix (confused). Already-resolved findings are visually dimmed.
+ * A selected count and select all/deselect all control appear in the header.
+ *
  * Polls the server every 30 seconds while mounted and provides a manual
  * refresh button. Polling stops automatically when the pane is unmounted.
  *
@@ -16,11 +21,13 @@
  *
  * @see docs/review-findings-panel/PRD-review-findings-panel.md
  * @see Issue #6: Polling + manual refresh
+ * @see Issue #8: Checkbox selection + reaction state display
  */
 
 import { useAtomRefresh, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import type {
   PrComment,
+  PrCommentReaction,
   ReviewFinding,
   ReviewSeverity,
 } from '@laborer/shared/rpc'
@@ -32,7 +39,9 @@ import {
   GitPullRequestClosed,
   MessageSquare,
   RefreshCw,
+  Rocket,
   Search,
+  ThumbsUp,
 } from 'lucide-react'
 import {
   Suspense,
@@ -47,6 +56,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Collapsible,
   CollapsibleContent,
@@ -88,6 +98,26 @@ function sortFindingsBySeverity(
 ): readonly ReviewFinding[] {
   return [...findings].sort(
     (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]
+  )
+}
+
+/**
+ * Check whether a finding has a specific reaction type.
+ */
+function hasReaction(
+  reactions: readonly PrCommentReaction[],
+  content: string
+): boolean {
+  return reactions.some((r) => r.content === content)
+}
+
+/**
+ * Whether a finding is "resolved" — has a thumbs_up (fixed) or confused
+ * (won't-fix) reaction. Resolved findings are visually dimmed.
+ */
+function isResolved(reactions: readonly PrCommentReaction[]): boolean {
+  return (
+    hasReaction(reactions, 'thumbs_up') || hasReaction(reactions, 'confused')
   )
 }
 
@@ -142,21 +172,94 @@ function SeverityBadge({ severity }: { readonly severity: ReviewSeverity }) {
 }
 
 /**
- * Renders a structured finding card with severity badge, file:line,
- * category tag, description, and collapsible suggested fixes.
+ * Renders reaction state indicators (rocket, thumbs-up, confused) for a finding.
+ * Shows which findings are queued, fixed, or won't-fix.
  */
-function FindingCard({ finding }: { readonly finding: ReviewFinding }) {
+function ReactionIndicators({
+  reactions,
+}: {
+  readonly reactions: readonly PrCommentReaction[]
+}) {
+  const queued = hasReaction(reactions, 'rocket')
+  const fixed = hasReaction(reactions, 'thumbs_up')
+  const wontFix = hasReaction(reactions, 'confused')
+
+  if (!(queued || fixed || wontFix)) {
+    return null
+  }
+
+  return (
+    <div className="flex items-center gap-1" data-testid="reaction-indicators">
+      {queued && (
+        <span
+          className="flex items-center gap-0.5 rounded bg-orange-500/10 px-1 py-0.5 text-orange-600 text-xs dark:bg-orange-500/20 dark:text-orange-400"
+          data-testid="reaction-rocket"
+          title="Queued for fix"
+        >
+          <Rocket className="size-3" />
+        </span>
+      )}
+      {fixed && (
+        <span
+          className="flex items-center gap-0.5 rounded bg-green-500/10 px-1 py-0.5 text-green-600 text-xs dark:bg-green-500/20 dark:text-green-400"
+          data-testid="reaction-thumbs-up"
+          title="Fixed"
+        >
+          <ThumbsUp className="size-3" />
+        </span>
+      )}
+      {wontFix && (
+        <span
+          className="flex items-center gap-0.5 rounded bg-gray-500/10 px-1 py-0.5 text-gray-500 text-xs dark:bg-gray-500/20 dark:text-gray-400"
+          data-testid="reaction-confused"
+          title="Won't fix"
+        >
+          😕
+        </span>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Renders a structured finding card with severity badge, file:line,
+ * category tag, description, collapsible suggested fixes, checkbox for
+ * triage selection, and reaction state indicators.
+ */
+function FindingCard({
+  finding,
+  onToggleSelection,
+  selected,
+}: {
+  readonly finding: ReviewFinding
+  readonly onToggleSelection: (commentId: number) => void
+  readonly selected: boolean
+}) {
   const [fixesOpen, setFixesOpen] = useState(false)
   const hasSuggestedFixes = finding.suggestedFixes.length > 0
+  const resolved = isResolved(finding.reactions)
 
   return (
     <div
-      className="border-b px-3 py-2.5 last:border-b-0"
+      className={cn(
+        'border-b px-3 py-2.5 last:border-b-0',
+        selected && 'bg-accent/50',
+        resolved && 'opacity-50'
+      )}
+      data-resolved={resolved || undefined}
+      data-selected={selected || undefined}
       data-testid="finding-card"
     >
       <div className="flex items-start gap-2">
+        <Checkbox
+          aria-label={`Select finding: ${finding.id}`}
+          checked={selected}
+          className="mt-0.5 shrink-0"
+          data-testid="finding-checkbox"
+          onCheckedChange={() => onToggleSelection(finding.commentId)}
+        />
         <div className="min-w-0 flex-1">
-          {/* Top row: severity badge + category tag */}
+          {/* Top row: severity badge + category tag + reaction indicators */}
           <div className="flex flex-wrap items-center gap-1.5">
             <SeverityBadge severity={finding.severity} />
             {finding.category !== null && (
@@ -164,6 +267,7 @@ function FindingCard({ finding }: { readonly finding: ReviewFinding }) {
                 {finding.category}
               </Badge>
             )}
+            <ReactionIndicators reactions={finding.reactions} />
           </div>
 
           {/* File:line reference */}
@@ -339,6 +443,44 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
     refresh()
     startPolling()
   }, [refresh, startPolling])
+  // -----------------------------------------------------------------------
+  // Selection state — local to this pane instance, not persisted.
+  // Tracks commentIds of selected findings. Hooks must be called before
+  // any early returns to satisfy the Rules of Hooks.
+  // -----------------------------------------------------------------------
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<number>>(
+    () => new Set()
+  )
+
+  /** Toggle a single finding's selection state. */
+  const handleToggleSelection = useCallback((commentId: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(commentId)) {
+        next.delete(commentId)
+      } else {
+        next.add(commentId)
+      }
+      return next
+    })
+  }, [])
+
+  // Extract findings for select-all (empty array when no data yet).
+  const findings =
+    result._tag === 'Success' ? result.value.findings : ([] as const)
+
+  /** Select all findings. */
+  const handleSelectAll = useCallback(() => {
+    setSelectedIds(new Set(findings.map((f) => f.commentId)))
+  }, [findings])
+
+  /** Deselect all findings. */
+  const handleDeselectAll = useCallback(() => {
+    setSelectedIds(new Set())
+  }, [])
+
+  const selectedCount = selectedIds.size
+  const allSelected = findings.length > 0 && selectedCount === findings.length
 
   // Determine whether we're in the initial loading state (no data yet)
   // vs. a background refresh (has data, `waiting` is true).
@@ -350,7 +492,11 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   if (isInitialLoading) {
     return (
       <>
-        <ReviewHeaderBar isRefreshing={false} onRefresh={handleManualRefresh} />
+        <ReviewHeaderBar
+          isRefreshing={false}
+          onRefresh={handleManualRefresh}
+          selectedCount={0}
+        />
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-2 text-muted-foreground">
             <Spinner className="size-5" />
@@ -373,6 +519,7 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
           <ReviewHeaderBar
             isRefreshing={false}
             onRefresh={handleManualRefresh}
+            selectedCount={0}
           />
           <Empty className="flex-1">
             <EmptyHeader>
@@ -393,7 +540,11 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
     // Other errors
     return (
       <>
-        <ReviewHeaderBar isRefreshing={false} onRefresh={handleManualRefresh} />
+        <ReviewHeaderBar
+          isRefreshing={false}
+          onRefresh={handleManualRefresh}
+          selectedCount={0}
+        />
         <div className="p-3">
           <Alert variant="destructive">
             <AlertTriangle className="size-3.5" />
@@ -405,7 +556,7 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
     )
   }
 
-  const { comments, findings } = result.value
+  const { comments } = result.value
 
   // Empty state — PR exists but has no comments or findings
   if (comments.length === 0 && findings.length === 0) {
@@ -414,6 +565,7 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
         <ReviewHeaderBar
           isRefreshing={isRefreshing}
           onRefresh={handleManualRefresh}
+          selectedCount={0}
         />
         <Empty className="flex-1">
           <EmptyHeader>
@@ -436,15 +588,25 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   return (
     <>
       <ReviewHeaderBar
+        allSelected={allSelected}
+        findingsCount={findings.length}
         isRefreshing={isRefreshing}
+        onDeselectAll={handleDeselectAll}
         onRefresh={handleManualRefresh}
+        onSelectAll={handleSelectAll}
+        selectedCount={selectedCount}
       />
       <ScrollArea className="flex-1">
         {/* Findings section */}
         {findings.length > 0 && (
           <ReviewSection count={findings.length} icon={Search} title="Findings">
             {sortedFindings.map((finding) => (
-              <FindingCard finding={finding} key={finding.commentId} />
+              <FindingCard
+                finding={finding}
+                key={finding.commentId}
+                onToggleSelection={handleToggleSelection}
+                selected={selectedIds.has(finding.commentId)}
+              />
             ))}
           </ReviewSection>
         )}
@@ -468,18 +630,63 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
 
 /**
  * Header bar for the review pane content area.
- * Shows a subtle refreshing indicator and a manual refresh button.
+ * Shows a selected count, select all/deselect all control, a subtle
+ * refreshing indicator, and a manual refresh button.
  */
 function ReviewHeaderBar({
+  allSelected = false,
+  findingsCount = 0,
   isRefreshing,
+  onDeselectAll,
   onRefresh,
+  onSelectAll,
+  selectedCount,
 }: {
+  readonly allSelected?: boolean
+  readonly findingsCount?: number
   readonly isRefreshing: boolean
+  readonly onDeselectAll?: () => void
   readonly onRefresh: () => void
+  readonly onSelectAll?: () => void
+  readonly selectedCount: number
 }) {
   return (
     <div className="flex h-8 shrink-0 items-center border-b bg-muted/30 px-3">
       <div className="flex flex-1 items-center gap-1.5">
+        {/* Selected count + select all/deselect all */}
+        {findingsCount > 0 && onSelectAll && onDeselectAll && (
+          <div
+            className="flex items-center gap-1.5"
+            data-testid="selection-controls"
+          >
+            <Button
+              className="h-5 px-1.5 text-xs"
+              data-testid="select-toggle-button"
+              onClick={allSelected ? onDeselectAll : onSelectAll}
+              size="sm"
+              variant="ghost"
+            >
+              {allSelected ? 'Deselect all' : 'Select all'}
+            </Button>
+            {selectedCount > 0 && (
+              <span
+                className="text-muted-foreground text-xs"
+                data-testid="selected-count"
+              >
+                {selectedCount} selected
+              </span>
+            )}
+          </div>
+        )}
+        {/* Show selected count even when no select all/deselect all controls */}
+        {(findingsCount === 0 || !onSelectAll) && selectedCount > 0 && (
+          <span
+            className="text-muted-foreground text-xs"
+            data-testid="selected-count"
+          >
+            {selectedCount} selected
+          </span>
+        )}
         {isRefreshing && (
           <div
             className="flex items-center gap-1 text-muted-foreground text-xs"

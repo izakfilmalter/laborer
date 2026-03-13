@@ -4,11 +4,12 @@
  * Verifies that the review pane correctly renders fetched PR comments and
  * findings in grouped sections with severity badges. Tests loading, empty,
  * and error states, finding cards with severity sorting, collapsible
- * suggested fixes, comment cards with author info, polling behavior, and
- * manual refresh.
+ * suggested fixes, comment cards with author info, polling behavior, manual
+ * refresh, checkbox selection, reaction state display, and selection controls.
  *
  * @see Issue #5: Grouped display with severity badges
  * @see Issue #6: Polling + manual refresh
+ * @see Issue #8: Checkbox selection + reaction state display
  */
 
 import { cleanup, render, screen, within } from '@testing-library/react'
@@ -70,6 +71,28 @@ vi.mock('@/components/ui/avatar', () => ({
   ),
   AvatarFallback: ({ children }: React.PropsWithChildren) => (
     <span data-testid="avatar-fallback">{children}</span>
+  ),
+}))
+
+vi.mock('@/components/ui/checkbox', () => ({
+  Checkbox: ({
+    checked,
+    onCheckedChange,
+    ...props
+  }: {
+    checked?: boolean
+    onCheckedChange?: () => void
+    'aria-label'?: string
+    'data-testid'?: string
+    className?: string
+  }) => (
+    <input
+      aria-label={props['aria-label']}
+      checked={checked}
+      data-testid={props['data-testid']}
+      onChange={onCheckedChange}
+      type="checkbox"
+    />
   ),
 }))
 
@@ -154,6 +177,48 @@ const INFO_FINDING = {
   dependsOn: [],
   commentId: 102,
   reactions: [],
+}
+
+/** Finding with a rocket reaction (queued for fix). */
+const QUEUED_FINDING = {
+  id: 'unvalidated-input',
+  file: 'src/api/input.ts',
+  line: 20,
+  severity: 'warning' as const,
+  description: 'User input not validated.',
+  suggestedFixes: [],
+  category: 'security',
+  dependsOn: [],
+  commentId: 200,
+  reactions: [{ id: 5001, content: 'rocket', userId: 100 }],
+}
+
+/** Finding with a thumbs_up reaction (fixed). */
+const FIXED_FINDING = {
+  id: 'deprecated-api',
+  file: 'src/lib/compat.ts',
+  line: 55,
+  severity: 'info' as const,
+  description: 'Using deprecated API.',
+  suggestedFixes: ['Use the new API.'],
+  category: 'hygiene',
+  dependsOn: [],
+  commentId: 201,
+  reactions: [{ id: 5002, content: 'thumbs_up', userId: 100 }],
+}
+
+/** Finding with a confused reaction (won't-fix). */
+const WONTFIX_FINDING = {
+  id: 'long-function',
+  file: 'src/utils/long.ts',
+  line: 1,
+  severity: 'info' as const,
+  description: 'Function exceeds 50 lines.',
+  suggestedFixes: [],
+  category: 'hygiene',
+  dependsOn: [],
+  commentId: 202,
+  reactions: [{ id: 5003, content: 'confused', userId: 100 }],
 }
 
 describe('ReviewPane', () => {
@@ -734,5 +799,268 @@ describe('ReviewPane', () => {
     }
     render(<ReviewPane workspaceId="ws-1" />)
     expect(screen.getByTestId('refresh-button')).toBeTruthy()
+  })
+
+  // -------------------------------------------------------------------------
+  // Issue #8: Checkbox selection + reaction state display
+  // -------------------------------------------------------------------------
+
+  it('renders a checkbox on each finding card', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING, WARNING_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const checkboxes = screen.getAllByTestId('finding-checkbox')
+    expect(checkboxes).toHaveLength(2)
+  })
+
+  it('toggles finding selection when checkbox is clicked', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const checkbox = screen.getByTestId('finding-checkbox')
+    const findingCard = screen.getByTestId('finding-card')
+
+    // Initially not selected
+    expect(findingCard.getAttribute('data-selected')).toBeNull()
+
+    // Click to select
+    await user.click(checkbox)
+    expect(findingCard.getAttribute('data-selected')).toBe('true')
+
+    // Click again to deselect
+    await user.click(checkbox)
+    expect(findingCard.getAttribute('data-selected')).toBeNull()
+  })
+
+  it('shows selected count when findings are selected', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING, WARNING_FINDING, INFO_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    // No selected count initially
+    expect(screen.queryByTestId('selected-count')).toBeNull()
+
+    // Select two findings
+    const checkboxes = screen.getAllByTestId('finding-checkbox')
+    if (!(checkboxes[0] && checkboxes[1])) {
+      throw new Error('Expected at least 2 checkboxes')
+    }
+    await user.click(checkboxes[0])
+    await user.click(checkboxes[1])
+
+    expect(screen.getByTestId('selected-count')).toBeTruthy()
+    expect(screen.getByText('2 selected')).toBeTruthy()
+  })
+
+  it('selected findings have highlighted background', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const checkbox = screen.getByTestId('finding-checkbox')
+    const findingCard = screen.getByTestId('finding-card')
+
+    // Select the finding
+    await user.click(checkbox)
+
+    // Should have data-selected attribute
+    expect(findingCard.getAttribute('data-selected')).toBe('true')
+  })
+
+  it('renders rocket reaction indicator for queued findings', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [QUEUED_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.getByTestId('reaction-rocket')).toBeTruthy()
+  })
+
+  it('renders thumbs-up reaction indicator for fixed findings', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [FIXED_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.getByTestId('reaction-thumbs-up')).toBeTruthy()
+  })
+
+  it("renders confused reaction indicator for won't-fix findings", () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [WONTFIX_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.getByTestId('reaction-confused')).toBeTruthy()
+  })
+
+  it('does not render reaction indicators when finding has no reactions', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.queryByTestId('reaction-indicators')).toBeNull()
+  })
+
+  it('dims resolved findings (thumbs-up or confused)', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [FIXED_FINDING, WONTFIX_FINDING, CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const findingCards = screen.getAllByTestId('finding-card')
+    // FIXED_FINDING and WONTFIX_FINDING are info severity, sorted last;
+    // CRITICAL_FINDING sorted first
+    const resolvedCards = findingCards.filter(
+      (card) => card.getAttribute('data-resolved') === 'true'
+    )
+    const unresolvedCards = findingCards.filter(
+      (card) => card.getAttribute('data-resolved') === null
+    )
+
+    expect(resolvedCards).toHaveLength(2)
+    expect(unresolvedCards).toHaveLength(1)
+  })
+
+  it('select all button selects all findings', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING, WARNING_FINDING, INFO_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    // Click "Select all"
+    const selectAllButton = screen.getByTestId('select-toggle-button')
+    expect(selectAllButton).toBeTruthy()
+    expect(selectAllButton.textContent).toBe('Select all')
+
+    await user.click(selectAllButton)
+
+    // All finding cards should be selected
+    const findingCards = screen.getAllByTestId('finding-card')
+    for (const card of findingCards) {
+      expect(card.getAttribute('data-selected')).toBe('true')
+    }
+
+    expect(screen.getByText('3 selected')).toBeTruthy()
+  })
+
+  it('deselect all button deselects all findings', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING, WARNING_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    // Select all first
+    const selectToggle = screen.getByTestId('select-toggle-button')
+    await user.click(selectToggle)
+    expect(screen.getByText('2 selected')).toBeTruthy()
+
+    // Button should now say "Deselect all"
+    expect(selectToggle.textContent).toBe('Deselect all')
+
+    // Click to deselect all
+    await user.click(selectToggle)
+
+    // No findings should be selected
+    const findingCards = screen.getAllByTestId('finding-card')
+    for (const card of findingCards) {
+      expect(card.getAttribute('data-selected')).toBeNull()
+    }
+
+    expect(screen.queryByTestId('selected-count')).toBeNull()
+  })
+
+  it('does not show selection controls when there are no findings', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [],
+        comments: [ISSUE_COMMENT],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.queryByTestId('selection-controls')).toBeNull()
+    expect(screen.queryByTestId('select-toggle-button')).toBeNull()
   })
 })

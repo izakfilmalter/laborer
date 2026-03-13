@@ -11,7 +11,7 @@ Parent PRD: [PRD-review-findings-panel.md](./PRD-review-findings-panel.md)
 | 5 | Grouped display with severity badges | 3, 4 | done |
 | 6 | Polling + manual refresh | 3 | done |
 | 7 | Verdict badge on workspace card | 4 | done |
-| 8 | Checkbox selection + reaction state display | 5 | pending |
+| 8 | Checkbox selection + reaction state display | 5 | done |
 | 9 | Rocket reaction RPCs + Fix Selected action | 8 | pending |
 | 10 | Click-to-open-in-editor | 5 | pending |
 | 11 | Cross-pane diff scroll | 10 | pending |

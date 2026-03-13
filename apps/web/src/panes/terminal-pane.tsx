@@ -187,6 +187,7 @@ import {
   type TerminalStatus,
   useTerminalWebSocket,
 } from '@/hooks/use-terminal-websocket'
+import { openExternalUrl } from '@/lib/desktop'
 
 /** Module-level mutation atom for terminal.resize — shared across all TerminalPane instances. */
 const terminalResizeMutation = TerminalServiceClient.mutation('terminal.resize')
@@ -467,8 +468,17 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
     // auto-detected and rendered as clickable links that open in the
     // user's default browser. Uses Cmd+Click (macOS) / Ctrl+Click
     // (Linux/Windows) to avoid accidental activation during text selection.
+    //
+    // Custom handler routes link clicks through openExternalUrl() which
+    // delegates to shell.openExternal via the Electron IPC bridge,
+    // ensuring URLs open in the OS default browser instead of a new
+    // Electron window. In plain browser mode, falls back to window.open.
     try {
-      const webLinksAddon = new WebLinksAddon()
+      const webLinksAddon = new WebLinksAddon((_event, url) => {
+        openExternalUrl(url).catch(() => {
+          // Silently ignore — link open failures are non-critical
+        })
+      })
       terminal.loadAddon(webLinksAddon)
     } catch {
       // Web Links addon failed to load — URLs remain plain text

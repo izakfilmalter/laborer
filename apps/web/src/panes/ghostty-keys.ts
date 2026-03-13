@@ -188,6 +188,24 @@ const GHOSTTY_KEY_MAP = new Map<string, number>([
   ['Pause', 150],
 ])
 
+/**
+ * Embedded Ghostty expects native macOS virtual keycodes for physical key
+ * matching. Printable keys still work via `text`, but control/navigation keys
+ * in TUIs need correct native codes to trigger bindings.
+ */
+const GHOSTTY_NATIVE_KEYCODE_OVERRIDES = new Map<string, number>([
+  ['Enter', 36],
+  ['Tab', 48],
+  ['Space', 49],
+  ['Backspace', 51],
+  ['Escape', 53],
+  ['ArrowLeft', 123],
+  ['ArrowRight', 124],
+  ['ArrowDown', 125],
+  ['ArrowUp', 126],
+  ['NumpadEnter', 76],
+])
+
 // ---------------------------------------------------------------------------
 // Resize debounce
 // ---------------------------------------------------------------------------
@@ -224,4 +242,9 @@ const translateModifiers = (event: {
   return mods
 }
 
-export { GHOSTTY_KEY_MAP, RESIZE_DEBOUNCE_MS, translateModifiers }
+export {
+  GHOSTTY_KEY_MAP,
+  GHOSTTY_NATIVE_KEYCODE_OVERRIDES,
+  RESIZE_DEBOUNCE_MS,
+  translateModifiers,
+}

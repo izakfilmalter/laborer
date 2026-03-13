@@ -63,6 +63,58 @@ const PUSH_ACTION_TYPES = new Set([
   'render_frame',
 ])
 
+const SILENT_COMMAND_TYPES = new Set([
+  'get_pixels',
+  'send_key',
+  'send_mouse_pos',
+  'send_mouse_button',
+  'send_mouse_scroll',
+])
+
+const SHARED_TEXTURE_POLL_INTERVAL_MS = 50
+const ENABLE_SHARED_TEXTURE_POLLING = false
+
+function formatGhosttyStdoutLine(line: string): string {
+  try {
+    const event = JSON.parse(line) as Record<string, unknown>
+    if (event.type === 'pixels_result') {
+      return JSON.stringify({
+        type: 'pixels_result',
+        id: event.id,
+        surfaceId: event.surfaceId,
+        width: event.width,
+        height: event.height,
+        pixels: '<base64 omitted>',
+      })
+    }
+    if (event.type === 'iosurface_handle_result') {
+      return JSON.stringify({
+        type: 'iosurface_handle_result',
+        id: event.id,
+        surfaceId: event.surfaceId,
+        width: event.width,
+        height: event.height,
+        ioSurfaceHandle: '<base64 omitted>',
+      })
+    }
+  } catch {
+    // Fall through to raw line logging.
+  }
+
+  return line
+}
+
+function shouldLogGhosttyStdoutLine(line: string): boolean {
+  try {
+    const event = JSON.parse(line) as Record<string, unknown>
+    return !new Set(['pixels_result', 'pixels_null', 'ok']).has(
+      event.type as string
+    )
+  } catch {
+    return true
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Pending request tracking
 // ---------------------------------------------------------------------------
@@ -82,8 +134,11 @@ interface PendingRequest {
  */
 export class GhosttyBridge {
   private child: ChildProcess | null = null
+  private readonly activeSurfaceIds = new Set<number>()
+  private readonly sharedTextureInFlight = new Set<number>()
   private readonly pendingRequests = new Map<string, PendingRequest>()
   private nextId = 1
+  private sharedTexturePollTimer: ReturnType<typeof setInterval> | null = null
   private stdoutRl: ReadlineInterface | null = null
   private ready = false
 
@@ -97,15 +152,27 @@ export class GhosttyBridge {
     this.child = child
     this.ready = false
 
+    console.info(
+      `[GhosttyBridge] attach() called, pid=${child.pid}, stdout=${child.stdout !== null}, stdin=${child.stdin !== null}`
+    )
+
     if (child.stdout) {
       this.stdoutRl = createInterface({ input: child.stdout })
       this.stdoutRl.on('line', (line: string) => {
+        // Log for debugging (replaces SidecarManager stdout logging which
+        // is skipped for ghostty to avoid dual-consumer stream contention).
+        if (shouldLogGhosttyStdoutLine(line)) {
+          console.info(`[ghostty:stdout] ${formatGhosttyStdoutLine(line)}`)
+        }
         this.processLine(line)
       })
+    } else {
+      console.warn('[GhosttyBridge] child.stdout is null — cannot read IPC')
     }
 
     // Reject all pending requests if the process exits.
     child.once('exit', () => {
+      console.warn('[GhosttyBridge] child process exited')
       this.rejectAll(new Error('Ghostty Host process exited'))
       this.child = null
       this.ready = false
@@ -116,6 +183,9 @@ export class GhosttyBridge {
   detach(): void {
     this.stdoutRl?.close()
     this.stdoutRl = null
+    this.stopSharedTexturePolling()
+    this.activeSurfaceIds.clear()
+    this.sharedTextureInFlight.clear()
     this.rejectAll(new Error('GhosttyBridge detached'))
     this.child = null
     this.ready = false
@@ -318,11 +388,14 @@ export class GhosttyBridge {
   }): Promise<number> {
     this.ensureReady()
     const id = this.generateId()
-    return await this.sendRequest<number>({
+    const surfaceId = await this.sendRequest<number>({
       type: 'create_surface',
       id,
       options,
     })
+    this.activeSurfaceIds.add(surfaceId)
+    this.ensureSharedTexturePolling()
+    return surfaceId
   }
 
   async getPixels(surfaceId: number): Promise<{
@@ -351,6 +424,11 @@ export class GhosttyBridge {
     this.ensureReady()
     const id = this.generateId()
     await this.sendRequest<void>({ type: 'destroy_surface', id, surfaceId })
+    this.activeSurfaceIds.delete(surfaceId)
+    this.sharedTextureInFlight.delete(surfaceId)
+    if (this.activeSurfaceIds.size === 0) {
+      this.stopSharedTexturePolling()
+    }
   }
 
   async setSurfaceSize(
@@ -489,15 +567,28 @@ export class GhosttyBridge {
 
   private ensureReady(): void {
     if (!this.child) {
+      console.warn(
+        '[GhosttyBridge] ensureReady failed: not attached to sidecar'
+      )
       throw new Error('GhosttyBridge: not attached to a sidecar process')
     }
     if (!this.ready) {
+      console.warn(
+        '[GhosttyBridge] ensureReady failed: Ghostty Host not ready yet'
+      )
       throw new Error('GhosttyBridge: Ghostty Host not ready yet')
     }
   }
 
   private sendCommand(command: Record<string, unknown>): void {
     const line = `${JSON.stringify(command)}\n`
+    const hasStdin =
+      this.child?.stdin !== null && this.child?.stdin !== undefined
+    if (!SILENT_COMMAND_TYPES.has(command.type as string)) {
+      console.info(
+        `[GhosttyBridge] sendCommand: type=${command.type as string} id=${command.id as string} hasStdin=${hasStdin}`
+      )
+    }
     this.child?.stdin?.write(line)
   }
 
@@ -527,6 +618,7 @@ export class GhosttyBridge {
 
     if (event.type === 'ready') {
       this.ready = true
+      console.info('[GhosttyBridge] Received "ready" — bridge is now ready')
       return
     }
 
@@ -542,11 +634,20 @@ export class GhosttyBridge {
       // render_frame events trigger shared texture import and transfer
       if (eventType === 'render_frame') {
         const surfaceId = event.surfaceId as number
-        this.handleRenderFrame(surfaceId).catch(() => {
-          // Best effort — texture import or transfer may fail
+        console.info(
+          `[GhosttyBridge] render_frame for surface ${surfaceId} — will request IOSurface handle`
+        )
+        this.handleRenderFrame(surfaceId).catch((error: unknown) => {
+          console.warn(
+            `[GhosttyBridge] handleRenderFrame failed: ${String(error)}`
+          )
         })
         return
       }
+      const windowCount = BrowserWindow.getAllWindows().length
+      console.info(
+        `[GhosttyBridge] Push action "${eventType}" → ${windowCount} window(s)`
+      )
       for (const window of BrowserWindow.getAllWindows()) {
         window.webContents.send(GHOSTTY_ACTION_CHANNEL, event)
       }
@@ -585,12 +686,24 @@ export class GhosttyBridge {
         }
         break
       default:
+        this.logResolvedEvent(eventType, event)
         // Other events (size_result, iosurface_result, iosurface_handle_result,
         // iosurface_handle_null, etc.) are resolved to their pending request.
         if (id && typeof id === 'string') {
           this.resolveRequest(id, event)
         }
         break
+    }
+  }
+
+  private logResolvedEvent(
+    eventType: string,
+    event: Record<string, unknown>
+  ): void {
+    if (eventType === 'iosurface_handle_result') {
+      console.info(
+        `[GhosttyBridge] iosurface_handle_result surface=${String(event.surfaceId)} size=${String(event.width)}x${String(event.height)}`
+      )
     }
   }
 
@@ -616,10 +729,17 @@ export class GhosttyBridge {
    * and sending the resulting VideoFrame to all renderer windows.
    */
   private async handleRenderFrame(surfaceId: number): Promise<void> {
+    const logFrames = false
     // Request the IOSurface handle from the sidecar
     const handleResult = await this.getIOSurfaceHandle(surfaceId)
     if (handleResult === null) {
       return
+    }
+
+    if (logFrames) {
+      console.info(
+        `[GhosttyBridge] handleRenderFrame: got IOSurface ${handleResult.width}x${handleResult.height} for surface ${surfaceId}`
+      )
     }
 
     // Decode the base64-encoded IOSurfaceRef buffer
@@ -640,6 +760,12 @@ export class GhosttyBridge {
         },
       })
 
+      if (logFrames) {
+        console.info(
+          '[GhosttyBridge] sharedTexture imported, sending to renderer windows'
+        )
+      }
+
       // Send the imported texture to all renderer windows
       const windows = BrowserWindow.getAllWindows()
       const sendPromises = windows.map(async (window) => {
@@ -651,8 +777,15 @@ export class GhosttyBridge {
             },
             surfaceId
           )
-        } catch {
-          // Best effort — renderer may not have receiver set up yet
+          if (logFrames) {
+            console.info(
+              `[GhosttyBridge] sharedTexture sent to window ${window.id}`
+            )
+          }
+        } catch (sendError: unknown) {
+          console.warn(
+            `[GhosttyBridge] sendSharedTexture to window ${window.id} failed: ${String(sendError)}`
+          )
         }
       })
 
@@ -660,9 +793,10 @@ export class GhosttyBridge {
 
       // Release the imported shared texture after sending
       imported.release()
-    } catch {
-      // Best effort — sharedTexture API may not be available
-      // or the IOSurface handle may be invalid
+    } catch (importError: unknown) {
+      console.warn(
+        `[GhosttyBridge] sharedTexture import/send failed: ${String(importError)}`
+      )
     }
   }
 
@@ -671,5 +805,52 @@ export class GhosttyBridge {
       pending.reject(error)
     }
     this.pendingRequests.clear()
+  }
+
+  private ensureSharedTexturePolling(): void {
+    if (!ENABLE_SHARED_TEXTURE_POLLING) {
+      return
+    }
+
+    if (this.sharedTexturePollTimer !== null) {
+      return
+    }
+
+    this.sharedTexturePollTimer = setInterval(() => {
+      this.pollSharedTextures().catch(() => {
+        // Best effort polling
+      })
+    }, SHARED_TEXTURE_POLL_INTERVAL_MS)
+  }
+
+  private stopSharedTexturePolling(): void {
+    if (this.sharedTexturePollTimer !== null) {
+      clearInterval(this.sharedTexturePollTimer)
+      this.sharedTexturePollTimer = null
+    }
+  }
+
+  private async pollSharedTextures(): Promise<void> {
+    if (!this.ready || this.activeSurfaceIds.size === 0) {
+      return
+    }
+
+    const surfaceIds = [...this.activeSurfaceIds]
+    await Promise.all(
+      surfaceIds.map(async (surfaceId) => {
+        if (this.sharedTextureInFlight.has(surfaceId)) {
+          return
+        }
+
+        this.sharedTextureInFlight.add(surfaceId)
+        try {
+          await this.handleRenderFrame(surfaceId)
+        } catch {
+          // Best effort polling
+        } finally {
+          this.sharedTextureInFlight.delete(surfaceId)
+        }
+      })
+    )
   }
 }

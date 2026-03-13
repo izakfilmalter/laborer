@@ -34,6 +34,7 @@ namespace {
 bool g_initialized = false;
 ghostty_app_t g_app = nullptr;
 ghostty_config_t g_app_config = nullptr;
+NSApplication* g_ns_app = nil;
 
 /** Monotonically increasing surface ID counter. */
 uint32_t g_next_surface_id = 1;
@@ -85,6 +86,7 @@ struct QueuedAction {
 
 std::vector<QueuedAction> g_action_queue;
 std::mutex g_action_queue_mutex;
+std::unordered_map<uint32_t, uint32_t> g_render_action_counts;
 
 /**
  * Reverse lookup: find the surface ID for a ghostty_surface_t pointer.
@@ -98,6 +100,71 @@ uint32_t findSurfaceIdByPointer(ghostty_surface_t surface) {
     return it->second;
   }
   return 0;
+}
+
+/**
+ * Check whether a layer currently presents an IOSurface in its contents.
+ */
+bool LayerHasIOSurfaceContents(CALayer* layer) {
+  if (layer == nil) {
+    return false;
+  }
+
+  id contents = [layer contents];
+  if (contents == nil) {
+    return false;
+  }
+
+  CFTypeRef contentsRef = (__bridge CFTypeRef)contents;
+  return CFGetTypeID(contentsRef) == IOSurfaceGetTypeID();
+}
+
+/**
+ * Recursively search a CALayer tree for the layer currently presenting an
+ * IOSurface. On macOS Ghostty uses a custom IOSurfaceLayer rather than a
+ * CAMetalLayer, so the visible signal is the IOSurface in layer.contents.
+ */
+CALayer* FindLayerWithIOSurfaceContents(CALayer* layer) {
+  if (LayerHasIOSurfaceContents(layer)) {
+    return layer;
+  }
+
+  if (layer == nil) {
+    return nil;
+  }
+
+  for (CALayer* sublayer in [layer sublayers]) {
+    CALayer* matchingLayer = FindLayerWithIOSurfaceContents(sublayer);
+    if (matchingLayer != nil) {
+      return matchingLayer;
+    }
+  }
+
+  return nil;
+}
+
+/**
+ * Locate the layer associated with a tracked Ghostty surface that currently
+ * exposes an IOSurface.
+ */
+CALayer* FindSurfaceIOSurfaceLayer(NSView* view) {
+  if (view == nil) {
+    return nil;
+  }
+
+  CALayer* layer = FindLayerWithIOSurfaceContents([view layer]);
+  if (layer != nil) {
+    return layer;
+  }
+
+  for (NSView* subview in [view subviews]) {
+    layer = FindSurfaceIOSurfaceLayer(subview);
+    if (layer != nil) {
+      return layer;
+    }
+  }
+
+  return nil;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +216,12 @@ bool RuntimeAction(ghostty_app_t app, ghostty_target_s target,
       qa.num_value_2 = 0;
       std::lock_guard<std::mutex> lock(g_action_queue_mutex);
       g_action_queue.push_back(std::move(qa));
+      uint32_t count = ++g_render_action_counts[surface_id];
+      if (count <= 5 || count % 100 == 0) {
+        fprintf(stderr,
+                "[ghostty-addon] queued render_frame surfaceId=%u count=%u\n",
+                surface_id, count);
+      }
       return true;
     }
 
@@ -524,6 +597,14 @@ Napi::Value CreateApp(const Napi::CallbackInfo& info) {
     return result;
   }
 
+  @autoreleasepool {
+    if (g_ns_app == nil) {
+      g_ns_app = [NSApplication sharedApplication];
+      [g_ns_app setActivationPolicy:NSApplicationActivationPolicyAccessory];
+      [g_ns_app finishLaunching];
+    }
+  }
+
   // Parse options
   std::string config_file;
   bool load_default_config = true;
@@ -669,7 +750,23 @@ Napi::Value AppTick(const Napi::CallbackInfo& info) {
     return env.Undefined();
   }
 
-  ghostty_app_tick(g_app);
+  @autoreleasepool {
+    ghostty_app_tick(g_app);
+    for (;;) {
+      NSEvent* event = [g_ns_app
+          nextEventMatchingMask:NSEventMaskAny
+                      untilDate:[NSDate distantPast]
+                         inMode:NSDefaultRunLoopMode
+                        dequeue:YES];
+      if (event == nil) {
+        break;
+      }
+
+      [g_ns_app sendEvent:event];
+    }
+
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, true);
+  }
   return env.Undefined();
 }
 
@@ -735,14 +832,16 @@ Napi::Value CreateSurface(const Napi::CallbackInfo& info) {
                       defer:NO];
     [window setReleasedWhenClosed:NO];
 
-    // Create a layer-backed view for Metal rendering
+    // Create the host view. Ghostty will install its own IOSurface-backed
+    // layer during renderer initialization.
     NSView* view = [[NSView alloc] initWithFrame:frame];
-    [view setWantsLayer:YES];
     [window setContentView:view];
 
-    // Move offscreen so it never appears on the user's display
+    // Move offscreen so it never appears on the user's display, but still
+    // order the window front so AppKit realizes the view hierarchy and Metal
+    // layer can allocate drawables for Ghostty rendering.
     [window setFrameOrigin:NSMakePoint(-10000, -10000)];
-    [window orderBack:nil];
+    [window orderFrontRegardless];
 
     // Set up surface config
     ghostty_surface_config_s surface_config = ghostty_surface_config_new();
@@ -867,20 +966,28 @@ Napi::Value SetSurfaceSize(const Napi::CallbackInfo& info) {
   uint32_t width = info[1].As<Napi::Number>().Uint32Value();
   uint32_t height = info[2].As<Napi::Number>().Uint32Value();
 
-  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
-  auto it = g_surfaces.find(surface_id);
-  if (it == g_surfaces.end()) {
-    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
-        .ThrowAsJavaScriptException();
-    return env.Undefined();
+  ghostty_surface_t surface = nullptr;
+  NSWindow* window = nil;
+  NSView* view = nil;
+  {
+    std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+    auto it = g_surfaces.find(surface_id);
+    if (it == g_surfaces.end()) {
+      Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    surface = it->second.surface;
+    window = it->second.window;
+    view = it->second.view;
   }
 
   @autoreleasepool {
-    TrackedSurface& tracked = it->second;
     NSRect frame = NSMakeRect(-10000, -10000, (CGFloat)width, (CGFloat)height);
-    [tracked.window setFrame:frame display:YES];
-    [tracked.view setFrame:NSMakeRect(0, 0, (CGFloat)width, (CGFloat)height)];
-    ghostty_surface_set_size(tracked.surface, width, height);
+    [window setFrame:frame display:YES];
+    [view setFrame:NSMakeRect(0, 0, (CGFloat)width, (CGFloat)height)];
+    [view displayIfNeeded];
+    ghostty_surface_set_size(surface, width, height);
   }
 
   return Napi::Boolean::New(env, true);
@@ -902,15 +1009,19 @@ Napi::Value SetSurfaceFocus(const Napi::CallbackInfo& info) {
   uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
   bool focused = info[1].As<Napi::Boolean>().Value();
 
-  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
-  auto it = g_surfaces.find(surface_id);
-  if (it == g_surfaces.end()) {
-    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
-        .ThrowAsJavaScriptException();
-    return env.Undefined();
+  ghostty_surface_t surface = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+    auto it = g_surfaces.find(surface_id);
+    if (it == g_surfaces.end()) {
+      Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    surface = it->second.surface;
   }
 
-  ghostty_surface_set_focus(it->second.surface, focused);
+  ghostty_surface_set_focus(surface, focused);
   return Napi::Boolean::New(env, true);
 }
 
@@ -929,15 +1040,19 @@ Napi::Value GetSurfaceSize(const Napi::CallbackInfo& info) {
 
   uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
 
-  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
-  auto it = g_surfaces.find(surface_id);
-  if (it == g_surfaces.end()) {
-    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
-        .ThrowAsJavaScriptException();
-    return env.Undefined();
+  ghostty_surface_t surface = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+    auto it = g_surfaces.find(surface_id);
+    if (it == g_surfaces.end()) {
+      Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    surface = it->second.surface;
   }
 
-  ghostty_surface_size_s size = ghostty_surface_size(it->second.surface);
+  ghostty_surface_size_s size = ghostty_surface_size(surface);
 
   Napi::Object result = Napi::Object::New(env);
   result.Set("columns", Napi::Number::New(env, size.columns));
@@ -976,26 +1091,30 @@ Napi::Value GetSurfaceIOSurfaceId(const Napi::CallbackInfo& info) {
 
   uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
 
-  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
-  auto it = g_surfaces.find(surface_id);
-  if (it == g_surfaces.end()) {
-    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
-        .ThrowAsJavaScriptException();
-    return env.Undefined();
+  NSView* view = nil;
+  {
+    std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+    auto it = g_surfaces.find(surface_id);
+    if (it == g_surfaces.end()) {
+      Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    view = it->second.view;
   }
 
   Napi::Object result = Napi::Object::New(env);
 
   @autoreleasepool {
-    TrackedSurface& tracked = it->second;
-    CALayer* layer = [tracked.view layer];
+    CALayer* rootLayer = [view layer];
+    CALayer* layer = FindSurfaceIOSurfaceLayer(view);
 
-    if (layer != nil && [layer isKindOfClass:[CAMetalLayer class]]) {
+    if (rootLayer != nil) {
       result.Set("hasLayer", Napi::Boolean::New(env, true));
 
       // Try to get IOSurface from the layer's contents.
       // CALayer.contents can be a CGImageRef or an IOSurfaceRef.
-      id contents = [layer contents];
+      id contents = layer != nil ? [layer contents] : nil;
       if (contents != nil) {
         CFTypeRef contentsRef = (__bridge CFTypeRef)contents;
         CFTypeID ioSurfaceTypeID = IOSurfaceGetTypeID();
@@ -1065,12 +1184,16 @@ Napi::Value SendSurfaceKey(const Napi::CallbackInfo& info) {
     }
   }
 
-  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
-  auto it = g_surfaces.find(surface_id);
-  if (it == g_surfaces.end()) {
-    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
-        .ThrowAsJavaScriptException();
-    return env.Undefined();
+  ghostty_surface_t surface = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+    auto it = g_surfaces.find(surface_id);
+    if (it == g_surfaces.end()) {
+      Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    surface = it->second.surface;
   }
 
   ghostty_input_key_s key_event = {};
@@ -1082,7 +1205,7 @@ Napi::Value SendSurfaceKey(const Napi::CallbackInfo& info) {
   key_event.unshifted_codepoint = unshifted_codepoint;
   key_event.composing = composing;
 
-  bool consumed = ghostty_surface_key(it->second.surface, key_event);
+  bool consumed = ghostty_surface_key(surface, key_event);
   return Napi::Boolean::New(env, consumed);
 }
 
@@ -1102,15 +1225,19 @@ Napi::Value SendSurfaceText(const Napi::CallbackInfo& info) {
   uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
   std::string text = info[1].As<Napi::String>().Utf8Value();
 
-  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
-  auto it = g_surfaces.find(surface_id);
-  if (it == g_surfaces.end()) {
-    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
-        .ThrowAsJavaScriptException();
-    return env.Undefined();
+  ghostty_surface_t surface = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+    auto it = g_surfaces.find(surface_id);
+    if (it == g_surfaces.end()) {
+      Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    surface = it->second.surface;
   }
 
-  ghostty_surface_text(it->second.surface, text.c_str(), text.size());
+  ghostty_surface_text(surface, text.c_str(), text.size());
   return Napi::Boolean::New(env, true);
 }
 
@@ -1137,15 +1264,19 @@ Napi::Value SurfaceMouseCaptured(const Napi::CallbackInfo& info) {
 
   uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
 
-  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
-  auto it = g_surfaces.find(surface_id);
-  if (it == g_surfaces.end()) {
-    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
-        .ThrowAsJavaScriptException();
-    return env.Undefined();
+  ghostty_surface_t surface = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+    auto it = g_surfaces.find(surface_id);
+    if (it == g_surfaces.end()) {
+      Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    surface = it->second.surface;
   }
 
-  bool captured = ghostty_surface_mouse_captured(it->second.surface);
+  bool captured = ghostty_surface_mouse_captured(surface);
   return Napi::Boolean::New(env, captured);
 }
 
@@ -1172,16 +1303,20 @@ Napi::Value SendSurfaceMouseButton(const Napi::CallbackInfo& info) {
   int button = info[2].As<Napi::Number>().Int32Value();
   int mods = info[3].As<Napi::Number>().Int32Value();
 
-  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
-  auto it = g_surfaces.find(surface_id);
-  if (it == g_surfaces.end()) {
-    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
-        .ThrowAsJavaScriptException();
-    return env.Undefined();
+  ghostty_surface_t surface = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+    auto it = g_surfaces.find(surface_id);
+    if (it == g_surfaces.end()) {
+      Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    surface = it->second.surface;
   }
 
   bool consumed = ghostty_surface_mouse_button(
-    it->second.surface,
+    surface,
     static_cast<ghostty_input_mouse_state_e>(state),
     static_cast<ghostty_input_mouse_button_e>(button),
     static_cast<ghostty_input_mods_e>(mods));
@@ -1209,16 +1344,20 @@ Napi::Value SendSurfaceMousePos(const Napi::CallbackInfo& info) {
   double y = info[2].As<Napi::Number>().DoubleValue();
   int mods = info[3].As<Napi::Number>().Int32Value();
 
-  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
-  auto it = g_surfaces.find(surface_id);
-  if (it == g_surfaces.end()) {
-    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
-        .ThrowAsJavaScriptException();
-    return env.Undefined();
+  ghostty_surface_t surface = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+    auto it = g_surfaces.find(surface_id);
+    if (it == g_surfaces.end()) {
+      Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    surface = it->second.surface;
   }
 
   ghostty_surface_mouse_pos(
-    it->second.surface, x, y,
+    surface, x, y,
     static_cast<ghostty_input_mods_e>(mods));
   return env.Undefined();
 }
@@ -1247,16 +1386,20 @@ Napi::Value SendSurfaceMouseScroll(const Napi::CallbackInfo& info) {
   double dy = info[2].As<Napi::Number>().DoubleValue();
   int scroll_mods = info[3].As<Napi::Number>().Int32Value();
 
-  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
-  auto it = g_surfaces.find(surface_id);
-  if (it == g_surfaces.end()) {
-    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
-        .ThrowAsJavaScriptException();
-    return env.Undefined();
+  ghostty_surface_t surface = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+    auto it = g_surfaces.find(surface_id);
+    if (it == g_surfaces.end()) {
+      Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    surface = it->second.surface;
   }
 
   ghostty_surface_mouse_scroll(
-    it->second.surface, dx, dy,
+    surface, dx, dy,
     static_cast<ghostty_input_scroll_mods_t>(scroll_mods));
   return env.Undefined();
 }
@@ -1290,19 +1433,22 @@ Napi::Value GetSurfaceIOSurfaceHandle(const Napi::CallbackInfo& info) {
 
   uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
 
-  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
-  auto it = g_surfaces.find(surface_id);
-  if (it == g_surfaces.end()) {
-    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
-        .ThrowAsJavaScriptException();
-    return env.Undefined();
+  NSView* view = nil;
+  {
+    std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+    auto it = g_surfaces.find(surface_id);
+    if (it == g_surfaces.end()) {
+      Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    view = it->second.view;
   }
 
   @autoreleasepool {
-    TrackedSurface& tracked = it->second;
-    CALayer* layer = [tracked.view layer];
+    CALayer* layer = FindSurfaceIOSurfaceLayer(view);
 
-    if (layer == nil || ![layer isKindOfClass:[CAMetalLayer class]]) {
+    if (layer == nil) {
       return env.Null();
     }
 
@@ -1380,19 +1526,22 @@ Napi::Value GetSurfacePixels(const Napi::CallbackInfo& info) {
 
   uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
 
-  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
-  auto it = g_surfaces.find(surface_id);
-  if (it == g_surfaces.end()) {
-    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
-        .ThrowAsJavaScriptException();
-    return env.Undefined();
+  NSView* view = nil;
+  {
+    std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+    auto it = g_surfaces.find(surface_id);
+    if (it == g_surfaces.end()) {
+      Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    view = it->second.view;
   }
 
   @autoreleasepool {
-    TrackedSurface& tracked = it->second;
-    CALayer* layer = [tracked.view layer];
+    CALayer* layer = FindSurfaceIOSurfaceLayer(view);
 
-    if (layer == nil || ![layer isKindOfClass:[CAMetalLayer class]]) {
+    if (layer == nil) {
       return env.Null();
     }
 

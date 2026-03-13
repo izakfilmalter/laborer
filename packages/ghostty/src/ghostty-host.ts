@@ -415,6 +415,7 @@ type GhosttyEvent =
 // ---------------------------------------------------------------------------
 
 let tickTimer: ReturnType<typeof setInterval> | null = null
+let drainLogCount = 0
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -980,6 +981,26 @@ function emitActionEvent(action: ActionEvent): void {
 function drainAndEmitActions(): void {
   try {
     const actions = drainActions()
+    if (actions.length > 0) {
+      const counts = new Map<string, number>()
+      for (const action of actions) {
+        counts.set(action.action, (counts.get(action.action) ?? 0) + 1)
+      }
+
+      const summary = [...counts.entries()]
+        .map(([type, count]) => `${type}=${count}`)
+        .join(', ')
+
+      if (
+        drainLogCount < 12 ||
+        counts.has('render_frame') ||
+        counts.has('renderer_health')
+      ) {
+        debug('drainActions: %d action(s): %s', actions.length, summary)
+        drainLogCount += 1
+      }
+    }
+
     for (const action of actions) {
       emitActionEvent(action)
     }

@@ -56,6 +56,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { getDesktopBridge } from '@/lib/desktop'
 import {
   GHOSTTY_KEY_MAP,
+  GHOSTTY_NATIVE_KEYCODE_OVERRIDES,
   RESIZE_DEBOUNCE_MS,
   translateModifiers,
 } from './ghostty-keys.js'
@@ -67,8 +68,17 @@ import {
 } from './ghostty-mouse.js'
 import { shouldBypassTerminal } from './terminal-keys.js'
 
-/** Target render rate for the pixel readback polling loop (ms). */
-const RENDER_INTERVAL_MS = 33 // ~30fps
+/** Target render rate for fallback pixel polling before the first frame. */
+const INITIAL_RENDER_INTERVAL_MS = 33
+
+/** Steady-state pixel polling rate once frames are arriving. */
+const ACTIVE_RENDER_INTERVAL_MS = 250
+
+/** Burst polling window after local interaction. */
+const INTERACTION_BURST_MS = 900
+
+/** How long to wait for shared-texture frames before falling back. */
+const SHARED_TEXTURE_FALLBACK_MS = 750
 
 /**
  * Decode base64-encoded BGRA pixel data and draw it to a canvas.
@@ -108,34 +118,6 @@ function drawPixelsToCanvas(
   ctx?.putImageData(imageData, 0, 0)
 }
 
-/**
- * Draw a VideoFrame from Electron's sharedTexture API to a canvas.
- * This is the zero-copy rendering path — the VideoFrame wraps a GPU
- * texture (IOSurface on macOS) without CPU pixel copies.
- */
-function drawVideoFrameToCanvas(
-  canvas: HTMLCanvasElement,
-  videoFrame: VideoFrame
-): void {
-  const width = videoFrame.displayWidth
-  const height = videoFrame.displayHeight
-
-  // Resize canvas if dimensions changed
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width
-    canvas.height = height
-  }
-
-  const ctx = canvas.getContext('2d')
-  if (ctx === null) {
-    return
-  }
-
-  // drawImage supports VideoFrame directly — the browser composites
-  // the GPU texture onto the canvas without CPU readback.
-  ctx.drawImage(videoFrame, 0, 0, width, height)
-}
-
 type SurfaceState =
   | { readonly status: 'idle' }
   | { readonly status: 'creating' }
@@ -143,6 +125,16 @@ type SurfaceState =
   | { readonly status: 'error'; readonly message: string }
   | { readonly status: 'destroyed' }
   | { readonly status: 'crashed' }
+
+type RenderTransport = 'pending-shared' | 'shared' | 'pixels'
+
+const CONTROL_KEY_TEXT: Readonly<Record<string, string>> = {
+  Backspace: '\b',
+  Enter: '\r',
+  Escape: '\u001b',
+  NumpadEnter: '\r',
+  Tab: '\t',
+}
 
 interface GhosttyTerminalPaneProps {
   /** Whether this pane is currently focused in the panel layout. */
@@ -172,6 +164,8 @@ function GhosttyTerminalPane({
   })
   const [title, setTitle] = useState<string>('')
   const [bellFlash, setBellFlash] = useState(false)
+  const [renderTransport, setRenderTransport] =
+    useState<RenderTransport>('pixels')
   const surfaceIdRef = useRef<number | null>(null)
   const mountedRef = useRef(true)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -179,7 +173,31 @@ function GhosttyTerminalPane({
   const prefixActiveRef = useRef(false)
   const prefixTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingMousePosRef = useRef<GhosttyMousePosEvent | null>(null)
+  const mouseFrameRef = useRef<number | null>(null)
+  const interactionBurstUntilRef = useRef(0)
   const renderingRef = useRef(false)
+
+  const requestInteractionBurst = useCallback(() => {
+    interactionBurstUntilRef.current = Date.now() + INTERACTION_BURST_MS
+  }, [])
+
+  const drawVideoFrameToCanvas = useCallback((videoFrame: VideoFrame) => {
+    const canvas = canvasRef.current
+    if (canvas === null) {
+      return
+    }
+
+    const width = videoFrame.displayWidth || videoFrame.codedWidth
+    const height = videoFrame.displayHeight || videoFrame.codedHeight
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width
+      canvas.height = height
+    }
+
+    const ctx = canvas.getContext('2d')
+    ctx?.drawImage(videoFrame, 0, 0, width, height)
+  }, [])
 
   // Create the Ghostty surface on mount
   useEffect(() => {
@@ -187,6 +205,9 @@ function GhosttyTerminalPane({
     const bridge = getDesktopBridge()
 
     if (!bridge?.ghosttyCreateSurface) {
+      console.warn(
+        '[GhosttyTerminalPane] No bridge or ghosttyCreateSurface — not in Electron?'
+      )
       setSurfaceState({
         status: 'error',
         message: 'Ghostty not available (not running in Electron)',
@@ -194,22 +215,31 @@ function GhosttyTerminalPane({
       return
     }
 
+    console.info('[GhosttyTerminalPane] Creating Ghostty surface...')
     setSurfaceState({ status: 'creating' })
 
     bridge
       .ghosttyCreateSurface()
       .then((surfaceId) => {
         if (!mountedRef.current) {
-          // Component unmounted during creation — destroy immediately
+          console.warn(
+            '[GhosttyTerminalPane] Unmounted during creation, destroying surface',
+            surfaceId
+          )
           bridge.ghosttyDestroySurface(surfaceId).catch(() => {
             // Best effort cleanup
           })
           return
         }
+        console.info(
+          `[GhosttyTerminalPane] Surface created: surfaceId=${surfaceId}`
+        )
         surfaceIdRef.current = surfaceId
+        setRenderTransport('pixels')
         setSurfaceState({ status: 'active', surfaceId })
       })
       .catch((error: unknown) => {
+        console.error('[GhosttyTerminalPane] Failed to create surface:', error)
         if (!mountedRef.current) {
           return
         }
@@ -235,15 +265,19 @@ function GhosttyTerminalPane({
 
   // Sync focus state with the native surface
   useEffect(() => {
-    const id = surfaceIdRef.current
-    if (id === null) {
+    if (surfaceState.status !== 'active') {
       return
     }
+
+    const { surfaceId } = surfaceState
     const bridge = getDesktopBridge()
-    bridge?.ghosttySetFocus(id, isFocused).catch(() => {
+    if (isFocused) {
+      requestInteractionBurst()
+    }
+    bridge?.ghosttySetFocus(surfaceId, isFocused).catch(() => {
       // Best effort — surface may have been destroyed
     })
-  }, [isFocused])
+  }, [isFocused, requestInteractionBurst, surfaceState])
 
   // Auto-focus the container when the pane becomes focused
   useEffect(() => {
@@ -254,6 +288,10 @@ function GhosttyTerminalPane({
 
   // ResizeObserver — propagate container size changes to the native surface
   useEffect(() => {
+    if (surfaceState.status !== 'active') {
+      return
+    }
+
     const container = containerRef.current
     if (container === null) {
       return
@@ -282,6 +320,7 @@ function GhosttyTerminalPane({
           return
         }
         const bridge = getDesktopBridge()
+        requestInteractionBurst()
         bridge
           ?.ghosttySetSize(id, Math.round(width), Math.round(height))
           .catch(() => {
@@ -299,56 +338,94 @@ function GhosttyTerminalPane({
         resizeTimerRef.current = null
       }
     }
-  }, [])
+  }, [requestInteractionBurst, surfaceState])
 
-  // Shared texture rendering — subscribes to frame events from the main
-  // process. The main process imports the IOSurface via Electron's
-  // sharedTexture API and sends VideoFrames to the renderer. This is
-  // the zero-copy GPU path that avoids CPU pixel readback.
-  //
-  // Falls back to pixel readback polling if shared texture is not available.
+  // Rendering — prefer sharedTexture zero-copy frames when Electron exposes
+  // the API, then fall back to pixel polling only if no frames arrive.
   useEffect(() => {
     if (surfaceState.status !== 'active') {
       return
     }
 
-    const { surfaceId } = surfaceState
     const bridge = getDesktopBridge()
-
-    // Try to use the shared texture path first
-    if (bridge?.onGhosttyFrame) {
-      const unsubscribe = bridge.onGhosttyFrame(
-        (frameSurfaceId, importedSharedTexture) => {
-          if (frameSurfaceId !== surfaceId) {
-            return
-          }
-
-          const canvas = canvasRef.current
-          if (canvas === null) {
-            importedSharedTexture.release()
-            return
-          }
-
-          try {
-            const videoFrame =
-              importedSharedTexture.getVideoFrame() as VideoFrame
-            drawVideoFrameToCanvas(canvas, videoFrame)
-            videoFrame.close()
-          } catch {
-            // Best effort — frame may be invalid
-          } finally {
-            importedSharedTexture.release()
-          }
-        }
-      )
-
-      return unsubscribe
+    if (!bridge?.onGhosttyFrame) {
+      setRenderTransport('pixels')
+      return
     }
 
-    // Fallback: pixel readback polling loop
+    let disposed = false
+    let receivedFrame = false
+    const unsubscribe = bridge.onGhosttyFrame((frameSurfaceId, imported) => {
+      if (disposed || frameSurfaceId !== surfaceState.surfaceId) {
+        return
+      }
+
+      receivedFrame = true
+      setRenderTransport('shared')
+
+      const videoFrame = imported.getVideoFrame() as VideoFrame
+      try {
+        drawVideoFrameToCanvas(videoFrame)
+      } catch (error) {
+        console.warn(
+          '[GhosttyTerminalPane] Failed to draw shared frame:',
+          error
+        )
+      } finally {
+        videoFrame.close()
+        imported.release()
+      }
+    })
+
+    if (unsubscribe === null) {
+      setRenderTransport('pixels')
+      return
+    }
+
+    setRenderTransport('pending-shared')
+    const fallbackTimer = setTimeout(() => {
+      if (!(disposed || receivedFrame)) {
+        console.info(
+          `[GhosttyTerminalPane] No sharedTexture frame for surface ${surfaceState.surfaceId}; falling back to pixel readback`
+        )
+        setRenderTransport('pixels')
+      }
+    }, SHARED_TEXTURE_FALLBACK_MS)
+
+    return () => {
+      disposed = true
+      clearTimeout(fallbackTimer)
+      unsubscribe()
+    }
+  }, [drawVideoFrameToCanvas, surfaceState])
+
+  // Rendering — uses pixel readback polling at ~30fps as the primary path.
+  //
+  // The Ghostty sidecar runs as a headless Node.js process without GPU
+  // context, so its Metal renderer does not produce render_frame push events
+  // needed for the shared texture zero-copy path. Pixel readback via
+  // get_pixels is the reliable rendering method for this architecture.
+  //
+  // If shared texture frames ever arrive (e.g., future GPU-enabled sidecar),
+  // they will be handled by a separate subscriber that can override the
+  // polling loop.
+  useEffect(() => {
+    if (surfaceState.status !== 'active' || renderTransport !== 'pixels') {
+      return
+    }
+
+    const { surfaceId } = surfaceState
+
+    console.info(
+      `[GhosttyTerminalPane] Starting pixel readback for surface ${surfaceId}`
+    )
+
     let timerId: ReturnType<typeof setTimeout> | null = null
     let stopped = false
+    let hasRenderedFrame = false
+    let pixelFrameCount = 0
 
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: debug logging adds branches
     const renderFrame = async () => {
       if (stopped || renderingRef.current) {
         return
@@ -359,16 +436,39 @@ function GhosttyTerminalPane({
         const currentBridge = getDesktopBridge()
         const result = await currentBridge?.ghosttyGetPixels(surfaceId)
 
-        if (stopped || result === null || result === undefined) {
-          return
-        }
+        if (stopped || result === undefined) {
+          pixelFrameCount += 1
+          if (pixelFrameCount <= 5) {
+            console.info(
+              `[GhosttyTerminalPane] getPixels returned ${result === null ? 'null' : 'undefined'} (attempt #${pixelFrameCount})`
+            )
+          }
+        } else if (result === null) {
+          pixelFrameCount += 1
+          if (pixelFrameCount <= 5) {
+            console.info(
+              `[GhosttyTerminalPane] getPixels returned null (attempt #${pixelFrameCount})`
+            )
+          }
+        } else {
+          hasRenderedFrame = true
+          pixelFrameCount += 1
+          if (pixelFrameCount <= 3 || pixelFrameCount % 100 === 0) {
+            console.info(
+              `[GhosttyTerminalPane] Pixel frame #${pixelFrameCount}: ${result.width}x${result.height}`
+            )
+          }
 
-        const canvas = canvasRef.current
-        if (canvas === null) {
-          return
+          const canvas = canvasRef.current
+          if (canvas !== null) {
+            drawPixelsToCanvas(
+              canvas,
+              result.pixels,
+              result.width,
+              result.height
+            )
+          }
         }
-
-        drawPixelsToCanvas(canvas, result.pixels, result.width, result.height)
       } catch {
         // Best effort — surface may have been destroyed or bridge disconnected
       } finally {
@@ -376,12 +476,17 @@ function GhosttyTerminalPane({
       }
 
       if (!stopped) {
-        timerId = setTimeout(renderFrame, RENDER_INTERVAL_MS)
+        const inInteractionBurst = Date.now() < interactionBurstUntilRef.current
+        timerId = setTimeout(
+          renderFrame,
+          hasRenderedFrame && !inInteractionBurst
+            ? ACTIVE_RENDER_INTERVAL_MS
+            : INITIAL_RENDER_INTERVAL_MS
+        )
       }
     }
 
-    // Start the render loop
-    timerId = setTimeout(renderFrame, RENDER_INTERVAL_MS)
+    timerId = setTimeout(renderFrame, INITIAL_RENDER_INTERVAL_MS)
 
     return () => {
       stopped = true
@@ -389,7 +494,7 @@ function GhosttyTerminalPane({
         clearTimeout(timerId)
       }
     }
-  }, [surfaceState])
+  }, [renderTransport, surfaceState])
 
   // Translate a browser KeyboardEvent to a GhosttyKeyEvent and send it
   const sendKeyEvent = useCallback(
@@ -399,28 +504,42 @@ function GhosttyTerminalPane({
         return
       }
 
-      const ghosttyKeycode = GHOSTTY_KEY_MAP.get(event.code)
+      const ghosttyKeycode =
+        GHOSTTY_NATIVE_KEYCODE_OVERRIDES.get(event.code) ??
+        GHOSTTY_KEY_MAP.get(event.code)
       if (ghosttyKeycode === undefined) {
         // Unknown key — cannot translate
         return
       }
+
+      const controlText = CONTROL_KEY_TEXT[event.code]
+      const text =
+        action === 1
+          ? (controlText ?? (event.key.length === 1 ? event.key : null))
+          : null
+      const unshiftedCodepoint = text !== null ? (text.codePointAt(0) ?? 0) : 0
 
       const keyEvent: GhosttyKeyEvent = {
         action,
         composing: event.nativeEvent.isComposing,
         keycode: ghosttyKeycode,
         mods: translateModifiers(event),
-        text: action === 1 && event.key.length === 1 ? event.key : null,
-        unshiftedCodepoint:
-          event.key.length === 1 ? (event.key.codePointAt(0) ?? 0) : 0,
+        text,
+        unshiftedCodepoint,
       }
 
       const bridge = getDesktopBridge()
+      requestInteractionBurst()
+      if (event.code === 'Enter' || event.code === 'NumpadEnter') {
+        console.info(
+          `[GhosttyTerminalPane] Sending ${event.code} to surface ${id} (action=${action}, focused=${isFocused})`
+        )
+      }
       bridge?.ghosttySendKey(id, keyEvent).catch(() => {
         // Best effort — surface may have been destroyed
       })
     },
-    []
+    [isFocused, requestInteractionBurst]
   )
 
   // Keyboard event handlers with shortcut scope isolation
@@ -482,95 +601,127 @@ function GhosttyTerminalPane({
 
   // Mouse event handlers — forward mouse input to the native Ghostty surface
 
-  const handleMouseDown = useCallback((event: React.MouseEvent) => {
-    const id = surfaceIdRef.current
-    if (id === null) {
-      return
-    }
+  const handleMouseDown = useCallback(
+    (event: React.MouseEvent) => {
+      const id = surfaceIdRef.current
+      if (id === null) {
+        return
+      }
 
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-    const mouseEvent: GhosttyMouseButtonEvent = {
-      state: GHOSTTY_MOUSE_PRESS,
-      button: translateMouseButton(event.button),
-      mods: translateMouseModifiers(event),
-    }
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+      const mouseEvent: GhosttyMouseButtonEvent = {
+        state: GHOSTTY_MOUSE_PRESS,
+        button: translateMouseButton(event.button),
+        mods: translateMouseModifiers(event),
+      }
 
-    const bridge = getDesktopBridge()
-    bridge?.ghosttySendMouseButton(id, mouseEvent).catch(() => {
-      // Best effort
-    })
+      const bridge = getDesktopBridge()
+      requestInteractionBurst()
+      bridge?.ghosttySendMouseButton(id, mouseEvent).catch(() => {
+        // Best effort
+      })
 
-    // Also send position with the button press
-    const posEvent: GhosttyMousePosEvent = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-      mods: translateMouseModifiers(event),
-    }
-    bridge?.ghosttySendMousePos(id, posEvent).catch(() => {
-      // Best effort
-    })
-  }, [])
+      // Also send position with the button press
+      const posEvent: GhosttyMousePosEvent = {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+        mods: translateMouseModifiers(event),
+      }
+      requestInteractionBurst()
+      bridge?.ghosttySendMousePos(id, posEvent).catch(() => {
+        // Best effort
+      })
+    },
+    [requestInteractionBurst]
+  )
 
-  const handleMouseUp = useCallback((event: React.MouseEvent) => {
-    const id = surfaceIdRef.current
-    if (id === null) {
-      return
-    }
+  const handleMouseUp = useCallback(
+    (event: React.MouseEvent) => {
+      const id = surfaceIdRef.current
+      if (id === null) {
+        return
+      }
 
-    const mouseEvent: GhosttyMouseButtonEvent = {
-      state: GHOSTTY_MOUSE_RELEASE,
-      button: translateMouseButton(event.button),
-      mods: translateMouseModifiers(event),
-    }
+      const mouseEvent: GhosttyMouseButtonEvent = {
+        state: GHOSTTY_MOUSE_RELEASE,
+        button: translateMouseButton(event.button),
+        mods: translateMouseModifiers(event),
+      }
 
-    const bridge = getDesktopBridge()
-    bridge?.ghosttySendMouseButton(id, mouseEvent).catch(() => {
-      // Best effort
-    })
-  }, [])
+      const bridge = getDesktopBridge()
+      requestInteractionBurst()
+      bridge?.ghosttySendMouseButton(id, mouseEvent).catch(() => {
+        // Best effort
+      })
+    },
+    [requestInteractionBurst]
+  )
 
-  const handleMouseMove = useCallback((event: React.MouseEvent) => {
-    const id = surfaceIdRef.current
-    if (id === null) {
-      return
-    }
+  const handleMouseMove = useCallback(
+    (event: React.MouseEvent) => {
+      const id = surfaceIdRef.current
+      if (id === null) {
+        return
+      }
 
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-    const posEvent: GhosttyMousePosEvent = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-      mods: translateMouseModifiers(event),
-    }
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+      const posEvent: GhosttyMousePosEvent = {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+        mods: translateMouseModifiers(event),
+      }
 
-    const bridge = getDesktopBridge()
-    bridge?.ghosttySendMousePos(id, posEvent).catch(() => {
-      // Best effort
-    })
-  }, [])
+      pendingMousePosRef.current = posEvent
+      if (mouseFrameRef.current !== null) {
+        return
+      }
 
-  const handleWheel = useCallback((event: React.WheelEvent) => {
-    const id = surfaceIdRef.current
-    if (id === null) {
-      return
-    }
+      mouseFrameRef.current = requestAnimationFrame(() => {
+        mouseFrameRef.current = null
+        const currentId = surfaceIdRef.current
+        const currentPos = pendingMousePosRef.current
+        pendingMousePosRef.current = null
+        if (currentId === null || currentPos === null) {
+          return
+        }
 
-    // Normalize scroll deltas. Browser WheelEvent.deltaX/deltaY are in
-    // pixels (for deltaMode 0). Ghostty expects scroll amounts where
-    // positive Y means scrolling content up (opposite of browser convention).
-    const scrollEvent: GhosttyMouseScrollEvent = {
-      dx: event.deltaX,
-      dy: event.deltaY,
-      scrollMods: 0,
-    }
+        const bridge = getDesktopBridge()
+        requestInteractionBurst()
+        bridge?.ghosttySendMousePos(currentId, currentPos).catch(() => {
+          // Best effort
+        })
+      })
+    },
+    [requestInteractionBurst]
+  )
 
-    const bridge = getDesktopBridge()
-    bridge?.ghosttySendMouseScroll(id, scrollEvent).catch(() => {
-      // Best effort
-    })
+  const handleWheel = useCallback(
+    (event: React.WheelEvent) => {
+      const id = surfaceIdRef.current
+      if (id === null) {
+        return
+      }
 
-    // Prevent the page from scrolling
-    event.preventDefault()
-  }, [])
+      // Normalize scroll deltas. Browser WheelEvent.deltaX/deltaY are in
+      // pixels (for deltaMode 0). Ghostty expects scroll amounts where
+      // positive Y means scrolling content up (opposite of browser convention).
+      const scrollEvent: GhosttyMouseScrollEvent = {
+        dx: event.deltaX,
+        dy: event.deltaY,
+        scrollMods: 0,
+      }
+
+      const bridge = getDesktopBridge()
+      requestInteractionBurst()
+      bridge?.ghosttySendMouseScroll(id, scrollEvent).catch(() => {
+        // Best effort
+      })
+
+      // Prevent the page from scrolling
+      event.preventDefault()
+    },
+    [requestInteractionBurst]
+  )
 
   const handleContextMenu = useCallback((event: React.MouseEvent) => {
     // Prevent the browser context menu inside the terminal surface.
@@ -656,6 +807,9 @@ function GhosttyTerminalPane({
     return () => {
       if (prefixTimerRef.current !== null) {
         clearTimeout(prefixTimerRef.current)
+      }
+      if (mouseFrameRef.current !== null) {
+        cancelAnimationFrame(mouseFrameRef.current)
       }
     }
   }, [])

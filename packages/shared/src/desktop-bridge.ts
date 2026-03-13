@@ -401,6 +401,9 @@ export interface DesktopBridge {
    * The caller should call getVideoFrame() on the imported texture,
    * draw it to a canvas, then close the VideoFrame and release the texture.
    * Returns an unsubscribe function.
+   *
+   * Returns `null` when the Electron sharedTexture API is not available,
+   * signaling the caller to fall back to pixel readback rendering.
    */
   onGhosttyFrame: (
     listener: (
@@ -410,7 +413,7 @@ export interface DesktopBridge {
         release: () => void
       }
     ) => void
-  ) => () => void
+  ) => (() => void) | null
 
   /**
    * Subscribes to application menu actions (e.g., "settings").

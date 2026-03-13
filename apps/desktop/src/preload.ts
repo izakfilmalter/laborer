@@ -13,6 +13,9 @@ try {
 } catch {
   // sharedTexture not available in this Electron version
 }
+console.info(
+  `[preload] electronSharedTexture available: ${electronSharedTexture !== null}`
+)
 
 import { parseWindowBootstrapArgs } from './window-identity.js'
 
@@ -269,6 +272,19 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     ipcRenderer.invoke(GHOSTTY_GET_IOSURFACE_HANDLE_CHANNEL, surfaceId),
 
   onGhosttyFrame: (listener) => {
+    // Return null when the sharedTexture API is not available so the
+    // caller knows to fall back to pixel readback rendering.
+    if (electronSharedTexture === null) {
+      console.info(
+        '[preload] onGhosttyFrame: returning null (sharedTexture not available)'
+      )
+      return null
+    }
+
+    console.info(
+      `[preload] onGhosttyFrame: registering listener (total=${frameListeners.size + 1})`
+    )
+
     // Set up the shared texture receiver in the renderer process.
     // The main process sends SharedTextureImported objects via
     // sharedTexture.sendSharedTexture(). The receiver is called
@@ -278,8 +294,10 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     frameListeners.add(listener)
 
     // Set up the global receiver if not already done
-    if (!frameReceiverSetUp && electronSharedTexture !== null) {
+    if (!frameReceiverSetUp) {
       frameReceiverSetUp = true
+      console.info('[preload] Setting up sharedTexture receiver for first time')
+      let receiverCallCount = 0
       electronSharedTexture.setSharedTextureReceiver(
         async (
           data: {
@@ -290,7 +308,13 @@ contextBridge.exposeInMainWorld('desktopBridge', {
           },
           ...args: unknown[]
         ) => {
+          receiverCallCount += 1
           const surfaceId = args[0] as number
+          if (receiverCallCount <= 3 || receiverCallCount % 100 === 0) {
+            console.info(
+              `[preload] sharedTexture receiver called #${receiverCallCount}: surfaceId=${surfaceId}, listeners=${frameListeners.size}`
+            )
+          }
           const imported = data.importedSharedTexture
           // Notify all listeners
           for (const cb of frameListeners) {
@@ -299,8 +323,8 @@ contextBridge.exposeInMainWorld('desktopBridge', {
                 getVideoFrame: () => imported.getVideoFrame(),
                 release: () => imported.release(),
               })
-            } catch {
-              // Best effort — listener may throw
+            } catch (cbError: unknown) {
+              console.warn('[preload] frame listener error:', cbError)
             }
           }
           // Yield to allow frame processing to complete
@@ -311,6 +335,9 @@ contextBridge.exposeInMainWorld('desktopBridge', {
 
     return () => {
       frameListeners.delete(listener)
+      console.info(
+        `[preload] onGhosttyFrame: listener removed (remaining=${frameListeners.size})`
+      )
     }
   },
 } satisfies DesktopBridge)

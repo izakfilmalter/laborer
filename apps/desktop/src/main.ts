@@ -280,6 +280,7 @@ app
     // stdin/stdout IPC and must always be spawned by the main process.
     ghosttyBridge = new GhosttyBridge()
     ghosttyBridge.registerIpcHandlers()
+    console.info('[main] GhosttyBridge created and IPC handlers registered')
 
     // In production, spawn all sidecar services with health monitoring.
     // In dev mode, only spawn Ghostty (other services run via `turbo dev`).
@@ -289,7 +290,11 @@ app
       // via `turbo dev` and communicate over HTTP.
       sidecarManager = new SidecarManager(servicePorts)
       const ghosttyProcess = sidecarManager.spawn('ghostty')
+      console.info(
+        `[main] Ghostty sidecar spawned (pid=${ghosttyProcess.pid}), attaching bridge`
+      )
       ghosttyBridge.attach(ghosttyProcess)
+      console.info('[main] GhosttyBridge attached to ghostty sidecar')
     } else {
       sidecarManager = new SidecarManager(servicePorts)
       healthMonitor = new HealthMonitor(sidecarManager, servicePorts)

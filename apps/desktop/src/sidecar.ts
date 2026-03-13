@@ -259,7 +259,10 @@ export class SidecarManager {
     this.sidecars.set(name, tracked)
 
     // Stream stdout to console (line-by-line).
-    if (child.stdout) {
+    // Skip for ghostty — it uses stdout as an IPC channel (newline-delimited
+    // JSON). The GhosttyBridge creates its own readline on child.stdout and
+    // a second consumer would steal lines, breaking IPC correlation.
+    if (child.stdout && name !== 'ghostty') {
       const rl = createInterface({ input: child.stdout })
       rl.on('line', (line: string) => {
         console.info(`[${name}:stdout] ${line}`)

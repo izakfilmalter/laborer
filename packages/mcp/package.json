@@ -17,11 +17,13 @@
   },
   "dependencies": {
     "@effect/ai": "0.29.1",
+    "@effect/cluster": "catalog:",
     "@effect/experimental": "catalog:",
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/rpc": "catalog:",
     "@effect/sql": "catalog:",
+    "@effect/workflow": "catalog:",
     "@laborer/env": "workspace:*",
     "@laborer/shared": "workspace:*",
     "effect": "catalog:"

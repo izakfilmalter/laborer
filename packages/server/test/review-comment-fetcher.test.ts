@@ -1308,3 +1308,245 @@ describe('ReviewCommentFetcher.fetchVerdict', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 })
+
+// ---------------------------------------------------------------------------
+// Issue #9: Rocket reaction RPCs
+// ---------------------------------------------------------------------------
+
+describe('ReviewCommentFetcher.addReaction', () => {
+  it.scoped('adds a rocket reaction to a review comment via gh api', () =>
+    Effect.gen(function* () {
+      const tempRoots: string[] = []
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const root of tempRoots) {
+            rmSync(root, { force: true, recursive: true })
+          }
+        })
+      )
+
+      const { store } = yield* LaborerStore
+      setupWorkspace('git@github.com:acme/laborer.git', tempRoots, store, {
+        prNumber: 42,
+      })
+
+      const createdReaction = {
+        id: 9001,
+        content: 'rocket',
+        user: { id: 555 },
+      }
+
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'remote.origin.url': {
+            stdout: 'git@github.com:acme/laborer.git',
+          },
+          'pulls/comments/2001/reactions': {
+            stdout: JSON.stringify(createdReaction),
+          },
+        })
+      )
+
+      const fetcher = yield* ReviewCommentFetcher
+      const result = yield* fetcher.addReaction('workspace-1', 2001, 'rocket')
+
+      assert.strictEqual(result.id, 9001)
+      assert.strictEqual(result.content, 'rocket')
+      assert.strictEqual(result.userId, 555)
+
+      // Verify the correct gh api endpoint was called with POST and content field
+      const calls = spawnMock.mock.calls.map((call) =>
+        (call[0] as string[]).join(' ')
+      )
+      const reactionCall = calls.find((cmd) =>
+        cmd.includes('pulls/comments/2001/reactions')
+      )
+      assert.isDefined(reactionCall)
+      if (reactionCall) {
+        assert.isTrue(
+          reactionCall.includes('-X POST'),
+          'should use POST method'
+        )
+        assert.isTrue(
+          reactionCall.includes('content=rocket'),
+          'should pass content=rocket field'
+        )
+      }
+    }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped('returns error when workspace does not exist', () =>
+    Effect.gen(function* () {
+      const fetcher = yield* ReviewCommentFetcher
+      const exit = yield* fetcher
+        .addReaction('nonexistent-workspace', 2001, 'rocket')
+        .pipe(Effect.exit)
+
+      assert.isTrue(Exit.isFailure(exit))
+      if (Exit.isFailure(exit)) {
+        const error = Cause.failureOption(exit.cause)
+        assert.isTrue(error._tag === 'Some')
+        if (error._tag === 'Some') {
+          assert.strictEqual(error.value.code, 'NOT_FOUND')
+        }
+      }
+    }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped('returns error when gh api call fails', () =>
+    Effect.gen(function* () {
+      const tempRoots: string[] = []
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const root of tempRoots) {
+            rmSync(root, { force: true, recursive: true })
+          }
+        })
+      )
+
+      const { store } = yield* LaborerStore
+      setupWorkspace('git@github.com:acme/laborer.git', tempRoots, store, {
+        prNumber: 42,
+      })
+
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'remote.origin.url': {
+            stdout: 'git@github.com:acme/laborer.git',
+          },
+          'pulls/comments/2001/reactions': {
+            stdout: '',
+            stderr: 'Not Found',
+            exitCode: 1,
+          },
+        })
+      )
+
+      const fetcher = yield* ReviewCommentFetcher
+      const exit = yield* fetcher
+        .addReaction('workspace-1', 2001, 'rocket')
+        .pipe(Effect.exit)
+
+      assert.isTrue(Exit.isFailure(exit))
+      if (Exit.isFailure(exit)) {
+        const error = Cause.failureOption(exit.cause)
+        assert.isTrue(error._tag === 'Some')
+        if (error._tag === 'Some') {
+          assert.strictEqual(error.value.code, 'GH_API_FAILED')
+        }
+      }
+    }).pipe(Effect.provide(TestLayer))
+  )
+})
+
+describe('ReviewCommentFetcher.removeReaction', () => {
+  it.scoped('removes a reaction from a review comment via gh api DELETE', () =>
+    Effect.gen(function* () {
+      const tempRoots: string[] = []
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const root of tempRoots) {
+            rmSync(root, { force: true, recursive: true })
+          }
+        })
+      )
+
+      const { store } = yield* LaborerStore
+      setupWorkspace('git@github.com:acme/laborer.git', tempRoots, store, {
+        prNumber: 42,
+      })
+
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'remote.origin.url': {
+            stdout: 'git@github.com:acme/laborer.git',
+          },
+          'pulls/comments/2001/reactions/9001': {
+            stdout: '',
+          },
+        })
+      )
+
+      const fetcher = yield* ReviewCommentFetcher
+      yield* fetcher.removeReaction('workspace-1', 2001, 9001)
+
+      // Verify the correct gh api endpoint was called with DELETE method
+      const calls = spawnMock.mock.calls.map((call) =>
+        (call[0] as string[]).join(' ')
+      )
+      const deleteCall = calls.find((cmd) =>
+        cmd.includes('pulls/comments/2001/reactions/9001')
+      )
+      assert.isDefined(deleteCall)
+      if (deleteCall) {
+        assert.isTrue(
+          deleteCall.includes('-X DELETE'),
+          'should use DELETE method'
+        )
+      }
+    }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped('returns error when workspace does not exist', () =>
+    Effect.gen(function* () {
+      const fetcher = yield* ReviewCommentFetcher
+      const exit = yield* fetcher
+        .removeReaction('nonexistent-workspace', 2001, 9001)
+        .pipe(Effect.exit)
+
+      assert.isTrue(Exit.isFailure(exit))
+      if (Exit.isFailure(exit)) {
+        const error = Cause.failureOption(exit.cause)
+        assert.isTrue(error._tag === 'Some')
+        if (error._tag === 'Some') {
+          assert.strictEqual(error.value.code, 'NOT_FOUND')
+        }
+      }
+    }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped('returns error when gh api DELETE call fails', () =>
+    Effect.gen(function* () {
+      const tempRoots: string[] = []
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const root of tempRoots) {
+            rmSync(root, { force: true, recursive: true })
+          }
+        })
+      )
+
+      const { store } = yield* LaborerStore
+      setupWorkspace('git@github.com:acme/laborer.git', tempRoots, store, {
+        prNumber: 42,
+      })
+
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'remote.origin.url': {
+            stdout: 'git@github.com:acme/laborer.git',
+          },
+          'pulls/comments/2001/reactions/9001': {
+            stdout: '',
+            stderr: 'Not Found',
+            exitCode: 1,
+          },
+        })
+      )
+
+      const fetcher = yield* ReviewCommentFetcher
+      const exit = yield* fetcher
+        .removeReaction('workspace-1', 2001, 9001)
+        .pipe(Effect.exit)
+
+      assert.isTrue(Exit.isFailure(exit))
+      if (Exit.isFailure(exit)) {
+        const error = Cause.failureOption(exit.cause)
+        assert.isTrue(error._tag === 'Some')
+        if (error._tag === 'Some') {
+          assert.strictEqual(error.value.code, 'GH_API_FAILED')
+        }
+      }
+    }).pipe(Effect.provide(TestLayer))
+  )
+})

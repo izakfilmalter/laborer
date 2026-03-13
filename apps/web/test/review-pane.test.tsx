@@ -5,11 +5,13 @@
  * findings in grouped sections with severity badges. Tests loading, empty,
  * and error states, finding cards with severity sorting, collapsible
  * suggested fixes, comment cards with author info, polling behavior, manual
- * refresh, checkbox selection, reaction state display, and selection controls.
+ * refresh, checkbox selection, reaction state display, selection controls,
+ * Fix Selected action, and Unqueue action.
  *
  * @see Issue #5: Grouped display with severity badges
  * @see Issue #6: Polling + manual refresh
  * @see Issue #8: Checkbox selection + reaction state display
+ * @see Issue #9: Rocket reaction RPCs + Fix Selected action
  */
 
 import { cleanup, render, screen, within } from '@testing-library/react'
@@ -23,15 +25,33 @@ type ResultState =
 
 let currentResult: ResultState = { _tag: 'Initial', waiting: true }
 const mockRefresh = vi.fn()
+const mockAtomSet = vi.fn().mockResolvedValue({ id: 'terminal-1' })
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomValue: () => currentResult,
   useAtomRefresh: () => mockRefresh,
+  useAtomSet: () => mockAtomSet,
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
   LaborerClient: {
     query: () => Symbol.for('query:review.fetchComments'),
+    mutation: () => Symbol.for('mutation'),
+  },
+}))
+
+const mockAssignTerminalToPane = vi.fn()
+
+vi.mock('@/panels/panel-context', () => ({
+  usePanelActions: () => ({
+    assignTerminalToPane: mockAssignTerminalToPane,
+  }),
+}))
+
+vi.mock('sonner', () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
   },
 }))
 
@@ -230,6 +250,9 @@ describe('ReviewPane', () => {
   beforeEach(() => {
     currentResult = { _tag: 'Initial', waiting: true }
     mockRefresh.mockReset()
+    mockAtomSet.mockReset()
+    mockAtomSet.mockResolvedValue({ id: 'terminal-1' })
+    mockAssignTerminalToPane.mockReset()
   })
 
   it('renders loading state during initial fetch', () => {
@@ -1062,5 +1085,149 @@ describe('ReviewPane', () => {
 
     expect(screen.queryByTestId('selection-controls')).toBeNull()
     expect(screen.queryByTestId('select-toggle-button')).toBeNull()
+  })
+
+  // -------------------------------------------------------------------------
+  // Issue #9: Rocket reaction RPCs + Fix Selected action
+  // -------------------------------------------------------------------------
+
+  it('renders Fix Selected button when findings exist', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING, WARNING_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const fixButton = screen.getByTestId('fix-selected-button')
+    expect(fixButton).toBeTruthy()
+  })
+
+  it('Fix Selected button is disabled when no findings are selected', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING, WARNING_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const fixButton = screen.getByTestId('fix-selected-button')
+    expect(fixButton.getAttribute('disabled')).not.toBeNull()
+  })
+
+  it('Fix Selected button is enabled when findings are selected', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    // Select a finding
+    const checkbox = screen.getByTestId('finding-checkbox')
+    await user.click(checkbox)
+
+    const fixButton = screen.getByTestId('fix-selected-button')
+    expect(fixButton.getAttribute('disabled')).toBeNull()
+  })
+
+  it('Fix Selected button shows count when findings are selected', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING, WARNING_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    // Select both findings
+    const checkboxes = screen.getAllByTestId('finding-checkbox')
+    if (!(checkboxes[0] && checkboxes[1])) {
+      throw new Error('Expected at least 2 checkboxes')
+    }
+    await user.click(checkboxes[0])
+    await user.click(checkboxes[1])
+
+    const fixButton = screen.getByTestId('fix-selected-button')
+    expect(fixButton.textContent).toContain('(2)')
+  })
+
+  it('does not render Fix Selected button when no findings exist', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [],
+        comments: [ISSUE_COMMENT],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.queryByTestId('fix-selected-button')).toBeNull()
+  })
+
+  it('renders Unqueue button on findings with rocket reaction', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [QUEUED_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const unqueueButton = screen.getByTestId('unqueue-button')
+    expect(unqueueButton).toBeTruthy()
+    expect(unqueueButton.textContent).toContain('Unqueue')
+  })
+
+  it('does not render Unqueue button on findings without rocket reaction', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.queryByTestId('unqueue-button')).toBeNull()
+  })
+
+  it('does not render Unqueue button on findings with only thumbs-up reaction', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [FIXED_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.queryByTestId('unqueue-button')).toBeNull()
   })
 })

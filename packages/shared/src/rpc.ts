@@ -725,6 +725,37 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       workspaceId: Schema.String,
     },
+  }),
+
+  /**
+   * Add a reaction (e.g. rocket) to an inline review comment on GitHub.
+   * Used by the review pane to queue findings for brrr fix.
+   *
+   * @see PRD-review-findings-panel.md — "Rocket Reaction Service" section
+   */
+  Rpc.make('review.addReaction', {
+    success: PrCommentReaction,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      commentId: Schema.Number,
+      content: Schema.String,
+    },
+  }),
+
+  /**
+   * Remove a reaction from an inline review comment on GitHub.
+   * Used by the review pane to unqueue findings from brrr fix.
+   *
+   * @see PRD-review-findings-panel.md — "Rocket Reaction Service" section
+   */
+  Rpc.make('review.removeReaction', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      commentId: Schema.Number,
+      reactionId: Schema.Number,
+    },
   })
 ) {}
 

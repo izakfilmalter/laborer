@@ -294,3 +294,60 @@ Completed all acceptance criteria:
   - Deselect all button deselects all findings
   - Does not show selection controls when there are no findings
 - All 722 tests pass (web: 440, server: 282), TypeScript clean, formatting clean
+
+## Issue 9: Rocket reaction RPCs + Fix Selected action — DONE
+
+Completed all acceptance criteria:
+
+- Defined new RPCs in packages/shared/src/rpc.ts:
+  - `review.addReaction`: payload { workspaceId, commentId, content },
+    success PrCommentReaction, error RpcError
+  - `review.removeReaction`: payload { workspaceId, commentId, reactionId },
+    error RpcError (void success)
+- Added `ghApiMutate` helper in review-comment-fetcher.ts for POST/DELETE
+  `gh api` calls (non-paginated, supports -X method and -f field args)
+- Added `resolveWorkspaceRepo` shared helper to avoid duplicating workspace
+  lookup + owner/repo detection across addReaction/removeReaction
+- Added `addReaction` method to ReviewCommentFetcher service:
+  - Calls `gh api repos/{owner}/{repo}/pulls/comments/{commentId}/reactions`
+    with `-X POST -f content=rocket`
+  - Returns { id, content, userId } from the created reaction
+- Added `removeReaction` method to ReviewCommentFetcher service:
+  - Calls `gh api repos/{owner}/{repo}/pulls/comments/{commentId}/reactions/{reactionId}`
+    with `-X DELETE`
+- Added RPC handlers for `review.addReaction` and `review.removeReaction`
+  in packages/server/src/rpc/handlers.ts delegating to ReviewCommentFetcher
+- Updated review pane UI (apps/web/src/panes/review-pane.tsx):
+  - "Fix Selected" button in ReviewHeaderBar:
+    - Disabled when no findings are selected, shows count "(N)"
+    - Hidden when no findings exist
+    - On click: adds rocket reactions to all selected findings concurrently,
+      then spawns `brrr fix` terminal via brrr.fix RPC, assigns terminal
+      to panel pane, clears selection, refreshes data
+    - Uses toast for success/error feedback
+  - "Unqueue" button on individual findings with rocket reaction:
+    - Appears as ghost button with X icon + "Unqueue" text
+    - Disabled while unqueue is in progress for that finding
+    - On click: removes rocket reaction via review.removeReaction RPC,
+      shows toast feedback, refreshes data
+  - Added mutation hooks: useAtomSet for addReactionMutation,
+    removeReactionMutation, fixFindingsMutation
+  - Added usePanelActions for terminal pane assignment
+  - Added isFixing / unqueuingCommentId loading state
+- Added 6 server tests in review-comment-fetcher.test.ts covering:
+  - addReaction: adds rocket reaction via gh api POST with correct endpoint
+  - addReaction: returns error when workspace does not exist (NOT_FOUND)
+  - addReaction: returns error when gh api call fails (GH_API_FAILED)
+  - removeReaction: removes reaction via gh api DELETE with correct endpoint
+  - removeReaction: returns error when workspace does not exist (NOT_FOUND)
+  - removeReaction: returns error when gh api DELETE fails (GH_API_FAILED)
+- Added 8 UI tests in review-pane.test.tsx covering:
+  - Fix Selected button renders when findings exist
+  - Fix Selected button disabled when no findings selected
+  - Fix Selected button enabled when findings are selected
+  - Fix Selected button shows count when findings are selected
+  - Fix Selected button not rendered when no findings exist
+  - Unqueue button renders on findings with rocket reaction
+  - Unqueue button not rendered on findings without rocket reaction
+  - Unqueue button not rendered on findings with only thumbs-up reaction
+- All 736 tests pass (web: 448, server: 288), TypeScript clean, formatting clean

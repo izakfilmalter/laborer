@@ -14,6 +14,10 @@
  * or won't-fix (confused). Already-resolved findings are visually dimmed.
  * A selected count and select all/deselect all control appear in the header.
  *
+ * "Fix Selected" adds rocket reactions to all selected findings and spawns
+ * a `brrr fix` terminal. "Unqueue" removes the rocket reaction from a
+ * single finding.
+ *
  * Polls the server every 30 seconds while mounted and provides a manual
  * refresh button. Polling stops automatically when the pane is unmounted.
  *
@@ -22,9 +26,14 @@
  * @see docs/review-findings-panel/PRD-review-findings-panel.md
  * @see Issue #6: Polling + manual refresh
  * @see Issue #8: Checkbox selection + reaction state display
+ * @see Issue #9: Rocket reaction RPCs + Fix Selected action
  */
 
-import { useAtomRefresh, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import {
+  useAtomRefresh,
+  useAtomSet,
+  useAtomValue,
+} from '@effect-atom/atom-react/Hooks'
 import type {
   PrComment,
   PrCommentReaction,
@@ -42,6 +51,8 @@ import {
   Rocket,
   Search,
   ThumbsUp,
+  Wrench,
+  X,
 } from 'lucide-react'
 import {
   Suspense,
@@ -51,6 +62,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -72,6 +84,11 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
+import { usePanelActions } from '@/panels/panel-context'
+
+const addReactionMutation = LaborerClient.mutation('review.addReaction')
+const removeReactionMutation = LaborerClient.mutation('review.removeReaction')
+const fixFindingsMutation = LaborerClient.mutation('brrr.fix')
 
 /** Polling interval in milliseconds (30 seconds). */
 const POLL_INTERVAL_MS = 30_000
@@ -224,15 +241,20 @@ function ReactionIndicators({
 /**
  * Renders a structured finding card with severity badge, file:line,
  * category tag, description, collapsible suggested fixes, checkbox for
- * triage selection, and reaction state indicators.
+ * triage selection, reaction state indicators, and an optional "Unqueue"
+ * button for findings with a rocket reaction.
  */
 function FindingCard({
   finding,
+  isUnqueuing,
   onToggleSelection,
+  onUnqueue,
   selected,
 }: {
   readonly finding: ReviewFinding
+  readonly isUnqueuing?: boolean
   readonly onToggleSelection: (commentId: number) => void
+  readonly onUnqueue?: (finding: ReviewFinding) => void
   readonly selected: boolean
 }) {
   const [fixesOpen, setFixesOpen] = useState(false)
@@ -268,6 +290,21 @@ function FindingCard({
               </Badge>
             )}
             <ReactionIndicators reactions={finding.reactions} />
+            {/* Unqueue button for findings with rocket reaction */}
+            {onUnqueue && hasReaction(finding.reactions, 'rocket') && (
+              <Button
+                aria-label={`Unqueue finding: ${finding.id}`}
+                className="ml-auto h-5 gap-0.5 px-1.5 text-xs"
+                data-testid="unqueue-button"
+                disabled={isUnqueuing}
+                onClick={() => onUnqueue(finding)}
+                size="sm"
+                variant="ghost"
+              >
+                <X className="size-3" />
+                Unqueue
+              </Button>
+            )}
           </div>
 
           {/* File:line reference */}
@@ -482,6 +519,106 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   const selectedCount = selectedIds.size
   const allSelected = findings.length > 0 && selectedCount === findings.length
 
+  // -----------------------------------------------------------------------
+  // Mutation hooks for rocket reactions and brrr fix.
+  // -----------------------------------------------------------------------
+  const addReaction = useAtomSet(addReactionMutation, { mode: 'promise' })
+  const removeReaction = useAtomSet(removeReactionMutation, { mode: 'promise' })
+  const fixFindings = useAtomSet(fixFindingsMutation, { mode: 'promise' })
+  const panelActions = usePanelActions()
+
+  const [isFixing, setIsFixing] = useState(false)
+  const [unqueuingCommentId, setUnqueuingCommentId] = useState<number | null>(
+    null
+  )
+
+  /**
+   * Fix Selected: add rocket reactions to all selected findings, then
+   * spawn `brrr fix` in the workspace terminal.
+   */
+  const handleFixSelected = useCallback(async () => {
+    setIsFixing(true)
+    try {
+      // Add rocket reactions to all selected findings concurrently
+      const selectedFindings = findings.filter((f) =>
+        selectedIds.has(f.commentId)
+      )
+      await Promise.all(
+        selectedFindings.map((f) =>
+          addReaction({
+            payload: {
+              workspaceId,
+              commentId: f.commentId,
+              content: 'rocket',
+            },
+          })
+        )
+      )
+
+      // Spawn brrr fix terminal
+      const result = await fixFindings({
+        payload: { workspaceId },
+      })
+      toast.success('Fix started')
+      if (panelActions) {
+        panelActions.assignTerminalToPane(result.id, workspaceId)
+      }
+
+      // Clear selection and refresh to show updated reaction state
+      setSelectedIds(new Set())
+      refresh()
+      startPolling()
+    } catch (error: unknown) {
+      const message = extractErrorMessage(error)
+      toast.error(`Failed to start fix: ${message}`)
+    } finally {
+      setIsFixing(false)
+    }
+  }, [
+    addReaction,
+    findings,
+    fixFindings,
+    panelActions,
+    refresh,
+    selectedIds,
+    startPolling,
+    workspaceId,
+  ])
+
+  /**
+   * Unqueue: remove the rocket reaction from a single finding.
+   */
+  const handleUnqueue = useCallback(
+    async (finding: ReviewFinding) => {
+      const rocketReaction = finding.reactions.find(
+        (r) => r.content === 'rocket'
+      )
+      if (!rocketReaction) {
+        return
+      }
+
+      setUnqueuingCommentId(finding.commentId)
+      try {
+        await removeReaction({
+          payload: {
+            workspaceId,
+            commentId: finding.commentId,
+            reactionId: rocketReaction.id,
+          },
+        })
+        toast.success('Finding unqueued')
+        refresh()
+        startPolling()
+      } catch (error: unknown) {
+        const message = extractErrorMessage(error)
+        toast.error(`Failed to unqueue: ${message}`)
+      } finally {
+        setUnqueuingCommentId(null)
+      }
+    },
+    [refresh, removeReaction, startPolling, workspaceId]
+  )
+
   // Determine whether we're in the initial loading state (no data yet)
   // vs. a background refresh (has data, `waiting` is true).
   const isInitialLoading =
@@ -590,8 +727,10 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
       <ReviewHeaderBar
         allSelected={allSelected}
         findingsCount={findings.length}
+        isFixing={isFixing}
         isRefreshing={isRefreshing}
         onDeselectAll={handleDeselectAll}
+        {...(findings.length > 0 ? { onFixSelected: handleFixSelected } : {})}
         onRefresh={handleManualRefresh}
         onSelectAll={handleSelectAll}
         selectedCount={selectedCount}
@@ -603,8 +742,10 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
             {sortedFindings.map((finding) => (
               <FindingCard
                 finding={finding}
+                isUnqueuing={unqueuingCommentId === finding.commentId}
                 key={finding.commentId}
                 onToggleSelection={handleToggleSelection}
+                onUnqueue={handleUnqueue}
                 selected={selectedIds.has(finding.commentId)}
               />
             ))}
@@ -631,21 +772,25 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
 /**
  * Header bar for the review pane content area.
  * Shows a selected count, select all/deselect all control, a subtle
- * refreshing indicator, and a manual refresh button.
+ * refreshing indicator, a "Fix Selected" button, and a manual refresh button.
  */
 function ReviewHeaderBar({
   allSelected = false,
   findingsCount = 0,
+  isFixing = false,
   isRefreshing,
   onDeselectAll,
+  onFixSelected,
   onRefresh,
   onSelectAll,
   selectedCount,
 }: {
   readonly allSelected?: boolean
   readonly findingsCount?: number
+  readonly isFixing?: boolean
   readonly isRefreshing: boolean
   readonly onDeselectAll?: () => void
+  readonly onFixSelected?: () => void | Promise<void>
   readonly onRefresh: () => void
   readonly onSelectAll?: () => void
   readonly selectedCount: number
@@ -697,16 +842,32 @@ function ReviewHeaderBar({
           </div>
         )}
       </div>
-      <Button
-        aria-label="Refresh comments"
-        className="size-6"
-        data-testid="refresh-button"
-        onClick={onRefresh}
-        size="icon"
-        variant="ghost"
-      >
-        <RefreshCw className="size-3" />
-      </Button>
+      <div className="flex items-center gap-1">
+        {/* Fix Selected button */}
+        {onFixSelected && (
+          <Button
+            className="h-5 gap-1 px-1.5 text-xs"
+            data-testid="fix-selected-button"
+            disabled={selectedCount === 0 || isFixing}
+            onClick={onFixSelected}
+            size="sm"
+            variant="ghost"
+          >
+            <Wrench className="size-3" />
+            Fix{selectedCount > 0 ? ` (${selectedCount})` : ''}
+          </Button>
+        )}
+        <Button
+          aria-label="Refresh comments"
+          className="size-6"
+          data-testid="refresh-button"
+          onClick={onRefresh}
+          size="icon"
+          variant="ghost"
+        >
+          <RefreshCw className="size-3" />
+        </Button>
+      </div>
     </div>
   )
 }

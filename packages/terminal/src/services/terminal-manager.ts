@@ -20,7 +20,16 @@
 
 import { exec } from 'node:child_process'
 import { TerminalRpcError } from '@laborer/shared/rpc'
-import { Cause, Context, Effect, Layer, PubSub, Ref, Runtime } from 'effect'
+import {
+  Cause,
+  Context,
+  Effect,
+  Layer,
+  PubSub,
+  Ref,
+  Runtime,
+  Schedule,
+} from 'effect'
 import { RingBuffer } from '../lib/ring-buffer.js'
 import { PtyHostClient } from './pty-host-client.js'
 
@@ -569,12 +578,24 @@ interface TerminalRestartedEvent {
   readonly terminal: TerminalRecord
 }
 
+/**
+ * Emitted by the background detection fiber when a terminal's process
+ * state changes (foreground process, agent status, child process
+ * presence, or process chain). Carries the full TerminalRecord so
+ * subscribers can replace local state in one shot.
+ */
+interface TerminalProcessChangedEvent {
+  readonly _tag: 'ProcessChanged'
+  readonly terminal: TerminalRecord
+}
+
 type TerminalLifecycleEvent =
   | TerminalSpawnedEvent
   | TerminalStatusChangedEvent
   | TerminalExitedEvent
   | TerminalRemovedEvent
   | TerminalRestartedEvent
+  | TerminalProcessChangedEvent
 
 // ---------------------------------------------------------------------------
 // Service Definition
@@ -1558,6 +1579,23 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       // ---------------------------------------------------------------
       // setAgentStatusFromHook — external hook status override
       // ---------------------------------------------------------------
+
+      /**
+       * Immediately emit a ProcessChanged event for a single terminal by
+       * building a full TerminalRecord from cached process detection.
+       * Called from `setAgentStatusFromHook` so hook-reported status
+       * reaches subscribers without waiting for the next detection tick.
+       */
+      const emitProcessChangedForTerminal = (
+        terminal: ManagedTerminal
+      ): void => {
+        // Process detection fields come from the last snapshot if available,
+        // but agent status is always fresh from the maps.
+        const cachedDetection = lastProcessSnapshot.get(terminal.id)
+        const record = toTerminalRecord(terminal, cachedDetection)
+        emitEvent({ _tag: 'ProcessChanged', terminal: record })
+      }
+
       const setAgentStatusFromHook = Effect.fn(
         'TerminalManager.setAgentStatusFromHook'
       )(function* (
@@ -1588,7 +1626,135 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             `Hook: set agent status to '${event}' for terminal ${terminalId}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
         }
+
+        // Push the updated state to stream subscribers immediately so
+        // the UI reflects hook-reported agent status without waiting
+        // for the next detection tick.
+        emitProcessChangedForTerminal(terminal)
       })
+
+      // ---------------------------------------------------------------
+      // Background process detection fiber
+      // ---------------------------------------------------------------
+      // Runs every 200ms. On each tick:
+      // 1. Collect shell PIDs for all running terminals
+      // 2. Run a single async `ps` call
+      // 3. Build TerminalRecords and diff against the previous snapshot
+      // 4. Emit ProcessChanged events for any terminals whose process
+      //    state differs from the last snapshot
+      //
+      // The snapshot stores the serialised process fields (foreground-
+      // Process, agentStatus, hasChildProcess, processChain) so we can
+      // do a cheap string equality check.
+      // ---------------------------------------------------------------
+
+      /** Interval for the background detection loop. */
+      const DETECTION_INTERVAL_MS = 200
+
+      /**
+       * Per-terminal process detection snapshot from the last tick.
+       * Used to diff and decide whether to emit ProcessChanged.
+       */
+      const lastProcessSnapshot = new Map<string, ProcessDetectionResult>()
+
+      /**
+       * Per-terminal serialised TerminalRecord from the last tick.
+       * JSON-stringified to enable cheap equality comparison.
+       */
+      const lastRecordJson = new Map<string, string>()
+
+      /** Collect shell PIDs for running terminals from the in-memory map. */
+      const collectShellPids = (
+        map: ReadonlyMap<string, ManagedTerminal>
+      ): {
+        shellPids: Map<string, number>
+        allTerminals: ManagedTerminal[]
+      } => {
+        const shellPids = new Map<string, number>()
+        const allTerminals: ManagedTerminal[] = []
+
+        for (const terminal of map.values()) {
+          allTerminals.push(terminal)
+          if (
+            terminal.status === 'running' &&
+            terminal.shellPid !== undefined
+          ) {
+            shellPids.set(terminal.id, terminal.shellPid)
+          }
+        }
+
+        return { shellPids, allTerminals }
+      }
+
+      /**
+       * Diff detection results against the previous snapshot and emit
+       * ProcessChanged events for terminals whose state has changed.
+       * Also cleans up stale snapshot entries.
+       */
+      const diffAndEmitChanges = (
+        allTerminals: readonly ManagedTerminal[],
+        detectionResults: ReadonlyMap<string, ProcessDetectionResult>,
+        terminalIds: ReadonlySet<string>
+      ): void => {
+        for (const terminal of allTerminals) {
+          const detected = detectionResults.get(terminal.id)
+
+          if (detected !== undefined) {
+            lastProcessSnapshot.set(terminal.id, detected)
+          }
+
+          const record = toTerminalRecord(terminal, detected)
+          const json = JSON.stringify(record)
+          const previous = lastRecordJson.get(terminal.id)
+
+          if (json !== previous) {
+            lastRecordJson.set(terminal.id, json)
+            emitEvent({ _tag: 'ProcessChanged', terminal: record })
+          }
+        }
+
+        // Clean up snapshots for removed terminals.
+        for (const id of lastRecordJson.keys()) {
+          if (!terminalIds.has(id)) {
+            lastRecordJson.delete(id)
+            lastProcessSnapshot.delete(id)
+          }
+        }
+      }
+
+      const detectionTick = Effect.gen(function* () {
+        const map = yield* Ref.get(terminalsRef)
+
+        if (map.size === 0) {
+          return
+        }
+
+        const { shellPids, allTerminals } = collectShellPids(map)
+
+        const detectionResults = yield* Effect.promise(() =>
+          detectProcessesForPids(shellPids)
+        )
+
+        diffAndEmitChanges(allTerminals, detectionResults, new Set(map.keys()))
+      }).pipe(
+        Effect.tapDefect((cause) =>
+          Effect.logWarning(
+            `Process detection tick failed: ${Cause.pretty(cause)}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+        ),
+        Effect.catchAllDefect(() => Effect.void)
+      )
+
+      // Launch the detection fiber as a daemon so it runs for the
+      // lifetime of the scoped layer and is interrupted on shutdown.
+      yield* detectionTick.pipe(
+        Effect.repeat(Schedule.spaced(`${DETECTION_INTERVAL_MS} millis`)),
+        Effect.forkDaemon
+      )
+
+      yield* Effect.log(
+        `Background process detection started (interval=${DETECTION_INTERVAL_MS}ms)`
+      ).pipe(Effect.annotateLogs('module', logPrefix))
 
       return TerminalManager.of({
         spawn,
@@ -1620,6 +1786,7 @@ export type {
   TerminalBufferState,
   TerminalExitedEvent,
   TerminalLifecycleEvent,
+  TerminalProcessChangedEvent,
   TerminalRecord,
   TerminalRemovedEvent,
   TerminalRestartedEvent,

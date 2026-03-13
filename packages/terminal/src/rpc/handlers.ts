@@ -79,6 +79,11 @@ const toLifecycleEventSchema = (
         command: event.terminal.command,
         status: event.terminal.status,
       }
+    case 'ProcessChanged':
+      return {
+        _tag: 'ProcessChanged' as const,
+        terminal: toTerminalInfo(event.terminal),
+      }
     default: {
       const _exhaustive: never = event
       return _exhaustive

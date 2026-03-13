@@ -42,6 +42,23 @@ export const TerminalRestartedEvent = Schema.TaggedStruct('Restarted', {
 })
 
 /**
+ * Pushed when a terminal's process-level state changes (foreground process,
+ * agent status, child process presence, or process chain). Emitted by the
+ * server-side background detection fiber whenever the diff against the
+ * previous snapshot is non-empty, and immediately when a hook-reported
+ * agent status arrives.
+ *
+ * Carries the full `TerminalInfo` so subscribers can replace their local
+ * state in one shot without a round-trip `terminal.list` fetch.
+ */
+export const TerminalProcessChangedEvent = Schema.TaggedStruct(
+  'ProcessChanged',
+  {
+    terminal: Schema.suspend(() => TerminalInfo),
+  }
+)
+
+/**
  * Union of all terminal lifecycle events for the `terminal.events` stream.
  *
  * @see Issue #142: Terminal event stream RPC
@@ -51,7 +68,8 @@ export const TerminalLifecycleEventSchema = Schema.Union(
   TerminalStatusChangedEvent,
   TerminalExitedEvent,
   TerminalRemovedEvent,
-  TerminalRestartedEvent
+  TerminalRestartedEvent,
+  TerminalProcessChangedEvent
 )
 
 export type TerminalLifecycleEventSchema =

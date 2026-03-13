@@ -559,9 +559,11 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
             workspaceId: TEST_WORKSPACE_ID,
           })
 
-          // Create a stream from the PubSub — same as terminal.events handler
-          // Filter to only events for our terminal to avoid cross-test noise
+          // Create a stream from the PubSub — same as terminal.events handler.
+          // Filter to our terminal and exclude ProcessChanged events from the
+          // background detection fiber so we capture the expected lifecycle event.
           const eventStream = Stream.fromPubSub(tm.lifecycleEvents).pipe(
+            Stream.filter((event) => event._tag !== 'ProcessChanged'),
             Stream.map((event) => ({
               _tag: event._tag,
               id:
@@ -1389,6 +1391,229 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
         const tm = yield* TerminalManager
         yield* tm.kill(result.id)
       })
+    )
+  })
+
+  // -------------------------------------------------------------------------
+  // Background detection fiber — ProcessChanged events
+  // -------------------------------------------------------------------------
+
+  it('background detection fiber emits ProcessChanged when process state changes', async () => {
+    // Spawn a shell, then run a child process. The background detection
+    // fiber (200ms interval) should notice the process tree changed and
+    // emit a ProcessChanged event with the updated TerminalRecord.
+    //
+    // We use withGracePeriod to get a fresh TerminalManager so we can
+    // control the lifecycle cleanly.
+    await withGracePeriod(60_000, async (runLocalEffect) => {
+      const collectedEvents: TerminalLifecycleEvent[] = []
+
+      const terminalId = await runLocalEffect(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const tm = yield* TerminalManager
+
+            // Subscribe to lifecycle events
+            const dequeue = yield* tm.lifecycleEvents.subscribe
+
+            const collectFiber = yield* Effect.fork(
+              Effect.gen(function* () {
+                while (true) {
+                  const event = yield* Queue.take(dequeue)
+                  collectedEvents.push(event)
+                }
+              })
+            )
+
+            // Spawn an interactive shell
+            const terminal = yield* tm.spawn({
+              command: '/bin/sh',
+              cwd: TEST_CWD,
+              cols: 80,
+              rows: 24,
+              workspaceId: TEST_WORKSPACE_ID,
+            })
+
+            // Wait for the detection fiber to establish a baseline snapshot
+            yield* Effect.sleep(500)
+
+            // Run a child process — this changes the process tree
+            yield* tm.write(terminal.id, 'cat\n')
+
+            // Wait for the detection fiber to pick up the change (~200ms per tick)
+            yield* Effect.sleep(1000)
+
+            yield* Fiber.interrupt(collectFiber)
+            return terminal.id
+          })
+        )
+      )
+
+      // Filter for ProcessChanged events for our terminal
+      const processChangedEvents = collectedEvents.filter(
+        (e) => e._tag === 'ProcessChanged' && e.terminal.id === terminalId
+      )
+
+      // Should have at least one ProcessChanged — the detection fiber
+      // noticed the process tree changed when 'cat' became the foreground process.
+      assert.isTrue(
+        processChangedEvents.length >= 1,
+        `Expected at least 1 ProcessChanged event, got ${processChangedEvents.length}`
+      )
+
+      // The most recent ProcessChanged should have the cat foreground process
+      const lastEvent = processChangedEvents.at(-1)
+      assert.isDefined(lastEvent)
+      if (lastEvent?._tag === 'ProcessChanged') {
+        assert.isDefined(lastEvent.terminal.foregroundProcess)
+      }
+
+      // Clean up
+      await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          yield* tm.kill(terminalId)
+        })
+      )
+    })
+  })
+
+  it('detection fiber does not emit duplicate ProcessChanged for unchanged state', async () => {
+    // Spawn a shell and let it idle. After an initial ProcessChanged
+    // establishes the snapshot, subsequent ticks should NOT emit more
+    // ProcessChanged events because the state hasn't changed.
+    await withGracePeriod(60_000, async (runLocalEffect) => {
+      const collectedEvents: TerminalLifecycleEvent[] = []
+
+      const terminalId = await runLocalEffect(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const tm = yield* TerminalManager
+
+            const dequeue = yield* tm.lifecycleEvents.subscribe
+
+            const collectFiber = yield* Effect.fork(
+              Effect.gen(function* () {
+                while (true) {
+                  const event = yield* Queue.take(dequeue)
+                  collectedEvents.push(event)
+                }
+              })
+            )
+
+            // Spawn an idle shell — no child processes
+            const terminal = yield* tm.spawn({
+              command: '/bin/sh',
+              cwd: TEST_CWD,
+              cols: 80,
+              rows: 24,
+              workspaceId: TEST_WORKSPACE_ID,
+            })
+
+            // Wait for the detection fiber to establish the initial snapshot.
+            // This may emit 1-2 ProcessChanged events as the snapshot stabilises.
+            yield* Effect.sleep(1000)
+
+            // Clear collected events — now we measure from a stable state
+            collectedEvents.length = 0
+
+            // Wait another full second (5× the 200ms interval). No process
+            // state change should occur → no new ProcessChanged events.
+            yield* Effect.sleep(1000)
+
+            yield* Fiber.interrupt(collectFiber)
+            return terminal.id
+          })
+        )
+      )
+
+      const duplicateEvents = collectedEvents.filter(
+        (e) => e._tag === 'ProcessChanged' && e.terminal.id === terminalId
+      )
+
+      // After the snapshot stabilised, we should have zero ProcessChanged
+      // events because nothing changed in the idle shell.
+      assert.strictEqual(
+        duplicateEvents.length,
+        0,
+        `Expected 0 duplicate ProcessChanged events, got ${duplicateEvents.length}`
+      )
+
+      // Clean up
+      await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          yield* tm.kill(terminalId)
+        })
+      )
+    })
+  })
+
+  it('setAgentStatusFromHook emits ProcessChanged immediately', async () => {
+    // When a hook sets the agent status, a ProcessChanged event should
+    // be emitted immediately (not waiting for the next 200ms tick).
+    const collectedEvents: TerminalLifecycleEvent[] = []
+
+    await runEffect(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+
+          // Spawn a terminal
+          const terminal = yield* tm.spawn({
+            command: 'cat',
+            cwd: TEST_CWD,
+            cols: 80,
+            rows: 24,
+            workspaceId: TEST_WORKSPACE_ID,
+          })
+
+          // Subscribe to lifecycle events
+          const dequeue = yield* tm.lifecycleEvents.subscribe
+
+          const collectFiber = yield* Effect.fork(
+            Effect.gen(function* () {
+              while (true) {
+                const event = yield* Queue.take(dequeue)
+                collectedEvents.push(event)
+              }
+            })
+          )
+
+          // Wait a moment for the subscriber to be fully wired
+          yield* Effect.sleep(100)
+
+          // Clear any previously collected events
+          collectedEvents.length = 0
+
+          // Set agent status via hook — should emit ProcessChanged immediately
+          yield* tm.setAgentStatusFromHook(terminal.id, 'active')
+
+          // Only wait 50ms — way less than a detection tick (200ms).
+          // If ProcessChanged arrives, it came from the hook, not the fiber.
+          yield* Effect.sleep(50)
+
+          yield* Fiber.interrupt(collectFiber)
+
+          // Verify a ProcessChanged event was emitted with agentStatus 'active'
+          const hookEvents = collectedEvents.filter(
+            (e) => e._tag === 'ProcessChanged' && e.terminal.id === terminal.id
+          )
+
+          assert.isTrue(
+            hookEvents.length >= 1,
+            `Expected at least 1 ProcessChanged from hook, got ${hookEvents.length}`
+          )
+
+          const hookEvent = hookEvents[0]
+          if (hookEvent?._tag === 'ProcessChanged') {
+            assert.strictEqual(hookEvent.terminal.agentStatus, 'active')
+          }
+
+          // Clean up
+          yield* tm.kill(terminal.id)
+        })
+      )
     )
   })
 })

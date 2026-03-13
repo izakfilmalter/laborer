@@ -1,26 +1,31 @@
 /**
  * useTerminalList — reactive terminal list from the terminal service.
  *
- * Polls the terminal service's `terminal.list` RPC endpoint at a
- * configurable interval (default 5 seconds) to provide a reactive list
- * of all terminals. Replaces the LiveStore `queryDb(terminals)` pattern
- * for terminal state queries.
+ * **Push-based architecture.** Instead of polling `terminal.list` every N
+ * seconds, this module creates a `keepAlive` atom that:
  *
- * The poll interval is aligned with the server-side process detection
- * cache refresh (5 seconds) since the server caches foreground process
- * info asynchronously. Polling faster would return stale cache data
- * without benefit.
+ * 1. Fetches the initial terminal list via `terminal.list` (hydration)
+ * 2. Subscribes to `terminal.events` for real-time updates pushed by the
+ *    server's 200 ms background detection fiber
+ * 3. Applies each event to the in-memory terminal list and emits the
+ *    updated list as the atom's value
  *
- * Uses the TerminalServiceClient (AtomRpc) for type-safe RPC calls
- * instead of raw fetch, ensuring the correct Effect RPC JSON wire
- * protocol is used.
+ * The atom stays alive for the lifetime of the app (via `Atom.keepAlive`)
+ * so the event stream connection is never torn down and re-established
+ * as components mount/unmount.
  *
- * @see Issue #144: Web app LiveStore terminal query replacement
- * @see packages/terminal/src/rpc/handlers.ts — terminal.list handler
+ * When the stream disconnects, Effect's `Stream.retry` re-establishes
+ * the connection with exponential backoff (1 s → 2 s → … → 30 s cap).
+ *
+ * @see packages/terminal/src/services/terminal-manager.ts — detection fiber
+ * @see packages/terminal/src/rpc/handlers.ts — terminal.events handler
  */
 
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Atom, Result } from '@effect-atom/atom'
+import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import type { TerminalLifecycleEventSchema } from '@laborer/shared/rpc'
+import { Effect, Ref, Schedule, Stream } from 'effect'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 
@@ -76,16 +81,20 @@ interface TerminalInfo {
 
 type TerminalServiceStatus = 'checking' | 'available' | 'unavailable'
 
+// ---------------------------------------------------------------------------
+// Shared store — module-level singleton
+//
+// External callers (e.g., spawn/restart handlers) use
+// `upsertTerminalListItem` and `removeTerminalListItem` to apply
+// optimistic updates before the server's ProcessChanged event arrives.
+// ---------------------------------------------------------------------------
+
 type TerminalListListener = (terminals: readonly TerminalInfo[]) => void
 
 const terminalListListeners = new Set<TerminalListListener>()
 
 let sharedTerminalList: readonly TerminalInfo[] = []
 let hasSharedTerminalListSnapshot = false
-
-const getSharedTerminalListSnapshot = (): readonly TerminalInfo[] | null => {
-  return hasSharedTerminalListSnapshot ? sharedTerminalList : null
-}
 
 const publishTerminalList = (terminals: readonly TerminalInfo[]) => {
   sharedTerminalList = terminals
@@ -126,42 +135,208 @@ const resetTerminalListStore = () => {
   hasSharedTerminalListSnapshot = false
 }
 
+// ---------------------------------------------------------------------------
+// Event application
+// ---------------------------------------------------------------------------
+
 /**
- * Default polling interval in milliseconds.
- *
- * Set to 5 seconds to align with the server-side process detection cache
- * refresh interval. The server detects foreground processes (for sidebar
- * display) via a background timer using a single async `ps` call. Polling
- * faster than the cache refresh provides no benefit — results would be
- * identical — and reduces unnecessary network + RPC overhead.
- *
- * Prior value was 2000ms, which with the old synchronous `execSync`-based
- * process detection caused O(N×12) event loop blocking per poll cycle.
+ * Apply a single lifecycle event from the `terminal.events` stream to
+ * an in-memory terminal list (stored in an Effect Ref).
  */
-const DEFAULT_POLL_INTERVAL_MS = 5000
+const applyEventToRef = (
+  event: TerminalLifecycleEventSchema,
+  ref: Ref.Ref<readonly TerminalInfo[]>
+): Effect.Effect<readonly TerminalInfo[]> =>
+  Ref.updateAndGet(ref, (list) => applyEventToList(event, list))
+
+/** Pure function: apply event to a terminal list, return new list. */
+const applyEventToList = (
+  event: TerminalLifecycleEventSchema,
+  list: readonly TerminalInfo[]
+): readonly TerminalInfo[] => {
+  switch (event._tag) {
+    case 'ProcessChanged': {
+      return upsertInList(list, event.terminal as TerminalInfo)
+    }
+    case 'Spawned': {
+      return upsertInList(list, {
+        agentStatus: null,
+        args: [],
+        command: event.command,
+        cwd: '',
+        foregroundProcess: null,
+        hasChildProcess: false,
+        id: event.id,
+        processChain: [],
+        status: event.status,
+        workspaceId: event.workspaceId,
+      })
+    }
+    case 'StatusChanged': {
+      const existing = list.find(({ id }) => id === event.id)
+      if (existing !== undefined) {
+        return upsertInList(list, { ...existing, status: event.status })
+      }
+      return list
+    }
+    case 'Removed': {
+      return list.filter(({ id }) => id !== event.id)
+    }
+    case 'Restarted': {
+      const existing = list.find(({ id }) => id === event.id)
+      if (existing !== undefined) {
+        return upsertInList(list, {
+          ...existing,
+          status: event.status,
+          command: event.command,
+          agentStatus: null,
+          foregroundProcess: null,
+          hasChildProcess: false,
+          processChain: [],
+        })
+      }
+      return list
+    }
+    case 'Exited': {
+      // Exited is informational — StatusChanged handles the transition.
+      return list
+    }
+    default: {
+      return list
+    }
+  }
+}
+
+/** Upsert a terminal into a list (immutable). */
+const upsertInList = (
+  list: readonly TerminalInfo[],
+  terminal: TerminalInfo
+): readonly TerminalInfo[] => {
+  const next = [...list]
+  const idx = next.findIndex(({ id }) => id === terminal.id)
+  if (idx === -1) {
+    next.push(terminal)
+  } else {
+    next[idx] = terminal
+  }
+  return next
+}
+
+// ---------------------------------------------------------------------------
+// Terminal list atom — keepAlive, push-based
+// ---------------------------------------------------------------------------
+
+/**
+ * Retry schedule for the event stream: exponential backoff 1s → 30s cap.
+ */
+const eventStreamRetrySchedule = Schedule.exponential('1 second').pipe(
+  Schedule.union(Schedule.spaced('30 seconds'))
+)
+
+/**
+ * Atom that holds the current terminal list, updated in real time via the
+ * `terminal.events` streaming RPC. Uses `Atom.keepAlive` so the stream
+ * stays connected across component mount/unmount cycles.
+ *
+ * The atom's value is `Result<readonly TerminalInfo[], E>`:
+ * - `Waiting` while the initial fetch is in progress
+ * - `Success(terminals)` once hydrated and on each subsequent event
+ * - `Failure(error)` if the initial fetch and all retries fail
+ */
+const terminalListAtom = Atom.keepAlive(
+  TerminalServiceClient.runtime.atom(
+    Effect.gen(function* () {
+      const client = yield* TerminalServiceClient
+
+      // 1. Hydrate from terminal.list
+      const initialList = yield* client('terminal.list', undefined)
+      const listRef = yield* Ref.make<readonly TerminalInfo[]>(
+        initialList as readonly TerminalInfo[]
+      )
+
+      // Publish to the shared store for external consumers.
+      publishTerminalList(initialList as readonly TerminalInfo[])
+
+      // 2. Subscribe to terminal.events in a background fiber.
+      //    On each event, update the ref and publish to the shared store.
+      yield* client('terminal.events', undefined).pipe(
+        Stream.tap((event) =>
+          Effect.gen(function* () {
+            const updated = yield* applyEventToRef(event, listRef)
+            publishTerminalList(updated)
+          })
+        ),
+        Stream.runDrain,
+        Effect.retry(eventStreamRetrySchedule),
+        Effect.catchAll((error) =>
+          Effect.logWarning(`Terminal event stream ended: ${String(error)}`)
+        ),
+        Effect.forkScoped
+      )
+
+      return yield* Ref.get(listRef)
+    })
+  )
+)
+
+// ---------------------------------------------------------------------------
+// Mutation for imperative refresh
+// ---------------------------------------------------------------------------
 
 const listTerminalsMutation = TerminalServiceClient.mutation('terminal.list')
 
+// ---------------------------------------------------------------------------
+// Service status tracking
+// ---------------------------------------------------------------------------
+
+type StatusListener = (status: {
+  readonly serviceStatus: TerminalServiceStatus
+  readonly errorMessage: string | null
+}) => void
+
+const statusListeners = new Set<StatusListener>()
+let sharedServiceStatus: TerminalServiceStatus = 'checking'
+let sharedErrorMessage: string | null = null
+
+const publishStatus = (
+  serviceStatus: TerminalServiceStatus,
+  errorMessage: string | null
+) => {
+  sharedServiceStatus = serviceStatus
+  sharedErrorMessage = errorMessage
+  for (const listener of statusListeners) {
+    listener({ serviceStatus, errorMessage })
+  }
+}
+
+const subscribeToStatus = (listener: StatusListener) => {
+  statusListeners.add(listener)
+  return () => {
+    statusListeners.delete(listener)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
+
 /**
- * Hook that provides a polled terminal list from the terminal service.
+ * Hook that provides a push-based reactive terminal list from the
+ * terminal service.
  *
- * Calls `terminal.list` on mount and at each poll interval to keep
- * the terminal list in sync with the terminal service state.
+ * Reads from the `terminalListAtom` which maintains a persistent
+ * connection to the `terminal.events` streaming RPC. No polling.
  *
- * The server-side `listTerminals()` is now non-blocking — it reads from
- * a pre-computed process detection cache instead of spawning synchronous
- * shell commands. This makes polling safe at any interval.
- *
- * @param pollIntervalMs - Polling interval in ms (default 5000).
- * @returns Object with `terminals` array and `isLoading` flag.
+ * @returns Object with `terminals` array, loading/status flags, and a
+ *   manual `refresh` function.
  */
-function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
+function useTerminalList(): {
   readonly errorMessage: string | null
   readonly isServiceAvailable: boolean
   readonly terminals: readonly TerminalInfo[]
   readonly isLoading: boolean
   /**
-   * Force a fresh `terminal.list` RPC call, bypassing the poll interval.
+   * Force a fresh `terminal.list` RPC call.
    *
    * Returns the up-to-date terminal list directly so callers can make
    * decisions based on the freshest process state (e.g., checking
@@ -173,89 +348,87 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
   readonly refresh: () => Promise<readonly TerminalInfo[]>
   readonly serviceStatus: TerminalServiceStatus
 } {
+  const atomResult = useAtomValue(terminalListAtom)
   const listTerminals = useAtomSet(listTerminalsMutation, {
     mode: 'promise',
   })
-  const initialSnapshot = getSharedTerminalListSnapshot()
-  const [terminals, setTerminals] = useState<readonly TerminalInfo[]>(
-    initialSnapshot ?? []
-  )
-  const [isLoading, setIsLoading] = useState(initialSnapshot === null)
-  const [serviceStatus, setServiceStatus] = useState<TerminalServiceStatus>(
-    initialSnapshot === null ? 'checking' : 'available'
-  )
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const mountedRef = useRef(true)
 
-  const fetchAndUpdate = useCallback(async () => {
-    try {
-      const result = await listTerminals({ payload: undefined })
-      if (mountedRef.current) {
-        publishTerminalList(result as readonly TerminalInfo[])
-        setIsLoading(false)
-        setServiceStatus('available')
-        setErrorMessage(null)
-      }
-    } catch (error) {
-      // Keep the last known terminal list, but surface service availability
-      // so the UI can show a clear "Terminal service unavailable" warning.
-      if (mountedRef.current) {
-        setIsLoading(false)
-        setServiceStatus('unavailable')
-        const message =
-          error instanceof Error
-            ? error.message
-            : 'Unknown terminal service error'
-        setErrorMessage(message)
-      }
+  // Derive state from the atom result.
+  const atomTerminals = useMemo((): readonly TerminalInfo[] => {
+    if (Result.isSuccess(atomResult)) {
+      return atomResult.value as readonly TerminalInfo[]
     }
-  }, [listTerminals])
+    return []
+  }, [atomResult])
 
-  /**
-   * Imperative refresh: fetches the latest terminal list from the server,
-   * publishes it to all subscribers, and returns the fresh data.
-   *
-   * Used by close-confirmation gating to get real-time process state
-   * instead of relying on the 5-second poll cache, which can be stale
-   * when the user exits a process (e.g., Ctrl+C) and immediately
-   * closes the terminal (Cmd+W).
-   */
-  const refresh = useCallback(async (): Promise<readonly TerminalInfo[]> => {
-    const result = await listTerminals({ payload: undefined })
-    const terminals = result as readonly TerminalInfo[]
-    publishTerminalList(terminals)
-    return terminals
-  }, [listTerminals])
+  // Track terminals from the shared store for external updates
+  // (optimistic upserts from spawn/restart).
+  const initialSnapshot = hasSharedTerminalListSnapshot
+    ? sharedTerminalList
+    : atomTerminals
+  const [terminals, setTerminals] =
+    useState<readonly TerminalInfo[]>(initialSnapshot)
 
+  // Derive initial service status from the atom result so it's
+  // correct on the very first render (no effect needed).
+  const deriveStatus = (): TerminalServiceStatus => {
+    if (Result.isSuccess(atomResult)) {
+      return 'available'
+    }
+    if (Result.isFailure(atomResult)) {
+      return 'unavailable'
+    }
+    return sharedServiceStatus
+  }
+  const initialStatus = deriveStatus()
+  const [serviceStatus, setServiceStatus] =
+    useState<TerminalServiceStatus>(initialStatus)
+  const [errorMessage, setErrorMessage] = useState<string | null>(
+    sharedErrorMessage
+  )
+
+  // Sync atom result → service status.
   useEffect(() => {
-    mountedRef.current = true
-    const unsubscribe = subscribeToTerminalList((nextTerminals) => {
-      if (!mountedRef.current) {
-        return
-      }
+    if (Result.isSuccess(atomResult)) {
+      publishStatus('available', null)
+    } else if (Result.isFailure(atomResult)) {
+      publishStatus('unavailable', String(atomResult.cause))
+    }
+  }, [atomResult])
 
+  // Sync shared store → local state.
+  useEffect(() => {
+    // If atom has data, publish it to shared store (initial sync).
+    if (Result.isSuccess(atomResult) && !hasSharedTerminalListSnapshot) {
+      publishTerminalList(atomResult.value as readonly TerminalInfo[])
+    }
+
+    const unsubTerminals = subscribeToTerminalList((nextTerminals) => {
       setTerminals(nextTerminals)
-      setIsLoading(false)
-      setServiceStatus('available')
-      setErrorMessage(null)
     })
 
-    fetchAndUpdate()
-
-    if (pollIntervalMs > 0) {
-      const timer = setInterval(fetchAndUpdate, pollIntervalMs)
-      return () => {
-        mountedRef.current = false
-        unsubscribe()
-        clearInterval(timer)
+    const unsubStatus = subscribeToStatus(
+      ({ serviceStatus: s, errorMessage: e }) => {
+        setServiceStatus(s)
+        setErrorMessage(e)
       }
-    }
+    )
 
     return () => {
-      mountedRef.current = false
-      unsubscribe()
+      unsubTerminals()
+      unsubStatus()
     }
-  }, [fetchAndUpdate, pollIntervalMs])
+  }, [atomResult])
+
+  const isLoading = Result.isInitial(atomResult) || atomResult.waiting
+
+  const refresh = useCallback(async (): Promise<readonly TerminalInfo[]> => {
+    const result = await listTerminals({ payload: undefined })
+    const freshTerminals = result as readonly TerminalInfo[]
+    publishTerminalList(freshTerminals)
+    publishStatus('available', null)
+    return freshTerminals
+  }, [listTerminals])
 
   return {
     errorMessage,
@@ -269,6 +442,7 @@ function useTerminalList(pollIntervalMs = DEFAULT_POLL_INTERVAL_MS): {
 
 export { useTerminalList }
 export {
+  applyEventToList,
   removeTerminalListItem,
   resetTerminalListStore,
   upsertTerminalListItem,

@@ -74,6 +74,7 @@ describe('LaborerRpcs workspace management', () => {
           const branchName = 'feature/rpc-create'
 
           writeLaborerConfig(repoPath, {
+            devServer: { image: null },
             setupScripts: [
               `printf '%s' "$PORT,$LABORER_WORKSPACE_ID,$LABORER_BRANCH,$LABORER_WORKSPACE_PATH" > ${SETUP_ENV_FILE}`,
             ],

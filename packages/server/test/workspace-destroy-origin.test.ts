@@ -1,6 +1,8 @@
+import { execSync } from 'node:child_process'
 import { existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
+import { containerName } from '@laborer/shared/container-name'
 import { events, tables } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
@@ -21,6 +23,9 @@ import { TestFileWatcherClientLayer } from './helpers/test-file-watcher-client.j
 import { TestLaborerStore } from './helpers/test-store.js'
 
 const tempRoots: string[] = []
+
+const docker = (args: string): string =>
+  execSync(`docker ${args}`, { encoding: 'utf-8' }).trim()
 
 const TestLayer = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(DepsImageService.layer),
@@ -161,5 +166,70 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
       assert.isFalse(existsSync(worktreePath))
       assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
     }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scopedLive(
+    'removes leaked container by deterministic branch name even when workspace metadata is missing',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('destroy-leaked-container', tempRoots)
+        const branchName = 'feature/leaked-container'
+        const projectName = 'destroy-leaked-container'
+        const worktreePath = join(repoPath, '.worktrees', 'leaked-container')
+        git(`worktree add -b ${branchName} ${worktreePath}`, repoPath)
+
+        const projectId = crypto.randomUUID()
+        const workspaceId = crypto.randomUUID()
+        const leakedContainer = containerName(branchName, projectName).name
+
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            try {
+              docker(`rm -f ${leakedContainer}`)
+            } catch {
+              // best-effort cleanup for local test runs
+            }
+          })
+        )
+
+        docker(`run -d --name ${leakedContainer} alpine:3.20 sleep infinity`)
+
+        const { store } = yield* LaborerStore
+        store.commit(
+          events.projectCreated({
+            id: projectId,
+            repoPath,
+            name: projectName,
+            rlphConfig: null,
+          })
+        )
+        store.commit(
+          events.workspaceCreated({
+            id: workspaceId,
+            projectId,
+            taskSource: null,
+            branchName,
+            worktreePath,
+            port: 0,
+            status: 'stopped',
+            origin: 'laborer',
+            createdAt: new Date().toISOString(),
+            baseSha: null,
+          })
+        )
+
+        const provider = yield* WorkspaceProvider
+        yield* provider.destroyWorktree(workspaceId)
+        yield* waitForWorkspaceRemoval(workspaceId)
+
+        assert.isFalse(existsSync(worktreePath))
+        assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
+        assert.strictEqual(
+          docker(
+            `ps -a --filter name=^${leakedContainer}$ --format '{{.Names}}'`
+          ),
+          ''
+        )
+      }).pipe(Effect.provide(TestLayer))
   )
 })

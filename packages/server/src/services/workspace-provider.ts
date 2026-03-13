@@ -57,6 +57,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
+import { containerName } from '@laborer/shared/container-name'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import {
@@ -409,6 +410,68 @@ const rollbackWorktree = (
     ).pipe(Effect.annotateLogs('module', logPrefix))
   })
 
+const dockerContainerExists = (name: string): Effect.Effect<boolean, never> =>
+  Effect.tryPromise({
+    try: async () => {
+      const proc = spawn(['docker', 'inspect', name], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const exitCode = await proc.exited
+      return exitCode === 0
+    },
+    catch: () => false,
+  }).pipe(Effect.catchAll(() => Effect.succeed(false)))
+
+const destroyContainerByName = (
+  name: string,
+  workspaceId: string
+): Effect.Effect<void, never> =>
+  Effect.gen(function* () {
+    const exists = yield* dockerContainerExists(name)
+    if (!exists) {
+      yield* Effect.logDebug(
+        `No Docker container named "${name}" found for workspace "${workspaceId}", skipping fallback cleanup`
+      ).pipe(Effect.annotateLogs('module', logPrefix))
+      return
+    }
+
+    yield* Effect.logInfo(
+      `Destroying leaked container "${name}" for workspace "${workspaceId}" via deterministic fallback`
+    ).pipe(Effect.annotateLogs('module', logPrefix))
+
+    yield* Effect.tryPromise({
+      try: async () => {
+        const proc = spawn(['docker', 'rm', '-f', name], {
+          stdout: 'pipe',
+          stderr: 'pipe',
+        })
+        const exitCode = await proc.exited
+        const stderr = await new Response(proc.stderr).text()
+        return { exitCode, stderr }
+      },
+      catch: (error) => String(error),
+    }).pipe(
+      Effect.tap((result) => {
+        if (typeof result === 'string') {
+          return Effect.logWarning(
+            `Failed to remove leaked container "${name}": ${result}`
+          )
+        }
+
+        if (result.exitCode !== 0) {
+          return Effect.logWarning(
+            `docker rm -f failed for leaked container "${name}" (exit ${result.exitCode}): ${result.stderr.trim()}`
+          )
+        }
+
+        return Effect.logDebug(`Leaked container "${name}" removed`)
+      }),
+      Effect.annotateLogs('module', logPrefix),
+      Effect.catchAll(() => Effect.void)
+    )
+  })
+
 /**
  * Fetch the latest remote refs before worktree creation. Runs `git fetch --all`
  * to ensure all remote branches are up-to-date. This is important because
@@ -756,6 +819,12 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       // Track background container-setup fibers per workspace so
       // destroyWorktree can interrupt them before cleaning up.
       const setupFibers = yield* Ref.make(
+        new Map<string, Fiber.RuntimeFiber<void, never>>()
+      )
+      // Track in-flight destroy fibers by worktree path so a new create
+      // for the same branch/path can wait for the actual cleanup fiber to
+      // finish instead of guessing with a timeout.
+      const destroyFibers = yield* Ref.make(
         new Map<string, Fiber.RuntimeFiber<void, never>>()
       )
       const { store } = yield* LaborerStore
@@ -1188,33 +1257,20 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           // validation, setup scripts, and optional container setup.
           // Progress is communicated via worktreeSetupStepChanged events.
           const worktreeSetupEffect = Effect.gen(function* () {
-            // Phase 0: Wait for any in-flight destroy cleanup that targets
-            // the same worktree path. When the user destroys a workspace
-            // and immediately creates a new one for the same branch, the
-            // old destroy's background fiber (git worktree remove, git
-            // branch -D) races with this setup fiber. We poll until no
-            // 'destroyed' workspace exists at this path — the row is
-            // deleted as the last step of the destroy fiber, so its
-            // absence means cleanup is complete.
-            const maxWaitAttempts = 100
-            for (let i = 0; i < maxWaitAttempts; i++) {
-              const conflicting = (
-                store.query(
-                  tables.workspaces.where('projectId', projectId)
-                ) as readonly WorkspaceRecord[]
-              ).find(
-                (w) =>
-                  w.id !== id &&
-                  w.worktreePath === worktreePath &&
-                  w.status === 'destroyed'
-              )
-              if (conflicting === undefined) {
-                break
-              }
-              yield* Effect.logDebug(
-                `Waiting for in-flight destroy of workspace ${conflicting.id} at ${worktreePath}`
+            // Phase 0: Wait for any in-flight destroy cleanup targeting the
+            // same worktree path. This blocks on the actual background fiber
+            // instead of polling with a timeout.
+            const inFlightDestroy = (yield* Ref.get(destroyFibers)).get(
+              worktreePath
+            )
+            if (inFlightDestroy !== undefined) {
+              yield* Effect.logInfo(
+                `Waiting for in-flight destroy cleanup at ${worktreePath} before creating workspace ${id}`
               ).pipe(Effect.annotateLogs('module', logPrefix))
-              yield* Effect.sleep('100 millis')
+              yield* Fiber.join(inFlightDestroy)
+              yield* Effect.logInfo(
+                `In-flight destroy cleanup finished for ${worktreePath}; resuming workspace ${id} creation`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
             }
 
             // Phase 1: Create and validate worktree, run setup scripts
@@ -1467,13 +1523,21 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           )
 
           const backgroundCleanup = Effect.gen(function* () {
+            const latestWorkspace =
+              store.query(tables.workspaces.where('id', workspaceId))[0] ??
+              workspace
+            const deterministicContainerName = containerName(
+              latestWorkspace.branchName,
+              project.name
+            ).name
+
             // Destroy container if one exists (Issue #5)
             // Container destruction happens before worktree removal so
             // the container is stopped before its bind-mounted directory
             // is deleted. Best-effort: logs warnings but continues cleanup.
-            if (workspace.containerId !== null) {
+            if (latestWorkspace.containerId !== null) {
               yield* Effect.logInfo(
-                `Destroying container: ${workspace.containerId}`
+                `Destroying tracked container: ${latestWorkspace.containerId}`
               ).pipe(Effect.annotateLogs('module', logPrefix))
 
               yield* containerService
@@ -1485,6 +1549,11 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                     ).pipe(Effect.annotateLogs('module', logPrefix))
                   )
                 )
+            } else if (latestWorkspace.origin === 'laborer') {
+              yield* destroyContainerByName(
+                deterministicContainerName,
+                workspaceId
+              )
             }
 
             // 4. Remove the git worktree and branch.
@@ -1698,7 +1767,24 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             )
           )
 
-          yield* Effect.forkDaemon(backgroundCleanup)
+          const cleanupFiber = yield* Effect.forkDaemon(backgroundCleanup)
+
+          yield* Ref.update(destroyFibers, (m) => {
+            const next = new Map(m)
+            next.set(workspace.worktreePath, cleanupFiber)
+            return next
+          })
+
+          cleanupFiber.addObserver(() => {
+            Ref.update(destroyFibers, (m) => {
+              const next = new Map(m)
+              const current = next.get(workspace.worktreePath)
+              if (current === cleanupFiber) {
+                next.delete(workspace.worktreePath)
+              }
+              return next
+            }).pipe(Effect.runSync)
+          })
         }
       )
 

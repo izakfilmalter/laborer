@@ -52,3 +52,36 @@ Completed all acceptance criteria:
   - Returns NOT_FOUND when workspace does not exist
   - Handles gh auth failure with actionable error message
 - All 269 tests pass, TypeScript clean, formatting clean
+
+## Issue 4: Finding extraction (server-side parsing) — DONE
+
+Completed all acceptance criteria:
+
+- Defined new shared schemas in packages/shared/src/rpc.ts:
+  - ReviewSeverity (literal: 'critical' | 'warning' | 'info')
+  - ReviewFinding (id, file, line, severity, description, suggestedFixes,
+    category, dependsOn, commentId, reactions)
+  - ReviewVerdict (literal: 'approved' | 'needs_fix')
+- Updated ReviewFetchCommentsResponse to new shape:
+  { verdict: ReviewVerdict | null, findings: ReviewFinding[], comments: PrComment[] }
+- Implemented finding extraction in review-comment-fetcher.ts:
+  - Parses `<!-- brrr-finding:{json} -->` markers from inline review comment bodies
+  - Extracts all ReviewFinding fields including suggestedFixes, category, dependsOn
+  - Handles brrr's `\u002d\u002d` escaping for `--` in HTML comments
+  - Comments with valid finding markers go to `findings` array
+  - Comments with malformed JSON fall back to `comments` array gracefully
+  - Missing markers produce empty `findings` array
+- Implemented verdict extraction:
+  - Detects `<!-- brrr-review -->` marker in issue comments
+  - Parses verdict from rendered text: `- Verdict: ✅ \`approved\`` / `- Verdict: ❌ \`needs_fix\``
+  - Returns null verdict when no summary comment exists
+  - Summary comment still included in `comments` array for context
+- Added 7 new tests in review-comment-fetcher.test.ts covering:
+  - Valid finding marker parsing with all fields (severity, suggestedFixes, etc.)
+  - Malformed JSON falls back to comments array gracefully
+  - Multiple findings across multiple review comments (incl. null depends_on normalization)
+  - Approved verdict extraction from summary comment
+  - needs_fix verdict extraction from summary comment
+  - Null verdict when no brrr-review comment exists
+  - Mixed comments: findings separated from human comments, verdict extracted
+- All 276 tests pass (269 + 7 new), TypeScript clean, formatting clean

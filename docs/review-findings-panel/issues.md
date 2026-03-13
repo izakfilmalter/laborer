@@ -7,7 +7,7 @@ Parent PRD: [PRD-review-findings-panel.md](./PRD-review-findings-panel.md)
 | 1 | Review pane type + panel system wiring | None | done |
 | 2 | PR comment fetching RPC + server service | None | done |
 | 3 | Review pane renders fetched comments | 1, 2 | pending |
-| 4 | Finding extraction (server-side parsing) | 2 | pending |
+| 4 | Finding extraction (server-side parsing) | 2 | done |
 | 5 | Grouped display with severity badges | 3, 4 | pending |
 | 6 | Polling + manual refresh | 3 | pending |
 | 7 | Verdict badge on workspace card | 4 | pending |

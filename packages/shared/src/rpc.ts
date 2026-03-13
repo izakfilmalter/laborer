@@ -262,6 +262,8 @@ export type PrCommentReaction = typeof PrCommentReaction.Type
 /**
  * A single PR comment fetched from GitHub.
  * Includes both issue comments and inline review comments.
+ * Comments that contain a brrr-finding marker are returned in the
+ * `findings` array instead of `comments`.
  */
 export const PrComment = Schema.Struct({
   /** GitHub comment ID */
@@ -287,9 +289,60 @@ export const PrComment = Schema.Struct({
 export type PrComment = typeof PrComment.Type
 
 /**
+ * Severity level for a brrr review finding.
+ */
+export const ReviewSeverity = Schema.Literal('critical', 'warning', 'info')
+
+export type ReviewSeverity = typeof ReviewSeverity.Type
+
+/**
+ * A structured finding extracted from a brrr inline review comment.
+ * Parsed from the `<!-- brrr-finding:{json} -->` HTML comment marker.
+ */
+export const ReviewFinding = Schema.Struct({
+  /** Short slugified identifier (e.g. "sql-injection") */
+  id: Schema.String,
+  /** File path where the finding applies */
+  file: Schema.String,
+  /** Line number in the file */
+  line: Schema.Number,
+  /** Severity level: critical, warning, or info */
+  severity: ReviewSeverity,
+  /** Human-readable description of the finding */
+  description: Schema.String,
+  /** Suggested fixes (may be empty) */
+  suggestedFixes: Schema.Array(Schema.String),
+  /** Finding category (e.g. "correctness", "security", "style"); null if unset */
+  category: Schema.NullOr(Schema.String),
+  /** IDs of other findings this one depends on (may be empty) */
+  dependsOn: Schema.Array(Schema.String),
+  /** GitHub comment ID of the inline review comment containing this finding */
+  commentId: Schema.Number,
+  /** Reactions on the comment containing this finding */
+  reactions: Schema.Array(PrCommentReaction),
+})
+
+export type ReviewFinding = typeof ReviewFinding.Type
+
+/**
+ * Review verdict extracted from the brrr summary comment.
+ * The summary comment is identified by the `<!-- brrr-review -->` marker.
+ */
+export const ReviewVerdict = Schema.Literal('approved', 'needs_fix')
+
+export type ReviewVerdict = typeof ReviewVerdict.Type
+
+/**
  * Response from review.fetchComments RPC.
+ * Comments with brrr-finding markers appear in `findings`, not `comments`.
+ * The verdict is extracted from the `<!-- brrr-review -->` summary comment.
  */
 const ReviewFetchCommentsResponse = Schema.Struct({
+  /** Review verdict (approved/needs_fix), or null if no brrr review summary exists */
+  verdict: Schema.NullOr(ReviewVerdict),
+  /** Structured findings extracted from brrr inline review comments */
+  findings: Schema.Array(ReviewFinding),
+  /** PR comments without brrr-finding markers (human comments + non-finding brrr comments) */
   comments: Schema.Array(PrComment),
 })
 

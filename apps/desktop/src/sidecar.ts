@@ -83,16 +83,17 @@ function resolveEntryPath(name: SidecarName): string {
     }
   }
 
-  // Production: bundled entry points
+  // Production: bundled entry points.
+  // tsdown outputs .mjs for ESM format, so use the correct extension.
   switch (name) {
     case 'server':
-      return join(root, 'packages/server/dist/main.js')
+      return join(root, 'packages/server/dist/main.mjs')
     case 'terminal':
-      return join(root, 'packages/terminal/dist/main.js')
+      return join(root, 'packages/terminal/dist/main.mjs')
     case 'file-watcher':
-      return join(root, 'packages/file-watcher/dist/main.js')
+      return join(root, 'packages/file-watcher/dist/main.mjs')
     default:
-      return join(root, 'packages/mcp/dist/main.js')
+      return join(root, 'packages/mcp/dist/main.mjs')
   }
 }
 

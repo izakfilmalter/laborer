@@ -17,10 +17,12 @@
   },
   "dependencies": {
     "@effect/cluster": "catalog:",
+    "@effect/experimental": "catalog:",
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/rpc": "catalog:",
     "@effect/sql": "catalog:",
+    "@effect/workflow": "catalog:",
     "@laborer/env": "workspace:*",
     "@laborer/shared": "workspace:*",
     "@livestore/adapter-node": "0.4.0-dev.22",

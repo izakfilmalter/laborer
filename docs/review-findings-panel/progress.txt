@@ -85,3 +85,39 @@ Completed all acceptance criteria:
   - Null verdict when no brrr-review comment exists
   - Mixed comments: findings separated from human comments, verdict extracted
 - All 276 tests pass (269 + 7 new), TypeScript clean, formatting clean
+
+## Issue 3: Review pane renders fetched comments — DONE
+
+Completed all acceptance criteria:
+
+- Replaced placeholder ReviewPane component with data-fetching implementation
+  in apps/web/src/panes/review-pane.tsx
+- Uses LaborerClient.query('review.fetchComments', { workspaceId }) with
+  useMemo for reactive data fetching on mount
+- Inner ReviewPaneContent component wrapped in Suspense for loading state
+- Loading state: Spinner with "Loading comments..." text (both Suspense
+  fallback and Initial/waiting state)
+- Empty state (no PR): detects PR_NOT_FOUND error code via extractErrorCode,
+  shows GitPullRequestClosed icon with guidance to create a PR
+- Error state: Alert with destructive variant showing error message
+- Empty state (PR exists, no comments): ClipboardCheck icon with guidance
+- Comment rendering via CommentCard component:
+  - Avatar with author image and 2-letter fallback
+  - Author login name and formatted timestamp
+  - File path and line number reference for inline review comments
+    (FileCode icon, shows file:line or just file when line is null)
+  - Full comment body with whitespace preservation
+- ScrollArea wrapping the comment list for overflow handling
+- Added 11 tests in apps/web/test/review-pane.test.tsx covering:
+  - Renders loading state during initial fetch
+  - Renders loading state when waiting for data
+  - Renders empty state when no PR exists (PR_NOT_FOUND)
+  - Renders error state when RPC fails
+  - Renders comments with author info and body
+  - Renders inline review comments with file path and line number
+  - Renders file path without line number when line is null
+  - Does not show file reference for issue comments
+  - Renders multiple comments
+  - Renders empty state when PR has no comments or findings
+  - Renders the review header bar
+- All 398 tests pass, TypeScript clean, formatting clean

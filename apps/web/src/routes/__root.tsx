@@ -14,7 +14,7 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
-import { waitForSidecars } from '@/lib/desktop'
+import { waitForServer } from '@/lib/desktop'
 import { LiveStoreProvider } from '@/livestore/provider'
 
 import '../index.css'
@@ -49,27 +49,28 @@ function SidecarCrashListener(): null {
 }
 
 /**
- * Gate that waits for sidecar services to become healthy before
- * rendering children. In Electron, the main process handles health
- * checking before showing the window, so this resolves immediately.
- * In plain browser mode, also resolves immediately.
+ * Gate that polls the server's health endpoint before rendering children.
+ *
+ * Prevents LiveStore, AtomRpc, and WebSocket connections from being
+ * initialized until the server is confirmed ready to handle requests.
+ * Without this gate, the app renders in a broken "connecting..." state
+ * when the server's HTTP routes haven't finished initializing.
  */
-function SidecarGate({ children }: { children: React.ReactNode }) {
+function ServerGate({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    console.log('[SidecarGate] origin:', globalThis.location?.origin)
-    console.log('[SidecarGate] Waiting for sidecars...')
-    waitForSidecars().then(
-      () => {
-        console.log('[SidecarGate] Sidecars ready')
-        setReady(true)
-      },
-      (error) => {
-        console.error('[SidecarGate] Sidecar initialization failed:', error)
+    let cancelled = false
+
+    waitForServer().then(() => {
+      if (!cancelled) {
         setReady(true)
       }
-    )
+    })
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   if (!ready) {
@@ -91,7 +92,7 @@ function RootComponent() {
       >
         <HotkeysProvider>
           <TooltipProvider>
-            <SidecarGate>
+            <ServerGate>
               <AtomRegistryProvider>
                 <LiveStoreProvider>
                   <div className="grid h-svh grid-rows-[auto_auto_1fr]">
@@ -101,7 +102,7 @@ function RootComponent() {
                   </div>
                 </LiveStoreProvider>
               </AtomRegistryProvider>
-            </SidecarGate>
+            </ServerGate>
             <Toaster richColors />
             <SidecarCrashListener />
           </TooltipProvider>

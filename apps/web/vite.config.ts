@@ -75,6 +75,10 @@ export default defineConfig(({ mode }) => {
         host: 'localhost',
       },
       proxy: {
+        '/server-health': {
+          target: `http://localhost:${serverPort}`,
+          rewrite: () => '/',
+        },
         '/rpc': {
           target: `http://localhost:${serverPort}`,
           ws: true,

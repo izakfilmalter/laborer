@@ -27,7 +27,7 @@ import { NodeHttpServer, NodeRuntime } from '@effect/platform-node'
 import { RpcSerialization, RpcServer } from '@effect/rpc'
 import { env } from '@laborer/env/server'
 import { LaborerRpcs } from '@laborer/shared/rpc'
-import { Effect, Layer } from 'effect'
+import { Cause, Effect, Exit, Layer } from 'effect'
 import { LaborerRpcsLive } from './rpc/handlers.js'
 import { BranchStateTracker } from './services/branch-state-tracker.js'
 import { ConfigService } from './services/config-service.js'
@@ -152,6 +152,34 @@ const HttpLive = HttpLiveBase.pipe(
 )
 
 /**
+ * Shutdown Timeout Teardown
+ *
+ * During dev restarts (tsx --watch sends SIGTERM), the graceful shutdown
+ * can hang due to circular WebSocket connections (LaborerStore connects
+ * to its own sync backend via makeWsSync). When the HTTP server begins
+ * closing, the WebSocket drops and the sync client retries indefinitely,
+ * creating a deadlock where scope teardown never completes.
+ *
+ * This custom teardown forces process.exit after a timeout if graceful
+ * shutdown doesn't complete, ensuring tsx --watch can restart cleanly.
+ */
+const SHUTDOWN_TIMEOUT_MS = 3000
+
+const exitCode = <E, A>(exit: Exit.Exit<A, E>): number =>
+  Exit.isFailure(exit) && !Cause.isInterruptedOnly(exit.cause) ? 1 : 0
+
+const teardownWithTimeout = <E, A>(
+  exit: Exit.Exit<A, E>,
+  onExit: (code: number) => void
+): void => {
+  const timer = setTimeout(() => {
+    process.exit(exitCode(exit))
+  }, SHUTDOWN_TIMEOUT_MS)
+  timer.unref()
+  onExit(exitCode(exit))
+}
+
+/**
  * Main program
  *
  * Layer.launch converts the layer into an Effect that:
@@ -161,4 +189,4 @@ const HttpLive = HttpLiveBase.pipe(
  */
 const main = HttpLive.pipe(Layer.launch, Effect.scoped)
 
-NodeRuntime.runMain(main)
+NodeRuntime.runMain(main, { teardown: teardownWithTimeout })

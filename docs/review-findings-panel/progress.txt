@@ -20,3 +20,35 @@ Completed all acceptance criteria:
   - closePane removes review pane and collapses split
 - Updated mock PanelActions in 3 test files to include toggleReviewPane
 - All 387 tests pass, TypeScript clean, formatting clean
+
+## Issue 2: PR comment fetching RPC + server service — DONE
+
+Completed all acceptance criteria:
+
+- Defined shared response schemas in packages/shared/src/rpc.ts:
+  - PrCommentReaction (id, content, userId)
+  - PrComment (id, commentType, authorLogin, authorAvatarUrl, body, filePath,
+    line, createdAt, reactions)
+  - ReviewFetchCommentsResponse (comments array)
+- Added review.fetchComments RPC to LaborerRpcs group with workspaceId payload
+- Created ReviewCommentFetcher server service (packages/server/src/services/review-comment-fetcher.ts):
+  - Context.Tag + Layer.effect pattern matching existing services
+  - fetchComments method resolves workspace from LiveStore, detects PR number
+    (cached or fallback to gh pr view), detects owner/repo from git remote
+  - Fetches issue comments via gh api repos/{owner}/{repo}/issues/{pr}/comments --paginate
+  - Fetches inline review comments via gh api repos/{owner}/{repo}/pulls/{pr}/comments --paginate
+  - Fetches reactions for each comment in parallel (concurrency: 5)
+  - Returns typed PrComment[] with commentType, author info, body, file/line, reactions
+  - Handles paginated gh output (concatenated JSON arrays)
+  - Actionable error messages for auth failures, rate limits, missing PR
+- Reuses parseGithubRepo from GithubTaskImporter for SSH/HTTPS remote URL parsing
+- Added review.fetchComments handler in handlers.ts delegating to ReviewCommentFetcher
+- Wired ReviewCommentFetcher.layer into main.ts and test-layer.ts
+- Added 6 tests in review-comment-fetcher.test.ts covering:
+  - Fetches and maps issue + review comments with reactions
+  - Parses owner/repo from SSH remote URL (git@github.com:...)
+  - Parses owner/repo from HTTPS remote URL (https://github.com/...)
+  - Returns PR_NOT_FOUND when no PR exists and prNumber not cached
+  - Returns NOT_FOUND when workspace does not exist
+  - Handles gh auth failure with actionable error message
+- All 269 tests pass, TypeScript clean, formatting clean

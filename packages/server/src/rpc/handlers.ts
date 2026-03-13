@@ -30,6 +30,7 @@ import {
   slugifyPrdTitle,
 } from '../services/prd-storage-service.js'
 import { ProjectRegistry } from '../services/project-registry.js'
+import { ReviewCommentFetcher } from '../services/review-comment-fetcher.js'
 import { TaskManager } from '../services/task-manager.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
@@ -1043,6 +1044,15 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.gen(function* () {
         const taskManager = yield* TaskManager
         yield* taskManager.removeTask(taskId)
+      }),
+
+    // -------------------------------------------------------------------
+    // Review RPCs
+    // -------------------------------------------------------------------
+    'review.fetchComments': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const fetcher = yield* ReviewCommentFetcher
+        return yield* fetcher.fetchComments(workspaceId)
       }),
   })
 )

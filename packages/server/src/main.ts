@@ -44,9 +44,9 @@ import { PortAllocator } from './services/port-allocator.js'
 import { PrWatcher } from './services/pr-watcher.js'
 import { PrdStorageService } from './services/prd-storage-service.js'
 import { ProjectRegistry } from './services/project-registry.js'
-
 import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
+import { ReviewCommentFetcher } from './services/review-comment-fetcher.js'
 import { SyncRpcLive } from './services/sync-backend.js'
 import { TaskManager } from './services/task-manager.js'
 import { TerminalClient } from './services/terminal-client.js'
@@ -119,6 +119,7 @@ const HttpLiveBase = HttpRouter.Default.serve((httpApp) =>
   Layer.provide(RpcLive),
   Layer.provide(SyncRpcLive),
   // --- Shared service layers (available to all route layers) ---
+  Layer.provide(ReviewCommentFetcher.layer),
   Layer.provide(LinearTaskImporter.layer),
   Layer.provide(GithubTaskImporter.layer),
   Layer.provide(TaskManager.layer),

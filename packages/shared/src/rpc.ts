@@ -244,6 +244,56 @@ const PrStatusResponse = Schema.Struct({
 })
 
 // ---------------------------------------------------------------------------
+// Review Comment Schemas
+// ---------------------------------------------------------------------------
+
+/**
+ * Reaction on a GitHub PR comment (e.g. rocket, thumbs_up, confused).
+ * Used to determine triage/resolution state of findings.
+ */
+export const PrCommentReaction = Schema.Struct({
+  id: Schema.Number,
+  content: Schema.String,
+  userId: Schema.Number,
+})
+
+export type PrCommentReaction = typeof PrCommentReaction.Type
+
+/**
+ * A single PR comment fetched from GitHub.
+ * Includes both issue comments and inline review comments.
+ */
+export const PrComment = Schema.Struct({
+  /** GitHub comment ID */
+  id: Schema.Number,
+  /** 'issue' for issue comments, 'review' for inline review comments */
+  commentType: Schema.Literal('issue', 'review'),
+  /** GitHub login of the comment author */
+  authorLogin: Schema.String,
+  /** Avatar URL of the comment author */
+  authorAvatarUrl: Schema.String,
+  /** Comment body (markdown) */
+  body: Schema.String,
+  /** File path for inline review comments (null for issue comments) */
+  filePath: Schema.NullOr(Schema.String),
+  /** Line number for inline review comments (null for issue comments) */
+  line: Schema.NullOr(Schema.Number),
+  /** ISO 8601 timestamp */
+  createdAt: Schema.String,
+  /** Reactions on this comment */
+  reactions: Schema.Array(PrCommentReaction),
+})
+
+export type PrComment = typeof PrComment.Type
+
+/**
+ * Response from review.fetchComments RPC.
+ */
+const ReviewFetchCommentsResponse = Schema.Struct({
+  comments: Schema.Array(PrComment),
+})
+
+// ---------------------------------------------------------------------------
 // RPC Definitions
 // ---------------------------------------------------------------------------
 
@@ -575,6 +625,25 @@ export class LaborerRpcs extends RpcGroup.make(
     error: RpcError,
     payload: {
       taskId: Schema.String,
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // Review RPCs
+  // -----------------------------------------------------------------------
+
+  /**
+   * Fetch all PR comments (issue comments + inline review comments) for a
+   * workspace's pull request. Returns raw comment data including author info,
+   * body, file/line references, and reactions.
+   *
+   * @see PRD-review-findings-panel.md — "PR Comment Fetcher" section
+   */
+  Rpc.make('review.fetchComments', {
+    success: ReviewFetchCommentsResponse,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
     },
   })
 ) {}

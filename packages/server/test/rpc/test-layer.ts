@@ -17,6 +17,7 @@ import { PrdStorageService } from '../../src/services/prd-storage-service.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { RepositoryIdentity } from '../../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../../src/services/repository-watch-coordinator.js'
+import { ReviewCommentFetcher } from '../../src/services/review-comment-fetcher.js'
 import { TaskManager } from '../../src/services/task-manager.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
@@ -142,6 +143,7 @@ const Group1Layers = Layer.mergeAll(
 const Group2Layers = Layer.mergeAll(
   GithubTaskImporter.layer,
   LinearTaskImporter.layer,
+  ReviewCommentFetcher.layer,
   RepositoryWatchCoordinator.layer
 )
 

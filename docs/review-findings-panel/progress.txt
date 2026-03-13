@@ -161,3 +161,36 @@ Completed all acceptance criteria:
   - Severity badges have correct data-severity attributes
   - Comments render with author info in Comments section
 - All 410 tests pass (web: 410, server: 276), TypeScript clean, formatting clean
+
+## Issue 6: Polling + manual refresh — DONE
+
+Completed all acceptance criteria:
+
+- Added 30-second polling interval via useEffect + setInterval calling
+  useAtomRefresh from @effect-atom/atom-react/Hooks
+- Polling starts automatically on mount and stops cleanly on unmount
+  (clearInterval in useEffect cleanup, intervalRef nulled)
+- Manual refresh button (RefreshCw icon, ghost variant, aria-label
+  "Refresh comments") triggers immediate fetch and resets the polling
+  timer so the next automatic poll is always 30s after the last action
+- Subtle refresh indicator ("Refreshing..." with spinning RefreshCw icon)
+  shown during background refetch when existing data is present
+  (result._tag === 'Success' && result.waiting) — does NOT replace
+  existing content, avoiding layout shifts and content flicker
+- Initial loading state still shows full-screen spinner (no data yet)
+- ReviewHeaderBar component extracted: renders refresh indicator and
+  manual refresh button, included in all content states (loading,
+  error, empty, populated) so refresh is always accessible
+- POLL_INTERVAL_MS constant (30_000) defined at module scope
+- Implementation uses useCallback for stable function references and
+  useRef for the interval ID to avoid stale closures
+- Added 8 new tests in review-pane.test.tsx (31 total) covering:
+  - Polling starts on mount and calls refresh after 30 seconds
+  - Polling stops when the pane is unmounted (no leaked intervals)
+  - Renders the refresh button
+  - Manual refresh button triggers immediate fetch
+  - Manual refresh resets the polling timer (verified with fake timers)
+  - Subtle refresh indicator shown when refetching with existing data
+  - Refresh indicator hidden when not refetching
+  - Refresh button renders in all content states (error, no-PR)
+- All 418 tests pass (web: 418, server: 276), TypeScript clean, formatting clean

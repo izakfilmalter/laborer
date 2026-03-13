@@ -4,9 +4,11 @@
  * Verifies that the review pane correctly renders fetched PR comments and
  * findings in grouped sections with severity badges. Tests loading, empty,
  * and error states, finding cards with severity sorting, collapsible
- * suggested fixes, and comment cards with author info.
+ * suggested fixes, comment cards with author info, polling behavior, and
+ * manual refresh.
  *
  * @see Issue #5: Grouped display with severity badges
+ * @see Issue #6: Polling + manual refresh
  */
 
 import { cleanup, render, screen, within } from '@testing-library/react'
@@ -19,9 +21,11 @@ type ResultState =
   | { _tag: 'Success'; waiting: boolean; value: unknown }
 
 let currentResult: ResultState = { _tag: 'Initial', waiting: true }
+const mockRefresh = vi.fn()
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomValue: () => currentResult,
+  useAtomRefresh: () => mockRefresh,
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
@@ -35,6 +39,17 @@ vi.mock('@/components/ui/scroll-area', () => ({
     <div data-testid="scroll-area" {...props}>
       {children}
     </div>
+  ),
+}))
+
+vi.mock('@/components/ui/button', () => ({
+  Button: ({
+    children,
+    ...props
+  }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button type="button" {...props}>
+      {children}
+    </button>
   ),
 }))
 
@@ -144,10 +159,12 @@ const INFO_FINDING = {
 describe('ReviewPane', () => {
   afterEach(() => {
     cleanup()
+    vi.restoreAllMocks()
   })
 
   beforeEach(() => {
     currentResult = { _tag: 'Initial', waiting: true }
+    mockRefresh.mockReset()
   })
 
   it('renders loading state during initial fetch', () => {
@@ -547,5 +564,175 @@ describe('ReviewPane', () => {
       screen.getByText('This function should handle the edge case.')
     ).toBeTruthy()
     expect(screen.getByText('src/utils/parser.ts:42')).toBeTruthy()
+  })
+
+  // -------------------------------------------------------------------------
+  // Issue #6: Polling + manual refresh
+  // -------------------------------------------------------------------------
+
+  it('starts polling on mount and calls refresh after 30 seconds', () => {
+    vi.useFakeTimers()
+
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: { verdict: null, findings: [], comments: [ISSUE_COMMENT] },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    // No refresh calls yet (initial render only)
+    expect(mockRefresh).not.toHaveBeenCalled()
+
+    // Advance 30 seconds — one polling cycle
+    vi.advanceTimersByTime(30_000)
+    expect(mockRefresh).toHaveBeenCalledTimes(1)
+
+    // Advance another 30 seconds
+    vi.advanceTimersByTime(30_000)
+    expect(mockRefresh).toHaveBeenCalledTimes(2)
+
+    vi.useRealTimers()
+  })
+
+  it('stops polling when the pane is unmounted', () => {
+    vi.useFakeTimers()
+
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: { verdict: null, findings: [], comments: [ISSUE_COMMENT] },
+    }
+    const { unmount } = render(<ReviewPane workspaceId="ws-1" />)
+
+    // Advance one cycle to confirm polling is working
+    vi.advanceTimersByTime(30_000)
+    expect(mockRefresh).toHaveBeenCalledTimes(1)
+
+    // Unmount the component
+    unmount()
+
+    // Advance another cycle — no additional calls
+    vi.advanceTimersByTime(30_000)
+    expect(mockRefresh).toHaveBeenCalledTimes(1)
+
+    vi.useRealTimers()
+  })
+
+  it('renders the refresh button', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: { verdict: null, findings: [], comments: [ISSUE_COMMENT] },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.getByTestId('refresh-button')).toBeTruthy()
+    expect(screen.getByLabelText('Refresh comments')).toBeTruthy()
+  })
+
+  it('calls refresh immediately when manual refresh button is clicked', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({
+      advanceTimers: vi.advanceTimersByTime,
+    })
+
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: { verdict: null, findings: [], comments: [ISSUE_COMMENT] },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(mockRefresh).not.toHaveBeenCalled()
+
+    // Click manual refresh
+    await user.click(screen.getByTestId('refresh-button'))
+
+    // Should have called refresh immediately
+    expect(mockRefresh).toHaveBeenCalledTimes(1)
+
+    vi.useRealTimers()
+  })
+
+  it('resets the polling timer when manual refresh is clicked', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({
+      advanceTimers: vi.advanceTimersByTime,
+    })
+
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: { verdict: null, findings: [], comments: [ISSUE_COMMENT] },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    // Advance 20 seconds (before the first automatic poll)
+    vi.advanceTimersByTime(20_000)
+    expect(mockRefresh).not.toHaveBeenCalled()
+
+    // Click manual refresh at t=20s
+    await user.click(screen.getByTestId('refresh-button'))
+    expect(mockRefresh).toHaveBeenCalledTimes(1)
+
+    // Advance 15 seconds (t=35s) — would have been past the original 30s
+    // but the timer was reset, so no automatic poll yet
+    vi.advanceTimersByTime(15_000)
+    expect(mockRefresh).toHaveBeenCalledTimes(1)
+
+    // Advance to 30s after the manual refresh (t=50s)
+    vi.advanceTimersByTime(15_000)
+    expect(mockRefresh).toHaveBeenCalledTimes(2)
+
+    vi.useRealTimers()
+  })
+
+  it('shows subtle refresh indicator when refetching with existing data', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: true, // Indicates a background refetch is in progress
+      value: { verdict: null, findings: [], comments: [ISSUE_COMMENT] },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    // The refresh indicator should be visible
+    expect(screen.getByTestId('refresh-indicator')).toBeTruthy()
+    expect(screen.getByText('Refreshing...')).toBeTruthy()
+
+    // The existing content should still be rendered (not replaced by spinner)
+    expect(screen.getByText('Comments')).toBeTruthy()
+    expect(screen.getByText('Looks good to me!')).toBeTruthy()
+  })
+
+  it('does not show refresh indicator when not refetching', () => {
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: { verdict: null, findings: [], comments: [ISSUE_COMMENT] },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    expect(screen.queryByTestId('refresh-indicator')).toBeNull()
+  })
+
+  it('renders refresh button in all content states', () => {
+    // Test with error state
+    currentResult = {
+      _tag: 'Failure',
+      waiting: false,
+      cause: { message: 'Network error' },
+    }
+    const { unmount } = render(<ReviewPane workspaceId="ws-1" />)
+    expect(screen.getByTestId('refresh-button')).toBeTruthy()
+    unmount()
+
+    // Test with no-PR state
+    currentResult = {
+      _tag: 'Failure',
+      waiting: false,
+      cause: { code: 'PR_NOT_FOUND', message: 'No PR found' },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+    expect(screen.getByTestId('refresh-button')).toBeTruthy()
   })
 })

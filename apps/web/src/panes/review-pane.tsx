@@ -9,13 +9,16 @@
  * Findings are sorted by severity: critical first, then warning, then info.
  * Both sections are collapsible with heading counts.
  *
+ * Polls the server every 30 seconds while mounted and provides a manual
+ * refresh button. Polling stops automatically when the pane is unmounted.
+ *
  * Handles loading, empty (no PR), and error states.
  *
  * @see docs/review-findings-panel/PRD-review-findings-panel.md
- * @see Issue #5: Grouped display with severity badges
+ * @see Issue #6: Polling + manual refresh
  */
 
-import { useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomRefresh, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import type {
   PrComment,
   ReviewFinding,
@@ -28,13 +31,22 @@ import {
   FileCode,
   GitPullRequestClosed,
   MessageSquare,
+  RefreshCw,
   Search,
 } from 'lucide-react'
-import { Suspense, useMemo, useState } from 'react'
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Collapsible,
   CollapsibleContent,
@@ -50,6 +62,9 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
+
+/** Polling interval in milliseconds (30 seconds). */
+const POLL_INTERVAL_MS = 30_000
 
 interface ReviewPaneProps {
   readonly workspaceId: string
@@ -284,6 +299,10 @@ function ReviewSection({
 /**
  * Inner component that performs the RPC query and renders the result.
  * Must be wrapped in Suspense.
+ *
+ * Polls the server every 30 seconds via `useEffect` + `setInterval` calling
+ * `useAtomRefresh`. The manual refresh button resets the polling timer so
+ * that the next automatic poll is always 30s after the last fetch.
  */
 function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   const reviewComments$ = useMemo(
@@ -291,16 +310,54 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
     [workspaceId]
   )
   const result = useAtomValue(reviewComments$)
+  const refresh = useAtomRefresh(reviewComments$)
 
-  // Loading state
-  if (result._tag === 'Initial' || result.waiting) {
+  // Ref to hold the interval ID so manual refresh can reset the timer.
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  /** Start (or restart) the polling interval. */
+  const startPolling = useCallback(() => {
+    if (intervalRef.current !== null) {
+      clearInterval(intervalRef.current)
+    }
+    intervalRef.current = setInterval(refresh, POLL_INTERVAL_MS)
+  }, [refresh])
+
+  // Set up polling on mount, tear down on unmount.
+  useEffect(() => {
+    startPolling()
+    return () => {
+      if (intervalRef.current !== null) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+    }
+  }, [startPolling])
+
+  /** Manual refresh: trigger an immediate fetch and reset the polling timer. */
+  const handleManualRefresh = useCallback(() => {
+    refresh()
+    startPolling()
+  }, [refresh, startPolling])
+
+  // Determine whether we're in the initial loading state (no data yet)
+  // vs. a background refresh (has data, `waiting` is true).
+  const isInitialLoading =
+    result._tag === 'Initial' || (result._tag !== 'Success' && result.waiting)
+  const isRefreshing = result._tag === 'Success' && result.waiting
+
+  // Initial loading state — full-screen spinner, no data yet
+  if (isInitialLoading) {
     return (
-      <div className="flex flex-1 items-center justify-center">
-        <div className="flex flex-col items-center gap-2 text-muted-foreground">
-          <Spinner className="size-5" />
-          <span className="text-xs">Loading comments...</span>
+      <>
+        <ReviewHeaderBar isRefreshing={false} onRefresh={handleManualRefresh} />
+        <div className="flex flex-1 items-center justify-center">
+          <div className="flex flex-col items-center gap-2 text-muted-foreground">
+            <Spinner className="size-5" />
+            <span className="text-xs">Loading comments...</span>
+          </div>
         </div>
-      </div>
+      </>
     )
   }
 
@@ -312,30 +369,39 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
     // No PR exists for this workspace
     if (errorCode === 'PR_NOT_FOUND') {
       return (
-        <Empty className="flex-1">
-          <EmptyHeader>
-            <EmptyMedia>
-              <GitPullRequestClosed className="size-8 opacity-50" />
-            </EmptyMedia>
-            <EmptyTitle>No pull request</EmptyTitle>
-            <EmptyDescription>
-              No pull request was found for this workspace's branch. Create a PR
-              to see review findings and comments.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
+        <>
+          <ReviewHeaderBar
+            isRefreshing={false}
+            onRefresh={handleManualRefresh}
+          />
+          <Empty className="flex-1">
+            <EmptyHeader>
+              <EmptyMedia>
+                <GitPullRequestClosed className="size-8 opacity-50" />
+              </EmptyMedia>
+              <EmptyTitle>No pull request</EmptyTitle>
+              <EmptyDescription>
+                No pull request was found for this workspace's branch. Create a
+                PR to see review findings and comments.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </>
       )
     }
 
     // Other errors
     return (
-      <div className="p-3">
-        <Alert variant="destructive">
-          <AlertTriangle className="size-3.5" />
-          <AlertTitle>Failed to load comments</AlertTitle>
-          <AlertDescription>{errorMessage}</AlertDescription>
-        </Alert>
-      </div>
+      <>
+        <ReviewHeaderBar isRefreshing={false} onRefresh={handleManualRefresh} />
+        <div className="p-3">
+          <Alert variant="destructive">
+            <AlertTriangle className="size-3.5" />
+            <AlertTitle>Failed to load comments</AlertTitle>
+            <AlertDescription>{errorMessage}</AlertDescription>
+          </Alert>
+        </div>
+      </>
     )
   }
 
@@ -344,47 +410,97 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   // Empty state — PR exists but has no comments or findings
   if (comments.length === 0 && findings.length === 0) {
     return (
-      <Empty className="flex-1">
-        <EmptyHeader>
-          <EmptyMedia>
-            <ClipboardCheck className="size-8 opacity-50" />
-          </EmptyMedia>
-          <EmptyTitle>No comments yet</EmptyTitle>
-          <EmptyDescription>
-            This pull request has no review comments or findings. Run a review
-            or wait for collaborators to leave feedback.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      <>
+        <ReviewHeaderBar
+          isRefreshing={isRefreshing}
+          onRefresh={handleManualRefresh}
+        />
+        <Empty className="flex-1">
+          <EmptyHeader>
+            <EmptyMedia>
+              <ClipboardCheck className="size-8 opacity-50" />
+            </EmptyMedia>
+            <EmptyTitle>No comments yet</EmptyTitle>
+            <EmptyDescription>
+              This pull request has no review comments or findings. Run a review
+              or wait for collaborators to leave feedback.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </>
     )
   }
 
   const sortedFindings = sortFindingsBySeverity(findings)
 
   return (
-    <ScrollArea className="flex-1">
-      {/* Findings section */}
-      {findings.length > 0 && (
-        <ReviewSection count={findings.length} icon={Search} title="Findings">
-          {sortedFindings.map((finding) => (
-            <FindingCard finding={finding} key={finding.commentId} />
-          ))}
-        </ReviewSection>
-      )}
+    <>
+      <ReviewHeaderBar
+        isRefreshing={isRefreshing}
+        onRefresh={handleManualRefresh}
+      />
+      <ScrollArea className="flex-1">
+        {/* Findings section */}
+        {findings.length > 0 && (
+          <ReviewSection count={findings.length} icon={Search} title="Findings">
+            {sortedFindings.map((finding) => (
+              <FindingCard finding={finding} key={finding.commentId} />
+            ))}
+          </ReviewSection>
+        )}
 
-      {/* Comments section */}
-      {comments.length > 0 && (
-        <ReviewSection
-          count={comments.length}
-          icon={MessageSquare}
-          title="Comments"
-        >
-          {comments.map((comment) => (
-            <CommentCard comment={comment} key={comment.id} />
-          ))}
-        </ReviewSection>
-      )}
-    </ScrollArea>
+        {/* Comments section */}
+        {comments.length > 0 && (
+          <ReviewSection
+            count={comments.length}
+            icon={MessageSquare}
+            title="Comments"
+          >
+            {comments.map((comment) => (
+              <CommentCard comment={comment} key={comment.id} />
+            ))}
+          </ReviewSection>
+        )}
+      </ScrollArea>
+    </>
+  )
+}
+
+/**
+ * Header bar for the review pane content area.
+ * Shows a subtle refreshing indicator and a manual refresh button.
+ */
+function ReviewHeaderBar({
+  isRefreshing,
+  onRefresh,
+}: {
+  readonly isRefreshing: boolean
+  readonly onRefresh: () => void
+}) {
+  return (
+    <div className="flex h-8 shrink-0 items-center border-b bg-muted/30 px-3">
+      <div className="flex flex-1 items-center gap-1.5">
+        {isRefreshing && (
+          <div
+            className="flex items-center gap-1 text-muted-foreground text-xs"
+            data-testid="refresh-indicator"
+          >
+            <RefreshCw className="size-3 animate-spin" />
+            <span>Refreshing...</span>
+          </div>
+        )}
+      </div>
+      <Button
+        aria-label="Refresh comments"
+        className="size-6"
+        data-testid="refresh-button"
+        onClick={onRefresh}
+        size="icon"
+        variant="ghost"
+      >
+        <RefreshCw className="size-3" />
+      </Button>
+    </div>
   )
 }
 

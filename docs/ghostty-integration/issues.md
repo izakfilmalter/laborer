@@ -2,7 +2,7 @@
 
 ---
 
-## Issue 1: Ghostty helper tracer bullet with one visible terminal — IN PROGRESS
+## Issue 1: Ghostty helper tracer bullet with one visible terminal
 
 ### Parent PRD
 
@@ -21,14 +21,10 @@ This slice should not aim for full terminal parity. Its purpose is to establish 
 ### Acceptance criteria
 
 - [ ] Laborer can start a dedicated Ghostty helper process alongside existing desktop services
-- [x] The helper process can initialize the Ghostty runtime through a native addon
+- [ ] The helper process can initialize the Ghostty runtime through a native addon
 - [ ] Laborer can create one Ghostty terminal surface and display its rendered output in a pane
 - [ ] Failure to start the helper process produces a visible, non-silent error state
 - [ ] An end-to-end test verifies helper startup and first-frame rendering
-
-### Progress
-
-Native addon layer complete: app runtime creation with callbacks, surface lifecycle with offscreen NSWindow/NSView hosting, surface control (size/focus), IOSurface handle extraction, and 25 tests passing. Remaining: helper process, desktop sidecar integration, renderer display, e2e test.
 
 ### Blocked by
 

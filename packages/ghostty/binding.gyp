@@ -2,7 +2,7 @@
   "targets": [
     {
       "target_name": "ghostty_addon",
-      "sources": ["src/addon.mm"],
+      "sources": ["src/addon.cc"],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",
         "../../vendor/ghostty/include"

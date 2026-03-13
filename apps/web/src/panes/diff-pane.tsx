@@ -96,6 +96,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
+import { useOnDiffScrollRequest } from '@/panels/diff-scroll-context'
 
 /** Module-level query — shared across all DiffPane instances with the same label. */
 const allDiffs$ = queryDb(diffs, { label: 'diffPane' })
@@ -552,6 +553,36 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
       }
     }
   }, [])
+
+  // --- Cross-pane diff scroll (Issue #11) ---
+  // When the review pane dispatches a "scroll to file:line" event for this
+  // workspace, find the matching <diffs-container> element in the scroll
+  // container and scroll it into view smoothly.
+  const deferredFileDiffsRef = useRef(deferredFileDiffs)
+  deferredFileDiffsRef.current = deferredFileDiffs
+
+  useOnDiffScrollRequest(
+    workspaceId,
+    useCallback((target: { file: string; line: number }) => {
+      const container = scrollContainerRef.current
+      if (!container) {
+        return
+      }
+
+      const fileDiffsList = deferredFileDiffsRef.current
+      const fileIndex = fileDiffsList.findIndex((fd) => fd.name === target.file)
+      if (fileIndex === -1) {
+        return
+      }
+
+      // Each child of the scroll container corresponds to a diffs-container
+      // element for one file, rendered in the same order as deferredFileDiffs.
+      const fileElement = container.children[fileIndex]
+      if (fileElement) {
+        fileElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    }, [])
+  )
 
   // --- Loading state ---
   // When diffRow is null, the DiffService hasn't polled yet for this workspace.

@@ -48,6 +48,12 @@ vi.mock('@/panels/panel-context', () => ({
   }),
 }))
 
+const mockScrollDiffToFile = vi.fn()
+
+vi.mock('@/panels/diff-scroll-context', () => ({
+  useDiffScrollDispatch: () => mockScrollDiffToFile,
+}))
+
 vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
@@ -253,6 +259,7 @@ describe('ReviewPane', () => {
     mockAtomSet.mockReset()
     mockAtomSet.mockResolvedValue({ id: 'terminal-1' })
     mockAssignTerminalToPane.mockReset()
+    mockScrollDiffToFile.mockReset()
   })
 
   it('renders loading state during initial fetch', () => {
@@ -1348,5 +1355,102 @@ describe('ReviewPane', () => {
 
     const fileLink = screen.getByTestId('file-line-link')
     expect(fileLink.className).toContain('underline')
+  })
+
+  // -------------------------------------------------------------------------
+  // Issue #11: Cross-pane diff scroll
+  // -------------------------------------------------------------------------
+
+  it('clicking file:line in finding card dispatches diff scroll event', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const fileLink = screen.getByTestId('file-line-link')
+    await user.click(fileLink)
+
+    expect(mockScrollDiffToFile).toHaveBeenCalledWith(
+      'ws-1',
+      'src/db/query.ts',
+      15
+    )
+  })
+
+  it('clicking file:line in comment card dispatches diff scroll event with line', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [],
+        comments: [REVIEW_COMMENT],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const fileLink = screen.getByTestId('file-line-link')
+    await user.click(fileLink)
+
+    expect(mockScrollDiffToFile).toHaveBeenCalledWith(
+      'ws-1',
+      'src/utils/parser.ts',
+      42
+    )
+  })
+
+  it('clicking file:line in comment card without line does not dispatch diff scroll event', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [],
+        comments: [REVIEW_COMMENT_NO_LINE],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const fileLink = screen.getByTestId('file-line-link')
+    await user.click(fileLink)
+
+    // line is null, so no diff scroll dispatch
+    expect(mockScrollDiffToFile).not.toHaveBeenCalled()
+  })
+
+  it('clicking file:line dispatches both editor open and diff scroll', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [WARNING_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    const fileLink = screen.getByTestId('file-line-link')
+    await user.click(fileLink)
+
+    // Both actions should fire on the same click
+    expect(mockScrollDiffToFile).toHaveBeenCalledWith(
+      'ws-1',
+      'src/api/handler.ts',
+      42
+    )
+    expect(mockAtomSet).toHaveBeenCalledWith({
+      payload: { workspaceId: 'ws-1', filePath: 'src/api/handler.ts' },
+    })
   })
 })

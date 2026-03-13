@@ -386,3 +386,52 @@ Completed all acceptance criteria:
   - Does not render file:line link for issue comments without file path
   - File:line link has visual affordance (underline styling)
 - All 454 web tests pass, all server tests pass, TypeScript clean, formatting clean
+
+## Issue 11: Cross-pane diff scroll — DONE
+
+Completed all acceptance criteria:
+
+- Created DiffScrollContext (apps/web/src/panels/diff-scroll-context.tsx):
+  - Panel-level React context with ref-based listener registry for
+    cross-pane communication without causing re-renders
+  - DiffScrollProvider wraps the panel tree (alongside PanelActionsProvider)
+  - scrollDiffToFile(workspaceId, file, line) dispatches events to all
+    subscribed listeners
+  - useOnDiffScrollRequest(workspaceId, callback) subscribes to events
+    filtered by workspace ID — only diff panes for the matching workspace
+    respond; events for other workspaces are silently ignored
+  - useDiffScrollDispatch() returns a stable dispatch function for callers
+  - Automatic unsubscribe on unmount via useEffect cleanup
+- Wired DiffScrollProvider into the panel tree (apps/web/src/routes/index.tsx):
+  - Wraps PanelActionsProvider so all pane components can access the context
+- Updated review pane to emit scroll events on file:line click
+  (apps/web/src/panes/review-pane.tsx):
+  - handleOpenFile now accepts (filePath, line) instead of just (filePath)
+  - When line is non-null, dispatches scrollDiffToFile(workspaceId, file, line)
+    before opening the file in the editor — both actions fire on same click
+  - FindingCard passes finding.line to onOpenFile (previously only file path)
+  - CommentCard passes comment.line to onOpenFile (previously only file path)
+  - When line is null (e.g., file-level comments), diff scroll is skipped
+- Updated diff pane to subscribe to scroll events
+  (apps/web/src/panes/diff-pane.tsx):
+  - useOnDiffScrollRequest subscribes for the pane's workspaceId
+  - On scroll event, finds the matching file in deferredFileDiffs by name
+  - Scrolls the matching <diffs-container> element into view with
+    smooth scroll behavior (behavior: 'smooth', block: 'start')
+  - Uses deferredFileDiffsRef to avoid stale closures in the callback
+  - If no matching file is found, event is silently ignored
+  - If no diff pane is open for the workspace, no listener exists
+    and event is silently ignored
+- Added 6 tests in diff-scroll-context.test.tsx covering:
+  - Dispatches scroll event to a subscribed listener
+  - Only dispatches to listeners matching the workspace ID
+  - Supports multiple listeners for the same workspace
+  - Unsubscribes listener on unmount (no leaked subscriptions)
+  - Silently ignores events when no listeners are subscribed
+  - Dispatch is a no-op when no provider is present
+- Added 4 tests in review-pane.test.tsx (61 total) covering:
+  - Clicking file:line in finding card dispatches diff scroll event
+  - Clicking file:line in comment card dispatches diff scroll event with line
+  - Clicking file:line in comment card without line does not dispatch scroll
+  - Clicking file:line dispatches both editor open and diff scroll
+- All 464 web tests pass (34 test files), TypeScript clean, formatting clean

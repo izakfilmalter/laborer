@@ -330,7 +330,8 @@ export function registerIpcHandlers(
       name !== 'server' &&
       name !== 'terminal' &&
       name !== 'file-watcher' &&
-      name !== 'mcp'
+      name !== 'mcp' &&
+      name !== 'ghostty'
     ) {
       return
     }

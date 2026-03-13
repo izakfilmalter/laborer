@@ -20,15 +20,15 @@ This slice should not aim for full terminal parity. Its purpose is to establish 
 
 ### Acceptance criteria
 
-- [ ] Laborer can start a dedicated Ghostty helper process alongside existing desktop services
+- [x] Laborer can start a dedicated Ghostty helper process alongside existing desktop services
 - [x] The helper process can initialize the Ghostty runtime through a native addon
 - [ ] Laborer can create one Ghostty terminal surface and display its rendered output in a pane
-- [ ] Failure to start the helper process produces a visible, non-silent error state
+- [x] Failure to start the helper process produces a visible, non-silent error state
 - [ ] An end-to-end test verifies helper startup and first-frame rendering
 
 ### Progress
 
-Native addon layer complete: app runtime creation with callbacks, surface lifecycle with offscreen NSWindow/NSView hosting, surface control (size/focus), IOSurface handle extraction, and 25 tests passing. Helper process (ghostty-host.ts) and Effect client service (GhosttyHostClient) complete with 13 integration tests passing. Remaining: desktop sidecar integration, renderer display, e2e test.
+Native addon layer complete: app runtime creation with callbacks, surface lifecycle with offscreen NSWindow/NSView hosting, surface control (size/focus), IOSurface handle extraction, and 25 tests passing. Helper process (ghostty-host.ts) and Effect client service (GhosttyHostClient) complete with 13 integration tests passing. Desktop sidecar integration complete: 'ghostty' added to SidecarManager with entry point resolution, stdin pipe for NDJSON IPC, HealthMonitor spawning (no HTTP — like MCP), crash detection with toast UI, and IPC restart support. Remaining: renderer display, e2e test.
 
 ### Blocked by
 

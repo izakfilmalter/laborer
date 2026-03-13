@@ -134,3 +134,41 @@ Date: 2026-03-13
 - Request IDs enable request/response correlation over the unidirectional stdio channel
 - Tick timer runs at ~60fps (16ms) and is unref'd so it doesn't block process exit
 - Dev mode uses tsx to run TypeScript directly; bundled mode uses plain node
+
+---
+
+## Issue 1: Ghostty helper tracer bullet — desktop sidecar integration
+Status: IN PROGRESS (desktop sidecar integration complete)
+Date: 2026-03-13
+
+### What was done
+- Added 'ghostty' to SidecarName type in apps/desktop/src/sidecar.ts
+  - New union member alongside 'server', 'terminal', 'file-watcher', 'mcp'
+- Added ghostty entry point resolution in resolveEntryPath():
+  - Dev: packages/ghostty/src/ghostty-host.ts (run via tsx)
+  - Prod: packages/ghostty/dist/ghostty-host.js (run via Electron-as-Node)
+- Configured stdin pipe for ghostty sidecar (alongside MCP):
+  - Ghostty uses newline-delimited JSON over stdin (commands) and stdout (events)
+- Updated HealthMonitor to handle ghostty:
+  - No HTTP health endpoint — treated like MCP (assume healthy after spawn)
+  - Added ghostty to spawnServices() — starts in parallel with terminal and file-watcher
+  - Ghostty failure is non-fatal: logged but does not block startup (xterm.js fallback)
+- Updated IPC restart handler in main.ts to accept 'ghostty' as valid restart target
+- Updated IPC channel validation in ipc.ts to accept 'ghostty' sidecar name
+- Updated shared SidecarName type in packages/shared/src/desktop-bridge.ts
+- Added 'Ghostty' to DISPLAY_NAMES in apps/web/src/hooks/use-sidecar-crash-listener.ts
+  - Crash/recovery toasts now work for the ghostty sidecar
+- All 10 packages typecheck successfully
+- All tests pass across all packages (1069+ tests total)
+- Format check passes
+
+### What remains for Issue 1 completion
+- Renderer display: import IOSurface texture in Electron renderer and display via WebGPU
+- End-to-end test: verify helper startup and first-frame rendering
+
+### Key decisions
+- Ghostty starts in parallel with terminal and file-watcher during app boot
+- Ghostty failure is non-fatal — the app continues with xterm.js terminals
+- No HTTP health check for ghostty — uses stdio IPC, marked healthy after spawn (like MCP)
+- Crash detection and exponential-backoff restart handled by existing HealthMonitor
+- Crash/recovery toast UI works automatically via the shared SidecarStatusEvent system

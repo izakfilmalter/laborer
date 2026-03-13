@@ -178,7 +178,8 @@ export class HealthMonitor {
 
   /**
    * Build the health check URL for a sidecar.
-   * Only server and terminal have HTTP endpoints; MCP uses stdio.
+   * Only server, terminal, and file-watcher have HTTP endpoints.
+   * MCP and Ghostty communicate over stdio — no HTTP health check.
    */
   private healthUrl(name: SidecarName): string | null {
     switch (name) {
@@ -189,7 +190,7 @@ export class HealthMonitor {
       case 'file-watcher':
         return `http://127.0.0.1:${this.ports.fileWatcherPort}`
       default:
-        // MCP communicates over stdio — no HTTP health check.
+        // MCP and Ghostty communicate over stdio — no HTTP health check.
         return null
     }
   }
@@ -237,21 +238,25 @@ export class HealthMonitor {
   }
 
   /**
-   * Spawn the terminal, file-watcher, and server services, waiting for
-   * each to become healthy before proceeding. Terminal and file-watcher
-   * start first (in parallel) because the server connects to both on
-   * startup.
+   * Spawn the terminal, file-watcher, ghostty, and server services,
+   * waiting for each to become healthy before proceeding. Terminal,
+   * file-watcher, and ghostty start first (in parallel) because the
+   * server connects to terminal and file-watcher on startup. Ghostty
+   * is independent but starts early so it is ready when the renderer
+   * needs it.
    *
    * Replaces the delay-based `SidecarManager.spawnServices()`.
    *
    * @returns `true` if all services are healthy.
    */
   async spawnServices(): Promise<boolean> {
-    // Terminal and file-watcher can start in parallel — the server
-    // depends on both but they are independent of each other.
-    const [terminalOk, fileWatcherOk] = await Promise.all([
+    // Terminal, file-watcher, and ghostty can start in parallel.
+    // The server depends on terminal and file-watcher but they are
+    // independent of each other. Ghostty is fully independent.
+    const [terminalOk, fileWatcherOk, ghosttyOk] = await Promise.all([
       this.spawnAndWaitHealthy('terminal'),
       this.spawnAndWaitHealthy('file-watcher'),
+      this.spawnAndWaitHealthy('ghostty'),
     ])
 
     if (!terminalOk) {
@@ -262,6 +267,12 @@ export class HealthMonitor {
     if (!fileWatcherOk) {
       console.error('[health] File-watcher failed to become healthy')
       return false
+    }
+
+    if (!ghosttyOk) {
+      console.error('[health] Ghostty failed to become healthy')
+      // Ghostty failure is not fatal — the app can still work with
+      // xterm.js terminals. Log the failure but continue startup.
     }
 
     const serverOk = await this.spawnAndWaitHealthy('server')

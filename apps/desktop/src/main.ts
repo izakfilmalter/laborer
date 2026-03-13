@@ -308,7 +308,13 @@ app
 
     // Wire sidecar restart requests from the renderer to the health monitor.
     setRestartSidecarHandler(async (name) => {
-      const validNames = ['server', 'terminal', 'file-watcher', 'mcp'] as const
+      const validNames = [
+        'server',
+        'terminal',
+        'file-watcher',
+        'mcp',
+        'ghostty',
+      ] as const
       type ValidName = (typeof validNames)[number]
       if (!validNames.includes(name as ValidName)) {
         return

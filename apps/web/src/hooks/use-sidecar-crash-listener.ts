@@ -25,6 +25,7 @@ const DISPLAY_NAMES: Record<SidecarName, string> = {
   terminal: 'Terminal',
   'file-watcher': 'File Watcher',
   mcp: 'MCP',
+  ghostty: 'Ghostty',
 }
 
 /**

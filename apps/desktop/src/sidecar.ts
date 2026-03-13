@@ -21,7 +21,12 @@ const KILL_GRACE_MS = 2000
 // ---------------------------------------------------------------------------
 
 /** Identifies a sidecar service. */
-export type SidecarName = 'server' | 'terminal' | 'file-watcher' | 'mcp'
+export type SidecarName =
+  | 'server'
+  | 'terminal'
+  | 'file-watcher'
+  | 'mcp'
+  | 'ghostty'
 
 /** A tracked child process with its stderr ring buffer. */
 interface TrackedSidecar {
@@ -78,6 +83,8 @@ function resolveEntryPath(name: SidecarName): string {
         return join(root, 'packages/terminal/src/main.ts')
       case 'file-watcher':
         return join(root, 'packages/file-watcher/src/main.ts')
+      case 'ghostty':
+        return join(root, 'packages/ghostty/src/ghostty-host.ts')
       default:
         return join(root, 'packages/mcp/src/main.ts')
     }
@@ -91,6 +98,8 @@ function resolveEntryPath(name: SidecarName): string {
       return join(root, 'packages/terminal/dist/main.js')
     case 'file-watcher':
       return join(root, 'packages/file-watcher/dist/main.js')
+    case 'ghostty':
+      return join(root, 'packages/ghostty/dist/ghostty-host.js')
     default:
       return join(root, 'packages/mcp/dist/main.js')
   }
@@ -226,8 +235,10 @@ export class SidecarManager {
     const { executable, args } = resolveSpawnCommand(name)
     const env = buildSidecarEnv(name, this.ports)
 
-    // MCP uses pipe for stdin (stdio transport), server/terminal ignore stdin.
-    const stdinMode = name === 'mcp' ? 'pipe' : 'ignore'
+    // MCP and Ghostty use pipe for stdin (stdio transport).
+    // MCP uses stdio-based JSON-RPC; Ghostty uses newline-delimited JSON
+    // commands over stdin and events over stdout.
+    const stdinMode = name === 'mcp' || name === 'ghostty' ? 'pipe' : 'ignore'
 
     console.info(`[sidecar:${name}] Spawning: ${executable} ${args.join(' ')}`)
 

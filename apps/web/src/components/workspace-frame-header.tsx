@@ -26,6 +26,7 @@ import {
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import {
   Tooltip,
   TooltipContent,
@@ -189,7 +190,14 @@ function WorkspaceFrameHeader({
                 >
                   <Server className="size-3.5" />
                 </TooltipTrigger>
-                <TooltipContent>Toggle dev server terminal</TooltipContent>
+                <TooltipContent>
+                  Toggle dev server terminal
+                  <KbdGroup>
+                    <Kbd>^</Kbd>
+                    <Kbd>B</Kbd>
+                    <Kbd>S</Kbd>
+                  </KbdGroup>
+                </TooltipContent>
               </Tooltip>
             )}
             <Tooltip>
@@ -213,6 +221,11 @@ function WorkspaceFrameHeader({
               </TooltipTrigger>
               <TooltipContent>
                 {diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'}
+                <KbdGroup>
+                  <Kbd>^</Kbd>
+                  <Kbd>B</Kbd>
+                  <Kbd>D</Kbd>
+                </KbdGroup>
               </TooltipContent>
             </Tooltip>
             <Tooltip>
@@ -236,6 +249,11 @@ function WorkspaceFrameHeader({
               </TooltipTrigger>
               <TooltipContent>
                 {reviewIsOpen ? 'Close review pane' : 'Open review pane'}
+                <KbdGroup>
+                  <Kbd>^</Kbd>
+                  <Kbd>B</Kbd>
+                  <Kbd>R</Kbd>
+                </KbdGroup>
               </TooltipContent>
             </Tooltip>
             <Tooltip>

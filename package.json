@@ -33,7 +33,7 @@
     "build": "turbo build",
     "typecheck": "turbo typecheck --ui=stream",
     "dev:native": "turbo -F native dev",
-    "build:app": "turbo -F web build",
+    "build:app": "tsx scripts/build-desktop-artifact.ts",
     "test": "turbo test --ui=stream --concurrency=3",
     "test:watch": "turbo test:watch --ui=stream --concurrency=3",
     "check": "turbo run //#format:fix typecheck test --ui=stream --concurrency=3",

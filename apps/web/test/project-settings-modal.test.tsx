@@ -37,7 +37,7 @@ interface ConfigResult {
       readonly value: readonly string[]
       readonly source: string
     }
-    readonly rlphConfig: {
+    readonly brrrConfig: {
       readonly value: string | null
       readonly source: string
     }
@@ -133,7 +133,7 @@ describe('ProjectSettingsModal', () => {
         agent: { value: 'opencode', source: 'default' },
         worktreeDir: { value: '/tmp/worktrees', source: 'laborer.json' },
         setupScripts: { value: ['bun install'], source: 'laborer.json' },
-        rlphConfig: { value: '.rlph/config.toml', source: 'laborer.json' },
+        brrrConfig: { value: '.brrr/config.toml', source: 'laborer.json' },
         devServer: {
           autoOpen: { value: false, source: 'default' },
           image: { value: null, source: 'default' },
@@ -165,7 +165,7 @@ describe('ProjectSettingsModal', () => {
     expect(screen.getByText('Project settings')).toBeTruthy()
     expect(screen.getByDisplayValue('/tmp/worktrees')).toBeTruthy()
     expect(screen.getByDisplayValue('bun install')).toBeTruthy()
-    expect(screen.getByDisplayValue('.rlph/config.toml')).toBeTruthy()
+    expect(screen.getByDisplayValue('.brrr/config.toml')).toBeTruthy()
     expect(queryMock).toHaveBeenCalledWith(
       'config.get',
       { projectId: 'project-1' },

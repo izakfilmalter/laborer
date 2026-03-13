@@ -11,13 +11,13 @@ const projects = [
     id: 'project-1',
     name: 'laborer',
     repoPath: '/repo/laborer',
-    rlphConfig: undefined,
+    brrrConfig: undefined,
   },
   {
     id: 'project-2',
     name: 'other',
     repoPath: '/repo/other',
-    rlphConfig: undefined,
+    brrrConfig: undefined,
   },
 ] as const
 

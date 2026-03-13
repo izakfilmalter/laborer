@@ -61,7 +61,7 @@ describe('LiveStore schema', () => {
             id: 'project-1',
             repoPath: '/tmp/project-1',
             name: 'Project One',
-            rlphConfig: null,
+            brrrConfig: null,
           })
         )
 
@@ -76,7 +76,7 @@ describe('LiveStore schema', () => {
           repoId: null,
           canonicalGitCommonDir: null,
           name: 'Project One',
-          rlphConfig: null,
+          brrrConfig: null,
         })
 
         store.commit(events.projectRemoved({ id: 'project-1' }))
@@ -99,7 +99,7 @@ describe('LiveStore schema', () => {
             id: 'project-1',
             repoPath: '/tmp/project-1',
             name: 'Project One',
-            rlphConfig: null,
+            brrrConfig: null,
           })
         )
         store.commit(
@@ -120,7 +120,7 @@ describe('LiveStore schema', () => {
               repoId: 'repo-1',
               canonicalGitCommonDir: '/private/tmp/project-1/.git',
               name: 'Project One',
-              rlphConfig: null,
+              brrrConfig: null,
             },
           ]
         )
@@ -698,7 +698,7 @@ describe('LiveStore schema', () => {
           id: 'project-1',
           repoPath: '/tmp/project-1',
           name: 'Project One',
-          rlphConfig: null,
+          brrrConfig: null,
         })
       )
       store.commit(

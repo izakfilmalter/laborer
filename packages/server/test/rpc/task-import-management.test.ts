@@ -143,9 +143,9 @@ describe('LaborerRpcs task import', () => {
 
           process.env.LINEAR_API_KEY = 'linear-token'
           const repoPath = initRepo('rpc-task-import-linear', tempRoots)
-          mkdirSync(join(repoPath, '.rlph'), { recursive: true })
+          mkdirSync(join(repoPath, '.brrr'), { recursive: true })
           writeFileSync(
-            join(repoPath, '.rlph', 'config.toml'),
+            join(repoPath, '.brrr', 'config.toml'),
             [
               'label = "ops"',
               '',

@@ -154,7 +154,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
           id: projectId,
           repoPath,
           name: 'boot-restore',
-          rlphConfig: null,
+          brrrConfig: null,
         })
       )
 
@@ -224,7 +224,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
             id: projectId,
             repoPath,
             name: 'boot-offline',
-            rlphConfig: null,
+            brrrConfig: null,
           })
         )
         store.commit(
@@ -473,7 +473,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
             repoId: identity.repoId,
             canonicalGitCommonDir: identity.canonicalGitCommonDir,
             name: 'boot-persisted-identity',
-            rlphConfig: null,
+            brrrConfig: null,
           })
         )
 
@@ -590,7 +590,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
             repoId: freshProject.repoId,
             canonicalGitCommonDir: freshProject.canonicalGitCommonDir,
             name: freshProject.name,
-            rlphConfig: null,
+            brrrConfig: null,
           })
         )
 

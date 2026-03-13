@@ -25,7 +25,7 @@ const project = {
   name: 'laborer',
   repoId: null,
   repoPath: '/repo/laborer',
-  rlphConfig: null,
+  brrrConfig: null,
 } as const
 
 const TestTaskManager = TaskManager.layer.pipe(
@@ -188,7 +188,7 @@ describe('PRD RPC handlers', () => {
             id: project.id,
             repoPath: project.repoPath,
             name: project.name,
-            rlphConfig: project.rlphConfig,
+            brrrConfig: project.brrrConfig,
           })
         )
 
@@ -510,7 +510,7 @@ describe('PRD RPC handlers', () => {
             id: project.id,
             repoPath: project.repoPath,
             name: project.name,
-            rlphConfig: project.rlphConfig,
+            brrrConfig: project.brrrConfig,
           })
         )
 
@@ -608,7 +608,7 @@ describe('PRD RPC handlers', () => {
             id: project.id,
             repoPath: project.repoPath,
             name: project.name,
-            rlphConfig: project.rlphConfig,
+            brrrConfig: project.brrrConfig,
           })
         )
 
@@ -677,7 +677,7 @@ describe('PRD RPC handlers', () => {
           id: project.id,
           repoPath: project.repoPath,
           name: project.name,
-          rlphConfig: project.rlphConfig,
+          brrrConfig: project.brrrConfig,
         })
       )
 
@@ -735,7 +735,7 @@ describe('PRD RPC handlers', () => {
           id: project.id,
           repoPath: project.repoPath,
           name: project.name,
-          rlphConfig: project.rlphConfig,
+          brrrConfig: project.brrrConfig,
         })
       )
 

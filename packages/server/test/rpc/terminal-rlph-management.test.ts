@@ -37,7 +37,7 @@ const makeWorkspaceFixture = (
   Scope.Scope
 > =>
   Effect.gen(function* () {
-    const repoPath = initRepo('rpc-terminal-rlph', tempRoots)
+    const repoPath = initRepo('rpc-terminal-brrr', tempRoots)
     const project = yield* context.client.project.add({ repoPath })
     const workspaceId = crypto.randomUUID()
     const worktreePath = join(repoPath, '.worktrees', workspaceId)
@@ -61,7 +61,7 @@ const makeWorkspaceFixture = (
     return { projectId: project.id, workspaceId }
   })
 
-describe('LaborerRpcs terminal and rlph management', () => {
+describe('LaborerRpcs terminal and brrr management', () => {
   it.scoped('terminal.spawn delegates to the terminal client boundary', () =>
     runWithRpcTestContext(({ client, terminalClientRecorder, ...context }) =>
       Effect.gen(function* () {
@@ -90,7 +90,7 @@ describe('LaborerRpcs terminal and rlph management', () => {
     )
   )
 
-  it.scoped('rlph.startLoop spawns the once command through RPC', () =>
+  it.scoped('brrr.startLoop spawns the build once command through RPC', () =>
     runWithRpcTestContext(({ client, terminalClientRecorder, ...context }) =>
       Effect.gen(function* () {
         const tempRoots: string[] = []
@@ -102,21 +102,21 @@ describe('LaborerRpcs terminal and rlph management', () => {
           { client, terminalClientRecorder, ...context },
           tempRoots
         )
-        const terminal = yield* client.rlph.startLoop({ workspaceId })
+        const terminal = yield* client.brrr.startLoop({ workspaceId })
 
         assert.strictEqual(terminal.workspaceId, workspaceId)
-        assert.strictEqual(terminal.command, 'rlph --once')
+        assert.strictEqual(terminal.command, 'brrr build --once')
         assert.strictEqual(terminal.status, 'running')
         assert.deepStrictEqual(
           yield* Ref.get(terminalClientRecorder.spawnInWorkspaceCalls),
-          [{ workspaceId, command: 'rlph --once' }]
+          [{ workspaceId, command: 'brrr build --once' }]
         )
       })
     )
   )
 
   it.scoped(
-    'rlph.review fails with PR_NOT_FOUND when no PR exists for branch',
+    'brrr.review fails with PR_NOT_FOUND when no PR exists for branch',
     () =>
       runWithRpcTestContext(({ client, terminalClientRecorder, ...context }) =>
         Effect.gen(function* () {
@@ -129,7 +129,7 @@ describe('LaborerRpcs terminal and rlph management', () => {
             { client, terminalClientRecorder, ...context },
             tempRoots
           )
-          const result = yield* client.rlph
+          const result = yield* client.brrr
             .review({ workspaceId })
             .pipe(Effect.flip)
 
@@ -148,7 +148,7 @@ describe('LaborerRpcs terminal and rlph management', () => {
   )
 
   it.scoped(
-    'rlph.fix fails with PR_NOT_FOUND when no PR exists for branch',
+    'brrr.fix fails with PR_NOT_FOUND when no PR exists for branch',
     () =>
       runWithRpcTestContext(({ client, terminalClientRecorder, ...context }) =>
         Effect.gen(function* () {
@@ -161,7 +161,7 @@ describe('LaborerRpcs terminal and rlph management', () => {
             { client, terminalClientRecorder, ...context },
             tempRoots
           )
-          const result = yield* client.rlph
+          const result = yield* client.brrr
             .fix({ workspaceId })
             .pipe(Effect.flip)
 

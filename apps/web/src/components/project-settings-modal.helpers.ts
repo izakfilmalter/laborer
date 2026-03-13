@@ -5,19 +5,20 @@ interface SetupScriptItem {
 
 interface ResolvedConfigSnapshot {
   readonly agent: 'opencode' | 'claude' | 'codex'
+  readonly brrrConfig: string | null
   readonly devServerAutoOpen: boolean
   readonly devServerImage: string | null
   readonly devServerInstallCommand: string | null
   readonly devServerNetwork: string | null
   readonly devServerSetupScripts: readonly string[]
   readonly devServerStartCommand: string | null
-  readonly rlphConfig: string | null
   readonly setupScripts: readonly string[]
   readonly worktreeDir: string
 }
 
 interface ConfigUpdates {
   agent?: 'opencode' | 'claude' | 'codex'
+  brrrConfig?: string
   devServer?: {
     autoOpen?: boolean
     image?: string
@@ -26,7 +27,6 @@ interface ConfigUpdates {
     setupScripts?: string[]
     startCommand?: string
   }
-  rlphConfig?: string
   setupScripts?: string[]
   worktreeDir?: string
 }
@@ -125,7 +125,7 @@ const buildConfigUpdates = ({
   devServerNetwork,
   devServerSetupScripts,
   devServerStartCommand,
-  rlphConfig,
+  brrrConfig,
   resolvedConfig,
   setupScripts,
   worktreeDir,
@@ -137,7 +137,7 @@ const buildConfigUpdates = ({
   devServerNetwork: string
   devServerSetupScripts: readonly SetupScriptItem[]
   devServerStartCommand: string
-  rlphConfig: string
+  brrrConfig: string
   resolvedConfig: ResolvedConfigSnapshot
   setupScripts: readonly SetupScriptItem[]
   worktreeDir: string
@@ -150,7 +150,7 @@ const buildConfigUpdates = ({
 
   const normalizedWorktreeDir = worktreeDir.trim()
   const normalizedSetupScripts = normalizeSetupScripts(setupScripts)
-  const normalizedRlphConfig = rlphConfig.trim()
+  const normalizedBrrrConfig = brrrConfig.trim()
 
   if (
     normalizedWorktreeDir.length > 0 &&
@@ -166,10 +166,10 @@ const buildConfigUpdates = ({
   }
 
   if (
-    normalizedRlphConfig.length > 0 &&
-    normalizedRlphConfig !== (resolvedConfig.rlphConfig ?? '')
+    normalizedBrrrConfig.length > 0 &&
+    normalizedBrrrConfig !== (resolvedConfig.brrrConfig ?? '')
   ) {
-    updates.rlphConfig = normalizedRlphConfig
+    updates.brrrConfig = normalizedBrrrConfig
   }
 
   const devServerUpdate = buildDevServerUpdates(

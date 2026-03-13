@@ -8,7 +8,7 @@ const project = {
   id: 'project-1',
   name: 'laborer',
   repoPath: '/repo/laborer',
-  rlphConfig: undefined,
+  brrrConfig: undefined,
 } as const
 
 const prd = {

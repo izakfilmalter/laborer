@@ -89,7 +89,7 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
           id: projectId,
           repoPath,
           name: 'destroy-external',
-          rlphConfig: null,
+          brrrConfig: null,
         })
       )
       store.commit(
@@ -138,7 +138,7 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
           id: projectId,
           repoPath,
           name: 'destroy-laborer',
-          rlphConfig: null,
+          brrrConfig: null,
         })
       )
       store.commit(
@@ -200,7 +200,7 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
             id: projectId,
             repoPath,
             name: projectName,
-            rlphConfig: null,
+            brrrConfig: null,
           })
         )
         store.commit(

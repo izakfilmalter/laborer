@@ -16,7 +16,7 @@ describe('TaskManager.createTask', () => {
           id: 'project-1',
           repoPath: '/tmp/project-1',
           name: 'project-1',
-          rlphConfig: null,
+          brrrConfig: null,
         })
       )
 

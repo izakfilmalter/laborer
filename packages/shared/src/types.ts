@@ -71,7 +71,7 @@ export class Project extends Schema.Class<Project>('Project')({
   repoId: Schema.optional(Schema.String),
   canonicalGitCommonDir: Schema.optional(Schema.String),
   name: Schema.String,
-  rlphConfig: Schema.optional(Schema.String),
+  brrrConfig: Schema.optional(Schema.String),
 }) {}
 
 export class Workspace extends Schema.Class<Workspace>('Workspace')({

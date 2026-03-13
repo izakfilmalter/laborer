@@ -173,9 +173,13 @@ class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
       const runtime = yield* Effect.runtime<never>()
       const runFork = Runtime.runFork(runtime)
 
-      // Spawn the PTY Host as a Node.js child process via node:child_process.
-      const child = spawnChild('node', [ptyHostPath], {
+      // Spawn the PTY Host as a child process via node:child_process.
+      // In production (Electron), use process.execPath (the Electron binary)
+      // with ELECTRON_RUN_AS_NODE=1 so the child can read files from the
+      // asar archive. In dev mode, plain 'node' works fine.
+      const child = spawnChild(process.execPath, [ptyHostPath], {
         stdio: ['pipe', 'pipe', 'inherit'], // PTY Host debug logs go to our stderr
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       })
 
       /** Send a JSON command to the PTY Host via stdin. */

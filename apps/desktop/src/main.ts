@@ -182,7 +182,8 @@ function createWindow(record?: WindowRecord): BrowserWindow {
     window.loadURL(VITE_DEV_SERVER_URL).catch(console.error)
   } else {
     // Production: serve the frontend via the custom laborer:// protocol.
-    window.loadURL(`${DESKTOP_SCHEME}://app/index.html`).catch(console.error)
+    // Load the root path (not /index.html) so TanStack Router matches "/".
+    window.loadURL(`${DESKTOP_SCHEME}://app/`).catch(console.error)
   }
 
   window.webContents.on('did-finish-load', () => {

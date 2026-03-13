@@ -297,7 +297,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
             repoId: 'repo-1',
             canonicalGitCommonDir: '/persisted/repo/.git',
             name: 'persisted-repo',
-            rlphConfig: null,
+            brrrConfig: null,
           })
         )
 
@@ -316,7 +316,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
               repoId: 'repo-1',
               canonicalGitCommonDir: '/persisted/repo/.git',
               name: 'persisted-repo',
-              rlphConfig: null,
+              brrrConfig: null,
             },
           ]
         )

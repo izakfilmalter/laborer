@@ -176,7 +176,7 @@ describe('DiffService downstream event consumer', () => {
               id: projectId,
               repoPath,
               name: 'diff-event-test',
-              rlphConfig: null,
+              brrrConfig: null,
             })
           )
 
@@ -260,7 +260,7 @@ describe('DiffService downstream event consumer', () => {
               id: projectId,
               repoPath,
               name: 'no-polling-test',
-              rlphConfig: null,
+              brrrConfig: null,
             })
           )
 
@@ -326,7 +326,7 @@ describe('DiffService downstream event consumer', () => {
             id: projectId,
             repoPath,
             name: 'debounce-test',
-            rlphConfig: null,
+            brrrConfig: null,
           })
         )
 
@@ -404,7 +404,7 @@ describe('DiffService downstream event consumer', () => {
               id: projectId,
               repoPath,
               name: 'stop-all-test',
-              rlphConfig: null,
+              brrrConfig: null,
             })
           )
 
@@ -495,7 +495,7 @@ describe('DiffService downstream event consumer', () => {
               id: projectId,
               repoPath,
               name: 'idempotent-poll-test',
-              rlphConfig: null,
+              brrrConfig: null,
             })
           )
 

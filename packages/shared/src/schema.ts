@@ -13,7 +13,7 @@ export const projects = State.SQLite.table({
     repoId: State.SQLite.text({ nullable: true }),
     canonicalGitCommonDir: State.SQLite.text({ nullable: true }),
     name: State.SQLite.text(),
-    rlphConfig: State.SQLite.text({ nullable: true }),
+    brrrConfig: State.SQLite.text({ nullable: true }),
   },
 })
 
@@ -143,7 +143,7 @@ export const projectCreated = Events.synced({
     repoId: Schema.optional(Schema.NullOr(Schema.String)),
     canonicalGitCommonDir: Schema.optional(Schema.NullOr(Schema.String)),
     name: Schema.String,
-    rlphConfig: Schema.NullOr(Schema.String),
+    brrrConfig: Schema.NullOr(Schema.String),
   }),
 })
 
@@ -515,7 +515,7 @@ const materializers = State.SQLite.materializers(events, {
     repoId,
     canonicalGitCommonDir,
     name,
-    rlphConfig,
+    brrrConfig,
   }) =>
     projects.insert({
       id,
@@ -523,7 +523,7 @@ const materializers = State.SQLite.materializers(events, {
       repoId: repoId ?? null,
       canonicalGitCommonDir: canonicalGitCommonDir ?? null,
       name,
-      rlphConfig,
+      brrrConfig,
     }),
   'v1.ProjectRepositoryIdentityBackfilled': ({
     id,

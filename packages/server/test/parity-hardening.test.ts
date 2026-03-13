@@ -289,7 +289,7 @@ describe('Persisted identity migration and dedupe hardening', () => {
             id: 'legacy-null-identity',
             repoPath,
             name: 'legacy-null-identity',
-            rlphConfig: null,
+            brrrConfig: null,
           })
         )
 
@@ -577,7 +577,7 @@ describe('End-to-end downstream invalidation hardening', () => {
               id: projectId,
               repoPath,
               name: 'e2e-native-test',
-              rlphConfig: null,
+              brrrConfig: null,
             })
           )
 
@@ -658,7 +658,7 @@ describe('End-to-end downstream invalidation hardening', () => {
               id: projectId,
               repoPath,
               name: 'e2e-mixed-test',
-              rlphConfig: null,
+              brrrConfig: null,
             })
           )
 

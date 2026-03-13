@@ -118,7 +118,7 @@ export const ProjectResponse = Schema.Struct({
   id: Schema.String,
   repoPath: Schema.String,
   name: Schema.String,
-  rlphConfig: Schema.optional(Schema.String),
+  brrrConfig: Schema.optional(Schema.String),
 })
 
 export type ProjectResponse = typeof ProjectResponse.Type
@@ -169,7 +169,7 @@ const ConfigResponse = Schema.Struct({
   prdsDir: ConfigResolvedValueString,
   worktreeDir: ConfigResolvedValueString,
   setupScripts: ConfigResolvedValueStringArray,
-  rlphConfig: ConfigResolvedValueNullableString,
+  brrrConfig: ConfigResolvedValueNullableString,
   watchIgnore: ConfigResolvedValueStringArray,
 })
 
@@ -317,7 +317,7 @@ export class LaborerRpcs extends RpcGroup.make(
         prdsDir: Schema.optional(Schema.String),
         worktreeDir: Schema.optional(Schema.String),
         setupScripts: Schema.optional(Schema.Array(Schema.String)),
-        rlphConfig: Schema.optional(Schema.String),
+        brrrConfig: Schema.optional(Schema.String),
       }),
     },
   }),
@@ -507,9 +507,9 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
-  // rlph RPCs
+  // brrr RPCs
   // -----------------------------------------------------------------------
-  Rpc.make('rlph.startLoop', {
+  Rpc.make('brrr.startLoop', {
     success: TerminalResponse,
     error: RpcError,
     payload: {
@@ -517,7 +517,7 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
-  Rpc.make('rlph.review', {
+  Rpc.make('brrr.review', {
     success: TerminalResponse,
     error: RpcError,
     payload: {
@@ -525,7 +525,7 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
-  Rpc.make('rlph.fix', {
+  Rpc.make('brrr.fix', {
     success: TerminalResponse,
     error: RpcError,
     payload: {
@@ -837,7 +837,7 @@ export class TerminalRpcs extends RpcGroup.make(
     success: TerminalInfo,
     error: TerminalRpcError,
     payload: {
-      /** Shell command to execute (e.g., "bash", "opencode", "rlph --once"). */
+      /** Shell command to execute (e.g., "bash", "opencode", "brrr build --once"). */
       command: Schema.String,
       /** Command arguments (optional, default []). */
       args: Schema.optional(Schema.Array(Schema.String)),

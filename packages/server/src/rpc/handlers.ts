@@ -206,7 +206,7 @@ export const handleConfigUpdate = ({
         }
       | undefined
     prdsDir?: string | undefined
-    rlphConfig?: string | undefined
+    brrrConfig?: string | undefined
     setupScripts?: readonly string[] | undefined
     worktreeDir?: string | undefined
   }
@@ -248,8 +248,8 @@ export const handleConfigUpdate = ({
       (config.prdsDir === undefined || typeof config.prdsDir === 'string') &&
       (config.worktreeDir === undefined ||
         typeof config.worktreeDir === 'string') &&
-      (config.rlphConfig === undefined ||
-        typeof config.rlphConfig === 'string') &&
+      (config.brrrConfig === undefined ||
+        typeof config.brrrConfig === 'string') &&
       isValidSetupScripts &&
       isValidDevServer
 
@@ -257,7 +257,7 @@ export const handleConfigUpdate = ({
       return yield* new RpcError({
         code: 'INVALID_INPUT',
         message:
-          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, rlphConfig, agent (opencode/claude/codex), setupScripts as string array, and devServer with optional string fields.',
+          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, brrrConfig, agent (opencode/claude/codex), setupScripts as string array, and devServer with optional string fields.',
       })
     }
 
@@ -657,7 +657,7 @@ export const handleProjectList = () =>
       id: project.id,
       repoPath: project.repoPath,
       name: project.name,
-      rlphConfig: project.rlphConfig ?? undefined,
+      brrrConfig: project.brrrConfig ?? undefined,
     }))
   })
 
@@ -675,9 +675,9 @@ export const handleProjectList = () =>
  * - terminal.write/resize/kill/remove/restart: stub — proxied by web app directly to terminal service (Issue #143)
  * - diff.refresh: delegates to DiffService.getDiff (Issue #82)
  * - editor.open: opens file in configured editor (Issue #111)
- * - rlph.startLoop: delegates to TerminalClient.spawnInWorkspace with `rlph --once` (Issue #92/#143)
- * - rlph.review: delegates to TerminalClient.spawnInWorkspace with `rlph review <prNumber>` (Issue #96/#143)
- * - rlph.fix: delegates to TerminalClient.spawnInWorkspace with `rlph fix <prNumber>` (Issue #98/#143)
+ * - brrr.startLoop: delegates to TerminalClient.spawnInWorkspace with `brrr build --once` (Issue #92/#143)
+ * - brrr.review: delegates to TerminalClient.spawnInWorkspace with `brrr review <prNumber>` (Issue #96/#143)
+ * - brrr.fix: delegates to TerminalClient.spawnInWorkspace with `brrr fix <prNumber>` (Issue #98/#143)
  * - task.create: delegates to TaskManager.createTask (Issue #100)
  * - task.updateStatus: delegates to TaskManager.updateTaskStatus + auto-creates workspace on "in_progress" + auto-destroys on "completed"/"cancelled" (Issue #101/#105/#106)
  * - task.remove: delegates to TaskManager.removeTask (Issue #100)
@@ -713,7 +713,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           id: project.id,
           repoPath: project.repoPath,
           name: project.name,
-          rlphConfig: project.rlphConfig ?? undefined,
+          brrrConfig: project.brrrConfig ?? undefined,
         }
       }),
     'project.remove': ({ projectId }) =>
@@ -911,28 +911,28 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       }),
 
     // -------------------------------------------------------------------
-    // rlph RPCs (Issue #92-98, #143)
+    // brrr RPCs (Issue #92-98, #143)
     // Now delegate to TerminalClient.spawnInWorkspace instead of TerminalManager.
     // -------------------------------------------------------------------
-    'rlph.startLoop': ({ workspaceId }) =>
+    'brrr.startLoop': ({ workspaceId }) =>
       Effect.gen(function* () {
         const tc = yield* TerminalClient
-        return yield* tc.spawnInWorkspace(workspaceId, 'rlph --once')
+        return yield* tc.spawnInWorkspace(workspaceId, 'brrr build --once')
       }),
-    'rlph.review': ({ workspaceId }) =>
+    'brrr.review': ({ workspaceId }) =>
       Effect.gen(function* () {
         const prNumber = yield* detectPrNumber(workspaceId)
         const tc = yield* TerminalClient
         return yield* tc.spawnInWorkspace(
           workspaceId,
-          `rlph review ${prNumber}`
+          `brrr review ${prNumber}`
         )
       }),
-    'rlph.fix': ({ workspaceId }) =>
+    'brrr.fix': ({ workspaceId }) =>
       Effect.gen(function* () {
         const prNumber = yield* detectPrNumber(workspaceId)
         const tc = yield* TerminalClient
-        return yield* tc.spawnInWorkspace(workspaceId, `rlph fix ${prNumber}`)
+        return yield* tc.spawnInWorkspace(workspaceId, `brrr fix ${prNumber}`)
       }),
 
     // -------------------------------------------------------------------

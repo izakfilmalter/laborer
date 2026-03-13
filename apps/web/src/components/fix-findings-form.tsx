@@ -7,10 +7,10 @@
  * returns an error which is displayed via a toast.
  *
  * On success, the spawned terminal is auto-assigned to a panel pane so the
- * user immediately sees the rlph TUI output in xterm.js.
+ * user immediately sees the brrr TUI output in xterm.js.
  *
  * @see Issue #99: "Fix Findings" button + PR number input
- * @see Issue #98: rlph.fix RPC handler
+ * @see Issue #98: brrr.fix RPC handler
  */
 
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
@@ -27,7 +27,7 @@ import {
 import { extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 
-const fixFindingsMutation = LaborerClient.mutation('rlph.fix')
+const fixFindingsMutation = LaborerClient.mutation('brrr.fix')
 
 interface FixFindingsFormProps {
   /** Disable the button (e.g., when no PR exists for the branch). */

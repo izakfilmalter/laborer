@@ -18,7 +18,7 @@
  *   "worktreeDir": "~/.config/laborer/my-project",
  *   "prdsDir": "~/.config/laborer/my-project/prds",
  *   "setupScripts": ["bun install", "cp .env.example .env"],
- *   "rlphConfig": "path/to/rlph.json"
+ *   "brrrConfig": "path/to/brrr/config.toml"
  * }
  * ```
  *
@@ -120,9 +120,9 @@ const VALID_AGENT_PROVIDERS: readonly AgentProvider[] = [
 interface LaborerConfig {
   /** Preferred AI coding agent. The value is also the CLI command to run. */
   readonly agent?: AgentProvider
+  readonly brrrConfig?: string
   readonly devServer?: DevServerConfig
   readonly prdsDir?: string
-  readonly rlphConfig?: string
   readonly setupScripts?: readonly string[]
   readonly watchIgnore?: readonly string[]
   readonly worktreeDir?: string
@@ -131,9 +131,9 @@ interface LaborerConfig {
 /** Partial updates accepted by writeProjectConfig(). */
 interface ProjectConfigUpdates {
   readonly agent?: AgentProvider | undefined
+  readonly brrrConfig?: string | undefined
   readonly devServer?: DevServerConfig | undefined
   readonly prdsDir?: string | undefined
-  readonly rlphConfig?: string | undefined
   readonly setupScripts?: readonly string[] | undefined
   readonly watchIgnore?: readonly string[] | undefined
   readonly worktreeDir?: string | undefined
@@ -172,10 +172,10 @@ interface ResolvedDevServerConfig {
 interface ResolvedLaborerConfig {
   /** Preferred AI coding agent CLI command (defaults to "opencode"). */
   readonly agent: ResolvedValue<AgentProvider>
+  readonly brrrConfig: ResolvedValue<string | null>
   readonly devServer: ResolvedDevServerConfig
   /** Absolute path with `~` already expanded. */
   readonly prdsDir: ResolvedValue<string>
-  readonly rlphConfig: ResolvedValue<string | null>
   readonly setupScripts: ResolvedValue<readonly string[]>
   /**
    * Additional ignore patterns appended to the default set.
@@ -391,8 +391,8 @@ const applyConfigUpdates = (
     next.setupScripts = [...updates.setupScripts]
   }
 
-  if (updates.rlphConfig !== undefined) {
-    next.rlphConfig = updates.rlphConfig
+  if (updates.brrrConfig !== undefined) {
+    next.brrrConfig = updates.brrrConfig
   }
 
   if (updates.watchIgnore !== undefined) {
@@ -672,7 +672,7 @@ const mergeConfigs = (
     value: [],
     source: 'default',
   }
-  let rlphConfig: ResolvedValue<string | null> = {
+  let brrrConfig: ResolvedValue<string | null> = {
     value: null,
     source: 'default',
   }
@@ -724,9 +724,9 @@ const mergeConfigs = (
       }
     }
 
-    if (config.rlphConfig !== undefined) {
-      rlphConfig = {
-        value: config.rlphConfig,
+    if (config.brrrConfig !== undefined) {
+      brrrConfig = {
+        value: config.brrrConfig,
         source: path,
       }
     }
@@ -747,7 +747,7 @@ const mergeConfigs = (
     prdsDir,
     worktreeDir,
     setupScripts,
-    rlphConfig,
+    brrrConfig,
     watchIgnore,
   }
 }
@@ -832,7 +832,7 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
         }
 
         yield* Effect.logDebug(
-          `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), prdsDir="${resolved.prdsDir.value}" (from ${resolved.prdsDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), rlphConfig=${resolved.rlphConfig.value ?? 'null'} (from ${resolved.rlphConfig.source}), devServer.image=${resolved.devServer.image.value ?? 'null'} (from ${resolved.devServer.image.source}), devServer.workdir="${resolved.devServer.workdir.value}" (from ${resolved.devServer.workdir.source})`
+          `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), prdsDir="${resolved.prdsDir.value}" (from ${resolved.prdsDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), brrrConfig=${resolved.brrrConfig.value ?? 'null'} (from ${resolved.brrrConfig.source}), devServer.image=${resolved.devServer.image.value ?? 'null'} (from ${resolved.devServer.image.source}), devServer.workdir="${resolved.devServer.workdir.value}" (from ${resolved.devServer.workdir.source})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
         return resolved

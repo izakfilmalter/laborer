@@ -27,8 +27,8 @@ const createProjectWithConfig = (
 ): string => {
   const repoPath = createTempDir('laborer-linear-import')
   tempRoots.push(repoPath)
-  mkdirSync(join(repoPath, '.rlph'), { recursive: true })
-  writeFileSync(join(repoPath, '.rlph', 'config.toml'), configContent)
+  mkdirSync(join(repoPath, '.brrr'), { recursive: true })
+  writeFileSync(join(repoPath, '.brrr', 'config.toml'), configContent)
   return repoPath
 }
 
@@ -88,7 +88,7 @@ describe('LinearTaskImporter.importProjectIssues', () => {
           id: 'project-1',
           repoPath,
           name: 'laborer',
-          rlphConfig: null,
+          brrrConfig: null,
         })
       )
       store.commit(
@@ -188,7 +188,7 @@ describe('LinearTaskImporter.importProjectIssues', () => {
           id: 'project-1',
           repoPath,
           name: 'laborer',
-          rlphConfig: null,
+          brrrConfig: null,
         })
       )
 

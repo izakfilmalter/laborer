@@ -58,7 +58,7 @@ describe('BranchStateTracker', () => {
           id: projectId,
           repoPath,
           name: 'branch-refresh-stale',
-          rlphConfig: null,
+          brrrConfig: null,
         })
       )
       store.commit(
@@ -105,7 +105,7 @@ describe('BranchStateTracker', () => {
           id: projectId,
           repoPath,
           name: 'branch-refresh-current',
-          rlphConfig: null,
+          brrrConfig: null,
         })
       )
       store.commit(
@@ -152,7 +152,7 @@ describe('BranchStateTracker', () => {
           id: projectId,
           repoPath,
           name: 'branch-refresh-multi',
-          rlphConfig: null,
+          brrrConfig: null,
         })
       )
       store.commit(
@@ -214,7 +214,7 @@ describe('BranchStateTracker', () => {
           id: projectId,
           repoPath,
           name: 'branch-refresh-destroyed',
-          rlphConfig: null,
+          brrrConfig: null,
         })
       )
       store.commit(
@@ -261,7 +261,7 @@ describe('BranchStateTracker', () => {
           id: projectId,
           repoPath,
           name: 'branch-refresh-detached',
-          rlphConfig: null,
+          brrrConfig: null,
         })
       )
       store.commit(
@@ -311,7 +311,7 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
             id: projectId,
             repoPath,
             name: 'coord-branch-refresh',
-            rlphConfig: null,
+            brrrConfig: null,
           })
         )
 
@@ -386,7 +386,7 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
             id: projectId,
             repoPath,
             name: 'coord-main-branch-with-linked',
-            rlphConfig: null,
+            brrrConfig: null,
           })
         )
 
@@ -459,7 +459,7 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
             id: projectId,
             repoPath,
             name: 'coord-linked-branch-refresh',
-            rlphConfig: null,
+            brrrConfig: null,
           })
         )
 
@@ -525,7 +525,7 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
             id: projectId,
             repoPath,
             name: 'coord-both-triggers',
-            rlphConfig: null,
+            brrrConfig: null,
           })
         )
 

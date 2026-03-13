@@ -10,7 +10,7 @@
  * are in progress.
  * Updates reactively when workspace state changes.
  * Includes a destroy button with confirmation dialog per workspace.
- * Includes rlph action buttons (Start Ralph Loop, Review PR,
+ * Includes brrr action buttons (Start Ralph Loop, Review PR,
  * Fix Findings) on every non-destroyed workspace for triggering agent
  * workflows.
  *
@@ -33,7 +33,7 @@
  * @see Issue #121: Loading state — workspace creation
  * @see Issue #113: Project switcher — filter workspaces by active project
  * @see Issue #160: UI for detected workspaces
- * @see Issue #193: Plan workspace scoped task list and rlph integration
+ * @see Issue #193: Plan workspace scoped task list and brrr integration
  */
 
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
@@ -97,7 +97,7 @@ const allWorkspaces$ = queryDb(workspaces, { label: 'workspaceList' })
 const allPrds$ = queryDb(prds, { label: 'workspaceList.prds' })
 
 const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
-const startLoopMutation = LaborerClient.mutation('rlph.startLoop')
+const startLoopMutation = LaborerClient.mutation('brrr.startLoop')
 const pauseContainerMutation = LaborerClient.mutation('container.pause')
 const unpauseContainerMutation = LaborerClient.mutation('container.unpause')
 

@@ -4,7 +4,7 @@
  * Verifies that workspaces associated with a plan (branch name `plan/<slug>`)
  * display a scoped PlanIssuesList showing only that plan's issues.
  *
- * @see Issue #193: Plan workspace scoped task list and rlph integration
+ * @see Issue #193: Plan workspace scoped task list and brrr integration
  */
 
 import {
@@ -71,7 +71,7 @@ vi.mock('@/atoms/laborer-client', () => ({
       if (name === 'workspace.destroy') {
         mutationMap.set(sentinel, destroyFn)
       }
-      if (name === 'rlph.startLoop') {
+      if (name === 'brrr.startLoop') {
         mutationMap.set(sentinel, startLoopFn)
       }
       if (name === 'task.updateStatus') {
@@ -447,7 +447,7 @@ describe('WorkspaceList plan association', () => {
     expect(screen.getByText('No workspaces')).toBeTruthy()
   })
 
-  it('rlph start loop button is present on plan-associated workspace', () => {
+  it('ralph start loop button is present on plan-associated workspace', () => {
     useLaborerStoreMock.mockReturnValue({
       useQuery: (query: { label: string }) => {
         if (query.label === 'workspaceList') {
@@ -465,7 +465,7 @@ describe('WorkspaceList plan association', () => {
 
     render(<WorkspaceList projectId="project-1" />)
 
-    // The rlph start loop button should be present
+    // The ralph start loop button should be present
     const startButton = screen.getByRole('button', {
       name: START_RALPH_LOOP_RE,
     })

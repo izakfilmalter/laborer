@@ -7,10 +7,10 @@
  * displayed via a toast.
  *
  * On success, the spawned terminal is auto-assigned to a panel pane so the
- * user immediately sees the rlph TUI output in xterm.js.
+ * user immediately sees the brrr TUI output in xterm.js.
  *
  * @see Issue #97: "Review PR" button + PR number input
- * @see Issue #96: rlph.review RPC handler
+ * @see Issue #96: brrr.review RPC handler
  */
 
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
@@ -27,7 +27,7 @@ import {
 import { extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 
-const reviewPrMutation = LaborerClient.mutation('rlph.review')
+const reviewPrMutation = LaborerClient.mutation('brrr.review')
 
 interface ReviewPrFormProps {
   /** Disable the button (e.g., when no PR exists for the branch). */

@@ -53,7 +53,7 @@ function TerminalOverlayToolbar({
         >
           <Columns2 className="size-3.5" />
         </TooltipTrigger>
-        <TooltipContent>
+        <TooltipContent side="bottom">
           Split horizontally
           <KbdGroup>
             <Kbd>⌘</Kbd>
@@ -74,7 +74,7 @@ function TerminalOverlayToolbar({
         >
           <Rows2 className="size-3.5" />
         </TooltipTrigger>
-        <TooltipContent>
+        <TooltipContent side="bottom">
           Split vertically
           <KbdGroup>
             <Kbd>⇧</Kbd>
@@ -100,7 +100,7 @@ function TerminalOverlayToolbar({
             <Maximize className="size-3.5" />
           )}
         </TooltipTrigger>
-        <TooltipContent>
+        <TooltipContent side="bottom">
           {isFullscreen ? 'Exit fullscreen' : 'Fullscreen pane'}
           <KbdGroup>
             <Kbd>⇧</Kbd>
@@ -122,7 +122,7 @@ function TerminalOverlayToolbar({
         >
           <X className="size-3.5" />
         </TooltipTrigger>
-        <TooltipContent>
+        <TooltipContent side="bottom">
           Close pane
           <KbdGroup>
             <Kbd>⌘</Kbd>

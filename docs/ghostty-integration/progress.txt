@@ -81,3 +81,56 @@ Date: 2026-03-13
 - Runtime callbacks are minimal stubs for now — full action mapping is Issue 7
 - IOSurface extraction probes CALayer contents — actual zero-copy sharing path will be hardened in Issue 3
 - Surface tracking uses a mutex-protected unordered_map with monotonic uint32 IDs
+
+---
+
+## Issue 1: Ghostty helper tracer bullet — helper process and client service
+Status: IN PROGRESS (helper process + client service complete)
+Date: 2026-03-13
+
+### What was done
+- Created ghostty-host.ts: standalone helper process following the PTY Host pattern
+  - Communicates via newline-delimited JSON over stdin (commands) and stdout (events)
+  - Loads the native @laborer/ghostty addon on startup
+  - Initializes Ghostty runtime, creates app, starts periodic tick timer (~60fps)
+  - Accepts commands: create_surface, destroy_surface, set_size, set_focus, get_iosurface, get_size, list_surfaces
+  - Emits events: ready (with version), surface_created, surface_destroyed, size_result, iosurface_result, surfaces_list, ok, error
+  - All commands use request IDs for response correlation
+  - Graceful shutdown on stdin close, SIGTERM, SIGINT
+  - Debug logging to stderr (not part of IPC protocol)
+- Created ghostty-host-client.ts: Effect Service for communicating with the helper process
+  - GhosttyHostClient Context.Tag with Layer.scoped lifecycle
+  - Spawns ghostty-host.ts as child process (tsx in dev, node in bundled mode)
+  - Waits for ready event via Effect.Deferred before accepting commands
+  - Request/response pattern with Effect.async and pending request tracking
+  - Monotonic command ID generation for response correlation
+  - Crash detection with callback registration
+  - Rejects all pending requests on process exit
+  - Automatic cleanup via Effect.addFinalizer on layer teardown
+  - Full typed API: createSurface, destroySurface, setSurfaceSize, setSurfaceFocus, getIOSurfaceId, getSurfaceSize, listSurfaces, onCrash
+- Added package.json export for "./client" entry point
+- Added effect and tsx as dependencies
+- Created integration test suite (test/ghostty-host.test.ts) with 13 tests:
+  - Startup: emits ready event with Ghostty version
+  - Surface lifecycle: create with defaults, custom options, destroy, error on non-existent
+  - Surface control: set size, set focus, get size, get IOSurface info
+  - Multi-surface: list surfaces after creating two
+  - Error handling: invalid JSON, invalid command structure
+  - Graceful shutdown: clean exit when stdin closes
+- All 38 tests pass (25 addon + 13 ghostty-host)
+- Full monorepo typecheck passes (all packages)
+- Format check passes
+
+### What remains for Issue 1 completion
+- Desktop integration: add 'ghostty' as a sidecar in SidecarManager
+- Renderer display: import IOSurface texture in Electron renderer and display via WebGPU
+- End-to-end test: verify helper startup and first-frame rendering
+- Error state: failure to start helper produces visible error in UI
+
+### Key decisions
+- Followed the PTY Host IPC pattern: newline-delimited JSON over stdin/stdout
+- Helper process owns Ghostty lifecycle entirely (init, app create, tick, surface management)
+- GhosttyHostClient is an Effect Service with scoped layer — fits the existing terminal package pattern
+- Request IDs enable request/response correlation over the unidirectional stdio channel
+- Tick timer runs at ~60fps (16ms) and is unref'd so it doesn't block process exit
+- Dev mode uses tsx to run TypeScript directly; bundled mode uses plain node

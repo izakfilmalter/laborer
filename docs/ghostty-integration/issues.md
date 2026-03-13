@@ -28,7 +28,7 @@ This slice should not aim for full terminal parity. Its purpose is to establish 
 
 ### Progress
 
-Native addon layer complete: app runtime creation with callbacks, surface lifecycle with offscreen NSWindow/NSView hosting, surface control (size/focus), IOSurface handle extraction, and 25 tests passing. Remaining: helper process, desktop sidecar integration, renderer display, e2e test.
+Native addon layer complete: app runtime creation with callbacks, surface lifecycle with offscreen NSWindow/NSView hosting, surface control (size/focus), IOSurface handle extraction, and 25 tests passing. Helper process (ghostty-host.ts) and Effect client service (GhosttyHostClient) complete with 13 integration tests passing. Remaining: desktop sidecar integration, renderer display, e2e test.
 
 ### Blocked by
 

@@ -13,15 +13,18 @@
   },
   "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./client": "./src/ghostty-host-client.ts"
   },
   "dependencies": {
+    "effect": "catalog:",
     "node-addon-api": "^8.3.1",
     "node-gyp": "^11.2.0"
   },
   "devDependencies": {
     "@laborer/config": "workspace:*",
     "@types/node": "^25.3.3",
+    "tsx": "^4.19.4",
     "typescript": "catalog:",
     "vitest": "^3.2.4"
   }

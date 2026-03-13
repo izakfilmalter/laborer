@@ -1059,5 +1059,15 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         const fetcher = yield* ReviewCommentFetcher
         return yield* fetcher.fetchVerdict(workspaceId)
       }),
+    'review.addReaction': ({ workspaceId, commentId, content }) =>
+      Effect.gen(function* () {
+        const fetcher = yield* ReviewCommentFetcher
+        return yield* fetcher.addReaction(workspaceId, commentId, content)
+      }),
+    'review.removeReaction': ({ workspaceId, commentId, reactionId }) =>
+      Effect.gen(function* () {
+        const fetcher = yield* ReviewCommentFetcher
+        yield* fetcher.removeReaction(workspaceId, commentId, reactionId)
+      }),
   })
 )

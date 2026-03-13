@@ -18,6 +18,7 @@
  */
 
 import type {
+  PrCommentReaction as PrCommentReactionType,
   PrComment as PrCommentType,
   ReviewFinding as ReviewFindingType,
   ReviewVerdict as ReviewVerdictType,
@@ -212,6 +213,75 @@ const ghApi = Effect.fn('ReviewCommentFetcher.ghApi')(function* <T>(
 })
 
 /**
+ * Run a mutating `gh api` command (POST or DELETE) and return the parsed
+ * JSON output. Unlike `ghApi`, this does not paginate.
+ */
+const ghApiMutate = Effect.fn('ReviewCommentFetcher.ghApiMutate')(function* <T>(
+  endpoint: string,
+  method: 'DELETE' | 'POST',
+  worktreePath: string,
+  fields?: readonly string[]
+) {
+  const args = ['gh', 'api', endpoint, '-X', method]
+  for (const f of fields ?? []) {
+    args.push('-f', f)
+  }
+
+  const { exitCode, stdout, stderr } = yield* Effect.tryPromise({
+    try: async () => {
+      const proc = spawn(args, {
+        cwd: worktreePath,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const exitCode = await proc.exited
+      const stdout = await new Response(proc.stdout).text()
+      const stderr = await new Response(proc.stderr).text()
+      return { exitCode, stdout, stderr }
+    },
+    catch: (error) =>
+      new RpcError({
+        message: `Failed to run gh api: ${String(error)}. Ensure the GitHub CLI (gh) is installed and authenticated. Run 'gh auth login' if needed.`,
+        code: 'GH_COMMAND_FAILED',
+      }),
+  })
+
+  if (exitCode !== 0) {
+    const stderrText = stderr.trim()
+    if (stderrText.includes('auth') || stderrText.includes('login')) {
+      return yield* new RpcError({
+        message: `GitHub CLI authentication failed. Run 'gh auth login' to authenticate.\n${stderrText}`,
+        code: 'GH_AUTH_FAILED',
+      })
+    }
+    if (stderrText.includes('rate limit')) {
+      return yield* new RpcError({
+        message: `GitHub API rate limit exceeded. Wait a few minutes and try again.\n${stderrText}`,
+        code: 'GH_RATE_LIMITED',
+      })
+    }
+    return yield* new RpcError({
+      message: `gh api ${endpoint} failed (exit code ${exitCode}): ${stderrText}`,
+      code: 'GH_API_FAILED',
+    })
+  }
+
+  const trimmed = stdout.trim()
+  if (trimmed.length === 0) {
+    return {} as T
+  }
+
+  return yield* Effect.try({
+    try: () => JSON.parse(trimmed) as T,
+    catch: () =>
+      new RpcError({
+        message: `Failed to parse gh api response for ${endpoint}`,
+        code: 'GH_API_PARSE_FAILED',
+      }),
+  })
+})
+
+/**
  * Fetch reactions for a specific comment via `gh api`.
  */
 const fetchReactions = Effect.fn('ReviewCommentFetcher.fetchReactions')(
@@ -352,12 +422,22 @@ interface ReviewFetchVerdictResult {
 class ReviewCommentFetcher extends Context.Tag('@laborer/ReviewCommentFetcher')<
   ReviewCommentFetcher,
   {
+    readonly addReaction: (
+      workspaceId: string,
+      commentId: number,
+      content: string
+    ) => Effect.Effect<PrCommentReactionType, RpcError>
     readonly fetchComments: (
       workspaceId: string
     ) => Effect.Effect<ReviewFetchCommentsResult, RpcError>
     readonly fetchVerdict: (
       workspaceId: string
     ) => Effect.Effect<ReviewFetchVerdictResult, RpcError>
+    readonly removeReaction: (
+      workspaceId: string,
+      commentId: number,
+      reactionId: number
+    ) => Effect.Effect<void, RpcError>
   }
 >() {
   static readonly layer = Layer.effect(
@@ -560,9 +640,81 @@ class ReviewCommentFetcher extends Context.Tag('@laborer/ReviewCommentFetcher')<
         }
       )
 
+      /**
+       * Resolve a workspace to its worktree path and owner/repo info.
+       * Shared by addReaction and removeReaction to avoid duplicating
+       * the workspace lookup + git remote detection logic.
+       */
+      const resolveWorkspaceRepo = Effect.fn(
+        'ReviewCommentFetcher.resolveWorkspaceRepo'
+      )(function* (workspaceId: string) {
+        const allWorkspaces = store.query(tables.workspaces)
+        const workspaceOpt = pipe(
+          allWorkspaces,
+          Arr.findFirst((w) => w.id === workspaceId)
+        )
+
+        if (workspaceOpt._tag === 'None') {
+          return yield* new RpcError({
+            message: `Workspace not found: ${workspaceId}`,
+            code: 'NOT_FOUND',
+          })
+        }
+
+        const workspace = workspaceOpt.value
+        const worktreePath = workspace.worktreePath
+        const { owner, repo } = yield* detectOwnerRepo(worktreePath)
+
+        return { owner, repo, worktreePath }
+      })
+
+      /**
+       * Add a reaction to an inline review comment via `gh api`.
+       * Returns the created reaction's id, content, and userId.
+       */
+      const addReaction = Effect.fn('ReviewCommentFetcher.addReaction')(
+        function* (workspaceId: string, commentId: number, content: string) {
+          const { owner, repo, worktreePath } =
+            yield* resolveWorkspaceRepo(workspaceId)
+
+          const endpoint = `repos/${owner}/${repo}/pulls/comments/${commentId}/reactions`
+          const result = yield* ghApiMutate<GhReaction>(
+            endpoint,
+            'POST',
+            worktreePath,
+            [`content=${content}`]
+          )
+
+          return {
+            id: result.id,
+            content: result.content,
+            userId: result.user.id,
+          }
+        }
+      )
+
+      /**
+       * Remove a reaction from an inline review comment via `gh api`.
+       */
+      const removeReaction = Effect.fn('ReviewCommentFetcher.removeReaction')(
+        function* (workspaceId: string, commentId: number, reactionId: number) {
+          const { owner, repo, worktreePath } =
+            yield* resolveWorkspaceRepo(workspaceId)
+
+          const endpoint = `repos/${owner}/${repo}/pulls/comments/${commentId}/reactions/${reactionId}`
+          yield* ghApiMutate<Record<string, never>>(
+            endpoint,
+            'DELETE',
+            worktreePath
+          )
+        }
+      )
+
       return ReviewCommentFetcher.of({
+        addReaction,
         fetchComments,
         fetchVerdict,
+        removeReaction,
       })
     })
   )

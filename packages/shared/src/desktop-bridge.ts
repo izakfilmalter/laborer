@@ -129,6 +129,14 @@ export interface AgentNotificationPayload {
  * Electron (e.g., in a plain browser for development), `window.desktopBridge` is
  * undefined and the renderer falls back to browser-native equivalents.
  */
+/** Options for creating a Ghostty terminal surface. */
+export interface GhosttyCreateSurfaceOptions {
+  readonly command?: string | undefined
+  readonly height?: number | undefined
+  readonly width?: number | undefined
+  readonly workingDirectory?: string | undefined
+}
+
 export interface DesktopBridge {
   /** Shows a native confirmation dialog with Yes/No buttons. Returns true if confirmed. */
   confirm: (message: string) => Promise<boolean>
@@ -158,6 +166,39 @@ export interface DesktopBridge {
 
   /** Returns the stable identity of the current native window. */
   getWindowId: () => string
+
+  /**
+   * Create a new Ghostty terminal surface in the host process.
+   * Returns the numeric surface ID assigned by the native runtime.
+   */
+  ghosttyCreateSurface: (
+    options?: GhosttyCreateSurfaceOptions
+  ) => Promise<number>
+
+  /**
+   * Destroy a Ghostty terminal surface by its ID.
+   * Frees native resources in the host process.
+   */
+  ghosttyDestroySurface: (surfaceId: number) => Promise<void>
+
+  /**
+   * List all active Ghostty surface IDs in the host process.
+   */
+  ghosttyListSurfaces: () => Promise<readonly number[]>
+
+  /**
+   * Set the focus state of a Ghostty surface.
+   */
+  ghosttySetFocus: (surfaceId: number, focused: boolean) => Promise<void>
+
+  /**
+   * Set the pixel size of a Ghostty surface.
+   */
+  ghosttySetSize: (
+    surfaceId: number,
+    width: number,
+    height: number
+  ) => Promise<void>
 
   /** Triggers quit-and-install of a downloaded update. */
   installUpdate: () => Promise<DesktopUpdateActionResult>

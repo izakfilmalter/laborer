@@ -771,6 +771,7 @@ const VALID_PANE_TYPES = new Set([
   'diff',
   'devServerTerminal',
   'review',
+  'ghosttyTerminal',
 ])
 const VALID_SPLIT_DIRECTIONS = new Set(['horizontal', 'vertical'])
 
@@ -789,6 +790,9 @@ function hasInvalidLeafOptionalFields(node: Record<string, unknown>): boolean {
     ('diffOpen' in node &&
       node.diffOpen !== undefined &&
       typeof node.diffOpen !== 'boolean') ||
+    ('ghosttySurfaceId' in node &&
+      node.ghosttySurfaceId !== undefined &&
+      typeof node.ghosttySurfaceId !== 'number') ||
     ('terminalId' in node &&
       node.terminalId !== undefined &&
       typeof node.terminalId !== 'string') ||
@@ -825,6 +829,9 @@ function repairLeafNode(
       ? { devServerTerminalId: node.devServerTerminalId }
       : {}),
     ...(typeof node.diffOpen === 'boolean' ? { diffOpen: node.diffOpen } : {}),
+    ...(typeof node.ghosttySurfaceId === 'number'
+      ? { ghosttySurfaceId: node.ghosttySurfaceId }
+      : {}),
     ...(typeof node.terminalId === 'string'
       ? { terminalId: node.terminalId }
       : {}),

@@ -11,6 +11,7 @@ import {
   triggerInstallUpdate,
 } from './auto-updater.js'
 import { fixPath } from './fix-path.js'
+import { GhosttyBridge } from './ghostty-bridge.js'
 import { HealthMonitor } from './health.js'
 import {
   getWorkspaceWindowRegistry,
@@ -81,6 +82,12 @@ let sidecarManager: SidecarManager | null = null
  * Only created in production mode.
  */
 let healthMonitor: HealthMonitor | null = null
+
+/**
+ * Bridge for relaying Ghostty surface commands from the renderer to the
+ * Ghostty Host sidecar process. Created in production mode only.
+ */
+let ghosttyBridge: GhosttyBridge | null = null
 
 /** System tray icon manager. */
 const trayManager = new TrayManager()
@@ -270,12 +277,28 @@ app
       sidecarManager = new SidecarManager(servicePorts)
       healthMonitor = new HealthMonitor(sidecarManager, servicePorts)
 
+      // Create the Ghostty IPC bridge and register its handlers early
+      // so the renderer can call Ghostty methods as soon as the sidecar
+      // is ready. The bridge will reject commands until attached.
+      ghosttyBridge = new GhosttyBridge()
+      ghosttyBridge.registerIpcHandlers()
+
       // Forward sidecar status events to the renderer.
+      // Also re-attach the Ghostty bridge when the sidecar restarts.
       healthMonitor.setStatusListener((status) => {
         if (status.state === 'crashed') {
           console.error(
             `[main] Sidecar ${status.name} crashed: ${status.error}`
           )
+        }
+
+        // Re-attach the Ghostty bridge when the sidecar becomes healthy
+        // (either initial spawn or after a restart).
+        if (status.name === 'ghostty' && status.state === 'healthy') {
+          const ghosttyProcess = sidecarManager?.getProcess('ghostty')
+          if (ghosttyProcess && ghosttyBridge) {
+            ghosttyBridge.attach(ghosttyProcess)
+          }
         }
 
         for (const window of BrowserWindow.getAllWindows()) {

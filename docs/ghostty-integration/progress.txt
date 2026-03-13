@@ -218,3 +218,68 @@ Date: 2026-03-13
 - Pixel data includes tightly-packed BGRA buffer (no GPU row padding) for direct use with canvas ImageData
 - E2e test uses polling pattern (100ms intervals, 60 attempts) since Ghostty rendering is async and GPU-dependent
 - Test gracefully handles environments without GPU (headless CI) — warns instead of failing
+
+---
+
+## Issue 4: Ghostty terminal lifecycle and pane integration
+Status: COMPLETE
+Date: 2026-03-13
+
+### What was done
+- Added 'ghosttyTerminal' to PaneType schema literal in packages/shared/src/types.ts
+- Added ghosttySurfaceId optional field to LeafNode interface and LeafNodeSchema
+- Added 'ghosttyTerminal' to VALID_PANE_TYPES set in layout-utils.ts
+- Updated layout tree repair logic to handle ghosttySurfaceId validation and preservation
+- Created GhosttyBridge class (apps/desktop/src/ghostty-bridge.ts):
+  - Relays Ghostty surface commands from the Electron renderer to the Ghostty Host sidecar via stdin/stdout JSON IPC
+  - Pending request tracking with monotonic IDs for response correlation
+  - Attach/detach lifecycle for sidecar process restart support
+  - Registers ipcMain.handle() handlers for 5 Ghostty channels
+- Added Ghostty methods to DesktopBridge interface (packages/shared/src/desktop-bridge.ts):
+  - ghosttyCreateSurface, ghosttyDestroySurface, ghosttySetSize, ghosttySetFocus, ghosttyListSurfaces
+  - GhosttyCreateSurfaceOptions type for surface creation parameters
+- Added Ghostty IPC channels to preload script (apps/desktop/src/preload.ts):
+  - 5 new channels: ghostty:create-surface, ghostty:destroy-surface, ghostty:set-size, ghostty:set-focus, ghostty:list-surfaces
+  - All use ipcRenderer.invoke pattern matching existing bridge methods
+- Wired GhosttyBridge into main.ts:
+  - Bridge created and IPC handlers registered during production startup
+  - Auto-attaches to ghostty sidecar process when HealthMonitor reports it healthy
+  - Re-attaches on sidecar restart via the status listener
+- Created GhosttyTerminalPane React component (apps/web/src/panes/ghostty-terminal-pane.tsx):
+  - Creates Ghostty surface via DesktopBridge on mount
+  - Destroys surface on unmount (including race condition handling for unmount-during-creation)
+  - Syncs focus state with native surface when isFocused prop changes
+  - Shows loading spinner during surface creation
+  - Shows error state with close button if creation fails
+  - Shows placeholder for active surfaces (rendering is Issue 3, input is Issue 5)
+- Wired GhosttyTerminalPane into PanelManager PaneContent:
+  - ghosttyTerminal pane type renders GhosttyTerminalPane with isFocused prop from useActivePaneId
+  - Positioned before devServerTerminal/empty terminal branches
+- Added 8 lifecycle tests to layout-utils.test.ts:
+  - repair accepts ghosttyTerminal as a valid pane type
+  - repair preserves ghosttySurfaceId on valid ghostty panes
+  - repair strips invalid ghosttySurfaceId type
+  - splitPane creates new ghosttyTerminal panes when specified
+  - closePane removes ghostty panes from splits
+  - findSiblingPaneId works for ghostty panes
+  - ensureValidActivePaneId works with ghostty panes
+  - getTerminalIdsToRemove returns empty for ghostty panes
+- All 8 packages typecheck successfully
+- All 436 web tests pass (including 8 new ghostty lifecycle tests)
+- All 42 ghostty package tests pass
+- Format check passes (376 files, no fixes needed)
+
+### What remains for full Issue 4 completion
+- The pane integration is structurally complete. Creating ghosttyTerminal panes
+  from the existing terminal UI flow requires either a user preference toggle
+  or a programmatic API to choose between 'terminal' and 'ghosttyTerminal'
+  paneType during computeTerminalPaneAssignment. This can be added as a
+  follow-up once the rendering (Issue 3) and input (Issue 5) paths are in place.
+
+### Key decisions
+- ghosttyTerminal is a separate PaneType rather than a flag on 'terminal' — keeps the two stacks cleanly separated during migration
+- ghosttySurfaceId is stored on LeafNode (not terminalId) — Ghostty surface IDs are numbers from the native addon, distinct from the string terminal IDs used by xterm.js
+- GhosttyBridge lives in the desktop app, not the ghostty package — it bridges Electron IPC (ipcMain/ipcRenderer) which is a desktop concern, not a ghostty package concern
+- GhosttyTerminalPane creates/destroys surfaces via component lifecycle (useEffect) — surface ownership is tied to component mounting, matching React's declarative model
+- Surface cleanup on unmount is fire-and-forget (.catch(() => {})) — the host process will clean up if the bridge call fails
+- The bridge attaches to the sidecar stdout for event parsing — this means the SidecarManager's stdout logging sees the same events, which is acceptable for debugging

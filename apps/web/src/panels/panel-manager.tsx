@@ -78,6 +78,7 @@ import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import {
+  useActivePaneId,
   useFullscreenPaneId,
   usePanelActions,
   usePendingClosePane,
@@ -85,6 +86,7 @@ import {
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import { TerminalPaneWithSidebars } from '@/panels/terminal-pane-with-sidebars'
 import { DevServerTerminalPane } from '@/panes/dev-server-terminal-pane'
+import { GhosttyTerminalPane } from '@/panes/ghostty-terminal-pane'
 import { ReviewPane } from '@/panes/review-pane'
 import { PaneCloseConfirmDialog } from '@/routes/-components/close-dialogs'
 
@@ -270,9 +272,21 @@ interface PaneContentProps {
  * while keeping the dev server terminal visually coupled to its workspace.
  */
 function PaneContent({ node, onTerminalExit }: PaneContentProps) {
+  const activePaneId = useActivePaneId()
+
   if (node.paneType === 'terminal' && node.terminalId) {
     return (
       <TerminalPaneWithSidebars node={node} onTerminalExit={onTerminalExit} />
+    )
+  }
+
+  // Ghostty native terminal pane
+  if (node.paneType === 'ghosttyTerminal') {
+    return (
+      <GhosttyTerminalPane
+        isFocused={activePaneId === node.id}
+        onSurfaceExit={onTerminalExit}
+      />
     )
   }
 

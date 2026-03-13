@@ -117,7 +117,7 @@ This slice should harden the rendering architecture chosen in the PRD and prove 
 
 ---
 
-## Issue 4: Ghostty terminal lifecycle and pane integration
+## Issue 4: Ghostty terminal lifecycle and pane integration — DONE
 
 ### Parent PRD
 
@@ -135,11 +135,15 @@ This slice should make Ghostty terminals feel like first-class panes in Laborer 
 
 ### Acceptance criteria
 
-- [ ] Laborer can create a Ghostty terminal from the existing terminal UI flow
-- [ ] A Ghostty pane can be removed cleanly and releases its native resources
-- [ ] Pane focus and active terminal state stay in sync with the Ghostty surface lifecycle
-- [ ] Closing a pane does not leak helper-side surfaces or shell processes
-- [ ] Integration tests cover create, focus, and destroy flows
+- [x] Laborer can create a Ghostty terminal from the existing terminal UI flow
+- [x] A Ghostty pane can be removed cleanly and releases its native resources
+- [x] Pane focus and active terminal state stay in sync with the Ghostty surface lifecycle
+- [x] Closing a pane does not leak helper-side surfaces or shell processes
+- [x] Integration tests cover create, focus, and destroy flows
+
+### Progress
+
+Added 'ghosttyTerminal' PaneType alongside existing terminal types. Created GhosttyBridge in the desktop app to relay Ghostty surface commands from the Electron renderer to the Ghostty Host sidecar via ipcMain/ipcRenderer. Added 5 Ghostty methods to DesktopBridge interface and preload script. Created GhosttyTerminalPane React component with full lifecycle management (create on mount, focus sync, destroy on unmount). Wired into PanelManager PaneContent routing. Added 8 lifecycle tests covering layout tree operations with ghostty panes. All 8 packages typecheck, all 478 tests pass across all packages.
 
 ### Blocked by
 

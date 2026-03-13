@@ -26,6 +26,7 @@ import {
   getLeafIds,
   getLeafNodes,
   getScopedActivePaneId,
+  getTerminalIdsToRemove,
   getWorkspaceIds,
   isWorkspaceFrameData,
   repairPanelLayoutTree,
@@ -1792,5 +1793,151 @@ describe('review pane type', () => {
 
     const result = closePane(layout, 'pane-review')
     expect(result).toEqual(terminalLeaf)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Ghostty terminal pane lifecycle — Issue 4
+// ---------------------------------------------------------------------------
+
+describe('Ghostty terminal pane lifecycle', () => {
+  it('repair accepts ghosttyTerminal as a valid pane type', () => {
+    const node = {
+      _tag: 'LeafNode',
+      id: 'pane-ghostty-1',
+      paneType: 'ghosttyTerminal',
+      ghosttySurfaceId: 42,
+    }
+    const result = repairPanelLayoutTree(node)
+    expect(result.wasRepaired).toBe(false)
+    expect(result.layoutTree).toEqual(node)
+  })
+
+  it('repair preserves ghosttySurfaceId on valid ghostty panes', () => {
+    const node = {
+      _tag: 'LeafNode',
+      id: 'pane-ghostty-2',
+      paneType: 'ghosttyTerminal',
+      ghosttySurfaceId: 7,
+      workspaceId: 'ws-1',
+    }
+    const result = repairPanelLayoutTree(node)
+    expect(result.wasRepaired).toBe(false)
+    expect(result.layoutTree).toEqual(node)
+  })
+
+  it('repair strips invalid ghosttySurfaceId type', () => {
+    const node = {
+      _tag: 'LeafNode',
+      id: 'pane-ghostty-3',
+      paneType: 'ghosttyTerminal',
+      ghosttySurfaceId: 'not-a-number',
+    }
+    const result = repairPanelLayoutTree(node)
+    expect(result.wasRepaired).toBe(true)
+    const repaired = result.layoutTree as LeafNode
+    expect(repaired.paneType).toBe('ghosttyTerminal')
+    expect(repaired.ghosttySurfaceId).toBeUndefined()
+  })
+
+  it('splitPane creates a new ghosttyTerminal pane when specified', () => {
+    const ghosttyLeaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-G1',
+      paneType: 'ghosttyTerminal',
+      ghosttySurfaceId: 1,
+    }
+    const result = splitPane(ghosttyLeaf, 'pane-G1', 'vertical', {
+      paneType: 'ghosttyTerminal',
+    })
+    expect(result._tag).toBe('SplitNode')
+    const split = result as SplitNode
+    expect(split.children).toHaveLength(2)
+    expect((split.children[0] as LeafNode).paneType).toBe('ghosttyTerminal')
+    expect((split.children[1] as LeafNode).paneType).toBe('ghosttyTerminal')
+  })
+
+  it('closePane removes a ghostty pane from a split', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-terminal',
+          paneType: 'terminal',
+          terminalId: 't-1',
+        },
+        {
+          _tag: 'LeafNode',
+          id: 'pane-ghostty',
+          paneType: 'ghosttyTerminal',
+          ghosttySurfaceId: 5,
+        },
+      ],
+      sizes: [50, 50],
+    }
+    const result = closePane(layout, 'pane-ghostty')
+    expect(result).toBeDefined()
+    expect(result?._tag).toBe('LeafNode')
+    expect((result as LeafNode).id).toBe('pane-terminal')
+  })
+
+  it('findSiblingPaneId works for ghostty panes', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-A',
+          paneType: 'ghosttyTerminal',
+          ghosttySurfaceId: 1,
+        },
+        {
+          _tag: 'LeafNode',
+          id: 'pane-B',
+          paneType: 'ghosttyTerminal',
+          ghosttySurfaceId: 2,
+        },
+      ],
+      sizes: [50, 50],
+    }
+    // Closing A → focus B
+    expect(findSiblingPaneId(layout, 'pane-A')).toBe('pane-B')
+    // Closing B → focus A
+    expect(findSiblingPaneId(layout, 'pane-B')).toBe('pane-A')
+  })
+
+  it('ensureValidActivePaneId works with ghostty panes', () => {
+    const ghosttyLeaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-ghostty',
+      paneType: 'ghosttyTerminal',
+      ghosttySurfaceId: 1,
+    }
+    // Valid active pane
+    expect(ensureValidActivePaneId(ghosttyLeaf, 'pane-ghostty')).toBe(
+      'pane-ghostty'
+    )
+    // Stale active pane → falls back to first leaf
+    expect(ensureValidActivePaneId(ghosttyLeaf, 'stale-id')).toBe(
+      'pane-ghostty'
+    )
+  })
+
+  it('getTerminalIdsToRemove returns empty for ghostty panes', () => {
+    const layout: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-ghostty',
+      paneType: 'ghosttyTerminal',
+      ghosttySurfaceId: 1,
+    }
+    // Ghostty panes don't have terminalId — nothing to remove from the
+    // terminal service. Surface cleanup happens in the React component.
+    const ids = getTerminalIdsToRemove(layout, 'pane-ghostty')
+    expect(ids).toEqual([])
   })
 })

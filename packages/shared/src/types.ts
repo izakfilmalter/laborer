@@ -59,7 +59,8 @@ export const PaneType = Schema.Literal(
   'terminal',
   'diff',
   'devServerTerminal',
-  'review'
+  'review',
+  'ghosttyTerminal'
 )
 export type PaneType = typeof PaneType.Type
 
@@ -137,6 +138,8 @@ export interface LeafNode {
   readonly devServerTerminalId?: string | undefined
   /** Whether the integrated diff sidebar is open for this pane. */
   readonly diffOpen?: boolean | undefined
+  /** Ghostty native surface ID for ghosttyTerminal panes. */
+  readonly ghosttySurfaceId?: number | undefined
   readonly id: string
   readonly paneType: PaneType
   readonly terminalId?: string | undefined
@@ -159,6 +162,7 @@ export const LeafNodeSchema: Schema.Schema<LeafNode> = Schema.TaggedStruct(
     devServerOpen: Schema.optional(Schema.Boolean),
     devServerTerminalId: Schema.optional(Schema.String),
     diffOpen: Schema.optional(Schema.Boolean),
+    ghosttySurfaceId: Schema.optional(Schema.Number),
     id: Schema.String,
     paneType: PaneType,
     terminalId: Schema.optional(Schema.String),

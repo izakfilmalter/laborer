@@ -25,6 +25,13 @@ const UPDATE_GET_STATE_CHANNEL = 'desktop:update-get-state'
 const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
 const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
 
+// Ghostty surface lifecycle channels
+const GHOSTTY_CREATE_SURFACE_CHANNEL = 'ghostty:create-surface'
+const GHOSTTY_DESTROY_SURFACE_CHANNEL = 'ghostty:destroy-surface'
+const GHOSTTY_SET_SIZE_CHANNEL = 'ghostty:set-size'
+const GHOSTTY_SET_FOCUS_CHANNEL = 'ghostty:set-focus'
+const GHOSTTY_LIST_SURFACES_CHANNEL = 'ghostty:list-surfaces'
+
 // ---------------------------------------------------------------------------
 // Service URLs — injected via `additionalArguments` from the main process.
 //
@@ -159,4 +166,20 @@ contextBridge.exposeInMainWorld('desktopBridge', {
       ipcRenderer.removeListener(UPDATE_STATE_CHANNEL, wrappedListener)
     }
   },
+
+  // -- Ghostty surface lifecycle -------------------------------------------
+
+  ghosttyCreateSurface: (options) =>
+    ipcRenderer.invoke(GHOSTTY_CREATE_SURFACE_CHANNEL, options),
+
+  ghosttyDestroySurface: (surfaceId) =>
+    ipcRenderer.invoke(GHOSTTY_DESTROY_SURFACE_CHANNEL, surfaceId),
+
+  ghosttyListSurfaces: () => ipcRenderer.invoke(GHOSTTY_LIST_SURFACES_CHANNEL),
+
+  ghosttySetFocus: (surfaceId, focused) =>
+    ipcRenderer.invoke(GHOSTTY_SET_FOCUS_CHANNEL, surfaceId, focused),
+
+  ghosttySetSize: (surfaceId, width, height) =>
+    ipcRenderer.invoke(GHOSTTY_SET_SIZE_CHANNEL, surfaceId, width, height),
 } satisfies DesktopBridge)

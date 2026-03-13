@@ -278,7 +278,7 @@ This slice makes Ghostty panes integrate with the rest of Laborer's interface in
 
 ---
 
-## Issue 8: Unsupported Ghostty actions registry and observability
+## Issue 8: Unsupported Ghostty actions registry and observability — DONE
 
 ### Parent PRD
 
@@ -296,11 +296,15 @@ This slice fulfills the PRD requirement that unsupported behavior be part of the
 
 ### Acceptance criteria
 
-- [ ] Unsupported Ghostty action categories are enumerated in code or config with clear intent
-- [ ] Unsupported actions are logged or counted in a controlled, non-spammy way
-- [ ] Docs list the intentionally unsupported action categories for launch
-- [ ] Unsupported actions fail safely without crashing the helper or blanking the terminal
-- [ ] Tests verify unsupported actions are handled gracefully
+- [x] Unsupported Ghostty action categories are enumerated in code or config with clear intent
+- [x] Unsupported actions are logged or counted in a controlled, non-spammy way
+- [x] Docs list the intentionally unsupported action categories for launch
+- [x] Unsupported actions fail safely without crashing the helper or blanking the terminal
+- [x] Tests verify unsupported actions are handled gracefully
+
+### Progress
+
+Created unsupported-actions.ts registry module classifying all 64 Ghostty actions (7 supported, 1 handled internally, 56 unsupported across 15 reason categories). Updated native addon to queue unsupported actions with "unsupported:" prefix instead of silently dropping them. Added UnsupportedActionEvent push event across all 5 architecture layers (host, client, shared types, bridge, renderer). Rate-limited logging (3 per action name, then silent counting). Created comprehensive docs at docs/ghostty-integration/unsupported-actions.md. Added 19 unit tests covering registry completeness, classification, grouping, counting, and safety. All 67 ghostty tests pass, all 513 web tests pass, all 8 packages typecheck.
 
 ### Blocked by
 

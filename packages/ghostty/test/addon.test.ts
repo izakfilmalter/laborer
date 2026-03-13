@@ -372,7 +372,7 @@ describe('ghostty native addon', () => {
       }
 
       const actions = drainActions()
-      const validTypes = new Set([
+      const supportedTypes = new Set([
         'set_title',
         'pwd',
         'ring_bell',
@@ -383,7 +383,10 @@ describe('ghostty native addon', () => {
       ])
 
       for (const action of actions) {
-        expect(validTypes.has(action.action)).toBe(true)
+        // Action is either a supported type or an unsupported:* prefixed type
+        const isSupported = supportedTypes.has(action.action)
+        const isUnsupported = action.action.startsWith('unsupported:')
+        expect(isSupported || isUnsupported).toBe(true)
       }
 
       destroySurface(handle.id)

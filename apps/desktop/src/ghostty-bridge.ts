@@ -54,6 +54,7 @@ const PUSH_ACTION_TYPES = new Set([
   'close_window',
   'cell_size',
   'renderer_health',
+  'unsupported_action',
 ])
 
 // ---------------------------------------------------------------------------

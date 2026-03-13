@@ -238,6 +238,14 @@ export type GhosttyActionEvent =
       readonly surfaceId: number
       readonly type: 'renderer_health'
     }
+  | {
+      /** The unsupported action name (e.g., "mouse_shape", "new_split"). */
+      readonly action: string
+      /** Running count of this action since process start. */
+      readonly count: number
+      readonly surfaceId: number
+      readonly type: 'unsupported_action'
+    }
 
 export interface DesktopBridge {
   /** Shows a native confirmation dialog with Yes/No buttons. Returns true if confirmed. */

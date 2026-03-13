@@ -229,9 +229,82 @@ bool RuntimeAction(ghostty_app_t app, ghostty_target_s target,
       return true;
     }
 
-    default:
-      // Unsupported action — return false so Ghostty knows we didn't handle it.
+    default: {
+      // Unsupported action — queue it for observability so the host process
+      // can log/count it, then return false so Ghostty knows we didn't
+      // handle it natively. This fulfills the PRD requirement that
+      // unsupported actions be tracked rather than silently dropped.
+      const char* action_name = nullptr;
+      switch (action.tag) {
+        case GHOSTTY_ACTION_QUIT: action_name = "quit"; break;
+        case GHOSTTY_ACTION_NEW_WINDOW: action_name = "new_window"; break;
+        case GHOSTTY_ACTION_NEW_TAB: action_name = "new_tab"; break;
+        case GHOSTTY_ACTION_CLOSE_TAB: action_name = "close_tab"; break;
+        case GHOSTTY_ACTION_NEW_SPLIT: action_name = "new_split"; break;
+        case GHOSTTY_ACTION_CLOSE_ALL_WINDOWS: action_name = "close_all_windows"; break;
+        case GHOSTTY_ACTION_TOGGLE_MAXIMIZE: action_name = "toggle_maximize"; break;
+        case GHOSTTY_ACTION_TOGGLE_FULLSCREEN: action_name = "toggle_fullscreen"; break;
+        case GHOSTTY_ACTION_TOGGLE_TAB_OVERVIEW: action_name = "toggle_tab_overview"; break;
+        case GHOSTTY_ACTION_TOGGLE_WINDOW_DECORATIONS: action_name = "toggle_window_decorations"; break;
+        case GHOSTTY_ACTION_TOGGLE_QUICK_TERMINAL: action_name = "toggle_quick_terminal"; break;
+        case GHOSTTY_ACTION_TOGGLE_COMMAND_PALETTE: action_name = "toggle_command_palette"; break;
+        case GHOSTTY_ACTION_TOGGLE_VISIBILITY: action_name = "toggle_visibility"; break;
+        case GHOSTTY_ACTION_TOGGLE_BACKGROUND_OPACITY: action_name = "toggle_background_opacity"; break;
+        case GHOSTTY_ACTION_MOVE_TAB: action_name = "move_tab"; break;
+        case GHOSTTY_ACTION_GOTO_TAB: action_name = "goto_tab"; break;
+        case GHOSTTY_ACTION_GOTO_SPLIT: action_name = "goto_split"; break;
+        case GHOSTTY_ACTION_GOTO_WINDOW: action_name = "goto_window"; break;
+        case GHOSTTY_ACTION_RESIZE_SPLIT: action_name = "resize_split"; break;
+        case GHOSTTY_ACTION_EQUALIZE_SPLITS: action_name = "equalize_splits"; break;
+        case GHOSTTY_ACTION_TOGGLE_SPLIT_ZOOM: action_name = "toggle_split_zoom"; break;
+        case GHOSTTY_ACTION_PRESENT_TERMINAL: action_name = "present_terminal"; break;
+        case GHOSTTY_ACTION_SIZE_LIMIT: action_name = "size_limit"; break;
+        case GHOSTTY_ACTION_RESET_WINDOW_SIZE: action_name = "reset_window_size"; break;
+        case GHOSTTY_ACTION_INITIAL_SIZE: action_name = "initial_size"; break;
+        case GHOSTTY_ACTION_SCROLLBAR: action_name = "scrollbar"; break;
+        case GHOSTTY_ACTION_INSPECTOR: action_name = "inspector"; break;
+        case GHOSTTY_ACTION_SHOW_GTK_INSPECTOR: action_name = "show_gtk_inspector"; break;
+        case GHOSTTY_ACTION_RENDER_INSPECTOR: action_name = "render_inspector"; break;
+        case GHOSTTY_ACTION_DESKTOP_NOTIFICATION: action_name = "desktop_notification"; break;
+        case GHOSTTY_ACTION_PROMPT_TITLE: action_name = "prompt_title"; break;
+        case GHOSTTY_ACTION_MOUSE_SHAPE: action_name = "mouse_shape"; break;
+        case GHOSTTY_ACTION_MOUSE_VISIBILITY: action_name = "mouse_visibility"; break;
+        case GHOSTTY_ACTION_MOUSE_OVER_LINK: action_name = "mouse_over_link"; break;
+        case GHOSTTY_ACTION_OPEN_CONFIG: action_name = "open_config"; break;
+        case GHOSTTY_ACTION_QUIT_TIMER: action_name = "quit_timer"; break;
+        case GHOSTTY_ACTION_FLOAT_WINDOW: action_name = "float_window"; break;
+        case GHOSTTY_ACTION_SECURE_INPUT: action_name = "secure_input"; break;
+        case GHOSTTY_ACTION_KEY_SEQUENCE: action_name = "key_sequence"; break;
+        case GHOSTTY_ACTION_KEY_TABLE: action_name = "key_table"; break;
+        case GHOSTTY_ACTION_COLOR_CHANGE: action_name = "color_change"; break;
+        case GHOSTTY_ACTION_RELOAD_CONFIG: action_name = "reload_config"; break;
+        case GHOSTTY_ACTION_CONFIG_CHANGE: action_name = "config_change"; break;
+        case GHOSTTY_ACTION_UNDO: action_name = "undo"; break;
+        case GHOSTTY_ACTION_REDO: action_name = "redo"; break;
+        case GHOSTTY_ACTION_CHECK_FOR_UPDATES: action_name = "check_for_updates"; break;
+        case GHOSTTY_ACTION_OPEN_URL: action_name = "open_url"; break;
+        case GHOSTTY_ACTION_PROGRESS_REPORT: action_name = "progress_report"; break;
+        case GHOSTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD: action_name = "show_on_screen_keyboard"; break;
+        case GHOSTTY_ACTION_COMMAND_FINISHED: action_name = "command_finished"; break;
+        case GHOSTTY_ACTION_START_SEARCH: action_name = "start_search"; break;
+        case GHOSTTY_ACTION_END_SEARCH: action_name = "end_search"; break;
+        case GHOSTTY_ACTION_SEARCH_TOTAL: action_name = "search_total"; break;
+        case GHOSTTY_ACTION_SEARCH_SELECTED: action_name = "search_selected"; break;
+        case GHOSTTY_ACTION_READONLY: action_name = "readonly"; break;
+        case GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD: action_name = "copy_title_to_clipboard"; break;
+        // Handled actions should never reach default, but guard anyway
+        default: action_name = "unknown"; break;
+      }
+
+      QueuedAction qa;
+      qa.action_type = std::string("unsupported:") + action_name;
+      qa.surface_id = surface_id;
+      qa.num_value_1 = 0;
+      qa.num_value_2 = 0;
+      std::lock_guard<std::mutex> lock(g_action_queue_mutex);
+      g_action_queue.push_back(std::move(qa));
       return false;
+    }
   }
 }
 

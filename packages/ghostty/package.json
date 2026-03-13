@@ -14,7 +14,8 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./client": "./src/ghostty-host-client.ts"
+    "./client": "./src/ghostty-host-client.ts",
+    "./unsupported-actions": "./src/unsupported-actions.ts"
   },
   "dependencies": {
     "effect": "catalog:",

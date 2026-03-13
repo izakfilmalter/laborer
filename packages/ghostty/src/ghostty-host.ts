@@ -73,6 +73,7 @@ import {
   setSurfaceSize,
   surfaceMouseCaptured,
 } from './index.ts'
+import { recordUnsupportedAction } from './unsupported-actions.ts'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -308,6 +309,15 @@ interface RendererHealthEvent {
   readonly type: 'renderer_health'
 }
 
+interface UnsupportedActionEvent {
+  /** The unsupported action name (e.g., "mouse_shape", "new_split"). */
+  readonly action: string
+  /** Running count of this action since process start. */
+  readonly count: number
+  readonly surfaceId: number
+  readonly type: 'unsupported_action'
+}
+
 type GhosttyEvent =
   | ReadyEvent
   | SurfaceCreatedEvent
@@ -327,6 +337,7 @@ type GhosttyEvent =
   | CloseWindowEvent
   | CellSizeChangedEvent
   | RendererHealthEvent
+  | UnsupportedActionEvent
 
 // ---------------------------------------------------------------------------
 // State
@@ -790,7 +801,19 @@ function emitActionEvent(action: ActionEvent): void {
       })
       break
     default:
-      debug('Unknown action type: %s', action.action)
+      // Check if this is an unsupported action from the native addon
+      if (action.action.startsWith('unsupported:')) {
+        const actionName = action.action.slice('unsupported:'.length)
+        const count = recordUnsupportedAction(actionName, action.surfaceId)
+        emit({
+          type: 'unsupported_action',
+          surfaceId: action.surfaceId,
+          action: actionName,
+          count,
+        })
+      } else {
+        debug('Unknown action type: %s', action.action)
+      }
       break
   }
 }

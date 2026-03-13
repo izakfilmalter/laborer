@@ -416,3 +416,64 @@ This is the first feature introducing push events (unsolicited) from Ghostty Hos
 - child_exited and close_window both set a destroyed state on the pane, preventing further interaction
 - cell_size events are received but not acted on (no-op) — the renderer controls sizing, not Ghostty
 - renderer_health events log a warning — full health monitoring deferred to Issue 8
+
+---
+
+## Issue 8: Unsupported Ghostty actions registry and observability
+Status: COMPLETE
+Date: 2026-03-13
+
+### What was done
+- Created unsupported-actions.ts registry module (packages/ghostty/src/unsupported-actions.ts):
+  - GHOSTTY_ACTION_REGISTRY: Record of all 64 Ghostty actions with classification
+  - 7 actions classified as 'supported' (from Issue 7)
+  - 1 action classified as 'handled_internally' (render — Metal layer)
+  - 56 actions classified as 'unsupported' with reason categories
+  - 15 unsupported reason categories: split_management, tab_management, window_management, search_ui, key_overlay, url_handling, notification, progress_reporting, scrollbar_ui, inspector, config_ui, clipboard_ui, input_ui, platform_irrelevant, deferred
+  - Rate-limited logging: first 3 occurrences per action logged with context, then counted silently
+  - recordUnsupportedAction() for tracking with count return
+  - getUnsupportedActionCounts() for diagnostics snapshot
+  - resetUnsupportedActionCounts() for test cleanup
+  - getUnsupportedActions() / getSupportedActions() for enumeration
+  - getUnsupportedActionsByReason() for grouped classification
+  - isUnsupportedAction() for checking support status
+- Updated native addon (addon.mm) RuntimeAction default case:
+  - Instead of returning false silently, unsupported actions are now queued with "unsupported:<action_name>" prefix
+  - Full switch statement maps all 56 unsupported action tag values to their string names
+  - Actions still return false to Ghostty (indicating unhandled) but are observable
+- Added UnsupportedActionEvent push event across all architecture layers:
+  - Layer 1 (Host IPC — ghostty-host.ts): New UnsupportedActionEvent type with action name, count, and surfaceId. emitActionEvent() detects "unsupported:" prefix, calls recordUnsupportedAction(), and emits unsupported_action event
+  - Layer 2 (Effect client — ghostty-host-client.ts): Added UnsupportedActionEvent to GhosttyActionEvent union, added 'unsupported_action' to ACTION_EVENT_TYPES set and routeEvent switch
+  - Layer 3 (Shared types — desktop-bridge.ts): Added unsupported_action variant to GhosttyActionEvent union
+  - Layer 4 (Desktop bridge — ghostty-bridge.ts): Added 'unsupported_action' to PUSH_ACTION_TYPES set
+  - Layer 5 (React component — ghostty-terminal-pane.tsx): Added 'unsupported_action' case (no-op — logged by host)
+- Added package.json export for "./unsupported-actions" entry point
+- Created comprehensive documentation (docs/ghostty-integration/unsupported-actions.md):
+  - Lists all supported, handled_internally, and unsupported actions
+  - Groups unsupported actions by category with descriptions
+  - Documents the observability architecture
+- Added 19 unit tests (test/unsupported-actions.test.ts):
+  - Registry completeness: all 64 actions enumerated, correct classification
+  - Supported actions: 7 supported actions match Issue 7
+  - Handled internally: render correctly classified
+  - Unsupported count: 56 unsupported actions
+  - Action identification by name and with unsupported: prefix
+  - Supported actions not misclassified
+  - Unknown actions not misclassified
+  - Reason-based grouping with all PRD categories present
+  - Split management and tab management category assignments
+  - Count recording, incrementing, resetting, independence
+  - Safety: unknown action names, empty names, zero surface IDs all handled gracefully
+- Updated existing addon test to accept unsupported:* prefixed action types
+- All 67 ghostty package tests pass (31 addon + 17 host + 19 unsupported-actions)
+- All 513 web tests pass
+- All 8 packages typecheck
+- Format check passes (387 files)
+
+### Key decisions
+- Unsupported actions queue through the full pipeline rather than being silently dropped — fulfills PRD requirement for observability
+- Native addon returns false to Ghostty for unsupported actions — Ghostty knows the action wasn't handled
+- Rate-limited logging (3 per action name) prevents log spam from high-frequency actions like mouse_shape
+- Registry uses descriptive reason categories from the PRD: split_management, search_ui, key_overlay, url_handling, notification, progress_reporting, scrollbar_ui
+- UnsupportedActionEvent includes a running count — enables future prioritization based on frequency
+- The 'render' action is classified as 'handled_internally' (not 'supported') since Metal handles it directly without JS involvement

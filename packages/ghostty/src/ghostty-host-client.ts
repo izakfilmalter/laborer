@@ -162,6 +162,15 @@ interface RendererHealthEvent {
   readonly type: 'renderer_health'
 }
 
+interface UnsupportedActionEvent {
+  /** The unsupported action name (e.g., "mouse_shape", "new_split"). */
+  readonly action: string
+  /** Running count of this action since process start. */
+  readonly count: number
+  readonly surfaceId: number
+  readonly type: 'unsupported_action'
+}
+
 /**
  * Union of all push action events emitted by the Ghostty Host.
  * These are unsolicited (not in response to a command) and are forwarded
@@ -175,6 +184,7 @@ type GhosttyActionEvent =
   | CloseWindowEvent
   | CellSizeChangedEvent
   | RendererHealthEvent
+  | UnsupportedActionEvent
 
 type GhosttyEvent =
   | ReadyEvent
@@ -205,6 +215,7 @@ const ACTION_EVENT_TYPES = new Set([
   'close_window',
   'cell_size',
   'renderer_health',
+  'unsupported_action',
 ])
 
 // ---------------------------------------------------------------------------
@@ -515,6 +526,7 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
           case 'close_window':
           case 'cell_size':
           case 'renderer_health':
+          case 'unsupported_action':
             notifyActionListeners(event)
             break
 

@@ -572,6 +572,9 @@ function GhosttyTerminalPane({
         case 'cell_size':
           // Cell size changes are informational — no UI action needed currently
           break
+        case 'unsupported_action':
+          // Unsupported actions are logged by the host process — no UI action needed
+          break
         default:
           break
       }

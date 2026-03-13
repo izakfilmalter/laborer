@@ -16,6 +16,7 @@
 #include <napi.h>
 #include <ghostty.h>
 #include <string>
+#include <vector>
 #include <unordered_map>
 #include <mutex>
 
@@ -54,6 +55,51 @@ struct TrackedSurface {
 std::unordered_map<uint32_t, TrackedSurface> g_surfaces;
 std::mutex g_surfaces_mutex;
 
+/**
+ * Reverse map: ghostty_surface_t pointer -> surface ID.
+ * Used by RuntimeAction to quickly look up which surface an action
+ * belongs to. Updated alongside g_surfaces.
+ * Protected by g_surfaces_mutex.
+ */
+std::unordered_map<uintptr_t, uint32_t> g_surface_ptr_to_id;
+
+// ---------------------------------------------------------------------------
+// Action queue — Ghostty actions queued by RuntimeAction for JS retrieval
+// ---------------------------------------------------------------------------
+
+/**
+ * Queued action event from the Ghostty runtime.
+ * Populated by RuntimeAction() during ghostty_app_tick() and drained
+ * by DrainActions() from the host process tick loop.
+ */
+struct QueuedAction {
+  std::string action_type;
+  /** Surface ID (0 if the action targets the app, not a surface). */
+  uint32_t surface_id;
+  /** String payload (title, pwd, etc.). Empty if not applicable. */
+  std::string str_value;
+  /** Numeric payload (exit code, cell width/height, health). */
+  uint32_t num_value_1;
+  uint32_t num_value_2;
+};
+
+std::vector<QueuedAction> g_action_queue;
+std::mutex g_action_queue_mutex;
+
+/**
+ * Reverse lookup: find the surface ID for a ghostty_surface_t pointer.
+ * Must be called with g_surfaces_mutex held.
+ * Returns 0 if not found.
+ */
+uint32_t findSurfaceIdByPointer(ghostty_surface_t surface) {
+  auto key = reinterpret_cast<uintptr_t>(surface);
+  auto it = g_surface_ptr_to_id.find(key);
+  if (it != g_surface_ptr_to_id.end()) {
+    return it->second;
+  }
+  return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Runtime callbacks
 // ---------------------------------------------------------------------------
@@ -74,30 +120,114 @@ void RuntimeWakeup(void* userdata) {
 /**
  * Action callback — Ghostty calls this when a terminal action occurs
  * (title change, bell, pwd update, close request, etc.).
+ *
+ * Core actions are queued into g_action_queue for the host process to
+ * drain via DrainActions(). RENDER is handled directly by the Metal layer.
+ *
  * Returns true if the action was handled, false otherwise.
  */
 bool RuntimeAction(ghostty_app_t app, ghostty_target_s target,
                    ghostty_action_s action) {
   (void)app;
-  (void)target;
 
-  // For now, handle RENDER action (needed for surface display) and
-  // acknowledge other core actions. Full action mapping is Issue 7.
+  // Resolve the surface ID from the target.
+  uint32_t surface_id = 0;
+  if (target.tag == GHOSTTY_TARGET_SURFACE) {
+    std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+    surface_id = findSurfaceIdByPointer(target.target.surface);
+  }
+
   switch (action.tag) {
     case GHOSTTY_ACTION_RENDER:
       // Render requests are handled by the Metal layer automatically.
       return true;
 
-    case GHOSTTY_ACTION_SET_TITLE:
-    case GHOSTTY_ACTION_PWD:
-    case GHOSTTY_ACTION_RING_BELL:
-    case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
-    case GHOSTTY_ACTION_CLOSE_WINDOW:
-    case GHOSTTY_ACTION_CELL_SIZE:
-    case GHOSTTY_ACTION_RENDERER_HEALTH:
-      // Recognized but not yet wired to JS callbacks.
-      // Will be implemented in Issue 7 (action mapping).
+    case GHOSTTY_ACTION_SET_TITLE: {
+      QueuedAction qa;
+      qa.action_type = "set_title";
+      qa.surface_id = surface_id;
+      qa.str_value = action.action.set_title.title != nullptr
+                       ? std::string(action.action.set_title.title)
+                       : "";
+      qa.num_value_1 = 0;
+      qa.num_value_2 = 0;
+      std::lock_guard<std::mutex> lock(g_action_queue_mutex);
+      g_action_queue.push_back(std::move(qa));
       return true;
+    }
+
+    case GHOSTTY_ACTION_PWD: {
+      QueuedAction qa;
+      qa.action_type = "pwd";
+      qa.surface_id = surface_id;
+      qa.str_value = action.action.pwd.pwd != nullptr
+                       ? std::string(action.action.pwd.pwd)
+                       : "";
+      qa.num_value_1 = 0;
+      qa.num_value_2 = 0;
+      std::lock_guard<std::mutex> lock(g_action_queue_mutex);
+      g_action_queue.push_back(std::move(qa));
+      return true;
+    }
+
+    case GHOSTTY_ACTION_RING_BELL: {
+      QueuedAction qa;
+      qa.action_type = "ring_bell";
+      qa.surface_id = surface_id;
+      qa.num_value_1 = 0;
+      qa.num_value_2 = 0;
+      std::lock_guard<std::mutex> lock(g_action_queue_mutex);
+      g_action_queue.push_back(std::move(qa));
+      return true;
+    }
+
+    case GHOSTTY_ACTION_SHOW_CHILD_EXITED: {
+      QueuedAction qa;
+      qa.action_type = "child_exited";
+      qa.surface_id = surface_id;
+      qa.num_value_1 = action.action.child_exited.exit_code;
+      qa.num_value_2 = 0;
+      std::lock_guard<std::mutex> lock(g_action_queue_mutex);
+      g_action_queue.push_back(std::move(qa));
+      return true;
+    }
+
+    case GHOSTTY_ACTION_CLOSE_WINDOW: {
+      QueuedAction qa;
+      qa.action_type = "close_window";
+      qa.surface_id = surface_id;
+      qa.num_value_1 = 0;
+      qa.num_value_2 = 0;
+      std::lock_guard<std::mutex> lock(g_action_queue_mutex);
+      g_action_queue.push_back(std::move(qa));
+      return true;
+    }
+
+    case GHOSTTY_ACTION_CELL_SIZE: {
+      QueuedAction qa;
+      qa.action_type = "cell_size";
+      qa.surface_id = surface_id;
+      qa.num_value_1 = action.action.cell_size.width;
+      qa.num_value_2 = action.action.cell_size.height;
+      std::lock_guard<std::mutex> lock(g_action_queue_mutex);
+      g_action_queue.push_back(std::move(qa));
+      return true;
+    }
+
+    case GHOSTTY_ACTION_RENDERER_HEALTH: {
+      QueuedAction qa;
+      qa.action_type = "renderer_health";
+      qa.surface_id = surface_id;
+      // 0 = healthy, 1 = unhealthy
+      qa.num_value_1 = (action.action.renderer_health ==
+                        GHOSTTY_RENDERER_HEALTH_HEALTHY)
+                           ? 0
+                           : 1;
+      qa.num_value_2 = 0;
+      std::lock_guard<std::mutex> lock(g_action_queue_mutex);
+      g_action_queue.push_back(std::move(qa));
+      return true;
+    }
 
     default:
       // Unsupported action — return false so Ghostty knows we didn't handle it.
@@ -369,6 +499,7 @@ Napi::Value DestroyApp(const Napi::CallbackInfo& info) {
       }
     }
     g_surfaces.clear();
+    g_surface_ptr_to_id.clear();
   }
 
   ghostty_app_free(g_app);
@@ -508,6 +639,7 @@ Napi::Value CreateSurface(const Napi::CallbackInfo& info) {
     {
       std::lock_guard<std::mutex> lock(g_surfaces_mutex);
       g_surfaces[surface_id] = tracked;
+      g_surface_ptr_to_id[reinterpret_cast<uintptr_t>(surface)] = surface_id;
     }
 
     Napi::Object result = Napi::Object::New(env);
@@ -540,7 +672,9 @@ Napi::Value DestroySurface(const Napi::CallbackInfo& info) {
 
   @autoreleasepool {
     TrackedSurface& tracked = it->second;
+    // Remove reverse mapping before freeing the surface
     if (tracked.surface != nullptr) {
+      g_surface_ptr_to_id.erase(reinterpret_cast<uintptr_t>(tracked.surface));
       ghostty_surface_free(tracked.surface);
     }
     if (tracked.window != nil) {
@@ -1091,6 +1225,48 @@ Napi::Value GetSurfacePixels(const Napi::CallbackInfo& info) {
 }
 
 // ---------------------------------------------------------------------------
+// N-API functions: Action queue
+// ---------------------------------------------------------------------------
+
+/**
+ * Drain all queued Ghostty actions since the last drain.
+ *
+ * Returns an array of action objects, each containing:
+ *   - action: string (the action type: "set_title", "pwd", "ring_bell", etc.)
+ *   - surfaceId: number (0 if the action targets the app, not a surface)
+ *   - value: string (string payload, e.g., title or pwd; empty if N/A)
+ *   - num1: number (first numeric payload, e.g., exit code or cell width)
+ *   - num2: number (second numeric payload, e.g., cell height)
+ *
+ * This is the polling-based mechanism for the host process to receive
+ * Ghostty action callbacks. Called once per tick in the host process.
+ */
+Napi::Value DrainActions(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  // Move the queue out under the lock, then process without holding it
+  std::vector<QueuedAction> actions;
+  {
+    std::lock_guard<std::mutex> lock(g_action_queue_mutex);
+    actions.swap(g_action_queue);
+  }
+
+  Napi::Array result = Napi::Array::New(env, actions.size());
+  for (uint32_t i = 0; i < actions.size(); i++) {
+    const auto& qa = actions[i];
+    Napi::Object obj = Napi::Object::New(env);
+    obj.Set("action", Napi::String::New(env, qa.action_type));
+    obj.Set("surfaceId", Napi::Number::New(env, qa.surface_id));
+    obj.Set("value", Napi::String::New(env, qa.str_value));
+    obj.Set("num1", Napi::Number::New(env, qa.num_value_1));
+    obj.Set("num2", Napi::Number::New(env, qa.num_value_2));
+    result.Set(i, obj);
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Module initialization
 // ---------------------------------------------------------------------------
 
@@ -1138,6 +1314,10 @@ Napi::Object InitModule(Napi::Env env, Napi::Object exports) {
   // Pixel readback
   exports.Set("getSurfacePixels",
               Napi::Function::New(env, GetSurfacePixels));
+
+  // Action queue
+  exports.Set("drainActions",
+              Napi::Function::New(env, DrainActions));
 
   return exports;
 }

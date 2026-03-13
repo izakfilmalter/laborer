@@ -42,6 +42,7 @@
  */
 
 import type {
+  ActionEvent,
   CreateSurfaceOptions,
   IOSurfaceInfo,
   KeyEvent,
@@ -56,6 +57,7 @@ import {
   createSurface,
   destroyApp,
   destroySurface,
+  drainActions,
   getInfo,
   getSurfaceIOSurfaceId,
   getSurfacePixels,
@@ -263,6 +265,49 @@ interface ErrorEvent {
   readonly type: 'error'
 }
 
+// Push events — unsolicited events from Ghostty action callbacks
+
+interface TitleChangedEvent {
+  readonly surfaceId: number
+  readonly title: string
+  readonly type: 'title_changed'
+}
+
+interface PwdChangedEvent {
+  readonly pwd: string
+  readonly surfaceId: number
+  readonly type: 'pwd_changed'
+}
+
+interface BellEvent {
+  readonly surfaceId: number
+  readonly type: 'bell'
+}
+
+interface ChildExitedEvent {
+  readonly exitCode: number
+  readonly surfaceId: number
+  readonly type: 'child_exited'
+}
+
+interface CloseWindowEvent {
+  readonly surfaceId: number
+  readonly type: 'close_window'
+}
+
+interface CellSizeChangedEvent {
+  readonly height: number
+  readonly surfaceId: number
+  readonly type: 'cell_size'
+  readonly width: number
+}
+
+interface RendererHealthEvent {
+  readonly healthy: boolean
+  readonly surfaceId: number
+  readonly type: 'renderer_health'
+}
+
 type GhosttyEvent =
   | ReadyEvent
   | SurfaceCreatedEvent
@@ -275,6 +320,13 @@ type GhosttyEvent =
   | SurfacesListEvent
   | OkEvent
   | ErrorEvent
+  | TitleChangedEvent
+  | PwdChangedEvent
+  | BellEvent
+  | ChildExitedEvent
+  | CloseWindowEvent
+  | CellSizeChangedEvent
+  | RendererHealthEvent
 
 // ---------------------------------------------------------------------------
 // State
@@ -679,6 +731,86 @@ function processLine(line: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Action draining — converts native actions to push events
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a native ActionEvent to a push GhosttyEvent and emit it.
+ * Called after each appTick() to forward Ghostty runtime callbacks
+ * to the parent process.
+ */
+function emitActionEvent(action: ActionEvent): void {
+  switch (action.action) {
+    case 'set_title':
+      emit({
+        type: 'title_changed',
+        surfaceId: action.surfaceId,
+        title: action.value,
+      })
+      break
+    case 'pwd':
+      emit({
+        type: 'pwd_changed',
+        surfaceId: action.surfaceId,
+        pwd: action.value,
+      })
+      break
+    case 'ring_bell':
+      emit({
+        type: 'bell',
+        surfaceId: action.surfaceId,
+      })
+      break
+    case 'child_exited':
+      emit({
+        type: 'child_exited',
+        surfaceId: action.surfaceId,
+        exitCode: action.num1,
+      })
+      break
+    case 'close_window':
+      emit({
+        type: 'close_window',
+        surfaceId: action.surfaceId,
+      })
+      break
+    case 'cell_size':
+      emit({
+        type: 'cell_size',
+        surfaceId: action.surfaceId,
+        width: action.num1,
+        height: action.num2,
+      })
+      break
+    case 'renderer_health':
+      emit({
+        type: 'renderer_health',
+        surfaceId: action.surfaceId,
+        healthy: action.num1 === 0,
+      })
+      break
+    default:
+      debug('Unknown action type: %s', action.action)
+      break
+  }
+}
+
+/**
+ * Drain all queued actions from the native addon and emit them
+ * as push events to the parent process.
+ */
+function drainAndEmitActions(): void {
+  try {
+    const actions = drainActions()
+    for (const action of actions) {
+      emitActionEvent(action)
+    }
+  } catch (error) {
+    debug('Error draining actions: %s', String(error))
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Stdin line reader
 // ---------------------------------------------------------------------------
 
@@ -780,10 +912,12 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  // Start the periodic tick timer for Ghostty event processing
+  // Start the periodic tick timer for Ghostty event processing.
+  // After each tick, drain queued actions and emit them as push events.
   tickTimer = setInterval(() => {
     try {
       appTick()
+      drainAndEmitActions()
     } catch (error) {
       debug('Tick error: %s', String(error))
     }

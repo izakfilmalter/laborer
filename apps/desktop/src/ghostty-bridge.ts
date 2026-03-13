@@ -23,7 +23,7 @@ import {
   type Interface as ReadlineInterface,
 } from 'node:readline'
 
-import { ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 
 // ---------------------------------------------------------------------------
 // IPC channel constants (must match preload.ts)
@@ -41,6 +41,20 @@ export const GHOSTTY_SEND_MOUSE_BUTTON_CHANNEL = 'ghostty:send-mouse-button'
 export const GHOSTTY_SEND_MOUSE_POS_CHANNEL = 'ghostty:send-mouse-pos'
 export const GHOSTTY_SEND_MOUSE_SCROLL_CHANNEL = 'ghostty:send-mouse-scroll'
 export const GHOSTTY_MOUSE_CAPTURED_CHANNEL = 'ghostty:mouse-captured'
+
+/** Push channel for Ghostty action events (title, pwd, bell, exit, etc.). */
+export const GHOSTTY_ACTION_CHANNEL = 'ghostty:action'
+
+/** Event types that are push action events (not request/response). */
+const PUSH_ACTION_TYPES = new Set([
+  'title_changed',
+  'pwd_changed',
+  'bell',
+  'child_exited',
+  'close_window',
+  'cell_size',
+  'renderer_health',
+])
 
 // ---------------------------------------------------------------------------
 // Pending request tracking
@@ -480,9 +494,20 @@ export class GhosttyBridge {
   }
 
   private routeEvent(event: Record<string, unknown>): void {
+    const eventType = event.type as string
+
+    // Check if this is a push action event (no request ID).
+    // Forward to all renderer windows via webContents.send().
+    if (PUSH_ACTION_TYPES.has(eventType)) {
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send(GHOSTTY_ACTION_CHANNEL, event)
+      }
+      return
+    }
+
     const id = event.id as string | undefined
 
-    switch (event.type) {
+    switch (eventType) {
       case 'surface_created':
         if (id) {
           this.resolveRequest(id, event.surfaceId)

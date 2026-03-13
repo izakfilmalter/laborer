@@ -256,13 +256,15 @@ Map the initial set of supported Ghostty actions into Laborer's UI and terminal 
 
 This slice makes Ghostty panes integrate with the rest of Laborer's interface instead of acting as isolated render targets.
 
+### Status: COMPLETE
+
 ### Acceptance criteria
 
-- [ ] Terminal title updates from Ghostty are reflected in Laborer's terminal UI
-- [ ] Working directory updates are surfaced to Laborer's metadata model
-- [ ] Bell notifications are surfaced through Laborer in a clear, minimal way
-- [ ] Exited/closed Ghostty surfaces update pane state correctly
-- [ ] Tests cover supported action mapping behavior end to end
+- [x] Terminal title updates from Ghostty are reflected in Laborer's terminal UI
+- [x] Working directory updates are surfaced to Laborer's metadata model
+- [x] Bell notifications are surfaced through Laborer in a clear, minimal way
+- [x] Exited/closed Ghostty surfaces update pane state correctly
+- [x] Tests cover supported action mapping behavior end to end
 
 ### Blocked by
 

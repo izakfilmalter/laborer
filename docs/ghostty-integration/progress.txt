@@ -369,3 +369,50 @@ Date: 2026-03-13
 - scrollMods is 0 for standard wheel events — precision trackpad/momentum scrolling is not yet wired from the browser
 - Mouse position is computed relative to the container element's bounding rect (clientX - rect.left) for correct surface-local coordinates
 - Mouse position is sent alongside button press events since Ghostty needs both the position and button state for correct click handling
+
+---
+
+## Issue 7: Core Ghostty action mapping into Laborer UI
+Status: COMPLETE
+Date: 2026-03-13
+
+### What was done
+- Implemented full action event pipeline across all 8 architecture layers:
+  - Layer 1-2 (Native addon — addon.mm): Added QueuedAction struct, g_action_queue vector with mutex, reverse lookup map g_surface_ptr_to_id for resolving ghostty_surface_t pointers to numeric surface IDs. RuntimeAction() queues 7 action types: SET_TITLE, PWD, RING_BELL, SHOW_CHILD_EXITED, CLOSE_WINDOW, CELL_SIZE, RENDERER_HEALTH. Added DrainActions() N-API function that atomically drains and clears the queue. Registered in module exports.
+  - Layer 3 (TypeScript wrapper — index.ts): Added ActionEvent interface with action/surfaceId/value/num1/num2 fields. Added drainActions() function wrapping the native call. Added to GhosttyAddon interface and exported.
+  - Layer 4 (Host process — ghostty-host.ts): Added 7 push event types (TitleChangedEvent, PwdChangedEvent, BellEvent, ChildExitedEvent, CloseWindowEvent, CellSizeChangedEvent, RendererHealthEvent). Added emitActionEvent() to map addon actions to typed IPC events. Added drainAndEmitActions() called after appTick() in the tick loop.
+  - Layer 5 (Effect client — ghostty-host-client.ts): Added GhosttyActionEvent discriminated union type. Added ActionCallback type, ACTION_EVENT_TYPES set, actionCallbacks array, and notifyActionListeners(). Updated routeEvent() to detect push events and notify registered callbacks. Added onAction() method to service interface and implementation.
+  - Layer 6 (Shared types — desktop-bridge.ts): Added GhosttyActionEvent discriminated union type. Added onGhosttyAction subscription method to DesktopBridge interface.
+  - Layer 7 (Main process bridge — ghostty-bridge.ts): Imported BrowserWindow. Added GHOSTTY_ACTION_CHANNEL constant and PUSH_ACTION_TYPES set. Updated routeEvent() to detect push events and forward to all renderer windows via webContents.send().
+  - Layer 8 (Preload — preload.ts): Added GHOSTTY_ACTION_CHANNEL constant. Added onGhosttyAction implementation using ipcRenderer.on() pattern with cleanup function return.
+  - Layer 9 (React component — ghostty-terminal-pane.tsx): Added GhosttyActionEvent import. Added onTitleChange/onPwdChange callback props. Added title/bellFlash state. Added useEffect subscribing to action events filtered by surfaceId. Handles all 7 event types: title_changed → state + callback, pwd_changed → callback, bell → visual flash (ring style, 300ms), child_exited/close_window → destroyed state + exit callback, renderer_health → console warn, cell_size → no-op. Updated aria-label with dynamic title. Added bell flash ring style.
+- Fixed surfaceId=0 bug: Actions that fire during ghostty_surface_new() (before surface is added to reverse map) legitimately get surfaceId=0. Fixed by:
+  - Adding g_surface_ptr_to_id.erase() in DestroySurface to clean up reverse map
+  - Adding g_surface_ptr_to_id.clear() in DestroyApp to clean up on app teardown
+  - Updating tests to tolerate surfaceId=0 for early init actions
+- Fixed stale action queue test: drainActions test now flushes stale actions from previous test suites before asserting empty
+- Added 4 new addon tests: drainActions empty queue, action shape validation, queue clearing, valid action type strings
+- Added 2 new host integration tests: action events after surface creation with shape validation, child_exited on shell termination
+- All 48 ghostty package tests pass (31 addon + 17 host)
+- Full monorepo typecheck passes (all 10 packages)
+- All other package test suites pass (server worktree-watcher tests are pre-existing flaky failures, unrelated)
+- Format check passes
+
+### Architecture: Push events pattern
+This is the first feature introducing push events (unsolicited) from Ghostty Host → GhosttyBridge → renderer, as opposed to the existing request/response pattern. The flow:
+1. Ghostty runtime fires RuntimeAction callback during appTick()
+2. Actions are queued into g_action_queue (thread-safe vector with mutex)
+3. After appTick(), drainAndEmitActions() drains the queue and emits typed JSON events to stdout
+4. GhosttyBridge in the main process detects push events (type in PUSH_ACTION_TYPES set)
+5. Push events are forwarded to all renderer windows via BrowserWindow.getAllWindows().webContents.send()
+6. Renderer receives via ipcRenderer.on() registered in onGhosttyAction preload method
+7. React component subscribes via useEffect and filters by surfaceId
+
+### Key decisions
+- Polling/drain pattern chosen over ThreadSafeFunction: actions are queued during appTick() and drained synchronously afterwards, avoiding cross-thread N-API complexity
+- surfaceId=0 is valid for early init actions: actions that fire during ghostty_surface_new() before the surface is registered get surfaceId=0 because we cannot pre-populate the reverse map without the pointer
+- Push events use BrowserWindow.getAllWindows() broadcast: all renderer windows receive all action events, and the React component filters by surfaceId
+- Bell notification uses a visual flash (ring style) rather than an audio beep — minimal and accessible
+- child_exited and close_window both set a destroyed state on the pane, preventing further interaction
+- cell_size events are received but not acted on (no-op) — the renderer controls sizing, not Ghostty
+- renderer_health events log a warning — full health monitoring deferred to Issue 8

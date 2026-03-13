@@ -38,6 +38,7 @@ const GHOSTTY_SEND_MOUSE_BUTTON_CHANNEL = 'ghostty:send-mouse-button'
 const GHOSTTY_SEND_MOUSE_POS_CHANNEL = 'ghostty:send-mouse-pos'
 const GHOSTTY_SEND_MOUSE_SCROLL_CHANNEL = 'ghostty:send-mouse-scroll'
 const GHOSTTY_MOUSE_CAPTURED_CHANNEL = 'ghostty:mouse-captured'
+const GHOSTTY_ACTION_CHANNEL = 'ghostty:action'
 
 // ---------------------------------------------------------------------------
 // Service URLs — injected via `additionalArguments` from the main process.
@@ -171,6 +172,25 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     ipcRenderer.on(UPDATE_STATE_CHANNEL, wrappedListener)
     return () => {
       ipcRenderer.removeListener(UPDATE_STATE_CHANNEL, wrappedListener)
+    }
+  },
+
+  // -- Ghostty action events ------------------------------------------------
+
+  onGhosttyAction: (listener) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      action: unknown
+    ) => {
+      if (typeof action !== 'object' || action === null) {
+        return
+      }
+      listener(action as Parameters<typeof listener>[0])
+    }
+
+    ipcRenderer.on(GHOSTTY_ACTION_CHANNEL, wrappedListener)
+    return () => {
+      ipcRenderer.removeListener(GHOSTTY_ACTION_CHANNEL, wrappedListener)
     }
   },
 

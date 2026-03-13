@@ -80,6 +80,33 @@ interface SurfacePixels {
 }
 
 /**
+ * Action event from the Ghostty runtime, drained from the native
+ * addon's action queue. Produced by RuntimeAction() in the native
+ * layer during ghostty_app_tick().
+ *
+ * action: the action type string:
+ *   - "set_title"       — terminal title changed (str_value = new title)
+ *   - "pwd"             — working directory changed (str_value = new pwd)
+ *   - "ring_bell"       — terminal bell
+ *   - "child_exited"    — child process exited (num1 = exit code)
+ *   - "close_window"    — window close requested
+ *   - "cell_size"       — cell dimensions changed (num1 = width, num2 = height)
+ *   - "renderer_health" — renderer health changed (num1: 0 = healthy, 1 = unhealthy)
+ */
+interface ActionEvent {
+  /** The action type identifier. */
+  readonly action: string
+  /** First numeric payload (context-dependent). */
+  readonly num1: number
+  /** Second numeric payload (context-dependent). */
+  readonly num2: number
+  /** Surface ID the action targets (0 if it targets the app). */
+  readonly surfaceId: number
+  /** String payload (context-dependent, empty if N/A). */
+  readonly value: string
+}
+
+/**
  * Key input action (matches ghostty_input_action_e).
  * 0 = release, 1 = press, 2 = repeat.
  */
@@ -172,6 +199,8 @@ interface GhosttyAddon {
   createSurface(options?: CreateSurfaceOptions): SurfaceHandle
   destroyApp(): boolean
   destroySurface(surfaceId: number): boolean
+  // Action queue
+  drainActions(): ActionEvent[]
 
   // Runtime initialization
   getInfo(): GhosttyInfo
@@ -340,6 +369,20 @@ const destroyApp = (): boolean => {
  */
 const appTick = (): void => {
   getAddon().appTick()
+}
+
+/**
+ * Drain all queued Ghostty actions since the last drain.
+ *
+ * Returns an array of ActionEvent objects representing Ghostty runtime
+ * callbacks (title changes, pwd updates, bell, child exit, etc.) that
+ * occurred during ghostty_app_tick() since the last drain.
+ *
+ * This should be called after each appTick() in the host process to
+ * forward action events to the parent.
+ */
+const drainActions = (): ActionEvent[] => {
+  return getAddon().drainActions()
 }
 
 // ---------------------------------------------------------------------------
@@ -548,6 +591,7 @@ export {
   createSurface,
   destroyApp,
   destroySurface,
+  drainActions,
   getInfo,
   getSurfaceIOSurfaceId,
   getSurfacePixels,
@@ -567,6 +611,7 @@ export {
   validateConfig,
 }
 export type {
+  ActionEvent,
   CreateSurfaceOptions,
   GhosttyConfigValidation,
   GhosttyInfo,

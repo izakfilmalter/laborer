@@ -119,6 +119,63 @@ interface ErrorEvent {
   readonly type: 'error'
 }
 
+// Push events — unsolicited events from Ghostty action callbacks
+
+interface TitleChangedEvent {
+  readonly surfaceId: number
+  readonly title: string
+  readonly type: 'title_changed'
+}
+
+interface PwdChangedEvent {
+  readonly pwd: string
+  readonly surfaceId: number
+  readonly type: 'pwd_changed'
+}
+
+interface BellEvent {
+  readonly surfaceId: number
+  readonly type: 'bell'
+}
+
+interface ChildExitedEvent {
+  readonly exitCode: number
+  readonly surfaceId: number
+  readonly type: 'child_exited'
+}
+
+interface CloseWindowEvent {
+  readonly surfaceId: number
+  readonly type: 'close_window'
+}
+
+interface CellSizeChangedEvent {
+  readonly height: number
+  readonly surfaceId: number
+  readonly type: 'cell_size'
+  readonly width: number
+}
+
+interface RendererHealthEvent {
+  readonly healthy: boolean
+  readonly surfaceId: number
+  readonly type: 'renderer_health'
+}
+
+/**
+ * Union of all push action events emitted by the Ghostty Host.
+ * These are unsolicited (not in response to a command) and are forwarded
+ * to registered action listeners.
+ */
+type GhosttyActionEvent =
+  | TitleChangedEvent
+  | PwdChangedEvent
+  | BellEvent
+  | ChildExitedEvent
+  | CloseWindowEvent
+  | CellSizeChangedEvent
+  | RendererHealthEvent
+
 type GhosttyEvent =
   | ReadyEvent
   | SurfaceCreatedEvent
@@ -131,9 +188,24 @@ type GhosttyEvent =
   | SurfacesListEvent
   | OkEvent
   | ErrorEvent
+  | GhosttyActionEvent
 
 /** Callback invoked when the Ghostty Host process crashes. */
 type CrashCallback = () => void
+
+/** Callback invoked when the Ghostty Host emits an action event. */
+type ActionCallback = (event: GhosttyActionEvent) => void
+
+/** Set of action event type strings used for push event detection. */
+const ACTION_EVENT_TYPES = new Set([
+  'title_changed',
+  'pwd_changed',
+  'bell',
+  'child_exited',
+  'close_window',
+  'cell_size',
+  'renderer_health',
+])
 
 // ---------------------------------------------------------------------------
 // Pending request tracking
@@ -205,6 +277,13 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
      * When captured, mouse events should be forwarded to the terminal.
      */
     readonly mouseCaptured: (surfaceId: number) => Effect.Effect<boolean, Error>
+
+    /**
+     * Register a callback invoked when the Ghostty Host emits an
+     * action event (title change, pwd update, bell, child exit, etc.).
+     * Multiple callbacks can be registered. All are invoked for each event.
+     */
+    readonly onAction: (callback: ActionCallback) => void
 
     /**
      * Register a callback invoked when the Ghostty Host process crashes.
@@ -291,6 +370,7 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
       // Pending request map: command ID -> resolve/reject callbacks
       const pendingRequests = new Map<string, PendingRequest>()
       const crashCallbacks: CrashCallback[] = []
+      const actionCallbacks: ActionCallback[] = []
 
       // Monotonic counter for generating unique command IDs
       let nextId = 1
@@ -364,6 +444,19 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
         }
       }
 
+      /** Notify all registered action callbacks. */
+      const notifyActionListeners = (event: GhosttyActionEvent): void => {
+        for (const cb of actionCallbacks) {
+          try {
+            cb(event)
+          } catch (error) {
+            console.error(
+              `[GhosttyHostClient] Action callback error: ${String(error)}`
+            )
+          }
+        }
+      }
+
       /** Route an incoming event to the appropriate handler. */
       const routeEvent = (event: GhosttyEvent): void => {
         switch (event.type) {
@@ -413,10 +506,26 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
               console.error(`[GhosttyHostClient] Host error: ${event.message}`)
             }
             break
+
+          // Push action events — forward to registered action callbacks
+          case 'title_changed':
+          case 'pwd_changed':
+          case 'bell':
+          case 'child_exited':
+          case 'close_window':
+          case 'cell_size':
+          case 'renderer_health':
+            notifyActionListeners(event)
+            break
+
           default:
-            console.error(
-              `[GhosttyHostClient] Unknown event type: ${(event as Record<string, unknown>).type}`
-            )
+            if (ACTION_EVENT_TYPES.has((event as { type: string }).type)) {
+              notifyActionListeners(event as GhosttyActionEvent)
+            } else {
+              console.error(
+                `[GhosttyHostClient] Unknown event type: ${(event as { type: string }).type}`
+              )
+            }
             break
         }
       }
@@ -619,6 +728,10 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
             id: 'list',
           }),
 
+        onAction: (callback) => {
+          actionCallbacks.push(callback)
+        },
+
         onCrash: (callback) => {
           crashCallbacks.push(callback)
         },
@@ -687,4 +800,4 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
 }
 
 export { GhosttyHostClient }
-export type { CrashCallback }
+export type { ActionCallback, CrashCallback, GhosttyActionEvent }

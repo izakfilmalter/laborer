@@ -11,9 +11,10 @@
  * - Destroying the surface cleanly when the pane unmounts
  * - Showing loading, error, and placeholder states
  *
+ * - Handling Ghostty action events (title, pwd, bell, child exit) (Issue 7)
+ *
  * The component does NOT handle:
  * - Zero-copy rendering via WebGPU/IOSurface (Issue 3)
- * - Action callbacks like title changes (Issue 7)
  *
  * The rendered output is currently a placeholder. Issue 3 will replace this
  * with shared-surface WebGPU rendering.
@@ -45,6 +46,7 @@
  */
 
 import type {
+  GhosttyActionEvent,
   GhosttyKeyEvent,
   GhosttyMouseButtonEvent,
   GhosttyMousePosEvent,
@@ -116,8 +118,12 @@ type SurfaceState =
 interface GhosttyTerminalPaneProps {
   /** Whether this pane is currently focused in the panel layout. */
   readonly isFocused?: boolean | undefined
+  /** Callback invoked when the terminal working directory changes. */
+  readonly onPwdChange?: ((pwd: string) => void) | undefined
   /** Callback invoked when the surface exits or is destroyed. */
   readonly onSurfaceExit?: (() => void) | undefined
+  /** Callback invoked when the terminal title changes. */
+  readonly onTitleChange?: ((title: string) => void) | undefined
 }
 
 /**
@@ -128,11 +134,15 @@ const PREFIX_TIMEOUT_MS = 1500
 
 function GhosttyTerminalPane({
   onSurfaceExit,
+  onTitleChange,
+  onPwdChange,
   isFocused = false,
 }: GhosttyTerminalPaneProps) {
   const [surfaceState, setSurfaceState] = useState<SurfaceState>({
     status: 'idle',
   })
+  const [title, setTitle] = useState<string>('')
+  const [bellFlash, setBellFlash] = useState(false)
   const surfaceIdRef = useRef<number | null>(null)
   const mountedRef = useRef(true)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -517,6 +527,59 @@ function GhosttyTerminalPane({
     }
   }, [])
 
+  // Subscribe to Ghostty action events (title, pwd, bell, child exit, etc.)
+  useEffect(() => {
+    const bridge = getDesktopBridge()
+    if (!bridge?.onGhosttyAction) {
+      return
+    }
+
+    const unsubscribe = bridge.onGhosttyAction((event: GhosttyActionEvent) => {
+      // Only handle events for this pane's surface
+      const currentSurfaceId = surfaceIdRef.current
+      if (currentSurfaceId === null || event.surfaceId !== currentSurfaceId) {
+        return
+      }
+
+      switch (event.type) {
+        case 'title_changed':
+          setTitle(event.title)
+          onTitleChange?.(event.title)
+          break
+        case 'pwd_changed':
+          onPwdChange?.(event.pwd)
+          break
+        case 'bell':
+          // Visual bell flash
+          setBellFlash(true)
+          setTimeout(() => setBellFlash(false), 150)
+          break
+        case 'child_exited':
+          setSurfaceState({ status: 'destroyed' })
+          onSurfaceExit?.()
+          break
+        case 'close_window':
+          setSurfaceState({ status: 'destroyed' })
+          onSurfaceExit?.()
+          break
+        case 'renderer_health':
+          if (!event.healthy) {
+            console.warn(
+              `[GhosttyTerminalPane] Renderer unhealthy for surface ${currentSurfaceId}`
+            )
+          }
+          break
+        case 'cell_size':
+          // Cell size changes are informational — no UI action needed currently
+          break
+        default:
+          break
+      }
+    })
+
+    return unsubscribe
+  }, [onSurfaceExit, onTitleChange, onPwdChange])
+
   if (surfaceState.status === 'idle' || surfaceState.status === 'creating') {
     return (
       <div className="flex h-full w-full items-center justify-center bg-background">
@@ -565,11 +628,16 @@ function GhosttyTerminalPane({
   // to forward them to the native Ghostty surface. This is intentional — the
   // div acts as a keyboard capture surface for the terminal, similar to how
   // xterm.js uses a <textarea> for input capture.
+  const ariaLabel =
+    title !== ''
+      ? `Ghostty Terminal: ${title}`
+      : `Ghostty Terminal Surface #${surfaceState.surfaceId}`
+
   return (
     // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Terminal keyboard and mouse event handlers for input forwarding
     <div
-      aria-label={`Ghostty Terminal Surface #${surfaceState.surfaceId}`}
-      className="flex h-full w-full flex-col bg-black outline-none"
+      aria-label={ariaLabel}
+      className={`flex h-full w-full flex-col bg-black outline-none${bellFlash ? 'ring-2 ring-yellow-400' : ''}`}
       data-ghostty-surface-id={surfaceState.surfaceId}
       onContextMenu={handleContextMenu}
       onKeyDown={handleKeyDown}

@@ -6,6 +6,7 @@ import {
   createSurface,
   destroyApp,
   destroySurface,
+  drainActions,
   getInfo,
   getSurfaceIOSurfaceId,
   getSurfacePixels,
@@ -275,6 +276,117 @@ describe('ghostty native addon', () => {
       createApp()
       const surfaces = listSurfaces()
       expect(surfaces).toEqual([])
+      destroyApp()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Action queue (Issue 7)
+  // ---------------------------------------------------------------------------
+
+  describe('action queue', () => {
+    afterAll(() => {
+      try {
+        for (const id of listSurfaces()) {
+          destroySurface(id)
+        }
+        destroyApp()
+      } catch {
+        // Ignore cleanup errors
+      }
+    })
+
+    it('drainActions returns an empty array when no actions are queued', () => {
+      if (!isAppCreated()) {
+        createApp()
+      }
+      // Flush any stale actions from previous test suites
+      drainActions()
+      // Now the queue should be empty
+      const actions = drainActions()
+      expect(Array.isArray(actions)).toBe(true)
+      expect(actions.length).toBe(0)
+    })
+
+    it('drainActions returns actions with correct shape', async () => {
+      if (!isAppCreated()) {
+        createApp()
+      }
+
+      // Create a surface and tick to trigger initial actions (e.g., cell_size)
+      const handle = createSurface()
+
+      // Tick several times to trigger Ghostty runtime callbacks
+      for (let i = 0; i < 10; i++) {
+        appTick()
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+
+      const actions = drainActions()
+      // After creating a surface and ticking, we expect some actions
+      // (at minimum cell_size and possibly set_title/pwd)
+      for (const action of actions) {
+        expect(typeof action.action).toBe('string')
+        expect(typeof action.surfaceId).toBe('number')
+        expect(typeof action.value).toBe('string')
+        expect(typeof action.num1).toBe('number')
+        expect(typeof action.num2).toBe('number')
+      }
+
+      destroySurface(handle.id)
+    })
+
+    it('drainActions clears the queue after draining', async () => {
+      if (!isAppCreated()) {
+        createApp()
+      }
+
+      const handle = createSurface()
+
+      // Tick to generate actions
+      for (let i = 0; i < 5; i++) {
+        appTick()
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+
+      // First drain may return actions
+      drainActions()
+
+      // Second drain immediately after should return empty
+      const secondDrain = drainActions()
+      expect(secondDrain.length).toBe(0)
+
+      destroySurface(handle.id)
+    })
+
+    it('queued actions have valid action type strings', async () => {
+      if (!isAppCreated()) {
+        createApp()
+      }
+
+      const handle = createSurface()
+
+      for (let i = 0; i < 10; i++) {
+        appTick()
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+
+      const actions = drainActions()
+      const validTypes = new Set([
+        'set_title',
+        'pwd',
+        'ring_bell',
+        'child_exited',
+        'close_window',
+        'cell_size',
+        'renderer_health',
+      ])
+
+      for (const action of actions) {
+        expect(validTypes.has(action.action)).toBe(true)
+      }
+
+      destroySurface(handle.id)
       destroyApp()
     })
   })

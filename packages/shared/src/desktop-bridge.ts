@@ -205,6 +205,40 @@ export interface GhosttyMouseScrollEvent {
   readonly scrollMods: number
 }
 
+/**
+ * Action event emitted by the Ghostty runtime.
+ * These are unsolicited push events representing terminal state changes.
+ */
+export type GhosttyActionEvent =
+  | {
+      readonly surfaceId: number
+      readonly title: string
+      readonly type: 'title_changed'
+    }
+  | {
+      readonly pwd: string
+      readonly surfaceId: number
+      readonly type: 'pwd_changed'
+    }
+  | { readonly surfaceId: number; readonly type: 'bell' }
+  | {
+      readonly exitCode: number
+      readonly surfaceId: number
+      readonly type: 'child_exited'
+    }
+  | { readonly surfaceId: number; readonly type: 'close_window' }
+  | {
+      readonly height: number
+      readonly surfaceId: number
+      readonly type: 'cell_size'
+      readonly width: number
+    }
+  | {
+      readonly healthy: boolean
+      readonly surfaceId: number
+      readonly type: 'renderer_health'
+    }
+
 export interface DesktopBridge {
   /** Shows a native confirmation dialog with Yes/No buttons. Returns true if confirmed. */
   confirm: (message: string) => Promise<boolean>
@@ -333,6 +367,13 @@ export interface DesktopBridge {
    * Returns an unsubscribe function.
    */
   onActivateWorkspace: (listener: (workspaceId: string) => void) => () => void
+
+  /**
+   * Subscribes to Ghostty action events (title changes, pwd updates,
+   * bell notifications, child exit, etc.).
+   * Returns an unsubscribe function.
+   */
+  onGhosttyAction: (listener: (event: GhosttyActionEvent) => void) => () => void
 
   /**
    * Subscribes to application menu actions (e.g., "settings").

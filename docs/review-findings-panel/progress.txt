@@ -435,3 +435,80 @@ Completed all acceptance criteria:
   - Clicking file:line in comment card without line does not dispatch scroll
   - Clicking file:line dispatches both editor open and diff scroll
 - All 464 web tests pass (34 test files), TypeScript clean, formatting clean
+
+## Issue 12: Keyboard shortcut + error handling + polish — DONE
+
+Completed all acceptance criteria:
+
+- Added Ctrl+B then R keyboard shortcut to toggle review pane for the
+  active workspace (panel-hotkeys.tsx):
+  - Follows existing tmux-prefix pattern matching Ctrl+B then D (diff)
+    and Ctrl+B then S (dev server)
+  - Uses `actions.toggleReviewPane(activePaneId)` with standard
+    action guard pattern
+  - Updated JSDoc comment block to document the new shortcut
+- Added review pane toggle button to workspace frame header
+  (workspace-frame-header.tsx):
+  - ClipboardCheck icon button rendered between diff toggle and close
+    workspace buttons, matching the existing toggle button pattern
+  - `reviewIsOpen` prop controls active state styling (bg-accent) and
+    aria-label ("Open review pane" / "Close review pane")
+  - Button disabled when no active pane, uses `withFocus` helper to
+    set active pane before toggling (same pattern as diff toggle)
+  - Hidden when workspace frame is minimized (matches existing behavior)
+- Added `reviewIsOpen` computation to WorkspaceFrameHeaderContainer
+  (workspace-frame-header-container.tsx):
+  - Uses `getLeafNodes(subLayout).some(leaf => leaf.paneType === 'review')`
+    to detect if a review pane exists in the workspace's sub-tree
+  - Different from `diffIsOpen` (which checks a flag on the active leaf)
+    because review panes are standalone leaves, not sidebar flags
+  - Passed as prop to presentational WorkspaceFrameHeader
+- Improved error handling with actionable guidance (review-pane.tsx):
+  - Added `getErrorGuidance()` helper that maps error codes to
+    user-friendly instructions:
+    - GH_AUTH_FAILED: "Run 'gh auth login' in your terminal..."
+    - GH_RATE_LIMITED: "GitHub API rate limit exceeded. Wait..."
+    - GH_COMMAND_FAILED: "Ensure the GitHub CLI (gh) is installed..."
+  - Error state Alert now includes a secondary guidance paragraph
+    with the actionable message (when applicable)
+  - Error toasts in "Fix Selected" and "Unqueue" handlers now use
+    `toast.error(title, { description })` pattern with guidance from
+    `getErrorGuidance()`, falling back to the raw error message
+- Smooth transitions for collapsible sections (review-pane.tsx):
+  - Added `h-[var(--collapsible-panel-height)] overflow-hidden
+    transition-[height] duration-200` to CollapsibleContent in
+    ReviewSection and suggested fixes collapsible
+  - Uses @base-ui/react Collapsible.Panel's native CSS custom property
+    for smooth height animations on expand/collapse
+  - ChevronRight icons already had `transition-transform duration-200`
+- Verified severity badge colors match brrr convention with dark mode:
+  - Critical: red (bg-red-500/10 text-red-600 dark:bg-red-500/20 dark:text-red-400)
+  - Warning: yellow (bg-yellow-500/10 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-400)
+  - Info: blue (bg-blue-500/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400)
+  - All reaction indicators also have dark mode variants
+- Verified keyboard accessibility:
+  - All buttons use `<button>` elements with proper `aria-label` attributes
+  - Focus-visible ring styles on all interactive elements
+  - Added `aria-label` to "Fix Selected" button with dynamic count
+  - CollapsibleTrigger renders as native button (keyboard accessible)
+  - File:line links are `<button>` elements with focus-visible ring
+- Verified design system compliance:
+  - Uses shadcn/ui components (Button, Badge, Alert, Tooltip, Collapsible,
+    Avatar, Checkbox, ScrollArea, Empty, Spinner)
+  - Tailwind CSS classes throughout, consistent with project patterns
+- Added 7 new tests in workspace-frame-header.test.tsx (37 total) covering:
+  - Renders the review pane toggle button
+  - Calls toggleReviewPane with the active pane ID when clicked
+  - Applies bg-accent class to review toggle when review is open
+  - Does not apply bg-accent class when review is closed
+  - Disables the review toggle button when no pane is active
+  - Labels the button "Open review pane" when review is closed
+  - Labels the button "Close review pane" when review is open
+- Updated existing tests:
+  - workspace-frame-header.test.tsx: Added reviewIsOpen to BASE_PROPS,
+    updated "hides buttons when minimized" and "shows all buttons" tests
+    to include review pane button assertions
+  - workspace-frame-header-container.test.tsx: Added getLeafNodes mock
+    to layout-utils mock to support reviewIsOpen computation
+- All 471 web tests pass (34 test files), all 288 server tests pass (36 files),
+  TypeScript clean, formatting clean

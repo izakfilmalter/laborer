@@ -159,6 +159,23 @@ function formatTimestamp(iso: string): string {
 }
 
 /**
+ * Map error codes from the server to actionable guidance for the user.
+ * Returns null if no specific guidance is available.
+ */
+function getErrorGuidance(errorCode: string | null): string | null {
+  switch (errorCode) {
+    case 'GH_AUTH_FAILED':
+      return "Run 'gh auth login' in your terminal to authenticate with GitHub."
+    case 'GH_RATE_LIMITED':
+      return 'GitHub API rate limit exceeded. Wait a few minutes and try again.'
+    case 'GH_COMMAND_FAILED':
+      return "Ensure the GitHub CLI (gh) is installed and authenticated. Run 'gh auth login' if needed."
+    default:
+      return null
+  }
+}
+
+/**
  * Renders a severity badge with appropriate color styling.
  * Colors match brrr's convention: red for critical, yellow for warning,
  * blue for info.
@@ -354,7 +371,7 @@ function FindingCard({
                   {finding.suggestedFixes.length})
                 </span>
               </CollapsibleTrigger>
-              <CollapsibleContent>
+              <CollapsibleContent className="h-[var(--collapsible-panel-height)] overflow-hidden transition-[height] duration-200">
                 <ul className="mt-1 ml-3 list-disc space-y-1 pl-2 text-xs leading-relaxed">
                   {finding.suggestedFixes.map((fix) => (
                     <li key={fix}>{fix}</li>
@@ -463,7 +480,9 @@ function ReviewSection({
           {count}
         </Badge>
       </CollapsibleTrigger>
-      <CollapsibleContent>{children}</CollapsibleContent>
+      <CollapsibleContent className="h-[var(--collapsible-panel-height)] overflow-hidden transition-[height] duration-200">
+        {children}
+      </CollapsibleContent>
     </Collapsible>
   )
 }
@@ -607,7 +626,11 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
       startPolling()
     } catch (error: unknown) {
       const message = extractErrorMessage(error)
-      toast.error(`Failed to start fix: ${message}`)
+      const code = extractErrorCode(error)
+      const guidance = getErrorGuidance(code ?? null)
+      toast.error('Failed to start fix', {
+        description: guidance ?? message,
+      })
     } finally {
       setIsFixing(false)
     }
@@ -648,7 +671,11 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
         startPolling()
       } catch (error: unknown) {
         const message = extractErrorMessage(error)
-        toast.error(`Failed to unqueue: ${message}`)
+        const code = extractErrorCode(error)
+        const guidance = getErrorGuidance(code ?? null)
+        toast.error('Failed to unqueue', {
+          description: guidance ?? message,
+        })
       } finally {
         setUnqueuingCommentId(null)
       }
@@ -735,6 +762,9 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
       )
     }
 
+    // Actionable error guidance based on error code
+    const errorGuidance = getErrorGuidance(errorCode ?? null)
+
     // Other errors
     return (
       <>
@@ -747,7 +777,12 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
           <Alert variant="destructive">
             <AlertTriangle className="size-3.5" />
             <AlertTitle>Failed to load comments</AlertTitle>
-            <AlertDescription>{errorMessage}</AlertDescription>
+            <AlertDescription>
+              <p>{errorMessage}</p>
+              {errorGuidance && (
+                <p className="mt-1 font-medium text-xs">{errorGuidance}</p>
+              )}
+            </AlertDescription>
           </Alert>
         </div>
       </>
@@ -912,6 +947,7 @@ function ReviewHeaderBar({
         {/* Fix Selected button */}
         {onFixSelected && (
           <Button
+            aria-label={`Fix ${selectedCount} selected finding${selectedCount === 1 ? '' : 's'}`}
             className="h-5 gap-1 px-1.5 text-xs"
             data-testid="fix-selected-button"
             disabled={selectedCount === 0 || isFixing}

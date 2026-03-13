@@ -14,7 +14,15 @@
  * @see components/terminal-overlay-toolbar.tsx — per-pane floating toolbar
  */
 
-import { FileCode2, Minus, Plus, Server, Terminal, X } from 'lucide-react'
+import {
+  ClipboardCheck,
+  FileCode2,
+  Minus,
+  Plus,
+  Server,
+  Terminal,
+  X,
+} from 'lucide-react'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -59,6 +67,8 @@ interface WorkspaceFrameHeaderProps {
   readonly prTitle: string | null
   /** PR URL for linking. */
   readonly prUrl: string | null
+  /** Whether the review pane is currently open for the active workspace. */
+  readonly reviewIsOpen?: boolean | undefined
   /** The workspace ID, used for the close-workspace action. */
   readonly workspaceId: string | undefined
 }
@@ -79,6 +89,7 @@ function WorkspaceFrameHeader({
   prTitle,
   prUrl,
   projectName,
+  reviewIsOpen = false,
   workspaceId,
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
@@ -202,6 +213,29 @@ function WorkspaceFrameHeader({
               </TooltipTrigger>
               <TooltipContent>
                 {diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={
+                      reviewIsOpen ? 'Close review pane' : 'Open review pane'
+                    }
+                    className={reviewIsOpen ? 'bg-accent' : ''}
+                    disabled={!hasActivePane}
+                    onClick={withFocus((paneId) =>
+                      actions?.toggleReviewPane(paneId)
+                    )}
+                    size="icon-sm"
+                    variant="ghost"
+                  />
+                }
+              >
+                <ClipboardCheck className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipContent>
+                {reviewIsOpen ? 'Close review pane' : 'Open review pane'}
               </TooltipContent>
             </Tooltip>
             <Tooltip>

@@ -12,17 +12,17 @@ fi
 # This prompt is basic, we'll expand it later.
 for ((i=1; i<=$1; i++)); do
 result=$(opencode --model anthropic/claude-opus-4-6 run \
-"@docs/review-findings-panel/PRD-review-findings-panel.md @docs/review-findings-panel/issues.md @docs/review-findings-panel/progress.txt \
-1. Decide which task to work on next from docs/review-findings-panel/issues.md. \
+"@docs/tabbed-window-layout/PRD.md @docs/tabbed-window-layout/issues.md @docs/tabbed-window-layout/progress.txt \
+1. Decide which task to work on next from docs/tabbed-window-layout/issues.md. \
 This should be the one YOU decide has the highest priority, \
 - not necessarily the first in the list. \
 2. Check any feedback loops, such as types and tests. \
-3. Append your progress to the docs/review-findings-panel/progress.txt file. \
-4. Update status of tasks in docs/review-findings-panel/issues.md \
+3. Append your progress to the docs/tabbed-window-layout/progress.txt file. \
+4. Update status of tasks in docs/tabbed-window-layout/issues.md \
 5. Make a git commit of that feature. \
 ONLY WORK ON A SINGLE TASK / FEATURE. \
 If, while implementing the feature, you notice that all work \
-is complete in docs/review-findings-panel/issues.md, output <promise>COMPLETE</promise>. \
+is complete in docs/tabbed-window-layout/issues.md, output <promise>COMPLETE</promise>. \
 ")
 
   echo "$result"

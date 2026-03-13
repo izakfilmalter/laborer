@@ -37,6 +37,7 @@ import { Context, Deferred, Effect, Layer, Runtime } from 'effect'
 import type {
   CreateSurfaceOptions,
   IOSurfaceInfo,
+  SurfacePixels,
   SurfaceSize,
 } from './index.ts'
 
@@ -76,6 +77,21 @@ interface IOSurfaceResultEvent {
   readonly type: 'iosurface_result'
 }
 
+interface PixelsResultEvent {
+  readonly height: number
+  readonly id: string
+  readonly pixels: string
+  readonly surfaceId: number
+  readonly type: 'pixels_result'
+  readonly width: number
+}
+
+interface PixelsNullEvent {
+  readonly id: string
+  readonly surfaceId: number
+  readonly type: 'pixels_null'
+}
+
 interface SurfacesListEvent {
   readonly surfaces: number[]
   readonly type: 'surfaces_list'
@@ -98,6 +114,8 @@ type GhosttyEvent =
   | SurfaceDestroyedEvent
   | SizeResultEvent
   | IOSurfaceResultEvent
+  | PixelsResultEvent
+  | PixelsNullEvent
   | SurfacesListEvent
   | OkEvent
   | ErrorEvent
@@ -147,6 +165,16 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
     readonly getIOSurfaceId: (
       surfaceId: number
     ) => Effect.Effect<IOSurfaceInfo, Error>
+
+    /**
+     * Read pixel data from a surface's IOSurface.
+     * Returns null if Ghostty hasn't rendered a frame yet.
+     * This is the tracer-bullet rendering path; Issue 3 replaces it
+     * with zero-copy shared-texture display via WebGPU.
+     */
+    readonly getSurfacePixels: (
+      surfaceId: number
+    ) => Effect.Effect<SurfacePixels | null, Error>
 
     /**
      * Get the current size of a surface including grid dimensions.
@@ -295,6 +323,19 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
             break
           case 'iosurface_result':
             resolveRequest(event.id, event.info)
+            break
+          case 'pixels_result': {
+            // Decode base64 pixel data back into a SurfacePixels object
+            const pixelData: SurfacePixels = {
+              width: event.width,
+              height: event.height,
+              data: Buffer.from(event.pixels, 'base64'),
+            }
+            resolveRequest(event.id, pixelData)
+            break
+          }
+          case 'pixels_null':
+            resolveRequest(event.id, null)
             break
           case 'surfaces_list':
             // list_surfaces has no ID — resolve all pending list requests
@@ -488,6 +529,15 @@ class GhosttyHostClient extends Context.Tag('@laborer/GhosttyHostClient')<
           const id = generateId()
           return sendRequest<IOSurfaceInfo>({
             type: 'get_iosurface',
+            id,
+            surfaceId,
+          })
+        },
+
+        getSurfacePixels: (surfaceId) => {
+          const id = generateId()
+          return sendRequest<SurfacePixels | null>({
+            type: 'get_pixels',
             id,
             surfaceId,
           })

@@ -172,3 +172,49 @@ Date: 2026-03-13
 - No HTTP health check for ghostty — uses stdio IPC, marked healthy after spawn (like MCP)
 - Crash detection and exponential-backoff restart handled by existing HealthMonitor
 - Crash/recovery toast UI works automatically via the shared SidecarStatusEvent system
+
+---
+
+## Issue 1: Ghostty helper tracer bullet — pixel readback and e2e rendering test
+Status: IN PROGRESS (pixel readback pipeline + e2e test complete)
+Date: 2026-03-13
+
+### What was done
+- Added GetSurfacePixels to native addon (addon.mm):
+  - Locks IOSurface for CPU read access via IOSurfaceLock(kIOSurfaceLockReadOnly)
+  - Reads BGRA pixel data from IOSurfaceGetBaseAddress
+  - Copies into tightly-packed Napi::Buffer (strips GPU row padding if present)
+  - Returns { width, height, data: Buffer } or null if IOSurface not yet available
+- Added getSurfacePixels to TypeScript wrapper (index.ts):
+  - New SurfacePixels interface: { width, height, data: Buffer }
+  - New exported function wrapping the native addon call
+- Added get_pixels command to ghostty-host.ts IPC protocol:
+  - New GetPixelsCommand type with id + surfaceId fields
+  - New PixelsResultEvent: base64-encoded BGRA pixel data with dimensions
+  - New PixelsNullEvent: returned when IOSurface has no rendered frame
+  - Handler function reads pixels and encodes to base64 for JSON transport
+  - Validation and dispatch wired into the command processing pipeline
+- Added getSurfacePixels to ghostty-host-client.ts Effect service:
+  - New PixelsResultEvent and PixelsNullEvent event types
+  - Event routing: decodes base64 pixel data back to Buffer for SurfacePixels
+  - New getSurfacePixels method on the service interface and implementation
+- Expanded addon test suite (test/addon.test.ts) from 25 to 27 tests:
+  - "can read surface pixels or returns null when no frame rendered"
+  - "returns pixel data after ticking to allow rendering" (polls with appTick)
+- Expanded host integration tests (test/ghostty-host.test.ts) from 13 to 15 tests:
+  - "can request pixel data from a surface" — validates pixels_result/pixels_null response
+  - "returns pixel data after rendering frames (e2e first-frame test)" — polls at 100ms intervals for up to 6s waiting for first rendered frame, validates non-zero pixel data
+- All 42 tests pass (27 addon + 15 host)
+- Full monorepo typecheck passes (all 8 packages)
+- Format check passes
+- Native addon builds successfully with node-gyp
+
+### What remains for Issue 1 completion
+- Renderer display: a React pane component that displays pixel data in a <canvas> (Issue 3/4 will build the production zero-copy path and pane integration; the pixel readback pipeline proves the architecture end-to-end)
+
+### Key decisions
+- Pixel readback is the tracer-bullet rendering path — proves Ghostty output can flow through the full pipeline (native addon -> helper process -> IPC -> client)
+- Base64 encoding used for JSON transport of pixel data over stdio — simple and reliable for the tracer bullet, will be replaced by zero-copy shared texture in Issue 3
+- Pixel data includes tightly-packed BGRA buffer (no GPU row padding) for direct use with canvas ImageData
+- E2e test uses polling pattern (100ms intervals, 60 attempts) since Ghostty rendering is async and GPU-dependent
+- Test gracefully handles environments without GPU (headless CI) — warns instead of failing

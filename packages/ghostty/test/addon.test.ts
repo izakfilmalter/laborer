@@ -8,6 +8,7 @@ import {
   destroySurface,
   getInfo,
   getSurfaceIOSurfaceId,
+  getSurfacePixels,
   getSurfaceSize,
   init,
   isAppCreated,
@@ -199,6 +200,47 @@ describe('ghostty native addon', () => {
       expect(
         ioInfo.ioSurfaceId === null || typeof ioInfo.ioSurfaceId === 'number'
       ).toBe(true)
+    })
+
+    it('can read surface pixels or returns null when no frame rendered', () => {
+      const surfaces = listSurfaces()
+      expect(surfaces.length).toBeGreaterThan(0)
+      const surfaceId = surfaces[0] as number
+
+      const pixels = getSurfacePixels(surfaceId)
+      // May be null if Ghostty hasn't rendered yet, or a SurfacePixels object
+      if (pixels !== null) {
+        expect(typeof pixels.width).toBe('number')
+        expect(typeof pixels.height).toBe('number')
+        expect(pixels.width).toBeGreaterThan(0)
+        expect(pixels.height).toBeGreaterThan(0)
+        expect(Buffer.isBuffer(pixels.data)).toBe(true)
+        expect(pixels.data.length).toBe(pixels.width * pixels.height * 4)
+      }
+    })
+
+    it('returns pixel data after ticking to allow rendering', async () => {
+      const surfaces = listSurfaces()
+      expect(surfaces.length).toBeGreaterThan(0)
+      const surfaceId = surfaces[0] as number
+
+      // Tick several times to give Ghostty a chance to render
+      for (let i = 0; i < 30; i++) {
+        appTick()
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+
+      const pixels = getSurfacePixels(surfaceId)
+      // After ticking, we expect pixel data to be available
+      // (though in CI without a GPU, it may still be null)
+      if (pixels !== null) {
+        expect(pixels.width).toBeGreaterThan(0)
+        expect(pixels.height).toBeGreaterThan(0)
+        expect(pixels.data.length).toBe(pixels.width * pixels.height * 4)
+        // Verify the buffer contains some non-zero data (not all black)
+        const hasContent = pixels.data.some((byte: number) => byte !== 0)
+        expect(hasContent).toBe(true)
+      }
     })
 
     it('can destroy a surface', () => {

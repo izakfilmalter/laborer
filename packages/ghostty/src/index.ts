@@ -66,6 +66,19 @@ interface IOSurfaceInfo {
   readonly ioSurfaceId: number | null
 }
 
+/**
+ * Pixel data read back from a Ghostty surface's IOSurface.
+ * Contains BGRA pixel data (4 bytes per pixel), tightly packed.
+ */
+interface SurfacePixels {
+  /** BGRA pixel data buffer (width * height * 4 bytes). */
+  readonly data: Buffer
+  /** Surface height in pixels. */
+  readonly height: number
+  /** Surface width in pixels. */
+  readonly width: number
+}
+
 // ---------------------------------------------------------------------------
 // Native addon interface
 // ---------------------------------------------------------------------------
@@ -88,6 +101,7 @@ interface GhosttyAddon {
 
   // Surface control
   getSurfaceIOSurfaceId(surfaceId: number): IOSurfaceInfo
+  getSurfacePixels(surfaceId: number): SurfacePixels | null
   getSurfaceSize(surfaceId: number): SurfaceSize
   init(): boolean
   isAppCreated(): boolean
@@ -304,6 +318,23 @@ const getSurfaceIOSurfaceId = (surfaceId: number): IOSurfaceInfo => {
   return getAddon().getSurfaceIOSurfaceId(surfaceId)
 }
 
+/**
+ * Read pixel data from a Ghostty surface's IOSurface.
+ *
+ * Locks the IOSurface for CPU read access, copies the BGRA pixel buffer,
+ * and returns it. This is the tracer-bullet rendering path that proves
+ * Ghostty output can flow to the Electron renderer. The zero-copy path
+ * (Issue 3) will replace this with shared-texture display via WebGPU.
+ *
+ * Returns null if the IOSurface is not yet available (Ghostty hasn't
+ * rendered a frame yet).
+ *
+ * @throws If the surface is not found.
+ */
+const getSurfacePixels = (surfaceId: number): SurfacePixels | null => {
+  return getAddon().getSurfacePixels(surfaceId)
+}
+
 // ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
@@ -316,6 +347,7 @@ export {
   destroySurface,
   getInfo,
   getSurfaceIOSurfaceId,
+  getSurfacePixels,
   getSurfaceSize,
   init,
   isAppCreated,
@@ -331,5 +363,6 @@ export type {
   GhosttyInfo,
   IOSurfaceInfo,
   SurfaceHandle,
+  SurfacePixels,
   SurfaceSize,
 }

@@ -54,6 +54,7 @@ import {
   destroySurface,
   getInfo,
   getSurfaceIOSurfaceId,
+  getSurfacePixels,
   getSurfaceSize,
   init,
   listSurfaces,
@@ -105,6 +106,12 @@ interface GetIOSurfaceCommand {
   readonly type: 'get_iosurface'
 }
 
+interface GetPixelsCommand {
+  readonly id: string
+  readonly surfaceId: number
+  readonly type: 'get_pixels'
+}
+
 interface GetSizeCommand {
   readonly id: string
   readonly surfaceId: number
@@ -121,6 +128,7 @@ type Command =
   | SetSizeCommand
   | SetFocusCommand
   | GetIOSurfaceCommand
+  | GetPixelsCommand
   | GetSizeCommand
   | ListSurfacesCommand
 
@@ -159,6 +167,22 @@ interface IOSurfaceResultEvent {
   readonly type: 'iosurface_result'
 }
 
+interface PixelsResultEvent {
+  readonly height: number
+  readonly id: string
+  /** Base64-encoded BGRA pixel data. */
+  readonly pixels: string
+  readonly surfaceId: number
+  readonly type: 'pixels_result'
+  readonly width: number
+}
+
+interface PixelsNullEvent {
+  readonly id: string
+  readonly surfaceId: number
+  readonly type: 'pixels_null'
+}
+
 interface SurfacesListEvent {
   readonly surfaces: number[]
   readonly type: 'surfaces_list'
@@ -181,6 +205,8 @@ type GhosttyEvent =
   | SurfaceDestroyedEvent
   | SizeResultEvent
   | IOSurfaceResultEvent
+  | PixelsResultEvent
+  | PixelsNullEvent
   | SurfacesListEvent
   | OkEvent
   | ErrorEvent
@@ -287,6 +313,34 @@ function handleGetIOSurface(cmd: GetIOSurfaceCommand): void {
   }
 }
 
+function handleGetPixels(cmd: GetPixelsCommand): void {
+  try {
+    const result = getSurfacePixels(cmd.surfaceId)
+    if (result === null) {
+      emit({
+        type: 'pixels_null',
+        id: cmd.id,
+        surfaceId: cmd.surfaceId,
+      })
+    } else {
+      emit({
+        type: 'pixels_result',
+        id: cmd.id,
+        surfaceId: cmd.surfaceId,
+        width: result.width,
+        height: result.height,
+        pixels: result.data.toString('base64'),
+      })
+    }
+  } catch (error) {
+    emit({
+      type: 'error',
+      id: cmd.id,
+      message: `Failed to get pixels for surface ${cmd.surfaceId}: ${String(error)}`,
+    })
+  }
+}
+
 function handleGetSize(cmd: GetSizeCommand): void {
   try {
     const size = getSurfaceSize(cmd.surfaceId)
@@ -350,6 +404,8 @@ function isValidCommand(parsed: unknown): parsed is Command {
       )
     case 'get_iosurface':
       return typeof obj.id === 'string' && typeof obj.surfaceId === 'number'
+    case 'get_pixels':
+      return typeof obj.id === 'string' && typeof obj.surfaceId === 'number'
     case 'get_size':
       return typeof obj.id === 'string' && typeof obj.surfaceId === 'number'
     case 'list_surfaces':
@@ -399,6 +455,9 @@ function processLine(line: string): void {
       break
     case 'get_iosurface':
       handleGetIOSurface(parsed)
+      break
+    case 'get_pixels':
+      handleGetPixels(parsed)
       break
     case 'get_size':
       handleGetSize(parsed)

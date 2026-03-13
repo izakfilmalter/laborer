@@ -742,6 +742,112 @@ Napi::Value GetSurfaceIOSurfaceId(const Napi::CallbackInfo& info) {
 }
 
 // ---------------------------------------------------------------------------
+// N-API functions: Pixel readback
+// ---------------------------------------------------------------------------
+
+/**
+ * Read pixel data from a Ghostty surface's IOSurface.
+ *
+ * Locks the IOSurface, copies the BGRA pixel buffer, and returns it as a
+ * Node.js Buffer. This is the "tracer bullet" rendering path that proves
+ * Ghostty output can flow to the Electron renderer. The zero-copy path
+ * (Issue 3) will replace this with shared-texture display via WebGPU.
+ *
+ * Returns { width: number, height: number, data: Buffer } or null if the
+ * IOSurface is not yet available (Ghostty hasn't rendered a frame).
+ *
+ * The buffer contains BGRA pixel data (4 bytes per pixel), row-major,
+ * with possible row padding (bytesPerRow may exceed width * 4).
+ */
+Napi::Value GetSurfacePixels(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 1 || !info[0].IsNumber()) {
+    Napi::TypeError::New(env, "Expected surface ID (number)")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  uint32_t surface_id = info[0].As<Napi::Number>().Uint32Value();
+
+  std::lock_guard<std::mutex> lock(g_surfaces_mutex);
+  auto it = g_surfaces.find(surface_id);
+  if (it == g_surfaces.end()) {
+    Napi::Error::New(env, "Surface not found: " + std::to_string(surface_id))
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  @autoreleasepool {
+    TrackedSurface& tracked = it->second;
+    CALayer* layer = [tracked.view layer];
+
+    if (layer == nil || ![layer isKindOfClass:[CAMetalLayer class]]) {
+      return env.Null();
+    }
+
+    id contents = [layer contents];
+    if (contents == nil) {
+      return env.Null();
+    }
+
+    CFTypeRef contentsRef = (__bridge CFTypeRef)contents;
+    if (CFGetTypeID(contentsRef) != IOSurfaceGetTypeID()) {
+      return env.Null();
+    }
+
+    IOSurfaceRef ioSurface = (IOSurfaceRef)contentsRef;
+
+    size_t width = IOSurfaceGetWidth(ioSurface);
+    size_t height = IOSurfaceGetHeight(ioSurface);
+    size_t bytesPerRow = IOSurfaceGetBytesPerRow(ioSurface);
+
+    if (width == 0 || height == 0) {
+      return env.Null();
+    }
+
+    // Lock the IOSurface for CPU read access
+    kern_return_t lockResult = IOSurfaceLock(ioSurface, kIOSurfaceLockReadOnly, nullptr);
+    if (lockResult != kIOReturnSuccess) {
+      return env.Null();
+    }
+
+    void* baseAddress = IOSurfaceGetBaseAddress(ioSurface);
+    if (baseAddress == nullptr) {
+      IOSurfaceUnlock(ioSurface, kIOSurfaceLockReadOnly, nullptr);
+      return env.Null();
+    }
+
+    // Copy pixel data into a tightly-packed buffer (no row padding).
+    // Source may have bytesPerRow > width * 4 due to GPU alignment.
+    size_t tightBytesPerRow = width * 4;
+    size_t totalBytes = tightBytesPerRow * height;
+
+    Napi::Buffer<uint8_t> buffer = Napi::Buffer<uint8_t>::New(env, totalBytes);
+    uint8_t* dst = buffer.Data();
+    uint8_t* src = static_cast<uint8_t*>(baseAddress);
+
+    if (bytesPerRow == tightBytesPerRow) {
+      // No padding — single memcpy
+      memcpy(dst, src, totalBytes);
+    } else {
+      // Row-by-row copy to strip GPU row padding
+      for (size_t row = 0; row < height; row++) {
+        memcpy(dst + row * tightBytesPerRow, src + row * bytesPerRow, tightBytesPerRow);
+      }
+    }
+
+    IOSurfaceUnlock(ioSurface, kIOSurfaceLockReadOnly, nullptr);
+
+    Napi::Object result = Napi::Object::New(env);
+    result.Set("width", Napi::Number::New(env, static_cast<double>(width)));
+    result.Set("height", Napi::Number::New(env, static_cast<double>(height)));
+    result.Set("data", buffer);
+    return result;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Module initialization
 // ---------------------------------------------------------------------------
 
@@ -771,6 +877,10 @@ Napi::Object InitModule(Napi::Env env, Napi::Object exports) {
   // IOSurface extraction
   exports.Set("getSurfaceIOSurfaceId",
               Napi::Function::New(env, GetSurfaceIOSurfaceId));
+
+  // Pixel readback
+  exports.Set("getSurfacePixels",
+              Napi::Function::New(env, GetSurfacePixels));
 
   return exports;
 }

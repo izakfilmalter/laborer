@@ -49,8 +49,9 @@ import type {
   GhosttyMouseButtonEvent,
   GhosttyMousePosEvent,
   GhosttyMouseScrollEvent,
+  SidecarStatusEvent,
 } from '@laborer/shared/desktop-bridge'
-import { Ghost, Loader2 } from 'lucide-react'
+import { Ghost, Loader2, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getDesktopBridge } from '@/lib/desktop'
 import {
@@ -141,6 +142,7 @@ type SurfaceState =
   | { readonly status: 'active'; readonly surfaceId: number }
   | { readonly status: 'error'; readonly message: string }
   | { readonly status: 'destroyed' }
+  | { readonly status: 'crashed' }
 
 interface GhosttyTerminalPaneProps {
   /** Whether this pane is currently focused in the panel layout. */
@@ -581,6 +583,74 @@ function GhosttyTerminalPane({
     onSurfaceExit?.()
   }, [onSurfaceExit])
 
+  // Handle reconnection after a sidecar crash — re-create the surface
+  const handleReconnect = useCallback(() => {
+    const bridge = getDesktopBridge()
+    if (!bridge?.ghosttyCreateSurface) {
+      return
+    }
+
+    // Reset to creating state and attempt to create a new surface
+    setSurfaceState({ status: 'creating' })
+    setTitle('')
+
+    bridge
+      .ghosttyCreateSurface()
+      .then((surfaceId) => {
+        if (!mountedRef.current) {
+          bridge.ghosttyDestroySurface(surfaceId).catch(() => {
+            // Best effort cleanup
+          })
+          return
+        }
+        surfaceIdRef.current = surfaceId
+        setSurfaceState({ status: 'active', surfaceId })
+      })
+      .catch((error: unknown) => {
+        if (!mountedRef.current) {
+          return
+        }
+        setSurfaceState({
+          status: 'error',
+          message: `Failed to reconnect Ghostty surface: ${String(error)}`,
+        })
+      })
+  }, [])
+
+  // Detect Ghostty sidecar crashes and transition to crashed state.
+  // When the sidecar recovers (healthy), automatically attempt to reconnect.
+  useEffect(() => {
+    const bridge = getDesktopBridge()
+    if (!bridge?.onSidecarStatus) {
+      return
+    }
+
+    const unsubscribe = bridge.onSidecarStatus((status: SidecarStatusEvent) => {
+      if (status.name !== 'ghostty') {
+        return
+      }
+
+      if (status.state === 'crashed' && surfaceIdRef.current !== null) {
+        // Only transition to crashed if we had an active surface
+        surfaceIdRef.current = null
+        setSurfaceState({ status: 'crashed' })
+      }
+
+      if (status.state === 'healthy') {
+        // Sidecar recovered — auto-reconnect if we're in crashed state
+        setSurfaceState((prev) => {
+          if (prev.status === 'crashed') {
+            // Trigger reconnect on next tick to avoid setState-in-setState
+            setTimeout(handleReconnect, 0)
+          }
+          return prev
+        })
+      }
+    })
+
+    return unsubscribe
+  }, [handleReconnect])
+
   // Cleanup prefix timer on unmount
   useEffect(() => {
     return () => {
@@ -681,6 +751,39 @@ function GhosttyTerminalPane({
         <div className="flex flex-col items-center gap-2 text-muted-foreground">
           <Ghost className="size-5" />
           <span className="text-sm">Terminal session ended</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (surfaceState.status === 'crashed') {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-2 text-destructive">
+          <Ghost className="size-5" />
+          <span className="text-sm">
+            Ghostty service crashed — terminal lost
+          </span>
+          <span className="text-muted-foreground text-xs">
+            Waiting for service recovery...
+          </span>
+          <div className="mt-2 flex gap-2">
+            <button
+              className="flex items-center gap-1 rounded-md border px-3 py-1 text-muted-foreground text-sm hover:bg-muted"
+              onClick={handleReconnect}
+              type="button"
+            >
+              <RefreshCw className="size-3" />
+              Reconnect
+            </button>
+            <button
+              className="rounded-md border px-3 py-1 text-muted-foreground text-sm hover:bg-muted"
+              onClick={handleExit}
+              type="button"
+            >
+              Close pane
+            </button>
+          </div>
         </div>
       </div>
     )

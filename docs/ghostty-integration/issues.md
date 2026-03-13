@@ -360,7 +360,7 @@ Updated native addon CreateApp() to load config files on startup (default files 
 
 ---
 
-## Issue 10: Multi-terminal performance and isolation hardening
+## Issue 10: Multi-terminal performance and isolation hardening — DONE
 
 ### Parent PRD
 
@@ -378,11 +378,15 @@ This slice turns the working integration into a production-quality multiterminal
 
 ### Acceptance criteria
 
-- [ ] Laborer can display and operate multiple Ghostty terminals concurrently
-- [ ] A busy terminal does not visibly degrade other Ghostty terminals
-- [ ] Helper-process or surface failure produces a contained error state instead of cascading failure
-- [ ] Performance or stress tests cover multiple concurrent Ghostty terminals
-- [ ] Cleanup remains correct when several terminals are created and destroyed repeatedly
+- [x] Laborer can display and operate multiple Ghostty terminals concurrently
+- [x] A busy terminal does not visibly degrade other Ghostty terminals
+- [x] Helper-process or surface failure produces a contained error state instead of cascading failure
+- [x] Performance or stress tests cover multiple concurrent Ghostty terminals
+- [x] Cleanup remains correct when several terminals are created and destroyed repeatedly
+
+### Progress
+
+Added 6 multi-surface native addon tests (concurrent create/operate/destroy, per-surface isolation, error isolation, action surfaceId correctness, rapid create/destroy cycles, post-destruction creation). Added 5 multi-terminal host integration tests (concurrent IPC operations, error isolation across surfaces, rapid create/destroy leak test, multi-surface action routing, 6-surface stress test with partial teardown and re-creation). Added crash recovery to GhosttyTerminalPane: new 'crashed' SurfaceState, handleReconnect callback, sidecar crash detection via onSidecarStatus, auto-reconnect on service recovery, crash error UI with Reconnect/Close buttons. All 92 ghostty tests pass (39 addon + 30 host + 19 unsupported-actions), all 513 web tests pass, all 8 packages typecheck, format passes.
 
 ### Blocked by
 

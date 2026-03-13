@@ -1237,6 +1237,428 @@ describe('ghostty host process', () => {
   })
 
   // -------------------------------------------------------------------------
+  // Multi-terminal performance and isolation (Issue 10)
+  // -------------------------------------------------------------------------
+
+  it('can create and operate multiple surfaces concurrently', async () => {
+    handle = spawnGhosttyHost()
+    await waitForEvent(handle.events, (e) => e.type === 'ready')
+
+    // Create 4 surfaces
+    const surfaceIds: number[] = []
+    for (let i = 0; i < 4; i++) {
+      handle.sendCommand({
+        type: 'create_surface',
+        id: `multi-create-${i}`,
+        options: { width: 400 + i * 100, height: 300 + i * 50 },
+      })
+      const created = (await waitForEvent(
+        handle.events,
+        (e) =>
+          e.type === 'surface_created' &&
+          'id' in e &&
+          e.id === `multi-create-${i}`
+      )) as SurfaceCreatedEvent
+      surfaceIds.push(created.surfaceId)
+    }
+
+    // All IDs should be unique
+    expect(new Set(surfaceIds).size).toBe(4)
+
+    // List should contain all 4
+    handle.sendCommand({ type: 'list_surfaces' })
+    const listEvent = (await waitForEvent(
+      handle.events,
+      (e) => e.type === 'surfaces_list'
+    )) as SurfacesListEvent
+    expect(listEvent.surfaces.length).toBe(4)
+    for (const id of surfaceIds) {
+      expect(listEvent.surfaces).toContain(id)
+    }
+
+    // Operate on each surface independently
+    for (let i = 0; i < surfaceIds.length; i++) {
+      const sid = surfaceIds[i] as number
+      handle.sendCommand({
+        type: 'set_size',
+        id: `multi-size-${i}`,
+        surfaceId: sid,
+        width: 640,
+        height: 480,
+      })
+      const ok = await waitForEvent(
+        handle.events,
+        (e) => e.type === 'ok' && 'id' in e && e.id === `multi-size-${i}`
+      )
+      expect(ok.type).toBe('ok')
+    }
+
+    // Set focus on each surface sequentially
+    for (let i = 0; i < surfaceIds.length; i++) {
+      const sid = surfaceIds[i] as number
+      handle.sendCommand({
+        type: 'set_focus',
+        id: `multi-focus-${i}`,
+        surfaceId: sid,
+        focused: i === surfaceIds.length - 1, // Only last gets focus
+      })
+      await waitForEvent(
+        handle.events,
+        (e) => e.type === 'ok' && 'id' in e && e.id === `multi-focus-${i}`
+      )
+    }
+
+    // Destroy all surfaces
+    for (let i = 0; i < surfaceIds.length; i++) {
+      const sid = surfaceIds[i] as number
+      handle.sendCommand({
+        type: 'destroy_surface',
+        id: `multi-destroy-${i}`,
+        surfaceId: sid,
+      })
+      const destroyed = await waitForEvent(
+        handle.events,
+        (e) =>
+          e.type === 'surface_destroyed' &&
+          'id' in e &&
+          e.id === `multi-destroy-${i}`
+      )
+      expect(destroyed.type).toBe('surface_destroyed')
+    }
+
+    // Verify all destroyed
+    handle.sendCommand({ type: 'list_surfaces' })
+    const finalList = (await waitForEvent(
+      handle.events,
+      (e) => e.type === 'surfaces_list'
+    )) as SurfacesListEvent
+    expect(finalList.surfaces.length).toBe(0)
+  })
+
+  it('error on one surface does not affect other surfaces', async () => {
+    handle = spawnGhosttyHost()
+    await waitForEvent(handle.events, (e) => e.type === 'ready')
+
+    // Create two healthy surfaces
+    handle.sendCommand({ type: 'create_surface', id: 'iso-create-a' })
+    const surfaceA = (await waitForEvent(
+      handle.events,
+      (e) =>
+        e.type === 'surface_created' && 'id' in e && e.id === 'iso-create-a'
+    )) as SurfaceCreatedEvent
+
+    handle.sendCommand({ type: 'create_surface', id: 'iso-create-b' })
+    const surfaceB = (await waitForEvent(
+      handle.events,
+      (e) =>
+        e.type === 'surface_created' && 'id' in e && e.id === 'iso-create-b'
+    )) as SurfaceCreatedEvent
+
+    // Send operations to a non-existent surface — should produce errors
+    handle.sendCommand({
+      type: 'set_size',
+      id: 'iso-bad-1',
+      surfaceId: 999_999,
+      width: 100,
+      height: 100,
+    })
+    const error1 = await waitForEvent(
+      handle.events,
+      (e) => e.type === 'error' && 'id' in e && e.id === 'iso-bad-1'
+    )
+    expect(error1.type).toBe('error')
+
+    handle.sendCommand({
+      type: 'destroy_surface',
+      id: 'iso-bad-2',
+      surfaceId: 999_999,
+    })
+    const error2 = await waitForEvent(
+      handle.events,
+      (e) => e.type === 'error' && 'id' in e && e.id === 'iso-bad-2'
+    )
+    expect(error2.type).toBe('error')
+
+    // Both healthy surfaces should still be fully operable
+    handle.sendCommand({
+      type: 'set_size',
+      id: 'iso-size-a',
+      surfaceId: surfaceA.surfaceId,
+      width: 500,
+      height: 400,
+    })
+    const okA = await waitForEvent(
+      handle.events,
+      (e) => e.type === 'ok' && 'id' in e && e.id === 'iso-size-a'
+    )
+    expect(okA.type).toBe('ok')
+
+    handle.sendCommand({
+      type: 'get_size',
+      id: 'iso-getsz-b',
+      surfaceId: surfaceB.surfaceId,
+    })
+    const sizeB = (await waitForEvent(
+      handle.events,
+      (e) => e.type === 'size_result' && 'id' in e && e.id === 'iso-getsz-b'
+    )) as SizeResultEvent
+    expect(typeof sizeB.size.columns).toBe('number')
+
+    // Destroy surface A — surface B should still work
+    handle.sendCommand({
+      type: 'destroy_surface',
+      id: 'iso-destroy-a',
+      surfaceId: surfaceA.surfaceId,
+    })
+    await waitForEvent(
+      handle.events,
+      (e) =>
+        e.type === 'surface_destroyed' && 'id' in e && e.id === 'iso-destroy-a'
+    )
+
+    handle.sendCommand({
+      type: 'set_focus',
+      id: 'iso-focus-b',
+      surfaceId: surfaceB.surfaceId,
+      focused: true,
+    })
+    const okB = await waitForEvent(
+      handle.events,
+      (e) => e.type === 'ok' && 'id' in e && e.id === 'iso-focus-b'
+    )
+    expect(okB.type).toBe('ok')
+
+    // Cleanup
+    handle.sendCommand({
+      type: 'destroy_surface',
+      id: 'iso-destroy-b',
+      surfaceId: surfaceB.surfaceId,
+    })
+    await waitForEvent(
+      handle.events,
+      (e) =>
+        e.type === 'surface_destroyed' && 'id' in e && e.id === 'iso-destroy-b'
+    )
+  })
+
+  it('rapid create/destroy cycle does not leak surfaces', async () => {
+    handle = spawnGhosttyHost()
+    await waitForEvent(handle.events, (e) => e.type === 'ready')
+
+    // Rapid create-destroy cycle: 8 iterations
+    for (let i = 0; i < 8; i++) {
+      handle.sendCommand({
+        type: 'create_surface',
+        id: `cycle-create-${i}`,
+      })
+      const created = (await waitForEvent(
+        handle.events,
+        (e) =>
+          e.type === 'surface_created' &&
+          'id' in e &&
+          e.id === `cycle-create-${i}`
+      )) as SurfaceCreatedEvent
+
+      handle.sendCommand({
+        type: 'destroy_surface',
+        id: `cycle-destroy-${i}`,
+        surfaceId: created.surfaceId,
+      })
+      await waitForEvent(
+        handle.events,
+        (e) =>
+          e.type === 'surface_destroyed' &&
+          'id' in e &&
+          e.id === `cycle-destroy-${i}`
+      )
+    }
+
+    // List should be empty — no leaked surfaces
+    handle.sendCommand({ type: 'list_surfaces' })
+    const listEvent = (await waitForEvent(
+      handle.events,
+      (e) => e.type === 'surfaces_list'
+    )) as SurfacesListEvent
+    expect(listEvent.surfaces.length).toBe(0)
+  })
+
+  it('actions from multiple surfaces carry correct surface IDs', async () => {
+    handle = spawnGhosttyHost()
+    await waitForEvent(handle.events, (e) => e.type === 'ready')
+
+    // Create two surfaces
+    handle.sendCommand({ type: 'create_surface', id: 'action-multi-a' })
+    const surfaceA = (await waitForEvent(
+      handle.events,
+      (e) =>
+        e.type === 'surface_created' && 'id' in e && e.id === 'action-multi-a'
+    )) as SurfaceCreatedEvent
+
+    handle.sendCommand({ type: 'create_surface', id: 'action-multi-b' })
+    const surfaceB = (await waitForEvent(
+      handle.events,
+      (e) =>
+        e.type === 'surface_created' && 'id' in e && e.id === 'action-multi-b'
+    )) as SurfaceCreatedEvent
+
+    // Collect action events for several seconds
+    const actionTypes = new Set([
+      'title_changed',
+      'pwd_changed',
+      'bell',
+      'child_exited',
+      'close_window',
+      'cell_size',
+      'renderer_health',
+      'render_frame',
+    ])
+
+    const actionEvents: GhosttyEvent[] = []
+    const deadline = Date.now() + 3000
+    while (Date.now() < deadline) {
+      const event = await Promise.race([
+        handle.events.next(),
+        new Promise<undefined>((resolve) => {
+          setTimeout(() => resolve(undefined), 500)
+        }),
+      ])
+
+      if (event === undefined) {
+        continue
+      }
+
+      if (actionTypes.has(event.type)) {
+        actionEvents.push(event)
+      }
+    }
+
+    if (actionEvents.length > 0) {
+      // All actions should reference surface A, B, or 0 (early init)
+      for (const event of actionEvents) {
+        const sid = (event as { surfaceId: number }).surfaceId
+        expect(
+          sid === surfaceA.surfaceId || sid === surfaceB.surfaceId || sid === 0
+        ).toBe(true)
+      }
+    }
+
+    // Cleanup — fire-and-forget since afterEach kills the process
+    handle.sendCommand({
+      type: 'destroy_surface',
+      id: 'action-multi-destroy-a',
+      surfaceId: surfaceA.surfaceId,
+    })
+    handle.sendCommand({
+      type: 'destroy_surface',
+      id: 'action-multi-destroy-b',
+      surfaceId: surfaceB.surfaceId,
+    })
+  })
+
+  it('new surfaces can be created after host handles many concurrent surfaces', async () => {
+    handle = spawnGhosttyHost()
+    await waitForEvent(handle.events, (e) => e.type === 'ready')
+
+    // Create 6 surfaces at once (stress test)
+    const surfaceIds: number[] = []
+    for (let i = 0; i < 6; i++) {
+      handle.sendCommand({
+        type: 'create_surface',
+        id: `stress-create-${i}`,
+      })
+    }
+
+    // Collect all surface_created events
+    for (let i = 0; i < 6; i++) {
+      const created = (await waitForEvent(
+        handle.events,
+        (e) =>
+          e.type === 'surface_created' &&
+          'id' in e &&
+          e.id === `stress-create-${i}`
+      )) as SurfaceCreatedEvent
+      surfaceIds.push(created.surfaceId)
+    }
+
+    expect(new Set(surfaceIds).size).toBe(6)
+
+    // Resize all surfaces simultaneously
+    for (let i = 0; i < surfaceIds.length; i++) {
+      handle.sendCommand({
+        type: 'set_size',
+        id: `stress-size-${i}`,
+        surfaceId: surfaceIds[i],
+        width: 640 + i * 10,
+        height: 480 + i * 10,
+      })
+    }
+
+    // Wait for all ok responses
+    for (let i = 0; i < surfaceIds.length; i++) {
+      await waitForEvent(
+        handle.events,
+        (e) => e.type === 'ok' && 'id' in e && e.id === `stress-size-${i}`
+      )
+    }
+
+    // Destroy half
+    for (let i = 0; i < 3; i++) {
+      handle.sendCommand({
+        type: 'destroy_surface',
+        id: `stress-destroy-${i}`,
+        surfaceId: surfaceIds[i],
+      })
+      await waitForEvent(
+        handle.events,
+        (e) =>
+          e.type === 'surface_destroyed' &&
+          'id' in e &&
+          e.id === `stress-destroy-${i}`
+      )
+    }
+
+    // Remaining 3 should still work
+    for (let i = 3; i < 6; i++) {
+      handle.sendCommand({
+        type: 'set_focus',
+        id: `stress-focus-${i}`,
+        surfaceId: surfaceIds[i],
+        focused: true,
+      })
+      await waitForEvent(
+        handle.events,
+        (e) => e.type === 'ok' && 'id' in e && e.id === `stress-focus-${i}`
+      )
+    }
+
+    // Create 2 new surfaces after partial teardown
+    for (let i = 0; i < 2; i++) {
+      handle.sendCommand({
+        type: 'create_surface',
+        id: `stress-new-${i}`,
+      })
+      const created = (await waitForEvent(
+        handle.events,
+        (e) =>
+          e.type === 'surface_created' &&
+          'id' in e &&
+          e.id === `stress-new-${i}`
+      )) as SurfaceCreatedEvent
+      // New IDs should not collide with old ones
+      expect(surfaceIds).not.toContain(created.surfaceId)
+      surfaceIds.push(created.surfaceId)
+    }
+
+    // Final list should show 5 surfaces (3 remaining + 2 new)
+    handle.sendCommand({ type: 'list_surfaces' })
+    const listEvent = (await waitForEvent(
+      handle.events,
+      (e) => e.type === 'surfaces_list'
+    )) as SurfacesListEvent
+    expect(listEvent.surfaces.length).toBe(5)
+  })
+
+  // -------------------------------------------------------------------------
   // Graceful shutdown
   // -------------------------------------------------------------------------
 

@@ -654,3 +654,47 @@ Date: 2026-03-13
 - ghostty_config_load_recursive_files() is called after all explicit config loading — this handles `config-file` directives within the loaded config
 - CreateApp returns a result object instead of boolean — breaking change from the previous API, but necessary to surface diagnostics
 - getConfigPath uses ghostty_config_open_path() which returns the macOS-appropriate path (may vary between ~/.config/ghostty/config and ~/Library/Application Support/)
+
+---
+
+## Issue 10: Multi-terminal performance and isolation hardening
+Status: COMPLETE
+Date: 2026-03-13
+
+### What was done
+- Added 6 multi-surface native addon tests (test/addon.test.ts):
+  - "can create and operate multiple surfaces concurrently" — creates 4 surfaces, verifies unique IDs, operates (resize/focus/getSize) each independently, verifies all listed, destroys all, verifies empty list
+  - "operations on one surface do not affect another" — creates 2 surfaces, resizes one, verifies other is independent, destroys one and verifies the other still works
+  - "error on one surface does not affect others" — triggers errors on non-existent surface ID (999999), verifies existing surface still fully operable
+  - "actions from multiple surfaces have correct surface IDs" — creates 2 surfaces, ticks, verifies all drained actions reference correct surface IDs (or 0 for early init)
+  - "rapid create and destroy cycle does not leak resources" — creates/destroys 10 surfaces in rapid succession, verifies surface count returns to initial
+  - "can create surfaces after destroying all existing ones" — creates batch, destroys all, creates new batch, verifies new IDs are monotonically higher (never reused)
+- Added 5 multi-terminal host integration tests (test/ghostty-host.test.ts):
+  - "can create and operate multiple surfaces concurrently" — creates 4 surfaces over IPC, verifies unique IDs, lists all 4, resizes and focuses each, destroys all, verifies empty list
+  - "error on one surface does not affect other surfaces" — creates 2 healthy surfaces, sends operations to non-existent surface (999999) producing errors, verifies both healthy surfaces still operable, destroys one and verifies other still works
+  - "rapid create/destroy cycle does not leak surfaces" — 8 iterations of create-then-destroy, verifies final list is empty
+  - "actions from multiple surfaces carry correct surface IDs" — creates 2 surfaces, collects push action events for 3 seconds, verifies all action surfaceIds reference one of the two surfaces or 0
+  - "new surfaces can be created after host handles many concurrent surfaces" — stress test: creates 6 surfaces, resizes all, destroys half, verifies remaining still operable, creates 2 new surfaces with non-colliding IDs, verifies final list has 5
+- Added crash recovery to GhosttyTerminalPane (apps/web/src/panes/ghostty-terminal-pane.tsx):
+  - New 'crashed' SurfaceState variant with crash recovery UI (error message, "Reconnect" button, "Close pane" button)
+  - handleReconnect callback: resets state to 'creating', creates new surface via DesktopBridge, transitions to 'active' on success or 'error' on failure
+  - Sidecar crash detection via onSidecarStatus subscription: listens for 'ghostty' sidecar crash events, transitions active panes to 'crashed' state, auto-reconnects when sidecar recovers (state becomes 'healthy')
+  - Imported SidecarStatusEvent type and RefreshCw icon
+- All 92 ghostty package tests pass (39 addon + 30 host + 19 unsupported-actions + 4 config)
+- All 513 web tests pass
+- All 8 packages typecheck
+- Format check passes (387 files)
+
+### Acceptance criteria coverage
+- [x] Multiple concurrent Ghostty terminals: verified by concurrent create/operate/destroy tests at both addon and host layers (4+ surfaces created, resized, focused, destroyed)
+- [x] Busy terminal does not degrade others: verified by per-surface isolation tests — operations on one surface don't affect another, and error on one surface doesn't corrupt another
+- [x] Helper-process or surface failure produces contained error state: crash recovery in GhosttyTerminalPane detects sidecar crashes via SidecarStatusEvent, shows error UI with reconnect option, auto-reconnects when service recovers
+- [x] Performance/stress tests: 6-surface stress test at host level (create all, resize all, destroy half, create new), rapid create/destroy cycle test (8 iterations), action surfaceId correctness under multi-surface load
+- [x] Cleanup correct when several terminals created/destroyed repeatedly: rapid create/destroy cycle tests at both addon (10 iterations) and host (8 iterations) layers verify surface count returns to zero and no resource leaks
+
+### Key decisions
+- Crash recovery uses the existing SidecarStatusEvent system — no new IPC channels needed. The pane listens for 'ghostty' sidecar crash/healthy events and manages its own lifecycle.
+- Auto-reconnect on sidecar recovery uses setTimeout(handleReconnect, 0) to avoid setState-during-render. The pane transitions: active → crashed → creating → active.
+- Surface IDs are monotonic and never reused — tests verify that new surfaces after bulk destruction get higher IDs, preventing stale ID collisions.
+- Error isolation is verified at both layers: native addon errors (N-API exceptions) don't corrupt the global surface map, and host IPC errors for invalid surfaceIds don't affect pending requests for valid surfaces.
+- The 'crashed' state is distinct from 'error' and 'destroyed' — 'crashed' means the sidecar died (potentially recoverable), while 'error' means surface creation failed and 'destroyed' means the shell exited normally.

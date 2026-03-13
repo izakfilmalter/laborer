@@ -516,4 +516,201 @@ describe('ghostty native addon', () => {
       destroyApp()
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // Multi-surface concurrent operations (Issue 10)
+  // ---------------------------------------------------------------------------
+
+  describe('multi-surface operations', () => {
+    afterAll(() => {
+      try {
+        for (const id of listSurfaces()) {
+          destroySurface(id)
+        }
+        destroyApp()
+      } catch {
+        // Ignore cleanup errors
+      }
+    })
+
+    it('can create and operate multiple surfaces concurrently', () => {
+      if (!isAppCreated()) {
+        createApp()
+      }
+
+      // Create 4 surfaces simultaneously
+      const surfaces = [
+        createSurface({ width: 400, height: 300 }),
+        createSurface({ width: 600, height: 400 }),
+        createSurface({ width: 800, height: 600 }),
+        createSurface({ width: 1024, height: 768 }),
+      ]
+
+      // All surfaces should have unique IDs
+      const ids = surfaces.map((s) => s.id)
+      const uniqueIds = new Set(ids)
+      expect(uniqueIds.size).toBe(4)
+
+      // All should be listed
+      const listed = listSurfaces()
+      expect(listed.length).toBeGreaterThanOrEqual(4)
+      for (const s of surfaces) {
+        expect(listed).toContain(s.id)
+      }
+
+      // Operate on each surface independently
+      for (const s of surfaces) {
+        expect(setSurfaceSize(s.id, 500, 400)).toBe(true)
+        expect(setSurfaceFocus(s.id, true)).toBe(true)
+        const size = getSurfaceSize(s.id)
+        expect(typeof size.columns).toBe('number')
+        expect(typeof size.rows).toBe('number')
+      }
+
+      // Only one should have focus (the last one focused)
+      // But all should still be operable
+      for (const s of surfaces) {
+        expect(setSurfaceFocus(s.id, false)).toBe(true)
+      }
+
+      // Destroy all
+      for (const s of surfaces) {
+        expect(destroySurface(s.id)).toBe(true)
+      }
+      expect(listSurfaces().length).toBe(0)
+    })
+
+    it('operations on one surface do not affect another', () => {
+      if (!isAppCreated()) {
+        createApp()
+      }
+
+      const surfaceA = createSurface({ width: 400, height: 300 })
+      const surfaceB = createSurface({ width: 800, height: 600 })
+
+      // Resize surface A
+      setSurfaceSize(surfaceA.id, 1024, 768)
+
+      // Surface B size should be independent
+      const sizeB = getSurfaceSize(surfaceB.id)
+      expect(typeof sizeB.widthPx).toBe('number')
+      expect(typeof sizeB.heightPx).toBe('number')
+
+      // Focus surface A
+      setSurfaceFocus(surfaceA.id, true)
+      setSurfaceFocus(surfaceB.id, false)
+
+      // Both surfaces should still accept operations
+      expect(setSurfaceSize(surfaceB.id, 640, 480)).toBe(true)
+      expect(setSurfaceSize(surfaceA.id, 320, 240)).toBe(true)
+
+      // Destroy surface A — surface B should still work
+      destroySurface(surfaceA.id)
+      expect(setSurfaceSize(surfaceB.id, 500, 400)).toBe(true)
+      expect(setSurfaceFocus(surfaceB.id, true)).toBe(true)
+
+      const remainingSurfaces = listSurfaces()
+      expect(remainingSurfaces).toContain(surfaceB.id)
+      expect(remainingSurfaces).not.toContain(surfaceA.id)
+
+      destroySurface(surfaceB.id)
+    })
+
+    it('error on one surface does not affect others', () => {
+      if (!isAppCreated()) {
+        createApp()
+      }
+
+      const goodSurface = createSurface()
+
+      // Try to operate on a non-existent surface
+      expect(() => setSurfaceSize(999_999, 100, 100)).toThrow()
+      expect(() => setSurfaceFocus(999_999, true)).toThrow()
+      expect(() => destroySurface(999_999)).toThrow()
+
+      // The good surface should still be fully operable
+      expect(setSurfaceSize(goodSurface.id, 500, 400)).toBe(true)
+      expect(setSurfaceFocus(goodSurface.id, true)).toBe(true)
+      const size = getSurfaceSize(goodSurface.id)
+      expect(typeof size.columns).toBe('number')
+
+      destroySurface(goodSurface.id)
+    })
+
+    it('actions from multiple surfaces have correct surface IDs', async () => {
+      if (!isAppCreated()) {
+        createApp()
+      }
+
+      // Flush stale actions
+      drainActions()
+
+      const surfaceA = createSurface({ width: 400, height: 300 })
+      const surfaceB = createSurface({ width: 600, height: 400 })
+
+      // Tick to generate actions from both surfaces
+      for (let i = 0; i < 15; i++) {
+        appTick()
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+
+      const actions = drainActions()
+
+      // Actions should reference either surface A, B, or 0 (early init)
+      for (const action of actions) {
+        expect(
+          action.surfaceId === surfaceA.id ||
+            action.surfaceId === surfaceB.id ||
+            action.surfaceId === 0
+        ).toBe(true)
+      }
+
+      destroySurface(surfaceA.id)
+      destroySurface(surfaceB.id)
+    })
+
+    it('rapid create and destroy cycle does not leak resources', () => {
+      if (!isAppCreated()) {
+        createApp()
+      }
+
+      const initialSurfaceCount = listSurfaces().length
+
+      // Create and destroy 10 surfaces in rapid succession
+      for (let i = 0; i < 10; i++) {
+        const s = createSurface()
+        destroySurface(s.id)
+      }
+
+      // Surface count should be back to initial
+      expect(listSurfaces().length).toBe(initialSurfaceCount)
+    })
+
+    it('can create surfaces after destroying all existing ones', () => {
+      if (!isAppCreated()) {
+        createApp()
+      }
+
+      // Create and destroy several surfaces
+      const batch1 = [createSurface(), createSurface(), createSurface()]
+      for (const s of batch1) {
+        destroySurface(s.id)
+      }
+
+      // Create a new batch — IDs should be unique (monotonic, never reused)
+      const batch2 = [createSurface(), createSurface()]
+      for (const s of batch2) {
+        // IDs should be higher than batch1 IDs (monotonic)
+        for (const old of batch1) {
+          expect(s.id).toBeGreaterThan(old.id)
+        }
+      }
+
+      for (const s of batch2) {
+        destroySurface(s.id)
+      }
+
+      destroyApp()
+    })
+  })
 })

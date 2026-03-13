@@ -1,0 +1,28 @@
+{
+  "name": "@laborer/ghostty",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "bash scripts/setup.sh",
+    "build:native": "node-gyp rebuild",
+    "build": "npm run build:native && tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.3.1",
+    "node-gyp": "^11.2.0"
+  },
+  "devDependencies": {
+    "@laborer/config": "workspace:*",
+    "@types/node": "^25.3.3",
+    "typescript": "catalog:",
+    "vitest": "^3.2.4"
+  }
+}

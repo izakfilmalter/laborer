@@ -1,0 +1,6 @@
+# Native build output
+build/
+GhosttyKit.xcframework
+
+# Node-gyp artifacts
+*.node

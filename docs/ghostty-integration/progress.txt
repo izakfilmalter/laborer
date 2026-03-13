@@ -1,0 +1,28 @@
+## Issue 2: Vendor and build Ghostty through a pinned native toolchain
+Status: COMPLETE
+Date: 2026-03-13
+
+### What was done
+- Added Ghostty as a pinned git submodule at vendor/ghostty (manaflow-ai/ghostty fork, SHA 1b008f5c1)
+- Created new @laborer/ghostty package at packages/ghostty/
+- Built GhosttyKit.xcframework from source using Zig (universal macOS arm64+x86_64)
+- Created setup.sh build script with SHA-based caching (at ~/.cache/laborer/ghosttykit/)
+- Created binding.gyp that links the native addon against libghostty.a and all required macOS frameworks
+- Created minimal C++ N-API addon (src/addon.cc) wrapping Ghostty C API: init, isInitialized, getInfo, validateConfig
+- Created TypeScript wrapper (src/index.ts) that loads the .node addon via createRequire
+- Created test harness (test/addon.test.ts) with 6 tests covering init, version info, and config validation
+- All 6 tests pass
+- Full monorepo typecheck passes (all 8 packages)
+- Format check passes (added vendor/ to biome.json excludes)
+
+### Build prerequisites
+- Zig >= 0.15.2 (brew install zig)
+- Xcode command line tools
+- Run `bun run setup` in packages/ghostty/ to build GhosttyKit.xcframework
+- Run `bun run build:native` to compile the Node.js native addon
+
+### Key decisions
+- Used manaflow-ai/ghostty fork (same as cmux reference) for xcframework build support
+- Setup script removes xcframework-* tags locally to avoid Ghostty build system panic
+- Disabled emit-macos-app during xcframework build (only need the library, not the full app)
+- Linked against 13 macOS frameworks required by libghostty.a (including GameController for GCController)

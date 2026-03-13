@@ -44,6 +44,7 @@ import { ExternalLink, GitBranch, Pause, Play, Trash2 } from 'lucide-react'
 import {
   type FC,
   type KeyboardEvent,
+  Suspense,
   useCallback,
   useMemo,
   useState,
@@ -55,6 +56,7 @@ import { FixFindingsForm } from '@/components/fix-findings-form'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { PlanIssuesList } from '@/components/plan-issues-list'
 import { ReviewPrForm } from '@/components/review-pr-form'
+import { ReviewVerdictBadge } from '@/components/review-verdict-badge'
 import { TerminalList } from '@/components/terminal-list'
 import {
   AlertDialog,
@@ -595,6 +597,11 @@ function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
               prTitle={workspace.prTitle}
               prUrl={workspace.prUrl}
             />
+            {workspace.prNumber != null && (
+              <Suspense fallback={null}>
+                <ReviewVerdictBadge workspaceId={workspace.id} />
+              </Suspense>
+            )}
             <Badge
               className={cn('shrink-0 border', getStatusClasses(displayStatus))}
               variant="outline"

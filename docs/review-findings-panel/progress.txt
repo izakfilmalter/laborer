@@ -194,3 +194,55 @@ Completed all acceptance criteria:
   - Refresh indicator hidden when not refetching
   - Refresh button renders in all content states (error, no-PR)
 - All 418 tests pass (web: 418, server: 276), TypeScript clean, formatting clean
+
+## Issue 7: Verdict badge on workspace card — DONE
+
+Completed all acceptance criteria:
+
+- Defined new `review.fetchVerdict` RPC in packages/shared/src/rpc.ts:
+  - ReviewFetchVerdictResponse schema with `verdict: Schema.NullOr(ReviewVerdict)`
+  - Lightweight RPC with workspaceId payload, returns only verdict
+- Added `fetchVerdict` method to ReviewCommentFetcher service
+  (packages/server/src/services/review-comment-fetcher.ts):
+  - Reuses workspace resolution, PR detection, and owner/repo detection
+  - Fetches only issue comments (skips inline review comments and reactions)
+  - Extracts verdict from `<!-- brrr-review -->` marker using existing
+    isBrrrReviewComment + extractVerdict helpers
+  - Much lighter than fetchComments — single API call vs 3+ calls
+- Added `review.fetchVerdict` handler in packages/server/src/rpc/handlers.ts
+  delegating to ReviewCommentFetcher.fetchVerdict
+- Created ReviewVerdictBadge component
+  (apps/web/src/components/review-verdict-badge.tsx):
+  - Self-manages data fetching via LaborerClient.query + useAtomValue
+  - Returns null when loading, on error, or when verdict is null (no review)
+  - Shows green checkmark icon (Check) for "approved" verdict with
+    border-success/30 bg-success/10 text-success styling
+  - Shows red X icon (X) for "needs_fix" verdict with
+    border-destructive/30 bg-destructive/10 text-destructive styling
+  - Compact badge (icon only) wrapped in Tooltip showing "Review: approved"
+    or "Review: needs fix"
+  - data-testid="review-verdict-badge" and data-verdict attribute for testing
+  - Follows GitHubPrStatusBadge pattern (cn(), Tooltip, lucide icons)
+- Integrated into workspace card (apps/web/src/components/workspace-list.tsx):
+  - ReviewVerdictBadge renders next to GitHubPrStatusBadge in the card header
+  - Only rendered when workspace.prNumber is non-null (PR exists)
+  - Wrapped in Suspense with null fallback so loading doesn't block the card
+- Added 6 server tests in review-comment-fetcher.test.ts covering:
+  - Returns approved verdict from brrr-review summary comment
+  - Returns needs_fix verdict from brrr-review summary comment
+  - Returns null verdict when no brrr-review comment exists
+  - Returns null verdict when issue comments are empty
+  - Does not fetch inline review comments or reactions (lightweight check)
+  - Returns error when workspace does not exist
+- Added 10 UI tests in apps/web/test/review-verdict-badge.test.tsx covering:
+  - Renders nothing during initial loading
+  - Renders nothing when the fetch fails
+  - Renders nothing when verdict is null (no review exists)
+  - Renders approved badge with correct data-verdict attribute
+  - Renders needs_fix badge with correct data-verdict attribute
+  - Renders approved badge with green success styling
+  - Renders needs_fix badge with red destructive styling
+  - Renders tooltip with "Review: approved" for approved verdict
+  - Renders tooltip with "Review: needs fix" for needs_fix verdict
+  - Renders badge as compact (icon only, no text)
+- All 710 tests pass (web: 428, server: 282), TypeScript clean, formatting clean

@@ -1025,3 +1025,286 @@ describe('ReviewCommentFetcher.fetchComments', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 })
+
+describe('ReviewCommentFetcher.fetchVerdict', () => {
+  it.scoped('returns approved verdict from brrr-review summary comment', () =>
+    Effect.gen(function* () {
+      const tempRoots: string[] = []
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const root of tempRoots) {
+            rmSync(root, { force: true, recursive: true })
+          }
+        })
+      )
+
+      const { store } = yield* LaborerStore
+      setupWorkspace('git@github.com:acme/laborer.git', tempRoots, store, {
+        prNumber: 42,
+      })
+
+      const summaryBody = [
+        '<!-- brrr-review -->',
+        'All good!',
+        '',
+        '- Verdict: \u2705 `approved`',
+      ].join('\n')
+
+      const issueComments = [
+        {
+          id: 9001,
+          user: {
+            login: 'brrr-bot',
+            avatar_url: 'https://example.com/brrr.png',
+          },
+          body: summaryBody,
+          created_at: '2025-01-15T10:00:00Z',
+        },
+      ]
+
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'remote.origin.url': {
+            stdout: 'git@github.com:acme/laborer.git',
+          },
+          'issues/42/comments': {
+            stdout: JSON.stringify(issueComments),
+          },
+        })
+      )
+
+      const fetcher = yield* ReviewCommentFetcher
+      const result = yield* fetcher.fetchVerdict('workspace-1')
+
+      assert.strictEqual(result.verdict, 'approved')
+    }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped('returns needs_fix verdict from brrr-review summary comment', () =>
+    Effect.gen(function* () {
+      const tempRoots: string[] = []
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const root of tempRoots) {
+            rmSync(root, { force: true, recursive: true })
+          }
+        })
+      )
+
+      const { store } = yield* LaborerStore
+      setupWorkspace('git@github.com:acme/laborer.git', tempRoots, store, {
+        prNumber: 42,
+      })
+
+      const summaryBody = [
+        '<!-- brrr-review -->',
+        'Issues found.',
+        '',
+        '- Verdict: \u274C `needs_fix`',
+      ].join('\n')
+
+      const issueComments = [
+        {
+          id: 9002,
+          user: {
+            login: 'brrr-bot',
+            avatar_url: 'https://example.com/brrr.png',
+          },
+          body: summaryBody,
+          created_at: '2025-01-15T10:00:00Z',
+        },
+      ]
+
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'remote.origin.url': {
+            stdout: 'git@github.com:acme/laborer.git',
+          },
+          'issues/42/comments': {
+            stdout: JSON.stringify(issueComments),
+          },
+        })
+      )
+
+      const fetcher = yield* ReviewCommentFetcher
+      const result = yield* fetcher.fetchVerdict('workspace-1')
+
+      assert.strictEqual(result.verdict, 'needs_fix')
+    }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped('returns null verdict when no brrr-review comment exists', () =>
+    Effect.gen(function* () {
+      const tempRoots: string[] = []
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const root of tempRoots) {
+            rmSync(root, { force: true, recursive: true })
+          }
+        })
+      )
+
+      const { store } = yield* LaborerStore
+      setupWorkspace('git@github.com:acme/laborer.git', tempRoots, store, {
+        prNumber: 42,
+      })
+
+      const issueComments = [
+        {
+          id: 9003,
+          user: {
+            login: 'human-reviewer',
+            avatar_url: 'https://example.com/human.png',
+          },
+          body: 'Looks good to me!',
+          created_at: '2025-01-15T10:00:00Z',
+        },
+      ]
+
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'remote.origin.url': {
+            stdout: 'git@github.com:acme/laborer.git',
+          },
+          'issues/42/comments': {
+            stdout: JSON.stringify(issueComments),
+          },
+        })
+      )
+
+      const fetcher = yield* ReviewCommentFetcher
+      const result = yield* fetcher.fetchVerdict('workspace-1')
+
+      assert.strictEqual(result.verdict, null)
+    }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped('returns null verdict when issue comments are empty', () =>
+    Effect.gen(function* () {
+      const tempRoots: string[] = []
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const root of tempRoots) {
+            rmSync(root, { force: true, recursive: true })
+          }
+        })
+      )
+
+      const { store } = yield* LaborerStore
+      setupWorkspace('git@github.com:acme/laborer.git', tempRoots, store, {
+        prNumber: 42,
+      })
+
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'remote.origin.url': {
+            stdout: 'git@github.com:acme/laborer.git',
+          },
+          'issues/42/comments': {
+            stdout: '[]',
+          },
+        })
+      )
+
+      const fetcher = yield* ReviewCommentFetcher
+      const result = yield* fetcher.fetchVerdict('workspace-1')
+
+      assert.strictEqual(result.verdict, null)
+    }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped(
+    'does not fetch inline review comments or reactions (lightweight)',
+    () =>
+      Effect.gen(function* () {
+        const tempRoots: string[] = []
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            for (const root of tempRoots) {
+              rmSync(root, { force: true, recursive: true })
+            }
+          })
+        )
+
+        const { store } = yield* LaborerStore
+        setupWorkspace('git@github.com:acme/laborer.git', tempRoots, store, {
+          prNumber: 42,
+        })
+
+        const summaryBody = [
+          '<!-- brrr-review -->',
+          'All good!',
+          '',
+          '- Verdict: \u2705 `approved`',
+        ].join('\n')
+
+        const issueComments = [
+          {
+            id: 9004,
+            user: {
+              login: 'brrr-bot',
+              avatar_url: 'https://example.com/brrr.png',
+            },
+            body: summaryBody,
+            created_at: '2025-01-15T10:00:00Z',
+          },
+        ]
+
+        spawnMock.mockImplementation(
+          createSpawnMock({
+            'remote.origin.url': {
+              stdout: 'git@github.com:acme/laborer.git',
+            },
+            'issues/42/comments': {
+              stdout: JSON.stringify(issueComments),
+            },
+          })
+        )
+
+        const fetcher = yield* ReviewCommentFetcher
+        const result = yield* fetcher.fetchVerdict('workspace-1')
+
+        assert.strictEqual(result.verdict, 'approved')
+
+        // Verify that spawn was never called with pulls/comments or reactions endpoints
+        const spawnCalls = spawnMock.mock.calls.map((call) =>
+          (call[0] as string[]).join(' ')
+        )
+        const pullsCommentCalls = spawnCalls.filter((cmd) =>
+          cmd.includes('pulls/42/comments')
+        )
+        const reactionCalls = spawnCalls.filter((cmd) =>
+          cmd.includes('reactions')
+        )
+
+        assert.strictEqual(
+          pullsCommentCalls.length,
+          0,
+          'should not fetch inline review comments'
+        )
+        assert.strictEqual(
+          reactionCalls.length,
+          0,
+          'should not fetch reactions'
+        )
+      }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.scoped('returns error when workspace does not exist', () =>
+    Effect.gen(function* () {
+      const fetcher = yield* ReviewCommentFetcher
+      const exit = yield* fetcher
+        .fetchVerdict('nonexistent-workspace')
+        .pipe(Effect.exit)
+
+      assert.isTrue(Exit.isFailure(exit))
+      if (Exit.isFailure(exit)) {
+        const error = Cause.failureOption(exit.cause)
+        assert.isTrue(error._tag === 'Some')
+        if (error._tag === 'Some') {
+          assert.strictEqual(error.value.code, 'NOT_FOUND')
+        }
+      }
+    }).pipe(Effect.provide(TestLayer))
+  )
+})

@@ -345,12 +345,19 @@ interface ReviewFetchCommentsResult {
   readonly verdict: ReviewVerdictType | null
 }
 
+interface ReviewFetchVerdictResult {
+  readonly verdict: ReviewVerdictType | null
+}
+
 class ReviewCommentFetcher extends Context.Tag('@laborer/ReviewCommentFetcher')<
   ReviewCommentFetcher,
   {
     readonly fetchComments: (
       workspaceId: string
     ) => Effect.Effect<ReviewFetchCommentsResult, RpcError>
+    readonly fetchVerdict: (
+      workspaceId: string
+    ) => Effect.Effect<ReviewFetchVerdictResult, RpcError>
   }
 >() {
   static readonly layer = Layer.effect(
@@ -501,8 +508,61 @@ class ReviewCommentFetcher extends Context.Tag('@laborer/ReviewCommentFetcher')<
         }
       )
 
+      /**
+       * Lightweight verdict-only fetch. Only fetches issue comments (skipping
+       * inline review comments and reactions) and parses the
+       * `<!-- brrr-review -->` marker for the verdict. Used by workspace cards
+       * to show a verdict badge without the overhead of full comment fetching.
+       */
+      const fetchVerdict = Effect.fn('ReviewCommentFetcher.fetchVerdict')(
+        function* (workspaceId: string) {
+          // 1. Resolve workspace
+          const allWorkspaces = store.query(tables.workspaces)
+          const workspaceOpt = pipe(
+            allWorkspaces,
+            Arr.findFirst((w) => w.id === workspaceId)
+          )
+
+          if (workspaceOpt._tag === 'None') {
+            return yield* new RpcError({
+              message: `Workspace not found: ${workspaceId}`,
+              code: 'NOT_FOUND',
+            })
+          }
+
+          const workspace = workspaceOpt.value
+          const worktreePath = workspace.worktreePath
+
+          // 2. Detect PR number
+          const prNumber =
+            typeof workspace.prNumber === 'number' && workspace.prNumber > 0
+              ? workspace.prNumber
+              : yield* detectPrNumber(worktreePath)
+
+          // 3. Detect owner/repo from git remote
+          const { owner, repo } = yield* detectOwnerRepo(worktreePath)
+
+          // 4. Fetch only issue comments (lightweight — no review comments or reactions)
+          const issueComments = yield* ghApi<GhIssueComment[]>(
+            `repos/${owner}/${repo}/issues/${prNumber}/comments`,
+            worktreePath
+          )
+
+          // 5. Extract verdict from issue comments
+          const verdict: ReviewVerdictType | null = pipe(
+            issueComments,
+            Arr.findFirst((c) => isBrrrReviewComment(c.body)),
+            Option.flatMap((c) => extractVerdict(c.body)),
+            Option.getOrElse(() => null as ReviewVerdictType | null)
+          )
+
+          return { verdict }
+        }
+      )
+
       return ReviewCommentFetcher.of({
         fetchComments,
+        fetchVerdict,
       })
     })
   )

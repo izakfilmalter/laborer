@@ -346,6 +346,16 @@ const ReviewFetchCommentsResponse = Schema.Struct({
   comments: Schema.Array(PrComment),
 })
 
+/**
+ * Response from review.fetchVerdict RPC.
+ * Lightweight response containing only the verdict — used by workspace
+ * cards to show a review status badge without fetching all comments.
+ */
+const ReviewFetchVerdictResponse = Schema.Struct({
+  /** Review verdict (approved/needs_fix), or null if no brrr review summary exists */
+  verdict: Schema.NullOr(ReviewVerdict),
+})
+
 // ---------------------------------------------------------------------------
 // RPC Definitions
 // ---------------------------------------------------------------------------
@@ -694,6 +704,23 @@ export class LaborerRpcs extends RpcGroup.make(
    */
   Rpc.make('review.fetchComments', {
     success: ReviewFetchCommentsResponse,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * Fetch only the review verdict for a workspace's PR. This is a
+   * lightweight call that only fetches issue comments (not inline review
+   * comments or reactions) and parses the `<!-- brrr-review -->` marker.
+   * Used by workspace cards to show a verdict badge without the overhead
+   * of fetching all findings and comments.
+   *
+   * @see PRD-review-findings-panel.md — "Verdict Badge Data Source" section
+   */
+  Rpc.make('review.fetchVerdict', {
+    success: ReviewFetchVerdictResponse,
     error: RpcError,
     payload: {
       workspaceId: Schema.String,

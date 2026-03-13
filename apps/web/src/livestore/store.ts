@@ -27,7 +27,8 @@ import { makePersistedAdapter } from '@livestore/adapter-web'
 import LiveStoreSharedWorker from '@livestore/adapter-web/shared-worker?sharedworker'
 import { useStore } from '@livestore/react'
 import { unstable_batchedUpdates as batchUpdates } from 'react-dom'
-import LiveStoreWorker from '../livestore.worker.ts?worker'
+import { serverWsSyncUrl } from '../lib/desktop'
+import LiveStoreWorkerUrl from '../livestore.worker.ts?worker&url'
 
 /**
  * Whether to reset persistence on load. In dev mode, append `?reset`
@@ -48,6 +49,35 @@ if (resetPersistence) {
 }
 
 /**
+ * Create the LiveStore dedicated worker with the sync URL injected as a
+ * search parameter.
+ *
+ * In Electron production, `location.origin` is `laborer://app` which
+ * can't resolve WebSocket URLs. The main thread has access to the
+ * DesktopBridge and can resolve the real server URL, but the worker
+ * runs in an isolated context without `window.desktopBridge`.
+ *
+ * We solve this by appending `?syncUrl=<wsUrl>` to the worker script URL.
+ * The worker reads this from `self.location.search` at initialization time.
+ *
+ * In dev mode (browser or Electron dev), the worker's origin-based URL
+ * resolution works fine through the Vite proxy, so no param is needed.
+ */
+function createLiveStoreWorker(options: { name: string }): Worker {
+  let workerUrl = LiveStoreWorkerUrl
+
+  const syncUrl = serverWsSyncUrl()
+  const isOriginBased = syncUrl.startsWith(`${globalThis.location.origin}/`)
+
+  if (!isOriginBased) {
+    const separator = workerUrl.includes('?') ? '&' : '?'
+    workerUrl = `${workerUrl}${separator}syncUrl=${encodeURIComponent(syncUrl)}`
+  }
+
+  return new Worker(workerUrl, { type: 'module', name: options.name })
+}
+
+/**
  * LiveStore browser adapter with OPFS persistence.
  *
  * Uses a dedicated Web Worker for the leader thread (SQLite + materializers)
@@ -55,7 +85,7 @@ if (resetPersistence) {
  */
 const adapter = makePersistedAdapter({
   storage: { type: 'opfs' },
-  worker: LiveStoreWorker,
+  worker: createLiveStoreWorker,
   sharedWorker: LiveStoreSharedWorker,
   resetPersistence,
 })

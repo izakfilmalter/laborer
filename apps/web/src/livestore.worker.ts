@@ -6,9 +6,9 @@
  * It handles materializers, sync, and serves state snapshots to
  * client sessions (browser tabs).
  *
- * The worker is imported in the store setup via Vite's `?worker` suffix:
+ * The worker is imported in the store setup via Vite's `?worker&url` suffix:
  * ```ts
- * import LiveStoreWorker from "../livestore.worker.ts?worker"
+ * import LiveStoreWorkerUrl from "../livestore.worker.ts?worker&url"
  * ```
  *
  * Sync is configured via `makeWsSync` from `@livestore/sync-cf/client`,
@@ -24,38 +24,27 @@ import { schema } from '@laborer/shared/schema'
 import { makeWorker } from '@livestore/adapter-web/worker'
 import { makeWsSync } from '@livestore/sync-cf/client'
 
-/** Regex for converting http(s) URLs to ws(s) URLs. */
-const HTTP_TO_WS_RE = /^http/
-
 /**
  * Resolve the WebSocket sync URL based on the runtime context.
  *
  * In Electron production mode, `location.origin` is `laborer://app` which
- * can't reach the backend via relative URLs. The DesktopBridge provides
- * service URLs, but since this runs in a Web Worker (no window.desktopBridge
- * access), we detect the custom protocol and fall back to reading the server
- * URL from a global config.
+ * can't reach the backend via relative URLs. The main thread resolves the
+ * real server URL from the DesktopBridge and passes it to this worker as
+ * a `syncUrl` search parameter on the worker script URL.
  *
  * In dev mode (browser or Electron dev), `location.origin` is the Vite dev
  * server (e.g., `http://localhost:2101`), so `${origin}/rpc` goes through
  * the Vite WebSocket proxy as before.
- *
- * The main thread posts the server URL to the worker via the
- * `__LABORER_SERVER_URL__` global, set before the worker is initialized.
- * If not available, we fall back to the origin-based URL.
  */
 const resolveWsSyncUrl = (): string => {
-  // Check for Electron production protocol (laborer://)
-  if (globalThis.location.origin.startsWith('laborer://')) {
-    // In Electron production, the server URL is provided via a global
-    // that the main thread sets. Fall back to origin-based URL if missing.
-    const serverUrl = (
-      globalThis as unknown as { __LABORER_SERVER_URL__?: string }
-    ).__LABORER_SERVER_URL__
-    if (serverUrl) {
-      return `${serverUrl.replace(HTTP_TO_WS_RE, 'ws')}/rpc`
-    }
+  // The main thread appends ?syncUrl=<url> to the worker script URL
+  // when the origin can't be used for WebSocket connections (Electron production).
+  const params = new URLSearchParams(globalThis.location.search)
+  const injectedUrl = params.get('syncUrl')
+  if (injectedUrl) {
+    return injectedUrl
   }
+
   return `${globalThis.location.origin}/rpc`
 }
 

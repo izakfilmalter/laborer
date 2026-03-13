@@ -24,6 +24,7 @@ import { useSidebarWidth } from '@/hooks/use-sidebar-width'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
 import { useLaborerStore } from '@/livestore/store'
+import { DiffScrollProvider } from '@/panels/diff-scroll-context'
 import {
   computeClosePaneAction,
   computeCloseWorkspaceAction,
@@ -386,155 +387,164 @@ function HomeComponent() {
   }, [mainView])
 
   return (
-    <PanelActionsProvider
-      activePaneId={activePaneId}
-      fullscreenPaneId={fullscreenPaneId}
-      pendingClose={pendingCloseState}
-      value={gatedPanelActions}
-    >
-      <CloseWorkspaceDialog
-        onConfirm={handleConfirmCloseWorkspace}
-        onOpenChange={setCloseWorkspaceDialogOpen}
-        open={closeWorkspaceDialogOpen}
-      />
-      <CloseAppDialog
-        onOpenChange={setIsCloseAppDialogOpen}
-        open={isCloseAppDialogOpen}
-      />
-      <ResizablePanelGroup
-        orientation="horizontal"
-        style={{ height: 'calc(100vh - 53px)' }}
+    <DiffScrollProvider>
+      <PanelActionsProvider
+        activePaneId={activePaneId}
+        fullscreenPaneId={fullscreenPaneId}
+        pendingClose={pendingCloseState}
+        value={gatedPanelActions}
       >
-        {/* Sidebar — search, project groups, workspace list, health check */}
-        <ResizablePanel
-          collapsedSize="0%"
-          collapsible={responsiveSizes.canCollapseSidebar}
-          defaultSize={
-            sidebarWidth.storedDefault ?? responsiveSizes.sidebarDefault
-          }
-          maxSize={responsiveSizes.sidebarMax}
-          minSize={responsiveSizes.sidebarMin}
-          onResize={handleSidebarResize}
-          panelRef={sidebarPanelRef}
+        <CloseWorkspaceDialog
+          onConfirm={handleConfirmCloseWorkspace}
+          onOpenChange={setCloseWorkspaceDialogOpen}
+          open={closeWorkspaceDialogOpen}
+        />
+        <CloseAppDialog
+          onOpenChange={setIsCloseAppDialogOpen}
+          open={isCloseAppDialogOpen}
+        />
+        <ResizablePanelGroup
+          orientation="horizontal"
+          style={{ height: 'calc(100vh - 53px)' }}
         >
-          <div className="flex h-full flex-col">
-            <ScrollArea className="min-h-0 flex-1">
-              <div className="grid gap-4 p-3">
-                {/* Search bar — filters projects and workspaces in real-time */}
-                {hasProjects && (
-                  <SidebarSearch
-                    onChange={setSearchQuery}
-                    value={searchQuery}
-                  />
-                )}
-                <div className="flex items-center justify-between">
-                  <h2 className="font-medium text-sm">Projects</h2>
-                  <AddProjectForm />
-                </div>
-                {/* Project-grouped tree — each project is a collapsible heading */}
-                {filteredProjects.map((project) => (
-                  <ProjectGroup
-                    expanded={
-                      isSearchActive && matchingProjectIds.has(project.id)
-                        ? true
-                        : collapseState.isExpanded(project.id)
-                    }
-                    key={project.id}
-                    onSelectPlan={handleSelectPlan}
-                    onToggle={() => collapseState.toggle(project.id)}
-                    project={project}
-                    selectedPlanId={selectedPlanId}
-                  />
-                ))}
-                {projectList.length === 0 && (
-                  <p className="py-2 text-center text-muted-foreground text-xs">
-                    No projects. Add one to get started.
-                  </p>
-                )}
-                {isSearchActive &&
-                  filteredProjects.length === 0 &&
-                  projectList.length > 0 && (
+          {/* Sidebar — search, project groups, workspace list, health check */}
+          <ResizablePanel
+            collapsedSize="0%"
+            collapsible={responsiveSizes.canCollapseSidebar}
+            defaultSize={
+              sidebarWidth.storedDefault ?? responsiveSizes.sidebarDefault
+            }
+            maxSize={responsiveSizes.sidebarMax}
+            minSize={responsiveSizes.sidebarMin}
+            onResize={handleSidebarResize}
+            panelRef={sidebarPanelRef}
+          >
+            <div className="flex h-full flex-col">
+              <ScrollArea className="min-h-0 flex-1">
+                <div className="grid gap-4 p-3">
+                  {/* Search bar — filters projects and workspaces in real-time */}
+                  {hasProjects && (
+                    <SidebarSearch
+                      onChange={setSearchQuery}
+                      value={searchQuery}
+                    />
+                  )}
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-medium text-sm">Projects</h2>
+                    <AddProjectForm />
+                  </div>
+                  {/* Project-grouped tree — each project is a collapsible heading */}
+                  {filteredProjects.map((project) => (
+                    <ProjectGroup
+                      expanded={
+                        isSearchActive && matchingProjectIds.has(project.id)
+                          ? true
+                          : collapseState.isExpanded(project.id)
+                      }
+                      key={project.id}
+                      onSelectPlan={handleSelectPlan}
+                      onToggle={() => collapseState.toggle(project.id)}
+                      project={project}
+                      selectedPlanId={selectedPlanId}
+                    />
+                  ))}
+                  {projectList.length === 0 && (
                     <p className="py-2 text-center text-muted-foreground text-xs">
-                      No matching projects or workspaces.
+                      No projects. Add one to get started.
                     </p>
                   )}
-              </div>
-            </ScrollArea>
-          </div>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        {/* Main content — Panel system, dashboard, plan editor, or welcome empty state */}
-        <ResizablePanel defaultSize="75%" minSize="10%">
-          {!hasProjects && <WelcomeEmptyState />}
-          {hasProjects && mainView === 'plan' && selectedPlanId && (
-            <div className="flex h-full flex-col border-2 border-transparent">
-              <PanelHeaderBar
-                mainView={mainView}
-                onToggleSidebar={
-                  responsiveSizes.canCollapseSidebar ? toggleSidebar : undefined
-                }
-                onViewChange={setMainView}
-                sidebarCollapsed={sidebarCollapsed}
-              />
-              <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-                <div className="min-h-0 min-w-0 flex-1">
-                  <PlanEditor onBack={handlePlanBack} prdId={selectedPlanId} />
+                  {isSearchActive &&
+                    filteredProjects.length === 0 &&
+                    projectList.length > 0 && (
+                      <p className="py-2 text-center text-muted-foreground text-xs">
+                        No matching projects or workspaces.
+                      </p>
+                    )}
                 </div>
-                <div className="h-64 shrink-0 border-t md:h-auto md:w-80 md:border-t-0 md:border-l">
-                  <div className="flex h-8 shrink-0 items-center justify-between border-b px-3">
-                    <span className="font-medium text-sm">Issues</span>
+              </ScrollArea>
+            </div>
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
+
+          {/* Main content — Panel system, dashboard, plan editor, or welcome empty state */}
+          <ResizablePanel defaultSize="75%" minSize="10%">
+            {!hasProjects && <WelcomeEmptyState />}
+            {hasProjects && mainView === 'plan' && selectedPlanId && (
+              <div className="flex h-full flex-col border-2 border-transparent">
+                <PanelHeaderBar
+                  mainView={mainView}
+                  onToggleSidebar={
+                    responsiveSizes.canCollapseSidebar
+                      ? toggleSidebar
+                      : undefined
+                  }
+                  onViewChange={setMainView}
+                  sidebarCollapsed={sidebarCollapsed}
+                />
+                <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+                  <div className="min-h-0 min-w-0 flex-1">
+                    <PlanEditor
+                      onBack={handlePlanBack}
+                      prdId={selectedPlanId}
+                    />
                   </div>
-                  <ScrollArea className="h-[calc(100%-2rem)]">
-                    <div className="grid gap-3 p-3">
-                      <CreatePlanWorkspace prdId={selectedPlanId} />
-                      <PlanIssuesList prdId={selectedPlanId} />
+                  <div className="h-64 shrink-0 border-t md:h-auto md:w-80 md:border-t-0 md:border-l">
+                    <div className="flex h-8 shrink-0 items-center justify-between border-b px-3">
+                      <span className="font-medium text-sm">Issues</span>
                     </div>
-                  </ScrollArea>
-                </div>
-              </div>
-            </div>
-          )}
-          {hasProjects && mainView !== 'plan' && (
-            <div className="flex h-full flex-col">
-              <PanelHeaderBar
-                mainView={mainView}
-                onToggleSidebar={
-                  responsiveSizes.canCollapseSidebar ? toggleSidebar : undefined
-                }
-                onViewChange={setMainView}
-                sidebarCollapsed={sidebarCollapsed}
-              />
-              {mainView === 'panels' && (
-                <>
-                  <PanelHotkeys
-                    layout={layout}
-                    leafPaneIds={leafPaneIds}
-                    onMetaWWithoutPane={handleMetaWWithoutPane}
-                  />
-                  <PanelContent
-                    activePaneId={activePaneId}
-                    fullscreenPaneId={fullscreenPaneId}
-                    isReconciling={isReconciling}
-                    layout={layout}
-                    workspaceOrder={workspaceOrder}
-                  />
-                </>
-              )}
-              {mainView === 'dashboard' && (
-                <div
-                  className={`flex h-full flex-col border-2 ${activePaneId ? 'border-primary' : 'border-transparent'}`}
-                >
-                  <div className="min-h-0 flex-1">
-                    <WorkspaceDashboard />
+                    <ScrollArea className="h-[calc(100%-2rem)]">
+                      <div className="grid gap-3 p-3">
+                        <CreatePlanWorkspace prdId={selectedPlanId} />
+                        <PlanIssuesList prdId={selectedPlanId} />
+                      </div>
+                    </ScrollArea>
                   </div>
                 </div>
-              )}
-            </div>
-          )}
-        </ResizablePanel>
-      </ResizablePanelGroup>
-    </PanelActionsProvider>
+              </div>
+            )}
+            {hasProjects && mainView !== 'plan' && (
+              <div className="flex h-full flex-col">
+                <PanelHeaderBar
+                  mainView={mainView}
+                  onToggleSidebar={
+                    responsiveSizes.canCollapseSidebar
+                      ? toggleSidebar
+                      : undefined
+                  }
+                  onViewChange={setMainView}
+                  sidebarCollapsed={sidebarCollapsed}
+                />
+                {mainView === 'panels' && (
+                  <>
+                    <PanelHotkeys
+                      layout={layout}
+                      leafPaneIds={leafPaneIds}
+                      onMetaWWithoutPane={handleMetaWWithoutPane}
+                    />
+                    <PanelContent
+                      activePaneId={activePaneId}
+                      fullscreenPaneId={fullscreenPaneId}
+                      isReconciling={isReconciling}
+                      layout={layout}
+                      workspaceOrder={workspaceOrder}
+                    />
+                  </>
+                )}
+                {mainView === 'dashboard' && (
+                  <div
+                    className={`flex h-full flex-col border-2 ${activePaneId ? 'border-primary' : 'border-transparent'}`}
+                  >
+                    <div className="min-h-0 flex-1">
+                      <WorkspaceDashboard />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </PanelActionsProvider>
+    </DiffScrollProvider>
   )
 }

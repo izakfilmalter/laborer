@@ -89,6 +89,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
+import { useDiffScrollDispatch } from '@/panels/diff-scroll-context'
 import { usePanelActions } from '@/panels/panel-context'
 
 const addReactionMutation = LaborerClient.mutation('review.addReaction')
@@ -260,7 +261,7 @@ function FindingCard({
 }: {
   readonly finding: ReviewFinding
   readonly isUnqueuing?: boolean
-  readonly onOpenFile: (filePath: string) => void
+  readonly onOpenFile: (filePath: string, line: number | null) => void
   readonly onToggleSelection: (commentId: number) => void
   readonly onUnqueue?: (finding: ReviewFinding) => void
   readonly selected: boolean
@@ -319,7 +320,7 @@ function FindingCard({
           <button
             className="mt-1 flex items-center gap-1 rounded text-muted-foreground text-xs underline decoration-muted-foreground/40 underline-offset-2 transition-colors hover:text-foreground hover:decoration-foreground/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             data-testid="file-line-link"
-            onClick={() => onOpenFile(finding.file)}
+            onClick={() => onOpenFile(finding.file, finding.line)}
             title={`Open ${finding.file}:${finding.line} in editor`}
             type="button"
           >
@@ -377,7 +378,7 @@ function CommentCard({
   onOpenFile,
 }: {
   readonly comment: PrComment
-  readonly onOpenFile: (filePath: string) => void
+  readonly onOpenFile: (filePath: string, line: number | null) => void
 }) {
   const fileRef =
     comment.filePath !== null
@@ -407,7 +408,9 @@ function CommentCard({
             <button
               className="mt-0.5 flex items-center gap-1 rounded text-muted-foreground text-xs underline decoration-muted-foreground/40 underline-offset-2 transition-colors hover:text-foreground hover:decoration-foreground/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               data-testid="file-line-link"
-              onClick={() => onOpenFile(comment.filePath as string)}
+              onClick={() =>
+                onOpenFile(comment.filePath as string, comment.line)
+              }
               title={`Open ${fileRef} in editor`}
               type="button"
             >
@@ -555,6 +558,7 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   const fixFindings = useAtomSet(fixFindingsMutation, { mode: 'promise' })
   const openEditor = useAtomSet(editorOpenMutation, { mode: 'promise' })
   const panelActions = usePanelActions()
+  const scrollDiffToFile = useDiffScrollDispatch()
 
   // Ref to avoid stale closures in the onOpenFile callback passed to cards.
   const openEditorRef = useRef(openEditor)
@@ -653,11 +657,17 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   )
 
   /**
-   * Open a file in the user's configured editor via the `editor.open` RPC.
-   * Uses a ref to avoid stale closures.
+   * Open a file in the user's configured editor via the `editor.open` RPC,
+   * and dispatch a cross-pane scroll event to any open diff pane for the
+   * same workspace so it scrolls to the matching file and line.
    */
   const handleOpenFile = useCallback(
-    async (filePath: string) => {
+    async (filePath: string, line: number | null) => {
+      // Dispatch scroll event to any open diff pane for this workspace
+      if (line !== null) {
+        scrollDiffToFile(workspaceId, filePath, line)
+      }
+
       try {
         await openEditorRef.current({
           payload: { workspaceId, filePath },
@@ -667,7 +677,7 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
         toast.error(`Failed to open file: ${extractErrorMessage(error)}`)
       }
     },
-    [workspaceId]
+    [scrollDiffToFile, workspaceId]
   )
 
   // Determine whether we're in the initial loading state (no data yet)

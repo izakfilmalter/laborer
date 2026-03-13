@@ -14,7 +14,7 @@ Parent PRD: [PRD-review-findings-panel.md](./PRD-review-findings-panel.md)
 | 8 | Checkbox selection + reaction state display | 5 | done |
 | 9 | Rocket reaction RPCs + Fix Selected action | 8 | done |
 | 10 | Click-to-open-in-editor | 5 | done |
-| 11 | Cross-pane diff scroll | 10 | pending |
+| 11 | Cross-pane diff scroll | 10 | done |
 | 12 | Keyboard shortcut + error handling + polish | 1-11 | pending |
 
 ---

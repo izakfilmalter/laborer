@@ -1497,6 +1497,58 @@ Napi::Value GetSurfaceIOSurfaceHandle(const Napi::CallbackInfo& info) {
   }
 }
 
+/**
+ * Look up an IOSurfaceRef by IOSurfaceID in the current process and return it
+ * as a Node.js Buffer for Electron's sharedTexture API.
+ *
+ * This is the cross-process-safe path for helper architectures: the helper
+ * process exports the numeric IOSurfaceID, and Electron main resolves that ID
+ * to a process-local IOSurfaceRef before importing it.
+ *
+ * Returns { ioSurfaceHandle: Buffer | null, width: number, height: number }
+ * or null if the IOSurface is no longer available.
+ */
+Napi::Value LookupIOSurfaceHandleById(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 1 || !info[0].IsNumber()) {
+    Napi::TypeError::New(env, "Expected IOSurface ID (number)")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  IOSurfaceID io_surface_id =
+      static_cast<IOSurfaceID>(info[0].As<Napi::Number>().Uint32Value());
+
+  @autoreleasepool {
+    IOSurfaceRef ioSurface = IOSurfaceLookup(io_surface_id);
+    if (ioSurface == nil) {
+      return env.Null();
+    }
+
+    size_t width = IOSurfaceGetWidth(ioSurface);
+    size_t height = IOSurfaceGetHeight(ioSurface);
+
+    if (width == 0 || height == 0) {
+      CFRelease(ioSurface);
+      return env.Null();
+    }
+
+    auto buffer = Napi::Buffer<uint8_t>::New(
+        env, reinterpret_cast<uint8_t*>(ioSurface), sizeof(IOSurfaceRef),
+        [](Napi::Env /*env*/, uint8_t* data) {
+          IOSurfaceRef surface = reinterpret_cast<IOSurfaceRef>(data);
+          CFRelease(surface);
+        });
+
+    Napi::Object result = Napi::Object::New(env);
+    result.Set("ioSurfaceHandle", buffer);
+    result.Set("width", Napi::Number::New(env, static_cast<double>(width)));
+    result.Set("height", Napi::Number::New(env, static_cast<double>(height)));
+    return result;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // N-API functions: Pixel readback
 // ---------------------------------------------------------------------------
@@ -1766,6 +1818,8 @@ Napi::Object InitModule(Napi::Env env, Napi::Object exports) {
   // IOSurface handle for Electron sharedTexture
   exports.Set("getSurfaceIOSurfaceHandle",
               Napi::Function::New(env, GetSurfaceIOSurfaceHandle));
+  exports.Set("lookupIOSurfaceHandleById",
+              Napi::Function::New(env, LookupIOSurfaceHandleById));
 
   // Pixel readback
   exports.Set("getSurfacePixels",

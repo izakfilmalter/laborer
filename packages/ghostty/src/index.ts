@@ -268,6 +268,7 @@ interface GhosttyAddon {
   isAppCreated(): boolean
   isInitialized(): boolean
   listSurfaces(): number[]
+  lookupIOSurfaceHandleById(ioSurfaceId: number): IOSurfaceHandle | null
 
   // Keyboard and text input
   sendSurfaceKey(
@@ -635,9 +636,8 @@ const getSurfaceSize = (surfaceId: number): SurfaceSize => {
  * Get the IOSurface handle for a Ghostty surface's Metal layer.
  *
  * Returns a Buffer containing the raw IOSurfaceRef pointer suitable for
- * passing to Electron's sharedTexture.importSharedTexture() API. This
- * enables zero-copy GPU texture sharing between the Ghostty helper
- * process and the Electron renderer.
+ * passing to Electron's sharedTexture.importSharedTexture() API in the
+ * same process that owns the surface.
  *
  * Returns null if the IOSurface is not yet available (Ghostty hasn't
  * rendered a frame yet).
@@ -648,6 +648,19 @@ const getSurfaceIOSurfaceHandle = (
   surfaceId: number
 ): IOSurfaceHandle | null => {
   return getAddon().getSurfaceIOSurfaceHandle(surfaceId)
+}
+
+/**
+ * Look up a process-local IOSurface handle from a cross-process IOSurface ID.
+ *
+ * Use this in Electron main after receiving an `ioSurfaceId` from the helper
+ * process. Electron's sharedTexture importer requires the IOSurfaceRef to be
+ * valid in the importing process.
+ */
+const lookupIOSurfaceHandleById = (
+  ioSurfaceId: number
+): IOSurfaceHandle | null => {
+  return getAddon().lookupIOSurfaceHandleById(ioSurfaceId)
 }
 
 /**
@@ -704,6 +717,7 @@ export {
   isAppCreated,
   isInitialized,
   listSurfaces,
+  lookupIOSurfaceHandleById,
   sendSurfaceKey,
   sendSurfaceMouseButton,
   sendSurfaceMousePos,

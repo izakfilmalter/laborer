@@ -72,10 +72,16 @@ import { shouldBypassTerminal } from './terminal-keys.js'
 const INITIAL_RENDER_INTERVAL_MS = 33
 
 /** Steady-state pixel polling rate once frames are arriving. */
-const ACTIVE_RENDER_INTERVAL_MS = 250
+const ACTIVE_RENDER_INTERVAL_MS = 50
+
+/** Focused interaction burst rate for fallback pixel polling. */
+const BURST_RENDER_INTERVAL_MS = 16
+
+/** Background polling rate for unfocused panes on pixel fallback. */
+const BACKGROUND_RENDER_INTERVAL_MS = 1000
 
 /** Burst polling window after local interaction. */
-const INTERACTION_BURST_MS = 900
+const INTERACTION_BURST_MS = 2500
 
 /** How long to wait for shared-texture frames before falling back. */
 const SHARED_TEXTURE_FALLBACK_MS = 750
@@ -176,10 +182,12 @@ function GhosttyTerminalPane({
   const pendingMousePosRef = useRef<GhosttyMousePosEvent | null>(null)
   const mouseFrameRef = useRef<number | null>(null)
   const interactionBurstUntilRef = useRef(0)
+  const immediatePixelRenderRef = useRef<(() => void) | null>(null)
   const renderingRef = useRef(false)
 
   const requestInteractionBurst = useCallback(() => {
     interactionBurstUntilRef.current = Date.now() + INTERACTION_BURST_MS
+    immediatePixelRenderRef.current?.()
   }, [])
 
   const drawVideoFrameToCanvas = useCallback((videoFrame: VideoFrame) => {
@@ -235,7 +243,7 @@ function GhosttyTerminalPane({
           `[GhosttyTerminalPane] Surface created: surfaceId=${surfaceId}`
         )
         surfaceIdRef.current = surfaceId
-        setRenderTransport('pixels')
+        setRenderTransport('pending-shared')
         setSurfaceState({ status: 'active', surfaceId })
       })
       .catch((error: unknown) => {
@@ -385,9 +393,6 @@ function GhosttyTerminalPane({
     setRenderTransport('pending-shared')
     const fallbackTimer = setTimeout(() => {
       if (!(disposed || receivedFrame)) {
-        console.info(
-          `[GhosttyTerminalPane] No sharedTexture frame for surface ${surfaceState.surfaceId}; falling back to pixel readback`
-        )
         setRenderTransport('pixels')
       }
     }, SHARED_TEXTURE_FALLBACK_MS)
@@ -416,16 +421,34 @@ function GhosttyTerminalPane({
 
     const { surfaceId } = surfaceState
 
-    console.info(
-      `[GhosttyTerminalPane] Starting pixel readback for surface ${surfaceId}`
-    )
-
     let timerId: ReturnType<typeof setTimeout> | null = null
     let stopped = false
     let hasRenderedFrame = false
-    let pixelFrameCount = 0
 
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: debug logging adds branches
+    const getNextRenderInterval = () => {
+      if (!isFocused) {
+        return BACKGROUND_RENDER_INTERVAL_MS
+      }
+
+      const inInteractionBurst = Date.now() < interactionBurstUntilRef.current
+      if (inInteractionBurst) {
+        return BURST_RENDER_INTERVAL_MS
+      }
+
+      if (hasRenderedFrame) {
+        return ACTIVE_RENDER_INTERVAL_MS
+      }
+
+      return INITIAL_RENDER_INTERVAL_MS
+    }
+
+    const scheduleRender = (delayMs: number) => {
+      if (timerId !== null) {
+        clearTimeout(timerId)
+      }
+      timerId = setTimeout(renderFrame, delayMs)
+    }
+
     const renderFrame = async () => {
       if (stopped || renderingRef.current) {
         return
@@ -436,29 +459,8 @@ function GhosttyTerminalPane({
         const currentBridge = getDesktopBridge()
         const result = await currentBridge?.ghosttyGetPixels(surfaceId)
 
-        if (stopped || result === undefined) {
-          pixelFrameCount += 1
-          if (pixelFrameCount <= 5) {
-            console.info(
-              `[GhosttyTerminalPane] getPixels returned ${result === null ? 'null' : 'undefined'} (attempt #${pixelFrameCount})`
-            )
-          }
-        } else if (result === null) {
-          pixelFrameCount += 1
-          if (pixelFrameCount <= 5) {
-            console.info(
-              `[GhosttyTerminalPane] getPixels returned null (attempt #${pixelFrameCount})`
-            )
-          }
-        } else {
+        if (!(stopped || result === undefined || result === null)) {
           hasRenderedFrame = true
-          pixelFrameCount += 1
-          if (pixelFrameCount <= 3 || pixelFrameCount % 100 === 0) {
-            console.info(
-              `[GhosttyTerminalPane] Pixel frame #${pixelFrameCount}: ${result.width}x${result.height}`
-            )
-          }
-
           const canvas = canvasRef.current
           if (canvas !== null) {
             drawPixelsToCanvas(
@@ -476,25 +478,27 @@ function GhosttyTerminalPane({
       }
 
       if (!stopped) {
-        const inInteractionBurst = Date.now() < interactionBurstUntilRef.current
-        timerId = setTimeout(
-          renderFrame,
-          hasRenderedFrame && !inInteractionBurst
-            ? ACTIVE_RENDER_INTERVAL_MS
-            : INITIAL_RENDER_INTERVAL_MS
-        )
+        scheduleRender(getNextRenderInterval())
       }
     }
 
-    timerId = setTimeout(renderFrame, INITIAL_RENDER_INTERVAL_MS)
+    immediatePixelRenderRef.current = () => {
+      if (stopped || renderTransport !== 'pixels') {
+        return
+      }
+      scheduleRender(0)
+    }
+
+    scheduleRender(0)
 
     return () => {
       stopped = true
+      immediatePixelRenderRef.current = null
       if (timerId !== null) {
         clearTimeout(timerId)
       }
     }
-  }, [renderTransport, surfaceState])
+  }, [isFocused, renderTransport, surfaceState])
 
   // Translate a browser KeyboardEvent to a GhosttyKeyEvent and send it
   const sendKeyEvent = useCallback(
@@ -530,11 +534,6 @@ function GhosttyTerminalPane({
 
       const bridge = getDesktopBridge()
       requestInteractionBurst()
-      if (event.code === 'Enter' || event.code === 'NumpadEnter') {
-        console.info(
-          `[GhosttyTerminalPane] Sending ${event.code} to surface ${id} (action=${action}, focused=${isFocused})`
-        )
-      }
       bridge?.ghosttySendKey(id, keyEvent).catch(() => {
         // Best effort — surface may have been destroyed
       })

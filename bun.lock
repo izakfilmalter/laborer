@@ -25,6 +25,7 @@
       "name": "@laborer/desktop",
       "version": "0.0.0",
       "dependencies": {
+        "@laborer/ghostty": "workspace:*",
         "@laborer/shared": "workspace:*",
         "electron": "40.6.0",
         "electron-updater": "^6.6.2",

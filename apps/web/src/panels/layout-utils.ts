@@ -1183,6 +1183,62 @@ function getTerminalIdsToRemove(
 }
 
 /**
+ * Compute whether closing a pane should proceed immediately or show a
+ * confirmation dialog.
+ *
+ * Uses the cached terminal list (from the 5-second poll) to make an
+ * instant, synchronous decision — no RPC calls at close time.
+ *
+ * Returns `'close'` when the pane can be closed immediately, or
+ * `'confirm'` when a confirmation dialog should be shown because the
+ * terminal has a running child process.
+ *
+ * This follows the same pattern as VS Code's ChildProcessMonitor:
+ * process state is pre-cached and read synchronously at close time.
+ *
+ * @param layout - The current panel layout tree (may be undefined)
+ * @param paneId - The ID of the pane being closed
+ * @param terminals - The cached terminal list from useTerminalList
+ * @returns `'close'` to close immediately, `'confirm'` to show dialog
+ */
+function computeClosePaneAction(
+  layout: PanelNode | undefined,
+  paneId: string,
+  terminals: ReadonlyArray<{
+    readonly id: string
+    readonly hasChildProcess: boolean
+  }>
+): 'close' | 'confirm' {
+  return shouldConfirmClose(layout, paneId, terminals) ? 'confirm' : 'close'
+}
+
+/**
+ * Compute whether closing a workspace should proceed immediately or show
+ * a confirmation dialog.
+ *
+ * Uses the cached terminal list to make an instant, synchronous decision.
+ * Returns `'confirm'` when any terminal in the workspace has a running
+ * child process.
+ *
+ * @param layout - The current panel layout tree (may be undefined)
+ * @param workspaceId - The workspace being closed
+ * @param terminals - The cached terminal list from useTerminalList
+ * @returns `'close'` to close immediately, `'confirm'` to show dialog
+ */
+function computeCloseWorkspaceAction(
+  layout: PanelNode | undefined,
+  workspaceId: string,
+  terminals: ReadonlyArray<{
+    readonly id: string
+    readonly hasChildProcess: boolean
+  }>
+): 'close' | 'confirm' {
+  return shouldConfirmCloseWorkspace(layout, workspaceId, terminals)
+    ? 'confirm'
+    : 'close'
+}
+
+/**
  * Determine whether closing a pane should show a confirmation dialog.
  *
  * Returns true only when ALL of these conditions hold:
@@ -1560,6 +1616,8 @@ function sortWorkspaceLayouts<
 export {
   closePane,
   closeWorkspacePanes,
+  computeClosePaneAction,
+  computeCloseWorkspaceAction,
   computeResize,
   computeTerminalPaneAssignment,
   countLeaves,

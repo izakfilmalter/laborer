@@ -198,11 +198,8 @@ export function usePanelLayout() {
   // gets immediately usable terminals instead of empty panes or error
   // states. Panes without a workspaceId (or where the spawn fails) fall
   // back to the EmptyTerminalPane CTA.
-  const {
-    terminals: liveTerminals,
-    isLoading: terminalsLoading,
-    refresh: refreshTerminals,
-  } = useTerminalList()
+  const { terminals: liveTerminals, isLoading: terminalsLoading } =
+    useTerminalList()
   const spawnTerminal = useAtomSet(spawnTerminalMutation, {
     mode: 'promise',
   })
@@ -930,7 +927,6 @@ export function usePanelLayout() {
     leafPaneIds,
     isReconciling,
     liveTerminals,
-    refreshTerminals,
     workspaceOrder: persistedWorkspaceOrder,
   }
 }

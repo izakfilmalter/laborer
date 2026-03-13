@@ -25,11 +25,11 @@ import { useTerminalList } from '@/hooks/use-terminal-list'
 import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
 import { useLaborerStore } from '@/livestore/store'
 import {
+  computeClosePaneAction,
+  computeCloseWorkspaceAction,
   findLeafByTerminalId,
   findNodeById,
   getLeafNodes,
-  shouldConfirmClose,
-  shouldConfirmCloseWorkspace,
 } from '@/panels/layout-utils'
 import {
   PanelActionsProvider,
@@ -81,7 +81,6 @@ function HomeComponent() {
     leafPaneIds,
     isReconciling,
     liveTerminals,
-    refreshTerminals,
     workspaceOrder,
   } = usePanelLayout()
   const store = useLaborerStore()
@@ -129,30 +128,26 @@ function HomeComponent() {
    * dev server, opencode) is running inside the shell — not when the shell
    * is idle at a prompt.
    *
-   * Forces a fresh `terminal.list` RPC call so the process state is
-   * up-to-date. Without this, a user who exits a process (Ctrl+C) and
-   * immediately closes the terminal (Cmd+W) would see a stale
-   * confirmation dialog because the 5-second poll hadn't refreshed yet.
+   * Uses the cached terminal list (from the 5-second poll) to make an
+   * instant, synchronous decision — no RPC calls at close time. This
+   * follows the same pattern as VS Code's ChildProcessMonitor: process
+   * state is pre-cached and read synchronously at close time.
+   *
+   * In the rare case where cached data is stale (e.g., user Ctrl+C's a
+   * process and closes within the poll window), the user may see an
+   * unnecessary confirmation dialog — which they can dismiss instantly.
+   * This is the same tradeoff VS Code and cmux make.
    */
   const gatedClosePane = useCallback(
-    async (paneId: string) => {
-      try {
-        const freshTerminals = await refreshTerminals()
-        if (shouldConfirmClose(layout, paneId, freshTerminals)) {
-          setPendingClosePaneId(paneId)
-          return
-        }
-      } catch {
-        // If the refresh fails, fall back to the cached poll data
-        if (shouldConfirmClose(layout, paneId, liveTerminals)) {
-          setPendingClosePaneId(paneId)
-          return
-        }
+    (paneId: string) => {
+      if (computeClosePaneAction(layout, paneId, liveTerminals) === 'confirm') {
+        setPendingClosePaneId(paneId)
+        return
       }
       // No active child process or no terminal — close immediately
       panelActions.closePane(paneId)
     },
-    [layout, liveTerminals, refreshTerminals, panelActions]
+    [layout, liveTerminals, panelActions]
   )
 
   const handleConfirmCloseTerminal = useCallback(() => {
@@ -207,29 +202,22 @@ function HomeComponent() {
    * a running child process. Shows a confirmation dialog when there are
    * active processes to prevent accidental loss of running work.
    *
-   * Forces a fresh `terminal.list` RPC call for the same reason as
-   * gatedClosePane — see its comment for details.
+   * Uses the cached terminal list for an instant, synchronous decision —
+   * same pattern as gatedClosePane above.
    */
   const gatedCloseWorkspace = useCallback(
-    async (workspaceId: string) => {
-      try {
-        const freshTerminals = await refreshTerminals()
-        if (shouldConfirmCloseWorkspace(layout, workspaceId, freshTerminals)) {
-          pendingCloseWorkspaceIdRef.current = workspaceId
-          setCloseWorkspaceDialogOpen(true)
-          return
-        }
-      } catch {
-        // If the refresh fails, fall back to the cached poll data
-        if (shouldConfirmCloseWorkspace(layout, workspaceId, liveTerminals)) {
-          pendingCloseWorkspaceIdRef.current = workspaceId
-          setCloseWorkspaceDialogOpen(true)
-          return
-        }
+    (workspaceId: string) => {
+      if (
+        computeCloseWorkspaceAction(layout, workspaceId, liveTerminals) ===
+        'confirm'
+      ) {
+        pendingCloseWorkspaceIdRef.current = workspaceId
+        setCloseWorkspaceDialogOpen(true)
+        return
       }
       panelActions.closeWorkspace(workspaceId)
     },
-    [layout, liveTerminals, refreshTerminals, panelActions]
+    [layout, liveTerminals, panelActions]
   )
 
   const handleConfirmCloseWorkspace = useCallback(() => {

@@ -42,6 +42,7 @@
 import type { PanelNode } from '@laborer/shared/types'
 import { useHotkeySequence } from '@tanstack/react-hotkeys'
 import { useEffect, useRef } from 'react'
+import { getDesktopBridge } from '@/lib/desktop'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import { findPaneInDirection } from '@/panels/layout-utils'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
@@ -109,7 +110,7 @@ function PanelHotkeys({
     null
   )
 
-  // Cmd+W (Meta+W) should close panes, not the Tauri window.
+  // Cmd+W (Meta+W) should close panes, not the Electron window.
   // Capture at the window level so native close behavior is suppressed.
   useEffect(() => {
     const handleMetaW = (event: KeyboardEvent) => {
@@ -128,6 +129,27 @@ function PanelHotkeys({
       window.removeEventListener('keydown', handleMetaW)
     }
   }, [])
+
+  // Listen for the Electron menu's 'close-pane' IPC action (Cmd+W on macOS).
+  // The Electron menu dispatches this instead of using role:close, so
+  // Cmd+W always routes through the panel system for instant close.
+  useEffect(() => {
+    const bridge = getDesktopBridge()
+    if (!bridge) {
+      return
+    }
+
+    return bridge.onMenuAction((action) => {
+      if (action !== 'close-pane') {
+        return
+      }
+      if (actions && activePaneId) {
+        actions.closePane(activePaneId)
+        return
+      }
+      onMetaWWithoutPane?.()
+    })
+  }, [actions, activePaneId, onMetaWWithoutPane])
 
   useEffect(() => {
     const clearResizePrefix = () => {

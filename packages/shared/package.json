@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -63,4 +63,36 @@ describe('buildApplicationMenuTemplate', () => {
       false
     )
   })
+
+  it('does not use role:close on macOS to avoid stealing Cmd+W from the web layer', () => {
+    const template = buildApplicationMenuTemplate(() => null, vi.fn(), 'darwin')
+    const fileMenuItems = getFileMenuItems(template)
+
+    // The File menu should not contain role: 'close' on macOS because
+    // Electron's native role:close binds Cmd+W at the Chromium level,
+    // which fires before the web content's keydown handler and causes
+    // the window to close/hide instead of closing a pane.
+    const hasRoleClose = fileMenuItems.some((item) => item.role === 'close')
+
+    expect(hasRoleClose).toBe(false)
+  })
+
+  it('dispatches close-pane menu action via IPC on macOS Cmd+W', () => {
+    const getMainWindow = vi.fn(() => null)
+    const template = buildApplicationMenuTemplate(
+      getMainWindow,
+      vi.fn(),
+      'darwin'
+    )
+    const fileMenuItems = getFileMenuItems(template)
+
+    // Should have a custom Close Pane item with Cmd+W accelerator
+    const closePaneItem = fileMenuItems.find(
+      (item) => item.accelerator === 'CmdOrCtrl+W'
+    )
+
+    expect(closePaneItem).toBeDefined()
+    expect(closePaneItem?.label).toBe('Close Pane')
+    expect(closePaneItem?.click).toBeTypeOf('function')
+  })
 })

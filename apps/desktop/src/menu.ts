@@ -151,9 +151,16 @@ export function buildApplicationMenuTemplate(
             },
             { type: 'separator' as const },
           ]),
-      {
-        role: (platform === 'darwin' ? 'close' : 'quit') as 'close' | 'quit',
-      },
+      ...(platform === 'darwin'
+        ? [
+            {
+              label: 'Close Pane',
+              accelerator: 'CmdOrCtrl+W' as const,
+              click: () =>
+                dispatchMenuAction('close-pane', getMainWindow, createWindowFn),
+            },
+          ]
+        : [{ role: 'quit' as const }]),
     ],
   })
 

@@ -246,3 +246,51 @@ Completed all acceptance criteria:
   - Renders tooltip with "Review: needs fix" for needs_fix verdict
   - Renders badge as compact (icon only, no text)
 - All 710 tests pass (web: 428, server: 282), TypeScript clean, formatting clean
+
+## Issue 8: Checkbox selection + reaction state display — DONE
+
+Completed all acceptance criteria:
+
+- Added checkbox (Checkbox from @base-ui/react) to each FindingCard component
+  for triage selection, with aria-label for accessibility
+- Selection state managed via useState<ReadonlySet<number>> in ReviewPaneContent,
+  tracking commentIds of selected findings (local to pane, not persisted)
+- Selected findings have highlighted background (bg-accent/50) and
+  data-selected="true" attribute for testing
+- Selected count displayed in ReviewHeaderBar ("N selected" text) via
+  data-testid="selected-count"
+- Reaction state indicators on each finding via ReactionIndicators component:
+  - Rocket icon (orange) for queued findings (content === 'rocket')
+  - ThumbsUp icon (green) for fixed findings (content === 'thumbs_up')
+  - Confused emoji (gray) for won't-fix findings (content === 'confused')
+  - data-testid attributes: reaction-rocket, reaction-thumbs-up, reaction-confused
+  - No indicators rendered when finding has no relevant reactions
+- Already-resolved findings (thumbs_up or confused reactions) are visually dimmed
+  with opacity-50 and data-resolved="true" attribute
+- Select all / deselect all toggle button in ReviewHeaderBar:
+  - Shows "Select all" when not all findings are selected
+  - Shows "Deselect all" when all findings are selected
+  - Only displayed when findings exist (findingsCount > 0)
+  - data-testid="select-toggle-button" and "selection-controls"
+- Selection hooks (useState, useCallback) placed before early returns to satisfy
+  Rules of Hooks — extracted findings from result state above early return guards
+- ReviewHeaderBar props extended: selectedCount, allSelected, findingsCount,
+  onSelectAll, onDeselectAll (all optional except isRefreshing, onRefresh,
+  selectedCount)
+- Added Checkbox mock in test file for @/components/ui/checkbox
+- Added 3 new test fixtures: QUEUED_FINDING (rocket), FIXED_FINDING (thumbs_up),
+  WONTFIX_FINDING (confused)
+- Added 12 new tests in review-pane.test.tsx (43 total) covering:
+  - Renders a checkbox on each finding card
+  - Toggles finding selection when checkbox is clicked
+  - Shows selected count when findings are selected
+  - Selected findings have highlighted background (data-selected)
+  - Renders rocket reaction indicator for queued findings
+  - Renders thumbs-up reaction indicator for fixed findings
+  - Renders confused reaction indicator for won't-fix findings
+  - Does not render reaction indicators when finding has no reactions
+  - Dims resolved findings (thumbs-up or confused) via data-resolved
+  - Select all button selects all findings
+  - Deselect all button deselects all findings
+  - Does not show selection controls when there are no findings
+- All 722 tests pass (web: 440, server: 282), TypeScript clean, formatting clean

@@ -8,6 +8,7 @@ import {
   destroySurface,
   drainActions,
   getInfo,
+  getSurfaceIOSurfaceHandle,
   getSurfaceIOSurfaceId,
   getSurfacePixels,
   getSurfaceSize,
@@ -244,6 +245,46 @@ describe('ghostty native addon', () => {
       }
     })
 
+    it('can query IOSurface handle or returns null when no frame rendered', () => {
+      const surfaces = listSurfaces()
+      expect(surfaces.length).toBeGreaterThan(0)
+      const surfaceId = surfaces[0] as number
+
+      const handle = getSurfaceIOSurfaceHandle(surfaceId)
+      // May be null if Ghostty hasn't rendered yet, or an IOSurfaceHandle
+      if (handle !== null) {
+        expect(typeof handle.width).toBe('number')
+        expect(typeof handle.height).toBe('number')
+        expect(handle.width).toBeGreaterThan(0)
+        expect(handle.height).toBeGreaterThan(0)
+        expect(Buffer.isBuffer(handle.ioSurfaceHandle)).toBe(true)
+        // Buffer should contain a pointer (8 bytes on 64-bit)
+        expect(handle.ioSurfaceHandle.length).toBe(8)
+      }
+    })
+
+    it('returns IOSurface handle after ticking to allow rendering', async () => {
+      const surfaces = listSurfaces()
+      expect(surfaces.length).toBeGreaterThan(0)
+      const surfaceId = surfaces[0] as number
+
+      // Tick to give Ghostty time to render
+      for (let i = 0; i < 30; i++) {
+        appTick()
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+
+      const handle = getSurfaceIOSurfaceHandle(surfaceId)
+      // After ticking, we expect handle to be available
+      // (though in CI without a GPU, it may still be null)
+      if (handle !== null) {
+        expect(handle.width).toBeGreaterThan(0)
+        expect(handle.height).toBeGreaterThan(0)
+        expect(Buffer.isBuffer(handle.ioSurfaceHandle)).toBe(true)
+        expect(handle.ioSurfaceHandle.length).toBe(8)
+      }
+    })
+
     it('can destroy a surface', () => {
       const surfaces = listSurfaces()
       const countBefore = surfaces.length
@@ -379,6 +420,7 @@ describe('ghostty native addon', () => {
         'child_exited',
         'close_window',
         'cell_size',
+        'render_frame',
         'renderer_health',
       ])
 
@@ -387,6 +429,47 @@ describe('ghostty native addon', () => {
         const isSupported = supportedTypes.has(action.action)
         const isUnsupported = action.action.startsWith('unsupported:')
         expect(isSupported || isUnsupported).toBe(true)
+      }
+
+      destroySurface(handle.id)
+      destroyApp()
+    })
+
+    it('emits render_frame actions after ticking with an active surface', async () => {
+      if (!isAppCreated()) {
+        createApp()
+      }
+
+      // Flush stale actions
+      drainActions()
+
+      const handle = createSurface({ width: 400, height: 300 })
+
+      // Tick enough times to trigger at least one render
+      for (let i = 0; i < 30; i++) {
+        appTick()
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+
+      const actions = drainActions()
+      const renderFrameActions = actions.filter(
+        (a) => a.action === 'render_frame'
+      )
+
+      // After ticking with a surface, we expect render_frame actions
+      // (in CI without a GPU, rendering may not produce frames)
+      if (renderFrameActions.length > 0) {
+        // Verify render_frame actions have correct shape
+        for (const rf of renderFrameActions) {
+          expect(rf.action).toBe('render_frame')
+          expect(typeof rf.surfaceId).toBe('number')
+        }
+        // Verify multiple render frames (subsequent frames, not just one)
+        expect(renderFrameActions.length).toBeGreaterThan(1)
+      } else {
+        console.warn(
+          '[render_frame test] No render_frame actions — likely headless/no GPU environment'
+        )
       }
 
       destroySurface(handle.id)

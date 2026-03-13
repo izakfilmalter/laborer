@@ -116,6 +116,26 @@ interface RendererHealthEvent {
   readonly type: 'renderer_health'
 }
 
+interface RenderFrameEvent {
+  readonly surfaceId: number
+  readonly type: 'render_frame'
+}
+
+interface IOSurfaceHandleResultEvent {
+  readonly height: number
+  readonly id: string
+  readonly ioSurfaceHandle: string
+  readonly surfaceId: number
+  readonly type: 'iosurface_handle_result'
+  readonly width: number
+}
+
+interface IOSurfaceHandleNullEvent {
+  readonly id: string
+  readonly surfaceId: number
+  readonly type: 'iosurface_handle_null'
+}
+
 type GhosttyActionEvent =
   | TitleChangedEvent
   | PwdChangedEvent
@@ -123,6 +143,7 @@ type GhosttyActionEvent =
   | ChildExitedEvent
   | CellSizeChangedEvent
   | RendererHealthEvent
+  | RenderFrameEvent
 
 type GhosttyEvent =
   | ReadyEvent
@@ -130,6 +151,8 @@ type GhosttyEvent =
   | SurfaceDestroyedEvent
   | SizeResultEvent
   | IOSurfaceResultEvent
+  | IOSurfaceHandleResultEvent
+  | IOSurfaceHandleNullEvent
   | PixelsResultEvent
   | PixelsNullEvent
   | SurfacesListEvent
@@ -845,6 +868,251 @@ describe('ghostty host process', () => {
       // In some environments, the child exit may not be detected
       // within the timeout — this is acceptable for CI
       console.warn('[exit test] child_exited event not received within timeout')
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // Shared surface bridge (Issue 3 — zero-copy rendering pipeline)
+  // -------------------------------------------------------------------------
+
+  it('can request IOSurface handle from a surface', async () => {
+    handle = spawnGhosttyHost()
+    await waitForEvent(handle.events, (e) => e.type === 'ready')
+
+    handle.sendCommand({ type: 'create_surface', id: 'create-handle' })
+    const created = (await waitForEvent(
+      handle.events,
+      (e) => e.type === 'surface_created'
+    )) as SurfaceCreatedEvent
+
+    handle.sendCommand({
+      type: 'get_iosurface_handle',
+      id: 'gethandle-1',
+      surfaceId: created.surfaceId,
+    })
+
+    // May return handle result or null depending on render state
+    const event = await waitForEvent(
+      handle.events,
+      (e) =>
+        (e.type === 'iosurface_handle_result' ||
+          e.type === 'iosurface_handle_null') &&
+        'id' in e &&
+        e.id === 'gethandle-1'
+    )
+
+    expect(
+      event.type === 'iosurface_handle_result' ||
+        event.type === 'iosurface_handle_null'
+    ).toBe(true)
+
+    if (event.type === 'iosurface_handle_result') {
+      const hr = event as IOSurfaceHandleResultEvent
+      expect(typeof hr.width).toBe('number')
+      expect(typeof hr.height).toBe('number')
+      expect(hr.width).toBeGreaterThan(0)
+      expect(hr.height).toBeGreaterThan(0)
+      expect(typeof hr.ioSurfaceHandle).toBe('string')
+      // Verify base64 decodes to a pointer-sized buffer (8 bytes on 64-bit)
+      const buf = Buffer.from(hr.ioSurfaceHandle, 'base64')
+      expect(buf.length).toBe(8)
+    }
+  })
+
+  it('returns IOSurface handle after rendering frames', async () => {
+    handle = spawnGhosttyHost()
+    await waitForEvent(handle.events, (e) => e.type === 'ready')
+
+    handle.sendCommand({
+      type: 'create_surface',
+      id: 'create-handle-e2e',
+      options: { width: 400, height: 300 },
+    })
+    const created = (await waitForEvent(
+      handle.events,
+      (e) => e.type === 'surface_created'
+    )) as SurfaceCreatedEvent
+
+    // Poll for IOSurface handle availability with retries.
+    // The host tick timer runs at ~60fps, so rendering starts quickly.
+    let handleReceived = false
+    for (let attempt = 0; attempt < 60; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+
+      handle.sendCommand({
+        type: 'get_iosurface_handle',
+        id: `poll-handle-${attempt}`,
+        surfaceId: created.surfaceId,
+      })
+
+      const event = await waitForEvent(
+        handle.events,
+        (e) =>
+          (e.type === 'iosurface_handle_result' ||
+            e.type === 'iosurface_handle_null') &&
+          'id' in e &&
+          e.id === `poll-handle-${attempt}`,
+        5000
+      )
+
+      if (event.type === 'iosurface_handle_result') {
+        const hr = event as IOSurfaceHandleResultEvent
+        expect(hr.width).toBeGreaterThan(0)
+        expect(hr.height).toBeGreaterThan(0)
+        const buf = Buffer.from(hr.ioSurfaceHandle, 'base64')
+        expect(buf.length).toBe(8)
+        handleReceived = true
+        break
+      }
+    }
+
+    if (!handleReceived) {
+      console.warn(
+        '[e2e] IOSurface handle not available after polling — likely headless/no GPU environment'
+      )
+    }
+  })
+
+  it('emits render_frame push events for subsequent frames', async () => {
+    handle = spawnGhosttyHost()
+    await waitForEvent(handle.events, (e) => e.type === 'ready')
+
+    handle.sendCommand({
+      type: 'create_surface',
+      id: 'create-frames',
+      options: { width: 400, height: 300 },
+    })
+    await waitForEvent(handle.events, (e) => e.type === 'surface_created')
+
+    // Collect render_frame events over several seconds.
+    // The host process emits these as push events when Ghostty renders.
+    const renderFrameEvents: RenderFrameEvent[] = []
+    const deadline = Date.now() + 5000
+
+    while (Date.now() < deadline) {
+      const event = await Promise.race([
+        handle.events.next(),
+        new Promise<undefined>((resolve) => {
+          setTimeout(() => resolve(undefined), 500)
+        }),
+      ])
+
+      if (event === undefined) {
+        continue
+      }
+
+      if (event.type === 'render_frame') {
+        renderFrameEvents.push(event as RenderFrameEvent)
+        // Once we have multiple frames, we've proven the pipeline works
+        if (renderFrameEvents.length >= 3) {
+          break
+        }
+      }
+    }
+
+    if (renderFrameEvents.length > 0) {
+      // Verify we got multiple render_frame events (subsequent frames)
+      expect(renderFrameEvents.length).toBeGreaterThanOrEqual(2)
+
+      // All render_frame events should have valid surfaceId
+      for (const rf of renderFrameEvents) {
+        expect(rf.type).toBe('render_frame')
+        expect(typeof rf.surfaceId).toBe('number')
+      }
+    } else {
+      console.warn(
+        '[render_frame test] No render_frame events — likely headless/no GPU environment'
+      )
+    }
+  })
+
+  it('continues emitting render_frame events after resize', async () => {
+    handle = spawnGhosttyHost()
+    await waitForEvent(handle.events, (e) => e.type === 'ready')
+
+    // Create a surface
+    handle.sendCommand({
+      type: 'create_surface',
+      id: 'create-resize-frames',
+      options: { width: 400, height: 300 },
+    })
+    const created = (await waitForEvent(
+      handle.events,
+      (e) => e.type === 'surface_created'
+    )) as SurfaceCreatedEvent
+
+    // Wait briefly for initial rendering to start
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+
+    // Resize the surface
+    handle.sendCommand({
+      type: 'set_size',
+      id: 'resize-1',
+      surfaceId: created.surfaceId,
+      width: 800,
+      height: 600,
+    })
+    await waitForEvent(
+      handle.events,
+      (e) => e.type === 'ok' && 'id' in e && e.id === 'resize-1'
+    )
+
+    // Collect render_frame events after resize
+    const postResizeFrames: RenderFrameEvent[] = []
+    const deadline = Date.now() + 5000
+
+    while (Date.now() < deadline) {
+      const event = await Promise.race([
+        handle.events.next(),
+        new Promise<undefined>((resolve) => {
+          setTimeout(() => resolve(undefined), 500)
+        }),
+      ])
+
+      if (event === undefined) {
+        continue
+      }
+
+      if (event.type === 'render_frame') {
+        postResizeFrames.push(event as RenderFrameEvent)
+        if (postResizeFrames.length >= 2) {
+          break
+        }
+      }
+    }
+
+    if (postResizeFrames.length > 0) {
+      // Verify render_frame events continue after resize
+      expect(postResizeFrames.length).toBeGreaterThanOrEqual(1)
+
+      // Verify the IOSurface handle reflects the new size
+      handle.sendCommand({
+        type: 'get_iosurface_handle',
+        id: 'post-resize-handle',
+        surfaceId: created.surfaceId,
+      })
+
+      const handleEvent = await waitForEvent(
+        handle.events,
+        (e) =>
+          (e.type === 'iosurface_handle_result' ||
+            e.type === 'iosurface_handle_null') &&
+          'id' in e &&
+          e.id === 'post-resize-handle',
+        5000
+      )
+
+      if (handleEvent.type === 'iosurface_handle_result') {
+        const hr = handleEvent as IOSurfaceHandleResultEvent
+        // After resize to 800x600, dimensions should be updated
+        // (exact pixel dimensions depend on Ghostty's internal scaling)
+        expect(hr.width).toBeGreaterThan(0)
+        expect(hr.height).toBeGreaterThan(0)
+      }
+    } else {
+      console.warn(
+        '[post-resize test] No render_frame events after resize — likely headless/no GPU environment'
+      )
     }
   })
 

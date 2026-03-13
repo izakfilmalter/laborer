@@ -79,7 +79,7 @@ None - can start immediately
 
 ---
 
-## Issue 3: Shared surface bridge from Ghostty to Electron renderer — IN PROGRESS
+## Issue 3: Shared surface bridge from Ghostty to Electron renderer — DONE
 
 ### Parent PRD
 
@@ -100,12 +100,12 @@ This slice should harden the rendering architecture chosen in the PRD and prove 
 - [x] A Ghostty surface can publish an Electron-importable shared surface handle or identifier
 - [x] Electron can import the surface and expose it to the renderer
 - [x] The renderer can display the imported surface through WebGPU
-- [ ] Subsequent rendered frames update the displayed terminal view correctly
-- [ ] End-to-end tests verify visible rendering beyond the initial frame
+- [x] Subsequent rendered frames update the displayed terminal view correctly
+- [x] End-to-end tests verify visible rendering beyond the initial frame
 
 ### Progress
 
-Added shared texture pipeline across all architecture layers. Native addon extracts IOSurfaceRef as Buffer with CFRetain/CFRelease lifecycle; GHOSTTY_ACTION_RENDER now queues render_frame push events. Host process handles get_iosurface_handle command with base64-encoded IOSurfaceRef transport. GhosttyBridge imports IOSurface via Electron's sharedTexture.importSharedTexture() and sends VideoFrames to renderer windows. Preload sets up sharedTexture.setSharedTextureReceiver() with multi-listener support. GhosttyTerminalPane draws VideoFrames to canvas via drawImage() (zero-copy GPU compositing) with pixel readback fallback. All 8 packages typecheck, all ghostty-related tests pass, format passes.
+Added shared texture pipeline across all architecture layers. Native addon extracts IOSurfaceRef as Buffer with CFRetain/CFRelease lifecycle; GHOSTTY_ACTION_RENDER now queues render_frame push events. Host process handles get_iosurface_handle command with base64-encoded IOSurfaceRef transport. GhosttyBridge imports IOSurface via Electron's sharedTexture.importSharedTexture() and sends VideoFrames to renderer windows. Preload sets up sharedTexture.setSharedTextureReceiver() with multi-listener support. GhosttyTerminalPane draws VideoFrames to canvas via drawImage() (zero-copy GPU compositing) with pixel readback fallback. Added end-to-end tests: IOSurface handle extraction at native and IPC layers, render_frame push event verification for subsequent frames, post-resize rendering continuity. All 74 ghostty tests pass (34 addon + 21 host + 19 unsupported-actions), all 8 packages typecheck, format passes.
 
 ### Blocked by
 

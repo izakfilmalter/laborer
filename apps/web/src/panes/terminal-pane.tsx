@@ -71,21 +71,90 @@ const terminalResizeMutation = TerminalServiceClient.mutation('terminal.resize')
 const PREFIX_MODE_TIMEOUT = 1500
 
 /**
- * Debounce delay for ResizeObserver callbacks (ms).
- *
- * During panel drag-resizing, the ResizeObserver fires at up to 60fps.
- * Without debouncing, each observation triggers `fitAddon.fit()` (which
- * measures the DOM) and a `terminal.resize` RPC call (which sends a
- * command through: RPC → terminal service → PTY Host → pty.resize() →
- * SIGWINCH). This floods the event loop and network with unnecessary
- * resize operations.
- *
- * VS Code uses a 100ms debounce for horizontal resizes (which trigger
- * text reflow) and applies vertical resizes immediately (cheap). We use
- * a simpler 100ms debounce for all resizes since the fit addon handles
- * both dimensions together.
+ * NOTE: The previous RESIZE_DEBOUNCE_MS (100ms setTimeout) has been replaced
+ * by requestAnimationFrame batching in the PTY-first resize handler.
+ * RAF naturally coalesces rapid resize events into single frames (~16ms)
+ * while the in-flight/pending coalescing ensures at most one RPC call
+ * is active at a time. This provides better responsiveness than a fixed
+ * 100ms debounce during panel drag operations.
  */
-const RESIZE_DEBOUNCE_MS = 100
+
+/**
+ * State for the PTY-first resize coalescing logic.
+ *
+ * Tracks in-flight resize requests and deduplication dimensions so that
+ * at most one RPC call is active at a time, and rapid resize events
+ * during panel drag are collapsed into at most two resizes.
+ */
+interface ResizeCoalesceState {
+  /** Whether a resize RPC is currently in-flight. */
+  inFlight: boolean
+  /** Last cols sent to the backend (for deduplication). */
+  lastCols: number
+  /** Last rows sent to the backend (for deduplication). */
+  lastRows: number
+  /** Whether another resize was requested while one was in-flight. */
+  pending: boolean
+  /** ID of the pending requestAnimationFrame (for cancellation). */
+  rafId: number | null
+}
+
+/**
+ * Execute the PTY-first resize: proposeDimensions → RPC → terminal.resize.
+ *
+ * Calculates desired dimensions without applying them, sends to the backend
+ * PTY via RPC (waits for confirmation), then resizes the frontend terminal
+ * to match. This eliminates the race where shell output formatted for old
+ * dimensions gets displayed in an already-resized frontend terminal.
+ */
+async function executePtyFirstResize(
+  fitAddon: FitAddon,
+  terminal: Terminal,
+  terminalId: string,
+  resizeFn: (arg: {
+    payload: { id: string; cols: number; rows: number }
+  }) => Promise<unknown>,
+  state: ResizeCoalesceState,
+  disposed: { current: boolean }
+): Promise<void> {
+  // Step 1: Calculate what size we want without applying it yet.
+  let proposed: { cols: number; rows: number } | undefined
+  try {
+    proposed = fitAddon.proposeDimensions()
+  } catch {
+    return
+  }
+  if (!proposed || proposed.cols <= 0 || proposed.rows <= 0) {
+    return
+  }
+
+  const { cols, rows } = proposed
+
+  // Deduplicate — skip if dimensions haven't changed
+  if (cols === state.lastCols && rows === state.lastRows) {
+    return
+  }
+
+  // Record the requested dimensions for deduplication
+  state.lastCols = cols
+  state.lastRows = rows
+
+  try {
+    // Step 2: Resize PTY first — wait for backend to confirm.
+    await resizeFn({ payload: { id: terminalId, cols, rows } })
+
+    if (disposed.current) {
+      return
+    }
+
+    // Step 3: Resize frontend to match the PTY exactly.
+    terminal.resize(cols, rows)
+  } catch {
+    // Allow future retries if the resize call failed.
+    state.lastCols = 0
+    state.lastRows = 0
+  }
+}
 
 interface TerminalPaneProps {
   /**
@@ -112,14 +181,21 @@ interface TerminalPaneProps {
  * terminal process exits, keyboard input is disabled. When the terminal
  * is restarted, the buffer is cleared.
  *
+ * PTY-first resize flow:
  * When the container is resized (by panel splits, window resize, etc.),
- * the fit addon recalculates cols/rows and the new dimensions are sent
- * to the server PTY via the `terminal.resize` RPC mutation. This ensures
- * the PTY sends SIGWINCH to the running process so it can reflow output.
+ * the fit addon's `proposeDimensions()` calculates desired cols/rows
+ * WITHOUT applying them. The new dimensions are sent to the backend PTY
+ * via RPC, and only after the backend confirms does the frontend terminal
+ * resize to match. This prevents output clobbering where shell output
+ * formatted for old dimensions gets displayed in an already-resized
+ * frontend terminal. Rapid resize events during panel drag are coalesced
+ * (one in-flight RPC at a time, pending flag for the next).
  */
 function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
   const router = useTerminalRouter()
-  const resizeTerminal = useAtomSet(terminalResizeMutation)
+  const resizeTerminal = useAtomSet(terminalResizeMutation, {
+    mode: 'promise',
+  })
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -460,45 +536,25 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
   }, [terminalId])
 
   /**
-   * Handle container resize — re-fit the terminal when the
-   * pane dimensions change, then send new dimensions to the
-   * server PTY via `terminal.resize` RPC mutation.
+   * PTY-first resize with coalescing.
    *
-   * The fit addon recalculates cols/rows based on the container
-   * size and font metrics. After fitting, we read the new dimensions
-   * from the ghostty-web Terminal instance and dispatch a resize mutation.
-   * The server PTY sends SIGWINCH so the process can reflow output.
-   */
-  const handleResize = useCallback(() => {
-    const fitAddon = fitAddonRef.current
-    const terminal = terminalRef.current
-    if (!(fitAddon && terminal)) {
-      return
-    }
-
-    try {
-      fitAddon.fit()
-    } catch {
-      // Ignore errors during resize (container may have 0 dimensions)
-      return
-    }
-
-    // Send new dimensions to the server PTY
-    const { cols, rows } = terminal
-    if (cols > 0 && rows > 0) {
-      resizeTerminalRef.current({
-        payload: { id: terminalId, cols, rows },
-      })
-    }
-  }, [terminalId])
-
-  /**
-   * Observe the container element for size changes using ResizeObserver.
-   * This handles allotment pane resizing, window resizing, etc.
+   * Observes the container for size changes and implements a three-step
+   * resize flow that prevents output clobbering:
    *
-   * Debounced at 100ms to avoid flooding the resize RPC during drag
-   * operations. Without debouncing, the ResizeObserver fires at up to
-   * 60fps, each triggering fitAddon.fit() + an RPC round-trip.
+   * 1. `proposeDimensions()` — calculate desired cols/rows WITHOUT
+   *    applying them to the terminal (read-only measurement)
+   * 2. `await resizeTerminal()` — send dimensions to backend PTY via RPC
+   *    and wait for confirmation (PTY sends SIGWINCH to the process)
+   * 3. `terminal.resize(cols, rows)` — apply the confirmed dimensions
+   *    to the frontend terminal
+   *
+   * Coalescing ensures at most one RPC call is in-flight at a time.
+   * If a resize event arrives while one is in-flight, it sets a pending
+   * flag. When the in-flight resize completes, the pending resize is
+   * processed with fresh `proposeDimensions()` (not stale captured values).
+   *
+   * The initial fit on mount uses `fit()` directly (acceptable since
+   * there is no PTY output race at initialization time).
    */
   useEffect(() => {
     const container = containerRef.current
@@ -506,27 +562,79 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
       return
     }
 
-    let resizeTimer: ReturnType<typeof setTimeout> | null = null
+    const state: ResizeCoalesceState = {
+      inFlight: false,
+      lastCols: 0,
+      lastRows: 0,
+      pending: false,
+      rafId: null,
+    }
+    const disposed = { current: false }
 
-    const resizeObserver = new ResizeObserver(() => {
-      if (resizeTimer !== null) {
-        clearTimeout(resizeTimer)
+    /**
+     * Coalescing resize handler.
+     *
+     * If a resize is already in-flight, sets a pending flag instead of
+     * starting a new one. Uses requestAnimationFrame to batch rapid
+     * resize events (e.g., during panel drag) into a single frame.
+     */
+    const handleResize = () => {
+      if (disposed.current) {
+        return
       }
-      resizeTimer = setTimeout(() => {
-        resizeTimer = null
-        handleResize()
-      }, RESIZE_DEBOUNCE_MS)
-    })
 
+      // If a resize is already in flight, mark that we need another one
+      if (state.inFlight) {
+        state.pending = true
+        return
+      }
+
+      const fitAddon = fitAddonRef.current
+      const terminal = terminalRef.current
+      if (!(fitAddon && terminal)) {
+        return
+      }
+
+      state.inFlight = true
+      state.pending = false
+
+      // Use RAF to batch rapid resize events
+      if (state.rafId !== null) {
+        cancelAnimationFrame(state.rafId)
+      }
+
+      state.rafId = requestAnimationFrame(() => {
+        state.rafId = null
+
+        executePtyFirstResize(
+          fitAddon,
+          terminal,
+          terminalId,
+          resizeTerminalRef.current,
+          state,
+          disposed
+        ).finally(() => {
+          state.inFlight = false
+          // If another resize was requested while we were busy, handle it.
+          // This re-calls proposeDimensions() for fresh dimensions.
+          if (state.pending && !disposed.current) {
+            handleResize()
+          }
+        })
+      })
+    }
+
+    const resizeObserver = new ResizeObserver(handleResize)
     resizeObserver.observe(container)
 
     return () => {
-      if (resizeTimer !== null) {
-        clearTimeout(resizeTimer)
+      disposed.current = true
+      if (state.rafId !== null) {
+        cancelAnimationFrame(state.rafId)
       }
       resizeObserver.disconnect()
     }
-  }, [handleResize])
+  }, [terminalId])
 
   return (
     <div

@@ -35,7 +35,7 @@ Parent PRD: [PRD-ghostty-web-migration.md](./PRD-ghostty-web-migration.md)
 | 8 | Backend: Race-free WebSocket attach protocol | #7 | Done |
 | 9 | Frontend: Terminal Session Router (core) | #8 | Done |
 | 10 | Frontend: Terminal Router context and integration | #1, #9 | Done |
-| 11 | PTY-first resize | #2, #7, #10 | Ready |
+| 11 | PTY-first resize | #2, #7, #10 | Done |
 | 12 | Cleanup: Remove xterm.js and ring buffer | #1-#11 | Blocked |
 
 ---

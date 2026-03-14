@@ -284,3 +284,40 @@ Date: 2026-03-14
 - All 647 tests pass across 46 test files in the web package (22 new + 625 existing)
 - 1 pre-existing skipped test (alive-desktop-oauth)
 - Biome lint passes on all changed files
+
+## Issue 11: PTY-first resize — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Replaced the current resize flow (fit → RPC) with a PTY-first approach that prevents output clobbering during resize:
+  1. `fitAddon.proposeDimensions()` — calculates desired cols/rows WITHOUT applying them to the terminal (read-only measurement)
+  2. `await resizeTerminal()` — sends dimensions to backend PTY via RPC and waits for confirmation (PTY sends SIGWINCH)
+  3. `terminal.resize(cols, rows)` — applies the confirmed dimensions to the frontend terminal only AFTER the backend confirms
+- Changed `useAtomSet(terminalResizeMutation)` to `useAtomSet(terminalResizeMutation, { mode: 'promise' })` so the resize mutation returns a Promise that can be awaited
+- Extracted `executePtyFirstResize()` as a standalone async function to reduce complexity in the effect
+- Implemented resize coalescing with `ResizeCoalesceState`:
+  - `inFlight` boolean gate — only one RPC call active at a time
+  - `pending` boolean flag — set to true if resize events arrive while one is in-flight
+  - `lastCols`/`lastRows` — deduplication to skip no-op resizes
+  - On in-flight completion (`.finally()`), if pending is true, re-calls handleResize with fresh `proposeDimensions()` (not stale captured values)
+  - On RPC failure, resets lastCols/lastRows to 0 to allow retry
+- Replaced the fixed 100ms setTimeout debounce with `requestAnimationFrame` batching:
+  - RAF naturally coalesces rapid resize events into single frames (~16ms)
+  - Combined with the in-flight/pending coalescing for at most one active RPC
+  - Provides better responsiveness than a fixed 100ms debounce during panel drag
+- Removed the `RESIZE_DEBOUNCE_MS` constant (replaced by RAF batching comment)
+- Preserved the initial `fit()` call on mount (acceptable since no PTY output race exists at initialization time)
+- Updated `fit-addon-resize.test.ts` to verify the new PTY-first resize flow:
+  - 32 tests total (up from 22): added tests for PTY-first flow, coalescing, proposeDimensions usage, awaitable RPC, RAF batching, and cleanup
+
+### Files changed
+- `apps/web/src/panes/terminal-pane.tsx` (modified — replaced resize flow with PTY-first approach, extracted executePtyFirstResize, added ResizeCoalesceState)
+- `apps/web/test/fit-addon-resize.test.ts` (modified — updated from 22 to 32 tests for PTY-first resize patterns)
+
+### Test results
+- All 657 tests pass across 45 test files in the web package (32 fit-addon-resize tests + 625 existing)
+- All 136 tests pass across 8 test files in the terminal package
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Typecheck passes cleanly
+- Biome lint passes on all changed files

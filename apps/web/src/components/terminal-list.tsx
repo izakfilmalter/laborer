@@ -391,6 +391,32 @@ const AGENT_ICON_BY_RAW_NAME: Record<
 }
 
 /**
+ * Map from agent command names (lowercase) to their display label and icon.
+ *
+ * Used as a fallback when `foregroundProcess` is null (idle / pre-detection).
+ * Without this, agent terminals show the raw command string ("opencode")
+ * and a generic terminal icon until the background detection fiber detects
+ * the process. This map ensures agent branding is shown immediately.
+ */
+const AGENT_COMMAND_DISPLAY: Record<
+  string,
+  { readonly label: string; readonly icon: ReactNode } | undefined
+> = {
+  claude: {
+    label: 'Claude',
+    icon: <AGENT_ICONS.claude className="size-3.5 shrink-0" />,
+  },
+  opencode: {
+    label: 'OpenCode',
+    icon: <AGENT_ICONS.opencode className="size-3.5 shrink-0" />,
+  },
+  codex: {
+    label: 'Codex',
+    icon: <AGENT_ICONS.codex className="size-3.5 shrink-0" />,
+  },
+}
+
+/**
  * Get the icon for a process based on its category and raw name.
  */
 function getProcessIcon(
@@ -482,12 +508,17 @@ function getTerminalDisplay(
   const rootProcess = processChain[0] ?? null
   const commandLabel = command || 'shell'
 
+  // Fallback agent display derived from the terminal command name.
+  // Ensures agent branding (icon + capitalised label) is shown even when
+  // `foregroundProcess` is null (pre-detection, idle, or shell at prompt).
+  const agentCommandInfo = AGENT_COMMAND_DISPLAY[command.toLowerCase()]
+
   if (!isRunning) {
     return {
-      icon: (
+      icon: agentCommandInfo?.icon ?? (
         <TerminalIcon className="size-3.5 shrink-0 text-muted-foreground" />
       ),
-      label: commandLabel,
+      label: agentCommandInfo?.label ?? commandLabel,
       badgeLabel: 'stopped',
       badgeClassName:
         'border-muted-foreground/30 bg-muted text-muted-foreground',
@@ -495,26 +526,33 @@ function getTerminalDisplay(
   }
 
   // Agent finished / waiting for user input — pulsing amber badge.
-  // Show the root process label if available, otherwise the command name.
+  // Show the root process label if available, otherwise fall back to
+  // the agent command display (icon + label) or the raw command name.
   if (agentStatus === 'waiting_for_input') {
     return {
-      icon: rootProcess ? (
-        getProcessIcon(rootProcess.category, rootProcess.rawName)
-      ) : (
-        <TerminalIcon className="size-3.5 shrink-0 text-amber-400" />
-      ),
-      label: rootProcess ? rootProcess.label : commandLabel,
+      icon: rootProcess
+        ? getProcessIcon(rootProcess.category, rootProcess.rawName)
+        : (agentCommandInfo?.icon ?? (
+            <TerminalIcon className="size-3.5 shrink-0 text-amber-400" />
+          )),
+      label: rootProcess
+        ? rootProcess.label
+        : (agentCommandInfo?.label ?? commandLabel),
       badgeLabel: 'needs input',
       badgeClassName:
         'animate-pulse border-amber-400/30 bg-amber-400/10 text-amber-400',
     }
   }
 
-  // No foreground process detected — shell is idle at prompt
+  // No foreground process detected — shell is idle at prompt.
+  // For agent commands, show the agent icon and label instead of
+  // the raw command string.
   if (foregroundProcess === null) {
     return {
-      icon: <TerminalIcon className="size-3.5 shrink-0 text-success" />,
-      label: commandLabel,
+      icon: agentCommandInfo?.icon ?? (
+        <TerminalIcon className="size-3.5 shrink-0 text-success" />
+      ),
+      label: agentCommandInfo?.label ?? commandLabel,
       badgeLabel: 'idle',
       badgeClassName: 'border-success/30 bg-success/10 text-success',
     }
@@ -532,8 +570,10 @@ function getTerminalDisplay(
   // Shell category means idle at prompt
   if (foregroundProcess.category === 'shell') {
     return {
-      icon: <TerminalIcon className="size-3.5 shrink-0 text-success" />,
-      label: commandLabel,
+      icon: agentCommandInfo?.icon ?? (
+        <TerminalIcon className="size-3.5 shrink-0 text-success" />
+      ),
+      label: agentCommandInfo?.label ?? commandLabel,
       badgeLabel: 'idle',
       badgeClassName: 'border-success/30 bg-success/10 text-success',
     }

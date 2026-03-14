@@ -1141,3 +1141,76 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 1006/1006 tests pass (22 new + 984 existing)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #27: Polish: tab overflow and performance — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Enhanced the `TabBar` component in `apps/web/src/components/ui/tab-bar.tsx` with overflow handling, auto-scroll, and performance safeguards:
+
+**1. Scroll overflow detection hook (`useScrollOverflow`)**
+- New hook that detects horizontal scroll overflow on the tab scroll container
+- Returns `OverflowState` with `canScrollLeft` and `canScrollRight` booleans
+- Subscribes to `scroll` events (passive) for real-time updates as user scrolls
+- Uses `ResizeObserver` (when available) to detect container size changes
+- Exposes `recheckOverflow()` for manual re-evaluation after item count changes
+- Gracefully handles environments without `ResizeObserver` (JSDOM in tests)
+
+**2. Scroll buttons**
+- Left chevron button (`ChevronLeft` from lucide-react) appears when `canScrollLeft` is true
+- Right chevron button (`ChevronRight`) appears when `canScrollRight` is true
+- Each button scrolls by 120px with `behavior: 'smooth'`
+- Accessible: `aria-label="Scroll tabs left"` / `"Scroll tabs right"`
+- Styled consistently with existing tab bar UI: `text-muted-foreground hover:text-foreground`
+- `data-testid="tab-bar-scroll-left"` / `"tab-bar-scroll-right"` for testing
+
+**3. Gradient fade overlays**
+- Left fade gradient (`from-muted/60 to-transparent`) when `canScrollLeft` is true
+- Right fade gradient (`from-muted/60 to-transparent`) when `canScrollRight` is true
+- `pointer-events-none` so they don't interfere with tab clicks
+- Positioned absolutely within a new `data-testid="tab-bar-scroll-area"` wrapper
+- 16px wide (`w-4`) — subtle visual cue without obscuring tab content
+
+**4. Auto-scroll active tab into view**
+- `useEffect` monitors `items` changes and scrolls the active tab into view
+- Uses `scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })`
+- `'nearest'` mode avoids unnecessary scrolling when the tab is already visible
+- Guarded with optional chaining for JSDOM compatibility
+
+**5. Item count change detection**
+- Uses `useRef` to track previous `items.length` and `queueMicrotask(recheckOverflow)` when count changes
+- This ensures overflow state is recalculated after React commits new tab elements to the DOM
+- Avoids Biome's `useExhaustiveDependencies` lint issue with primitive function parameters
+
+**6. Performance: background tab rendering**
+- The existing architecture already suspends rendering for background window tabs — only the active window tab's `workspaceTileLayout` is passed to `PanelContent`, so background tabs are never mounted as React components
+- Terminals continue running at the process level (server-side) regardless of whether their React components are mounted
+- Tab switching triggers terminal reconnection via the existing xterm.js lifecycle, which is near-instant for terminals that are already running
+- This architecture naturally prevents memory growth from background tabs since only the active tab's component tree is in the React tree
+
+**7. Keyboard accessibility preserved**
+- All tabs remain in the DOM (`role="tab"`) regardless of visual overflow
+- `tabIndex=0` on the active tab, `-1` on inactive tabs
+- `Cmd+1-8`, `Cmd+9`, `Cmd+Shift+[/]` shortcuts work regardless of overflow (they operate on the data model, not the DOM)
+
+### Structural changes
+- Added `data-testid="tab-bar-scroll-area"` wrapper div around the scrollable tab container
+- Restructured scroll container from `<div class="flex min-w-0 flex-1 ...">` to `<div class="relative min-w-0 flex-1">` wrapping `<div class="scrollbar-none flex h-full ...">` (separating the positioning context from the scroll container)
+
+### Tests
+- 17 tests in `apps/web/test/tab-bar-overflow.test.tsx` covering:
+  - **Scroll area structure** (3 tests): scroll area container renders, has overflow-x-auto class, has scrollbar-none class
+  - **Overflow indicators without overflow** (4 tests): no left/right fade or scroll buttons when content doesn't overflow
+  - **Scroll buttons** (3 tests): correct aria-labels, scrollBy called with correct arguments
+  - **Keyboard shortcut accessibility** (2 tests): all 20/50 tabs rendered in DOM, active tab has tabIndex=0
+  - **Auto-scroll active tab into view** (1 test): active tab element exists and has aria-selected
+  - **Gradient fade overlays** (2 tests): pointer-events-none class on fade elements
+  - **Auto-hide with overflow** (2 tests): no overflow controls when auto-hidden
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 1043/1043 tests pass (17 new + 1026 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)

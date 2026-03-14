@@ -445,6 +445,47 @@ function useCollapseState(
   return collapsed
 }
 
+/**
+ * Whether the sync indicator should be visible.
+ * Only shows when sync is actively connecting/catching up (not healthy, not unknown).
+ */
+function isSyncActive(state: ServiceState): boolean {
+  return state.state !== 'healthy' && state.state !== 'unknown'
+}
+
+/**
+ * Subtle sync indicator — a small pulsing dot that appears only when
+ * LiveStore sync is actively connecting or catching up. Hidden when
+ * sync is idle/connected or when no sync backend is configured.
+ *
+ * Visually distinct from the core service dots — uses a smaller size
+ * and different color to avoid confusion.
+ */
+function SyncIndicator({ syncState }: { readonly syncState: ServiceState }) {
+  if (!isSyncActive(syncState)) {
+    return null
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            className="inline-flex w-4 items-center justify-center p-1"
+            data-testid="sync-indicator"
+          />
+        }
+      >
+        <span aria-hidden="true" className="relative inline-flex size-1.5">
+          <span className="absolute inline-flex size-full animate-ping rounded-full bg-info opacity-75" />
+          <span className="relative inline-flex size-1.5 rounded-full bg-info" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>Syncing...</TooltipContent>
+    </Tooltip>
+  )
+}
+
 /** Compact row of status dots for core services, with collapse/expand behavior. */
 function ServiceStatusDots() {
   const statuses = useServiceStatus()
@@ -471,6 +512,7 @@ function ServiceStatusDots() {
         className="flex items-center gap-0.5 transition-all duration-300"
       >
         <CollapsedIndicator statuses={statuses} />
+        <SyncIndicator syncState={statuses.sync} />
       </output>
     )
   }
@@ -490,6 +532,7 @@ function ServiceStatusDots() {
           serviceState={statuses[name]}
         />
       ))}
+      <SyncIndicator syncState={statuses.sync} />
     </output>
   )
 }

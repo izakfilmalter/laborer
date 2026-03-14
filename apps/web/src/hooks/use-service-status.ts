@@ -2,21 +2,21 @@
  * Hook that returns a reactive map of per-service health states.
  *
  * Aggregates data from sidecar status events (Electron IPC or dev polling)
- * and includes a `sync` entry for LiveStore sync status. The sync entry
- * is initially `unknown` and will be wired to LiveStore's sync status
- * when Issue #2 (LiveStore sync status indicator) is implemented.
+ * and includes a `sync` entry for LiveStore sync status from the
+ * `SyncStatusContext`.
  *
  * ```tsx
  * const statuses = useServiceStatus()
  * // statuses.server.state → 'healthy' | 'starting' | 'crashed' | ...
- * // statuses.sync.state → 'unknown' (until wired in Issue #2)
+ * // statuses.sync.state → 'unknown' | 'starting' | 'healthy'
  * ```
  *
  * @see Issue #5: useWhenPhase hook and service status hook
- * @see Issue #2: LiveStore sync status indicator (future sync wiring)
+ * @see Issue #2: LiveStore sync status indicator
  */
 
 import { useMemo } from 'react'
+import { useSyncServiceState } from '@/components/sync-status-context'
 import { useSidecarStatuses } from '@/hooks/use-sidecar-statuses'
 import type { ServiceState } from '@/lib/sidecar-statuses'
 
@@ -35,14 +35,14 @@ type ServiceStatuses = Record<ServiceName, ServiceState>
  */
 function useServiceStatus(): ServiceStatuses {
   const sidecarStatuses = useSidecarStatuses()
+  const syncState = useSyncServiceState()
 
   return useMemo(
     (): ServiceStatuses => ({
       ...sidecarStatuses,
-      // Sync status placeholder — wired to LiveStore in Issue #2
-      sync: { state: 'unknown' },
+      sync: syncState,
     }),
-    [sidecarStatuses]
+    [sidecarStatuses, syncState]
   )
 }
 

@@ -11,6 +11,8 @@ import { AppSettingsModal } from '@/components/app-settings-modal'
 import { DockerStatusBanner } from '@/components/docker-status-banner'
 import Header from '@/components/header'
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
+import { SyncStatusBridge } from '@/components/sync-status-bridge'
+import { SyncStatusProvider } from '@/components/sync-status-context'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -64,14 +66,17 @@ function RootComponent() {
             <TooltipProvider>
               <AtomRegistryProvider>
                 <AppSettingsProvider>
-                  <div className="grid h-svh grid-rows-[auto_auto_1fr]">
-                    <Header />
-                    <DockerStatusBanner />
-                    <LiveStoreProvider>
-                      <AppSettingsModal />
-                      <Outlet />
-                    </LiveStoreProvider>
-                  </div>
+                  <SyncStatusProvider>
+                    <div className="grid h-svh grid-rows-[auto_auto_1fr]">
+                      <Header />
+                      <DockerStatusBanner />
+                      <LiveStoreProvider>
+                        <SyncStatusBridge />
+                        <AppSettingsModal />
+                        <Outlet />
+                      </LiveStoreProvider>
+                    </div>
+                  </SyncStatusProvider>
                 </AppSettingsProvider>
               </AtomRegistryProvider>
               <Toaster richColors />

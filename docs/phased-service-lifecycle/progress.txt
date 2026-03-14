@@ -553,3 +553,62 @@
 - TypeScript typecheck passes with no errors across all packages
 - Formatter (ultracite/biome) passes on all changed files
 - Pre-existing format errors in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #2: LiveStore sync status indicator — COMPLETED
+
+### What was done
+- **Created `apps/web/src/components/sync-status-context.tsx`** — React context that bridges LiveStore sync status from inside the LiveStoreProvider boundary to components rendered outside it (like Header):
+  - `SyncStatusProvider` — context provider holding a `ServiceState` value, placed above `Header` in the render tree
+  - `useSyncServiceState()` — returns the current sync `ServiceState` from context (consumed by `useServiceStatus()`)
+  - `useSyncStatusUpdate()` — returns a setter to update the sync state (used by `SyncStatusBridge`)
+  - Default state is `{ state: 'unknown' }` (before LiveStore loads)
+
+- **Created `apps/web/src/components/sync-status-bridge.tsx`** — renderless component that subscribes to `store.networkStatus` from LiveStore and bridges connectivity state to `SyncStatusContext`:
+  - Renders inside `LiveStoreProvider` (calls `useLaborerStore()`)
+  - Polls `store.networkStatus.get` (an Effect `Subscribable`) every 2 seconds
+  - Maps `NetworkStatus.isConnected` to `ServiceState`:
+    - `isConnected: true` → `{ state: 'healthy' }` (sync connected, idle)
+    - `isConnected: false` → `{ state: 'starting' }` (sync connecting/catching up)
+  - Uses `Effect.runPromise` to read the Effect value in React
+
+- **Updated `apps/web/src/hooks/use-service-status.ts`** — wired real sync status:
+  - Replaced hardcoded `sync: { state: 'unknown' }` with `useSyncServiceState()` from context
+  - Added import for `useSyncServiceState` from `sync-status-context`
+  - Updated JSDoc to reflect the new sync status wiring
+
+- **Updated `apps/web/src/components/service-status-dots.tsx`** — added sync indicator:
+  - `SyncIndicator` component — subtle pulsing dot that shows only when sync is actively connecting or catching up
+  - Uses `bg-info` color (blue) to visually distinguish from core service dots (green/yellow/red)
+  - Smaller size (`size-1.5`) than core dots (`size-2`) for visual subtlety
+  - `data-testid="sync-indicator"` for testing
+  - Fixed `w-4` container to prevent layout shifts when indicator appears/disappears
+  - Tooltip shows "Syncing..." on hover
+  - Rendered in both collapsed and expanded states of `ServiceStatusDots`
+  - Hidden when sync is `healthy` (connected) or `unknown` (no sync backend)
+  - `isSyncActive()` helper determines visibility
+
+- **Updated `apps/web/src/routes/__root.tsx`** — wired context and bridge:
+  - Added `SyncStatusProvider` wrapping the layout div (above `Header`, below `AppSettingsProvider`)
+  - Added `SyncStatusBridge` inside `LiveStoreProvider` (alongside `AppSettingsModal` and `Outlet`)
+
+- **Fixed inaccurate JSDoc in `apps/web/src/livestore/store.ts`** — removed reference to non-existent `store.useSyncStatus()` method, replaced with accurate documentation of `store.networkStatus` (Effect `Subscribable`)
+
+- **Created `apps/web/test/sync-status-indicator.test.tsx`** with 4 tests:
+  1. Sync indicator renders when sync status is syncing (isConnected: false → starting state)
+  2. Sync indicator hidden when sync status is connected/idle (isConnected: true → healthy state)
+  3. Sync indicator hidden when no sync status set (unknown/default)
+  4. Sync indicator does not cause layout shifts (fixed w-4 container dimensions)
+
+### Architecture Note
+The `Header` component renders **outside** the `LiveStoreProvider` boundary in `__root.tsx`. Since `useServiceStatus()` (consumed by `ServiceStatusDots` in `Header`) needs sync data, the sync status must be bridged via React context:
+- `SyncStatusProvider` wraps both `Header` and `LiveStoreProvider`
+- `SyncStatusBridge` renders inside `LiveStoreProvider`, reads `store.networkStatus`, and writes to the context
+- `useServiceStatus()` reads from the context to populate the `sync` field
+
+### Verification
+- All 4 new tests pass
+- All 628 web tests pass (up from 624 after Issue #10, 4 new tests)
+- All 344 server tests pass (no regressions)
+- TypeScript typecheck passes with no errors across all 7 packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change

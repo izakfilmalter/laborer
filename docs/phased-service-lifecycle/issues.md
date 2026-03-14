@@ -7,7 +7,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
 | 1 | Switch LiveStore to non-blocking sync | None | Done |
-| 2 | LiveStore sync status indicator | #1 | Ready |
+| 2 | LiveStore sync status indicator | #1 | Done |
 | 3 | First-launch empty cache handling | #1 | Ready |
 | 4 | Lifecycle phase enum and context | None | Done |
 | 5 | `useWhenPhase` hook and service status hook | #4 | Done |

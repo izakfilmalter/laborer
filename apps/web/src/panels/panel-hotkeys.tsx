@@ -8,6 +8,10 @@
  * - Cmd+d → split horizontal (side-by-side)
  * - Cmd+Shift+d → split vertical (stacked)
  * - Cmd+Shift+Enter → toggle fullscreen for active terminal pane
+ * - Cmd+Option+ArrowLeft → move focus to pane on the left
+ * - Cmd+Option+ArrowRight → move focus to pane on the right
+ * - Cmd+Option+ArrowUp → move focus to pane above
+ * - Cmd+Option+ArrowDown → move focus to pane below
  *
  * Tmux-style prefix key sequences (Ctrl+b then action key):
  * - Ctrl+b then h → split horizontal (side-by-side)
@@ -92,6 +96,23 @@ function getResizeDirectionFromEvent(
     return 'up'
   }
 
+  return null
+}
+
+/** Map an arrow key string to a NavigationDirection, or null if not an arrow key. */
+function arrowKeyToDirection(key: string): NavigationDirection | null {
+  if (key === 'ArrowLeft') {
+    return 'left'
+  }
+  if (key === 'ArrowRight') {
+    return 'right'
+  }
+  if (key === 'ArrowUp') {
+    return 'up'
+  }
+  if (key === 'ArrowDown') {
+    return 'down'
+  }
   return null
 }
 
@@ -545,6 +566,34 @@ function PanelHotkeys({
     (event) => navigateDirection(event, 'down'),
     { timeout: SEQUENCE_TIMEOUT }
   )
+
+  // --- cmux-style direct navigation (Cmd+Option+Arrow) ---
+  // Navigate to the pane in the given direction with a single shortcut,
+  // no prefix key required. Uses raw keydown handler because TanStack
+  // Hotkeys may not handle Alt+Meta+Arrow reliably on macOS (Option key
+  // can produce special characters for some key combinations).
+  useEffect(() => {
+    const handleMetaAltArrow = (event: KeyboardEvent) => {
+      if (!(event.metaKey && event.altKey) || event.ctrlKey || event.shiftKey) {
+        return
+      }
+      const direction = arrowKeyToDirection(event.key)
+      if (direction) {
+        event.preventDefault()
+        if (!(actions && activePaneId && layout)) {
+          return
+        }
+        const targetId = findPaneInDirection(layout, activePaneId, direction)
+        if (targetId) {
+          actions.setActivePaneId(targetId)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleMetaAltArrow)
+    return () => {
+      window.removeEventListener('keydown', handleMetaAltArrow)
+    }
+  }, [actions, activePaneId, layout])
 
   // --- Panel tab shortcuts ---
 

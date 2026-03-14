@@ -93,6 +93,17 @@ const isCtrlShiftBracket = (event: KeyboardEvent): boolean =>
   !event.altKey &&
   (event.key === '[' || event.key === ']')
 
+/** Cmd+Option+Arrow — directional pane navigation (cmux-style). */
+const isMetaAltArrow = (event: KeyboardEvent): boolean =>
+  event.metaKey &&
+  event.altKey &&
+  !event.ctrlKey &&
+  !event.shiftKey &&
+  (event.key === 'ArrowLeft' ||
+    event.key === 'ArrowRight' ||
+    event.key === 'ArrowUp' ||
+    event.key === 'ArrowDown')
+
 /**
  * Check if a keyboard event should bypass xterm.js and bubble to
  * the global hotkey layer (TanStack Hotkeys on document).
@@ -109,7 +120,8 @@ const shouldBypassTerminal = (event: KeyboardEvent): boolean =>
   isMetaShiftBracket(event) ||
   isCtrlT(event) ||
   isCtrlDigit(event) ||
-  isCtrlShiftBracket(event)
+  isCtrlShiftBracket(event) ||
+  isMetaAltArrow(event)
 
 export {
   isCtrlDigit,
@@ -117,6 +129,7 @@ export {
   isCtrlT,
   isExactCtrlB,
   isExactMetaW,
+  isMetaAltArrow,
   isMetaDigit,
   isMetaN,
   isMetaShiftBracket,

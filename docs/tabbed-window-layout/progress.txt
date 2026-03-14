@@ -727,3 +727,50 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 891/891 tests pass (33 new + 858 existing)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing `useAwait` issue in unrelated test code)
+
+## Issue #16: cmux-style keybindings: pane navigation + zoom — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Added `Cmd+Option+Arrow` (Meta+Alt+Arrow) directional pane navigation shortcuts to `apps/web/src/panels/panel-hotkeys.tsx`:
+  - `Cmd+Option+ArrowLeft` → move focus to the pane on the left
+  - `Cmd+Option+ArrowRight` → move focus to the pane on the right
+  - `Cmd+Option+ArrowUp` → move focus to the pane above
+  - `Cmd+Option+ArrowDown` → move focus to the pane below
+  - Uses raw `keydown` event handler (not `useHotkeySequence`) because TanStack Hotkeys may not handle Alt+Meta+Arrow reliably on macOS
+  - Reuses existing `findPaneInDirection` from `layout-utils.ts` for spatial navigation logic
+  - Navigation works within panel splits AND across workspace tiles (same algorithm as `Ctrl+B, Arrow`)
+
+- Added `arrowKeyToDirection` helper function in `panel-hotkeys.tsx`:
+  - Maps arrow key strings to `NavigationDirection` values
+  - Used by the `Cmd+Option+Arrow` handler for clean key-to-direction dispatch
+
+- Added `isMetaAltArrow` detector to `apps/web/src/panes/terminal-keys.ts`:
+  - Detects `Cmd+Option+Arrow` (Meta+Alt+Arrow) events for all four directions
+  - Requires exactly Meta+Alt with no Ctrl or Shift modifiers
+  - Added to `shouldBypassTerminal` chain so shortcuts work when terminal has focus
+
+- Updated documentation comment at top of `panel-hotkeys.tsx` to include new shortcuts
+
+- Verified existing shortcuts work correctly in the new hierarchy:
+  - `Cmd+Shift+Enter` (zoom toggle) — already registered, uses transient `fullscreenPaneId` state that works regardless of hierarchy depth
+  - `Cmd+B` (sidebar toggle) — handled by sidebar component, no conflict with `Ctrl+B` prefix (different modifier keys on macOS)
+  - `Ctrl+B, Arrow` (directional navigation fallback) — continues to work via `useHotkeySequence`, same `findPaneInDirection` algorithm
+
+### Tests
+- 14 new tests in `apps/web/test/terminal-keys.test.ts`:
+  - **shouldBypassTerminal** (4 tests): bypasses Cmd+Option+ArrowLeft/Right/Up/Down
+  - **isMetaAltArrow** (10 tests):
+    - Returns true for all four arrow directions with Cmd+Option
+    - Returns false when meta not held, when alt not held
+    - Returns false when ctrl also held, when shift also held
+    - Returns false for non-arrow keys with same modifiers
+    - Returns false for plain arrow keys (terminal cursor movement)
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 905/905 tests pass (14 new + 891 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)

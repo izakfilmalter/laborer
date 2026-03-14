@@ -15,7 +15,6 @@ import {
 } from '@/components/ui/resizable'
 import {
   filterTreeByWorkspace,
-  findNodeById,
   getLeafNodes,
   getWorkspaceIds,
   isWorkspaceFrameData,
@@ -334,14 +333,12 @@ function WorkspaceFrameResizableChild({
 export function WorkspaceFrames({
   layout,
   activePaneId,
-  fullscreenPaneId,
   workspaceOrder,
   diffWorkspaceId = null,
   reviewWorkspaceId = null,
 }: {
   readonly layout: PanelNode
   readonly activePaneId: string | null
-  readonly fullscreenPaneId: string | null
   readonly workspaceOrder: string[] | null
   readonly diffWorkspaceId?: string | null
   readonly reviewWorkspaceId?: string | null
@@ -362,26 +359,6 @@ export function WorkspaceFrames({
 
     return sortWorkspaceLayouts(layouts, workspaceOrder)
   }, [layout, workspaceIds, workspaceOrder])
-
-  // When a pane is fullscreened, find the workspace it belongs to and
-  // render only that workspace with just the fullscreened pane's LeafNode.
-  const fullscreenLayout = useMemo(() => {
-    if (!fullscreenPaneId) {
-      return null
-    }
-    const node = findNodeById(layout, fullscreenPaneId)
-    if (!node || node._tag !== 'LeafNode') {
-      return null
-    }
-    // Find which workspace this pane belongs to
-    const wsEntry = workspaceLayouts.find((entry) => {
-      const leaves = getLeafNodes(entry.subLayout)
-      return leaves.some((l) => l.id === fullscreenPaneId)
-    })
-    return wsEntry
-      ? { workspaceId: wsEntry.workspaceId, subLayout: node }
-      : null
-  }, [fullscreenPaneId, layout, workspaceLayouts])
 
   // Wire up the monitor to handle workspace frame drops (reordering)
   const actions = usePanelActions()
@@ -413,20 +390,6 @@ export function WorkspaceFrames({
       },
     })
   }, [workspaceLayouts, actions])
-
-  // Fullscreen mode — render only the fullscreened pane in its workspace frame
-  if (fullscreenLayout) {
-    return (
-      <WorkspaceFrame
-        activePaneId={activePaneId}
-        diffWorkspaceId={diffWorkspaceId}
-        index={0}
-        reviewWorkspaceId={reviewWorkspaceId}
-        subLayout={fullscreenLayout.subLayout}
-        workspaceId={fullscreenLayout.workspaceId}
-      />
-    )
-  }
 
   // Single workspace — no need for resizable splitting
   if (workspaceLayouts.length <= 1) {

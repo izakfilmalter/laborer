@@ -49,6 +49,7 @@ import type { LeafNode, PanelNode, SplitNode } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import { Layers, Plus, Terminal as TerminalIcon } from 'lucide-react'
 import { useCallback, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { GroupImperativeHandle } from 'react-resizable-panels'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalOverlayToolbar } from '@/components/terminal-overlay-toolbar'
@@ -79,6 +80,7 @@ import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import {
   useFullscreenPaneId,
+  useFullscreenPortal,
   usePanelActions,
   usePendingClosePane,
 } from '@/panels/panel-context'
@@ -429,8 +431,11 @@ function SplitChild({
 function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
   const actions = usePanelActions()
   const fullscreenPaneId = useFullscreenPaneId()
+  const fullscreenPortalRef = useFullscreenPortal()
   const pendingClose = usePendingClosePane()
   const [isDragOver, setIsDragOver] = useState(false)
+
+  const isFullscreen = fullscreenPaneId === node.id
 
   /**
    * Auto-close the pane when the terminal process exits.
@@ -500,7 +505,7 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
     borderClass = 'border-2 border-primary bg-primary/5'
   }
 
-  return (
+  const paneContent = (
     // biome-ignore lint/a11y/useSemanticElements: Panel pane container requires drag-and-drop target behavior
     // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Drag-and-drop handlers on pane container are essential for terminal assignment
     <div
@@ -518,7 +523,7 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
       {isOccupiedTerminalPane && (
         <TerminalOverlayToolbar
           actions={actions}
-          isFullscreen={fullscreenPaneId === node.id}
+          isFullscreen={isFullscreen}
           paneId={node.id}
         />
       )}
@@ -531,6 +536,24 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
       )}
     </div>
   )
+
+  // When fullscreened, portal the pane content into a container that sits
+  // above the entire panel hierarchy. The pane stays mounted in React's
+  // component tree (preserving xterm.js instance, WebGL context, WebSocket
+  // connection, and all hook state) but its DOM output renders into an
+  // absolutely-positioned overlay at the PanelContent level.
+  //
+  // Sibling terminals are completely untouched — they keep their DOM
+  // position, dimensions, and ResizeObserver state. Only the fullscreened
+  // pane needs a re-fit (handled by its ResizeObserver when the portal
+  // container expands to fill the panel area). When fullscreen exits, the
+  // portal is removed and the pane renders back in its original slot —
+  // its ResizeObserver fires one resize, but siblings never changed.
+  if (isFullscreen && fullscreenPortalRef) {
+    return createPortal(paneContent, fullscreenPortalRef)
+  }
+
+  return paneContent
 }
 
 /**

@@ -223,6 +223,18 @@ const PendingClosePaneContext =
   createContext<PendingCloseState>(defaultPendingClose)
 
 /**
+ * The DOM element where the fullscreened pane portals its content.
+ * The portal target sits at the PanelContent level, positioned absolutely
+ * over the entire panel area. This lets the fullscreened pane escape its
+ * ResizablePanel container without unmounting siblings.
+ *
+ * Uses `HTMLElement | null` (not a ref) so that setting the element via
+ * a callback ref + useState triggers a re-render — ensuring the portal
+ * target is available to `createPortal` on the first render after mount.
+ */
+const FullscreenPortalContext = createContext<HTMLElement | null>(null)
+
+/**
  * Provider component that makes panel actions, active pane state,
  * fullscreen pane state, and pending close confirmation state available
  * to all pane components in the tree.
@@ -288,10 +300,21 @@ function usePendingClosePane(): PendingCloseState {
   return useContext(PendingClosePaneContext)
 }
 
+/**
+ * Hook to access the fullscreen portal target element.
+ * Used by LeafPaneRenderer to portal the fullscreened pane's content
+ * into a container that sits above the panel hierarchy.
+ */
+function useFullscreenPortal(): HTMLElement | null {
+  return useContext(FullscreenPortalContext)
+}
+
 export {
+  FullscreenPortalContext,
   PanelActionsProvider,
   useActivePaneId,
   useFullscreenPaneId,
+  useFullscreenPortal,
   usePanelActions,
   usePendingClosePane,
 }

@@ -718,90 +718,95 @@ function WorkspaceItem({
             )}
           </div>
         </div>
-        {/* Row 2 — Infra: container URL/port, status, pause/play */}
-        <div className="flex min-w-0 items-center justify-between gap-2">
-          {containerLink ? (
-            <CardDescription className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-              <span className="group/copyable flex min-w-0 items-center gap-1 overflow-hidden">
-                <a
-                  className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
-                  href={containerLink}
-                  onClick={handleContainerLinkClick}
-                  rel="noopener"
-                  target="_blank"
-                  title={`Open ${containerLink}`}
-                >
-                  {workspace.containerUrl}
-                </a>
-                <span className="-mr-14 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
-                  <CopyButton title="Copy URL" value={containerLink} />
-                  <Tooltip>
-                    <TooltipTrigger>
-                      <a
-                        aria-label="Open in browser"
-                        className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                        href={containerLink}
-                        onClick={handleContainerLinkClick}
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        <ExternalLink className="size-3" />
-                      </a>
-                    </TooltipTrigger>
-                    <TooltipContent>Open in browser</TooltipContent>
-                  </Tooltip>
-                </span>
-              </span>
-            </CardDescription>
-          ) : (
-            workspace.port > 0 && (
-              <CardDescription className="flex items-center gap-2">
-                <span className="font-mono text-muted-foreground">
-                  :{workspace.port}
+        {/* Row 2 — Infra: container URL/port, status, pause/play (hidden for root workspace) */}
+        {!isRootWorkspace && (
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            {containerLink ? (
+              <CardDescription className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+                <span className="group/copyable flex min-w-0 items-center gap-1 overflow-hidden">
+                  <a
+                    className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
+                    href={containerLink}
+                    onClick={handleContainerLinkClick}
+                    rel="noopener"
+                    target="_blank"
+                    title={`Open ${containerLink}`}
+                  >
+                    {workspace.containerUrl}
+                  </a>
+                  <span className="-mr-14 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
+                    <CopyButton title="Copy URL" value={containerLink} />
+                    <Tooltip>
+                      <TooltipTrigger>
+                        <a
+                          aria-label="Open in browser"
+                          className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                          href={containerLink}
+                          onClick={handleContainerLinkClick}
+                          rel="noopener"
+                          target="_blank"
+                        >
+                          <ExternalLink className="size-3" />
+                        </a>
+                      </TooltipTrigger>
+                      <TooltipContent>Open in browser</TooltipContent>
+                    </Tooltip>
+                  </span>
                 </span>
               </CardDescription>
-            )
-          )}
-          <div className="ml-auto flex shrink-0 items-center gap-1">
-            <Badge
-              className={cn('shrink-0 border', getStatusClasses(displayStatus))}
-              variant="outline"
-            >
-              <StatusDot status={displayStatus} />
-              {displayStatus}
-            </Badge>
-            {isContainerized ? (
-              <ContainerPauseButton
-                isPaused={isContainerPaused}
-                workspaceId={workspace.id}
-              />
             ) : (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      aria-label="Start ralph loop"
-                      disabled={isStartingLoop}
-                      onClick={handleStartLoop}
-                      size="icon-xs"
-                      variant="ghost"
-                    />
-                  }
-                >
-                  <Play
-                    className={cn(
-                      'size-3.5',
-                      isStartingLoop
-                        ? 'animate-pulse text-muted-foreground'
-                        : 'text-success'
-                    )}
-                  />
-                </TooltipTrigger>
-                <TooltipContent>Start Ralph Loop</TooltipContent>
-              </Tooltip>
+              workspace.port > 0 && (
+                <CardDescription className="flex items-center gap-2">
+                  <span className="font-mono text-muted-foreground">
+                    :{workspace.port}
+                  </span>
+                </CardDescription>
+              )
             )}
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              <Badge
+                className={cn(
+                  'shrink-0 border',
+                  getStatusClasses(displayStatus)
+                )}
+                variant="outline"
+              >
+                <StatusDot status={displayStatus} />
+                {displayStatus}
+              </Badge>
+              {isContainerized ? (
+                <ContainerPauseButton
+                  isPaused={isContainerPaused}
+                  workspaceId={workspace.id}
+                />
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        aria-label="Start ralph loop"
+                        disabled={isStartingLoop}
+                        onClick={handleStartLoop}
+                        size="icon-xs"
+                        variant="ghost"
+                      />
+                    }
+                  >
+                    <Play
+                      className={cn(
+                        'size-3.5',
+                        isStartingLoop
+                          ? 'animate-pulse text-muted-foreground'
+                          : 'text-success'
+                      )}
+                    />
+                  </TooltipTrigger>
+                  <TooltipContent>Start Ralph Loop</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </CardHeader>
       <CardContent>
         {workspace.worktreeSetupStep != null && (

@@ -195,7 +195,6 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        fullscreenPaneId={null}
         layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
         workspaceOrder={null}
@@ -212,7 +211,6 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        fullscreenPaneId={null}
         layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId={null}
         workspaceOrder={null}
@@ -226,7 +224,6 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        fullscreenPaneId={null}
         layout={TWO_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
         workspaceOrder={null}
@@ -258,7 +255,6 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        fullscreenPaneId={null}
         layout={TWO_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-2"
         workspaceOrder={null}
@@ -283,7 +279,6 @@ describe('Workspace-scoped diff panel', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-1"
-        fullscreenPaneId={null}
         layout={SINGLE_WORKSPACE_LAYOUT}
         workspaceOrder={null}
       />
@@ -299,7 +294,6 @@ describe('Workspace-scoped diff panel', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId={null}
-        fullscreenPaneId={null}
         layout={SINGLE_WORKSPACE_LAYOUT}
         workspaceOrder={null}
       />
@@ -313,7 +307,6 @@ describe('Workspace-scoped diff panel', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-2"
-        fullscreenPaneId={null}
         layout={TWO_WORKSPACE_LAYOUT}
         workspaceOrder={null}
       />
@@ -338,7 +331,6 @@ describe('Both panels in same workspace', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-1"
-        fullscreenPaneId={null}
         layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
         workspaceOrder={null}
@@ -354,7 +346,6 @@ describe('Both panels in same workspace', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-1"
-        fullscreenPaneId={null}
         layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
         workspaceOrder={null}
@@ -375,7 +366,6 @@ describe('Both panels in same workspace', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-1"
-        fullscreenPaneId={null}
         layout={SINGLE_WORKSPACE_LAYOUT}
         workspaceOrder={null}
       />
@@ -392,7 +382,6 @@ describe('Both panels in same workspace', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        fullscreenPaneId={null}
         layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
         workspaceOrder={null}
@@ -409,7 +398,6 @@ describe('Both panels in same workspace', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-2"
-        fullscreenPaneId={null}
         layout={TWO_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
         workspaceOrder={null}

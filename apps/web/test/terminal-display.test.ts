@@ -143,10 +143,10 @@ describe('getTerminalDisplay', () => {
     expect(result.badgeClassName).toContain('animate-pulse')
   })
 
-  it('uses the command name as label when waiting_for_input with no foreground process', () => {
+  it('uses the agent display label when waiting_for_input with no foreground process', () => {
     const result = getTerminalDisplay('claude', null, true, 'waiting_for_input')
 
-    expect(result.label).toBe('claude')
+    expect(result.label).toBe('Claude')
     expect(result.badgeLabel).toBe('needs input')
   })
 
@@ -273,6 +273,59 @@ describe('getTerminalDisplay', () => {
       true,
       'waiting_for_input',
       [opencode]
+    )
+
+    expect(result.label).toBe('OpenCode')
+    expect(result.badgeLabel).toBe('needs input')
+  })
+
+  // -------------------------------------------------------------------------
+  // Agent command fallback — branding when foregroundProcess is null
+  // -------------------------------------------------------------------------
+
+  it('shows agent icon and capitalised label for idle agent terminal', () => {
+    const result = getTerminalDisplay('opencode', null, true, null)
+
+    expect(result.label).toBe('OpenCode')
+    expect(result.badgeLabel).toBe('idle')
+  })
+
+  it('shows agent label for stopped agent terminal', () => {
+    const result = getTerminalDisplay('opencode', null, false, null)
+
+    expect(result.label).toBe('OpenCode')
+    expect(result.badgeLabel).toBe('stopped')
+  })
+
+  it('shows agent label when shell foreground process detected in agent terminal', () => {
+    const result = getTerminalDisplay(
+      'claude',
+      {
+        category: 'shell',
+        label: 'zsh',
+        rawName: 'zsh',
+      },
+      true,
+      null
+    )
+
+    expect(result.label).toBe('Claude')
+    expect(result.badgeLabel).toBe('idle')
+  })
+
+  it('does not use agent fallback for non-agent commands', () => {
+    const result = getTerminalDisplay('/bin/zsh', null, true, null)
+
+    expect(result.label).toBe('/bin/zsh')
+    expect(result.badgeLabel).toBe('idle')
+  })
+
+  it('shows agent label when waiting_for_input with no process chain', () => {
+    const result = getTerminalDisplay(
+      'opencode',
+      null,
+      true,
+      'waiting_for_input'
     )
 
     expect(result.label).toBe('OpenCode')

@@ -244,6 +244,25 @@ const makeWorkspace = (
 })
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Configure the mock store with the given workspaces (and optional PRDs). */
+const mockStore = (workspaces: unknown[], prds: unknown[] = []) => {
+  useLaborerStoreMock.mockReturnValue({
+    useQuery: (query: { label: string }) => {
+      if (query.label === 'workspaceList') {
+        return workspaces
+      }
+      if (query.label === 'workspaceList.prds') {
+        return prds
+      }
+      return []
+    },
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -265,17 +284,7 @@ describe('WorkspaceList — root workspace delete protection', () => {
       worktreePath: PROJECT_REPO_PATH,
     })
 
-    useLaborerStoreMock.mockReturnValue({
-      useQuery: (query: { label: string }) => {
-        if (query.label === 'workspaceList') {
-          return [rootWorkspace]
-        }
-        if (query.label === 'workspaceList.prds') {
-          return []
-        }
-        return []
-      },
-    })
+    mockStore([rootWorkspace])
 
     render(<WorkspaceList projectId="project-1" repoPath={PROJECT_REPO_PATH} />)
 
@@ -292,17 +301,7 @@ describe('WorkspaceList — root workspace delete protection', () => {
       worktreePath: '/Users/dev/my-project-worktrees/feature-my-feature',
     })
 
-    useLaborerStoreMock.mockReturnValue({
-      useQuery: (query: { label: string }) => {
-        if (query.label === 'workspaceList') {
-          return [linkedWorkspace]
-        }
-        if (query.label === 'workspaceList.prds') {
-          return []
-        }
-        return []
-      },
-    })
+    mockStore([linkedWorkspace])
 
     render(<WorkspaceList projectId="project-1" repoPath={PROJECT_REPO_PATH} />)
 
@@ -324,17 +323,7 @@ describe('WorkspaceList — root workspace delete protection', () => {
       worktreePath: '/Users/dev/my-project-worktrees/feature-my-feature',
     })
 
-    useLaborerStoreMock.mockReturnValue({
-      useQuery: (query: { label: string }) => {
-        if (query.label === 'workspaceList') {
-          return [rootWorkspace, linkedWorkspace]
-        }
-        if (query.label === 'workspaceList.prds') {
-          return []
-        }
-        return []
-      },
-    })
+    mockStore([rootWorkspace, linkedWorkspace])
 
     render(<WorkspaceList projectId="project-1" repoPath={PROJECT_REPO_PATH} />)
 

@@ -235,7 +235,7 @@ Implement the migration path that converts persisted old-format layouts to the n
 
 ## 7. Tab bar component
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1067,7 +1067,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 4 | Layout-utils: panel tab operations | 1 | done |
 | 5 | Schema + LiveStore events for new layout model | 1 | done |
 | 6 | Layout migration: flat PanelNode to hierarchical WindowLayout | 1, 2, 5 | done |
-| 7 | Tab bar component | None | pending |
+| 7 | Tab bar component | None | done |
 | 8 | Window tab bar integration | 7, 2, 5 | pending |
 | 9 | Workspace bidirectional tiling UI | 3, 5, 6 | pending |
 | 10 | Panel tab bar integration | 7, 4, 9 | pending |

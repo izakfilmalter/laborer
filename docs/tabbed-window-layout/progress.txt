@@ -224,3 +224,49 @@ Date: 2026-03-13
 - `bun run --filter @laborer/web test` — 780/780 tests pass (47 new + 733 existing)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no issues in modified files
+
+## Issue #7: Tab bar component — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Created new presentational component `apps/web/src/components/ui/tab-bar.tsx`:
+  - `TabBar` — shared tab bar component used at both window tab level and workspace panel tab level
+  - `TabBarTab` — individual draggable tab with close button, active indicator, and dirty indicator
+  - `TabBarInner` — inner component that mounts drag-and-drop monitor only when rendered
+
+- Component features:
+  - **Auto-hide**: when `autoHide` prop is true and items.length <= 1, renders nothing
+  - **Active tab indicator**: bottom border line (`bg-primary`) on the active tab
+  - **Close button**: per-tab close button with `onClose(id)` callback; close click does not bubble to `onSelect`
+  - **New tab (+) button**: renders a `+` icon button with configurable tooltip via `newTabTooltip` prop
+  - **Dirty indicator**: amber dot with title="Unsaved changes" when `isDirty` is true
+  - **Icon support**: optional `icon` ReactNode rendered before the label
+  - **Drag-and-drop reordering**: using `@atlaskit/pragmatic-drag-and-drop` with per-instance `barId` to prevent cross-bar drops; visual drop indicators (left/right `bg-primary` lines); `onReorder(fromIndex, toIndex)` callback
+  - **Overflow scrolling**: tab area uses `overflow-x-auto scrollbar-none` for horizontal scroll when tabs exceed width
+  - **Keyboard accessibility**: `role="tablist"` on container, `role="tab"` on each item, `aria-selected` reflecting active state, `tabIndex=0` for active / `-1` for inactive, Enter/Space key handlers for selection
+
+- Props interface:
+  - `items: readonly TabBarItem[]` — ordered tab items with `id`, `label`, `icon?`, `isDirty?`, `isActive`
+  - `onSelect(id)`, `onClose(id)`, `onNew()`, `onReorder(fromIndex, toIndex)` — callbacks
+  - `autoHide?: boolean` — hide when 0 or 1 items (defaults to false)
+  - `newTabTooltip?: string` — tooltip for the + button (defaults to "New tab")
+  - `className?: string` — additional classes for the root container
+
+- Styling follows existing patterns: Tailwind CSS, `cn()` utility, `h-8 border-b` header bar pattern, `size-3.5` icon sizing, ghost variant buttons
+
+### Tests
+- 25 tests in `apps/web/test/tab-bar.test.tsx` covering:
+  - Auto-hide: 0 items, 1 item, 2+ items with autoHide true/false, default autoHide
+  - Rendering items: all items rendered, labels, aria-selected, dirty indicator, icon
+  - Callbacks: onSelect on click, onClose on close button click, close doesn't trigger onSelect, onNew on + button, custom newTabTooltip
+  - Keyboard accessibility: role=tablist, role=tab, tabIndex, Enter key, Space key
+  - Multiple tabs: close buttons for all, only one aria-selected at a time
+  - className prop: applied to root element
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 805/805 tests pass (25 new + 780 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no issues in modified files

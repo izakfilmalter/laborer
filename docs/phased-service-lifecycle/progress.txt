@@ -93,3 +93,36 @@
 - TypeScript typecheck passes with no errors across all 7 packages
 - Formatter (ultracite/biome) passes on changed files
 - Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #7: Wire sidecar status events to lifecycle phase transitions — COMPLETED
+
+### What was done
+- Created `apps/web/src/hooks/use-phase-transition-driver.tsx` with:
+  - `usePhaseTransitionDriver()` hook that subscribes to `useSidecarStatuses()` and calls `advanceTo()` when transition conditions are met
+  - **Starting → Ready:** Triggered when server sidecar reports `healthy`
+  - **Ready → Restored:** Triggered when terminal + file-watcher sidecars both report `healthy` (after server already healthy)
+  - Handles out-of-order events correctly (e.g., terminal healthy before server — waits for server, then advances directly to Restored)
+  - Uses `advanceTo()` forward-only semantics — no phase regression even if services crash
+  - `PhaseTransitionDriver` renderless component for use in the app root
+- Wired `PhaseTransitionDriver` into `apps/web/src/routes/__root.tsx` inside `LifecyclePhaseProvider` (alongside existing `SidecarCrashListener`)
+- Works in both Electron (IPC events via `bridge.onSidecarStatus()`) and dev mode (HTTP health polling) — both modes are handled by `useSidecarStatuses()` which this hook consumes
+- Created `apps/web/test/phase-transition-driver.test.tsx` with 7 tests:
+  1. Advances to Ready when server health endpoint responds
+  2. Stays at Starting when no sidecar events received
+  3. Does not advance to Ready when only terminal reports healthy
+  4. Does not advance to Ready when only file-watcher reports healthy
+  5. Advances to Restored when terminal + file-watcher become healthy after Ready
+  6. Handles out-of-order events: terminal/file-watcher healthy before server (jumps to Restored)
+  7. Advances to Restored correctly when file-watcher lags behind terminal + server
+
+### Notes
+- The **Restored → Eventually** transition is NOT wired yet — it depends on Issue #15 (Server "fully initialized" event) which is blocked by Issues #14 and #13
+- LiveStore sync status is NOT included in the Restored transition condition yet — it depends on Issue #2 (LiveStore sync status indicator) which will wire `useSyncStatus()` into `useServiceStatus()`
+- Once Issue #15 is implemented, a new condition will be added to trigger the Eventually phase
+
+### Verification
+- All 7 new tests pass
+- All 590 tests pass (no regressions, up from 583 after Issue #6)
+- TypeScript typecheck passes with no errors
+- Formatter (ultracite/biome) passes on new files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change

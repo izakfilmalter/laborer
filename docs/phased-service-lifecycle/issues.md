@@ -12,7 +12,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 4 | Lifecycle phase enum and context | None | Done |
 | 5 | `useWhenPhase` hook and service status hook | #4 | Done |
 | 6 | Remove ServerGate blocking gate | #1, #4 | Done |
-| 7 | Wire sidecar status events to lifecycle phase transitions | #5, #6 | Ready |
+| 7 | Wire sidecar status events to lifecycle phase transitions | #5, #6 | Done |
 | 8 | Header per-service status dots | #5 | Ready |
 | 9 | Header status collapse and expand | #8 | Blocked |
 | 10 | Header error state persistence and animations | #8 | Blocked |

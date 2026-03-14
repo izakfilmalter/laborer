@@ -14,6 +14,7 @@ import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { PhaseTransitionDriver } from '@/hooks/use-phase-transition-driver'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
 import { LiveStoreProvider } from '@/livestore/provider'
 
@@ -74,6 +75,7 @@ function RootComponent() {
                 </AppSettingsProvider>
               </AtomRegistryProvider>
               <Toaster richColors />
+              <PhaseTransitionDriver />
               <SidecarCrashListener />
             </TooltipProvider>
           </HotkeysProvider>

@@ -26,8 +26,10 @@ import {
   getLeafIds,
   getLeafNodes,
   getScopedActivePaneId,
+  getStaleTerminalLeaves,
   getWorkspaceIds,
   isWorkspaceFrameData,
+  reconcileLayout,
   repairPanelLayoutTree,
   shouldConfirmClose,
   sortWorkspaceLayouts,
@@ -1792,5 +1794,250 @@ describe('review pane type', () => {
 
     const result = closePane(layout, 'pane-review')
     expect(result).toEqual(terminalLeaf)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: getStaleTerminalLeaves
+// ---------------------------------------------------------------------------
+
+describe('getStaleTerminalLeaves', () => {
+  it('returns empty when all terminal IDs are live', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-A',
+          paneType: 'terminal',
+          terminalId: 'term-1',
+          workspaceId: 'ws-1',
+        },
+        {
+          _tag: 'LeafNode',
+          id: 'pane-B',
+          paneType: 'terminal',
+          terminalId: 'term-2',
+          workspaceId: 'ws-2',
+        },
+      ],
+      sizes: [50, 50],
+    }
+    const liveIds = new Set(['term-1', 'term-2'])
+
+    expect(getStaleTerminalLeaves(layout, liveIds)).toEqual([])
+  })
+
+  it('returns leaves whose terminal IDs are not in the live set', () => {
+    const staleLeaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-A',
+      paneType: 'terminal',
+      terminalId: 'term-stale',
+      workspaceId: 'ws-1',
+    }
+    const liveLeaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-B',
+      paneType: 'terminal',
+      terminalId: 'term-live',
+      workspaceId: 'ws-2',
+    }
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [staleLeaf, liveLeaf],
+      sizes: [50, 50],
+    }
+    const liveIds = new Set(['term-live'])
+
+    const result = getStaleTerminalLeaves(layout, liveIds)
+    expect(result).toHaveLength(1)
+    expect(result[0]?.terminalId).toBe('term-stale')
+  })
+
+  it('skips leaves with no terminal ID assigned', () => {
+    const emptyLeaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-empty',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+
+    expect(getStaleTerminalLeaves(emptyLeaf, new Set())).toEqual([])
+  })
+
+  it('collects stale leaves from a nested layout', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-A',
+          paneType: 'terminal',
+          terminalId: 'term-stale-1',
+          workspaceId: 'ws-1',
+        },
+        {
+          _tag: 'SplitNode',
+          id: 'split-right',
+          direction: 'vertical',
+          children: [
+            {
+              _tag: 'LeafNode',
+              id: 'pane-B',
+              paneType: 'terminal',
+              terminalId: 'term-live',
+              workspaceId: 'ws-2',
+            },
+            {
+              _tag: 'LeafNode',
+              id: 'pane-C',
+              paneType: 'terminal',
+              terminalId: 'term-stale-2',
+              workspaceId: 'ws-3',
+            },
+          ],
+          sizes: [50, 50],
+        },
+      ],
+      sizes: [50, 50],
+    }
+    const liveIds = new Set(['term-live'])
+
+    const result = getStaleTerminalLeaves(layout, liveIds)
+    expect(result).toHaveLength(2)
+    expect(result.map((l) => l.terminalId)).toEqual([
+      'term-stale-1',
+      'term-stale-2',
+    ])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: reconcileLayout
+// ---------------------------------------------------------------------------
+
+describe('reconcileLayout', () => {
+  it('replaces stale terminal IDs with respawned ones', () => {
+    const layout: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-A',
+      paneType: 'terminal',
+      terminalId: 'term-old',
+      workspaceId: 'ws-1',
+    }
+    const liveIds = new Set<string>()
+    const respawnedIds = new Map([['term-old', 'term-new']])
+
+    const result = reconcileLayout(layout, liveIds, respawnedIds)
+    expect(result._tag).toBe('LeafNode')
+    expect((result as LeafNode).terminalId).toBe('term-new')
+  })
+
+  it('clears terminal ID when stale but no respawn mapping exists', () => {
+    const layout: LeafNode = {
+      _tag: 'LeafNode',
+      id: 'pane-A',
+      paneType: 'terminal',
+      terminalId: 'term-failed',
+      workspaceId: 'ws-1',
+    }
+    const liveIds = new Set<string>()
+
+    const result = reconcileLayout(layout, liveIds)
+    expect(result._tag).toBe('LeafNode')
+    expect((result as LeafNode).terminalId).toBeUndefined()
+  })
+
+  it('returns the same reference when no changes are needed', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-A',
+          paneType: 'terminal',
+          terminalId: 'term-1',
+          workspaceId: 'ws-1',
+        },
+        {
+          _tag: 'LeafNode',
+          id: 'pane-B',
+          paneType: 'terminal',
+          terminalId: 'term-2',
+          workspaceId: 'ws-2',
+        },
+      ],
+      sizes: [50, 50],
+    }
+    const liveIds = new Set(['term-1', 'term-2'])
+
+    const result = reconcileLayout(layout, liveIds)
+    expect(result).toBe(layout)
+  })
+
+  it('reconciles stale leaves in a nested layout', () => {
+    const layout: SplitNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-A',
+          paneType: 'terminal',
+          terminalId: 'term-old-1',
+          workspaceId: 'ws-1',
+        },
+        {
+          _tag: 'SplitNode',
+          id: 'split-right',
+          direction: 'vertical',
+          children: [
+            {
+              _tag: 'LeafNode',
+              id: 'pane-B',
+              paneType: 'terminal',
+              terminalId: 'term-live',
+              workspaceId: 'ws-2',
+            },
+            {
+              _tag: 'LeafNode',
+              id: 'pane-C',
+              paneType: 'terminal',
+              terminalId: 'term-old-2',
+              workspaceId: 'ws-3',
+            },
+          ],
+          sizes: [50, 50],
+        },
+      ],
+      sizes: [50, 50],
+    }
+    const liveIds = new Set(['term-live'])
+    const respawnedIds = new Map([
+      ['term-old-1', 'term-new-1'],
+      ['term-old-2', 'term-new-2'],
+    ])
+
+    const result = reconcileLayout(layout, liveIds, respawnedIds) as SplitNode
+    const paneA = result.children[0] as LeafNode
+    const splitRight = result.children[1] as SplitNode
+    const paneB = splitRight.children[0] as LeafNode
+    const paneC = splitRight.children[1] as LeafNode
+
+    expect(paneA.terminalId).toBe('term-new-1')
+    expect(paneB.terminalId).toBe('term-live')
+    expect(paneC.terminalId).toBe('term-new-2')
+    // Live leaf should be the same reference (untouched)
+    expect(paneB).toBe((layout.children[1] as SplitNode).children[0])
   })
 })

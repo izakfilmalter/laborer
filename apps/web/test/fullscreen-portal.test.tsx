@@ -86,6 +86,10 @@ vi.mock('@/panes/dev-server-terminal-pane', () => ({
   DevServerTerminalPane: () => <div data-testid="dev-server-terminal" />,
 }))
 
+vi.mock('@/panes/diff-pane', () => ({
+  DiffPane: () => <div data-testid="diff-pane" />,
+}))
+
 vi.mock('@/panes/review-pane', () => ({
   ReviewPane: () => <div data-testid="review-pane" />,
 }))

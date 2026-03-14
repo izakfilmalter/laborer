@@ -443,7 +443,7 @@ None — can start immediately (purely presentational).
 
 ## 12. Promote diff to first-class panel type
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1072,7 +1072,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 9 | Workspace bidirectional tiling UI | 3, 5, 6 | done |
 | 10 | Panel tab bar integration | 7, 4, 9 | done |
 | 11 | Panel type picker component | None | done |
-| 12 | Promote diff to first-class panel type | 11, 10 | pending |
+| 12 | Promote diff to first-class panel type | 11, 10 | done |
 | 13 | Promote review to first-class panel type | 11, 10 | pending |
 | 14 | Promote dev server terminal to first-class panel type | 11, 10 | pending |
 | 15 | Wire panel type picker into split + new tab flows | 11, 12, 13, 14 | pending |

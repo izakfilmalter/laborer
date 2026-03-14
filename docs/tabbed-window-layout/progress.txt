@@ -449,3 +449,35 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 805/805 tests pass (no regressions)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no issues in modified files
+
+## Issue #12: Promote diff to first-class panel type — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Updated `PaneContent` dispatch in `apps/web/src/panels/panel-manager.tsx` to render `DiffPane` directly for `paneType: 'diff'` leaf nodes:
+  - Added `import { DiffPane } from '@/panes/diff-pane'`
+  - Added new case: `if (node.paneType === 'diff' && node.workspaceId)` → renders `<DiffPane workspaceId={node.workspaceId} />`
+  - This means diff panels created via `addPanelTab(workspaceId, 'diff')` or via layout migration now render correctly as standalone panes
+
+- Updated `Ctrl+B, D` keybinding in `apps/web/src/panels/panel-hotkeys.tsx`:
+  - Changed from calling `actions.toggleDiffPane(activePaneId)` (sidebar toggle) to creating a new diff panel via `actions.splitPane(activePaneId, 'horizontal', { paneType: 'diff', workspaceId })` (right-side split)
+  - Falls back to `actions.addPanelTab(activeWorkspaceId, 'diff')` when no active pane exists but a workspace is focused
+  - Added `LeafNode` type import for the `Partial<LeafNode>` parameter
+  - Updated comment to reflect new behavior
+
+- Updated `apps/web/test/fullscreen-portal.test.tsx`:
+  - Added mock for `@/panes/diff-pane` (`DiffPane` component) to prevent transitive import of `diffs` from `@laborer/shared/schema` breaking the test
+  - This was necessary because `panel-manager.tsx` now imports `DiffPane` directly
+
+### Notes
+- The existing full-height side panel approach in `index.tsx` (via `toggleDiffPane` / `diffPaneWorkspaceId` state) remains untouched for backward compatibility. It will be cleaned up when all panel types are fully promoted (issues 13, 14).
+- Diff appears as option #2 in the panel type picker (already configured in issue #11).
+- Old layouts with `diffOpen: true` are migrated by the migration issue (#6, already completed).
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 838/838 tests pass (no regressions, fullscreen portal tests restored)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)

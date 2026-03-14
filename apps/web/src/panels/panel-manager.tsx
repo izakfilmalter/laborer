@@ -87,6 +87,7 @@ import {
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import { TerminalPaneWithSidebars } from '@/panels/terminal-pane-with-sidebars'
 import { DevServerTerminalPane } from '@/panes/dev-server-terminal-pane'
+import { DiffPane } from '@/panes/diff-pane'
 import { ReviewPane } from '@/panes/review-pane'
 import { PaneCloseConfirmDialog } from '@/routes/-components/close-dialogs'
 
@@ -286,6 +287,11 @@ function PaneContent({ node, onTerminalExit }: PaneContentProps) {
   // Empty pane — use guided empty state with CTA for terminal panes
   if (node.paneType === 'terminal') {
     return <EmptyTerminalPane paneId={node.id} workspaceId={node.workspaceId} />
+  }
+
+  // Diff pane — displays workspace diffs as a standalone panel
+  if (node.paneType === 'diff' && node.workspaceId) {
+    return <DiffPane workspaceId={node.workspaceId} />
   }
 
   // Review pane — displays PR review findings and comments

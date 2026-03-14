@@ -15,7 +15,7 @@
  * - Ctrl+b then x → close active pane
  * - Ctrl+b then o → cycle focus to next pane
  * - Ctrl+b then p → cycle focus to previous pane
- * - Ctrl+b then d → toggle diff viewer alongside active terminal pane
+ * - Ctrl+b then d → create diff panel in right-side split
  * - Ctrl+b then r → toggle review pane alongside active terminal pane
  * - Ctrl+b then s → toggle dev server terminal alongside active terminal pane
  * - Ctrl+b then z → toggle fullscreen for active terminal pane (zoom)
@@ -40,7 +40,7 @@
  * @see Issue #90: Toggle diff alongside terminal
  */
 
-import type { PanelNode } from '@laborer/shared/types'
+import type { LeafNode, PanelNode } from '@laborer/shared/types'
 import { useHotkeySequence } from '@tanstack/react-hotkeys'
 import { useEffect, useRef } from 'react'
 import { useWorkspaceSyncActions } from '@/hooks/use-workspace-sync-actions'
@@ -350,13 +350,23 @@ function PanelHotkeys({
     { timeout: SEQUENCE_TIMEOUT }
   )
 
-  // Ctrl+b then d → toggle diff viewer alongside active terminal pane
+  // Ctrl+b then d → create a new diff panel in a right-side split
   useHotkeySequence(
     ['Control+B', 'D'],
     (event) => {
       event.preventDefault()
-      if (actions && activePaneId) {
-        actions.toggleDiffPane(activePaneId)
+      if (!actions) {
+        return
+      }
+      if (activePaneId && activeWorkspaceId) {
+        // Split right with a diff pane inheriting the workspace context
+        actions.splitPane(activePaneId, 'horizontal', {
+          paneType: 'diff',
+          workspaceId: activeWorkspaceId,
+        } as Partial<LeafNode>)
+      } else if (activeWorkspaceId) {
+        // No active pane — add as a new panel tab
+        actions.addPanelTab?.(activeWorkspaceId, 'diff')
       }
     },
     { timeout: SEQUENCE_TIMEOUT }

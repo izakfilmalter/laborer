@@ -616,31 +616,33 @@ function TerminalItem({
   )
 
   return (
-    <button
+    <div
       className={cn(
         'flex w-full min-w-0 items-center gap-2 rounded-md border px-2 py-1.5 text-left text-xs transition-colors',
-        'hover:bg-accent hover:text-accent-foreground',
-        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-        'cursor-grab active:cursor-grabbing'
+        'hover:bg-accent hover:text-accent-foreground'
       )}
-      draggable
-      onClick={() => onSelect(terminal.id)}
-      onDragStart={handleDragStart}
-      type="button"
     >
-      {icon}
-      <span className="min-w-0 flex-1 truncate font-mono">{label}</span>
-      {badgeLabel !== null && badgeClassName !== null && (
-        <Badge
-          className={cn(
-            'shrink-0 border text-[10px] leading-none',
-            badgeClassName
-          )}
-          variant="outline"
-        >
-          {badgeLabel}
-        </Badge>
-      )}
+      <button
+        className="flex min-w-0 flex-1 cursor-grab items-center gap-2 focus-visible:outline-none active:cursor-grabbing"
+        draggable
+        onClick={() => onSelect(terminal.id)}
+        onDragStart={handleDragStart}
+        type="button"
+      >
+        {icon}
+        <span className="min-w-0 flex-1 truncate font-mono">{label}</span>
+        {badgeLabel !== null && badgeClassName !== null && (
+          <Badge
+            className={cn(
+              'shrink-0 border text-[10px] leading-none',
+              badgeClassName
+            )}
+            variant="outline"
+          >
+            {badgeLabel}
+          </Badge>
+        )}
+      </button>
       <Tooltip>
         <TooltipTrigger
           render={
@@ -679,7 +681,7 @@ function TerminalItem({
         </TooltipTrigger>
         <TooltipContent>Close</TooltipContent>
       </Tooltip>
-    </button>
+    </div>
   )
 }
 

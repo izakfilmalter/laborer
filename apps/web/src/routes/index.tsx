@@ -382,7 +382,7 @@ function HomeComponent() {
     pendingDestroyWorkspaceIdRef.current = null
   }, [handleDestroyWorkspaceAndClose])
 
-  /** Handle the destroy-on-close dialog confirmation. */
+  /** Handle the destroy-on-close dialog confirmation (close & destroy). */
   const handleDestroyOnCloseConfirm = useCallback(() => {
     const workspaceId = destroyOnCloseWorkspaceIdRef.current
     const paneId = destroyOnClosePaneIdRef.current
@@ -395,6 +395,16 @@ function HomeComponent() {
     destroyOnCloseWorkspaceIdRef.current = null
     destroyOnClosePaneIdRef.current = null
   }, [handleDestroyWorkspaceAndClose, panelActions])
+
+  /** Handle the destroy-on-close dialog "Close" (close pane without destroying). */
+  const handleDestroyOnCloseJustClose = useCallback(() => {
+    const paneId = destroyOnClosePaneIdRef.current
+    if (paneId) {
+      panelActions.closePane(paneId)
+    }
+    destroyOnCloseWorkspaceIdRef.current = null
+    destroyOnClosePaneIdRef.current = null
+  }, [panelActions])
 
   /** Context value for the pane-scoped close confirmation dialog. */
   const pendingCloseState: PendingCloseState = useMemo(
@@ -654,6 +664,7 @@ function HomeComponent() {
         />
         <DestroyWorkspaceOnCloseDialog
           onCloseAndDestroy={handleDestroyOnCloseConfirm}
+          onConfirm={handleDestroyOnCloseJustClose}
           onOpenChange={setDestroyOnCloseDialogOpen}
           open={destroyOnCloseDialogOpen}
         />

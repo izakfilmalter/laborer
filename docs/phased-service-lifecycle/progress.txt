@@ -126,3 +126,33 @@
 - TypeScript typecheck passes with no errors
 - Formatter (ultracite/biome) passes on new files
 - Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #8: Header per-service status dots — COMPLETED
+
+### What was done
+- Created `apps/web/src/components/service-status-dots.tsx` with:
+  - `ServiceStatusDots` component — compact status dots replacing the old `ServiceStatusPills`
+  - `ServiceDot` sub-component — individual dot with tooltip showing service name and state
+  - Consumes `useServiceStatus()` from Issue #5 (the higher-level hook that aggregates sidecar + sync statuses)
+  - Shows only core services: Server, Terminal, File Watcher (MCP excluded per acceptance criteria)
+  - Each dot renders as a small colored circle: green (healthy), yellow (starting/restarting with pulsing animation), red (crashed), gray (unknown)
+  - Tooltip on each dot shows "DisplayName — StatusLabel" on hover
+  - `data-testid="service-dot-{name}"` and `data-state="{state}"` attributes for testing
+  - Wrapped in `<output aria-label="Service statuses">` for accessibility
+  - More compact than the old pills — dots only, no text labels in the default view
+- Updated `apps/web/src/components/header.tsx` to import and render `ServiceStatusDots` instead of `ServiceStatusPills`
+  - Old `ServiceStatusPills` component file retained for reference — no longer imported
+- Created `apps/web/test/service-status-dots.test.tsx` with 6 tests:
+  1. Shows starting state for server dot when server is starting
+  2. Shows healthy state for server dot when server health check passes
+  3. Shows error state for server dot when server crashes
+  4. Renders all three core services independently (server healthy, terminal healthy, file-watcher starting)
+  5. Excludes MCP from primary indicators
+  6. Renders within an output element with accessible label
+
+### Verification
+- All 6 new tests pass
+- All 596 tests pass (no regressions, up from 590 after Issue #7)
+- TypeScript typecheck passes with no errors across all packages
+- Formatter (ultracite/biome) passes on new files
+- Pre-existing lint warnings in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change

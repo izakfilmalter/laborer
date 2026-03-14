@@ -282,11 +282,22 @@ function DiffPane({ onClose, workspaceId }: DiffPaneProps) {
 
   // --- Derive diff content and metadata from the reactive query ---
   const diffRow = useMemo(() => {
-    return (
+    const row =
       diffRows.find(
         (r: { workspaceId: string }) => r.workspaceId === workspaceId
       ) ?? null
+
+    // Diagnostic logging: helps identify whether the issue is on the
+    // server side (no DiffUpdated event committed) or the sync layer
+    // (event not reaching the client's LiveStore).
+    console.debug(
+      `[DiffPane] workspaceId=${workspaceId} diffRows.length=${diffRows.length} matchingRow=${row !== null ? `found (diffLen=${row.diffContent.length}, lastUpdated=${row.lastUpdated})` : 'NULL — no diff row for this workspace'}`,
+      row === null
+        ? `Available workspaceIds in diffs table: ${diffRows.map((r: { workspaceId: string }) => r.workspaceId.slice(0, 8)).join(', ') || 'none'}`
+        : ''
     )
+
+    return row
   }, [diffRows, workspaceId])
 
   const rawDiffContent = diffRow?.diffContent ?? ''
@@ -618,6 +629,12 @@ function DiffPane({ onClose, workspaceId }: DiffPaneProps) {
   // Show a loading spinner instead of the "No changes" empty state so the user
   // knows the diff is being computed rather than that there are genuinely no changes.
   if (diffRow === null) {
+    console.warn(
+      `[DiffPane] LOADING STATE — workspaceId=${workspaceId} has NO row in diffs table. ` +
+        'This means the server DiffService has not committed a DiffUpdated event for this workspace, ' +
+        'OR the LiveStore sync has not delivered it to the client yet. ' +
+        'Check server logs for [DiffService.getDiff] and [DiffService.startPolling] entries for this workspace.'
+    )
     return (
       <div className="flex h-full w-full flex-col bg-background">
         <DiffPaneHeader onClose={onClose} />
@@ -642,6 +659,11 @@ function DiffPane({ onClose, workspaceId }: DiffPaneProps) {
   // Uses rawDiffContent (not debounced diffContent) to avoid briefly showing
   // the empty state while the debounce timer settles after new content arrives.
   if (!rawDiffContent) {
+    console.debug(
+      `[DiffPane] EMPTY STATE — workspaceId=${workspaceId} has a diffs row but diffContent is empty. ` +
+        'This means DiffService polled successfully but git diff returned no changes. ' +
+        `lastUpdated=${lastUpdated}`
+    )
     return (
       <div className="flex h-full w-full flex-col bg-background">
         <DiffPaneHeader onClose={onClose} />

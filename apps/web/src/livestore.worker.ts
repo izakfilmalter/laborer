@@ -50,6 +50,10 @@ const resolveWsSyncUrl = (): string => {
 
 const syncUrl = resolveWsSyncUrl()
 
+console.log(
+  `[LiveStore.worker] initializing with syncUrl=${syncUrl} (origin=${globalThis.location.origin})`
+)
+
 makeWorker({
   schema,
   sync: {

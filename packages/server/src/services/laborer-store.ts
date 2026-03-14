@@ -157,6 +157,7 @@ const makeStore = Effect.gen(function* () {
     },
   })
 
+  yield* Effect.logInfo(`${logPrefix} Connecting to sync backend at ${syncUrl}`)
   yield* Effect.logInfo(
     `${logPrefix} Schema state hash: ${String(schema.state.sqlite.hash)}, ` +
       `migrations strategy: ${schema.state.sqlite.migrations.strategy}, ` +

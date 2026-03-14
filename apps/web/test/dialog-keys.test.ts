@@ -10,7 +10,11 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { isExactEnter, isMetaEnter } from '../src/lib/dialog-keys'
+import {
+  isExactEnter,
+  isMetaEnter,
+  isMetaShiftEnter,
+} from '../src/lib/dialog-keys'
 
 // ---------------------------------------------------------------------------
 // Helper — create a minimal KeyboardEvent-shaped object for testing.
@@ -111,5 +115,69 @@ describe('isMetaEnter', () => {
 
   it('returns false for a different key with meta', () => {
     expect(isMetaEnter(makeKeyEvent({ key: 'a', metaKey: true }))).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: isMetaShiftEnter (Cmd+Shift+Enter — close-and-destroy action)
+// ---------------------------------------------------------------------------
+
+describe('isMetaShiftEnter', () => {
+  it('returns true for Cmd+Shift+Enter', () => {
+    expect(
+      isMetaShiftEnter(
+        makeKeyEvent({ key: 'Enter', metaKey: true, shiftKey: true })
+      )
+    ).toBe(true)
+  })
+
+  it('returns false for plain Enter', () => {
+    expect(isMetaShiftEnter(makeKeyEvent({ key: 'Enter' }))).toBe(false)
+  })
+
+  it('returns false for Cmd+Enter (no shift)', () => {
+    expect(
+      isMetaShiftEnter(makeKeyEvent({ key: 'Enter', metaKey: true }))
+    ).toBe(false)
+  })
+
+  it('returns false for Shift+Enter (no meta)', () => {
+    expect(
+      isMetaShiftEnter(makeKeyEvent({ key: 'Enter', shiftKey: true }))
+    ).toBe(false)
+  })
+
+  it('returns false when ctrl is also held', () => {
+    expect(
+      isMetaShiftEnter(
+        makeKeyEvent({
+          key: 'Enter',
+          metaKey: true,
+          shiftKey: true,
+          ctrlKey: true,
+        })
+      )
+    ).toBe(false)
+  })
+
+  it('returns false when alt is also held', () => {
+    expect(
+      isMetaShiftEnter(
+        makeKeyEvent({
+          key: 'Enter',
+          metaKey: true,
+          shiftKey: true,
+          altKey: true,
+        })
+      )
+    ).toBe(false)
+  })
+
+  it('returns false for a different key with same modifiers', () => {
+    expect(
+      isMetaShiftEnter(
+        makeKeyEvent({ key: 'a', metaKey: true, shiftKey: true })
+      )
+    ).toBe(false)
   })
 })

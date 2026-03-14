@@ -199,6 +199,12 @@ const ActivePaneIdContext = createContext<string | null>(null)
 interface PendingCloseState {
   /** Cancel the close — dismisses the dialog. */
   readonly onCancel: () => void
+  /**
+   * Optional handler for "Close & Destroy" — closes the pane AND
+   * destroys the workspace worktree. Present only when the pane is
+   * the last for a workspace whose PR is merged.
+   */
+  readonly onCloseAndDestroy?: (() => void) | undefined
   /** Confirm the close — kills the process and removes the pane. */
   readonly onConfirm: () => void
   /** The pane ID awaiting close confirmation, or null if none. */

@@ -1,8 +1,11 @@
+import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { projects, workspaces } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
 import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PanelImperativeHandle } from 'react-resizable-panels'
+import { toast } from 'sonner'
+import { LaborerClient } from '@/atoms/laborer-client'
 import { AddProjectForm } from '@/components/add-project-form'
 import { CreatePlanWorkspace } from '@/components/create-plan-workspace'
 import { PlanEditor } from '@/components/plan-editor'
@@ -23,10 +26,11 @@ import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSidebarWidth } from '@/hooks/use-sidebar-width'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
+import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { DiffScrollProvider } from '@/panels/diff-scroll-context'
 import {
-  computeClosePaneAction,
+  computeClosePaneGateAction,
   computeCloseWorkspaceAction,
   findLeafByTerminalId,
   findNodeById,
@@ -41,6 +45,7 @@ import { PanelHotkeys } from '@/panels/panel-hotkeys'
 import {
   CloseAppDialog,
   CloseWorkspaceDialog,
+  DestroyWorkspaceOnCloseDialog,
 } from './-components/close-dialogs'
 import { PanelContent } from './-components/panel-content'
 import type { MainView } from './-components/panel-header-bar'
@@ -69,6 +74,8 @@ export const Route = createFileRoute('/')({
 /** LiveStore query for projects (used by sidebar and WelcomeEmptyState). */
 const sidebarProjects$ = queryDb(projects, { label: 'sidebarProjects' })
 
+const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
+
 /** LiveStore query for workspaces (used by sidebar search filtering). */
 const sidebarWorkspaces$ = queryDb(workspaces, {
   label: 'sidebarWorkspaces',
@@ -88,6 +95,40 @@ function HomeComponent() {
   const projectList = store.useQuery(sidebarProjects$)
   const workspaceList = store.useQuery(sidebarWorkspaces$)
   const hasProjects = projectList.length > 0
+
+  const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
+    mode: 'promise',
+  })
+
+  /**
+   * Look up the PR state for a workspace by its ID.
+   * Returns null if the workspace is not found or has no PR.
+   */
+  const getWorkspacePrState = useCallback(
+    (workspaceId: string): string | null => {
+      const ws = workspaceList.find((w) => w.id === workspaceId)
+      return ws?.prState ?? null
+    },
+    [workspaceList]
+  )
+
+  /**
+   * Look up the PR state for the workspace that owns a given pane.
+   * Returns null if the pane or workspace can't be found.
+   */
+  const getPanePrState = useCallback(
+    (paneId: string): string | null => {
+      if (!layout) {
+        return null
+      }
+      const node = findNodeById(layout, paneId)
+      if (!node || node._tag !== 'LeafNode' || !node.workspaceId) {
+        return null
+      }
+      return getWorkspacePrState(node.workspaceId)
+    },
+    [layout, getWorkspacePrState]
+  )
 
   // Fullscreen pane state — transient UI mode (not persisted to LiveStore).
   // When set, only the fullscreened pane is shown, hiding all other
@@ -237,45 +278,123 @@ function HomeComponent() {
   const [pendingClosePaneId, setPendingClosePaneId] = useState<string | null>(
     null
   )
+  // The workspace ID to offer "close and destroy" for in the inline dialog.
+  // Set when the pane being closed is the last for a merged-PR workspace
+  // AND the terminal has a running process.
+  const pendingDestroyWorkspaceIdRef = useRef<string | null>(null)
+
+  // Destroy-workspace-on-close dialog state — shown when closing the last
+  // pane of a merged-PR workspace with no running process.
+  const [destroyOnCloseDialogOpen, setDestroyOnCloseDialogOpen] =
+    useState(false)
+  const destroyOnCloseWorkspaceIdRef = useRef<string | null>(null)
+  const destroyOnClosePaneIdRef = useRef<string | null>(null)
 
   /**
-   * Gated closePane that checks if the terminal has a running child process.
-   * Only shows the confirmation dialog when an actual program (e.g., vim,
-   * dev server, opencode) is running inside the shell — not when the shell
-   * is idle at a prompt.
+   * Destroy a workspace worktree and close all its panes.
+   * Used by both the inline "Close & Destroy" button and the prompt dialog.
+   */
+  const handleDestroyWorkspaceAndClose = useCallback(
+    (workspaceId: string) => {
+      const ws = workspaceList.find((w) => w.id === workspaceId)
+      const branchName = ws?.branchName ?? 'workspace'
+
+      const toastId = toast.loading(`Destroying workspace "${branchName}"...`)
+      destroyWorkspace({
+        payload: { workspaceId, force: true },
+      })
+        .then(() => {
+          panelActions.forceCloseWorkspace(workspaceId)
+          toast.success(`Workspace "${branchName}" destroyed successfully`, {
+            id: toastId,
+          })
+        })
+        .catch((error: unknown) => {
+          const message = extractErrorMessage(error)
+          toast.error(message, { id: toastId })
+        })
+    },
+    [destroyWorkspace, panelActions, workspaceList]
+  )
+
+  /**
+   * Gated closePane that checks if the terminal has a running child process
+   * and whether the pane is the last for a merged-PR workspace.
    *
    * Uses the cached terminal list (from the 5-second poll) to make an
    * instant, synchronous decision — no RPC calls at close time. This
    * follows the same pattern as VS Code's ChildProcessMonitor: process
    * state is pre-cached and read synchronously at close time.
    *
-   * In the rare case where cached data is stale (e.g., user Ctrl+C's a
-   * process and closes within the poll window), the user may see an
-   * unnecessary confirmation dialog — which they can dismiss instantly.
-   * This is the same tradeoff VS Code and cmux make.
+   * Returns one of four outcomes:
+   * - close: close immediately
+   * - confirm: show "process running" dialog (Cancel, Close)
+   * - confirm-with-destroy: show dialog with 3 actions (Cancel, Close, Close & Destroy)
+   * - prompt-destroy: no process but last pane + merged PR — show destroy dialog
    */
   const gatedClosePane = useCallback(
     (paneId: string) => {
-      if (computeClosePaneAction(layout, paneId, liveTerminals) === 'confirm') {
+      const prState = getPanePrState(paneId)
+      const result = computeClosePaneGateAction(
+        layout,
+        paneId,
+        liveTerminals,
+        prState
+      )
+
+      if (result.action === 'close') {
+        panelActions.closePane(paneId)
+      } else if (result.action === 'confirm') {
+        pendingDestroyWorkspaceIdRef.current = null
         setPendingClosePaneId(paneId)
-        return
+      } else if (result.action === 'confirm-with-destroy') {
+        pendingDestroyWorkspaceIdRef.current = result.workspaceId
+        setPendingClosePaneId(paneId)
+      } else if (result.action === 'prompt-destroy') {
+        destroyOnCloseWorkspaceIdRef.current = result.workspaceId
+        destroyOnClosePaneIdRef.current = paneId
+        setDestroyOnCloseDialogOpen(true)
       }
-      // No active child process or no terminal — close immediately
-      panelActions.closePane(paneId)
     },
-    [layout, liveTerminals, panelActions]
+    [getPanePrState, layout, liveTerminals, panelActions]
   )
 
   const handleConfirmCloseTerminal = useCallback(() => {
     if (pendingClosePaneId) {
       panelActions.closePane(pendingClosePaneId)
       setPendingClosePaneId(null)
+      pendingDestroyWorkspaceIdRef.current = null
     }
   }, [panelActions, pendingClosePaneId])
 
   const handleCancelCloseTerminal = useCallback(() => {
     setPendingClosePaneId(null)
+    pendingDestroyWorkspaceIdRef.current = null
   }, [])
+
+  /** Close pane AND destroy the workspace worktree. */
+  const handleCloseAndDestroyFromInline = useCallback(() => {
+    const workspaceId = pendingDestroyWorkspaceIdRef.current
+    if (workspaceId) {
+      handleDestroyWorkspaceAndClose(workspaceId)
+    }
+    setPendingClosePaneId(null)
+    pendingDestroyWorkspaceIdRef.current = null
+  }, [handleDestroyWorkspaceAndClose])
+
+  /** Handle the destroy-on-close dialog confirmation. */
+  const handleDestroyOnCloseConfirm = useCallback(() => {
+    const workspaceId = destroyOnCloseWorkspaceIdRef.current
+    const paneId = destroyOnClosePaneIdRef.current
+    if (workspaceId) {
+      handleDestroyWorkspaceAndClose(workspaceId)
+    } else if (paneId) {
+      // Fallback: just close the pane
+      panelActions.closePane(paneId)
+    }
+    destroyOnCloseWorkspaceIdRef.current = null
+    destroyOnClosePaneIdRef.current = null
+  }, [handleDestroyWorkspaceAndClose, panelActions])
 
   /** Context value for the pane-scoped close confirmation dialog. */
   const pendingCloseState: PendingCloseState = useMemo(
@@ -283,8 +402,17 @@ function HomeComponent() {
       paneId: pendingClosePaneId,
       onConfirm: handleConfirmCloseTerminal,
       onCancel: handleCancelCloseTerminal,
+      onCloseAndDestroy:
+        pendingDestroyWorkspaceIdRef.current != null
+          ? handleCloseAndDestroyFromInline
+          : undefined,
     }),
-    [pendingClosePaneId, handleConfirmCloseTerminal, handleCancelCloseTerminal]
+    [
+      pendingClosePaneId,
+      handleConfirmCloseTerminal,
+      handleCancelCloseTerminal,
+      handleCloseAndDestroyFromInline,
+    ]
   )
 
   /**
@@ -523,6 +651,11 @@ function HomeComponent() {
         <CloseAppDialog
           onOpenChange={setIsCloseAppDialogOpen}
           open={isCloseAppDialogOpen}
+        />
+        <DestroyWorkspaceOnCloseDialog
+          onCloseAndDestroy={handleDestroyOnCloseConfirm}
+          onOpenChange={setDestroyOnCloseDialogOpen}
+          open={destroyOnCloseDialogOpen}
         />
         <ResizablePanelGroup
           orientation="horizontal"

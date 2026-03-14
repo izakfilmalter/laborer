@@ -1,0 +1,24 @@
+## Issue 6: Backend: Escape sequence buffering — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Created `packages/terminal/src/lib/buffered-data-handler.ts` with `createBufferedDataHandler` function
+- The function wraps raw PTY onData callbacks to hold back incomplete VT escape sequences:
+  - Trailing bare ESC (`\x1b`) is held back
+  - Trailing CSI introducer (`\x1b[`) is held back
+  - Trailing incomplete CSI with parameters (`\x1b[38;5`) is held back via regex
+  - Held-back fragments are prepended to the next chunk and forwarded when complete
+  - Plain text and chunks ending with complete sequences pass through immediately
+- Wired `createBufferedDataHandler` into `terminal-manager.ts` around both PTY data callbacks (spawn and restart)
+- Created comprehensive test suite `packages/terminal/test/buffered-data-handler.test.ts` with 10 tests covering all acceptance criteria
+
+### Files changed
+- `packages/terminal/src/lib/buffered-data-handler.ts` (new, 59 lines)
+- `packages/terminal/test/buffered-data-handler.test.ts` (new, 128 lines)
+- `packages/terminal/src/services/terminal-manager.ts` (modified — added import, wrapped both spawn data callbacks)
+
+### Test results
+- All 115 tests pass across 6 test files in the terminal package
+- 10 new buffered-data-handler tests all pass
+- All existing terminal-manager and rpc-integration tests continue to pass

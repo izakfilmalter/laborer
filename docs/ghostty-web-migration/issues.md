@@ -30,8 +30,8 @@ Parent PRD: [PRD-ghostty-web-migration.md](./PRD-ghostty-web-migration.md)
 | 3 | Theme, font, and cursor configuration | #1 | Blocked |
 | 4 | Keyboard bypass and prefix mode | #1 | Blocked |
 | 5 | Link detection and OSC title changes | #1 | Blocked |
-| 6 | Backend: Escape sequence buffering | None | Ready |
-| 7 | Backend: Headless terminal state manager | #6 | Blocked |
+| 6 | Backend: Escape sequence buffering | None | Done |
+| 7 | Backend: Headless terminal state manager | #6 | Ready |
 | 8 | Backend: Race-free WebSocket attach protocol | #7 | Blocked |
 | 9 | Frontend: Terminal Session Router (core) | #8 | Blocked |
 | 10 | Frontend: Terminal Router context and integration | #1, #9 | Blocked |

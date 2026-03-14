@@ -30,6 +30,7 @@ import {
   Runtime,
   Schedule,
 } from 'effect'
+import { createBufferedDataHandler } from '../lib/buffered-data-handler.js'
 import { RingBuffer } from '../lib/ring-buffer.js'
 import { PtyHostClient } from './pty-host-client.js'
 
@@ -985,8 +986,9 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             cols,
             rows,
           },
-          // Data callback: write to ring buffer + notify subscribers
-          (data: string) => {
+          // Data callback: buffer incomplete escape sequences, then write
+          // to ring buffer + notify subscribers
+          createBufferedDataHandler((data: string) => {
             bufferState.ringBuffer.write(textEncoder.encode(data))
 
             for (const subscriber of bufferState.subscribers.values()) {
@@ -996,7 +998,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
                 // Subscriber errors silently ignored
               }
             }
-          },
+          }),
           // Exit callback: mark as stopped (retain in memory)
           (exitCode: number, signal: number) => {
             clearGraceTimeout(id)
@@ -1327,7 +1329,9 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             cols: 80,
             rows: 24,
           },
-          (data: string) => {
+          // Data callback: buffer incomplete escape sequences, then write
+          // to ring buffer + notify subscribers
+          createBufferedDataHandler((data: string) => {
             restartBufferState.ringBuffer.write(textEncoder.encode(data))
 
             for (const subscriber of restartBufferState.subscribers.values()) {
@@ -1337,7 +1341,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
                 // Subscriber errors silently ignored
               }
             }
-          },
+          }),
           (exitCode: number, signal: number) => {
             clearGraceTimeout(terminalId)
 

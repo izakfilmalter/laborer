@@ -9,8 +9,8 @@ import {
 } from '@/components/ui/tooltip'
 import { isElectron } from '@/lib/desktop'
 
-import { HealthCheckStatus } from './health-check-status'
 import { ModeToggle } from './mode-toggle'
+import { ServiceStatusPills } from './service-status-pills'
 
 function ResetButton() {
   const handleReset = useCallback(() => {
@@ -44,9 +44,7 @@ export default function Header() {
       >
         <span className="font-medium text-lg">laborer</span>
         <div className="flex items-center gap-2">
-          <span className="text-xs">
-            <HealthCheckStatus />
-          </span>
+          <ServiceStatusPills />
           <ResetButton />
           <ModeToggle />
         </div>

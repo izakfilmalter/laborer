@@ -27,7 +27,7 @@ Parent PRD: [PRD-ghostty-web-migration.md](./PRD-ghostty-web-migration.md)
 |---|-------|-----------|--------|
 | 1 | Tracer bullet: Swap xterm.js for ghostty-web with basic I/O | None | Done |
 | 2 | ghostty-web FitAddon and basic resize | #1 | Done |
-| 3 | Theme, font, and cursor configuration | #1 | Ready |
+| 3 | Theme, font, and cursor configuration | #1 | Done |
 | 4 | Keyboard bypass and prefix mode | #1 | Ready |
 | 5 | Link detection and OSC title changes | #1 | Ready |
 | 6 | Backend: Escape sequence buffering | None | Done |

@@ -321,3 +321,35 @@ Date: 2026-03-14
 - 1 pre-existing skipped test (alive-desktop-oauth)
 - Typecheck passes cleanly
 - Biome lint passes on all changed files
+
+## Issue 3: Theme, font, and cursor configuration — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Verified that the full visual configuration was already applied in terminal-pane.tsx during Issue 1 (tracer bullet):
+  - Zinc color scale theme: background (#09090b), foreground (#fafafa), cursor (#fafafa), cursorAccent (#09090b), selectionBackground (#27272a80), all 16 ANSI colors mapped to zinc palette
+  - JetBrains Mono font stack with Fira Code, Cascadia Code, Menlo fallbacks
+  - Font size: 13px
+  - Cursor: blinking bar style (cursorBlink: true, cursorStyle: 'bar')
+  - Scrollback: 100,000 lines
+  - convertEol: false
+  - caretColor: transparent on container to hide browser's native contenteditable caret
+- Confirmed that `lineHeight` is NOT supported by ghostty-web's ITerminalOptions — cell height is computed automatically from FontMetrics based on fontSize and fontFamily. This is an accepted gap documented in tests.
+- Created comprehensive test suite `apps/web/test/theme-font-cursor.test.ts` with 30 tests:
+  - ghostty-web ITerminalOptions API compatibility (7 tests): cursorBlink, cursorStyle with bar, fontSize, fontFamily, scrollback, theme with ITheme, lineHeight absence confirmation
+  - ghostty-web ITheme API compatibility (4 tests): all 16 ANSI colors, foreground/background, cursor/cursorAccent, selectionBackground/selectionForeground
+  - terminal-pane.tsx theme configuration (7 tests): background, foreground, cursor, cursorAccent, selectionBackground, all 8 normal ANSI colors, all 8 bright ANSI colors
+  - terminal-pane.tsx cursor configuration (2 tests): blink enabled, bar style
+  - terminal-pane.tsx font configuration (4 tests): JetBrains Mono primary, fallback fonts, font size 13, no lineHeight in constructor
+  - terminal-pane.tsx scrollback configuration (2 tests): 100k scrollback, convertEol false
+  - terminal-pane.tsx contenteditable caret hiding (2 tests): caretColor transparent, applied before terminal.open()
+  - Theme completeness (2 tests): all expected keys present, all values valid CSS hex colors
+
+### Files changed
+- `apps/web/test/theme-font-cursor.test.ts` (new, 301 lines)
+
+### Test results
+- All 687 tests pass across 46 test files in the web package (30 new + 657 existing)
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Biome lint passes on all changed files

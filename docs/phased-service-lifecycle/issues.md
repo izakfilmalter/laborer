@@ -14,7 +14,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 6 | Remove ServerGate blocking gate | #1, #4 | Done |
 | 7 | Wire sidecar status events to lifecycle phase transitions | #5, #6 | Done |
 | 8 | Header per-service status dots | #5 | Done |
-| 9 | Header status collapse and expand | #8 | Ready |
+| 9 | Header status collapse and expand | #8 | Done |
 | 10 | Header error state persistence and animations | #8 | Ready |
 | 11 | Disable write actions before Phase 2 (Ready) | #5, #6 | Done |
 | 12 | Progressive feature enablement for Phases 3-4 | #11 | Done |

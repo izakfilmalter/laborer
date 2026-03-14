@@ -462,3 +462,42 @@
 - TypeScript typecheck passes with no errors across all 7 packages
 - Formatter (ultracite/biome) passes on all changed files
 - Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #9: Header status collapse and expand — COMPLETED
+
+### What was done
+- **Updated `apps/web/src/components/service-status-dots.tsx`** with collapse/expand behavior:
+  - Added `useCollapseState()` hook that manages collapsed/expanded state:
+    - Starts expanded (individual per-service dots visible)
+    - After all 3 core services (server, terminal, file-watcher) are healthy for 2 seconds, collapses to a single compact green dot
+    - If any service goes unhealthy while collapsed, expands immediately (no delay)
+    - On fast startups (all services healthy within 500ms of component mount), skips the expanded state entirely — goes straight to compact
+  - Added `CollapsedIndicator` component — a single green dot that opens a Popover on click:
+    - Popover shows "Service Status" header with per-service detail rows
+    - Each row shows: colored status dot + service display name + status label (e.g., "Healthy")
+    - Each row includes a "Restart" button (only in Electron — calls `desktopBridge.restartSidecar(name)`)
+    - Popover aligns to the end of the trigger, opens below the header
+  - Added `ServiceDetailRow` component — a single row in the expanded popover showing service name, state, and restart action
+  - Added `toSidecarName()` helper — maps ServiceName to SidecarName for restart calls (filters out 'sync' which isn't a sidecar)
+  - Added `areAllCoreHealthy()` helper — checks if all STATUS_DOT_SERVICES are in the 'healthy' state
+  - Exported `COLLAPSE_DELAY_MS` constant (2000ms) and `useCollapseState` hook for testing
+  - Uses `@/components/ui/popover` (Popover, PopoverContent, PopoverTrigger) for the expanded detail view
+  - Tooltip on collapsed indicator reads "All services healthy"
+  - All markup wrapped in `<output aria-label="Service statuses">` for accessibility in both states
+
+- **Created `apps/web/test/service-status-collapse.test.tsx`** with 7 tests:
+  1. Collapses to single compact indicator after 2s of all-healthy
+  2. Shows expanded dots when any service is not healthy
+  3. Clicking compact indicator shows per-service detail popover
+  4. Popover detail shows service name and state
+  5. Expands immediately if a service goes unhealthy while collapsed
+  6. On fast startup (all healthy within 500ms), user never sees expanded dots
+  7. Output wrapper has accessible label in both collapsed and expanded state
+
+### Verification
+- All 7 new tests pass
+- All 618 web tests pass (up from 611 after Issue #12, 7 new tests)
+- All 6 existing service-status-dots tests pass (no regressions)
+- TypeScript typecheck passes with no errors across all packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format errors in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change

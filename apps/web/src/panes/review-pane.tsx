@@ -136,6 +136,41 @@ function hasReaction(
   return reactions.some((r) => r.content === content)
 }
 
+function upsertReaction(
+  reactions: readonly PrCommentReaction[],
+  reaction: PrCommentReaction
+): readonly PrCommentReaction[] {
+  const withoutMatchingReaction = reactions.filter(
+    (existingReaction) => existingReaction.content !== reaction.content
+  )
+
+  return [...withoutMatchingReaction, reaction]
+}
+
+type ReactionOverride =
+  | {
+      readonly type: 'remove'
+    }
+  | {
+      readonly reaction: PrCommentReaction
+      readonly type: 'upsert'
+    }
+
+function applyRocketReactionOverride(
+  reactions: readonly PrCommentReaction[],
+  override: ReactionOverride | undefined
+): readonly PrCommentReaction[] {
+  if (!override) {
+    return reactions
+  }
+
+  if (override.type === 'remove') {
+    return reactions.filter((reaction) => reaction.content !== 'rocket')
+  }
+
+  return upsertReaction(reactions, override.reaction)
+}
+
 /**
  * Whether a finding is "resolved" — has a thumbs_up (fixed) or confused
  * (won't-fix) reaction. Resolved findings are visually dimmed.
@@ -280,7 +315,7 @@ function FindingCard({
   readonly finding: ReviewFinding
   readonly isUnqueuing?: boolean
   readonly onOpenFile: (filePath: string, line: number | null) => void
-  readonly onToggleSelection: (commentId: number) => void
+  readonly onToggleSelection: (finding: ReviewFinding) => void | Promise<void>
   readonly onUnqueue?: (finding: ReviewFinding) => void
   readonly selected: boolean
 }) {
@@ -305,7 +340,9 @@ function FindingCard({
           checked={selected}
           className="mt-0.5 shrink-0"
           data-testid="finding-checkbox"
-          onCheckedChange={() => onToggleSelection(finding.commentId)}
+          onCheckedChange={() => {
+            onToggleSelection(finding)
+          }}
         />
         <div className="min-w-0 flex-1">
           {/* Top row: severity badge + category tag + reaction indicators */}
@@ -539,6 +576,9 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<number>>(
     () => new Set()
   )
+  const [reactionOverrides, setReactionOverrides] = useState<
+    ReadonlyMap<number, ReactionOverride>
+  >(() => new Map())
 
   /** Toggle a single finding's selection state. */
   const handleToggleSelection = useCallback((commentId: number) => {
@@ -556,6 +596,17 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   // Extract findings for select-all (empty array when no data yet).
   const findings =
     result._tag === 'Success' ? result.value.findings : ([] as const)
+  const displayedFindings = useMemo(
+    () =>
+      findings.map((finding) => ({
+        ...finding,
+        reactions: applyRocketReactionOverride(
+          finding.reactions,
+          reactionOverrides.get(finding.commentId)
+        ),
+      })),
+    [findings, reactionOverrides]
+  )
 
   /** Select all findings. */
   const handleSelectAll = useCallback(() => {
@@ -590,29 +641,29 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   )
 
   /**
-   * Fix Selected: add rocket reactions to all selected findings, then
-   * spawn `brrr fix` in the workspace terminal.
+   * Fix Selected: ensure selected findings are queued, then kick off `brrr fix`.
    */
   const handleFixSelected = useCallback(async () => {
     setIsFixing(true)
     try {
-      // Add rocket reactions to all selected findings concurrently
-      const selectedFindings = findings.filter((f) =>
-        selectedIds.has(f.commentId)
+      const unqueuedSelectedFindings = displayedFindings.filter(
+        (finding) =>
+          selectedIds.has(finding.commentId) &&
+          !hasReaction(finding.reactions, 'rocket')
       )
+
       await Promise.all(
-        selectedFindings.map((f) =>
+        unqueuedSelectedFindings.map((finding) =>
           addReaction({
             payload: {
               workspaceId,
-              commentId: f.commentId,
+              commentId: finding.commentId,
               content: 'rocket',
             },
           })
         )
       )
 
-      // Spawn brrr fix terminal
       const result = await fixFindings({
         payload: { workspaceId },
       })
@@ -637,7 +688,7 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
     }
   }, [
     addReaction,
-    findings,
+    displayedFindings,
     fixFindings,
     panelActions,
     refresh,
@@ -645,6 +696,81 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
     startPolling,
     workspaceId,
   ])
+
+  const handleQueueFinding = useCallback(
+    async (finding: ReviewFinding) => {
+      const temporaryReaction: PrCommentReaction = {
+        id: -finding.commentId,
+        content: 'rocket',
+        userId: 0,
+      }
+
+      setSelectedIds((prev) => new Set(prev).add(finding.commentId))
+      setReactionOverrides((prev) => {
+        const next = new Map(prev)
+        next.set(finding.commentId, {
+          type: 'upsert',
+          reaction: temporaryReaction,
+        })
+        return next
+      })
+
+      try {
+        const createdReaction = await addReaction({
+          payload: {
+            workspaceId,
+            commentId: finding.commentId,
+            content: 'rocket',
+          },
+        })
+
+        setReactionOverrides((prev) => {
+          const next = new Map(prev)
+          next.set(finding.commentId, {
+            type: 'upsert',
+            reaction: createdReaction,
+          })
+          return next
+        })
+      } catch (error: unknown) {
+        setSelectedIds((prev) => {
+          const next = new Set(prev)
+          next.delete(finding.commentId)
+          return next
+        })
+        setReactionOverrides((prev) => {
+          const next = new Map(prev)
+          next.delete(finding.commentId)
+          return next
+        })
+
+        const message = extractErrorMessage(error)
+        const code = extractErrorCode(error)
+        const guidance = getErrorGuidance(code ?? null)
+        toast.error('Failed to queue finding', {
+          description: guidance ?? message,
+        })
+      }
+    },
+    [addReaction, workspaceId]
+  )
+
+  const handleToggleFindingSelection = useCallback(
+    async (finding: ReviewFinding) => {
+      if (selectedIds.has(finding.commentId)) {
+        handleToggleSelection(finding.commentId)
+        return
+      }
+
+      if (hasReaction(finding.reactions, 'rocket')) {
+        handleToggleSelection(finding.commentId)
+        return
+      }
+
+      await handleQueueFinding(finding)
+    },
+    [handleQueueFinding, handleToggleSelection, selectedIds]
+  )
 
   /**
    * Unqueue: remove the rocket reaction from a single finding.
@@ -659,6 +785,11 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
       }
 
       setUnqueuingCommentId(finding.commentId)
+      setReactionOverrides((prev) => {
+        const next = new Map(prev)
+        next.set(finding.commentId, { type: 'remove' })
+        return next
+      })
       try {
         await removeReaction({
           payload: {
@@ -668,9 +799,22 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
           },
         })
         toast.success('Finding unqueued')
+        setSelectedIds((prev) => {
+          const next = new Set(prev)
+          next.delete(finding.commentId)
+          return next
+        })
         refresh()
         startPolling()
       } catch (error: unknown) {
+        setReactionOverrides((prev) => {
+          const next = new Map(prev)
+          next.set(finding.commentId, {
+            type: 'upsert',
+            reaction: rocketReaction,
+          })
+          return next
+        })
         const message = extractErrorMessage(error)
         const code = extractErrorCode(error)
         const guidance = getErrorGuidance(code ?? null)
@@ -813,7 +957,7 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
     )
   }
 
-  const sortedFindings = sortFindingsBySeverity(findings)
+  const sortedFindings = sortFindingsBySeverity(displayedFindings)
 
   return (
     <>
@@ -842,7 +986,7 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
                 isUnqueuing={unqueuingCommentId === finding.commentId}
                 key={finding.commentId}
                 onOpenFile={handleOpenFile}
-                onToggleSelection={handleToggleSelection}
+                onToggleSelection={handleToggleFindingSelection}
                 onUnqueue={handleUnqueue}
                 selected={selectedIds.has(finding.commentId)}
               />

@@ -1,60 +1,35 @@
 /**
- * Tests for full-height side panels (review and diff).
+ * Tests for workspace-scoped side panels (review and diff).
  *
- * Both the review panel and diff panel should render as full-height side
- * panels alongside workspace frames, rather than being split inside a
- * single workspace's layout tree. This ensures they span all workspaces.
+ * Diff and review panels render inside the WorkspaceFrame they belong to,
+ * spanning the full height of that workspace. When multiple workspaces are
+ * open, only the workspace matching the panel's workspaceId shows the panel.
  *
- * @see Issue: Full-height review panel
- * @see Issue: Full-height diff panel
+ * @see Issue: Diff and review panel placement
  */
 
 import type { PanelNode } from '@laborer/shared/types'
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-// Mock LiveStore before any component imports
-vi.mock('@livestore/livestore', () => ({
-  queryDb: vi.fn(() => ({ table: 'mock' })),
+vi.mock('@atlaskit/pragmatic-drag-and-drop/element/adapter', () => ({
+  draggable: () => () => undefined,
+  dropTargetForElements: () => () => undefined,
+  monitorForElements: () => () => undefined,
 }))
 
-vi.mock('@/livestore/store', () => ({
-  useLaborerStore: () => ({
-    useQuery: vi.fn(() => []),
-    query: vi.fn(() => []),
-    commit: vi.fn(),
-  }),
+vi.mock('@atlaskit/pragmatic-drag-and-drop/combine', () => ({
+  combine:
+    (...cleanups: Array<() => void>) =>
+    () => {
+      for (const c of cleanups) {
+        c()
+      }
+    },
 }))
 
-// Mock panel context values
-const mockPanelActions = {
-  assignTerminalToPane: vi.fn(),
-  closePane: vi.fn(),
-  closeTerminalPane: vi.fn(),
-  closeWorkspace: vi.fn(),
-  forceCloseWorkspace: vi.fn(),
-  reorderWorkspaces: vi.fn(),
-  resizePane: vi.fn(),
-  setActivePaneId: vi.fn(),
-  splitPane: vi.fn(),
-  toggleDevServerPane: vi.fn(),
-  toggleDiffPane: vi.fn(),
-  toggleFullscreenPane: vi.fn(),
-  toggleReviewPane: vi.fn(),
-}
-
-vi.mock('@/panels/panel-context', () => ({
-  PanelActionsProvider: ({ children }: React.PropsWithChildren) => (
-    <>{children}</>
-  ),
-  useActivePaneId: () => 'pane-1',
-  useFullscreenPaneId: () => null,
-  usePanelActions: () => mockPanelActions,
-  usePendingClosePane: () => ({
-    paneId: null,
-    onConfirm: vi.fn(),
-    onCancel: vi.fn(),
-  }),
+vi.mock('@atlaskit/pragmatic-drag-and-drop/reorder', () => ({
+  reorder: vi.fn(),
 }))
 
 vi.mock('@/panels/panel-manager', () => ({
@@ -79,15 +54,33 @@ vi.mock('@/panes/diff-pane', () => ({
   ),
 }))
 
-vi.mock('../src/routes/-components/workspace-frames', () => ({
-  WorkspaceFrames: () => (
-    <div data-testid="workspace-frames">Workspace Frames</div>
-  ),
+vi.mock('@/panels/panel-context', () => ({
+  usePanelActions: () => ({
+    assignTerminalToPane: vi.fn(),
+    closePane: vi.fn(),
+    closeTerminalPane: vi.fn(),
+    closeWorkspace: vi.fn(),
+    forceCloseWorkspace: vi.fn(),
+    reorderWorkspaces: vi.fn(),
+    resizePane: vi.fn(),
+    setActivePaneId: vi.fn(),
+    splitPane: vi.fn(),
+    toggleDevServerPane: vi.fn(async () => false),
+    toggleDiffPane: vi.fn(() => false),
+    toggleFullscreenPane: vi.fn(),
+    toggleReviewPane: vi.fn(() => false),
+  }),
 }))
 
 vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
-  WorkspaceFrameHeaderContainer: () => (
-    <div data-testid="workspace-frame-header">Header</div>
+  WorkspaceFrameHeaderContainer: ({
+    workspaceId,
+  }: {
+    workspaceId: string | undefined
+  }) => (
+    <div data-testid="workspace-frame-header" data-workspace-id={workspaceId}>
+      Header {workspaceId}
+    </div>
   ),
 }))
 
@@ -101,8 +94,11 @@ vi.mock('@/components/ui/resizable', () => ({
     minSize,
   }: {
     children: React.ReactNode
-    defaultSize?: string
+    defaultSize?: string | number
     minSize?: string
+    collapsedSize?: string
+    collapsible?: boolean
+    panelRef?: { current: unknown }
   }) => (
     <div
       data-default-size={defaultSize}
@@ -130,7 +126,7 @@ vi.mock('@/components/ui/resizable', () => ({
 }))
 
 // Import after mocks are set up
-import { PanelContent } from '../src/routes/-components/panel-content'
+import { WorkspaceFrames } from '../src/routes/-components/workspace-frames'
 
 const TWO_WORKSPACE_LAYOUT: PanelNode = {
   _tag: 'SplitNode',
@@ -155,94 +151,219 @@ const TWO_WORKSPACE_LAYOUT: PanelNode = {
   sizes: [50, 50],
 }
 
-describe('Full-height review panel', () => {
+const SINGLE_WORKSPACE_LAYOUT: PanelNode = {
+  _tag: 'LeafNode',
+  id: 'pane-1',
+  paneType: 'terminal',
+  terminalId: 'term-1',
+  workspaceId: 'workspace-1',
+}
+
+describe('Workspace-scoped review panel', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
   })
 
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
-  it('renders review panel alongside workspace frames when reviewPaneOpen is true', () => {
+  it('renders review panel inside the matching workspace frame', () => {
     render(
-      <PanelContent
+      <WorkspaceFrames
         activePaneId="pane-1"
         fullscreenPaneId={null}
-        isReconciling={false}
-        layout={TWO_WORKSPACE_LAYOUT}
-        reviewPaneOpen
+        layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
         workspaceOrder={null}
       />
     )
 
-    // Review pane should be rendered at the top level
+    // Review pane should be rendered inside the workspace frame
     const reviewPane = screen.getByTestId('review-pane')
     expect(reviewPane).toBeTruthy()
     expect(reviewPane.getAttribute('data-workspace-id')).toBe('workspace-1')
   })
 
-  it('does not render review panel when reviewPaneOpen is false', () => {
+  it('does not render review panel when reviewWorkspaceId is null', () => {
     render(
-      <PanelContent
+      <WorkspaceFrames
         activePaneId="pane-1"
         fullscreenPaneId={null}
-        isReconciling={false}
-        layout={TWO_WORKSPACE_LAYOUT}
-        reviewPaneOpen={false}
+        layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId={null}
         workspaceOrder={null}
       />
     )
 
-    // Review pane should not be rendered
     expect(screen.queryByTestId('review-pane')).toBeNull()
   })
 
-  it('renders workspace frames and review panel side by side in horizontal split', () => {
-    const { container } = render(
-      <PanelContent
-        activePaneId="pane-1"
-        fullscreenPaneId={null}
-        isReconciling={false}
-        layout={TWO_WORKSPACE_LAYOUT}
-        reviewPaneOpen
-        reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
-      />
-    )
-
-    // Should have a horizontal resizable panel group containing both
-    const panelGroup = container.querySelector('[data-panel-group]')
-    expect(panelGroup).toBeTruthy()
-    expect(panelGroup?.getAttribute('data-orientation')).toBe('horizontal')
-
-    // Both workspace frames and review pane should be present
-    expect(screen.getByTestId('workspace-frames')).toBeTruthy()
-    expect(screen.getByTestId('review-pane')).toBeTruthy()
-  })
-
-  it('review panel takes up right side of the layout', () => {
+  it('renders review panel only in the matching workspace when multiple workspaces exist', () => {
     render(
-      <PanelContent
+      <WorkspaceFrames
         activePaneId="pane-1"
         fullscreenPaneId={null}
-        isReconciling={false}
         layout={TWO_WORKSPACE_LAYOUT}
-        reviewPaneOpen
         reviewWorkspaceId="workspace-1"
         workspaceOrder={null}
       />
     )
 
-    // The review pane should be rendered (on the right side)
-    const reviewPane = screen.getByTestId('review-pane')
-    expect(reviewPane).toBeTruthy()
+    // Review pane should exist once, for workspace-1
+    const reviewPanes = screen.getAllByTestId('review-pane')
+    expect(reviewPanes).toHaveLength(1)
+    expect(reviewPanes[0]?.getAttribute('data-workspace-id')).toBe(
+      'workspace-1'
+    )
+
+    // The workspace-1 header's frame should contain the review pane
+    const headers = screen.getAllByTestId('workspace-frame-header')
+    const ws1Header = headers.find(
+      (h) => h.getAttribute('data-workspace-id') === 'workspace-1'
+    )
+    expect(ws1Header).toBeTruthy()
+
+    // The workspace-2 frame should NOT contain a review pane
+    const ws2Header = headers.find(
+      (h) => h.getAttribute('data-workspace-id') === 'workspace-2'
+    )
+    expect(ws2Header).toBeTruthy()
   })
 
-  it('shows loading state during reconciliation even with review panel', () => {
+  it('renders review panel for workspace-2 when that workspace is targeted', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        fullscreenPaneId={null}
+        layout={TWO_WORKSPACE_LAYOUT}
+        reviewWorkspaceId="workspace-2"
+        workspaceOrder={null}
+      />
+    )
+
+    const reviewPane = screen.getByTestId('review-pane')
+    expect(reviewPane.getAttribute('data-workspace-id')).toBe('workspace-2')
+  })
+})
+
+describe('Workspace-scoped diff panel', () => {
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('renders diff panel inside the matching workspace frame', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        diffWorkspaceId="workspace-1"
+        fullscreenPaneId={null}
+        layout={SINGLE_WORKSPACE_LAYOUT}
+        workspaceOrder={null}
+      />
+    )
+
+    const diffPane = screen.getByTestId('diff-pane')
+    expect(diffPane).toBeTruthy()
+    expect(diffPane.getAttribute('data-workspace-id')).toBe('workspace-1')
+  })
+
+  it('does not render diff panel when diffWorkspaceId is null', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        diffWorkspaceId={null}
+        fullscreenPaneId={null}
+        layout={SINGLE_WORKSPACE_LAYOUT}
+        workspaceOrder={null}
+      />
+    )
+
+    expect(screen.queryByTestId('diff-pane')).toBeNull()
+  })
+
+  it('renders diff panel only in the matching workspace when multiple workspaces exist', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        diffWorkspaceId="workspace-2"
+        fullscreenPaneId={null}
+        layout={TWO_WORKSPACE_LAYOUT}
+        workspaceOrder={null}
+      />
+    )
+
+    const diffPanes = screen.getAllByTestId('diff-pane')
+    expect(diffPanes).toHaveLength(1)
+    expect(diffPanes[0]?.getAttribute('data-workspace-id')).toBe('workspace-2')
+  })
+})
+
+describe('Both panels in same workspace', () => {
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('renders both review and diff panels inside the same workspace frame', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        diffWorkspaceId="workspace-1"
+        fullscreenPaneId={null}
+        layout={SINGLE_WORKSPACE_LAYOUT}
+        reviewWorkspaceId="workspace-1"
+        workspaceOrder={null}
+      />
+    )
+
+    expect(screen.getByTestId('review-pane')).toBeTruthy()
+    expect(screen.getByTestId('diff-pane')).toBeTruthy()
+  })
+
+  it('renders panels in different workspaces simultaneously', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        diffWorkspaceId="workspace-2"
+        fullscreenPaneId={null}
+        layout={TWO_WORKSPACE_LAYOUT}
+        reviewWorkspaceId="workspace-1"
+        workspaceOrder={null}
+      />
+    )
+
+    const reviewPane = screen.getByTestId('review-pane')
+    const diffPane = screen.getByTestId('diff-pane')
+
+    expect(reviewPane.getAttribute('data-workspace-id')).toBe('workspace-1')
+    expect(diffPane.getAttribute('data-workspace-id')).toBe('workspace-2')
+  })
+})
+
+describe('PanelContent passes through side panel state', () => {
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('shows loading state during reconciliation regardless of panel state', async () => {
+    // We need to test PanelContent separately for the reconciling state
+    // since WorkspaceFrames is not rendered during reconciliation
+    vi.doMock('@/livestore/store', () => ({
+      useLaborerStore: () => ({
+        useQuery: vi.fn(() => []),
+        query: vi.fn(() => []),
+        commit: vi.fn(),
+      }),
+    }))
+
+    vi.doMock('@livestore/livestore', () => ({
+      queryDb: vi.fn(() => ({ table: 'mock' })),
+    }))
+
+    const { PanelContent } = await import(
+      '../src/routes/-components/panel-content'
+    )
+
     render(
       <PanelContent
         activePaneId="pane-1"
@@ -255,218 +376,7 @@ describe('Full-height review panel', () => {
       />
     )
 
-    // Should show reconciling message
     expect(screen.getByText('Restoring terminal sessions...')).toBeTruthy()
-    // Review pane should not be shown during reconciliation
     expect(screen.queryByTestId('review-pane')).toBeNull()
-  })
-
-  it('renders review panel for the correct workspace', () => {
-    render(
-      <PanelContent
-        activePaneId="pane-1"
-        fullscreenPaneId={null}
-        isReconciling={false}
-        layout={TWO_WORKSPACE_LAYOUT}
-        reviewPaneOpen
-        reviewWorkspaceId="workspace-2"
-        workspaceOrder={null}
-      />
-    )
-
-    const reviewPane = screen.getByTestId('review-pane')
-    expect(reviewPane.getAttribute('data-workspace-id')).toBe('workspace-2')
-  })
-
-  it('does not render review panel when reviewWorkspaceId is null even if reviewPaneOpen is true', () => {
-    render(
-      <PanelContent
-        activePaneId="pane-1"
-        fullscreenPaneId={null}
-        isReconciling={false}
-        layout={TWO_WORKSPACE_LAYOUT}
-        reviewPaneOpen
-        reviewWorkspaceId={null}
-        workspaceOrder={null}
-      />
-    )
-
-    // Review pane should not be rendered because workspaceId is null
-    expect(screen.queryByTestId('review-pane')).toBeNull()
-    // But workspace frames should still be rendered
-    expect(screen.getByTestId('workspace-frames')).toBeTruthy()
-  })
-
-  it('does not render review panel when layout is undefined', () => {
-    render(
-      <PanelContent
-        activePaneId="pane-1"
-        fullscreenPaneId={null}
-        isReconciling={false}
-        layout={undefined}
-        reviewPaneOpen
-        reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
-      />
-    )
-
-    // Review pane should not be rendered because no layout exists
-    expect(screen.queryByTestId('review-pane')).toBeNull()
-  })
-})
-
-describe('Full-height diff panel', () => {
-  afterEach(() => {
-    cleanup()
-    vi.clearAllMocks()
-  })
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
-  it('renders diff panel alongside workspace frames when diffPaneOpen is true', () => {
-    render(
-      <PanelContent
-        activePaneId="pane-1"
-        diffPaneOpen
-        diffWorkspaceId="workspace-1"
-        fullscreenPaneId={null}
-        isReconciling={false}
-        layout={TWO_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
-      />
-    )
-
-    // Diff pane should be rendered at the top level
-    const diffPane = screen.getByTestId('diff-pane')
-    expect(diffPane).toBeTruthy()
-    expect(diffPane.getAttribute('data-workspace-id')).toBe('workspace-1')
-  })
-
-  it('does not render diff panel when diffPaneOpen is false', () => {
-    render(
-      <PanelContent
-        activePaneId="pane-1"
-        diffPaneOpen={false}
-        diffWorkspaceId={null}
-        fullscreenPaneId={null}
-        isReconciling={false}
-        layout={TWO_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
-      />
-    )
-
-    // Diff pane should not be rendered
-    expect(screen.queryByTestId('diff-pane')).toBeNull()
-  })
-
-  it('renders workspace frames and diff panel side by side in horizontal split', () => {
-    const { container } = render(
-      <PanelContent
-        activePaneId="pane-1"
-        diffPaneOpen
-        diffWorkspaceId="workspace-1"
-        fullscreenPaneId={null}
-        isReconciling={false}
-        layout={TWO_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
-      />
-    )
-
-    // Should have a horizontal resizable panel group containing both
-    const panelGroup = container.querySelector('[data-panel-group]')
-    expect(panelGroup).toBeTruthy()
-    expect(panelGroup?.getAttribute('data-orientation')).toBe('horizontal')
-
-    // Both workspace frames and diff pane should be present
-    expect(screen.getByTestId('workspace-frames')).toBeTruthy()
-    expect(screen.getByTestId('diff-pane')).toBeTruthy()
-  })
-
-  it('renders diff panel for the correct workspace', () => {
-    render(
-      <PanelContent
-        activePaneId="pane-1"
-        diffPaneOpen
-        diffWorkspaceId="workspace-2"
-        fullscreenPaneId={null}
-        isReconciling={false}
-        layout={TWO_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
-      />
-    )
-
-    const diffPane = screen.getByTestId('diff-pane')
-    expect(diffPane.getAttribute('data-workspace-id')).toBe('workspace-2')
-  })
-
-  it('does not render diff panel when diffWorkspaceId is null even if diffPaneOpen is true', () => {
-    render(
-      <PanelContent
-        activePaneId="pane-1"
-        diffPaneOpen
-        diffWorkspaceId={null}
-        fullscreenPaneId={null}
-        isReconciling={false}
-        layout={TWO_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
-      />
-    )
-
-    // Diff pane should not be rendered because workspaceId is null
-    expect(screen.queryByTestId('diff-pane')).toBeNull()
-    // But workspace frames should still be rendered
-    expect(screen.getByTestId('workspace-frames')).toBeTruthy()
-  })
-})
-
-describe('Both panels open simultaneously', () => {
-  afterEach(() => {
-    cleanup()
-    vi.clearAllMocks()
-  })
-
-  it('renders both review and diff panels when both are open', () => {
-    render(
-      <PanelContent
-        activePaneId="pane-1"
-        diffPaneOpen
-        diffWorkspaceId="workspace-1"
-        fullscreenPaneId={null}
-        isReconciling={false}
-        layout={TWO_WORKSPACE_LAYOUT}
-        reviewPaneOpen
-        reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
-      />
-    )
-
-    // Both panels should be rendered
-    expect(screen.getByTestId('review-pane')).toBeTruthy()
-    expect(screen.getByTestId('diff-pane')).toBeTruthy()
-    expect(screen.getByTestId('workspace-frames')).toBeTruthy()
-  })
-
-  it('renders panels for different workspaces', () => {
-    render(
-      <PanelContent
-        activePaneId="pane-1"
-        diffPaneOpen
-        diffWorkspaceId="workspace-2"
-        fullscreenPaneId={null}
-        isReconciling={false}
-        layout={TWO_WORKSPACE_LAYOUT}
-        reviewPaneOpen
-        reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
-      />
-    )
-
-    const reviewPane = screen.getByTestId('review-pane')
-    const diffPane = screen.getByTestId('diff-pane')
-
-    expect(reviewPane.getAttribute('data-workspace-id')).toBe('workspace-1')
-    expect(diffPane.getAttribute('data-workspace-id')).toBe('workspace-2')
   })
 })

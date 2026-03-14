@@ -5,7 +5,7 @@ import type { SidecarManager, SidecarName } from './sidecar.js'
 // ---------------------------------------------------------------------------
 
 /** Interval between health check HTTP polls (ms). */
-const HEALTH_CHECK_INTERVAL_MS = 100
+const HEALTH_CHECK_INTERVAL_MS = 50
 
 /** Maximum time to wait for a sidecar to become healthy (ms). */
 const HEALTH_CHECK_TIMEOUT_MS = 10_000
@@ -79,6 +79,10 @@ async function checkHealth(url: string): Promise<boolean> {
 /**
  * Poll a sidecar's health endpoint until it responds or the timeout elapses.
  *
+ * Uses an immediate first check followed by exponential backoff polling
+ * to minimize latency when services start quickly while reducing CPU
+ * usage during longer waits.
+ *
  * @returns `true` if the service became healthy within the timeout, `false` otherwise.
  */
 export async function waitForHealthy(
@@ -88,11 +92,21 @@ export async function waitForHealthy(
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
 
+  // Immediate first check — no initial delay
+  if (await checkHealth(url)) {
+    return true
+  }
+
+  // Exponential backoff: start at intervalMs, cap at 200ms
+  let currentInterval = intervalMs
+  const maxInterval = 200
+
   while (Date.now() < deadline) {
+    await delay(currentInterval)
     if (await checkHealth(url)) {
       return true
     }
-    await delay(intervalMs)
+    currentInterval = Math.min(currentInterval * 1.5, maxInterval)
   }
 
   return false

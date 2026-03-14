@@ -5,16 +5,13 @@ import {
   Outlet,
 } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
-import { useEffect, useState } from 'react'
 import { AtomRegistryProvider } from '@/atoms/provider'
 import { DockerStatusBanner } from '@/components/docker-status-banner'
 import Header from '@/components/header'
-import Loader from '@/components/loader'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
-import { waitForServer } from '@/lib/desktop'
 import { LiveStoreProvider } from '@/livestore/provider'
 
 import '../index.css'
@@ -48,38 +45,6 @@ function SidecarCrashListener(): null {
   return null
 }
 
-/**
- * Gate that polls the server's health endpoint before rendering children.
- *
- * Prevents LiveStore, AtomRpc, and WebSocket connections from being
- * initialized until the server is confirmed ready to handle requests.
- * Without this gate, the app renders in a broken "connecting..." state
- * when the server's HTTP routes haven't finished initializing.
- */
-function ServerGate({ children }: { children: React.ReactNode }) {
-  const [ready, setReady] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-
-    waitForServer().then(() => {
-      if (!cancelled) {
-        setReady(true)
-      }
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  if (!ready) {
-    return <Loader />
-  }
-
-  return children
-}
-
 function RootComponent() {
   return (
     <>
@@ -92,17 +57,15 @@ function RootComponent() {
       >
         <HotkeysProvider>
           <TooltipProvider>
-            <ServerGate>
-              <AtomRegistryProvider>
+            <AtomRegistryProvider>
+              <div className="grid h-svh grid-rows-[auto_auto_1fr]">
+                <Header />
+                <DockerStatusBanner />
                 <LiveStoreProvider>
-                  <div className="grid h-svh grid-rows-[auto_auto_1fr]">
-                    <Header />
-                    <DockerStatusBanner />
-                    <Outlet />
-                  </div>
+                  <Outlet />
                 </LiveStoreProvider>
-              </AtomRegistryProvider>
-            </ServerGate>
+              </div>
+            </AtomRegistryProvider>
             <Toaster richColors />
             <SidecarCrashListener />
           </TooltipProvider>

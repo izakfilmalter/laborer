@@ -174,7 +174,6 @@ describe('WorkspaceFrames minimize behavior', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        fullscreenPaneId={null}
         layout={layout}
         workspaceOrder={null}
       />
@@ -190,7 +189,6 @@ describe('WorkspaceFrames minimize behavior', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        fullscreenPaneId={null}
         layout={layout}
         workspaceOrder={null}
       />

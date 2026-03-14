@@ -29,6 +29,7 @@ import { env } from '@laborer/env/server'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import { Cause, Effect, Exit, Layer } from 'effect'
 import { LaborerRpcsLive } from './rpc/handlers.js'
+import { BackgroundFetchService } from './services/background-fetch-service.js'
 import { BranchStateTracker } from './services/branch-state-tracker.js'
 import { ConfigService } from './services/config-service.js'
 import { ContainerService } from './services/container-service.js'
@@ -128,7 +129,10 @@ const HttpLiveBase = HttpRouter.Default.serve((httpApp) =>
   Layer.provide(DiffService.layer),
   Layer.provide(PrWatcher.layer),
   Layer.provide(
-    WorkspaceSyncService.layer.pipe(Layer.provide(PrWatcher.layer))
+    WorkspaceSyncService.layer.pipe(
+      Layer.provide(PrWatcher.layer),
+      Layer.provide(BackgroundFetchService.layer)
+    )
   ),
   Layer.provide(TerminalClient.layer),
   Layer.provide(WorkspaceProvider.layer),

@@ -13,9 +13,12 @@ const {
   layoutWorkspacesReorderedMock,
   persistedRowsRef,
   reportVisibleWorkspacesMock,
+  spawnTerminalMock,
   storeCommitMock,
   storeQueryMock,
   storeUseQueryMock,
+  terminalListRef,
+  upsertTerminalListItemMock,
 } = vi.hoisted(() => ({
   currentWindowIdRef: { current: 'window-a' as string | null },
   focusExistingWindowForWorkspaceMock: vi.fn(
@@ -45,16 +48,26 @@ const {
       readonly workspaceOrder?: readonly string[] | null
     }>,
   },
+  spawnTerminalMock: vi.fn(async () => ({
+    id: 'spawned-terminal',
+    command: '/bin/zsh',
+    status: 'running' as const,
+    workspaceId: 'workspace-a',
+  })),
   storeCommitMock: vi.fn(),
   storeQueryMock: vi.fn(),
   storeUseQueryMock: vi.fn(),
+  terminalListRef: {
+    current: {
+      isLoading: false,
+      terminals: [] as Array<{ readonly id: string }>,
+    },
+  },
+  upsertTerminalListItemMock: vi.fn(),
 }))
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
-  useAtomSet: () =>
-    vi.fn(async () => ({
-      id: 'spawned-terminal',
-    })),
+  useAtomSet: () => spawnTerminalMock,
 }))
 
 vi.mock('@laborer/shared/schema', () => ({
@@ -85,10 +98,9 @@ vi.mock('@/atoms/terminal-service-client', () => ({
 
 vi.mock('@/hooks/use-terminal-list', () => ({
   removeTerminalListItem: vi.fn(),
-  useTerminalList: vi.fn(() => ({
-    isLoading: false,
-    terminals: [],
-  })),
+  upsertTerminalListItem: (...args: unknown[]) =>
+    upsertTerminalListItemMock(...args),
+  useTerminalList: vi.fn(() => terminalListRef.current),
 }))
 
 vi.mock('@/lib/desktop', () => ({
@@ -225,6 +237,7 @@ describe('usePanelLayout', () => {
     currentWindowIdRef.current = 'window-a'
     initialLayoutRef.current = undefined
     persistedRowsRef.current = []
+    terminalListRef.current = { isLoading: false, terminals: [] }
     focusExistingWindowForWorkspaceMock.mockReset()
     focusExistingWindowForWorkspaceMock.mockResolvedValue(false)
     layoutPaneAssignedMock.mockClear()
@@ -233,6 +246,14 @@ describe('usePanelLayout', () => {
     layoutSplitMock.mockClear()
     layoutWorkspacesReorderedMock.mockClear()
     reportVisibleWorkspacesMock.mockClear()
+    spawnTerminalMock.mockClear()
+    spawnTerminalMock.mockImplementation(async () => ({
+      id: 'spawned-terminal',
+      command: '/bin/zsh',
+      status: 'running' as const,
+      workspaceId: 'workspace-a',
+    }))
+    upsertTerminalListItemMock.mockClear()
     storeCommitMock.mockReset()
     storeQueryMock.mockReset()
     storeUseQueryMock.mockReset()
@@ -650,6 +671,128 @@ describe('usePanelLayout', () => {
     )
     expect(layoutPaneAssignedMock).toHaveBeenCalledWith(
       expect.objectContaining({ windowId: 'window-a' })
+    )
+  })
+
+  it('optimistically updates the terminal list when reconciling stale terminals on startup', async () => {
+    // Persisted layout has a terminal ID that no longer exists
+    const STALE_LAYOUT: PanelNode = {
+      _tag: 'LeafNode',
+      id: 'pane-a',
+      paneType: 'terminal',
+      terminalId: 'term-stale',
+      workspaceId: 'workspace-a',
+    }
+    persistedRowsRef.current = [
+      {
+        activePaneId: 'pane-a',
+        layoutTree: STALE_LAYOUT,
+        windowId: 'window-a',
+      },
+    ]
+
+    // Terminal service returns no live terminals (fresh restart)
+    terminalListRef.current = { isLoading: false, terminals: [] }
+
+    // Spawn returns a new terminal
+    spawnTerminalMock.mockResolvedValue({
+      id: 'term-new',
+      command: '/bin/zsh',
+      status: 'running' as const,
+      workspaceId: 'workspace-a',
+    })
+
+    const { rerender } = renderHook(() => usePanelLayout())
+
+    // Allow the reconciliation effect and async spawn to complete
+    await act(async () => {
+      rerender()
+      // Wait for the spawn promise to resolve
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+
+    // The fix: upsertTerminalListItem should have been called with the
+    // new terminal info, so the sidebar shows the recovered terminal
+    // immediately without waiting for the event stream.
+    expect(upsertTerminalListItemMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'term-new',
+        workspaceId: 'workspace-a',
+        status: 'running',
+        command: '/bin/zsh',
+      })
+    )
+  })
+
+  it('reconciles the persisted layout tree with new terminal IDs after respawning', async () => {
+    const STALE_LAYOUT: PanelNode = {
+      _tag: 'SplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [
+        {
+          _tag: 'LeafNode',
+          id: 'pane-a',
+          paneType: 'terminal',
+          terminalId: 'term-stale-1',
+          workspaceId: 'workspace-a',
+        },
+        {
+          _tag: 'LeafNode',
+          id: 'pane-b',
+          paneType: 'terminal',
+          terminalId: 'term-stale-2',
+          workspaceId: 'workspace-b',
+        },
+      ],
+      sizes: [50, 50],
+    }
+    persistedRowsRef.current = [
+      {
+        activePaneId: 'pane-a',
+        layoutTree: STALE_LAYOUT,
+        windowId: 'window-a',
+      },
+    ]
+
+    terminalListRef.current = { isLoading: false, terminals: [] }
+
+    let spawnCount = 0
+    spawnTerminalMock.mockImplementation(async () => {
+      spawnCount++
+      return {
+        id: `term-new-${spawnCount}`,
+        command: '/bin/zsh',
+        status: 'running' as const,
+        workspaceId: `workspace-${spawnCount === 1 ? 'a' : 'b'}`,
+      }
+    })
+
+    const { rerender } = renderHook(() => usePanelLayout())
+
+    await act(async () => {
+      rerender()
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    })
+
+    // Both stale terminals should have been respawned
+    expect(spawnTerminalMock).toHaveBeenCalledTimes(2)
+
+    // Both should have optimistic upserts
+    expect(upsertTerminalListItemMock).toHaveBeenCalledTimes(2)
+
+    // The layout should be updated with the new terminal IDs
+    expect(layoutRestoredMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        windowId: 'window-a',
+        layoutTree: expect.objectContaining({
+          _tag: 'SplitNode',
+          children: expect.arrayContaining([
+            expect.objectContaining({ terminalId: 'term-new-1' }),
+            expect.objectContaining({ terminalId: 'term-new-2' }),
+          ]),
+        }),
+      })
     )
   })
 })

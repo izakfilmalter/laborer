@@ -1,3 +1,4 @@
+// @effect-diagnostics effect/preferSchemaOverJson:off
 import { rmSync } from 'node:fs'
 import { assert, describe, it } from '@effect/vitest'
 import { events } from '@laborer/shared/schema'

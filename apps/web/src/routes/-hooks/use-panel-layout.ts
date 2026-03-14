@@ -15,6 +15,7 @@ import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import {
   removeTerminalListItem,
+  upsertTerminalListItem,
   useTerminalList,
 } from '@/hooks/use-terminal-list'
 import {
@@ -263,6 +264,22 @@ export function usePanelLayout() {
             payload: { workspaceId: leaf.workspaceId },
           })
           respawnedIds.set(leaf.terminalId, result.id)
+          // Optimistically update the shared terminal list so the
+          // sidebar workspace cards show recovered terminals immediately,
+          // without waiting for the terminal.events stream (which may
+          // not be fully connected during startup).
+          upsertTerminalListItem({
+            agentStatus: null,
+            args: [],
+            command: result.command,
+            cwd: '',
+            foregroundProcess: null,
+            hasChildProcess: false,
+            id: result.id,
+            processChain: [],
+            status: result.status,
+            workspaceId: leaf.workspaceId,
+          })
         } catch (error) {
           console.error(
             '[reconcile] spawn failed for workspace:',

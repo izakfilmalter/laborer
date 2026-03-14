@@ -43,6 +43,43 @@ fixPath()
 // MUST happen synchronously before app.whenReady().
 registerSchemeAsPrivileged()
 
+// ---------------------------------------------------------------------------
+// GitHub OAuth protocol handler
+// ---------------------------------------------------------------------------
+// Register x-github-desktop-dev-auth:// so the OS routes the OAuth callback
+// back to this app after the user authorizes in the browser.
+
+const GITHUB_OAUTH_PROTOCOL = 'x-github-desktop-dev-auth'
+
+/** Pending OAuth URL received before a window was ready. */
+let pendingOAuthUrl: string | null = null
+
+/**
+ * Broadcast a GitHub OAuth callback URL to all renderer windows.
+ */
+function handleGithubOAuthUrl(url: string): void {
+  const windows = BrowserWindow.getAllWindows()
+  if (windows.length === 0) {
+    // Window not ready yet — store for later delivery.
+    pendingOAuthUrl = url
+    return
+  }
+
+  for (const window of windows) {
+    window.webContents.send('desktop:github-oauth-callback', url)
+  }
+}
+
+// macOS: the OS delivers custom-protocol URLs via the open-url event.
+// This MUST be registered before app.whenReady() to catch URLs that
+// triggered the app launch.
+app.on('open-url', (event, url) => {
+  if (url.startsWith(`${GITHUB_OAUTH_PROTOCOL}://`)) {
+    event.preventDefault()
+    handleGithubOAuthUrl(url)
+  }
+})
+
 /**
  * Vite dev server URL, set by the dev-electron script.
  * When present, the renderer loads from the dev server instead of a custom protocol.
@@ -295,6 +332,16 @@ app
           )
         }
       })
+    }
+
+    // Register x-github-desktop-dev-auth:// as a protocol handler so
+    // the OAuth callback from GitHub lands back in this app.
+    app.setAsDefaultProtocolClient(GITHUB_OAUTH_PROTOCOL)
+
+    // Deliver any pending OAuth URL that arrived before windows were ready.
+    if (pendingOAuthUrl) {
+      handleGithubOAuthUrl(pendingOAuthUrl)
+      pendingOAuthUrl = null
     }
 
     // Register IPC handlers once for the DesktopBridge contract.

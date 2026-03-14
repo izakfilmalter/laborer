@@ -45,6 +45,7 @@
     "prepare": "effect-language-service patch"
   },
   "dependencies": {
+    "@github/alive-client": "^1.2.0",
     "@laborer/env": "workspace:*",
     "dotenv": "catalog:",
     "zod": "catalog:"

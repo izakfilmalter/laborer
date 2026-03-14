@@ -24,6 +24,8 @@ const UPDATE_STATE_CHANNEL = 'desktop:update-state'
 const UPDATE_GET_STATE_CHANNEL = 'desktop:update-get-state'
 const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
 const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
+const GITHUB_OAUTH_CALLBACK_CHANNEL = 'desktop:github-oauth-callback'
+const START_GITHUB_OAUTH_CHANNEL = 'desktop:start-github-oauth'
 
 // ---------------------------------------------------------------------------
 // Service URLs — injected via `additionalArguments` from the main process.
@@ -159,4 +161,23 @@ contextBridge.exposeInMainWorld('desktopBridge', {
       ipcRenderer.removeListener(UPDATE_STATE_CHANNEL, wrappedListener)
     }
   },
+  onGithubOAuthCallback: (listener) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      url: unknown
+    ) => {
+      if (typeof url !== 'string') {
+        return
+      }
+      listener(url)
+    }
+
+    ipcRenderer.on(GITHUB_OAUTH_CALLBACK_CHANNEL, wrappedListener)
+    return () => {
+      ipcRenderer.removeListener(GITHUB_OAUTH_CALLBACK_CHANNEL, wrappedListener)
+    }
+  },
+
+  startGithubOAuth: (state) =>
+    ipcRenderer.invoke(START_GITHUB_OAUTH_CHANNEL, state),
 } satisfies DesktopBridge)

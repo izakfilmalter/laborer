@@ -1,5 +1,5 @@
-import { RotateCcw } from 'lucide-react'
-import { useCallback } from 'react'
+import { RotateCcw, Settings } from 'lucide-react'
+import { useCallback, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/tooltip'
 import { isElectron } from '@/lib/desktop'
 
+import { AppSettingsModal } from './app-settings-modal'
 import { ModeToggle } from './mode-toggle'
 import { ServiceStatusPills } from './service-status-pills'
 
@@ -32,6 +33,31 @@ function ResetButton() {
   )
 }
 
+function SettingsButton() {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              onClick={() => setOpen(true)}
+              size="icon"
+              variant="outline"
+            />
+          }
+        >
+          <Settings className="h-[1.2rem] w-[1.2rem]" />
+          <span className="sr-only">Settings</span>
+        </TooltipTrigger>
+        <TooltipContent>Settings</TooltipContent>
+      </Tooltip>
+      <AppSettingsModal onOpenChange={setOpen} open={open} />
+    </>
+  )
+}
+
 export default function Header() {
   const electron = isElectron()
 
@@ -46,6 +72,7 @@ export default function Header() {
         <div className="flex items-center gap-2">
           <ServiceStatusPills />
           <ResetButton />
+          <SettingsButton />
           <ModeToggle />
         </div>
       </div>

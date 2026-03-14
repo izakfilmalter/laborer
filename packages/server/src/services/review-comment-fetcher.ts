@@ -419,6 +419,22 @@ interface ReviewFetchVerdictResult {
   readonly verdict: ReviewVerdictType | null
 }
 
+interface FetchSingleIssueCommentResult {
+  readonly comment: PrCommentType
+  readonly verdict: ReviewVerdictType | null
+}
+
+type FetchSingleReviewCommentResult =
+  | { readonly kind: 'comment'; readonly comment: PrCommentType }
+  | { readonly kind: 'finding'; readonly finding: ReviewFindingType }
+
+interface FetchSingleReviewResult {
+  readonly authorLogin: string
+  readonly body: string
+  readonly reviewId: number
+  readonly state: string
+}
+
 class ReviewCommentFetcher extends Context.Tag('@laborer/ReviewCommentFetcher')<
   ReviewCommentFetcher,
   {
@@ -430,6 +446,18 @@ class ReviewCommentFetcher extends Context.Tag('@laborer/ReviewCommentFetcher')<
     readonly fetchComments: (
       workspaceId: string
     ) => Effect.Effect<ReviewFetchCommentsResult, RpcError>
+    readonly fetchSingleIssueComment: (
+      workspaceId: string,
+      commentId: number
+    ) => Effect.Effect<FetchSingleIssueCommentResult, RpcError>
+    readonly fetchSingleReview: (
+      workspaceId: string,
+      reviewId: number
+    ) => Effect.Effect<FetchSingleReviewResult, RpcError>
+    readonly fetchSingleReviewComment: (
+      workspaceId: string,
+      commentId: number
+    ) => Effect.Effect<FetchSingleReviewCommentResult, RpcError>
     readonly fetchVerdict: (
       workspaceId: string
     ) => Effect.Effect<ReviewFetchVerdictResult, RpcError>
@@ -665,7 +693,12 @@ class ReviewCommentFetcher extends Context.Tag('@laborer/ReviewCommentFetcher')<
         const worktreePath = workspace.worktreePath
         const { owner, repo } = yield* detectOwnerRepo(worktreePath)
 
-        return { owner, repo, worktreePath }
+        const prNumber =
+          typeof workspace.prNumber === 'number' && workspace.prNumber > 0
+            ? workspace.prNumber
+            : yield* detectPrNumber(worktreePath)
+
+        return { owner, prNumber, repo, worktreePath }
       })
 
       /**
@@ -710,9 +743,143 @@ class ReviewCommentFetcher extends Context.Tag('@laborer/ReviewCommentFetcher')<
         }
       )
 
+      /**
+       * Fetch a single issue comment by ID. Applies brrr verdict parsing.
+       */
+      const fetchSingleIssueComment = Effect.fn(
+        'ReviewCommentFetcher.fetchSingleIssueComment'
+      )(function* (workspaceId: string, commentId: number) {
+        const { owner, repo, worktreePath } =
+          yield* resolveWorkspaceRepo(workspaceId)
+
+        const raw = yield* ghApi<GhIssueComment>(
+          `repos/${owner}/${repo}/issues/comments/${commentId}`,
+          worktreePath
+        )
+
+        const reactions = yield* fetchReactions(
+          owner,
+          repo,
+          commentId,
+          'issue',
+          worktreePath
+        )
+
+        const comment: PrCommentType = {
+          id: raw.id,
+          commentType: 'issue' as const,
+          authorLogin: raw.user.login,
+          authorAvatarUrl: raw.user.avatar_url,
+          body: raw.body,
+          filePath: null,
+          line: null,
+          createdAt: raw.created_at,
+          reactions,
+        }
+
+        // Check if this is the brrr review summary comment
+        const verdict = isBrrrReviewComment(raw.body)
+          ? Option.getOrElse(
+              extractVerdict(raw.body),
+              () => null as ReviewVerdictType | null
+            )
+          : null
+
+        return { comment, verdict }
+      })
+
+      /**
+       * Fetch a single inline review comment by ID. Applies brrr finding parsing.
+       * Returns either a plain comment or a structured finding.
+       */
+      const fetchSingleReviewComment = Effect.fn(
+        'ReviewCommentFetcher.fetchSingleReviewComment'
+      )(function* (workspaceId: string, commentId: number) {
+        const { owner, repo, worktreePath } =
+          yield* resolveWorkspaceRepo(workspaceId)
+
+        const raw = yield* ghApi<GhReviewComment>(
+          `repos/${owner}/${repo}/pulls/comments/${commentId}`,
+          worktreePath
+        )
+
+        const reactions = yield* fetchReactions(
+          owner,
+          repo,
+          commentId,
+          'review',
+          worktreePath
+        )
+
+        const findingOpt = extractFinding(raw.body)
+        if (Option.isSome(findingOpt)) {
+          const f = findingOpt.value
+          return {
+            kind: 'finding' as const,
+            finding: {
+              id: f.id,
+              file: f.file,
+              line: f.line,
+              severity: f.severity as ReviewFindingType['severity'],
+              description: f.description,
+              suggestedFixes: [...(f.suggested_fixes ?? [])],
+              category: f.category ?? null,
+              dependsOn: [...(f.depends_on ?? [])],
+              commentId: raw.id,
+              reactions,
+            },
+          }
+        }
+
+        return {
+          kind: 'comment' as const,
+          comment: {
+            id: raw.id,
+            commentType: 'review' as const,
+            authorLogin: raw.user.login,
+            authorAvatarUrl: raw.user.avatar_url,
+            body: raw.body,
+            filePath: raw.path,
+            line: raw.line ?? raw.original_line ?? null,
+            createdAt: raw.created_at,
+            reactions,
+          },
+        }
+      })
+
+      /**
+       * Fetch a single PR review by ID. Returns the review state.
+       */
+      const fetchSingleReview = Effect.fn(
+        'ReviewCommentFetcher.fetchSingleReview'
+      )(function* (workspaceId: string, reviewId: number) {
+        const { owner, prNumber, repo, worktreePath } =
+          yield* resolveWorkspaceRepo(workspaceId)
+
+        const raw = yield* ghApi<{
+          readonly body: string
+          readonly id: number
+          readonly state: string
+          readonly user: GhUser
+        }>(
+          `repos/${owner}/${repo}/pulls/${prNumber}/reviews/${reviewId}`,
+          worktreePath
+        )
+
+        return {
+          reviewId: raw.id,
+          state: raw.state,
+          authorLogin: raw.user.login,
+          body: raw.body,
+        }
+      })
+
       return ReviewCommentFetcher.of({
         addReaction,
         fetchComments,
+        fetchSingleIssueComment,
+        fetchSingleReview,
+        fetchSingleReviewComment,
         fetchVerdict,
         removeReaction,
       })

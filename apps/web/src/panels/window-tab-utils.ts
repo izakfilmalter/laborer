@@ -410,6 +410,74 @@ function getActiveWindowTab(layout: WindowLayout): WindowTab | undefined {
 }
 
 // ---------------------------------------------------------------------------
+// Workspace tile leaf update
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply a transform to the workspace tile node that matches a given
+ * workspace ID within a tile tree. Returns a new tree with the leaf
+ * replaced by the transform's return value.
+ *
+ * @param node - The workspace tile tree to search
+ * @param workspaceId - The workspace ID to find
+ * @param transform - Function that receives the leaf and returns the updated leaf
+ * @returns A new tile tree with the leaf updated, or the original tree if not found
+ */
+function updateTileLeaf(
+  node: WorkspaceTileNode,
+  workspaceId: string,
+  transform: (leaf: WorkspaceTileLeaf) => WorkspaceTileLeaf
+): WorkspaceTileNode {
+  if (node._tag === 'WorkspaceTileLeaf') {
+    return node.workspaceId === workspaceId ? transform(node) : node
+  }
+  const newChildren = node.children.map((child) =>
+    updateTileLeaf(child, workspaceId, transform)
+  )
+  // Only create a new split if something changed
+  if (newChildren.every((child, i) => child === node.children[i])) {
+    return node
+  }
+  return { ...node, children: newChildren }
+}
+
+/**
+ * Apply a transform to a workspace tile leaf within a WindowLayout.
+ * Searches all tabs for the workspace and applies the transform to the
+ * matching leaf. Returns a new WindowLayout with the update applied.
+ *
+ * @param layout - The window layout to search
+ * @param workspaceId - The workspace ID to find
+ * @param transform - Function that receives the leaf and returns the updated leaf
+ * @returns A new WindowLayout with the workspace updated
+ */
+function updateWorkspaceTileLeaf(
+  layout: WindowLayout,
+  workspaceId: string,
+  transform: (leaf: WorkspaceTileLeaf) => WorkspaceTileLeaf
+): WindowLayout {
+  const newTabs = layout.tabs.map((tab) => {
+    if (!tab.workspaceLayout) {
+      return tab
+    }
+    const newLayout = updateTileLeaf(
+      tab.workspaceLayout,
+      workspaceId,
+      transform
+    )
+    if (newLayout === tab.workspaceLayout) {
+      return tab
+    }
+    return { ...tab, workspaceLayout: newLayout }
+  })
+  // Only create new layout if something changed
+  if (newTabs.every((tab, i) => tab === layout.tabs[i])) {
+    return layout
+  }
+  return { ...layout, tabs: newTabs }
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -425,6 +493,7 @@ export {
   switchWindowTab,
   switchWindowTabByIndex,
   switchWindowTabRelative,
+  updateWorkspaceTileLeaf,
 }
 
 export type { TerminalLocation, WorkspaceLocation }

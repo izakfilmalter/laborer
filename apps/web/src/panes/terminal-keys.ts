@@ -68,6 +68,31 @@ const isMetaShiftBracket = (event: KeyboardEvent): boolean =>
   !event.altKey &&
   (event.key === '[' || event.key === ']')
 
+/** Ctrl+T — new panel tab. */
+const isCtrlT = (event: KeyboardEvent): boolean =>
+  event.key === 't' &&
+  event.ctrlKey &&
+  !event.metaKey &&
+  !event.shiftKey &&
+  !event.altKey
+
+/** Ctrl+1 through Ctrl+9 — switch panel tab by index. */
+const isCtrlDigit = (event: KeyboardEvent): boolean =>
+  event.ctrlKey &&
+  !event.metaKey &&
+  !event.shiftKey &&
+  !event.altKey &&
+  event.key >= '1' &&
+  event.key <= '9'
+
+/** Ctrl+Shift+[ or Ctrl+Shift+] — cycle panel tabs. */
+const isCtrlShiftBracket = (event: KeyboardEvent): boolean =>
+  event.ctrlKey &&
+  event.shiftKey &&
+  !event.metaKey &&
+  !event.altKey &&
+  (event.key === '[' || event.key === ']')
+
 /**
  * Check if a keyboard event should bypass xterm.js and bubble to
  * the global hotkey layer (TanStack Hotkeys on document).
@@ -81,9 +106,15 @@ const shouldBypassTerminal = (event: KeyboardEvent): boolean =>
   isMetaN(event) ||
   isMetaShiftW(event) ||
   isMetaDigit(event) ||
-  isMetaShiftBracket(event)
+  isMetaShiftBracket(event) ||
+  isCtrlT(event) ||
+  isCtrlDigit(event) ||
+  isCtrlShiftBracket(event)
 
 export {
+  isCtrlDigit,
+  isCtrlShiftBracket,
+  isCtrlT,
   isExactCtrlB,
   isExactMetaW,
   isMetaDigit,

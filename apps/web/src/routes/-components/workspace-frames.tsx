@@ -7,6 +7,7 @@ import {
 import { reorder } from '@atlaskit/pragmatic-drag-and-drop/reorder'
 import type {
   PanelNode,
+  PanelTreeNode,
   WorkspaceTileLeaf,
   WorkspaceTileNode,
 } from '@laborer/shared/types'
@@ -17,6 +18,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from '@/components/ui/resizable'
+import { TabBar, type TabBarItem } from '@/components/ui/tab-bar'
 import {
   filterTreeByWorkspace,
   getLeafNodes,
@@ -27,6 +29,7 @@ import {
 } from '@/panels/layout-utils'
 import { usePanelActions } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
+import { getActivePanelTab } from '@/panels/panel-tab-utils'
 import { DiffPane } from '@/panes/diff-pane'
 import { ReviewPane } from '@/panes/review-pane'
 import { WorkspaceFrameHeaderContainer } from './workspace-frame-header-container'
@@ -38,6 +41,11 @@ import { WorkspaceFrameHeaderContainer } from './workspace-frame-header-containe
  * Supports minimized mode where only the header is visible.
  * Clicking the header focuses the first pane in this workspace frame.
  * When minimized, clicking the header expands the frame instead.
+ *
+ * When `tileLeaf` is provided (hierarchical rendering), panel tabs are
+ * rendered via the shared TabBar component, and only the active tab's
+ * panel layout is shown. Otherwise, falls back to rendering the flat
+ * `subLayout` directly.
  */
 function WorkspaceFrame({
   workspaceId,
@@ -48,6 +56,7 @@ function WorkspaceFrame({
   panelRef,
   diffWorkspaceId = null,
   reviewWorkspaceId = null,
+  tileLeaf,
 }: {
   readonly workspaceId: string | undefined
   readonly subLayout: PanelNode
@@ -57,6 +66,7 @@ function WorkspaceFrame({
   readonly panelRef?: { readonly current: PanelImperativeHandle | null }
   readonly diffWorkspaceId?: string | null
   readonly reviewWorkspaceId?: string | null
+  readonly tileLeaf?: WorkspaceTileLeaf | undefined
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null)
   const dragHandleRef = useRef<HTMLDivElement | null>(null)
@@ -205,6 +215,71 @@ function WorkspaceFrame({
   const sidePanelSize = sidePanelCount === 2 ? '20%' : '30%'
   const mainPanelSize = sidePanelCount === 2 ? '60%' : '70%'
 
+  // Panel tab bar items and active tab layout (hierarchical mode only)
+  const panelTabItems: readonly TabBarItem[] = useMemo(() => {
+    if (!tileLeaf) {
+      return []
+    }
+    return tileLeaf.panelTabs.map((tab) => ({
+      id: tab.id,
+      label: tab.label ?? getPanelTabLabel(tab.panelLayout),
+      isActive: tab.id === tileLeaf.activePanelTabId,
+    }))
+  }, [tileLeaf])
+
+  // The layout to render: in hierarchical mode, use the active panel tab's layout
+  // (cast to PanelNode since PanelManager accepts the legacy type and the structure
+  // is compatible at the rendering level). Falls back to subLayout for legacy rendering.
+  const effectiveLayout: PanelNode = useMemo(() => {
+    if (tileLeaf) {
+      const activeTab = getActivePanelTab(tileLeaf)
+      if (activeTab) {
+        // PanelTreeNode is structurally compatible with PanelNode for rendering.
+        // PanelLeafNode has the same shape as LeafNode (without sidebar flags).
+        // PanelSplitNode has the same shape as SplitNode.
+        return activeTab.panelLayout as unknown as PanelNode
+      }
+    }
+    return subLayout
+  }, [tileLeaf, subLayout])
+
+  // Panel tab bar callbacks
+  const handlePanelTabSelect = useCallback(
+    (tabId: string) => {
+      if (workspaceId) {
+        actions?.switchPanelTab?.(workspaceId, tabId)
+      }
+    },
+    [actions, workspaceId]
+  )
+
+  const handlePanelTabClose = useCallback(
+    (tabId: string) => {
+      if (workspaceId) {
+        actions?.removePanelTab?.(workspaceId, tabId)
+      }
+    },
+    [actions, workspaceId]
+  )
+
+  const handlePanelTabNew = useCallback(() => {
+    if (workspaceId) {
+      // Default to terminal type until panel type picker (issue #11) is wired up
+      actions?.addPanelTab?.(workspaceId, 'terminal')
+    }
+  }, [actions, workspaceId])
+
+  const handlePanelTabReorder = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      if (workspaceId) {
+        actions?.reorderPanelTabsDnd?.(workspaceId, fromIndex, toIndex)
+      }
+    },
+    [actions, workspaceId]
+  )
+
+  const showPanelTabBar = tileLeaf !== undefined
+
   return (
     <div
       className={`relative flex ${isMinimized ? 'h-auto' : 'h-full'} flex-col border-2 ${isActiveFrame ? 'border-primary' : 'border-transparent'} ${isDragging ? 'opacity-40' : ''}`}
@@ -224,12 +299,23 @@ function WorkspaceFrame({
         subLayout={subLayout}
         workspaceId={workspaceId}
       />
+      {showPanelTabBar && !isMinimized && (
+        <TabBar
+          autoHide
+          items={panelTabItems}
+          newTabTooltip="New panel tab (Ctrl+T)"
+          onClose={handlePanelTabClose}
+          onNew={handlePanelTabNew}
+          onReorder={handlePanelTabReorder}
+          onSelect={handlePanelTabSelect}
+        />
+      )}
       {hasSidePanels && !isMinimized ? (
         <ResizablePanelGroup className="h-full" orientation="horizontal">
           <ResizablePanel defaultSize={mainPanelSize} minSize="30%">
             <div className="flex h-full min-h-0 flex-col">
               <div className="min-h-0 flex-1">
-                <PanelManager layout={subLayout} />
+                <PanelManager layout={effectiveLayout} />
               </div>
             </div>
           </ResizablePanel>
@@ -267,7 +353,7 @@ function WorkspaceFrame({
       ) : (
         !isMinimized && (
           <div className="min-h-0 flex-1">
-            <PanelManager layout={subLayout} />
+            <PanelManager layout={effectiveLayout} />
           </div>
         )
       )}
@@ -276,6 +362,33 @@ function WorkspaceFrame({
       )}
     </div>
   )
+}
+
+/**
+ * Derive a display label for a panel tab from its root pane type.
+ * Used as a fallback when no explicit label is set on the tab.
+ */
+function getPanelTabLabel(layout: PanelTreeNode): string {
+  if (layout._tag === 'PanelLeafNode') {
+    switch (layout.paneType) {
+      case 'terminal':
+        return 'Terminal'
+      case 'diff':
+        return 'Diff'
+      case 'review':
+        return 'Review'
+      case 'devServerTerminal':
+        return 'Dev Server'
+      default:
+        return 'Panel'
+    }
+  }
+  // For split nodes, use the first child's type
+  const firstChild = layout.children[0]
+  if (firstChild) {
+    return getPanelTabLabel(firstChild)
+  }
+  return 'Panel'
 }
 
 /**
@@ -331,13 +444,12 @@ function WorkspaceFrameResizableChild({
 // ---------------------------------------------------------------------------
 
 /**
- * Renders a WorkspaceTileLeaf as a WorkspaceFrame, using the legacy flat
- * PanelNode tree to get the workspace's sub-layout for the PanelManager.
+ * Renders a WorkspaceTileLeaf as a WorkspaceFrame with panel tab support.
  *
- * This is a bridge component: it takes the new hierarchical tile leaf and
- * looks up the corresponding sub-layout from the legacy flat tree. In future
- * issues (panel tab integration, issue #10), the leaf's own `panelTabs` will
- * be used directly instead of extracting from the flat tree.
+ * When the leaf has panel tabs, the active tab's panel layout is rendered
+ * via the WorkspaceFrame's built-in TabBar and PanelManager integration.
+ * Falls back to extracting a sub-layout from the legacy flat tree when
+ * the leaf has no panel tabs (backward compatibility during migration).
  */
 function WorkspaceTileLeafFrame({
   leaf,
@@ -354,19 +466,30 @@ function WorkspaceTileLeafFrame({
   readonly diffWorkspaceId?: string | null
   readonly reviewWorkspaceId?: string | null
 }) {
-  // Extract this workspace's sub-layout from the legacy flat tree.
-  // This bridge will be removed when panel tabs (issue #10) are integrated.
-  const subLayout = useMemo(
-    () =>
+  // When the leaf has panel tabs, use the active tab's layout.
+  // When it doesn't (pre-migration), fall back to extracting from the flat tree.
+  const subLayout = useMemo(() => {
+    if (leaf.panelTabs.length > 0) {
+      // Use a placeholder — the actual rendering is driven by tileLeaf's panelTabs
+      // via WorkspaceFrame. We still need a valid PanelNode for the header's
+      // getScopedActivePaneId and getLeafNodes calls.
+      const activeTab = leaf.panelTabs.find(
+        (t) => t.id === leaf.activePanelTabId
+      )
+      if (activeTab) {
+        return activeTab.panelLayout as unknown as PanelNode
+      }
+    }
+    return (
       filterTreeByWorkspace(flatLayout, leaf.workspaceId) ?? {
         _tag: 'LeafNode' as const,
         id: `pane-tile-${leaf.id}`,
         paneType: 'terminal' as const,
         terminalId: undefined,
         workspaceId: leaf.workspaceId,
-      },
-    [flatLayout, leaf.workspaceId, leaf.id]
-  )
+      }
+    )
+  }, [flatLayout, leaf])
 
   return (
     <WorkspaceFrame
@@ -375,6 +498,7 @@ function WorkspaceTileLeafFrame({
       index={index}
       reviewWorkspaceId={reviewWorkspaceId}
       subLayout={subLayout}
+      tileLeaf={leaf}
       workspaceId={leaf.workspaceId}
     />
   )

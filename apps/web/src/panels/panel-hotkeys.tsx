@@ -465,6 +465,100 @@ function PanelHotkeys({
     { timeout: SEQUENCE_TIMEOUT }
   )
 
+  // --- Panel tab shortcuts ---
+
+  // Ctrl+T → create new panel tab in focused workspace (defaults to terminal)
+  useHotkeySequence(['Control+T'], (event) => {
+    event.preventDefault()
+    if (actions && activeWorkspaceId) {
+      // Default to terminal type until panel type picker (issue #11) is wired up
+      actions.addPanelTab?.(activeWorkspaceId, 'terminal')
+    }
+  })
+
+  // Ctrl+1 through Ctrl+8 → switch to panel tab by index in focused workspace
+  useHotkeySequence(['Control+1'], (event) => {
+    event.preventDefault()
+    if (activeWorkspaceId) {
+      actions?.switchPanelTabByIndex?.(activeWorkspaceId, 1)
+    }
+  })
+  useHotkeySequence(['Control+2'], (event) => {
+    event.preventDefault()
+    if (activeWorkspaceId) {
+      actions?.switchPanelTabByIndex?.(activeWorkspaceId, 2)
+    }
+  })
+  useHotkeySequence(['Control+3'], (event) => {
+    event.preventDefault()
+    if (activeWorkspaceId) {
+      actions?.switchPanelTabByIndex?.(activeWorkspaceId, 3)
+    }
+  })
+  useHotkeySequence(['Control+4'], (event) => {
+    event.preventDefault()
+    if (activeWorkspaceId) {
+      actions?.switchPanelTabByIndex?.(activeWorkspaceId, 4)
+    }
+  })
+  useHotkeySequence(['Control+5'], (event) => {
+    event.preventDefault()
+    if (activeWorkspaceId) {
+      actions?.switchPanelTabByIndex?.(activeWorkspaceId, 5)
+    }
+  })
+  useHotkeySequence(['Control+6'], (event) => {
+    event.preventDefault()
+    if (activeWorkspaceId) {
+      actions?.switchPanelTabByIndex?.(activeWorkspaceId, 6)
+    }
+  })
+  useHotkeySequence(['Control+7'], (event) => {
+    event.preventDefault()
+    if (activeWorkspaceId) {
+      actions?.switchPanelTabByIndex?.(activeWorkspaceId, 7)
+    }
+  })
+  useHotkeySequence(['Control+8'], (event) => {
+    event.preventDefault()
+    if (activeWorkspaceId) {
+      actions?.switchPanelTabByIndex?.(activeWorkspaceId, 8)
+    }
+  })
+
+  // Ctrl+9 → switch to last panel tab in focused workspace
+  useHotkeySequence(['Control+9'], (event) => {
+    event.preventDefault()
+    if (activeWorkspaceId) {
+      actions?.switchPanelTabByIndex?.(activeWorkspaceId, 9)
+    }
+  })
+
+  // Ctrl+Shift+[ and Ctrl+Shift+] → cycle panel tabs in focused workspace
+  // Uses raw keydown handler because TanStack Hotkeys doesn't support
+  // bracket key names in its Hotkey type.
+  useEffect(() => {
+    const handlePanelTabCycle = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey && event.shiftKey) || event.metaKey || event.altKey) {
+        return
+      }
+      if (!activeWorkspaceId) {
+        return
+      }
+      if (event.key === '[') {
+        event.preventDefault()
+        actions?.switchPanelTabRelative?.(activeWorkspaceId, -1)
+      } else if (event.key === ']') {
+        event.preventDefault()
+        actions?.switchPanelTabRelative?.(activeWorkspaceId, 1)
+      }
+    }
+    window.addEventListener('keydown', handlePanelTabCycle)
+    return () => {
+      window.removeEventListener('keydown', handlePanelTabCycle)
+    }
+  }, [actions, activeWorkspaceId])
+
   // --- Window tab shortcuts ---
 
   // Cmd+N → create new window tab

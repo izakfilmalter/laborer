@@ -13,6 +13,7 @@
 
 import type {
   LeafNode,
+  PaneType,
   SplitDirection,
   WindowLayout,
 } from '@laborer/shared/types'
@@ -30,6 +31,19 @@ interface AssignTerminalToPaneOptions {
 }
 
 interface PanelActions {
+  // -- Panel tab actions ---------------------------------------------------
+
+  /**
+   * Add a new panel tab of the given type to the focused workspace.
+   * Triggered by Ctrl+T (with type picker).
+   *
+   * @param workspaceId - The workspace to add the tab to
+   * @param panelType - The panel type for the new tab
+   */
+  readonly addPanelTab:
+    | ((workspaceId: string, panelType: PaneType) => void)
+    | undefined
+
   // -- Window tab actions ---------------------------------------------------
 
   /**
@@ -100,6 +114,27 @@ interface PanelActions {
   readonly forceCloseWorkspace: (workspaceId: string) => void
 
   /**
+   * Remove a panel tab by ID from a workspace.
+   *
+   * @param workspaceId - The workspace containing the tab
+   * @param tabId - The ID of the panel tab to remove
+   */
+  readonly removePanelTab:
+    | ((workspaceId: string, tabId: string) => void)
+    | undefined
+
+  /**
+   * Reorder panel tabs within a workspace (for drag-and-drop).
+   *
+   * @param workspaceId - The workspace containing the tabs
+   * @param fromIndex - Source tab index (0-based)
+   * @param toIndex - Target tab index (0-based)
+   */
+  readonly reorderPanelTabsDnd:
+    | ((workspaceId: string, fromIndex: number, toIndex: number) => void)
+    | undefined
+
+  /**
    * Reorder window tabs (for drag-and-drop).
    */
   readonly reorderWindowTabsDnd:
@@ -150,6 +185,38 @@ interface PanelActions {
     direction: SplitDirection,
     newPaneContent?: Partial<LeafNode>
   ) => void
+
+  /**
+   * Switch the active panel tab by ID within a workspace.
+   *
+   * @param workspaceId - The workspace containing the tab
+   * @param tabId - The ID of the panel tab to activate
+   */
+  readonly switchPanelTab:
+    | ((workspaceId: string, tabId: string) => void)
+    | undefined
+
+  /**
+   * Switch the active panel tab by 1-based index within the focused workspace.
+   * Triggered by Ctrl+1 through Ctrl+8 (index 9 = last tab).
+   *
+   * @param workspaceId - The workspace containing the tabs
+   * @param index - 1-based tab index (1-8, or 9 for last)
+   */
+  readonly switchPanelTabByIndex:
+    | ((workspaceId: string, index: number) => void)
+    | undefined
+
+  /**
+   * Cycle to the next or previous panel tab within the focused workspace.
+   * Triggered by Ctrl+Shift+] (delta=1) and Ctrl+Shift+[ (delta=-1).
+   *
+   * @param workspaceId - The workspace containing the tabs
+   * @param delta - +1 for next, -1 for previous
+   */
+  readonly switchPanelTabRelative:
+    | ((workspaceId: string, delta: number) => void)
+    | undefined
 
   /**
    * Switch to a specific window tab by ID.

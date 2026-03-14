@@ -6,13 +6,22 @@ import {
   layoutSplit,
   layoutWorkspacesReordered,
   panelLayout,
+  panelTabClosed,
+  panelTabCreated,
+  panelTabSwitched,
+  panelTabsReordered,
   windowTabClosed,
   windowTabCreated,
   windowTabSwitched,
   windowTabsReordered,
   workspaces,
 } from '@laborer/shared/schema'
-import type { LeafNode, PanelNode, WindowLayout } from '@laborer/shared/types'
+import type {
+  LeafNode,
+  PanelNode,
+  PaneType,
+  WindowLayout,
+} from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -53,12 +62,21 @@ import {
 import type { AssignTerminalToPaneOptions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import {
+  addPanelTab,
+  removePanelTab,
+  reorderPanelTabs,
+  switchPanelTab,
+  switchPanelTabByIndex,
+  switchPanelTabRelative,
+} from '@/panels/panel-tab-utils'
+import {
   addWindowTab,
   removeWindowTab,
   reorderWindowTabs,
   switchWindowTab,
   switchWindowTabByIndex,
   switchWindowTabRelative,
+  updateWorkspaceTileLeaf,
 } from '@/panels/window-tab-utils'
 import { useInitialLayout } from './use-initial-layout'
 
@@ -1006,8 +1024,127 @@ export function usePanelLayout() {
     [persistedWindowLayout, commitWindowLayout]
   )
 
+  // -------------------------------------------------------------------
+  // Panel tab actions — operate on workspaces within the WindowLayout.
+  // -------------------------------------------------------------------
+
+  /**
+   * Helper to commit a panel tab layout event to LiveStore.
+   * All panel tab events carry the same window layout payload shape.
+   */
+  const commitPanelTabLayout = useCallback(
+    (
+      event:
+        | typeof panelTabCreated
+        | typeof panelTabClosed
+        | typeof panelTabSwitched
+        | typeof panelTabsReordered,
+      newLayout: WindowLayout
+    ) => {
+      store.commit(
+        event({
+          windowId: panelWindowId,
+          windowLayout: newLayout,
+          activeWindowTabId: newLayout.activeTabId ?? null,
+        })
+      )
+    },
+    [panelWindowId, store]
+  )
+
+  const handleAddPanelTab = useCallback(
+    (workspaceId: string, panelType: PaneType) => {
+      if (!persistedWindowLayout) {
+        return
+      }
+      const newLayout = updateWorkspaceTileLeaf(
+        persistedWindowLayout,
+        workspaceId,
+        (leaf) => addPanelTab(leaf, panelType)
+      )
+      commitPanelTabLayout(panelTabCreated, newLayout)
+    },
+    [persistedWindowLayout, commitPanelTabLayout]
+  )
+
+  const handleRemovePanelTab = useCallback(
+    (workspaceId: string, tabId: string) => {
+      if (!persistedWindowLayout) {
+        return
+      }
+      const newLayout = updateWorkspaceTileLeaf(
+        persistedWindowLayout,
+        workspaceId,
+        (leaf) => removePanelTab(leaf, tabId)
+      )
+      commitPanelTabLayout(panelTabClosed, newLayout)
+    },
+    [persistedWindowLayout, commitPanelTabLayout]
+  )
+
+  const handleSwitchPanelTab = useCallback(
+    (workspaceId: string, tabId: string) => {
+      if (!persistedWindowLayout) {
+        return
+      }
+      const newLayout = updateWorkspaceTileLeaf(
+        persistedWindowLayout,
+        workspaceId,
+        (leaf) => switchPanelTab(leaf, tabId)
+      )
+      commitPanelTabLayout(panelTabSwitched, newLayout)
+    },
+    [persistedWindowLayout, commitPanelTabLayout]
+  )
+
+  const handleSwitchPanelTabByIndex = useCallback(
+    (workspaceId: string, index: number) => {
+      if (!persistedWindowLayout) {
+        return
+      }
+      const newLayout = updateWorkspaceTileLeaf(
+        persistedWindowLayout,
+        workspaceId,
+        (leaf) => switchPanelTabByIndex(leaf, index)
+      )
+      commitPanelTabLayout(panelTabSwitched, newLayout)
+    },
+    [persistedWindowLayout, commitPanelTabLayout]
+  )
+
+  const handleSwitchPanelTabRelative = useCallback(
+    (workspaceId: string, delta: number) => {
+      if (!persistedWindowLayout) {
+        return
+      }
+      const newLayout = updateWorkspaceTileLeaf(
+        persistedWindowLayout,
+        workspaceId,
+        (leaf) => switchPanelTabRelative(leaf, delta)
+      )
+      commitPanelTabLayout(panelTabSwitched, newLayout)
+    },
+    [persistedWindowLayout, commitPanelTabLayout]
+  )
+
+  const handleReorderPanelTabs = useCallback(
+    (workspaceId: string, fromIndex: number, toIndex: number) => {
+      if (!persistedWindowLayout) {
+        return
+      }
+      const newLayout = updateWorkspaceTileLeaf(
+        persistedWindowLayout,
+        workspaceId,
+        (leaf) => reorderPanelTabs(leaf, fromIndex, toIndex)
+      )
+      commitPanelTabLayout(panelTabsReordered, newLayout)
+    },
+    [persistedWindowLayout, commitPanelTabLayout]
+  )
+
   const panelActions = useMemo(
     () => ({
+      addPanelTab: handleAddPanelTab,
       assignTerminalToPane: handleAssignTerminalToPane,
       splitPane: handleSplitPane,
       closePane: handleClosePane,
@@ -1019,16 +1156,22 @@ export function usePanelLayout() {
       toggleReviewPane: handleToggleReviewPane,
       resizePane: handleResizePane,
       closeTerminalPane: handleCloseTerminalPane,
+      removePanelTab: handleRemovePanelTab,
+      reorderPanelTabsDnd: handleReorderPanelTabs,
       reorderWorkspaces: handleReorderWorkspaces,
       addWindowTab: handleAddWindowTab,
       closeWindowTab: handleCloseWindowTab,
       switchWindowTab: handleSwitchWindowTab,
       switchWindowTabByIndex: handleSwitchWindowTabByIndex,
       switchWindowTabRelative: handleSwitchWindowTabRelative,
+      switchPanelTab: handleSwitchPanelTab,
+      switchPanelTabByIndex: handleSwitchPanelTabByIndex,
+      switchPanelTabRelative: handleSwitchPanelTabRelative,
       reorderWindowTabsDnd: handleReorderWindowTabs,
       windowLayout: persistedWindowLayout,
     }),
     [
+      handleAddPanelTab,
       handleAssignTerminalToPane,
       handleSplitPane,
       handleClosePane,
@@ -1039,12 +1182,17 @@ export function usePanelLayout() {
       handleToggleReviewPane,
       handleResizePane,
       handleCloseTerminalPane,
+      handleRemovePanelTab,
+      handleReorderPanelTabs,
       handleReorderWorkspaces,
       handleAddWindowTab,
       handleCloseWindowTab,
       handleSwitchWindowTab,
       handleSwitchWindowTabByIndex,
       handleSwitchWindowTabRelative,
+      handleSwitchPanelTab,
+      handleSwitchPanelTabByIndex,
+      handleSwitchPanelTabRelative,
       handleReorderWindowTabs,
       persistedWindowLayout,
     ]

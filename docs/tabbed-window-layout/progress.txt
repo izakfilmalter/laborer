@@ -67,7 +67,71 @@ Date: 2026-03-13
 - `bun run --filter @laborer/shared test` — 60/60 tests pass
 - `biome check` — no issues in modified files
 
-## Issue #3: Layout-utils: workspace tile operations — COMPLETED
+## Issue #10: Panel tab bar integration — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Wired the shared `TabBar` component into each `WorkspaceFrame` for workspace-level panel tabs, connecting it to the panel tab state within each workspace.
+
+- Extended `PanelActions` interface in `panel-context.tsx` with 6 new panel tab actions:
+  - `addPanelTab(workspaceId, panelType)` — creates a new panel tab of the given type in the specified workspace
+  - `removePanelTab(workspaceId, tabId)` — removes a panel tab by ID from a workspace
+  - `switchPanelTab(workspaceId, tabId)` — switch to a panel tab by ID
+  - `switchPanelTabByIndex(workspaceId, index)` — switch by 1-based index (for Ctrl+1-8, Ctrl+9=last)
+  - `switchPanelTabRelative(workspaceId, delta)` — cycle next/prev (for Ctrl+Shift+[/])
+  - `reorderPanelTabsDnd(workspaceId, fromIndex, toIndex)` — drag-and-drop reorder
+
+- Added `updateWorkspaceTileLeaf` helper to `window-tab-utils.ts`:
+  - Pure function that applies a transform to a workspace tile leaf within a `WindowLayout`
+  - Searches all tabs and recursively walks the workspace tile tree to find the matching workspace
+  - Returns a new WindowLayout with the leaf updated (structural sharing for unchanged parts)
+
+- Added panel tab action handlers in `usePanelLayout` hook (`use-panel-layout.ts`):
+  - Each action calls the corresponding pure function from `panel-tab-utils.ts` via `updateWorkspaceTileLeaf`
+  - Each action commits the appropriate LiveStore event (`panelTabCreated`, `panelTabClosed`, `panelTabSwitched`, `panelTabsReordered`)
+  - Helper `commitPanelTabLayout` encapsulates the event commit pattern
+
+- Updated `WorkspaceFrame` component in `workspace-frames.tsx`:
+  - Added optional `tileLeaf: WorkspaceTileLeaf` prop for hierarchical rendering
+  - When `tileLeaf` is provided, renders `TabBar` with auto-hide (hidden when 1 tab, shown when 2+)
+  - Tab bar items derived from `tileLeaf.panelTabs` with labels auto-generated from pane type
+  - Active panel tab's `panelLayout` is rendered by `PanelManager` (cast to legacy `PanelNode` for compatibility)
+  - Tab bar callbacks wire to panel tab actions via `usePanelActions()`
+  - New tab (+) button defaults to terminal type (panel type picker will be wired in issue #11)
+  - `getPanelTabLabel` helper derives display labels from panel tree root pane type
+
+- Updated `WorkspaceTileLeafFrame` bridge component:
+  - Now passes `tileLeaf` prop to `WorkspaceFrame` for panel tab rendering
+  - When the leaf has panel tabs, uses the active tab's layout directly
+  - Falls back to extracting from the legacy flat tree when leaf has no panel tabs (backward compat)
+
+- Registered keyboard shortcuts in `panel-hotkeys.tsx`:
+  - `Ctrl+T` → new panel tab in focused workspace (defaults to terminal)
+  - `Ctrl+1` through `Ctrl+8` → switch to panel tab by index
+  - `Ctrl+9` → switch to last panel tab
+  - `Ctrl+Shift+[` → previous panel tab (via raw keydown handler — TanStack Hotkeys doesn't support bracket keys)
+  - `Ctrl+Shift+]` → next panel tab (via raw keydown handler)
+
+- Updated `terminal-keys.ts` to bypass new shortcuts through xterm.js:
+  - Added `isCtrlT` — Ctrl+T (new panel tab)
+  - Added `isCtrlDigit` — Ctrl+1 through Ctrl+9 (switch panel tab by index)
+  - Added `isCtrlShiftBracket` — Ctrl+Shift+[ and Ctrl+Shift+] (cycle panel tabs)
+  - All new detectors added to `shouldBypassTerminal` union
+
+- Updated 5 test files to include new panel tab action mocks:
+  - `workspace-frames-minimize.test.tsx`
+  - `workspace-frame-header.test.tsx`
+  - `terminal-overlay-toolbar.test.tsx`
+  - `full-height-review-panel.test.tsx`
+  - `fullscreen-portal.test.tsx`
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 805/805 tests pass (no regressions)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no issues in modified files (pre-existing issues in unrelated files)
 
 Date: 2026-03-13
 

@@ -255,3 +255,32 @@ Date: 2026-03-14
 - 1 pre-existing skipped test (alive-desktop-oauth)
 - Typecheck passes cleanly
 - Biome lint passes on all changed files
+
+## Issue 2: ghostty-web FitAddon and basic resize — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- The FitAddon and resize integration was already implemented as part of Issue 1 (tracer bullet). This issue adds the specific tests verifying the FitAddon resize flow.
+- Implementation already in place in `terminal-pane.tsx`:
+  - FitAddon imported from `ghostty-web` and loaded via `terminal.loadAddon(fitAddon)`
+  - FitAddon stored in `fitAddonRef` for resize handler access
+  - `fitAddon.fit()` called after `terminal.open(container)` for initial sizing
+  - Initial cols/rows sent to backend via resize RPC after fit
+  - `ResizeObserver` with 100ms debounce (`RESIZE_DEBOUNCE_MS`) re-fits on container resize
+  - `handleResize` callback calls `fitAddon.fit()` then sends updated cols/rows via resize RPC
+  - ResizeObserver disconnected and resize timer cleared on cleanup
+  - Positive cols/rows validation before sending resize RPC
+- Created comprehensive test suite `apps/web/test/fit-addon-resize.test.ts` with 22 tests:
+  - FitAddon API shape (6 tests): instantiation, fit method, proposeDimensions method, activate method, dispose method, Terminal.prototype.loadAddon
+  - terminal-pane.tsx FitAddon integration (6 tests): imports FitAddon, loads via loadAddon(), stores in ref, calls fit() after open, validates cols/rows, sends resize RPC
+  - terminal-pane.tsx ResizeObserver integration (7 tests): creates ResizeObserver, uses RESIZE_DEBOUNCE_MS, debounce is 100ms, re-fits on resize, sends dimensions after re-fit, disconnects observer on cleanup, clears timer on cleanup
+  - Resize flow ordering (3 tests): FitAddon loaded before open(), fit() called after open(), resize RPC sent after fit()
+
+### Files changed
+- `apps/web/test/fit-addon-resize.test.ts` (new, 172 lines)
+
+### Test results
+- All 647 tests pass across 46 test files in the web package (22 new + 625 existing)
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Biome lint passes on all changed files

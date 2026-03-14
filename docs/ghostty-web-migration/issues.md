@@ -26,7 +26,7 @@ Parent PRD: [PRD-ghostty-web-migration.md](./PRD-ghostty-web-migration.md)
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
 | 1 | Tracer bullet: Swap xterm.js for ghostty-web with basic I/O | None | Done |
-| 2 | ghostty-web FitAddon and basic resize | #1 | Ready |
+| 2 | ghostty-web FitAddon and basic resize | #1 | Done |
 | 3 | Theme, font, and cursor configuration | #1 | Ready |
 | 4 | Keyboard bypass and prefix mode | #1 | Ready |
 | 5 | Link detection and OSC title changes | #1 | Ready |
@@ -35,7 +35,7 @@ Parent PRD: [PRD-ghostty-web-migration.md](./PRD-ghostty-web-migration.md)
 | 8 | Backend: Race-free WebSocket attach protocol | #7 | Done |
 | 9 | Frontend: Terminal Session Router (core) | #8 | Done |
 | 10 | Frontend: Terminal Router context and integration | #1, #9 | Done |
-| 11 | PTY-first resize | #2, #7, #10 | Blocked |
+| 11 | PTY-first resize | #2, #7, #10 | Ready |
 | 12 | Cleanup: Remove xterm.js and ring buffer | #1-#11 | Blocked |
 
 ---

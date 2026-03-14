@@ -6,7 +6,7 @@ Parent PRD: [PRD.md](./PRD.md)
 
 ## 1. Hierarchical layout types
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1061,7 +1061,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
-| 1 | Hierarchical layout types | None | pending |
+| 1 | Hierarchical layout types | None | done |
 | 2 | Layout-utils: window tab operations | 1 | pending |
 | 3 | Layout-utils: workspace tile operations | 1 | pending |
 | 4 | Layout-utils: panel tab operations | 1 | pending |

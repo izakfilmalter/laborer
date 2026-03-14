@@ -1,0 +1,27 @@
+## Issue #1: Hierarchical layout types — COMPLETED
+
+Date: 2026-03-13
+
+### What was done
+- Defined new TypeScript types in `packages/shared/src/types.ts`:
+  - `PanelLeafNode` — leaf node without sidebar toggle flags (diffOpen, devServerOpen, devServerTerminalId removed)
+  - `PanelSplitNode` — split node for panel-level splits
+  - `PanelTreeNode` — union of PanelLeafNode | PanelSplitNode
+  - `PanelTab` — tab within a workspace (id, label, panelLayout, focusedPaneId)
+  - `WorkspaceTileLeaf` — workspace frame with panel tabs
+  - `WorkspaceTileSplit` — split node for workspace tiling (horizontal + vertical)
+  - `WorkspaceTileNode` — union of WorkspaceTileLeaf | WorkspaceTileSplit
+  - `WindowTab` — top-level tab containing a workspace tile tree
+  - `WindowLayout` — ordered list of window tabs with activeTabId
+- Created Effect Schema definitions for all new types with `Schema.suspend` for recursive types
+- Old `PanelNode` / `LeafNode` / `SplitNode` types preserved for migration compatibility
+- Added 27 schema round-trip tests in `packages/shared/test/hierarchical-layout-types.test.ts`
+  - Tests cover all new types including deeply nested trees (5 levels)
+  - Legacy LeafNodeSchema backward-compatibility verified
+
+### Verification
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/shared test` — 60/60 tests pass
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/web test` — 563/563 tests pass
+- `bun run format:fix` — no issues in modified files

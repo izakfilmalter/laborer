@@ -1267,7 +1267,7 @@ function computeClosePaneGateAction(
 
   const hasProcess = shouldConfirmClose(layout, paneId, terminals)
   const workspaceId = node.workspaceId
-  const isPrMerged = prState === 'merged'
+  const isPrMerged = prState === 'MERGED'
 
   // Check if this is the last pane for the workspace
   const isLastPaneForWorkspace =

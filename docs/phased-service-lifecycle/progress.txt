@@ -501,3 +501,55 @@
 - TypeScript typecheck passes with no errors across all packages
 - Formatter (ultracite/biome) passes on all changed files
 - Pre-existing format errors in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #10: Header error state persistence and animations — COMPLETED
+
+### What was done
+- **Error state persistence** — Added `usePersistedErrors` hook to `apps/web/src/components/service-status-dots.tsx`:
+  - Tracks services that have entered the `crashed` state in a persisted `Set<ServiceName>`
+  - When a service crashes, it's added to the persisted error set
+  - The error persists even after the service recovers to `healthy`, ensuring users don't miss failures
+  - A `dismissedRef` prevents re-persisting the same crash after dismissal — the service must go healthy first, then crash again for a new persisted error
+  - `dismissError(name)` callback clears the persisted error and adds the service to the dismissed set
+
+- **Dismiss and retry actions** — Added inline dismiss and retry buttons on error dots:
+  - Buttons render inline next to the status dot when `errorPersisted` is true (no tooltip interaction needed)
+  - Dismiss button clears the persisted error, allowing the dot to show the live state
+  - Retry button calls `desktopBridge.restartSidecar(name)` (when in Electron) AND clears the persisted error
+  - Both buttons use `data-testid` attributes (`dismiss-error-{name}`, `retry-error-{name}`) for testing
+
+- **Minimum display duration** — Added `useMinDisplayDuration` hook:
+  - Holds the displayed state for at least 300ms (`MIN_DISPLAY_DURATION_MS`) before transitioning
+  - Prevents flickering when services transition rapidly (e.g., starting to healthy in < 100ms)
+  - Uses `lastChangeRef` to track when the current display state was set
+  - Schedules a delayed transition via `setTimeout` when the minimum hasn't elapsed
+  - Returns a "display state" that's rendered instead of the raw live state
+  - Each `ServiceDot` tracks its own display state independently via this hook
+
+- **CSS transitions for smooth state changes**:
+  - Status dot color changes use `transition-colors duration-300` for smooth animated transitions
+  - The `output` container uses `transition-all duration-300` for smooth collapse/expand
+  - Detail row dots in the popover also use `transition-colors duration-300`
+  - Fixed-width containers (`w-4`) on each dot prevent layout shifts during transitions
+  - `data-display-state` attribute on each dot exposes the debounced display state for testing
+
+- **ServiceDot component restructured** for error persistence:
+  - Wrapping `<span>` element holds `data-state` (live), `data-display-state` (debounced), and `data-error-persisted` attributes
+  - Tooltip remains inside for hover detail but dismiss/retry buttons render outside the tooltip (always visible when error is persisted)
+
+- **Created `apps/web/test/service-status-errors.test.tsx`** with 6 tests:
+  1. Error indicator persists after service crashes and shows error dot (crash then recover with error still persisted)
+  2. Dismiss action removes the persisted error indicator (click dismiss then error cleared and shows healthy)
+  3. Retry action triggers restart and transitions to starting state (click retry then error cleared)
+  4. No flickering: minimum 300ms display duration for transitional states (starting to healthy delayed)
+  5. Animated transitions use fixed-width containers to prevent layout shifts (transition class present)
+  6. Recovery from error automatically transitions indicator to healthy (live state shows healthy but error persisted flag remains)
+
+### Verification
+- All 6 new tests pass
+- All 624 web tests pass (up from 618 after Issue #9, 6 new tests)
+- All 13 existing service-status-dots + collapse tests pass (no regressions)
+- All 344 server tests pass (no regressions)
+- TypeScript typecheck passes with no errors across all packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format errors in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change

@@ -49,6 +49,7 @@ import {
   AlertTriangle,
   ChevronRight,
   ClipboardCheck,
+  Eye,
   FileCode,
   GitPullRequestClosed,
   MessageSquare,
@@ -96,6 +97,7 @@ import { usePanelActions } from '@/panels/panel-context'
 const addReactionMutation = LaborerClient.mutation('review.addReaction')
 const removeReactionMutation = LaborerClient.mutation('review.removeReaction')
 const fixFindingsMutation = LaborerClient.mutation('brrr.fix')
+const reviewPrMutation = LaborerClient.mutation('brrr.review')
 const editorOpenMutation = LaborerClient.mutation('editor.open')
 
 /** Polling interval in milliseconds (30 seconds). */
@@ -622,11 +624,12 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   const allSelected = findings.length > 0 && selectedCount === findings.length
 
   // -----------------------------------------------------------------------
-  // Mutation hooks for rocket reactions, brrr fix, and editor open.
+  // Mutation hooks for rocket reactions, brrr fix, review, and editor open.
   // -----------------------------------------------------------------------
   const addReaction = useAtomSet(addReactionMutation, { mode: 'promise' })
   const removeReaction = useAtomSet(removeReactionMutation, { mode: 'promise' })
   const fixFindings = useAtomSet(fixFindingsMutation, { mode: 'promise' })
+  const reviewPr = useAtomSet(reviewPrMutation, { mode: 'promise' })
   const openEditor = useAtomSet(editorOpenMutation, { mode: 'promise' })
   const panelActions = usePanelActions()
   const scrollDiffToFile = useDiffScrollDispatch()
@@ -636,6 +639,26 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
   openEditorRef.current = openEditor
 
   const [isFixing, setIsFixing] = useState(false)
+  const [isReviewStarting, setIsReviewStarting] = useState(false)
+
+  /** Start a new AI review via `brrr review`. */
+  const handleStartReview = useCallback(async () => {
+    setIsReviewStarting(true)
+    try {
+      const reviewResult = await reviewPr({
+        payload: { workspaceId },
+      })
+      toast.success('Review started')
+      if (panelActions) {
+        panelActions.assignTerminalToPane(reviewResult.id, workspaceId)
+      }
+    } catch (error: unknown) {
+      const message = extractErrorMessage(error)
+      toast.error(`Failed to start PR review: ${message}`)
+    } finally {
+      setIsReviewStarting(false)
+    }
+  }, [workspaceId, reviewPr, panelActions])
   const [unqueuingCommentId, setUnqueuingCommentId] = useState<number | null>(
     null
   )
@@ -864,7 +887,9 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
       <>
         <ReviewPaneHeader
           isRefreshing={false}
+          isReviewStarting={isReviewStarting}
           onRefresh={handleManualRefresh}
+          onStartReview={handleStartReview}
         />
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-2 text-muted-foreground">
@@ -913,7 +938,9 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
       <>
         <ReviewPaneHeader
           isRefreshing={false}
+          isReviewStarting={isReviewStarting}
           onRefresh={handleManualRefresh}
+          onStartReview={handleStartReview}
         />
         <div className="p-3">
           <Alert variant="destructive">
@@ -939,7 +966,9 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
       <>
         <ReviewPaneHeader
           isRefreshing={isRefreshing}
+          isReviewStarting={isReviewStarting}
           onRefresh={handleManualRefresh}
+          onStartReview={handleStartReview}
         />
         <Empty className="flex-1">
           <EmptyHeader>
@@ -963,7 +992,9 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
     <>
       <ReviewPaneHeader
         isRefreshing={isRefreshing}
+        isReviewStarting={isReviewStarting}
         onRefresh={handleManualRefresh}
+        onStartReview={handleStartReview}
       />
       {findings.length > 0 && (
         <ReviewActionsBar
@@ -1016,15 +1047,19 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
 }
 
 /**
- * The review pane header — combines the "Review" title with refresh controls.
- * Replaces the old static header + separate ReviewHeaderBar refresh row.
+ * The review pane header — combines the "Review" title with refresh controls
+ * and an "AI Review" button to start a new brrr review.
  */
 function ReviewPaneHeader({
   isRefreshing,
   onRefresh,
+  onStartReview,
+  isReviewStarting,
 }: {
   readonly isRefreshing: boolean
+  readonly isReviewStarting?: boolean
   readonly onRefresh: () => void
+  readonly onStartReview?: () => void
 }) {
   return (
     <div className="flex h-8 shrink-0 items-center gap-1.5 border-b bg-muted/30 px-3">
@@ -1039,6 +1074,20 @@ function ReviewPaneHeader({
             <RefreshCw className="size-3 animate-spin" />
             <span>Refreshing...</span>
           </div>
+        )}
+        {onStartReview && (
+          <Button
+            aria-label="Start AI review"
+            className="h-5 gap-1 px-1.5 text-xs"
+            data-testid="ai-review-button"
+            disabled={isReviewStarting}
+            onClick={onStartReview}
+            size="sm"
+            variant="ghost"
+          >
+            <Eye className="size-3 text-chart-4" />
+            AI Review
+          </Button>
         )}
         <Button
           aria-label="Refresh comments"

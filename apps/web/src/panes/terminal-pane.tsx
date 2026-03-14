@@ -452,6 +452,12 @@ function TerminalPane({
       // Open terminal in the container — mounts the canvas
       terminal.open(container)
 
+      // Explicitly focus the terminal so keyboard input works immediately.
+      // ghostty-web calls focus() at the end of open(), but because this
+      // runs inside an async setup function (after WASM init), the browser
+      // may have shifted focus elsewhere by the time open() completes.
+      terminal.focus()
+
       // Initial fit — also send dimensions to server PTY so it starts
       // with the correct size (or re-syncs on reconnection).
       try {
@@ -471,8 +477,13 @@ function TerminalPane({
       // ghostty-web captures keyboard events within its container.
       // `attachCustomKeyEventHandler` intercepts KeyboardEvent objects
       // before ghostty-web processes them:
-      // - Return `true` → ghostty-web handles the key (normal terminal input)
-      // - Return `false` → ghostty-web ignores the key (it bubbles to document)
+      // - Return `true` → custom handler CONSUMED the event, ghostty-web
+      //   calls preventDefault() and stops processing (key bubbles to document)
+      // - Return `false` → custom handler did NOT consume, ghostty-web
+      //   continues normal key processing (terminal input)
+      //
+      // NOTE: This is the OPPOSITE convention from xterm.js, where
+      // `true` means "let xterm handle it" and `false` means "ignore it".
       const enterPrefixMode = () => {
         prefixModeRef.current = true
         setPrefixMode(true)
@@ -499,28 +510,29 @@ function TerminalPane({
         // Only intercept keydown events — keyup should pass through
         // to avoid breaking key state tracking in the browser.
         if (event.type !== 'keydown') {
-          return true
+          return false
         }
 
         // Let global shortcuts (Cmd+W, Cmd+Shift+Enter) bubble to
-        // TanStack Hotkeys on document.
+        // TanStack Hotkeys on document — consume the event so ghostty-web
+        // does not process it as terminal input.
         if (shouldBypassTerminal(event)) {
           // Ctrl+B additionally enters prefix mode for tmux-style sequences.
           if (isExactCtrlB(event)) {
             enterPrefixMode()
           }
-          return false
+          return true
         }
 
-        // In prefix mode: pass the action key through to TanStack Hotkeys.
-        // This is the second key in the Ctrl+B -> action sequence.
+        // In prefix mode: consume the action key so it bubbles to
+        // TanStack Hotkeys. This is the second key in the Ctrl+B -> action sequence.
         if (prefixModeRef.current) {
           exitPrefixMode()
-          return false
+          return true
         }
 
-        // Normal key — let ghostty-web handle it
-        return true
+        // Normal key — let ghostty-web handle it as terminal input
+        return false
       })
 
       // Wire keyboard input to server PTY via the TerminalSessionRouter.

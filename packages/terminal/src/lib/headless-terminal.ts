@@ -17,7 +17,9 @@
  */
 
 import { SerializeAddon } from '@xterm/addon-serialize'
-import { Terminal } from '@xterm/headless'
+import XtermHeadless from '@xterm/headless'
+
+const { Terminal } = XtermHeadless
 
 /**
  * Per-terminal headless state. Tracks the headless xterm instance,
@@ -27,7 +29,7 @@ import { Terminal } from '@xterm/headless'
 interface HeadlessTerminalState {
   readonly onDataDisposable: { dispose: () => void }
   readonly serializeAddon: SerializeAddon
-  readonly terminal: Terminal
+  readonly terminal: InstanceType<typeof Terminal>
 }
 
 /**

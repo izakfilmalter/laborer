@@ -134,11 +134,41 @@ function getStatusLabel(state: ServiceState): string {
   }
 }
 
+/**
+ * The core services that must be healthy for the app to function.
+ * MCP is excluded because it starts independently and is not required
+ * for the main UI to work.
+ */
+const CORE_SIDECAR_NAMES: readonly SidecarName[] = [
+  'server',
+  'terminal',
+  'file-watcher',
+] as const
+
+/**
+ * Check whether all core services (server, terminal, file-watcher) are healthy.
+ * Returns false if any core service is not in the `healthy` state.
+ */
+function areCoreServicesHealthy(statuses: SidecarStatuses): boolean {
+  return CORE_SIDECAR_NAMES.every((name) => statuses[name].state === 'healthy')
+}
+
+/**
+ * Check whether any core service has crashed (not starting/restarting, but
+ * actually in the `crashed` state). Used to show error UI in the server gate.
+ */
+function hasAnyCoreServiceCrashed(statuses: SidecarStatuses): boolean {
+  return CORE_SIDECAR_NAMES.some((name) => statuses[name].state === 'crashed')
+}
+
 export {
   ALL_SIDECAR_NAMES,
+  areCoreServicesHealthy,
+  CORE_SIDECAR_NAMES,
   deriveSidecarStatuses,
   getDisplayName,
   getStatusColor,
   getStatusLabel,
+  hasAnyCoreServiceCrashed,
 }
 export type { ServiceState, SidecarStatuses, StatusColor }

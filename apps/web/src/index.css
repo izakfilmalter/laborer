@@ -145,7 +145,8 @@
 .drag-region input,
 .drag-region textarea,
 .drag-region select,
-.drag-region a {
+.drag-region a,
+.drag-region [data-slot="tooltip-trigger"] {
   -webkit-app-region: no-drag;
 }
 

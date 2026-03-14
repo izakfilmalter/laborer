@@ -23,6 +23,7 @@
     "@effect/platform": "0.93.8",
     "@effect/platform-browser": "0.73.0",
     "@effect/rpc": "0.72.2",
+    "@github/alive-client": "^1.2.0",
     "@hookform/resolvers": "^5.1.1",
     "@laborer/env": "workspace:*",
     "@laborer/shared": "workspace:*",

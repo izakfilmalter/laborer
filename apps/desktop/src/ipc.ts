@@ -38,6 +38,8 @@ export const UPDATE_STATE_CHANNEL = 'desktop:update-state'
 export const UPDATE_GET_STATE_CHANNEL = 'desktop:update-get-state'
 export const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
 export const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
+export const GITHUB_OAUTH_CALLBACK_CHANNEL = 'desktop:github-oauth-callback'
+export const START_GITHUB_OAUTH_CHANNEL = 'desktop:start-github-oauth'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -452,4 +454,20 @@ export function registerIpcHandlers(
       return true
     }
   )
+
+  // -- Start GitHub OAuth --------------------------------------------------
+  ipcMain.removeHandler(START_GITHUB_OAUTH_CHANNEL)
+  ipcMain.handle(START_GITHUB_OAUTH_CHANNEL, async (_event, state: unknown) => {
+    if (typeof state !== 'string') {
+      return
+    }
+    const scope = encodeURIComponent('repo user workflow')
+    const clientId = '3a723b10ac5575cc5bb9'
+    const url =
+      'https://github.com/login/oauth/authorize' +
+      `?client_id=${clientId}` +
+      `&scope=${scope}` +
+      `&state=${state}`
+    await shell.openExternal(url)
+  })
 }

@@ -1095,5 +1095,83 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         const fetcher = yield* ReviewCommentFetcher
         yield* fetcher.removeReaction(workspaceId, commentId, reactionId)
       }),
+
+    // -------------------------------------------------------------------
+    // Alive-driven individual fetch RPCs
+    // -------------------------------------------------------------------
+    'review.fetchSingleIssueComment': ({ workspaceId, commentId }) =>
+      Effect.gen(function* () {
+        const fetcher = yield* ReviewCommentFetcher
+        return yield* fetcher.fetchSingleIssueComment(workspaceId, commentId)
+      }),
+    'review.fetchSingleReviewComment': ({ workspaceId, commentId }) =>
+      Effect.gen(function* () {
+        const fetcher = yield* ReviewCommentFetcher
+        return yield* fetcher.fetchSingleReviewComment(workspaceId, commentId)
+      }),
+    'review.fetchSingleReview': ({ workspaceId, reviewId }) =>
+      Effect.gen(function* () {
+        const fetcher = yield* ReviewCommentFetcher
+        return yield* fetcher.fetchSingleReview(workspaceId, reviewId)
+      }),
+
+    // -------------------------------------------------------------------
+    // GitHub OAuth RPCs
+    // -------------------------------------------------------------------
+    'github.exchangeOAuthCode': ({ code }) =>
+      Effect.gen(function* () {
+        // GitHub Desktop dev OAuth App credentials (public, from open-source repo)
+        const clientId = '3a723b10ac5575cc5bb9'
+        const clientSecret = '22c34d87789a365981ed921352a7b9a8c3f69d54'
+
+        const res = yield* Effect.tryPromise({
+          try: () =>
+            fetch('https://github.com/login/oauth/access_token', {
+              method: 'POST',
+              headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'User-Agent': 'GitHubDesktop/3.4.12 (Macintosh)',
+              },
+              body: JSON.stringify({
+                client_id: clientId,
+                client_secret: clientSecret,
+                code,
+              }),
+            }),
+          catch: (err) =>
+            new RpcError({
+              message: `GitHub OAuth token exchange failed: ${String(err)}`,
+            }),
+        })
+
+        const body = yield* Effect.tryPromise({
+          try: () =>
+            res.json() as Promise<{
+              access_token?: string
+              scope?: string
+              token_type?: string
+              error?: string
+              error_description?: string
+            }>,
+          catch: () =>
+            new RpcError({ message: 'Failed to parse GitHub OAuth response' }),
+        })
+
+        if (body.error || !body.access_token) {
+          return yield* new RpcError({
+            message:
+              body.error_description ??
+              body.error ??
+              'No access token returned',
+          })
+        }
+
+        return {
+          accessToken: body.access_token,
+          scope: body.scope ?? '',
+          tokenType: body.token_type ?? 'bearer',
+        }
+      }),
   })
 )

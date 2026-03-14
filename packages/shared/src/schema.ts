@@ -105,6 +105,19 @@ export const prds = State.SQLite.table({
 })
 
 /**
+ * Global application settings stored as key-value pairs.
+ * Used for configuration that applies across all projects/workspaces,
+ * such as the GitHub Desktop OAuth token for Alive real-time notifications.
+ */
+export const appSettings = State.SQLite.table({
+  name: 'app_settings',
+  columns: {
+    key: State.SQLite.text({ primaryKey: true }),
+    value: State.SQLite.text(),
+  },
+})
+
+/**
  * PanelLayout stores the recursive tree structure of splits and panes.
  * Uses a single row per window session (keyed by `windowId`) with the full
  * tree serialized as JSON. The `activePaneId` tracks which pane currently has
@@ -433,6 +446,16 @@ export const prdRemoved = Events.synced({
   }),
 })
 
+// -- App Settings events ----------------------------------------------------
+
+export const appSettingChanged = Events.synced({
+  name: 'v1.AppSettingChanged',
+  schema: Schema.Struct({
+    key: Schema.String,
+    value: Schema.String,
+  }),
+})
+
 // -- Panel Layout events ----------------------------------------------------
 
 /**
@@ -511,6 +534,7 @@ export const events = {
   prdUpdated,
   prdStatusChanged,
   prdRemoved,
+  appSettingChanged,
   layoutSplit,
   layoutPaneClosed,
   layoutPaneAssigned,
@@ -707,6 +731,8 @@ const materializers = State.SQLite.materializers(events, {
   'v1.PrdStatusChanged': ({ id, status }) =>
     prds.update({ status }).where({ id }),
   'v1.PrdRemoved': ({ id }) => prds.delete().where({ id }),
+  'v1.AppSettingChanged': ({ key, value }) =>
+    appSettings.insert({ key, value }).onConflict('key', 'replace'),
   'v1.LayoutSplit': ({ windowId, layoutTree, activePaneId }) =>
     panelLayout
       .insert({ windowId, layoutTree, activePaneId })
@@ -738,6 +764,7 @@ export const tables = {
   diffs,
   tasks,
   prds,
+  appSettings,
   panelLayout,
 }
 
@@ -753,6 +780,7 @@ const activeTables = {
   diffs,
   tasks,
   prds,
+  appSettings,
   panelLayout,
 }
 

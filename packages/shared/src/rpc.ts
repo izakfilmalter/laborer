@@ -785,6 +785,89 @@ export class LaborerRpcs extends RpcGroup.make(
       commentId: Schema.Number,
       reactionId: Schema.Number,
     },
+  }),
+
+  // -----------------------------------------------------------------------
+  // GitHub OAuth RPCs
+  // -----------------------------------------------------------------------
+
+  /**
+   * Exchange a GitHub OAuth authorization code for an access token.
+   * Uses the GitHub Desktop dev OAuth App credentials (public, open-source).
+   * The client_secret is kept server-side.
+   */
+  Rpc.make('github.exchangeOAuthCode', {
+    success: Schema.Struct({
+      accessToken: Schema.String,
+      scope: Schema.String,
+      tokenType: Schema.String,
+    }),
+    error: RpcError,
+    payload: {
+      code: Schema.String,
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // Alive-driven individual fetch RPCs
+  // -----------------------------------------------------------------------
+
+  /**
+   * Fetch a single issue comment by ID, applying brrr finding/verdict parsing.
+   * Used by Alive event handler when a `pr-comment` (subtype: issue-comment)
+   * event arrives, avoiding a full fetchComments round-trip.
+   */
+  Rpc.make('review.fetchSingleIssueComment', {
+    success: Schema.Struct({
+      comment: PrComment,
+      /** Non-null if this comment is the brrr review summary. */
+      verdict: Schema.NullOr(ReviewVerdict),
+    }),
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      commentId: Schema.Number,
+    },
+  }),
+
+  /**
+   * Fetch a single PR review comment (inline) by ID, applying brrr finding
+   * parsing. Returns either a plain comment or a structured finding.
+   */
+  Rpc.make('review.fetchSingleReviewComment', {
+    success: Schema.Union(
+      Schema.Struct({
+        kind: Schema.Literal('comment'),
+        comment: PrComment,
+      }),
+      Schema.Struct({
+        kind: Schema.Literal('finding'),
+        finding: ReviewFinding,
+      })
+    ),
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      commentId: Schema.Number,
+    },
+  }),
+
+  /**
+   * Fetch a single PR review by ID. Returns the review state which can be
+   * used to update the verdict badge immediately.
+   */
+  Rpc.make('review.fetchSingleReview', {
+    success: Schema.Struct({
+      reviewId: Schema.Number,
+      state: Schema.String,
+      authorLogin: Schema.String,
+      body: Schema.String,
+    }),
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      reviewId: Schema.Number,
+    },
   })
 ) {}
 

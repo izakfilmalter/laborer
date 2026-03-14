@@ -572,6 +572,38 @@ function ReviewPaneContent({
     }
   }, [startPolling])
 
+  // Listen for Alive real-time events that target this workspace.
+  // When an event arrives, trigger an immediate refresh and reset the
+  // polling timer so we don't double-fetch.
+  useEffect(() => {
+    const aliveEventTypes = [
+      'alive:issue-comment',
+      'alive:review-comment',
+      'alive:review-submit',
+      'alive:review-refresh',
+    ] as const
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId: string }>).detail
+      if (detail.workspaceId !== workspaceId) {
+        return
+      }
+      // Immediate refresh + reset polling timer
+      refresh()
+      startPolling()
+    }
+
+    for (const eventType of aliveEventTypes) {
+      window.addEventListener(eventType, handler)
+    }
+
+    return () => {
+      for (const eventType of aliveEventTypes) {
+        window.removeEventListener(eventType, handler)
+      }
+    }
+  }, [workspaceId, refresh, startPolling])
+
   /** Manual refresh: trigger an immediate fetch and reset the polling timer. */
   const handleManualRefresh = useCallback(() => {
     refresh()

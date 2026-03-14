@@ -167,6 +167,14 @@ export interface DesktopBridge {
   onActivateWorkspace: (listener: (workspaceId: string) => void) => () => void
 
   /**
+   * Subscribes to GitHub OAuth callback events.
+   * Fired when the OS routes an `x-github-desktop-dev-auth://oauth?code=...&state=...`
+   * URL to the app. The callback receives the full URL string.
+   * Returns an unsubscribe function.
+   */
+  onGithubOAuthCallback: (listener: (url: string) => void) => () => void
+
+  /**
    * Subscribes to application menu actions (e.g., "settings").
    * Returns an unsubscribe function.
    */
@@ -225,6 +233,13 @@ export interface DesktopBridge {
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number }
   ) => Promise<T | null>
+
+  /**
+   * Opens the GitHub OAuth authorization page in the user's browser.
+   * The state parameter is a CSRF token the caller generates and validates
+   * when the callback arrives.
+   */
+  startGithubOAuth: (state: string) => Promise<void>
 
   /** Updates the system tray tooltip with the current workspace count. */
   updateTrayWorkspaceCount: (count: number) => Promise<void>

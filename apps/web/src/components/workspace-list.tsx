@@ -55,6 +55,7 @@ import { CopyButton } from '@/components/copy-button'
 import { FixFindingsForm } from '@/components/fix-findings-form'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { PlanIssuesList } from '@/components/plan-issues-list'
+import { ReviewFindingsCount } from '@/components/review-findings-count'
 import { ReviewPrForm } from '@/components/review-pr-form'
 import { ReviewVerdictBadge } from '@/components/review-verdict-badge'
 import { TerminalList } from '@/components/terminal-list'
@@ -681,6 +682,11 @@ function WorkspaceItem({
             {workspace.prNumber != null && (
               <Suspense fallback={null}>
                 <ReviewVerdictBadge workspaceId={workspace.id} />
+              </Suspense>
+            )}
+            {workspace.prNumber != null && (
+              <Suspense fallback={null}>
+                <ReviewFindingsCount workspaceId={workspace.id} />
               </Suspense>
             )}
             <Badge

@@ -19,6 +19,13 @@ const { isElectronMock, openExternalUrlMock } = vi.hoisted(() => ({
 vi.mock('@/lib/desktop', () => ({
   isElectron: isElectronMock,
   openExternalUrl: openExternalUrlMock,
+  serverRpcUrl: () => 'http://localhost:2100/rpc',
+}))
+
+// Stub the review findings count hook — the header's ReviewButtonWithCount
+// component needs this, but we don't want real RPC calls in unit tests.
+vi.mock('@/components/review-findings-count', () => ({
+  useUnresolvedFindingsCount: () => 0,
 }))
 
 // Stub tooltip — the @base-ui/react tooltip uses a portal that isn't

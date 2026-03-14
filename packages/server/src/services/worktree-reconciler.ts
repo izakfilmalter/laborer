@@ -178,6 +178,10 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
         const detectedWorktrees = yield* detector.detect(canonicalRepoPath)
         const defaultBranchRef = yield* getDefaultBranchRef(canonicalRepoPath)
 
+        yield* Effect.logDebug(
+          `[WorktreeReconciler] project=${projectId} detected ${detectedWorktrees.length} worktrees, defaultBranchRef=${defaultBranchRef}. Worktrees: ${detectedWorktrees.map((w) => `${w.branch ?? 'detached'}(isMain=${w.isMain}, head=${w.head.slice(0, 8)})`).join(', ')}`
+        )
+
         const allWorkspaces = store.query(
           tables.workspaces.where('projectId', projectId)
         ) as readonly WorkspaceRecord[]
@@ -234,12 +238,22 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
             detected.head
           )
 
+          const newWorkspaceId = crypto.randomUUID()
+          const branchName = toWorkspaceBranchName(
+            detected.branch,
+            detected.head
+          )
+
+          yield* Effect.log(
+            `[WorktreeReconciler] ADDING external workspace: id=${newWorkspaceId.slice(0, 8)} project=${projectId} branch=${branchName} isMain=${detected.isMain} path=${canonicalDetectedPath} baseSha=${baseSha?.slice(0, 8) ?? 'null'} status=stopped`
+          )
+
           store.commit(
             events.workspaceCreated({
-              id: crypto.randomUUID(),
+              id: newWorkspaceId,
               projectId,
               taskSource: null,
-              branchName: toWorkspaceBranchName(detected.branch, detected.head),
+              branchName,
               worktreePath: canonicalDetectedPath,
               port: 0,
               status: 'stopped',
@@ -266,6 +280,10 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
           store.commit(events.workspaceDestroyed({ id: workspace.id }))
           removed += 1
         }
+
+        yield* Effect.log(
+          `[WorktreeReconciler] project=${projectId} reconcile complete: added=${added} removed=${removed} unchanged=${unchanged}`
+        )
 
         return {
           added,

@@ -25,7 +25,7 @@ import {
 } from '@/lib/sidecar-statuses'
 import { cn } from '@/lib/utils'
 
-/** Map semantic colors to Tailwind utility classes. */
+/** Map semantic colors to Tailwind utility classes for the status dot. */
 const DOT_COLOR_CLASSES: Record<StatusColor, string> = {
   green: 'bg-success',
   yellow: 'bg-warning',
@@ -41,6 +41,19 @@ const TEXT_COLOR_CLASSES: Record<StatusColor, string> = {
   gray: 'text-muted-foreground',
 }
 
+/** Map semantic colors to border color classes for the pill. */
+const BORDER_COLOR_CLASSES: Record<StatusColor, string> = {
+  green: 'border-success/40',
+  yellow: 'border-warning/40',
+  red: 'border-destructive/40',
+  gray: 'border-border',
+}
+
+/** Whether a service state should pulse the indicator dot. */
+function shouldPulse(state: ServiceState): boolean {
+  return state.state === 'starting' || state.state === 'restarting'
+}
+
 /** A single service status pill with a colored dot, name, and tooltip. */
 function ServicePill({
   name,
@@ -52,6 +65,7 @@ function ServicePill({
   const color = getStatusColor(serviceState)
   const displayName = getDisplayName(name)
   const label = getStatusLabel(serviceState)
+  const pulsing = shouldPulse(serviceState)
 
   return (
     <Tooltip>
@@ -59,20 +73,30 @@ function ServicePill({
         render={
           <span
             className={cn(
-              'inline-flex items-center gap-1.5 border border-border px-2 py-0.5 text-xs',
-              TEXT_COLOR_CLASSES[color]
+              'inline-flex items-center gap-1.5 border px-2 py-0.5 text-xs',
+              TEXT_COLOR_CLASSES[color],
+              BORDER_COLOR_CLASSES[color]
             )}
             data-testid={`service-pill-${name}`}
           />
         }
       >
-        <span
-          aria-hidden="true"
-          className={cn(
-            'inline-block size-1.5 rounded-full',
-            DOT_COLOR_CLASSES[color]
+        <span aria-hidden="true" className="relative inline-flex size-2">
+          {pulsing && (
+            <span
+              className={cn(
+                'absolute inline-flex size-full animate-ping rounded-full opacity-75',
+                DOT_COLOR_CLASSES[color]
+              )}
+            />
           )}
-        />
+          <span
+            className={cn(
+              'relative inline-flex size-2 rounded-full',
+              DOT_COLOR_CLASSES[color]
+            )}
+          />
+        </span>
         {displayName}
       </TooltipTrigger>
       <TooltipContent>

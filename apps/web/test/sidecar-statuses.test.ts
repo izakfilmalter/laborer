@@ -10,10 +10,12 @@ import type { SidecarStatusEvent } from '@laborer/shared/desktop-bridge'
 import { describe, expect, it } from 'vitest'
 import {
   ALL_SIDECAR_NAMES,
+  areCoreServicesHealthy,
   deriveSidecarStatuses,
   getDisplayName,
   getStatusColor,
   getStatusLabel,
+  hasAnyCoreServiceCrashed,
 } from '../src/lib/sidecar-statuses'
 
 describe('deriveSidecarStatuses', () => {
@@ -131,5 +133,78 @@ describe('getStatusLabel', () => {
     expect(getStatusLabel({ state: 'restarting', delayMs: 3000 })).toBe(
       'Restarting'
     )
+  })
+})
+
+describe('areCoreServicesHealthy', () => {
+  it('returns false when all services are unknown', () => {
+    const statuses = deriveSidecarStatuses([])
+    expect(areCoreServicesHealthy(statuses)).toBe(false)
+  })
+
+  it('returns false when only some core services are healthy', () => {
+    const statuses = deriveSidecarStatuses([
+      { state: 'healthy', name: 'server' },
+      { state: 'healthy', name: 'terminal' },
+    ])
+    expect(areCoreServicesHealthy(statuses)).toBe(false)
+  })
+
+  it('returns true when all core services are healthy (MCP irrelevant)', () => {
+    const statuses = deriveSidecarStatuses([
+      { state: 'healthy', name: 'server' },
+      { state: 'healthy', name: 'terminal' },
+      { state: 'healthy', name: 'file-watcher' },
+    ])
+    expect(areCoreServicesHealthy(statuses)).toBe(true)
+  })
+
+  it('returns true even when MCP is not healthy', () => {
+    const statuses = deriveSidecarStatuses([
+      { state: 'healthy', name: 'server' },
+      { state: 'healthy', name: 'terminal' },
+      { state: 'healthy', name: 'file-watcher' },
+      { state: 'crashed', name: 'mcp', error: 'fail' },
+    ])
+    expect(areCoreServicesHealthy(statuses)).toBe(true)
+  })
+
+  it('returns false when a core service has crashed', () => {
+    const statuses = deriveSidecarStatuses([
+      { state: 'healthy', name: 'server' },
+      { state: 'healthy', name: 'terminal' },
+      { state: 'crashed', name: 'file-watcher', error: 'OOM' },
+    ])
+    expect(areCoreServicesHealthy(statuses)).toBe(false)
+  })
+})
+
+describe('hasAnyCoreServiceCrashed', () => {
+  it('returns false when no core services have crashed', () => {
+    const statuses = deriveSidecarStatuses([])
+    expect(hasAnyCoreServiceCrashed(statuses)).toBe(false)
+  })
+
+  it('returns true when a core service has crashed', () => {
+    const statuses = deriveSidecarStatuses([
+      { state: 'crashed', name: 'server', error: 'timeout' },
+    ])
+    expect(hasAnyCoreServiceCrashed(statuses)).toBe(true)
+  })
+
+  it('returns false when only MCP has crashed', () => {
+    const statuses = deriveSidecarStatuses([
+      { state: 'crashed', name: 'mcp', error: 'fail' },
+    ])
+    expect(hasAnyCoreServiceCrashed(statuses)).toBe(false)
+  })
+
+  it('returns true when file-watcher has crashed among healthy services', () => {
+    const statuses = deriveSidecarStatuses([
+      { state: 'healthy', name: 'server' },
+      { state: 'healthy', name: 'terminal' },
+      { state: 'crashed', name: 'file-watcher', error: 'ENOENT' },
+    ])
+    expect(hasAnyCoreServiceCrashed(statuses)).toBe(true)
   })
 })

@@ -285,8 +285,9 @@ app
       })
 
       // Spawn services without blocking — the web app's ServerGate component
-      // handles the loading UI while waiting for services to become healthy.
-      // This allows the window to render immediately with a loading spinner.
+      // (apps/web/src/components/server-gate.tsx) blocks the main UI until
+      // all core services are healthy, showing status and retry options.
+      // This allows the window to render immediately with the header visible.
       healthMonitor.spawnServices().then((servicesOk) => {
         if (!servicesOk) {
           console.error(

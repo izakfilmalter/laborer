@@ -116,6 +116,64 @@ function HomeComponent() {
     })
   }, [activePaneId])
 
+  // Review panel state — transient UI mode (not persisted to LiveStore).
+  // When set to a workspace ID, the full-height review panel is shown
+  // alongside all workspace frames. The panel spans the full height of
+  // the panel area, not just a single workspace.
+  const [reviewPaneWorkspaceId, setReviewPaneWorkspaceId] = useState<
+    string | null
+  >(null)
+
+  // Auto-close review panel when the workspace no longer exists in the layout
+  // (e.g., if the workspace was closed while the review panel was open).
+  useEffect(() => {
+    if (reviewPaneWorkspaceId && layout) {
+      const leaves = getLeafNodes(layout)
+      const workspaceExists = leaves.some(
+        (l) => l.workspaceId === reviewPaneWorkspaceId
+      )
+      if (!workspaceExists) {
+        setReviewPaneWorkspaceId(null)
+      }
+    }
+  }, [reviewPaneWorkspaceId, layout])
+
+  /**
+   * Toggle the full-height review panel for the workspace of the given pane.
+   * If the review panel is already open for that workspace, closes it.
+   * If it's open for a different workspace, switches to the new workspace.
+   *
+   * @param paneId - The pane ID to get the workspace from
+   * @returns Whether the review panel is now open
+   */
+  const toggleReviewPane = useCallback(
+    (paneId: string): boolean => {
+      if (!layout) {
+        return false
+      }
+
+      const node = findNodeById(layout, paneId)
+      if (!node || node._tag !== 'LeafNode' || !node.workspaceId) {
+        return false
+      }
+
+      const workspaceId = node.workspaceId
+
+      setReviewPaneWorkspaceId((current) => {
+        if (current === workspaceId) {
+          // Already showing review panel for this workspace — close it
+          return null
+        }
+        // Open review panel for this workspace
+        return workspaceId
+      })
+
+      // Return true if the panel will be open after this toggle
+      return reviewPaneWorkspaceId !== workspaceId
+    },
+    [layout, reviewPaneWorkspaceId]
+  )
+
   // Close-terminal confirmation dialog state — the pane ID is stored in
   // state (not a ref) so that changes trigger a re-render, allowing the
   // LeafPaneRenderer to show the inline confirmation dialog via context.
@@ -232,6 +290,7 @@ function HomeComponent() {
   // Override panelActions.closePane with the gated version and add fullscreen toggle.
   // forceCloseWorkspace bypasses the confirmation gate — used by workspace
   // destruction which has its own confirmation dialog.
+  // toggleReviewPane replaces the layout-based version with the full-height version.
   const gatedPanelActions = useMemo(
     () => ({
       ...panelActions,
@@ -240,6 +299,7 @@ function HomeComponent() {
       closeWorkspace: gatedCloseWorkspace,
       forceCloseWorkspace: panelActions.closeWorkspace,
       toggleFullscreenPane,
+      toggleReviewPane,
     }),
     [
       panelActions,
@@ -247,6 +307,7 @@ function HomeComponent() {
       gatedCloseTerminalPane,
       gatedCloseWorkspace,
       toggleFullscreenPane,
+      toggleReviewPane,
     ]
   )
 
@@ -527,6 +588,8 @@ function HomeComponent() {
                       fullscreenPaneId={fullscreenPaneId}
                       isReconciling={isReconciling}
                       layout={layout}
+                      reviewPaneOpen={reviewPaneWorkspaceId !== null}
+                      reviewWorkspaceId={reviewPaneWorkspaceId}
                       workspaceOrder={workspaceOrder}
                     />
                   </>

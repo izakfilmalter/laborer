@@ -40,7 +40,14 @@ import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { prds, workspaces } from '@laborer/shared/schema'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
-import { ExternalLink, GitBranch, Pause, Play, Trash2 } from 'lucide-react'
+import {
+  ExternalLink,
+  GitBranch,
+  GitBranchPlus,
+  Pause,
+  Play,
+  Trash2,
+} from 'lucide-react'
 import {
   type FC,
   type KeyboardEvent,
@@ -79,6 +86,13 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
 import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
 import {
@@ -902,7 +916,20 @@ function WorkspaceList({ projectId, repoPath }: WorkspaceListProps) {
   }, [prdList, projectId])
 
   if (activeWorkspaces.length === 0) {
-    return <p className="py-2 text-muted-foreground text-xs">No workspaces</p>
+    return (
+      <Empty className="py-4">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <GitBranchPlus />
+          </EmptyMedia>
+          <EmptyTitle>No workspaces</EmptyTitle>
+          <EmptyDescription>
+            Create a workspace to start working on isolated branches with AI
+            agents.
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
   }
 
   return (

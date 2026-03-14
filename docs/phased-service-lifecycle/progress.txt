@@ -612,3 +612,39 @@ The `Header` component renders **outside** the `LiveStoreProvider` boundary in `
 - TypeScript typecheck passes with no errors across all 7 packages
 - Formatter (ultracite/biome) passes on all changed files
 - Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #3: First-launch empty cache handling — COMPLETED
+
+### What was done
+- **Upgraded `WorkspaceList` empty state** (`apps/web/src/components/workspace-list.tsx`):
+  - Replaced the plain `<p>No workspaces</p>` text with the proper `Empty` component pattern used throughout the app
+  - Added `GitBranchPlus` icon via `EmptyMedia` with `variant="icon"` for visual consistency
+  - Added `EmptyTitle` with "No workspaces" heading
+  - Added `EmptyDescription` with guidance text: "Create a workspace to start working on isolated branches with AI agents."
+  - The `Empty` component uses `data-slot="empty"` which is the established pattern for empty state containers
+  - Added imports for `Empty`, `EmptyDescription`, `EmptyHeader`, `EmptyMedia`, `EmptyTitle` from `@/components/ui/empty`
+  - Added `GitBranchPlus` import from `lucide-react`
+
+- **Already-handled empty states** (no changes needed):
+  - `WelcomeEmptyState` in the main content area (index route) — shows full onboarding with `AddProjectForm` CTA when no projects exist
+  - Sidebar "No projects" text — adequate for sidebar context (main CTA is in the content area)
+  - `WorkspaceDashboard` — already uses `Empty` component with icon for "No projects" state
+  - `PanelManager` — already uses `Empty` component for "No panels" state
+  - `PlanList` — already uses `Empty` component with icon and description
+  - `TaskList` — already uses `Empty` component with icon and description
+  - `PlanIssuesList` — already uses `Empty` component with icon and description
+  - Panel layout system — returns `undefined` for empty store, which `PanelManager` handles gracefully
+
+- **Created `apps/web/test/first-launch-empty-cache.test.tsx`** with 4 tests:
+  1. Workspace list shows onboarding content when store has no workspaces — verifies `data-slot="empty"` container
+  2. Workspace list shows guidance description in empty state — verifies "create workspace" text
+  3. Workspace list updates reactively when data arrives via sync — empty state disappears, workspace cards appear (no full-page re-render)
+  4. No console errors or rendering crashes with empty store — verifies clean render with empty LiveStore
+
+### Verification
+- All 4 new tests pass
+- All 632 web tests pass (up from 628 after Issue #2, 4 new tests)
+- All 344 server tests pass (no regressions)
+- TypeScript typecheck passes with no errors across all 7 packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change

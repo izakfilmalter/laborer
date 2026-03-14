@@ -2,11 +2,11 @@
  * Keyboard event detection helpers for terminal pane scope isolation.
  *
  * These pure functions determine which keyboard events should bypass
- * xterm.js and bubble to the global hotkey layer (TanStack Hotkeys on
+ * ghostty-web and bubble to the global hotkey layer (TanStack Hotkeys on
  * document). They are used by `TerminalPane.attachCustomKeyEventHandler`
  * to let panel shortcuts work even when a terminal has focus.
  *
- * @see apps/web/src/panes/terminal-pane.tsx — usage in xterm.js key handler
+ * @see apps/web/src/panes/terminal-pane.tsx — usage in ghostty-web key handler
  * @see apps/web/src/panels/panel-hotkeys.tsx — global shortcuts that need these events
  * @see Issue #80: Keyboard shortcut scope isolation
  */
@@ -36,10 +36,10 @@ const isExactCtrlB = (event: KeyboardEvent): boolean =>
   !event.metaKey
 
 /**
- * Check if a keyboard event should bypass xterm.js and bubble to
+ * Check if a keyboard event should bypass ghostty-web and bubble to
  * the global hotkey layer (TanStack Hotkeys on document).
  *
- * Returns true if the event should be passed through (xterm ignores it).
+ * Returns true if the event should be passed through (ghostty-web ignores it).
  */
 const shouldBypassTerminal = (event: KeyboardEvent): boolean =>
   isExactMetaW(event) || isMetaShiftEnter(event) || isExactCtrlB(event)

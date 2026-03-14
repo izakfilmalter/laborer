@@ -353,3 +353,36 @@ Date: 2026-03-14
 - All 687 tests pass across 46 test files in the web package (30 new + 657 existing)
 - 1 pre-existing skipped test (alive-desktop-oauth)
 - Biome lint passes on all changed files
+
+## Issue 4: Keyboard bypass and prefix mode — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Verified that the keyboard bypass and prefix mode integration with ghostty-web was already fully implemented in `terminal-pane.tsx` during Issue 1 (tracer bullet):
+  - `attachCustomKeyEventHandler` called on the ghostty-web terminal after open
+  - Only intercepts `keydown` events — `keyup` passes through to avoid breaking browser key state tracking
+  - `shouldBypassTerminal(event)` checks for Cmd+W, Cmd+Shift+Enter, Ctrl+B — returns false so the event bubbles to TanStack Hotkeys on document
+  - `isExactCtrlB(event)` additionally enters prefix mode when Ctrl+B is pressed
+  - In prefix mode, the next keydown returns false (action key intercepted), then prefix mode exits
+  - Prefix mode auto-exits after 1500ms timeout (`PREFIX_MODE_TIMEOUT`)
+  - `enterPrefixMode()` and `exitPrefixMode()` manage both `prefixModeRef` (for synchronous reads in handler) and `prefixMode` state (for React UI indicator)
+  - Prefix mode UI indicator ("Ctrl+B" badge) rendered conditionally at top-left of terminal pane
+  - Normal printable keys return true and are handled by ghostty-web
+- Updated JSDoc in `terminal-keys.ts` and `terminal-keys.test.ts` to reference ghostty-web instead of xterm.js
+- Created comprehensive test suite `apps/web/test/keyboard-bypass-prefix-mode.test.ts` with 29 tests:
+  - ghostty-web API compatibility (2 tests): Terminal.prototype.attachCustomKeyEventHandler exists, accepts function argument
+  - terminal-pane.tsx handler wiring (9 tests): imports from terminal-keys, calls attachCustomKeyEventHandler, PREFIX_MODE_TIMEOUT=1500, keydown-only interception, shouldBypassTerminal usage, isExactCtrlB check, enterPrefixMode/exitPrefixMode defined, prefixModeRef.current checked, prefix mode UI indicator rendered
+  - Bypass handler returns false for intercepted keys (8 tests): Cmd+W, Cmd+Shift+Enter, Ctrl+B return false; normal keys, keyup, Ctrl+C, Ctrl+D, arrow keys return true
+  - Prefix mode state machine (10 tests): Ctrl+B enters prefix, next key returns false + exits, subsequent keys return true, 1500ms auto-exit, keys return true after timeout, Ctrl+B again resets timeout, Cmd+W/Cmd+Shift+Enter don't enter prefix, keyup doesn't consume action in prefix mode, multiple Ctrl+B→action sequences work
+
+### Files changed
+- `apps/web/src/panes/terminal-keys.ts` (modified — updated JSDoc to reference ghostty-web instead of xterm.js)
+- `apps/web/test/terminal-keys.test.ts` (modified — updated JSDoc to reference ghostty-web instead of xterm.js)
+- `apps/web/test/keyboard-bypass-prefix-mode.test.ts` (new, 377 lines)
+
+### Test results
+- All 716 tests pass across 47 test files in the web package (29 new + 687 existing)
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Typecheck passes cleanly
+- Biome lint passes on all changed files

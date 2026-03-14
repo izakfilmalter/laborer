@@ -2,7 +2,7 @@
  * Unit tests for terminal keyboard event detection helpers.
  *
  * These test the pure functions that determine which keyboard events
- * bypass xterm.js and bubble to the global hotkey layer. Getting these
+ * bypass ghostty-web and bubble to the global hotkey layer. Getting these
  * wrong means either panel shortcuts don't work from within terminals,
  * or legitimate terminal input gets silently swallowed.
  *

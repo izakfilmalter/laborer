@@ -94,3 +94,36 @@ Date: 2026-03-13
 - `bun run --filter @laborer/web test` — 676/676 tests pass (46 new + 630 existing)
 - `bun run --filter @laborer/shared test` — 60/60 tests pass
 - `biome check` — no issues in modified files
+
+## Issue #4: Layout-utils: panel tab operations — COMPLETED
+
+Date: 2026-03-13
+
+### What was done
+- Created new module `apps/web/src/panels/panel-tab-utils.ts` with pure functions:
+  - `addPanelTab(workspace, panelType, options?)` — add a new panel tab with a single leaf pane of the specified type, makes it active; supports pre-configured tabs, custom labels, and terminal IDs
+  - `removePanelTab(workspace, tabId)` — remove a panel tab, switch active to nearest sibling (prefer right, fall back left); handles only tab, empty workspace
+  - `switchPanelTab(workspace, tabId)` — set active panel tab by ID
+  - `switchPanelTabByIndex(workspace, index)` — set active panel tab by 1-based position (1-8, 9=last)
+  - `switchPanelTabRelative(workspace, delta)` — cycle next/prev with wrapping
+  - `reorderPanelTabs(workspace, fromIndex, toIndex)` — drag reorder
+  - `getActivePanelTab(workspace)` — get the active panel tab
+- Exported `AddPanelTabOptions` type for configuring new tabs
+- All functions are pure: input WorkspaceTileLeaf, output new WorkspaceTileLeaf
+
+### Tests
+- 57 tests in `apps/web/test/panel-tab-utils.test.ts` covering:
+  - addPanelTab: empty workspace, append to existing, all pane types, pre-configured tab, terminalId, label, immutability, focusedPaneId
+  - removePanelTab: not found, only tab, non-active tab, active middle/last/first, two tabs, immutability, empty workspace
+  - switchPanelTab: existing tab, not found, already active, immutability
+  - switchPanelTabByIndex: indices 1-8, index 9 (last), out-of-range, zero, negative, empty workspace
+  - switchPanelTabRelative: next/prev, wrap-around forward/backward, single tab, empty, delta +/-2, invalid activePanelTabId
+  - reorderPanelTabs: move forward/backward, same index, out-of-range, negative, preserveActiveId, immutability, two-tab swap
+  - getActivePanelTab: active, empty, invalid ID, undefined ID
+  - Combined operations: add+remove round-trip, add+switch+remove, reorder+switchByIndex, add multiple+cycle, workspace-level properties preserved
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 733/733 tests pass (57 new + 676 existing)
+- `biome check` — no issues in modified files

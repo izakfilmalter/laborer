@@ -121,7 +121,7 @@ These follow the same patterns as the existing `splitPane`/`closePane` but opera
 
 ## 4. Layout-utils: panel tab operations
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1064,7 +1064,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 1 | Hierarchical layout types | None | done |
 | 2 | Layout-utils: window tab operations | 1 | done |
 | 3 | Layout-utils: workspace tile operations | 1 | done |
-| 4 | Layout-utils: panel tab operations | 1 | pending |
+| 4 | Layout-utils: panel tab operations | 1 | done |
 | 5 | Schema + LiveStore events for new layout model | 1 | pending |
 | 6 | Layout migration: flat PanelNode to hierarchical WindowLayout | 1, 2, 5 | pending |
 | 7 | Tab bar component | None | pending |

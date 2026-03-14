@@ -330,3 +330,53 @@
 - TypeScript typecheck passes with no errors across all packages (shared, server, web)
 - Formatter (ultracite/biome) passes on all changed files
 - Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #16: Lazy sidecar connections (TerminalClient + FileWatcherClient) — COMPLETED
+
+### What was done
+- **FileWatcherClient** (`packages/server/src/services/file-watcher-client.ts`) — converted from eager to lazy connection:
+  - Extracted `createFileWatcherRpcClient(url)` helper function for proper type inference of the RPC client
+  - Layer construction (`Layer.scoped`) no longer calls `RpcClient.make()` or starts event stream subscription
+  - Connection is established lazily on first method call (`subscribe`, `unsubscribe`, `updateIgnore`, `listSubscriptions`)
+  - Uses a mutable closure variable (`cachedClient`) to cache the RPC client after first successful connection
+  - Event stream subscription (`watcher.events()`) starts once after first successful connection, forked into the layer's scope
+  - Retry with exponential backoff (1s base, up to 30s, max 5 retries) when sidecar is unavailable
+  - All method errors mapped to `FileWatcherRpcError` for consistent error types
+  - `onFileEvent()` handler registration works immediately (before connection) — handlers stored in memory, dispatched when events arrive
+  - Captured `layerScope` from `Effect.scope` during construction, provided to lazy `RpcClient.make()` via `Effect.provideService(Scope.Scope, layerScope)` so the client lifecycle is tied to the layer
+
+- **TerminalClient** (`packages/server/src/services/terminal-client.ts`) — converted from eager to lazy connection:
+  - Extracted `createTerminalRpcClient(url)` helper function for proper type inference
+  - Layer construction no longer calls `RpcClient.make()`, seeds the terminal map, or starts event stream subscription
+  - Connection is established lazily on first method call via `getOrCreateClient` effect
+  - Terminal map seeding (`terminal.list()`) happens after first successful connection
+  - Event stream subscription (`terminal.events()`) starts once after connection, forked into layer's scope
+  - Same retry pattern as FileWatcherClient (exponential backoff, max 5 retries)
+  - `killAllForWorkspace()` gracefully returns 0 when sidecar is unreachable (catches connection error, logs warning)
+  - `spawnContainerTerminal` and `spawnHostTerminal` get the RPC client lazily via `yield* getOrCreateClient`
+  - `autoTypeScripts` and `scheduleAutoRun` now receive `rpcClient` as a parameter (instead of closing over it)
+  - `buildAgentCommand` now takes `terminalPort` as parameter (instead of closing over `env`)
+  - Environment variables (`TERMINAL_PORT`) cached in a closure variable after first lazy resolution
+
+- **Test file** — Created `packages/server/test/rpc/lazy-connections.test.ts` with 6 tests:
+  1. FileWatcherClient layer builds instantly without connecting to file-watcher sidecar
+  2. FileWatcherClient onFileEvent handler can be registered before connection
+  3. TerminalClient layer builds instantly without connecting to terminal sidecar
+  4. TerminalClient killAllForWorkspace returns 0 when no terminals tracked (before connection)
+  5. FileWatcherClient layer builds in under 1 second without sidecar (timing test)
+  6. TerminalClient layer builds in under 1 second without sidecar (timing test)
+
+### Notes
+- The lazy connection pattern uses `Effect.provideService(Scope.Scope, layerScope)` to tie the lazily-created RPC client's lifecycle to the layer's scope, ensuring proper cleanup on shutdown
+- The event stream fibers are forked via `Effect.forkIn(layerScope)` (not `Effect.forkScoped`) since the fork happens outside the original `Layer.scoped` generator — `forkIn` explicitly uses the captured scope
+- Both clients maintain the same retry strategy as before (exponential backoff with spaced union) for the event stream subscription, but the initial connection retry is bounded (max 5 retries) to avoid blocking indefinitely
+- The existing `DeferredServicesProxyLive` in `main.ts` still wraps these layers in Ref-backed proxies — the lazy connection pattern means the background fiber that builds `DeferredServicesLive` completes faster since neither client blocks on sidecar connections during layer construction
+- Issue #17 (Parallel sidecar spawning) is now unblocked
+
+### Verification
+- All 6 new tests pass
+- All 344 server tests pass (up from 338 after Issue #15, 6 new tests)
+- All 604 web tests pass (no regressions)
+- TypeScript typecheck passes with no errors across all 7 packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format errors in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change

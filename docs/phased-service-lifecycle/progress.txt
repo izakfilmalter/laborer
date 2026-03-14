@@ -25,3 +25,33 @@
 - All 572 existing tests pass (no regressions)
 - TypeScript typecheck passes with no errors
 - Formatter (ultracite/biome) passes on new files
+
+## Issue #5: `useWhenPhase` hook and service status hook — COMPLETED
+
+### What was done
+- Created `apps/web/src/hooks/use-when-phase.ts` with:
+  - `useWhenPhase(targetPhase): boolean` — returns `true` once the current lifecycle phase is at or past the target phase, `false` before
+  - Thin hook that reads `useLifecyclePhase().phase` and compares with `>=`
+  - Primary API for phase-aware UI — components use this to conditionally enable features
+- Created `apps/web/src/hooks/use-service-status.ts` with:
+  - `useServiceStatus(): ServiceStatuses` — returns a reactive map of per-service health states
+  - Aggregates sidecar statuses from `useSidecarStatuses()` (server, terminal, file-watcher, mcp)
+  - Adds a `sync` entry for LiveStore sync status (initially `unknown`, to be wired in Issue #2)
+  - Exports `ServiceName` type (`'server' | 'terminal' | 'file-watcher' | 'mcp' | 'sync'`)
+  - Exports `ServiceStatuses` type (`Record<ServiceName, ServiceState>`)
+- Created `apps/web/test/lifecycle-phase-hooks.test.tsx` with 7 tests:
+  - useWhenPhase:
+    1. Returns false for Ready during Starting phase and true after advancing to Ready
+    2. Returns true immediately for Starting (always past)
+    3. Returns false for Eventually until Eventually phase is reached
+  - useServiceStatus:
+    4. Shows starting state for sidecar services initially
+    5. Includes sync status entry with unknown state initially
+    6. Updates sidecar status to healthy when health endpoint responds
+    7. Updates reactively when service status changes
+
+### Verification
+- All 7 new tests pass
+- All 579 tests pass (no regressions, up from 572 after Issue #4)
+- TypeScript typecheck passes with no errors
+- Formatter (ultracite/biome) passes on new files

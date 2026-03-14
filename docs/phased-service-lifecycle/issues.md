@@ -10,10 +10,10 @@ Parent PRD: [PRD.md](./PRD.md)
 | 2 | LiveStore sync status indicator | #1 | Blocked |
 | 3 | First-launch empty cache handling | #1 | Blocked |
 | 4 | Lifecycle phase enum and context | None | Done |
-| 5 | `useWhenPhase` hook and service status hook | #4 | Ready |
+| 5 | `useWhenPhase` hook and service status hook | #4 | Done |
 | 6 | Remove ServerGate blocking gate | #1, #4 | Blocked |
 | 7 | Wire sidecar status events to lifecycle phase transitions | #5, #6 | Blocked |
-| 8 | Header per-service status dots | #5 | Blocked |
+| 8 | Header per-service status dots | #5 | Ready |
 | 9 | Header status collapse and expand | #8 | Blocked |
 | 10 | Header error state persistence and animations | #8 | Blocked |
 | 11 | Disable write actions before Phase 2 (Ready) | #5, #6 | Blocked |

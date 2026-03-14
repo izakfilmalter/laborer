@@ -320,7 +320,7 @@ Wire the `TabBar` component into the main work area for window-level tabs. Place
 
 ## 9. Workspace bidirectional tiling UI
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1069,7 +1069,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 6 | Layout migration: flat PanelNode to hierarchical WindowLayout | 1, 2, 5 | done |
 | 7 | Tab bar component | None | done |
 | 8 | Window tab bar integration | 7, 2, 5 | done |
-| 9 | Workspace bidirectional tiling UI | 3, 5, 6 | pending |
+| 9 | Workspace bidirectional tiling UI | 3, 5, 6 | done |
 | 10 | Panel tab bar integration | 7, 4, 9 | pending |
 | 11 | Panel type picker component | None | pending |
 | 12 | Promote diff to first-class panel type | 11, 10 | pending |

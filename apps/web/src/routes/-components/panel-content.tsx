@@ -1,4 +1,4 @@
-import type { PanelNode } from '@laborer/shared/types'
+import type { PanelNode, WorkspaceTileNode } from '@laborer/shared/types'
 import { useState } from 'react'
 import { FullscreenPortalContext } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
@@ -14,6 +14,7 @@ interface PanelContentProps {
   readonly reviewPaneOpen?: boolean
   readonly reviewWorkspaceId?: string | null
   readonly workspaceOrder: string[] | null
+  readonly workspaceTileLayout?: WorkspaceTileNode | undefined
 }
 
 /**
@@ -35,6 +36,7 @@ export function PanelContent({
   activePaneId,
   fullscreenPaneId,
   workspaceOrder,
+  workspaceTileLayout,
   reviewPaneOpen = false,
   reviewWorkspaceId = null,
   diffPaneOpen = false,
@@ -62,6 +64,7 @@ export function PanelContent({
             layout={layout}
             reviewWorkspaceId={reviewPaneOpen ? reviewWorkspaceId : null}
             workspaceOrder={workspaceOrder}
+            workspaceTileLayout={workspaceTileLayout}
           />
           {/* Fullscreen portal target — panes portal into this overlay
               when fullscreened. Positioned absolutely to cover the entire

@@ -5,7 +5,11 @@ import {
   monitorForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import { reorder } from '@atlaskit/pragmatic-drag-and-drop/reorder'
-import type { PanelNode } from '@laborer/shared/types'
+import type {
+  PanelNode,
+  WorkspaceTileLeaf,
+  WorkspaceTileNode,
+} from '@laborer/shared/types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PanelImperativeHandle } from 'react-resizable-panels'
 import {
@@ -322,15 +326,240 @@ function WorkspaceFrameResizableChild({
   )
 }
 
+// ---------------------------------------------------------------------------
+// Hierarchical workspace tile rendering
+// ---------------------------------------------------------------------------
+
 /**
- * Renders workspace frames stacked vertically. Each workspace's terminals
- * get their own frame with a header showing the project / branch name.
+ * Renders a WorkspaceTileLeaf as a WorkspaceFrame, using the legacy flat
+ * PanelNode tree to get the workspace's sub-layout for the PanelManager.
  *
- * When there's only one workspace, renders a single frame without
- * resizable splitting overhead. With multiple workspaces, uses
- * ResizablePanelGroup for vertical stacking.
+ * This is a bridge component: it takes the new hierarchical tile leaf and
+ * looks up the corresponding sub-layout from the legacy flat tree. In future
+ * issues (panel tab integration, issue #10), the leaf's own `panelTabs` will
+ * be used directly instead of extracting from the flat tree.
+ */
+function WorkspaceTileLeafFrame({
+  leaf,
+  flatLayout,
+  activePaneId,
+  index,
+  diffWorkspaceId = null,
+  reviewWorkspaceId = null,
+}: {
+  readonly leaf: WorkspaceTileLeaf
+  readonly flatLayout: PanelNode
+  readonly activePaneId: string | null
+  readonly index: number
+  readonly diffWorkspaceId?: string | null
+  readonly reviewWorkspaceId?: string | null
+}) {
+  // Extract this workspace's sub-layout from the legacy flat tree.
+  // This bridge will be removed when panel tabs (issue #10) are integrated.
+  const subLayout = useMemo(
+    () =>
+      filterTreeByWorkspace(flatLayout, leaf.workspaceId) ?? {
+        _tag: 'LeafNode' as const,
+        id: `pane-tile-${leaf.id}`,
+        paneType: 'terminal' as const,
+        terminalId: undefined,
+        workspaceId: leaf.workspaceId,
+      },
+    [flatLayout, leaf.workspaceId, leaf.id]
+  )
+
+  return (
+    <WorkspaceFrame
+      activePaneId={activePaneId}
+      diffWorkspaceId={diffWorkspaceId}
+      index={index}
+      reviewWorkspaceId={reviewWorkspaceId}
+      subLayout={subLayout}
+      workspaceId={leaf.workspaceId}
+    />
+  )
+}
+
+/**
+ * A resizable child for workspace tile rendering.
+ * Wraps a workspace tile leaf or a nested tile renderer in a ResizablePanel.
+ */
+function WorkspaceTileResizableChild({
+  tileNode,
+  flatLayout,
+  activePaneId,
+  defaultSize,
+  index,
+  diffWorkspaceId = null,
+  reviewWorkspaceId = null,
+}: {
+  readonly tileNode: WorkspaceTileNode
+  readonly flatLayout: PanelNode
+  readonly activePaneId: string | null
+  readonly defaultSize: number
+  readonly index: number
+  readonly diffWorkspaceId?: string | null
+  readonly reviewWorkspaceId?: string | null
+}) {
+  const panelRef = useRef<PanelImperativeHandle | null>(null)
+
+  return (
+    <>
+      {index > 0 && <ResizableHandle />}
+      <ResizablePanel
+        collapsedSize="2.5rem"
+        collapsible={tileNode._tag === 'WorkspaceTileLeaf'}
+        defaultSize={`${defaultSize}%`}
+        minSize="10%"
+        panelRef={panelRef}
+      >
+        <WorkspaceTileRenderer
+          activePaneId={activePaneId}
+          diffWorkspaceId={diffWorkspaceId}
+          flatLayout={flatLayout}
+          index={index}
+          reviewWorkspaceId={reviewWorkspaceId}
+          tileNode={tileNode}
+        />
+      </ResizablePanel>
+    </>
+  )
+}
+
+/**
+ * Recursively renders a `WorkspaceTileNode` tree.
+ *
+ * - `WorkspaceTileLeaf` → renders a `WorkspaceFrame` with the workspace's
+ *   sub-layout extracted from the legacy flat tree (bridge for now).
+ * - `WorkspaceTileSplit` → renders a `ResizablePanelGroup` with the correct
+ *   orientation (horizontal or vertical), recursing into children.
+ *
+ * This enables bidirectional tiling: workspaces can be arranged both
+ * horizontally and vertically, supporting nested split layouts.
+ */
+function WorkspaceTileRenderer({
+  tileNode,
+  flatLayout,
+  activePaneId,
+  index = 0,
+  diffWorkspaceId = null,
+  reviewWorkspaceId = null,
+}: {
+  readonly tileNode: WorkspaceTileNode
+  readonly flatLayout: PanelNode
+  readonly activePaneId: string | null
+  readonly index?: number
+  readonly diffWorkspaceId?: string | null
+  readonly reviewWorkspaceId?: string | null
+}) {
+  if (tileNode._tag === 'WorkspaceTileLeaf') {
+    return (
+      <WorkspaceTileLeafFrame
+        activePaneId={activePaneId}
+        diffWorkspaceId={diffWorkspaceId}
+        flatLayout={flatLayout}
+        index={index}
+        leaf={tileNode}
+        reviewWorkspaceId={reviewWorkspaceId}
+      />
+    )
+  }
+
+  // WorkspaceTileSplit — render children in a resizable panel group
+  if (tileNode.children.length === 0) {
+    return <PanelManager layout={undefined} />
+  }
+
+  return (
+    <ResizablePanelGroup orientation={tileNode.direction}>
+      {tileNode.children.map((child, childIndex) => {
+        const size =
+          tileNode.sizes[childIndex] ?? 100 / tileNode.children.length
+        return (
+          <WorkspaceTileResizableChild
+            activePaneId={activePaneId}
+            defaultSize={size}
+            diffWorkspaceId={diffWorkspaceId}
+            flatLayout={flatLayout}
+            index={childIndex}
+            key={child.id}
+            reviewWorkspaceId={reviewWorkspaceId}
+            tileNode={child}
+          />
+        )
+      })}
+    </ResizablePanelGroup>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Legacy flat layout rendering (original WorkspaceFrames)
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders workspace frames based on the layout model.
+ *
+ * When a `workspaceTileLayout` (from the hierarchical WindowLayout model)
+ * is provided, renders using the recursive `WorkspaceTileRenderer` which
+ * supports both horizontal and vertical workspace tiling.
+ *
+ * Falls back to the legacy vertical-only stacking when no tile layout
+ * is available (backward compatibility).
  */
 export function WorkspaceFrames({
+  layout,
+  activePaneId,
+  workspaceOrder,
+  workspaceTileLayout,
+  diffWorkspaceId = null,
+  reviewWorkspaceId = null,
+}: {
+  readonly layout: PanelNode
+  readonly activePaneId: string | null
+  readonly workspaceOrder: string[] | null
+  readonly workspaceTileLayout?: WorkspaceTileNode | undefined
+  readonly diffWorkspaceId?: string | null
+  readonly reviewWorkspaceId?: string | null
+}) {
+  // -------------------------------------------------------------------
+  // Hierarchical tile layout path — bidirectional workspace tiling
+  // -------------------------------------------------------------------
+  // When a workspace tile layout is provided (from the active WindowTab),
+  // use the recursive WorkspaceTileRenderer for bidirectional tiling.
+  // The flat PanelNode tree is still needed as a bridge to extract
+  // per-workspace sub-layouts until panel tabs (issue #10) are wired up.
+  if (workspaceTileLayout) {
+    return (
+      <WorkspaceTileRenderer
+        activePaneId={activePaneId}
+        diffWorkspaceId={diffWorkspaceId}
+        flatLayout={layout}
+        reviewWorkspaceId={reviewWorkspaceId}
+        tileNode={workspaceTileLayout}
+      />
+    )
+  }
+
+  // -------------------------------------------------------------------
+  // Legacy flat layout path — vertical-only workspace stacking
+  // -------------------------------------------------------------------
+  return (
+    <LegacyWorkspaceFrames
+      activePaneId={activePaneId}
+      diffWorkspaceId={diffWorkspaceId}
+      layout={layout}
+      reviewWorkspaceId={reviewWorkspaceId}
+      workspaceOrder={workspaceOrder}
+    />
+  )
+}
+
+/**
+ * Legacy rendering: extracts workspaces from the flat PanelNode tree and
+ * stacks them vertically. Preserved for backward compatibility when no
+ * hierarchical workspace tile layout is available.
+ */
+function LegacyWorkspaceFrames({
   layout,
   activePaneId,
   workspaceOrder,

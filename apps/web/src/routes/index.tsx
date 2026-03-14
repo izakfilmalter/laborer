@@ -42,6 +42,7 @@ import {
 } from '@/panels/panel-context'
 import { PanelGroupRegistryProvider } from '@/panels/panel-group-registry'
 import { PanelHotkeys } from '@/panels/panel-hotkeys'
+import { getActiveWindowTab } from '@/panels/window-tab-utils'
 import {
   CloseAppDialog,
   CloseWorkspaceDialog,
@@ -91,6 +92,19 @@ function HomeComponent() {
     liveTerminals,
     workspaceOrder,
   } = usePanelLayout()
+
+  // Extract the active window tab's workspace tile layout for bidirectional tiling.
+  // When available, WorkspaceFrames uses this for hierarchical rendering instead
+  // of extracting workspaces from the flat PanelNode tree.
+  const workspaceTileLayout = useMemo(() => {
+    const windowLayout = panelActions.windowLayout
+    if (!windowLayout) {
+      return undefined
+    }
+    const activeTab = getActiveWindowTab(windowLayout)
+    return activeTab?.workspaceLayout
+  }, [panelActions.windowLayout])
+
   const store = useLaborerStore()
   const projectList = store.useQuery(sidebarProjects$)
   const workspaceList = store.useQuery(sidebarWorkspaces$)
@@ -802,6 +816,7 @@ function HomeComponent() {
                       reviewPaneOpen={reviewPaneWorkspaceId !== null}
                       reviewWorkspaceId={reviewPaneWorkspaceId}
                       workspaceOrder={workspaceOrder}
+                      workspaceTileLayout={workspaceTileLayout}
                     />
                   </>
                 )}

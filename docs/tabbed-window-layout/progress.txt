@@ -328,3 +328,36 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 805/805 tests pass (no regressions)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no issues in modified files (pre-existing info in unrelated files)
+
+## Issue #9: Workspace bidirectional tiling UI — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Updated `apps/web/src/routes/-components/workspace-frames.tsx` to support bidirectional workspace tiling:
+  - Added `WorkspaceTileRenderer` — recursive component that renders `WorkspaceTileNode` trees. `WorkspaceTileLeaf` nodes render as `WorkspaceFrame`, `WorkspaceTileSplit` nodes render as `ResizablePanelGroup` with correct orientation (horizontal or vertical). This enables nested workspace arrangements (e.g., two workspaces side-by-side with a third stacked below one of them).
+  - Added `WorkspaceTileLeafFrame` — bridge component that renders a workspace tile leaf by extracting the workspace's sub-layout from the legacy flat `PanelNode` tree via `filterTreeByWorkspace()`. This bridge will be replaced when panel tabs (issue #10) are integrated.
+  - Added `WorkspaceTileResizableChild` — wraps tile nodes in `ResizablePanel` for resizable tiling. Workspace tile leaves are collapsible (matching existing minimize behavior).
+  - Refactored `WorkspaceFrames` to accept an optional `workspaceTileLayout: WorkspaceTileNode` prop. When provided, renders via `WorkspaceTileRenderer` for bidirectional tiling. Falls back to the legacy vertical-only `LegacyWorkspaceFrames` when not available.
+  - Extracted legacy rendering into `LegacyWorkspaceFrames` for clean separation.
+
+- Updated `apps/web/src/routes/-components/panel-content.tsx`:
+  - Added `workspaceTileLayout?: WorkspaceTileNode` prop to `PanelContentProps`
+  - Passes `workspaceTileLayout` through to `WorkspaceFrames`
+
+- Updated `apps/web/src/routes/index.tsx`:
+  - Added import for `getActiveWindowTab` from `window-tab-utils`
+  - Added `useMemo` to extract the active window tab's `workspaceLayout` from `panelActions.windowLayout`
+  - Passes `workspaceTileLayout` to `PanelContent`
+
+### Architecture decisions
+- **Bridge pattern**: The new tile renderer still extracts per-workspace sub-layouts from the legacy flat `PanelNode` tree using `filterTreeByWorkspace()`. This is intentional — the workspace tile tree only knows workspace IDs, not the panel split trees within each workspace. Panel tab integration (issue #10) will replace this bridge with the `panelTabs` stored directly on each `WorkspaceTileLeaf`.
+- **Backward compatibility**: When no `workspaceTileLayout` is provided (no active window tab or no hierarchical layout), the component falls back to the existing vertical-only rendering. This ensures zero breakage for users who haven't migrated to the new layout format.
+- **No new tests**: The workspace tile rendering is UI composition — it delegates to existing tested components (`WorkspaceFrame`, `ResizablePanelGroup`, `PanelManager`). The pure utility functions (`workspace-tile-utils.ts`) are already comprehensively tested (46 tests). Component tests for bidirectional tiling would require mocking the full React rendering pipeline including ResizablePanelGroup, which provides minimal value over the existing unit tests. Integration testing will be more valuable once panel tabs (issue #10) are wired up.
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 805/805 tests pass (no regressions)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no issues in modified files

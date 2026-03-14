@@ -20,7 +20,32 @@ import { WebHaptics } from 'web-haptics'
 /** Singleton WebHaptics instance, lazily initialized on first trigger. */
 let instance: WebHaptics | null = null
 
-function getInstance(): WebHaptics {
+/**
+ * Whether the user has interacted with the page (click, touch, keydown).
+ *
+ * Browsers block `navigator.vibrate()` until the user has tapped or clicked
+ * on the frame. We track the first interaction and silently skip haptic
+ * triggers before it to avoid "[Intervention] Blocked call to
+ * navigator.vibrate" console warnings.
+ */
+let userHasInteracted = false
+
+if (typeof window !== 'undefined') {
+  const markInteracted = () => {
+    userHasInteracted = true
+    window.removeEventListener('click', markInteracted, true)
+    window.removeEventListener('touchstart', markInteracted, true)
+    window.removeEventListener('keydown', markInteracted, true)
+  }
+  window.addEventListener('click', markInteracted, true)
+  window.addEventListener('touchstart', markInteracted, true)
+  window.addEventListener('keydown', markInteracted, true)
+}
+
+function getInstance(): WebHaptics | null {
+  if (!userHasInteracted) {
+    return null
+  }
   if (!instance) {
     instance = new WebHaptics()
   }
@@ -49,57 +74,57 @@ function getInstance(): WebHaptics {
 const haptics = {
   /** Light tap — standard button click. */
   buttonTap() {
-    getInstance().trigger('light')
+    getInstance()?.trigger('light')
   },
 
   /** Micro-tap — toggle, switch, checkbox state change. */
   selection() {
-    getInstance().trigger('selection')
+    getInstance()?.trigger('selection')
   },
 
   /** Success double-tap — operation completed. */
   success() {
-    getInstance().trigger('success')
+    getInstance()?.trigger('success')
   },
 
   /** Warning double-tap — attention advised. */
   warning() {
-    getInstance().trigger('warning')
+    getInstance()?.trigger('warning')
   },
 
   /** Error staccato — operation failed. */
   error() {
-    getInstance().trigger('error')
+    getInstance()?.trigger('error')
   },
 
   /** Heavy single tap — destructive or irreversible action. */
   heavyImpact() {
-    getInstance().trigger('heavy')
+    getInstance()?.trigger('heavy')
   },
 
   /** Nudge — agent needs attention / waiting for input. */
   notification() {
-    getInstance().trigger('nudge')
+    getInstance()?.trigger('nudge')
   },
 
   /** Medium tap — dialog or modal opening. */
   dialogOpen() {
-    getInstance().trigger('medium')
+    getInstance()?.trigger('medium')
   },
 
   /** Rigid snap — clipboard copy. */
   copy() {
-    getInstance().trigger('rigid')
+    getInstance()?.trigger('rigid')
   },
 
   /** Soft tap — terminal/agent spawn, workspace creation. */
   spawn() {
-    getInstance().trigger('soft')
+    getInstance()?.trigger('soft')
   },
 
   /** Long buzz — sidecar crash alert. */
   crash() {
-    getInstance().trigger('buzz')
+    getInstance()?.trigger('buzz')
   },
 } as const
 

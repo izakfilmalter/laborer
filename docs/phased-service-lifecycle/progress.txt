@@ -247,3 +247,35 @@
 - TypeScript typecheck passes with no errors across all packages
 - Formatter (ultracite/biome) passes on all changed files
 - Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #11: Disable write actions before Phase 2 (Ready) — COMPLETED
+
+### What was done
+- Audited all server-dependent write action components and added `useWhenPhase(LifecyclePhase.Ready)` gating to disable them during Phase 1 (Starting):
+  - `CreateWorkspaceForm` — dialog trigger button disabled, submit button disabled, shows "Connecting..." label
+  - `CreatePlanWorkspace` — button shows "Connecting..." with tooltip during Phase 1, before existing workspace/creating states
+  - `AddProjectForm` — both Electron (folder picker) and browser (form) buttons disabled with "Connecting..." label
+  - `DestroyWorkspaceButton` — destroy trigger button disabled with "Connecting to server..." tooltip
+  - `WorkspaceSyncStatus` — push/pull buttons disabled with tooltip
+  - `StartRalphLoopButton` — extracted from WorkspaceItem to reduce complexity, disabled with tooltip
+  - `ContainerPauseButton` — pause/unpause button disabled during Phase 1
+  - `TerminalSpawnButtons` — extracted from TerminalList to reduce complexity, New Terminal and Agent buttons disabled with tooltip
+  - `ProjectGroup` — create workspace (+) and remove project (trash) buttons disabled with tooltip
+  - `ReviewPrForm` — review PR button disabled during Phase 1
+  - `FixFindingsForm` — fix findings button disabled during Phase 1
+  - `ProjectSettingsModal` — save button disabled during Phase 1
+- Extracted `StartRalphLoopButton` from `WorkspaceItem` and `TerminalSpawnButtons` from `TerminalList` to keep function complexity within biome's 20-point limit
+- Created `apps/web/test/disable-write-actions.test.tsx` with 5 tests:
+  1. Write action button is disabled during Phase 1 and shows "Connecting..."
+  2. Write action button enables when phase advances to Ready
+  3. Disabled buttons have tooltip explaining why they're disabled
+  4. Form submission is blocked during Phase 1 (not just visually disabled)
+  5. Buttons don't flash between disabled/enabled during fast phase transitions
+- Updated existing tests in `create-plan-workspace.test.tsx` and `create-workspace-form.test.tsx` to wrap components in `LifecyclePhaseProvider` with phase advanced to Ready (since components now gate on phase)
+
+### Verification
+- All 5 new tests pass
+- All 601 tests pass (no regressions, up from 596 after Issue #8)
+- TypeScript typecheck passes with no errors across all packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change

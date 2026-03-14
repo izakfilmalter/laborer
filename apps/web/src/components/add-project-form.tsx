@@ -18,15 +18,33 @@ import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { FolderPlus } from 'lucide-react'
 import { type FormEvent, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { getDesktopBridge, isElectron } from '@/lib/desktop'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 
 const addProjectMutation = LaborerClient.mutation('project.add')
 
+/** Returns the appropriate button label based on server readiness and submission state. */
+function addProjectLabel(
+  isServerReady: boolean,
+  isAdding: boolean,
+  full?: boolean
+): string {
+  if (!isServerReady) {
+    return 'Connecting...'
+  }
+  if (isAdding) {
+    return 'Adding...'
+  }
+  return full ? 'Add Project' : 'Add'
+}
+
 function AddProjectForm() {
+  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [isAdding, setIsAdding] = useState(false)
   const [repoPath, setRepoPath] = useState('')
   const addProject = useAtomSet(addProjectMutation, { mode: 'promise' })
@@ -80,13 +98,14 @@ function AddProjectForm() {
   if (isElectron()) {
     return (
       <Button
-        disabled={isAdding}
+        disabled={!isServerReady || isAdding}
         onClick={handleDesktopClick}
         size="sm"
+        title={isServerReady ? undefined : 'Connecting to server...'}
         variant="outline"
       >
         <FolderPlus className="size-3.5" />
-        {isAdding ? 'Adding...' : 'Add Project'}
+        {addProjectLabel(isServerReady, isAdding, true)}
       </Button>
     )
   }
@@ -95,20 +114,21 @@ function AddProjectForm() {
     <form className="flex items-center gap-1" onSubmit={handleBrowserSubmit}>
       <Input
         aria-label="Repository path"
-        disabled={isAdding}
+        disabled={!isServerReady || isAdding}
         onChange={(event) => setRepoPath(event.target.value)}
         placeholder="/path/to/git/repo"
         type="text"
         value={repoPath}
       />
       <Button
-        disabled={isAdding || repoPath.trim().length === 0}
+        disabled={!isServerReady || isAdding || repoPath.trim().length === 0}
         size="sm"
+        title={isServerReady ? undefined : 'Connecting to server...'}
         type="submit"
         variant="outline"
       >
         <FolderPlus className="size-3.5" />
-        {isAdding ? 'Adding...' : 'Add'}
+        {addProjectLabel(isServerReady, isAdding)}
       </Button>
     </form>
   )

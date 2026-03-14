@@ -53,6 +53,7 @@ import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { CopyButton } from '@/components/copy-button'
 import { FixFindingsForm } from '@/components/fix-findings-form'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { PlanIssuesList } from '@/components/plan-issues-list'
 import { ReviewFindingsCount } from '@/components/review-findings-count'
 import { ReviewPrForm } from '@/components/review-pr-form'
@@ -90,6 +91,7 @@ import {
   type ActiveTerminal,
   useDestroyWorkspaceChecks,
 } from '@/hooks/use-destroy-workspace-checks'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { isElectron, openExternalUrl } from '@/lib/desktop'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { toast } from '@/lib/toast'
@@ -249,6 +251,7 @@ function ContainerPauseButton({
   readonly workspaceId: string
   readonly isPaused: boolean
 }) {
+  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [isLoading, setIsLoading] = useState(false)
   const pauseContainer = useAtomSet(pauseContainerMutation, {
     mode: 'promise',
@@ -282,7 +285,7 @@ function ContainerPauseButton({
         render={
           <Button
             aria-label={isPaused ? 'Resume container' : 'Pause container'}
-            disabled={isLoading}
+            disabled={!isServerReady || isLoading}
             onClick={handleToggle}
             size="icon-xs"
             variant="ghost"
@@ -419,6 +422,47 @@ function DestroyDialogDescription({
   )
 }
 
+/**
+ * Start Ralph Loop button — extracted to avoid excessive complexity
+ * in WorkspaceItem and to encapsulate the phase-gating logic.
+ */
+function StartRalphLoopButton({
+  isStartingLoop,
+  onClick,
+}: {
+  readonly isStartingLoop: boolean
+  readonly onClick: () => void
+}) {
+  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label="Start ralph loop"
+            disabled={!isServerReady || isStartingLoop}
+            onClick={onClick}
+            size="icon-xs"
+            title={isServerReady ? undefined : 'Connecting to server...'}
+            variant="ghost"
+          />
+        }
+      >
+        <Play
+          className={cn(
+            'size-3.5',
+            isStartingLoop
+              ? 'animate-pulse text-muted-foreground'
+              : 'text-success'
+          )}
+        />
+      </TooltipTrigger>
+      <TooltipContent>Start Ralph Loop</TooltipContent>
+    </Tooltip>
+  )
+}
+
 interface WorkspaceItemProps {
   /** The prdId of the plan this workspace is associated with, if any. */
   readonly associatedPrdId?: string | undefined
@@ -459,6 +503,7 @@ function DestroyWorkspaceButton({
   readonly workspaceId: string
   readonly branchName: string
 }) {
+  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [dialogOpen, setDialogOpen] = useState(false)
   const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
     mode: 'promise',
@@ -520,7 +565,9 @@ function DestroyWorkspaceButton({
               render={
                 <Button
                   aria-label={`Destroy workspace ${branchName}`}
+                  disabled={!isServerReady}
                   size="icon-xs"
+                  title={isServerReady ? undefined : 'Connecting to server...'}
                   variant="ghost"
                 />
               }
@@ -780,29 +827,10 @@ function WorkspaceItem({
                   workspaceId={workspace.id}
                 />
               ) : (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        aria-label="Start ralph loop"
-                        disabled={isStartingLoop}
-                        onClick={handleStartLoop}
-                        size="icon-xs"
-                        variant="ghost"
-                      />
-                    }
-                  >
-                    <Play
-                      className={cn(
-                        'size-3.5',
-                        isStartingLoop
-                          ? 'animate-pulse text-muted-foreground'
-                          : 'text-success'
-                      )}
-                    />
-                  </TooltipTrigger>
-                  <TooltipContent>Start Ralph Loop</TooltipContent>
-                </Tooltip>
+                <StartRalphLoopButton
+                  isStartingLoop={isStartingLoop}
+                  onClick={handleStartLoop}
+                />
               )}
             </div>
           </div>

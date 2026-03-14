@@ -57,10 +57,33 @@ vi.mock('@/components/ui/tooltip', () => ({
   ),
 }))
 
+import { useEffect } from 'react'
 import {
   CreatePlanWorkspace,
   planBranchName,
 } from '../src/components/create-plan-workspace'
+import {
+  LifecyclePhase,
+  LifecyclePhaseProvider,
+  useLifecyclePhase,
+} from '../src/components/lifecycle-phase-context'
+
+function AdvanceToReady() {
+  const { advanceTo } = useLifecyclePhase()
+  useEffect(() => {
+    advanceTo(LifecyclePhase.Ready)
+  }, [advanceTo])
+  return null
+}
+
+function ReadyPhaseWrapper({ children }: { children: React.ReactNode }) {
+  return (
+    <LifecyclePhaseProvider>
+      <AdvanceToReady />
+      {children}
+    </LifecyclePhaseProvider>
+  )
+}
 
 const CREATE_WORKSPACE_RE = /Create Workspace/i
 
@@ -93,7 +116,11 @@ describe('CreatePlanWorkspace', () => {
       },
     })
 
-    render(<CreatePlanWorkspace prdId="prd-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreatePlanWorkspace prdId="prd-1" />
+      </ReadyPhaseWrapper>
+    )
 
     const button = screen.getByRole('button', { name: CREATE_WORKSPACE_RE })
     expect(button).toBeTruthy()
@@ -121,7 +148,11 @@ describe('CreatePlanWorkspace', () => {
       },
     })
 
-    render(<CreatePlanWorkspace prdId="prd-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreatePlanWorkspace prdId="prd-1" />
+      </ReadyPhaseWrapper>
+    )
 
     const button = screen.getByRole('button', { name: CREATE_WORKSPACE_RE })
     expect(button.hasAttribute('disabled')).toBe(true)
@@ -152,7 +183,11 @@ describe('CreatePlanWorkspace', () => {
       },
     })
 
-    render(<CreatePlanWorkspace prdId="prd-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreatePlanWorkspace prdId="prd-1" />
+      </ReadyPhaseWrapper>
+    )
 
     const button = screen.getByRole('button', { name: CREATE_WORKSPACE_RE })
     expect(button.getAttribute('disabled')).toBeNull()
@@ -178,7 +213,11 @@ describe('CreatePlanWorkspace', () => {
       },
     })
 
-    render(<CreatePlanWorkspace prdId="prd-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreatePlanWorkspace prdId="prd-1" />
+      </ReadyPhaseWrapper>
+    )
 
     const button = screen.getByRole('button', { name: CREATE_WORKSPACE_RE })
     await user.click(button)
@@ -196,7 +235,11 @@ describe('CreatePlanWorkspace', () => {
       useQuery: () => [],
     })
 
-    const { container } = render(<CreatePlanWorkspace prdId="prd-missing" />)
+    const { container } = render(
+      <ReadyPhaseWrapper>
+        <CreatePlanWorkspace prdId="prd-missing" />
+      </ReadyPhaseWrapper>
+    )
     expect(container.innerHTML).toBe('')
   })
 
@@ -221,7 +264,11 @@ describe('CreatePlanWorkspace', () => {
       },
     })
 
-    render(<CreatePlanWorkspace prdId="prd-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreatePlanWorkspace prdId="prd-1" />
+      </ReadyPhaseWrapper>
+    )
 
     const button = screen.getByRole('button', { name: CREATE_WORKSPACE_RE })
     expect(button.getAttribute('disabled')).toBeNull()

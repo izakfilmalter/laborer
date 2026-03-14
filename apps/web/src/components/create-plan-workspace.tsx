@@ -18,6 +18,7 @@ import { queryDb } from '@livestore/livestore'
 import { Layers } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import {
@@ -25,6 +26,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
@@ -47,6 +49,7 @@ function planBranchName(slug: string): string {
 }
 
 function CreatePlanWorkspace({ prdId }: CreatePlanWorkspaceProps) {
+  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const store = useLaborerStore()
   const prdList = store.useQuery(allPrds$)
   const workspaceList = store.useQuery(allWorkspaces$)
@@ -111,6 +114,23 @@ function CreatePlanWorkspace({ prdId }: CreatePlanWorkspaceProps) {
 
   if (!prd) {
     return null
+  }
+
+  // Server not ready: show connecting state
+  if (!isServerReady) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button disabled size="sm" variant="outline">
+              <Layers className="size-3.5" />
+              Connecting...
+            </Button>
+          }
+        />
+        <TooltipContent>Connecting to server...</TooltipContent>
+      </Tooltip>
+    )
   }
 
   // Disabled state: workspace already exists

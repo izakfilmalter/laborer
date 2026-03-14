@@ -16,8 +16,8 @@ Parent PRD: [PRD.md](./PRD.md)
 | 8 | Header per-service status dots | #5 | Done |
 | 9 | Header status collapse and expand | #8 | Ready |
 | 10 | Header error state persistence and animations | #8 | Ready |
-| 11 | Disable write actions before Phase 2 (Ready) | #5, #6 | Ready |
-| 12 | Progressive feature enablement for Phases 3-4 | #11 | Blocked |
+| 11 | Disable write actions before Phase 2 (Ready) | #5, #6 | Done |
+| 12 | Progressive feature enablement for Phases 3-4 | #11 | Ready |
 | 13 | Server core layer group (fast health endpoint) | None | Done |
 | 14 | Server deferred layer group (background initialization) | #13 | Done |
 | 15 | Server "fully initialized" event | #14 | Ready |

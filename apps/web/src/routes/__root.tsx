@@ -11,7 +11,6 @@ import { AppSettingsModal } from '@/components/app-settings-modal'
 import { DockerStatusBanner } from '@/components/docker-status-banner'
 import Header from '@/components/header'
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
-import { ServerGate } from '@/components/server-gate'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -67,12 +66,10 @@ function RootComponent() {
                   <div className="grid h-svh grid-rows-[auto_auto_1fr]">
                     <Header />
                     <DockerStatusBanner />
-                    <ServerGate>
-                      <LiveStoreProvider>
-                        <AppSettingsModal />
-                        <Outlet />
-                      </LiveStoreProvider>
-                    </ServerGate>
+                    <LiveStoreProvider>
+                      <AppSettingsModal />
+                      <Outlet />
+                    </LiveStoreProvider>
                   </div>
                 </AppSettingsProvider>
               </AtomRegistryProvider>

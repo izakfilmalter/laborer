@@ -71,3 +71,25 @@
 - All 579 web tests pass (no regressions)
 - Pre-existing desktop test failures in `main.test.ts` (7 failures, unrelated to this change — `app.setAsDefaultProtocolClient` mock issue) confirmed identical before and after change via `git stash` comparison
 - Formatter check passes (only pre-existing lint warnings in unrelated files)
+
+## Issue #6: Remove ServerGate blocking gate — COMPLETED
+
+### What was done
+- Removed `ServerGate` from `apps/web/src/routes/__root.tsx` render tree
+  - Removed the `import { ServerGate } from '@/components/server-gate'` import
+  - `LiveStoreProvider` now renders directly inside the layout div, no longer wrapped by `ServerGate`
+  - Route content (`Outlet`) renders immediately during Phase 1 (Starting) without waiting for the server
+  - The `LifecyclePhaseProvider` (from Issue #4) replaces `ServerGate` as the mechanism for tracking service readiness — but it doesn't block rendering
+- `ServerGate` component file (`apps/web/src/components/server-gate.tsx`) retained for reference — it is no longer imported or used anywhere
+- Created `apps/web/test/root-no-server-gate.test.tsx` with 4 tests:
+  1. Route content renders during Phase 1 (Starting) without server — no blocking overlay
+  2. Route content renders during Phase 2 (Ready) after server becomes available
+  3. No blocking overlay or spinner gate text is rendered (no "Waiting for server", "Starting services", etc.)
+  4. Navigation area renders during Phase 1 — links are accessible immediately
+
+### Verification
+- All 4 new tests pass
+- All 583 tests pass (no regressions, up from 579 after Issue #1)
+- TypeScript typecheck passes with no errors across all 7 packages
+- Formatter (ultracite/biome) passes on changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change

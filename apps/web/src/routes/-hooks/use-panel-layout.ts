@@ -612,52 +612,24 @@ export function usePanelLayout() {
   /**
    * Toggle the integrated diff sidebar on a terminal pane.
    *
-   * Flips the `diffOpen` flag on the target LeafNode and persists the
-   * updated tree. The diff sidebar is rendered inside the terminal pane
-   * container (not as a separate pane in the layout tree).
+   * Toggle a full-height diff panel for a workspace.
    *
-   * @see Issue #90: Toggle diff alongside terminal
+   * NOTE: This is a placeholder implementation. The actual diff panel
+   * toggle is handled at the route level (index.tsx) where the full-height
+   * diff panel state is managed. This hook's version is overridden by
+   * the route's gatedPanelActions to provide the full-height behavior.
+   *
+   * The diff panel now spans all workspace frames rather than being a
+   * sidebar within a single terminal pane.
+   *
+   * @param _paneId - The pane ID (unused in this stub implementation)
+   * @returns Always false since the actual implementation is in index.tsx
    */
-  const handleToggleDiffPane = useCallback(
-    (paneId: string): boolean => {
-      const base = persistedLayoutTree ?? defaultLayout
-      if (!base) {
-        return false
-      }
-
-      const targetNode = findNodeById(base, paneId)
-      if (
-        !targetNode ||
-        targetNode._tag !== 'LeafNode' ||
-        targetNode.paneType !== 'terminal' ||
-        !targetNode.workspaceId
-      ) {
-        return false
-      }
-
-      const nowOpen = !targetNode.diffOpen
-      const updatedLeaf: LeafNode = {
-        ...targetNode,
-        diffOpen: nowOpen,
-      }
-      const newTree = replaceNode(base, paneId, updatedLeaf)
-      store.commit(
-        layoutPaneAssigned({
-          windowId: panelWindowId,
-          layoutTree: newTree,
-          activePaneId: persistedActivePaneId,
-        })
-      )
-      return nowOpen
-    },
-    [
-      persistedLayoutTree,
-      defaultLayout,
-      panelWindowId,
-      persistedActivePaneId,
-      store,
-    ]
-  )
+  const handleToggleDiffPane = useCallback((_paneId: string): boolean => {
+    // This is overridden by gatedPanelActions in index.tsx
+    // to provide full-height diff panel behavior
+    return false
+  }, [])
 
   /**
    * Toggle the dev server terminal alongside a terminal pane.

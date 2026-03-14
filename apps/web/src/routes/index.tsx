@@ -124,6 +124,14 @@ function HomeComponent() {
     string | null
   >(null)
 
+  // Diff panel state — transient UI mode (not persisted to LiveStore).
+  // When set to a workspace ID, the full-height diff panel is shown
+  // alongside all workspace frames. The panel spans the full height of
+  // the panel area, not just a single workspace.
+  const [diffPaneWorkspaceId, setDiffPaneWorkspaceId] = useState<string | null>(
+    null
+  )
+
   // Auto-close review panel when the workspace no longer exists in the layout
   // (e.g., if the workspace was closed while the review panel was open).
   useEffect(() => {
@@ -137,6 +145,19 @@ function HomeComponent() {
       }
     }
   }, [reviewPaneWorkspaceId, layout])
+
+  // Auto-close diff panel when the workspace no longer exists in the layout.
+  useEffect(() => {
+    if (diffPaneWorkspaceId && layout) {
+      const leaves = getLeafNodes(layout)
+      const workspaceExists = leaves.some(
+        (l) => l.workspaceId === diffPaneWorkspaceId
+      )
+      if (!workspaceExists) {
+        setDiffPaneWorkspaceId(null)
+      }
+    }
+  }, [diffPaneWorkspaceId, layout])
 
   /**
    * Toggle the full-height review panel for the workspace of the given pane.
@@ -172,6 +193,42 @@ function HomeComponent() {
       return reviewPaneWorkspaceId !== workspaceId
     },
     [layout, reviewPaneWorkspaceId]
+  )
+
+  /**
+   * Toggle the full-height diff panel for the workspace of the given pane.
+   * If the diff panel is already open for that workspace, closes it.
+   * If it's open for a different workspace, switches to the new workspace.
+   *
+   * @param paneId - The pane ID to get the workspace from
+   * @returns Whether the diff panel is now open
+   */
+  const toggleDiffPane = useCallback(
+    (paneId: string): boolean => {
+      if (!layout) {
+        return false
+      }
+
+      const node = findNodeById(layout, paneId)
+      if (!node || node._tag !== 'LeafNode' || !node.workspaceId) {
+        return false
+      }
+
+      const workspaceId = node.workspaceId
+
+      setDiffPaneWorkspaceId((current) => {
+        if (current === workspaceId) {
+          // Already showing diff panel for this workspace — close it
+          return null
+        }
+        // Open diff panel for this workspace
+        return workspaceId
+      })
+
+      // Return true if the panel will be open after this toggle
+      return diffPaneWorkspaceId !== workspaceId
+    },
+    [layout, diffPaneWorkspaceId]
   )
 
   // Close-terminal confirmation dialog state — the pane ID is stored in
@@ -290,7 +347,8 @@ function HomeComponent() {
   // Override panelActions.closePane with the gated version and add fullscreen toggle.
   // forceCloseWorkspace bypasses the confirmation gate — used by workspace
   // destruction which has its own confirmation dialog.
-  // toggleReviewPane replaces the layout-based version with the full-height version.
+  // toggleReviewPane and toggleDiffPane replace the layout-based versions with
+  // full-height versions.
   const gatedPanelActions = useMemo(
     () => ({
       ...panelActions,
@@ -300,6 +358,7 @@ function HomeComponent() {
       forceCloseWorkspace: panelActions.closeWorkspace,
       toggleFullscreenPane,
       toggleReviewPane,
+      toggleDiffPane,
     }),
     [
       panelActions,
@@ -308,6 +367,7 @@ function HomeComponent() {
       gatedCloseWorkspace,
       toggleFullscreenPane,
       toggleReviewPane,
+      toggleDiffPane,
     ]
   )
 
@@ -585,6 +645,8 @@ function HomeComponent() {
                     />
                     <PanelContent
                       activePaneId={activePaneId}
+                      diffPaneOpen={diffPaneWorkspaceId !== null}
+                      diffWorkspaceId={diffPaneWorkspaceId}
                       fullscreenPaneId={fullscreenPaneId}
                       isReconciling={isReconciling}
                       layout={layout}

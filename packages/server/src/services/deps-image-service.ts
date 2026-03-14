@@ -114,6 +114,14 @@ const GLOB_STAR_SUFFIX_PATTERN = /\/\*$/
 // ---------------------------------------------------------------------------
 
 /**
+ * Command to install Bun inside a container.
+ * Used when the lockfile is bun but the base image is node:* (which
+ * doesn't have bun). Installs to /root/.bun and adds to PATH.
+ */
+const BUN_INSTALL_COMMAND =
+  'curl -fsSL https://bun.sh/install | bash && ln -sf /root/.bun/bin/bun /usr/local/bin/bun && ln -sf /root/.bun/bin/bunx /usr/local/bin/bunx'
+
+/**
  * Detect the lockfile in a project directory.
  * Returns the first matching lockfile info, or null if none found.
  */
@@ -469,6 +477,36 @@ const getHostStorePath = (lockfileType: LockfileType): string | null => {
 }
 
 /**
+ * Install bun inside a running container when the lockfile is bun-based.
+ *
+ * The official oven/bun Docker image only contains a symlink stub for
+ * `node` (routing through Bun's compatibility layer), so we use node:lts
+ * as the base and install bun on top to get both a real Node.js runtime
+ * and bun.
+ */
+const ensureBunInContainer = (
+  containerId: string,
+  lockfileType: LockfileType,
+  onProgress?: ((step: string) => void) | undefined
+): Effect.Effect<void, RpcError> =>
+  Effect.gen(function* () {
+    if (lockfileType !== 'bun') {
+      return
+    }
+    onProgress?.('Installing bun runtime...')
+    yield* Effect.logInfo('Installing bun into container').pipe(
+      Effect.annotateLogs('module', logPrefix)
+    )
+    const result = yield* dockerExec(containerId, BUN_INSTALL_COMMAND)
+    if (result.exitCode !== 0) {
+      return yield* new RpcError({
+        message: `Failed to install bun (exit ${result.exitCode}):\n${result.output.slice(0, 500)}`,
+        code: 'DEPS_IMAGE_BUILD_FAILED',
+      })
+    }
+  })
+
+/**
  * Build the list of setup commands to run inside the container.
  * Filters out install-like commands and "exec bash" since we handle
  * the install step explicitly.
@@ -779,6 +817,9 @@ const buildDepsImage = (
           code: 'DEPS_IMAGE_BUILD_FAILED',
         })
       }
+
+      // 2b. Install bun if the project uses a bun lockfile.
+      yield* ensureBunInContainer(containerId, lockfileType, onProgress)
 
       // 3. Run setup scripts
       for (let i = 0; i < commands.length; i++) {

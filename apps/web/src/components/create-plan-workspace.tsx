@@ -17,7 +17,6 @@ import { prds, workspaces } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
 import { Layers } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -26,6 +25,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 

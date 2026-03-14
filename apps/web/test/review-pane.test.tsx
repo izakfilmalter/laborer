@@ -74,7 +74,7 @@ vi.mock('@/panels/diff-scroll-context', () => ({
   useDiffScrollDispatch: () => mockScrollDiffToFile,
 }))
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),

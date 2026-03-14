@@ -32,7 +32,6 @@ import {
   XCircle,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import {
   filterTasksByProjectAndSource,
@@ -72,6 +71,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 

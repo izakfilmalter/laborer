@@ -36,7 +36,6 @@ import {
   useMemo,
   useState,
 } from 'react'
-import { toast } from 'sonner'
 import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
@@ -57,6 +56,7 @@ import {
   upsertTerminalListItem,
   useTerminalList,
 } from '@/hooks/use-terminal-list'
+import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
 import { usePanelActions } from '@/panels/panel-context'

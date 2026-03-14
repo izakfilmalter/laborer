@@ -1,6 +1,8 @@
 import { AlertDialog as AlertDialogPrimitive } from '@base-ui/react/alert-dialog'
 import type * as React from 'react'
+import { useEffect } from 'react'
 import { Button } from '@/components/ui/button'
+import { haptics } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
 
 function AlertDialog({ ...props }: AlertDialogPrimitive.Root.Props) {
@@ -42,6 +44,11 @@ function AlertDialogContent({
 }: AlertDialogPrimitive.Popup.Props & {
   size?: 'default' | 'sm'
 }) {
+  // Trigger haptic feedback when the alert dialog opens
+  useEffect(() => {
+    haptics.dialogOpen()
+  }, [])
+
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />

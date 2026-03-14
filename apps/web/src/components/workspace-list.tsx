@@ -49,7 +49,6 @@ import {
   useMemo,
   useState,
 } from 'react'
-import { toast } from 'sonner'
 import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { CopyButton } from '@/components/copy-button'
 import { FixFindingsForm } from '@/components/fix-findings-form'
@@ -93,6 +92,7 @@ import {
 } from '@/hooks/use-destroy-workspace-checks'
 import { isElectron, openExternalUrl } from '@/lib/desktop'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
+import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { usePanelActions } from '@/panels/panel-context'

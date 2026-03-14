@@ -26,8 +26,6 @@ import { AlertTriangle, Layers, ScrollText, WifiOff, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useState } from 'react'
 import { IMaskInput } from 'react-imask'
-import { toast } from 'sonner'
-
 import { LaborerClient } from '@/atoms/laborer-client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -49,6 +47,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { toast } from '@/lib/toast'
 import { extractErrorCode, extractErrorMessage } from '@/lib/utils'
 
 const createWorkspaceMutation = LaborerClient.mutation('workspace.create')

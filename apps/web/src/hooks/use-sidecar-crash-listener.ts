@@ -15,9 +15,9 @@
 
 import type { SidecarName } from '@laborer/shared/desktop-bridge'
 import { useEffect, useRef } from 'react'
-import { toast } from 'sonner'
-
 import { getDesktopBridge } from '@/lib/desktop'
+import { haptics } from '@/lib/haptics'
+import { toast } from '@/lib/toast'
 
 /** Human-readable display names for sidecar services. */
 const DISPLAY_NAMES: Record<SidecarName, string> = {
@@ -52,6 +52,9 @@ function useSidecarCrashListener(): void {
       const displayName = DISPLAY_NAMES[name]
 
       if (status.state === 'crashed') {
+        // Heavy buzz for service crash — distinct from normal error haptics
+        haptics.crash()
+
         // Dismiss any existing error toast for this service
         const existingId = toastIdsRef.current.get(name)
         if (existingId !== undefined) {

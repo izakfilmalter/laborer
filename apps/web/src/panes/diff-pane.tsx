@@ -83,7 +83,6 @@ import {
   useState,
   useTransition,
 } from 'react'
-import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { Button } from '@/components/ui/button'
 import {
@@ -95,6 +94,7 @@ import {
 } from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
+import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { useOnDiffScrollRequest } from '@/panels/diff-scroll-context'

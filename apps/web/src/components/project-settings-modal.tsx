@@ -1,7 +1,6 @@
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { Plus, Settings, Trash2 } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { toast } from 'sonner'
 import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { Button } from '@/components/ui/button'
@@ -35,6 +34,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import {
   buildConfigUpdates,

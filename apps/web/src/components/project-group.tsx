@@ -17,7 +17,6 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { ChevronRight, FolderGit2, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { CreateWorkspaceForm } from '@/components/create-workspace-form'
 import { PlanList } from '@/components/plan-list'
@@ -50,6 +49,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { WorkspaceList } from '@/components/workspace-list'
+import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 
 const removeProjectMutation = LaborerClient.mutation('project.remove')

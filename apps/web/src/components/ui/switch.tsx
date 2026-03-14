@@ -2,15 +2,24 @@
 
 import { Switch as SwitchPrimitive } from '@base-ui/react/switch'
 
+import { haptics } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
 
 function Switch({
   className,
   size = 'default',
+  onCheckedChange,
   ...props
 }: SwitchPrimitive.Root.Props & {
   size?: 'sm' | 'default'
 }) {
+  const handleCheckedChange: typeof onCheckedChange = onCheckedChange
+    ? (checked, eventDetails) => {
+        haptics.selection()
+        onCheckedChange(checked, eventDetails)
+      }
+    : undefined
+
   return (
     <SwitchPrimitive.Root
       className={cn(
@@ -19,6 +28,7 @@ function Switch({
       )}
       data-size={size}
       data-slot="switch"
+      onCheckedChange={handleCheckedChange}
       {...props}
     >
       <SwitchPrimitive.Thumb

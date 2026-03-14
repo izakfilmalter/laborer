@@ -21,6 +21,7 @@ import { useEffect, useRef } from 'react'
 import type { AgentStatus, TerminalInfo } from '@/hooks/use-terminal-list'
 import { detectNotificationTransitions } from '@/lib/agent-notification-transitions'
 import { getDesktopBridge } from '@/lib/desktop'
+import { haptics } from '@/lib/haptics'
 import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
 
 /** Workspace metadata needed to compose notification titles. */
@@ -106,8 +107,15 @@ function useAgentNotifications(
     // Update the ref for next comparison
     prevStatusMapRef.current = currentStatusMap
 
-    // Only notify when the window is not focused
-    if (transitioned.length === 0 || document.hasFocus()) {
+    if (transitioned.length === 0) {
+      return
+    }
+
+    // Play haptic nudge for any attention-needed transition (even when focused)
+    haptics.notification()
+
+    // Only send desktop notifications when the window is not focused
+    if (document.hasFocus()) {
       return
     }
 

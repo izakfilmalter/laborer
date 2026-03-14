@@ -623,7 +623,7 @@ function TerminalItem({
       )}
     >
       <button
-        className="flex min-w-0 flex-1 cursor-grab items-center gap-2 focus-visible:outline-none active:cursor-grabbing"
+        className="flex min-w-0 flex-1 cursor-grab items-center gap-2 text-left focus-visible:outline-none active:cursor-grabbing"
         draggable
         onClick={() => onSelect(terminal.id)}
         onDragStart={handleDragStart}

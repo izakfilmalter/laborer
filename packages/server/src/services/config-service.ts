@@ -89,7 +89,7 @@ interface DevServerConfig {
   readonly image?: string | undefined
   /** Override the auto-detected install command for cached deps images (e.g. "pnpm install --frozen-lockfile"). */
   readonly installCommand?: string | undefined
-  /** Docker network to join (e.g. "myproject_default" for docker-compose services). When not set, uses --network=host. */
+  /** Docker network to join (e.g. "myproject_default" for docker-compose services). When not set, uses default bridge networking. Containers can reach other Docker containers via .orb.local domains and host services via host.docker.internal. */
   readonly network?: string | undefined
   /** Scripts to run inside the container before the start command (e.g. "apt-get install -y python3"). */
   readonly setupScripts?: readonly string[] | undefined

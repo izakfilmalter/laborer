@@ -300,20 +300,27 @@ const classifyProcess = (processName: string): ForegroundProcess | null => {
   // Extract basename (ps -o comm= may return full path on some systems)
   const basename = processName.split('/').pop() ?? processName
 
-  const known = KNOWN_PROCESSES.get(basename)
+  // Normalize to lowercase for case-insensitive matching.
+  // macOS `ps -o comm=` may report binaries with mixed case (e.g. "OpenCode")
+  // depending on how the binary is named on disk. The KNOWN_PROCESSES map
+  // and downstream icon lookups (AGENT_ICON_BY_RAW_NAME) use lowercase keys.
+  const normalized = basename.toLowerCase()
+
+  const known = KNOWN_PROCESSES.get(normalized)
   if (known !== undefined) {
     return {
       category: known.category,
       label: known.label,
-      rawName: basename,
+      rawName: normalized,
     }
   }
 
-  // Unknown process — still return it with the raw name
+  // Unknown process — use the original basename for the display label
+  // but lowercase rawName so downstream lookups are consistent.
   return {
     category: 'unknown',
     label: basename,
-    rawName: basename,
+    rawName: normalized,
   }
 }
 
@@ -1775,7 +1782,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
   )
 }
 
-export { TerminalManager }
+export { classifyProcess, TerminalManager }
 export type {
   AgentStatus,
   ForegroundProcess,

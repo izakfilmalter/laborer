@@ -1,23 +1,23 @@
 /**
- * Terminal pane component — renders PTY output via ghostty-web using a
- * dedicated WebSocket connection for terminal data.
+ * Terminal pane component — renders PTY output via ghostty-web using the
+ * centralized TerminalSessionRouter for WebSocket stream management.
  *
  * Data flow:
  * 1. Terminal service PTY emits output via node-pty `onData`
  * 2. TerminalManager writes to headless terminal + notifies subscribers
  * 3. Terminal WebSocket route forwards data as text frames to connected clients
- * 4. This component receives text frames via `useTerminalWebSocket` hook
- * 5. Output is written directly to ghostty-web Terminal instance
+ * 4. TerminalSessionRouter receives frames and broadcasts to subscribers
+ * 5. This component's subscriber callbacks write output to ghostty-web Terminal
  *
  * Input flow:
  * - Keystrokes captured by ghostty-web `onData` callback
- * - Sent as raw WebSocket text frames (NOT via terminal.write RPC)
+ * - Sent via `router.sendInput()` as raw WebSocket text frames
  * - Terminal service WebSocket route forwards to PTY via PtyHostClient.write()
  *
  * Terminal status:
- * Terminal status is derived from WebSocket control messages sent by
- * the terminal service. The `useTerminalWebSocket` hook parses these
- * messages and exposes `terminalStatus` for UI decisions.
+ * Terminal status is derived from WebSocket control messages parsed by
+ * the TerminalSessionRouter. The `onStatus` subscriber callback updates
+ * local state for UI decisions.
  *
  * Keyboard shortcut scope isolation (Issue #80):
  * - ghostty-web greedily captures all keyboard events within its container.
@@ -26,10 +26,10 @@
  * - Cmd+W, Cmd+Shift+Enter, and Ctrl+B prefix mode all work identically.
  *
  * Reconnection:
- * - On page reload or network disruption, the WebSocket reconnects with
- *   exponential backoff
+ * - TerminalSessionRouter manages WebSocket reconnection with exponential
+ *   backoff (500ms initial, 30s max, 3 consecutive failure limit)
  * - Server sends compact screen state snapshot (~4KB) on connect
- * - New live output continues streaming after screen state
+ * - Screen state is cached by the router for late subscribers
  *
  * Rendering:
  * - ghostty-web uses Ghostty's WASM-compiled VT100 parser with a
@@ -40,7 +40,8 @@
  *
  * @see packages/terminal/src/routes/terminal-ws.ts — WebSocket endpoint
  * @see packages/terminal/src/services/terminal-manager.ts — headless terminal + subscribers
- * @see apps/web/src/hooks/use-terminal-websocket.ts — WebSocket hook
+ * @see apps/web/src/lib/terminal-session-router.ts — TerminalSessionRouter class
+ * @see apps/web/src/contexts/terminal-router-context.tsx — React context provider
  */
 
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
@@ -48,10 +49,9 @@ import { FitAddon, init, Terminal } from 'ghostty-web'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { Spinner } from '@/components/ui/spinner'
-import {
-  type TerminalStatus,
-  useTerminalWebSocket,
-} from '@/hooks/use-terminal-websocket'
+import { useTerminalRouter } from '@/contexts/terminal-router-context'
+import type { TerminalStatus } from '@/lib/terminal-session-router'
+import { isExactCtrlB, shouldBypassTerminal } from '@/panes/terminal-keys'
 
 /**
  * Module-level WASM initialization promise.
@@ -87,8 +87,6 @@ const PREFIX_MODE_TIMEOUT = 1500
  */
 const RESIZE_DEBOUNCE_MS = 100
 
-import { isExactCtrlB, shouldBypassTerminal } from '@/panes/terminal-keys'
-
 interface TerminalPaneProps {
   /**
    * Callback invoked when the terminal process exits (status becomes "stopped").
@@ -103,15 +101,14 @@ interface TerminalPaneProps {
  * TerminalPane renders a live terminal view for a given terminal ID.
  *
  * It initializes a ghostty-web Terminal (WASM-based VT100 parser with
- * canvas renderer), connects to the terminal service via a dedicated
- * WebSocket (`/terminal?id=<terminalId>`), and pipes output directly
- * to ghostty-web. Keyboard input is sent as WebSocket text frames.
+ * canvas renderer), subscribes to the TerminalSessionRouter for WebSocket
+ * stream management, and pipes output directly to ghostty-web. Keyboard
+ * input is sent via `router.sendInput()`.
  *
- * On reconnection (page reload), the server sends a compact screen state
- * snapshot (~4KB) as the first data frame, restoring the terminal's
- * current screen near-instantaneously.
+ * On reconnection (page reload), the router delivers a cached screen state
+ * snapshot (~4KB) immediately to late subscribers without a server round-trip.
  *
- * Terminal status is derived from WebSocket control messages. When the
+ * Terminal status is derived from router subscriber callbacks. When the
  * terminal process exits, keyboard input is disabled. When the terminal
  * is restarted, the buffer is cleared.
  *
@@ -121,6 +118,7 @@ interface TerminalPaneProps {
  * the PTY sends SIGWINCH to the running process so it can reflow output.
  */
 function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
+  const router = useTerminalRouter()
   const resizeTerminal = useAtomSet(terminalResizeMutation)
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -152,7 +150,7 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
    *
    * When the terminal pane first mounts, no output has arrived yet.
    * `hasReceivedData` starts as `false` and flips to `true` on the
-   * first WebSocket data frame. A loading overlay is shown while false.
+   * first data (output or screenState). A loading overlay is shown while false.
    * Uses a ref for the hot-path check (every data frame) and state
    * for React rendering.
    */
@@ -160,61 +158,18 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
   const hasReceivedDataRef = useRef(false)
 
   /**
-   * Callback for terminal output data received via WebSocket.
-   * Writes raw UTF-8 data directly to ghostty-web.
-   * On first data receipt, clears the loading overlay.
-   */
-  const handleTerminalData = useCallback((data: string) => {
-    const terminal = terminalRef.current
-    if (terminal) {
-      terminal.write(data)
-    }
-
-    // Clear loading overlay on first data (Issue #122).
-    // Ref check avoids calling setState on every subsequent data frame.
-    if (!hasReceivedDataRef.current) {
-      hasReceivedDataRef.current = true
-      setHasReceivedData(true)
-    }
-  }, [])
-
-  /**
-   * Callback for terminal status control messages received via WebSocket.
-   * Handles "restarted" status by clearing the ghostty-web buffer.
-   * Handles "stopped" status by invoking onTerminalExit to auto-close the pane.
-   */
-  const handleTerminalStatus = useCallback(
-    (status: TerminalStatus, _exitCode: number | undefined) => {
-      if (status === 'restarted') {
-        const terminal = terminalRef.current
-        if (terminal) {
-          terminal.clear()
-        }
-      }
-      if (status === 'stopped') {
-        onTerminalExit?.()
-      }
-    },
-    [onTerminalExit]
-  )
-
-  /**
-   * WebSocket connection to the terminal output endpoint.
-   * Provides: scrollback on connect, live output streaming, input via send(),
-   * terminal status via control messages.
+   * Connection and terminal status state.
    *
-   * `terminalStatus` replaces the LiveStore `queryDb(terminals)` query
-   * for determining whether the terminal is running or stopped.
+   * Updated by the router's subscriber callbacks. The connection status
+   * is polled from the router on status changes (since the router manages
+   * it per-session rather than broadcasting). The terminal status is
+   * delivered via the onStatus callback.
    */
-  const {
-    send: wsSend,
-    status: wsStatus,
-    terminalStatus,
-  } = useTerminalWebSocket({
-    terminalId,
-    onData: handleTerminalData,
-    onStatus: handleTerminalStatus,
-  })
+  const [connectionStatus, setConnectionStatus] = useState<
+    'connecting' | 'connected' | 'disconnected'
+  >('connecting')
+  const [terminalStatus, setTerminalStatus] =
+    useState<TerminalStatus>('running')
 
   const isRunning = terminalStatus !== 'stopped'
 
@@ -222,15 +177,102 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
   const isRunningRef = useRef(isRunning)
   isRunningRef.current = isRunning
 
-  // Ref to hold latest wsSend for the onData callback
-  const wsSendRef = useRef(wsSend)
-  wsSendRef.current = wsSend
+  /** Ref for router so the onData callback can send input without stale closures. */
+  const routerRef = useRef(router)
+  routerRef.current = router
+
+  /** Ref for onTerminalExit to avoid stale closures in subscriber callbacks. */
+  const onTerminalExitRef = useRef(onTerminalExit)
+  onTerminalExitRef.current = onTerminalExit
+
+  /**
+   * Mark data as received — clears the loading overlay.
+   * Uses a ref for the hot-path check (every data frame) to avoid
+   * calling setState on every subsequent frame.
+   */
+  const markDataReceived = useCallback(() => {
+    if (!hasReceivedDataRef.current) {
+      hasReceivedDataRef.current = true
+      setHasReceivedData(true)
+    }
+  }, [])
+
+  /**
+   * Subscribe to the TerminalSessionRouter for this terminal's output.
+   *
+   * The router enforces one WebSocket per terminal ID. When the component
+   * subscribes, the router either creates a new session (first subscriber)
+   * or reuses an existing one. Cached screen state is delivered immediately
+   * to late subscribers via setTimeout(0).
+   *
+   * On unmount, the unsubscribe function is called. If this is the last
+   * subscriber, the router tears down the session (closes WebSocket).
+   */
+  useEffect(() => {
+    if (!router) {
+      // Router not available (server reconnecting). Update connection
+      // status to reflect the disconnected state.
+      setConnectionStatus('disconnected')
+      return
+    }
+
+    // Update connection status from the router's current state for this terminal.
+    // The router tracks connection status per-session.
+    const updateConnectionStatus = () => {
+      setConnectionStatus(router.getConnectionStatus(terminalId))
+    }
+
+    // Initial connection status
+    updateConnectionStatus()
+
+    const unsubscribe = router.subscribe(terminalId, {
+      onOutput: (data: string) => {
+        const terminal = terminalRef.current
+        if (terminal) {
+          terminal.write(data)
+        }
+        markDataReceived()
+        // Update connection status — if we're getting output, we're connected
+        setConnectionStatus('connected')
+      },
+      onScreenState: (state: string) => {
+        const terminal = terminalRef.current
+        if (terminal) {
+          // Clear the terminal before writing screen state to avoid
+          // duplicating content on reconnection.
+          terminal.clear()
+          terminal.write(state)
+        }
+        markDataReceived()
+        setConnectionStatus('connected')
+      },
+      onStatus: (status: TerminalStatus, _exitCode: number | undefined) => {
+        setTerminalStatus(status)
+        updateConnectionStatus()
+
+        if (status === 'restarted') {
+          const terminal = terminalRef.current
+          if (terminal) {
+            terminal.clear()
+          }
+          // Reset loading state on restart — new output will arrive
+          hasReceivedDataRef.current = false
+          setHasReceivedData(false)
+        }
+        if (status === 'stopped') {
+          onTerminalExitRef.current?.()
+        }
+      },
+    })
+
+    return unsubscribe
+  }, [router, terminalId, markDataReceived])
 
   /**
    * Initialize ghostty-web terminal instance.
    *
    * Waits for WASM to load, creates the Terminal, loads the FitAddon,
-   * opens in the container, and wires keyboard input to WebSocket.
+   * opens in the container, and wires keyboard input to the router.
    *
    * ghostty-web handles Unicode 15.1, link detection, and canvas
    * rendering natively — no separate addons needed for WebGL, Image,
@@ -253,9 +295,7 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
         return
       }
 
-      // Create ghostty-web Terminal instance with minimal config.
-      // Theme, font, cursor, links, and other visual configuration
-      // are applied in later issues (#3, #5).
+      // Create ghostty-web Terminal instance with full visual config.
       const terminal = new Terminal({
         cursorBlink: true,
         cursorStyle: 'bar',
@@ -380,7 +420,7 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
         return true
       })
 
-      // Wire keyboard input to server PTY via WebSocket text frames.
+      // Wire keyboard input to server PTY via the TerminalSessionRouter.
       // ghostty-web's onData fires for every keystroke (including special
       // keys like enter, backspace, ctrl-c, arrows) with the data already
       // encoded as the correct ANSI escape sequences.
@@ -391,7 +431,7 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
         if (!isRunningRef.current) {
           return
         }
-        wsSendRef.current(data)
+        routerRef.current?.sendInput(terminalId, data)
       })
 
       // Store cleanup function for disposal
@@ -498,9 +538,9 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
 
       {/* Loading overlay (Issue #122) — shown while the PTY is spawning
 			    and no output has arrived yet. Covers the blank terminal canvas
-			    with a spinner and message. Disappears on first WebSocket data frame.
-			    Only shown for running terminals (stopped terminals get immediate
-			    scrollback on reconnection). */}
+			    with a spinner and message. Disappears on first data (output or
+			    screenState). Only shown for running terminals (stopped terminals
+			    get immediate screen state on reconnection). */}
       {!hasReceivedData && isRunning && <TerminalLoadingOverlay />}
 
       {/* Prefix mode indicator (Issue #80) — shown when Ctrl+B was pressed
@@ -514,10 +554,12 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
       )}
 
       {/* WebSocket disconnection indicator */}
-      {wsStatus === 'disconnected' && isRunning && <DisconnectedBanner />}
+      {connectionStatus === 'disconnected' && isRunning && (
+        <DisconnectedBanner />
+      )}
 
       {/* Reconnecting indicator */}
-      {wsStatus === 'connecting' && isRunning && <ReconnectingBanner />}
+      {connectionStatus === 'connecting' && isRunning && <ReconnectingBanner />}
 
       {/* Status banner — shown when terminal process has exited */}
       {!isRunning && (

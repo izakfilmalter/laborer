@@ -211,3 +211,47 @@ Date: 2026-03-14
 - 1 pre-existing skipped test (alive-desktop-oauth)
 - Typecheck passes cleanly
 - Biome lint passes on all changed files
+
+## Issue 10: Frontend: Terminal Router context and integration — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Created `apps/web/src/contexts/terminal-router-context.tsx` with `TerminalRouterProvider` and `useTerminalRouter`:
+  - `TerminalRouterProvider` — React context provider that creates a `TerminalSessionRouter` on mount and disposes it on unmount. Placed inside `ServerGate` in the component tree so the router is recreated whenever the server reconnects (fresh WebSocket sessions).
+  - `useTerminalRouter()` — hook that returns the router instance (or null during server reconnection). Consumers handle null gracefully by skipping operations.
+- Integrated `TerminalRouterProvider` into `apps/web/src/routes/__root.tsx`:
+  - Wraps children inside `ServerGate`, outside `LiveStoreProvider` (terminals don't depend on LiveStore)
+  - Provider nesting: `ServerGate > TerminalRouterProvider > LiveStoreProvider > Outlet`
+- Rewrote `apps/web/src/panes/terminal-pane.tsx` to use the router:
+  - Replaced `useTerminalWebSocket` hook with `useTerminalRouter()` + `router.subscribe()`
+  - Added `useEffect` that subscribes to the router with `onOutput`, `onScreenState`, `onStatus` callbacks:
+    - `onOutput` — writes raw PTY output to ghostty-web terminal, clears loading overlay
+    - `onScreenState` — clears terminal, writes screen state VT sequences, clears loading overlay
+    - `onStatus` — updates terminal status state, handles restart (clear buffer + reset loading), handles stopped (invoke onTerminalExit)
+  - Replaced `wsSendRef.current(data)` with `routerRef.current?.sendInput(terminalId, data)` for keyboard input
+  - Added local `connectionStatus` and `terminalStatus` state managed by router subscriber callbacks
+  - Connection status driven by `router.getConnectionStatus()` and inferred from data receipt
+  - Null router (server reconnecting) sets `connectionStatus` to `'disconnected'`
+  - Removed all `useTerminalWebSocket` references (import, hook call, `wsSend`, `wsStatus`)
+  - Imported `TerminalStatus` type from `@/lib/terminal-session-router` instead of `@/hooks/use-terminal-websocket`
+  - Updated all JSDoc to reference TerminalSessionRouter instead of useTerminalWebSocket
+  - Terminal instance stays alive when tab is hidden (no dispose on hide) — unsubscribe only tears down the WebSocket session, not the ghostty-web Terminal
+- Created comprehensive test suite `apps/web/test/terminal-router-context.test.ts` with 17 tests:
+  - Context module exports (2 tests): TerminalRouterProvider and useTerminalRouter exported correctly
+  - TerminalSessionRouter integration (2 tests): instantiation, dispose prevents subscriptions
+  - terminal-pane.tsx integration (6 tests): no useTerminalWebSocket import, imports useTerminalRouter, uses router.subscribe, uses router.sendInput, no wsSend, imports TerminalStatus from terminal-session-router
+  - __root.tsx integration (3 tests): imports TerminalRouterProvider, imports from contexts/terminal-router-context, places provider inside ServerGate and before LiveStoreProvider
+  - Connection status overlay integration (4 tests): uses connectionStatus for disconnected/connecting banners, no wsStatus references, tracks terminal status via subscriber callbacks
+
+### Files changed
+- `apps/web/src/contexts/terminal-router-context.tsx` (new, 80 lines)
+- `apps/web/src/panes/terminal-pane.tsx` (modified — replaced useTerminalWebSocket with router subscribe pattern)
+- `apps/web/src/routes/__root.tsx` (modified — added TerminalRouterProvider inside ServerGate)
+- `apps/web/test/terminal-router-context.test.ts` (new, 155 lines)
+
+### Test results
+- All 625 tests pass across 45 test files in the web package (17 new + 608 existing)
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Typecheck passes cleanly
+- Biome lint passes on all changed files

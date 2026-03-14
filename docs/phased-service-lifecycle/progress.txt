@@ -1,0 +1,27 @@
+## Issue #4: Lifecycle phase enum and context — COMPLETED
+
+### What was done
+- Created `apps/web/src/components/lifecycle-phase-context.tsx` with:
+  - `LifecyclePhase` const enum: Starting (1), Ready (2), Restored (3), Eventually (4)
+  - `LifecyclePhaseProvider` context provider with forward-only phase transitions
+  - `useLifecyclePhase()` hook returning current phase, `advanceTo()`, and `when()`
+  - Barrier pattern (inspired by VS Code) for `when(phase): Promise<void>` API
+  - Phase transitions are irreversible — `advanceTo` with a lower phase is a no-op
+  - Barriers for skipped intermediate phases are opened when jumping forward
+- Wired `LifecyclePhaseProvider` into `apps/web/src/routes/__root.tsx` as the outermost provider (above ThemeProvider and all other providers)
+- Created `apps/web/test/lifecycle-phase-context.test.tsx` with 9 tests:
+  1. Initial phase is Starting
+  2. advanceTo(Ready) changes phase to Ready
+  3. advanceTo(Starting) after Ready is a no-op (no regression)
+  4. advanceTo(Eventually) skips intermediate phases (jumps forward)
+  5. Multiple advanceTo calls with the same phase are idempotent
+  6. when(phase) resolves when phase is reached
+  7. when(phase) resolves immediately if phase already passed
+  8. when(phase) resolves for skipped intermediate phases
+  9. Provides sensible defaults without a provider
+
+### Verification
+- All 9 new tests pass
+- All 572 existing tests pass (no regressions)
+- TypeScript typecheck passes with no errors
+- Formatter (ultracite/biome) passes on new files

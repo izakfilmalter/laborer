@@ -10,6 +10,7 @@ import { AppSettingsProvider } from '@/components/app-settings-context'
 import { AppSettingsModal } from '@/components/app-settings-modal'
 import { DockerStatusBanner } from '@/components/docker-status-banner'
 import Header from '@/components/header'
+import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
 import { ServerGate } from '@/components/server-gate'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
@@ -52,33 +53,35 @@ function RootComponent() {
   return (
     <>
       <HeadContent />
-      <ThemeProvider
-        attribute="class"
-        defaultTheme="dark"
-        disableTransitionOnChange
-        storageKey="vite-ui-theme"
-      >
-        <HotkeysProvider>
-          <TooltipProvider>
-            <AtomRegistryProvider>
-              <AppSettingsProvider>
-                <div className="grid h-svh grid-rows-[auto_auto_1fr]">
-                  <Header />
-                  <DockerStatusBanner />
-                  <ServerGate>
-                    <LiveStoreProvider>
-                      <AppSettingsModal />
-                      <Outlet />
-                    </LiveStoreProvider>
-                  </ServerGate>
-                </div>
-              </AppSettingsProvider>
-            </AtomRegistryProvider>
-            <Toaster richColors />
-            <SidecarCrashListener />
-          </TooltipProvider>
-        </HotkeysProvider>
-      </ThemeProvider>
+      <LifecyclePhaseProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          disableTransitionOnChange
+          storageKey="vite-ui-theme"
+        >
+          <HotkeysProvider>
+            <TooltipProvider>
+              <AtomRegistryProvider>
+                <AppSettingsProvider>
+                  <div className="grid h-svh grid-rows-[auto_auto_1fr]">
+                    <Header />
+                    <DockerStatusBanner />
+                    <ServerGate>
+                      <LiveStoreProvider>
+                        <AppSettingsModal />
+                        <Outlet />
+                      </LiveStoreProvider>
+                    </ServerGate>
+                  </div>
+                </AppSettingsProvider>
+              </AtomRegistryProvider>
+              <Toaster richColors />
+              <SidecarCrashListener />
+            </TooltipProvider>
+          </HotkeysProvider>
+        </ThemeProvider>
+      </LifecyclePhaseProvider>
       <TanStackRouterDevtools position="bottom-left" />
     </>
   )

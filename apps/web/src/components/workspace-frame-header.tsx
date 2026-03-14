@@ -34,6 +34,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
 import { cn } from '@/lib/utils'
 import type { PanelActions } from '@/panels/panel-context'
 
@@ -44,6 +45,10 @@ interface WorkspaceFrameHeaderProps {
   readonly activePaneId: string | null
   /** Aggregate agent status for the workspace (null, active, or waiting_for_input). */
   readonly agentStatus?: 'active' | 'waiting_for_input' | null | undefined
+  /** Number of local commits ahead of upstream. */
+  readonly aheadCount: number | null
+  /** Number of upstream commits not yet pulled locally. */
+  readonly behindCount: number | null
   /** The branch name for the workspace (shown in the header). */
   readonly branchName: string | undefined
   /** Whether the diff viewer is currently open for the active pane. */
@@ -182,7 +187,9 @@ function WorkspaceFrameHeader({
   activePaneId,
   actions,
   agentStatus,
+  aheadCount,
   branchName,
+  behindCount,
   diffIsOpen,
   dragHandleRef,
   isContainerized,
@@ -269,6 +276,14 @@ function WorkspaceFrameHeader({
           prTitle={prTitle}
           prUrl={prUrl}
         />
+        {workspaceId ? (
+          <WorkspaceSyncStatus
+            aheadCount={aheadCount}
+            behindCount={behindCount}
+            size="header"
+            workspaceId={workspaceId}
+          />
+        ) : null}
         {needsAttention && (
           <Badge
             className="shrink-0 animate-pulse border border-amber-400/30 bg-amber-400/10 text-[10px] text-amber-400 leading-none"

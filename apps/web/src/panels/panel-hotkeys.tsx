@@ -43,9 +43,10 @@
 import type { PanelNode } from '@laborer/shared/types'
 import { useHotkeySequence } from '@tanstack/react-hotkeys'
 import { useEffect, useRef } from 'react'
+import { useWorkspaceSyncActions } from '@/hooks/use-workspace-sync-actions'
 import { getDesktopBridge } from '@/lib/desktop'
 import type { NavigationDirection } from '@/panels/layout-utils'
-import { findPaneInDirection } from '@/panels/layout-utils'
+import { findNodeById, findPaneInDirection } from '@/panels/layout-utils'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
 
 /** Timeout for the prefix key sequence (ms). */
@@ -106,6 +107,7 @@ function PanelHotkeys({
 }: PanelHotkeysProps) {
   const actions = usePanelActions()
   const activePaneId = useActivePaneId()
+  const { pullWorkspace, pushWorkspace } = useWorkspaceSyncActions()
   const resizePrefixActiveRef = useRef(false)
   const resizePrefixTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
@@ -151,6 +153,47 @@ function PanelHotkeys({
       onMetaWWithoutPane?.()
     })
   }, [actions, activePaneId, onMetaWWithoutPane])
+
+  const activePaneNode =
+    activePaneId && layout ? findNodeById(layout, activePaneId) : undefined
+  const activeWorkspaceId =
+    activePaneNode?._tag === 'LeafNode' ? activePaneNode.workspaceId : undefined
+
+  const triggerPushWorkspace = () => {
+    if (!activeWorkspaceId) {
+      return
+    }
+
+    pushWorkspace(activeWorkspaceId).catch(() => {
+      // Error state is already surfaced via toast in the shared action hook.
+    })
+  }
+
+  const triggerPullWorkspace = () => {
+    if (!activeWorkspaceId) {
+      return
+    }
+
+    pullWorkspace(activeWorkspaceId).catch(() => {
+      // Error state is already surfaced via toast in the shared action hook.
+    })
+  }
+
+  useEffect(() => {
+    const bridge = getDesktopBridge()
+    if (!bridge) {
+      return
+    }
+
+    return bridge.onMenuAction((action) => {
+      if (action === 'push-workspace' && activeWorkspaceId) {
+        triggerPushWorkspace()
+      }
+      if (action === 'pull-workspace' && activeWorkspaceId) {
+        triggerPullWorkspace()
+      }
+    })
+  }, [activeWorkspaceId, triggerPullWorkspace, triggerPushWorkspace])
 
   useEffect(() => {
     const clearResizePrefix = () => {
@@ -348,6 +391,20 @@ function PanelHotkeys({
     event.preventDefault()
     if (actions) {
       actions.toggleFullscreenPane()
+    }
+  })
+
+  useHotkeySequence(['Meta+P'], (event) => {
+    event.preventDefault()
+    if (activeWorkspaceId) {
+      triggerPushWorkspace()
+    }
+  })
+
+  useHotkeySequence(['Shift+Meta+P'], (event) => {
+    event.preventDefault()
+    if (activeWorkspaceId) {
+      triggerPullWorkspace()
     }
   })
 

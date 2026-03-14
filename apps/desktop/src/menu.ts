@@ -154,6 +154,27 @@ export function buildApplicationMenuTemplate(
       ...(platform === 'darwin'
         ? [
             {
+              label: 'Push Workspace',
+              accelerator: 'CmdOrCtrl+P' as const,
+              click: () =>
+                dispatchMenuAction(
+                  'push-workspace',
+                  getMainWindow,
+                  createWindowFn
+                ),
+            },
+            {
+              label: 'Pull Workspace',
+              accelerator: 'CmdOrCtrl+Shift+P' as const,
+              click: () =>
+                dispatchMenuAction(
+                  'pull-workspace',
+                  getMainWindow,
+                  createWindowFn
+                ),
+            },
+            { type: 'separator' as const },
+            {
               label: 'Close Pane',
               accelerator: 'CmdOrCtrl+W' as const,
               click: () =>

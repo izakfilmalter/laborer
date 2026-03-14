@@ -58,6 +58,48 @@ const writeLaborerConfig = (
   )
 }
 
+const configureRepo = (repoPath: string): void => {
+  git('config user.email test@example.com', repoPath)
+  git('config user.name Test User', repoPath)
+}
+
+const commitFile = (
+  repoPath: string,
+  fileName: string,
+  content: string
+): void => {
+  writeFileSync(join(repoPath, fileName), content)
+  git(`add ${fileName}`, repoPath)
+  git(`commit -m "${fileName}"`, repoPath)
+}
+
+const createRemoteClone = (
+  remotePath: string,
+  prefix: string,
+  tempRoots: string[]
+): string => {
+  const parentDir = createTempDir(prefix, tempRoots)
+  const repoPath = join(parentDir, 'repo')
+  git(`clone "${remotePath}" repo`, parentDir)
+  configureRepo(repoPath)
+  return repoPath
+}
+
+const initRemoteRepo = (prefix: string, tempRoots: string[]) => {
+  const remotePath = createTempDir(`${prefix}-remote`, tempRoots)
+  git('init --bare', remotePath)
+
+  const seedPath = initRepo(`${prefix}-seed`, tempRoots)
+  git('branch -M main', seedPath)
+  git(`remote add origin "${remotePath}"`, seedPath)
+  git('push -u origin main', seedPath)
+
+  const localPath = createRemoteClone(remotePath, `${prefix}-local`, tempRoots)
+  git('checkout main', localPath)
+
+  return { localPath, remotePath }
+}
+
 describe('LaborerRpcs workspace management', () => {
   it.scopedLive(
     'workspace.create creates a worktree, allocates a port, and runs setup scripts',
@@ -430,6 +472,156 @@ describe('LaborerRpcs workspace management', () => {
           )
           assert.strictEqual(finalRows.length, 1)
           assert.strictEqual(finalRows[0]?.status, 'running')
+        })
+      )
+  )
+
+  it.scopedLive('workspace.refreshSyncStatus returns ahead/behind counts', () =>
+    runWithRpcTestContext(({ client, store }) =>
+      Effect.gen(function* () {
+        const tempRoots: string[] = []
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => cleanupTempRoots(tempRoots))
+        )
+
+        const { localPath, remotePath } = initRemoteRepo(
+          'rpc-sync-status',
+          tempRoots
+        )
+        const remoteClonePath = createRemoteClone(
+          remotePath,
+          'rpc-sync-status-remote',
+          tempRoots
+        )
+
+        commitFile(localPath, 'local.txt', 'local change\n')
+        commitFile(remoteClonePath, 'remote.txt', 'remote change\n')
+        git('push origin main', remoteClonePath)
+        git('fetch origin', localPath)
+
+        const project = yield* client.project.add({ repoPath: localPath })
+        const workspaceId = crypto.randomUUID()
+        store.commit(
+          events.workspaceCreated({
+            id: workspaceId,
+            projectId: project.id,
+            taskSource: null,
+            branchName: 'main',
+            worktreePath: localPath,
+            port: 0,
+            status: 'stopped',
+            origin: 'external',
+            createdAt: new Date().toISOString(),
+            baseSha: null,
+          })
+        )
+
+        const result = yield* client.workspace.refreshSyncStatus({
+          workspaceId,
+        })
+
+        assert.deepStrictEqual(result, {
+          aheadCount: 1,
+          behindCount: 1,
+        })
+      })
+    )
+  )
+
+  it.scopedLive('workspace.push pushes commits and refreshes sync status', () =>
+    runWithRpcTestContext(({ client, store }) =>
+      Effect.gen(function* () {
+        const tempRoots: string[] = []
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => cleanupTempRoots(tempRoots))
+        )
+
+        const { localPath, remotePath } = initRemoteRepo(
+          'rpc-sync-push',
+          tempRoots
+        )
+
+        commitFile(localPath, 'push.txt', 'push me\n')
+
+        const project = yield* client.project.add({ repoPath: localPath })
+        const workspaceId = crypto.randomUUID()
+        store.commit(
+          events.workspaceCreated({
+            id: workspaceId,
+            projectId: project.id,
+            taskSource: null,
+            branchName: 'main',
+            worktreePath: localPath,
+            port: 0,
+            status: 'stopped',
+            origin: 'external',
+            createdAt: new Date().toISOString(),
+            baseSha: null,
+          })
+        )
+
+        const result = yield* client.workspace.push({ workspaceId })
+
+        assert.deepStrictEqual(result, {
+          aheadCount: 0,
+          behindCount: 0,
+        })
+        assert.strictEqual(git('rev-list --count main', remotePath), '2')
+      })
+    )
+  )
+
+  it.scopedLive(
+    'workspace.pull pulls remote commits and refreshes sync status',
+    () =>
+      runWithRpcTestContext(({ client, store }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
+
+          const { localPath, remotePath } = initRemoteRepo(
+            'rpc-sync-pull',
+            tempRoots
+          )
+          const remoteClonePath = createRemoteClone(
+            remotePath,
+            'rpc-sync-pull-remote',
+            tempRoots
+          )
+
+          commitFile(remoteClonePath, 'pulled.txt', 'from remote\n')
+          git('push origin main', remoteClonePath)
+          git('fetch origin', localPath)
+
+          const project = yield* client.project.add({ repoPath: localPath })
+          const workspaceId = crypto.randomUUID()
+          store.commit(
+            events.workspaceCreated({
+              id: workspaceId,
+              projectId: project.id,
+              taskSource: null,
+              branchName: 'main',
+              worktreePath: localPath,
+              port: 0,
+              status: 'stopped',
+              origin: 'external',
+              createdAt: new Date().toISOString(),
+              baseSha: null,
+            })
+          )
+
+          const result = yield* client.workspace.pull({ workspaceId })
+
+          assert.deepStrictEqual(result, {
+            aheadCount: 0,
+            behindCount: 0,
+          })
+          assert.strictEqual(
+            git('show HEAD:pulled.txt', localPath),
+            'from remote'
+          )
         })
       )
   )

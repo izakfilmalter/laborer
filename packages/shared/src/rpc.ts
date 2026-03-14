@@ -243,6 +243,11 @@ const PrStatusResponse = Schema.Struct({
   url: Schema.NullOr(Schema.String),
 })
 
+const WorkspaceSyncStatusResponse = Schema.Struct({
+  aheadCount: Schema.NullOr(Schema.Int),
+  behindCount: Schema.NullOr(Schema.Int),
+})
+
 // ---------------------------------------------------------------------------
 // Review Comment Schemas
 // ---------------------------------------------------------------------------
@@ -556,6 +561,30 @@ export class LaborerRpcs extends RpcGroup.make(
 
   Rpc.make('workspace.refreshPr', {
     success: PrStatusResponse,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  Rpc.make('workspace.refreshSyncStatus', {
+    success: WorkspaceSyncStatusResponse,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  Rpc.make('workspace.push', {
+    success: WorkspaceSyncStatusResponse,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  Rpc.make('workspace.pull', {
+    success: WorkspaceSyncStatusResponse,
     error: RpcError,
     payload: {
       workspaceId: Schema.String,

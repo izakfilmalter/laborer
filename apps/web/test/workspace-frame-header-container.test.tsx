@@ -99,6 +99,8 @@ describe('WorkspaceFrameHeaderContainer', () => {
             prState: null,
             prTitle: null,
             prUrl: null,
+            aheadCount: null,
+            behindCount: null,
           },
         ]
       },

@@ -173,6 +173,8 @@ describe('LiveStore schema', () => {
           prUrl: null,
           prTitle: null,
           prState: null,
+          aheadCount: null,
+          behindCount: null,
           worktreeSetupStep: null,
         })
 

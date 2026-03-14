@@ -95,4 +95,17 @@ describe('buildApplicationMenuTemplate', () => {
     expect(closePaneItem?.label).toBe('Close Pane')
     expect(closePaneItem?.click).toBeTypeOf('function')
   })
+
+  it('adds push and pull workspace shortcuts on macOS', () => {
+    const template = buildApplicationMenuTemplate(() => null, vi.fn(), 'darwin')
+    const fileMenuItems = getFileMenuItems(template)
+
+    expect(
+      fileMenuItems.find((item) => item.accelerator === 'CmdOrCtrl+P')?.label
+    ).toBe('Push Workspace')
+    expect(
+      fileMenuItems.find((item) => item.accelerator === 'CmdOrCtrl+Shift+P')
+        ?.label
+    ).toBe('Pull Workspace')
+  })
 })

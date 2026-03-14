@@ -10,6 +10,7 @@ import {
   panelTabCreated,
   panelTabSwitched,
   panelTabsReordered,
+  windowLayoutRestored,
   windowTabClosed,
   windowTabCreated,
   windowTabSwitched,
@@ -37,6 +38,7 @@ import {
   getDesktopBridge,
 } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
+import { migrateToWindowLayout } from '@/panels/layout-migration'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import {
   closePane,
@@ -71,8 +73,11 @@ import {
 } from '@/panels/panel-tab-utils'
 import {
   addWindowTab,
+  getStaleTerminalLeavesHierarchical,
+  reconcileWindowLayout,
   removeWindowTab,
   reorderWindowTabs,
+  repairWindowLayout,
   switchWindowTab,
   switchWindowTabByIndex,
   switchWindowTabRelative,
@@ -154,10 +159,43 @@ export function usePanelLayout() {
     | string[]
     | null
 
-  // Read the hierarchical window layout from the new columns.
-  const persistedWindowLayout = (persistedRow?.windowLayout ?? undefined) as
-    | WindowLayout
-    | undefined
+  // Read and repair the hierarchical window layout from the new columns.
+  // If the layout was repaired, we'll re-persist it.
+  const windowLayoutRepair = useMemo(() => {
+    const raw = persistedRow?.windowLayout
+    if (!raw) {
+      return {
+        windowLayout: undefined as WindowLayout | undefined,
+        wasRepaired: false,
+      }
+    }
+    return repairWindowLayout(raw)
+  }, [persistedRow])
+
+  // Effective window layout: repaired if available, or migrated from legacy.
+  // Migration only runs in useMemo (no side effects) — the migrated layout
+  // is persisted via a one-time effect below.
+  const persistedWindowLayout = useMemo(() => {
+    if (windowLayoutRepair.windowLayout) {
+      return windowLayoutRepair.windowLayout
+    }
+    // Migrate legacy layout to hierarchical format if the old column has
+    // data but the new column is empty. This ensures the hierarchical layout
+    // is available immediately on the first render after upgrade.
+    if (persistedLayoutTree) {
+      return migrateToWindowLayout(
+        persistedLayoutTree,
+        rawPersistedActivePaneId,
+        persistedWorkspaceOrder
+      )
+    }
+    return undefined
+  }, [
+    windowLayoutRepair.windowLayout,
+    persistedLayoutTree,
+    rawPersistedActivePaneId,
+    persistedWorkspaceOrder,
+  ])
 
   // Determine the effective layout: persisted layout takes priority,
   // otherwise fall back to the auto-generated layout from terminals/workspaces.
@@ -198,6 +236,37 @@ export function usePanelLayout() {
     persistedLayoutRepair.wasRepaired,
     persistedRow,
     rawPersistedActivePaneId,
+    store,
+  ])
+
+  // Persist repaired window layout to LiveStore (not migration — that
+  // happens during reconciliation). Only fires when repair was needed.
+  const hasPersistedWindowRepair = useRef(false)
+  useEffect(() => {
+    if (
+      !(
+        windowLayoutRepair.wasRepaired &&
+        windowLayoutRepair.windowLayout &&
+        persistedRow
+      ) ||
+      hasPersistedWindowRepair.current
+    ) {
+      return
+    }
+
+    hasPersistedWindowRepair.current = true
+    store.commit(
+      windowLayoutRestored({
+        windowId: panelWindowId,
+        windowLayout: windowLayoutRepair.windowLayout,
+        activeWindowTabId: windowLayoutRepair.windowLayout.activeTabId ?? null,
+      })
+    )
+  }, [
+    windowLayoutRepair.wasRepaired,
+    windowLayoutRepair.windowLayout,
+    persistedRow,
+    panelWindowId,
     store,
   ])
 
@@ -242,11 +311,12 @@ export function usePanelLayout() {
   const removeTerminal = useAtomSet(removeTerminalMutation, {
     mode: 'promise',
   })
-  // Start as "reconciling" when a persisted layout exists — this prevents
+  // Start as "reconciling" when any persisted layout exists — this prevents
   // rendering TerminalPane components with potentially stale terminal IDs
   // before we've checked them against the live terminal service.
   const [isReconciling, setIsReconciling] = useState(
-    () => persistedLayoutTree !== undefined
+    () =>
+      persistedLayoutTree !== undefined || persistedWindowLayout !== undefined
   )
   const hasReconciled = useRef(false)
 
@@ -260,21 +330,96 @@ export function usePanelLayout() {
     [removeTerminal]
   )
 
+  /**
+   * Collect stale terminal leaves from both legacy and hierarchical layouts.
+   * Prefers hierarchical when available.
+   */
+  const collectStaleLeaves = useCallback(
+    (liveIds: ReadonlySet<string>) => {
+      const hierarchicalStale = persistedWindowLayout
+        ? getStaleTerminalLeavesHierarchical(persistedWindowLayout, liveIds)
+        : []
+      if (hierarchicalStale.length > 0) {
+        return hierarchicalStale
+      }
+      return persistedLayoutTree
+        ? getStaleTerminalLeaves(persistedLayoutTree, liveIds)
+        : []
+    },
+    [persistedLayoutTree, persistedWindowLayout]
+  )
+
+  /**
+   * Commit reconciled layouts (both legacy and hierarchical) to LiveStore.
+   */
+  const commitReconciledLayouts = useCallback(
+    (liveIds: ReadonlySet<string>, respawnedIds: Map<string, string>) => {
+      const currentRows = store.query(persistedLayout$)
+      const currentRow = currentRows.find(
+        (row) => row.windowId === panelWindowId
+      )
+
+      // Reconcile the legacy layout tree if present
+      const currentTree = currentRow?.layoutTree as PanelNode | undefined
+      if (currentTree) {
+        const reconciled = reconcileLayout(currentTree, liveIds, respawnedIds)
+        if (reconciled !== currentTree) {
+          store.commit(
+            layoutRestored({
+              windowId: panelWindowId,
+              layoutTree: reconciled,
+              activePaneId: ensureValidActivePaneId(
+                reconciled,
+                currentRow?.activePaneId ?? null
+              ),
+            })
+          )
+        }
+      }
+
+      // Reconcile the hierarchical window layout if present.
+      // If the layout was migrated from legacy format (no windowLayout in
+      // persisted row), also persist the migrated+reconciled layout.
+      const currentWindowLayout = currentRow?.windowLayout as
+        | WindowLayout
+        | undefined
+      const effectiveWindowLayout = currentWindowLayout ?? persistedWindowLayout
+      if (effectiveWindowLayout) {
+        const reconciledWindow = reconcileWindowLayout(
+          effectiveWindowLayout,
+          liveIds,
+          respawnedIds
+        )
+        // Persist if the layout changed OR if this is a first-time migration
+        if (reconciledWindow !== currentWindowLayout) {
+          store.commit(
+            windowLayoutRestored({
+              windowId: panelWindowId,
+              windowLayout: reconciledWindow,
+              activeWindowTabId: reconciledWindow.activeTabId ?? null,
+            })
+          )
+        }
+      }
+    },
+    [panelWindowId, persistedWindowLayout, store]
+  )
+
   useEffect(() => {
     if (terminalsLoading || hasReconciled.current) {
       return
     }
 
-    if (!persistedLayoutTree) {
+    if (!(persistedLayoutTree || persistedWindowLayout)) {
       hasReconciled.current = true
       setIsReconciling(false)
       return
     }
 
     const liveIds = new Set(liveTerminals.map((t) => t.id))
-    const staleLeaves = getStaleTerminalLeaves(persistedLayoutTree, liveIds)
+    const staleLeavesToRespawn = collectStaleLeaves(liveIds)
 
-    if (staleLeaves.length === 0) {
+    if (staleLeavesToRespawn.length === 0) {
       hasReconciled.current = true
       setIsReconciling(false)
       return
@@ -285,24 +430,21 @@ export function usePanelLayout() {
     hasReconciled.current = true
 
     // Spawn new terminals for stale panes sequentially, then update the
-    // layout tree with the new terminal IDs. Sequential spawning avoids
-    // concurrency issues with the AtomRpc mutation layer.
+    // layout tree with the new terminal IDs.
     const respawnStaleTerminals = async () => {
       const respawnedIds = new Map<string, string>()
 
-      for (const leaf of staleLeaves) {
-        if (!(leaf.workspaceId && leaf.terminalId)) {
+      for (const leaf of staleLeavesToRespawn) {
+        const wsId = 'workspaceId' in leaf ? leaf.workspaceId : undefined
+        const termId = 'terminalId' in leaf ? leaf.terminalId : undefined
+        if (!(wsId && termId)) {
           continue
         }
         try {
           const result = await spawnTerminal({
-            payload: { workspaceId: leaf.workspaceId },
+            payload: { workspaceId: wsId },
           })
-          respawnedIds.set(leaf.terminalId, result.id)
-          // Optimistically update the shared terminal list so the
-          // sidebar workspace cards show recovered terminals immediately,
-          // without waiting for the terminal.events stream (which may
-          // not be fully connected during startup).
+          respawnedIds.set(termId, result.id)
           upsertTerminalListItem({
             agentStatus: null,
             args: [],
@@ -313,42 +455,14 @@ export function usePanelLayout() {
             id: result.id,
             processChain: [],
             status: result.status,
-            workspaceId: leaf.workspaceId,
+            workspaceId: wsId,
           })
         } catch (error) {
-          console.error(
-            '[reconcile] spawn failed for workspace:',
-            leaf.workspaceId,
-            error
-          )
+          console.error('[reconcile] spawn failed for workspace:', wsId, error)
         }
       }
 
-      // Re-read the persisted layout to avoid overwriting any changes
-      // that occurred during the async spawn phase.
-      const currentRows = store.query(persistedLayout$)
-      const currentRow = currentRows.find(
-        (row) => row.windowId === panelWindowId
-      )
-      const currentTree = currentRow?.layoutTree as PanelNode | undefined
-      if (!currentTree) {
-        setIsReconciling(false)
-        return
-      }
-
-      const reconciled = reconcileLayout(currentTree, liveIds, respawnedIds)
-      if (reconciled !== currentTree) {
-        store.commit(
-          layoutRestored({
-            windowId: panelWindowId,
-            layoutTree: reconciled,
-            activePaneId: ensureValidActivePaneId(
-              reconciled,
-              currentRow?.activePaneId ?? null
-            ),
-          })
-        )
-      }
+      commitReconciledLayouts(liveIds, respawnedIds)
       setIsReconciling(false)
     }
 
@@ -356,10 +470,11 @@ export function usePanelLayout() {
   }, [
     terminalsLoading,
     liveTerminals,
-    panelWindowId,
     persistedLayoutTree,
+    persistedWindowLayout,
+    collectStaleLeaves,
+    commitReconciledLayouts,
     spawnTerminal,
-    store,
   ])
 
   // -------------------------------------------------------------------

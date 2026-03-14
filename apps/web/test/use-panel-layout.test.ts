@@ -11,6 +11,10 @@ const {
   layoutRestoredMock,
   layoutSplitMock,
   layoutWorkspacesReorderedMock,
+  panelTabClosedMock,
+  panelTabCreatedMock,
+  panelTabSwitchedMock,
+  panelTabsReorderedMock,
   persistedRowsRef,
   reportVisibleWorkspacesMock,
   spawnTerminalMock,
@@ -19,6 +23,11 @@ const {
   storeUseQueryMock,
   terminalListRef,
   upsertTerminalListItemMock,
+  windowLayoutRestoredMock,
+  windowTabClosedMock,
+  windowTabCreatedMock,
+  windowTabSwitchedMock,
+  windowTabsReorderedMock,
 } = vi.hoisted(() => ({
   currentWindowIdRef: { current: 'window-a' as string | null },
   focusExistingWindowForWorkspaceMock: vi.fn(
@@ -40,11 +49,48 @@ const {
     payload,
     type: 'layoutWorkspacesReordered',
   })),
+  windowLayoutRestoredMock: vi.fn((payload) => ({
+    payload,
+    type: 'windowLayoutRestored',
+  })),
+  panelTabCreatedMock: vi.fn((payload) => ({
+    payload,
+    type: 'panelTabCreated',
+  })),
+  panelTabClosedMock: vi.fn((payload) => ({
+    payload,
+    type: 'panelTabClosed',
+  })),
+  panelTabSwitchedMock: vi.fn((payload) => ({
+    payload,
+    type: 'panelTabSwitched',
+  })),
+  panelTabsReorderedMock: vi.fn((payload) => ({
+    payload,
+    type: 'panelTabsReordered',
+  })),
+  windowTabCreatedMock: vi.fn((payload) => ({
+    payload,
+    type: 'windowTabCreated',
+  })),
+  windowTabClosedMock: vi.fn((payload) => ({
+    payload,
+    type: 'windowTabClosed',
+  })),
+  windowTabSwitchedMock: vi.fn((payload) => ({
+    payload,
+    type: 'windowTabSwitched',
+  })),
+  windowTabsReorderedMock: vi.fn((payload) => ({
+    payload,
+    type: 'windowTabsReordered',
+  })),
   persistedRowsRef: {
     current: [] as Array<{
       readonly activePaneId: string | null
       readonly layoutTree: PanelNode
       readonly windowId: string
+      readonly windowLayout?: unknown
       readonly workspaceOrder?: readonly string[] | null
     }>,
   },
@@ -77,6 +123,15 @@ vi.mock('@laborer/shared/schema', () => ({
   layoutSplit: layoutSplitMock,
   layoutWorkspacesReordered: layoutWorkspacesReorderedMock,
   panelLayout: { table: 'panel_layout' },
+  panelTabCreated: panelTabCreatedMock,
+  panelTabClosed: panelTabClosedMock,
+  panelTabSwitched: panelTabSwitchedMock,
+  panelTabsReordered: panelTabsReorderedMock,
+  windowLayoutRestored: windowLayoutRestoredMock,
+  windowTabCreated: windowTabCreatedMock,
+  windowTabClosed: windowTabClosedMock,
+  windowTabSwitched: windowTabSwitchedMock,
+  windowTabsReordered: windowTabsReorderedMock,
   workspaces: { table: 'workspaces' },
 }))
 
@@ -187,6 +242,20 @@ type PersistedLayoutEvent =
   | ReturnType<typeof layoutRestoredMock>
   | ReturnType<typeof layoutSplitMock>
   | ReturnType<typeof layoutWorkspacesReorderedMock>
+  | ReturnType<typeof windowLayoutRestoredMock>
+
+/** Window layout event types that only update the windowLayout column. */
+const WINDOW_LAYOUT_EVENT_TYPES = new Set([
+  'windowLayoutRestored',
+  'windowTabCreated',
+  'windowTabClosed',
+  'windowTabSwitched',
+  'windowTabsReordered',
+  'panelTabCreated',
+  'panelTabClosed',
+  'panelTabSwitched',
+  'panelTabsReordered',
+])
 
 const getPersistedRow = (windowId: string): PersistedLayoutRow | undefined =>
   persistedRowsRef.current.find((row) => row.windowId === windowId)
@@ -205,6 +274,23 @@ const upsertPersistedRow = (
 
 const applyPersistedLayoutEvent = (event: PersistedLayoutEvent) => {
   const { payload, type } = event
+
+  // Handle window layout events — they only update the windowLayout column
+  if (WINDOW_LAYOUT_EVENT_TYPES.has(type)) {
+    const windowPayload = payload as {
+      windowId: string
+      windowLayout: unknown
+      activeWindowTabId?: string | null
+    }
+    upsertPersistedRow(windowPayload.windowId, (currentRow) => ({
+      activePaneId: currentRow?.activePaneId ?? null,
+      layoutTree: currentRow?.layoutTree ?? WINDOW_B_LAYOUT,
+      windowId: windowPayload.windowId,
+      windowLayout: windowPayload.windowLayout,
+      workspaceOrder: currentRow?.workspaceOrder ?? null,
+    }))
+    return
+  }
 
   if (type === 'layoutWorkspacesReordered') {
     upsertPersistedRow(payload.windowId, (currentRow) => ({

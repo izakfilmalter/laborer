@@ -12,6 +12,7 @@
  */
 
 import type {
+  PanelTab,
   PanelTreeNode,
   WindowLayout,
   WindowTab,
@@ -679,6 +680,711 @@ function findWorkspaceTileLeaf(
 }
 
 // ---------------------------------------------------------------------------
+// Hierarchical reconciliation: stale terminal detection + ID replacement
+// ---------------------------------------------------------------------------
+
+/**
+ * Stale terminal leaf info within the hierarchical layout.
+ * Contains the terminal leaf details plus its location in the hierarchy.
+ */
+interface StaleTerminalLeaf {
+  readonly paneId: string
+  readonly terminalId: string
+  readonly workspaceId: string | undefined
+}
+
+/**
+ * Collect all terminal leaves from a PanelTreeNode whose terminalId is
+ * not in the live terminal set. These are candidates for respawning.
+ */
+function getStaleTerminalLeavesFromPanelTree(
+  node: PanelTreeNode,
+  liveTerminalIds: ReadonlySet<string>
+): readonly StaleTerminalLeaf[] {
+  if (node._tag === 'PanelLeafNode') {
+    if (
+      node.terminalId !== undefined &&
+      !liveTerminalIds.has(node.terminalId)
+    ) {
+      return [
+        {
+          paneId: node.id,
+          terminalId: node.terminalId,
+          workspaceId: node.workspaceId,
+        },
+      ]
+    }
+    return []
+  }
+  return node.children.flatMap((child) =>
+    getStaleTerminalLeavesFromPanelTree(child, liveTerminalIds)
+  )
+}
+
+/**
+ * Collect all stale terminal leaves from a WorkspaceTileNode tree.
+ * Walks workspace tiles > panel tabs > panel tree nodes.
+ */
+function getStaleTerminalLeavesFromTileTree(
+  node: WorkspaceTileNode,
+  liveTerminalIds: ReadonlySet<string>
+): readonly StaleTerminalLeaf[] {
+  if (node._tag === 'WorkspaceTileLeaf') {
+    return node.panelTabs.flatMap((tab) =>
+      getStaleTerminalLeavesFromPanelTree(tab.panelLayout, liveTerminalIds)
+    )
+  }
+  return node.children.flatMap((child) =>
+    getStaleTerminalLeavesFromTileTree(child, liveTerminalIds)
+  )
+}
+
+/**
+ * Collect all stale terminal leaves from a WindowLayout.
+ * Searches all window tabs > workspace tiles > panel tabs > panel splits.
+ *
+ * @param layout - The hierarchical window layout
+ * @param liveTerminalIds - Set of terminal IDs that are currently live
+ * @returns Array of stale terminal leaf info
+ */
+function getStaleTerminalLeavesHierarchical(
+  layout: WindowLayout,
+  liveTerminalIds: ReadonlySet<string>
+): readonly StaleTerminalLeaf[] {
+  return layout.tabs.flatMap((tab) =>
+    tab.workspaceLayout
+      ? getStaleTerminalLeavesFromTileTree(tab.workspaceLayout, liveTerminalIds)
+      : []
+  )
+}
+
+/**
+ * Reconcile a PanelTreeNode by replacing stale terminal IDs with
+ * respawned ones. If a stale leaf has no mapping entry, terminalId
+ * becomes undefined. Preserves referential equality when no changes.
+ */
+function reconcilePanelTree(
+  node: PanelTreeNode,
+  liveTerminalIds: ReadonlySet<string>,
+  respawnedIds: ReadonlyMap<string, string>
+): PanelTreeNode {
+  if (node._tag === 'PanelLeafNode') {
+    if (
+      node.terminalId !== undefined &&
+      !liveTerminalIds.has(node.terminalId)
+    ) {
+      const newId = respawnedIds.get(node.terminalId)
+      return { ...node, terminalId: newId }
+    }
+    return node
+  }
+
+  let changed = false
+  const newChildren = node.children.map((child) => {
+    const reconciled = reconcilePanelTree(child, liveTerminalIds, respawnedIds)
+    if (reconciled !== child) {
+      changed = true
+    }
+    return reconciled
+  })
+
+  return changed ? { ...node, children: newChildren } : node
+}
+
+/**
+ * Reconcile a WorkspaceTileNode by walking its panel tabs and
+ * replacing stale terminal IDs.
+ */
+function reconcileTileTree(
+  node: WorkspaceTileNode,
+  liveTerminalIds: ReadonlySet<string>,
+  respawnedIds: ReadonlyMap<string, string>
+): WorkspaceTileNode {
+  if (node._tag === 'WorkspaceTileLeaf') {
+    let changed = false
+    const newPanelTabs = node.panelTabs.map((tab) => {
+      const newLayout = reconcilePanelTree(
+        tab.panelLayout,
+        liveTerminalIds,
+        respawnedIds
+      )
+      if (newLayout !== tab.panelLayout) {
+        changed = true
+        return { ...tab, panelLayout: newLayout }
+      }
+      return tab
+    })
+    return changed ? { ...node, panelTabs: newPanelTabs } : node
+  }
+
+  let changed = false
+  const newChildren = node.children.map((child) => {
+    const reconciled = reconcileTileTree(child, liveTerminalIds, respawnedIds)
+    if (reconciled !== child) {
+      changed = true
+    }
+    return reconciled
+  })
+
+  return changed ? { ...node, children: newChildren } : node
+}
+
+/**
+ * Reconcile a WindowLayout by replacing stale terminal IDs with
+ * respawned ones across all window tabs, workspace tiles, and panel tabs.
+ *
+ * Preserves referential equality when no changes are made (returns
+ * the same object reference).
+ *
+ * @param layout - The hierarchical window layout
+ * @param liveTerminalIds - Set of terminal IDs that are currently live
+ * @param respawnedIds - Map of old stale terminal ID → new respawned terminal ID
+ * @returns The reconciled layout (same reference if unchanged)
+ */
+function reconcileWindowLayout(
+  layout: WindowLayout,
+  liveTerminalIds: ReadonlySet<string>,
+  respawnedIds: ReadonlyMap<string, string>
+): WindowLayout {
+  let changed = false
+  const newTabs = layout.tabs.map((tab) => {
+    if (!tab.workspaceLayout) {
+      return tab
+    }
+    const newLayout = reconcileTileTree(
+      tab.workspaceLayout,
+      liveTerminalIds,
+      respawnedIds
+    )
+    if (newLayout !== tab.workspaceLayout) {
+      changed = true
+      return { ...tab, workspaceLayout: newLayout }
+    }
+    return tab
+  })
+
+  return changed ? { ...layout, tabs: newTabs } : layout
+}
+
+// ---------------------------------------------------------------------------
+// Hierarchical layout repair
+// ---------------------------------------------------------------------------
+
+/** Valid pane types for repair validation. */
+const VALID_PANE_TYPES = new Set([
+  'terminal',
+  'diff',
+  'devServerTerminal',
+  'review',
+])
+
+/** Valid split directions for repair validation. */
+const VALID_DIRECTIONS = new Set(['horizontal', 'vertical'])
+
+/** Type guard for record-like objects. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Validate and rebuild split sizes.
+ * Returns even distribution if the original sizes are invalid.
+ */
+function repairSplitSizes(
+  rawSizes: unknown,
+  validCount: number,
+  originalCount: number
+): { sizes: readonly number[]; repaired: boolean } {
+  const sizes = Array.isArray(rawSizes) ? (rawSizes as number[]) : []
+  if (
+    sizes.length === validCount &&
+    sizes.every((s) => typeof s === 'number' && s > 0)
+  ) {
+    return {
+      sizes,
+      repaired: validCount !== originalCount,
+    }
+  }
+  const equalSize = 100 / validCount
+  return {
+    sizes: Array.from({ length: validCount }, () => equalSize),
+    repaired: true,
+  }
+}
+
+/**
+ * Result of repairing a WindowLayout.
+ */
+interface RepairWindowLayoutResult {
+  readonly wasRepaired: boolean
+  readonly windowLayout: WindowLayout | undefined
+}
+
+/**
+ * Repair a PanelTreeNode (PanelLeafNode or PanelSplitNode).
+ * Validates structure and drops invalid nodes.
+ * Returns undefined if the node is completely invalid.
+ */
+function repairPanelTreeNode(
+  node: unknown
+): { tree: PanelTreeNode; repaired: boolean } | undefined {
+  if (!isRecord(node) || typeof node._tag !== 'string') {
+    return undefined
+  }
+
+  if (node._tag === 'PanelLeafNode') {
+    return repairPanelLeafNode(node)
+  }
+
+  if (node._tag === 'PanelSplitNode') {
+    return repairPanelSplitNode(node)
+  }
+
+  return undefined
+}
+
+/**
+ * Repair a PanelLeafNode.
+ * Validates id and paneType, strips invalid optional fields.
+ */
+function repairPanelLeafNode(
+  node: Record<string, unknown>
+): { tree: PanelTreeNode; repaired: boolean } | undefined {
+  if (typeof node.id !== 'string' || node.id === '') {
+    return undefined
+  }
+
+  if (
+    typeof node.paneType !== 'string' ||
+    !VALID_PANE_TYPES.has(node.paneType)
+  ) {
+    return undefined
+  }
+
+  let repaired = false
+  const result: Record<string, unknown> = {
+    _tag: 'PanelLeafNode',
+    id: node.id,
+    paneType: node.paneType,
+  }
+
+  // Validate optional fields
+  if (node.terminalId !== undefined) {
+    if (typeof node.terminalId === 'string') {
+      result.terminalId = node.terminalId
+    } else {
+      repaired = true
+    }
+  }
+  if (node.workspaceId !== undefined) {
+    if (typeof node.workspaceId === 'string') {
+      result.workspaceId = node.workspaceId
+    } else {
+      repaired = true
+    }
+  }
+
+  return { tree: result as unknown as PanelTreeNode, repaired }
+}
+
+/**
+ * Repair a PanelSplitNode.
+ * Validates structure, recursively repairs children, collapses single-child splits.
+ */
+function repairPanelSplitNode(
+  node: Record<string, unknown>
+): { tree: PanelTreeNode; repaired: boolean } | undefined {
+  if (typeof node.id !== 'string' || node.id === '') {
+    return undefined
+  }
+  if (
+    typeof node.direction !== 'string' ||
+    !VALID_DIRECTIONS.has(node.direction)
+  ) {
+    return undefined
+  }
+  if (!Array.isArray(node.children)) {
+    return undefined
+  }
+
+  let repaired = false
+  const validChildren: PanelTreeNode[] = []
+  for (const child of node.children) {
+    const result = repairPanelTreeNode(child)
+    if (result) {
+      validChildren.push(result.tree)
+      if (result.repaired) {
+        repaired = true
+      }
+    } else {
+      repaired = true
+    }
+  }
+
+  if (validChildren.length === 0) {
+    return undefined
+  }
+  const onlyChild = validChildren.length === 1 ? validChildren[0] : undefined
+  if (onlyChild) {
+    return { tree: onlyChild, repaired: true }
+  }
+
+  // Validate/rebuild sizes
+  const sizesResult = repairSplitSizes(
+    node.sizes,
+    validChildren.length,
+    (node.children as unknown[]).length
+  )
+  if (sizesResult.repaired) {
+    repaired = true
+  }
+
+  return {
+    tree: {
+      _tag: 'PanelSplitNode',
+      id: node.id,
+      direction: node.direction as 'horizontal' | 'vertical',
+      children: validChildren,
+      sizes: sizesResult.sizes,
+    },
+    repaired,
+  }
+}
+
+/**
+ * Repair a PanelTab.
+ * Validates structure and repairs the inner panelLayout.
+ */
+function repairPanelTab(
+  tab: unknown
+): { tab: PanelTab; repaired: boolean } | undefined {
+  if (!isRecord(tab)) {
+    return undefined
+  }
+  if (typeof tab.id !== 'string' || tab.id === '') {
+    return undefined
+  }
+
+  const layoutResult = repairPanelTreeNode(tab.panelLayout)
+  if (!layoutResult) {
+    return undefined
+  }
+
+  let repaired = layoutResult.repaired
+  const result: Record<string, unknown> = {
+    id: tab.id,
+    panelLayout: layoutResult.tree,
+  }
+
+  if (tab.label !== undefined) {
+    if (typeof tab.label === 'string') {
+      result.label = tab.label
+    } else {
+      repaired = true
+    }
+  }
+  if (tab.focusedPaneId !== undefined) {
+    if (typeof tab.focusedPaneId === 'string') {
+      result.focusedPaneId = tab.focusedPaneId
+    } else {
+      repaired = true
+    }
+  }
+
+  return { tab: result as unknown as PanelTab, repaired }
+}
+
+/**
+ * Repair a WorkspaceTileNode (leaf or split).
+ */
+function repairWorkspaceTileNode(
+  node: unknown
+): { tile: WorkspaceTileNode; repaired: boolean } | undefined {
+  if (!isRecord(node) || typeof node._tag !== 'string') {
+    return undefined
+  }
+
+  if (node._tag === 'WorkspaceTileLeaf') {
+    return repairWorkspaceTileLeaf(node)
+  }
+
+  if (node._tag === 'WorkspaceTileSplit') {
+    return repairWorkspaceTileSplit(node)
+  }
+
+  return undefined
+}
+
+/**
+ * Repair panel tabs from a raw array.
+ * Returns valid tabs and whether any repairs were made.
+ */
+function repairPanelTabsArray(rawTabs: unknown): {
+  tabs: PanelTab[]
+  repaired: boolean
+} {
+  if (!Array.isArray(rawTabs)) {
+    return { tabs: [], repaired: true }
+  }
+
+  let repaired = false
+  const validTabs: PanelTab[] = []
+  for (const rawTab of rawTabs) {
+    const result = repairPanelTab(rawTab)
+    if (result) {
+      validTabs.push(result.tab)
+      if (result.repaired) {
+        repaired = true
+      }
+    } else {
+      repaired = true
+    }
+  }
+  return { tabs: validTabs, repaired }
+}
+
+/**
+ * Validate and resolve activePanelTabId against valid tabs.
+ */
+function resolveActivePanelTabId(
+  raw: unknown,
+  validTabs: readonly PanelTab[]
+): { id: string | undefined; repaired: boolean } {
+  if (typeof raw === 'string') {
+    const tabExists = validTabs.some((t) => t.id === raw)
+    if (tabExists) {
+      return { id: raw, repaired: false }
+    }
+    return { id: validTabs[0]?.id, repaired: true }
+  }
+  return {
+    id: validTabs[0]?.id,
+    repaired: raw !== undefined,
+  }
+}
+
+/**
+ * Repair a WorkspaceTileLeaf.
+ * Validates structure, repairs panel tabs, drops invalid tabs.
+ */
+function repairWorkspaceTileLeaf(
+  node: Record<string, unknown>
+): { tile: WorkspaceTileNode; repaired: boolean } | undefined {
+  if (typeof node.id !== 'string' || node.id === '') {
+    return undefined
+  }
+  if (typeof node.workspaceId !== 'string') {
+    return undefined
+  }
+
+  const tabsResult = repairPanelTabsArray(node.panelTabs)
+  const activeResult = resolveActivePanelTabId(
+    node.activePanelTabId,
+    tabsResult.tabs
+  )
+  const repaired = tabsResult.repaired || activeResult.repaired
+
+  return {
+    tile: {
+      _tag: 'WorkspaceTileLeaf',
+      id: node.id,
+      workspaceId: node.workspaceId as string,
+      panelTabs: tabsResult.tabs,
+      activePanelTabId: activeResult.id,
+    },
+    repaired,
+  }
+}
+
+/**
+ * Repair a WorkspaceTileSplit.
+ * Validates structure, recursively repairs children, collapses single-child splits.
+ */
+/**
+ * Repair the children array of a workspace tile split.
+ * Returns valid children and whether any repairs were made.
+ */
+function repairTileSplitChildren(rawChildren: unknown[]): {
+  children: WorkspaceTileNode[]
+  repaired: boolean
+} {
+  let repaired = false
+  const validChildren: WorkspaceTileNode[] = []
+  for (const child of rawChildren) {
+    const result = repairWorkspaceTileNode(child)
+    if (result) {
+      validChildren.push(result.tile)
+      if (result.repaired) {
+        repaired = true
+      }
+    } else {
+      repaired = true
+    }
+  }
+  return { children: validChildren, repaired }
+}
+
+function repairWorkspaceTileSplit(
+  node: Record<string, unknown>
+): { tile: WorkspaceTileNode; repaired: boolean } | undefined {
+  if (typeof node.id !== 'string' || node.id === '') {
+    return undefined
+  }
+  if (
+    typeof node.direction !== 'string' ||
+    !VALID_DIRECTIONS.has(node.direction)
+  ) {
+    return undefined
+  }
+  if (!Array.isArray(node.children)) {
+    return undefined
+  }
+
+  const childrenResult = repairTileSplitChildren(node.children)
+  const { children: validChildren } = childrenResult
+  let repaired = childrenResult.repaired
+
+  if (validChildren.length === 0) {
+    return undefined
+  }
+  const onlyTileChild =
+    validChildren.length === 1 ? validChildren[0] : undefined
+  if (onlyTileChild) {
+    return { tile: onlyTileChild, repaired: true }
+  }
+
+  const sizesResult = repairSplitSizes(
+    node.sizes,
+    validChildren.length,
+    node.children.length
+  )
+  if (sizesResult.repaired) {
+    repaired = true
+  }
+
+  return {
+    tile: {
+      _tag: 'WorkspaceTileSplit',
+      id: node.id,
+      direction: node.direction as 'horizontal' | 'vertical',
+      children: validChildren,
+      sizes: sizesResult.sizes,
+    },
+    repaired,
+  }
+}
+
+/**
+ * Repair a WindowTab.
+ * Validates structure and repairs the workspace tile tree.
+ */
+function repairWindowTab(
+  tab: unknown
+): { tab: WindowTab; repaired: boolean } | undefined {
+  if (!isRecord(tab)) {
+    return undefined
+  }
+  if (typeof tab.id !== 'string' || tab.id === '') {
+    return undefined
+  }
+
+  let repaired = false
+  const result: Record<string, unknown> = { id: tab.id }
+
+  if (tab.label !== undefined) {
+    if (typeof tab.label === 'string') {
+      result.label = tab.label
+    } else {
+      repaired = true
+    }
+  }
+
+  if (tab.workspaceLayout !== undefined && tab.workspaceLayout !== null) {
+    const tileResult = repairWorkspaceTileNode(tab.workspaceLayout)
+    if (tileResult) {
+      result.workspaceLayout = tileResult.tile
+      if (tileResult.repaired) {
+        repaired = true
+      }
+    } else {
+      // Invalid workspace layout — drop it (tab becomes empty)
+      repaired = true
+    }
+  }
+
+  return { tab: result as unknown as WindowTab, repaired }
+}
+
+/**
+ * Repair a deserialized WindowLayout.
+ *
+ * Validates every node in the hierarchy recursively:
+ * - WindowLayout: validates `tabs` array and `activeTabId`
+ * - WindowTab: validates `id`, `label`, and `workspaceLayout`
+ * - WorkspaceTileNode: validates leaves (workspace ID, panel tabs) and splits
+ * - PanelTab: validates `id`, `panelLayout`, optional fields
+ * - PanelTreeNode: validates leaves (pane type, terminal ID) and splits
+ *
+ * Invalid nodes are dropped. Single-child splits are collapsed.
+ * Sizes are redistributed when invalid.
+ *
+ * Returns `{ windowLayout, wasRepaired }`. If `wasRepaired` is true,
+ * the caller should re-persist the repaired layout.
+ *
+ * @param layout - The raw deserialized WindowLayout (may be malformed)
+ * @returns The repaired layout and whether any repairs were made
+ */
+function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
+  if (!isRecord(layout)) {
+    return { windowLayout: undefined, wasRepaired: true }
+  }
+
+  if (!Array.isArray(layout.tabs)) {
+    return { windowLayout: undefined, wasRepaired: true }
+  }
+
+  let repaired = false
+  const validTabs: WindowTab[] = []
+  for (const rawTab of layout.tabs) {
+    const result = repairWindowTab(rawTab)
+    if (result) {
+      validTabs.push(result.tab)
+      if (result.repaired) {
+        repaired = true
+      }
+    } else {
+      repaired = true
+    }
+  }
+
+  if (validTabs.length === 0) {
+    return { windowLayout: undefined, wasRepaired: true }
+  }
+
+  // Validate activeTabId
+  let activeTabId: string | undefined
+  if (typeof layout.activeTabId === 'string') {
+    const tabExists = validTabs.some((t) => t.id === layout.activeTabId)
+    if (tabExists) {
+      activeTabId = layout.activeTabId as string
+    } else {
+      activeTabId = validTabs[0]?.id
+      repaired = true
+    }
+  } else {
+    activeTabId = validTabs[0]?.id
+    if (layout.activeTabId !== undefined) {
+      repaired = true
+    }
+  }
+
+  return {
+    windowLayout: { tabs: validTabs, activeTabId },
+    wasRepaired: repaired,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -689,13 +1395,22 @@ export {
   findWorkspaceLocation,
   getActiveWindowTab,
   getAllWorkspaceTileLeaves,
+  getStaleTerminalLeavesHierarchical,
   getWorkspaceTileLeaves,
+  reconcileWindowLayout,
   reorderWindowTabs,
   removeWindowTab,
+  repairWindowLayout,
   switchWindowTab,
   switchWindowTabByIndex,
   switchWindowTabRelative,
   updateWorkspaceTileLeaf,
 }
 
-export type { ProgressiveCloseAction, TerminalLocation, WorkspaceLocation }
+export type {
+  ProgressiveCloseAction,
+  RepairWindowLayoutResult,
+  StaleTerminalLeaf,
+  TerminalLocation,
+  WorkspaceLocation,
+}

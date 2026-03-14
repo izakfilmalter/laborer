@@ -675,3 +675,55 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 858/858 tests pass (20 new + 838 existing)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #21: Session persistence for hierarchical layout — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Added hierarchical reconciliation functions to `apps/web/src/panels/window-tab-utils.ts`:
+  - `getStaleTerminalLeavesHierarchical(layout, liveTerminalIds)` — collects all terminal leaves from a `WindowLayout` whose terminalId is not in the live terminal set. Walks all window tabs > workspace tiles (including nested `WorkspaceTileSplit`) > panel tabs > panel tree nodes.
+  - `reconcileWindowLayout(layout, liveTerminalIds, respawnedIds)` — replaces stale terminal IDs in a `WindowLayout` with respawned ones using a mapping. Preserves referential equality when no changes are made. Walks the full hierarchy: tabs > tiles > panel tabs > panel tree nodes.
+  - Helper functions: `getStaleTerminalLeavesFromPanelTree`, `getStaleTerminalLeavesFromTileTree`, `reconcilePanelTree`, `reconcileTileTree`
+
+- Added hierarchical repair function `repairWindowLayout(layout)` to `window-tab-utils.ts`:
+  - Validates every node in the hierarchy recursively: `WindowLayout` > `WindowTab` > `WorkspaceTileNode` > `PanelTab` > `PanelTreeNode`
+  - Drops invalid nodes (empty IDs, invalid pane types, invalid directions)
+  - Collapses single-child splits (both workspace tile splits and panel splits)
+  - Redistributes sizes when they are invalid
+  - Validates and repairs `activeTabId` and `activePanelTabId` references
+  - Strips invalid optional fields from leaf nodes (e.g., non-string terminalId)
+  - Returns `{ windowLayout, wasRepaired }` so the caller can re-persist if needed
+  - Extracted helper functions to stay under lint complexity limits: `repairPanelTreeNode`, `repairPanelLeafNode`, `repairPanelSplitNode`, `repairPanelTab`, `repairPanelTabsArray`, `resolveActivePanelTabId`, `repairWorkspaceTileNode`, `repairWorkspaceTileLeaf`, `repairWorkspaceTileSplit`, `repairTileSplitChildren`, `repairWindowTab`, `repairSplitSizes`
+
+- Updated `apps/web/src/routes/-hooks/use-panel-layout.ts`:
+  - **Repair on read**: Added `windowLayoutRepair` useMemo that runs `repairWindowLayout` on the persisted `windowLayout` column. If repaired, a one-time effect commits `windowLayoutRestored` to LiveStore.
+  - **Migration detection**: Added `persistedWindowLayout` useMemo that returns the repaired window layout if available, or migrates from the legacy `layoutTree` via `migrateToWindowLayout()` if `windowLayout` is empty. The migration runs in useMemo (no side effects).
+  - **Migration persistence**: The migrated layout is persisted to the `windowLayout` column during the reconciliation flow (alongside terminal respawning). The `commitReconciledLayouts` callback uses `persistedWindowLayout` as fallback when the persisted row doesn't have a `windowLayout`.
+  - **Reconciliation**: Updated the reconciliation effect to:
+    1. Check both legacy `layoutTree` and hierarchical `windowLayout` for stale terminals
+    2. Prefer hierarchical stale leaves when available
+    3. After respawning, reconcile both the legacy tree (via `reconcileLayout`) and the hierarchical tree (via `reconcileWindowLayout`)
+    4. Commit reconciled layouts to their respective columns
+  - **isReconciling**: Updated initial state to also consider `persistedWindowLayout` existence
+  - Extracted `collectStaleLeaves` and `commitReconciledLayouts` callbacks to reduce effect complexity
+
+- Updated `apps/web/test/use-panel-layout.test.ts`:
+  - Added `windowLayoutRestored` mock and all window/panel tab event mocks to the `vi.hoisted` block
+  - Added all new event mocks to the `@laborer/shared/schema` mock module
+  - Added `windowLayout` field to the `PersistedLayoutRow` type
+  - Updated `applyPersistedLayoutEvent` to handle window layout events (routes them to update the `windowLayout` column, preserving existing row data)
+  - Added `WINDOW_LAYOUT_EVENT_TYPES` set for event type dispatch
+
+### Tests
+- 33 tests in `apps/web/test/hierarchical-persistence.test.ts` covering:
+  - **getStaleTerminalLeavesHierarchical** (10 tests): no terminals, all live, single stale, multiple panel tabs, multiple window tabs, nested panel splits, empty layout, no workspace layout, workspace tile splits, non-terminal pane types
+  - **reconcileWindowLayout** (8 tests): no changes (referential equality), replace stale IDs, clear unmapped stale IDs, multiple panel tabs, multiple window tabs, preserve live terminals, empty layout, workspace tile splits
+  - **repairWindowLayout** (15 tests): non-object input, invalid tabs, all tabs invalid, valid layout no repair, stale activeTabId, drop invalid tabs, invalid panel tabs, stale activePanelTabId, collapse single-child workspace splits, collapse single-child panel splits, invalid pane types, valid diff/review types, strip invalid optional fields, redistribute invalid sizes, deeply nested hierarchies
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 891/891 tests pass (33 new + 858 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing `useAwait` issue in unrelated test code)

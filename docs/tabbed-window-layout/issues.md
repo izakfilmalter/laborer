@@ -788,7 +788,7 @@ Also update the sidebar highlight: the workspace entry corresponding to the curr
 
 ## 21. Session persistence for hierarchical layout
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1081,7 +1081,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 18 | Empty state: window tab with workspace picker | 8 | pending |
 | 19 | Empty state: workspace and panel tab | 10, 11 | pending |
 | 20 | Sidebar navigation to terminal across tabs | 2, 8, 10 | pending |
-| 21 | Session persistence for hierarchical layout | 6, 8, 10 | pending |
+| 21 | Session persistence for hierarchical layout | 6, 8, 10 | done |
 | 22 | Workspace uniqueness enforcement | 21 | pending |
 | 23 | Tab drag-and-drop reordering | 8, 10 | pending |
 | 24 | Polish: tab bar animations and transitions | 7 | pending |

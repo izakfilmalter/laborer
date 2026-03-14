@@ -7,12 +7,14 @@
  *
  * - **Starting → Ready:** Server sidecar reports `healthy`
  * - **Ready → Restored:** Terminal + file-watcher sidecars both report `healthy`
- * - **Restored → Eventually:** Server "fully initialized" event (Issue #15)
+ * - **Restored → Eventually:** Server's `/init-status` endpoint reports
+ *   all deferred services ready (polled after phase reaches Restored)
  *
  * Rendered as a renderless component in the app root, inside the
  * `LifecyclePhaseProvider`.
  *
  * @see Issue #7: Wire sidecar status events to lifecycle phase transitions
+ * @see Issue #15: Server "fully initialized" event
  * @see apps/web/src/components/lifecycle-phase-context.tsx — phase system
  * @see apps/web/src/hooks/use-sidecar-statuses.ts — sidecar status source
  */
@@ -23,6 +25,10 @@ import {
   useLifecyclePhase,
 } from '@/components/lifecycle-phase-context'
 import { useSidecarStatuses } from '@/hooks/use-sidecar-statuses'
+import { serverInitStatusUrl } from '@/lib/desktop'
+
+/** Polling interval for the init-status endpoint (ms). */
+const INIT_STATUS_POLL_INTERVAL_MS = 2000
 
 /**
  * Hook that drives lifecycle phase transitions based on sidecar status events.
@@ -32,9 +38,10 @@ import { useSidecarStatuses } from '@/hooks/use-sidecar-statuses'
  * conditions are met.
  */
 function usePhaseTransitionDriver(): void {
-  const { advanceTo } = useLifecyclePhase()
+  const { phase, advanceTo } = useLifecyclePhase()
   const statuses = useSidecarStatuses()
 
+  // Starting → Ready / Ready → Restored: driven by sidecar health events
   useEffect(() => {
     const serverHealthy = statuses.server.state === 'healthy'
     const terminalHealthy = statuses.terminal.state === 'healthy'
@@ -52,6 +59,51 @@ function usePhaseTransitionDriver(): void {
       advanceTo(LifecyclePhase.Ready)
     }
   }, [statuses, advanceTo])
+
+  // Restored → Eventually: poll server's init-status endpoint
+  useEffect(() => {
+    // Only poll between Restored and Eventually — not before Restored
+    // (server may not be ready) and not after Eventually (already reached).
+    if (phase < LifecyclePhase.Restored || phase >= LifecyclePhase.Eventually) {
+      return
+    }
+
+    const url = serverInitStatusUrl()
+    let cancelled = false
+
+    async function pollInitStatus() {
+      try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 2000)
+        const response = await fetch(url, {
+          signal: controller.signal,
+          redirect: 'error',
+        })
+        clearTimeout(timeoutId)
+
+        if (!response.ok || cancelled) {
+          return
+        }
+
+        const data = (await response.json()) as { ready?: boolean }
+        if (data.ready && !cancelled) {
+          advanceTo(LifecyclePhase.Eventually)
+        }
+      } catch {
+        // Server not reachable or request aborted — retry on next poll
+      }
+    }
+
+    // Poll immediately, then on interval
+    pollInitStatus()
+
+    const intervalId = setInterval(pollInitStatus, INIT_STATUS_POLL_INTERVAL_MS)
+
+    return () => {
+      cancelled = true
+      clearInterval(intervalId)
+    }
+  }, [phase, advanceTo])
 }
 
 /**

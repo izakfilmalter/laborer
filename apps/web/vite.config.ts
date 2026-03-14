@@ -80,6 +80,10 @@ export default defineConfig(({ mode }) => {
           target: `http://localhost:${serverPort}`,
           rewrite: () => '/',
         },
+        '/server-init-status': {
+          target: `http://localhost:${serverPort}`,
+          rewrite: () => '/init-status',
+        },
         '/terminal-health': {
           target: `http://localhost:${terminalPort}`,
           rewrite: () => '/',

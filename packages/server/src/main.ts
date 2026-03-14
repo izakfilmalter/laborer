@@ -86,16 +86,31 @@ import { WorktreeReconciler } from './services/worktree-reconciler.js'
  * the health check by sidecar status polling.
  */
 const CustomRoutesLive = HttpRouter.Default.use((router) =>
-  router.addRoute(
-    HttpRouter.makeRoute(
-      'GET',
-      '/',
-      HttpServerResponse.json({
-        status: 'ok',
-        name: 'laborer-server',
-      })
+  Effect.gen(function* () {
+    const { ref: readyRef } = yield* DeferredServicesReady
+
+    yield* router.addRoute(
+      HttpRouter.makeRoute(
+        'GET',
+        '/',
+        HttpServerResponse.json({
+          status: 'ok',
+          name: 'laborer-server',
+        })
+      )
     )
-  )
+
+    yield* router.addRoute(
+      HttpRouter.makeRoute(
+        'GET',
+        '/init-status',
+        Effect.gen(function* () {
+          const ready = yield* Ref.get(readyRef)
+          return yield* HttpServerResponse.json({ ready })
+        })
+      )
+    )
+  })
 )
 
 /**

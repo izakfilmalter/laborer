@@ -20,7 +20,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 12 | Progressive feature enablement for Phases 3-4 | #11 | Ready |
 | 13 | Server core layer group (fast health endpoint) | None | Done |
 | 14 | Server deferred layer group (background initialization) | #13 | Done |
-| 15 | Server "fully initialized" event | #14 | Ready |
+| 15 | Server "fully initialized" event | #14 | Done |
 | 16 | Lazy sidecar connections (TerminalClient + FileWatcherClient) | #14 | Ready |
 | 17 | Parallel sidecar spawning | #16 | Blocked |
 

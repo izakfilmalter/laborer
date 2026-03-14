@@ -279,3 +279,54 @@
 - TypeScript typecheck passes with no errors across all packages
 - Formatter (ultracite/biome) passes on all changed files
 - Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #15: Server "fully initialized" event — COMPLETED
+
+### What was done
+- **Shared RPC contract** — Added `lifecycle.initStatus` RPC to `packages/shared/src/rpc.ts`:
+  - Returns `{ ready: boolean }` — `false` while deferred services are initializing, `true` once all are ready
+  - No payload required, no error channel (always succeeds)
+
+- **Server handler** — Added handler in `packages/server/src/rpc/handlers.ts`:
+  - Reads `DeferredServicesReady` Ref (set to `true` by the background init fiber in `main.ts`)
+  - Added `DeferredServicesReady` and `Ref` imports
+
+- **Server HTTP endpoint** — Added `GET /init-status` custom route in `packages/server/src/main.ts`:
+  - Lightweight JSON endpoint returning `{ ready: boolean }` from the `DeferredServicesReady` Ref
+  - Polled by the renderer's phase transition driver (avoids needing the Effect RPC wire format)
+  - Matches the existing health check pattern (`GET /`)
+
+- **Test layer updates** — Added `DeferredServicesReadyLayer` to test layers:
+  - `packages/server/test/rpc/test-layer.ts` — Both `TestLaborerRpcLayer` and `TestLaborerRpcWithStoreLayer`
+  - `packages/server/test/rpc/core-layers.test.ts` — `CoreOnlyRpcLayer` and new `CoreOnlyRpcWithReadyRefLayer`
+
+- **Server tests** — 3 new tests in `packages/server/test/rpc/core-layers.test.ts`:
+  1. `lifecycle.initStatus` returns `{ ready: false }` before deferred services init
+  2. `lifecycle.initStatus` returns `{ ready: true }` after deferred services init (Ref swap)
+  3. `lifecycle.initStatus` works alongside other core RPCs
+
+- **Vite proxy** — Added `/server-init-status` proxy in `apps/web/vite.config.ts`:
+  - Rewrites to `/init-status` on the server port, matching the health-check proxy pattern
+
+- **Desktop URL helper** — Added `serverInitStatusUrl()` to `apps/web/src/lib/desktop.ts`:
+  - Dev mode: `/server-init-status` (Vite proxy)
+  - Electron production: `${desktopBridge.getServerUrl()}/init-status` (direct)
+
+- **Phase transition driver** — Updated `apps/web/src/hooks/use-phase-transition-driver.tsx`:
+  - Added `useEffect` that polls `/server-init-status` every 2 seconds when phase >= Restored and < Eventually
+  - When response returns `{ ready: true }`, calls `advanceTo(LifecyclePhase.Eventually)`
+  - Stops polling once Eventually is reached (cleanup via interval clear + cancelled flag)
+  - Added `phase` to hook dependencies to trigger/stop polling on phase transitions
+
+- **Renderer tests** — 3 new tests in `apps/web/test/phase-transition-driver.test.tsx`:
+  1. Advances to Eventually when init-status returns ready after Restored
+  2. Does not poll init-status before Restored phase (no premature polling)
+  3. Stops polling init-status after Eventually is reached
+
+### Verification
+- All 6 new tests pass (3 server + 3 web)
+- All 604 web tests pass (up from 601 after Issue #11)
+- All 338 server tests pass (up from 335 after Issue #14)
+- TypeScript typecheck passes with no errors across all packages (shared, server, web)
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change

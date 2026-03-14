@@ -15,11 +15,13 @@
 import { RpcTest } from '@effect/rpc'
 import { assert, describe, it } from '@effect/vitest'
 import { LaborerRpcs } from '@laborer/shared/rpc'
-import { Effect, Layer } from 'effect'
+import { Context, Effect, Layer, Ref } from 'effect'
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
 import { ConfigService } from '../../src/services/config-service.js'
 import { ContainerService } from '../../src/services/container-service.js'
 import {
+  DeferredServicesReady,
+  DeferredServicesReadyLayer,
   makeServiceProxy,
   SERVICE_INITIALIZING_CODE,
 } from '../../src/services/deferred-service.js'
@@ -82,6 +84,7 @@ const DeferredServiceStubs = Layer.mergeAll(
  */
 const CoreOnlyRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(DeferredServiceStubs),
+  Layer.provide(DeferredServicesReadyLayer),
   Layer.provide(ConfigService.layer),
   Layer.provide(TestLaborerStore)
 )
@@ -176,5 +179,73 @@ describe('Deferred service proxies (Issue #14)', () => {
         const response = yield* client.health.check()
         assert.strictEqual(response.status, 'ok')
       })
+  )
+})
+
+// ---------------------------------------------------------------------------
+// Lifecycle init status RPC (Issue #15)
+// ---------------------------------------------------------------------------
+
+/**
+ * Layer that exposes both the RPC client and the DeferredServicesReady Ref,
+ * so tests can verify the relationship between the Ref state and the RPC
+ * response. Uses provideMerge for DeferredServicesReadyLayer so it appears
+ * in the output context for extraction.
+ */
+const CoreOnlyRpcWithReadyRefLayer = LaborerRpcsLive.pipe(
+  Layer.provide(DeferredServiceStubs),
+  Layer.provideMerge(DeferredServicesReadyLayer),
+  Layer.provide(ConfigService.layer),
+  Layer.provideMerge(TestLaborerStore)
+)
+
+const makeScopedInitStatusContext = Effect.gen(function* () {
+  const context = yield* Layer.build(CoreOnlyRpcWithReadyRefLayer)
+  const client = yield* RpcTest.makeClient(LaborerRpcs).pipe(
+    Effect.provide(Layer.succeedContext(context))
+  )
+  const { ref: readyRef } = Context.get(context, DeferredServicesReady)
+  return { client, readyRef }
+})
+
+describe('Lifecycle init status (Issue #15)', () => {
+  it.scoped(
+    'lifecycle.initStatus returns { ready: false } before deferred services init',
+    () =>
+      Effect.gen(function* () {
+        const { client } = yield* makeScopedInitStatusContext
+
+        const result = yield* client.lifecycle.initStatus()
+
+        assert.strictEqual(result.ready, false)
+      })
+  )
+
+  it.scoped(
+    'lifecycle.initStatus returns { ready: true } after deferred services init',
+    () =>
+      Effect.gen(function* () {
+        const { client, readyRef } = yield* makeScopedInitStatusContext
+
+        // Simulate background fiber completing deferred initialization
+        yield* Ref.set(readyRef, true)
+
+        const result = yield* client.lifecycle.initStatus()
+
+        assert.strictEqual(result.ready, true)
+      })
+  )
+
+  it.scoped('lifecycle.initStatus works alongside other core RPCs', () =>
+    Effect.gen(function* () {
+      const { client } = yield* makeScopedInitStatusContext
+
+      // Both core RPCs should work in the same session
+      const health = yield* client.health.check()
+      const initStatus = yield* client.lifecycle.initStatus()
+
+      assert.strictEqual(health.status, 'ok')
+      assert.strictEqual(initStatus.ready, false)
+    })
   )
 })

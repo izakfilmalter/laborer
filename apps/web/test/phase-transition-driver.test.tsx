@@ -329,4 +329,180 @@ describe('PhaseTransitionDriver', () => {
       String(LifecyclePhase.Restored)
     )
   })
+
+  // Issue #15: Eventually transition via init-status polling
+  it('advances to Eventually when init-status returns ready after Restored', async () => {
+    let initStatusReady = false
+
+    mockFetch((url) => {
+      // All sidecars healthy immediately
+      if (url === '/server-health') {
+        return Promise.resolve({ ok: true })
+      }
+      if (url === '/terminal-health') {
+        return Promise.resolve({ ok: true })
+      }
+      if (url === '/file-watcher-health') {
+        return Promise.resolve({ ok: true })
+      }
+      // Init-status endpoint
+      if (url === '/server-init-status') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ ready: initStatusReady }),
+        })
+      }
+      return pendingPromise()
+    })
+
+    render(
+      <LifecyclePhaseProvider>
+        <PhaseTransitionDriver />
+        <PhaseDisplay />
+      </LifecyclePhaseProvider>
+    )
+
+    // Initial poll — all sidecars healthy → Restored
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('phase').textContent).toBe(
+      String(LifecyclePhase.Restored)
+    )
+
+    // Init-status returns not ready — still Restored
+    await act(async () => {
+      vi.advanceTimersByTime(2000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('phase').textContent).toBe(
+      String(LifecyclePhase.Restored)
+    )
+
+    // Deferred services finish initializing
+    initStatusReady = true
+
+    await act(async () => {
+      vi.advanceTimersByTime(2000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('phase').textContent).toBe(
+      String(LifecyclePhase.Eventually)
+    )
+  })
+
+  it('does not poll init-status before Restored phase', async () => {
+    const initStatusCalls: string[] = []
+
+    mockFetch((url) => {
+      // Only server healthy — terminal and file-watcher not ready
+      if (url === '/server-health') {
+        return Promise.resolve({ ok: true })
+      }
+      if (url === '/server-init-status') {
+        initStatusCalls.push(url)
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ ready: true }),
+        })
+      }
+      if (url === '/terminal-health' || url === '/file-watcher-health') {
+        return Promise.reject(new Error('not ready'))
+      }
+      return pendingPromise()
+    })
+
+    render(
+      <LifecyclePhaseProvider>
+        <PhaseTransitionDriver />
+        <PhaseDisplay />
+      </LifecyclePhaseProvider>
+    )
+
+    // Initial poll — server healthy, but sidecars not → Ready only
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('phase').textContent).toBe(
+      String(LifecyclePhase.Ready)
+    )
+
+    // Advance several poll intervals — init-status should NOT be polled
+    await act(async () => {
+      vi.advanceTimersByTime(10_000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(initStatusCalls).toHaveLength(0)
+    expect(screen.getByTestId('phase').textContent).toBe(
+      String(LifecyclePhase.Ready)
+    )
+  })
+
+  it('stops polling init-status after Eventually is reached', async () => {
+    let initStatusCallCount = 0
+
+    mockFetch((url) => {
+      if (url === '/server-health') {
+        return Promise.resolve({ ok: true })
+      }
+      if (url === '/terminal-health') {
+        return Promise.resolve({ ok: true })
+      }
+      if (url === '/file-watcher-health') {
+        return Promise.resolve({ ok: true })
+      }
+      if (url === '/server-init-status') {
+        initStatusCallCount++
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ ready: true }),
+        })
+      }
+      return pendingPromise()
+    })
+
+    render(
+      <LifecyclePhaseProvider>
+        <PhaseTransitionDriver />
+        <PhaseDisplay />
+      </LifecyclePhaseProvider>
+    )
+
+    // All sidecars healthy → Restored, init-status ready → Eventually
+    // (init-status polling starts immediately on Restored and returns ready)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('phase').textContent).toBe(
+      String(LifecyclePhase.Eventually)
+    )
+
+    const callCountAtEventually = initStatusCallCount
+
+    // Advance several more poll intervals — should NOT poll again
+    // (phase === Eventually, useEffect cleanup runs)
+    await act(async () => {
+      vi.advanceTimersByTime(10_000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // The call count should not have increased significantly
+    // (one extra call at most from the effect re-running when phase changes)
+    expect(initStatusCallCount).toBeLessThanOrEqual(callCountAtEventually + 1)
+  })
 })

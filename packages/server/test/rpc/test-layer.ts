@@ -6,6 +6,7 @@ import { BackgroundFetchService } from '../../src/services/background-fetch-serv
 import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
 import { ConfigService } from '../../src/services/config-service.js'
 import { ContainerService } from '../../src/services/container-service.js'
+import { DeferredServicesReadyLayer } from '../../src/services/deferred-service.js'
 import { DepsImageService } from '../../src/services/deps-image-service.js'
 import { DiffService } from '../../src/services/diff-service.js'
 import { DockerDetection } from '../../src/services/docker-detection.js'
@@ -203,6 +204,7 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(DeferredServiceStack),
   Layer.provide(DeferredLeafLayers),
   Layer.provide(CoreLeafLayers),
+  Layer.provide(DeferredServicesReadyLayer),
   Layer.provide(TestLaborerStore)
 )
 
@@ -212,6 +214,7 @@ const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
   Layer.provide(DeferredServiceStack),
   Layer.provide(DeferredLeafLayers),
   Layer.provide(CoreLeafLayers),
+  Layer.provide(DeferredServicesReadyLayer),
   Layer.provideMerge(TestLaborerStore)
 )
 

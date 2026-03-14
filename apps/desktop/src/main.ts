@@ -321,10 +321,10 @@ app
         }
       })
 
-      // Spawn services without blocking — the web app's ServerGate component
-      // (apps/web/src/components/server-gate.tsx) blocks the main UI until
-      // all core services are healthy, showing status and retry options.
-      // This allows the window to render immediately with the header visible.
+      // Spawn all three sidecars in parallel without blocking the window.
+      // Each sidecar reports healthy independently via status events.
+      // The renderer's lifecycle phase service advances phases as each
+      // sidecar becomes ready (Starting → Ready → Restored → Eventually).
       healthMonitor.spawnServices().then((servicesOk) => {
         if (!servicesOk) {
           console.error(

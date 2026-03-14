@@ -380,3 +380,31 @@
 - TypeScript typecheck passes with no errors across all 7 packages
 - Formatter (ultracite/biome) passes on all changed files
 - Pre-existing format errors in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #17: Parallel sidecar spawning — COMPLETED
+
+### What was done
+- **`HealthMonitor.spawnServices()`** (`apps/desktop/src/health.ts`) — changed from two-phase sequential to fully parallel spawning:
+  - **Before:** Terminal + file-watcher spawned in parallel (Phase 1), then server spawned sequentially after both healthy (Phase 2). If terminal or file-watcher failed, server never started.
+  - **After:** All three sidecars (terminal, file-watcher, server) spawn concurrently via `Promise.all`. Each reports healthy independently via status events. Individual failures are logged but don't prevent other sidecars from starting.
+  - The return value still indicates whether ALL services are healthy (`true` only if all three succeed), but individual failures no longer block the others.
+  - This is possible because Issue #16 (lazy sidecar connections) removed the server's dependency on terminal/file-watcher being healthy before starting.
+
+- **Updated comment in `apps/desktop/src/main.ts`** (line 324-327) — replaced old ServerGate reference with lifecycle phase description, reflecting that the renderer now uses phased lifecycle service instead of a blocking gate.
+
+- **Tests** — Added 6 new tests to `apps/desktop/test/health.test.ts` under `HealthMonitor.spawnServices`:
+  1. Spawns all 3 sidecars concurrently (not sequentially) — verifies all 3 are spawned, spawn timestamps within 100ms of each other
+  2. Server health reported independently of terminal/file-watcher — server reports healthy before delayed terminal/file-watcher
+  3. Each sidecar emits its own status events independently — verifies 3 starting + 3 healthy events, each for a different service
+  4. Individual sidecar failure does not block others — server times out but terminal/file-watcher still report healthy
+  5. Startup time is max(sidecars) not sum(sidecars) — all 3 healthy after ~200ms delay, total < 2s (not 3x200ms sequential)
+  6. Crash recovery for individual sidecars still works — manual restart after initial spawn succeeds
+
+- **Test infrastructure** — Added `createTestServer` helper (creates HTTP server on random port) and `createMockSidecarManager` helper (records spawn order/timestamps, no-op for process lifecycle). Uses inline `SidecarName` type to avoid importing `sidecar.ts` which requires Electron.
+
+### Verification
+- All 6 new tests pass
+- All 151 desktop tests pass (up from 145 after previous changes, 6 new tests; 7 pre-existing failures in `main.test.ts` due to `app.setAsDefaultProtocolClient` mock issue — identical before and after change)
+- TypeScript typecheck passes with no errors across all packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format errors in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change

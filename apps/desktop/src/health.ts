@@ -251,40 +251,39 @@ export class HealthMonitor {
   }
 
   /**
-   * Spawn the terminal, file-watcher, and server services, waiting for
-   * each to become healthy before proceeding. Terminal and file-watcher
-   * start first (in parallel) because the server connects to both on
-   * startup.
+   * Spawn all three core sidecars (terminal, file-watcher, server) in
+   * parallel. Each reports healthy independently via status events.
    *
-   * Replaces the delay-based `SidecarManager.spawnServices()`.
+   * With lazy sidecar connections (Issue #16), the server no longer needs
+   * terminal or file-watcher to be healthy before starting — all three
+   * can boot concurrently. Individual failures are logged but do not
+   * prevent other sidecars from starting.
    *
    * @returns `true` if all services are healthy.
    */
   async spawnServices(): Promise<boolean> {
-    // Terminal and file-watcher can start in parallel — the server
-    // depends on both but they are independent of each other.
-    const [terminalOk, fileWatcherOk] = await Promise.all([
+    // All three sidecars are independent — spawn them concurrently.
+    // The server uses lazy connections to terminal and file-watcher,
+    // so it no longer blocks on their health before starting.
+    const [terminalOk, fileWatcherOk, serverOk] = await Promise.all([
       this.spawnAndWaitHealthy('terminal'),
       this.spawnAndWaitHealthy('file-watcher'),
+      this.spawnAndWaitHealthy('server'),
     ])
 
     if (!terminalOk) {
       console.error('[health] Terminal failed to become healthy')
-      return false
     }
 
     if (!fileWatcherOk) {
       console.error('[health] File-watcher failed to become healthy')
-      return false
     }
 
-    const serverOk = await this.spawnAndWaitHealthy('server')
     if (!serverOk) {
       console.error('[health] Server failed to become healthy')
-      return false
     }
 
-    return true
+    return terminalOk && fileWatcherOk && serverOk
   }
 
   /**

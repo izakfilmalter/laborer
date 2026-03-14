@@ -1,5 +1,5 @@
 import { Events, makeSchema, Schema, State } from '@livestore/livestore'
-import { PanelNodeSchema, PrdStatus } from './types.js'
+import { PanelNodeSchema, PrdStatus, WindowLayoutSchema } from './types.js'
 
 // ---------------------------------------------------------------------------
 // Tables
@@ -120,31 +120,49 @@ export const appSettings = State.SQLite.table({
 /**
  * PanelLayout stores the recursive tree structure of splits and panes.
  * Uses a single row per window session (keyed by `windowId`) with the full
- * tree serialized as JSON. The `activePaneId` tracks which pane currently has
- * focus.
+ * tree serialized as JSON.
  *
- * The `layoutTree` column uses `State.SQLite.json` which automatically handles
- * JSON serialization/deserialization via Effect Schema's `parseJson`.
+ * Legacy columns (`layoutTree`, `activePaneId`, `workspaceOrder`) store the
+ * old flat `PanelNode` format. New columns (`windowLayout`, `activeWindowTabId`)
+ * store the hierarchical `WindowLayout` format. During migration both may
+ * coexist; consumers should prefer `windowLayout` when present.
  */
 export const panelLayout = State.SQLite.table({
   name: 'panel_layout',
   columns: {
     windowId: State.SQLite.text({ primaryKey: true }),
+    /** @deprecated — Legacy flat layout tree. Use `windowLayout` for new code. */
     layoutTree: State.SQLite.json({
-      schema: PanelNodeSchema,
+      schema: Schema.NullOr(PanelNodeSchema),
+      nullable: true,
+      default: null,
     }),
+    /** @deprecated — Legacy active pane ID. Focus state is now embedded in `windowLayout`. */
     activePaneId: State.SQLite.text({ nullable: true }),
     /**
-     * Explicit ordering of workspace frames in the panel view.
-     * Stored as a JSON array of workspace IDs. When null, the order
-     * is derived from the DFS traversal of the layout tree.
-     * Updated when the user drag-and-drops workspace frames to reorder.
+     * @deprecated — Legacy workspace ordering. Now embedded in `windowLayout`'s
+     * workspace tile tree.
      */
     workspaceOrder: State.SQLite.json({
       schema: Schema.NullOr(Schema.Array(Schema.String)),
       nullable: true,
       default: null,
     }),
+    /**
+     * The hierarchical layout tree: WindowLayout > WindowTab > WorkspaceTileNode > PanelTab.
+     * Contains all window tabs, workspace tiling, panel tabs, and split trees.
+     * Null when the row was written by legacy events that only populated `layoutTree`.
+     */
+    windowLayout: State.SQLite.json({
+      schema: Schema.NullOr(WindowLayoutSchema),
+      nullable: true,
+      default: null,
+    }),
+    /**
+     * ID of the currently active window tab within this Electron window.
+     * Null when using legacy layout format or when no tab is active.
+     */
+    activeWindowTabId: State.SQLite.text({ nullable: true }),
   },
 })
 
@@ -502,6 +520,108 @@ export const layoutWorkspacesReordered = Events.synced({
   }),
 })
 
+// -- Hierarchical Layout events ---------------------------------------------
+
+/**
+ * All hierarchical layout events carry the full `WindowLayout` tree for the
+ * window. Tree manipulation logic lives in the app; the materializer simply
+ * persists the result. Each event represents a different user action for
+ * auditability.
+ *
+ * The `activeWindowTabId` is stored as a top-level column for quick access
+ * without deserializing the full JSON tree.
+ */
+
+const windowLayoutEventSchema = Schema.Struct({
+  windowId: Schema.String,
+  windowLayout: WindowLayoutSchema,
+  activeWindowTabId: Schema.NullOr(Schema.String),
+})
+
+/** Fired when a new window tab is created (e.g., Cmd+N). */
+export const windowTabCreated = Events.synced({
+  name: 'v1.WindowTabCreated',
+  schema: windowLayoutEventSchema,
+})
+
+/** Fired when a window tab is closed (e.g., Cmd+Shift+W). */
+export const windowTabClosed = Events.synced({
+  name: 'v1.WindowTabClosed',
+  schema: windowLayoutEventSchema,
+})
+
+/** Fired when the user switches to a different window tab. */
+export const windowTabSwitched = Events.synced({
+  name: 'v1.WindowTabSwitched',
+  schema: windowLayoutEventSchema,
+})
+
+/** Fired when window tabs are reordered via drag-and-drop. */
+export const windowTabsReordered = Events.synced({
+  name: 'v1.WindowTabsReordered',
+  schema: windowLayoutEventSchema,
+})
+
+/** Fired when a new panel tab is created within a workspace (e.g., Ctrl+T). */
+export const panelTabCreated = Events.synced({
+  name: 'v1.PanelTabCreated',
+  schema: windowLayoutEventSchema,
+})
+
+/** Fired when a panel tab is closed within a workspace. */
+export const panelTabClosed = Events.synced({
+  name: 'v1.PanelTabClosed',
+  schema: windowLayoutEventSchema,
+})
+
+/** Fired when the user switches to a different panel tab within a workspace. */
+export const panelTabSwitched = Events.synced({
+  name: 'v1.PanelTabSwitched',
+  schema: windowLayoutEventSchema,
+})
+
+/** Fired when panel tabs are reordered within a workspace via drag-and-drop. */
+export const panelTabsReordered = Events.synced({
+  name: 'v1.PanelTabsReordered',
+  schema: windowLayoutEventSchema,
+})
+
+/**
+ * Fired when the hierarchical layout is restored on startup (new format).
+ * Used for both initial seeding and post-reconciliation commits.
+ */
+export const windowLayoutRestored = Events.synced({
+  name: 'v1.WindowLayoutRestored',
+  schema: windowLayoutEventSchema,
+})
+
+/**
+ * Fired when a pane is split within the hierarchical layout (new format).
+ * Carries the full updated WindowLayout tree.
+ */
+export const windowLayoutSplit = Events.synced({
+  name: 'v1.WindowLayoutSplit',
+  schema: windowLayoutEventSchema,
+})
+
+/**
+ * Fired when a pane is closed within the hierarchical layout (new format).
+ * Carries the full updated WindowLayout tree.
+ */
+export const windowLayoutPaneClosed = Events.synced({
+  name: 'v1.WindowLayoutPaneClosed',
+  schema: windowLayoutEventSchema,
+})
+
+/**
+ * Fired when a pane is assigned (focus change, terminal assignment) in the
+ * hierarchical layout. Carries the full updated WindowLayout tree.
+ */
+export const windowLayoutPaneAssigned = Events.synced({
+  name: 'v1.WindowLayoutPaneAssigned',
+  schema: windowLayoutEventSchema,
+})
+
 export const events = {
   projectCreated,
   projectRepositoryIdentityBackfilled,
@@ -540,6 +660,18 @@ export const events = {
   layoutPaneAssigned,
   layoutRestored,
   layoutWorkspacesReordered,
+  windowTabCreated,
+  windowTabClosed,
+  windowTabSwitched,
+  windowTabsReordered,
+  panelTabCreated,
+  panelTabClosed,
+  panelTabSwitched,
+  panelTabsReordered,
+  windowLayoutRestored,
+  windowLayoutSplit,
+  windowLayoutPaneClosed,
+  windowLayoutPaneAssigned,
 }
 
 // ---------------------------------------------------------------------------
@@ -751,6 +883,63 @@ const materializers = State.SQLite.materializers(events, {
       .onConflict('windowId', 'update', { layoutTree, activePaneId }),
   'v1.LayoutWorkspacesReordered': ({ windowId, workspaceOrder }) =>
     panelLayout.update({ workspaceOrder }).where({ windowId }),
+  // -- Hierarchical layout event materializers --------------------------------
+  'v1.WindowTabCreated': ({ windowId, windowLayout, activeWindowTabId }) =>
+    panelLayout
+      .insert({ windowId, windowLayout, activeWindowTabId })
+      .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),
+  'v1.WindowTabClosed': ({ windowId, windowLayout, activeWindowTabId }) =>
+    panelLayout
+      .insert({ windowId, windowLayout, activeWindowTabId })
+      .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),
+  'v1.WindowTabSwitched': ({ windowId, windowLayout, activeWindowTabId }) =>
+    panelLayout
+      .insert({ windowId, windowLayout, activeWindowTabId })
+      .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),
+  'v1.WindowTabsReordered': ({ windowId, windowLayout, activeWindowTabId }) =>
+    panelLayout
+      .insert({ windowId, windowLayout, activeWindowTabId })
+      .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),
+  'v1.PanelTabCreated': ({ windowId, windowLayout, activeWindowTabId }) =>
+    panelLayout
+      .insert({ windowId, windowLayout, activeWindowTabId })
+      .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),
+  'v1.PanelTabClosed': ({ windowId, windowLayout, activeWindowTabId }) =>
+    panelLayout
+      .insert({ windowId, windowLayout, activeWindowTabId })
+      .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),
+  'v1.PanelTabSwitched': ({ windowId, windowLayout, activeWindowTabId }) =>
+    panelLayout
+      .insert({ windowId, windowLayout, activeWindowTabId })
+      .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),
+  'v1.PanelTabsReordered': ({ windowId, windowLayout, activeWindowTabId }) =>
+    panelLayout
+      .insert({ windowId, windowLayout, activeWindowTabId })
+      .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),
+  'v1.WindowLayoutRestored': ({ windowId, windowLayout, activeWindowTabId }) =>
+    panelLayout
+      .insert({ windowId, windowLayout, activeWindowTabId })
+      .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),
+  'v1.WindowLayoutSplit': ({ windowId, windowLayout, activeWindowTabId }) =>
+    panelLayout
+      .insert({ windowId, windowLayout, activeWindowTabId })
+      .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),
+  'v1.WindowLayoutPaneClosed': ({
+    windowId,
+    windowLayout,
+    activeWindowTabId,
+  }) =>
+    panelLayout
+      .insert({ windowId, windowLayout, activeWindowTabId })
+      .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),
+  'v1.WindowLayoutPaneAssigned': ({
+    windowId,
+    windowLayout,
+    activeWindowTabId,
+  }) =>
+    panelLayout
+      .insert({ windowId, windowLayout, activeWindowTabId })
+      .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),
 })
 
 // ---------------------------------------------------------------------------

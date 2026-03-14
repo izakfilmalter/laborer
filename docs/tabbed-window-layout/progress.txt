@@ -127,3 +127,56 @@ Date: 2026-03-13
 - `bun run --filter @laborer/shared typecheck` — passes
 - `bun run --filter @laborer/web test` — 733/733 tests pass (57 new + 676 existing)
 - `biome check` — no issues in modified files
+
+## Issue #5: Schema + LiveStore events for new layout model — COMPLETED
+
+Date: 2026-03-13
+
+### What was done
+- Updated `panel_layout` state table in `packages/shared/src/schema.ts`:
+  - Made `layoutTree` column nullable (was required) with `Schema.NullOr(PanelNodeSchema)` for backward compat
+  - Added `windowLayout` column: `Schema.NullOr(WindowLayoutSchema)`, nullable, default null — stores the new hierarchical `WindowLayout` tree
+  - Added `activeWindowTabId` column: nullable text — stores the ID of the currently active window tab
+  - Legacy columns (`layoutTree`, `activePaneId`, `workspaceOrder`) preserved and marked `@deprecated`
+
+- Defined shared `windowLayoutEventSchema` for all new events:
+  - `{ windowId: String, windowLayout: WindowLayoutSchema, activeWindowTabId: NullOr(String) }`
+
+- Added 12 new LiveStore events:
+  - **Window tab events**: `windowTabCreated`, `windowTabClosed`, `windowTabSwitched`, `windowTabsReordered`
+  - **Panel tab events**: `panelTabCreated`, `panelTabClosed`, `panelTabSwitched`, `panelTabsReordered`
+  - **Hierarchical layout events**: `windowLayoutRestored`, `windowLayoutSplit`, `windowLayoutPaneClosed`, `windowLayoutPaneAssigned`
+
+- Added materializers for all 12 new events:
+  - All use the same upsert pattern: `insert({ windowId, windowLayout, activeWindowTabId }).onConflict('windowId', 'update', { windowLayout, activeWindowTabId })`
+  - New events only update `windowLayout` and `activeWindowTabId` columns — they do NOT touch legacy columns
+  - Legacy events continue to only update `layoutTree` and `activePaneId` — they do NOT touch new columns
+  - This ensures legacy and hierarchical data can coexist during migration
+
+- Old events (`layoutSplit`, `layoutPaneClosed`, `layoutPaneAssigned`, `layoutRestored`, `layoutWorkspacesReordered`) remain unchanged for backward compatibility with existing eventlog data
+
+- Updated existing test assertions in `packages/shared/test/schema.test.ts` to include new columns (`windowLayout: null`, `activeWindowTabId: null`) in `deepStrictEqual` checks
+
+- Added 15 new tests in `packages/shared/test/schema.test.ts`:
+  - `windowTabCreated` materializes correctly (verifies new columns populated, legacy columns null)
+  - `windowTabClosed` updates layout after closing a tab
+  - `windowTabSwitched` updates `activeWindowTabId`
+  - `windowTabsReordered` updates tab order in the layout
+  - `panelTabCreated` adds panel tabs to workspaces
+  - `panelTabClosed` removes panel tabs
+  - `panelTabSwitched` updates active panel tab
+  - `panelTabsReordered` reorders panel tabs
+  - `windowLayoutRestored` for startup/reconciliation
+  - `windowLayoutSplit` with nested panel split trees
+  - `windowLayoutPaneClosed` and `windowLayoutPaneAssigned`
+  - Multiple windows with hierarchical layouts stored independently
+  - Hierarchical events do not overwrite legacy columns
+  - Legacy events do not overwrite hierarchical columns
+  - Nested workspace tile splits round-trip correctly through JSON serialization
+
+### Verification
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/shared test` — 75/75 tests pass (15 new + 60 existing)
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/web test` — 733/733 tests pass (no regressions)
+- `biome check` — no issues in modified files (pre-existing issues in unrelated files)

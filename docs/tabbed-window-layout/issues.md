@@ -160,7 +160,7 @@ Panel tabs contain a `PanelNode` split tree (the existing type), so existing spl
 
 ## 5. Schema + LiveStore events for new layout model
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1065,7 +1065,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 2 | Layout-utils: window tab operations | 1 | done |
 | 3 | Layout-utils: workspace tile operations | 1 | done |
 | 4 | Layout-utils: panel tab operations | 1 | done |
-| 5 | Schema + LiveStore events for new layout model | 1 | pending |
+| 5 | Schema + LiveStore events for new layout model | 1 | done |
 | 6 | Layout migration: flat PanelNode to hierarchical WindowLayout | 1, 2, 5 | pending |
 | 7 | Tab bar component | None | pending |
 | 8 | Window tab bar integration | 7, 2, 5 | pending |

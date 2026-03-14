@@ -48,6 +48,7 @@ export default defineConfig(({ mode }) => {
 
   const serverPort = Number(env.VITE_SERVER_PORT ?? 2100)
   const terminalPort = Number(env.VITE_TERMINAL_PORT ?? 2102)
+  const fileWatcherPort = Number(env.VITE_FILE_WATCHER_PORT ?? 2104)
   const vitePort = Number(env.VITE_PORT ?? 2101)
 
   return {
@@ -77,6 +78,14 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/server-health': {
           target: `http://localhost:${serverPort}`,
+          rewrite: () => '/',
+        },
+        '/terminal-health': {
+          target: `http://localhost:${terminalPort}`,
+          rewrite: () => '/',
+        },
+        '/file-watcher-health': {
+          target: `http://localhost:${fileWatcherPort}`,
           rewrite: () => '/',
         },
         '/rpc': {

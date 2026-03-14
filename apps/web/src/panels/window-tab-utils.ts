@@ -597,6 +597,98 @@ function addWorkspaceToTabUnique(
 }
 
 // ---------------------------------------------------------------------------
+// Close confirmation for hierarchical levels
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal terminal info needed for close confirmation checks.
+ */
+interface TerminalProcessInfo {
+  readonly hasChildProcess: boolean
+  readonly id: string
+}
+
+/**
+ * Collect all terminal IDs from a PanelTreeNode.
+ */
+function collectTerminalIdsFromPanelTree(
+  node: PanelTreeNode
+): readonly string[] {
+  if (node._tag === 'PanelLeafNode') {
+    return node.terminalId !== undefined ? [node.terminalId] : []
+  }
+  return node.children.flatMap(collectTerminalIdsFromPanelTree)
+}
+
+/**
+ * Check whether any terminal in the given IDs has a running child process.
+ */
+function hasRunningProcess(
+  terminalIds: readonly string[],
+  terminals: readonly TerminalProcessInfo[]
+): boolean {
+  return terminalIds.some((id) => {
+    const terminal = terminals.find((t) => t.id === id)
+    return terminal?.hasChildProcess === true
+  })
+}
+
+/**
+ * Determine whether closing a panel tab should show a confirmation dialog.
+ *
+ * Returns true when the panel tab contains any terminal with a running
+ * child process. This prevents accidental loss of running work when
+ * the progressive close chain removes a panel tab.
+ *
+ * @param panelTab - The panel tab to check
+ * @param terminals - The live terminal list with hasChildProcess info
+ * @returns Whether the close confirmation dialog should be shown
+ */
+function shouldConfirmClosePanelTab(
+  panelTab: PanelTab,
+  terminals: readonly TerminalProcessInfo[]
+): boolean {
+  const terminalIds = collectTerminalIdsFromPanelTree(panelTab.panelLayout)
+  return hasRunningProcess(terminalIds, terminals)
+}
+
+/**
+ * Collect all terminal IDs from a WorkspaceTileNode tree.
+ * Walks workspace tiles > panel tabs > panel tree nodes.
+ */
+function collectTerminalIdsFromTileTree(
+  node: WorkspaceTileNode
+): readonly string[] {
+  if (node._tag === 'WorkspaceTileLeaf') {
+    return node.panelTabs.flatMap((tab) =>
+      collectTerminalIdsFromPanelTree(tab.panelLayout)
+    )
+  }
+  return node.children.flatMap(collectTerminalIdsFromTileTree)
+}
+
+/**
+ * Determine whether closing a window tab should show a confirmation dialog.
+ *
+ * Returns true when the window tab contains any terminal (across all
+ * workspaces and panel tabs) with a running child process.
+ *
+ * @param windowTab - The window tab to check
+ * @param terminals - The live terminal list with hasChildProcess info
+ * @returns Whether the close confirmation dialog should be shown
+ */
+function shouldConfirmCloseWindowTab(
+  windowTab: WindowTab,
+  terminals: readonly TerminalProcessInfo[]
+): boolean {
+  if (!windowTab.workspaceLayout) {
+    return false
+  }
+  const terminalIds = collectTerminalIdsFromTileTree(windowTab.workspaceLayout)
+  return hasRunningProcess(terminalIds, terminals)
+}
+
+// ---------------------------------------------------------------------------
 // Progressive close logic
 // ---------------------------------------------------------------------------
 
@@ -1522,6 +1614,8 @@ export {
   removeWorkspaceFromLayout,
   reorderWindowTabs,
   repairWindowLayout,
+  shouldConfirmClosePanelTab,
+  shouldConfirmCloseWindowTab,
   switchWindowTab,
   switchWindowTabByIndex,
   switchWindowTabRelative,
@@ -1533,5 +1627,6 @@ export type {
   RepairWindowLayoutResult,
   StaleTerminalLeaf,
   TerminalLocation,
+  TerminalProcessInfo,
   WorkspaceLocation,
 }

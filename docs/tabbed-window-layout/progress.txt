@@ -996,3 +996,52 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 959/959 tests pass (19 new + 940 existing)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing `useAwait` issue in unrelated test code)
+
+## Issue #28: Polish: close confirmation and error handling — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Added close confirmation gating at **panel tab** and **window tab** levels, matching the existing pane-level and workspace-level confirmation patterns:
+
+- **Pure confirmation functions** in `apps/web/src/panels/window-tab-utils.ts`:
+  - `shouldConfirmClosePanelTab(panelTab, terminals)` — checks if any terminal in a panel tab's split tree has a running child process. Walks `PanelTreeNode` recursively to collect terminal IDs.
+  - `shouldConfirmCloseWindowTab(windowTab, terminals)` — checks across all workspaces and panel tabs in a window tab. Walks `WorkspaceTileNode` > `PanelTab` > `PanelTreeNode`.
+  - Helper functions: `collectTerminalIdsFromPanelTree`, `collectTerminalIdsFromTileTree`, `hasRunningProcess`
+  - Exported `TerminalProcessInfo` type for the minimal terminal info needed for checks.
+
+- **New dialog components** in `apps/web/src/routes/-components/close-dialogs.tsx`:
+  - `ClosePanelTabDialog` — "Close tab?" confirmation with Cancel/Close tab buttons. Shown when progressive close chain removes a panel tab with running processes.
+  - `CloseWindowTabDialog` — "Close window tab?" confirmation. Shown when closing a window tab (Cmd+Shift+W or progressive close) that has terminals with running processes across any workspace.
+
+- **Gated action handlers** in `apps/web/src/routes/index.tsx`:
+  - `gatedRemovePanelTab(workspaceId, tabId)` — checks `shouldConfirmClosePanelTab` before removing. If running processes found, shows `ClosePanelTabDialog`. Otherwise removes immediately.
+  - `gatedCloseWindowTab()` — checks `shouldConfirmCloseWindowTab` on the active window tab. If running processes found, shows `CloseWindowTabDialog`. Otherwise closes immediately.
+  - Both gated actions added to `gatedPanelActions` so they flow through the entire component tree (including the progressive close chain via `executeProgressiveClose`).
+  - Dialog state managed via `useState` + `useRef` pattern matching existing `closeWorkspaceDialogOpen` / `pendingCloseWorkspaceIdRef`.
+
+- **Error boundary component** `apps/web/src/components/ui/tab-error-boundary.tsx`:
+  - `TabErrorBoundary` — React class component (required for error boundaries) that isolates render failures in one tab/workspace from crashing other tabs or the entire app.
+  - Shows a fallback UI with: AlertTriangle icon, "Something went wrong" heading, error message, optional tab label context, and "Retry" button.
+  - `Retry` resets the boundary state, allowing the child tree to re-render.
+  - Logs errors via `console.error` with `[TabErrorBoundary]` prefix and tab label.
+
+- **Error boundary integration** in `apps/web/src/routes/-components/workspace-frames.tsx`:
+  - Wrapped `WorkspaceTileLeafFrame` in `TabErrorBoundary` within `WorkspaceTileRenderer`. Each workspace tile leaf is independently isolated — a render error in one workspace's panels does not crash other workspaces or the window tab.
+
+- **Stale layout handling**: Verified that `repairWindowLayout` (implemented in issue #21) already produces empty states instead of crashes. The repair function validates every node recursively, drops invalid nodes, collapses single-child splits, and validates active tab/pane references. Combined with the new error boundaries, invalid layout data gracefully degrades to empty states rather than crashing.
+
+### Tests
+- 19 tests in `apps/web/test/close-confirmation.test.ts` covering:
+  - **shouldConfirmClosePanelTab** (8 tests): no terminals, idle terminal, running terminal, mixed split (one running), all idle split, terminal not in live list, non-terminal pane types, deeply nested splits
+  - **shouldConfirmCloseWindowTab** (11 tests): no workspace layout, no running processes, running process, multiple workspaces (one running), all idle workspaces, multiple panel tabs, panel tab splits, empty workspace, nested workspace tile splits, non-terminal pane types
+
+- 6 tests in `apps/web/test/tab-error-boundary.test.tsx` covering:
+  - Renders children normally, catches errors and shows fallback, shows label in error message, shows retry button, retry recovers when child fixed, sibling isolation
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 984/984 tests pass (25 new + 959 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing `useAwait` issue in unrelated test code)

@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/resizable'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { TabBar, type TabBarItem } from '@/components/ui/tab-bar'
+import { TabErrorBoundary } from '@/components/ui/tab-error-boundary'
 import { useLaborerStore } from '@/livestore/store'
 import {
   filterTreeByWorkspace,
@@ -993,14 +994,16 @@ function WorkspaceTileRenderer({
 }) {
   if (tileNode._tag === 'WorkspaceTileLeaf') {
     return (
-      <WorkspaceTileLeafFrame
-        activePaneId={activePaneId}
-        diffWorkspaceId={diffWorkspaceId}
-        flatLayout={flatLayout}
-        index={index}
-        leaf={tileNode}
-        reviewWorkspaceId={reviewWorkspaceId}
-      />
+      <TabErrorBoundary label={tileNode.workspaceId}>
+        <WorkspaceTileLeafFrame
+          activePaneId={activePaneId}
+          diffWorkspaceId={diffWorkspaceId}
+          flatLayout={flatLayout}
+          index={index}
+          leaf={tileNode}
+          reviewWorkspaceId={reviewWorkspaceId}
+        />
+      </TabErrorBoundary>
     )
   }
 

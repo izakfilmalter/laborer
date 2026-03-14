@@ -45,9 +45,16 @@ import {
 } from '@/panels/panel-context'
 import { PanelGroupRegistryProvider } from '@/panels/panel-group-registry'
 import { PanelHotkeys } from '@/panels/panel-hotkeys'
-import { getActiveWindowTab } from '@/panels/window-tab-utils'
+import {
+  getActiveWindowTab,
+  getWorkspaceTileLeaves,
+  shouldConfirmClosePanelTab,
+  shouldConfirmCloseWindowTab,
+} from '@/panels/window-tab-utils'
 import {
   CloseAppDialog,
+  ClosePanelTabDialog,
+  CloseWindowTabDialog,
   CloseWorkspaceDialog,
   DestroyWorkspaceOnCloseDialog,
 } from './-components/close-dialogs'
@@ -513,6 +520,80 @@ function HomeComponent() {
     }
   }, [panelActions])
 
+  // Close-panel-tab confirmation dialog state — shown when the progressive
+  // close chain attempts to close a panel tab that has running processes.
+  const [closePanelTabDialogOpen, setClosePanelTabDialogOpen] = useState(false)
+  const pendingClosePanelTabRef = useRef<{
+    workspaceId: string
+    tabId: string
+  } | null>(null)
+
+  /**
+   * Gated removePanelTab that checks if any terminal in the panel tab has
+   * a running child process. Shows a confirmation dialog when there are
+   * active processes.
+   */
+  const gatedRemovePanelTab = useCallback(
+    (workspaceId: string, tabId: string) => {
+      const windowLayout = panelActions.windowLayout
+      if (!windowLayout) {
+        panelActions.removePanelTab?.(workspaceId, tabId)
+        return
+      }
+      // Find the workspace tile leaf and panel tab
+      const activeTab = getActiveWindowTab(windowLayout)
+      if (!activeTab?.workspaceLayout) {
+        panelActions.removePanelTab?.(workspaceId, tabId)
+        return
+      }
+      const leaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+      const leaf = leaves.find((l) => l.workspaceId === workspaceId)
+      const panelTab = leaf?.panelTabs.find((t) => t.id === tabId)
+      if (panelTab && shouldConfirmClosePanelTab(panelTab, liveTerminals)) {
+        pendingClosePanelTabRef.current = { workspaceId, tabId }
+        setClosePanelTabDialogOpen(true)
+        return
+      }
+      panelActions.removePanelTab?.(workspaceId, tabId)
+    },
+    [panelActions, liveTerminals]
+  )
+
+  const handleConfirmClosePanelTab = useCallback(() => {
+    const pending = pendingClosePanelTabRef.current
+    if (pending) {
+      panelActions.removePanelTab?.(pending.workspaceId, pending.tabId)
+      pendingClosePanelTabRef.current = null
+    }
+  }, [panelActions])
+
+  // Close-window-tab confirmation dialog state — shown when closing a
+  // window tab that has terminals with running processes.
+  const [closeWindowTabDialogOpen, setCloseWindowTabDialogOpen] =
+    useState(false)
+
+  /**
+   * Gated closeWindowTab that checks if any terminal across all workspaces
+   * in the window tab has a running child process.
+   */
+  const gatedCloseWindowTab = useCallback(() => {
+    const windowLayout = panelActions.windowLayout
+    if (!windowLayout) {
+      panelActions.closeWindowTab?.()
+      return
+    }
+    const activeTab = getActiveWindowTab(windowLayout)
+    if (activeTab && shouldConfirmCloseWindowTab(activeTab, liveTerminals)) {
+      setCloseWindowTabDialogOpen(true)
+      return
+    }
+    panelActions.closeWindowTab?.()
+  }, [panelActions, liveTerminals])
+
+  const handleConfirmCloseWindowTab = useCallback(() => {
+    panelActions.closeWindowTab?.()
+  }, [panelActions])
+
   // Panel type picker state — when set, shows the picker overlay on the
   // specified pane. On type selection, the pending action (split/new tab)
   // is performed. Follows the same pattern as pendingClosePaneId.
@@ -589,6 +670,8 @@ function HomeComponent() {
       closePane: gatedClosePane,
       closeTerminalPane: gatedCloseTerminalPane,
       closeWorkspace: gatedCloseWorkspace,
+      closeWindowTab: gatedCloseWindowTab,
+      removePanelTab: gatedRemovePanelTab,
       forceCloseWorkspace: panelActions.closeWorkspace,
       toggleFullscreenPane,
       toggleReviewPane,
@@ -600,6 +683,8 @@ function HomeComponent() {
       gatedClosePane,
       gatedCloseTerminalPane,
       gatedCloseWorkspace,
+      gatedCloseWindowTab,
+      gatedRemovePanelTab,
       toggleFullscreenPane,
       toggleReviewPane,
       toggleDiffPane,
@@ -757,6 +842,16 @@ function HomeComponent() {
           onConfirm={handleConfirmCloseWorkspace}
           onOpenChange={setCloseWorkspaceDialogOpen}
           open={closeWorkspaceDialogOpen}
+        />
+        <ClosePanelTabDialog
+          onConfirm={handleConfirmClosePanelTab}
+          onOpenChange={setClosePanelTabDialogOpen}
+          open={closePanelTabDialogOpen}
+        />
+        <CloseWindowTabDialog
+          onConfirm={handleConfirmCloseWindowTab}
+          onOpenChange={setCloseWindowTabDialogOpen}
+          open={closeWindowTabDialogOpen}
         />
         <CloseAppDialog
           onOpenChange={setIsCloseAppDialogOpen}

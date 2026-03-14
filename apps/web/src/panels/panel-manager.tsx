@@ -45,7 +45,12 @@
 
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { workspaces } from '@laborer/shared/schema'
-import type { LeafNode, PanelNode, SplitNode } from '@laborer/shared/types'
+import type {
+  LeafNode,
+  PanelNode,
+  PaneType,
+  SplitNode,
+} from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import { Layers, Plus, Server, Terminal as TerminalIcon } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -62,6 +67,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { PanelTypePicker } from '@/components/ui/panel-type-picker'
 import {
   ResizableHandle,
   ResizablePanel,
@@ -83,6 +89,7 @@ import {
   useFullscreenPortal,
   usePanelActions,
   usePendingClosePane,
+  usePendingPicker,
 } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import { TerminalPaneWithSidebars } from '@/panels/terminal-pane-with-sidebars'
@@ -510,6 +517,40 @@ function SplitChild({
 }
 
 /**
+ * Inline panel type picker overlay, rendered within a pane's container.
+ * Follows the same pattern as PaneCloseConfirmDialog — absolute positioning
+ * with a backdrop, centered content, keyboard focus captured on mount.
+ */
+function PanePickerOverlay({
+  onSelect,
+  onCancel,
+}: {
+  readonly onSelect: (type: PaneType) => void
+  readonly onCancel: () => void
+}) {
+  return (
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Picker overlay needs click-outside-to-dismiss on backdrop
+    <div
+      className="absolute inset-0 z-50 flex items-center justify-center"
+      onMouseDown={(e) => {
+        // Clicking the backdrop (not the picker) cancels
+        if (e.target === e.currentTarget) {
+          onCancel()
+        }
+      }}
+      role="dialog"
+    >
+      {/* Backdrop — covers only the pane */}
+      <div className="absolute inset-0 bg-foreground/10 supports-backdrop-filter:backdrop-blur-xs" />
+      {/* Picker content */}
+      <div className="relative z-10">
+        <PanelTypePicker onCancel={onCancel} onSelect={onSelect} />
+      </div>
+    </div>
+  )
+}
+
+/**
  * Renders a LeafNode pane with drop target support for terminal drag-and-drop.
  *
  * The active-pane focus border is rendered on the outer panel container
@@ -532,6 +573,7 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
   const fullscreenPaneId = useFullscreenPaneId()
   const fullscreenPortalRef = useFullscreenPortal()
   const pendingClose = usePendingClosePane()
+  const pendingPicker = usePendingPicker()
   const [isDragOver, setIsDragOver] = useState(false)
 
   const isFullscreen = fullscreenPaneId === node.id
@@ -631,6 +673,12 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
           onCancel={pendingClose.onCancel}
           onCloseAndDestroy={pendingClose.onCloseAndDestroy}
           onConfirm={pendingClose.onConfirm}
+        />
+      )}
+      {pendingPicker.paneId === node.id && (
+        <PanePickerOverlay
+          onCancel={pendingPicker.onCancel}
+          onSelect={pendingPicker.onSelect}
         />
       )}
     </div>

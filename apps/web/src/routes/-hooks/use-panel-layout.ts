@@ -405,13 +405,17 @@ export function usePanelLayout() {
   >(null)
 
   const handleSplitPane = useCallback(
-    (paneId: string, direction: 'horizontal' | 'vertical') => {
+    (
+      paneId: string,
+      direction: 'horizontal' | 'vertical',
+      newPaneContent?: Partial<LeafNode>
+    ) => {
       const base = persistedLayoutTree ?? defaultLayout
       if (!base) {
         return
       }
 
-      const newTree = splitPane(base, paneId, direction)
+      const newTree = splitPane(base, paneId, direction, newPaneContent)
 
       store.commit(
         layoutSplit({
@@ -424,6 +428,13 @@ export function usePanelLayout() {
       // Find the newly created pane via leaf-diffing
       const newLeaf = findNewLeafAfterSplit(base, newTree)
       if (!newLeaf?.workspaceId) {
+        return
+      }
+
+      // Only auto-spawn a terminal for terminal-type panes.
+      // Diff, review, and dev server panes handle their own content.
+      const newPaneType = newPaneContent?.paneType ?? 'terminal'
+      if (newPaneType !== 'terminal') {
         return
       }
 
@@ -1168,6 +1179,7 @@ export function usePanelLayout() {
       switchPanelTabByIndex: handleSwitchPanelTabByIndex,
       switchPanelTabRelative: handleSwitchPanelTabRelative,
       reorderWindowTabsDnd: handleReorderWindowTabs,
+      showPanelTypePicker: undefined,
       windowLayout: persistedWindowLayout,
     }),
     [

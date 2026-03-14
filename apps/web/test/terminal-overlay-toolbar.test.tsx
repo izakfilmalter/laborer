@@ -36,6 +36,7 @@ function mockActions(): PanelActions {
     reorderWorkspaces: vi.fn(),
     resizePane: vi.fn(),
     setActivePaneId: vi.fn(),
+    showPanelTypePicker: vi.fn(),
     splitPane: vi.fn(),
     toggleDevServerPane: vi.fn(),
     toggleDiffPane: vi.fn(),

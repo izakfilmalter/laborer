@@ -264,8 +264,10 @@ function WorkspaceFrame({
 
   const handlePanelTabNew = useCallback(() => {
     if (workspaceId) {
-      // Default to terminal type until panel type picker (issue #11) is wired up
-      actions?.addPanelTab?.(workspaceId, 'terminal')
+      actions?.showPanelTypePicker?.({
+        kind: 'new-tab',
+        workspaceId,
+      })
     }
   }, [actions, workspaceId])
 

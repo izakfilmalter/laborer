@@ -541,3 +541,70 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 838/838 tests pass (no regressions)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #15: Wire panel type picker into split + new tab flows — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Connected the panel type picker component to all panel creation entry points, so users now choose a panel type (Terminal, Diff, Review, Dev Server) before splitting or creating a new tab.
+
+- Added `PickerMode` type to `panel-context.tsx`:
+  - `{ kind: 'split-right', paneId, workspaceId }` — split right with chosen type
+  - `{ kind: 'split-down', paneId, workspaceId }` — split down with chosen type
+  - `{ kind: 'new-tab', workspaceId }` — create new panel tab with chosen type
+
+- Added `PendingPickerState` context to `panel-context.tsx`:
+  - `paneId: string | null` — the pane to anchor the picker overlay on
+  - `onSelect(type)` — called when a panel type is selected
+  - `onCancel()` — called when the picker is dismissed
+  - Distributed via `PendingPickerContext` and `usePendingPicker()` hook
+
+- Added `showPanelTypePicker(mode: PickerMode)` to `PanelActions` interface:
+  - Sets the picker mode state, which triggers the picker overlay to appear
+  - On type selection, automatically performs the corresponding split or new-tab action
+  - On cancel (Escape), dismisses without action
+
+- Added `PanePickerOverlay` component in `panel-manager.tsx`:
+  - Renders inline within the pane container (same pattern as `PaneCloseConfirmDialog`)
+  - Uses `absolute inset-0 z-50` positioning with backdrop blur
+  - Centers the `PanelTypePicker` component within the pane
+  - Click-on-backdrop dismisses the picker
+  - Rendered conditionally in `LeafPaneRenderer` when `pendingPicker.paneId === node.id`
+
+- Wired picker state management in `index.tsx`:
+  - `pickerMode` state manages the current picker mode (split-right, split-down, new-tab)
+  - `handlePickerSelect` performs the action: `splitPane` with `newPaneContent` for splits, `addPanelTab` for new tabs
+  - `handlePickerCancel` dismisses the picker
+  - `pendingPickerState` context value passed to `PanelActionsProvider`
+
+- Updated `handleSplitPane` in `use-panel-layout.ts`:
+  - Now accepts optional third argument `newPaneContent?: Partial<LeafNode>`
+  - Passes `newPaneContent` through to `splitPane` from `layout-utils.ts` (which already supported it)
+  - Only auto-spawns a terminal for `terminal`-type panes — diff, review, and dev server panes handle their own content
+  - This fixes a pre-existing bug where `Ctrl+B D/R/S` was silently dropping the `newPaneContent` argument
+
+- Updated keyboard shortcuts in `panel-hotkeys.tsx`:
+  - `Cmd+D` → shows picker, then splits right with chosen type
+  - `Cmd+Shift+D` → shows picker, then splits down with chosen type
+  - `Ctrl+T` → shows picker, then creates panel tab with chosen type
+  - `Ctrl+B, H` → shows picker, then splits right with chosen type
+  - `Ctrl+B, V` → shows picker, then splits down with chosen type
+  - Terminal is pre-selected in the picker, so pressing Enter immediately creates a terminal (no extra interaction needed for the common case)
+
+- Updated panel tab bar `+` button in `workspace-frames.tsx`:
+  - `handlePanelTabNew` now calls `showPanelTypePicker({ kind: 'new-tab', workspaceId })` instead of directly creating a terminal tab
+
+- Updated 5 test files to include `showPanelTypePicker: vi.fn()` mock:
+  - `workspace-frames-minimize.test.tsx`
+  - `workspace-frame-header.test.tsx`
+  - `terminal-overlay-toolbar.test.tsx`
+  - `full-height-review-panel.test.tsx`
+  - `fullscreen-portal.test.tsx`
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 838/838 tests pass (no regressions)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)

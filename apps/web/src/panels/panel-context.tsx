@@ -30,6 +30,23 @@ interface AssignTerminalToPaneOptions {
   readonly autoOpenDevServer?: boolean | undefined
 }
 
+/**
+ * Mode for the panel type picker — determines what happens after a type
+ * is selected.
+ */
+type PickerMode =
+  | {
+      readonly kind: 'split-right'
+      readonly paneId: string
+      readonly workspaceId: string
+    }
+  | {
+      readonly kind: 'split-down'
+      readonly paneId: string
+      readonly workspaceId: string
+    }
+  | { readonly kind: 'new-tab'; readonly workspaceId: string }
+
 interface PanelActions {
   // -- Panel tab actions ---------------------------------------------------
 
@@ -180,6 +197,13 @@ interface PanelActions {
    * @param direction - "horizontal" (side-by-side) or "vertical" (stacked)
    * @param newPaneContent - Optional content for the new pane
    */
+  /**
+   * Show the panel type picker. When a type is selected, the corresponding
+   * action (split or new tab) is performed automatically.
+   *
+   * @param mode - Determines the action: split-right, split-down, or new-tab
+   */
+  readonly showPanelTypePicker: ((mode: PickerMode) => void) | undefined
   readonly splitPane: (
     paneId: string,
     direction: SplitDirection,
@@ -324,6 +348,24 @@ interface PendingCloseState {
   readonly paneId: string | null
 }
 
+/**
+ * State for the panel type picker overlay.
+ * When active, the picker is shown on the pane (for split operations)
+ * or on the workspace frame (for new tab). On selection, the appropriate
+ * split or tab creation action is performed.
+ */
+interface PendingPickerState {
+  /** Cancel the picker — dismisses without creating anything. */
+  readonly onCancel: () => void
+  /** Called when a panel type is selected — performs the action. */
+  readonly onSelect: (type: PaneType) => void
+  /**
+   * The pane ID to anchor the picker to, or null when no picker is active.
+   * For new-tab actions, this is the workspace's active pane (if any).
+   */
+  readonly paneId: string | null
+}
+
 const noop = () => undefined
 
 const defaultPendingClose: PendingCloseState = {
@@ -332,8 +374,17 @@ const defaultPendingClose: PendingCloseState = {
   onCancel: noop,
 }
 
+const defaultPendingPicker: PendingPickerState = {
+  paneId: null,
+  onSelect: noop,
+  onCancel: noop,
+}
+
 const PendingClosePaneContext =
   createContext<PendingCloseState>(defaultPendingClose)
+
+const PendingPickerContext =
+  createContext<PendingPickerState>(defaultPendingPicker)
 
 /**
  * The DOM element where the fullscreened pane portals its content.
@@ -357,12 +408,14 @@ function PanelActionsProvider({
   children,
   fullscreenPaneId,
   pendingClose,
+  pendingPicker,
   value,
 }: {
   readonly activePaneId: string | null
   readonly children: React.ReactNode
   readonly fullscreenPaneId: string | null
   readonly pendingClose?: PendingCloseState | undefined
+  readonly pendingPicker?: PendingPickerState | undefined
   readonly value: PanelActions
 }) {
   return (
@@ -372,7 +425,11 @@ function PanelActionsProvider({
           <PendingClosePaneContext.Provider
             value={pendingClose ?? defaultPendingClose}
           >
-            {children}
+            <PendingPickerContext.Provider
+              value={pendingPicker ?? defaultPendingPicker}
+            >
+              {children}
+            </PendingPickerContext.Provider>
           </PendingClosePaneContext.Provider>
         </FullscreenPaneIdContext.Provider>
       </ActivePaneIdContext.Provider>
@@ -414,6 +471,15 @@ function usePendingClosePane(): PendingCloseState {
 }
 
 /**
+ * Hook to read the pending panel type picker state.
+ * Used by LeafPaneRenderer to render an inline picker overlay
+ * within the pane that triggered a split or new tab action.
+ */
+function usePendingPicker(): PendingPickerState {
+  return useContext(PendingPickerContext)
+}
+
+/**
  * Hook to access the fullscreen portal target element.
  * Used by LeafPaneRenderer to portal the fullscreened pane's content
  * into a container that sits above the panel hierarchy.
@@ -430,5 +496,12 @@ export {
   useFullscreenPortal,
   usePanelActions,
   usePendingClosePane,
+  usePendingPicker,
 }
-export type { AssignTerminalToPaneOptions, PanelActions, PendingCloseState }
+export type {
+  AssignTerminalToPaneOptions,
+  PanelActions,
+  PendingCloseState,
+  PendingPickerState,
+  PickerMode,
+}

@@ -251,43 +251,59 @@ function PanelHotkeys({
     }
   }, [actions, activePaneId])
 
-  // Ctrl+b then h → split active pane horizontally
+  // Ctrl+b then h → split active pane horizontally (shows type picker)
   useHotkeySequence(
     ['Control+B', 'H'],
     (event) => {
       event.preventDefault()
-      if (actions && activePaneId) {
-        actions.splitPane(activePaneId, 'horizontal')
+      if (actions && activePaneId && activeWorkspaceId) {
+        actions.showPanelTypePicker?.({
+          kind: 'split-right',
+          paneId: activePaneId,
+          workspaceId: activeWorkspaceId,
+        })
       }
     },
     { timeout: SEQUENCE_TIMEOUT }
   )
 
-  // Ctrl+b then v → split active pane vertically
+  // Ctrl+b then v → split active pane vertically (shows type picker)
   useHotkeySequence(
     ['Control+B', 'V'],
     (event) => {
       event.preventDefault()
-      if (actions && activePaneId) {
-        actions.splitPane(activePaneId, 'vertical')
+      if (actions && activePaneId && activeWorkspaceId) {
+        actions.showPanelTypePicker?.({
+          kind: 'split-down',
+          paneId: activePaneId,
+          workspaceId: activeWorkspaceId,
+        })
       }
     },
     { timeout: SEQUENCE_TIMEOUT }
   )
 
-  // Cmd+d → split active pane horizontally (Ghostty-style)
+  // Cmd+d → split active pane horizontally (shows type picker)
   useHotkeySequence(['Meta+D'], (event) => {
     event.preventDefault()
-    if (actions && activePaneId) {
-      actions.splitPane(activePaneId, 'horizontal')
+    if (actions && activePaneId && activeWorkspaceId) {
+      actions.showPanelTypePicker?.({
+        kind: 'split-right',
+        paneId: activePaneId,
+        workspaceId: activeWorkspaceId,
+      })
     }
   })
 
-  // Cmd+Shift+d → split active pane vertically (Ghostty-style)
+  // Cmd+Shift+d → split active pane vertically (shows type picker)
   useHotkeySequence(['Shift+Meta+D'], (event) => {
     event.preventDefault()
-    if (actions && activePaneId) {
-      actions.splitPane(activePaneId, 'vertical')
+    if (actions && activePaneId && activeWorkspaceId) {
+      actions.showPanelTypePicker?.({
+        kind: 'split-down',
+        paneId: activePaneId,
+        workspaceId: activeWorkspaceId,
+      })
     }
   })
 
@@ -497,12 +513,14 @@ function PanelHotkeys({
 
   // --- Panel tab shortcuts ---
 
-  // Ctrl+T → create new panel tab in focused workspace (defaults to terminal)
+  // Ctrl+T → show type picker, then create new panel tab in focused workspace
   useHotkeySequence(['Control+T'], (event) => {
     event.preventDefault()
     if (actions && activeWorkspaceId) {
-      // Default to terminal type until panel type picker (issue #11) is wired up
-      actions.addPanelTab?.(activeWorkspaceId, 'terminal')
+      actions.showPanelTypePicker?.({
+        kind: 'new-tab',
+        workspaceId: activeWorkspaceId,
+      })
     }
   })
 

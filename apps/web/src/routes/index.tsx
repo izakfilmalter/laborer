@@ -1,5 +1,6 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { projects, workspaces } from '@laborer/shared/schema'
+import type { LeafNode, PaneType } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -39,6 +40,8 @@ import {
 import {
   PanelActionsProvider,
   type PendingCloseState,
+  type PendingPickerState,
+  type PickerMode,
 } from '@/panels/panel-context'
 import { PanelGroupRegistryProvider } from '@/panels/panel-group-registry'
 import { PanelHotkeys } from '@/panels/panel-hotkeys'
@@ -496,6 +499,71 @@ function HomeComponent() {
     }
   }, [panelActions])
 
+  // Panel type picker state — when set, shows the picker overlay on the
+  // specified pane. On type selection, the pending action (split/new tab)
+  // is performed. Follows the same pattern as pendingClosePaneId.
+  const [pickerMode, setPickerMode] = useState<PickerMode | null>(null)
+
+  /**
+   * Show the panel type picker. When a type is selected, the corresponding
+   * split or new-tab action is performed and the picker is dismissed.
+   */
+  const showPanelTypePicker = useCallback((mode: PickerMode) => {
+    setPickerMode(mode)
+  }, [])
+
+  const handlePickerSelect = useCallback(
+    (type: PaneType) => {
+      if (!pickerMode) {
+        return
+      }
+      if (pickerMode.kind === 'split-right') {
+        panelActions.splitPane(pickerMode.paneId, 'horizontal', {
+          paneType: type,
+          workspaceId: pickerMode.workspaceId,
+        } as Partial<LeafNode>)
+      } else if (pickerMode.kind === 'split-down') {
+        panelActions.splitPane(pickerMode.paneId, 'vertical', {
+          paneType: type,
+          workspaceId: pickerMode.workspaceId,
+        } as Partial<LeafNode>)
+      } else if (pickerMode.kind === 'new-tab') {
+        panelActions.addPanelTab?.(pickerMode.workspaceId, type)
+      }
+      setPickerMode(null)
+    },
+    [pickerMode, panelActions]
+  )
+
+  const handlePickerCancel = useCallback(() => {
+    setPickerMode(null)
+  }, [])
+
+  /**
+   * The pane ID to show the picker on. For split actions, it's the pane
+   * being split. For new-tab, it's the workspace's active pane (if any).
+   */
+  const pickerPaneId = useMemo(() => {
+    if (!pickerMode) {
+      return null
+    }
+    if (pickerMode.kind === 'new-tab') {
+      // For new-tab, show picker on the workspace's currently active pane
+      return activePaneId
+    }
+    return pickerMode.paneId
+  }, [pickerMode, activePaneId])
+
+  /** Context value for the panel type picker overlay. */
+  const pendingPickerState: PendingPickerState = useMemo(
+    () => ({
+      paneId: pickerPaneId,
+      onSelect: handlePickerSelect,
+      onCancel: handlePickerCancel,
+    }),
+    [pickerPaneId, handlePickerSelect, handlePickerCancel]
+  )
+
   // Override panelActions.closePane with the gated version and add fullscreen toggle.
   // forceCloseWorkspace bypasses the confirmation gate — used by workspace
   // destruction which has its own confirmation dialog.
@@ -511,6 +579,7 @@ function HomeComponent() {
       toggleFullscreenPane,
       toggleReviewPane,
       toggleDiffPane,
+      showPanelTypePicker,
     }),
     [
       panelActions,
@@ -520,6 +589,7 @@ function HomeComponent() {
       toggleFullscreenPane,
       toggleReviewPane,
       toggleDiffPane,
+      showPanelTypePicker,
     ]
   )
 
@@ -665,6 +735,7 @@ function HomeComponent() {
         activePaneId={activePaneId}
         fullscreenPaneId={fullscreenPaneId}
         pendingClose={pendingCloseState}
+        pendingPicker={pendingPickerState}
         value={gatedPanelActions}
       >
         <CloseWorkspaceDialog

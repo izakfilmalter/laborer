@@ -959,3 +959,40 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 940/940 tests pass (12 new + 928 existing)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #22: Workspace uniqueness enforcement — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Added 3 new pure functions to `apps/web/src/panels/window-tab-utils.ts` for workspace uniqueness enforcement:
+
+- **`removeWorkspaceFromLayout(layout, workspaceId, removeFromTab)`** — removes a workspace from whatever tab it currently lives in across the entire layout. Uses `findWorkspaceLocation` to locate the workspace and the injected `removeFromTab` callback to strip it from the owning tab. Returns the layout unchanged (referential equality) if the workspace is not found.
+
+- **`moveWorkspace(layout, workspaceId, targetTabId, removeFromTab, addToTab)`** — moves a workspace from its current location to a specific target tab. If the workspace already lives in the target tab, returns the layout unchanged (no-op). Otherwise removes it from the old tab and adds it to the target tab. Both `removeFromTab` and `addToTab` are injected as callbacks to avoid circular imports with `workspace-tile-utils.ts`.
+
+- **`addWorkspaceToTabUnique(layout, workspaceId, targetTabId, removeFromTab, addToTab)`** — the primary entry point for within-window uniqueness enforcement. Delegates to `moveWorkspace` to ensure the workspace ends up only in the target tab. This function is used by the UI handler to enforce the constraint that a workspace can only be open in one window tab at a time.
+
+- Updated `handleAddWorkspaceToCurrentTab` in `apps/web/src/routes/-hooks/use-panel-layout.ts`:
+  - Made the handler `async` to support cross-window uniqueness checking
+  - Added **cross-window uniqueness**: calls `focusExistingWindowForWorkspace(workspaceId)` before adding. If the workspace is already open in another Electron window, focuses that window instead of duplicating the workspace.
+  - Added **within-window uniqueness**: calls `findWorkspaceLocation(base, workspaceId)` to check if the workspace already exists in the current layout. If already in the target tab, returns early (no-op). Otherwise calls `addWorkspaceToTabUnique` to remove the workspace from its old tab and add it to the active tab.
+  - Imported `addWorkspaceToTabUnique`, `findWorkspaceLocation` from `window-tab-utils.ts` and `removeWorkspaceFromTab` from `workspace-tile-utils.ts`
+
+### Architecture decisions
+- **Dependency injection for `removeFromTab`/`addToTab`**: The pure functions in `window-tab-utils.ts` accept `removeFromTab` and `addToTab` as callback parameters rather than importing them directly from `workspace-tile-utils.ts`. This avoids circular import issues and keeps the modules decoupled — `window-tab-utils.ts` operates on `WindowLayout` while `workspace-tile-utils.ts` operates on `WindowTab`.
+- **Cross-window check via Electron IPC**: The cross-window uniqueness check reuses the existing `focusExistingWindowForWorkspace` function from `desktop.ts`, which communicates with other Electron windows via the desktop bridge IPC. This is the same pattern used in `handleAssignTerminalToPane` for terminal sidebar navigation.
+- **No LiveStore cross-window query**: The PRD mentions "query other windows' layouts via LiveStore" for cross-window enforcement. However, the existing `focusExistingWindowForWorkspace` Electron IPC mechanism already handles this correctly — it checks all windows' workspace assignments and focuses the right window. Using IPC is more reliable than querying LiveStore because it handles the focus-switching atomically.
+
+### Tests
+- 19 tests in `apps/web/test/workspace-uniqueness.test.ts` covering:
+  - **removeWorkspaceFromLayout** (5 tests): workspace not found (referential equality), empty layout, removes from correct tab, removes only workspace (makes tab empty), removes from nested tile split, preserves activeTabId
+  - **moveWorkspace** (6 tests): no-op when already in target tab (referential equality), moves between tabs, adds to empty tab, adds workspace not in any tab, preserves activeTabId, immutability
+  - **addWorkspaceToTabUnique** (8 tests): adds when not open anywhere, moves from another tab, no-op when already in target tab, empty layout, enforces no duplicate views (count check), workspace in correct target after move, multi-workspace moves preserve source tab, sequential operations maintain uniqueness invariant
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 959/959 tests pass (19 new + 940 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing `useAwait` issue in unrelated test code)

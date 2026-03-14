@@ -479,6 +479,124 @@ function updateWorkspaceTileLeaf(
 }
 
 // ---------------------------------------------------------------------------
+// Workspace uniqueness enforcement
+// ---------------------------------------------------------------------------
+
+/**
+ * Remove a workspace from whatever tab it currently lives in across the
+ * entire layout.  Uses `findWorkspaceLocation` to locate the workspace
+ * and then `removeWorkspaceFromTab` (from `workspace-tile-utils.ts`) to
+ * strip it from the owning tab.
+ *
+ * If the workspace is not found anywhere in the layout, returns the
+ * layout unchanged (referential equality).
+ *
+ * @param layout - The current window layout
+ * @param workspaceId - The workspace ID to remove
+ * @param removeFromTab - A function that removes a workspace from a tab (injected to avoid circular imports)
+ * @returns A new WindowLayout with the workspace removed from its previous location
+ */
+function removeWorkspaceFromLayout(
+  layout: WindowLayout,
+  workspaceId: string,
+  removeFromTab: (tab: WindowTab, workspaceId: string) => WindowTab
+): WindowLayout {
+  const location = findWorkspaceLocation(layout, workspaceId)
+  if (!location) {
+    return layout
+  }
+
+  const newTabs = layout.tabs.map((tab) =>
+    tab.id === location.tabId ? removeFromTab(tab, workspaceId) : tab
+  )
+
+  // Only create a new layout if something changed
+  if (newTabs.every((tab, i) => tab === layout.tabs[i])) {
+    return layout
+  }
+
+  return { ...layout, tabs: newTabs }
+}
+
+/**
+ * Move a workspace from its current location (any tab in the layout) to
+ * a specific target tab.  This is the core of workspace uniqueness
+ * enforcement: if the workspace already lives in a tab, it is removed
+ * from the old tab before being added to the new one.
+ *
+ * If the workspace is already in the target tab, the layout is returned
+ * unchanged (no-op).
+ *
+ * @param layout - The current window layout
+ * @param workspaceId - The workspace ID to move
+ * @param targetTabId - The ID of the tab to move the workspace into
+ * @param removeFromTab - Injected `removeWorkspaceFromTab` to avoid circular imports
+ * @param addToTab - Injected `addWorkspaceToTab` to avoid circular imports
+ * @returns A new WindowLayout with the workspace in the target tab only
+ */
+function moveWorkspace(
+  layout: WindowLayout,
+  workspaceId: string,
+  targetTabId: string,
+  removeFromTab: (tab: WindowTab, workspaceId: string) => WindowTab,
+  addToTab: (tab: WindowTab, workspaceId: string) => WindowTab
+): WindowLayout {
+  const existing = findWorkspaceLocation(layout, workspaceId)
+
+  // Already in the target tab — nothing to do
+  if (existing?.tabId === targetTabId) {
+    return layout
+  }
+
+  // Step 1: Remove from old location (if any)
+  let intermediate = layout
+  if (existing) {
+    intermediate = removeWorkspaceFromLayout(layout, workspaceId, removeFromTab)
+  }
+
+  // Step 2: Add to target tab
+  const newTabs = intermediate.tabs.map((tab) =>
+    tab.id === targetTabId ? addToTab(tab, workspaceId) : tab
+  )
+
+  if (newTabs.every((tab, i) => tab === intermediate.tabs[i])) {
+    return intermediate
+  }
+
+  return { ...intermediate, tabs: newTabs }
+}
+
+/**
+ * Enforce workspace uniqueness within a layout by adding a workspace to
+ * a target tab after removing it from any other tab.
+ *
+ * This is the primary entry point for the within-window uniqueness
+ * enforcement path.
+ *
+ * @param layout - The current window layout
+ * @param workspaceId - The workspace ID to add
+ * @param targetTabId - The ID of the tab to add the workspace to
+ * @param removeFromTab - Injected `removeWorkspaceFromTab`
+ * @param addToTab - Injected `addWorkspaceToTab`
+ * @returns A new WindowLayout with the workspace only in the target tab
+ */
+function addWorkspaceToTabUnique(
+  layout: WindowLayout,
+  workspaceId: string,
+  targetTabId: string,
+  removeFromTab: (tab: WindowTab, workspaceId: string) => WindowTab,
+  addToTab: (tab: WindowTab, workspaceId: string) => WindowTab
+): WindowLayout {
+  return moveWorkspace(
+    layout,
+    workspaceId,
+    targetTabId,
+    removeFromTab,
+    addToTab
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Progressive close logic
 // ---------------------------------------------------------------------------
 
@@ -1390,6 +1508,7 @@ function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
 
 export {
   addWindowTab,
+  addWorkspaceToTabUnique,
   computeProgressiveCloseAction,
   findTerminalLocation,
   findWorkspaceLocation,
@@ -1397,9 +1516,11 @@ export {
   getAllWorkspaceTileLeaves,
   getStaleTerminalLeavesHierarchical,
   getWorkspaceTileLeaves,
+  moveWorkspace,
   reconcileWindowLayout,
-  reorderWindowTabs,
   removeWindowTab,
+  removeWorkspaceFromLayout,
+  reorderWindowTabs,
   repairWindowLayout,
   switchWindowTab,
   switchWindowTabByIndex,

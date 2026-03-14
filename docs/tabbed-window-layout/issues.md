@@ -826,7 +826,7 @@ Update the session persistence layer to serialize and deserialize the new hierar
 
 ## 22. Workspace uniqueness enforcement
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1082,7 +1082,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 19 | Empty state: workspace and panel tab | 10, 11 | done |
 | 20 | Sidebar navigation to terminal across tabs | 2, 8, 10 | done |
 | 21 | Session persistence for hierarchical layout | 6, 8, 10 | done |
-| 22 | Workspace uniqueness enforcement | 21 | pending |
+| 22 | Workspace uniqueness enforcement | 21 | done |
 | 23 | Tab drag-and-drop reordering | 8, 10 | pending |
 | 24 | Polish: tab bar animations and transitions | 7 | pending |
 | 25 | Polish: focus consistency | 8, 10 | pending |

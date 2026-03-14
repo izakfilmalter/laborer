@@ -73,7 +73,9 @@ import {
 } from '@/panels/panel-tab-utils'
 import {
   addWindowTab,
+  addWorkspaceToTabUnique,
   findTerminalLocation,
+  findWorkspaceLocation,
   getActiveWindowTab,
   getStaleTerminalLeavesHierarchical,
   reconcileWindowLayout,
@@ -85,7 +87,10 @@ import {
   switchWindowTabRelative,
   updateWorkspaceTileLeaf,
 } from '@/panels/window-tab-utils'
-import { addWorkspaceToTab } from '@/panels/workspace-tile-utils'
+import {
+  addWorkspaceToTab,
+  removeWorkspaceFromTab,
+} from '@/panels/workspace-tile-utils'
 import { useInitialLayout } from './use-initial-layout'
 
 /** Browser fallback until every renderer boot path has a native window ID. */
@@ -1210,17 +1215,38 @@ export function usePanelLayout() {
   )
 
   const handleAddWorkspaceToCurrentTab = useCallback(
-    (workspaceId: string) => {
+    async (workspaceId: string) => {
       const base = persistedWindowLayout ?? { tabs: [], activeTabId: undefined }
       const activeTab = getActiveWindowTab(base)
       if (!activeTab) {
         return
       }
-      const updatedTab = addWorkspaceToTab(activeTab, workspaceId)
-      const newLayout: WindowLayout = {
-        ...base,
-        tabs: base.tabs.map((t) => (t.id === activeTab.id ? updatedTab : t)),
+
+      // Cross-window uniqueness: if the workspace is already open in
+      // another Electron window, focus that window instead.
+      const focusedElsewhere =
+        await focusExistingWindowForWorkspace(workspaceId)
+      if (focusedElsewhere) {
+        return
       }
+
+      // Within-window uniqueness: if the workspace already exists in
+      // another tab, remove it from the old tab before adding.  If it
+      // already lives in the active tab, this is a no-op.
+      const existing = findWorkspaceLocation(base, workspaceId)
+      if (existing?.tabId === activeTab.id) {
+        // Already in the target tab — nothing to do
+        return
+      }
+
+      const newLayout = addWorkspaceToTabUnique(
+        base,
+        workspaceId,
+        activeTab.id,
+        removeWorkspaceFromTab,
+        addWorkspaceToTab
+      )
+
       commitWindowLayout(windowTabCreated, newLayout)
     },
     [persistedWindowLayout, commitWindowLayout]

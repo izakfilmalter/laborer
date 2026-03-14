@@ -675,15 +675,17 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
     /**
      * Subscribe to live terminal output for a WebSocket connection.
-     * Returns ring buffer scrollback and a subscriber ID.
+     * Returns a subscriber ID. The callback begins receiving live
+     * output immediately after registration.
+     *
+     * For reconnection, callers should use `getScreenState()` to
+     * obtain a compact screen state snapshot after subscribing
+     * (subscribe-before-serialize pattern for race-free attach).
      */
     readonly subscribe: (
       terminalId: string,
       callback: (data: string) => void
-    ) => Effect.Effect<
-      { readonly scrollback: string; readonly subscriberId: string },
-      TerminalRpcError
-    >
+    ) => Effect.Effect<{ readonly subscriberId: string }, TerminalRpcError>
 
     /** Unsubscribe a WebSocket connection from terminal output. */
     readonly unsubscribe: (
@@ -1593,13 +1595,11 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         state.subscribers.set(subscriberId, callback)
         clearGraceTimeout(terminalId)
 
-        const scrollback = state.ringBuffer.readString()
-
         yield* Effect.log(
-          `WebSocket subscribed to terminal ${terminalId} (subscriber=${subscriberId}, scrollback=${scrollback.length} chars)`
+          `WebSocket subscribed to terminal ${terminalId} (subscriber=${subscriberId})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
-        return { scrollback, subscriberId }
+        return { subscriberId }
       })
 
       const unsubscribe = Effect.fn('TerminalManager.unsubscribe')(function* (

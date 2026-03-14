@@ -32,8 +32,8 @@ Parent PRD: [PRD-ghostty-web-migration.md](./PRD-ghostty-web-migration.md)
 | 5 | Link detection and OSC title changes | #1 | Blocked |
 | 6 | Backend: Escape sequence buffering | None | Done |
 | 7 | Backend: Headless terminal state manager | #6 | Done |
-| 8 | Backend: Race-free WebSocket attach protocol | #7 | Ready |
-| 9 | Frontend: Terminal Session Router (core) | #8 | Blocked |
+| 8 | Backend: Race-free WebSocket attach protocol | #7 | Done |
+| 9 | Frontend: Terminal Session Router (core) | #8 | Ready |
 | 10 | Frontend: Terminal Router context and integration | #1, #9 | Blocked |
 | 11 | PTY-first resize | #2, #7, #10 | Blocked |
 | 12 | Cleanup: Remove xterm.js and ring buffer | #1-#11 | Blocked |

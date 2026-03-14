@@ -6,13 +6,13 @@
  * direct WebSocket channel. This provides:
  * - Lower latency (no LiveStore event serialization/materialization overhead)
  * - No base64 encoding (raw UTF-8 text frames)
- * - Server-side ring buffer scrollback on reconnection
+ * - Compact screen state snapshot on reconnection (~4KB vs 5MB ring buffer)
  * - Reduced LiveStore database writes (terminal output no longer persisted)
  *
  * The hook handles:
  * - WebSocket connection lifecycle (open, close, error)
  * - Exponential backoff reconnection on disconnect
- * - Scrollback replay from the server's ring buffer on connect
+ * - Screen state snapshot from the server's headless terminal on connect
  * - Sending keyboard input as text frames (replaces terminal.write RPC)
  * - Connection status tracking for UI indicators
  * - Parsing JSON status control messages from the terminal service
@@ -28,13 +28,15 @@
  * See PRD-terminal-perf.md "Character-Count Flow Control" for the full
  * protocol specification.
  *
- * Terminal status control messages (Issue #141):
+ * Terminal control messages:
  * The terminal service sends JSON control messages to inform the client
- * about terminal lifecycle events. These are parsed and separated from
- * raw PTY output data:
+ * about terminal lifecycle events and screen state. These are parsed and
+ * separated from raw PTY output data:
  * - `{"type":"status","status":"running"}` — sent on initial connection
  * - `{"type":"status","status":"stopped","exitCode":N}` — PTY process exited
  * - `{"type":"status","status":"restarted"}` — terminal was restarted
+ * - `{"type":"screenState","data":"<VT sequences>"}` — compact screen state
+ *   snapshot (~4KB) for fast reconnection (replaces ring buffer replay)
  *
  * The hook exposes `terminalStatus` so consumers can derive UI state from
  * the WebSocket control messages instead of polling LiveStore.
@@ -89,16 +91,28 @@ interface StatusControlMessage {
   readonly type: 'status'
 }
 
+/** Shape of a parsed screen state control message from the terminal service. */
+interface ScreenStateControlMessage {
+  readonly data: string
+  readonly type: 'screenState'
+}
+
+/** Union of all control message types from the terminal service. */
+type ControlMessage = StatusControlMessage | ScreenStateControlMessage
+
 /**
- * Attempt to parse a WebSocket text frame as a JSON status control message.
+ * Attempt to parse a WebSocket text frame as a JSON control message.
  * Returns the parsed message if valid, or undefined if the frame is raw
  * PTY output data.
  *
- * Detection heuristic: text frames starting with `{` that contain
- * `"type":"status"` are control messages. All others are PTY data.
- * This matches the server-side sendStatusMessage format.
+ * Detection heuristic: text frames starting with `{` that contain a
+ * recognized `"type"` field are control messages. All others are PTY data.
+ *
+ * Recognized control message types:
+ * - `status` — terminal lifecycle events (running, stopped, restarted)
+ * - `screenState` — compact screen state snapshot for fast reconnection
  */
-function parseStatusMessage(data: string): StatusControlMessage | undefined {
+function parseControlMessage(data: string): ControlMessage | undefined {
   if (data.length === 0 || data[0] !== '{') {
     return undefined
   }
@@ -110,6 +124,12 @@ function parseStatusMessage(data: string): StatusControlMessage | undefined {
         status: parsed.status,
         exitCode:
           typeof parsed.exitCode === 'number' ? parsed.exitCode : undefined,
+      }
+    }
+    if (parsed.type === 'screenState' && typeof parsed.data === 'string') {
+      return {
+        type: 'screenState',
+        data: parsed.data,
       }
     }
   } catch {
@@ -197,6 +217,26 @@ function useTerminalWebSocket({
   const terminalStatusRef = useRef(terminalStatus)
   terminalStatusRef.current = terminalStatus
 
+  /**
+   * Handle a parsed control message from the terminal service.
+   * Extracted to reduce complexity of the onmessage handler.
+   */
+  const handleControlMessage = useCallback((msg: ControlMessage): void => {
+    if (msg.type === 'status') {
+      const newStatus = msg.status as TerminalStatus
+      setTerminalStatus(newStatus)
+      onStatusRef.current?.(newStatus, msg.exitCode)
+      return
+    }
+    if (msg.type === 'screenState') {
+      // Screen state is a compact VT escape sequence representation
+      // of the current terminal screen (~4KB). Write it directly to
+      // the terminal as data — the VT sequences will reconstruct
+      // the screen state in the terminal emulator.
+      onDataRef.current(msg.data)
+    }
+  }, [])
+
   const clearReconnectTimer = useCallback(() => {
     if (reconnectTimerRef.current !== null) {
       clearTimeout(reconnectTimerRef.current)
@@ -238,12 +278,10 @@ function useTerminalWebSocket({
         return
       }
 
-      // Check if this is a status control message from the terminal service
-      const statusMsg = parseStatusMessage(event.data)
-      if (statusMsg !== undefined) {
-        const newStatus = statusMsg.status as TerminalStatus
-        setTerminalStatus(newStatus)
-        onStatusRef.current?.(newStatus, statusMsg.exitCode)
+      // Check if this is a control message from the terminal service
+      const controlMsg = parseControlMessage(event.data)
+      if (controlMsg !== undefined) {
+        handleControlMessage(controlMsg)
         return
       }
 
@@ -297,7 +335,7 @@ function useTerminalWebSocket({
     ws.onerror = () => {
       // onerror is always followed by onclose — let onclose handle cleanup
     }
-  }, [terminalId])
+  }, [terminalId, handleControlMessage])
 
   // Connect on mount, reconnect when terminalId changes
   useEffect(() => {

@@ -42,6 +42,7 @@ import {
 } from '@/components/ui/dialog'
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { inputClassName } from '@/components/ui/input'
+import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
@@ -213,7 +214,15 @@ function CreateWorkspaceForm({ projectId, trigger }: CreateWorkspaceFormProps) {
             gets its own branch, port, and directory.
           </DialogDescription>
         </DialogHeader>
+        {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: Cmd+Enter keyboard shortcut to submit the form */}
         <form
+          onKeyDown={(e) => {
+            // Allow Cmd+Enter to submit (in addition to plain Enter)
+            if (e.key === 'Enter' && e.metaKey) {
+              e.preventDefault()
+              form.handleSubmit()
+            }
+          }}
           onSubmit={(e) => {
             e.preventDefault()
             e.stopPropagation()
@@ -269,6 +278,7 @@ function CreateWorkspaceForm({ projectId, trigger }: CreateWorkspaceFormProps) {
                   )}
                   {!isSubmitting && creationError && 'Retry'}
                   {!(isSubmitting || creationError) && 'Create Workspace'}
+                  {!isSubmitting && <Kbd>↵</Kbd>}
                 </Button>
               </DialogFooter>
             )}

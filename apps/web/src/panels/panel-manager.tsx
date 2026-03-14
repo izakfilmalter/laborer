@@ -525,6 +525,7 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
       {pendingClose.paneId === node.id && (
         <PaneCloseConfirmDialog
           onCancel={pendingClose.onCancel}
+          onCloseAndDestroy={pendingClose.onCloseAndDestroy}
           onConfirm={pendingClose.onConfirm}
         />
       )}

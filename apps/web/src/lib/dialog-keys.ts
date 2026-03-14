@@ -46,4 +46,23 @@ function isMetaEnter(
   )
 }
 
-export { isExactEnter, isMetaEnter }
+/**
+ * Returns true when the event is Cmd+Shift+Enter with no other modifier keys.
+ * Used to trigger the "close and destroy" action in close confirmation dialogs.
+ */
+function isMetaShiftEnter(
+  event: Pick<
+    KeyboardEvent,
+    'altKey' | 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'
+  >
+): boolean {
+  return (
+    event.key === 'Enter' &&
+    event.metaKey &&
+    event.shiftKey &&
+    !event.ctrlKey &&
+    !event.altKey
+  )
+}
+
+export { isExactEnter, isMetaEnter, isMetaShiftEnter }

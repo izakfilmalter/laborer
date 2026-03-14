@@ -1218,6 +1218,80 @@ function computeClosePaneAction(
 }
 
 /**
+ * Result of the enriched close-pane gate action computation.
+ *
+ * - `'close'`: close immediately, no dialog
+ * - `'confirm'`: show "process running" dialog (Cancel, Close)
+ * - `'confirm-with-destroy'`: process running + last pane for workspace +
+ *   PR merged → show dialog with 3 actions (Cancel, Close, Close & Destroy)
+ * - `'prompt-destroy'`: no running process + last pane + PR merged →
+ *   show "destroy workspace?" dialog
+ */
+type ClosePaneGateResult =
+  | { readonly action: 'close' }
+  | { readonly action: 'confirm' }
+  | { readonly action: 'confirm-with-destroy'; readonly workspaceId: string }
+  | { readonly action: 'prompt-destroy'; readonly workspaceId: string }
+
+/**
+ * Enriched close-pane gating that considers process state, whether the
+ * pane is the last for its workspace, and the workspace's PR merge status.
+ *
+ * When the pane being closed is the last pane for a workspace whose PR
+ * is merged, the user is offered a "close and destroy" action so they
+ * can clean up the worktree in a single gesture.
+ *
+ * @param layout - The current panel layout tree (may be undefined)
+ * @param paneId - The ID of the pane being closed
+ * @param terminals - The cached terminal list from useTerminalList
+ * @param prState - The PR state of the pane's workspace (e.g. 'merged', 'open', null)
+ * @returns A discriminated union describing which dialog (if any) to show
+ */
+function computeClosePaneGateAction(
+  layout: PanelNode | undefined,
+  paneId: string,
+  terminals: ReadonlyArray<{
+    readonly id: string
+    readonly hasChildProcess: boolean
+  }>,
+  prState: string | null
+): ClosePaneGateResult {
+  if (!layout) {
+    return { action: 'close' }
+  }
+
+  const node = findNodeById(layout, paneId)
+  if (!node || node._tag !== 'LeafNode') {
+    return { action: 'close' }
+  }
+
+  const hasProcess = shouldConfirmClose(layout, paneId, terminals)
+  const workspaceId = node.workspaceId
+  const isPrMerged = prState === 'merged'
+
+  // Check if this is the last pane for the workspace
+  const isLastPaneForWorkspace =
+    workspaceId != null &&
+    isPrMerged &&
+    getLeafNodes(layout).filter((l) => l.workspaceId === workspaceId).length ===
+      1
+
+  if (hasProcess && isLastPaneForWorkspace && workspaceId != null) {
+    return { action: 'confirm-with-destroy', workspaceId }
+  }
+
+  if (hasProcess) {
+    return { action: 'confirm' }
+  }
+
+  if (isLastPaneForWorkspace && workspaceId != null) {
+    return { action: 'prompt-destroy', workspaceId }
+  }
+
+  return { action: 'close' }
+}
+
+/**
  * Compute whether closing a workspace should proceed immediately or show
  * a confirmation dialog.
  *
@@ -1622,6 +1696,7 @@ export {
   closePane,
   closeWorkspacePanes,
   computeClosePaneAction,
+  computeClosePaneGateAction,
   computeCloseWorkspaceAction,
   computeResize,
   computeTerminalPaneAssignment,
@@ -1657,4 +1732,4 @@ export {
   splitPane,
   WORKSPACE_FRAME_TYPE,
 }
-export type { NavigationDirection }
+export type { ClosePaneGateResult, NavigationDirection }

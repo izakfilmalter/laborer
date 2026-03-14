@@ -13,7 +13,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { isElectron } from '@/lib/desktop'
-import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
+import { isExactEnter, isMetaEnter, isMetaShiftEnter } from '@/lib/dialog-keys'
 
 /**
  * Inline pane-scoped close confirmation dialog.
@@ -27,9 +27,16 @@ import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
  */
 export function PaneCloseConfirmDialog({
   onCancel,
+  onCloseAndDestroy,
   onConfirm,
 }: {
   readonly onCancel: () => void
+  /**
+   * Optional handler for "Close & Destroy" action.
+   * When provided, a third button is shown that closes the pane AND
+   * destroys the workspace worktree. Triggered by Cmd+Shift+Enter.
+   */
+  readonly onCloseAndDestroy?: (() => void) | undefined
   readonly onConfirm: () => void
 }) {
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -53,13 +60,19 @@ export function PaneCloseConfirmDialog({
         event.stopPropagation()
         return
       }
+      if (onCloseAndDestroy && isMetaShiftEnter(event.nativeEvent)) {
+        event.preventDefault()
+        event.stopPropagation()
+        onCloseAndDestroy()
+        return
+      }
       if (isMetaEnter(event.nativeEvent)) {
         event.preventDefault()
         event.stopPropagation()
         onConfirm()
       }
     },
-    [onCancel, onConfirm]
+    [onCancel, onCloseAndDestroy, onConfirm]
   )
 
   return (
@@ -92,6 +105,14 @@ export function PaneCloseConfirmDialog({
           <Button onClick={onCancel} variant="outline">
             Cancel <Kbd>Esc</Kbd>
           </Button>
+          {onCloseAndDestroy && (
+            <Button onClick={onCloseAndDestroy} variant="destructive">
+              Close & Destroy
+              <Kbd>⌘</Kbd>
+              <Kbd>⇧</Kbd>
+              <Kbd>↵</Kbd>
+            </Button>
+          )}
           <Button onClick={onConfirm}>
             Close
             <Kbd>⌘</Kbd>
@@ -136,6 +157,78 @@ export function CloseWorkspaceDialog({
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction onClick={handleConfirm}>
             Close workspace
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
+/**
+ * Dialog shown when closing the last pane of a workspace whose PR is merged
+ * and no process is running. Prompts the user to also destroy the worktree.
+ *
+ * Keyboard shortcuts:
+ * - Escape → Cancel (close dialog, keep pane open)
+ * - Cmd+Enter → Close & Destroy (close pane + destroy worktree)
+ * - Cmd+Shift+Enter → Close & Destroy (alias)
+ * - Plain Enter → blocked (prevent accidental confirmation)
+ *
+ * This dialog does NOT accept plain Enter because the action is destructive.
+ */
+export function DestroyWorkspaceOnCloseDialog({
+  open,
+  onOpenChange,
+  onCloseAndDestroy,
+}: {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+  readonly onCloseAndDestroy: () => void
+}) {
+  const handleCloseAndDestroy = useCallback(() => {
+    onCloseAndDestroy()
+    onOpenChange(false)
+  }, [onCloseAndDestroy, onOpenChange])
+
+  return (
+    <AlertDialog onOpenChange={onOpenChange} open={open}>
+      <AlertDialogContent
+        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+          if (isExactEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            return
+          }
+          if (
+            isMetaShiftEnter(event.nativeEvent) ||
+            isMetaEnter(event.nativeEvent)
+          ) {
+            event.preventDefault()
+            event.stopPropagation()
+            handleCloseAndDestroy()
+          }
+        }}
+      >
+        <AlertDialogHeader>
+          <AlertDialogTitle>Destroy workspace?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The PR for this workspace has been merged. Would you like to destroy
+            the worktree? This will remove the git worktree, delete the branch,
+            and free the allocated port.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>
+            Cancel <Kbd>Esc</Kbd>
+          </AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleCloseAndDestroy}
+            variant="destructive"
+          >
+            Close & Destroy
+            <Kbd>⌘</Kbd>
+            <Kbd>⇧</Kbd>
+            <Kbd>↵</Kbd>
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -316,7 +316,7 @@ describe('computeClosePaneGateAction', () => {
       layout,
       'pane-A',
       terminals,
-      'merged'
+      'MERGED'
     )
     expect(result).toEqual({ action: 'confirm' })
   })
@@ -335,7 +335,7 @@ describe('computeClosePaneGateAction', () => {
       layout,
       'pane-A',
       terminals,
-      'merged'
+      'MERGED'
     )
     expect(result).toEqual({
       action: 'confirm-with-destroy',
@@ -357,7 +357,7 @@ describe('computeClosePaneGateAction', () => {
       layout,
       'pane-A',
       terminals,
-      'merged'
+      'MERGED'
     )
     expect(result).toEqual({ action: 'prompt-destroy', workspaceId: 'ws-1' })
   })
@@ -376,7 +376,7 @@ describe('computeClosePaneGateAction', () => {
       layout,
       'pane-A',
       terminals,
-      'open'
+      'OPEN'
     )
     expect(result).toEqual({ action: 'close' })
   })
@@ -415,13 +415,13 @@ describe('computeClosePaneGateAction', () => {
       layout,
       'pane-A',
       terminals,
-      'merged'
+      'MERGED'
     )
     expect(result).toEqual({ action: 'prompt-destroy', workspaceId: 'ws-1' })
   })
 
   it('returns "close" when layout is undefined', () => {
-    const result = computeClosePaneGateAction(undefined, 'pane-A', [], 'merged')
+    const result = computeClosePaneGateAction(undefined, 'pane-A', [], 'MERGED')
     expect(result).toEqual({ action: 'close' })
   })
 })

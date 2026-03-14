@@ -554,8 +554,8 @@ function PanePickerOverlay({
 /**
  * Renders a LeafNode pane with drop target support for terminal drag-and-drop.
  *
- * The active-pane focus border is rendered on the outer panel container
- * (in the route component), not on individual leaf panes.
+ * The active pane gets a subtle `ring-1 ring-primary/50` highlight to
+ * distinguish it from unfocused panes within a split.
  * Drag-over drop target uses `border-primary bg-primary/5` for visual feedback.
  *
  * Empty terminal panes (no terminalId assigned) accept drops from the
@@ -675,6 +675,8 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
   let borderClass = ''
   if (isDragOver) {
     borderClass = 'border-2 border-primary bg-primary/5'
+  } else if (isActive) {
+    borderClass = 'ring-1 ring-primary/50'
   }
 
   const paneContent = (

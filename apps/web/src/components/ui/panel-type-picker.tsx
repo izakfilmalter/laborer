@@ -164,9 +164,9 @@ function PanelTypePicker({
           role="option"
           tabIndex={-1}
         >
-          <span className="flex w-4 shrink-0 items-center justify-center text-muted-foreground text-xs">
+          <kbd className="flex size-4 shrink-0 items-center justify-center rounded border border-muted-foreground/30 bg-muted/50 font-mono text-[10px] text-muted-foreground">
             {index + 1}
-          </span>
+          </kbd>
           <span className="flex shrink-0 items-center">{option.icon}</span>
           <span>{option.label}</span>
         </div>

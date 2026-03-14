@@ -57,11 +57,20 @@ function WindowTabBar({
     if (!windowLayout) {
       return []
     }
-    return windowLayout.tabs.map((tab, index) => ({
-      id: tab.id,
-      label: tab.label ?? `Tab ${index + 1}`,
-      isActive: tab.id === windowLayout.activeTabId,
-    }))
+    return windowLayout.tabs.map((tab, index) => {
+      let shortcutHint: string | undefined
+      if (index < 8) {
+        shortcutHint = `Cmd+${index + 1}`
+      } else if (index === windowLayout.tabs.length - 1) {
+        shortcutHint = 'Cmd+9'
+      }
+      return {
+        id: tab.id,
+        label: tab.label ?? `Tab ${index + 1}`,
+        isActive: tab.id === windowLayout.activeTabId,
+        shortcutHint,
+      }
+    })
   }, [windowLayout])
 
   if (items.length === 0) {
@@ -72,6 +81,7 @@ function WindowTabBar({
     <TabBar
       autoHide
       className="border-b-0"
+      closeTooltip="Close tab (Cmd+Shift+W)"
       items={items}
       newTabTooltip="New window tab (Cmd+N)"
       onClose={onCloseTab ? () => onCloseTab() : () => undefined}

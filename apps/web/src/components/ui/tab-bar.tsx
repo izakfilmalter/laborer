@@ -46,6 +46,8 @@ interface TabBarItem {
   readonly isDirty?: boolean
   /** Display label for the tab. */
   readonly label: string
+  /** Optional keyboard shortcut hint shown in a tooltip on hover. */
+  readonly shortcutHint?: string | undefined
 }
 
 /** Props for the TabBar component. */
@@ -54,6 +56,8 @@ interface TabBarProps {
   readonly autoHide?: boolean | undefined
   /** Additional CSS classes for the root container. */
   readonly className?: string | undefined
+  /** Tooltip text for the close button on each tab (e.g. "Close tab (Cmd+W)"). */
+  readonly closeTooltip?: string | undefined
   /** Ordered list of tab items to render. */
   readonly items: readonly TabBarItem[]
   /** Tooltip text for the new tab (+) button. */
@@ -105,12 +109,14 @@ function TabBarTab({
   barId,
   onSelect,
   onClose,
+  closeTooltip,
 }: {
   readonly item: TabBarItem
   readonly index: number
   readonly barId: string
   readonly onSelect: (id: string) => void
   readonly onClose: (id: string) => void
+  readonly closeTooltip?: string | undefined
 }) {
   const tabRef = useRef<HTMLDivElement | null>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -191,6 +197,7 @@ function TabBarTab({
         }}
         role="tab"
         tabIndex={item.isActive ? 0 : -1}
+        title={item.shortcutHint}
       >
         {/* Active indicator — bottom border line */}
         {item.isActive && (
@@ -206,21 +213,46 @@ function TabBarTab({
             title="Unsaved changes"
           />
         )}
-        <button
-          aria-label={`Close ${item.label}`}
-          className={cn(
-            'ml-0.5 flex size-4 shrink-0 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
-            'opacity-0 group-hover/tab:opacity-100',
-            item.isActive && 'opacity-100'
-          )}
-          onClick={(e) => {
-            e.stopPropagation()
-            onClose(item.id)
-          }}
-          type="button"
-        >
-          <X className="size-3" />
-        </button>
+        {closeTooltip ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  aria-label={`Close ${item.label}`}
+                  className={cn(
+                    'ml-0.5 flex size-4 shrink-0 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+                    'opacity-0 group-hover/tab:opacity-100',
+                    item.isActive && 'opacity-100'
+                  )}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onClose(item.id)
+                  }}
+                  type="button"
+                />
+              }
+            >
+              <X className="size-3" />
+            </TooltipTrigger>
+            <TooltipContent>{closeTooltip}</TooltipContent>
+          </Tooltip>
+        ) : (
+          <button
+            aria-label={`Close ${item.label}`}
+            className={cn(
+              'ml-0.5 flex size-4 shrink-0 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+              'opacity-0 group-hover/tab:opacity-100',
+              item.isActive && 'opacity-100'
+            )}
+            onClick={(e) => {
+              e.stopPropagation()
+              onClose(item.id)
+            }}
+            type="button"
+          >
+            <X className="size-3" />
+          </button>
+        )}
       </div>
       {closestEdge === 'right' && (
         <div className="absolute top-1 right-0 bottom-1 z-10 w-0.5 bg-primary" />
@@ -240,6 +272,7 @@ function TabBar({
   onNew,
   onReorder,
   autoHide = false,
+  closeTooltip,
   newTabTooltip = 'New tab',
   className,
 }: TabBarProps) {
@@ -257,6 +290,7 @@ function TabBar({
     <TabBarInner
       barId={barId}
       className={className}
+      closeTooltip={closeTooltip}
       items={items}
       newTabTooltip={newTabTooltip}
       onClose={onClose}
@@ -351,6 +385,7 @@ function TabBarInner({
   onClose,
   onNew,
   onReorder,
+  closeTooltip,
   newTabTooltip,
   className,
   barId,
@@ -476,6 +511,7 @@ function TabBarInner({
           {items.map((item, index) => (
             <TabBarTab
               barId={barId}
+              closeTooltip={closeTooltip}
               index={index}
               item={item}
               key={item.id}

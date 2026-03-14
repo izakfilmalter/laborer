@@ -1214,3 +1214,56 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 1043/1043 tests pass (17 new + 1026 existing)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #26: Polish: visual indicators and keyboard discoverability — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Added 5 visual indicator enhancements across the tab bar, panel manager, panel type picker, and workspace frames:
+
+**1. Focused pane border/highlight**
+- Updated `LeafPaneRenderer` in `apps/web/src/panels/panel-manager.tsx`:
+  - Active pane now gets `ring-1 ring-primary/50` — a subtle inset ring that visually distinguishes the focused pane from unfocused panes within a split
+  - This is subordinate to the drag-over highlight (`border-2 border-primary bg-primary/5`) which takes priority
+  - Updated the JSDoc comment to reflect the new behavior (was: "border rendered on outer container"; now: "ring highlight on individual leaf panes")
+
+**2. Tab close button tooltips with keyboard shortcuts**
+- Added `closeTooltip` prop to `TabBarProps` in `apps/web/src/components/ui/tab-bar.tsx`:
+  - When provided, wraps each tab's close button in a `<Tooltip>` / `<TooltipContent>` showing the shortcut text
+  - When not provided, renders the close button without a tooltip (backward compatible)
+  - Passed through `TabBar` -> `TabBarInner` -> `TabBarTab`
+- Set `closeTooltip="Close tab (Cmd+Shift+W)"` on the window tab bar in `panel-header-bar.tsx`
+- Set `closeTooltip="Close tab (Cmd+W)"` on the panel tab bar in `workspace-frames.tsx`
+
+**3. Tab shortcut hint titles**
+- Added `shortcutHint` prop to `TabBarItem` in `tab-bar.tsx`:
+  - Rendered as a `title` attribute on the tab `<div>`, providing native browser tooltip on hover
+  - Using `title` instead of `<Tooltip>` to avoid interference with drag-and-drop
+- Window tab bar (`panel-header-bar.tsx`): sets `shortcutHint` to `Cmd+1` through `Cmd+8` for tabs by index, `Cmd+9` for the last tab
+- Panel tab bar (`workspace-frames.tsx`): sets `shortcutHint` to `Ctrl+1` through `Ctrl+8` for tabs by index, `Ctrl+9` for the last tab
+
+**4. Panel type picker keycap-styled number indicators**
+- Updated `panel-type-picker.tsx`: changed number indicators from `<span>` to `<kbd>` elements with keycap styling:
+  - `border border-muted-foreground/30` — subtle border
+  - `bg-muted/50` — slight background to look like a keyboard key
+  - `font-mono text-[10px]` — monospace font at a compact size
+  - `size-4 rounded` — fixed size with rounded corners
+  - This makes the numbers look like pressable keyboard keys, clearly communicating that pressing 1-4 selects the option
+
+**5. Sidebar workspace highlight (verified)**
+- Confirmed that the sidebar workspace highlight (issue #20) correctly highlights the workspace card matching the currently focused workspace via `useActiveWorkspaceId()` -> `border-primary` on `<Card>`
+- No changes needed — already working correctly
+
+### Tests
+- 6 tests in `apps/web/test/visual-indicators.test.tsx` covering:
+  - **Close button tooltips** (2 tests): tooltip content rendered when `closeTooltip` provided (one per tab), no tooltip when not provided
+  - **Tab shortcut hints** (2 tests): `title` attribute set on tab when `shortcutHint` provided, no `title` when undefined
+  - **Panel type picker keycap numbers** (2 tests): 4 `<kbd>` elements with correct text (1-4), border and font-mono classes present for prominence
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 1049/1049 tests pass (6 new + 1043 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)

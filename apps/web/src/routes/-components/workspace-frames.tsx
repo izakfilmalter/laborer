@@ -659,11 +659,20 @@ function WorkspaceFrame({
     if (!tileLeaf) {
       return []
     }
-    return tileLeaf.panelTabs.map((tab) => ({
-      id: tab.id,
-      label: tab.label ?? getPanelTabLabel(tab.panelLayout),
-      isActive: tab.id === tileLeaf.activePanelTabId,
-    }))
+    return tileLeaf.panelTabs.map((tab, index) => {
+      let shortcutHint: string | undefined
+      if (index < 8) {
+        shortcutHint = `Ctrl+${index + 1}`
+      } else if (index === tileLeaf.panelTabs.length - 1) {
+        shortcutHint = 'Ctrl+9'
+      }
+      return {
+        id: tab.id,
+        label: tab.label ?? getPanelTabLabel(tab.panelLayout),
+        isActive: tab.id === tileLeaf.activePanelTabId,
+        shortcutHint,
+      }
+    })
   }, [tileLeaf])
 
   // Whether this workspace has no panel tabs (empty workspace state)
@@ -750,6 +759,7 @@ function WorkspaceFrame({
       {showPanelTabBar && !isMinimized && (
         <TabBar
           autoHide
+          closeTooltip="Close tab (Cmd+W)"
           items={panelTabItems}
           newTabTooltip="New panel tab (Ctrl+T)"
           onClose={handlePanelTabClose}

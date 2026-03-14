@@ -29,14 +29,14 @@ Parent PRD: [PRD-ghostty-web-migration.md](./PRD-ghostty-web-migration.md)
 | 2 | ghostty-web FitAddon and basic resize | #1 | Done |
 | 3 | Theme, font, and cursor configuration | #1 | Done |
 | 4 | Keyboard bypass and prefix mode | #1 | Done |
-| 5 | Link detection and OSC title changes | #1 | Ready |
+| 5 | Link detection and OSC title changes | #1 | Done |
 | 6 | Backend: Escape sequence buffering | None | Done |
 | 7 | Backend: Headless terminal state manager | #6 | Done |
 | 8 | Backend: Race-free WebSocket attach protocol | #7 | Done |
 | 9 | Frontend: Terminal Session Router (core) | #8 | Done |
 | 10 | Frontend: Terminal Router context and integration | #1, #9 | Done |
 | 11 | PTY-first resize | #2, #7, #10 | Done |
-| 12 | Cleanup: Remove xterm.js and ring buffer | #1-#11 | Blocked |
+| 12 | Cleanup: Remove xterm.js and ring buffer | #1-#11 | Ready |
 
 ---
 

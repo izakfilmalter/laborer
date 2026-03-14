@@ -162,6 +162,12 @@ interface TerminalPaneProps {
    * Used by the panel system to auto-close the pane when a terminal is closed.
    */
   readonly onTerminalExit?: (() => void) | undefined
+  /**
+   * Callback invoked when the terminal's title changes via OSC 0 or OSC 2
+   * escape sequences (e.g., shell prompt sets window title). The title string
+   * is the parsed value from the escape sequence.
+   */
+  readonly onTitleChange?: ((title: string) => void) | undefined
   /** The terminal ID to subscribe to for output events. */
   readonly terminalId: string
 }
@@ -191,7 +197,11 @@ interface TerminalPaneProps {
  * frontend terminal. Rapid resize events during panel drag are coalesced
  * (one in-flight RPC at a time, pending flag for the next).
  */
-function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
+function TerminalPane({
+  terminalId,
+  onTerminalExit,
+  onTitleChange,
+}: TerminalPaneProps) {
   const router = useTerminalRouter()
   const resizeTerminal = useAtomSet(terminalResizeMutation, {
     mode: 'promise',
@@ -260,6 +270,10 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
   /** Ref for onTerminalExit to avoid stale closures in subscriber callbacks. */
   const onTerminalExitRef = useRef(onTerminalExit)
   onTerminalExitRef.current = onTerminalExit
+
+  /** Ref for onTitleChange to avoid stale closures in terminal event callbacks. */
+  const onTitleChangeRef = useRef(onTitleChange)
+  onTitleChangeRef.current = onTitleChange
 
   /**
    * Mark data as received — clears the loading overlay.
@@ -353,6 +367,19 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
    * ghostty-web handles Unicode 15.1, link detection, and canvas
    * rendering natively — no separate addons needed for WebGL, Image,
    * Unicode, or WebLinks.
+   *
+   * Link detection:
+   * ghostty-web automatically registers OSC8LinkProvider (explicit
+   * hyperlinks) and UrlRegexProvider (auto-detected URLs) during
+   * terminal.open(). Cmd+Click on a detected link opens it via
+   * window.open(). In Electron, setWindowOpenHandler in the main
+   * process redirects window.open() calls to shell.openExternal()
+   * so links open in the OS default browser.
+   *
+   * OSC title changes:
+   * ghostty-web fires onTitleChange when OSC 0 or OSC 2 escape
+   * sequences set the window title. This event is forwarded to the
+   * parent component via the onTitleChange prop.
    */
   useEffect(() => {
     const container = containerRef.current
@@ -510,9 +537,20 @@ function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
         routerRef.current?.sendInput(terminalId, data)
       })
 
+      // Subscribe to OSC title changes (OSC 0 and OSC 2 escape sequences).
+      // ghostty-web parses these sequences during write() and fires onTitleChange
+      // with the title string. This allows the parent component to update tab
+      // labels, window titles, or other UI based on the running process's title.
+      const onTitleChangeDisposable = terminal.onTitleChange(
+        (title: string) => {
+          onTitleChangeRef.current?.(title)
+        }
+      )
+
       // Store cleanup function for disposal
       cleanupRef.current = () => {
         onDataDisposable.dispose()
+        onTitleChangeDisposable.dispose()
         terminal.dispose()
         terminalRef.current = null
         fitAddonRef.current = null

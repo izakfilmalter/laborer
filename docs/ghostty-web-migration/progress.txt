@@ -386,3 +386,37 @@ Date: 2026-03-14
 - 1 pre-existing skipped test (alive-desktop-oauth)
 - Typecheck passes cleanly
 - Biome lint passes on all changed files
+
+## Issue 5: Link detection and OSC title changes — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- **Link detection** — ghostty-web automatically registers both `OSC8LinkProvider` (explicit hyperlinks via OSC 8 escape sequences) and `UrlRegexProvider` (auto-detected URLs: https, http, mailto, ftp, ssh, etc.) during `terminal.open()`. Links are visually indicated with underline and pointer cursor on hover. Cmd+Click (macOS) or Ctrl+Click (Linux/Windows) activates the link via `window.open(url, '_blank', 'noopener,noreferrer')`.
+- **Electron link handling** — Added `setWindowOpenHandler` to the Electron main process (`apps/desktop/src/main.ts`) to intercept `window.open()` calls from the renderer and redirect them to `shell.openExternal()`. This ensures terminal link clicks open in the OS default browser instead of creating a new BrowserWindow. Only http/https URLs are allowed; all others are denied.
+- **OSC title changes** — Subscribed to ghostty-web's `onTitleChange` event in `terminal-pane.tsx`. ghostty-web parses OSC 0 and OSC 2 escape sequences during `write()` and fires `onTitleChange` with the title string. The event is forwarded to the parent component via a new `onTitleChange` prop on `TerminalPaneProps`. Both BEL (`\x07`) and ST (`\x1b\\`) terminators are supported.
+- Added `onTitleChange?: ((title: string) => void) | undefined` to `TerminalPaneProps` interface
+- Added `onTitleChangeRef` to avoid stale closures in the terminal event callback
+- Added `onTitleChangeDisposable` for proper cleanup on terminal disposal
+- Updated the `TerminalPane` function signature to destructure the new prop
+- Updated JSDoc to document link detection behavior (auto-registration, Electron interception) and OSC title change propagation
+- Updated Electron mock in `apps/desktop/test/main.test.ts` to include `setWindowOpenHandler` on `webContents`
+- Created comprehensive test suite `apps/web/test/link-detection-title-changes.test.ts` with 20 tests:
+  - ghostty-web link detection API (4 tests): OSC8LinkProvider export, UrlRegexProvider export, LinkDetector export, Terminal.prototype.registerLinkProvider
+  - ghostty-web onTitleChange API (1 test): Terminal class has onTitleChange event property
+  - terminal-pane.tsx link and title integration (8 tests): subscribes to onTitleChange, stores disposable for cleanup, disposes on cleanup, uses ref for stale closures, declares prop, documents OSC title change, documents link detection, does not manually register link providers
+  - Electron setWindowOpenHandler integration (5 tests): configures handler on webContents, redirects to shell.openExternal, imports shell from electron, denies action, only opens http/https
+  - openExternalUrl availability (2 tests): function exists, handles both Electron and browser environments
+
+### Files changed
+- `apps/web/src/panes/terminal-pane.tsx` (modified — added onTitleChange prop, subscribed to onTitleChange event, updated JSDoc with link detection and title change documentation)
+- `apps/web/test/link-detection-title-changes.test.ts` (new, 157 lines)
+- `apps/desktop/src/main.ts` (modified — added shell import, added setWindowOpenHandler to intercept window.open() for Electron)
+- `apps/desktop/test/main.test.ts` (modified — added setWindowOpenHandler to BrowserWindow mock)
+
+### Test results
+- All 736 tests pass across 48 test files in the web package (20 new + 716 existing)
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Desktop: 146 passed, 7 pre-existing failures in main.test.ts (app.setAsDefaultProtocolClient mock gap — unrelated)
+- Typecheck passes cleanly for both web and desktop packages
+- Biome lint passes on all changed files

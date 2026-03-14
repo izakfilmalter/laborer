@@ -33,6 +33,7 @@ const createBrowserWindowMock = () => {
     readonly webContents = {
       on: vi.fn(),
       send: vi.fn(),
+      setWindowOpenHandler: vi.fn(),
     }
 
     readonly eventHandlers = new Map<

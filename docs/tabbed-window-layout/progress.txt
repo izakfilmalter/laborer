@@ -180,3 +180,47 @@ Date: 2026-03-13
 - `bun run --filter @laborer/web typecheck` — passes
 - `bun run --filter @laborer/web test` — 733/733 tests pass (no regressions)
 - `biome check` — no issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #6: Layout migration: flat PanelNode to hierarchical WindowLayout — COMPLETED
+
+Date: 2026-03-13
+
+### What was done
+- Created new module `apps/web/src/panels/layout-migration.ts` with pure functions:
+  - `migrateToWindowLayout(oldTree, activePaneId, workspaceOrder)` — main migration entry point that converts a legacy flat `PanelNode` tree to the new `WindowLayout` hierarchy
+  - `convertLeafNode(node)` — converts old `LeafNode` to `PanelLeafNode`, stripping sidebar toggle flags (`diffOpen`, `devServerOpen`, `devServerTerminalId`)
+  - `convertPanelTree(node)` — recursively converts old `PanelNode` tree to `PanelTreeNode` tree (LeafNode→PanelLeafNode, SplitNode→PanelSplitNode)
+  - `collectSidebarFlags(node)` — aggregates sidebar toggle flags from all leaves in a workspace's sub-tree for promotion to independent panel tabs
+  - `buildWorkspaceTile(workspaceId, subTree, activePaneId)` — creates a `WorkspaceTileLeaf` for a workspace, including promoted sidebar panel tabs
+  - `resolveFocusedPaneId(tree, activePaneId)` — maps legacy `activePaneId` to the correct `focusedPaneId` per workspace
+  - `sortWorkspaceIdsByOrder(workspaceIds, workspaceOrder)` — sorts workspace IDs according to legacy `workspaceOrder` array
+
+- Migration logic:
+  1. Extracts unique workspace IDs from the old flat tree using `getWorkspaceIds()`
+  2. Sorts workspaces according to `workspaceOrder` (if provided)
+  3. Filters old tree per workspace using `filterTreeByWorkspace()`
+  4. Converts old node types to new types (strips sidebar flags)
+  5. Promotes sidebar toggle flags to independent panel tabs:
+     - `diffOpen: true` → additional `PanelTab` with `paneType: 'diff'`
+     - `devServerOpen: true` → additional `PanelTab` with `paneType: 'devServerTerminal'` (preserving `devServerTerminalId`)
+  6. Wraps each workspace's panels in a `WorkspaceTileLeaf`
+  7. Arranges multiple workspace tiles in a horizontal `WorkspaceTileSplit` (single workspace = direct leaf, no wrapper)
+  8. Wraps everything in a single `WindowTab` inside a `WindowLayout`
+
+### Tests
+- 47 tests in `apps/web/test/layout-migration.test.ts` covering:
+  - convertLeafNode: simple terminal, preserves terminalId/workspaceId/both, strips diffOpen/devServerOpen/devServerTerminalId, preserves diff/review/devServerTerminal paneTypes
+  - convertPanelTree: single leaf, split with two leaves, preserves sizes, nested splits, strips sidebar flags from nested trees
+  - collectSidebarFlags: no flags, diffOpen, devServerOpen with terminalId, aggregation from splits, deeply nested, diffOpen:false
+  - migrateToWindowLayout — single workspace: single-leaf tree, split tree, activePaneId→focusedPaneId, null activePaneId fallback, cross-workspace activePaneId fallback
+  - migrateToWindowLayout — sidebar flag promotion: diffOpen→diff tab, devServerOpen→devServer tab, both flags, false flags, main tab active, no devServerTerminalId, flags from split children
+  - migrateToWindowLayout — multi-workspace: multiple tiles in horizontal split, equal sizes, workspaceOrder respected, partial workspaceOrder, activePaneId per-workspace mapping, mixed sidebar flags
+  - migrateToWindowLayout — edge cases: no workspaceId, nested splits single workspace, deeply nested multi-workspace, empty workspaceOrder, correct tags at every level, immutability, all workspaces with diffOpen, unique IDs
+  - migrateToWindowLayout — round-trip structure: complex tree with ordering + sidebar flags + nested splits
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 780/780 tests pass (47 new + 733 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no issues in modified files

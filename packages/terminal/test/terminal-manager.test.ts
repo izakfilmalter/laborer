@@ -861,6 +861,47 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     )
   })
 
+  it('listTerminals() reports hasChildProcess true when the shell exec-replaces into a running command', async () => {
+    // `defaultShell -c "sleep 999"` commonly exec-replaces the shell with
+    // `sleep`, so the original shell PID becomes the running process itself
+    // with no child process under it. We still need to treat that terminal as
+    // active so close confirmation appears reliably.
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'sleep 999',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    await delay(1000)
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.status, 'running')
+    assert.strictEqual(terminal?.hasChildProcess, true)
+    assert.isDefined(terminal?.foregroundProcess)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
   // -------------------------------------------------------------------------
   // Foreground process detection
   // -------------------------------------------------------------------------

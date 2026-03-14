@@ -491,10 +491,12 @@ const detectForShellPid = (
     return EMPTY_DETECTION
   }
 
-  // Shell exec'd into another process (e.g., sh -c cat → cat)
+  // Shell exec'd into another process (e.g., sh -c cat -> cat). There is no
+  // child process beneath the original shell PID, but the terminal still has
+  // an active foreground process and should require close confirmation.
   return {
     foregroundProcess: shellClassified,
-    hasChildProcess: false,
+    hasChildProcess: true,
     processChain: [shellClassified],
   }
 }

@@ -513,7 +513,7 @@ Make review a standalone panel type, same pattern as diff promotion:
 
 ## 14. Promote dev server terminal to first-class panel type
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1074,7 +1074,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 11 | Panel type picker component | None | done |
 | 12 | Promote diff to first-class panel type | 11, 10 | done |
 | 13 | Promote review to first-class panel type | 11, 10 | done |
-| 14 | Promote dev server terminal to first-class panel type | 11, 10 | pending |
+| 14 | Promote dev server terminal to first-class panel type | 11, 10 | done |
 | 15 | Wire panel type picker into split + new tab flows | 11, 12, 13, 14 | pending |
 | 16 | cmux-style keybindings: pane navigation + zoom | 8, 10 | pending |
 | 17 | Progressive Cmd+W close logic | 8, 10 | pending |

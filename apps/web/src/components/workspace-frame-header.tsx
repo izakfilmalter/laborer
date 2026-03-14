@@ -303,11 +303,16 @@ function WorkspaceFrameHeader({
                 <TooltipTrigger
                   render={
                     <Button
-                      aria-label="Toggle dev server terminal"
+                      aria-label="New dev server terminal"
                       disabled={!hasActivePane}
-                      onClick={withFocus((paneId) =>
-                        actions?.toggleDevServerPane(paneId)
-                      )}
+                      onClick={withFocus((paneId) => {
+                        if (workspaceId) {
+                          actions?.splitPane(paneId, 'horizontal', {
+                            paneType: 'devServerTerminal',
+                            workspaceId,
+                          })
+                        }
+                      })}
                       size="icon-sm"
                       variant="ghost"
                     />
@@ -316,7 +321,7 @@ function WorkspaceFrameHeader({
                   <Server className="size-3.5" />
                 </TooltipTrigger>
                 <TooltipContent>
-                  Toggle dev server terminal
+                  New dev server terminal
                   <KbdGroup>
                     <Kbd>^</Kbd>
                     <Kbd>B</Kbd>

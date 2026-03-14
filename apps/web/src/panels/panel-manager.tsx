@@ -47,8 +47,8 @@ import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { workspaces } from '@laborer/shared/schema'
 import type { LeafNode, PanelNode, SplitNode } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
-import { Layers, Plus, Terminal as TerminalIcon } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { Layers, Plus, Server, Terminal as TerminalIcon } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { GroupImperativeHandle } from 'react-resizable-panels'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -256,6 +256,92 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
   )
 }
 
+interface EmptyDevServerPaneProps {
+  /** The pane ID, used to assign the spawned dev server terminal to this pane. */
+  readonly paneId: string
+  /** Pre-assigned workspace ID from the pane node. */
+  readonly workspaceId: string
+}
+
+/**
+ * Empty state for dev server terminal panes with no terminal assigned.
+ *
+ * Automatically spawns a dev server terminal with `autoRun: true` on mount.
+ * While spawning, shows a loading indicator. If the spawn fails, shows an
+ * error with a retry button.
+ */
+function EmptyDevServerPane({ paneId, workspaceId }: EmptyDevServerPaneProps) {
+  const panelActions = usePanelActions()
+  const spawnTerminal = useAtomSet(spawnTerminalMutation, {
+    mode: 'promise',
+  })
+  const [isSpawning, setIsSpawning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const hasSpawned = useRef(false)
+
+  const description = isSpawning
+    ? 'Spawning the dev server terminal for this workspace.'
+    : (error ?? 'The dev server terminal will start automatically.')
+
+  const handleSpawn = useCallback(async () => {
+    setIsSpawning(true)
+    setError(null)
+    try {
+      const result = await spawnTerminal({
+        payload: { workspaceId, autoRun: true },
+      })
+      if (panelActions) {
+        panelActions.assignTerminalToPane(result.id, workspaceId, paneId)
+      }
+    } catch (spawnError) {
+      setError(extractErrorMessage(spawnError))
+      toast.error(
+        `Failed to spawn dev server: ${extractErrorMessage(spawnError)}`
+      )
+    } finally {
+      setIsSpawning(false)
+    }
+  }, [spawnTerminal, workspaceId, panelActions, paneId])
+
+  // Auto-spawn on mount
+  useEffect(() => {
+    if (hasSpawned.current) {
+      return
+    }
+    hasSpawned.current = true
+    handleSpawn()
+  }, [handleSpawn])
+
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-background">
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Server />
+          </EmptyMedia>
+          <EmptyTitle>
+            {isSpawning ? 'Starting dev server...' : 'Dev server'}
+          </EmptyTitle>
+          <EmptyDescription>{description}</EmptyDescription>
+        </EmptyHeader>
+        {error && (
+          <EmptyContent>
+            <Button
+              disabled={isSpawning}
+              onClick={handleSpawn}
+              size="sm"
+              variant="outline"
+            >
+              <Plus className="size-3.5" />
+              Retry
+            </Button>
+          </EmptyContent>
+        )}
+      </Empty>
+    </div>
+  )
+}
+
 interface PaneContentProps {
   /** The leaf node describing this pane's content. */
   readonly node: LeafNode
@@ -282,6 +368,13 @@ function PaneContent({ node, onTerminalExit }: PaneContentProps) {
   // Dev server terminal rendered as a standalone pane
   if (node.paneType === 'devServerTerminal' && node.terminalId) {
     return <DevServerTerminalPane terminalId={node.terminalId} />
+  }
+
+  // Dev server pane without terminal — auto-spawn dev server
+  if (node.paneType === 'devServerTerminal' && node.workspaceId) {
+    return (
+      <EmptyDevServerPane paneId={node.id} workspaceId={node.workspaceId} />
+    )
   }
 
   // Empty pane — use guided empty state with CTA for terminal panes

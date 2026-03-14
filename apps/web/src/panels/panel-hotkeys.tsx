@@ -394,13 +394,23 @@ function PanelHotkeys({
     { timeout: SEQUENCE_TIMEOUT }
   )
 
-  // Ctrl+b then s → toggle dev server terminal alongside active terminal pane
+  // Ctrl+b then s → create a new dev server terminal panel in a right-side split
   useHotkeySequence(
     ['Control+B', 'S'],
     (event) => {
       event.preventDefault()
-      if (actions && activePaneId) {
-        actions.toggleDevServerPane(activePaneId)
+      if (!actions) {
+        return
+      }
+      if (activePaneId && activeWorkspaceId) {
+        // Split right with a dev server terminal pane inheriting the workspace context
+        actions.splitPane(activePaneId, 'horizontal', {
+          paneType: 'devServerTerminal',
+          workspaceId: activeWorkspaceId,
+        } as Partial<LeafNode>)
+      } else if (activeWorkspaceId) {
+        // No active pane — add as a new panel tab
+        actions.addPanelTab?.(activeWorkspaceId, 'devServerTerminal')
       }
     },
     { timeout: SEQUENCE_TIMEOUT }

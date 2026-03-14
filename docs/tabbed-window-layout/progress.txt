@@ -506,3 +506,38 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 838/838 tests pass (no regressions)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #14: Promote dev server terminal to first-class panel type — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Updated `PaneContent` dispatch in `apps/web/src/panels/panel-manager.tsx` to handle dev server terminal panes without a terminal ID:
+  - Added `EmptyDevServerPane` component that auto-spawns a dev server terminal with `autoRun: true` on mount
+  - When `paneType === 'devServerTerminal'` and no `terminalId`, renders `EmptyDevServerPane` which automatically spawns the terminal and assigns it to the pane
+  - Shows loading state while spawning, error state with retry button on failure
+  - The existing standalone rendering for `paneType === 'devServerTerminal'` with `terminalId` continues to work (renders `DevServerTerminalPane` directly)
+
+- Updated `Ctrl+B, S` keybinding in `apps/web/src/panels/panel-hotkeys.tsx`:
+  - Changed from calling `actions.toggleDevServerPane(activePaneId)` (sidebar toggle) to creating a new dev server terminal panel via `actions.splitPane(activePaneId, 'horizontal', { paneType: 'devServerTerminal', workspaceId })` (right-side split)
+  - Falls back to `actions.addPanelTab?.(activeWorkspaceId, 'devServerTerminal')` when no active pane exists but a workspace is focused
+  - This matches the exact pattern used for `Ctrl+B, D` (diff) and `Ctrl+B, R` (review) in issues #12 and #13
+
+- Updated dev server button in `apps/web/src/components/workspace-frame-header.tsx`:
+  - Changed from `actions?.toggleDevServerPane(paneId)` to `actions?.splitPane(paneId, 'horizontal', { paneType: 'devServerTerminal', workspaceId })`
+  - Updated aria-label from "Toggle dev server terminal" to "New dev server terminal"
+  - Updated tooltip text from "Toggle dev server terminal" to "New dev server terminal"
+
+### Notes
+- Dev server terminal already renders correctly as a standalone pane (line 369 in panel-manager.tsx) — `DevServerTerminalPane` component was already standalone-capable.
+- Dev server appears as option #4 in the panel type picker (already configured in issue #11).
+- Old layouts with `devServerOpen: true` are migrated by the migration issue (#6, already completed).
+- The existing `toggleDevServerPane` action remains in the codebase for backward compatibility. It will be cleaned up when all toggle actions are removed.
+- The `autoOpenDevServerRef` in `use-panel-layout.ts` still references `handleToggleDevServerPane` for the auto-open flow when containers start. This continues to work for legacy layouts.
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 838/838 tests pass (no regressions)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)

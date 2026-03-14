@@ -482,7 +482,51 @@ Date: 2026-03-14
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
 
-## Issue #13: Promote review to first-class panel type — COMPLETED
+## Issue #23: Tab drag-and-drop reordering — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Verified that tab drag-and-drop reordering is already fully implemented end-to-end for both window tabs and panel tabs, built across issues #7 (TabBar component), #8 (window tab bar integration), and #10 (panel tab bar integration).
+
+- **TabBar component** (`apps/web/src/components/ui/tab-bar.tsx`) — already has complete DnD implementation:
+  - Each tab registers as both `draggable` and `dropTargetForElements` via `@atlaskit/pragmatic-drag-and-drop`
+  - Instance-scoped `barId` prevents cross-bar drops (each TabBar instance gets a unique ID)
+  - `monitorForElements` at the container level dispatches `onReorder(fromIndex, toIndex)` on drop
+  - Drop indicators: `closestEdge` state renders left/right `bg-primary` vertical lines during drag
+  - Edge logic: source index < target index = right edge, source index > target index = left edge
+  - `onDragLeave` and `onDrop` clear indicators
+
+- **Window tab reorder wiring** (already in place from issue #8):
+  - `PanelHeaderBar` -> `WindowTabBar` -> `TabBar.onReorder` -> `panelActions.reorderWindowTabsDnd`
+  - `handleReorderWindowTabs` in `use-panel-layout.ts` calls `reorderWindowTabs()` pure function
+  - Commits `windowTabsReordered` LiveStore event with the updated `WindowLayout`
+
+- **Panel tab reorder wiring** (already in place from issue #10):
+  - `WorkspaceFrame` -> `TabBar.onReorder` -> `handlePanelTabReorder` -> `panelActions.reorderPanelTabsDnd`
+  - `handleReorderPanelTabs` in `use-panel-layout.ts` calls `reorderPanelTabs()` via `updateWorkspaceTileLeaf`
+  - Commits `panelTabsReordered` LiveStore event with the updated layout
+
+- Added dedicated DnD integration tests in `apps/web/test/tab-bar-dnd-reorder.test.tsx`:
+  - Intercepts `@atlaskit/pragmatic-drag-and-drop` registrations to test the DnD data contract
+  - Tests capture `draggable`, `dropTargetForElements`, and `monitorForElements` configurations
+
+### Tests
+- 20 tests in `apps/web/test/tab-bar-dnd-reorder.test.tsx` covering:
+  - **Draggable registration** (2 tests): each tab registers as draggable, getInitialData returns correct shape (type, id, index, barId), same barId within same TabBar
+  - **Drop target registration** (4 tests): each tab registers as drop target, getData returns correct shape, canDrop accepts same barId, canDrop rejects different barId, canDrop rejects wrong type
+  - **Monitor registration** (6 tests): registers one monitor per TabBar, canMonitor accepts same barId, canMonitor rejects different barId, onDrop calls onReorder with correct indices, onDrop handles reverse direction, onDrop no-op for same index, onDrop no-op for no drop targets, onDrop ignores non-tab-bar-item data
+  - **Cross-bar isolation** (2 tests): two TabBar instances have different barIds, drop target rejects drags from different TabBar instance
+  - **Drop indicator edge logic** (1 test): onDragEnter sets edge based on source vs target index, onDrag/onDragLeave registered
+  - **Auto-hide** (2 tests): no DnD registrations when auto-hidden (0 items), no DnD registrations when auto-hidden (1 item)
+  - **Edge cases** (3 tests): monitor dispatch for reverse direction reorder, empty drop targets, wrong drag type ignored
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 1026/1026 tests pass (20 new + 1006 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files
 
 Date: 2026-03-14
 

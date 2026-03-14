@@ -859,7 +859,7 @@ Enforce the constraint that a workspace can only be open in one window tab at a 
 
 ## 23. Tab drag-and-drop reordering
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1083,7 +1083,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 20 | Sidebar navigation to terminal across tabs | 2, 8, 10 | done |
 | 21 | Session persistence for hierarchical layout | 6, 8, 10 | done |
 | 22 | Workspace uniqueness enforcement | 21 | done |
-| 23 | Tab drag-and-drop reordering | 8, 10 | pending |
+| 23 | Tab drag-and-drop reordering | 8, 10 | done |
 | 24 | Polish: tab bar animations and transitions | 7 | pending |
 | 25 | Polish: focus consistency | 8, 10 | done |
 | 26 | Polish: visual indicators and keyboard discoverability | 8, 10 | pending |

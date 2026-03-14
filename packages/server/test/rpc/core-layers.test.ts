@@ -1,10 +1,15 @@
 /**
- * Core Layers Test — Issue #13
+ * Core Layers Test — Issues #13 + #14
  *
  * Verifies that the health check RPC works with only core
  * infrastructure layers, confirming the layer separation in main.ts
- * is correct. Deferred services are provided as stubs that die when
- * invoked, proving they're not needed for the health endpoint.
+ * is correct. Deferred services are provided as placeholder proxies
+ * (using the production makeServiceProxy) that return
+ * SERVICE_INITIALIZING errors when invoked.
+ *
+ * Also verifies the deferred service proxy behavior:
+ * - DockerDetection returns { available: false } (placeholder override)
+ * - Other deferred RPCs return SERVICE_INITIALIZING error
  */
 
 import { RpcTest } from '@effect/rpc'
@@ -14,6 +19,10 @@ import { Effect, Layer } from 'effect'
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
 import { ConfigService } from '../../src/services/config-service.js'
 import { ContainerService } from '../../src/services/container-service.js'
+import {
+  makeServiceProxy,
+  SERVICE_INITIALIZING_CODE,
+} from '../../src/services/deferred-service.js'
 import { DepsImageService } from '../../src/services/deps-image-service.js'
 import { DiffService } from '../../src/services/diff-service.js'
 import { DockerDetection } from '../../src/services/docker-detection.js'
@@ -30,62 +39,46 @@ import { WorkspaceSyncService } from '../../src/services/workspace-sync-service.
 import { TestLaborerStore } from '../helpers/test-store.js'
 
 /**
- * Creates a proxy service stub that constructs successfully but throws
- * when any method is invoked. Used to satisfy LaborerRpcsLive's
- * type-level service requirements without building real deferred services.
- */
-const makeStubService = <T extends object>(name: string): T =>
-  new Proxy({} as T, {
-    get: (_target, prop) => {
-      if (typeof prop === 'symbol') {
-        return undefined
-      }
-      return () =>
-        Effect.die(
-          new Error(
-            `${name}.${prop} not available — deferred service not initialized`
-          )
-        )
-    },
-  })
-
-/**
- * Stub layers for all deferred services.
+ * Placeholder proxy layers for all deferred services.
  *
- * Each stub provides the service tag with a proxy whose methods
- * return Effect.die when invoked. This proves the health endpoint
- * doesn't depend on deferred services at runtime — only at the
- * type level (because LaborerRpcsLive captures handler service
- * requirements).
+ * Uses the production makeServiceProxy from deferred-service.ts.
+ * Each proxy returns RpcError with SERVICE_INITIALIZING code for all
+ * method calls, except DockerDetection which has a placeholder override
+ * (its RPC has no error channel, so it returns { available: false }).
  *
- * Issue #14 will replace these with proper "service initializing"
- * error implementations.
+ * This matches the behavior of the production DeferredServicesProxyLive
+ * layer before the background fiber completes initialization.
  */
 const DeferredServiceStubs = Layer.mergeAll(
-  Layer.succeed(DockerDetection, makeStubService('DockerDetection')),
-  Layer.succeed(ProjectRegistry, makeStubService('ProjectRegistry')),
-  Layer.succeed(PrdStorageService, makeStubService('PrdStorageService')),
-  Layer.succeed(TaskManager, makeStubService('TaskManager')),
-  Layer.succeed(WorkspaceProvider, makeStubService('WorkspaceProvider')),
-  Layer.succeed(DiffService, makeStubService('DiffService')),
-  Layer.succeed(PrWatcher, makeStubService('PrWatcher')),
-  Layer.succeed(WorkspaceSyncService, makeStubService('WorkspaceSyncService')),
-  Layer.succeed(TerminalClient, makeStubService('TerminalClient')),
-  Layer.succeed(ContainerService, makeStubService('ContainerService')),
-  Layer.succeed(GithubTaskImporter, makeStubService('GithubTaskImporter')),
-  Layer.succeed(LinearTaskImporter, makeStubService('LinearTaskImporter')),
-  Layer.succeed(ReviewCommentFetcher, makeStubService('ReviewCommentFetcher')),
-  Layer.succeed(DepsImageService, makeStubService('DepsImageService'))
+  Layer.succeed(
+    DockerDetection,
+    makeServiceProxy('DockerDetection', {
+      check: () => Effect.succeed({ available: false }),
+    })
+  ),
+  Layer.succeed(ProjectRegistry, makeServiceProxy('ProjectRegistry')),
+  Layer.succeed(PrdStorageService, makeServiceProxy('PrdStorageService')),
+  Layer.succeed(TaskManager, makeServiceProxy('TaskManager')),
+  Layer.succeed(WorkspaceProvider, makeServiceProxy('WorkspaceProvider')),
+  Layer.succeed(DiffService, makeServiceProxy('DiffService')),
+  Layer.succeed(PrWatcher, makeServiceProxy('PrWatcher')),
+  Layer.succeed(WorkspaceSyncService, makeServiceProxy('WorkspaceSyncService')),
+  Layer.succeed(TerminalClient, makeServiceProxy('TerminalClient')),
+  Layer.succeed(ContainerService, makeServiceProxy('ContainerService')),
+  Layer.succeed(GithubTaskImporter, makeServiceProxy('GithubTaskImporter')),
+  Layer.succeed(LinearTaskImporter, makeServiceProxy('LinearTaskImporter')),
+  Layer.succeed(ReviewCommentFetcher, makeServiceProxy('ReviewCommentFetcher')),
+  Layer.succeed(DepsImageService, makeServiceProxy('DepsImageService'))
 )
 
 /**
  * Core-only test layer: LaborerRpcsLive with only core infrastructure
- * layers (ConfigService, LaborerStore) and stub implementations for
- * all deferred services.
+ * layers (ConfigService, LaborerStore) and placeholder proxy
+ * implementations for all deferred services.
  *
  * This proves the health endpoint responds without building any
  * deferred services — terminal sidecar, file-watcher sidecar, Docker
- * detection, etc. are all stubbed.
+ * detection, etc. are all placeholders.
  */
 const CoreOnlyRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(DeferredServiceStubs),
@@ -114,7 +107,7 @@ describe('Core layers (Issue #13)', () => {
       // This test proves the RPC layer can be built and serve health
       // checks without the terminal or file-watcher sidecars running.
       // The CoreOnlyRpcLayer doesn't include TerminalClient.layer or
-      // FileWatcherClient.layer — only stubs.
+      // FileWatcherClient.layer — only placeholder proxies.
       const client = yield* CoreOnlyRpcClient
       const response = yield* client.health.check()
 
@@ -132,31 +125,56 @@ describe('Core layers (Issue #13)', () => {
       assert.isTrue(response.uptime >= 0)
     })
   )
+})
+
+describe('Deferred service proxies (Issue #14)', () => {
+  it.scoped('DockerDetection placeholder returns { available: false }', () =>
+    Effect.gen(function* () {
+      const client = yield* CoreOnlyRpcClient
+
+      // DockerDetection has a placeholder override that returns
+      // { available: false } instead of an error (its RPC has
+      // no error channel).
+      const result = yield* client.docker.status()
+
+      assert.strictEqual(result.available, false)
+    })
+  )
 
   it.scoped(
-    'deferred service RPC fails with stub error, not missing service',
+    'deferred service RPC returns SERVICE_INITIALIZING error before init',
     () =>
       Effect.gen(function* () {
         const client = yield* CoreOnlyRpcClient
 
-        // Calling a deferred-service RPC should fail with a defect
-        // from our stub (the service object itself throws when
-        // any property is accessed), not with a "service not found" error.
-        const result = yield* client.docker.status().pipe(
-          Effect.matchCauseEffect({
+        // Calling a deferred-service RPC should fail with
+        // SERVICE_INITIALIZING error, not a defect or missing service.
+        const result = yield* client.project.list().pipe(
+          Effect.matchEffect({
             onSuccess: () => Effect.succeed('success' as const),
-            onFailure: (cause) => {
-              const defectOrError = cause.toString()
-              return Effect.succeed(defectOrError)
-            },
+            onFailure: (error) => Effect.succeed(error),
           })
         )
 
-        // The stub should produce a "not available" defect
         if (result === 'success') {
-          assert.fail('Expected docker.status to fail with stub')
+          assert.fail('Expected project.list to fail with SERVICE_INITIALIZING')
         }
-        assert.include(result, 'not available')
+        assert.strictEqual(result._tag, 'RpcError')
+        assert.strictEqual(result.code, SERVICE_INITIALIZING_CODE)
+        assert.include(result.message, 'still initializing')
+      })
+  )
+
+  it.scoped(
+    'core RPCs continue working regardless of deferred service state',
+    () =>
+      Effect.gen(function* () {
+        const client = yield* CoreOnlyRpcClient
+
+        // health.check is a core RPC — it should always work,
+        // even when all deferred services return SERVICE_INITIALIZING.
+        const response = yield* client.health.check()
+        assert.strictEqual(response.status, 'ok')
       })
   )
 })

@@ -203,3 +203,47 @@
 - TypeScript typecheck passes with no errors across all packages
 - Formatter (ultracite/biome) passes on all changed files
 - Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #14: Server deferred layer group (background initialization) — COMPLETED
+
+### What was done
+- Created `packages/server/src/services/deferred-service.ts` with:
+  - `SERVICE_INITIALIZING_CODE` — sentinel error code (`'SERVICE_INITIALIZING'`) used in RpcError to signal that a deferred service is still initializing, detectable by the renderer
+  - `serviceInitializingError(serviceName)` — creates an RpcError with the SERVICE_INITIALIZING code
+  - `makeServiceProxy<T>(serviceName, overrides?)` — creates a Proxy that returns SERVICE_INITIALIZING errors for all method calls, with optional method overrides for services that need valid placeholder data (e.g., DockerDetection.check() returns `{ available: false }`)
+  - `makeRefDelegatingService<Id, S>(tag, overrides?)` — creates a `{ ref, proxy }` pair where:
+    - `ref` is a `Ref<S>` holding the current implementation (starts with placeholder proxy)
+    - `proxy` is a Proxy that delegates all method calls through the Ref to the current implementation
+    - When the Ref is swapped to the real service, all future calls automatically go through to it
+  - `DeferredServicesReady` — Context.Tag holding a `Ref<boolean>` that tracks whether all deferred services have initialized (starts `false`, set to `true` when background fiber completes). Used by Issue #15 (Server "fully initialized" event)
+  - `DeferredServicesReadyLayer` — Layer.effect that provides DeferredServicesReady
+
+- Restructured `packages/server/src/main.ts` for background initialization:
+  - **DeferredServicesProxyLive** — new `Layer.scopedContext` layer that:
+    1. Creates 14 Ref-backed delegating proxies for all deferred service Tags that RPC handlers yield from
+    2. DockerDetection gets a special placeholder override: `check()` returns `{ available: false }`
+    3. Forks a single background fiber (`Effect.forkScoped`) that builds the full `DeferredServicesLive` layer graph
+    4. Once built, swaps each Ref to the real service implementation from the built Context
+    5. Sets `DeferredServicesReady` ref to `true` on success
+    6. On failure: logs the error but does NOT crash the server — RPCs continue returning SERVICE_INITIALIZING errors
+    7. Returns a Context with all 14 proxy service implementations
+  - **HttpLive** updated to use `DeferredServicesProxyLive` instead of `DeferredServicesLive` directly
+  - The health endpoint responds as soon as core layers are built (before deferred services finish)
+
+- Updated `packages/server/test/rpc/core-layers.test.ts`:
+  - Replaced custom `makeStubService` with production `makeServiceProxy` from `deferred-service.ts`
+  - 6 tests: 3 core layer tests + 3 deferred proxy behavior tests
+
+- Created `packages/server/test/rpc/deferred-init.test.ts` with 8 tests:
+  - makeServiceProxy: SERVICE_INITIALIZING errors, override support
+  - makeRefDelegatingService: placeholder → real service Ref swap
+  - DeferredServicesReady: starts false, can be set to true
+  - DockerDetection placeholder behavior
+
+### Verification
+- All 14 new tests pass (6 in core-layers.test.ts, 8 in deferred-init.test.ts)
+- All 335 server tests pass (up from 325 after Issue #13)
+- All 596 web tests pass (no regressions)
+- TypeScript typecheck passes with no errors across all packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change

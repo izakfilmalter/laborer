@@ -16,7 +16,7 @@
  * - Environment variables validated at import time via @laborer/env/server
  *
  * Layer composition is organized into core and deferred groups
- * (Phased Service Lifecycle — Issue #13):
+ * (Phased Service Lifecycle — Issues #13 + #14):
  *
  *   Core layers: HTTP server, health endpoint, LiveStore sync, RPC
  *   handler registration, ConfigService, RepositoryIdentity. These
@@ -26,12 +26,9 @@
  *   Deferred layers: Docker detection, sidecar connections, PR watchers,
  *   task importers, workspace management, and other services that
  *   involve I/O, external connections, or heavy initialization.
- *
- *   Both groups are composed into a single layer graph because
- *   LaborerRpcsLive captures handler service requirements at the
- *   type level. The separation is structural — making it clear which
- *   layers are core vs deferred for future optimization (Issue #14:
- *   background initialization, Issue #16: lazy sidecar connections).
+ *   These are provided as Ref-backed delegating proxies that initially
+ *   return SERVICE_INITIALIZING errors, then swap to real implementations
+ *   once a background fiber finishes building them.
  */
 
 import { createServer } from 'node:http'
@@ -45,12 +42,17 @@ import { NodeHttpServer, NodeRuntime } from '@effect/platform-node'
 import { RpcSerialization, RpcServer } from '@effect/rpc'
 import { env } from '@laborer/env/server'
 import { LaborerRpcs } from '@laborer/shared/rpc'
-import { Cause, Effect, Exit, Layer } from 'effect'
+import { Cause, Context, Effect, Exit, Layer, pipe, Ref } from 'effect'
 import { LaborerRpcsLive } from './rpc/handlers.js'
 import { BackgroundFetchService } from './services/background-fetch-service.js'
 import { BranchStateTracker } from './services/branch-state-tracker.js'
 import { ConfigService } from './services/config-service.js'
 import { ContainerService } from './services/container-service.js'
+import {
+  DeferredServicesReady,
+  DeferredServicesReadyLayer,
+  makeRefDelegatingService,
+} from './services/deferred-service.js'
 import { DepsImageService } from './services/deps-image-service.js'
 import { DiffService } from './services/diff-service.js'
 import { DockerDetection } from './services/docker-detection.js'
@@ -139,7 +141,7 @@ const ServerLive = NodeHttpServer.layer(createServer, { port: env.PORT })
  */
 
 // ---------------------------------------------------------------------------
-// Deferred Layers (heavy I/O, external connections, background services)
+// Deferred Layers — Real implementations (built in background fiber)
 // ---------------------------------------------------------------------------
 
 /**
@@ -211,6 +213,9 @@ const DeferredTopLayers = Layer.mergeAll(
  * External requirements after composition: LaborerStore, ConfigService,
  * RepositoryIdentity (provided by core infrastructure layers).
  *
+ * This layer is NOT provided to HttpLive directly. Instead, it is
+ * built in a background fiber by DeferredServicesBackgroundInit.
+ *
  * @see PRD section: "Server Layer Graph Splitting" (deferred layers list)
  */
 const DeferredServicesLive = DeferredTopLayers.pipe(
@@ -219,28 +224,145 @@ const DeferredServicesLive = DeferredTopLayers.pipe(
 )
 
 // ---------------------------------------------------------------------------
-// Application Layer — Core + Deferred composed
+// Deferred Services — Placeholder proxies with background initialization
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a Layer that provides all 14 deferred service Tags with
+ * Ref-backed delegating proxies, AND forks a background fiber to
+ * build the real implementations.
+ *
+ * Uses Layer.scopedContext to return a Context with all 14 services.
+ * The background fiber is tied to the server's scope and properly
+ * interrupted on shutdown.
+ *
+ * @see Issue #14: Server deferred layer group (background initialization)
+ */
+const DeferredServicesProxyLive = Layer.scopedContext(
+  Effect.gen(function* () {
+    // --- Create Ref-backed delegating proxies for each deferred service ---
+
+    const containerService = yield* makeRefDelegatingService(ContainerService)
+    const diffService = yield* makeRefDelegatingService(DiffService)
+    const dockerDetection = yield* makeRefDelegatingService(DockerDetection, {
+      // DockerDetection.check() has no error channel — return valid data
+      check: () => Effect.succeed({ available: false }),
+    })
+    const githubTaskImporter =
+      yield* makeRefDelegatingService(GithubTaskImporter)
+    const linearTaskImporter =
+      yield* makeRefDelegatingService(LinearTaskImporter)
+    const prWatcher = yield* makeRefDelegatingService(PrWatcher)
+    const prdStorageService = yield* makeRefDelegatingService(PrdStorageService)
+    const projectRegistry = yield* makeRefDelegatingService(ProjectRegistry)
+    const reviewCommentFetcher =
+      yield* makeRefDelegatingService(ReviewCommentFetcher)
+    const taskManager = yield* makeRefDelegatingService(TaskManager)
+    const terminalClient = yield* makeRefDelegatingService(TerminalClient)
+    const workspaceProvider = yield* makeRefDelegatingService(WorkspaceProvider)
+    const workspaceSyncService =
+      yield* makeRefDelegatingService(WorkspaceSyncService)
+    const depsImageService = yield* makeRefDelegatingService(DepsImageService)
+
+    // --- Fork background fiber to build real services ---
+
+    yield* Effect.gen(function* () {
+      yield* Effect.logInfo(
+        'Starting background initialization of deferred services...'
+      )
+
+      // Build the full deferred layer graph in the background.
+      // Core services (ConfigService, LaborerStore, RepositoryIdentity)
+      // are available because they're provided in the ambient context
+      // via the layer composition in HttpLive.
+      const ctx = yield* Layer.build(DeferredServicesLive)
+
+      // Swap each Ref to the real implementation
+      yield* Ref.set(containerService.ref, Context.get(ctx, ContainerService))
+      yield* Ref.set(diffService.ref, Context.get(ctx, DiffService))
+      yield* Ref.set(dockerDetection.ref, Context.get(ctx, DockerDetection))
+      yield* Ref.set(
+        githubTaskImporter.ref,
+        Context.get(ctx, GithubTaskImporter)
+      )
+      yield* Ref.set(
+        linearTaskImporter.ref,
+        Context.get(ctx, LinearTaskImporter)
+      )
+      yield* Ref.set(prWatcher.ref, Context.get(ctx, PrWatcher))
+      yield* Ref.set(prdStorageService.ref, Context.get(ctx, PrdStorageService))
+      yield* Ref.set(projectRegistry.ref, Context.get(ctx, ProjectRegistry))
+      yield* Ref.set(
+        reviewCommentFetcher.ref,
+        Context.get(ctx, ReviewCommentFetcher)
+      )
+      yield* Ref.set(taskManager.ref, Context.get(ctx, TaskManager))
+      yield* Ref.set(terminalClient.ref, Context.get(ctx, TerminalClient))
+      yield* Ref.set(workspaceProvider.ref, Context.get(ctx, WorkspaceProvider))
+      yield* Ref.set(
+        workspaceSyncService.ref,
+        Context.get(ctx, WorkspaceSyncService)
+      )
+      yield* Ref.set(depsImageService.ref, Context.get(ctx, DepsImageService))
+
+      // Signal that all deferred services are ready
+      const { ref: readyRef } = yield* DeferredServicesReady
+      yield* Ref.set(readyRef, true)
+
+      yield* Effect.logInfo('All deferred services initialized successfully')
+    }).pipe(
+      Effect.catchAllCause((cause) =>
+        Effect.gen(function* () {
+          yield* Effect.logError('Deferred services failed to initialize')
+          yield* Effect.logError(cause)
+        })
+      ),
+      Effect.forkScoped,
+      Effect.withSpan('deferred.init.all')
+    )
+
+    // Return context with all 14 proxies
+    return pipe(
+      Context.empty(),
+      Context.add(ContainerService, containerService.proxy),
+      Context.add(DiffService, diffService.proxy),
+      Context.add(DockerDetection, dockerDetection.proxy),
+      Context.add(GithubTaskImporter, githubTaskImporter.proxy),
+      Context.add(LinearTaskImporter, linearTaskImporter.proxy),
+      Context.add(PrWatcher, prWatcher.proxy),
+      Context.add(PrdStorageService, prdStorageService.proxy),
+      Context.add(ProjectRegistry, projectRegistry.proxy),
+      Context.add(ReviewCommentFetcher, reviewCommentFetcher.proxy),
+      Context.add(TaskManager, taskManager.proxy),
+      Context.add(TerminalClient, terminalClient.proxy),
+      Context.add(WorkspaceProvider, workspaceProvider.proxy),
+      Context.add(WorkspaceSyncService, workspaceSyncService.proxy),
+      Context.add(DepsImageService, depsImageService.proxy)
+    )
+  })
+)
+
+// ---------------------------------------------------------------------------
+// Application Layer — Core + Deferred Placeholders composed
 // ---------------------------------------------------------------------------
 
 /**
  * Application Layer
  *
- * Composes route layers with all service layers. The layer graph is
- * organized into core and deferred groups for clarity, but built as
- * a single composition because LaborerRpcsLive captures handler
- * service requirements at the type level.
+ * Composes route layers with all service layers. Deferred services are
+ * provided as Ref-backed delegating proxies that initially return
+ * SERVICE_INITIALIZING errors. A background fiber builds the real
+ * implementations and swaps the Refs once ready.
  *
- * Core layers (fast-building):
+ * Core layers (fast-building, built eagerly):
  *   CustomRoutesLive, RpcLive, SyncRpcLive, ConfigService,
  *   RepositoryIdentity, RpcSerialization, LaborerStoreLive, ServerLive
  *
- * Deferred layers (heavy I/O, external connections):
+ * Deferred layers (built in background fiber):
  *   All remaining ~20 services (see DeferredServicesLive)
+ *   Provided initially as placeholders via makeDeferredServicesLayer()
  *
- * Future optimization (Issue #14): Deferred services will be wrapped
- * in background-initializing layers that return placeholder
- * implementations immediately, allowing the health endpoint to
- * respond before all services finish building.
+ * @see Issue #14: Server deferred layer group (background initialization)
  */
 const HttpLive = HttpRouter.Default.serve((httpApp) =>
   HttpMiddleware.logger(HttpMiddleware.cors()(httpApp))
@@ -250,8 +372,9 @@ const HttpLive = HttpRouter.Default.serve((httpApp) =>
   Layer.provide(CustomRoutesLive),
   Layer.provide(RpcLive),
   Layer.provide(SyncRpcLive),
-  // --- Deferred service layers (heavy I/O, external connections) ---
-  Layer.provide(DeferredServicesLive),
+  // --- Deferred service layers (Ref-backed proxies + background init) ---
+  Layer.provide(DeferredServicesProxyLive),
+  Layer.provide(DeferredServicesReadyLayer),
   // --- Core infrastructure layers (fast-building) ---
   Layer.provide(ConfigService.layer),
   Layer.provide(RepositoryIdentity.layer),
@@ -300,13 +423,16 @@ const teardownWithTimeout = <E, A>(
  * Main program
  *
  * Layer.launch converts the layer into an Effect that:
- * 1. Builds all layers (starting the HTTP server + RPC)
- * 2. Keeps running until interrupted
- * 3. On SIGINT/SIGTERM, tears down all layer scopes
+ * 1. Builds core layers + placeholder proxies (starting the HTTP server + RPC)
+ * 2. Forks a background fiber to build deferred service layers
+ * 3. Keeps running until interrupted
+ * 4. On SIGINT/SIGTERM, tears down all layer scopes (including background fiber)
  *
- * The layer composition clearly separates core from deferred layers
- * (see HttpLive). Issue #14 will add background initialization for
- * deferred layers so the health endpoint responds before they finish.
+ * The health endpoint responds as soon as core layers are built.
+ * Deferred service RPCs return SERVICE_INITIALIZING errors until the
+ * background fiber completes, then seamlessly delegate to real services.
+ *
+ * @see Issue #14: Server deferred layer group (background initialization)
  */
 const main = HttpLive.pipe(Layer.launch, Effect.scoped)
 

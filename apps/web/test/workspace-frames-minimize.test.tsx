@@ -1,7 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PanelActions } from '@/panels/panel-context'
-import { WorkspaceFrames } from '../src/routes/-components/workspace-frames'
 
 const { panelApis } = vi.hoisted(() => ({
   panelApis: [] as {
@@ -29,6 +28,21 @@ vi.mock('@atlaskit/pragmatic-drag-and-drop/combine', () => ({
 
 vi.mock('@atlaskit/pragmatic-drag-and-drop/reorder', () => ({
   reorder: vi.fn(),
+}))
+
+// Mock LiveStore dependencies (workspace-frames.tsx imports @laborer/shared/schema)
+vi.mock('@livestore/livestore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@livestore/livestore')>()
+  return {
+    ...actual,
+    queryDb: vi.fn(() => ({})),
+  }
+})
+
+vi.mock('@/livestore/store', () => ({
+  useLaborerStore: () => ({
+    useQuery: () => [],
+  }),
 }))
 
 vi.mock('@/panels/panel-manager', () => ({
@@ -66,6 +80,7 @@ vi.mock('@/panels/panel-context', () => {
     toggleFullscreenPane: vi.fn(),
     toggleReviewPane: vi.fn(() => false),
     addPanelTab: vi.fn(),
+    addWorkspaceToCurrentTab: vi.fn(),
     addWindowTab: vi.fn(),
     closeWindowTab: vi.fn(),
     removePanelTab: vi.fn(),
@@ -148,6 +163,9 @@ vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
     </button>
   ),
 }))
+
+// Import after mocks are set up
+import { WorkspaceFrames } from '../src/routes/-components/workspace-frames'
 
 const layout = {
   _tag: 'SplitNode' as const,

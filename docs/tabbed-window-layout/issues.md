@@ -677,7 +677,7 @@ Close confirmation dialogs must work at each level: if closing a tab/workspace/w
 
 ## 18. Empty state: window tab with workspace picker
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1078,7 +1078,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 15 | Wire panel type picker into split + new tab flows | 11, 12, 13, 14 | done |
 | 16 | cmux-style keybindings: pane navigation + zoom | 8, 10 | done |
 | 17 | Progressive Cmd+W close logic | 8, 10 | done |
-| 18 | Empty state: window tab with workspace picker | 8 | pending |
+| 18 | Empty state: window tab with workspace picker | 8 | done |
 | 19 | Empty state: workspace and panel tab | 10, 11 | done |
 | 20 | Sidebar navigation to terminal across tabs | 2, 8, 10 | done |
 | 21 | Session persistence for hierarchical layout | 6, 8, 10 | done |

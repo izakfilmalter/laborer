@@ -108,14 +108,19 @@ function HomeComponent() {
   // Extract the active window tab's workspace tile layout for bidirectional tiling.
   // When available, WorkspaceFrames uses this for hierarchical rendering instead
   // of extracting workspaces from the flat PanelNode tree.
-  const workspaceTileLayout = useMemo(() => {
+  const activeWindowTab = useMemo(() => {
     const windowLayout = panelActions.windowLayout
     if (!windowLayout) {
       return undefined
     }
-    const activeTab = getActiveWindowTab(windowLayout)
-    return activeTab?.workspaceLayout
+    return getActiveWindowTab(windowLayout)
   }, [panelActions.windowLayout])
+
+  const workspaceTileLayout = activeWindowTab?.workspaceLayout
+
+  // Detect when the active window tab exists but has no workspaces.
+  // This triggers the empty window tab state (workspace picker).
+  const isEmptyWindowTab = activeWindowTab !== undefined && !workspaceTileLayout
 
   const store = useLaborerStore()
   const projectList = store.useQuery(sidebarProjects$)
@@ -892,6 +897,7 @@ function HomeComponent() {
                       diffPaneOpen={diffPaneWorkspaceId !== null}
                       diffWorkspaceId={diffPaneWorkspaceId}
                       fullscreenPaneId={fullscreenPaneId}
+                      isEmptyWindowTab={isEmptyWindowTab}
                       isReconciling={isReconciling}
                       layout={layout}
                       reviewPaneOpen={reviewPaneWorkspaceId !== null}

@@ -2,13 +2,15 @@ import type { PanelNode, WorkspaceTileNode } from '@laborer/shared/types'
 import { useState } from 'react'
 import { FullscreenPortalContext } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
-import { WorkspaceFrames } from './workspace-frames'
+import { EmptyWindowTabState, WorkspaceFrames } from './workspace-frames'
 
 interface PanelContentProps {
   readonly activePaneId: string | null
   readonly diffPaneOpen?: boolean
   readonly diffWorkspaceId?: string | null
   readonly fullscreenPaneId: string | null
+  /** True when the active window tab exists but has no workspace layout. */
+  readonly isEmptyWindowTab?: boolean
   readonly isReconciling: boolean
   readonly layout: PanelNode | undefined
   readonly reviewPaneOpen?: boolean
@@ -19,7 +21,7 @@ interface PanelContentProps {
 
 /**
  * Renders the main panel area content, handling the reconciling/loading,
- * workspace frames, or empty state.
+ * workspace frames, empty window tab state, or empty state.
  *
  * Side panels (review and/or diff) are rendered inside each workspace frame
  * that matches the panel's workspaceId, spanning the full height of that
@@ -37,6 +39,7 @@ export function PanelContent({
   fullscreenPaneId,
   workspaceOrder,
   workspaceTileLayout,
+  isEmptyWindowTab = false,
   reviewPaneOpen = false,
   reviewWorkspaceId = null,
   diffPaneOpen = false,
@@ -52,6 +55,11 @@ export function PanelContent({
         </p>
       </div>
     )
+  }
+
+  // Active window tab has no workspaces — show workspace picker
+  if (isEmptyWindowTab) {
+    return <EmptyWindowTabState />
   }
 
   if (layout) {

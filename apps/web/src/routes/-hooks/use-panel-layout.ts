@@ -74,6 +74,7 @@ import {
 import {
   addWindowTab,
   findTerminalLocation,
+  getActiveWindowTab,
   getStaleTerminalLeavesHierarchical,
   reconcileWindowLayout,
   removeWindowTab,
@@ -84,6 +85,7 @@ import {
   switchWindowTabRelative,
   updateWorkspaceTileLeaf,
 } from '@/panels/window-tab-utils'
+import { addWorkspaceToTab } from '@/panels/workspace-tile-utils'
 import { useInitialLayout } from './use-initial-layout'
 
 /** Browser fallback until every renderer boot path has a native window ID. */
@@ -1207,6 +1209,23 @@ export function usePanelLayout() {
     [persistedWindowLayout, commitWindowLayout]
   )
 
+  const handleAddWorkspaceToCurrentTab = useCallback(
+    (workspaceId: string) => {
+      const base = persistedWindowLayout ?? { tabs: [], activeTabId: undefined }
+      const activeTab = getActiveWindowTab(base)
+      if (!activeTab) {
+        return
+      }
+      const updatedTab = addWorkspaceToTab(activeTab, workspaceId)
+      const newLayout: WindowLayout = {
+        ...base,
+        tabs: base.tabs.map((t) => (t.id === activeTab.id ? updatedTab : t)),
+      }
+      commitWindowLayout(windowTabCreated, newLayout)
+    },
+    [persistedWindowLayout, commitWindowLayout]
+  )
+
   // -------------------------------------------------------------------
   // Panel tab actions — operate on workspaces within the WindowLayout.
   // -------------------------------------------------------------------
@@ -1342,6 +1361,7 @@ export function usePanelLayout() {
       removePanelTab: handleRemovePanelTab,
       reorderPanelTabsDnd: handleReorderPanelTabs,
       reorderWorkspaces: handleReorderWorkspaces,
+      addWorkspaceToCurrentTab: handleAddWorkspaceToCurrentTab,
       addWindowTab: handleAddWindowTab,
       closeWindowTab: handleCloseWindowTab,
       switchWindowTab: handleSwitchWindowTab,
@@ -1369,6 +1389,7 @@ export function usePanelLayout() {
       handleRemovePanelTab,
       handleReorderPanelTabs,
       handleReorderWorkspaces,
+      handleAddWorkspaceToCurrentTab,
       handleAddWindowTab,
       handleCloseWindowTab,
       handleSwitchWindowTab,

@@ -68,6 +68,14 @@ interface PanelActions {
    * Triggered by Cmd+N.
    */
   readonly addWindowTab: (() => void) | undefined
+
+  /**
+   * Add an existing workspace to the active window tab.
+   * Shown in the empty window tab state workspace picker.
+   *
+   * @param workspaceId - The workspace to add to the current window tab
+   */
+  readonly addWorkspaceToCurrentTab: ((workspaceId: string) => void) | undefined
   /**
    * Assign a terminal to an existing pane or the first available empty pane.
    * If no paneId is given, finds the first empty terminal pane in the tree

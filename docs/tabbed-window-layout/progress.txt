@@ -876,3 +876,86 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 928/928 tests pass (23 new + 905 existing)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #18: Empty state: window tab with workspace picker — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Created `EmptyWindowTabState` component in `apps/web/src/routes/-components/workspace-frames.tsx`:
+  - Shows when a window tab has no workspaces (e.g., after `Cmd+N` creates a new empty tab)
+  - Uses the shared `Empty` component library (`Empty`, `EmptyHeader`, `EmptyMedia`, `EmptyTitle`, `EmptyDescription`, `EmptyContent`)
+  - Displays `LayoutGrid` icon from lucide-react
+  - Title: "Empty tab"
+  - Description: "Select a workspace to add to this tab, or create a new one from the sidebar."
+
+- **Workspace picker** — queries LiveStore for all workspaces and projects, groups available workspaces by project:
+  - `allWorkspacesForPicker$` — `queryDb(workspaces)` with label `emptyWindowTabWorkspaces`
+  - `allProjectsForPicker$` — `queryDb(projects)` with label `emptyWindowTabProjects`
+  - Filters out destroyed workspaces (`status === 'destroyed'`)
+  - Filters out workspaces already open in any window tab using `getAllWorkspaceTileLeaves(windowLayout)` to collect all open workspace IDs
+  - Groups remaining workspaces by project, displaying project name as heading and workspace branch names as clickable items
+  - Falls back to project ID when project name is not found in the DB
+  - Shows "All workspaces are already open" message when no workspaces are available
+  - Available workspaces rendered as `Button` components with `GitBranch` icon and branch name
+  - Workspace list is scrollable via `ScrollArea` with `max-h-48` constraint
+
+- **Sub-components**:
+  - `WorkspacePickerGroup` — renders a project heading with its available workspaces
+  - `WorkspacePickerItem` — renders a single workspace as a clickable button with keyboard support (Enter/Space)
+  - Both support click and keyboard interaction
+
+- Added `addWorkspaceToCurrentTab` action to `PanelActions` interface in `apps/web/src/panels/panel-context.tsx`:
+  - Takes a `workspaceId: string` parameter
+  - Adds the workspace to the active window tab
+
+- Implemented `handleAddWorkspaceToCurrentTab` handler in `apps/web/src/routes/-hooks/use-panel-layout.ts`:
+  - Gets the active window tab via `getActiveWindowTab(persistedWindowLayout)`
+  - Calls `addWorkspaceToTab(activeTab, workspaceId)` from `workspace-tile-utils.ts` to add the workspace
+  - Replaces the updated tab in the layout and commits `windowTabCreated` LiveStore event
+  - Added imports for `getActiveWindowTab` from `window-tab-utils.ts` and `addWorkspaceToTab` from `workspace-tile-utils.ts`
+
+- Wired empty state into the rendering flow:
+  - Updated `PanelContent` in `apps/web/src/routes/-components/panel-content.tsx`:
+    - Added `isEmptyWindowTab` prop (boolean, defaults to false)
+    - When `isEmptyWindowTab` is true, renders `EmptyWindowTabState` instead of workspace frames
+    - Imports `EmptyWindowTabState` from `workspace-frames.tsx`
+  - Updated `apps/web/src/routes/index.tsx`:
+    - Refactored `workspaceTileLayout` derivation to first extract `activeWindowTab`, then derive `workspaceTileLayout` from it
+    - Added `isEmptyWindowTab` boolean: true when `activeWindowTab` exists but has no `workspaceLayout`
+    - Passes `isEmptyWindowTab` to `PanelContent`
+
+- Updated 6 test files to include `addWorkspaceToCurrentTab: vi.fn()` mock:
+  - `empty-state-components.test.tsx`
+  - `full-height-review-panel.test.tsx`
+  - `workspace-frames-minimize.test.tsx`
+  - `workspace-frame-header.test.tsx`
+  - `terminal-overlay-toolbar.test.tsx`
+  - `fullscreen-portal.test.tsx`
+
+- Added LiveStore mocks to 3 test files that now need them (because `workspace-frames.tsx` imports `@laborer/shared/schema`):
+  - `empty-state-components.test.tsx` — added `@livestore/livestore` and `@/livestore/store` mocks
+  - `full-height-review-panel.test.tsx` — added `@livestore/livestore` and `@/livestore/store` mocks
+  - `workspace-frames-minimize.test.tsx` — added `@livestore/livestore` and `@/livestore/store` mocks, moved `WorkspaceFrames` import after mocks
+
+### Tests
+- 12 tests in `apps/web/test/empty-window-tab-state.test.tsx` covering:
+  - Renders the empty state container with `data-testid="empty-window-tab-state"`
+  - Displays "Empty tab" title
+  - Shows description text about selecting a workspace
+  - Shows "all workspaces open" message when no workspaces are available
+  - Shows available workspaces grouped by project (multi-project, multi-workspace)
+  - Excludes destroyed workspaces from the picker
+  - Excludes workspaces already open in other tabs (via `windowLayout` check)
+  - Calls `addWorkspaceToCurrentTab` when a workspace is clicked
+  - Uses the Empty component library (data-slot verification)
+  - Falls back to project ID when project name is not found
+  - Shows all-open message when all workspaces are in tabs (with `WorkspaceTileSplit`)
+  - Shows workspaces in all non-destroyed statuses (running, creating, paused)
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 940/940 tests pass (12 new + 928 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)

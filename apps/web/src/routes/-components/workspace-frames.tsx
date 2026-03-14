@@ -5,6 +5,7 @@ import {
   monitorForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import { reorder } from '@atlaskit/pragmatic-drag-and-drop/reorder'
+import { projects, workspaces } from '@laborer/shared/schema'
 import type {
   PanelNode,
   PanelTreeNode,
@@ -12,9 +13,11 @@ import type {
   WorkspaceTileLeaf,
   WorkspaceTileNode,
 } from '@laborer/shared/types'
-import { Layers, PanelTop } from 'lucide-react'
+import { queryDb } from '@livestore/livestore'
+import { GitBranch, Layers, LayoutGrid, PanelTop } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PanelImperativeHandle } from 'react-resizable-panels'
+import { Button } from '@/components/ui/button'
 import {
   Empty,
   EmptyContent,
@@ -29,7 +32,9 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from '@/components/ui/resizable'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { TabBar, type TabBarItem } from '@/components/ui/tab-bar'
+import { useLaborerStore } from '@/livestore/store'
 import {
   filterTreeByWorkspace,
   getLeafNodes,
@@ -41,6 +46,7 @@ import {
 import { usePanelActions } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
 import { getActivePanelTab } from '@/panels/panel-tab-utils'
+import { getAllWorkspaceTileLeaves } from '@/panels/window-tab-utils'
 import { DiffPane } from '@/panes/diff-pane'
 import { ReviewPane } from '@/panes/review-pane'
 import { WorkspaceFrameHeaderContainer } from './workspace-frame-header-container'
@@ -154,6 +160,213 @@ export function EmptyPanelTabState({
         </EmptyContent>
       </Empty>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// LiveStore queries for workspace picker
+// ---------------------------------------------------------------------------
+
+const allWorkspacesForPicker$ = queryDb(workspaces, {
+  label: 'emptyWindowTabWorkspaces',
+})
+const allProjectsForPicker$ = queryDb(projects, {
+  label: 'emptyWindowTabProjects',
+})
+
+// ---------------------------------------------------------------------------
+// Empty window tab state — workspace picker
+// ---------------------------------------------------------------------------
+
+/** A workspace entry grouped by project for the picker. */
+interface WorkspacePickerEntry {
+  readonly branchName: string
+  readonly id: string
+  readonly status: string
+}
+
+/** A project group with its available workspaces. */
+interface ProjectWorkspaceGroup {
+  readonly projectId: string
+  readonly projectName: string
+  readonly workspaces: readonly WorkspacePickerEntry[]
+}
+
+/**
+ * Empty state shown when a window tab has no workspaces.
+ *
+ * Displays a workspace picker that lists existing workspaces grouped
+ * by project. Workspaces already open in any tab (across all window tabs)
+ * are excluded from the list. A "New Workspace" button triggers the
+ * sidebar workspace creation flow.
+ *
+ * @see docs/tabbed-window-layout/issues.md — Issue #18
+ */
+export function EmptyWindowTabState() {
+  const actions = usePanelActions()
+  const store = useLaborerStore()
+  const workspaceList = store.useQuery(allWorkspacesForPicker$)
+  const projectList = store.useQuery(allProjectsForPicker$)
+
+  // Collect workspace IDs that are already open in any window tab
+  const openWorkspaceIds = useMemo(() => {
+    const windowLayout = actions?.windowLayout
+    if (!windowLayout) {
+      return new Set<string>()
+    }
+    const leaves = getAllWorkspaceTileLeaves(windowLayout)
+    return new Set(leaves.map((l) => l.workspaceId))
+  }, [actions?.windowLayout])
+
+  // Build grouped workspace list: only non-destroyed, not-yet-open workspaces
+  const groups = useMemo(() => {
+    const projectMap = new Map<string, { name: string }>()
+    for (const p of projectList) {
+      projectMap.set(p.id, { name: p.name })
+    }
+
+    const byProject = new Map<string, WorkspacePickerEntry[]>()
+    for (const ws of workspaceList) {
+      if (ws.status === 'destroyed') {
+        continue
+      }
+      if (openWorkspaceIds.has(ws.id)) {
+        continue
+      }
+      const entries = byProject.get(ws.projectId) ?? []
+      entries.push({
+        id: ws.id,
+        branchName: ws.branchName,
+        status: ws.status,
+      })
+      byProject.set(ws.projectId, entries)
+    }
+
+    const result: ProjectWorkspaceGroup[] = []
+    for (const [projectId, entries] of byProject) {
+      const project = projectMap.get(projectId)
+      result.push({
+        projectId,
+        projectName: project?.name ?? projectId,
+        workspaces: entries,
+      })
+    }
+    return result
+  }, [workspaceList, projectList, openWorkspaceIds])
+
+  const handleSelectWorkspace = useCallback(
+    (workspaceId: string) => {
+      actions?.addWorkspaceToCurrentTab?.(workspaceId)
+    },
+    [actions]
+  )
+
+  const hasAvailableWorkspaces = groups.some((g) => g.workspaces.length > 0)
+
+  return (
+    <div
+      className="flex h-full w-full items-center justify-center bg-background"
+      data-testid="empty-window-tab-state"
+    >
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <LayoutGrid />
+          </EmptyMedia>
+          <EmptyTitle>Empty tab</EmptyTitle>
+          <EmptyDescription>
+            Select a workspace to add to this tab, or create a new one from the
+            sidebar.
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          {hasAvailableWorkspaces ? (
+            <ScrollArea className="max-h-48 w-full">
+              <div className="grid gap-2">
+                {groups.map((group) => (
+                  <WorkspacePickerGroup
+                    group={group}
+                    key={group.projectId}
+                    onSelect={handleSelectWorkspace}
+                  />
+                ))}
+              </div>
+            </ScrollArea>
+          ) : (
+            <p className="text-muted-foreground text-xs">
+              All workspaces are already open. Create a new one from the
+              sidebar.
+            </p>
+          )}
+        </EmptyContent>
+      </Empty>
+    </div>
+  )
+}
+
+/**
+ * A project group within the workspace picker.
+ * Shows the project name as a heading and its available workspaces as
+ * clickable items.
+ */
+function WorkspacePickerGroup({
+  group,
+  onSelect,
+}: {
+  readonly group: ProjectWorkspaceGroup
+  readonly onSelect: (workspaceId: string) => void
+}) {
+  if (group.workspaces.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="grid gap-1">
+      <span className="font-medium text-muted-foreground text-xs">
+        {group.projectName}
+      </span>
+      {group.workspaces.map((ws) => (
+        <WorkspacePickerItem key={ws.id} onSelect={onSelect} workspace={ws} />
+      ))}
+    </div>
+  )
+}
+
+/**
+ * A single workspace item in the picker. Shows the branch name and a
+ * status indicator. Clicking adds the workspace to the current window tab.
+ */
+function WorkspacePickerItem({
+  workspace,
+  onSelect,
+}: {
+  readonly workspace: WorkspacePickerEntry
+  readonly onSelect: (workspaceId: string) => void
+}) {
+  const handleClick = useCallback(() => {
+    onSelect(workspace.id)
+  }, [onSelect, workspace.id])
+
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        onSelect(workspace.id)
+      }
+    },
+    [onSelect, workspace.id]
+  )
+
+  return (
+    <Button
+      className="h-auto justify-start gap-2 px-2 py-1.5 text-xs"
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      variant="ghost"
+    >
+      <GitBranch className="size-3 shrink-0 text-muted-foreground" />
+      <span className="truncate">{workspace.branchName}</span>
+    </Button>
   )
 }
 

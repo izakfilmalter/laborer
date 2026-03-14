@@ -621,8 +621,6 @@ const materializers = State.SQLite.materializers(events, {
     workspaces
       .update({
         containerId: null,
-        containerUrl: null,
-        containerImage: null,
         containerStatus: null,
         containerSetupStep: null,
       })

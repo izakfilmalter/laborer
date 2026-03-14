@@ -815,7 +815,7 @@ interface WorkspaceListProps {
    * The repository path (project.repoPath) used to identify the root workspace.
    * The root workspace is the one where worktreePath matches this path.
    */
-  readonly repoPath?: string | undefined
+  readonly repoPath: string
 }
 
 function WorkspaceList({ projectId, repoPath }: WorkspaceListProps) {
@@ -849,9 +849,7 @@ function WorkspaceList({ projectId, repoPath }: WorkspaceListProps) {
       {activeWorkspaces.map((workspace) => (
         <WorkspaceItem
           associatedPrdId={branchToPrdId.get(workspace.branchName)}
-          isRootWorkspace={
-            repoPath != null && workspace.worktreePath === repoPath
-          }
+          isRootWorkspace={workspace.worktreePath === repoPath}
           key={workspace.id}
           workspace={workspace}
         />

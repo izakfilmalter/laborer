@@ -822,3 +822,57 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 905/905 tests pass (no regressions)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing `useAwait` issue in unrelated test code)
+
+## Issue #19: Empty state: workspace and panel tab — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Created two new empty state components in `apps/web/src/routes/-components/workspace-frames.tsx`:
+
+- **`EmptyWorkspaceState`** — shown when all panel tabs in a workspace have been closed (`tileLeaf.panelTabs.length === 0`):
+  - Uses the shared `Empty` component library (`Empty`, `EmptyHeader`, `EmptyMedia`, `EmptyTitle`, `EmptyDescription`, `EmptyContent`)
+  - Displays `Layers` icon from lucide-react
+  - Title: "No panel tabs"
+  - Description with `Ctrl+T` keyboard shortcut hint in a styled `<kbd>` element
+  - Embeds `PanelTypePicker` inline (not via the overlay/context mechanism) — user can immediately select a panel type to create a new tab
+  - On type selection, calls `actions.addPanelTab(workspaceId, type)` via `usePanelActions()`
+  - `data-testid="empty-workspace-state"` for testing
+
+- **`EmptyPanelTabState`** — shown when all panes in a panel tab have been closed (edge case from layout repair/reconciliation):
+  - Same `Empty` component library pattern for visual consistency
+  - Displays `PanelTop` icon from lucide-react
+  - Title: "Empty tab"
+  - Description with `Cmd+D` keyboard shortcut hint in a styled `<kbd>` element
+  - Embeds `PanelTypePicker` inline — user can select a type to create a new panel
+  - On type selection, calls `actions.addPanelTab(workspaceId, type)` via `usePanelActions()`
+  - `data-testid="empty-panel-tab-state"` for testing
+  - Exported for future use — not currently wired into the rendering flow since the progressive close chain (issue #17) removes panel tabs when their last pane is closed
+
+- **Wired `EmptyWorkspaceState` into the rendering flow:**
+  - Extracted `WorkspaceContent` component from `WorkspaceFrame` to reduce cognitive complexity and avoid nested ternary expressions
+  - `WorkspaceContent` dispatches between: empty workspace state (no panel tabs), side panel layout (diff/review open alongside main content), and standard `PanelManager` rendering
+  - In `WorkspaceFrame`, added `isEmptyWorkspace` boolean flag: `tileLeaf !== undefined && tileLeaf.panelTabs.length === 0`
+  - Updated `effectiveLayout` to return `null` when no active panel tab exists (empty workspace)
+  - When `isEmptyWorkspace` is true and workspace is not minimized, renders `EmptyWorkspaceState` instead of `PanelManager`
+
+- Added imports to `workspace-frames.tsx`:
+  - `PaneType` from `@laborer/shared/types`
+  - `Layers`, `PanelTop` from `lucide-react`
+  - `Empty`, `EmptyContent`, `EmptyDescription`, `EmptyHeader`, `EmptyMedia`, `EmptyTitle` from `@/components/ui/empty`
+  - `PanelTypePicker` from `@/components/ui/panel-type-picker`
+
+- Added `noop` constant for the `PanelTypePicker`'s `onCancel` handler in embedded contexts (Escape is a no-op since the picker is always visible in the empty state)
+
+### Tests
+- 23 tests in `apps/web/test/empty-state-components.test.tsx` covering:
+  - **EmptyWorkspaceState** (12 tests): renders container, displays "No panel tabs" title, shows Ctrl+T shortcut hint, embeds PanelTypePicker with 4 options, calls addPanelTab for terminal/diff/review/devServer, no-op when workspaceId undefined, keyboard selection via number keys, keyboard selection via Enter, renders description text
+  - **EmptyPanelTabState** (9 tests): renders container, displays "Empty tab" title, shows Cmd+D shortcut hint, embeds PanelTypePicker with 4 options, calls addPanelTab for terminal/review, no-op when workspaceId undefined, renders description text, keyboard selection via number keys
+  - **Visual consistency** (2 tests): both states use the Empty component library (data-slot="empty", "empty-icon", "empty-title", "empty-description")
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 928/928 tests pass (23 new + 905 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)

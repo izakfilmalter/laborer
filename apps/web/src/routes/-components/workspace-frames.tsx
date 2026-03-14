@@ -8,11 +8,22 @@ import { reorder } from '@atlaskit/pragmatic-drag-and-drop/reorder'
 import type {
   PanelNode,
   PanelTreeNode,
+  PaneType,
   WorkspaceTileLeaf,
   WorkspaceTileNode,
 } from '@laborer/shared/types'
+import { Layers, PanelTop } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PanelImperativeHandle } from 'react-resizable-panels'
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import { PanelTypePicker } from '@/components/ui/panel-type-picker'
 import {
   ResizableHandle,
   ResizablePanel,
@@ -33,6 +44,220 @@ import { getActivePanelTab } from '@/panels/panel-tab-utils'
 import { DiffPane } from '@/panes/diff-pane'
 import { ReviewPane } from '@/panes/review-pane'
 import { WorkspaceFrameHeaderContainer } from './workspace-frame-header-container'
+
+// ---------------------------------------------------------------------------
+// Empty state components
+// ---------------------------------------------------------------------------
+
+/** No-op callback for the PanelTypePicker's cancel handler in embedded contexts. */
+const noop = () => undefined
+
+/**
+ * Empty state shown when all panel tabs in a workspace have been closed.
+ *
+ * Displays the panel type picker inline so the user can immediately
+ * create a new panel tab without any extra interaction. Keyboard shortcut
+ * hints guide the user.
+ *
+ * @see docs/tabbed-window-layout/issues.md — Issue #19
+ */
+export function EmptyWorkspaceState({
+  workspaceId,
+}: {
+  readonly workspaceId: string | undefined
+}) {
+  const actions = usePanelActions()
+
+  const handleSelect = useCallback(
+    (type: PaneType) => {
+      if (workspaceId) {
+        actions?.addPanelTab?.(workspaceId, type)
+      }
+    },
+    [actions, workspaceId]
+  )
+
+  return (
+    <div
+      className="flex h-full w-full items-center justify-center bg-background"
+      data-testid="empty-workspace-state"
+    >
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Layers />
+          </EmptyMedia>
+          <EmptyTitle>No panel tabs</EmptyTitle>
+          <EmptyDescription>
+            Select a panel type to create a new tab, or press{' '}
+            <kbd className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">
+              Ctrl+T
+            </kbd>{' '}
+            to open the panel picker.
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <PanelTypePicker onCancel={noop} onSelect={handleSelect} />
+        </EmptyContent>
+      </Empty>
+    </div>
+  )
+}
+
+/**
+ * Empty state shown when all panes in a panel tab have been closed.
+ *
+ * Displays a CTA to add a new panel via the type picker. This state
+ * is an edge case (the progressive close chain normally removes the
+ * panel tab when its last pane is closed), but can appear after
+ * layout repair or reconciliation.
+ *
+ * @see docs/tabbed-window-layout/issues.md — Issue #19
+ */
+export function EmptyPanelTabState({
+  workspaceId,
+}: {
+  readonly workspaceId: string | undefined
+}) {
+  const actions = usePanelActions()
+
+  const handleSelect = useCallback(
+    (type: PaneType) => {
+      if (workspaceId) {
+        actions?.addPanelTab?.(workspaceId, type)
+      }
+    },
+    [actions, workspaceId]
+  )
+
+  return (
+    <div
+      className="flex h-full w-full items-center justify-center bg-background"
+      data-testid="empty-panel-tab-state"
+    >
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <PanelTop />
+          </EmptyMedia>
+          <EmptyTitle>Empty tab</EmptyTitle>
+          <EmptyDescription>
+            This tab has no panels. Select a type below, or press{' '}
+            <kbd className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">
+              Cmd+D
+            </kbd>{' '}
+            to split.
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <PanelTypePicker onCancel={noop} onSelect={handleSelect} />
+        </EmptyContent>
+      </Empty>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// WorkspaceContent — extracted to reduce WorkspaceFrame complexity
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders the main content area of a workspace frame. Dispatches between:
+ * - Empty workspace state (no panel tabs)
+ * - Side panel layout (diff/review open alongside main content)
+ * - Standard panel manager rendering
+ */
+function WorkspaceContent({
+  isEmptyWorkspace,
+  workspaceId,
+  hasSidePanels,
+  effectiveLayout,
+  mainPanelSize,
+  sidePanelSize,
+  showDiff,
+  showReview,
+  diffWorkspaceId,
+  reviewWorkspaceId,
+  closeSidePanel,
+}: {
+  readonly isEmptyWorkspace: boolean
+  readonly workspaceId: string | undefined
+  readonly hasSidePanels: boolean
+  readonly effectiveLayout: PanelNode | null
+  readonly mainPanelSize: string
+  readonly sidePanelSize: string
+  readonly showDiff: boolean
+  readonly showReview: boolean
+  readonly diffWorkspaceId: string | null
+  readonly reviewWorkspaceId: string | null
+  readonly closeSidePanel: (
+    togglePanel: ((paneId: string) => boolean) | undefined
+  ) => void
+}) {
+  const actions = usePanelActions()
+
+  if (isEmptyWorkspace) {
+    return (
+      <div className="min-h-0 flex-1">
+        <EmptyWorkspaceState workspaceId={workspaceId} />
+      </div>
+    )
+  }
+
+  if (hasSidePanels) {
+    return (
+      <ResizablePanelGroup className="h-full" orientation="horizontal">
+        <ResizablePanel defaultSize={mainPanelSize} minSize="30%">
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="min-h-0 flex-1">
+              <PanelManager layout={effectiveLayout ?? undefined} />
+            </div>
+          </div>
+        </ResizablePanel>
+        {showDiff && diffWorkspaceId !== null && (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel
+              className="h-full overflow-hidden"
+              defaultSize={sidePanelSize}
+              minSize="15%"
+            >
+              <DiffPane
+                onClose={() => closeSidePanel(actions?.toggleDiffPane)}
+                workspaceId={diffWorkspaceId}
+              />
+            </ResizablePanel>
+          </>
+        )}
+        {showReview && reviewWorkspaceId !== null && (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel
+              className="h-full overflow-hidden"
+              defaultSize={sidePanelSize}
+              minSize="15%"
+            >
+              <ReviewPane
+                onClose={() => closeSidePanel(actions?.toggleReviewPane)}
+                workspaceId={reviewWorkspaceId}
+              />
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
+    )
+  }
+
+  return (
+    <div className="min-h-0 flex-1">
+      <PanelManager layout={effectiveLayout ?? undefined} />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// WorkspaceFrame
+// ---------------------------------------------------------------------------
 
 /**
  * Renders a single workspace's terminal frame: a bordered container with
@@ -227,10 +452,15 @@ function WorkspaceFrame({
     }))
   }, [tileLeaf])
 
+  // Whether this workspace has no panel tabs (empty workspace state)
+  const isEmptyWorkspace =
+    tileLeaf !== undefined && tileLeaf.panelTabs.length === 0
+
   // The layout to render: in hierarchical mode, use the active panel tab's layout
   // (cast to PanelNode since PanelManager accepts the legacy type and the structure
   // is compatible at the rendering level). Falls back to subLayout for legacy rendering.
-  const effectiveLayout: PanelNode = useMemo(() => {
+  // Returns null when no active panel tab exists in hierarchical mode (empty workspace).
+  const effectiveLayout: PanelNode | null = useMemo(() => {
     if (tileLeaf) {
       const activeTab = getActivePanelTab(tileLeaf)
       if (activeTab) {
@@ -239,6 +469,8 @@ function WorkspaceFrame({
         // PanelSplitNode has the same shape as SplitNode.
         return activeTab.panelLayout as unknown as PanelNode
       }
+      // No active tab — empty workspace state will be rendered instead
+      return null
     }
     return subLayout
   }, [tileLeaf, subLayout])
@@ -312,52 +544,20 @@ function WorkspaceFrame({
           onSelect={handlePanelTabSelect}
         />
       )}
-      {hasSidePanels && !isMinimized ? (
-        <ResizablePanelGroup className="h-full" orientation="horizontal">
-          <ResizablePanel defaultSize={mainPanelSize} minSize="30%">
-            <div className="flex h-full min-h-0 flex-col">
-              <div className="min-h-0 flex-1">
-                <PanelManager layout={effectiveLayout} />
-              </div>
-            </div>
-          </ResizablePanel>
-          {showDiff && (
-            <>
-              <ResizableHandle withHandle />
-              <ResizablePanel
-                className="h-full overflow-hidden"
-                defaultSize={sidePanelSize}
-                minSize="15%"
-              >
-                <DiffPane
-                  onClose={() => closeSidePanel(actions?.toggleDiffPane)}
-                  workspaceId={diffWorkspaceId}
-                />
-              </ResizablePanel>
-            </>
-          )}
-          {showReview && (
-            <>
-              <ResizableHandle withHandle />
-              <ResizablePanel
-                className="h-full overflow-hidden"
-                defaultSize={sidePanelSize}
-                minSize="15%"
-              >
-                <ReviewPane
-                  onClose={() => closeSidePanel(actions?.toggleReviewPane)}
-                  workspaceId={reviewWorkspaceId}
-                />
-              </ResizablePanel>
-            </>
-          )}
-        </ResizablePanelGroup>
-      ) : (
-        !isMinimized && (
-          <div className="min-h-0 flex-1">
-            <PanelManager layout={effectiveLayout} />
-          </div>
-        )
+      {!isMinimized && (
+        <WorkspaceContent
+          closeSidePanel={closeSidePanel}
+          diffWorkspaceId={diffWorkspaceId}
+          effectiveLayout={effectiveLayout}
+          hasSidePanels={hasSidePanels}
+          isEmptyWorkspace={isEmptyWorkspace}
+          mainPanelSize={mainPanelSize}
+          reviewWorkspaceId={reviewWorkspaceId}
+          showDiff={showDiff}
+          showReview={showReview}
+          sidePanelSize={sidePanelSize}
+          workspaceId={workspaceId}
+        />
       )}
       {closestEdge === 'bottom' && (
         <div className="absolute inset-x-0 bottom-0 z-10 h-0.5 bg-primary" />

@@ -284,17 +284,16 @@ app
         }
       })
 
-      // Spawn terminal first (server depends on it), then server.
-      // Health monitor polls HTTP endpoints and blocks until healthy.
-      const servicesOk = await healthMonitor.spawnServices()
-
-      if (!servicesOk) {
-        console.error(
-          '[main] One or more services failed to become healthy on startup'
-        )
-        // Continue anyway — the health monitor will keep retrying via
-        // the crash handler's exponential backoff.
-      }
+      // Spawn services without blocking — the web app's ServerGate component
+      // handles the loading UI while waiting for services to become healthy.
+      // This allows the window to render immediately with a loading spinner.
+      healthMonitor.spawnServices().then((servicesOk) => {
+        if (!servicesOk) {
+          console.error(
+            '[main] One or more services failed to become healthy on startup'
+          )
+        }
+      })
     }
 
     // Register IPC handlers once for the DesktopBridge contract.

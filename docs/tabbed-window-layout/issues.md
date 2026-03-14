@@ -892,7 +892,7 @@ Enable drag-and-drop reordering for both window tabs and panel tabs using `@atla
 
 ## 24. Polish: tab bar animations and transitions
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1084,7 +1084,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 21 | Session persistence for hierarchical layout | 6, 8, 10 | done |
 | 22 | Workspace uniqueness enforcement | 21 | done |
 | 23 | Tab drag-and-drop reordering | 8, 10 | done |
-| 24 | Polish: tab bar animations and transitions | 7 | pending |
+| 24 | Polish: tab bar animations and transitions | 7 | done |
 | 25 | Polish: focus consistency | 8, 10 | done |
 | 26 | Polish: visual indicators and keyboard discoverability | 8, 10 | done |
 | 27 | Polish: tab overflow and performance | 8, 10 | done |

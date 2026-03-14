@@ -21,7 +21,7 @@ import {
   monitorForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -110,6 +110,7 @@ function TabBarTab({
   onSelect,
   onClose,
   closeTooltip,
+  isNew,
 }: {
   readonly item: TabBarItem
   readonly index: number
@@ -117,10 +118,25 @@ function TabBarTab({
   readonly onSelect: (id: string) => void
   readonly onClose: (id: string) => void
   readonly closeTooltip?: string | undefined
+  /** Whether this tab was newly added (for entrance animation). */
+  readonly isNew?: boolean
 }) {
   const tabRef = useRef<HTMLDivElement | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [closestEdge, setClosestEdge] = useState<'left' | 'right' | null>(null)
+  // Entrance animation: start with scale-x-0, animate to scale-x-100
+  const [isEntering, setIsEntering] = useState(isNew === true)
+
+  useEffect(() => {
+    if (isEntering) {
+      // Use a microtask to ensure the element is rendered at scale-x-0
+      // before transitioning to scale-x-100 on the next frame
+      const raf = requestAnimationFrame(() => {
+        setIsEntering(false)
+      })
+      return () => cancelAnimationFrame(raf)
+    }
+  }, [isEntering])
 
   useEffect(() => {
     const el = tabRef.current
@@ -173,7 +189,15 @@ function TabBarTab({
   }, [item.id, index, barId])
 
   return (
-    <div className="relative flex items-stretch" ref={tabRef}>
+    <div
+      className={cn(
+        'relative flex items-stretch transition-[max-width,opacity] duration-150 ease-in-out',
+        isEntering
+          ? 'max-w-0 overflow-hidden opacity-0'
+          : 'max-w-[200px] opacity-100'
+      )}
+      ref={tabRef}
+    >
       {closestEdge === 'left' && (
         <div className="absolute top-1 bottom-1 left-0 z-10 w-0.5 bg-primary" />
       )}
@@ -265,6 +289,31 @@ function TabBarTab({
 // TabBar — main component
 // ---------------------------------------------------------------------------
 
+/**
+ * Hook that detects `prefers-reduced-motion: reduce` media query.
+ * Returns `true` when the user prefers reduced motion.
+ */
+function usePrefersReducedMotion(): boolean {
+  const [prefersReduced, setPrefersReduced] = useState(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) {
+      return false
+    }
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  })
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) {
+      return
+    }
+    const mql = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const handler = (e: MediaQueryListEvent) => setPrefersReduced(e.matches)
+    mql.addEventListener('change', handler)
+    return () => mql.removeEventListener('change', handler)
+  }, [])
+
+  return prefersReduced
+}
+
 function TabBar({
   items,
   onSelect,
@@ -281,23 +330,68 @@ function TabBar({
     return `tab-bar-${barIdCounter}`
   })
 
-  // Auto-hide: render nothing when there are 0 or 1 items
-  if (autoHide && items.length <= 1) {
+  const shouldHide = autoHide && items.length <= 1
+  const prefersReducedMotion = usePrefersReducedMotion()
+
+  // Track whether we've mounted — skip the entrance animation on first render
+  // to avoid a flash. The tab bar should appear instantly on mount and only
+  // animate on subsequent show/hide transitions.
+  const hasMountedRef = useRef(false)
+  useEffect(() => {
+    hasMountedRef.current = true
+  }, [])
+
+  // When animating, we need to keep the inner content rendered during the
+  // hide transition so CSS can animate it out. Track this with a deferred
+  // "is visible" state that lags behind `shouldHide`.
+  const [isRendered, setIsRendered] = useState(!shouldHide)
+
+  useEffect(() => {
+    if (!shouldHide) {
+      // Show: render immediately so the transition can animate in
+      setIsRendered(true)
+    } else if (prefersReducedMotion || !hasMountedRef.current) {
+      // Instant hide when reduced motion is preferred or on initial mount
+      setIsRendered(false)
+    }
+    // When shouldHide becomes true WITH motion, we keep isRendered=true
+    // and let the transitionend handler set it to false after animation
+  }, [shouldHide, prefersReducedMotion])
+
+  const handleTransitionEnd = useCallback(() => {
+    if (shouldHide) {
+      setIsRendered(false)
+    }
+  }, [shouldHide])
+
+  // If autoHide is false, always render. If autoHide with no animation needed
+  // (reduced motion or never mounted), render based on shouldHide directly.
+  if (!isRendered && shouldHide) {
     return null
   }
 
   return (
-    <TabBarInner
-      barId={barId}
-      className={className}
-      closeTooltip={closeTooltip}
-      items={items}
-      newTabTooltip={newTabTooltip}
-      onClose={onClose}
-      onNew={onNew}
-      onReorder={onReorder}
-      onSelect={onSelect}
-    />
+    <div
+      className={cn(
+        'overflow-hidden transition-[height,opacity] duration-150 ease-in-out',
+        shouldHide ? 'h-0 opacity-0' : 'h-8 opacity-100',
+        prefersReducedMotion && 'transition-none'
+      )}
+      data-testid={shouldHide ? undefined : 'tab-bar-animated-wrapper'}
+      onTransitionEnd={handleTransitionEnd}
+    >
+      <TabBarInner
+        barId={barId}
+        className={className}
+        closeTooltip={closeTooltip}
+        items={items}
+        newTabTooltip={newTabTooltip}
+        onClose={onClose}
+        onNew={onNew}
+        onReorder={onReorder}
+        onSelect={onSelect}
+      />
+    </div>
   )
 }
 
@@ -392,6 +486,24 @@ function TabBarInner({
 }: TabBarProps & { readonly barId: string }) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const { overflow, recheckOverflow } = useScrollOverflow(scrollRef)
+
+  // Track known item IDs to detect newly added tabs for entrance animation.
+  // On mount, all items are considered "known" (no entrance animation).
+  const knownIdsRef = useRef<ReadonlySet<string>>(
+    new Set(items.map((i) => i.id))
+  )
+  const newIds = useMemo(() => {
+    const known = knownIdsRef.current
+    const added = new Set<string>()
+    for (const item of items) {
+      if (!known.has(item.id)) {
+        added.add(item.id)
+      }
+    }
+    // Update known set for next render
+    knownIdsRef.current = new Set(items.map((i) => i.id))
+    return added
+  }, [items])
 
   // Re-check overflow whenever items change. Using a microtask ensures the
   // DOM has been updated with the new tab elements before we measure.
@@ -513,6 +625,7 @@ function TabBarInner({
               barId={barId}
               closeTooltip={closeTooltip}
               index={index}
+              isNew={newIds.has(item.id)}
               item={item}
               key={item.id}
               onClose={onClose}

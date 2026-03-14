@@ -1267,3 +1267,51 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 1049/1049 tests pass (6 new + 1043 existing)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #24: Polish: tab bar animations and transitions — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Added smooth animated show/hide transitions to the `TabBar` component in `apps/web/src/components/ui/tab-bar.tsx`:
+
+**1. Auto-hide animated wrapper**
+- Instead of returning `null` immediately when `autoHide` is true and items <= 1, the `TabBar` now renders an animated wrapper `<div>` with CSS transition on height and opacity
+- When hiding: wrapper transitions from `h-8 opacity-100` to `h-0 opacity-0` with `duration-150 ease-in-out`
+- Uses `overflow-hidden` on the wrapper to prevent layout shift during the height transition
+- After the CSS transition completes (`onTransitionEnd`), the inner content is unmounted to free resources
+- On initial mount when hidden, returns `null` immediately (no flash — entrance animation only triggers on subsequent show/hide transitions)
+- `data-testid="tab-bar-animated-wrapper"` added for test targeting
+
+**2. Individual tab entrance animations**
+- Added `isNew` prop to `TabBarTab` component to detect newly added tabs
+- `TabBarInner` tracks known tab IDs via `useRef<Set<string>>` and computes `newIds` via `useMemo` on each render — only tabs not previously seen are flagged as new
+- New tabs start with `max-w-0 overflow-hidden opacity-0` and transition to `max-w-[200px] opacity-100` using CSS `transition-[max-width,opacity] duration-150`
+- Uses `requestAnimationFrame` to defer the `isEntering` state removal, ensuring the browser renders the initial collapsed state before transitioning to full size
+- Tabs present on initial mount are not animated (they render at full size immediately)
+
+**3. `prefers-reduced-motion` support**
+- Added `usePrefersReducedMotion()` hook that subscribes to `(prefers-reduced-motion: reduce)` media query
+- When reduced motion is preferred, the animated wrapper gets `transition-none` class, making all transitions instant
+- When reduced motion is active during hide transition, content is removed immediately without waiting for `transitionEnd`
+- Hook handles SSR (`typeof window === 'undefined'`) and environments without `matchMedia`
+- Listens for runtime changes to the media query (e.g., user toggles system setting while app is open)
+
+**4. No layout shift**
+- `overflow-hidden` on the animated wrapper prevents content from leaking during height transitions
+- Height transitions use the fixed `h-8` / `h-0` values (not `auto`) for reliable CSS transitions
+- Individual tab animations use `max-width` (not `width`) to allow natural content sizing
+
+### Tests
+- 16 tests in `apps/web/test/tab-bar-animations.test.tsx` covering:
+  - **Auto-hide animated wrapper** (9 tests): renders nothing on initial mount (0 items), renders nothing on initial mount (1 item), renders animated wrapper when shown (2+ items), no wrapper when autoHide is false, overflow-hidden class present, transition classes for height and opacity, h-8/opacity-100 when shown, keeps content during hide transition, removes content after transitionEnd
+  - **Individual tab entrance animations** (3 tests): newly added tabs get transition classes, initial mount tabs have full opacity/width, tab wrapper has transition classes
+  - **prefers-reduced-motion** (2 tests): transition classes by default, transition-none when reduced motion active
+  - **Show/hide transition** (2 tests): shows immediately when going 1→2+ items, wrapper transitions h-0→h-8 when showing
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 1065/1065 tests pass (16 new + 1049 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing `useAwait` issue in unrelated test code)

@@ -37,6 +37,18 @@ vi.mock('@/panels/panel-manager', () => ({
   ),
 }))
 
+vi.mock('@/panes/diff-pane', () => ({
+  DiffPane: ({ workspaceId }: { workspaceId: string }) => (
+    <div data-testid="diff-pane" data-workspace-id={workspaceId} />
+  ),
+}))
+
+vi.mock('@/panes/review-pane', () => ({
+  ReviewPane: ({ workspaceId }: { workspaceId: string }) => (
+    <div data-testid="review-pane" data-workspace-id={workspaceId} />
+  ),
+}))
+
 vi.mock('@/panels/panel-context', () => {
   const actions: PanelActions = {
     assignTerminalToPane: vi.fn(),

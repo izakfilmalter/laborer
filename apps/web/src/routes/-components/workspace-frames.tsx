@@ -24,6 +24,8 @@ import {
 } from '@/panels/layout-utils'
 import { usePanelActions } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
+import { DiffPane } from '@/panes/diff-pane'
+import { ReviewPane } from '@/panes/review-pane'
 import { WorkspaceFrameHeaderContainer } from './workspace-frame-header-container'
 
 /**
@@ -41,6 +43,8 @@ function WorkspaceFrame({
   index,
   isCollapsible = false,
   panelRef,
+  diffWorkspaceId = null,
+  reviewWorkspaceId = null,
 }: {
   readonly workspaceId: string | undefined
   readonly subLayout: PanelNode
@@ -48,6 +52,8 @@ function WorkspaceFrame({
   readonly index: number
   readonly isCollapsible?: boolean
   readonly panelRef?: { readonly current: PanelImperativeHandle | null }
+  readonly diffWorkspaceId?: string | null
+  readonly reviewWorkspaceId?: string | null
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null)
   const dragHandleRef = useRef<HTMLDivElement | null>(null)
@@ -164,14 +170,18 @@ function WorkspaceFrame({
     )
   }, [workspaceId, index])
 
-  return (
-    <div
-      className={`relative flex ${isMinimized ? 'h-auto' : 'h-full'} flex-col border-2 ${isActiveFrame ? 'border-primary' : 'border-transparent'} ${isDragging ? 'opacity-40' : ''}`}
-      ref={frameRef}
-    >
-      {closestEdge === 'top' && (
-        <div className="absolute inset-x-0 top-0 z-10 h-0.5 bg-primary" />
-      )}
+  const showDiff = diffWorkspaceId !== null && diffWorkspaceId === workspaceId
+  const showReview =
+    reviewWorkspaceId !== null && reviewWorkspaceId === workspaceId
+  const hasSidePanels = showDiff || showReview
+
+  // Calculate default sizes based on how many side panels are open
+  const sidePanelCount = (showDiff ? 1 : 0) + (showReview ? 1 : 0)
+  const sidePanelSize = sidePanelCount === 2 ? '20%' : '30%'
+  const mainPanelSize = sidePanelCount === 2 ? '60%' : '70%'
+
+  const mainContent = (
+    <>
       <WorkspaceFrameHeaderContainer
         dragHandleRef={dragHandleRef}
         isMinimized={isMinimized}
@@ -184,6 +194,50 @@ function WorkspaceFrame({
         <div className="min-h-0 flex-1">
           <PanelManager layout={subLayout} />
         </div>
+      )}
+    </>
+  )
+
+  return (
+    <div
+      className={`relative flex ${isMinimized ? 'h-auto' : 'h-full'} flex-col border-2 ${isActiveFrame ? 'border-primary' : 'border-transparent'} ${isDragging ? 'opacity-40' : ''}`}
+      ref={frameRef}
+    >
+      {closestEdge === 'top' && (
+        <div className="absolute inset-x-0 top-0 z-10 h-0.5 bg-primary" />
+      )}
+      {hasSidePanels && !isMinimized ? (
+        <ResizablePanelGroup className="h-full" orientation="horizontal">
+          <ResizablePanel defaultSize={mainPanelSize} minSize="30%">
+            <div className="flex h-full flex-col">{mainContent}</div>
+          </ResizablePanel>
+          {showDiff && (
+            <>
+              <ResizableHandle withHandle />
+              <ResizablePanel
+                className="h-full overflow-hidden"
+                defaultSize={sidePanelSize}
+                minSize="15%"
+              >
+                <DiffPane workspaceId={diffWorkspaceId} />
+              </ResizablePanel>
+            </>
+          )}
+          {showReview && (
+            <>
+              <ResizableHandle withHandle />
+              <ResizablePanel
+                className="h-full overflow-hidden"
+                defaultSize={sidePanelSize}
+                minSize="15%"
+              >
+                <ReviewPane workspaceId={reviewWorkspaceId} />
+              </ResizablePanel>
+            </>
+          )}
+        </ResizablePanelGroup>
+      ) : (
+        mainContent
       )}
       {closestEdge === 'bottom' && (
         <div className="absolute inset-x-0 bottom-0 z-10 h-0.5 bg-primary" />
@@ -202,12 +256,16 @@ function WorkspaceFrameResizableChild({
   activePaneId,
   defaultSize,
   index,
+  diffWorkspaceId = null,
+  reviewWorkspaceId = null,
 }: {
   readonly workspaceId: string | undefined
   readonly subLayout: PanelNode
   readonly activePaneId: string | null
   readonly defaultSize: number
   readonly index: number
+  readonly diffWorkspaceId?: string | null
+  readonly reviewWorkspaceId?: string | null
 }) {
   const panelRef = useRef<PanelImperativeHandle | null>(null)
 
@@ -223,9 +281,11 @@ function WorkspaceFrameResizableChild({
       >
         <WorkspaceFrame
           activePaneId={activePaneId}
+          diffWorkspaceId={diffWorkspaceId}
           index={index}
           isCollapsible
           panelRef={panelRef}
+          reviewWorkspaceId={reviewWorkspaceId}
           subLayout={subLayout}
           workspaceId={workspaceId}
         />
@@ -247,11 +307,15 @@ export function WorkspaceFrames({
   activePaneId,
   fullscreenPaneId,
   workspaceOrder,
+  diffWorkspaceId = null,
+  reviewWorkspaceId = null,
 }: {
   readonly layout: PanelNode
   readonly activePaneId: string | null
   readonly fullscreenPaneId: string | null
   readonly workspaceOrder: string[] | null
+  readonly diffWorkspaceId?: string | null
+  readonly reviewWorkspaceId?: string | null
 }) {
   const workspaceIds = useMemo(() => getWorkspaceIds(layout), [layout])
 
@@ -326,7 +390,9 @@ export function WorkspaceFrames({
     return (
       <WorkspaceFrame
         activePaneId={activePaneId}
+        diffWorkspaceId={diffWorkspaceId}
         index={0}
+        reviewWorkspaceId={reviewWorkspaceId}
         subLayout={fullscreenLayout.subLayout}
         workspaceId={fullscreenLayout.workspaceId}
       />
@@ -342,7 +408,9 @@ export function WorkspaceFrames({
     return (
       <WorkspaceFrame
         activePaneId={activePaneId}
+        diffWorkspaceId={diffWorkspaceId}
         index={0}
+        reviewWorkspaceId={reviewWorkspaceId}
         subLayout={entry.subLayout}
         workspaceId={entry.workspaceId}
       />
@@ -357,8 +425,10 @@ export function WorkspaceFrames({
         <WorkspaceFrameResizableChild
           activePaneId={activePaneId}
           defaultSize={equalSize}
+          diffWorkspaceId={diffWorkspaceId}
           index={index}
           key={entry.workspaceId ?? 'no-workspace'}
+          reviewWorkspaceId={reviewWorkspaceId}
           subLayout={entry.subLayout}
           workspaceId={entry.workspaceId}
         />

@@ -311,7 +311,10 @@ describe('ReviewPane', () => {
     currentResult = {
       _tag: 'Failure',
       waiting: false,
-      cause: { code: 'PR_NOT_FOUND', message: 'No PR found' },
+      cause: {
+        _tag: 'Fail',
+        error: { code: 'PR_NOT_FOUND', message: 'No PR found' },
+      },
     }
     render(<ReviewPane workspaceId="ws-1" />)
 
@@ -323,7 +326,10 @@ describe('ReviewPane', () => {
     currentResult = {
       _tag: 'Failure',
       waiting: false,
-      cause: { message: 'Authentication required' },
+      cause: {
+        _tag: 'Fail',
+        error: { message: 'Authentication required' },
+      },
     }
     render(<ReviewPane workspaceId="ws-1" />)
 
@@ -845,7 +851,10 @@ describe('ReviewPane', () => {
     currentResult = {
       _tag: 'Failure',
       waiting: false,
-      cause: { message: 'Network error' },
+      cause: {
+        _tag: 'Fail',
+        error: { message: 'Network error' },
+      },
     }
     const { unmount } = render(<ReviewPane workspaceId="ws-1" />)
     expect(screen.getByTestId('refresh-button')).toBeTruthy()
@@ -855,7 +864,10 @@ describe('ReviewPane', () => {
     currentResult = {
       _tag: 'Failure',
       waiting: false,
-      cause: { code: 'PR_NOT_FOUND', message: 'No PR found' },
+      cause: {
+        _tag: 'Fail',
+        error: { code: 'PR_NOT_FOUND', message: 'No PR found' },
+      },
     }
     render(<ReviewPane workspaceId="ws-1" />)
     expect(screen.getByTestId('refresh-button')).toBeTruthy()

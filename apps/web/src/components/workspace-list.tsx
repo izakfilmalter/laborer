@@ -659,7 +659,7 @@ function WorkspaceItem({
       size="sm"
     >
       <CardHeader className="gap-2">
-        {/* Row 1 — Git: branch name, PR info, review/fix actions */}
+        {/* Row 1 — Git: branch name, PR info, review/fix actions, destroy */}
         <div className="flex min-w-0 flex-wrap items-start gap-2">
           <div className="flex min-w-0 flex-1 items-start gap-2 overflow-hidden">
             <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -710,9 +710,15 @@ function WorkspaceItem({
                 workspaceId={workspace.id}
               />
             )}
+            {!isRootWorkspace && (
+              <DestroyWorkspaceButton
+                branchName={workspace.branchName}
+                workspaceId={workspace.id}
+              />
+            )}
           </div>
         </div>
-        {/* Row 2 — Infra: container URL/port, status, pause, destroy */}
+        {/* Row 2 — Infra: container URL/port, status, pause/play */}
         <div className="flex min-w-0 items-center justify-between gap-2">
           {containerLink ? (
             <CardDescription className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
@@ -793,12 +799,6 @@ function WorkspaceItem({
                 </TooltipTrigger>
                 <TooltipContent>Start Ralph Loop</TooltipContent>
               </Tooltip>
-            )}
-            {!isRootWorkspace && (
-              <DestroyWorkspaceButton
-                branchName={workspace.branchName}
-                workspaceId={workspace.id}
-              />
             )}
           </div>
         </div>

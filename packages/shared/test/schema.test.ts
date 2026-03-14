@@ -297,8 +297,11 @@ describe('LiveStore schema', () => {
         )
         assert.strictEqual(afterStop.length, 1)
         assert.strictEqual(afterStop[0]?.containerId, null)
-        assert.strictEqual(afterStop[0]?.containerUrl, null)
-        assert.strictEqual(afterStop[0]?.containerImage, null)
+        assert.strictEqual(
+          afterStop[0]?.containerUrl,
+          'feature-container-test--project-1.orb.local'
+        )
+        assert.strictEqual(afterStop[0]?.containerImage, 'node:22')
         assert.strictEqual(afterStop[0]?.containerStatus, null)
 
         // Verify other workspace fields are preserved after container events

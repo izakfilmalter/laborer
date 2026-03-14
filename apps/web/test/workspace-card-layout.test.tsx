@@ -4,7 +4,7 @@
  * Row 1 (Git): branch name + PR badge + review verdict + findings count
  *   + Review/Fix action buttons (hidden when no PR)
  *
- * Row 2 (Docker/Infra): container URL/port + status badge + pause + destroy
+ * Row 2 (Docker/Infra): container URL/port + status badge + pause/play
  *
  * @see Issue: Reorganize workspace actions
  */
@@ -313,7 +313,7 @@ describe('Workspace card layout — Row 2 (Docker/Infra row)', () => {
     isElectronMock.mockReturnValue(false)
   })
 
-  it('shows status badge, pause button, and destroy button on the infra row for containerized workspace', () => {
+  it('shows status badge and pause button on the infra row for containerized workspace', () => {
     mockStore([
       makeWorkspace({
         containerId: 'container-1',
@@ -332,13 +332,13 @@ describe('Workspace card layout — Row 2 (Docker/Infra row)', () => {
       screen.getByRole('button', { name: PAUSE_CONTAINER_RE })
     ).toBeTruthy()
 
-    // Destroy button should be present (non-root workspace)
+    // Destroy button should be present on Row 1 (non-root workspace)
     expect(
       screen.getByRole('button', { name: DESTROY_WORKSPACE_RE })
     ).toBeTruthy()
   })
 
-  it('shows status badge and destroy on infra row for non-containerized workspace', () => {
+  it('shows status badge on infra row for non-containerized workspace', () => {
     mockStore([makeWorkspace()])
 
     render(<WorkspaceList projectId="project-1" repoPath="/repo" />)

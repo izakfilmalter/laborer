@@ -478,11 +478,213 @@ function updateWorkspaceTileLeaf(
 }
 
 // ---------------------------------------------------------------------------
+// Progressive close logic
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of `computeProgressiveCloseAction` — a discriminated union
+ * describing the correct close action for the current state.
+ */
+type ProgressiveCloseAction =
+  | {
+      /** Close a pane within a panel tab's split tree (existing behavior). */
+      readonly kind: 'close-pane'
+      readonly paneId: string
+    }
+  | {
+      /** Remove the active panel tab from a workspace (last pane in tab). */
+      readonly kind: 'close-panel-tab'
+      readonly tabId: string
+      readonly workspaceId: string
+    }
+  | {
+      /** Remove a workspace from the active window tab (last panel tab in workspace). */
+      readonly kind: 'close-workspace'
+      readonly workspaceId: string
+    }
+  | {
+      /** Close the active window tab (no workspaces left). */
+      readonly kind: 'close-window-tab'
+      readonly tabId: string
+    }
+  | {
+      /** No tabs left — show the close-app dialog or do nothing. */
+      readonly kind: 'close-app'
+    }
+
+/**
+ * Count the number of leaf panes in a PanelTreeNode tree.
+ */
+function countPanelLeaves(node: PanelTreeNode): number {
+  if (node._tag === 'PanelLeafNode') {
+    return 1
+  }
+  let count = 0
+  for (const child of node.children) {
+    count += countPanelLeaves(child)
+  }
+  return count
+}
+
+/**
+ * Determine whether closing the last item at this level should escalate
+ * to closing the window tab or the app.
+ */
+function resolveLastWorkspaceCloseAction(
+  layout: WindowLayout,
+  activeTab: WindowTab
+): ProgressiveCloseAction {
+  return layout.tabs.length <= 1
+    ? { kind: 'close-app' }
+    : { kind: 'close-window-tab', tabId: activeTab.id }
+}
+
+/**
+ * Determine the close action when the workspace has no active panel tab
+ * (empty workspace state).
+ */
+function resolveEmptyWorkspaceAction(
+  layout: WindowLayout,
+  activeTab: WindowTab,
+  activeWorkspaceId: string
+): ProgressiveCloseAction {
+  if (!activeTab.workspaceLayout) {
+    return resolveLastWorkspaceCloseAction(layout, activeTab)
+  }
+  const allLeaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+  if (allLeaves.length <= 1) {
+    return resolveLastWorkspaceCloseAction(layout, activeTab)
+  }
+  return { kind: 'close-workspace', workspaceId: activeWorkspaceId }
+}
+
+/**
+ * Determine the close action when the active panel tab has exactly one
+ * pane — escalate from panel tab to workspace to window tab.
+ */
+function resolveLastPaneCloseAction(
+  layout: WindowLayout,
+  activeTab: WindowTab,
+  workspaceLeaf: WorkspaceTileLeaf,
+  activePanelTabId: string,
+  activeWorkspaceId: string
+): ProgressiveCloseAction {
+  // More than one panel tab → close just this tab
+  if (workspaceLeaf.panelTabs.length > 1) {
+    return {
+      kind: 'close-panel-tab',
+      tabId: activePanelTabId,
+      workspaceId: activeWorkspaceId,
+    }
+  }
+  // Last panel tab → escalate to workspace level
+  return resolveEmptyWorkspaceAction(layout, activeTab, activeWorkspaceId)
+}
+
+/**
+ * Determine the correct close action for the progressive `Cmd+W` chain.
+ *
+ * The chain escalates from innermost to outermost:
+ * 1. If the active panel tab has multiple panes → close the active pane
+ * 2. If the active panel tab has exactly 1 pane → close the panel tab
+ * 3. If that was the last panel tab → remove the workspace from the window tab
+ * 4. If that was the last workspace → close the window tab
+ * 5. If that was the last window tab → close the app
+ *
+ * Falls back to `close-pane` with `activePaneId` if the hierarchical layout
+ * is not available (legacy mode).
+ *
+ * @param layout - The hierarchical window layout (may be undefined for legacy mode)
+ * @param activePaneId - The currently focused pane ID
+ * @param activeWorkspaceId - The workspace ID of the active pane (used for tab/workspace lookup)
+ * @returns A discriminated union describing the action to take
+ */
+function computeProgressiveCloseAction(
+  layout: WindowLayout | undefined,
+  activePaneId: string | null,
+  activeWorkspaceId: string | undefined
+): ProgressiveCloseAction {
+  // No active pane and no layout → close app
+  if (!activePaneId) {
+    return { kind: 'close-app' }
+  }
+
+  // No hierarchical layout available → fall back to simple pane close
+  if (!layout) {
+    return { kind: 'close-pane', paneId: activePaneId }
+  }
+
+  // Find the active window tab
+  const activeTab = getActiveWindowTab(layout)
+  if (!activeTab) {
+    return { kind: 'close-app' }
+  }
+
+  // If no workspace context, just close the pane
+  if (!activeWorkspaceId) {
+    return { kind: 'close-pane', paneId: activePaneId }
+  }
+
+  // Find the workspace tile leaf
+  const workspaceLeaf = activeTab.workspaceLayout
+    ? findWorkspaceTileLeaf(activeTab.workspaceLayout, activeWorkspaceId)
+    : undefined
+
+  if (!workspaceLeaf) {
+    return { kind: 'close-pane', paneId: activePaneId }
+  }
+
+  // Find the active panel tab
+  const activePanelTab = workspaceLeaf.panelTabs.find(
+    (t) => t.id === workspaceLeaf.activePanelTabId
+  )
+
+  if (!activePanelTab) {
+    return resolveEmptyWorkspaceAction(layout, activeTab, activeWorkspaceId)
+  }
+
+  // Multiple panes → close the active pane
+  const paneCount = countPanelLeaves(activePanelTab.panelLayout)
+  if (paneCount > 1) {
+    return { kind: 'close-pane', paneId: activePaneId }
+  }
+
+  // Single pane → escalate
+  return resolveLastPaneCloseAction(
+    layout,
+    activeTab,
+    workspaceLeaf,
+    activePanelTab.id,
+    activeWorkspaceId
+  )
+}
+
+/**
+ * Find a workspace tile leaf by workspace ID in a tile tree.
+ */
+function findWorkspaceTileLeaf(
+  node: WorkspaceTileNode,
+  workspaceId: string
+): WorkspaceTileLeaf | undefined {
+  if (node._tag === 'WorkspaceTileLeaf') {
+    return node.workspaceId === workspaceId ? node : undefined
+  }
+  for (const child of node.children) {
+    const found = findWorkspaceTileLeaf(child, workspaceId)
+    if (found) {
+      return found
+    }
+  }
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
 export {
   addWindowTab,
+  computeProgressiveCloseAction,
   findTerminalLocation,
   findWorkspaceLocation,
   getActiveWindowTab,
@@ -496,4 +698,4 @@ export {
   updateWorkspaceTileLeaf,
 }
 
-export type { TerminalLocation, WorkspaceLocation }
+export type { ProgressiveCloseAction, TerminalLocation, WorkspaceLocation }

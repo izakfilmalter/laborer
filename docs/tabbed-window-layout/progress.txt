@@ -608,3 +608,70 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 838/838 tests pass (no regressions)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #17: Progressive Cmd+W close logic — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Implemented the progressive close chain for `Cmd+W` and `Ctrl+B, X` that escalates from innermost to outermost:
+  1. Multiple panes in active panel tab → close the active pane (existing `closePane`)
+  2. Single pane in active panel tab → close the panel tab (`removePanelTab`)
+  3. Last panel tab in workspace → remove the workspace from the window tab (`closeWorkspace`)
+  4. Last workspace in window tab → close the window tab (`closeWindowTab`)
+  5. Last window tab → show close-app dialog (`onMetaWWithoutPane`)
+
+- Added `computeProgressiveCloseAction` pure function to `apps/web/src/panels/window-tab-utils.ts`:
+  - Takes `WindowLayout | undefined`, `activePaneId`, and `activeWorkspaceId` as inputs
+  - Returns a discriminated union `ProgressiveCloseAction` with 5 variants:
+    - `close-pane` — close a pane within a panel tab's split tree
+    - `close-panel-tab` — remove the active panel tab from a workspace
+    - `close-workspace` — remove a workspace from the active window tab
+    - `close-window-tab` — close the active window tab
+    - `close-app` — show the close-app dialog or do nothing
+  - Extracted helper functions to keep complexity under the lint threshold:
+    - `resolveLastWorkspaceCloseAction` — decides between close-window-tab and close-app
+    - `resolveEmptyWorkspaceAction` — handles empty workspace state
+    - `resolveLastPaneCloseAction` — escalates from panel tab to workspace to window tab
+  - `countPanelLeaves` — counts leaf panes in a `PanelTreeNode` tree
+  - `findWorkspaceTileLeaf` — finds a `WorkspaceTileLeaf` by workspace ID in a tile tree
+  - Falls back to `close-pane` when no hierarchical layout is available (legacy mode)
+
+- Updated `Cmd+W` handler in `apps/web/src/panels/panel-hotkeys.tsx`:
+  - Added `executeProgressiveClose` function that calls `computeProgressiveCloseAction` and dispatches the correct action
+  - `Cmd+W` (`Meta+W`) now calls `executeProgressiveClose` instead of directly calling `actions.closePane`
+  - The close-pane action still goes through the existing gating layer (confirmation dialog for running processes)
+
+- Updated `Ctrl+B, X` handler in `apps/web/src/panels/panel-hotkeys.tsx`:
+  - Now calls `executeProgressiveClose` instead of directly calling `actions.closePane`
+  - Same progressive chain as `Cmd+W`
+
+- Updated Electron IPC `close-pane` handler:
+  - Now calls `executeProgressiveClose` instead of directly calling `actions.closePane`
+  - Ensures macOS menu bar Cmd+W also uses the progressive chain
+
+- Exported `ProgressiveCloseAction` type and `computeProgressiveCloseAction` function from `window-tab-utils.ts`
+
+### Tests
+- 20 tests in `apps/web/test/progressive-close.test.ts` covering:
+  - No layout / no active pane: returns close-app or close-pane fallback
+  - No active tab found: returns close-app
+  - No workspace context: returns close-pane fallback
+  - Workspace not found in active tab: returns close-pane fallback
+  - close-pane: panel tab with 2 panes, panel tab with 3 panes
+  - close-panel-tab: single pane with multiple panel tabs, non-first active tab
+  - close-workspace: single pane, single tab, multiple workspaces
+  - close-window-tab: single workspace, multiple window tabs
+  - close-app: single tab, single workspace, single pane
+  - Empty workspace: multiple workspaces, single workspace with multiple tabs, single workspace single tab
+  - Window tab with no workspace layout: falls back correctly
+  - Nested workspace tiles: closes workspace from nested split
+  - Full escalation chain: step-by-step verification of all 3 steps in a multi-level hierarchy
+  - Diff/review pane types: correctly identifies multiple panes in a split with non-terminal types
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 858/858 tests pass (20 new + 838 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)

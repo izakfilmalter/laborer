@@ -48,6 +48,7 @@ import { getDesktopBridge } from '@/lib/desktop'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import { findNodeById, findPaneInDirection } from '@/panels/layout-utils'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
+import { computeProgressiveCloseAction } from '@/panels/window-tab-utils'
 
 /** Timeout for the prefix key sequence (ms). */
 const SEQUENCE_TIMEOUT = 1500
@@ -133,6 +134,55 @@ function PanelHotkeys({
     }
   }, [])
 
+  const activePaneNode =
+    activePaneId && layout ? findNodeById(layout, activePaneId) : undefined
+  const activeWorkspaceId =
+    activePaneNode?._tag === 'LeafNode' ? activePaneNode.workspaceId : undefined
+
+  /**
+   * Execute the progressive close chain: determines the correct close
+   * action based on the current layout hierarchy and dispatches it.
+   *
+   * The chain escalates from innermost to outermost:
+   * 1. Multiple panes in active panel tab → close the active pane
+   * 2. Single pane in active panel tab → close the panel tab
+   * 3. Last panel tab in workspace → remove the workspace
+   * 4. Last workspace in window tab → close the window tab
+   * 5. Last window tab → show close-app dialog
+   */
+  const executeProgressiveClose = () => {
+    if (!actions) {
+      onMetaWWithoutPane?.()
+      return
+    }
+
+    const closeAction = computeProgressiveCloseAction(
+      actions.windowLayout,
+      activePaneId,
+      activeWorkspaceId
+    )
+
+    switch (closeAction.kind) {
+      case 'close-pane':
+        actions.closePane(closeAction.paneId)
+        break
+      case 'close-panel-tab':
+        actions.removePanelTab?.(closeAction.workspaceId, closeAction.tabId)
+        break
+      case 'close-workspace':
+        actions.closeWorkspace(closeAction.workspaceId)
+        break
+      case 'close-window-tab':
+        actions.closeWindowTab?.()
+        break
+      case 'close-app':
+        onMetaWWithoutPane?.()
+        break
+      default:
+        break
+    }
+  }
+
   // Listen for the Electron menu's 'close-pane' IPC action (Cmd+W on macOS).
   // The Electron menu dispatches this instead of using role:close, so
   // Cmd+W always routes through the panel system for instant close.
@@ -146,18 +196,9 @@ function PanelHotkeys({
       if (action !== 'close-pane') {
         return
       }
-      if (actions && activePaneId) {
-        actions.closePane(activePaneId)
-        return
-      }
-      onMetaWWithoutPane?.()
+      executeProgressiveClose()
     })
-  }, [actions, activePaneId, onMetaWWithoutPane])
-
-  const activePaneNode =
-    activePaneId && layout ? findNodeById(layout, activePaneId) : undefined
-  const activeWorkspaceId =
-    activePaneNode?._tag === 'LeafNode' ? activePaneNode.workspaceId : undefined
+  }, [executeProgressiveClose])
 
   const triggerPushWorkspace = () => {
     if (!activeWorkspaceId) {
@@ -307,26 +348,20 @@ function PanelHotkeys({
     }
   })
 
-  // Ctrl+b then x → close active pane
+  // Ctrl+b then x → progressive close (same chain as Cmd+W)
   useHotkeySequence(
     ['Control+B', 'X'],
     (event) => {
       event.preventDefault()
-      if (actions && activePaneId) {
-        actions.closePane(activePaneId)
-      }
+      executeProgressiveClose()
     },
     { timeout: SEQUENCE_TIMEOUT }
   )
 
-  // Cmd+w (Meta+W) → close active pane directly
+  // Cmd+w (Meta+W) → progressive close: escalates from pane → tab → workspace → window tab → app
   useHotkeySequence(['Meta+W'], (event) => {
     event.preventDefault()
-    if (actions && activePaneId) {
-      actions.closePane(activePaneId)
-      return
-    }
-    onMetaWWithoutPane?.()
+    executeProgressiveClose()
   })
 
   // Ctrl+b then o → cycle focus to next pane

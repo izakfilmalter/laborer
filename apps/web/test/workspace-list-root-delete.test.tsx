@@ -220,6 +220,8 @@ const makeWorkspace = (
     prUrl: string | null
     prTitle: string | null
     prState: string | null
+    aheadCount: number | null
+    behindCount: number | null
   }> = {}
 ) => ({
   id: 'ws-1',
@@ -240,6 +242,8 @@ const makeWorkspace = (
   prUrl: null,
   prTitle: null,
   prState: null,
+  aheadCount: null,
+  behindCount: null,
   ...overrides,
 })
 

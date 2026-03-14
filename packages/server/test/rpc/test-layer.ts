@@ -21,6 +21,7 @@ import { ReviewCommentFetcher } from '../../src/services/review-comment-fetcher.
 import { TaskManager } from '../../src/services/task-manager.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
+import { WorkspaceSyncService } from '../../src/services/workspace-sync-service.js'
 import { WorktreeDetector } from '../../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../../src/services/worktree-reconciler.js'
 import { TestFileWatcherClientLayer } from '../helpers/test-file-watcher-client.js'
@@ -137,6 +138,10 @@ const Group1Layers = Layer.mergeAll(
   WorktreeReconciler.layer
 )
 
+const Group1LayersWithSync = WorkspaceSyncService.layer.pipe(
+  Layer.provideMerge(Group1Layers)
+)
+
 /**
  * Layers that depend on Group 1 (Group 2).
  */
@@ -154,7 +159,7 @@ const Group2Layers = Layer.mergeAll(
 const ServiceLayers = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(ProjectRegistry.layer),
   Layer.provideMerge(Group2Layers),
-  Layer.provideMerge(Group1Layers)
+  Layer.provideMerge(Group1LayersWithSync)
 )
 
 export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(

@@ -73,13 +73,17 @@ const MINIMIZE_RE = /minimize/i
 const FULLSCREEN_RE = /fullscreen/i
 const MERGED_PR_RE = /#42 merged/i
 const CLOSED_PR_RE = /#17 closed/i
+const PUSH_COMMITS_RE = /push 2 commits/i
+const PULL_COMMITS_RE = /pull 3 commits/i
 
 const REVIEW_PANE_RE = /review pane/i
 
 /** Default props for a typical active pane scenario. */
 const BASE_PROPS = {
   activePaneId: 'pane-1',
+  aheadCount: null,
   branchName: 'main',
+  behindCount: null,
   diffIsOpen: false,
   isContainerized: false,
   prNumber: null,
@@ -592,6 +596,21 @@ describe('WorkspaceFrameHeader', () => {
     expect(screen.getByText('#17')).toBeTruthy()
     expect(screen.getByText('closed')).toBeTruthy()
     expect(screen.queryByRole('link', { name: CLOSED_PR_RE })).toBeNull()
+  })
+
+  it('renders push and pull sync actions when commits are available', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        aheadCount={2}
+        behindCount={3}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: PUSH_COMMITS_RE })).toBeTruthy()
+    expect(screen.getByRole('button', { name: PULL_COMMITS_RE })).toBeTruthy()
   })
 
   // ---------------------------------------------------------------------------

@@ -86,6 +86,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
 import {
   type ActiveTerminal,
   useDestroyWorkspaceChecks,
@@ -446,6 +447,8 @@ interface WorkspaceItemProps {
     readonly prUrl: string | null
     readonly prTitle: string | null
     readonly prState: string | null
+    readonly aheadCount: number | null
+    readonly behindCount: number | null
   }
 }
 
@@ -679,6 +682,11 @@ function WorkspaceItem({
               prState={workspace.prState}
               prTitle={workspace.prTitle}
               prUrl={workspace.prUrl}
+            />
+            <WorkspaceSyncStatus
+              aheadCount={workspace.aheadCount}
+              behindCount={workspace.behindCount}
+              workspaceId={workspace.id}
             />
             {workspace.prNumber != null && (
               <Suspense fallback={null}>

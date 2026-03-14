@@ -34,6 +34,7 @@ import { ReviewCommentFetcher } from '../services/review-comment-fetcher.js'
 import { TaskManager } from '../services/task-manager.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
+import { WorkspaceSyncService } from '../services/workspace-sync-service.js'
 
 const startTime = Date.now()
 const PRD_ISSUE_EXTERNAL_ID_REGEX = /:issue:(\d+)$/u
@@ -754,10 +755,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         // background worktree setup completes and the workspace is 'running'.
         const diffService = yield* DiffService
         const prWatcher = yield* PrWatcher
+        const workspaceSyncService = yield* WorkspaceSyncService
         const onReady = (workspaceId: string) =>
           Effect.gen(function* () {
             yield* diffService.startPolling(workspaceId)
             yield* prWatcher.startPolling(workspaceId)
+            yield* workspaceSyncService.startPolling(workspaceId)
           })
         const workspace = yield* provider.createWorktree(
           projectId,
@@ -790,6 +793,9 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         const prWatcher = yield* PrWatcher
         yield* prWatcher.stopPolling(workspaceId)
 
+        const workspaceSyncService = yield* WorkspaceSyncService
+        yield* workspaceSyncService.stopPolling(workspaceId)
+
         // Issue #44/#143: Kill all workspace terminals via terminal service.
         const tc = yield* TerminalClient
         yield* tc.killAllForWorkspace(workspaceId)
@@ -813,6 +819,21 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           title: prData.title,
           url: prData.url,
         }
+      }),
+    'workspace.refreshSyncStatus': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspaceSyncService = yield* WorkspaceSyncService
+        return yield* workspaceSyncService.checkStatus(workspaceId)
+      }),
+    'workspace.push': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspaceSyncService = yield* WorkspaceSyncService
+        return yield* workspaceSyncService.push(workspaceId)
+      }),
+    'workspace.pull': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspaceSyncService = yield* WorkspaceSyncService
+        return yield* workspaceSyncService.pull(workspaceId)
       }),
 
     // -------------------------------------------------------------------
@@ -991,10 +1012,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
             const provider = yield* WorkspaceProvider
             const diffService = yield* DiffService
             const prWatcher = yield* PrWatcher
+            const workspaceSyncService = yield* WorkspaceSyncService
             const onReady = (workspaceId: string) =>
               Effect.gen(function* () {
                 yield* diffService.startPolling(workspaceId)
                 yield* prWatcher.startPolling(workspaceId)
+                yield* workspaceSyncService.startPolling(workspaceId)
               })
             yield* provider.createWorktree(
               task.projectId,
@@ -1024,6 +1047,9 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 
               const prWatcher = yield* PrWatcher
               yield* prWatcher.stopPolling(workspace.id)
+
+              const workspaceSyncService = yield* WorkspaceSyncService
+              yield* workspaceSyncService.stopPolling(workspace.id)
 
               const tc = yield* TerminalClient
               yield* tc.killAllForWorkspace(workspace.id)

@@ -82,6 +82,8 @@ export function WorkspaceFrameHeaderContainer({
         prUrl: null,
         prTitle: null,
         prState: null,
+        aheadCount: null,
+        behindCount: null,
       }
     }
     const workspace = workspaceList.find((ws) => ws.id === workspaceId)
@@ -94,6 +96,8 @@ export function WorkspaceFrameHeaderContainer({
         prUrl: null,
         prTitle: null,
         prState: null,
+        aheadCount: null,
+        behindCount: null,
       }
     }
     const project = projectList.find((p) => p.id === workspace.projectId)
@@ -106,6 +110,8 @@ export function WorkspaceFrameHeaderContainer({
       prUrl: workspace.prUrl ?? null,
       prTitle: workspace.prTitle ?? null,
       prState: workspace.prState ?? null,
+      aheadCount: workspace.aheadCount ?? null,
+      behindCount: workspace.behindCount ?? null,
     }
   }, [workspaceId, workspaceList, projectList])
 
@@ -124,6 +130,8 @@ export function WorkspaceFrameHeaderContainer({
       actions={actions}
       activePaneId={scopedActivePaneId}
       agentStatus={workspaceAgentStatus}
+      aheadCount={workspaceData.aheadCount}
+      behindCount={workspaceData.behindCount}
       branchName={workspaceData.branchName}
       diffIsOpen={diffIsOpen ?? false}
       dragHandleRef={dragHandleRef}

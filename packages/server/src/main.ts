@@ -51,6 +51,7 @@ import { SyncRpcLive } from './services/sync-backend.js'
 import { TaskManager } from './services/task-manager.js'
 import { TerminalClient } from './services/terminal-client.js'
 import { WorkspaceProvider } from './services/workspace-provider.js'
+import { WorkspaceSyncService } from './services/workspace-sync-service.js'
 import { WorktreeDetector } from './services/worktree-detector.js'
 import { WorktreeReconciler } from './services/worktree-reconciler.js'
 
@@ -126,6 +127,9 @@ const HttpLiveBase = HttpRouter.Default.serve((httpApp) =>
   Layer.provide(PrdStorageService.layer),
   Layer.provide(DiffService.layer),
   Layer.provide(PrWatcher.layer),
+  Layer.provide(
+    WorkspaceSyncService.layer.pipe(Layer.provide(PrWatcher.layer))
+  ),
   Layer.provide(TerminalClient.layer),
   Layer.provide(WorkspaceProvider.layer),
   Layer.provide(ContainerService.layer),

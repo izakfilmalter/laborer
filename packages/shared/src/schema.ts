@@ -51,6 +51,10 @@ export const workspaces = State.SQLite.table({
     prTitle: State.SQLite.text({ nullable: true }),
     /** Pull request state: 'OPEN', 'CLOSED', 'MERGED'. Null when no PR exists. */
     prState: State.SQLite.text({ nullable: true }),
+    /** Number of local commits ahead of upstream. Null when no upstream is configured. */
+    aheadCount: State.SQLite.integer({ nullable: true }),
+    /** Number of upstream commits not yet pulled locally. Null when no upstream is configured. */
+    behindCount: State.SQLite.integer({ nullable: true }),
   },
 })
 
@@ -224,6 +228,15 @@ export const workspacePrUpdated = Events.synced({
     prUrl: Schema.NullOr(Schema.String),
     prTitle: Schema.NullOr(Schema.String),
     prState: Schema.NullOr(Schema.String),
+  }),
+})
+
+export const workspaceSyncStatusUpdated = Events.synced({
+  name: 'v1.WorkspaceSyncStatusUpdated',
+  schema: Schema.Struct({
+    id: Schema.String,
+    aheadCount: Schema.NullOr(Schema.Number),
+    behindCount: Schema.NullOr(Schema.Number),
   }),
 })
 
@@ -476,6 +489,7 @@ export const events = {
   workspaceBaseShaUpdated,
   workspaceDestroyed,
   workspacePrUpdated,
+  workspaceSyncStatusUpdated,
   containerStarted,
   containerStopped,
   containerPaused,
@@ -572,6 +586,8 @@ const materializers = State.SQLite.materializers(events, {
       prUrl: null,
       prTitle: null,
       prState: null,
+      aheadCount: null,
+      behindCount: null,
     }),
   'v1.WorkspaceStatusChanged': ({ id, status }) =>
     status === 'running'
@@ -584,6 +600,8 @@ const materializers = State.SQLite.materializers(events, {
   'v1.WorkspaceDestroyed': ({ id }) => workspaces.delete().where({ id }),
   'v1.WorkspacePrUpdated': ({ id, prNumber, prUrl, prTitle, prState }) =>
     workspaces.update({ prNumber, prUrl, prTitle, prState }).where({ id }),
+  'v1.WorkspaceSyncStatusUpdated': ({ id, aheadCount, behindCount }) =>
+    workspaces.update({ aheadCount, behindCount }).where({ id }),
   'v1.ContainerStarted': ({
     workspaceId,
     containerId,

@@ -129,6 +129,7 @@ describe('WorkspaceFrameHeader', () => {
 
     const button = screen.getByRole('button', { name: DIFF_VIEWER_RE })
     expect(button.className).toContain('bg-accent')
+    expect(button.getAttribute('aria-pressed')).toBe('true')
   })
 
   it('does not apply bg-accent class to diff toggle when diff is closed', () => {
@@ -137,6 +138,7 @@ describe('WorkspaceFrameHeader', () => {
 
     const button = screen.getByRole('button', { name: DIFF_VIEWER_RE })
     expect(button.className).not.toContain('bg-accent')
+    expect(button.getAttribute('aria-pressed')).toBe('false')
   })
 
   it('disables the diff toggle button when no pane is active', () => {
@@ -215,6 +217,7 @@ describe('WorkspaceFrameHeader', () => {
 
     const button = screen.getByRole('button', { name: REVIEW_PANE_RE })
     expect(button.className).toContain('bg-accent')
+    expect(button.getAttribute('aria-pressed')).toBe('true')
   })
 
   it('does not apply bg-accent class to review toggle when review is closed', () => {
@@ -223,6 +226,7 @@ describe('WorkspaceFrameHeader', () => {
 
     const button = screen.getByRole('button', { name: REVIEW_PANE_RE })
     expect(button.className).not.toContain('bg-accent')
+    expect(button.getAttribute('aria-pressed')).toBe('false')
   })
 
   it('disables the review toggle button when no pane is active', () => {

@@ -104,6 +104,7 @@ const editorOpenMutation = LaborerClient.mutation('editor.open')
 const POLL_INTERVAL_MS = 30_000
 
 interface ReviewPaneProps {
+  readonly onClose?: (() => void) | undefined
   readonly workspaceId: string
 }
 
@@ -535,7 +536,13 @@ function ReviewSection({
  * `useAtomRefresh`. The manual refresh button resets the polling timer so
  * that the next automatic poll is always 30s after the last fetch.
  */
-function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
+function ReviewPaneContent({
+  onClose,
+  workspaceId,
+}: {
+  readonly onClose?: (() => void) | undefined
+  readonly workspaceId: string
+}) {
   const reviewComments$ = useMemo(
     () => LaborerClient.query('review.fetchComments', { workspaceId }),
     [workspaceId]
@@ -888,6 +895,7 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
         <ReviewPaneHeader
           isRefreshing={false}
           isReviewStarting={isReviewStarting}
+          onClose={onClose}
           onRefresh={handleManualRefresh}
           onStartReview={handleStartReview}
         />
@@ -912,6 +920,7 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
         <>
           <ReviewPaneHeader
             isRefreshing={false}
+            onClose={onClose}
             onRefresh={handleManualRefresh}
           />
           <Empty className="flex-1">
@@ -939,6 +948,7 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
         <ReviewPaneHeader
           isRefreshing={false}
           isReviewStarting={isReviewStarting}
+          onClose={onClose}
           onRefresh={handleManualRefresh}
           onStartReview={handleStartReview}
         />
@@ -967,6 +977,7 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
         <ReviewPaneHeader
           isRefreshing={isRefreshing}
           isReviewStarting={isReviewStarting}
+          onClose={onClose}
           onRefresh={handleManualRefresh}
           onStartReview={handleStartReview}
         />
@@ -993,6 +1004,7 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
       <ReviewPaneHeader
         isRefreshing={isRefreshing}
         isReviewStarting={isReviewStarting}
+        onClose={onClose}
         onRefresh={handleManualRefresh}
         onStartReview={handleStartReview}
       />
@@ -1052,12 +1064,14 @@ function ReviewPaneContent({ workspaceId }: { readonly workspaceId: string }) {
  */
 function ReviewPaneHeader({
   isRefreshing,
+  onClose,
   onRefresh,
   onStartReview,
   isReviewStarting,
 }: {
   readonly isRefreshing: boolean
   readonly isReviewStarting?: boolean
+  readonly onClose?: (() => void) | undefined
   readonly onRefresh: () => void
   readonly onStartReview?: () => void
 }) {
@@ -1099,6 +1113,17 @@ function ReviewPaneHeader({
         >
           <RefreshCw className="size-3" />
         </Button>
+        {onClose && (
+          <Button
+            aria-label="Close review pane"
+            className="size-6"
+            onClick={onClose}
+            size="icon"
+            variant="ghost"
+          >
+            <X className="size-3" />
+          </Button>
+        )}
       </div>
     </div>
   )
@@ -1184,7 +1209,7 @@ function ReviewActionsBar({
   )
 }
 
-function ReviewPane({ workspaceId }: ReviewPaneProps) {
+function ReviewPane({ onClose, workspaceId }: ReviewPaneProps) {
   return (
     <div className="flex h-full w-full flex-col">
       <Suspense
@@ -1195,6 +1220,19 @@ function ReviewPane({ workspaceId }: ReviewPaneProps) {
               <span className="font-medium text-muted-foreground text-xs">
                 Review
               </span>
+              {onClose && (
+                <div className="ml-auto">
+                  <Button
+                    aria-label="Close review pane"
+                    className="size-6"
+                    onClick={onClose}
+                    size="icon"
+                    variant="ghost"
+                  >
+                    <X className="size-3" />
+                  </Button>
+                </div>
+              )}
             </div>
             <div className="flex flex-1 items-center justify-center">
               <div className="flex flex-col items-center gap-2 text-muted-foreground">
@@ -1205,7 +1243,7 @@ function ReviewPane({ workspaceId }: ReviewPaneProps) {
           </>
         }
       >
-        <ReviewPaneContent workspaceId={workspaceId} />
+        <ReviewPaneContent onClose={onClose} workspaceId={workspaceId} />
       </Suspense>
     </div>
   )

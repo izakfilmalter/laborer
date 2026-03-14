@@ -656,6 +656,7 @@ function WorkspaceItem({
       size="sm"
     >
       <CardHeader className="gap-2">
+        {/* Row 1 — Git: branch name, PR info, review/fix actions */}
         <div className="flex min-w-0 flex-wrap items-start gap-2">
           <div className="flex min-w-0 flex-1 items-start gap-2 overflow-hidden">
             <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -689,15 +690,21 @@ function WorkspaceItem({
                 <ReviewFindingsCount workspaceId={workspace.id} />
               </Suspense>
             )}
-            <Badge
-              className={cn('shrink-0 border', getStatusClasses(displayStatus))}
-              variant="outline"
-            >
-              <StatusDot status={displayStatus} />
-              {displayStatus}
-            </Badge>
+            {workspace.prNumber != null && (
+              <ReviewPrForm
+                projectId={workspace.projectId}
+                workspaceId={workspace.id}
+              />
+            )}
+            {workspace.prNumber != null && (
+              <FixFindingsForm
+                projectId={workspace.projectId}
+                workspaceId={workspace.id}
+              />
+            )}
           </div>
         </div>
+        {/* Row 2 — Infra: container URL/port, status, pause, destroy */}
         <div className="flex min-w-0 items-center justify-between gap-2">
           {containerLink ? (
             <CardDescription className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
@@ -742,6 +749,13 @@ function WorkspaceItem({
             )
           )}
           <div className="ml-auto flex shrink-0 items-center gap-1">
+            <Badge
+              className={cn('shrink-0 border', getStatusClasses(displayStatus))}
+              variant="outline"
+            >
+              <StatusDot status={displayStatus} />
+              {displayStatus}
+            </Badge>
             {isContainerized ? (
               <ContainerPauseButton
                 isPaused={isContainerPaused}
@@ -772,16 +786,6 @@ function WorkspaceItem({
                 <TooltipContent>Start Ralph Loop</TooltipContent>
               </Tooltip>
             )}
-            <ReviewPrForm
-              disabled={workspace.prNumber == null}
-              projectId={workspace.projectId}
-              workspaceId={workspace.id}
-            />
-            <FixFindingsForm
-              disabled={workspace.prNumber == null}
-              projectId={workspace.projectId}
-              workspaceId={workspace.id}
-            />
             {!isRootWorkspace && (
               <DestroyWorkspaceButton
                 branchName={workspace.branchName}

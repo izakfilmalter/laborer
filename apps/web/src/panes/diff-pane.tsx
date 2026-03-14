@@ -85,6 +85,7 @@ import {
 } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { Button } from '@/components/ui/button'
 import {
   Empty,
   EmptyDescription,
@@ -143,8 +144,36 @@ const UNIFIED_DIFF_THRESHOLD = 500
 const UPDATE_FLASH_DURATION = 1500
 
 interface DiffPaneProps {
+  /** Optional close action for the diff side panel header. */
+  readonly onClose?: (() => void) | undefined
   /** The workspace ID to display diffs for. */
   readonly workspaceId: string
+}
+
+function DiffPaneHeader({
+  onClose,
+}: {
+  readonly onClose?: (() => void) | undefined
+}) {
+  return (
+    <div className="flex h-8 shrink-0 items-center gap-1.5 border-b bg-muted/30 px-3">
+      <FileCode2 className="size-3.5 text-muted-foreground" />
+      <span className="font-medium text-muted-foreground text-xs">Diff</span>
+      {onClose && (
+        <div className="ml-auto">
+          <Button
+            aria-label="Close diff viewer"
+            className="size-6"
+            onClick={onClose}
+            size="icon"
+            variant="ghost"
+          >
+            <X className="size-3" />
+          </Button>
+        </div>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -223,7 +252,7 @@ function hunkHasChanges(hunk: Hunk): boolean {
  * large diff re-renders, scroll position is preserved across updates,
  * and a brief flash indicator shows when new content arrives.
  */
-function DiffPane({ workspaceId }: DiffPaneProps) {
+function DiffPane({ onClose, workspaceId }: DiffPaneProps) {
   const store = useLaborerStore()
   const diffRows = store.useQuery(allDiffs$)
   const openEditor = useAtomSet(editorOpenMutation, { mode: 'promise' })
@@ -590,15 +619,18 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
   // knows the diff is being computed rather than that there are genuinely no changes.
   if (diffRow === null) {
     return (
-      <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-background">
-        <Spinner className="size-6 text-muted-foreground" />
-        <div className="flex flex-col items-center gap-1">
-          <p className="font-medium text-muted-foreground text-sm">
-            Computing diff...
-          </p>
-          <p className="text-muted-foreground/70 text-xs">
-            Waiting for the first diff computation to complete
-          </p>
+      <div className="flex h-full w-full flex-col bg-background">
+        <DiffPaneHeader onClose={onClose} />
+        <div className="flex flex-1 items-center justify-center gap-3">
+          <Spinner className="size-6 text-muted-foreground" />
+          <div className="flex flex-col items-center gap-1">
+            <p className="font-medium text-muted-foreground text-sm">
+              Computing diff...
+            </p>
+            <p className="text-muted-foreground/70 text-xs">
+              Waiting for the first diff computation to complete
+            </p>
+          </div>
         </div>
       </div>
     )
@@ -611,19 +643,22 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
   // the empty state while the debounce timer settles after new content arrives.
   if (!rawDiffContent) {
     return (
-      <div className="flex h-full w-full items-center justify-center bg-background">
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <FileCode2 />
-            </EmptyMedia>
-            <EmptyTitle>No changes</EmptyTitle>
-            <EmptyDescription>
-              No file changes detected in this workspace. Changes will appear
-              here automatically as the agent modifies files.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
+      <div className="flex h-full w-full flex-col bg-background">
+        <DiffPaneHeader onClose={onClose} />
+        <div className="flex flex-1 items-center justify-center">
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <FileCode2 />
+              </EmptyMedia>
+              <EmptyTitle>No changes</EmptyTitle>
+              <EmptyDescription>
+                No file changes detected in this workspace. Changes will appear
+                here automatically as the agent modifies files.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </div>
       </div>
     )
   }
@@ -633,9 +668,11 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
       className="relative flex h-full w-full flex-col bg-background"
       ref={containerRef}
     >
+      <DiffPaneHeader onClose={onClose} />
+
       {/* Update flash indicator — fades in/out when new diff content arrives */}
       {showUpdateFlash && (
-        <div className="fade-in absolute top-2 right-2 z-10 flex animate-in items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-primary text-xs duration-200">
+        <div className="fade-in absolute top-10 right-2 z-10 flex animate-in items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-primary text-xs duration-200">
           <RefreshCw className="h-3 w-3" />
           Updated
         </div>
@@ -643,7 +680,7 @@ function DiffPane({ workspaceId }: DiffPaneProps) {
 
       {/* Pending indicator — shows when a large diff is being processed */}
       {isPending && (
-        <div className="absolute top-2 left-2 z-10 flex items-center gap-1.5 rounded-md bg-muted/90 px-2 py-1 text-muted-foreground text-xs backdrop-blur-sm">
+        <div className="absolute top-10 left-2 z-10 flex items-center gap-1.5 rounded-md bg-muted/90 px-2 py-1 text-muted-foreground text-xs backdrop-blur-sm">
           <RefreshCw className="h-3 w-3 animate-spin" />
           Updating...
         </div>

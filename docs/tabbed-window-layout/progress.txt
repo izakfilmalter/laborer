@@ -66,3 +66,31 @@ Date: 2026-03-13
 - `bun run --filter @laborer/web test` — 630/630 tests pass (67 new + 563 existing)
 - `bun run --filter @laborer/shared test` — 60/60 tests pass
 - `biome check` — no issues in modified files
+
+## Issue #3: Layout-utils: workspace tile operations — COMPLETED
+
+Date: 2026-03-13
+
+### What was done
+- Created new module `apps/web/src/panels/workspace-tile-utils.ts` with pure functions:
+  - `addWorkspaceToTab(tab, workspaceId)` — add a workspace as a new tile leaf; creates single leaf for empty tab, flattens into horizontal split for existing horizontal root, wraps in new horizontal split otherwise
+  - `removeWorkspaceFromTab(tab, workspaceId)` — remove a workspace tile by ID, collapses single-child splits, returns undefined layout when last workspace removed
+  - `splitWorkspaceTile(tab, workspaceId, newWorkspaceId, direction)` — split a workspace tile to add a new workspace beside it; same-direction splits are flattened (no unnecessary nesting), different-direction splits create nested split nodes
+  - `resizeWorkspaceTiles(tab, nodeId, direction)` — resize workspace tiles by walking up the tile tree to find a matching-orientation ancestor split, shifts 5% between the target and its sibling, enforces 5% minimum size
+  - `reorderWorkspaceTiles(tab, workspaceOrder)` — reorder workspace tiles based on workspace ID order; collects all leaves, reorders them, rebuilds as flat horizontal split; preserves panel tab state
+
+### Tests
+- 46 tests in `apps/web/test/workspace-tile-utils.test.ts` covering:
+  - addWorkspaceToTab: empty tab, single workspace (creates horizontal split), existing horizontal split (flattens), vertical root (wraps), immutability
+  - removeWorkspaceFromTab: empty layout, not found, only workspace (undefined), two-workspace collapse, three-workspace redistribute, nested collapse, deep cascade collapse, immutability
+  - splitWorkspaceTile: empty tab, not found, root leaf horizontal/vertical, same-direction flattening (H→H, V→V), different-direction nesting (V→H), nested workspace split, immutability
+  - resizeWorkspaceTiles: empty tab, not found, root leaf, grow right/down, shrink left/up, minimum size enforcement, direction mismatch, edge (no sibling), nested resize, immutability
+  - reorderWorkspaceTiles: empty tab, single workspace, two/three workspace reorder, unchanged order, partial order (appends unmatched), nonexistent IDs ignored, nested flatten, panel tab state preservation
+  - Combined operations: add+remove round-trip, add+split+remove, add+reorder+resize
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 676/676 tests pass (46 new + 630 existing)
+- `bun run --filter @laborer/shared test` — 60/60 tests pass
+- `biome check` — no issues in modified files

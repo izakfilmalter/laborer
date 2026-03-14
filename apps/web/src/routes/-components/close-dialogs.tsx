@@ -180,15 +180,22 @@ export function DestroyWorkspaceOnCloseDialog({
   open,
   onOpenChange,
   onCloseAndDestroy,
+  onConfirm,
 }: {
   readonly open: boolean
   readonly onOpenChange: (open: boolean) => void
   readonly onCloseAndDestroy: () => void
+  readonly onConfirm: () => void
 }) {
   const handleCloseAndDestroy = useCallback(() => {
     onCloseAndDestroy()
     onOpenChange(false)
   }, [onCloseAndDestroy, onOpenChange])
+
+  const handleConfirm = useCallback(() => {
+    onConfirm()
+    onOpenChange(false)
+  }, [onConfirm, onOpenChange])
 
   return (
     <AlertDialog onOpenChange={onOpenChange} open={open}>
@@ -199,13 +206,16 @@ export function DestroyWorkspaceOnCloseDialog({
             event.stopPropagation()
             return
           }
-          if (
-            isMetaShiftEnter(event.nativeEvent) ||
-            isMetaEnter(event.nativeEvent)
-          ) {
+          if (isMetaShiftEnter(event.nativeEvent)) {
             event.preventDefault()
             event.stopPropagation()
             handleCloseAndDestroy()
+            return
+          }
+          if (isMetaEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            handleConfirm()
           }
         }}
       >
@@ -221,6 +231,11 @@ export function DestroyWorkspaceOnCloseDialog({
           <AlertDialogCancel>
             Cancel <Kbd>Esc</Kbd>
           </AlertDialogCancel>
+          <AlertDialogAction onClick={handleConfirm}>
+            Close
+            <Kbd>⌘</Kbd>
+            <Kbd>↵</Kbd>
+          </AlertDialogAction>
           <AlertDialogAction
             onClick={handleCloseAndDestroy}
             variant="destructive"

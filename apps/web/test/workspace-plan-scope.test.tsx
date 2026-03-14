@@ -42,6 +42,12 @@ vi.mock('@/lib/desktop', () => ({
   terminalRpcUrl: () => 'http://localhost:2101',
 }))
 
+// Stub the review findings count — not relevant for plan scope tests.
+vi.mock('@/components/review-findings-count', () => ({
+  ReviewFindingsCount: () => null,
+  useUnresolvedFindingsCount: () => 0,
+}))
+
 vi.mock('@/hooks/use-terminal-list', () => ({
   useTerminalList: () => ({
     terminals: [],

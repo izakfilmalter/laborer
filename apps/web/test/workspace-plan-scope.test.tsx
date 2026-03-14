@@ -265,7 +265,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" />)
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
     fireEvent.click(screen.getByRole('button', { name: DESTROY_ACTION_RE }))
 
@@ -294,7 +294,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" />)
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
     // Workspace card should be visible (branch name appears in card title
     // and destroy dialog, so use getAllByText)
@@ -326,7 +326,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" />)
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
     // Regular workspace card should be visible (branch name appears in
     // card title and destroy dialog)
@@ -354,7 +354,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" />)
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
     // Both workspaces should be visible
     expect(screen.getAllByText('plan/my-cool-feature').length).toBeGreaterThan(
@@ -390,7 +390,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" />)
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
     // Workspace card should be visible
     expect(screen.getAllByText('plan/my-cool-feature').length).toBeGreaterThan(
@@ -417,7 +417,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" />)
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
     // Plan Issues heading should still appear
     expect(screen.getByText('Plan Issues')).toBeTruthy()
@@ -447,7 +447,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" />)
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
     // Destroyed workspaces should not render at all
     expect(screen.getByText('No workspaces')).toBeTruthy()
@@ -469,7 +469,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" />)
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
     // The ralph start loop button should be present
     const startButton = screen.getByRole('button', {
@@ -491,7 +491,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" />)
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
     expect(screen.getByText('#77')).toBeTruthy()
     expect(screen.getByText('closed')).toBeTruthy()
@@ -518,7 +518,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" />)
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
     fireEvent.click(screen.getByRole('link', { name: 'preview.example.com' }))
 

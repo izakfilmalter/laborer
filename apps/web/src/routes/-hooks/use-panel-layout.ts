@@ -612,52 +612,24 @@ export function usePanelLayout() {
   /**
    * Toggle the integrated diff sidebar on a terminal pane.
    *
-   * Flips the `diffOpen` flag on the target LeafNode and persists the
-   * updated tree. The diff sidebar is rendered inside the terminal pane
-   * container (not as a separate pane in the layout tree).
+   * Toggle a full-height diff panel for a workspace.
    *
-   * @see Issue #90: Toggle diff alongside terminal
+   * NOTE: This is a placeholder implementation. The actual diff panel
+   * toggle is handled at the route level (index.tsx) where the full-height
+   * diff panel state is managed. This hook's version is overridden by
+   * the route's gatedPanelActions to provide the full-height behavior.
+   *
+   * The diff panel now spans all workspace frames rather than being a
+   * sidebar within a single terminal pane.
+   *
+   * @param _paneId - The pane ID (unused in this stub implementation)
+   * @returns Always false since the actual implementation is in index.tsx
    */
-  const handleToggleDiffPane = useCallback(
-    (paneId: string): boolean => {
-      const base = persistedLayoutTree ?? defaultLayout
-      if (!base) {
-        return false
-      }
-
-      const targetNode = findNodeById(base, paneId)
-      if (
-        !targetNode ||
-        targetNode._tag !== 'LeafNode' ||
-        targetNode.paneType !== 'terminal' ||
-        !targetNode.workspaceId
-      ) {
-        return false
-      }
-
-      const nowOpen = !targetNode.diffOpen
-      const updatedLeaf: LeafNode = {
-        ...targetNode,
-        diffOpen: nowOpen,
-      }
-      const newTree = replaceNode(base, paneId, updatedLeaf)
-      store.commit(
-        layoutPaneAssigned({
-          windowId: panelWindowId,
-          layoutTree: newTree,
-          activePaneId: persistedActivePaneId,
-        })
-      )
-      return nowOpen
-    },
-    [
-      persistedLayoutTree,
-      defaultLayout,
-      panelWindowId,
-      persistedActivePaneId,
-      store,
-    ]
-  )
+  const handleToggleDiffPane = useCallback((_paneId: string): boolean => {
+    // This is overridden by gatedPanelActions in index.tsx
+    // to provide full-height diff panel behavior
+    return false
+  }, [])
 
   /**
    * Toggle the dev server terminal alongside a terminal pane.
@@ -867,97 +839,24 @@ export function usePanelLayout() {
   )
 
   /**
-   * Toggle a standalone review pane for a workspace.
+   * Toggle a full-height review panel for a workspace.
    *
-   * When toggled ON: splits right from the given pane with a new review
-   * pane inheriting the same workspaceId. Unlike diff/dev server which
-   * are sidebars on a terminal leaf, the review pane is its own leaf in
-   * the layout tree.
+   * NOTE: This is a placeholder implementation. The actual review panel
+   * toggle is handled at the route level (index.tsx) where the full-height
+   * review panel state is managed. This hook's version is overridden by
+   * the route's gatedPanelActions to provide the full-height behavior.
    *
-   * When toggled OFF: finds and closes the existing review pane for the
-   * workspace.
+   * The review panel now spans all workspace frames rather than being a
+   * split within a single workspace's layout tree.
+   *
+   * @param _paneId - The pane ID (unused in this stub implementation)
+   * @returns Always false since the actual implementation is in index.tsx
    */
-  const handleToggleReviewPane = useCallback(
-    (paneId: string): boolean => {
-      const base = persistedLayoutTree ?? defaultLayout
-      if (!base) {
-        return false
-      }
-
-      // Find the source pane to get its workspaceId
-      const sourcePane = findNodeById(base, paneId)
-      if (
-        !sourcePane ||
-        sourcePane._tag !== 'LeafNode' ||
-        !sourcePane.workspaceId
-      ) {
-        return false
-      }
-
-      const workspaceId = sourcePane.workspaceId
-
-      // Check if a review pane already exists for this workspace
-      const existingReview = getLeafNodes(base).find(
-        (leaf) => leaf.paneType === 'review' && leaf.workspaceId === workspaceId
-      )
-
-      if (existingReview) {
-        // Close the existing review pane
-        const newTree = closePane(base, existingReview.id)
-        if (newTree) {
-          const nextActivePaneId = ensureValidActivePaneId(
-            newTree,
-            persistedActivePaneId
-          )
-          store.commit(
-            layoutPaneClosed({
-              windowId: panelWindowId,
-              layoutTree: newTree,
-              activePaneId: nextActivePaneId,
-            })
-          )
-        }
-        return false
-      }
-
-      // Split right (horizontal) from the source pane with a review pane
-      const newTree = splitPane(base, paneId, 'horizontal', {
-        _tag: 'LeafNode',
-        id: '',
-        paneType: 'review',
-        workspaceId,
-      })
-
-      store.commit(
-        layoutSplit({
-          windowId: panelWindowId,
-          layoutTree: newTree,
-          activePaneId: persistedActivePaneId,
-        })
-      )
-
-      // Focus the newly created review pane
-      const newLeaf = findNewLeafAfterSplit(base, newTree)
-      if (newLeaf) {
-        store.commit(
-          layoutPaneAssigned({
-            windowId: panelWindowId,
-            layoutTree: newTree,
-            activePaneId: newLeaf.id,
-          })
-        )
-      }
-
-      return true
-    },
-    [
-      persistedLayoutTree,
-      defaultLayout,
-      panelWindowId,
-      persistedActivePaneId,
-      store,
-    ]
-  )
+  const handleToggleReviewPane = useCallback((_paneId: string): boolean => {
+    // This is overridden by gatedPanelActions in index.tsx
+    // to provide full-height review panel behavior
+    return false
+  }, [])
 
   /**
    * Reorder workspace frames by persisting an explicit workspace ID ordering.

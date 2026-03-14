@@ -25,18 +25,38 @@ type ResultState =
 
 let currentResult: ResultState = { _tag: 'Initial', waiting: true }
 const mockRefresh = vi.fn()
-const mockAtomSet = vi.fn().mockResolvedValue({ id: 'terminal-1' })
+const mockAddReaction = vi.fn().mockResolvedValue({
+  id: 5001,
+  content: 'rocket',
+  userId: 100,
+})
+const mockRemoveReaction = vi.fn().mockResolvedValue(undefined)
+const mockFixFindings = vi.fn().mockResolvedValue({ id: 'terminal-1' })
+const mockEditorOpen = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomValue: () => currentResult,
   useAtomRefresh: () => mockRefresh,
-  useAtomSet: () => mockAtomSet,
+  useAtomSet: (atom: symbol) => {
+    switch (atom.description) {
+      case 'review.addReaction':
+        return mockAddReaction
+      case 'review.removeReaction':
+        return mockRemoveReaction
+      case 'brrr.fix':
+        return mockFixFindings
+      case 'editor.open':
+        return mockEditorOpen
+      default:
+        return vi.fn()
+    }
+  },
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
   LaborerClient: {
     query: () => Symbol.for('query:review.fetchComments'),
-    mutation: () => Symbol.for('mutation'),
+    mutation: (name: string) => Symbol(name),
   },
 }))
 
@@ -256,8 +276,18 @@ describe('ReviewPane', () => {
   beforeEach(() => {
     currentResult = { _tag: 'Initial', waiting: true }
     mockRefresh.mockReset()
-    mockAtomSet.mockReset()
-    mockAtomSet.mockResolvedValue({ id: 'terminal-1' })
+    mockAddReaction.mockReset()
+    mockAddReaction.mockResolvedValue({
+      id: 5001,
+      content: 'rocket',
+      userId: 100,
+    })
+    mockRemoveReaction.mockReset()
+    mockRemoveReaction.mockResolvedValue(undefined)
+    mockFixFindings.mockReset()
+    mockFixFindings.mockResolvedValue({ id: 'terminal-1' })
+    mockEditorOpen.mockReset()
+    mockEditorOpen.mockResolvedValue(undefined)
     mockAssignTerminalToPane.mockReset()
     mockScrollDiffToFile.mockReset()
   })
@@ -1176,6 +1206,53 @@ describe('ReviewPane', () => {
     expect(fixButton.textContent).toContain('(2)')
   })
 
+  it('queues a finding immediately when its checkbox is clicked', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    await user.click(screen.getByTestId('finding-checkbox'))
+
+    expect(screen.getByTestId('reaction-rocket')).toBeTruthy()
+    expect(mockAddReaction).toHaveBeenCalledWith({
+      payload: {
+        workspaceId: 'ws-1',
+        commentId: 100,
+        content: 'rocket',
+      },
+    })
+  })
+
+  it('Fix Selected button starts fix after findings are queued', async () => {
+    const user = userEvent.setup()
+    currentResult = {
+      _tag: 'Success',
+      waiting: false,
+      value: {
+        verdict: null,
+        findings: [CRITICAL_FINDING],
+        comments: [],
+      },
+    }
+    render(<ReviewPane workspaceId="ws-1" />)
+
+    await user.click(screen.getByTestId('finding-checkbox'))
+    await user.click(screen.getByTestId('fix-selected-button'))
+
+    expect(mockAddReaction).toHaveBeenCalledTimes(1)
+    expect(mockFixFindings).toHaveBeenCalledWith({
+      payload: { workspaceId: 'ws-1' },
+    })
+  })
+
   it('does not render Fix Selected button when no findings exist', () => {
     currentResult = {
       _tag: 'Success',
@@ -1300,7 +1377,7 @@ describe('ReviewPane', () => {
     const fileLink = screen.getByTestId('file-line-link')
     await user.click(fileLink)
 
-    expect(mockAtomSet).toHaveBeenCalledWith({
+    expect(mockEditorOpen).toHaveBeenCalledWith({
       payload: { workspaceId: 'ws-1', filePath: 'src/db/query.ts' },
     })
   })
@@ -1321,7 +1398,7 @@ describe('ReviewPane', () => {
     const fileLink = screen.getByTestId('file-line-link')
     await user.click(fileLink)
 
-    expect(mockAtomSet).toHaveBeenCalledWith({
+    expect(mockEditorOpen).toHaveBeenCalledWith({
       payload: { workspaceId: 'ws-1', filePath: 'src/utils/parser.ts' },
     })
   })
@@ -1449,7 +1526,7 @@ describe('ReviewPane', () => {
       'src/api/handler.ts',
       42
     )
-    expect(mockAtomSet).toHaveBeenCalledWith({
+    expect(mockEditorOpen).toHaveBeenCalledWith({
       payload: { workspaceId: 'ws-1', filePath: 'src/api/handler.ts' },
     })
   })

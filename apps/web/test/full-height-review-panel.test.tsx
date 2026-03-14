@@ -10,7 +10,13 @@
 
 import type { PanelNode } from '@laborer/shared/types'
 import { cleanup, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const { toggleDiffPaneMock, toggleReviewPaneMock } = vi.hoisted(() => ({
+  toggleDiffPaneMock: vi.fn(() => false),
+  toggleReviewPaneMock: vi.fn(() => false),
+}))
 
 vi.mock('@atlaskit/pragmatic-drag-and-drop/element/adapter', () => ({
   draggable: () => () => undefined,
@@ -39,16 +45,34 @@ vi.mock('@/panels/panel-manager', () => ({
 }))
 
 vi.mock('@/panes/review-pane', () => ({
-  ReviewPane: ({ workspaceId }: { workspaceId: string }) => (
+  ReviewPane: ({
+    onClose,
+    workspaceId,
+  }: {
+    onClose?: () => void
+    workspaceId: string
+  }) => (
     <div data-testid="review-pane" data-workspace-id={workspaceId}>
+      <button onClick={onClose} type="button">
+        Close review pane
+      </button>
       Review Panel Content
     </div>
   ),
 }))
 
 vi.mock('@/panes/diff-pane', () => ({
-  DiffPane: ({ workspaceId }: { workspaceId: string }) => (
+  DiffPane: ({
+    onClose,
+    workspaceId,
+  }: {
+    onClose?: () => void
+    workspaceId: string
+  }) => (
     <div data-testid="diff-pane" data-workspace-id={workspaceId}>
+      <button onClick={onClose} type="button">
+        Close diff viewer
+      </button>
       Diff Panel Content
     </div>
   ),
@@ -66,9 +90,9 @@ vi.mock('@/panels/panel-context', () => ({
     setActivePaneId: vi.fn(),
     splitPane: vi.fn(),
     toggleDevServerPane: vi.fn(async () => false),
-    toggleDiffPane: vi.fn(() => false),
+    toggleDiffPane: toggleDiffPaneMock,
     toggleFullscreenPane: vi.fn(),
-    toggleReviewPane: vi.fn(() => false),
+    toggleReviewPane: toggleReviewPaneMock,
   }),
 }))
 
@@ -163,6 +187,8 @@ describe('Workspace-scoped review panel', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
+    toggleDiffPaneMock.mockClear()
+    toggleReviewPaneMock.mockClear()
   })
 
   it('renders review panel inside the matching workspace frame', () => {
@@ -248,6 +274,8 @@ describe('Workspace-scoped diff panel', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
+    toggleDiffPaneMock.mockClear()
+    toggleReviewPaneMock.mockClear()
   })
 
   it('renders diff panel inside the matching workspace frame', () => {
@@ -301,6 +329,8 @@ describe('Both panels in same workspace', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
+    toggleDiffPaneMock.mockClear()
+    toggleReviewPaneMock.mockClear()
   })
 
   it('renders both review and diff panels inside the same workspace frame', () => {
@@ -317,6 +347,61 @@ describe('Both panels in same workspace', () => {
 
     expect(screen.getByTestId('review-pane')).toBeTruthy()
     expect(screen.getByTestId('diff-pane')).toBeTruthy()
+  })
+
+  it('renders the workspace header above the side panel group', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        diffWorkspaceId="workspace-1"
+        fullscreenPaneId={null}
+        layout={SINGLE_WORKSPACE_LAYOUT}
+        reviewWorkspaceId="workspace-1"
+        workspaceOrder={null}
+      />
+    )
+
+    const frame = screen.getByTestId('workspace-frame')
+    const frameChildren = Array.from(frame.children)
+
+    expect(frameChildren[0]).toBe(screen.getByTestId('workspace-frame-header'))
+    expect(frameChildren[1]).toBe(screen.getByTestId('resizable-panel-group'))
+  })
+
+  it('closes the diff viewer from the side panel header', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        diffWorkspaceId="workspace-1"
+        fullscreenPaneId={null}
+        layout={SINGLE_WORKSPACE_LAYOUT}
+        workspaceOrder={null}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Close diff viewer' }))
+
+    expect(toggleDiffPaneMock).toHaveBeenCalledWith('pane-1')
+  })
+
+  it('closes the review pane from the side panel header', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        fullscreenPaneId={null}
+        layout={SINGLE_WORKSPACE_LAYOUT}
+        reviewWorkspaceId="workspace-1"
+        workspaceOrder={null}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Close review pane' }))
+
+    expect(toggleReviewPaneMock).toHaveBeenCalledWith('pane-1')
   })
 
   it('renders panels in different workspaces simultaneously', () => {
@@ -343,6 +428,8 @@ describe('PanelContent passes through side panel state', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
+    toggleDiffPaneMock.mockClear()
+    toggleReviewPaneMock.mockClear()
   })
 
   it('shows loading state during reconciliation regardless of panel state', async () => {

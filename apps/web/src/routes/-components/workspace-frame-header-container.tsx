@@ -8,11 +8,7 @@ import { WorkspaceFrameHeader } from '@/components/workspace-frame-header'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
 import { useLaborerStore } from '@/livestore/store'
-import {
-  findNodeById,
-  getLeafNodes,
-  getScopedActivePaneId,
-} from '@/panels/layout-utils'
+import { getScopedActivePaneId } from '@/panels/layout-utils'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
 
 /** LiveStore query for projects (used by PanelHeaderBar to resolve names). */
@@ -29,12 +25,14 @@ const refreshPrMutation = LaborerClient.mutation('workspace.refreshPr')
  * component.
  */
 export function WorkspaceFrameHeaderContainer({
+  diffIsOpen,
   workspaceId,
   subLayout,
   dragHandleRef,
   isMinimized,
   onHeaderClick,
   onMinimize,
+  reviewIsOpen,
 }: {
   readonly workspaceId: string | undefined
   readonly subLayout: PanelNode
@@ -44,6 +42,8 @@ export function WorkspaceFrameHeaderContainer({
   readonly isMinimized: boolean
   readonly onHeaderClick: () => void
   readonly onMinimize: () => void
+  readonly diffIsOpen?: boolean
+  readonly reviewIsOpen?: boolean
 }) {
   const store = useLaborerStore()
   const projectList = store.useQuery(allProjects$)
@@ -59,19 +59,6 @@ export function WorkspaceFrameHeaderContainer({
     () => getScopedActivePaneId(subLayout, globalActivePaneId),
     [subLayout, globalActivePaneId]
   )
-
-  const diffIsOpen = useMemo(() => {
-    if (!scopedActivePaneId) {
-      return false
-    }
-    const node = findNodeById(subLayout, scopedActivePaneId)
-    return node?._tag === 'LeafNode' && node.diffOpen === true
-  }, [scopedActivePaneId, subLayout])
-
-  const reviewIsOpen = useMemo(() => {
-    const leaves = getLeafNodes(subLayout)
-    return leaves.some((leaf) => leaf.paneType === 'review')
-  }, [subLayout])
 
   // Derive workspace-level agent status from the terminal list
   const { terminals } = useTerminalList()
@@ -138,7 +125,7 @@ export function WorkspaceFrameHeaderContainer({
       activePaneId={scopedActivePaneId}
       agentStatus={workspaceAgentStatus}
       branchName={workspaceData.branchName}
-      diffIsOpen={diffIsOpen}
+      diffIsOpen={diffIsOpen ?? false}
       dragHandleRef={dragHandleRef}
       isContainerized={workspaceData.isContainerized}
       isMinimized={isMinimized}
@@ -149,7 +136,7 @@ export function WorkspaceFrameHeaderContainer({
       prState={workspaceData.prState}
       prTitle={workspaceData.prTitle}
       prUrl={workspaceData.prUrl}
-      reviewIsOpen={reviewIsOpen}
+      reviewIsOpen={reviewIsOpen ?? false}
       workspaceId={workspaceId}
     />
   )

@@ -94,7 +94,8 @@ function ReviewIconButton({
         render={
           <Button
             aria-label={reviewIsOpen ? 'Close review pane' : 'Open review pane'}
-            className={reviewIsOpen ? 'bg-accent' : ''}
+            aria-pressed={reviewIsOpen}
+            className={reviewIsOpen ? 'bg-accent text-foreground' : ''}
             disabled={disabled}
             onClick={onClick}
             size="icon-sm"
@@ -150,10 +151,11 @@ function ReviewButtonWithCount({
         render={
           <Button
             aria-label={`Open review pane — ${count} unresolved`}
+            aria-pressed={reviewIsOpen}
             className={cn(
               'h-6 gap-1 px-1.5 text-xs',
               reviewIsOpen
-                ? 'bg-accent'
+                ? 'bg-accent text-foreground'
                 : 'border-orange-500/30 bg-orange-500/10 text-orange-600 hover:bg-orange-500/20 dark:bg-orange-500/20 dark:text-orange-400 dark:hover:bg-orange-500/30'
             )}
             disabled={disabled}
@@ -315,7 +317,8 @@ function WorkspaceFrameHeader({
                     aria-label={
                       diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'
                     }
-                    className={diffIsOpen ? 'bg-accent' : ''}
+                    aria-pressed={diffIsOpen}
+                    className={diffIsOpen ? 'bg-accent text-foreground' : ''}
                     disabled={!hasActivePane}
                     onClick={withFocus((paneId) =>
                       actions?.toggleDiffPane(paneId)

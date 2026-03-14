@@ -116,3 +116,45 @@ Date: 2026-03-14
 - 2 pre-existing failures in terminal-manager.test.ts and rpc-integration.test.ts due to @effect/vitest module import issue (unrelated)
 - Typecheck passes cleanly for both terminal and web packages
 - Biome lint passes on all changed files
+
+## Issue 1: Tracer bullet: Swap xterm.js for ghostty-web with basic I/O — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Replaced all 6 `@xterm/*` dependencies with `ghostty-web` ^0.4.0 in `apps/web/package.json`
+- Modified `apps/web/src/panes/terminal-pane.tsx` to use ghostty-web instead of xterm.js:
+  - Imports `init`, `Terminal`, `FitAddon` from `ghostty-web` instead of `@xterm/*` packages
+  - Removed all addon loading code (WebGL, Image, Unicode11, WebLinks)
+  - Removed `@xterm/xterm/css/xterm.css` import (ghostty-web uses canvas, not DOM)
+  - Added module-level `const wasmReady = init()` for idempotent WASM initialization
+  - Made terminal initialization async (awaits WASM readiness before creating terminal)
+  - Added `caretColor: transparent` on container to hide browser's native contenteditable caret
+  - Added disposal guard (`disposed` flag) for async initialization race conditions
+  - Added `cleanupRef` for cleanup function storage across async boundary
+  - Preserved all existing functionality: theme config, keyboard bypass (Ctrl+B prefix mode, Cmd+W, Cmd+Shift+Enter), FitAddon resize, WebSocket I/O, loading/disconnected/reconnecting overlays
+  - Removed `openExternalUrl` import (link detection moved to Issue 5)
+  - Removed `allowProposedApi`, `fastScrollSensitivity`, `scrollSensitivity`, `lineHeight` options (not in ghostty-web's ITerminalOptions)
+- Removed `patchXtermEnumPlugin()` from `apps/web/vite.config.ts`:
+  - Deleted the entire 18-line function that patched xterm.js ESM const enum IIFEs
+  - Removed `type Plugin` import from vite (no longer needed)
+  - Removed `patchXtermEnumPlugin()` from the plugins array
+- Updated all JSDoc comments to reference ghostty-web instead of xterm.js
+- Created comprehensive test suite `apps/web/test/ghostty-web-migration.test.ts` with 13 tests:
+  - API surface exports: Terminal, FitAddon, init, EventEmitter, Ghostty
+  - Terminal class API shape: open, write, dispose, resize, clear, focus, blur, loadAddon, attachCustomKeyEventHandler
+  - FitAddon API shape: fit, proposeDimensions, dispose, activate
+  - xterm.js removal verification: no @xterm imports in terminal-pane.tsx, no xterm.css, imports from ghostty-web, patchXtermEnumPlugin removed, no @xterm dependencies in package.json, ghostty-web in dependencies
+
+### Files changed
+- `apps/web/package.json` (modified — removed 6 @xterm/* deps, added ghostty-web)
+- `apps/web/src/panes/terminal-pane.tsx` (modified — 758→566 lines, full ghostty-web swap)
+- `apps/web/vite.config.ts` (modified — 112→80 lines, removed patchXtermEnumPlugin)
+- `apps/web/test/ghostty-web-migration.test.ts` (new, 151 lines)
+- `bun.lock` (auto-updated)
+
+### Test results
+- All 576 tests pass across 43 test files in the web package (13 new + 563 existing)
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Typecheck passes cleanly
+- Biome lint passes on all changed files

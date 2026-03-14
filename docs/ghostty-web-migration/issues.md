@@ -25,11 +25,11 @@ Parent PRD: [PRD-ghostty-web-migration.md](./PRD-ghostty-web-migration.md)
 
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
-| 1 | Tracer bullet: Swap xterm.js for ghostty-web with basic I/O | None | Ready |
-| 2 | ghostty-web FitAddon and basic resize | #1 | Blocked |
-| 3 | Theme, font, and cursor configuration | #1 | Blocked |
-| 4 | Keyboard bypass and prefix mode | #1 | Blocked |
-| 5 | Link detection and OSC title changes | #1 | Blocked |
+| 1 | Tracer bullet: Swap xterm.js for ghostty-web with basic I/O | None | Done |
+| 2 | ghostty-web FitAddon and basic resize | #1 | Ready |
+| 3 | Theme, font, and cursor configuration | #1 | Ready |
+| 4 | Keyboard bypass and prefix mode | #1 | Ready |
+| 5 | Link detection and OSC title changes | #1 | Ready |
 | 6 | Backend: Escape sequence buffering | None | Done |
 | 7 | Backend: Headless terminal state manager | #6 | Done |
 | 8 | Backend: Race-free WebSocket attach protocol | #7 | Done |

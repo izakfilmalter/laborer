@@ -408,3 +408,57 @@
 - TypeScript typecheck passes with no errors across all packages
 - Formatter (ultracite/biome) passes on all changed files
 - Pre-existing format errors in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #12: Progressive feature enablement for Phases 3-4 — COMPLETED
+
+### What was done
+- **Terminal pane** (`apps/web/src/panes/terminal-pane.tsx`) — gated behind Phase 3 (Restored):
+  - Split `TerminalPane` into a phase-aware wrapper and `TerminalPaneContent` inner component
+  - Before Phase 3: renders `TerminalConnectingPlaceholder` — spinner + "Terminal service connecting..." message
+  - After Phase 3: renders the full xterm.js terminal content
+  - The heavy xterm.js initialization (WebGL, addons, WebSocket connection) only runs after Phase 3
+  - Added `useWhenPhase(LifecyclePhase.Restored)` import and usage
+
+- **Docker status banner** (`apps/web/src/components/docker-status-banner.tsx`) — gated behind Phase 4 (Eventually):
+  - `DockerStatusBanner` returns `null` before Phase 4 (no query, no rendering)
+  - After Phase 4: renders the existing `Suspense` + `DockerStatusContent` (which queries `docker.status` RPC)
+  - Prevents SERVICE_INITIALIZING errors from DockerDetection during startup
+
+- **Review pane** (`apps/web/src/panes/review-pane.tsx`) — gated behind Phase 4 (Eventually):
+  - Before Phase 4: shows "Loading review..." spinner placeholder with review header
+  - After Phase 4: renders the full review pane with Suspense + `ReviewPaneContent`
+  - Prevents review.fetchComments RPC calls before PrWatcher/ReviewCommentFetcher are ready
+
+- **Review findings count** (`apps/web/src/components/review-findings-count.tsx`) — gated behind Phase 4 (Eventually):
+  - Returns `null` before Phase 4 (suppresses `review.fetchComments` query result display)
+  - After Phase 4: renders the unresolved findings count badge
+
+- **Review verdict badge** (`apps/web/src/components/review-verdict-badge.tsx`) — gated behind Phase 4 (Eventually):
+  - Returns `null` before Phase 4 (suppresses `review.fetchVerdict` query result display)
+  - After Phase 4: renders the verdict badge (approved/needs_fix)
+
+- **Branch ahead/behind counts** — no additional gating needed:
+  - `WorkspaceSyncStatus` receives `aheadCount`/`behindCount` as props from LiveStore queries
+  - Counts are `null`/`0` until background sync populates the data, handled naturally
+  - `GitHubPrStatusBadge` is purely presentational (receives all data as props)
+
+- Created `apps/web/test/progressive-feature-enablement.test.tsx` with 7 tests:
+  1. Terminal pane shows connecting placeholder before Phase 3 (Restored)
+  2. Terminal pane renders normally after Phase 3 (Restored)
+  3. Docker status banner shows placeholder before Phase 4 (Eventually)
+  4. Docker status banner shows real status after Phase 4 (Eventually)
+  5. Review pane shows loading placeholder before Phase 4 (Eventually)
+  6. Review pane shows real content after Phase 4 (Eventually)
+  7. Features transition smoothly from placeholder to real content without broken UI
+
+- Updated existing tests to work with phase gating:
+  - `apps/web/test/review-pane.test.tsx` — added `vi.mock('@/hooks/use-when-phase')` returning `true`
+  - `apps/web/test/review-pane-alive.test.tsx` — added `vi.mock('@/hooks/use-when-phase')` returning `true`
+  - `apps/web/test/review-verdict-badge.test.tsx` — added `vi.mock('@/hooks/use-when-phase')` returning `true`
+
+### Verification
+- All 7 new tests pass
+- All 611 web tests pass (up from 604 after Issue #15, 7 new tests)
+- TypeScript typecheck passes with no errors across all 7 packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change

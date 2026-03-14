@@ -182,11 +182,13 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Spinner } from '@/components/ui/spinner'
 import {
   type TerminalStatus,
   useTerminalWebSocket,
 } from '@/hooks/use-terminal-websocket'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { openExternalUrl } from '@/lib/desktop'
 
 /** Module-level mutation atom for terminal.resize — shared across all TerminalPane instances. */
@@ -252,6 +254,48 @@ interface TerminalPaneProps {
  * the PTY sends SIGWINCH to the running process so it can reflow output.
  */
 function TerminalPane({ terminalId, onTerminalExit }: TerminalPaneProps) {
+  const isRestored = useWhenPhase(LifecyclePhase.Restored)
+
+  if (!isRestored) {
+    return <TerminalConnectingPlaceholder />
+  }
+
+  return (
+    <TerminalPaneContent
+      onTerminalExit={onTerminalExit}
+      terminalId={terminalId}
+    />
+  )
+}
+
+/**
+ * Placeholder shown when the terminal service is still connecting (before
+ * Phase 3 / Restored). Shows a spinner and message explaining the state.
+ *
+ * @see Issue #12: Progressive feature enablement for Phases 3-4
+ */
+function TerminalConnectingPlaceholder() {
+  return (
+    <div
+      className="flex h-full w-full flex-col items-center justify-center gap-3 bg-background"
+      data-testid="terminal-connecting-placeholder"
+    >
+      <Spinner className="size-6 text-muted-foreground" />
+      <p className="text-muted-foreground text-sm">
+        Terminal service connecting...
+      </p>
+    </div>
+  )
+}
+
+/**
+ * Inner terminal pane component — only rendered after Phase 3 (Restored)
+ * when the terminal sidecar is available.
+ */
+function TerminalPaneContent({
+  terminalId,
+  onTerminalExit,
+}: TerminalPaneProps) {
   const resizeTerminal = useAtomSet(terminalResizeMutation)
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)

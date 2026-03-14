@@ -17,11 +17,13 @@ import type { ReviewVerdict } from '@laborer/shared/rpc'
 import { Check, X } from 'lucide-react'
 import { useMemo } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { cn } from '@/lib/utils'
 
 interface ReviewVerdictBadgeProps {
@@ -48,15 +50,27 @@ function getVerdictConfig(verdict: ReviewVerdict): {
   }
 }
 
+/**
+ * Review verdict badge — gated behind Phase 4 (Eventually) since review
+ * verdict data depends on deferred services. Returns null before Phase 4.
+ *
+ * @see Issue #12: Progressive feature enablement for Phases 3-4
+ */
 function ReviewVerdictBadge({
   className,
   workspaceId,
 }: ReviewVerdictBadgeProps) {
+  const isEventually = useWhenPhase(LifecyclePhase.Eventually)
   const verdictAtom$ = useMemo(
     () => LaborerClient.query('review.fetchVerdict', { workspaceId }),
     [workspaceId]
   )
   const result = useAtomValue(verdictAtom$)
+
+  // Not ready yet — deferred services still initializing
+  if (!isEventually) {
+    return null
+  }
 
   // Only render when we have a successful result with a non-null verdict
   if (result._tag !== 'Success') {

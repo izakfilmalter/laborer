@@ -12,7 +12,9 @@ import { useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { AlertTriangle } from 'lucide-react'
 import { Suspense } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 
 // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
 const dockerStatus$ = LaborerClient.query('docker.status', undefined as void)
@@ -54,7 +56,21 @@ function DockerStatusContent() {
   )
 }
 
+/**
+ * Docker status banner — only queries the server and renders after Phase 4
+ * (Eventually) when deferred services (including DockerDetection) are ready.
+ * Before Phase 4, renders nothing — the docker.status RPC would return a
+ * SERVICE_INITIALIZING error anyway.
+ *
+ * @see Issue #12: Progressive feature enablement for Phases 3-4
+ */
 function DockerStatusBanner() {
+  const isEventually = useWhenPhase(LifecyclePhase.Eventually)
+
+  if (!isEventually) {
+    return null
+  }
+
   return (
     <Suspense fallback={null}>
       <DockerStatusContent />

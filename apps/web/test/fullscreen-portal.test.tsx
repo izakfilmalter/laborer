@@ -132,6 +132,13 @@ function mockActions() {
     toggleDiffPane: vi.fn(() => false),
     toggleFullscreenPane: vi.fn(),
     toggleReviewPane: vi.fn(() => false),
+    addWindowTab: vi.fn(),
+    closeWindowTab: vi.fn(),
+    switchWindowTab: vi.fn(),
+    switchWindowTabByIndex: vi.fn(),
+    switchWindowTabRelative: vi.fn(),
+    reorderWindowTabsDnd: vi.fn(),
+    windowLayout: undefined,
   }
 }
 

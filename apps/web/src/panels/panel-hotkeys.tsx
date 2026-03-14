@@ -465,6 +465,82 @@ function PanelHotkeys({
     { timeout: SEQUENCE_TIMEOUT }
   )
 
+  // --- Window tab shortcuts ---
+
+  // Cmd+N → create new window tab
+  useHotkeySequence(['Meta+N'], (event) => {
+    event.preventDefault()
+    actions?.addWindowTab?.()
+  })
+
+  // Cmd+Shift+W → close active window tab
+  useHotkeySequence(['Shift+Meta+W'], (event) => {
+    event.preventDefault()
+    actions?.closeWindowTab?.()
+  })
+
+  // Cmd+1 through Cmd+8 → switch to window tab by index
+  useHotkeySequence(['Meta+1'], (event) => {
+    event.preventDefault()
+    actions?.switchWindowTabByIndex?.(1)
+  })
+  useHotkeySequence(['Meta+2'], (event) => {
+    event.preventDefault()
+    actions?.switchWindowTabByIndex?.(2)
+  })
+  useHotkeySequence(['Meta+3'], (event) => {
+    event.preventDefault()
+    actions?.switchWindowTabByIndex?.(3)
+  })
+  useHotkeySequence(['Meta+4'], (event) => {
+    event.preventDefault()
+    actions?.switchWindowTabByIndex?.(4)
+  })
+  useHotkeySequence(['Meta+5'], (event) => {
+    event.preventDefault()
+    actions?.switchWindowTabByIndex?.(5)
+  })
+  useHotkeySequence(['Meta+6'], (event) => {
+    event.preventDefault()
+    actions?.switchWindowTabByIndex?.(6)
+  })
+  useHotkeySequence(['Meta+7'], (event) => {
+    event.preventDefault()
+    actions?.switchWindowTabByIndex?.(7)
+  })
+  useHotkeySequence(['Meta+8'], (event) => {
+    event.preventDefault()
+    actions?.switchWindowTabByIndex?.(8)
+  })
+
+  // Cmd+9 → switch to last window tab
+  useHotkeySequence(['Meta+9'], (event) => {
+    event.preventDefault()
+    actions?.switchWindowTabByIndex?.(9)
+  })
+
+  // Cmd+Shift+[ and Cmd+Shift+] → cycle window tabs
+  // Uses raw keydown handler because TanStack Hotkeys doesn't support
+  // bracket key names in its Hotkey type.
+  useEffect(() => {
+    const handleWindowTabCycle = (event: KeyboardEvent) => {
+      if (!(event.metaKey && event.shiftKey) || event.ctrlKey || event.altKey) {
+        return
+      }
+      if (event.key === '[') {
+        event.preventDefault()
+        actions?.switchWindowTabRelative?.(-1)
+      } else if (event.key === ']') {
+        event.preventDefault()
+        actions?.switchWindowTabRelative?.(1)
+      }
+    }
+    window.addEventListener('keydown', handleWindowTabCycle)
+    return () => {
+      window.removeEventListener('keydown', handleWindowTabCycle)
+    }
+  }, [actions])
+
   return null
 }
 

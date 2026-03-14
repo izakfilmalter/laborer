@@ -6,9 +6,13 @@ import {
   layoutSplit,
   layoutWorkspacesReordered,
   panelLayout,
+  windowTabClosed,
+  windowTabCreated,
+  windowTabSwitched,
+  windowTabsReordered,
   workspaces,
 } from '@laborer/shared/schema'
-import type { LeafNode, PanelNode } from '@laborer/shared/types'
+import type { LeafNode, PanelNode, WindowLayout } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -48,6 +52,14 @@ import {
 } from '@/panels/layout-utils'
 import type { AssignTerminalToPaneOptions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
+import {
+  addWindowTab,
+  removeWindowTab,
+  reorderWindowTabs,
+  switchWindowTab,
+  switchWindowTabByIndex,
+  switchWindowTabRelative,
+} from '@/panels/window-tab-utils'
 import { useInitialLayout } from './use-initial-layout'
 
 /** Browser fallback until every renderer boot path has a native window ID. */
@@ -123,6 +135,11 @@ export function usePanelLayout() {
   const persistedWorkspaceOrder = (persistedRow?.workspaceOrder ?? null) as
     | string[]
     | null
+
+  // Read the hierarchical window layout from the new columns.
+  const persistedWindowLayout = (persistedRow?.windowLayout ?? undefined) as
+    | WindowLayout
+    | undefined
 
   // Determine the effective layout: persisted layout takes priority,
   // otherwise fall back to the auto-generated layout from terminals/workspaces.
@@ -895,6 +912,100 @@ export function usePanelLayout() {
     [panelWindowId, store]
   )
 
+  // -------------------------------------------------------------------
+  // Window tab actions — operate on the hierarchical WindowLayout.
+  // -------------------------------------------------------------------
+
+  /**
+   * Helper to commit a window layout event to LiveStore.
+   * All window tab events carry the same payload shape.
+   */
+  const commitWindowLayout = useCallback(
+    (
+      event:
+        | typeof windowTabCreated
+        | typeof windowTabClosed
+        | typeof windowTabSwitched
+        | typeof windowTabsReordered,
+      newLayout: WindowLayout
+    ) => {
+      store.commit(
+        event({
+          windowId: panelWindowId,
+          windowLayout: newLayout,
+          activeWindowTabId: newLayout.activeTabId ?? null,
+        })
+      )
+    },
+    [panelWindowId, store]
+  )
+
+  const handleAddWindowTab = useCallback(() => {
+    const base = persistedWindowLayout ?? { tabs: [], activeTabId: undefined }
+    const newLayout = addWindowTab(base)
+    commitWindowLayout(windowTabCreated, newLayout)
+  }, [persistedWindowLayout, commitWindowLayout])
+
+  const handleCloseWindowTab = useCallback(() => {
+    if (!persistedWindowLayout) {
+      return
+    }
+    const activeId = persistedWindowLayout.activeTabId
+    if (!activeId) {
+      return
+    }
+    const newLayout = removeWindowTab(persistedWindowLayout, activeId)
+    commitWindowLayout(windowTabClosed, newLayout)
+  }, [persistedWindowLayout, commitWindowLayout])
+
+  const handleSwitchWindowTab = useCallback(
+    (tabId: string) => {
+      if (!persistedWindowLayout) {
+        return
+      }
+      const newLayout = switchWindowTab(persistedWindowLayout, tabId)
+      commitWindowLayout(windowTabSwitched, newLayout)
+    },
+    [persistedWindowLayout, commitWindowLayout]
+  )
+
+  const handleSwitchWindowTabByIndex = useCallback(
+    (index: number) => {
+      if (!persistedWindowLayout) {
+        return
+      }
+      const newLayout = switchWindowTabByIndex(persistedWindowLayout, index)
+      commitWindowLayout(windowTabSwitched, newLayout)
+    },
+    [persistedWindowLayout, commitWindowLayout]
+  )
+
+  const handleSwitchWindowTabRelative = useCallback(
+    (delta: number) => {
+      if (!persistedWindowLayout) {
+        return
+      }
+      const newLayout = switchWindowTabRelative(persistedWindowLayout, delta)
+      commitWindowLayout(windowTabSwitched, newLayout)
+    },
+    [persistedWindowLayout, commitWindowLayout]
+  )
+
+  const handleReorderWindowTabs = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      if (!persistedWindowLayout) {
+        return
+      }
+      const newLayout = reorderWindowTabs(
+        persistedWindowLayout,
+        fromIndex,
+        toIndex
+      )
+      commitWindowLayout(windowTabsReordered, newLayout)
+    },
+    [persistedWindowLayout, commitWindowLayout]
+  )
+
   const panelActions = useMemo(
     () => ({
       assignTerminalToPane: handleAssignTerminalToPane,
@@ -909,6 +1020,13 @@ export function usePanelLayout() {
       resizePane: handleResizePane,
       closeTerminalPane: handleCloseTerminalPane,
       reorderWorkspaces: handleReorderWorkspaces,
+      addWindowTab: handleAddWindowTab,
+      closeWindowTab: handleCloseWindowTab,
+      switchWindowTab: handleSwitchWindowTab,
+      switchWindowTabByIndex: handleSwitchWindowTabByIndex,
+      switchWindowTabRelative: handleSwitchWindowTabRelative,
+      reorderWindowTabsDnd: handleReorderWindowTabs,
+      windowLayout: persistedWindowLayout,
     }),
     [
       handleAssignTerminalToPane,
@@ -922,6 +1040,13 @@ export function usePanelLayout() {
       handleResizePane,
       handleCloseTerminalPane,
       handleReorderWorkspaces,
+      handleAddWindowTab,
+      handleCloseWindowTab,
+      handleSwitchWindowTab,
+      handleSwitchWindowTabByIndex,
+      handleSwitchWindowTabRelative,
+      handleReorderWindowTabs,
+      persistedWindowLayout,
     ]
   )
 

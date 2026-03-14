@@ -270,3 +270,61 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 805/805 tests pass (25 new + 780 existing)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no issues in modified files
+
+## Issue #8: Window tab bar integration — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Wired the `TabBar` component into the main work area's `PanelHeaderBar` for window-level tabs:
+  - Added `WindowTabBar` sub-component that converts `WindowLayout` to `TabBarItem[]` for the shared `TabBar`
+  - Tab bar auto-hides when there is only 1 window tab (using `TabBar`'s `autoHide` prop)
+  - Tab bar renders in the right side of the header bar alongside the sidebar toggle and view toggle icons
+  - Tab bar only shows when `mainView === 'panels'` (not in dashboard or plan views)
+
+- Extended `PanelActions` interface in `panel-context.tsx` with 7 new window tab actions:
+  - `addWindowTab` — creates a new empty window tab and switches to it
+  - `closeWindowTab` — closes the active window tab
+  - `switchWindowTab` — switch to a window tab by ID
+  - `switchWindowTabByIndex` — switch by 1-based index (for Cmd+1-8, Cmd+9=last)
+  - `switchWindowTabRelative` — cycle next/prev (for Cmd+Shift+[/])
+  - `reorderWindowTabsDnd` — drag-and-drop reorder
+  - `windowLayout` — the current `WindowLayout` for rendering the tab bar
+
+- Added window tab action handlers in `usePanelLayout` hook (`use-panel-layout.ts`):
+  - Reads `persistedWindowLayout` from the `windowLayout` column of the `panelLayout` LiveStore table
+  - Each action calls the corresponding pure function from `window-tab-utils.ts`
+  - Each action commits the appropriate LiveStore event (`windowTabCreated`, `windowTabClosed`, `windowTabSwitched`, `windowTabsReordered`)
+  - Helper `commitWindowLayout` encapsulates the event commit pattern
+
+- Registered keyboard shortcuts in `panel-hotkeys.tsx`:
+  - `Cmd+N` → new window tab (via `useHotkeySequence`)
+  - `Cmd+Shift+W` → close active window tab (via `useHotkeySequence`)
+  - `Cmd+1` through `Cmd+8` → switch to tab by index (via `useHotkeySequence`)
+  - `Cmd+9` → switch to last tab (via `useHotkeySequence`)
+  - `Cmd+Shift+[` → previous window tab (via raw keydown handler — TanStack Hotkeys doesn't support bracket keys)
+  - `Cmd+Shift+]` → next window tab (via raw keydown handler)
+
+- Updated `terminal-keys.ts` to bypass new shortcuts through xterm.js:
+  - Added `isMetaN` — Cmd+N (new tab)
+  - Added `isMetaShiftW` — Cmd+Shift+W (close tab)
+  - Added `isMetaDigit` — Cmd+1 through Cmd+9 (switch tab by index)
+  - Added `isMetaShiftBracket` — Cmd+Shift+[ and Cmd+Shift+] (cycle tabs)
+  - All new detectors added to `shouldBypassTerminal` union
+
+- Wired `PanelHeaderBar` props in `index.tsx`:
+  - Passes `windowLayout`, `onSelectWindowTab`, `onCloseWindowTab`, `onNewWindowTab`, `onReorderWindowTabs` from `panelActions` to `PanelHeaderBar`
+
+- Updated 5 test files to include new window tab action mocks:
+  - `workspace-frames-minimize.test.tsx`
+  - `workspace-frame-header.test.tsx`
+  - `terminal-overlay-toolbar.test.tsx`
+  - `full-height-review-panel.test.tsx`
+  - `fullscreen-portal.test.tsx`
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 805/805 tests pass (no regressions)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no issues in modified files (pre-existing info in unrelated files)

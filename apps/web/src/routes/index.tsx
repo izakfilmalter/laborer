@@ -772,6 +772,10 @@ function HomeComponent() {
               <div className="flex h-full flex-col">
                 <PanelHeaderBar
                   mainView={mainView}
+                  onCloseWindowTab={panelActions.closeWindowTab}
+                  onNewWindowTab={panelActions.addWindowTab}
+                  onReorderWindowTabs={panelActions.reorderWindowTabsDnd}
+                  onSelectWindowTab={panelActions.switchWindowTab}
                   onToggleSidebar={
                     responsiveSizes.canCollapseSidebar
                       ? toggleSidebar
@@ -779,6 +783,7 @@ function HomeComponent() {
                   }
                   onViewChange={setMainView}
                   sidebarCollapsed={sidebarCollapsed}
+                  windowLayout={panelActions.windowLayout}
                 />
                 {mainView === 'panels' && (
                   <>

@@ -276,7 +276,7 @@ None — can start immediately (purely presentational, no data model dependency)
 
 ## 8. Window tab bar integration
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1068,7 +1068,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 5 | Schema + LiveStore events for new layout model | 1 | done |
 | 6 | Layout migration: flat PanelNode to hierarchical WindowLayout | 1, 2, 5 | done |
 | 7 | Tab bar component | None | done |
-| 8 | Window tab bar integration | 7, 2, 5 | pending |
+| 8 | Window tab bar integration | 7, 2, 5 | done |
 | 9 | Workspace bidirectional tiling UI | 3, 5, 6 | pending |
 | 10 | Panel tab bar integration | 7, 4, 9 | pending |
 | 11 | Panel type picker component | None | pending |

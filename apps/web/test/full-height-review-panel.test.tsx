@@ -93,6 +93,13 @@ vi.mock('@/panels/panel-context', () => ({
     toggleDiffPane: toggleDiffPaneMock,
     toggleFullscreenPane: vi.fn(),
     toggleReviewPane: toggleReviewPaneMock,
+    addWindowTab: vi.fn(),
+    closeWindowTab: vi.fn(),
+    switchWindowTab: vi.fn(),
+    switchWindowTabByIndex: vi.fn(),
+    switchWindowTabRelative: vi.fn(),
+    reorderWindowTabsDnd: vi.fn(),
+    windowLayout: undefined,
   }),
 }))
 

@@ -11,7 +11,11 @@
  * @see Issue #75: Keyboard shortcut — split horizontal
  */
 
-import type { LeafNode, SplitDirection } from '@laborer/shared/types'
+import type {
+  LeafNode,
+  SplitDirection,
+  WindowLayout,
+} from '@laborer/shared/types'
 import { createContext, useContext } from 'react'
 
 /**
@@ -26,6 +30,13 @@ interface AssignTerminalToPaneOptions {
 }
 
 interface PanelActions {
+  // -- Window tab actions ---------------------------------------------------
+
+  /**
+   * Add a new empty window tab and switch to it.
+   * Triggered by Cmd+N.
+   */
+  readonly addWindowTab: (() => void) | undefined
   /**
    * Assign a terminal to an existing pane or the first available empty pane.
    * If no paneId is given, finds the first empty terminal pane in the tree
@@ -59,6 +70,12 @@ interface PanelActions {
    * @param terminalId - The ID of the terminal to close
    */
   readonly closeTerminalPane: (terminalId: string) => void
+
+  /**
+   * Close the active window tab.
+   * Triggered by Cmd+Shift+W.
+   */
+  readonly closeWindowTab: (() => void) | undefined
   /**
    * Close all panes belonging to a workspace, killing their terminals.
    *
@@ -81,6 +98,13 @@ interface PanelActions {
    * @param workspaceId - The workspace whose panes should be closed
    */
   readonly forceCloseWorkspace: (workspaceId: string) => void
+
+  /**
+   * Reorder window tabs (for drag-and-drop).
+   */
+  readonly reorderWindowTabsDnd:
+    | ((fromIndex: number, toIndex: number) => void)
+    | undefined
   /**
    * Reorder workspace frames in the panel view.
    *
@@ -126,6 +150,23 @@ interface PanelActions {
     direction: SplitDirection,
     newPaneContent?: Partial<LeafNode>
   ) => void
+
+  /**
+   * Switch to a specific window tab by ID.
+   */
+  readonly switchWindowTab: ((tabId: string) => void) | undefined
+
+  /**
+   * Switch to a window tab by its 1-based index.
+   * Triggered by Cmd+1 through Cmd+8 (index 9 = last tab).
+   */
+  readonly switchWindowTabByIndex: ((index: number) => void) | undefined
+
+  /**
+   * Cycle to the next or previous window tab.
+   * Triggered by Cmd+Shift+] (delta=1) and Cmd+Shift+[ (delta=-1).
+   */
+  readonly switchWindowTabRelative: ((delta: number) => void) | undefined
   /**
    * Toggle the dev server terminal alongside a terminal pane.
    *
@@ -178,6 +219,11 @@ interface PanelActions {
    * @returns Whether the review pane is now visible (true = toggled on)
    */
   readonly toggleReviewPane: (paneId: string) => boolean
+
+  /**
+   * The current window layout (for rendering the tab bar).
+   */
+  readonly windowLayout: WindowLayout | undefined
 }
 
 /**

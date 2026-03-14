@@ -326,6 +326,11 @@ const FullscreenPaneIdContext = createContext<string | null>(null)
 
 const PanelActionsContext = createContext<PanelActions | null>(null)
 const ActivePaneIdContext = createContext<string | null>(null)
+/**
+ * The workspace ID that is currently focused (i.e., contains the active pane).
+ * Used by the sidebar to highlight the workspace matching the focused workspace.
+ */
+const ActiveWorkspaceIdContext = createContext<string | null>(null)
 
 /**
  * State for the pane-scoped close confirmation dialog.
@@ -405,6 +410,7 @@ const FullscreenPortalContext = createContext<HTMLElement | null>(null)
  */
 function PanelActionsProvider({
   activePaneId,
+  activeWorkspaceId,
   children,
   fullscreenPaneId,
   pendingClose,
@@ -412,6 +418,7 @@ function PanelActionsProvider({
   value,
 }: {
   readonly activePaneId: string | null
+  readonly activeWorkspaceId?: string | null | undefined
   readonly children: React.ReactNode
   readonly fullscreenPaneId: string | null
   readonly pendingClose?: PendingCloseState | undefined
@@ -421,17 +428,19 @@ function PanelActionsProvider({
   return (
     <PanelActionsContext.Provider value={value}>
       <ActivePaneIdContext.Provider value={activePaneId}>
-        <FullscreenPaneIdContext.Provider value={fullscreenPaneId}>
-          <PendingClosePaneContext.Provider
-            value={pendingClose ?? defaultPendingClose}
-          >
-            <PendingPickerContext.Provider
-              value={pendingPicker ?? defaultPendingPicker}
+        <ActiveWorkspaceIdContext.Provider value={activeWorkspaceId ?? null}>
+          <FullscreenPaneIdContext.Provider value={fullscreenPaneId}>
+            <PendingClosePaneContext.Provider
+              value={pendingClose ?? defaultPendingClose}
             >
-              {children}
-            </PendingPickerContext.Provider>
-          </PendingClosePaneContext.Provider>
-        </FullscreenPaneIdContext.Provider>
+              <PendingPickerContext.Provider
+                value={pendingPicker ?? defaultPendingPicker}
+              >
+                {children}
+              </PendingPickerContext.Provider>
+            </PendingClosePaneContext.Provider>
+          </FullscreenPaneIdContext.Provider>
+        </ActiveWorkspaceIdContext.Provider>
       </ActivePaneIdContext.Provider>
     </PanelActionsContext.Provider>
   )
@@ -451,6 +460,15 @@ function usePanelActions(): PanelActions | null {
  */
 function useActivePaneId(): string | null {
   return useContext(ActivePaneIdContext)
+}
+
+/**
+ * Hook to read the workspace ID that is currently focused.
+ * Used by the sidebar workspace list to highlight the active workspace.
+ * Returns null if no workspace is focused or no provider is present.
+ */
+function useActiveWorkspaceId(): string | null {
+  return useContext(ActiveWorkspaceIdContext)
 }
 
 /**
@@ -492,6 +510,7 @@ export {
   FullscreenPortalContext,
   PanelActionsProvider,
   useActivePaneId,
+  useActiveWorkspaceId,
   useFullscreenPaneId,
   useFullscreenPortal,
   usePanelActions,

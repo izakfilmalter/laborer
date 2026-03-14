@@ -95,7 +95,7 @@ import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
-import { usePanelActions } from '@/panels/panel-context'
+import { useActiveWorkspaceId, usePanelActions } from '@/panels/panel-context'
 
 const allWorkspaces$ = queryDb(workspaces, { label: 'workspaceList' })
 const allPrds$ = queryDb(prds, { label: 'workspaceList.prds' })
@@ -588,6 +588,8 @@ function WorkspaceItem({
     mode: 'promise',
   })
   const panelActions = usePanelActions()
+  const activeWorkspaceId = useActiveWorkspaceId()
+  const isActiveWorkspace = activeWorkspaceId === workspace.id
   const configGet$ = useMemo(
     () =>
       LaborerClient.query(
@@ -653,6 +655,7 @@ function WorkspaceItem({
   return (
     <Card
       className={cn(
+        isActiveWorkspace && 'border-primary',
         needsAttention &&
           'animate-pulse border-amber-400/50 shadow-[0_0_8px_rgba(251,191,36,0.15)]'
       )}

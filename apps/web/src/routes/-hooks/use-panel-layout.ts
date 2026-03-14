@@ -73,6 +73,7 @@ import {
 } from '@/panels/panel-tab-utils'
 import {
   addWindowTab,
+  findTerminalLocation,
   getStaleTerminalLeavesHierarchical,
   reconcileWindowLayout,
   removeWindowTab,
@@ -733,6 +734,55 @@ export function usePanelLayout() {
         return
       }
 
+      // If the terminal already exists in the hierarchical layout,
+      // navigate to its exact location (switch window tab, panel tab,
+      // and focus the pane) instead of creating a new pane.
+      if (!paneId && persistedWindowLayout) {
+        const location = findTerminalLocation(persistedWindowLayout, terminalId)
+        if (location) {
+          let layout = persistedWindowLayout
+
+          // 1. Switch to the correct window tab (if not already active)
+          if (layout.activeTabId !== location.tabId) {
+            layout = switchWindowTab(layout, location.tabId)
+            store.commit(
+              windowTabSwitched({
+                windowId: panelWindowId,
+                windowLayout: layout,
+                activeWindowTabId: layout.activeTabId ?? null,
+              })
+            )
+          }
+
+          // 2. Switch to the correct panel tab within the workspace
+          layout = updateWorkspaceTileLeaf(
+            layout,
+            location.workspaceId,
+            (leaf) => switchPanelTab(leaf, location.panelTabId)
+          )
+          store.commit(
+            panelTabSwitched({
+              windowId: panelWindowId,
+              windowLayout: layout,
+              activeWindowTabId: layout.activeTabId ?? null,
+            })
+          )
+
+          // 3. Focus the pane containing the terminal
+          const base = persistedLayoutTree ?? defaultLayout
+          if (base) {
+            store.commit(
+              layoutPaneAssigned({
+                windowId: panelWindowId,
+                layoutTree: base,
+                activePaneId: location.paneId,
+              })
+            )
+          }
+          return
+        }
+      }
+
       const base = persistedLayoutTree ?? defaultLayout
       const result = computeTerminalPaneAssignment(
         base,
@@ -748,7 +798,14 @@ export function usePanelLayout() {
         result.triggerDevServer
       )
     },
-    [persistedLayoutTree, defaultLayout, commitAssignment]
+    [
+      persistedLayoutTree,
+      defaultLayout,
+      commitAssignment,
+      persistedWindowLayout,
+      panelWindowId,
+      store,
+    ]
   )
 
   // Keep the assign-terminal ref in sync with the latest handler

@@ -774,3 +774,51 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 905/905 tests pass (14 new + 891 existing)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #20: Sidebar navigation to terminal across tabs — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Updated `handleAssignTerminalToPane` in `apps/web/src/routes/-hooks/use-panel-layout.ts` to navigate across window tabs and panel tabs when a terminal is clicked in the sidebar:
+  - Added import of `findTerminalLocation` from `window-tab-utils.ts`
+  - Before creating a new pane, checks if the terminal already exists anywhere in the hierarchical `WindowLayout` via `findTerminalLocation`
+  - If found, performs 3-step navigation:
+    1. Switches to the correct window tab (if not already active) via `switchWindowTab` + `windowTabSwitched` LiveStore event
+    2. Switches to the correct panel tab within the workspace via `updateWorkspaceTileLeaf` + `switchPanelTab` + `panelTabSwitched` LiveStore event
+    3. Focuses the pane containing the terminal via `layoutPaneAssigned` LiveStore event
+  - Only triggered when no specific `paneId` is provided (sidebar click path), not when a specific pane is targeted (drag-and-drop or reassignment)
+  - Falls through to existing `computeTerminalPaneAssignment` logic when terminal is not found in the hierarchy (new terminals, legacy layout)
+
+- Added sidebar workspace highlighting via `ActiveWorkspaceIdContext` in `apps/web/src/panels/panel-context.tsx`:
+  - Added `ActiveWorkspaceIdContext` — React context holding the workspace ID that is currently focused
+  - Added `useActiveWorkspaceId()` hook — returns the workspace ID from context (null if no workspace is focused)
+  - Updated `PanelActionsProvider` to accept optional `activeWorkspaceId` prop and wrap children with `ActiveWorkspaceIdContext.Provider`
+  - Exported `useActiveWorkspaceId` from `panel-context.tsx`
+
+- Derived `activeWorkspaceId` in `apps/web/src/routes/index.tsx`:
+  - Added `useMemo` that derives the active workspace ID from the `activePaneId` by looking up the active pane in the layout tree via `findNodeById` and extracting `workspaceId` from the leaf node
+  - Passed `activeWorkspaceId` to `PanelActionsProvider`
+
+- Updated `WorkspaceItem` in `apps/web/src/components/workspace-list.tsx`:
+  - Added import of `useActiveWorkspaceId` from `panel-context`
+  - Calls `useActiveWorkspaceId()` and compares with `workspace.id` to determine `isActiveWorkspace`
+  - Active workspace card gets `border-primary` class via `cn()` utility — visually highlights the sidebar card matching the currently focused workspace
+
+- Updated 3 test files with `useActiveWorkspaceId` mock:
+  - `workspace-card-layout.test.tsx` — added `useActiveWorkspaceId: () => null` to panel-context mock
+  - `workspace-list-root-delete.test.tsx` — added `useActiveWorkspaceId: () => null` to panel-context mock
+  - `workspace-plan-scope.test.tsx` — added `useActiveWorkspaceId: () => null` to panel-context mock
+
+### Notes
+- The `findTerminalLocation` utility function was already fully implemented and tested in issue #2 (67 tests in `window-tab-utils.test.ts`) — this issue wires it into the actual UI flow.
+- Cross-window navigation (focusing a different Electron window) continues to work via the existing `focusExistingWindowForWorkspace` gate at the top of `handleAssignTerminalToPane`.
+- The sidebar workspace highlight uses `border-primary` matching the existing workspace frame active indicator pattern in `workspace-frames.tsx`.
+- The `needsAttention` animation styling (`border-amber-400/50`) takes precedence over the active highlight due to CSS specificity ordering in the `cn()` call.
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 905/905 tests pass (no regressions)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing `useAwait` issue in unrelated test code)

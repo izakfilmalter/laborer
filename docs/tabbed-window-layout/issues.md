@@ -749,7 +749,7 @@ Both states should be visually consistent with the window tab empty state.
 
 ## 20. Sidebar navigation to terminal across tabs
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1080,7 +1080,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 17 | Progressive Cmd+W close logic | 8, 10 | done |
 | 18 | Empty state: window tab with workspace picker | 8 | pending |
 | 19 | Empty state: workspace and panel tab | 10, 11 | pending |
-| 20 | Sidebar navigation to terminal across tabs | 2, 8, 10 | pending |
+| 20 | Sidebar navigation to terminal across tabs | 2, 8, 10 | done |
 | 21 | Session persistence for hierarchical layout | 6, 8, 10 | done |
 | 22 | Workspace uniqueness enforcement | 21 | pending |
 | 23 | Tab drag-and-drop reordering | 8, 10 | pending |

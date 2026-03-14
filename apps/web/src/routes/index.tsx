@@ -96,6 +96,15 @@ function HomeComponent() {
     workspaceOrder,
   } = usePanelLayout()
 
+  // Derive the active workspace ID from the active pane for sidebar highlighting.
+  const activeWorkspaceId = useMemo(() => {
+    if (!(activePaneId && layout)) {
+      return null
+    }
+    const node = findNodeById(layout, activePaneId)
+    return node?._tag === 'LeafNode' ? (node.workspaceId ?? null) : null
+  }, [activePaneId, layout])
+
   // Extract the active window tab's workspace tile layout for bidirectional tiling.
   // When available, WorkspaceFrames uses this for hierarchical rendering instead
   // of extracting workspaces from the flat PanelNode tree.
@@ -733,6 +742,7 @@ function HomeComponent() {
     <DiffScrollProvider>
       <PanelActionsProvider
         activePaneId={activePaneId}
+        activeWorkspaceId={activeWorkspaceId}
         fullscreenPaneId={fullscreenPaneId}
         pendingClose={pendingCloseState}
         pendingPicker={pendingPickerState}

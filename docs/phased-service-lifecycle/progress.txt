@@ -156,3 +156,50 @@
 - TypeScript typecheck passes with no errors across all packages
 - Formatter (ultracite/biome) passes on new files
 - Pre-existing lint warnings in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #13: Server core layer group (fast health endpoint) — COMPLETED
+
+### What was done
+- Restructured `packages/server/src/main.ts` to clearly separate core from deferred layer groups:
+  - **Core layers** (fast-building, needed for health endpoint):
+    - `ServerLive` — Node.js HTTP server binding
+    - `LaborerStoreLive` — LiveStore with SQLite persistence
+    - `SyncRpcLive` — LiveStore WebSocket sync endpoint (GET /rpc)
+    - `RpcLive` — Business RPC endpoint (POST /rpc, handlers defined)
+    - `RpcSerialization.layerJson` — JSON wire format
+    - `CustomRoutesLive` — Health check endpoint (GET /)
+    - `ConfigService` — Configuration resolution (Layer.succeed, pure)
+    - `RepositoryIdentity` — Git repository identification (leaf)
+  - **Deferred layers** (heavy I/O, external connections, background services):
+    - `DeferredLeafLayers` — FileWatcherClient, WorktreeDetector, DepsImageService, DockerDetection, PortAllocator
+    - `DeferredGroup1Layers` — TaskManager, BranchStateTracker, ContainerService, PrdStorageService, DiffService, PrWatcher, WorktreeReconciler
+    - `DeferredGroup1WithSync` — WorkspaceSyncService + BackgroundFetchService
+    - `DeferredGroup2Layers` — GithubTaskImporter, LinearTaskImporter, ReviewCommentFetcher, RepositoryWatchCoordinator
+    - `DeferredServiceStack` — WorkspaceProvider, ProjectRegistry (bottom-up composition)
+    - `DeferredTopLayers` — TerminalClient, McpRegistrar
+    - `DeferredServicesLive` — All deferred services composed
+  - The separation is structural/organizational because `LaborerRpcsLive` captures all handler service requirements at the type level. Issue #14 will add background initialization for deferred layers.
+- Restructured `packages/server/test/rpc/test-layer.ts` to mirror the core/deferred split:
+  - `CoreLeafLayers` — ConfigService, RepositoryIdentity (core infrastructure)
+  - `DeferredLeafLayers` — test stubs for FileWatcherClient, DockerDetection, DepsImageService + real WorktreeDetector, PortAllocator
+  - `DeferredGroup1Layers`, `DeferredGroup1WithSync`, `DeferredGroup2Layers`, `DeferredServiceStack` — matching main.ts structure
+  - All existing test layers and exports preserved
+- Created `packages/server/test/rpc/core-layers.test.ts` with 4 tests:
+  1. Health check responds with only core layers (deferred services stubbed)
+  2. Server starts without terminal or file-watcher sidecars (stubs only)
+  3. LiveStore queries work with only core layers
+  4. Deferred service RPC fails gracefully with stub error (not "service not found")
+- Stub pattern uses JavaScript Proxy to create service objects that construct successfully but return `Effect.die` when any method is invoked — proving deferred services are not needed at runtime for core operations
+
+### Notes
+- `LaborerRpcsLive` (via `RpcGroup.toLayer`) captures all handler service requirements at the type level, even though services are only resolved at handler invocation time. This means the full layer graph must be provided for type safety, preventing a naive "launch core separately from deferred" approach.
+- Issue #14 will build on this separation by wrapping deferred services in background-initializing layers that return placeholder implementations immediately, with typed `ServiceInitializing` errors for handlers invoked before their service is ready.
+- Issue #16 will make `TerminalClient` and `FileWatcherClient` connect lazily on first use instead of during layer construction.
+
+### Verification
+- All 4 new tests pass
+- All 325 server tests pass (up from 321 after Issue #8, 4 new tests)
+- All 596 web tests pass (no regressions)
+- TypeScript typecheck passes with no errors across all packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change

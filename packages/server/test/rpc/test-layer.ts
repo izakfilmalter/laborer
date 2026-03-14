@@ -113,13 +113,29 @@ const TestDepsImageService = Layer.succeed(
   })
 )
 
+// ---------------------------------------------------------------------------
+// Core layers (match main.ts CoreHttpLive — fast-building, no I/O)
+// ---------------------------------------------------------------------------
+
 /**
- * Leaf layers with no service dependencies (Group 0).
+ * Core infrastructure layers that build fast and have no external
+ * I/O dependencies. These mirror the core layers in main.ts.
  */
-const LeafLayers = Layer.mergeAll(
+const CoreLeafLayers = Layer.mergeAll(
   ConfigService.layer,
+  RepositoryIdentity.layer
+)
+
+// ---------------------------------------------------------------------------
+// Deferred layers (match main.ts DeferredServicesLive — heavy I/O)
+// ---------------------------------------------------------------------------
+
+/**
+ * Deferred leaf layers with test stubs for external services.
+ * Mirrors DeferredLeafLayers in main.ts but with test-safe stubs.
+ */
+const DeferredLeafLayers = Layer.mergeAll(
   TestFileWatcherClientLayer,
-  RepositoryIdentity.layer,
   WorktreeDetector.layer,
   TestDepsImageService,
   TestDockerDetection,
@@ -127,9 +143,9 @@ const LeafLayers = Layer.mergeAll(
 )
 
 /**
- * Layers that depend only on LaborerStore + leaf layers (Group 1).
+ * Deferred Group 1 — services depending on LaborerStore + leaf layers.
  */
-const Group1Layers = Layer.mergeAll(
+const DeferredGroup1Layers = Layer.mergeAll(
   TaskManager.layer,
   BranchStateTracker.layer,
   ContainerService.layer,
@@ -149,15 +165,15 @@ const TestBackgroundFetchLayer = Layer.succeed(
   })
 )
 
-const Group1LayersWithSync = WorkspaceSyncService.layer.pipe(
+const DeferredGroup1WithSync = WorkspaceSyncService.layer.pipe(
   Layer.provide(TestBackgroundFetchLayer),
-  Layer.provideMerge(Group1Layers)
+  Layer.provideMerge(DeferredGroup1Layers)
 )
 
 /**
- * Layers that depend on Group 1 (Group 2).
+ * Deferred Group 2 — services depending on Group 1.
  */
-const Group2Layers = Layer.mergeAll(
+const DeferredGroup2Layers = Layer.mergeAll(
   GithubTaskImporter.layer,
   LinearTaskImporter.layer,
   ReviewCommentFetcher.layer,
@@ -165,28 +181,37 @@ const Group2Layers = Layer.mergeAll(
 )
 
 /**
- * Full service dependency stack built bottom-up.
+ * Full deferred service stack built bottom-up.
  * Each group uses provideMerge so all services remain available as outputs.
  */
-const ServiceLayers = WorkspaceProvider.layer.pipe(
+const DeferredServiceStack = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(ProjectRegistry.layer),
-  Layer.provideMerge(Group2Layers),
-  Layer.provideMerge(Group1LayersWithSync)
+  Layer.provideMerge(DeferredGroup2Layers),
+  Layer.provideMerge(DeferredGroup1WithSync)
 )
 
+// ---------------------------------------------------------------------------
+// Combined test layers
+// ---------------------------------------------------------------------------
+
+/**
+ * All layers (core + deferred) composed for full RPC testing.
+ */
 export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
-  Layer.provide(ServiceLayers),
-  Layer.provide(LeafLayers),
+  Layer.provide(DeferredServiceStack),
+  Layer.provide(DeferredLeafLayers),
+  Layer.provide(CoreLeafLayers),
   Layer.provide(TestLaborerStore)
 )
 
 const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
-  Layer.provide(ServiceLayers),
-  Layer.provide(LeafLayers),
+  Layer.provide(DeferredServiceStack),
+  Layer.provide(DeferredLeafLayers),
+  Layer.provide(CoreLeafLayers),
   Layer.provideMerge(TestLaborerStore)
 )
 

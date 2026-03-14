@@ -14,6 +14,24 @@
  * - SyncWsRpc uses layerProtocolWebsocket (GET /rpc) for WebSocket sync
  * - Terminal operations delegated to standalone terminal service via TerminalClient (Issue #143)
  * - Environment variables validated at import time via @laborer/env/server
+ *
+ * Layer composition is organized into core and deferred groups
+ * (Phased Service Lifecycle — Issue #13):
+ *
+ *   Core layers: HTTP server, health endpoint, LiveStore sync, RPC
+ *   handler registration, ConfigService, RepositoryIdentity. These
+ *   are stateless or fast-building layers needed for the health
+ *   endpoint to respond.
+ *
+ *   Deferred layers: Docker detection, sidecar connections, PR watchers,
+ *   task importers, workspace management, and other services that
+ *   involve I/O, external connections, or heavy initialization.
+ *
+ *   Both groups are composed into a single layer graph because
+ *   LaborerRpcsLive captures handler service requirements at the
+ *   type level. The separation is structural — making it clear which
+ *   layers are core vs deferred for future optimization (Issue #14:
+ *   background initialization, Issue #16: lazy sidecar connections).
  */
 
 import { createServer } from 'node:http'
@@ -56,11 +74,14 @@ import { WorkspaceSyncService } from './services/workspace-sync-service.js'
 import { WorktreeDetector } from './services/worktree-detector.js'
 import { WorktreeReconciler } from './services/worktree-reconciler.js'
 
+// ---------------------------------------------------------------------------
+// Custom HTTP Routes
+// ---------------------------------------------------------------------------
+
 /**
- * Custom HTTP Routes
- *
  * Adds non-RPC HTTP routes to the Default router.
- * The root endpoint returns a basic server identity response.
+ * The root endpoint returns a basic server identity response used as
+ * the health check by sidecar status polling.
  */
 const CustomRoutesLive = HttpRouter.Default.use((router) =>
   router.addRoute(
@@ -81,6 +102,11 @@ const CustomRoutesLive = HttpRouter.Default.use((router) =>
  * Creates the Effect RPC server from the LaborerRpcs group and wires
  * it to the handler implementations. Uses HTTP protocol (POST) which
  * matches the client's RpcClient.layerProtocolHttp.
+ *
+ * Note: LaborerRpcsLive captures all handler service dependencies at
+ * the type level (via `yield* ServiceTag` in handlers). All services
+ * must be provided in the layer graph, even though they're only
+ * resolved at handler invocation time.
  */
 const RpcLive = RpcServer.layer(LaborerRpcs).pipe(
   Layer.provide(RpcServer.layerProtocolHttp({ path: '/rpc' })),
@@ -88,31 +114,135 @@ const RpcLive = RpcServer.layer(LaborerRpcs).pipe(
 )
 
 /**
- * Server Layer
- *
- * Provides the Node.js HTTP server on the configured port.
+ * Server Layer — Node.js HTTP server on the configured port.
  */
 const ServerLive = NodeHttpServer.layer(createServer, { port: env.PORT })
+
+// ---------------------------------------------------------------------------
+// Core Layers (fast-building, needed for health endpoint)
+// ---------------------------------------------------------------------------
+
+/**
+ * Core layers build before the health endpoint responds.
+ *
+ * These are stateless or fast-initializing services:
+ *   - ServerLive — Node.js HTTP server binding
+ *   - LaborerStoreLive — LiveStore with SQLite persistence
+ *   - SyncRpcLive — LiveStore WebSocket sync endpoint (GET /rpc)
+ *   - RpcLive — Business RPC endpoint (POST /rpc, handlers defined)
+ *   - RpcSerialization.layerJson — JSON wire format
+ *   - CustomRoutesLive — Health check endpoint (GET /)
+ *   - ConfigService — Configuration resolution (Layer.succeed, pure)
+ *   - RepositoryIdentity — Git repository identification (leaf)
+ *
+ * @see PRD section: "Server Layer Graph Splitting" (core layers list)
+ */
+
+// ---------------------------------------------------------------------------
+// Deferred Layers (heavy I/O, external connections, background services)
+// ---------------------------------------------------------------------------
+
+/**
+ * Deferred Leaf Layers — no inter-service dependencies but run I/O
+ * that can block (Docker CLI, sidecar connections, git commands, ports).
+ */
+const DeferredLeafLayers = Layer.mergeAll(
+  FileWatcherClient.layer,
+  WorktreeDetector.layer,
+  DepsImageService.layer,
+  DockerDetection.layer,
+  PortAllocator.layer
+)
+
+/**
+ * Deferred Group 1 — services depending on LaborerStore + leaf layers.
+ */
+const DeferredGroup1Layers = Layer.mergeAll(
+  TaskManager.layer,
+  BranchStateTracker.layer,
+  ContainerService.layer,
+  PrdStorageService.layer,
+  DiffService.layer,
+  PrWatcher.layer,
+  WorktreeReconciler.layer
+)
+
+/**
+ * Deferred Group 1 with WorkspaceSyncService (depends on PrWatcher +
+ * BackgroundFetchService in addition to Group 1).
+ */
+const DeferredGroup1WithSync = WorkspaceSyncService.layer.pipe(
+  Layer.provide(BackgroundFetchService.layer),
+  Layer.provideMerge(DeferredGroup1Layers)
+)
+
+/**
+ * Deferred Group 2 — services depending on Group 1.
+ */
+const DeferredGroup2Layers = Layer.mergeAll(
+  GithubTaskImporter.layer,
+  LinearTaskImporter.layer,
+  ReviewCommentFetcher.layer,
+  RepositoryWatchCoordinator.layer
+)
+
+/**
+ * Full deferred service stack built bottom-up.
+ * Each group uses provideMerge so all services remain available
+ * as outputs for higher layers to consume.
+ */
+const DeferredServiceStack = WorkspaceProvider.layer.pipe(
+  Layer.provideMerge(ProjectRegistry.layer),
+  Layer.provideMerge(DeferredGroup2Layers),
+  Layer.provideMerge(DeferredGroup1WithSync)
+)
+
+/**
+ * Top-level deferred services that depend on the full stack.
+ */
+const DeferredTopLayers = Layer.mergeAll(
+  TerminalClient.layer,
+  McpRegistrar.layer
+)
+
+/**
+ * All deferred services composed into a single layer.
+ *
+ * External requirements after composition: LaborerStore, ConfigService,
+ * RepositoryIdentity (provided by core infrastructure layers).
+ *
+ * @see PRD section: "Server Layer Graph Splitting" (deferred layers list)
+ */
+const DeferredServicesLive = DeferredTopLayers.pipe(
+  Layer.provideMerge(DeferredServiceStack),
+  Layer.provideMerge(DeferredLeafLayers)
+)
+
+// ---------------------------------------------------------------------------
+// Application Layer — Core + Deferred composed
+// ---------------------------------------------------------------------------
 
 /**
  * Application Layer
  *
- * Composes all service layers into a single application layer.
+ * Composes route layers with all service layers. The layer graph is
+ * organized into core and deferred groups for clarity, but built as
+ * a single composition because LaborerRpcsLive captures handler
+ * service requirements at the type level.
  *
- * Layer composition:
- *   HttpRouter.Default.serve() — serves the Default router with logging middleware
- *   + CustomRoutesLive — adds GET / to the router
- *   + RpcLive — Laborer RPC handling (POST /rpc via layerProtocolHttp)
- *   + SyncRpcLive — LiveStore sync RPC handler (GET /rpc via layerProtocolWebsocket)
- *   + RpcSerialization.layerJson — wire format for RPC messages
- *   + LaborerStoreLive — LiveStore with SQLite persistence
- *   + ServerLive — Node.js HTTP server
+ * Core layers (fast-building):
+ *   CustomRoutesLive, RpcLive, SyncRpcLive, ConfigService,
+ *   RepositoryIdentity, RpcSerialization, LaborerStoreLive, ServerLive
  *
- * Issue #143: TerminalManager, PtyHostClient, and TerminalWsRouteLive removed.
- * Terminal operations are delegated to the standalone terminal service via
- * TerminalClient, which connects over Effect RPC HTTP.
+ * Deferred layers (heavy I/O, external connections):
+ *   All remaining ~20 services (see DeferredServicesLive)
+ *
+ * Future optimization (Issue #14): Deferred services will be wrapped
+ * in background-initializing layers that return placeholder
+ * implementations immediately, allowing the health endpoint to
+ * respond before all services finish building.
  */
-const HttpLiveBase = HttpRouter.Default.serve((httpApp) =>
+const HttpLive = HttpRouter.Default.serve((httpApp) =>
   HttpMiddleware.logger(HttpMiddleware.cors()(httpApp))
 ).pipe(
   HttpServer.withLogAddress,
@@ -120,44 +250,19 @@ const HttpLiveBase = HttpRouter.Default.serve((httpApp) =>
   Layer.provide(CustomRoutesLive),
   Layer.provide(RpcLive),
   Layer.provide(SyncRpcLive),
-  // --- Shared service layers (available to all route layers) ---
-  Layer.provide(ReviewCommentFetcher.layer),
-  Layer.provide(LinearTaskImporter.layer),
-  Layer.provide(GithubTaskImporter.layer),
-  Layer.provide(TaskManager.layer),
-  Layer.provide(PrdStorageService.layer),
-  Layer.provide(DiffService.layer),
-  Layer.provide(PrWatcher.layer),
-  Layer.provide(
-    WorkspaceSyncService.layer.pipe(
-      Layer.provide(PrWatcher.layer),
-      Layer.provide(BackgroundFetchService.layer)
-    )
-  ),
-  Layer.provide(TerminalClient.layer),
-  Layer.provide(WorkspaceProvider.layer),
-  Layer.provide(ContainerService.layer),
-  Layer.provide(DepsImageService.layer),
-  Layer.provide(DockerDetection.layer),
+  // --- Deferred service layers (heavy I/O, external connections) ---
+  Layer.provide(DeferredServicesLive),
+  // --- Core infrastructure layers (fast-building) ---
   Layer.provide(ConfigService.layer),
-  Layer.provide(McpRegistrar.layer),
-  Layer.provide(ProjectRegistry.layer)
-)
-
-const HttpLive = HttpLiveBase.pipe(
-  Layer.provide(RepositoryWatchCoordinator.layer),
-  Layer.provide(BranchStateTracker.layer),
-  Layer.provide(ConfigService.layer),
-  Layer.provide(FileWatcherClient.layer),
-  Layer.provide(WorktreeReconciler.layer),
-  Layer.provide(WorktreeDetector.layer),
-  Layer.provide(PortAllocator.layer),
   Layer.provide(RepositoryIdentity.layer),
-  // --- Infrastructure layers ---
   Layer.provide(RpcSerialization.layerJson),
   Layer.provide(LaborerStoreLive),
   Layer.provide(ServerLive)
 )
+
+// ---------------------------------------------------------------------------
+// Shutdown
+// ---------------------------------------------------------------------------
 
 /**
  * Shutdown Timeout Teardown
@@ -187,6 +292,10 @@ const teardownWithTimeout = <E, A>(
   onExit(exitCode(exit))
 }
 
+// ---------------------------------------------------------------------------
+// Main Program
+// ---------------------------------------------------------------------------
+
 /**
  * Main program
  *
@@ -194,6 +303,10 @@ const teardownWithTimeout = <E, A>(
  * 1. Builds all layers (starting the HTTP server + RPC)
  * 2. Keeps running until interrupted
  * 3. On SIGINT/SIGTERM, tears down all layer scopes
+ *
+ * The layer composition clearly separates core from deferred layers
+ * (see HttpLive). Issue #14 will add background initialization for
+ * deferred layers so the health endpoint responds before they finish.
  */
 const main = HttpLive.pipe(Layer.launch, Effect.scoped)
 

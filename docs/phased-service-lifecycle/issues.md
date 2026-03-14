@@ -18,8 +18,8 @@ Parent PRD: [PRD.md](./PRD.md)
 | 10 | Header error state persistence and animations | #8 | Ready |
 | 11 | Disable write actions before Phase 2 (Ready) | #5, #6 | Ready |
 | 12 | Progressive feature enablement for Phases 3-4 | #11 | Blocked |
-| 13 | Server core layer group (fast health endpoint) | None | Ready |
-| 14 | Server deferred layer group (background initialization) | #13 | Blocked |
+| 13 | Server core layer group (fast health endpoint) | None | Done |
+| 14 | Server deferred layer group (background initialization) | #13 | Ready |
 | 15 | Server "fully initialized" event | #14 | Blocked |
 | 16 | Lazy sidecar connections (TerminalClient + FileWatcherClient) | #14 | Blocked |
 | 17 | Parallel sidecar spawning | #16 | Blocked |

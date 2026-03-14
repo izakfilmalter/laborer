@@ -131,6 +131,7 @@ The `.reference/` directory contains shallow clones of key dependency repositori
 - `.reference/t3code/` — [t3code](https://github.com/pingdotgg/t3code) AI coding agent CLI
 - `.reference/cmux/` — [cmux](https://github.com/manaflow-ai/cmux) terminal multiplexer
 - `.reference/brrr/` — [brrr](https://github.com/hsubra89/brrr) autonomous AI development loop CLI (ralph-loops, task orchestration)
+- `.reference/ghostty/` — [Ghostty](https://github.com/ghostty-org/ghostty) fast, native terminal emulator (Zig, GPU-accelerated rendering, platform integration)
 
 <!-- effect-solutions:start -->
 ## Effect Best Practices

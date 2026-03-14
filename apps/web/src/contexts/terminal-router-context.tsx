@@ -13,7 +13,6 @@
  * a fresh router is created automatically.
  *
  * @see apps/web/src/lib/terminal-session-router.ts — TerminalSessionRouter class
- * @see apps/web/src/hooks/use-terminal-websocket.ts — original per-component hook (replaced)
  */
 
 import { createContext, useContext, useEffect, useRef, useState } from 'react'

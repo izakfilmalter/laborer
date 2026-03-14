@@ -18,7 +18,6 @@
  * - Client → Server: Flow control acks (`{"type":"ack","chars":N}`)
  *
  * @see packages/terminal/src/routes/terminal-ws.ts — WebSocket endpoint
- * @see apps/web/src/hooks/use-terminal-websocket.ts — original per-component hook (replaced by this)
  * @see .reference/mux/src/browser/terminal/TerminalSessionRouter.ts — reference pattern
  */
 

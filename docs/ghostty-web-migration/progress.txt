@@ -420,3 +420,47 @@ Date: 2026-03-14
 - Desktop: 146 passed, 7 pre-existing failures in main.test.ts (app.setAsDefaultProtocolClient mock gap — unrelated)
 - Typecheck passes cleanly for both web and desktop packages
 - Biome lint passes on all changed files
+
+## Issue 12: Cleanup: Remove xterm.js and ring buffer — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- **Removed RingBuffer from terminal package:**
+  - Deleted `packages/terminal/src/lib/ring-buffer.ts` (131 lines)
+  - Deleted `packages/terminal/test/ring-buffer.test.ts` (301 lines)
+  - Removed `RingBuffer` import, `RING_BUFFER_CAPACITY` constant (5MB), and `textEncoder` from `terminal-manager.ts`
+  - Replaced `TerminalBufferState` interface (had `ringBuffer` + `subscribers`) with `TerminalSubscriberState` (only `subscribers`)
+  - Renamed `bufferStates` map to `subscriberStates` and `getOrCreateBufferState` to `getOrCreateSubscriberState`
+  - Removed `ringBuffer.write(textEncoder.encode(data))` calls from spawn and restart data callbacks
+  - Removed `ringBuffer.clear()` call from restart flow
+  - Removed `TerminalBufferState` from the module's exported types
+- **Deleted useTerminalWebSocket hook:**
+  - Deleted `apps/web/src/hooks/use-terminal-websocket.ts` (382 lines) — replaced by TerminalSessionRouter (Issues 9-10)
+  - Removed stale `@see` references to the deleted file from `terminal-router-context.tsx` and `terminal-session-router.ts`
+- **Updated e2e test selectors for ghostty-web:**
+  - Updated `apps/web/e2e/fixtures/terminal-helper.ts`: changed `terminalInputs` from `getByRole('textbox', { name: 'Terminal input' })` (xterm.js textarea) to `locator('[data-terminal-id] [contenteditable]')` (ghostty-web contenteditable)
+  - Updated JSDoc in terminal-helper.ts and terminal-interaction.spec.ts to reference ghostty-web instead of xterm.js
+- **Verified cleanup completeness:**
+  - No `@xterm/*` imports remain in frontend source (`apps/web/src/`)
+  - No `@xterm/*` dependencies in `apps/web/package.json`
+  - `patchXtermEnumPlugin` already removed in Issue 1 (verified)
+  - No `RingBuffer` references remain in `packages/terminal/src/`
+  - `useTerminalWebSocket` references in source are only JSDoc comments (no imports)
+  - Backend `@xterm/headless` and `@xterm/addon-serialize` retained in `packages/terminal/` (used by headless terminal state manager)
+
+### Files changed
+- `packages/terminal/src/services/terminal-manager.ts` (modified — removed RingBuffer, renamed TerminalBufferState to TerminalSubscriberState, removed ring buffer writes)
+- `packages/terminal/src/lib/ring-buffer.ts` (deleted)
+- `packages/terminal/test/ring-buffer.test.ts` (deleted)
+- `apps/web/src/hooks/use-terminal-websocket.ts` (deleted)
+- `apps/web/src/contexts/terminal-router-context.tsx` (modified — removed stale @see reference)
+- `apps/web/src/lib/terminal-session-router.ts` (modified — removed stale @see reference)
+- `apps/web/e2e/fixtures/terminal-helper.ts` (modified — updated selectors for ghostty-web DOM)
+- `apps/web/e2e/terminal-interaction.spec.ts` (modified — updated JSDoc to reference ghostty-web)
+
+### Test results
+- Terminal package: 104 tests pass across 7 test files (ring-buffer.test.ts deleted, 28 ring buffer tests removed, all remaining tests pass)
+- Web package: 736 tests pass across 48 test files (1 pre-existing skipped)
+- Typecheck passes cleanly for both terminal and web packages
+- Biome lint: no new issues (3 pre-existing in panel-hotkeys.tsx and use-panel-layout.test.ts)

@@ -398,7 +398,7 @@ Wire the shared `TabBar` component into each `WorkspaceFrame` for workspace-leve
 
 ## 11. Panel type picker component
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1071,7 +1071,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 8 | Window tab bar integration | 7, 2, 5 | done |
 | 9 | Workspace bidirectional tiling UI | 3, 5, 6 | done |
 | 10 | Panel tab bar integration | 7, 4, 9 | done |
-| 11 | Panel type picker component | None | pending |
+| 11 | Panel type picker component | None | done |
 | 12 | Promote diff to first-class panel type | 11, 10 | pending |
 | 13 | Promote review to first-class panel type | 11, 10 | pending |
 | 14 | Promote dev server terminal to first-class panel type | 11, 10 | pending |

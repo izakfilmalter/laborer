@@ -131,33 +131,57 @@ Date: 2026-03-14
 - `bun run --filter @laborer/shared typecheck` — passes
 - `bun run --filter @laborer/web test` — 805/805 tests pass (no regressions)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
-- `biome check` — no issues in modified files (pre-existing issues in unrelated files)
+- `biome check` — no issues in modified files
 
-Date: 2026-03-13
+## Issue #11: Panel type picker component — COMPLETED
+
+Date: 2026-03-14
 
 ### What was done
-- Created new module `apps/web/src/panels/workspace-tile-utils.ts` with pure functions:
-  - `addWorkspaceToTab(tab, workspaceId)` — add a workspace as a new tile leaf; creates single leaf for empty tab, flattens into horizontal split for existing horizontal root, wraps in new horizontal split otherwise
-  - `removeWorkspaceFromTab(tab, workspaceId)` — remove a workspace tile by ID, collapses single-child splits, returns undefined layout when last workspace removed
-  - `splitWorkspaceTile(tab, workspaceId, newWorkspaceId, direction)` — split a workspace tile to add a new workspace beside it; same-direction splits are flattened (no unnecessary nesting), different-direction splits create nested split nodes
-  - `resizeWorkspaceTiles(tab, nodeId, direction)` — resize workspace tiles by walking up the tile tree to find a matching-orientation ancestor split, shifts 5% between the target and its sibling, enforces 5% minimum size
-  - `reorderWorkspaceTiles(tab, workspaceOrder)` — reorder workspace tiles based on workspace ID order; collects all leaves, reorders them, rebuilds as flat horizontal split; preserves panel tab state
+- Created new presentational component `apps/web/src/components/ui/panel-type-picker.tsx`:
+  - `PanelTypePicker` — lightweight panel type picker shown when creating a new panel (via split or new tab)
+  - `PANEL_TYPE_OPTIONS` — exported constant array of the 4 panel type options for reuse by callers
+
+- Component features:
+  - **Numbered list**: Shows 4 panel types with number indicators (1-4) and icons:
+    1. Terminal (`Terminal` icon from lucide-react)
+    2. Diff (`FileCode2` icon)
+    3. Review (`Eye` icon)
+    4. Dev Server (`Server` icon)
+  - **Pre-selection**: Terminal (first item) is highlighted by default on open
+  - **Arrow key navigation**: ArrowUp/ArrowDown move highlight with wrapping
+  - **Number key direct selection**: Keys 1-4 immediately select and close
+  - **Enter key**: Confirms current highlight
+  - **Escape key**: Cancels via `onCancel` callback without selecting
+  - **Mouse interaction**: Click to select, hover to move highlight
+  - **Auto-focus**: Container receives focus on mount to capture keyboard events
+  - **Accessibility**: `role="listbox"` on container, `role="option"` on each item, `aria-selected` reflecting highlight state, `tabIndex` for focusability, keyboard event handlers on options
+
+- Props interface:
+  - `onSelect(type: PaneType)` — called when a panel type is selected
+  - `onCancel()` — called when picker is dismissed (Escape)
+  - `className?: string` — additional CSS classes for the root container
+
+- Styling follows existing patterns: Tailwind CSS, `cn()` utility, `bg-popover text-popover-foreground`, `bg-accent text-accent-foreground` for highlighted items, `rounded-none`, `text-xs`, `shadow-md ring-1 ring-foreground/10`
 
 ### Tests
-- 46 tests in `apps/web/test/workspace-tile-utils.test.ts` covering:
-  - addWorkspaceToTab: empty tab, single workspace (creates horizontal split), existing horizontal split (flattens), vertical root (wraps), immutability
-  - removeWorkspaceFromTab: empty layout, not found, only workspace (undefined), two-workspace collapse, three-workspace redistribute, nested collapse, deep cascade collapse, immutability
-  - splitWorkspaceTile: empty tab, not found, root leaf horizontal/vertical, same-direction flattening (H→H, V→V), different-direction nesting (V→H), nested workspace split, immutability
-  - resizeWorkspaceTiles: empty tab, not found, root leaf, grow right/down, shrink left/up, minimum size enforcement, direction mismatch, edge (no sibling), nested resize, immutability
-  - reorderWorkspaceTiles: empty tab, single workspace, two/three workspace reorder, unchanged order, partial order (appends unmatched), nonexistent IDs ignored, nested flatten, panel tab state preservation
-  - Combined operations: add+remove round-trip, add+split+remove, add+reorder+resize
+- 33 tests in `apps/web/test/panel-type-picker.test.tsx` covering:
+  - Rendering: 4 items, labels, number indicators, role=listbox, role=option, className prop
+  - Pre-selection: terminal pre-selected, only one selected, non-terminal items not selected
+  - Arrow key navigation: ArrowDown next, ArrowUp previous, ArrowDown wrap, ArrowUp wrap, sequential navigation
+  - Number key selection: keys 1-4 select correct types, key 5 no-op, key 0 no-op
+  - Enter key: confirms default (terminal), confirms after ArrowDown navigation, confirms after ArrowUp wrap
+  - Escape key: calls onCancel, does not call onSelect
+  - Mouse interaction: click selects, click last option, hover updates highlight, hover+Enter selects hovered item
+  - Focus: container has tabIndex=0
+  - PANEL_TYPE_OPTIONS export: 4 options, terminal first, correct types/labels in order
 
 ### Verification
 - `bun run --filter @laborer/web typecheck` — passes
 - `bun run --filter @laborer/shared typecheck` — passes
-- `bun run --filter @laborer/web test` — 676/676 tests pass (46 new + 630 existing)
-- `bun run --filter @laborer/shared test` — 60/60 tests pass
-- `biome check` — no issues in modified files
+- `bun run --filter @laborer/web test` — 838/838 tests pass (33 new + 805 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no issues in modified files (pre-existing issues in unrelated files)
 
 ## Issue #4: Layout-utils: panel tab operations — COMPLETED
 

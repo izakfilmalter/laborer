@@ -174,42 +174,61 @@ function WorkspaceFrame({
   const showReview =
     reviewWorkspaceId !== null && reviewWorkspaceId === workspaceId
   const hasSidePanels = showDiff || showReview
+  const workspacePaneId = useMemo(() => {
+    if (
+      activePaneId != null &&
+      leaves.some((leaf) => leaf.id === activePaneId)
+    ) {
+      return activePaneId
+    }
+
+    return leaves[0]?.id ?? null
+  }, [activePaneId, leaves])
+
+  const closeSidePanel = useCallback(
+    (togglePanel: ((paneId: string) => boolean) | undefined) => {
+      if (!(togglePanel && workspacePaneId)) {
+        return
+      }
+
+      actions?.setActivePaneId(workspacePaneId)
+      togglePanel(workspacePaneId)
+    },
+    [actions, workspacePaneId]
+  )
 
   // Calculate default sizes based on how many side panels are open
   const sidePanelCount = (showDiff ? 1 : 0) + (showReview ? 1 : 0)
   const sidePanelSize = sidePanelCount === 2 ? '20%' : '30%'
   const mainPanelSize = sidePanelCount === 2 ? '60%' : '70%'
 
-  const mainContent = (
-    <>
-      <WorkspaceFrameHeaderContainer
-        dragHandleRef={dragHandleRef}
-        isMinimized={isMinimized}
-        onHeaderClick={handleHeaderClick}
-        onMinimize={handleMinimize}
-        subLayout={subLayout}
-        workspaceId={workspaceId}
-      />
-      {!isMinimized && (
-        <div className="min-h-0 flex-1">
-          <PanelManager layout={subLayout} />
-        </div>
-      )}
-    </>
-  )
-
   return (
     <div
       className={`relative flex ${isMinimized ? 'h-auto' : 'h-full'} flex-col border-2 ${isActiveFrame ? 'border-primary' : 'border-transparent'} ${isDragging ? 'opacity-40' : ''}`}
+      data-testid="workspace-frame"
       ref={frameRef}
     >
       {closestEdge === 'top' && (
         <div className="absolute inset-x-0 top-0 z-10 h-0.5 bg-primary" />
       )}
+      <WorkspaceFrameHeaderContainer
+        diffIsOpen={showDiff}
+        dragHandleRef={dragHandleRef}
+        isMinimized={isMinimized}
+        onHeaderClick={handleHeaderClick}
+        onMinimize={handleMinimize}
+        reviewIsOpen={showReview}
+        subLayout={subLayout}
+        workspaceId={workspaceId}
+      />
       {hasSidePanels && !isMinimized ? (
         <ResizablePanelGroup className="h-full" orientation="horizontal">
           <ResizablePanel defaultSize={mainPanelSize} minSize="30%">
-            <div className="flex h-full flex-col">{mainContent}</div>
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="min-h-0 flex-1">
+                <PanelManager layout={subLayout} />
+              </div>
+            </div>
           </ResizablePanel>
           {showDiff && (
             <>
@@ -219,7 +238,10 @@ function WorkspaceFrame({
                 defaultSize={sidePanelSize}
                 minSize="15%"
               >
-                <DiffPane workspaceId={diffWorkspaceId} />
+                <DiffPane
+                  onClose={() => closeSidePanel(actions?.toggleDiffPane)}
+                  workspaceId={diffWorkspaceId}
+                />
               </ResizablePanel>
             </>
           )}
@@ -231,13 +253,20 @@ function WorkspaceFrame({
                 defaultSize={sidePanelSize}
                 minSize="15%"
               >
-                <ReviewPane workspaceId={reviewWorkspaceId} />
+                <ReviewPane
+                  onClose={() => closeSidePanel(actions?.toggleReviewPane)}
+                  workspaceId={reviewWorkspaceId}
+                />
               </ResizablePanel>
             </>
           )}
         </ResizablePanelGroup>
       ) : (
-        mainContent
+        !isMinimized && (
+          <div className="min-h-0 flex-1">
+            <PanelManager layout={subLayout} />
+          </div>
+        )
       )}
       {closestEdge === 'bottom' && (
         <div className="absolute inset-x-0 bottom-0 z-10 h-0.5 bg-primary" />

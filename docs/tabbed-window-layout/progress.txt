@@ -25,3 +25,44 @@ Date: 2026-03-13
 - `bun run --filter @laborer/web typecheck` — passes
 - `bun run --filter @laborer/web test` — 563/563 tests pass
 - `bun run format:fix` — no issues in modified files
+
+## Issue #2: Layout-utils: window tab operations — COMPLETED
+
+Date: 2026-03-13
+
+### What was done
+- Created new module `apps/web/src/panels/window-tab-utils.ts` with pure functions:
+  - `addWindowTab(layout, tab?)` — append a new empty window tab, makes it active
+  - `removeWindowTab(layout, tabId)` — remove a tab, switch active to nearest sibling (prefer right, fall back left)
+  - `switchWindowTab(layout, tabId)` — set active tab by ID
+  - `switchWindowTabByIndex(layout, index)` — set active tab by 1-based position (1-8, 9=last)
+  - `switchWindowTabRelative(layout, delta)` — cycle next/prev with wrapping
+  - `reorderWindowTabs(layout, fromIndex, toIndex)` — drag reorder
+  - `findWorkspaceLocation(layout, workspaceId)` — find which tab contains a workspace (searches nested tile trees)
+  - `findTerminalLocation(layout, terminalId)` — find tab + workspace + panel tab + pane for a terminal ID
+  - `getWorkspaceTileLeaves(node)` — collect all workspace tile leaves from a tile tree
+  - `getAllWorkspaceTileLeaves(layout)` — collect across all tabs
+  - `getActiveWindowTab(layout)` — get the active window tab
+- Added exported types: `WorkspaceLocation`, `TerminalLocation`
+- All functions are pure: input WindowLayout, output new WindowLayout
+
+### Tests
+- 67 tests in `apps/web/test/window-tab-utils.test.ts` covering:
+  - addWindowTab: empty layout, append, pre-configured tab, immutability
+  - removeWindowTab: not found, only tab, non-active tab, active middle/last/first, immutability
+  - switchWindowTab: existing tab, not found, already active
+  - switchWindowTabByIndex: indices 1-8, index 9 (last), out-of-range, empty layout
+  - switchWindowTabRelative: next/prev, wrap-around, single tab, empty, multi-skip, invalid active
+  - reorderWindowTabs: move forward/backward, same index, out-of-range, preserve activeTabId, immutability
+  - findWorkspaceLocation: single/multi/nested/complex layouts, not found, empty, empty tabs
+  - findTerminalLocation: single/multi/nested/complex layouts, non-active panel tabs, not found, empty
+  - getWorkspaceTileLeaves: leaf, split, nested split
+  - getAllWorkspaceTileLeaves: empty, multi-tab, complex, skip empty tabs
+  - getActiveWindowTab: active, empty, invalid, undefined
+  - Combined operations: add+remove, add+switch+remove, reorder+switchByIndex
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/web test` — 630/630 tests pass (67 new + 563 existing)
+- `bun run --filter @laborer/shared test` — 60/60 tests pass
+- `biome check` — no issues in modified files

@@ -43,7 +43,7 @@ Foundation for all user stories. No user stories directly demoable.
 
 ## 2. Layout-utils: window tab operations
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1062,7 +1062,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
 | 1 | Hierarchical layout types | None | done |
-| 2 | Layout-utils: window tab operations | 1 | pending |
+| 2 | Layout-utils: window tab operations | 1 | done |
 | 3 | Layout-utils: workspace tile operations | 1 | pending |
 | 4 | Layout-utils: panel tab operations | 1 | pending |
 | 5 | Schema + LiveStore events for new layout model | 1 | pending |

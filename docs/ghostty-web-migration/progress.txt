@@ -158,3 +158,56 @@ Date: 2026-03-14
 - 1 pre-existing skipped test (alive-desktop-oauth)
 - Typecheck passes cleanly
 - Biome lint passes on all changed files
+
+## Issue 9: Frontend: Terminal Session Router (core) — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Created `apps/web/src/lib/terminal-session-router.ts` with `TerminalSessionRouter` class:
+  - Centralized WebSocket stream manager that enforces exactly one WebSocket per terminal ID
+  - `subscribe(terminalId, callbacks)` — registers a subscriber with `onOutput`, `onScreenState`, `onStatus` callbacks. First subscriber opens the WebSocket. Returns an unsubscribe function.
+  - `sendInput(terminalId, data)` — sends user input to the terminal's WebSocket as a raw text frame
+  - `getConnectionStatus(terminalId)` — returns current WebSocket connection status (connecting/connected/disconnected)
+  - `getTerminalStatus(terminalId)` — returns terminal process status (running/stopped/restarted)
+  - `hasSubscribers(terminalId)` — checks if a session has active subscribers
+  - `getSessionCount()` — returns number of active sessions (for testing/debugging)
+  - `dispose()` — closes all WebSockets, clears all sessions, rejects future subscriptions
+  - Cached screenState delivered to late subscribers via `setTimeout(0)` without server round-trip
+  - Cached exit state delivered to late subscribers for terminals that already stopped
+  - Screen state cache cleared on terminal restart
+  - Last subscriber unsubscribing tears down the session (closes WebSocket, cancels timers)
+  - Reconnection with exponential backoff (500ms initial, 2x factor, 30s max)
+  - Max 3 consecutive failures before giving up (prevents infinite reconnection)
+  - No reconnection when terminal is stopped
+  - Flow control: character-count ack frames (`{"type":"ack","chars":N}`) every 5000 chars
+  - JSON control message parsing: `status` (running/stopped/restarted) and `screenState` types
+  - Non-JSON and unrecognized JSON messages treated as raw PTY output
+  - Guard against stale WebSocket events (checks `session.ws !== ws`)
+  - Guard against disposed router (rejects new subscriptions with no-op)
+- Extracted and reused the message protocol from `use-terminal-websocket.ts`:
+  - Same `parseControlMessage()` function for JSON control message detection
+  - Same flow control ack protocol (CHAR_COUNT_ACK_SIZE = 5000)
+  - Same exponential backoff parameters (500ms, 2x, 30s max, 3 failures)
+- Created comprehensive test suite `apps/web/test/terminal-session-router.test.ts` with 32 tests:
+  - Subscribe/WebSocket lifecycle (7 tests): returns unsubscribe, opens one WS, shares WS, separate WS per terminal, closes on last unsub, keeps open with remaining subs, re-creates after full unsub
+  - Output broadcasting (2 tests): broadcasts to all subscribers, excludes unsubscribed
+  - ScreenState caching (2 tests): caches and delivers to late subscribers via setTimeout(0), does not deliver after unsubscribe
+  - Status control messages (4 tests): broadcasts status, handles stopped with exit code, delivers cached exit state, clears screenState on restart
+  - SendInput (3 tests): routes data correctly, no-ops for nonexistent, no-ops when not open
+  - Flow control (2 tests): sends ack after 5000 chars, no ack for small messages
+  - Connection status (2 tests): tracks through lifecycle, returns disconnected for nonexistent
+  - Reconnection (3 tests): exponential backoff after close, no reconnect when stopped, stops after max failures
+  - Dispose (2 tests): closes all WebSockets, rejects new subscriptions
+  - Message parsing (4 tests): non-JSON as PTY output, malformed JSON as PTY output, unrecognized type as PTY output, ignores binary messages
+  - Session count (1 test): tracks active sessions correctly
+
+### Files changed
+- `apps/web/src/lib/terminal-session-router.ts` (new, 462 lines)
+- `apps/web/test/terminal-session-router.test.ts` (new, 661 lines)
+
+### Test results
+- All 608 tests pass across 44 test files in the web package (32 new + 576 existing)
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Typecheck passes cleanly
+- Biome lint passes on all changed files

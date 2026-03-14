@@ -372,13 +372,23 @@ function PanelHotkeys({
     { timeout: SEQUENCE_TIMEOUT }
   )
 
-  // Ctrl+b then r → toggle review pane alongside active terminal pane
+  // Ctrl+b then r → create a new review panel in a right-side split
   useHotkeySequence(
     ['Control+B', 'R'],
     (event) => {
       event.preventDefault()
-      if (actions && activePaneId) {
-        actions.toggleReviewPane(activePaneId)
+      if (!actions) {
+        return
+      }
+      if (activePaneId && activeWorkspaceId) {
+        // Split right with a review pane inheriting the workspace context
+        actions.splitPane(activePaneId, 'horizontal', {
+          paneType: 'review',
+          workspaceId: activeWorkspaceId,
+        } as Partial<LeafNode>)
+      } else if (activeWorkspaceId) {
+        // No active pane — add as a new panel tab
+        actions.addPanelTab?.(activeWorkspaceId, 'review')
       }
     },
     { timeout: SEQUENCE_TIMEOUT }

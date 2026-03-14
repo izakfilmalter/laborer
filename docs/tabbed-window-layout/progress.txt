@@ -481,3 +481,28 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 838/838 tests pass (no regressions, fullscreen portal tests restored)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #13: Promote review to first-class panel type — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Verified that `PaneContent` in `apps/web/src/panels/panel-manager.tsx` already renders `ReviewPane` as a standalone pane for `paneType: 'review'` leaf nodes (lines 298-300), so no changes needed there.
+
+- Updated `Ctrl+B, R` keybinding in `apps/web/src/panels/panel-hotkeys.tsx`:
+  - Changed from calling `actions.toggleReviewPane(activePaneId)` (toggle behavior) to creating a new review panel via `actions.splitPane(activePaneId, 'horizontal', { paneType: 'review', workspaceId: activeWorkspaceId })` (right-side split)
+  - Falls back to `actions.addPanelTab?.(activeWorkspaceId, 'review')` when no active pane exists but a workspace is focused
+  - This matches the exact pattern used for `Ctrl+B, D` (diff panel creation) in issue #12
+
+### Notes
+- Review already appears as option #3 in the panel type picker (configured in issue #11).
+- `PaneContent` already renders `ReviewPane` standalone with correct workspace context — no changes needed.
+- The existing `toggleReviewPane` action remains in the codebase for backward compatibility (used by workspace frame header button and full-height review panel close button). It will be cleaned up when all panel types are fully promoted.
+- Old layouts with review panes continue to work — `PaneContent` handles `paneType: 'review'` correctly.
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 838/838 tests pass (no regressions)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)

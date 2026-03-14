@@ -3,7 +3,9 @@
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
 import { XIcon } from 'lucide-react'
 import type * as React from 'react'
+import { useEffect } from 'react'
 import { Button } from '@/components/ui/button'
+import { haptics } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
 
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
@@ -46,6 +48,11 @@ function DialogContent({
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
 }) {
+  // Trigger haptic feedback when the dialog opens
+  useEffect(() => {
+    haptics.dialogOpen()
+  }, [])
+
   return (
     <DialogPortal>
       <DialogOverlay />

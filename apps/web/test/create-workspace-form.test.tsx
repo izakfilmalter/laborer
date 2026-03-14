@@ -25,7 +25,7 @@ vi.mock('@/atoms/laborer-client', () => ({
   },
 }))
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }))
 

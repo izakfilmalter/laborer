@@ -17,11 +17,11 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { FolderPlus } from 'lucide-react'
 import { type FormEvent, useState } from 'react'
-import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { getDesktopBridge, isElectron } from '@/lib/desktop'
+import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 
 const addProjectMutation = LaborerClient.mutation('project.add')

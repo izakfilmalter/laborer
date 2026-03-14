@@ -67,7 +67,6 @@ import {
   useRef,
   useState,
 } from 'react'
-import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -89,6 +88,7 @@ import {
 import { Markdown } from '@/components/ui/markdown'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+import { toast } from '@/lib/toast'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { useDiffScrollDispatch } from '@/panels/diff-scroll-context'
 import { usePanelActions } from '@/panels/panel-context'

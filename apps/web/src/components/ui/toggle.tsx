@@ -1,6 +1,7 @@
 import { Toggle as TogglePrimitive } from '@base-ui/react/toggle'
 import { cva, type VariantProps } from 'class-variance-authority'
 
+import { haptics } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
 
 const toggleVariants = cva(
@@ -28,12 +29,21 @@ function Toggle({
   className,
   variant = 'default',
   size = 'default',
+  onClick,
   ...props
 }: TogglePrimitive.Props & VariantProps<typeof toggleVariants>) {
+  const handleClick: typeof onClick = onClick
+    ? (event) => {
+        haptics.selection()
+        onClick(event)
+      }
+    : undefined
+
   return (
     <TogglePrimitive
       className={cn(toggleVariants({ variant, size, className }))}
       data-slot="toggle"
+      onClick={handleClick}
       {...props}
     />
   )

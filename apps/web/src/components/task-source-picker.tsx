@@ -1,7 +1,6 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { Github, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import {
   canImportTasks,
@@ -9,6 +8,7 @@ import {
 } from '@/components/task-source-picker.helpers'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 
 const importGithubMutation = LaborerClient.mutation('task.importGithub')

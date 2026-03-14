@@ -2,9 +2,22 @@
 
 import { Checkbox as CheckboxPrimitive } from '@base-ui/react/checkbox'
 import { CheckIcon } from 'lucide-react'
+
+import { haptics } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
 
-function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
+function Checkbox({
+  className,
+  onCheckedChange,
+  ...props
+}: CheckboxPrimitive.Root.Props) {
+  const handleCheckedChange: typeof onCheckedChange = onCheckedChange
+    ? (checked, eventDetails) => {
+        haptics.selection()
+        onCheckedChange(checked, eventDetails)
+      }
+    : undefined
+
   return (
     <CheckboxPrimitive.Root
       className={cn(
@@ -12,6 +25,7 @@ function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
         className
       )}
       data-slot="checkbox"
+      onCheckedChange={handleCheckedChange}
       {...props}
     >
       <CheckboxPrimitive.Indicator

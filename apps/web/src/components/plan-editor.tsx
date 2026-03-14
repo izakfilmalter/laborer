@@ -43,7 +43,6 @@ import {
 } from 'platejs/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import remarkGfm from 'remark-gfm'
-import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { Button } from '@/components/ui/button'
 import {
@@ -51,6 +50,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 
 // ─── Element Components ────────────────────────────────────────────────

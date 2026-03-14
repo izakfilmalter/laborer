@@ -50,7 +50,6 @@ import { queryDb } from '@livestore/livestore'
 import { Layers, Plus, Terminal as TerminalIcon } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import type { GroupImperativeHandle } from 'react-resizable-panels'
-import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalOverlayToolbar } from '@/components/terminal-overlay-toolbar'
 import { Button } from '@/components/ui/button'
@@ -75,6 +74,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
+import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import {

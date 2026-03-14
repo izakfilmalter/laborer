@@ -84,7 +84,7 @@ vi.mock('@/components/project-settings-modal.helpers', () => ({
   getSettingsLoadErrorMessage: () => 'Failed to load project settings.',
 }))
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: {
     error: toastErrorMock,
     message: toastMessageMock,
@@ -120,7 +120,7 @@ vi.mock('@/components/ui/select', () => ({
   SelectValue: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { ProjectSettingsModal } from '../src/components/project-settings-modal'
 
 describe('ProjectSettingsModal', () => {

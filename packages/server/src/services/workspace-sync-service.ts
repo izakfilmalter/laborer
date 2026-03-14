@@ -12,6 +12,7 @@ import {
   Schedule,
 } from 'effect'
 import { spawn } from '../lib/spawn.js'
+import { BackgroundFetchService } from './background-fetch-service.js'
 import { LaborerStore } from './laborer-store.js'
 import { PrWatcher } from './pr-watcher.js'
 import { withFsmonitorDisabled } from './repo-watching-git.js'
@@ -109,6 +110,7 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
     Effect.gen(function* () {
       const { store } = yield* LaborerStore
       const prWatcher = yield* PrWatcher
+      const backgroundFetch = yield* BackgroundFetchService
 
       const pollingFibers = yield* Ref.make<
         Map<string, Fiber.RuntimeFiber<void, never>>
@@ -252,6 +254,9 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
             return
           }
 
+          // Start background fetching so tracking refs stay fresh
+          yield* backgroundFetch.startFetching(workspaceId)
+
           const interval = intervalMs ?? DEFAULT_POLL_INTERVAL_MS
           const fiber = yield* checkStatus(workspaceId).pipe(
             Effect.catchAll(() => Effect.void),
@@ -284,6 +289,9 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
             yield* Fiber.interrupt(fiber)
           }
 
+          // Stop background fetching for this workspace
+          yield* backgroundFetch.stopFetching(workspaceId)
+
           yield* Ref.update(previousStatuses, (cache) => {
             const next = new Map(cache)
             next.delete(workspaceId)
@@ -298,6 +306,7 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
           yield* Effect.forEach([...fibers.values()], Fiber.interrupt, {
             discard: true,
           })
+          yield* backgroundFetch.stopAllFetching()
           yield* Ref.set(previousStatuses, new Map())
         }
       )

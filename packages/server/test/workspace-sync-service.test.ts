@@ -4,6 +4,7 @@ import { assert, describe, it } from '@effect/vitest'
 import { events, tables } from '@laborer/shared/schema'
 import { Context, Effect, Layer, Ref } from 'effect'
 import { afterAll } from 'vitest'
+import { BackgroundFetchService } from '../src/services/background-fetch-service.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
 import { WorkspaceSyncService } from '../src/services/workspace-sync-service.js'
@@ -66,6 +67,16 @@ const TestPrWatcherLayer = Layer.effect(
   })
 )
 
+const TestBackgroundFetchLayer = Layer.succeed(
+  BackgroundFetchService,
+  BackgroundFetchService.of({
+    startFetching: () => Effect.void,
+    stopFetching: () => Effect.void,
+    stopAllFetching: () => Effect.void,
+    fetchNow: () => Effect.succeed(false),
+  })
+)
+
 const buildWorkspaceSyncService = (
   storeContext: Context.Context<LaborerStore>
 ) =>
@@ -73,6 +84,7 @@ const buildWorkspaceSyncService = (
     const context = yield* Layer.build(
       WorkspaceSyncService.layer.pipe(
         Layer.provide(TestPrWatcherLayer),
+        Layer.provide(TestBackgroundFetchLayer),
         Layer.provideMerge(TestPrWatcherRecorderLayer),
         Layer.provide(Layer.succeedContext(storeContext))
       )

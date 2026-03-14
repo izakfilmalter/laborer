@@ -2,6 +2,7 @@ import { RpcTest } from '@effect/rpc'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import { Context, Effect, Layer, Ref } from 'effect'
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
+import { BackgroundFetchService } from '../../src/services/background-fetch-service.js'
 import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
 import { ConfigService } from '../../src/services/config-service.js'
 import { ContainerService } from '../../src/services/container-service.js'
@@ -138,7 +139,18 @@ const Group1Layers = Layer.mergeAll(
   WorktreeReconciler.layer
 )
 
+const TestBackgroundFetchLayer = Layer.succeed(
+  BackgroundFetchService,
+  BackgroundFetchService.of({
+    startFetching: () => Effect.void,
+    stopFetching: () => Effect.void,
+    stopAllFetching: () => Effect.void,
+    fetchNow: () => Effect.succeed(false),
+  })
+)
+
 const Group1LayersWithSync = WorkspaceSyncService.layer.pipe(
+  Layer.provide(TestBackgroundFetchLayer),
   Layer.provideMerge(Group1Layers)
 )
 

@@ -12,17 +12,17 @@ fi
 # This prompt is basic, we'll expand it later.
 for ((i=1; i<=$1; i++)); do
 result=$(opencode --model anthropic/claude-opus-4-6 run \
-"@docs/phased-service-lifecycle/PRD.md @docs/phased-service-lifecycle/issues.md @docs/phased-service-lifecycle/progress.txt \
-1. Decide which task to work on next from docs/phased-service-lifecycle/issues.md. \
+"@docs/ghostty-web-migration/PRD-ghostty-web-migration.md @docs/ghostty-web-migration/issues.md @docs/ghostty-web-migration/progress.txt \
+1. Decide which task to work on next from docs/ghostty-web-migration/issues.md. \
 This should be the one YOU decide has the highest priority, \
 - not necessarily the first in the list. \
 2. Check any feedback loops, such as types and tests. \
-3. Append your progress to the docs/phased-service-lifecycle/progress.txt file. \
-4. Update status of tasks in docs/phased-service-lifecycle/issues.md \
+3. Append your progress to the docs/ghostty-web-migration/progress.txt file. \
+4. Update status of tasks in docs/ghostty-web-migration/issues.md \
 5. Make a git commit of that feature. \
 ONLY WORK ON A SINGLE TASK / FEATURE. \
 If, while implementing the feature, you notice that all work \
-is complete in docs/phased-service-lifecycle/issues.md, output <promise>COMPLETE</promise>. \
+is complete in docs/ghostty-web-migration/issues.md, output <promise>COMPLETE</promise>. \
 ")
 
   echo "$result"

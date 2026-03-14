@@ -15,6 +15,11 @@
  * which speaks the `SyncWsRpc` protocol over WebSocket to the server's
  * `/rpc` endpoint. The Vite dev proxy forwards `/rpc` to the backend.
  *
+ * Sync uses LiveStore's default non-blocking mode (`{ _tag: 'Skip' }`):
+ * the store loads from the local OPFS cache immediately and syncs in the
+ * background. This means the Suspense boundary resolves in milliseconds
+ * (from OPFS) rather than waiting up to 5s for network sync.
+ *
  * @see packages/shared/src/schema.ts for the LiveStore schema definition
  * @see Issue #17: LiveStore client adapter setup
  * @see Issue #18: LiveStore server-to-client sync
@@ -58,6 +63,5 @@ makeWorker({
   schema,
   sync: {
     backend: makeWsSync({ url: syncUrl }),
-    initialSyncOptions: { _tag: 'Blocking', timeout: 5000 },
   },
 })

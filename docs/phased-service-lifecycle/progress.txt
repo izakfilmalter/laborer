@@ -55,3 +55,19 @@
 - All 579 tests pass (no regressions, up from 572 after Issue #4)
 - TypeScript typecheck passes with no errors
 - Formatter (ultracite/biome) passes on new files
+
+## Issue #1: Switch LiveStore to non-blocking sync — COMPLETED
+
+### What was done
+- Removed `initialSyncOptions: { _tag: 'Blocking', timeout: 5000 }` from `apps/web/src/livestore.worker.ts`
+  - LiveStore now defaults to `{ _tag: 'Skip' }` — the store loads from the local OPFS cache immediately and syncs in the background
+  - The `Suspense` boundary in `LiveStoreProvider` resolves in milliseconds (from OPFS) rather than waiting up to 5s for network sync
+  - Background WebSocket sync starts automatically when the server is available
+  - The `onSyncError` default (`'ignore'`) is kept, so sync failures don't crash the app
+- Updated the file's JSDoc comment to document the non-blocking sync behavior
+
+### Verification
+- TypeScript typecheck passes with no errors across all 7 packages
+- All 579 web tests pass (no regressions)
+- Pre-existing desktop test failures in `main.test.ts` (7 failures, unrelated to this change — `app.setAsDefaultProtocolClient` mock issue) confirmed identical before and after change via `git stash` comparison
+- Formatter check passes (only pre-existing lint warnings in unrelated files)

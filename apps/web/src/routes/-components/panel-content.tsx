@@ -1,4 +1,6 @@
 import type { PanelNode } from '@laborer/shared/types'
+import { useState } from 'react'
+import { FullscreenPortalContext } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
 import { WorkspaceFrames } from './workspace-frames'
 
@@ -21,6 +23,11 @@ interface PanelContentProps {
  * Side panels (review and/or diff) are rendered inside each workspace frame
  * that matches the panel's workspaceId, spanning the full height of that
  * workspace rather than sitting outside all workspaces.
+ *
+ * Provides a fullscreen portal target: when a pane is fullscreened, it
+ * portals its content into an absolutely-positioned overlay rendered here.
+ * This keeps sibling terminals mounted and correctly sized — they never
+ * unmount during fullscreen transitions.
  */
 export function PanelContent({
   isReconciling,
@@ -33,6 +40,8 @@ export function PanelContent({
   diffPaneOpen = false,
   diffWorkspaceId = null,
 }: PanelContentProps) {
+  const [portalElement, setPortalElement] = useState<HTMLElement | null>(null)
+
   if (isReconciling) {
     return (
       <div className="flex h-full items-center justify-center bg-background">
@@ -45,14 +54,23 @@ export function PanelContent({
 
   if (layout) {
     return (
-      <WorkspaceFrames
-        activePaneId={activePaneId}
-        diffWorkspaceId={diffPaneOpen ? diffWorkspaceId : null}
-        fullscreenPaneId={fullscreenPaneId}
-        layout={layout}
-        reviewWorkspaceId={reviewPaneOpen ? reviewWorkspaceId : null}
-        workspaceOrder={workspaceOrder}
-      />
+      <FullscreenPortalContext.Provider value={portalElement}>
+        <div className="relative h-full w-full">
+          <WorkspaceFrames
+            activePaneId={activePaneId}
+            diffWorkspaceId={diffPaneOpen ? diffWorkspaceId : null}
+            layout={layout}
+            reviewWorkspaceId={reviewPaneOpen ? reviewWorkspaceId : null}
+            workspaceOrder={workspaceOrder}
+          />
+          {/* Fullscreen portal target — panes portal into this overlay
+              when fullscreened. Positioned absolutely to cover the entire
+              panel area without affecting the normal layout flow. */}
+          {fullscreenPaneId && (
+            <div className="absolute inset-0 z-10" ref={setPortalElement} />
+          )}
+        </div>
+      </FullscreenPortalContext.Provider>
     )
   }
 

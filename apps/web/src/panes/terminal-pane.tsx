@@ -239,9 +239,13 @@ function TerminalPane({
    * first data (output or screenState). A loading overlay is shown while false.
    * Uses a ref for the hot-path check (every data frame) and state
    * for React rendering.
+   *
+   * The spinner display is delayed by 200ms (`showSpinner`) so that
+   * fast-loading terminals don't flash the loading overlay.
    */
   const [hasReceivedData, setHasReceivedData] = useState(false)
   const hasReceivedDataRef = useRef(false)
+  const [showSpinner, setShowSpinner] = useState(false)
 
   /**
    * Connection and terminal status state.
@@ -286,6 +290,25 @@ function TerminalPane({
       setHasReceivedData(true)
     }
   }, [])
+
+  /**
+   * Delay showing the loading spinner by 200ms so that fast-loading
+   * terminals (e.g., reconnections with cached screen state) never
+   * flash the overlay. If data arrives within the delay, the spinner
+   * is never shown.
+   */
+  useEffect(() => {
+    if (hasReceivedData) {
+      setShowSpinner(false)
+      return
+    }
+    const timer = setTimeout(() => {
+      setShowSpinner(true)
+    }, 200)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [hasReceivedData])
 
   /**
    * Subscribe to the TerminalSessionRouter for this terminal's output.
@@ -699,7 +722,9 @@ function TerminalPane({
 			    with a spinner and message. Disappears on first data (output or
 			    screenState). Only shown for running terminals (stopped terminals
 			    get immediate screen state on reconnection). */}
-      {!hasReceivedData && isRunning && <TerminalLoadingOverlay />}
+      {!hasReceivedData && isRunning && showSpinner && (
+        <TerminalLoadingOverlay />
+      )}
 
       {/* Prefix mode indicator (Issue #80) — shown when Ctrl+B was pressed
 			    and the terminal is waiting for the next key to complete a panel

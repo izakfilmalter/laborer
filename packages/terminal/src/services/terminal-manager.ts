@@ -31,6 +31,7 @@ import {
   Schedule,
 } from 'effect'
 import { createBufferedDataHandler } from '../lib/buffered-data-handler.js'
+import { createHeadlessTerminalManager } from '../lib/headless-terminal.js'
 import { RingBuffer } from '../lib/ring-buffer.js'
 import { PtyHostClient } from './pty-host-client.js'
 
@@ -663,6 +664,16 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
     ) => Effect.Effect<number, never>
 
     /**
+     * Get the serialized screen state for a terminal as a compact VT
+     * escape sequence string (~4KB). Used by the WebSocket attach
+     * protocol for fast reconnection instead of replaying the full
+     * ring buffer.
+     *
+     * Returns empty string if the terminal does not exist or has no output.
+     */
+    readonly getScreenState: (terminalId: string) => string
+
+    /**
      * Subscribe to live terminal output for a WebSocket connection.
      * Returns ring buffer scrollback and a subscriber ID.
      */
@@ -733,6 +744,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       // Per-terminal ring buffer and subscriber state.
       const bufferStates = new Map<string, TerminalBufferState>()
       const graceTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
+
+      // Headless terminal state manager for compact screen state
+      // serialization (~4KB) and backend device query handling.
+      const headlessManager = createHeadlessTerminalManager()
 
       // Lifecycle event PubSub — unbounded so publishers never block.
       const lifecyclePubSub = yield* PubSub.unbounded<TerminalLifecycleEvent>()
@@ -971,6 +986,12 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
         const bufferState = getOrCreateBufferState(id)
 
+        // Create headless terminal for screen state serialization and
+        // backend device query handling (DA1/DSR).
+        headlessManager.create(id, cols, rows, (data: string) => {
+          ptyHostClient.write(id, data)
+        })
+
         ptyHostClient.spawn(
           {
             id,
@@ -987,8 +1008,9 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             rows,
           },
           // Data callback: buffer incomplete escape sequences, then write
-          // to ring buffer + notify subscribers
+          // to headless terminal + ring buffer + notify subscribers
           createBufferedDataHandler((data: string) => {
+            headlessManager.write(id, data)
             bufferState.ringBuffer.write(textEncoder.encode(data))
 
             for (const subscriber of bufferState.subscribers.values()) {
@@ -1104,6 +1126,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         }
 
         ptyHostClient.resize(terminalId, cols, rows)
+
+        // Keep headless terminal in sync with the real PTY dimensions
+        // so serialized screen state is always dimensionally accurate.
+        headlessManager.resize(terminalId, cols, rows)
       })
 
       // ---------------------------------------------------------------
@@ -1177,6 +1203,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         })
 
         bufferStates.delete(terminalId)
+        headlessManager.dispose(terminalId)
         agentStatusMap.delete(terminalId)
         hookAgentStatusMap.delete(terminalId)
 
@@ -1313,6 +1340,12 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         const restartBufferState = getOrCreateBufferState(terminalId)
         restartBufferState.ringBuffer.clear()
 
+        // Re-create headless terminal for the restarted PTY.
+        // This disposes the old instance and creates a fresh one.
+        headlessManager.create(terminalId, 80, 24, (data: string) => {
+          ptyHostClient.write(terminalId, data)
+        })
+
         // Respawn PTY
         ptyHostClient.spawn(
           {
@@ -1330,8 +1363,9 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             rows: 24,
           },
           // Data callback: buffer incomplete escape sequences, then write
-          // to ring buffer + notify subscribers
+          // to headless terminal + ring buffer + notify subscribers
           createBufferedDataHandler((data: string) => {
+            headlessManager.write(terminalId, data)
             restartBufferState.ringBuffer.write(textEncoder.encode(data))
 
             for (const subscriber of restartBufferState.subscribers.values()) {
@@ -1526,6 +1560,9 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             clearTimeout(timeoutId)
           }
           graceTimeouts.clear()
+
+          // Clean up all headless terminal instances
+          headlessManager.disposeAll()
 
           yield* Effect.log(
             `Shutdown: killed ${killedCount}/${runningTerminals.length} terminal(s)`
@@ -1778,6 +1815,8 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         restart,
         listTerminals,
         killAllForWorkspace,
+        getScreenState: (terminalId: string) =>
+          headlessManager.getScreenState(terminalId),
         subscribe,
         unsubscribe,
         terminalExists,

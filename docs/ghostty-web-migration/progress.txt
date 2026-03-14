@@ -22,3 +22,48 @@ Date: 2026-03-14
 - All 115 tests pass across 6 test files in the terminal package
 - 10 new buffered-data-handler tests all pass
 - All existing terminal-manager and rpc-integration tests continue to pass
+
+## Issue 7: Backend: Headless terminal state manager — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Added `@xterm/headless@^6.0.0` and `@xterm/addon-serialize@^0.14.0` as dependencies of `@laborer/terminal`
+- Created `packages/terminal/src/lib/headless-terminal.ts` with `createHeadlessTerminalManager` factory:
+  - Manages a `Map<string, HeadlessTerminalState>` of headless xterm instances
+  - `create(terminalId, cols, rows, ptyWrite)` — creates a headless Terminal with SerializeAddon, wires `onData` to forward device query responses (DA1/DSR) back to the PTY
+  - `write(terminalId, data)` — writes PTY output to the headless terminal to maintain parsed screen state
+  - `getScreenState(terminalId)` — returns compact VT escape sequence serialization (~4KB) via SerializeAddon
+  - `resize(terminalId, cols, rows)` — keeps headless terminal in sync with PTY dimensions
+  - `dispose(terminalId)` / `disposeAll()` — cleans up xterm instances and event handlers
+  - Re-creating with same ID auto-disposes the old instance (restart scenario)
+- Integrated headless terminal manager into `terminal-manager.ts`:
+  - Headless terminal created on spawn with matching cols/rows
+  - All PTY output written to headless terminal alongside ring buffer and subscribers
+  - Headless terminal resized in sync on resize RPC
+  - Headless terminal re-created on restart
+  - Headless terminal disposed on remove
+  - All headless terminals disposed on shutdown
+  - `getScreenState(terminalId)` exposed on the TerminalManager service interface for Issue 8 (WebSocket attach protocol) to use
+- Created comprehensive test suite `packages/terminal/test/headless-terminal.test.ts` with 13 tests:
+  - Creation and basic lifecycle (create, non-existent terminal)
+  - Screen state serialization (written text, empty terminal)
+  - Device query handling (DA1 response forwarded to PTY)
+  - Resize (reflects in serialized state, no-op for non-existent)
+  - Alternate screen mode (serialization includes `\x1b[?1049h`)
+  - Dispose (clean disposal, no-op for non-existent, disposeAll)
+  - Re-creation (old content cleared on restart)
+  - Write no-op for non-existent terminal
+
+### Files changed
+- `packages/terminal/package.json` (modified — added @xterm/headless and @xterm/addon-serialize dependencies)
+- `packages/terminal/src/lib/headless-terminal.ts` (new, 197 lines)
+- `packages/terminal/test/headless-terminal.test.ts` (new, 259 lines)
+- `packages/terminal/src/services/terminal-manager.ts` (modified — imported and integrated headless terminal manager, added getScreenState to service interface)
+
+### Test results
+- All 128 tests pass across 7 test files in the terminal package
+- 13 new headless-terminal tests all pass
+- All 115 existing tests (terminal-manager, rpc-integration, pty-host, ring-buffer, buffered-data-handler, classify-process) continue to pass
+- Typecheck passes cleanly
+- Biome lint passes on all changed files

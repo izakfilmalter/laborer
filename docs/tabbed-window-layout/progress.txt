@@ -1045,3 +1045,55 @@ Date: 2026-03-14
 - `bun run --filter @laborer/web test` — 984/984 tests pass (25 new + 959 existing)
 - `bun run --filter @laborer/shared test` — 75/75 tests pass
 - `biome check` — no new issues in modified files (pre-existing `useAwait` issue in unrelated test code)
+
+## Issue #25: Polish: focus consistency — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Fixed four focus management gaps that caused "focus limbo" states when switching tabs, splitting panes, and navigating with keyboard shortcuts:
+
+**1. Focus restoration on window tab switch**
+- Updated `handleSwitchWindowTab`, `handleSwitchWindowTabByIndex`, and `handleSwitchWindowTabRelative` in `use-panel-layout.ts` to restore `activePaneId` when switching window tabs
+- Added `commitWindowTabSwitchWithFocus` helper that commits the window layout change AND updates `activePaneId` to the destination tab's last-focused pane
+- Also updated `handleCloseWindowTab` to restore focus to the new active tab after closing
+
+**2. Focus restoration on panel tab switch**
+- Updated `handleSwitchPanelTab`, `handleSwitchPanelTabByIndex`, and `handleSwitchPanelTabRelative` in `use-panel-layout.ts` to restore `activePaneId` when switching panel tabs
+- Added `commitPanelTabSwitchWithFocus` helper that commits the panel tab change AND updates `activePaneId` to the destination panel tab's `focusedPaneId` (or first leaf as fallback)
+
+**3. Focus persistence via `focusedPaneId`**
+- Updated `handleSetActivePaneId` in `use-panel-layout.ts` to save the current focus to the hierarchical layout's `focusedPaneId` field
+- Added `saveFocusedPaneId(layout, paneId)` pure function to `window-tab-utils.ts` — walks WindowLayout > WindowTab > WorkspaceTileNode > PanelTab to find the panel tab containing the pane and updates its `focusedPaneId`
+- This ensures that when switching away from a tab and back, the previously focused pane is restored
+
+**4. DOM focus transfer on `activePaneId` change**
+- Added `useEffect` in `LeafPaneRenderer` (`panel-manager.tsx`) that transfers DOM focus when a pane becomes active
+- When `activePaneId` changes to this pane (via keyboard navigation, tab switch, or split), the pane container's first focusable element receives `.focus()` — for terminals this is the xterm.js canvas, giving immediate keyboard input
+- Added `ref` and `tabIndex={-1}` to the pane container div for focusability
+- Checks `document.activeElement` to avoid redundant focus calls when focus is already inside the pane
+
+**5. Focus on new pane after split**
+- Updated `handleSplitPane` in `use-panel-layout.ts` to set `activePaneId` to the newly created pane after splitting (was keeping focus on the original pane)
+- This matches the PRD requirement: "After splitting: focus lands on the new pane"
+
+- Added pure utility functions to `window-tab-utils.ts`:
+  - `getFirstPanelTreeLeafId(node)` — gets the first leaf pane ID from a PanelTreeNode tree (DFS order)
+  - `resolveActivePaneForPanelTab(tab)` — resolves focus for a panel tab (prefers focusedPaneId, falls back to first leaf)
+  - `resolveActivePaneForWindowTab(tab)` — resolves focus for a window tab (walks: workspace tiles > active panel tab > focusedPaneId)
+  - `saveFocusedPaneId(layout, paneId)` — saves focusedPaneId on the panel tab containing the pane
+  - Helper functions: `saveFocusInTileTree`, `saveFocusInWorkspaceTile`, `panelTreeContainsPane`
+
+### Tests
+- 22 tests in `apps/web/test/focus-consistency.test.ts` covering:
+  - **getFirstPanelTreeLeafId** (4 tests): single leaf, horizontal split, nested split (DFS), empty split
+  - **resolveActivePaneForPanelTab** (4 tests): returns focusedPaneId, falls back to first leaf, non-first leaf, single-leaf tab
+  - **resolveActivePaneForWindowTab** (6 tests): empty window tab, focused pane of active panel tab, fallback to first leaf, active panel tab not first, no panel tabs, multi-workspace with empty first workspace
+  - **saveFocusedPaneId** (8 tests): pane not found (referential equality), updates matching panel tab, already correct (referential equality), only updates matching tab, across window tabs, nested workspace tile splits, empty layout, no workspace layout
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 1006/1006 tests pass (22 new + 984 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)

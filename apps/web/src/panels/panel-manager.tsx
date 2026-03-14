@@ -85,6 +85,7 @@ import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import {
+  useActivePaneId,
   useFullscreenPaneId,
   useFullscreenPortal,
   usePanelActions,
@@ -570,13 +571,43 @@ function PanePickerOverlay({
  */
 function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
   const actions = usePanelActions()
+  const activePaneId = useActivePaneId()
   const fullscreenPaneId = useFullscreenPaneId()
   const fullscreenPortalRef = useFullscreenPortal()
   const pendingClose = usePendingClosePane()
   const pendingPicker = usePendingPicker()
   const [isDragOver, setIsDragOver] = useState(false)
+  const paneContainerRef = useRef<HTMLDivElement | null>(null)
 
   const isFullscreen = fullscreenPaneId === node.id
+  const isActive = activePaneId === node.id
+
+  // When this pane becomes active (via keyboard navigation, tab switch, or
+  // split), transfer DOM focus to it. This ensures terminal panes receive
+  // keyboard input immediately without requiring a click.
+  useEffect(() => {
+    if (!isActive) {
+      return
+    }
+    const container = paneContainerRef.current
+    if (!container) {
+      return
+    }
+    // Check if focus is already inside this pane
+    if (container.contains(document.activeElement)) {
+      return
+    }
+    // Focus the first focusable element inside (xterm.js canvas for terminals,
+    // or the container itself for non-terminal panes).
+    const focusable = container.querySelector<HTMLElement>(
+      'canvas, textarea, input, [tabindex="0"]'
+    )
+    if (focusable) {
+      focusable.focus()
+    } else {
+      container.focus()
+    }
+  }, [isActive])
 
   /**
    * Auto-close the pane when the terminal process exits.
@@ -658,7 +689,9 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
       onDrop={handleDrop}
       onFocusCapture={() => actions?.setActivePaneId(node.id)}
       onMouseDownCapture={() => actions?.setActivePaneId(node.id)}
+      ref={paneContainerRef}
       role="region"
+      tabIndex={-1}
     >
       <PaneContent node={node} onTerminalExit={handleTerminalExit} />
       {isOccupiedTerminalPane && (

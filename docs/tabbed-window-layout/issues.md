@@ -923,7 +923,7 @@ Add smooth animations for tab bar appearance/disappearance:
 
 ## 25. Polish: focus consistency
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1085,7 +1085,7 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 | 22 | Workspace uniqueness enforcement | 21 | done |
 | 23 | Tab drag-and-drop reordering | 8, 10 | pending |
 | 24 | Polish: tab bar animations and transitions | 7 | pending |
-| 25 | Polish: focus consistency | 8, 10 | pending |
+| 25 | Polish: focus consistency | 8, 10 | done |
 | 26 | Polish: visual indicators and keyboard discoverability | 8, 10 | pending |
 | 27 | Polish: tab overflow and performance | 8, 10 | pending |
 | 28 | Polish: close confirmation and error handling | 17, 21 | done |

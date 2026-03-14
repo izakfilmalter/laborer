@@ -78,10 +78,14 @@ import {
   findWorkspaceLocation,
   getActiveWindowTab,
   getStaleTerminalLeavesHierarchical,
+  getWorkspaceTileLeaves,
   reconcileWindowLayout,
   removeWindowTab,
   reorderWindowTabs,
   repairWindowLayout,
+  resolveActivePaneForPanelTab,
+  resolveActivePaneForWindowTab,
+  saveFocusedPaneId,
   switchWindowTab,
   switchWindowTabByIndex,
   switchWindowTabRelative,
@@ -540,16 +544,21 @@ export function usePanelLayout() {
 
       const newTree = splitPane(base, paneId, direction, newPaneContent)
 
+      // Find the newly created pane via leaf-diffing
+      const newLeaf = findNewLeafAfterSplit(base, newTree)
+
+      // Focus the new pane after splitting so the user can immediately
+      // interact with it. This matches the PRD requirement: "After
+      // splitting: focus lands on the new pane."
+      const newActivePaneId = newLeaf?.id ?? persistedActivePaneId
+
       store.commit(
         layoutSplit({
           windowId: panelWindowId,
           layoutTree: newTree,
-          activePaneId: persistedActivePaneId,
+          activePaneId: newActivePaneId,
         })
       )
-
-      // Find the newly created pane via leaf-diffing
-      const newLeaf = findNewLeafAfterSplit(base, newTree)
       if (!newLeaf?.workspaceId) {
         return
       }
@@ -673,8 +682,31 @@ export function usePanelLayout() {
           activePaneId: validatedPaneId,
         })
       )
+      // Save focusedPaneId on the hierarchical layout so that
+      // switching tabs can restore focus later.
+      if (validatedPaneId && persistedWindowLayout) {
+        const updated = saveFocusedPaneId(
+          persistedWindowLayout,
+          validatedPaneId
+        )
+        if (updated !== persistedWindowLayout) {
+          store.commit(
+            windowTabSwitched({
+              windowId: panelWindowId,
+              windowLayout: updated,
+              activeWindowTabId: updated.activeTabId ?? null,
+            })
+          )
+        }
+      }
     },
-    [persistedLayoutTree, defaultLayout, panelWindowId, store]
+    [
+      persistedLayoutTree,
+      defaultLayout,
+      panelWindowId,
+      store,
+      persistedWindowLayout,
+    ]
   )
 
   /**
@@ -1164,7 +1196,71 @@ export function usePanelLayout() {
     }
     const newLayout = removeWindowTab(persistedWindowLayout, activeId)
     commitWindowLayout(windowTabClosed, newLayout)
-  }, [persistedWindowLayout, commitWindowLayout])
+    // Restore focus to the new active tab's last-focused pane
+    const base = persistedLayoutTree ?? defaultLayout
+    if (!base) {
+      return
+    }
+    const newActiveTab = getActiveWindowTab(newLayout)
+    if (!newActiveTab) {
+      return
+    }
+    const paneId = resolveActivePaneForWindowTab(newActiveTab)
+    if (paneId) {
+      store.commit(
+        layoutPaneAssigned({
+          windowId: panelWindowId,
+          layoutTree: base,
+          activePaneId: paneId,
+        })
+      )
+    }
+  }, [
+    persistedWindowLayout,
+    commitWindowLayout,
+    persistedLayoutTree,
+    defaultLayout,
+    store,
+    panelWindowId,
+  ])
+
+  /**
+   * Commit a window tab switch and restore `activePaneId` to the
+   * destination tab's last-focused pane.  This ensures that keyboard
+   * focus follows tab switches instead of being stranded on a pane
+   * that is no longer visible.
+   */
+  const commitWindowTabSwitchWithFocus = useCallback(
+    (newLayout: WindowLayout) => {
+      commitWindowLayout(windowTabSwitched, newLayout)
+      // Restore activePaneId to the destination tab's last-focused pane
+      const base = persistedLayoutTree ?? defaultLayout
+      if (!base) {
+        return
+      }
+      const activeTab = getActiveWindowTab(newLayout)
+      if (!activeTab) {
+        return
+      }
+      const paneId = resolveActivePaneForWindowTab(activeTab)
+      if (paneId) {
+        store.commit(
+          layoutPaneAssigned({
+            windowId: panelWindowId,
+            layoutTree: base,
+            activePaneId: paneId,
+          })
+        )
+      }
+    },
+    [
+      commitWindowLayout,
+      persistedLayoutTree,
+      defaultLayout,
+      store,
+      panelWindowId,
+    ]
+  )
 
   const handleSwitchWindowTab = useCallback(
     (tabId: string) => {
@@ -1172,9 +1268,9 @@ export function usePanelLayout() {
         return
       }
       const newLayout = switchWindowTab(persistedWindowLayout, tabId)
-      commitWindowLayout(windowTabSwitched, newLayout)
+      commitWindowTabSwitchWithFocus(newLayout)
     },
-    [persistedWindowLayout, commitWindowLayout]
+    [persistedWindowLayout, commitWindowTabSwitchWithFocus]
   )
 
   const handleSwitchWindowTabByIndex = useCallback(
@@ -1183,9 +1279,9 @@ export function usePanelLayout() {
         return
       }
       const newLayout = switchWindowTabByIndex(persistedWindowLayout, index)
-      commitWindowLayout(windowTabSwitched, newLayout)
+      commitWindowTabSwitchWithFocus(newLayout)
     },
-    [persistedWindowLayout, commitWindowLayout]
+    [persistedWindowLayout, commitWindowTabSwitchWithFocus]
   )
 
   const handleSwitchWindowTabRelative = useCallback(
@@ -1194,9 +1290,9 @@ export function usePanelLayout() {
         return
       }
       const newLayout = switchWindowTabRelative(persistedWindowLayout, delta)
-      commitWindowLayout(windowTabSwitched, newLayout)
+      commitWindowTabSwitchWithFocus(newLayout)
     },
-    [persistedWindowLayout, commitWindowLayout]
+    [persistedWindowLayout, commitWindowTabSwitchWithFocus]
   )
 
   const handleReorderWindowTabs = useCallback(
@@ -1310,6 +1406,52 @@ export function usePanelLayout() {
     [persistedWindowLayout, commitPanelTabLayout]
   )
 
+  /**
+   * Commit a panel tab switch and restore `activePaneId` to the
+   * destination panel tab's last-focused pane. This ensures keyboard
+   * focus follows panel tab switches.
+   */
+  const commitPanelTabSwitchWithFocus = useCallback(
+    (newLayout: WindowLayout, workspaceId: string) => {
+      commitPanelTabLayout(panelTabSwitched, newLayout)
+      // Restore activePaneId to the destination panel tab's last-focused pane
+      const base = persistedLayoutTree ?? defaultLayout
+      if (!base) {
+        return
+      }
+      const activeWinTab = getActiveWindowTab(newLayout)
+      const tileLayout = activeWinTab?.workspaceLayout
+      const leaves = tileLayout ? getWorkspaceTileLeaves(tileLayout) : []
+      const leaf = leaves.find((l) => l.workspaceId === workspaceId)
+      if (!leaf) {
+        return
+      }
+      const activeTab = leaf.panelTabs.find(
+        (t) => t.id === leaf.activePanelTabId
+      )
+      if (!activeTab) {
+        return
+      }
+      const paneId = resolveActivePaneForPanelTab(activeTab)
+      if (paneId) {
+        store.commit(
+          layoutPaneAssigned({
+            windowId: panelWindowId,
+            layoutTree: base,
+            activePaneId: paneId,
+          })
+        )
+      }
+    },
+    [
+      commitPanelTabLayout,
+      persistedLayoutTree,
+      defaultLayout,
+      store,
+      panelWindowId,
+    ]
+  )
+
   const handleSwitchPanelTab = useCallback(
     (workspaceId: string, tabId: string) => {
       if (!persistedWindowLayout) {
@@ -1320,9 +1462,9 @@ export function usePanelLayout() {
         workspaceId,
         (leaf) => switchPanelTab(leaf, tabId)
       )
-      commitPanelTabLayout(panelTabSwitched, newLayout)
+      commitPanelTabSwitchWithFocus(newLayout, workspaceId)
     },
-    [persistedWindowLayout, commitPanelTabLayout]
+    [persistedWindowLayout, commitPanelTabSwitchWithFocus]
   )
 
   const handleSwitchPanelTabByIndex = useCallback(
@@ -1335,9 +1477,9 @@ export function usePanelLayout() {
         workspaceId,
         (leaf) => switchPanelTabByIndex(leaf, index)
       )
-      commitPanelTabLayout(panelTabSwitched, newLayout)
+      commitPanelTabSwitchWithFocus(newLayout, workspaceId)
     },
-    [persistedWindowLayout, commitPanelTabLayout]
+    [persistedWindowLayout, commitPanelTabSwitchWithFocus]
   )
 
   const handleSwitchPanelTabRelative = useCallback(
@@ -1350,9 +1492,9 @@ export function usePanelLayout() {
         workspaceId,
         (leaf) => switchPanelTabRelative(leaf, delta)
       )
-      commitPanelTabLayout(panelTabSwitched, newLayout)
+      commitPanelTabSwitchWithFocus(newLayout, workspaceId)
     },
-    [persistedWindowLayout, commitPanelTabLayout]
+    [persistedWindowLayout, commitPanelTabSwitchWithFocus]
   )
 
   const handleReorderPanelTabs = useCallback(

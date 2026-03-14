@@ -411,6 +411,156 @@ function getActiveWindowTab(layout: WindowLayout): WindowTab | undefined {
 }
 
 // ---------------------------------------------------------------------------
+// Focus resolution — derive activePaneId from the hierarchical structure
+// ---------------------------------------------------------------------------
+
+/**
+ * Get the first leaf pane ID from a PanelTreeNode tree (DFS order).
+ * Used as a fallback when `focusedPaneId` is not set on a panel tab.
+ */
+function getFirstPanelTreeLeafId(node: PanelTreeNode): string | undefined {
+  if (node._tag === 'PanelLeafNode') {
+    return node.id
+  }
+  for (const child of node.children) {
+    const leafId = getFirstPanelTreeLeafId(child)
+    if (leafId) {
+      return leafId
+    }
+  }
+  return undefined
+}
+
+/**
+ * Resolve the pane that should receive focus for a given panel tab.
+ * Prefers `focusedPaneId` if set, falls back to the first leaf pane.
+ */
+function resolveActivePaneForPanelTab(tab: PanelTab): string | undefined {
+  if (tab.focusedPaneId) {
+    return tab.focusedPaneId
+  }
+  return getFirstPanelTreeLeafId(tab.panelLayout)
+}
+
+/**
+ * Resolve the pane that should receive focus when switching to a window tab.
+ *
+ * Walks the hierarchy: active workspace tile > active panel tab > focusedPaneId.
+ * Falls back at each level if the preferred value is not available.
+ *
+ * @param tab - The window tab to resolve focus for
+ * @returns The pane ID that should receive focus, or undefined
+ */
+function resolveActivePaneForWindowTab(tab: WindowTab): string | undefined {
+  if (!tab.workspaceLayout) {
+    return undefined
+  }
+  // Get the first workspace tile leaf as a fallback
+  const leaves = getWorkspaceTileLeaves(tab.workspaceLayout)
+  if (leaves.length === 0) {
+    return undefined
+  }
+  // Prefer the first workspace that has panel tabs
+  for (const leaf of leaves) {
+    const activeTab = leaf.panelTabs.find((t) => t.id === leaf.activePanelTabId)
+    if (activeTab) {
+      const paneId = resolveActivePaneForPanelTab(activeTab)
+      if (paneId) {
+        return paneId
+      }
+    }
+    // Fallback: first panel tab of this workspace
+    const firstTab = leaf.panelTabs[0]
+    if (firstTab) {
+      const paneId = resolveActivePaneForPanelTab(firstTab)
+      if (paneId) {
+        return paneId
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Save the current focusedPaneId on the active panel tab of the workspace
+ * that contains the given pane. Walks all tabs > all workspaces > all panel
+ * tabs to find the pane and update its panel tab's focusedPaneId.
+ *
+ * @param layout - The window layout
+ * @param paneId - The pane that is now focused
+ * @returns A new WindowLayout with focusedPaneId updated on the matching panel tab
+ */
+function saveFocusedPaneId(layout: WindowLayout, paneId: string): WindowLayout {
+  const newTabs = layout.tabs.map((tab) => {
+    if (!tab.workspaceLayout) {
+      return tab
+    }
+    const newWorkspaceLayout = saveFocusInTileTree(tab.workspaceLayout, paneId)
+    if (newWorkspaceLayout === tab.workspaceLayout) {
+      return tab
+    }
+    return { ...tab, workspaceLayout: newWorkspaceLayout }
+  })
+  if (newTabs.every((tab, i) => tab === layout.tabs[i])) {
+    return layout
+  }
+  return { ...layout, tabs: newTabs }
+}
+
+/**
+ * Recursively search a workspace tile tree and save focusedPaneId
+ * on the panel tab containing the given pane.
+ */
+function saveFocusInTileTree(
+  node: WorkspaceTileNode,
+  paneId: string
+): WorkspaceTileNode {
+  if (node._tag === 'WorkspaceTileLeaf') {
+    return saveFocusInWorkspaceTile(node, paneId)
+  }
+  const newChildren = node.children.map((child) =>
+    saveFocusInTileTree(child, paneId)
+  )
+  if (newChildren.every((child, i) => child === node.children[i])) {
+    return node
+  }
+  return { ...node, children: newChildren }
+}
+
+/**
+ * Save focusedPaneId on the panel tab in a workspace tile leaf that
+ * contains the given pane.
+ */
+function saveFocusInWorkspaceTile(
+  tile: WorkspaceTileLeaf,
+  paneId: string
+): WorkspaceTileLeaf {
+  const newPanelTabs = tile.panelTabs.map((tab) => {
+    if (panelTreeContainsPane(tab.panelLayout, paneId)) {
+      if (tab.focusedPaneId === paneId) {
+        return tab
+      }
+      return { ...tab, focusedPaneId: paneId }
+    }
+    return tab
+  })
+  if (newPanelTabs.every((tab, i) => tab === tile.panelTabs[i])) {
+    return tile
+  }
+  return { ...tile, panelTabs: newPanelTabs }
+}
+
+/**
+ * Check if a PanelTreeNode tree contains a pane with the given ID.
+ */
+function panelTreeContainsPane(node: PanelTreeNode, paneId: string): boolean {
+  if (node._tag === 'PanelLeafNode') {
+    return node.id === paneId
+  }
+  return node.children.some((child) => panelTreeContainsPane(child, paneId))
+}
+
+// ---------------------------------------------------------------------------
 // Workspace tile leaf update
 // ---------------------------------------------------------------------------
 
@@ -1606,6 +1756,7 @@ export {
   findWorkspaceLocation,
   getActiveWindowTab,
   getAllWorkspaceTileLeaves,
+  getFirstPanelTreeLeafId,
   getStaleTerminalLeavesHierarchical,
   getWorkspaceTileLeaves,
   moveWorkspace,
@@ -1614,6 +1765,9 @@ export {
   removeWorkspaceFromLayout,
   reorderWindowTabs,
   repairWindowLayout,
+  resolveActivePaneForPanelTab,
+  resolveActivePaneForWindowTab,
+  saveFocusedPaneId,
   shouldConfirmClosePanelTab,
   shouldConfirmCloseWindowTab,
   switchWindowTab,

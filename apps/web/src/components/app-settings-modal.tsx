@@ -4,6 +4,7 @@ import { queryDb } from '@livestore/livestore'
 import { Check, ExternalLink, Github, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { useAppSettings } from '@/components/app-settings-context'
 import { getDesktopBridge, openExternalUrl } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
 import { Button } from './ui/button'
@@ -27,13 +28,8 @@ const allAppSettings$ = queryDb(appSettings, {
 
 const exchangeCodeMutation = LaborerClient.mutation('github.exchangeOAuthCode')
 
-export function AppSettingsModal({
-  open,
-  onOpenChange,
-}: {
-  readonly open: boolean
-  readonly onOpenChange: (open: boolean) => void
-}) {
+export function AppSettingsModal() {
+  const { open, onOpenChange } = useAppSettings()
   const store = useLaborerStore()
   const settings = store.useQuery(allAppSettings$)
   const exchangeCode = useAtomSet(exchangeCodeMutation, { mode: 'promise' })

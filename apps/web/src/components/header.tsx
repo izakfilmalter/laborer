@@ -1,6 +1,6 @@
 import { RotateCcw, Settings } from 'lucide-react'
-import { useCallback, useState } from 'react'
-
+import { useCallback } from 'react'
+import { useAppSettings } from '@/components/app-settings-context'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -9,7 +9,6 @@ import {
 } from '@/components/ui/tooltip'
 import { isElectron } from '@/lib/desktop'
 
-import { AppSettingsModal } from './app-settings-modal'
 import { ModeToggle } from './mode-toggle'
 import { ServiceStatusPills } from './service-status-pills'
 
@@ -34,27 +33,24 @@ function ResetButton() {
 }
 
 function SettingsButton() {
-  const [open, setOpen] = useState(false)
+  const { onOpenChange } = useAppSettings()
 
   return (
-    <>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              onClick={() => setOpen(true)}
-              size="icon"
-              variant="outline"
-            />
-          }
-        >
-          <Settings className="h-[1.2rem] w-[1.2rem]" />
-          <span className="sr-only">Settings</span>
-        </TooltipTrigger>
-        <TooltipContent>Settings</TooltipContent>
-      </Tooltip>
-      <AppSettingsModal onOpenChange={setOpen} open={open} />
-    </>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            onClick={() => onOpenChange(true)}
+            size="icon"
+            variant="outline"
+          />
+        }
+      >
+        <Settings className="h-[1.2rem] w-[1.2rem]" />
+        <span className="sr-only">Settings</span>
+      </TooltipTrigger>
+      <TooltipContent>Settings</TooltipContent>
+    </Tooltip>
   )
 }
 

@@ -57,33 +57,11 @@ vi.mock('@/components/ui/tooltip', () => ({
   ),
 }))
 
-import { useEffect } from 'react'
 import {
   CreatePlanWorkspace,
   planBranchName,
 } from '../src/components/create-plan-workspace'
-import {
-  LifecyclePhase,
-  LifecyclePhaseProvider,
-  useLifecyclePhase,
-} from '../src/components/lifecycle-phase-context'
-
-function AdvanceToReady() {
-  const { advanceTo } = useLifecyclePhase()
-  useEffect(() => {
-    advanceTo(LifecyclePhase.Ready)
-  }, [advanceTo])
-  return null
-}
-
-function ReadyPhaseWrapper({ children }: { children: React.ReactNode }) {
-  return (
-    <LifecyclePhaseProvider>
-      <AdvanceToReady />
-      {children}
-    </LifecyclePhaseProvider>
-  )
-}
+import { ReadyPhaseWrapper } from './helpers/lifecycle-test-utils'
 
 const CREATE_WORKSPACE_RE = /Create Workspace/i
 

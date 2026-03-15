@@ -18,16 +18,10 @@ import { act, cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LifecyclePhaseProvider } from '../src/components/lifecycle-phase-context'
 import { ServiceStatusDots } from '../src/components/service-status-dots'
+import { mockFetch } from './helpers/mock-fetch'
 
 describe('ServiceStatusDots error states and animations', () => {
   const originalFetch = globalThis.fetch
-
-  function mockFetch(impl: (url: string) => Promise<{ ok: boolean } | never>) {
-    globalThis.fetch = ((input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input.toString()
-      return impl(url) as Promise<Response>
-    }) as typeof fetch
-  }
 
   /** Mock all services as healthy. */
   function mockAllHealthy() {

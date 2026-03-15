@@ -18,16 +18,10 @@ import {
   SyncStatusProvider,
   useSyncStatusUpdate,
 } from '../src/components/sync-status-context'
+import { mockFetch } from './helpers/mock-fetch'
 
 describe('LiveStore sync status indicator', () => {
   const originalFetch = globalThis.fetch
-
-  function mockFetch(impl: (url: string) => Promise<{ ok: boolean } | never>) {
-    globalThis.fetch = ((input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input.toString()
-      return impl(url) as Promise<Response>
-    }) as typeof fetch
-  }
 
   /** Mock all sidecar services as healthy so we can focus on sync indicator. */
   function mockAllSidecarsHealthy() {

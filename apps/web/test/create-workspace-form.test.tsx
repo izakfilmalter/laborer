@@ -72,30 +72,8 @@ vi.mock('@/components/ui/spinner', () => ({
   Spinner: () => null,
 }))
 
-import { useEffect } from 'react'
 import { CreateWorkspaceForm } from '../src/components/create-workspace-form'
-import {
-  LifecyclePhase,
-  LifecyclePhaseProvider,
-  useLifecyclePhase,
-} from '../src/components/lifecycle-phase-context'
-
-function AdvanceToReady() {
-  const { advanceTo } = useLifecyclePhase()
-  useEffect(() => {
-    advanceTo(LifecyclePhase.Ready)
-  }, [advanceTo])
-  return null
-}
-
-function ReadyPhaseWrapper({ children }: { children: React.ReactNode }) {
-  return (
-    <LifecyclePhaseProvider>
-      <AdvanceToReady />
-      {children}
-    </LifecyclePhaseProvider>
-  )
-}
+import { ReadyPhaseWrapper } from './helpers/lifecycle-test-utils'
 
 const BRANCH_NAME_RE = /branch name/i
 const CREATE_WORKSPACE_RE = /create workspace/i

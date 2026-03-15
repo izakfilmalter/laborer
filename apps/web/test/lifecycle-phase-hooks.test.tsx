@@ -18,6 +18,7 @@ import {
 } from '../src/components/lifecycle-phase-context'
 import { useServiceStatus } from '../src/hooks/use-service-status'
 import { useWhenPhase } from '../src/hooks/use-when-phase'
+import { mockFetch, pendingPromise } from './helpers/mock-fetch'
 
 /**
  * Test component that displays useWhenPhase results for each phase
@@ -133,22 +134,8 @@ function ServiceStatusDisplay() {
   )
 }
 
-/** Creates a promise that never resolves — used to simulate pending requests. */
-function pendingPromise<T>(): Promise<T> {
-  return new Promise<T>((_resolve) => {
-    // Intentionally never resolved — simulates a hanging request
-  })
-}
-
 describe('useServiceStatus', () => {
   const originalFetch = globalThis.fetch
-
-  function mockFetch(impl: (url: string) => Promise<{ ok: boolean } | never>) {
-    globalThis.fetch = ((input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input.toString()
-      return impl(url) as Promise<Response>
-    }) as typeof fetch
-  }
 
   beforeEach(() => {
     vi.useFakeTimers()

@@ -20,6 +20,7 @@ import {
   useLifecyclePhase,
 } from '../src/components/lifecycle-phase-context'
 import { PhaseTransitionDriver } from '../src/hooks/use-phase-transition-driver'
+import { mockFetch, pendingPromise } from './helpers/mock-fetch'
 
 /** Displays the current lifecycle phase for test assertions. */
 function PhaseDisplay() {
@@ -27,22 +28,8 @@ function PhaseDisplay() {
   return <span data-testid="phase">{phase}</span>
 }
 
-/** Creates a promise that never resolves — simulates a hanging request. */
-function pendingPromise<T>(): Promise<T> {
-  return new Promise<T>(() => {
-    // Intentionally never resolved
-  })
-}
-
 describe('PhaseTransitionDriver', () => {
   const originalFetch = globalThis.fetch
-
-  function mockFetch(impl: (url: string) => Promise<{ ok: boolean } | never>) {
-    globalThis.fetch = ((input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input.toString()
-      return impl(url) as Promise<Response>
-    }) as typeof fetch
-  }
 
   beforeEach(() => {
     vi.useFakeTimers()

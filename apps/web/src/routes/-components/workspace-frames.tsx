@@ -36,6 +36,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { TabBar, type TabBarItem } from '@/components/ui/tab-bar'
 import { TabErrorBoundary } from '@/components/ui/tab-error-boundary'
 import { useLaborerStore } from '@/livestore/store'
+import { convertPanelTreeToLegacy } from '@/panels/layout-migration'
 import {
   filterTreeByWorkspace,
   getLeafNodes,
@@ -687,10 +688,9 @@ function WorkspaceFrame({
     if (tileLeaf) {
       const activeTab = getActivePanelTab(tileLeaf)
       if (activeTab) {
-        // PanelTreeNode is structurally compatible with PanelNode for rendering.
-        // PanelLeafNode has the same shape as LeafNode (without sidebar flags).
-        // PanelSplitNode has the same shape as SplitNode.
-        return activeTab.panelLayout as unknown as PanelNode
+        // Convert the new PanelTreeNode to legacy PanelNode so that
+        // PanelManager and layout-utils can process it correctly.
+        return convertPanelTreeToLegacy(activeTab.panelLayout)
       }
       // No active tab — empty workspace state will be rendered instead
       return null
@@ -758,9 +758,9 @@ function WorkspaceFrame({
       />
       {showPanelTabBar && !isMinimized && (
         <TabBar
-          autoHide
           closeTooltip="Close tab (Cmd+W)"
           items={panelTabItems}
+          label="Panel Tabs"
           newTabTooltip="New panel tab (Ctrl+T)"
           onClose={handlePanelTabClose}
           onNew={handlePanelTabNew}
@@ -896,14 +896,13 @@ function WorkspaceTileLeafFrame({
   // When it doesn't (pre-migration), fall back to extracting from the flat tree.
   const subLayout = useMemo(() => {
     if (leaf.panelTabs.length > 0) {
-      // Use a placeholder — the actual rendering is driven by tileLeaf's panelTabs
-      // via WorkspaceFrame. We still need a valid PanelNode for the header's
-      // getScopedActivePaneId and getLeafNodes calls.
+      // Convert the active tab's PanelTreeNode to legacy PanelNode so that
+      // the header's getScopedActivePaneId and getLeafNodes calls work correctly.
       const activeTab = leaf.panelTabs.find(
         (t) => t.id === leaf.activePanelTabId
       )
       if (activeTab) {
-        return activeTab.panelLayout as unknown as PanelNode
+        return convertPanelTreeToLegacy(activeTab.panelLayout)
       }
     }
     return (

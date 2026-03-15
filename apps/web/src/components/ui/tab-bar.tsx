@@ -60,6 +60,8 @@ interface TabBarProps {
   readonly closeTooltip?: string | undefined
   /** Ordered list of tab items to render. */
   readonly items: readonly TabBarItem[]
+  /** Optional label shown at the leading edge of the tab bar (e.g. "Window Tabs"). */
+  readonly label?: string | undefined
   /** Tooltip text for the new tab (+) button. */
   readonly newTabTooltip?: string | undefined
   /** Called when a tab's close button is clicked. */
@@ -322,6 +324,7 @@ function TabBar({
   onReorder,
   autoHide = false,
   closeTooltip,
+  label,
   newTabTooltip = 'New tab',
   className,
 }: TabBarProps) {
@@ -385,6 +388,7 @@ function TabBar({
         className={className}
         closeTooltip={closeTooltip}
         items={items}
+        label={label}
         newTabTooltip={newTabTooltip}
         onClose={onClose}
         onNew={onNew}
@@ -480,6 +484,7 @@ function TabBarInner({
   onNew,
   onReorder,
   closeTooltip,
+  label,
   newTabTooltip,
   className,
   barId,
@@ -599,6 +604,12 @@ function TabBarInner({
       data-testid="tab-bar"
       role="tablist"
     >
+      {/* Label */}
+      {label && (
+        <span className="flex shrink-0 items-center px-2 font-medium text-[10px] text-muted-foreground uppercase tracking-wider">
+          {label}
+        </span>
+      )}
       {/* Left overflow scroll button */}
       {overflow.canScrollLeft && (
         <button

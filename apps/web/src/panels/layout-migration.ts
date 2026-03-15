@@ -28,6 +28,7 @@ import type {
   PanelSplitNode,
   PanelTab,
   PanelTreeNode,
+  SplitNode,
   WindowLayout,
   WindowTab,
   WorkspaceTileLeaf,
@@ -90,6 +91,43 @@ function convertPanelTree(node: PanelNode): PanelTreeNode {
     direction: node.direction,
     children,
     sizes: node.sizes,
+  }
+  return result
+}
+
+// ---------------------------------------------------------------------------
+// New → Old node conversion (for rendering compatibility)
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a new `PanelTreeNode` tree back to a legacy `PanelNode` tree.
+ *
+ * This is needed because `PanelManager` and `layout-utils` functions operate
+ * on the legacy `PanelNode` type (`LeafNode` / `SplitNode`). When the
+ * hierarchical layout provides a `PanelTreeNode` (from a panel tab's layout),
+ * it must be converted to a `PanelNode` before passing to these consumers.
+ */
+function convertPanelTreeToLegacy(node: PanelTreeNode): PanelNode {
+  if (node._tag === 'PanelLeafNode') {
+    const leaf: LeafNode = {
+      _tag: 'LeafNode',
+      id: node.id,
+      paneType: node.paneType,
+      ...(node.terminalId !== undefined ? { terminalId: node.terminalId } : {}),
+      ...(node.workspaceId !== undefined
+        ? { workspaceId: node.workspaceId }
+        : {}),
+    }
+    return leaf
+  }
+
+  const children = node.children.map(convertPanelTreeToLegacy)
+  const result: SplitNode = {
+    _tag: 'SplitNode',
+    id: node.id,
+    direction: node.direction,
+    children,
+    sizes: [...node.sizes],
   }
   return result
 }
@@ -358,6 +396,84 @@ function sortWorkspaceIdsByOrder(
 }
 
 // ---------------------------------------------------------------------------
+// Derive legacy flat tree from hierarchical layout
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a legacy `PanelNode` flat tree from a `WindowLayout`'s active
+ * window tab. Extracts all workspace tile leaves from the active tab,
+ * takes each workspace's active panel tab's layout, converts it to legacy
+ * format, and combines them into a single flat tree.
+ *
+ * This is used to keep the legacy `layout` variable (consumed by hotkeys,
+ * directional navigation, and other legacy code) in sync with the
+ * hierarchical layout that drives rendering.
+ *
+ * @param windowLayout - The hierarchical window layout
+ * @returns A legacy PanelNode tree, or undefined if no active tab/workspace exists
+ */
+function deriveLegacyTreeFromHierarchical(
+  windowLayout: WindowLayout
+): PanelNode | undefined {
+  const activeTab = windowLayout.tabs.find(
+    (t) => t.id === windowLayout.activeTabId
+  )
+  if (!activeTab?.workspaceLayout) {
+    return undefined
+  }
+
+  // Collect all workspace tile leaves from the active window tab
+  const leaves = collectWorkspaceTileLeaves(activeTab.workspaceLayout)
+  if (leaves.length === 0) {
+    return undefined
+  }
+
+  // Convert each workspace's active panel tab layout to legacy format
+  const legacySubTrees: PanelNode[] = []
+  for (const leaf of leaves) {
+    const activePanelTab = leaf.panelTabs.find(
+      (t) => t.id === leaf.activePanelTabId
+    )
+    if (activePanelTab) {
+      legacySubTrees.push(convertPanelTreeToLegacy(activePanelTab.panelLayout))
+    }
+  }
+
+  if (legacySubTrees.length === 0) {
+    return undefined
+  }
+
+  if (legacySubTrees.length === 1) {
+    return legacySubTrees[0]
+  }
+
+  // Combine into a horizontal split (matching the legacy flat tree format)
+  return {
+    _tag: 'SplitNode' as const,
+    id: `derived-split-${activeTab.id}`,
+    direction: 'horizontal' as const,
+    children: legacySubTrees,
+    sizes: legacySubTrees.map(() => 100 / legacySubTrees.length),
+  }
+}
+
+/**
+ * Recursively collect all WorkspaceTileLeaf nodes from a workspace tile tree.
+ */
+function collectWorkspaceTileLeaves(
+  node: WorkspaceTileNode
+): WorkspaceTileLeaf[] {
+  if (node._tag === 'WorkspaceTileLeaf') {
+    return [node]
+  }
+  const result: WorkspaceTileLeaf[] = []
+  for (const child of node.children) {
+    result.push(...collectWorkspaceTileLeaves(child))
+  }
+  return result
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -365,5 +481,7 @@ export {
   collectSidebarFlags,
   convertLeafNode,
   convertPanelTree,
+  convertPanelTreeToLegacy,
+  deriveLegacyTreeFromHierarchical,
   migrateToWindowLayout,
 }

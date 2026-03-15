@@ -79,10 +79,10 @@ function WindowTabBar({
 
   return (
     <TabBar
-      autoHide
       className="border-b-0"
       closeTooltip="Close tab (Cmd+Shift+W)"
       items={items}
+      label="Window Tabs"
       newTabTooltip="New window tab (Cmd+N)"
       onClose={onCloseTab ? () => onCloseTab() : () => undefined}
       onNew={onNewTab ?? (() => undefined)}

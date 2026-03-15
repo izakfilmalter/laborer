@@ -38,7 +38,11 @@ import {
   getDesktopBridge,
 } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
-import { migrateToWindowLayout } from '@/panels/layout-migration'
+import {
+  convertPanelTree,
+  deriveLegacyTreeFromHierarchical,
+  migrateToWindowLayout,
+} from '@/panels/layout-migration'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import {
   closePane,
@@ -46,6 +50,7 @@ import {
   computeResize,
   computeTerminalPaneAssignment,
   ensureValidActivePaneId,
+  filterTreeByWorkspace,
   findLeafByTerminalId,
   findNewLeafAfterSplit,
   findNodeById,
@@ -122,6 +127,55 @@ const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
 
 /** Mutation atom for removing terminals via the terminal service's terminal.remove RPC. */
 const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
+
+/**
+ * Sync a legacy tree mutation to the hierarchical WindowLayout.
+ *
+ * After a pane-level mutation (split, close, assign terminal) updates the
+ * legacy flat `PanelNode` tree, this function mirrors the change into the
+ * hierarchical `WindowLayout` by:
+ * 1. Extracting the affected workspace's subtree from the mutated legacy tree
+ * 2. Converting it to a `PanelTreeNode`
+ * 3. Updating the active panel tab's `panelLayout` in the hierarchical tree
+ *
+ * @param windowLayout - The current hierarchical window layout (may be undefined during migration)
+ * @param legacyTree - The mutated legacy PanelNode tree
+ * @param workspaceId - The workspace whose panel tab should be updated
+ * @returns The updated WindowLayout, or undefined if no sync was possible
+ */
+function syncLegacyTreeToHierarchical(
+  windowLayout: WindowLayout | undefined,
+  legacyTree: PanelNode,
+  workspaceId: string | undefined
+): WindowLayout | undefined {
+  if (!(windowLayout && workspaceId)) {
+    return undefined
+  }
+
+  // Extract the workspace's subtree from the mutated legacy tree
+  const workspaceSubTree = filterTreeByWorkspace(legacyTree, workspaceId)
+  if (!workspaceSubTree) {
+    return undefined
+  }
+
+  // Convert to the new PanelTreeNode format
+  const newPanelLayout = convertPanelTree(workspaceSubTree)
+
+  // Update the active panel tab's layout in the hierarchical tree
+  return updateWorkspaceTileLeaf(windowLayout, workspaceId, (leaf) => {
+    const activeTabId = leaf.activePanelTabId
+    if (!activeTabId) {
+      return leaf
+    }
+    const updatedTabs = leaf.panelTabs.map((tab) => {
+      if (tab.id !== activeTabId) {
+        return tab
+      }
+      return { ...tab, panelLayout: newPanelLayout }
+    })
+    return { ...leaf, panelTabs: updatedTabs }
+  })
+}
 
 /**
  * Manages the panel layout state, providing split and close actions
@@ -209,9 +263,19 @@ export function usePanelLayout() {
     persistedWorkspaceOrder,
   ])
 
-  // Determine the effective layout: persisted layout takes priority,
-  // otherwise fall back to the auto-generated layout from terminals/workspaces.
-  const layout = persistedLayoutTree ?? defaultLayout
+  // Determine the effective layout. When a hierarchical window layout is
+  // available, derive the legacy flat tree from it so that hotkeys and other
+  // legacy consumers see pane IDs that match the rendered layout. Falls back
+  // to the persisted legacy tree or the auto-generated default layout.
+  const layout = useMemo(() => {
+    if (persistedWindowLayout) {
+      const derived = deriveLegacyTreeFromHierarchical(persistedWindowLayout)
+      if (derived) {
+        return derived
+      }
+    }
+    return persistedLayoutTree ?? defaultLayout
+  }, [persistedWindowLayout, persistedLayoutTree, defaultLayout])
 
   // Enforce the guaranteed active pane invariant: when a layout exists,
   // activePaneId must reference a valid leaf node. If it's null or stale
@@ -542,6 +606,11 @@ export function usePanelLayout() {
         return
       }
 
+      // Resolve the workspace for the pane being split (needed for hierarchical sync)
+      const sourceNode = findNodeById(base, paneId)
+      const splitWorkspaceId =
+        sourceNode?._tag === 'LeafNode' ? sourceNode.workspaceId : undefined
+
       const newTree = splitPane(base, paneId, direction, newPaneContent)
 
       // Find the newly created pane via leaf-diffing
@@ -559,6 +628,23 @@ export function usePanelLayout() {
           activePaneId: newActivePaneId,
         })
       )
+
+      // Sync the split to the hierarchical tree
+      const updatedWindowLayout = syncLegacyTreeToHierarchical(
+        persistedWindowLayout,
+        newTree,
+        splitWorkspaceId
+      )
+      if (updatedWindowLayout) {
+        store.commit(
+          windowLayoutRestored({
+            windowId: panelWindowId,
+            windowLayout: updatedWindowLayout,
+            activeWindowTabId: updatedWindowLayout.activeTabId ?? null,
+          })
+        )
+      }
+
       if (!newLeaf?.workspaceId) {
         return
       }
@@ -586,6 +672,7 @@ export function usePanelLayout() {
       defaultLayout,
       panelWindowId,
       persistedActivePaneId,
+      persistedWindowLayout,
       store,
       spawnTerminal,
     ]
@@ -597,6 +684,11 @@ export function usePanelLayout() {
       if (!base) {
         return
       }
+
+      // Resolve the workspace for the pane being closed (needed for hierarchical sync)
+      const closingNode = findNodeById(base, paneId)
+      const closeWorkspaceId =
+        closingNode?._tag === 'LeafNode' ? closingNode.workspaceId : undefined
 
       // Kill terminal processes associated with the pane being closed.
       // You shouldn't have running terminals that aren't in a pane.
@@ -632,6 +724,22 @@ export function usePanelLayout() {
             activePaneId: nextActivePaneId,
           })
         )
+
+        // Sync the close to the hierarchical tree
+        const updatedWindowLayout = syncLegacyTreeToHierarchical(
+          persistedWindowLayout,
+          newTree,
+          closeWorkspaceId
+        )
+        if (updatedWindowLayout) {
+          store.commit(
+            windowLayoutRestored({
+              windowId: panelWindowId,
+              windowLayout: updatedWindowLayout,
+              activeWindowTabId: updatedWindowLayout.activeTabId ?? null,
+            })
+          )
+        }
       } else {
         // All panes closed — remove the persisted layout so the
         // empty state renders and a new initial layout can seed.
@@ -660,6 +768,7 @@ export function usePanelLayout() {
       defaultLayout,
       panelWindowId,
       persistedActivePaneId,
+      persistedWindowLayout,
       store,
       removeTerminalOptimistically,
     ]
@@ -749,13 +858,30 @@ export function usePanelLayout() {
           activePaneId,
         })
       )
+
+      // Sync the mutation to the hierarchical tree
+      const updatedWindowLayout = syncLegacyTreeToHierarchical(
+        persistedWindowLayout,
+        layoutTree,
+        workspaceId
+      )
+      if (updatedWindowLayout) {
+        store.commit(
+          windowLayoutRestored({
+            windowId: panelWindowId,
+            windowLayout: updatedWindowLayout,
+            activeWindowTabId: updatedWindowLayout.activeTabId ?? null,
+          })
+        )
+      }
+
       if (triggerDevServer && isWorkspaceContainerized(workspaceId)) {
         autoOpenDevServerRef.current?.(activePaneId)?.catch((error) => {
           console.warn('[auto-open] dev server spawn failed:', error)
         })
       }
     },
-    [panelWindowId, store, isWorkspaceContainerized]
+    [panelWindowId, store, isWorkspaceContainerized, persistedWindowLayout]
   )
 
   const handleAssignTerminalToPane = useCallback(

@@ -48,6 +48,14 @@ const LifecyclePhase = {
 
 type LifecyclePhase = (typeof LifecyclePhase)[keyof typeof LifecyclePhase]
 
+/** All phases in order, used to open barriers up to a target phase. */
+const ALL_PHASES = [
+  LifecyclePhase.Starting,
+  LifecyclePhase.Ready,
+  LifecyclePhase.Restored,
+  LifecyclePhase.Eventually,
+] as const
+
 /**
  * A barrier that can be opened once. Waiting on an already-open barrier
  * resolves immediately. Inspired by VS Code's `Barrier` class.
@@ -131,13 +139,7 @@ function LifecyclePhaseProvider({
       }
 
       // Open barriers for all phases up to and including the target.
-      const allPhases = [
-        LifecyclePhase.Starting,
-        LifecyclePhase.Ready,
-        LifecyclePhase.Restored,
-        LifecyclePhase.Eventually,
-      ] as const
-      for (const p of allPhases) {
+      for (const p of ALL_PHASES) {
         if (p <= targetPhase) {
           barriersRef.current[p].open()
         }

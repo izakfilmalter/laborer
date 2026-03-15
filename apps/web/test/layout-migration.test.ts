@@ -672,10 +672,9 @@ describe('migrateToWindowLayout', () => {
       const oldTree = makeOldLeaf('leaf-1', { paneType: 'terminal' })
       const result = migrateToWindowLayout(oldTree, 'leaf-1', null)
 
+      // Leaves without a workspaceId are dropped during migration
       expect(result.tabs).toHaveLength(1)
-      const tile = result.tabs[0]?.workspaceLayout as WorkspaceTileLeaf
-      // workspaceId should be empty string for undefined workspaceId
-      expect(tile.workspaceId).toBe('')
+      expect(result.tabs[0]?.workspaceLayout).toBeUndefined()
     })
 
     it('handles nested splits within a single workspace', () => {

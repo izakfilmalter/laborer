@@ -1533,7 +1533,7 @@ function repairWorkspaceTileLeaf(
   if (typeof node.id !== 'string' || node.id === '') {
     return undefined
   }
-  if (typeof node.workspaceId !== 'string') {
+  if (typeof node.workspaceId !== 'string' || node.workspaceId === '') {
     return undefined
   }
 

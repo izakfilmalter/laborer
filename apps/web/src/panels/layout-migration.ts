@@ -323,9 +323,12 @@ function migrateToWindowLayout(
     workspaceOrder
   )
 
-  // Build workspace tile leaves
+  // Build workspace tile leaves (skip undefined/empty workspace IDs)
   const tileLeaves: WorkspaceTileLeaf[] = []
   for (const wsId of sortedWorkspaceIds) {
+    if (!wsId) {
+      continue
+    }
     const subTree = filterTreeByWorkspace(oldTree, wsId)
     if (!subTree) {
       continue
@@ -422,8 +425,10 @@ function deriveLegacyTreeFromHierarchical(
     return undefined
   }
 
-  // Collect all workspace tile leaves from the active window tab
-  const leaves = collectWorkspaceTileLeaves(activeTab.workspaceLayout)
+  // Collect all workspace tile leaves from the active window tab,
+  // skipping any with empty/missing workspaceId (invalid data)
+  const allLeaves = collectWorkspaceTileLeaves(activeTab.workspaceLayout)
+  const leaves = allLeaves.filter((l) => l.workspaceId !== '')
   if (leaves.length === 0) {
     return undefined
   }

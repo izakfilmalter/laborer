@@ -50,6 +50,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { Spinner } from '@/components/ui/spinner'
 import { useTerminalRouter } from '@/contexts/terminal-router-context'
+import { subscribeWindowResize } from '@/hooks/use-window-resize'
 import type { TerminalStatus } from '@/lib/terminal-session-router'
 import { isExactCtrlB, shouldBypassTerminal } from '@/panes/terminal-keys'
 
@@ -71,89 +72,53 @@ const terminalResizeMutation = TerminalServiceClient.mutation('terminal.resize')
 const PREFIX_MODE_TIMEOUT = 1500
 
 /**
- * NOTE: The previous RESIZE_DEBOUNCE_MS (100ms setTimeout) has been replaced
- * by requestAnimationFrame batching in the PTY-first resize handler.
- * RAF naturally coalesces rapid resize events into single frames (~16ms)
- * while the in-flight/pending coalescing ensures at most one RPC call
- * is active at a time. This provides better responsiveness than a fixed
- * 100ms debounce during panel drag operations.
+ * State for resize deduplication and RAF batching.
  */
-
-/**
- * State for the PTY-first resize coalescing logic.
- *
- * Tracks in-flight resize requests and deduplication dimensions so that
- * at most one RPC call is active at a time, and rapid resize events
- * during panel drag are collapsed into at most two resizes.
- */
-interface ResizeCoalesceState {
-  /** Whether a resize RPC is currently in-flight. */
-  inFlight: boolean
+interface ResizeState {
   /** Last cols sent to the backend (for deduplication). */
   lastCols: number
   /** Last rows sent to the backend (for deduplication). */
   lastRows: number
-  /** Whether another resize was requested while one was in-flight. */
-  pending: boolean
   /** ID of the pending requestAnimationFrame (for cancellation). */
   rafId: number | null
 }
 
 /**
- * Execute the PTY-first resize: proposeDimensions → RPC → terminal.resize.
+ * Execute a fit-first resize: fit terminal to container, then notify PTY.
  *
- * Calculates desired dimensions without applying them, sends to the backend
- * PTY via RPC (waits for confirmation), then resizes the frontend terminal
- * to match. This eliminates the race where shell output formatted for old
- * dimensions gets displayed in an already-resized frontend terminal.
+ * Fits the terminal to its container (calculating cols/rows from the
+ * container's dimensions), then sends the new dimensions to the backend
+ * PTY as a fire-and-forget RPC. The PTY sends SIGWINCH so the shell
+ * process can reflow its output.
  */
-async function executePtyFirstResize(
+function executeResize(
   fitAddon: FitAddon,
   terminal: Terminal,
   terminalId: string,
   resizeFn: (arg: {
     payload: { id: string; cols: number; rows: number }
-  }) => Promise<unknown>,
-  state: ResizeCoalesceState,
-  disposed: { current: boolean }
-): Promise<void> {
-  // Step 1: Calculate what size we want without applying it yet.
-  let proposed: { cols: number; rows: number } | undefined
+  }) => void,
+  state: ResizeState
+): void {
   try {
-    proposed = fitAddon.proposeDimensions()
+    fitAddon.fit()
   } catch {
     return
   }
-  if (!proposed || proposed.cols <= 0 || proposed.rows <= 0) {
+
+  const { cols, rows } = terminal
+  if (cols <= 0 || rows <= 0) {
     return
   }
 
-  const { cols, rows } = proposed
-
-  // Deduplicate — skip if dimensions haven't changed
   if (cols === state.lastCols && rows === state.lastRows) {
     return
   }
 
-  // Record the requested dimensions for deduplication
   state.lastCols = cols
   state.lastRows = rows
 
-  try {
-    // Step 2: Resize PTY first — wait for backend to confirm.
-    await resizeFn({ payload: { id: terminalId, cols, rows } })
-
-    if (disposed.current) {
-      return
-    }
-
-    // Step 3: Resize frontend to match the PTY exactly.
-    terminal.resize(cols, rows)
-  } catch {
-    // Allow future retries if the resize call failed.
-    state.lastCols = 0
-    state.lastRows = 0
-  }
+  resizeFn({ payload: { id: terminalId, cols, rows } })
 }
 
 interface TerminalPaneProps {
@@ -187,15 +152,13 @@ interface TerminalPaneProps {
  * terminal process exits, keyboard input is disabled. When the terminal
  * is restarted, the buffer is cleared.
  *
- * PTY-first resize flow:
+ * Resize flow:
  * When the container is resized (by panel splits, window resize, etc.),
- * the fit addon's `proposeDimensions()` calculates desired cols/rows
- * WITHOUT applying them. The new dimensions are sent to the backend PTY
- * via RPC, and only after the backend confirms does the frontend terminal
- * resize to match. This prevents output clobbering where shell output
- * formatted for old dimensions gets displayed in an already-resized
- * frontend terminal. Rapid resize events during panel drag are coalesced
- * (one in-flight RPC at a time, pending flag for the next).
+ * `fitAddon.fit()` calculates cols/rows from the container dimensions
+ * and resizes the terminal canvas in one step. The new dimensions are
+ * then sent to the backend PTY as a fire-and-forget RPC (no awaiting).
+ * The PTY sends SIGWINCH so the shell process can reflow its output.
+ * Rapid resize events are coalesced via requestAnimationFrame.
  */
 function TerminalPane({
   terminalId,
@@ -203,13 +166,19 @@ function TerminalPane({
   onTitleChange,
 }: TerminalPaneProps) {
   const router = useTerminalRouter()
-  const resizeTerminal = useAtomSet(terminalResizeMutation, {
-    mode: 'promise',
-  })
+  const resizeTerminal = useAtomSet(terminalResizeMutation)
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const cleanupRef = useRef<(() => void) | null>(null)
+
+  /**
+   * Ref to hold the resize handler so it can be called from the terminal
+   * setup effect after initialization completes. The resize observer
+   * effect creates the handler and stores it here; the setup effect
+   * calls it after fit() to ensure the initial dimensions are sent.
+   */
+  const handleResizeRef = useRef<(() => void) | null>(null)
 
   /**
    * Ref to hold the latest resizeTerminal function so the ResizeObserver
@@ -582,6 +551,12 @@ function TerminalPane({
         }
       )
 
+      // Trigger an initial resize now that refs are populated. The
+      // ResizeObserver's initial observation already fired (and was
+      // skipped because refs were null at that point), so we need
+      // this explicit call to sync dimensions.
+      handleResizeRef.current?.()
+
       // Store cleanup function for disposal
       cleanupRef.current = () => {
         onDataDisposable.dispose()
@@ -609,25 +584,21 @@ function TerminalPane({
   }, [terminalId])
 
   /**
-   * PTY-first resize with coalescing.
+   * Resize handler — fit terminal then notify backend (fire-and-forget).
    *
-   * Observes the container for size changes and implements a three-step
-   * resize flow that prevents output clobbering:
+   * Two resize sources feed the same handler:
+   * 1. A `ResizeObserver` on the container div — panel splits, drags
+   * 2. The module-level `subscribeWindowResize` signal — window resize
    *
-   * 1. `proposeDimensions()` — calculate desired cols/rows WITHOUT
-   *    applying them to the terminal (read-only measurement)
-   * 2. `await resizeTerminal()` — send dimensions to backend PTY via RPC
-   *    and wait for confirmation (PTY sends SIGWINCH to the process)
-   * 3. `terminal.resize(cols, rows)` — apply the confirmed dimensions
-   *    to the frontend terminal
+   * The handler reads `fitAddonRef` and `terminalRef` on each invocation.
+   * If the terminal hasn't finished async init yet, it returns early.
+   * Once the setup effect completes, it calls `handleResizeRef.current()`
+   * to trigger the first resize explicitly.
    *
-   * Coalescing ensures at most one RPC call is in-flight at a time.
-   * If a resize event arrives while one is in-flight, it sets a pending
-   * flag. When the in-flight resize completes, the pending resize is
-   * processed with fresh `proposeDimensions()` (not stale captured values).
-   *
-   * The initial fit on mount uses `fit()` directly (acceptable since
-   * there is no PTY output race at initialization time).
+   * Uses RAF to batch rapid events. No async, no in-flight tracking —
+   * just fit + fire-and-forget RPC, matching the pre-migration xterm.js
+   * approach. The previous PTY-first async flow caused deadlocks when
+   * the RPC promise hung (e.g. during server reconnects).
    */
   useEffect(() => {
     const container = containerRef.current
@@ -635,30 +606,15 @@ function TerminalPane({
       return
     }
 
-    const state: ResizeCoalesceState = {
-      inFlight: false,
+    const state: ResizeState = {
       lastCols: 0,
       lastRows: 0,
-      pending: false,
       rafId: null,
     }
-    const disposed = { current: false }
+    let disposed = false
 
-    /**
-     * Coalescing resize handler.
-     *
-     * If a resize is already in-flight, sets a pending flag instead of
-     * starting a new one. Uses requestAnimationFrame to batch rapid
-     * resize events (e.g., during panel drag) into a single frame.
-     */
     const handleResize = () => {
-      if (disposed.current) {
-        return
-      }
-
-      // If a resize is already in flight, mark that we need another one
-      if (state.inFlight) {
-        state.pending = true
+      if (disposed) {
         return
       }
 
@@ -668,44 +624,52 @@ function TerminalPane({
         return
       }
 
-      state.inFlight = true
-      state.pending = false
-
-      // Use RAF to batch rapid resize events
+      // Cancel any pending RAF to coalesce rapid events
       if (state.rafId !== null) {
         cancelAnimationFrame(state.rafId)
       }
 
       state.rafId = requestAnimationFrame(() => {
         state.rafId = null
+        if (disposed) {
+          return
+        }
 
-        executePtyFirstResize(
-          fitAddon,
-          terminal,
+        const fitAddonNow = fitAddonRef.current
+        const terminalNow = terminalRef.current
+        if (!(fitAddonNow && terminalNow)) {
+          return
+        }
+
+        executeResize(
+          fitAddonNow,
+          terminalNow,
           terminalId,
           resizeTerminalRef.current,
-          state,
-          disposed
-        ).finally(() => {
-          state.inFlight = false
-          // If another resize was requested while we were busy, handle it.
-          // This re-calls proposeDimensions() for fresh dimensions.
-          if (state.pending && !disposed.current) {
-            handleResize()
-          }
-        })
+          state
+        )
       })
     }
 
+    // Store the handler so the terminal setup effect can trigger
+    // an initial resize after the terminal is created.
+    handleResizeRef.current = handleResize
+
+    // Observe container for panel resizes (splits, drags)
     const resizeObserver = new ResizeObserver(handleResize)
     resizeObserver.observe(container)
 
+    // Subscribe to the module-level window resize signal.
+    const unsubWindow = subscribeWindowResize(handleResize)
+
     return () => {
-      disposed.current = true
+      disposed = true
+      handleResizeRef.current = null
       if (state.rafId !== null) {
         cancelAnimationFrame(state.rafId)
       }
       resizeObserver.disconnect()
+      unsubWindow()
     }
   }, [terminalId])
 
@@ -714,8 +678,11 @@ function TerminalPane({
       className="relative h-full w-full overflow-hidden"
       data-terminal-id={terminalId}
     >
-      {/* ghostty-web terminal container */}
-      <div className="h-full w-full" ref={containerRef} />
+      {/* ghostty-web terminal container — uses the same layout structure
+          as the Mux reference: flex column parent with flex:1 + min-h-0
+          child. The overflow:hidden prevents the canvas from pushing the
+          container larger than the available space. */}
+      <div className="h-full w-full overflow-hidden" ref={containerRef} />
 
       {/* Loading overlay (Issue #122) — shown while the PTY is spawning
 			    and no output has arrived yet. Covers the blank terminal canvas

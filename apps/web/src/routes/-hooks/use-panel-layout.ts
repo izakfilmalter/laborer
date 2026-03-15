@@ -1507,14 +1507,36 @@ export function usePanelLayout() {
       if (!persistedWindowLayout) {
         return
       }
+      let newPaneId: string | undefined
       const newLayout = updateWorkspaceTileLeaf(
         persistedWindowLayout,
         workspaceId,
-        (leaf) => addPanelTab(leaf, panelType)
+        (leaf) => {
+          const updated = addPanelTab(leaf, panelType)
+          // The newly added tab is always the last one and is set as active
+          const newTab = updated.panelTabs.at(-1)
+          if (newTab?.panelLayout._tag === 'PanelLeafNode') {
+            newPaneId = newTab.panelLayout.id
+          }
+          return updated
+        }
       )
       commitPanelTabLayout(panelTabCreated, newLayout)
+
+      // Auto-spawn a terminal for terminal-type panel tabs, mirroring
+      // the split-pane behaviour at handleSplitPane.
+      if (panelType === 'terminal' && newPaneId) {
+        const paneId = newPaneId
+        spawnTerminal({ payload: { workspaceId } })
+          .then((result) => {
+            assignTerminalToPaneRef.current?.(result.id, workspaceId, paneId)
+          })
+          .catch((error) => {
+            console.warn('[add-panel-tab] auto-spawn failed:', error)
+          })
+      }
     },
-    [persistedWindowLayout, commitPanelTabLayout]
+    [persistedWindowLayout, commitPanelTabLayout, spawnTerminal]
   )
 
   const handleRemovePanelTab = useCallback(

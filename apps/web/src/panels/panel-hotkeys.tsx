@@ -46,7 +46,7 @@
 
 import type { LeafNode, PanelNode } from '@laborer/shared/types'
 import { useHotkeySequence } from '@tanstack/react-hotkeys'
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useWorkspaceSyncActions } from '@/hooks/use-workspace-sync-actions'
 import { getDesktopBridge } from '@/lib/desktop'
 import type { NavigationDirection } from '@/panels/layout-utils'
@@ -171,7 +171,7 @@ function PanelHotkeys({
    * 4. Last workspace in window tab → close the window tab
    * 5. Last window tab → show close-app dialog
    */
-  const executeProgressiveClose = () => {
+  const executeProgressiveClose = useCallback(() => {
     if (!actions) {
       onMetaWWithoutPane?.()
       return
@@ -202,7 +202,7 @@ function PanelHotkeys({
       default:
         break
     }
-  }
+  }, [actions, activePaneId, activeWorkspaceId, onMetaWWithoutPane])
 
   // Listen for the Electron menu's 'close-pane' IPC action (Cmd+W on macOS).
   // The Electron menu dispatches this instead of using role:close, so
@@ -221,7 +221,7 @@ function PanelHotkeys({
     })
   }, [executeProgressiveClose])
 
-  const triggerPushWorkspace = () => {
+  const triggerPushWorkspace = useCallback(() => {
     if (!activeWorkspaceId) {
       return
     }
@@ -229,9 +229,9 @@ function PanelHotkeys({
     pushWorkspace(activeWorkspaceId).catch(() => {
       // Error state is already surfaced via toast in the shared action hook.
     })
-  }
+  }, [activeWorkspaceId, pushWorkspace])
 
-  const triggerPullWorkspace = () => {
+  const triggerPullWorkspace = useCallback(() => {
     if (!activeWorkspaceId) {
       return
     }
@@ -239,7 +239,7 @@ function PanelHotkeys({
     pullWorkspace(activeWorkspaceId).catch(() => {
       // Error state is already surfaced via toast in the shared action hook.
     })
-  }
+  }, [activeWorkspaceId, pullWorkspace])
 
   useEffect(() => {
     const bridge = getDesktopBridge()

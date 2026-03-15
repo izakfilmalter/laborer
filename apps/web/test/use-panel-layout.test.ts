@@ -844,14 +844,14 @@ describe('usePanelLayout', () => {
     terminalListRef.current = { isLoading: false, terminals: [] }
 
     let spawnCount = 0
-    spawnTerminalMock.mockImplementation(async () => {
+    spawnTerminalMock.mockImplementation(() => {
       spawnCount++
-      return {
+      return Promise.resolve({
         id: `term-new-${spawnCount}`,
         command: '/bin/zsh',
         status: 'running' as const,
         workspaceId: `workspace-${spawnCount === 1 ? 'a' : 'b'}`,
-      }
+      })
     })
 
     const { rerender } = renderHook(() => usePanelLayout())

@@ -45,6 +45,75 @@ const isExactCtrlB = (event: KeyboardEvent): boolean =>
   !event.altKey &&
   !event.metaKey
 
+/** Cmd+N — new window tab. */
+const isMetaN = (event: KeyboardEvent): boolean =>
+  event.key === 'n' &&
+  event.metaKey &&
+  !event.ctrlKey &&
+  !event.shiftKey &&
+  !event.altKey
+
+/** Cmd+Shift+W — close window tab. */
+const isMetaShiftW = (event: KeyboardEvent): boolean =>
+  event.key === 'W' &&
+  event.metaKey &&
+  event.shiftKey &&
+  !event.ctrlKey &&
+  !event.altKey
+
+/** Cmd+1 through Cmd+9 — switch window tab by index. */
+const isMetaDigit = (event: KeyboardEvent): boolean =>
+  event.metaKey &&
+  !event.ctrlKey &&
+  !event.shiftKey &&
+  !event.altKey &&
+  event.key >= '1' &&
+  event.key <= '9'
+
+/** Cmd+Shift+[ or Cmd+Shift+] — cycle window tabs. */
+const isMetaShiftBracket = (event: KeyboardEvent): boolean =>
+  event.metaKey &&
+  event.shiftKey &&
+  !event.ctrlKey &&
+  !event.altKey &&
+  (event.code === 'BracketLeft' || event.code === 'BracketRight')
+
+/** Ctrl+T — new panel tab. */
+const isCtrlT = (event: KeyboardEvent): boolean =>
+  event.key === 't' &&
+  event.ctrlKey &&
+  !event.metaKey &&
+  !event.shiftKey &&
+  !event.altKey
+
+/** Ctrl+1 through Ctrl+9 — switch panel tab by index. */
+const isCtrlDigit = (event: KeyboardEvent): boolean =>
+  event.ctrlKey &&
+  !event.metaKey &&
+  !event.shiftKey &&
+  !event.altKey &&
+  event.key >= '1' &&
+  event.key <= '9'
+
+/** Ctrl+Shift+[ or Ctrl+Shift+] — cycle panel tabs. */
+const isCtrlShiftBracket = (event: KeyboardEvent): boolean =>
+  event.ctrlKey &&
+  event.shiftKey &&
+  !event.metaKey &&
+  !event.altKey &&
+  (event.code === 'BracketLeft' || event.code === 'BracketRight')
+
+/** Cmd+Option+Arrow — directional pane navigation (cmux-style). */
+const isMetaAltArrow = (event: KeyboardEvent): boolean =>
+  event.metaKey &&
+  event.altKey &&
+  !event.ctrlKey &&
+  !event.shiftKey &&
+  (event.key === 'ArrowLeft' ||
+    event.key === 'ArrowRight' ||
+    event.key === 'ArrowUp' ||
+    event.key === 'ArrowDown')
+
 /**
  * Check if a keyboard event should bypass ghostty-web and bubble to
  * the global hotkey layer (TanStack Hotkeys on document).
@@ -58,6 +127,23 @@ const isExactCtrlB = (event: KeyboardEvent): boolean =>
  * the tmux-style prefix key sequence.
  */
 const shouldBypassTerminal = (event: KeyboardEvent): boolean =>
-  event.metaKey || isExactCtrlB(event)
+  event.metaKey ||
+  isExactCtrlB(event) ||
+  isCtrlT(event) ||
+  isCtrlDigit(event) ||
+  isCtrlShiftBracket(event)
 
-export { isExactCtrlB, isExactMetaW, isMetaShiftEnter, shouldBypassTerminal }
+export {
+  isCtrlDigit,
+  isCtrlShiftBracket,
+  isCtrlT,
+  isExactCtrlB,
+  isExactMetaW,
+  isMetaAltArrow,
+  isMetaDigit,
+  isMetaN,
+  isMetaShiftBracket,
+  isMetaShiftEnter,
+  isMetaShiftW,
+  shouldBypassTerminal,
+}

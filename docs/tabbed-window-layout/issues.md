@@ -6,7 +6,7 @@ Parent PRD: [PRD.md](./PRD.md)
 
 ## 1. Hierarchical layout types
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -43,7 +43,7 @@ Foundation for all user stories. No user stories directly demoable.
 
 ## 2. Layout-utils: window tab operations
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -84,7 +84,7 @@ All functions are pure: input `WindowLayout`, output new `WindowLayout`.
 
 ## 3. Layout-utils: workspace tile operations
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -121,7 +121,7 @@ These follow the same patterns as the existing `splitPane`/`closePane` but opera
 
 ## 4. Layout-utils: panel tab operations
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -160,7 +160,7 @@ Panel tabs contain a `PanelNode` split tree (the existing type), so existing spl
 
 ## 5. Schema + LiveStore events for new layout model
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -194,7 +194,7 @@ Foundation for persistence. No user stories directly demoable.
 
 ## 6. Layout migration: flat PanelNode to hierarchical WindowLayout
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -235,7 +235,7 @@ Implement the migration path that converts persisted old-format layouts to the n
 
 ## 7. Tab bar component
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -276,7 +276,7 @@ None — can start immediately (purely presentational, no data model dependency)
 
 ## 8. Window tab bar integration
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -320,7 +320,7 @@ Wire the `TabBar` component into the main work area for window-level tabs. Place
 
 ## 9. Workspace bidirectional tiling UI
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -355,7 +355,7 @@ Update `workspace-frames.tsx` to render workspaces using the new `WorkspaceTileN
 
 ## 10. Panel tab bar integration
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -398,7 +398,7 @@ Wire the shared `TabBar` component into each `WorkspaceFrame` for workspace-leve
 
 ## 11. Panel type picker component
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -443,7 +443,7 @@ None — can start immediately (purely presentational).
 
 ## 12. Promote diff to first-class panel type
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -480,7 +480,7 @@ Make diff a standalone panel type that can be opened in any panel tab or split, 
 
 ## 13. Promote review to first-class panel type
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -513,7 +513,7 @@ Make review a standalone panel type, same pattern as diff promotion:
 
 ## 14. Promote dev server terminal to first-class panel type
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -548,7 +548,7 @@ Make dev server terminal a standalone panel type:
 
 ## 15. Wire panel type picker into split + new tab flows
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -591,7 +591,7 @@ The picker appears as a small popover anchored to the active pane (for splits) o
 
 ## 16. cmux-style keybindings: pane navigation + zoom
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -633,7 +633,7 @@ The existing `Ctrl+B, Arrow` navigation continues to work as fallback.
 
 ## 17. Progressive Cmd+W close logic
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -677,7 +677,7 @@ Close confirmation dialogs must work at each level: if closing a tab/workspace/w
 
 ## 18. Empty state: window tab with workspace picker
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -713,7 +713,7 @@ The workspace picker filters out workspaces already open in other tabs (workspac
 
 ## 19. Empty state: workspace and panel tab
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -749,7 +749,7 @@ Both states should be visually consistent with the window tab empty state.
 
 ## 20. Sidebar navigation to terminal across tabs
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -788,7 +788,7 @@ Also update the sidebar highlight: the workspace entry corresponding to the curr
 
 ## 21. Session persistence for hierarchical layout
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -826,7 +826,7 @@ Update the session persistence layer to serialize and deserialize the new hierar
 
 ## 22. Workspace uniqueness enforcement
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -859,7 +859,7 @@ Enforce the constraint that a workspace can only be open in one window tab at a 
 
 ## 23. Tab drag-and-drop reordering
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -892,7 +892,7 @@ Enable drag-and-drop reordering for both window tabs and panel tabs using `@atla
 
 ## 24. Polish: tab bar animations and transitions
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -923,7 +923,7 @@ Add smooth animations for tab bar appearance/disappearance:
 
 ## 25. Polish: focus consistency
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -958,7 +958,7 @@ Audit and fix focus behavior across all layout operations:
 
 ## 26. Polish: visual indicators and keyboard discoverability
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -994,7 +994,7 @@ Visual refinements:
 
 ## 27. Polish: tab overflow and performance
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1026,7 +1026,7 @@ Handle edge cases for many tabs and ensure performance:
 
 ## 28. Polish: close confirmation and error handling
 
-**Status:** pending
+**Status:** done
 
 ### What to build
 
@@ -1061,31 +1061,31 @@ Ensure close confirmation and error handling work at all hierarchy levels:
 
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
-| 1 | Hierarchical layout types | None | pending |
-| 2 | Layout-utils: window tab operations | 1 | pending |
-| 3 | Layout-utils: workspace tile operations | 1 | pending |
-| 4 | Layout-utils: panel tab operations | 1 | pending |
-| 5 | Schema + LiveStore events for new layout model | 1 | pending |
-| 6 | Layout migration: flat PanelNode to hierarchical WindowLayout | 1, 2, 5 | pending |
-| 7 | Tab bar component | None | pending |
-| 8 | Window tab bar integration | 7, 2, 5 | pending |
-| 9 | Workspace bidirectional tiling UI | 3, 5, 6 | pending |
-| 10 | Panel tab bar integration | 7, 4, 9 | pending |
-| 11 | Panel type picker component | None | pending |
-| 12 | Promote diff to first-class panel type | 11, 10 | pending |
-| 13 | Promote review to first-class panel type | 11, 10 | pending |
-| 14 | Promote dev server terminal to first-class panel type | 11, 10 | pending |
-| 15 | Wire panel type picker into split + new tab flows | 11, 12, 13, 14 | pending |
-| 16 | cmux-style keybindings: pane navigation + zoom | 8, 10 | pending |
-| 17 | Progressive Cmd+W close logic | 8, 10 | pending |
-| 18 | Empty state: window tab with workspace picker | 8 | pending |
-| 19 | Empty state: workspace and panel tab | 10, 11 | pending |
-| 20 | Sidebar navigation to terminal across tabs | 2, 8, 10 | pending |
-| 21 | Session persistence for hierarchical layout | 6, 8, 10 | pending |
-| 22 | Workspace uniqueness enforcement | 21 | pending |
-| 23 | Tab drag-and-drop reordering | 8, 10 | pending |
-| 24 | Polish: tab bar animations and transitions | 7 | pending |
-| 25 | Polish: focus consistency | 8, 10 | pending |
-| 26 | Polish: visual indicators and keyboard discoverability | 8, 10 | pending |
-| 27 | Polish: tab overflow and performance | 8, 10 | pending |
-| 28 | Polish: close confirmation and error handling | 17, 21 | pending |
+| 1 | Hierarchical layout types | None | done |
+| 2 | Layout-utils: window tab operations | 1 | done |
+| 3 | Layout-utils: workspace tile operations | 1 | done |
+| 4 | Layout-utils: panel tab operations | 1 | done |
+| 5 | Schema + LiveStore events for new layout model | 1 | done |
+| 6 | Layout migration: flat PanelNode to hierarchical WindowLayout | 1, 2, 5 | done |
+| 7 | Tab bar component | None | done |
+| 8 | Window tab bar integration | 7, 2, 5 | done |
+| 9 | Workspace bidirectional tiling UI | 3, 5, 6 | done |
+| 10 | Panel tab bar integration | 7, 4, 9 | done |
+| 11 | Panel type picker component | None | done |
+| 12 | Promote diff to first-class panel type | 11, 10 | done |
+| 13 | Promote review to first-class panel type | 11, 10 | done |
+| 14 | Promote dev server terminal to first-class panel type | 11, 10 | done |
+| 15 | Wire panel type picker into split + new tab flows | 11, 12, 13, 14 | done |
+| 16 | cmux-style keybindings: pane navigation + zoom | 8, 10 | done |
+| 17 | Progressive Cmd+W close logic | 8, 10 | done |
+| 18 | Empty state: window tab with workspace picker | 8 | done |
+| 19 | Empty state: workspace and panel tab | 10, 11 | done |
+| 20 | Sidebar navigation to terminal across tabs | 2, 8, 10 | done |
+| 21 | Session persistence for hierarchical layout | 6, 8, 10 | done |
+| 22 | Workspace uniqueness enforcement | 21 | done |
+| 23 | Tab drag-and-drop reordering | 8, 10 | done |
+| 24 | Polish: tab bar animations and transitions | 7 | done |
+| 25 | Polish: focus consistency | 8, 10 | done |
+| 26 | Polish: visual indicators and keyboard discoverability | 8, 10 | done |
+| 27 | Polish: tab overflow and performance | 8, 10 | done |
+| 28 | Polish: close confirmation and error handling | 17, 21 | done |

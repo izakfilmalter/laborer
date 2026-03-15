@@ -113,6 +113,7 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
       whenReady: () => Promise.resolve(),
       on: appOn,
       quit: vi.fn(),
+      setAsDefaultProtocolClient: vi.fn(),
     },
     BrowserWindow,
   }))

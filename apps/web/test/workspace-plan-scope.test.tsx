@@ -108,6 +108,7 @@ vi.mock('@/lib/toast', () => ({
 }))
 
 vi.mock('@/panels/panel-context', () => ({
+  useActiveWorkspaceId: () => null,
   usePanelActions: () => ({
     closeWorkspace: closeWorkspaceMock,
     forceCloseWorkspace: closeWorkspaceMock,

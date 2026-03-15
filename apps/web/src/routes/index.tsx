@@ -1,5 +1,6 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { projects, workspaces } from '@laborer/shared/schema'
+import type { LeafNode, PaneType } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -39,11 +40,21 @@ import {
 import {
   PanelActionsProvider,
   type PendingCloseState,
+  type PendingPickerState,
+  type PickerMode,
 } from '@/panels/panel-context'
 import { PanelGroupRegistryProvider } from '@/panels/panel-group-registry'
 import { PanelHotkeys } from '@/panels/panel-hotkeys'
 import {
+  getActiveWindowTab,
+  getWorkspaceTileLeaves,
+  shouldConfirmClosePanelTab,
+  shouldConfirmCloseWindowTab,
+} from '@/panels/window-tab-utils'
+import {
   CloseAppDialog,
+  ClosePanelTabDialog,
+  CloseWindowTabDialog,
   CloseWorkspaceDialog,
   DestroyWorkspaceOnCloseDialog,
 } from './-components/close-dialogs'
@@ -91,6 +102,33 @@ function HomeComponent() {
     liveTerminals,
     workspaceOrder,
   } = usePanelLayout()
+
+  // Derive the active workspace ID from the active pane for sidebar highlighting.
+  const activeWorkspaceId = useMemo(() => {
+    if (!(activePaneId && layout)) {
+      return null
+    }
+    const node = findNodeById(layout, activePaneId)
+    return node?._tag === 'LeafNode' ? (node.workspaceId ?? null) : null
+  }, [activePaneId, layout])
+
+  // Extract the active window tab's workspace tile layout for bidirectional tiling.
+  // When available, WorkspaceFrames uses this for hierarchical rendering instead
+  // of extracting workspaces from the flat PanelNode tree.
+  const activeWindowTab = useMemo(() => {
+    const windowLayout = panelActions.windowLayout
+    if (!windowLayout) {
+      return undefined
+    }
+    return getActiveWindowTab(windowLayout)
+  }, [panelActions.windowLayout])
+
+  const workspaceTileLayout = activeWindowTab?.workspaceLayout
+
+  // Detect when the active window tab exists but has no workspaces.
+  // This triggers the empty window tab state (workspace picker).
+  const isEmptyWindowTab = activeWindowTab !== undefined && !workspaceTileLayout
+
   const store = useLaborerStore()
   const projectList = store.useQuery(sidebarProjects$)
   const workspaceList = store.useQuery(sidebarWorkspaces$)
@@ -173,32 +211,26 @@ function HomeComponent() {
     null
   )
 
-  // Auto-close review panel when the workspace no longer exists in the layout
-  // (e.g., if the workspace was closed while the review panel was open).
+  // Auto-close review/diff panels when the workspace no longer exists
+  // in the layout (e.g., if the workspace was closed while a side panel was open).
   useEffect(() => {
-    if (reviewPaneWorkspaceId && layout) {
-      const leaves = getLeafNodes(layout)
-      const workspaceExists = leaves.some(
-        (l) => l.workspaceId === reviewPaneWorkspaceId
-      )
-      if (!workspaceExists) {
+    if (!((reviewPaneWorkspaceId || diffPaneWorkspaceId) && layout)) {
+      return
+    }
+    const leaves = getLeafNodes(layout)
+    if (reviewPaneWorkspaceId) {
+      const exists = leaves.some((l) => l.workspaceId === reviewPaneWorkspaceId)
+      if (!exists) {
         setReviewPaneWorkspaceId(null)
       }
     }
-  }, [reviewPaneWorkspaceId, layout])
-
-  // Auto-close diff panel when the workspace no longer exists in the layout.
-  useEffect(() => {
-    if (diffPaneWorkspaceId && layout) {
-      const leaves = getLeafNodes(layout)
-      const workspaceExists = leaves.some(
-        (l) => l.workspaceId === diffPaneWorkspaceId
-      )
-      if (!workspaceExists) {
+    if (diffPaneWorkspaceId) {
+      const exists = leaves.some((l) => l.workspaceId === diffPaneWorkspaceId)
+      if (!exists) {
         setDiffPaneWorkspaceId(null)
       }
     }
-  }, [diffPaneWorkspaceId, layout])
+  }, [reviewPaneWorkspaceId, diffPaneWorkspaceId, layout])
 
   /**
    * Toggle the full-height review panel for the workspace of the given pane.
@@ -482,6 +514,145 @@ function HomeComponent() {
     }
   }, [panelActions])
 
+  // Close-panel-tab confirmation dialog state — shown when the progressive
+  // close chain attempts to close a panel tab that has running processes.
+  const [closePanelTabDialogOpen, setClosePanelTabDialogOpen] = useState(false)
+  const pendingClosePanelTabRef = useRef<{
+    workspaceId: string
+    tabId: string
+  } | null>(null)
+
+  /**
+   * Gated removePanelTab that checks if any terminal in the panel tab has
+   * a running child process. Shows a confirmation dialog when there are
+   * active processes.
+   */
+  const gatedRemovePanelTab = useCallback(
+    (workspaceId: string, tabId: string) => {
+      const windowLayout = panelActions.windowLayout
+      if (!windowLayout) {
+        panelActions.removePanelTab?.(workspaceId, tabId)
+        return
+      }
+      // Find the workspace tile leaf and panel tab
+      const activeTab = getActiveWindowTab(windowLayout)
+      if (!activeTab?.workspaceLayout) {
+        panelActions.removePanelTab?.(workspaceId, tabId)
+        return
+      }
+      const leaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+      const leaf = leaves.find((l) => l.workspaceId === workspaceId)
+      const panelTab = leaf?.panelTabs.find((t) => t.id === tabId)
+      if (panelTab && shouldConfirmClosePanelTab(panelTab, liveTerminals)) {
+        pendingClosePanelTabRef.current = { workspaceId, tabId }
+        setClosePanelTabDialogOpen(true)
+        return
+      }
+      panelActions.removePanelTab?.(workspaceId, tabId)
+    },
+    [panelActions, liveTerminals]
+  )
+
+  const handleConfirmClosePanelTab = useCallback(() => {
+    const pending = pendingClosePanelTabRef.current
+    if (pending) {
+      panelActions.removePanelTab?.(pending.workspaceId, pending.tabId)
+      pendingClosePanelTabRef.current = null
+    }
+  }, [panelActions])
+
+  // Close-window-tab confirmation dialog state — shown when closing a
+  // window tab that has terminals with running processes.
+  const [closeWindowTabDialogOpen, setCloseWindowTabDialogOpen] =
+    useState(false)
+
+  /**
+   * Gated closeWindowTab that checks if any terminal across all workspaces
+   * in the window tab has a running child process.
+   */
+  const gatedCloseWindowTab = useCallback(() => {
+    const windowLayout = panelActions.windowLayout
+    if (!windowLayout) {
+      panelActions.closeWindowTab?.()
+      return
+    }
+    const activeTab = getActiveWindowTab(windowLayout)
+    if (activeTab && shouldConfirmCloseWindowTab(activeTab, liveTerminals)) {
+      setCloseWindowTabDialogOpen(true)
+      return
+    }
+    panelActions.closeWindowTab?.()
+  }, [panelActions, liveTerminals])
+
+  const handleConfirmCloseWindowTab = useCallback(() => {
+    panelActions.closeWindowTab?.()
+  }, [panelActions])
+
+  // Panel type picker state — when set, shows the picker overlay on the
+  // specified pane. On type selection, the pending action (split/new tab)
+  // is performed. Follows the same pattern as pendingClosePaneId.
+  const [pickerMode, setPickerMode] = useState<PickerMode | null>(null)
+
+  /**
+   * Show the panel type picker. When a type is selected, the corresponding
+   * split or new-tab action is performed and the picker is dismissed.
+   */
+  const showPanelTypePicker = useCallback((mode: PickerMode) => {
+    setPickerMode(mode)
+  }, [])
+
+  const handlePickerSelect = useCallback(
+    (type: PaneType) => {
+      if (!pickerMode) {
+        return
+      }
+      if (pickerMode.kind === 'split-right') {
+        panelActions.splitPane(pickerMode.paneId, 'horizontal', {
+          paneType: type,
+          workspaceId: pickerMode.workspaceId,
+        } as Partial<LeafNode>)
+      } else if (pickerMode.kind === 'split-down') {
+        panelActions.splitPane(pickerMode.paneId, 'vertical', {
+          paneType: type,
+          workspaceId: pickerMode.workspaceId,
+        } as Partial<LeafNode>)
+      } else if (pickerMode.kind === 'new-tab') {
+        panelActions.addPanelTab?.(pickerMode.workspaceId, type)
+      }
+      setPickerMode(null)
+    },
+    [pickerMode, panelActions]
+  )
+
+  const handlePickerCancel = useCallback(() => {
+    setPickerMode(null)
+  }, [])
+
+  /**
+   * The pane ID to show the picker on. For split actions, it's the pane
+   * being split. For new-tab, it's the workspace's active pane (if any).
+   */
+  const pickerPaneId = useMemo(() => {
+    if (!pickerMode) {
+      return null
+    }
+    if (pickerMode.kind === 'new-tab') {
+      // For new-tab, show picker on the workspace's currently active pane
+      return activePaneId
+    }
+    return pickerMode.paneId
+  }, [pickerMode, activePaneId])
+
+  /** Context value for the panel type picker overlay. */
+  const pendingPickerState: PendingPickerState = useMemo(
+    () => ({
+      paneId: pickerPaneId,
+      onSelect: handlePickerSelect,
+      onCancel: handlePickerCancel,
+    }),
+    [pickerPaneId, handlePickerSelect, handlePickerCancel]
+  )
+
   // Override panelActions.closePane with the gated version and add fullscreen toggle.
   // forceCloseWorkspace bypasses the confirmation gate — used by workspace
   // destruction which has its own confirmation dialog.
@@ -493,19 +664,25 @@ function HomeComponent() {
       closePane: gatedClosePane,
       closeTerminalPane: gatedCloseTerminalPane,
       closeWorkspace: gatedCloseWorkspace,
+      closeWindowTab: gatedCloseWindowTab,
+      removePanelTab: gatedRemovePanelTab,
       forceCloseWorkspace: panelActions.closeWorkspace,
       toggleFullscreenPane,
       toggleReviewPane,
       toggleDiffPane,
+      showPanelTypePicker,
     }),
     [
       panelActions,
       gatedClosePane,
       gatedCloseTerminalPane,
       gatedCloseWorkspace,
+      gatedCloseWindowTab,
+      gatedRemovePanelTab,
       toggleFullscreenPane,
       toggleReviewPane,
       toggleDiffPane,
+      showPanelTypePicker,
     ]
   )
 
@@ -649,14 +826,26 @@ function HomeComponent() {
     <DiffScrollProvider>
       <PanelActionsProvider
         activePaneId={activePaneId}
+        activeWorkspaceId={activeWorkspaceId}
         fullscreenPaneId={fullscreenPaneId}
         pendingClose={pendingCloseState}
+        pendingPicker={pendingPickerState}
         value={gatedPanelActions}
       >
         <CloseWorkspaceDialog
           onConfirm={handleConfirmCloseWorkspace}
           onOpenChange={setCloseWorkspaceDialogOpen}
           open={closeWorkspaceDialogOpen}
+        />
+        <ClosePanelTabDialog
+          onConfirm={handleConfirmClosePanelTab}
+          onOpenChange={setClosePanelTabDialogOpen}
+          open={closePanelTabDialogOpen}
+        />
+        <CloseWindowTabDialog
+          onConfirm={handleConfirmCloseWindowTab}
+          onOpenChange={setCloseWindowTabDialogOpen}
+          open={closeWindowTabDialogOpen}
         />
         <CloseAppDialog
           onOpenChange={setIsCloseAppDialogOpen}
@@ -772,6 +961,10 @@ function HomeComponent() {
               <div className="flex h-full flex-col">
                 <PanelHeaderBar
                   mainView={mainView}
+                  onCloseWindowTab={gatedPanelActions.closeWindowTab}
+                  onNewWindowTab={panelActions.addWindowTab}
+                  onReorderWindowTabs={panelActions.reorderWindowTabsDnd}
+                  onSelectWindowTab={panelActions.switchWindowTab}
                   onToggleSidebar={
                     responsiveSizes.canCollapseSidebar
                       ? toggleSidebar
@@ -779,6 +972,7 @@ function HomeComponent() {
                   }
                   onViewChange={setMainView}
                   sidebarCollapsed={sidebarCollapsed}
+                  windowLayout={panelActions.windowLayout}
                 />
                 {mainView === 'panels' && (
                   <>
@@ -792,11 +986,13 @@ function HomeComponent() {
                       diffPaneOpen={diffPaneWorkspaceId !== null}
                       diffWorkspaceId={diffPaneWorkspaceId}
                       fullscreenPaneId={fullscreenPaneId}
+                      isEmptyWindowTab={isEmptyWindowTab}
                       isReconciling={isReconciling}
                       layout={layout}
                       reviewPaneOpen={reviewPaneWorkspaceId !== null}
                       reviewWorkspaceId={reviewPaneWorkspaceId}
                       workspaceOrder={workspaceOrder}
+                      workspaceTileLayout={workspaceTileLayout}
                     />
                   </>
                 )}

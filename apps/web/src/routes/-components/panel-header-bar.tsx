@@ -1,10 +1,14 @@
+import type { WindowLayout } from '@laborer/shared/types'
 import {
   LayoutDashboard,
   PanelLeftClose,
   PanelLeftOpen,
   Terminal,
 } from 'lucide-react'
+import { useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
+import type { TabBarItem } from '@/components/ui/tab-bar'
+import { TabBar } from '@/components/ui/tab-bar'
 import {
   Tooltip,
   TooltipContent,
@@ -28,25 +32,119 @@ function ViewContextLabel({ mainView }: { readonly mainView: MainView }) {
   return null
 }
 
+interface WindowTabBarProps {
+  readonly onCloseTab: (() => void) | undefined
+  readonly onNewTab: (() => void) | undefined
+  readonly onReorderTabs:
+    | ((fromIndex: number, toIndex: number) => void)
+    | undefined
+  readonly onSelectTab: ((tabId: string) => void) | undefined
+  readonly windowLayout: WindowLayout | undefined
+}
+
+/**
+ * Renders the window-level tab bar using the shared TabBar component.
+ * Auto-hides when there is only 1 tab.
+ */
+function WindowTabBar({
+  windowLayout,
+  onSelectTab,
+  onCloseTab,
+  onNewTab,
+  onReorderTabs,
+}: WindowTabBarProps) {
+  const items: readonly TabBarItem[] = useMemo(() => {
+    if (!windowLayout) {
+      return []
+    }
+    return windowLayout.tabs.map((tab, index) => {
+      let shortcutHint: string | undefined
+      if (index < 8) {
+        shortcutHint = `Cmd+${index + 1}`
+      } else if (index === windowLayout.tabs.length - 1) {
+        shortcutHint = 'Cmd+9'
+      }
+      return {
+        id: tab.id,
+        label: tab.label ?? `Tab ${index + 1}`,
+        isActive: tab.id === windowLayout.activeTabId,
+        shortcutHint,
+      }
+    })
+  }, [windowLayout])
+
+  const handleClose = useCallback(() => {
+    onCloseTab?.()
+  }, [onCloseTab])
+
+  const handleNew = useCallback(() => {
+    onNewTab?.()
+  }, [onNewTab])
+
+  const handleReorder = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      onReorderTabs?.(fromIndex, toIndex)
+    },
+    [onReorderTabs]
+  )
+
+  const handleSelect = useCallback(
+    (tabId: string) => {
+      onSelectTab?.(tabId)
+    },
+    [onSelectTab]
+  )
+
+  if (items.length === 0) {
+    return null
+  }
+
+  return (
+    <TabBar
+      className="border-b-0"
+      closeTooltip="Close tab (Cmd+Shift+W)"
+      items={items}
+      label="Window Tabs"
+      newTabTooltip="New window tab (Cmd+N)"
+      onClose={handleClose}
+      onNew={handleNew}
+      onReorder={handleReorder}
+      onSelect={handleSelect}
+    />
+  )
+}
+
 /**
  * Bar rendered at the top of the main content area (right of the sidebar).
  *
- * Shows the sidebar toggle, view toggle (panels / dashboard), and view label.
- * Per-pane actions (split, close, diff, dev server) are now in per-workspace
- * frame headers instead.
+ * Shows the sidebar toggle, view toggle (panels / dashboard), view label,
+ * and the window-level tab bar (auto-hidden when 1 tab).
  *
  * @see Issue #114: Cross-project workspace dashboard
+ * @see Issue #8: Window tab bar integration
  */
 export function PanelHeaderBar({
   mainView,
   onViewChange,
   onToggleSidebar,
   sidebarCollapsed,
+  windowLayout,
+  onSelectWindowTab,
+  onCloseWindowTab,
+  onNewWindowTab,
+  onReorderWindowTabs,
 }: {
   readonly mainView: MainView
   readonly onViewChange: (view: MainView) => void
   readonly onToggleSidebar?: (() => void) | undefined
   readonly sidebarCollapsed?: boolean
+  readonly windowLayout?: WindowLayout | undefined
+  readonly onSelectWindowTab?: ((tabId: string) => void) | undefined
+  readonly onCloseWindowTab?: (() => void) | undefined
+  readonly onNewWindowTab?: (() => void) | undefined
+  readonly onReorderWindowTabs?:
+    | ((fromIndex: number, toIndex: number) => void)
+    | undefined
 }) {
   return (
     <div className="flex h-8 shrink-0 items-center justify-between border-b px-2">
@@ -115,6 +213,17 @@ export function PanelHeaderBar({
           <ViewContextLabel mainView={mainView} />
         </div>
       </div>
+
+      {/* Right: window tab bar (auto-hides with 1 tab) */}
+      {mainView === 'panels' && (
+        <WindowTabBar
+          onCloseTab={onCloseWindowTab}
+          onNewTab={onNewWindowTab}
+          onReorderTabs={onReorderWindowTabs}
+          onSelectTab={onSelectWindowTab}
+          windowLayout={windowLayout}
+        />
+      )}
     </div>
   )
 }

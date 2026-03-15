@@ -86,6 +86,10 @@ vi.mock('@/panes/dev-server-terminal-pane', () => ({
   DevServerTerminalPane: () => <div data-testid="dev-server-terminal" />,
 }))
 
+vi.mock('@/panes/diff-pane', () => ({
+  DiffPane: () => <div data-testid="diff-pane" />,
+}))
+
 vi.mock('@/panes/review-pane', () => ({
   ReviewPane: () => <div data-testid="review-pane" />,
 }))
@@ -127,11 +131,26 @@ function mockActions() {
     reorderWorkspaces: vi.fn(),
     resizePane: vi.fn(),
     setActivePaneId: vi.fn(),
+    showPanelTypePicker: vi.fn(),
     splitPane: vi.fn(),
     toggleDevServerPane: vi.fn(async () => false),
     toggleDiffPane: vi.fn(() => false),
     toggleFullscreenPane: vi.fn(),
     toggleReviewPane: vi.fn(() => false),
+    addPanelTab: vi.fn(),
+    addWorkspaceToCurrentTab: vi.fn(),
+    addWindowTab: vi.fn(),
+    closeWindowTab: vi.fn(),
+    removePanelTab: vi.fn(),
+    reorderPanelTabsDnd: vi.fn(),
+    switchPanelTab: vi.fn(),
+    switchPanelTabByIndex: vi.fn(),
+    switchPanelTabRelative: vi.fn(),
+    switchWindowTab: vi.fn(),
+    switchWindowTabByIndex: vi.fn(),
+    switchWindowTabRelative: vi.fn(),
+    reorderWindowTabsDnd: vi.fn(),
+    windowLayout: undefined,
   }
 }
 

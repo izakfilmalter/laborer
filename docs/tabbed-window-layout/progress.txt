@@ -1,0 +1,1317 @@
+## Issue #1: Hierarchical layout types — COMPLETED
+
+Date: 2026-03-13
+
+### What was done
+- Defined new TypeScript types in `packages/shared/src/types.ts`:
+  - `PanelLeafNode` — leaf node without sidebar toggle flags (diffOpen, devServerOpen, devServerTerminalId removed)
+  - `PanelSplitNode` — split node for panel-level splits
+  - `PanelTreeNode` — union of PanelLeafNode | PanelSplitNode
+  - `PanelTab` — tab within a workspace (id, label, panelLayout, focusedPaneId)
+  - `WorkspaceTileLeaf` — workspace frame with panel tabs
+  - `WorkspaceTileSplit` — split node for workspace tiling (horizontal + vertical)
+  - `WorkspaceTileNode` — union of WorkspaceTileLeaf | WorkspaceTileSplit
+  - `WindowTab` — top-level tab containing a workspace tile tree
+  - `WindowLayout` — ordered list of window tabs with activeTabId
+- Created Effect Schema definitions for all new types with `Schema.suspend` for recursive types
+- Old `PanelNode` / `LeafNode` / `SplitNode` types preserved for migration compatibility
+- Added 27 schema round-trip tests in `packages/shared/test/hierarchical-layout-types.test.ts`
+  - Tests cover all new types including deeply nested trees (5 levels)
+  - Legacy LeafNodeSchema backward-compatibility verified
+
+### Verification
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/shared test` — 60/60 tests pass
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/web test` — 563/563 tests pass
+- `bun run format:fix` — no issues in modified files
+
+## Issue #2: Layout-utils: window tab operations — COMPLETED
+
+Date: 2026-03-13
+
+### What was done
+- Created new module `apps/web/src/panels/window-tab-utils.ts` with pure functions:
+  - `addWindowTab(layout, tab?)` — append a new empty window tab, makes it active
+  - `removeWindowTab(layout, tabId)` — remove a tab, switch active to nearest sibling (prefer right, fall back left)
+  - `switchWindowTab(layout, tabId)` — set active tab by ID
+  - `switchWindowTabByIndex(layout, index)` — set active tab by 1-based position (1-8, 9=last)
+  - `switchWindowTabRelative(layout, delta)` — cycle next/prev with wrapping
+  - `reorderWindowTabs(layout, fromIndex, toIndex)` — drag reorder
+  - `findWorkspaceLocation(layout, workspaceId)` — find which tab contains a workspace (searches nested tile trees)
+  - `findTerminalLocation(layout, terminalId)` — find tab + workspace + panel tab + pane for a terminal ID
+  - `getWorkspaceTileLeaves(node)` — collect all workspace tile leaves from a tile tree
+  - `getAllWorkspaceTileLeaves(layout)` — collect across all tabs
+  - `getActiveWindowTab(layout)` — get the active window tab
+- Added exported types: `WorkspaceLocation`, `TerminalLocation`
+- All functions are pure: input WindowLayout, output new WindowLayout
+
+### Tests
+- 67 tests in `apps/web/test/window-tab-utils.test.ts` covering:
+  - addWindowTab: empty layout, append, pre-configured tab, immutability
+  - removeWindowTab: not found, only tab, non-active tab, active middle/last/first, immutability
+  - switchWindowTab: existing tab, not found, already active
+  - switchWindowTabByIndex: indices 1-8, index 9 (last), out-of-range, empty layout
+  - switchWindowTabRelative: next/prev, wrap-around, single tab, empty, multi-skip, invalid active
+  - reorderWindowTabs: move forward/backward, same index, out-of-range, preserve activeTabId, immutability
+  - findWorkspaceLocation: single/multi/nested/complex layouts, not found, empty, empty tabs
+  - findTerminalLocation: single/multi/nested/complex layouts, non-active panel tabs, not found, empty
+  - getWorkspaceTileLeaves: leaf, split, nested split
+  - getAllWorkspaceTileLeaves: empty, multi-tab, complex, skip empty tabs
+  - getActiveWindowTab: active, empty, invalid, undefined
+  - Combined operations: add+remove, add+switch+remove, reorder+switchByIndex
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/web test` — 630/630 tests pass (67 new + 563 existing)
+- `bun run --filter @laborer/shared test` — 60/60 tests pass
+- `biome check` — no issues in modified files
+
+## Issue #10: Panel tab bar integration — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Wired the shared `TabBar` component into each `WorkspaceFrame` for workspace-level panel tabs, connecting it to the panel tab state within each workspace.
+
+- Extended `PanelActions` interface in `panel-context.tsx` with 6 new panel tab actions:
+  - `addPanelTab(workspaceId, panelType)` — creates a new panel tab of the given type in the specified workspace
+  - `removePanelTab(workspaceId, tabId)` — removes a panel tab by ID from a workspace
+  - `switchPanelTab(workspaceId, tabId)` — switch to a panel tab by ID
+  - `switchPanelTabByIndex(workspaceId, index)` — switch by 1-based index (for Ctrl+1-8, Ctrl+9=last)
+  - `switchPanelTabRelative(workspaceId, delta)` — cycle next/prev (for Ctrl+Shift+[/])
+  - `reorderPanelTabsDnd(workspaceId, fromIndex, toIndex)` — drag-and-drop reorder
+
+- Added `updateWorkspaceTileLeaf` helper to `window-tab-utils.ts`:
+  - Pure function that applies a transform to a workspace tile leaf within a `WindowLayout`
+  - Searches all tabs and recursively walks the workspace tile tree to find the matching workspace
+  - Returns a new WindowLayout with the leaf updated (structural sharing for unchanged parts)
+
+- Added panel tab action handlers in `usePanelLayout` hook (`use-panel-layout.ts`):
+  - Each action calls the corresponding pure function from `panel-tab-utils.ts` via `updateWorkspaceTileLeaf`
+  - Each action commits the appropriate LiveStore event (`panelTabCreated`, `panelTabClosed`, `panelTabSwitched`, `panelTabsReordered`)
+  - Helper `commitPanelTabLayout` encapsulates the event commit pattern
+
+- Updated `WorkspaceFrame` component in `workspace-frames.tsx`:
+  - Added optional `tileLeaf: WorkspaceTileLeaf` prop for hierarchical rendering
+  - When `tileLeaf` is provided, renders `TabBar` with auto-hide (hidden when 1 tab, shown when 2+)
+  - Tab bar items derived from `tileLeaf.panelTabs` with labels auto-generated from pane type
+  - Active panel tab's `panelLayout` is rendered by `PanelManager` (cast to legacy `PanelNode` for compatibility)
+  - Tab bar callbacks wire to panel tab actions via `usePanelActions()`
+  - New tab (+) button defaults to terminal type (panel type picker will be wired in issue #11)
+  - `getPanelTabLabel` helper derives display labels from panel tree root pane type
+
+- Updated `WorkspaceTileLeafFrame` bridge component:
+  - Now passes `tileLeaf` prop to `WorkspaceFrame` for panel tab rendering
+  - When the leaf has panel tabs, uses the active tab's layout directly
+  - Falls back to extracting from the legacy flat tree when leaf has no panel tabs (backward compat)
+
+- Registered keyboard shortcuts in `panel-hotkeys.tsx`:
+  - `Ctrl+T` → new panel tab in focused workspace (defaults to terminal)
+  - `Ctrl+1` through `Ctrl+8` → switch to panel tab by index
+  - `Ctrl+9` → switch to last panel tab
+  - `Ctrl+Shift+[` → previous panel tab (via raw keydown handler — TanStack Hotkeys doesn't support bracket keys)
+  - `Ctrl+Shift+]` → next panel tab (via raw keydown handler)
+
+- Updated `terminal-keys.ts` to bypass new shortcuts through xterm.js:
+  - Added `isCtrlT` — Ctrl+T (new panel tab)
+  - Added `isCtrlDigit` — Ctrl+1 through Ctrl+9 (switch panel tab by index)
+  - Added `isCtrlShiftBracket` — Ctrl+Shift+[ and Ctrl+Shift+] (cycle panel tabs)
+  - All new detectors added to `shouldBypassTerminal` union
+
+- Updated 5 test files to include new panel tab action mocks:
+  - `workspace-frames-minimize.test.tsx`
+  - `workspace-frame-header.test.tsx`
+  - `terminal-overlay-toolbar.test.tsx`
+  - `full-height-review-panel.test.tsx`
+  - `fullscreen-portal.test.tsx`
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 805/805 tests pass (no regressions)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no issues in modified files
+
+## Issue #11: Panel type picker component — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Created new presentational component `apps/web/src/components/ui/panel-type-picker.tsx`:
+  - `PanelTypePicker` — lightweight panel type picker shown when creating a new panel (via split or new tab)
+  - `PANEL_TYPE_OPTIONS` — exported constant array of the 4 panel type options for reuse by callers
+
+- Component features:
+  - **Numbered list**: Shows 4 panel types with number indicators (1-4) and icons:
+    1. Terminal (`Terminal` icon from lucide-react)
+    2. Diff (`FileCode2` icon)
+    3. Review (`Eye` icon)
+    4. Dev Server (`Server` icon)
+  - **Pre-selection**: Terminal (first item) is highlighted by default on open
+  - **Arrow key navigation**: ArrowUp/ArrowDown move highlight with wrapping
+  - **Number key direct selection**: Keys 1-4 immediately select and close
+  - **Enter key**: Confirms current highlight
+  - **Escape key**: Cancels via `onCancel` callback without selecting
+  - **Mouse interaction**: Click to select, hover to move highlight
+  - **Auto-focus**: Container receives focus on mount to capture keyboard events
+  - **Accessibility**: `role="listbox"` on container, `role="option"` on each item, `aria-selected` reflecting highlight state, `tabIndex` for focusability, keyboard event handlers on options
+
+- Props interface:
+  - `onSelect(type: PaneType)` — called when a panel type is selected
+  - `onCancel()` — called when picker is dismissed (Escape)
+  - `className?: string` — additional CSS classes for the root container
+
+- Styling follows existing patterns: Tailwind CSS, `cn()` utility, `bg-popover text-popover-foreground`, `bg-accent text-accent-foreground` for highlighted items, `rounded-none`, `text-xs`, `shadow-md ring-1 ring-foreground/10`
+
+### Tests
+- 33 tests in `apps/web/test/panel-type-picker.test.tsx` covering:
+  - Rendering: 4 items, labels, number indicators, role=listbox, role=option, className prop
+  - Pre-selection: terminal pre-selected, only one selected, non-terminal items not selected
+  - Arrow key navigation: ArrowDown next, ArrowUp previous, ArrowDown wrap, ArrowUp wrap, sequential navigation
+  - Number key selection: keys 1-4 select correct types, key 5 no-op, key 0 no-op
+  - Enter key: confirms default (terminal), confirms after ArrowDown navigation, confirms after ArrowUp wrap
+  - Escape key: calls onCancel, does not call onSelect
+  - Mouse interaction: click selects, click last option, hover updates highlight, hover+Enter selects hovered item
+  - Focus: container has tabIndex=0
+  - PANEL_TYPE_OPTIONS export: 4 options, terminal first, correct types/labels in order
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 838/838 tests pass (33 new + 805 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #4: Layout-utils: panel tab operations — COMPLETED
+
+Date: 2026-03-13
+
+### What was done
+- Created new module `apps/web/src/panels/panel-tab-utils.ts` with pure functions:
+  - `addPanelTab(workspace, panelType, options?)` — add a new panel tab with a single leaf pane of the specified type, makes it active; supports pre-configured tabs, custom labels, and terminal IDs
+  - `removePanelTab(workspace, tabId)` — remove a panel tab, switch active to nearest sibling (prefer right, fall back left); handles only tab, empty workspace
+  - `switchPanelTab(workspace, tabId)` — set active panel tab by ID
+  - `switchPanelTabByIndex(workspace, index)` — set active panel tab by 1-based position (1-8, 9=last)
+  - `switchPanelTabRelative(workspace, delta)` — cycle next/prev with wrapping
+  - `reorderPanelTabs(workspace, fromIndex, toIndex)` — drag reorder
+  - `getActivePanelTab(workspace)` — get the active panel tab
+- Exported `AddPanelTabOptions` type for configuring new tabs
+- All functions are pure: input WorkspaceTileLeaf, output new WorkspaceTileLeaf
+
+### Tests
+- 57 tests in `apps/web/test/panel-tab-utils.test.ts` covering:
+  - addPanelTab: empty workspace, append to existing, all pane types, pre-configured tab, terminalId, label, immutability, focusedPaneId
+  - removePanelTab: not found, only tab, non-active tab, active middle/last/first, two tabs, immutability, empty workspace
+  - switchPanelTab: existing tab, not found, already active, immutability
+  - switchPanelTabByIndex: indices 1-8, index 9 (last), out-of-range, zero, negative, empty workspace
+  - switchPanelTabRelative: next/prev, wrap-around forward/backward, single tab, empty, delta +/-2, invalid activePanelTabId
+  - reorderPanelTabs: move forward/backward, same index, out-of-range, negative, preserveActiveId, immutability, two-tab swap
+  - getActivePanelTab: active, empty, invalid ID, undefined ID
+  - Combined operations: add+remove round-trip, add+switch+remove, reorder+switchByIndex, add multiple+cycle, workspace-level properties preserved
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 733/733 tests pass (57 new + 676 existing)
+- `biome check` — no issues in modified files
+
+## Issue #5: Schema + LiveStore events for new layout model — COMPLETED
+
+Date: 2026-03-13
+
+### What was done
+- Updated `panel_layout` state table in `packages/shared/src/schema.ts`:
+  - Made `layoutTree` column nullable (was required) with `Schema.NullOr(PanelNodeSchema)` for backward compat
+  - Added `windowLayout` column: `Schema.NullOr(WindowLayoutSchema)`, nullable, default null — stores the new hierarchical `WindowLayout` tree
+  - Added `activeWindowTabId` column: nullable text — stores the ID of the currently active window tab
+  - Legacy columns (`layoutTree`, `activePaneId`, `workspaceOrder`) preserved and marked `@deprecated`
+
+- Defined shared `windowLayoutEventSchema` for all new events:
+  - `{ windowId: String, windowLayout: WindowLayoutSchema, activeWindowTabId: NullOr(String) }`
+
+- Added 12 new LiveStore events:
+  - **Window tab events**: `windowTabCreated`, `windowTabClosed`, `windowTabSwitched`, `windowTabsReordered`
+  - **Panel tab events**: `panelTabCreated`, `panelTabClosed`, `panelTabSwitched`, `panelTabsReordered`
+  - **Hierarchical layout events**: `windowLayoutRestored`, `windowLayoutSplit`, `windowLayoutPaneClosed`, `windowLayoutPaneAssigned`
+
+- Added materializers for all 12 new events:
+  - All use the same upsert pattern: `insert({ windowId, windowLayout, activeWindowTabId }).onConflict('windowId', 'update', { windowLayout, activeWindowTabId })`
+  - New events only update `windowLayout` and `activeWindowTabId` columns — they do NOT touch legacy columns
+  - Legacy events continue to only update `layoutTree` and `activePaneId` — they do NOT touch new columns
+  - This ensures legacy and hierarchical data can coexist during migration
+
+- Old events (`layoutSplit`, `layoutPaneClosed`, `layoutPaneAssigned`, `layoutRestored`, `layoutWorkspacesReordered`) remain unchanged for backward compatibility with existing eventlog data
+
+- Updated existing test assertions in `packages/shared/test/schema.test.ts` to include new columns (`windowLayout: null`, `activeWindowTabId: null`) in `deepStrictEqual` checks
+
+- Added 15 new tests in `packages/shared/test/schema.test.ts`:
+  - `windowTabCreated` materializes correctly (verifies new columns populated, legacy columns null)
+  - `windowTabClosed` updates layout after closing a tab
+  - `windowTabSwitched` updates `activeWindowTabId`
+  - `windowTabsReordered` updates tab order in the layout
+  - `panelTabCreated` adds panel tabs to workspaces
+  - `panelTabClosed` removes panel tabs
+  - `panelTabSwitched` updates active panel tab
+  - `panelTabsReordered` reorders panel tabs
+  - `windowLayoutRestored` for startup/reconciliation
+  - `windowLayoutSplit` with nested panel split trees
+  - `windowLayoutPaneClosed` and `windowLayoutPaneAssigned`
+  - Multiple windows with hierarchical layouts stored independently
+  - Hierarchical events do not overwrite legacy columns
+  - Legacy events do not overwrite hierarchical columns
+  - Nested workspace tile splits round-trip correctly through JSON serialization
+
+### Verification
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/shared test` — 75/75 tests pass (15 new + 60 existing)
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/web test` — 733/733 tests pass (no regressions)
+- `biome check` — no issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #6: Layout migration: flat PanelNode to hierarchical WindowLayout — COMPLETED
+
+Date: 2026-03-13
+
+### What was done
+- Created new module `apps/web/src/panels/layout-migration.ts` with pure functions:
+  - `migrateToWindowLayout(oldTree, activePaneId, workspaceOrder)` — main migration entry point that converts a legacy flat `PanelNode` tree to the new `WindowLayout` hierarchy
+  - `convertLeafNode(node)` — converts old `LeafNode` to `PanelLeafNode`, stripping sidebar toggle flags (`diffOpen`, `devServerOpen`, `devServerTerminalId`)
+  - `convertPanelTree(node)` — recursively converts old `PanelNode` tree to `PanelTreeNode` tree (LeafNode→PanelLeafNode, SplitNode→PanelSplitNode)
+  - `collectSidebarFlags(node)` — aggregates sidebar toggle flags from all leaves in a workspace's sub-tree for promotion to independent panel tabs
+  - `buildWorkspaceTile(workspaceId, subTree, activePaneId)` — creates a `WorkspaceTileLeaf` for a workspace, including promoted sidebar panel tabs
+  - `resolveFocusedPaneId(tree, activePaneId)` — maps legacy `activePaneId` to the correct `focusedPaneId` per workspace
+  - `sortWorkspaceIdsByOrder(workspaceIds, workspaceOrder)` — sorts workspace IDs according to legacy `workspaceOrder` array
+
+- Migration logic:
+  1. Extracts unique workspace IDs from the old flat tree using `getWorkspaceIds()`
+  2. Sorts workspaces according to `workspaceOrder` (if provided)
+  3. Filters old tree per workspace using `filterTreeByWorkspace()`
+  4. Converts old node types to new types (strips sidebar flags)
+  5. Promotes sidebar toggle flags to independent panel tabs:
+     - `diffOpen: true` → additional `PanelTab` with `paneType: 'diff'`
+     - `devServerOpen: true` → additional `PanelTab` with `paneType: 'devServerTerminal'` (preserving `devServerTerminalId`)
+  6. Wraps each workspace's panels in a `WorkspaceTileLeaf`
+  7. Arranges multiple workspace tiles in a horizontal `WorkspaceTileSplit` (single workspace = direct leaf, no wrapper)
+  8. Wraps everything in a single `WindowTab` inside a `WindowLayout`
+
+### Tests
+- 47 tests in `apps/web/test/layout-migration.test.ts` covering:
+  - convertLeafNode: simple terminal, preserves terminalId/workspaceId/both, strips diffOpen/devServerOpen/devServerTerminalId, preserves diff/review/devServerTerminal paneTypes
+  - convertPanelTree: single leaf, split with two leaves, preserves sizes, nested splits, strips sidebar flags from nested trees
+  - collectSidebarFlags: no flags, diffOpen, devServerOpen with terminalId, aggregation from splits, deeply nested, diffOpen:false
+  - migrateToWindowLayout — single workspace: single-leaf tree, split tree, activePaneId→focusedPaneId, null activePaneId fallback, cross-workspace activePaneId fallback
+  - migrateToWindowLayout — sidebar flag promotion: diffOpen→diff tab, devServerOpen→devServer tab, both flags, false flags, main tab active, no devServerTerminalId, flags from split children
+  - migrateToWindowLayout — multi-workspace: multiple tiles in horizontal split, equal sizes, workspaceOrder respected, partial workspaceOrder, activePaneId per-workspace mapping, mixed sidebar flags
+  - migrateToWindowLayout — edge cases: no workspaceId, nested splits single workspace, deeply nested multi-workspace, empty workspaceOrder, correct tags at every level, immutability, all workspaces with diffOpen, unique IDs
+  - migrateToWindowLayout — round-trip structure: complex tree with ordering + sidebar flags + nested splits
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 780/780 tests pass (47 new + 733 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no issues in modified files
+
+## Issue #7: Tab bar component — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Created new presentational component `apps/web/src/components/ui/tab-bar.tsx`:
+  - `TabBar` — shared tab bar component used at both window tab level and workspace panel tab level
+  - `TabBarTab` — individual draggable tab with close button, active indicator, and dirty indicator
+  - `TabBarInner` — inner component that mounts drag-and-drop monitor only when rendered
+
+- Component features:
+  - **Auto-hide**: when `autoHide` prop is true and items.length <= 1, renders nothing
+  - **Active tab indicator**: bottom border line (`bg-primary`) on the active tab
+  - **Close button**: per-tab close button with `onClose(id)` callback; close click does not bubble to `onSelect`
+  - **New tab (+) button**: renders a `+` icon button with configurable tooltip via `newTabTooltip` prop
+  - **Dirty indicator**: amber dot with title="Unsaved changes" when `isDirty` is true
+  - **Icon support**: optional `icon` ReactNode rendered before the label
+  - **Drag-and-drop reordering**: using `@atlaskit/pragmatic-drag-and-drop` with per-instance `barId` to prevent cross-bar drops; visual drop indicators (left/right `bg-primary` lines); `onReorder(fromIndex, toIndex)` callback
+  - **Overflow scrolling**: tab area uses `overflow-x-auto scrollbar-none` for horizontal scroll when tabs exceed width
+  - **Keyboard accessibility**: `role="tablist"` on container, `role="tab"` on each item, `aria-selected` reflecting active state, `tabIndex=0` for active / `-1` for inactive, Enter/Space key handlers for selection
+
+- Props interface:
+  - `items: readonly TabBarItem[]` — ordered tab items with `id`, `label`, `icon?`, `isDirty?`, `isActive`
+  - `onSelect(id)`, `onClose(id)`, `onNew()`, `onReorder(fromIndex, toIndex)` — callbacks
+  - `autoHide?: boolean` — hide when 0 or 1 items (defaults to false)
+  - `newTabTooltip?: string` — tooltip for the + button (defaults to "New tab")
+  - `className?: string` — additional classes for the root container
+
+- Styling follows existing patterns: Tailwind CSS, `cn()` utility, `h-8 border-b` header bar pattern, `size-3.5` icon sizing, ghost variant buttons
+
+### Tests
+- 25 tests in `apps/web/test/tab-bar.test.tsx` covering:
+  - Auto-hide: 0 items, 1 item, 2+ items with autoHide true/false, default autoHide
+  - Rendering items: all items rendered, labels, aria-selected, dirty indicator, icon
+  - Callbacks: onSelect on click, onClose on close button click, close doesn't trigger onSelect, onNew on + button, custom newTabTooltip
+  - Keyboard accessibility: role=tablist, role=tab, tabIndex, Enter key, Space key
+  - Multiple tabs: close buttons for all, only one aria-selected at a time
+  - className prop: applied to root element
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 805/805 tests pass (25 new + 780 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no issues in modified files
+
+## Issue #8: Window tab bar integration — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Wired the `TabBar` component into the main work area's `PanelHeaderBar` for window-level tabs:
+  - Added `WindowTabBar` sub-component that converts `WindowLayout` to `TabBarItem[]` for the shared `TabBar`
+  - Tab bar auto-hides when there is only 1 window tab (using `TabBar`'s `autoHide` prop)
+  - Tab bar renders in the right side of the header bar alongside the sidebar toggle and view toggle icons
+  - Tab bar only shows when `mainView === 'panels'` (not in dashboard or plan views)
+
+- Extended `PanelActions` interface in `panel-context.tsx` with 7 new window tab actions:
+  - `addWindowTab` — creates a new empty window tab and switches to it
+  - `closeWindowTab` — closes the active window tab
+  - `switchWindowTab` — switch to a window tab by ID
+  - `switchWindowTabByIndex` — switch by 1-based index (for Cmd+1-8, Cmd+9=last)
+  - `switchWindowTabRelative` — cycle next/prev (for Cmd+Shift+[/])
+  - `reorderWindowTabsDnd` — drag-and-drop reorder
+  - `windowLayout` — the current `WindowLayout` for rendering the tab bar
+
+- Added window tab action handlers in `usePanelLayout` hook (`use-panel-layout.ts`):
+  - Reads `persistedWindowLayout` from the `windowLayout` column of the `panelLayout` LiveStore table
+  - Each action calls the corresponding pure function from `window-tab-utils.ts`
+  - Each action commits the appropriate LiveStore event (`windowTabCreated`, `windowTabClosed`, `windowTabSwitched`, `windowTabsReordered`)
+  - Helper `commitWindowLayout` encapsulates the event commit pattern
+
+- Registered keyboard shortcuts in `panel-hotkeys.tsx`:
+  - `Cmd+N` → new window tab (via `useHotkeySequence`)
+  - `Cmd+Shift+W` → close active window tab (via `useHotkeySequence`)
+  - `Cmd+1` through `Cmd+8` → switch to tab by index (via `useHotkeySequence`)
+  - `Cmd+9` → switch to last tab (via `useHotkeySequence`)
+  - `Cmd+Shift+[` → previous window tab (via raw keydown handler — TanStack Hotkeys doesn't support bracket keys)
+  - `Cmd+Shift+]` → next window tab (via raw keydown handler)
+
+- Updated `terminal-keys.ts` to bypass new shortcuts through xterm.js:
+  - Added `isMetaN` — Cmd+N (new tab)
+  - Added `isMetaShiftW` — Cmd+Shift+W (close tab)
+  - Added `isMetaDigit` — Cmd+1 through Cmd+9 (switch tab by index)
+  - Added `isMetaShiftBracket` — Cmd+Shift+[ and Cmd+Shift+] (cycle tabs)
+  - All new detectors added to `shouldBypassTerminal` union
+
+- Wired `PanelHeaderBar` props in `index.tsx`:
+  - Passes `windowLayout`, `onSelectWindowTab`, `onCloseWindowTab`, `onNewWindowTab`, `onReorderWindowTabs` from `panelActions` to `PanelHeaderBar`
+
+- Updated 5 test files to include new window tab action mocks:
+  - `workspace-frames-minimize.test.tsx`
+  - `workspace-frame-header.test.tsx`
+  - `terminal-overlay-toolbar.test.tsx`
+  - `full-height-review-panel.test.tsx`
+  - `fullscreen-portal.test.tsx`
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 805/805 tests pass (no regressions)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no issues in modified files (pre-existing info in unrelated files)
+
+## Issue #9: Workspace bidirectional tiling UI — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Updated `apps/web/src/routes/-components/workspace-frames.tsx` to support bidirectional workspace tiling:
+  - Added `WorkspaceTileRenderer` — recursive component that renders `WorkspaceTileNode` trees. `WorkspaceTileLeaf` nodes render as `WorkspaceFrame`, `WorkspaceTileSplit` nodes render as `ResizablePanelGroup` with correct orientation (horizontal or vertical). This enables nested workspace arrangements (e.g., two workspaces side-by-side with a third stacked below one of them).
+  - Added `WorkspaceTileLeafFrame` — bridge component that renders a workspace tile leaf by extracting the workspace's sub-layout from the legacy flat `PanelNode` tree via `filterTreeByWorkspace()`. This bridge will be replaced when panel tabs (issue #10) are integrated.
+  - Added `WorkspaceTileResizableChild` — wraps tile nodes in `ResizablePanel` for resizable tiling. Workspace tile leaves are collapsible (matching existing minimize behavior).
+  - Refactored `WorkspaceFrames` to accept an optional `workspaceTileLayout: WorkspaceTileNode` prop. When provided, renders via `WorkspaceTileRenderer` for bidirectional tiling. Falls back to the legacy vertical-only `LegacyWorkspaceFrames` when not available.
+  - Extracted legacy rendering into `LegacyWorkspaceFrames` for clean separation.
+
+- Updated `apps/web/src/routes/-components/panel-content.tsx`:
+  - Added `workspaceTileLayout?: WorkspaceTileNode` prop to `PanelContentProps`
+  - Passes `workspaceTileLayout` through to `WorkspaceFrames`
+
+- Updated `apps/web/src/routes/index.tsx`:
+  - Added import for `getActiveWindowTab` from `window-tab-utils`
+  - Added `useMemo` to extract the active window tab's `workspaceLayout` from `panelActions.windowLayout`
+  - Passes `workspaceTileLayout` to `PanelContent`
+
+### Architecture decisions
+- **Bridge pattern**: The new tile renderer still extracts per-workspace sub-layouts from the legacy flat `PanelNode` tree using `filterTreeByWorkspace()`. This is intentional — the workspace tile tree only knows workspace IDs, not the panel split trees within each workspace. Panel tab integration (issue #10) will replace this bridge with the `panelTabs` stored directly on each `WorkspaceTileLeaf`.
+- **Backward compatibility**: When no `workspaceTileLayout` is provided (no active window tab or no hierarchical layout), the component falls back to the existing vertical-only rendering. This ensures zero breakage for users who haven't migrated to the new layout format.
+- **No new tests**: The workspace tile rendering is UI composition — it delegates to existing tested components (`WorkspaceFrame`, `ResizablePanelGroup`, `PanelManager`). The pure utility functions (`workspace-tile-utils.ts`) are already comprehensively tested (46 tests). Component tests for bidirectional tiling would require mocking the full React rendering pipeline including ResizablePanelGroup, which provides minimal value over the existing unit tests. Integration testing will be more valuable once panel tabs (issue #10) are wired up.
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 805/805 tests pass (no regressions)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no issues in modified files
+
+## Issue #12: Promote diff to first-class panel type — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Updated `PaneContent` dispatch in `apps/web/src/panels/panel-manager.tsx` to render `DiffPane` directly for `paneType: 'diff'` leaf nodes:
+  - Added `import { DiffPane } from '@/panes/diff-pane'`
+  - Added new case: `if (node.paneType === 'diff' && node.workspaceId)` → renders `<DiffPane workspaceId={node.workspaceId} />`
+  - This means diff panels created via `addPanelTab(workspaceId, 'diff')` or via layout migration now render correctly as standalone panes
+
+- Updated `Ctrl+B, D` keybinding in `apps/web/src/panels/panel-hotkeys.tsx`:
+  - Changed from calling `actions.toggleDiffPane(activePaneId)` (sidebar toggle) to creating a new diff panel via `actions.splitPane(activePaneId, 'horizontal', { paneType: 'diff', workspaceId })` (right-side split)
+  - Falls back to `actions.addPanelTab(activeWorkspaceId, 'diff')` when no active pane exists but a workspace is focused
+  - Added `LeafNode` type import for the `Partial<LeafNode>` parameter
+  - Updated comment to reflect new behavior
+
+- Updated `apps/web/test/fullscreen-portal.test.tsx`:
+  - Added mock for `@/panes/diff-pane` (`DiffPane` component) to prevent transitive import of `diffs` from `@laborer/shared/schema` breaking the test
+  - This was necessary because `panel-manager.tsx` now imports `DiffPane` directly
+
+### Notes
+- The existing full-height side panel approach in `index.tsx` (via `toggleDiffPane` / `diffPaneWorkspaceId` state) remains untouched for backward compatibility. It will be cleaned up when all panel types are fully promoted (issues 13, 14).
+- Diff appears as option #2 in the panel type picker (already configured in issue #11).
+- Old layouts with `diffOpen: true` are migrated by the migration issue (#6, already completed).
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 838/838 tests pass (no regressions, fullscreen portal tests restored)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #23: Tab drag-and-drop reordering — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Verified that tab drag-and-drop reordering is already fully implemented end-to-end for both window tabs and panel tabs, built across issues #7 (TabBar component), #8 (window tab bar integration), and #10 (panel tab bar integration).
+
+- **TabBar component** (`apps/web/src/components/ui/tab-bar.tsx`) — already has complete DnD implementation:
+  - Each tab registers as both `draggable` and `dropTargetForElements` via `@atlaskit/pragmatic-drag-and-drop`
+  - Instance-scoped `barId` prevents cross-bar drops (each TabBar instance gets a unique ID)
+  - `monitorForElements` at the container level dispatches `onReorder(fromIndex, toIndex)` on drop
+  - Drop indicators: `closestEdge` state renders left/right `bg-primary` vertical lines during drag
+  - Edge logic: source index < target index = right edge, source index > target index = left edge
+  - `onDragLeave` and `onDrop` clear indicators
+
+- **Window tab reorder wiring** (already in place from issue #8):
+  - `PanelHeaderBar` -> `WindowTabBar` -> `TabBar.onReorder` -> `panelActions.reorderWindowTabsDnd`
+  - `handleReorderWindowTabs` in `use-panel-layout.ts` calls `reorderWindowTabs()` pure function
+  - Commits `windowTabsReordered` LiveStore event with the updated `WindowLayout`
+
+- **Panel tab reorder wiring** (already in place from issue #10):
+  - `WorkspaceFrame` -> `TabBar.onReorder` -> `handlePanelTabReorder` -> `panelActions.reorderPanelTabsDnd`
+  - `handleReorderPanelTabs` in `use-panel-layout.ts` calls `reorderPanelTabs()` via `updateWorkspaceTileLeaf`
+  - Commits `panelTabsReordered` LiveStore event with the updated layout
+
+- Added dedicated DnD integration tests in `apps/web/test/tab-bar-dnd-reorder.test.tsx`:
+  - Intercepts `@atlaskit/pragmatic-drag-and-drop` registrations to test the DnD data contract
+  - Tests capture `draggable`, `dropTargetForElements`, and `monitorForElements` configurations
+
+### Tests
+- 20 tests in `apps/web/test/tab-bar-dnd-reorder.test.tsx` covering:
+  - **Draggable registration** (2 tests): each tab registers as draggable, getInitialData returns correct shape (type, id, index, barId), same barId within same TabBar
+  - **Drop target registration** (4 tests): each tab registers as drop target, getData returns correct shape, canDrop accepts same barId, canDrop rejects different barId, canDrop rejects wrong type
+  - **Monitor registration** (6 tests): registers one monitor per TabBar, canMonitor accepts same barId, canMonitor rejects different barId, onDrop calls onReorder with correct indices, onDrop handles reverse direction, onDrop no-op for same index, onDrop no-op for no drop targets, onDrop ignores non-tab-bar-item data
+  - **Cross-bar isolation** (2 tests): two TabBar instances have different barIds, drop target rejects drags from different TabBar instance
+  - **Drop indicator edge logic** (1 test): onDragEnter sets edge based on source vs target index, onDrag/onDragLeave registered
+  - **Auto-hide** (2 tests): no DnD registrations when auto-hidden (0 items), no DnD registrations when auto-hidden (1 item)
+  - **Edge cases** (3 tests): monitor dispatch for reverse direction reorder, empty drop targets, wrong drag type ignored
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 1026/1026 tests pass (20 new + 1006 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files
+
+Date: 2026-03-14
+
+### What was done
+- Verified that `PaneContent` in `apps/web/src/panels/panel-manager.tsx` already renders `ReviewPane` as a standalone pane for `paneType: 'review'` leaf nodes (lines 298-300), so no changes needed there.
+
+- Updated `Ctrl+B, R` keybinding in `apps/web/src/panels/panel-hotkeys.tsx`:
+  - Changed from calling `actions.toggleReviewPane(activePaneId)` (toggle behavior) to creating a new review panel via `actions.splitPane(activePaneId, 'horizontal', { paneType: 'review', workspaceId: activeWorkspaceId })` (right-side split)
+  - Falls back to `actions.addPanelTab?.(activeWorkspaceId, 'review')` when no active pane exists but a workspace is focused
+  - This matches the exact pattern used for `Ctrl+B, D` (diff panel creation) in issue #12
+
+### Notes
+- Review already appears as option #3 in the panel type picker (configured in issue #11).
+- `PaneContent` already renders `ReviewPane` standalone with correct workspace context — no changes needed.
+- The existing `toggleReviewPane` action remains in the codebase for backward compatibility (used by workspace frame header button and full-height review panel close button). It will be cleaned up when all panel types are fully promoted.
+- Old layouts with review panes continue to work — `PaneContent` handles `paneType: 'review'` correctly.
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 838/838 tests pass (no regressions)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #14: Promote dev server terminal to first-class panel type — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Updated `PaneContent` dispatch in `apps/web/src/panels/panel-manager.tsx` to handle dev server terminal panes without a terminal ID:
+  - Added `EmptyDevServerPane` component that auto-spawns a dev server terminal with `autoRun: true` on mount
+  - When `paneType === 'devServerTerminal'` and no `terminalId`, renders `EmptyDevServerPane` which automatically spawns the terminal and assigns it to the pane
+  - Shows loading state while spawning, error state with retry button on failure
+  - The existing standalone rendering for `paneType === 'devServerTerminal'` with `terminalId` continues to work (renders `DevServerTerminalPane` directly)
+
+- Updated `Ctrl+B, S` keybinding in `apps/web/src/panels/panel-hotkeys.tsx`:
+  - Changed from calling `actions.toggleDevServerPane(activePaneId)` (sidebar toggle) to creating a new dev server terminal panel via `actions.splitPane(activePaneId, 'horizontal', { paneType: 'devServerTerminal', workspaceId })` (right-side split)
+  - Falls back to `actions.addPanelTab?.(activeWorkspaceId, 'devServerTerminal')` when no active pane exists but a workspace is focused
+  - This matches the exact pattern used for `Ctrl+B, D` (diff) and `Ctrl+B, R` (review) in issues #12 and #13
+
+- Updated dev server button in `apps/web/src/components/workspace-frame-header.tsx`:
+  - Changed from `actions?.toggleDevServerPane(paneId)` to `actions?.splitPane(paneId, 'horizontal', { paneType: 'devServerTerminal', workspaceId })`
+  - Updated aria-label from "Toggle dev server terminal" to "New dev server terminal"
+  - Updated tooltip text from "Toggle dev server terminal" to "New dev server terminal"
+
+### Notes
+- Dev server terminal already renders correctly as a standalone pane (line 369 in panel-manager.tsx) — `DevServerTerminalPane` component was already standalone-capable.
+- Dev server appears as option #4 in the panel type picker (already configured in issue #11).
+- Old layouts with `devServerOpen: true` are migrated by the migration issue (#6, already completed).
+- The existing `toggleDevServerPane` action remains in the codebase for backward compatibility. It will be cleaned up when all toggle actions are removed.
+- The `autoOpenDevServerRef` in `use-panel-layout.ts` still references `handleToggleDevServerPane` for the auto-open flow when containers start. This continues to work for legacy layouts.
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 838/838 tests pass (no regressions)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #15: Wire panel type picker into split + new tab flows — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Connected the panel type picker component to all panel creation entry points, so users now choose a panel type (Terminal, Diff, Review, Dev Server) before splitting or creating a new tab.
+
+- Added `PickerMode` type to `panel-context.tsx`:
+  - `{ kind: 'split-right', paneId, workspaceId }` — split right with chosen type
+  - `{ kind: 'split-down', paneId, workspaceId }` — split down with chosen type
+  - `{ kind: 'new-tab', workspaceId }` — create new panel tab with chosen type
+
+- Added `PendingPickerState` context to `panel-context.tsx`:
+  - `paneId: string | null` — the pane to anchor the picker overlay on
+  - `onSelect(type)` — called when a panel type is selected
+  - `onCancel()` — called when the picker is dismissed
+  - Distributed via `PendingPickerContext` and `usePendingPicker()` hook
+
+- Added `showPanelTypePicker(mode: PickerMode)` to `PanelActions` interface:
+  - Sets the picker mode state, which triggers the picker overlay to appear
+  - On type selection, automatically performs the corresponding split or new-tab action
+  - On cancel (Escape), dismisses without action
+
+- Added `PanePickerOverlay` component in `panel-manager.tsx`:
+  - Renders inline within the pane container (same pattern as `PaneCloseConfirmDialog`)
+  - Uses `absolute inset-0 z-50` positioning with backdrop blur
+  - Centers the `PanelTypePicker` component within the pane
+  - Click-on-backdrop dismisses the picker
+  - Rendered conditionally in `LeafPaneRenderer` when `pendingPicker.paneId === node.id`
+
+- Wired picker state management in `index.tsx`:
+  - `pickerMode` state manages the current picker mode (split-right, split-down, new-tab)
+  - `handlePickerSelect` performs the action: `splitPane` with `newPaneContent` for splits, `addPanelTab` for new tabs
+  - `handlePickerCancel` dismisses the picker
+  - `pendingPickerState` context value passed to `PanelActionsProvider`
+
+- Updated `handleSplitPane` in `use-panel-layout.ts`:
+  - Now accepts optional third argument `newPaneContent?: Partial<LeafNode>`
+  - Passes `newPaneContent` through to `splitPane` from `layout-utils.ts` (which already supported it)
+  - Only auto-spawns a terminal for `terminal`-type panes — diff, review, and dev server panes handle their own content
+  - This fixes a pre-existing bug where `Ctrl+B D/R/S` was silently dropping the `newPaneContent` argument
+
+- Updated keyboard shortcuts in `panel-hotkeys.tsx`:
+  - `Cmd+D` → shows picker, then splits right with chosen type
+  - `Cmd+Shift+D` → shows picker, then splits down with chosen type
+  - `Ctrl+T` → shows picker, then creates panel tab with chosen type
+  - `Ctrl+B, H` → shows picker, then splits right with chosen type
+  - `Ctrl+B, V` → shows picker, then splits down with chosen type
+  - Terminal is pre-selected in the picker, so pressing Enter immediately creates a terminal (no extra interaction needed for the common case)
+
+- Updated panel tab bar `+` button in `workspace-frames.tsx`:
+  - `handlePanelTabNew` now calls `showPanelTypePicker({ kind: 'new-tab', workspaceId })` instead of directly creating a terminal tab
+
+- Updated 5 test files to include `showPanelTypePicker: vi.fn()` mock:
+  - `workspace-frames-minimize.test.tsx`
+  - `workspace-frame-header.test.tsx`
+  - `terminal-overlay-toolbar.test.tsx`
+  - `full-height-review-panel.test.tsx`
+  - `fullscreen-portal.test.tsx`
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 838/838 tests pass (no regressions)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #17: Progressive Cmd+W close logic — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Implemented the progressive close chain for `Cmd+W` and `Ctrl+B, X` that escalates from innermost to outermost:
+  1. Multiple panes in active panel tab → close the active pane (existing `closePane`)
+  2. Single pane in active panel tab → close the panel tab (`removePanelTab`)
+  3. Last panel tab in workspace → remove the workspace from the window tab (`closeWorkspace`)
+  4. Last workspace in window tab → close the window tab (`closeWindowTab`)
+  5. Last window tab → show close-app dialog (`onMetaWWithoutPane`)
+
+- Added `computeProgressiveCloseAction` pure function to `apps/web/src/panels/window-tab-utils.ts`:
+  - Takes `WindowLayout | undefined`, `activePaneId`, and `activeWorkspaceId` as inputs
+  - Returns a discriminated union `ProgressiveCloseAction` with 5 variants:
+    - `close-pane` — close a pane within a panel tab's split tree
+    - `close-panel-tab` — remove the active panel tab from a workspace
+    - `close-workspace` — remove a workspace from the active window tab
+    - `close-window-tab` — close the active window tab
+    - `close-app` — show the close-app dialog or do nothing
+  - Extracted helper functions to keep complexity under the lint threshold:
+    - `resolveLastWorkspaceCloseAction` — decides between close-window-tab and close-app
+    - `resolveEmptyWorkspaceAction` — handles empty workspace state
+    - `resolveLastPaneCloseAction` — escalates from panel tab to workspace to window tab
+  - `countPanelLeaves` — counts leaf panes in a `PanelTreeNode` tree
+  - `findWorkspaceTileLeaf` — finds a `WorkspaceTileLeaf` by workspace ID in a tile tree
+  - Falls back to `close-pane` when no hierarchical layout is available (legacy mode)
+
+- Updated `Cmd+W` handler in `apps/web/src/panels/panel-hotkeys.tsx`:
+  - Added `executeProgressiveClose` function that calls `computeProgressiveCloseAction` and dispatches the correct action
+  - `Cmd+W` (`Meta+W`) now calls `executeProgressiveClose` instead of directly calling `actions.closePane`
+  - The close-pane action still goes through the existing gating layer (confirmation dialog for running processes)
+
+- Updated `Ctrl+B, X` handler in `apps/web/src/panels/panel-hotkeys.tsx`:
+  - Now calls `executeProgressiveClose` instead of directly calling `actions.closePane`
+  - Same progressive chain as `Cmd+W`
+
+- Updated Electron IPC `close-pane` handler:
+  - Now calls `executeProgressiveClose` instead of directly calling `actions.closePane`
+  - Ensures macOS menu bar Cmd+W also uses the progressive chain
+
+- Exported `ProgressiveCloseAction` type and `computeProgressiveCloseAction` function from `window-tab-utils.ts`
+
+### Tests
+- 20 tests in `apps/web/test/progressive-close.test.ts` covering:
+  - No layout / no active pane: returns close-app or close-pane fallback
+  - No active tab found: returns close-app
+  - No workspace context: returns close-pane fallback
+  - Workspace not found in active tab: returns close-pane fallback
+  - close-pane: panel tab with 2 panes, panel tab with 3 panes
+  - close-panel-tab: single pane with multiple panel tabs, non-first active tab
+  - close-workspace: single pane, single tab, multiple workspaces
+  - close-window-tab: single workspace, multiple window tabs
+  - close-app: single tab, single workspace, single pane
+  - Empty workspace: multiple workspaces, single workspace with multiple tabs, single workspace single tab
+  - Window tab with no workspace layout: falls back correctly
+  - Nested workspace tiles: closes workspace from nested split
+  - Full escalation chain: step-by-step verification of all 3 steps in a multi-level hierarchy
+  - Diff/review pane types: correctly identifies multiple panes in a split with non-terminal types
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 858/858 tests pass (20 new + 838 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #21: Session persistence for hierarchical layout — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Added hierarchical reconciliation functions to `apps/web/src/panels/window-tab-utils.ts`:
+  - `getStaleTerminalLeavesHierarchical(layout, liveTerminalIds)` — collects all terminal leaves from a `WindowLayout` whose terminalId is not in the live terminal set. Walks all window tabs > workspace tiles (including nested `WorkspaceTileSplit`) > panel tabs > panel tree nodes.
+  - `reconcileWindowLayout(layout, liveTerminalIds, respawnedIds)` — replaces stale terminal IDs in a `WindowLayout` with respawned ones using a mapping. Preserves referential equality when no changes are made. Walks the full hierarchy: tabs > tiles > panel tabs > panel tree nodes.
+  - Helper functions: `getStaleTerminalLeavesFromPanelTree`, `getStaleTerminalLeavesFromTileTree`, `reconcilePanelTree`, `reconcileTileTree`
+
+- Added hierarchical repair function `repairWindowLayout(layout)` to `window-tab-utils.ts`:
+  - Validates every node in the hierarchy recursively: `WindowLayout` > `WindowTab` > `WorkspaceTileNode` > `PanelTab` > `PanelTreeNode`
+  - Drops invalid nodes (empty IDs, invalid pane types, invalid directions)
+  - Collapses single-child splits (both workspace tile splits and panel splits)
+  - Redistributes sizes when they are invalid
+  - Validates and repairs `activeTabId` and `activePanelTabId` references
+  - Strips invalid optional fields from leaf nodes (e.g., non-string terminalId)
+  - Returns `{ windowLayout, wasRepaired }` so the caller can re-persist if needed
+  - Extracted helper functions to stay under lint complexity limits: `repairPanelTreeNode`, `repairPanelLeafNode`, `repairPanelSplitNode`, `repairPanelTab`, `repairPanelTabsArray`, `resolveActivePanelTabId`, `repairWorkspaceTileNode`, `repairWorkspaceTileLeaf`, `repairWorkspaceTileSplit`, `repairTileSplitChildren`, `repairWindowTab`, `repairSplitSizes`
+
+- Updated `apps/web/src/routes/-hooks/use-panel-layout.ts`:
+  - **Repair on read**: Added `windowLayoutRepair` useMemo that runs `repairWindowLayout` on the persisted `windowLayout` column. If repaired, a one-time effect commits `windowLayoutRestored` to LiveStore.
+  - **Migration detection**: Added `persistedWindowLayout` useMemo that returns the repaired window layout if available, or migrates from the legacy `layoutTree` via `migrateToWindowLayout()` if `windowLayout` is empty. The migration runs in useMemo (no side effects).
+  - **Migration persistence**: The migrated layout is persisted to the `windowLayout` column during the reconciliation flow (alongside terminal respawning). The `commitReconciledLayouts` callback uses `persistedWindowLayout` as fallback when the persisted row doesn't have a `windowLayout`.
+  - **Reconciliation**: Updated the reconciliation effect to:
+    1. Check both legacy `layoutTree` and hierarchical `windowLayout` for stale terminals
+    2. Prefer hierarchical stale leaves when available
+    3. After respawning, reconcile both the legacy tree (via `reconcileLayout`) and the hierarchical tree (via `reconcileWindowLayout`)
+    4. Commit reconciled layouts to their respective columns
+  - **isReconciling**: Updated initial state to also consider `persistedWindowLayout` existence
+  - Extracted `collectStaleLeaves` and `commitReconciledLayouts` callbacks to reduce effect complexity
+
+- Updated `apps/web/test/use-panel-layout.test.ts`:
+  - Added `windowLayoutRestored` mock and all window/panel tab event mocks to the `vi.hoisted` block
+  - Added all new event mocks to the `@laborer/shared/schema` mock module
+  - Added `windowLayout` field to the `PersistedLayoutRow` type
+  - Updated `applyPersistedLayoutEvent` to handle window layout events (routes them to update the `windowLayout` column, preserving existing row data)
+  - Added `WINDOW_LAYOUT_EVENT_TYPES` set for event type dispatch
+
+### Tests
+- 33 tests in `apps/web/test/hierarchical-persistence.test.ts` covering:
+  - **getStaleTerminalLeavesHierarchical** (10 tests): no terminals, all live, single stale, multiple panel tabs, multiple window tabs, nested panel splits, empty layout, no workspace layout, workspace tile splits, non-terminal pane types
+  - **reconcileWindowLayout** (8 tests): no changes (referential equality), replace stale IDs, clear unmapped stale IDs, multiple panel tabs, multiple window tabs, preserve live terminals, empty layout, workspace tile splits
+  - **repairWindowLayout** (15 tests): non-object input, invalid tabs, all tabs invalid, valid layout no repair, stale activeTabId, drop invalid tabs, invalid panel tabs, stale activePanelTabId, collapse single-child workspace splits, collapse single-child panel splits, invalid pane types, valid diff/review types, strip invalid optional fields, redistribute invalid sizes, deeply nested hierarchies
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 891/891 tests pass (33 new + 858 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing `useAwait` issue in unrelated test code)
+
+## Issue #16: cmux-style keybindings: pane navigation + zoom — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Added `Cmd+Option+Arrow` (Meta+Alt+Arrow) directional pane navigation shortcuts to `apps/web/src/panels/panel-hotkeys.tsx`:
+  - `Cmd+Option+ArrowLeft` → move focus to the pane on the left
+  - `Cmd+Option+ArrowRight` → move focus to the pane on the right
+  - `Cmd+Option+ArrowUp` → move focus to the pane above
+  - `Cmd+Option+ArrowDown` → move focus to the pane below
+  - Uses raw `keydown` event handler (not `useHotkeySequence`) because TanStack Hotkeys may not handle Alt+Meta+Arrow reliably on macOS
+  - Reuses existing `findPaneInDirection` from `layout-utils.ts` for spatial navigation logic
+  - Navigation works within panel splits AND across workspace tiles (same algorithm as `Ctrl+B, Arrow`)
+
+- Added `arrowKeyToDirection` helper function in `panel-hotkeys.tsx`:
+  - Maps arrow key strings to `NavigationDirection` values
+  - Used by the `Cmd+Option+Arrow` handler for clean key-to-direction dispatch
+
+- Added `isMetaAltArrow` detector to `apps/web/src/panes/terminal-keys.ts`:
+  - Detects `Cmd+Option+Arrow` (Meta+Alt+Arrow) events for all four directions
+  - Requires exactly Meta+Alt with no Ctrl or Shift modifiers
+  - Added to `shouldBypassTerminal` chain so shortcuts work when terminal has focus
+
+- Updated documentation comment at top of `panel-hotkeys.tsx` to include new shortcuts
+
+- Verified existing shortcuts work correctly in the new hierarchy:
+  - `Cmd+Shift+Enter` (zoom toggle) — already registered, uses transient `fullscreenPaneId` state that works regardless of hierarchy depth
+  - `Cmd+B` (sidebar toggle) — handled by sidebar component, no conflict with `Ctrl+B` prefix (different modifier keys on macOS)
+  - `Ctrl+B, Arrow` (directional navigation fallback) — continues to work via `useHotkeySequence`, same `findPaneInDirection` algorithm
+
+### Tests
+- 14 new tests in `apps/web/test/terminal-keys.test.ts`:
+  - **shouldBypassTerminal** (4 tests): bypasses Cmd+Option+ArrowLeft/Right/Up/Down
+  - **isMetaAltArrow** (10 tests):
+    - Returns true for all four arrow directions with Cmd+Option
+    - Returns false when meta not held, when alt not held
+    - Returns false when ctrl also held, when shift also held
+    - Returns false for non-arrow keys with same modifiers
+    - Returns false for plain arrow keys (terminal cursor movement)
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 905/905 tests pass (14 new + 891 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #20: Sidebar navigation to terminal across tabs — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Updated `handleAssignTerminalToPane` in `apps/web/src/routes/-hooks/use-panel-layout.ts` to navigate across window tabs and panel tabs when a terminal is clicked in the sidebar:
+  - Added import of `findTerminalLocation` from `window-tab-utils.ts`
+  - Before creating a new pane, checks if the terminal already exists anywhere in the hierarchical `WindowLayout` via `findTerminalLocation`
+  - If found, performs 3-step navigation:
+    1. Switches to the correct window tab (if not already active) via `switchWindowTab` + `windowTabSwitched` LiveStore event
+    2. Switches to the correct panel tab within the workspace via `updateWorkspaceTileLeaf` + `switchPanelTab` + `panelTabSwitched` LiveStore event
+    3. Focuses the pane containing the terminal via `layoutPaneAssigned` LiveStore event
+  - Only triggered when no specific `paneId` is provided (sidebar click path), not when a specific pane is targeted (drag-and-drop or reassignment)
+  - Falls through to existing `computeTerminalPaneAssignment` logic when terminal is not found in the hierarchy (new terminals, legacy layout)
+
+- Added sidebar workspace highlighting via `ActiveWorkspaceIdContext` in `apps/web/src/panels/panel-context.tsx`:
+  - Added `ActiveWorkspaceIdContext` — React context holding the workspace ID that is currently focused
+  - Added `useActiveWorkspaceId()` hook — returns the workspace ID from context (null if no workspace is focused)
+  - Updated `PanelActionsProvider` to accept optional `activeWorkspaceId` prop and wrap children with `ActiveWorkspaceIdContext.Provider`
+  - Exported `useActiveWorkspaceId` from `panel-context.tsx`
+
+- Derived `activeWorkspaceId` in `apps/web/src/routes/index.tsx`:
+  - Added `useMemo` that derives the active workspace ID from the `activePaneId` by looking up the active pane in the layout tree via `findNodeById` and extracting `workspaceId` from the leaf node
+  - Passed `activeWorkspaceId` to `PanelActionsProvider`
+
+- Updated `WorkspaceItem` in `apps/web/src/components/workspace-list.tsx`:
+  - Added import of `useActiveWorkspaceId` from `panel-context`
+  - Calls `useActiveWorkspaceId()` and compares with `workspace.id` to determine `isActiveWorkspace`
+  - Active workspace card gets `border-primary` class via `cn()` utility — visually highlights the sidebar card matching the currently focused workspace
+
+- Updated 3 test files with `useActiveWorkspaceId` mock:
+  - `workspace-card-layout.test.tsx` — added `useActiveWorkspaceId: () => null` to panel-context mock
+  - `workspace-list-root-delete.test.tsx` — added `useActiveWorkspaceId: () => null` to panel-context mock
+  - `workspace-plan-scope.test.tsx` — added `useActiveWorkspaceId: () => null` to panel-context mock
+
+### Notes
+- The `findTerminalLocation` utility function was already fully implemented and tested in issue #2 (67 tests in `window-tab-utils.test.ts`) — this issue wires it into the actual UI flow.
+- Cross-window navigation (focusing a different Electron window) continues to work via the existing `focusExistingWindowForWorkspace` gate at the top of `handleAssignTerminalToPane`.
+- The sidebar workspace highlight uses `border-primary` matching the existing workspace frame active indicator pattern in `workspace-frames.tsx`.
+- The `needsAttention` animation styling (`border-amber-400/50`) takes precedence over the active highlight due to CSS specificity ordering in the `cn()` call.
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 905/905 tests pass (no regressions)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing `useAwait` issue in unrelated test code)
+
+## Issue #19: Empty state: workspace and panel tab — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Created two new empty state components in `apps/web/src/routes/-components/workspace-frames.tsx`:
+
+- **`EmptyWorkspaceState`** — shown when all panel tabs in a workspace have been closed (`tileLeaf.panelTabs.length === 0`):
+  - Uses the shared `Empty` component library (`Empty`, `EmptyHeader`, `EmptyMedia`, `EmptyTitle`, `EmptyDescription`, `EmptyContent`)
+  - Displays `Layers` icon from lucide-react
+  - Title: "No panel tabs"
+  - Description with `Ctrl+T` keyboard shortcut hint in a styled `<kbd>` element
+  - Embeds `PanelTypePicker` inline (not via the overlay/context mechanism) — user can immediately select a panel type to create a new tab
+  - On type selection, calls `actions.addPanelTab(workspaceId, type)` via `usePanelActions()`
+  - `data-testid="empty-workspace-state"` for testing
+
+- **`EmptyPanelTabState`** — shown when all panes in a panel tab have been closed (edge case from layout repair/reconciliation):
+  - Same `Empty` component library pattern for visual consistency
+  - Displays `PanelTop` icon from lucide-react
+  - Title: "Empty tab"
+  - Description with `Cmd+D` keyboard shortcut hint in a styled `<kbd>` element
+  - Embeds `PanelTypePicker` inline — user can select a type to create a new panel
+  - On type selection, calls `actions.addPanelTab(workspaceId, type)` via `usePanelActions()`
+  - `data-testid="empty-panel-tab-state"` for testing
+  - Exported for future use — not currently wired into the rendering flow since the progressive close chain (issue #17) removes panel tabs when their last pane is closed
+
+- **Wired `EmptyWorkspaceState` into the rendering flow:**
+  - Extracted `WorkspaceContent` component from `WorkspaceFrame` to reduce cognitive complexity and avoid nested ternary expressions
+  - `WorkspaceContent` dispatches between: empty workspace state (no panel tabs), side panel layout (diff/review open alongside main content), and standard `PanelManager` rendering
+  - In `WorkspaceFrame`, added `isEmptyWorkspace` boolean flag: `tileLeaf !== undefined && tileLeaf.panelTabs.length === 0`
+  - Updated `effectiveLayout` to return `null` when no active panel tab exists (empty workspace)
+  - When `isEmptyWorkspace` is true and workspace is not minimized, renders `EmptyWorkspaceState` instead of `PanelManager`
+
+- Added imports to `workspace-frames.tsx`:
+  - `PaneType` from `@laborer/shared/types`
+  - `Layers`, `PanelTop` from `lucide-react`
+  - `Empty`, `EmptyContent`, `EmptyDescription`, `EmptyHeader`, `EmptyMedia`, `EmptyTitle` from `@/components/ui/empty`
+  - `PanelTypePicker` from `@/components/ui/panel-type-picker`
+
+- Added `noop` constant for the `PanelTypePicker`'s `onCancel` handler in embedded contexts (Escape is a no-op since the picker is always visible in the empty state)
+
+### Tests
+- 23 tests in `apps/web/test/empty-state-components.test.tsx` covering:
+  - **EmptyWorkspaceState** (12 tests): renders container, displays "No panel tabs" title, shows Ctrl+T shortcut hint, embeds PanelTypePicker with 4 options, calls addPanelTab for terminal/diff/review/devServer, no-op when workspaceId undefined, keyboard selection via number keys, keyboard selection via Enter, renders description text
+  - **EmptyPanelTabState** (9 tests): renders container, displays "Empty tab" title, shows Cmd+D shortcut hint, embeds PanelTypePicker with 4 options, calls addPanelTab for terminal/review, no-op when workspaceId undefined, renders description text, keyboard selection via number keys
+  - **Visual consistency** (2 tests): both states use the Empty component library (data-slot="empty", "empty-icon", "empty-title", "empty-description")
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 928/928 tests pass (23 new + 905 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #18: Empty state: window tab with workspace picker — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Created `EmptyWindowTabState` component in `apps/web/src/routes/-components/workspace-frames.tsx`:
+  - Shows when a window tab has no workspaces (e.g., after `Cmd+N` creates a new empty tab)
+  - Uses the shared `Empty` component library (`Empty`, `EmptyHeader`, `EmptyMedia`, `EmptyTitle`, `EmptyDescription`, `EmptyContent`)
+  - Displays `LayoutGrid` icon from lucide-react
+  - Title: "Empty tab"
+  - Description: "Select a workspace to add to this tab, or create a new one from the sidebar."
+
+- **Workspace picker** — queries LiveStore for all workspaces and projects, groups available workspaces by project:
+  - `allWorkspacesForPicker$` — `queryDb(workspaces)` with label `emptyWindowTabWorkspaces`
+  - `allProjectsForPicker$` — `queryDb(projects)` with label `emptyWindowTabProjects`
+  - Filters out destroyed workspaces (`status === 'destroyed'`)
+  - Filters out workspaces already open in any window tab using `getAllWorkspaceTileLeaves(windowLayout)` to collect all open workspace IDs
+  - Groups remaining workspaces by project, displaying project name as heading and workspace branch names as clickable items
+  - Falls back to project ID when project name is not found in the DB
+  - Shows "All workspaces are already open" message when no workspaces are available
+  - Available workspaces rendered as `Button` components with `GitBranch` icon and branch name
+  - Workspace list is scrollable via `ScrollArea` with `max-h-48` constraint
+
+- **Sub-components**:
+  - `WorkspacePickerGroup` — renders a project heading with its available workspaces
+  - `WorkspacePickerItem` — renders a single workspace as a clickable button with keyboard support (Enter/Space)
+  - Both support click and keyboard interaction
+
+- Added `addWorkspaceToCurrentTab` action to `PanelActions` interface in `apps/web/src/panels/panel-context.tsx`:
+  - Takes a `workspaceId: string` parameter
+  - Adds the workspace to the active window tab
+
+- Implemented `handleAddWorkspaceToCurrentTab` handler in `apps/web/src/routes/-hooks/use-panel-layout.ts`:
+  - Gets the active window tab via `getActiveWindowTab(persistedWindowLayout)`
+  - Calls `addWorkspaceToTab(activeTab, workspaceId)` from `workspace-tile-utils.ts` to add the workspace
+  - Replaces the updated tab in the layout and commits `windowTabCreated` LiveStore event
+  - Added imports for `getActiveWindowTab` from `window-tab-utils.ts` and `addWorkspaceToTab` from `workspace-tile-utils.ts`
+
+- Wired empty state into the rendering flow:
+  - Updated `PanelContent` in `apps/web/src/routes/-components/panel-content.tsx`:
+    - Added `isEmptyWindowTab` prop (boolean, defaults to false)
+    - When `isEmptyWindowTab` is true, renders `EmptyWindowTabState` instead of workspace frames
+    - Imports `EmptyWindowTabState` from `workspace-frames.tsx`
+  - Updated `apps/web/src/routes/index.tsx`:
+    - Refactored `workspaceTileLayout` derivation to first extract `activeWindowTab`, then derive `workspaceTileLayout` from it
+    - Added `isEmptyWindowTab` boolean: true when `activeWindowTab` exists but has no `workspaceLayout`
+    - Passes `isEmptyWindowTab` to `PanelContent`
+
+- Updated 6 test files to include `addWorkspaceToCurrentTab: vi.fn()` mock:
+  - `empty-state-components.test.tsx`
+  - `full-height-review-panel.test.tsx`
+  - `workspace-frames-minimize.test.tsx`
+  - `workspace-frame-header.test.tsx`
+  - `terminal-overlay-toolbar.test.tsx`
+  - `fullscreen-portal.test.tsx`
+
+- Added LiveStore mocks to 3 test files that now need them (because `workspace-frames.tsx` imports `@laborer/shared/schema`):
+  - `empty-state-components.test.tsx` — added `@livestore/livestore` and `@/livestore/store` mocks
+  - `full-height-review-panel.test.tsx` — added `@livestore/livestore` and `@/livestore/store` mocks
+  - `workspace-frames-minimize.test.tsx` — added `@livestore/livestore` and `@/livestore/store` mocks, moved `WorkspaceFrames` import after mocks
+
+### Tests
+- 12 tests in `apps/web/test/empty-window-tab-state.test.tsx` covering:
+  - Renders the empty state container with `data-testid="empty-window-tab-state"`
+  - Displays "Empty tab" title
+  - Shows description text about selecting a workspace
+  - Shows "all workspaces open" message when no workspaces are available
+  - Shows available workspaces grouped by project (multi-project, multi-workspace)
+  - Excludes destroyed workspaces from the picker
+  - Excludes workspaces already open in other tabs (via `windowLayout` check)
+  - Calls `addWorkspaceToCurrentTab` when a workspace is clicked
+  - Uses the Empty component library (data-slot verification)
+  - Falls back to project ID when project name is not found
+  - Shows all-open message when all workspaces are in tabs (with `WorkspaceTileSplit`)
+  - Shows workspaces in all non-destroyed statuses (running, creating, paused)
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 940/940 tests pass (12 new + 928 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #22: Workspace uniqueness enforcement — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Added 3 new pure functions to `apps/web/src/panels/window-tab-utils.ts` for workspace uniqueness enforcement:
+
+- **`removeWorkspaceFromLayout(layout, workspaceId, removeFromTab)`** — removes a workspace from whatever tab it currently lives in across the entire layout. Uses `findWorkspaceLocation` to locate the workspace and the injected `removeFromTab` callback to strip it from the owning tab. Returns the layout unchanged (referential equality) if the workspace is not found.
+
+- **`moveWorkspace(layout, workspaceId, targetTabId, removeFromTab, addToTab)`** — moves a workspace from its current location to a specific target tab. If the workspace already lives in the target tab, returns the layout unchanged (no-op). Otherwise removes it from the old tab and adds it to the target tab. Both `removeFromTab` and `addToTab` are injected as callbacks to avoid circular imports with `workspace-tile-utils.ts`.
+
+- **`addWorkspaceToTabUnique(layout, workspaceId, targetTabId, removeFromTab, addToTab)`** — the primary entry point for within-window uniqueness enforcement. Delegates to `moveWorkspace` to ensure the workspace ends up only in the target tab. This function is used by the UI handler to enforce the constraint that a workspace can only be open in one window tab at a time.
+
+- Updated `handleAddWorkspaceToCurrentTab` in `apps/web/src/routes/-hooks/use-panel-layout.ts`:
+  - Made the handler `async` to support cross-window uniqueness checking
+  - Added **cross-window uniqueness**: calls `focusExistingWindowForWorkspace(workspaceId)` before adding. If the workspace is already open in another Electron window, focuses that window instead of duplicating the workspace.
+  - Added **within-window uniqueness**: calls `findWorkspaceLocation(base, workspaceId)` to check if the workspace already exists in the current layout. If already in the target tab, returns early (no-op). Otherwise calls `addWorkspaceToTabUnique` to remove the workspace from its old tab and add it to the active tab.
+  - Imported `addWorkspaceToTabUnique`, `findWorkspaceLocation` from `window-tab-utils.ts` and `removeWorkspaceFromTab` from `workspace-tile-utils.ts`
+
+### Architecture decisions
+- **Dependency injection for `removeFromTab`/`addToTab`**: The pure functions in `window-tab-utils.ts` accept `removeFromTab` and `addToTab` as callback parameters rather than importing them directly from `workspace-tile-utils.ts`. This avoids circular import issues and keeps the modules decoupled — `window-tab-utils.ts` operates on `WindowLayout` while `workspace-tile-utils.ts` operates on `WindowTab`.
+- **Cross-window check via Electron IPC**: The cross-window uniqueness check reuses the existing `focusExistingWindowForWorkspace` function from `desktop.ts`, which communicates with other Electron windows via the desktop bridge IPC. This is the same pattern used in `handleAssignTerminalToPane` for terminal sidebar navigation.
+- **No LiveStore cross-window query**: The PRD mentions "query other windows' layouts via LiveStore" for cross-window enforcement. However, the existing `focusExistingWindowForWorkspace` Electron IPC mechanism already handles this correctly — it checks all windows' workspace assignments and focuses the right window. Using IPC is more reliable than querying LiveStore because it handles the focus-switching atomically.
+
+### Tests
+- 19 tests in `apps/web/test/workspace-uniqueness.test.ts` covering:
+  - **removeWorkspaceFromLayout** (5 tests): workspace not found (referential equality), empty layout, removes from correct tab, removes only workspace (makes tab empty), removes from nested tile split, preserves activeTabId
+  - **moveWorkspace** (6 tests): no-op when already in target tab (referential equality), moves between tabs, adds to empty tab, adds workspace not in any tab, preserves activeTabId, immutability
+  - **addWorkspaceToTabUnique** (8 tests): adds when not open anywhere, moves from another tab, no-op when already in target tab, empty layout, enforces no duplicate views (count check), workspace in correct target after move, multi-workspace moves preserve source tab, sequential operations maintain uniqueness invariant
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 959/959 tests pass (19 new + 940 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing `useAwait` issue in unrelated test code)
+
+## Issue #28: Polish: close confirmation and error handling — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Added close confirmation gating at **panel tab** and **window tab** levels, matching the existing pane-level and workspace-level confirmation patterns:
+
+- **Pure confirmation functions** in `apps/web/src/panels/window-tab-utils.ts`:
+  - `shouldConfirmClosePanelTab(panelTab, terminals)` — checks if any terminal in a panel tab's split tree has a running child process. Walks `PanelTreeNode` recursively to collect terminal IDs.
+  - `shouldConfirmCloseWindowTab(windowTab, terminals)` — checks across all workspaces and panel tabs in a window tab. Walks `WorkspaceTileNode` > `PanelTab` > `PanelTreeNode`.
+  - Helper functions: `collectTerminalIdsFromPanelTree`, `collectTerminalIdsFromTileTree`, `hasRunningProcess`
+  - Exported `TerminalProcessInfo` type for the minimal terminal info needed for checks.
+
+- **New dialog components** in `apps/web/src/routes/-components/close-dialogs.tsx`:
+  - `ClosePanelTabDialog` — "Close tab?" confirmation with Cancel/Close tab buttons. Shown when progressive close chain removes a panel tab with running processes.
+  - `CloseWindowTabDialog` — "Close window tab?" confirmation. Shown when closing a window tab (Cmd+Shift+W or progressive close) that has terminals with running processes across any workspace.
+
+- **Gated action handlers** in `apps/web/src/routes/index.tsx`:
+  - `gatedRemovePanelTab(workspaceId, tabId)` — checks `shouldConfirmClosePanelTab` before removing. If running processes found, shows `ClosePanelTabDialog`. Otherwise removes immediately.
+  - `gatedCloseWindowTab()` — checks `shouldConfirmCloseWindowTab` on the active window tab. If running processes found, shows `CloseWindowTabDialog`. Otherwise closes immediately.
+  - Both gated actions added to `gatedPanelActions` so they flow through the entire component tree (including the progressive close chain via `executeProgressiveClose`).
+  - Dialog state managed via `useState` + `useRef` pattern matching existing `closeWorkspaceDialogOpen` / `pendingCloseWorkspaceIdRef`.
+
+- **Error boundary component** `apps/web/src/components/ui/tab-error-boundary.tsx`:
+  - `TabErrorBoundary` — React class component (required for error boundaries) that isolates render failures in one tab/workspace from crashing other tabs or the entire app.
+  - Shows a fallback UI with: AlertTriangle icon, "Something went wrong" heading, error message, optional tab label context, and "Retry" button.
+  - `Retry` resets the boundary state, allowing the child tree to re-render.
+  - Logs errors via `console.error` with `[TabErrorBoundary]` prefix and tab label.
+
+- **Error boundary integration** in `apps/web/src/routes/-components/workspace-frames.tsx`:
+  - Wrapped `WorkspaceTileLeafFrame` in `TabErrorBoundary` within `WorkspaceTileRenderer`. Each workspace tile leaf is independently isolated — a render error in one workspace's panels does not crash other workspaces or the window tab.
+
+- **Stale layout handling**: Verified that `repairWindowLayout` (implemented in issue #21) already produces empty states instead of crashes. The repair function validates every node recursively, drops invalid nodes, collapses single-child splits, and validates active tab/pane references. Combined with the new error boundaries, invalid layout data gracefully degrades to empty states rather than crashing.
+
+### Tests
+- 19 tests in `apps/web/test/close-confirmation.test.ts` covering:
+  - **shouldConfirmClosePanelTab** (8 tests): no terminals, idle terminal, running terminal, mixed split (one running), all idle split, terminal not in live list, non-terminal pane types, deeply nested splits
+  - **shouldConfirmCloseWindowTab** (11 tests): no workspace layout, no running processes, running process, multiple workspaces (one running), all idle workspaces, multiple panel tabs, panel tab splits, empty workspace, nested workspace tile splits, non-terminal pane types
+
+- 6 tests in `apps/web/test/tab-error-boundary.test.tsx` covering:
+  - Renders children normally, catches errors and shows fallback, shows label in error message, shows retry button, retry recovers when child fixed, sibling isolation
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 984/984 tests pass (25 new + 959 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing `useAwait` issue in unrelated test code)
+
+## Issue #25: Polish: focus consistency — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Fixed four focus management gaps that caused "focus limbo" states when switching tabs, splitting panes, and navigating with keyboard shortcuts:
+
+**1. Focus restoration on window tab switch**
+- Updated `handleSwitchWindowTab`, `handleSwitchWindowTabByIndex`, and `handleSwitchWindowTabRelative` in `use-panel-layout.ts` to restore `activePaneId` when switching window tabs
+- Added `commitWindowTabSwitchWithFocus` helper that commits the window layout change AND updates `activePaneId` to the destination tab's last-focused pane
+- Also updated `handleCloseWindowTab` to restore focus to the new active tab after closing
+
+**2. Focus restoration on panel tab switch**
+- Updated `handleSwitchPanelTab`, `handleSwitchPanelTabByIndex`, and `handleSwitchPanelTabRelative` in `use-panel-layout.ts` to restore `activePaneId` when switching panel tabs
+- Added `commitPanelTabSwitchWithFocus` helper that commits the panel tab change AND updates `activePaneId` to the destination panel tab's `focusedPaneId` (or first leaf as fallback)
+
+**3. Focus persistence via `focusedPaneId`**
+- Updated `handleSetActivePaneId` in `use-panel-layout.ts` to save the current focus to the hierarchical layout's `focusedPaneId` field
+- Added `saveFocusedPaneId(layout, paneId)` pure function to `window-tab-utils.ts` — walks WindowLayout > WindowTab > WorkspaceTileNode > PanelTab to find the panel tab containing the pane and updates its `focusedPaneId`
+- This ensures that when switching away from a tab and back, the previously focused pane is restored
+
+**4. DOM focus transfer on `activePaneId` change**
+- Added `useEffect` in `LeafPaneRenderer` (`panel-manager.tsx`) that transfers DOM focus when a pane becomes active
+- When `activePaneId` changes to this pane (via keyboard navigation, tab switch, or split), the pane container's first focusable element receives `.focus()` — for terminals this is the xterm.js canvas, giving immediate keyboard input
+- Added `ref` and `tabIndex={-1}` to the pane container div for focusability
+- Checks `document.activeElement` to avoid redundant focus calls when focus is already inside the pane
+
+**5. Focus on new pane after split**
+- Updated `handleSplitPane` in `use-panel-layout.ts` to set `activePaneId` to the newly created pane after splitting (was keeping focus on the original pane)
+- This matches the PRD requirement: "After splitting: focus lands on the new pane"
+
+- Added pure utility functions to `window-tab-utils.ts`:
+  - `getFirstPanelTreeLeafId(node)` — gets the first leaf pane ID from a PanelTreeNode tree (DFS order)
+  - `resolveActivePaneForPanelTab(tab)` — resolves focus for a panel tab (prefers focusedPaneId, falls back to first leaf)
+  - `resolveActivePaneForWindowTab(tab)` — resolves focus for a window tab (walks: workspace tiles > active panel tab > focusedPaneId)
+  - `saveFocusedPaneId(layout, paneId)` — saves focusedPaneId on the panel tab containing the pane
+  - Helper functions: `saveFocusInTileTree`, `saveFocusInWorkspaceTile`, `panelTreeContainsPane`
+
+### Tests
+- 22 tests in `apps/web/test/focus-consistency.test.ts` covering:
+  - **getFirstPanelTreeLeafId** (4 tests): single leaf, horizontal split, nested split (DFS), empty split
+  - **resolveActivePaneForPanelTab** (4 tests): returns focusedPaneId, falls back to first leaf, non-first leaf, single-leaf tab
+  - **resolveActivePaneForWindowTab** (6 tests): empty window tab, focused pane of active panel tab, fallback to first leaf, active panel tab not first, no panel tabs, multi-workspace with empty first workspace
+  - **saveFocusedPaneId** (8 tests): pane not found (referential equality), updates matching panel tab, already correct (referential equality), only updates matching tab, across window tabs, nested workspace tile splits, empty layout, no workspace layout
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 1006/1006 tests pass (22 new + 984 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #27: Polish: tab overflow and performance — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Enhanced the `TabBar` component in `apps/web/src/components/ui/tab-bar.tsx` with overflow handling, auto-scroll, and performance safeguards:
+
+**1. Scroll overflow detection hook (`useScrollOverflow`)**
+- New hook that detects horizontal scroll overflow on the tab scroll container
+- Returns `OverflowState` with `canScrollLeft` and `canScrollRight` booleans
+- Subscribes to `scroll` events (passive) for real-time updates as user scrolls
+- Uses `ResizeObserver` (when available) to detect container size changes
+- Exposes `recheckOverflow()` for manual re-evaluation after item count changes
+- Gracefully handles environments without `ResizeObserver` (JSDOM in tests)
+
+**2. Scroll buttons**
+- Left chevron button (`ChevronLeft` from lucide-react) appears when `canScrollLeft` is true
+- Right chevron button (`ChevronRight`) appears when `canScrollRight` is true
+- Each button scrolls by 120px with `behavior: 'smooth'`
+- Accessible: `aria-label="Scroll tabs left"` / `"Scroll tabs right"`
+- Styled consistently with existing tab bar UI: `text-muted-foreground hover:text-foreground`
+- `data-testid="tab-bar-scroll-left"` / `"tab-bar-scroll-right"` for testing
+
+**3. Gradient fade overlays**
+- Left fade gradient (`from-muted/60 to-transparent`) when `canScrollLeft` is true
+- Right fade gradient (`from-muted/60 to-transparent`) when `canScrollRight` is true
+- `pointer-events-none` so they don't interfere with tab clicks
+- Positioned absolutely within a new `data-testid="tab-bar-scroll-area"` wrapper
+- 16px wide (`w-4`) — subtle visual cue without obscuring tab content
+
+**4. Auto-scroll active tab into view**
+- `useEffect` monitors `items` changes and scrolls the active tab into view
+- Uses `scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })`
+- `'nearest'` mode avoids unnecessary scrolling when the tab is already visible
+- Guarded with optional chaining for JSDOM compatibility
+
+**5. Item count change detection**
+- Uses `useRef` to track previous `items.length` and `queueMicrotask(recheckOverflow)` when count changes
+- This ensures overflow state is recalculated after React commits new tab elements to the DOM
+- Avoids Biome's `useExhaustiveDependencies` lint issue with primitive function parameters
+
+**6. Performance: background tab rendering**
+- The existing architecture already suspends rendering for background window tabs — only the active window tab's `workspaceTileLayout` is passed to `PanelContent`, so background tabs are never mounted as React components
+- Terminals continue running at the process level (server-side) regardless of whether their React components are mounted
+- Tab switching triggers terminal reconnection via the existing xterm.js lifecycle, which is near-instant for terminals that are already running
+- This architecture naturally prevents memory growth from background tabs since only the active tab's component tree is in the React tree
+
+**7. Keyboard accessibility preserved**
+- All tabs remain in the DOM (`role="tab"`) regardless of visual overflow
+- `tabIndex=0` on the active tab, `-1` on inactive tabs
+- `Cmd+1-8`, `Cmd+9`, `Cmd+Shift+[/]` shortcuts work regardless of overflow (they operate on the data model, not the DOM)
+
+### Structural changes
+- Added `data-testid="tab-bar-scroll-area"` wrapper div around the scrollable tab container
+- Restructured scroll container from `<div class="flex min-w-0 flex-1 ...">` to `<div class="relative min-w-0 flex-1">` wrapping `<div class="scrollbar-none flex h-full ...">` (separating the positioning context from the scroll container)
+
+### Tests
+- 17 tests in `apps/web/test/tab-bar-overflow.test.tsx` covering:
+  - **Scroll area structure** (3 tests): scroll area container renders, has overflow-x-auto class, has scrollbar-none class
+  - **Overflow indicators without overflow** (4 tests): no left/right fade or scroll buttons when content doesn't overflow
+  - **Scroll buttons** (3 tests): correct aria-labels, scrollBy called with correct arguments
+  - **Keyboard shortcut accessibility** (2 tests): all 20/50 tabs rendered in DOM, active tab has tabIndex=0
+  - **Auto-scroll active tab into view** (1 test): active tab element exists and has aria-selected
+  - **Gradient fade overlays** (2 tests): pointer-events-none class on fade elements
+  - **Auto-hide with overflow** (2 tests): no overflow controls when auto-hidden
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 1043/1043 tests pass (17 new + 1026 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #26: Polish: visual indicators and keyboard discoverability — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Added 5 visual indicator enhancements across the tab bar, panel manager, panel type picker, and workspace frames:
+
+**1. Focused pane border/highlight**
+- Updated `LeafPaneRenderer` in `apps/web/src/panels/panel-manager.tsx`:
+  - Active pane now gets `ring-1 ring-primary/50` — a subtle inset ring that visually distinguishes the focused pane from unfocused panes within a split
+  - This is subordinate to the drag-over highlight (`border-2 border-primary bg-primary/5`) which takes priority
+  - Updated the JSDoc comment to reflect the new behavior (was: "border rendered on outer container"; now: "ring highlight on individual leaf panes")
+
+**2. Tab close button tooltips with keyboard shortcuts**
+- Added `closeTooltip` prop to `TabBarProps` in `apps/web/src/components/ui/tab-bar.tsx`:
+  - When provided, wraps each tab's close button in a `<Tooltip>` / `<TooltipContent>` showing the shortcut text
+  - When not provided, renders the close button without a tooltip (backward compatible)
+  - Passed through `TabBar` -> `TabBarInner` -> `TabBarTab`
+- Set `closeTooltip="Close tab (Cmd+Shift+W)"` on the window tab bar in `panel-header-bar.tsx`
+- Set `closeTooltip="Close tab (Cmd+W)"` on the panel tab bar in `workspace-frames.tsx`
+
+**3. Tab shortcut hint titles**
+- Added `shortcutHint` prop to `TabBarItem` in `tab-bar.tsx`:
+  - Rendered as a `title` attribute on the tab `<div>`, providing native browser tooltip on hover
+  - Using `title` instead of `<Tooltip>` to avoid interference with drag-and-drop
+- Window tab bar (`panel-header-bar.tsx`): sets `shortcutHint` to `Cmd+1` through `Cmd+8` for tabs by index, `Cmd+9` for the last tab
+- Panel tab bar (`workspace-frames.tsx`): sets `shortcutHint` to `Ctrl+1` through `Ctrl+8` for tabs by index, `Ctrl+9` for the last tab
+
+**4. Panel type picker keycap-styled number indicators**
+- Updated `panel-type-picker.tsx`: changed number indicators from `<span>` to `<kbd>` elements with keycap styling:
+  - `border border-muted-foreground/30` — subtle border
+  - `bg-muted/50` — slight background to look like a keyboard key
+  - `font-mono text-[10px]` — monospace font at a compact size
+  - `size-4 rounded` — fixed size with rounded corners
+  - This makes the numbers look like pressable keyboard keys, clearly communicating that pressing 1-4 selects the option
+
+**5. Sidebar workspace highlight (verified)**
+- Confirmed that the sidebar workspace highlight (issue #20) correctly highlights the workspace card matching the currently focused workspace via `useActiveWorkspaceId()` -> `border-primary` on `<Card>`
+- No changes needed — already working correctly
+
+### Tests
+- 6 tests in `apps/web/test/visual-indicators.test.tsx` covering:
+  - **Close button tooltips** (2 tests): tooltip content rendered when `closeTooltip` provided (one per tab), no tooltip when not provided
+  - **Tab shortcut hints** (2 tests): `title` attribute set on tab when `shortcutHint` provided, no `title` when undefined
+  - **Panel type picker keycap numbers** (2 tests): 4 `<kbd>` elements with correct text (1-4), border and font-mono classes present for prominence
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 1049/1049 tests pass (6 new + 1043 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing issues in unrelated files)
+
+## Issue #24: Polish: tab bar animations and transitions — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Added smooth animated show/hide transitions to the `TabBar` component in `apps/web/src/components/ui/tab-bar.tsx`:
+
+**1. Auto-hide animated wrapper**
+- Instead of returning `null` immediately when `autoHide` is true and items <= 1, the `TabBar` now renders an animated wrapper `<div>` with CSS transition on height and opacity
+- When hiding: wrapper transitions from `h-8 opacity-100` to `h-0 opacity-0` with `duration-150 ease-in-out`
+- Uses `overflow-hidden` on the wrapper to prevent layout shift during the height transition
+- After the CSS transition completes (`onTransitionEnd`), the inner content is unmounted to free resources
+- On initial mount when hidden, returns `null` immediately (no flash — entrance animation only triggers on subsequent show/hide transitions)
+- `data-testid="tab-bar-animated-wrapper"` added for test targeting
+
+**2. Individual tab entrance animations**
+- Added `isNew` prop to `TabBarTab` component to detect newly added tabs
+- `TabBarInner` tracks known tab IDs via `useRef<Set<string>>` and computes `newIds` via `useMemo` on each render — only tabs not previously seen are flagged as new
+- New tabs start with `max-w-0 overflow-hidden opacity-0` and transition to `max-w-[200px] opacity-100` using CSS `transition-[max-width,opacity] duration-150`
+- Uses `requestAnimationFrame` to defer the `isEntering` state removal, ensuring the browser renders the initial collapsed state before transitioning to full size
+- Tabs present on initial mount are not animated (they render at full size immediately)
+
+**3. `prefers-reduced-motion` support**
+- Added `usePrefersReducedMotion()` hook that subscribes to `(prefers-reduced-motion: reduce)` media query
+- When reduced motion is preferred, the animated wrapper gets `transition-none` class, making all transitions instant
+- When reduced motion is active during hide transition, content is removed immediately without waiting for `transitionEnd`
+- Hook handles SSR (`typeof window === 'undefined'`) and environments without `matchMedia`
+- Listens for runtime changes to the media query (e.g., user toggles system setting while app is open)
+
+**4. No layout shift**
+- `overflow-hidden` on the animated wrapper prevents content from leaking during height transitions
+- Height transitions use the fixed `h-8` / `h-0` values (not `auto`) for reliable CSS transitions
+- Individual tab animations use `max-width` (not `width`) to allow natural content sizing
+
+### Tests
+- 16 tests in `apps/web/test/tab-bar-animations.test.tsx` covering:
+  - **Auto-hide animated wrapper** (9 tests): renders nothing on initial mount (0 items), renders nothing on initial mount (1 item), renders animated wrapper when shown (2+ items), no wrapper when autoHide is false, overflow-hidden class present, transition classes for height and opacity, h-8/opacity-100 when shown, keeps content during hide transition, removes content after transitionEnd
+  - **Individual tab entrance animations** (3 tests): newly added tabs get transition classes, initial mount tabs have full opacity/width, tab wrapper has transition classes
+  - **prefers-reduced-motion** (2 tests): transition classes by default, transition-none when reduced motion active
+  - **Show/hide transition** (2 tests): shows immediately when going 1→2+ items, wrapper transitions h-0→h-8 when showing
+
+### Verification
+- `bun run --filter @laborer/web typecheck` — passes
+- `bun run --filter @laborer/shared typecheck` — passes
+- `bun run --filter @laborer/web test` — 1065/1065 tests pass (16 new + 1049 existing)
+- `bun run --filter @laborer/shared test` — 75/75 tests pass
+- `biome check` — no new issues in modified files (pre-existing `useAwait` issue in unrelated test code)

@@ -455,6 +455,8 @@ describe('LiveStore schema', () => {
             layoutTree: splitLayout,
             activePaneId: 'pane-1',
             workspaceOrder: null,
+            windowLayout: null,
+            activeWindowTabId: null,
           },
         ])
 
@@ -472,6 +474,8 @@ describe('LiveStore schema', () => {
             layoutTree: leafPane,
             activePaneId: 'pane-1',
             workspaceOrder: null,
+            windowLayout: null,
+            activeWindowTabId: null,
           },
         ])
 
@@ -497,6 +501,8 @@ describe('LiveStore schema', () => {
             },
             activePaneId: 'pane-assigned',
             workspaceOrder: null,
+            windowLayout: null,
+            activeWindowTabId: null,
           },
         ])
 
@@ -514,6 +520,8 @@ describe('LiveStore schema', () => {
             layoutTree: restoredLayout,
             activePaneId: null,
             workspaceOrder: null,
+            windowLayout: null,
+            activeWindowTabId: null,
           },
         ])
       })
@@ -546,12 +554,16 @@ describe('LiveStore schema', () => {
             layoutTree: splitLayout,
             activePaneId: 'pane-1',
             workspaceOrder: null,
+            windowLayout: null,
+            activeWindowTabId: null,
           },
           {
             windowId: 'window-2',
             layoutTree: restoredLayout,
             activePaneId: 'pane-restored',
             workspaceOrder: null,
+            windowLayout: null,
+            activeWindowTabId: null,
           },
         ])
       })
@@ -579,6 +591,8 @@ describe('LiveStore schema', () => {
             layoutTree: splitLayout,
             activePaneId: 'pane-1',
             workspaceOrder: null,
+            windowLayout: null,
+            activeWindowTabId: null,
           },
         ])
 
@@ -597,6 +611,8 @@ describe('LiveStore schema', () => {
             layoutTree: splitLayout,
             activePaneId: 'pane-1',
             workspaceOrder: ['workspace-2', 'workspace-1'],
+            windowLayout: null,
+            activeWindowTabId: null,
           },
         ])
       })
@@ -647,6 +663,8 @@ describe('LiveStore schema', () => {
             layoutTree: splitLayout,
             activePaneId: 'pane-2',
             workspaceOrder: ['workspace-2', 'workspace-1'],
+            windowLayout: null,
+            activeWindowTabId: null,
           },
         ])
 
@@ -803,5 +821,694 @@ describe('LiveStore schema', () => {
         beforeDeprecatedEvents
       )
     })
+  )
+
+  // ---------------------------------------------------------------------------
+  // Hierarchical layout event tests
+  // ---------------------------------------------------------------------------
+
+  const singlePanelLeaf = {
+    _tag: 'PanelLeafNode',
+    id: 'panel-1',
+    paneType: 'terminal',
+    terminalId: 'term-1',
+    workspaceId: 'ws-1',
+  } as const
+
+  const panelTab1 = {
+    id: 'ptab-1',
+    label: 'Terminal',
+    panelLayout: singlePanelLeaf,
+    focusedPaneId: 'panel-1',
+  } as const
+
+  const panelTab2 = {
+    id: 'ptab-2',
+    panelLayout: {
+      _tag: 'PanelLeafNode',
+      id: 'panel-2',
+      paneType: 'diff',
+      workspaceId: 'ws-1',
+    } as const,
+  } as const
+
+  const workspaceTileLeaf = {
+    _tag: 'WorkspaceTileLeaf',
+    id: 'tile-1',
+    workspaceId: 'ws-1',
+    panelTabs: [panelTab1],
+    activePanelTabId: 'ptab-1',
+  } as const
+
+  const singleTabLayout = {
+    tabs: [
+      {
+        id: 'wtab-1',
+        label: 'Main',
+        workspaceLayout: workspaceTileLeaf,
+      },
+    ],
+    activeTabId: 'wtab-1',
+  } as const
+
+  const twoTabLayout = {
+    tabs: [
+      {
+        id: 'wtab-1',
+        label: 'Main',
+        workspaceLayout: workspaceTileLeaf,
+      },
+      {
+        id: 'wtab-2',
+        label: 'Review',
+        workspaceLayout: {
+          _tag: 'WorkspaceTileLeaf',
+          id: 'tile-2',
+          workspaceId: 'ws-2',
+          panelTabs: [panelTab2],
+          activePanelTabId: 'ptab-2',
+        } as const,
+      },
+    ],
+    activeTabId: 'wtab-1',
+  } as const
+
+  it.scoped('materializes windowTabCreated into the panel_layout table', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
+
+      store.commit(
+        events.windowTabCreated({
+          windowId: 'window-1',
+          windowLayout: singleTabLayout,
+          activeWindowTabId: 'wtab-1',
+        })
+      )
+
+      const result = store.query(tables.panelLayout)
+      assert.strictEqual(result.length, 1)
+      assert.strictEqual(result[0]?.windowId, 'window-1')
+      assert.deepStrictEqual(result[0]?.windowLayout, singleTabLayout)
+      assert.strictEqual(result[0]?.activeWindowTabId, 'wtab-1')
+      // Legacy columns should be null (not touched by new events)
+      assert.strictEqual(result[0]?.layoutTree, null)
+      assert.strictEqual(result[0]?.activePaneId, null)
+      assert.strictEqual(result[0]?.workspaceOrder, null)
+    })
+  )
+
+  it.scoped('materializes windowTabClosed and updates the layout', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
+
+      // Start with two tabs
+      store.commit(
+        events.windowTabCreated({
+          windowId: 'window-1',
+          windowLayout: twoTabLayout,
+          activeWindowTabId: 'wtab-1',
+        })
+      )
+
+      // Close the second tab
+      store.commit(
+        events.windowTabClosed({
+          windowId: 'window-1',
+          windowLayout: singleTabLayout,
+          activeWindowTabId: 'wtab-1',
+        })
+      )
+
+      const result = store.query(tables.panelLayout)
+      assert.strictEqual(result.length, 1)
+      assert.deepStrictEqual(result[0]?.windowLayout, singleTabLayout)
+      assert.strictEqual(result[0]?.activeWindowTabId, 'wtab-1')
+    })
+  )
+
+  it.scoped(
+    'materializes windowTabSwitched and updates activeWindowTabId',
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTestStore
+
+        store.commit(
+          events.windowTabCreated({
+            windowId: 'window-1',
+            windowLayout: twoTabLayout,
+            activeWindowTabId: 'wtab-1',
+          })
+        )
+
+        // Switch to second tab
+        store.commit(
+          events.windowTabSwitched({
+            windowId: 'window-1',
+            windowLayout: { ...twoTabLayout, activeTabId: 'wtab-2' },
+            activeWindowTabId: 'wtab-2',
+          })
+        )
+
+        const result = store.query(tables.panelLayout)
+        assert.strictEqual(result[0]?.activeWindowTabId, 'wtab-2')
+        assert.strictEqual(result[0]?.windowLayout?.activeTabId, 'wtab-2')
+      })
+  )
+
+  it.scoped('materializes windowTabsReordered and updates the layout', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
+
+      store.commit(
+        events.windowTabCreated({
+          windowId: 'window-1',
+          windowLayout: twoTabLayout,
+          activeWindowTabId: 'wtab-1',
+        })
+      )
+
+      const reorderedLayout = {
+        ...twoTabLayout,
+        tabs: [twoTabLayout.tabs[1], twoTabLayout.tabs[0]],
+      }
+
+      store.commit(
+        events.windowTabsReordered({
+          windowId: 'window-1',
+          windowLayout: reorderedLayout,
+          activeWindowTabId: 'wtab-1',
+        })
+      )
+
+      const result = store.query(tables.panelLayout)
+      assert.strictEqual(result[0]?.windowLayout?.tabs[0]?.id, 'wtab-2')
+      assert.strictEqual(result[0]?.windowLayout?.tabs[1]?.id, 'wtab-1')
+    })
+  )
+
+  it.scoped('materializes panelTabCreated into the panel_layout table', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
+
+      // Add a panel tab to the workspace
+      const layoutWithTwoPanelTabs = {
+        tabs: [
+          {
+            id: 'wtab-1',
+            label: 'Main',
+            workspaceLayout: {
+              ...workspaceTileLeaf,
+              panelTabs: [panelTab1, panelTab2],
+              activePanelTabId: 'ptab-2',
+            },
+          },
+        ],
+        activeTabId: 'wtab-1',
+      } as const
+
+      store.commit(
+        events.panelTabCreated({
+          windowId: 'window-1',
+          windowLayout: layoutWithTwoPanelTabs,
+          activeWindowTabId: 'wtab-1',
+        })
+      )
+
+      const result = store.query(tables.panelLayout)
+      const workspace = result[0]?.windowLayout?.tabs[0]?.workspaceLayout
+      assert.strictEqual(workspace?._tag, 'WorkspaceTileLeaf')
+      if (workspace?._tag === 'WorkspaceTileLeaf') {
+        assert.strictEqual(workspace.panelTabs.length, 2)
+        assert.strictEqual(workspace.activePanelTabId, 'ptab-2')
+      }
+    })
+  )
+
+  it.scoped('materializes panelTabClosed and updates the layout', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
+
+      store.commit(
+        events.panelTabCreated({
+          windowId: 'window-1',
+          windowLayout: singleTabLayout,
+          activeWindowTabId: 'wtab-1',
+        })
+      )
+
+      // Close the panel tab — layout now has workspace with no panel tabs
+      const emptyWorkspaceLayout = {
+        tabs: [
+          {
+            id: 'wtab-1',
+            label: 'Main',
+            workspaceLayout: {
+              ...workspaceTileLeaf,
+              panelTabs: [] as const,
+              activePanelTabId: undefined,
+            },
+          },
+        ],
+        activeTabId: 'wtab-1',
+      }
+
+      store.commit(
+        events.panelTabClosed({
+          windowId: 'window-1',
+          windowLayout: emptyWorkspaceLayout,
+          activeWindowTabId: 'wtab-1',
+        })
+      )
+
+      const result = store.query(tables.panelLayout)
+      const workspace = result[0]?.windowLayout?.tabs[0]?.workspaceLayout
+      assert.strictEqual(workspace?._tag, 'WorkspaceTileLeaf')
+      if (workspace?._tag === 'WorkspaceTileLeaf') {
+        assert.strictEqual(workspace.panelTabs.length, 0)
+      }
+    })
+  )
+
+  it.scoped('materializes panelTabSwitched and updates active panel tab', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
+
+      const layoutWithTwoPanelTabs = {
+        tabs: [
+          {
+            id: 'wtab-1',
+            label: 'Main',
+            workspaceLayout: {
+              ...workspaceTileLeaf,
+              panelTabs: [panelTab1, panelTab2],
+              activePanelTabId: 'ptab-1',
+            },
+          },
+        ],
+        activeTabId: 'wtab-1',
+      } as const
+
+      store.commit(
+        events.panelTabCreated({
+          windowId: 'window-1',
+          windowLayout: layoutWithTwoPanelTabs,
+          activeWindowTabId: 'wtab-1',
+        })
+      )
+
+      // Switch to second panel tab
+      const switchedLayout = {
+        tabs: [
+          {
+            id: 'wtab-1',
+            label: 'Main',
+            workspaceLayout: {
+              ...workspaceTileLeaf,
+              panelTabs: [panelTab1, panelTab2],
+              activePanelTabId: 'ptab-2',
+            },
+          },
+        ],
+        activeTabId: 'wtab-1',
+      } as const
+
+      store.commit(
+        events.panelTabSwitched({
+          windowId: 'window-1',
+          windowLayout: switchedLayout,
+          activeWindowTabId: 'wtab-1',
+        })
+      )
+
+      const result = store.query(tables.panelLayout)
+      const workspace = result[0]?.windowLayout?.tabs[0]?.workspaceLayout
+      assert.strictEqual(workspace?._tag, 'WorkspaceTileLeaf')
+      if (workspace?._tag === 'WorkspaceTileLeaf') {
+        assert.strictEqual(workspace.activePanelTabId, 'ptab-2')
+      }
+    })
+  )
+
+  it.scoped('materializes panelTabsReordered and updates panel tab order', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
+
+      const layoutWithTwoPanelTabs = {
+        tabs: [
+          {
+            id: 'wtab-1',
+            label: 'Main',
+            workspaceLayout: {
+              ...workspaceTileLeaf,
+              panelTabs: [panelTab1, panelTab2],
+              activePanelTabId: 'ptab-1',
+            },
+          },
+        ],
+        activeTabId: 'wtab-1',
+      } as const
+
+      store.commit(
+        events.panelTabCreated({
+          windowId: 'window-1',
+          windowLayout: layoutWithTwoPanelTabs,
+          activeWindowTabId: 'wtab-1',
+        })
+      )
+
+      // Reorder panel tabs
+      const reorderedLayout = {
+        tabs: [
+          {
+            id: 'wtab-1',
+            label: 'Main',
+            workspaceLayout: {
+              ...workspaceTileLeaf,
+              panelTabs: [panelTab2, panelTab1],
+              activePanelTabId: 'ptab-1',
+            },
+          },
+        ],
+        activeTabId: 'wtab-1',
+      } as const
+
+      store.commit(
+        events.panelTabsReordered({
+          windowId: 'window-1',
+          windowLayout: reorderedLayout,
+          activeWindowTabId: 'wtab-1',
+        })
+      )
+
+      const result = store.query(tables.panelLayout)
+      const workspace = result[0]?.windowLayout?.tabs[0]?.workspaceLayout
+      assert.strictEqual(workspace?._tag, 'WorkspaceTileLeaf')
+      if (workspace?._tag === 'WorkspaceTileLeaf') {
+        assert.strictEqual(workspace.panelTabs[0]?.id, 'ptab-2')
+        assert.strictEqual(workspace.panelTabs[1]?.id, 'ptab-1')
+      }
+    })
+  )
+
+  it.scoped(
+    'materializes windowLayoutRestored for startup/reconciliation',
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTestStore
+
+        store.commit(
+          events.windowLayoutRestored({
+            windowId: 'window-1',
+            windowLayout: singleTabLayout,
+            activeWindowTabId: 'wtab-1',
+          })
+        )
+
+        const result = store.query(tables.panelLayout)
+        assert.strictEqual(result.length, 1)
+        assert.deepStrictEqual(result[0]?.windowLayout, singleTabLayout)
+        assert.strictEqual(result[0]?.activeWindowTabId, 'wtab-1')
+      })
+  )
+
+  it.scoped(
+    'materializes windowLayoutSplit for pane splits in new format',
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTestStore
+
+        const splitPanelLayout = {
+          tabs: [
+            {
+              id: 'wtab-1',
+              label: 'Main',
+              workspaceLayout: {
+                _tag: 'WorkspaceTileLeaf',
+                id: 'tile-1',
+                workspaceId: 'ws-1',
+                panelTabs: [
+                  {
+                    id: 'ptab-1',
+                    panelLayout: {
+                      _tag: 'PanelSplitNode',
+                      id: 'split-1',
+                      direction: 'horizontal',
+                      children: [
+                        {
+                          _tag: 'PanelLeafNode',
+                          id: 'panel-1',
+                          paneType: 'terminal',
+                          terminalId: 'term-1',
+                          workspaceId: 'ws-1',
+                        },
+                        {
+                          _tag: 'PanelLeafNode',
+                          id: 'panel-2',
+                          paneType: 'diff',
+                          workspaceId: 'ws-1',
+                        },
+                      ],
+                      sizes: [0.5, 0.5],
+                    },
+                    focusedPaneId: 'panel-2',
+                  },
+                ],
+                activePanelTabId: 'ptab-1',
+              } as const,
+            },
+          ],
+          activeTabId: 'wtab-1',
+        } as const
+
+        store.commit(
+          events.windowLayoutSplit({
+            windowId: 'window-1',
+            windowLayout: splitPanelLayout,
+            activeWindowTabId: 'wtab-1',
+          })
+        )
+
+        const result = store.query(tables.panelLayout)
+        const workspace = result[0]?.windowLayout?.tabs[0]?.workspaceLayout
+        assert.strictEqual(workspace?._tag, 'WorkspaceTileLeaf')
+        if (workspace?._tag === 'WorkspaceTileLeaf') {
+          const panelLayout = workspace.panelTabs[0]?.panelLayout
+          assert.strictEqual(panelLayout?._tag, 'PanelSplitNode')
+          if (panelLayout?._tag === 'PanelSplitNode') {
+            assert.strictEqual(panelLayout.children.length, 2)
+            assert.deepStrictEqual(panelLayout.sizes, [0.5, 0.5])
+          }
+        }
+      })
+  )
+
+  it.scoped(
+    'materializes windowLayoutPaneClosed and windowLayoutPaneAssigned',
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTestStore
+
+        store.commit(
+          events.windowLayoutPaneClosed({
+            windowId: 'window-1',
+            windowLayout: singleTabLayout,
+            activeWindowTabId: 'wtab-1',
+          })
+        )
+
+        assert.deepStrictEqual(
+          store.query(tables.panelLayout)[0]?.windowLayout,
+          singleTabLayout
+        )
+
+        // Now assign a pane (focus change)
+        store.commit(
+          events.windowLayoutPaneAssigned({
+            windowId: 'window-1',
+            windowLayout: singleTabLayout,
+            activeWindowTabId: 'wtab-1',
+          })
+        )
+
+        assert.deepStrictEqual(
+          store.query(tables.panelLayout)[0]?.windowLayout,
+          singleTabLayout
+        )
+      })
+  )
+
+  it.scoped(
+    'stores multiple windows with hierarchical layouts independently',
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTestStore
+
+        store.commit(
+          events.windowTabCreated({
+            windowId: 'window-1',
+            windowLayout: singleTabLayout,
+            activeWindowTabId: 'wtab-1',
+          })
+        )
+
+        const window2Layout = {
+          tabs: [
+            {
+              id: 'wtab-3',
+              workspaceLayout: {
+                _tag: 'WorkspaceTileLeaf',
+                id: 'tile-3',
+                workspaceId: 'ws-3',
+                panelTabs: [panelTab2],
+                activePanelTabId: 'ptab-2',
+              } as const,
+            },
+          ],
+          activeTabId: 'wtab-3',
+        }
+
+        store.commit(
+          events.windowTabCreated({
+            windowId: 'window-2',
+            windowLayout: window2Layout,
+            activeWindowTabId: 'wtab-3',
+          })
+        )
+
+        const result = store.query(tables.panelLayout)
+        assert.strictEqual(result.length, 2)
+        assert.strictEqual(result[0]?.windowId, 'window-1')
+        assert.deepStrictEqual(result[0]?.windowLayout, singleTabLayout)
+        assert.strictEqual(result[1]?.windowId, 'window-2')
+        assert.deepStrictEqual(result[1]?.windowLayout, window2Layout)
+      })
+  )
+
+  it.scoped('hierarchical events do not overwrite legacy columns', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
+
+      // Seed with legacy event
+      store.commit(
+        events.layoutRestored({
+          windowId: 'window-1',
+          layoutTree: leafPane,
+          activePaneId: 'pane-1',
+        })
+      )
+
+      // Then write hierarchical event — should update windowLayout without touching layoutTree
+      store.commit(
+        events.windowTabCreated({
+          windowId: 'window-1',
+          windowLayout: singleTabLayout,
+          activeWindowTabId: 'wtab-1',
+        })
+      )
+
+      const result = store.query(tables.panelLayout)
+      assert.strictEqual(result.length, 1)
+      // Legacy columns preserved
+      assert.deepStrictEqual(result[0]?.layoutTree, leafPane)
+      assert.strictEqual(result[0]?.activePaneId, 'pane-1')
+      // New columns populated
+      assert.deepStrictEqual(result[0]?.windowLayout, singleTabLayout)
+      assert.strictEqual(result[0]?.activeWindowTabId, 'wtab-1')
+    })
+  )
+
+  it.scoped('legacy events do not overwrite hierarchical columns', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
+
+      // Seed with hierarchical event
+      store.commit(
+        events.windowTabCreated({
+          windowId: 'window-1',
+          windowLayout: singleTabLayout,
+          activeWindowTabId: 'wtab-1',
+        })
+      )
+
+      // Then write legacy event — should update layoutTree without touching windowLayout
+      store.commit(
+        events.layoutRestored({
+          windowId: 'window-1',
+          layoutTree: leafPane,
+          activePaneId: 'pane-1',
+        })
+      )
+
+      const result = store.query(tables.panelLayout)
+      assert.strictEqual(result.length, 1)
+      // Legacy columns updated
+      assert.deepStrictEqual(result[0]?.layoutTree, leafPane)
+      assert.strictEqual(result[0]?.activePaneId, 'pane-1')
+      // Hierarchical columns preserved
+      assert.deepStrictEqual(result[0]?.windowLayout, singleTabLayout)
+      assert.strictEqual(result[0]?.activeWindowTabId, 'wtab-1')
+    })
+  )
+
+  it.scoped(
+    'hierarchical layout with nested workspace tile splits round-trips correctly',
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTestStore
+
+        const nestedLayout = {
+          tabs: [
+            {
+              id: 'wtab-1',
+              label: 'Development',
+              workspaceLayout: {
+                _tag: 'WorkspaceTileSplit',
+                id: 'wsplit-1',
+                direction: 'horizontal',
+                children: [
+                  {
+                    _tag: 'WorkspaceTileLeaf',
+                    id: 'tile-1',
+                    workspaceId: 'ws-1',
+                    panelTabs: [panelTab1],
+                    activePanelTabId: 'ptab-1',
+                  },
+                  {
+                    _tag: 'WorkspaceTileLeaf',
+                    id: 'tile-2',
+                    workspaceId: 'ws-2',
+                    panelTabs: [panelTab2],
+                    activePanelTabId: 'ptab-2',
+                  },
+                ],
+                sizes: [0.6, 0.4],
+              } as const,
+            },
+          ],
+          activeTabId: 'wtab-1',
+        } as const
+
+        store.commit(
+          events.windowLayoutRestored({
+            windowId: 'window-1',
+            windowLayout: nestedLayout,
+            activeWindowTabId: 'wtab-1',
+          })
+        )
+
+        const result = store.query(tables.panelLayout)
+        assert.deepStrictEqual(result[0]?.windowLayout, nestedLayout)
+
+        // Verify the nested structure is fully deserialized
+        const wsLayout = result[0]?.windowLayout?.tabs[0]?.workspaceLayout
+        assert.strictEqual(wsLayout?._tag, 'WorkspaceTileSplit')
+        if (wsLayout?._tag === 'WorkspaceTileSplit') {
+          assert.strictEqual(wsLayout.children.length, 2)
+          assert.strictEqual(wsLayout.direction, 'horizontal')
+          assert.deepStrictEqual(wsLayout.sizes, [0.6, 0.4])
+          assert.strictEqual(wsLayout.children[0]?._tag, 'WorkspaceTileLeaf')
+          assert.strictEqual(wsLayout.children[1]?._tag, 'WorkspaceTileLeaf')
+        }
+      })
   )
 })

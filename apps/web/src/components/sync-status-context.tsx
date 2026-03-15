@@ -49,11 +49,7 @@ function SyncStatusProvider({
     [syncState]
   )
 
-  return (
-    <SyncStatusContext.Provider value={value}>
-      {children}
-    </SyncStatusContext.Provider>
-  )
+  return <SyncStatusContext value={value}>{children}</SyncStatusContext>
 }
 
 /**

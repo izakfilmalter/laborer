@@ -33,6 +33,13 @@ import { Context, Effect, Layer, Ref } from 'effect'
 export const SERVICE_INITIALIZING_CODE = 'SERVICE_INITIALIZING'
 
 /**
+ * Well-known JS protocol properties that must not be intercepted by service
+ * proxies. Returning a function for 'then' makes the proxy look like a
+ * thenable, causing Promise.resolve / await to hang.
+ */
+const PASSTHROUGH_PROPS = new Set(['then', 'toJSON', 'valueOf', 'toString'])
+
+/**
  * Creates an RpcError indicating the service is still initializing.
  */
 export const serviceInitializingError = (serviceName: string) =>
@@ -57,7 +64,7 @@ export const makeServiceProxy = <T extends object>(
 ): T =>
   new Proxy(overrides as T, {
     get: (target, prop) => {
-      if (typeof prop === 'symbol') {
+      if (typeof prop === 'symbol' || PASSTHROUGH_PROPS.has(prop)) {
         return undefined
       }
       if (prop in target) {
@@ -89,7 +96,7 @@ export const makeRefDelegatingService = <Id, S extends object>(
 
     const proxy = new Proxy({} as S, {
       get: (_target, prop) => {
-        if (typeof prop === 'symbol') {
+        if (typeof prop === 'symbol' || PASSTHROUGH_PROPS.has(prop)) {
           return undefined
         }
         return (...args: readonly unknown[]) =>

@@ -21,6 +21,7 @@ import type {
 } from '@laborer/shared/types'
 
 import { generateId } from './id-utils'
+import { generateRandomTabName } from './random-name'
 
 // ---------------------------------------------------------------------------
 // ID generation
@@ -47,6 +48,7 @@ function generateWindowTabId(): string {
 function addWindowTab(layout: WindowLayout, tab?: WindowTab): WindowLayout {
   const newTab: WindowTab = tab ?? {
     id: generateWindowTabId(),
+    label: generateRandomTabName(),
   }
   return {
     tabs: [...layout.tabs, newTab],
@@ -88,6 +90,28 @@ function removeWindowTab(layout: WindowLayout, tabId: string): WindowLayout {
     tabs: newTabs,
     activeTabId: newTabs[nextIndex]?.id,
   }
+}
+
+/**
+ * Rename a window tab by ID.
+ * If the tabId doesn't exist in the layout, returns the layout unchanged.
+ *
+ * @param layout - The current window layout
+ * @param tabId - The ID of the tab to rename
+ * @param label - The new label for the tab
+ * @returns A new WindowLayout with the tab renamed
+ */
+function renameWindowTab(
+  layout: WindowLayout,
+  tabId: string,
+  label: string
+): WindowLayout {
+  const index = layout.tabs.findIndex((t) => t.id === tabId)
+  if (index === -1) {
+    return layout
+  }
+  const newTabs = layout.tabs.map((t) => (t.id === tabId ? { ...t, label } : t))
+  return { ...layout, tabs: newTabs }
 }
 
 /**
@@ -1783,6 +1807,7 @@ export {
   reconcileWindowLayout,
   removeWindowTab,
   removeWorkspaceFromLayout,
+  renameWindowTab,
   reorderWindowTabs,
   repairWindowLayout,
   resolveActivePaneForPanelTab,

@@ -969,6 +969,7 @@ function HomeComponent() {
                   mainView={mainView}
                   onCloseWindowTab={gatedPanelActions.closeWindowTab}
                   onNewWindowTab={panelActions.addWindowTab}
+                  onRenameWindowTab={panelActions.renameWindowTab}
                   onReorderWindowTabs={panelActions.reorderWindowTabsDnd}
                   onSelectWindowTab={panelActions.switchWindowTab}
                   onToggleSidebar={

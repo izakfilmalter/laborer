@@ -556,6 +556,12 @@ export const windowTabSwitched = Events.synced({
   schema: windowLayoutEventSchema,
 })
 
+/** Fired when a window tab is renamed (e.g., double-click to edit label). */
+export const windowTabRenamed = Events.synced({
+  name: 'v1.WindowTabRenamed',
+  schema: windowLayoutEventSchema,
+})
+
 /** Fired when window tabs are reordered via drag-and-drop. */
 export const windowTabsReordered = Events.synced({
   name: 'v1.WindowTabsReordered',
@@ -662,6 +668,7 @@ export const events = {
   layoutWorkspacesReordered,
   windowTabCreated,
   windowTabClosed,
+  windowTabRenamed,
   windowTabSwitched,
   windowTabsReordered,
   panelTabCreated,
@@ -895,6 +902,10 @@ const materializers = State.SQLite.materializers(events, {
       .insert({ windowId, windowLayout, activeWindowTabId })
       .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),
   'v1.WindowTabSwitched': ({ windowId, windowLayout, activeWindowTabId }) =>
+    panelLayout
+      .insert({ windowId, windowLayout, activeWindowTabId })
+      .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),
+  'v1.WindowTabRenamed': ({ windowId, windowLayout, activeWindowTabId }) =>
     panelLayout
       .insert({ windowId, windowLayout, activeWindowTabId })
       .onConflict('windowId', 'update', { windowLayout, activeWindowTabId }),

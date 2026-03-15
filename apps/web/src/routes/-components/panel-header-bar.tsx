@@ -35,6 +35,7 @@ function ViewContextLabel({ mainView }: { readonly mainView: MainView }) {
 interface WindowTabBarProps {
   readonly onCloseTab: (() => void) | undefined
   readonly onNewTab: (() => void) | undefined
+  readonly onRenameTab: ((tabId: string, label: string) => void) | undefined
   readonly onReorderTabs:
     | ((fromIndex: number, toIndex: number) => void)
     | undefined
@@ -51,6 +52,7 @@ function WindowTabBar({
   onSelectTab,
   onCloseTab,
   onNewTab,
+  onRenameTab,
   onReorderTabs,
 }: WindowTabBarProps) {
   const items: readonly TabBarItem[] = useMemo(() => {
@@ -95,6 +97,13 @@ function WindowTabBar({
     [onSelectTab]
   )
 
+  const handleRename = useCallback(
+    (tabId: string, label: string) => {
+      onRenameTab?.(tabId, label)
+    },
+    [onRenameTab]
+  )
+
   if (items.length === 0) {
     return null
   }
@@ -108,6 +117,7 @@ function WindowTabBar({
       newTabTooltip="New window tab (Cmd+N)"
       onClose={handleClose}
       onNew={handleNew}
+      onRename={handleRename}
       onReorder={handleReorder}
       onSelect={handleSelect}
     />
@@ -132,6 +142,7 @@ export function PanelHeaderBar({
   onSelectWindowTab,
   onCloseWindowTab,
   onNewWindowTab,
+  onRenameWindowTab,
   onReorderWindowTabs,
 }: {
   readonly mainView: MainView
@@ -142,6 +153,9 @@ export function PanelHeaderBar({
   readonly onSelectWindowTab?: ((tabId: string) => void) | undefined
   readonly onCloseWindowTab?: (() => void) | undefined
   readonly onNewWindowTab?: (() => void) | undefined
+  readonly onRenameWindowTab?:
+    | ((tabId: string, label: string) => void)
+    | undefined
   readonly onReorderWindowTabs?:
     | ((fromIndex: number, toIndex: number) => void)
     | undefined
@@ -219,6 +233,7 @@ export function PanelHeaderBar({
         <WindowTabBar
           onCloseTab={onCloseWindowTab}
           onNewTab={onNewWindowTab}
+          onRenameTab={onRenameWindowTab}
           onReorderTabs={onReorderWindowTabs}
           onSelectTab={onSelectWindowTab}
           windowLayout={windowLayout}

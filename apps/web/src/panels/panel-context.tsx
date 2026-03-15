@@ -154,6 +154,15 @@ interface PanelActions {
     | undefined
 
   /**
+   * Rename a window tab label.
+   * Triggered by double-clicking a window tab to edit its name inline.
+   *
+   * @param tabId - The ID of the window tab to rename
+   * @param label - The new label
+   */
+  readonly renameWindowTab: ((tabId: string, label: string) => void) | undefined
+
+  /**
    * Reorder panel tabs within a workspace (for drag-and-drop).
    *
    * @param workspaceId - The workspace containing the tabs

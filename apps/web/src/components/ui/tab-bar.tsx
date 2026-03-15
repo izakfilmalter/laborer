@@ -68,6 +68,8 @@ interface TabBarProps {
   readonly onClose: (id: string) => void
   /** Called when the new tab (+) button is clicked. */
   readonly onNew: () => void
+  /** Called when a tab label is renamed via double-click inline editing. */
+  readonly onRename?: ((id: string, label: string) => void) | undefined
   /** Called when tabs are reordered via drag-and-drop. */
   readonly onReorder: (fromIndex: number, toIndex: number) => void
   /** Called when a tab is clicked to select it. */
@@ -111,6 +113,7 @@ function TabBarTab({
   barId,
   onSelect,
   onClose,
+  onRename,
   closeTooltip,
   isNew,
 }: {
@@ -119,13 +122,17 @@ function TabBarTab({
   readonly barId: string
   readonly onSelect: (id: string) => void
   readonly onClose: (id: string) => void
+  readonly onRename?: ((id: string, label: string) => void) | undefined
   readonly closeTooltip?: string | undefined
   /** Whether this tab was newly added (for entrance animation). */
   readonly isNew?: boolean
 }) {
   const tabRef = useRef<HTMLDivElement | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [closestEdge, setClosestEdge] = useState<'left' | 'right' | null>(null)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editValue, setEditValue] = useState(item.label)
   // Entrance animation: start with scale-x-0, animate to scale-x-100
   const [isEntering, setIsEntering] = useState(isNew === true)
 
@@ -139,6 +146,35 @@ function TabBarTab({
       return () => cancelAnimationFrame(raf)
     }
   }, [isEntering])
+
+  // Focus the input when entering edit mode
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [isEditing])
+
+  const commitRename = useCallback(() => {
+    const trimmed = editValue.trim()
+    if (trimmed && trimmed !== item.label) {
+      onRename?.(item.id, trimmed)
+    }
+    setIsEditing(false)
+  }, [editValue, item.id, item.label, onRename])
+
+  const cancelRename = useCallback(() => {
+    setEditValue(item.label)
+    setIsEditing(false)
+  }, [item.label])
+
+  const handleDoubleClick = useCallback(() => {
+    if (!onRename) {
+      return
+    }
+    setEditValue(item.label)
+    setIsEditing(true)
+  }, [item.label, onRename])
 
   useEffect(() => {
     const el = tabRef.current
@@ -207,7 +243,12 @@ function TabBarTab({
           isDragging && 'opacity-40'
         )}
         data-testid="tab-bar-tab"
-        onClick={() => onSelect(item.id)}
+        onClick={() => {
+          if (!isEditing) {
+            onSelect(item.id)
+          }
+        }}
+        onDoubleClick={handleDoubleClick}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
@@ -225,7 +266,29 @@ function TabBarTab({
         {item.icon && (
           <span className="flex shrink-0 items-center">{item.icon}</span>
         )}
-        <span className="min-w-0 truncate">{item.label}</span>
+        {isEditing ? (
+          <input
+            className="min-w-0 max-w-[140px] rounded bg-transparent px-0.5 text-xs outline-none ring-1 ring-primary"
+            onBlur={commitRename}
+            onChange={(e) => setEditValue(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                commitRename()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                cancelRename()
+              }
+              e.stopPropagation()
+            }}
+            ref={inputRef}
+            type="text"
+            value={editValue}
+          />
+        ) : (
+          <span className="min-w-0 truncate">{item.label}</span>
+        )}
         {item.isDirty && (
           <span
             className="size-1.5 shrink-0 rounded-full bg-amber-400"
@@ -314,6 +377,7 @@ function TabBar({
   onSelect,
   onClose,
   onNew,
+  onRename,
   onReorder,
   autoHide = false,
   closeTooltip,
@@ -385,6 +449,7 @@ function TabBar({
         newTabTooltip={newTabTooltip}
         onClose={onClose}
         onNew={onNew}
+        onRename={onRename}
         onReorder={onReorder}
         onSelect={onSelect}
       />
@@ -475,6 +540,7 @@ function TabBarInner({
   onSelect,
   onClose,
   onNew,
+  onRename,
   onReorder,
   closeTooltip,
   label,
@@ -629,6 +695,7 @@ function TabBarInner({
               item={item}
               key={item.id}
               onClose={onClose}
+              onRename={onRename}
               onSelect={onSelect}
             />
           ))}

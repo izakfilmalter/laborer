@@ -13,6 +13,7 @@ import {
   windowLayoutRestored,
   windowTabClosed,
   windowTabCreated,
+  windowTabRenamed,
   windowTabSwitched,
   windowTabsReordered,
   workspaces,
@@ -89,6 +90,7 @@ import {
   reconcileWindowLayout,
   removeWindowTab,
   removeWorkspaceFromLayout,
+  renameWindowTab,
   reorderWindowTabs,
   repairWindowLayout,
   resolveActivePaneForPanelTab,
@@ -1365,6 +1367,7 @@ export function usePanelLayout() {
       event:
         | typeof windowTabCreated
         | typeof windowTabClosed
+        | typeof windowTabRenamed
         | typeof windowTabSwitched
         | typeof windowTabsReordered
         | typeof windowLayoutRestored,
@@ -1386,6 +1389,17 @@ export function usePanelLayout() {
     const newLayout = addWindowTab(base)
     commitWindowLayout(windowTabCreated, newLayout)
   }, [persistedWindowLayout, commitWindowLayout])
+
+  const handleRenameWindowTab = useCallback(
+    (tabId: string, label: string) => {
+      if (!persistedWindowLayout) {
+        return
+      }
+      const newLayout = renameWindowTab(persistedWindowLayout, tabId, label)
+      commitWindowLayout(windowTabRenamed, newLayout)
+    },
+    [persistedWindowLayout, commitWindowLayout]
+  )
 
   const handleCloseWindowTab = useCallback(() => {
     if (!persistedWindowLayout) {
@@ -1831,6 +1845,7 @@ export function usePanelLayout() {
       addWorkspaceToCurrentTab: handleAddWorkspaceToCurrentTab,
       addWindowTab: handleAddWindowTab,
       closeWindowTab: handleCloseWindowTab,
+      renameWindowTab: handleRenameWindowTab,
       switchWindowTab: handleSwitchWindowTab,
       switchWindowTabByIndex: handleSwitchWindowTabByIndex,
       switchWindowTabRelative: handleSwitchWindowTabRelative,
@@ -1859,6 +1874,7 @@ export function usePanelLayout() {
       handleAddWorkspaceToCurrentTab,
       handleAddWindowTab,
       handleCloseWindowTab,
+      handleRenameWindowTab,
       handleSwitchWindowTab,
       handleSwitchWindowTabByIndex,
       handleSwitchWindowTabRelative,

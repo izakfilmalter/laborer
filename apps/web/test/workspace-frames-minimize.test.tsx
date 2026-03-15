@@ -91,6 +91,7 @@ vi.mock('@/panels/panel-context', () => {
     switchWindowTab: vi.fn(),
     switchWindowTabByIndex: vi.fn(),
     switchWindowTabRelative: vi.fn(),
+    renameWindowTab: vi.fn(),
     reorderWindowTabsDnd: vi.fn(),
     windowLayout: undefined,
   }

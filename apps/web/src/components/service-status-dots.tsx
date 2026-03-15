@@ -192,6 +192,64 @@ function useMinDisplayDuration(liveState: ServiceState): ServiceState {
   return displayState
 }
 
+/** Shared badge+dot+tooltip rendering used by both service and sync indicators. */
+function StatusBadgeCore({
+  color,
+  displayName,
+  label,
+  pulsing,
+  testId,
+  variant,
+}: {
+  readonly color: StatusColor
+  readonly displayName: string
+  readonly label: string
+  readonly pulsing: boolean
+  readonly testId?: string
+  readonly variant: 'default' | 'destructive' | 'outline' | 'secondary'
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Badge
+            className={cn(
+              'gap-1.5 transition-colors duration-300',
+              color === 'green' && 'border-success/40 text-success',
+              color === 'yellow' && 'border-warning/40 text-warning',
+              color === 'red' && 'border-destructive text-destructive',
+              color === 'gray' && 'border-border text-muted-foreground'
+            )}
+            data-testid={testId}
+            variant={variant}
+          />
+        }
+      >
+        <span aria-hidden="true" className="relative inline-flex size-2">
+          {pulsing && (
+            <span
+              className={cn(
+                'absolute inline-flex size-full animate-ping rounded-full opacity-75',
+                DOT_COLOR_CLASSES[color]
+              )}
+            />
+          )}
+          <span
+            className={cn(
+              'relative inline-flex size-2 rounded-full transition-colors duration-300',
+              DOT_COLOR_CLASSES[color]
+            )}
+          />
+        </span>
+        {displayName}
+      </TooltipTrigger>
+      <TooltipContent>
+        {displayName} — {label}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 /** A single service status badge showing the name and a colored status dot. */
 function ServiceStatusBadge({
   name,
@@ -221,43 +279,13 @@ function ServiceStatusBadge({
       data-state={serviceState.state}
       data-testid={`service-dot-${name}`}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Badge
-              className={cn(
-                'gap-1.5 transition-colors duration-300',
-                color === 'green' && 'border-success/40 text-success',
-                color === 'yellow' && 'border-warning/40 text-warning',
-                color === 'red' && 'border-destructive text-destructive',
-                color === 'gray' && 'border-border text-muted-foreground'
-              )}
-              variant={variant}
-            />
-          }
-        >
-          <span aria-hidden="true" className="relative inline-flex size-2">
-            {pulsing && (
-              <span
-                className={cn(
-                  'absolute inline-flex size-full animate-ping rounded-full opacity-75',
-                  DOT_COLOR_CLASSES[color]
-                )}
-              />
-            )}
-            <span
-              className={cn(
-                'relative inline-flex size-2 rounded-full transition-colors duration-300',
-                DOT_COLOR_CLASSES[color]
-              )}
-            />
-          </span>
-          {displayName}
-        </TooltipTrigger>
-        <TooltipContent>
-          {displayName} — {label}
-        </TooltipContent>
-      </Tooltip>
+      <StatusBadgeCore
+        color={color}
+        displayName={displayName}
+        label={label}
+        pulsing={pulsing}
+        variant={variant}
+      />
       {errorPersisted && (
         <span className="inline-flex gap-0.5">
           <button
@@ -301,42 +329,14 @@ function SyncIndicator({ syncState }: { readonly syncState: ServiceState }) {
   const variant = BADGE_VARIANT_MAP[color]
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Badge
-            className={cn(
-              'gap-1.5 transition-colors duration-300',
-              color === 'green' && 'border-success/40 text-success',
-              color === 'yellow' && 'border-warning/40 text-warning',
-              color === 'red' && 'border-destructive text-destructive',
-              color === 'gray' && 'border-border text-muted-foreground'
-            )}
-            data-testid="sync-indicator"
-            variant={variant}
-          />
-        }
-      >
-        <span aria-hidden="true" className="relative inline-flex size-2">
-          {pulsing && (
-            <span
-              className={cn(
-                'absolute inline-flex size-full animate-ping rounded-full opacity-75',
-                DOT_COLOR_CLASSES[color]
-              )}
-            />
-          )}
-          <span
-            className={cn(
-              'relative inline-flex size-2 rounded-full transition-colors duration-300',
-              DOT_COLOR_CLASSES[color]
-            )}
-          />
-        </span>
-        Sync
-      </TooltipTrigger>
-      <TooltipContent>Sync — {label}</TooltipContent>
-    </Tooltip>
+    <StatusBadgeCore
+      color={color}
+      displayName="Sync"
+      label={label}
+      pulsing={pulsing}
+      testId="sync-indicator"
+      variant={variant}
+    />
   )
 }
 

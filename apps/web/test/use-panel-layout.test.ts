@@ -687,14 +687,13 @@ describe('usePanelLayout', () => {
     expect(layoutPaneAssignedMock).toHaveBeenCalledWith(
       expect.objectContaining({ windowId: 'window-a' })
     )
-    expect(layoutWorkspacesReorderedMock).toHaveBeenCalledWith(
+    // Workspace reorder now goes through the hierarchical tile path
+    // (windowLayoutRestored) instead of the legacy layoutWorkspacesReordered
+    // event, since the layout is migrated to hierarchical format.
+    expect(windowLayoutRestoredMock).toHaveBeenCalledWith(
       expect.objectContaining({ windowId: 'window-a' })
     )
     expect(windowARow?.activePaneId).toBe('pane-a-left')
-    expect(windowARow?.workspaceOrder).toEqual([
-      'workspace-b',
-      'workspace-assigned',
-    ])
     expect(windowARow?.layoutTree).toEqual({
       _tag: 'SplitNode',
       children: [

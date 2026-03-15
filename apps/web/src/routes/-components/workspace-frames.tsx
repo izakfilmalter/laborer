@@ -10,6 +10,7 @@ import type {
   PanelNode,
   PanelTreeNode,
   PaneType,
+  SplitDirection,
   WorkspaceTileLeaf,
   WorkspaceTileNode,
 } from '@laborer/shared/types'
@@ -48,6 +49,7 @@ import {
 import { usePanelActions } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
 import { getAllWorkspaceTileLeaves } from '@/panels/window-tab-utils'
+import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
 import { DiffPane } from '@/panes/diff-pane'
 import { ReviewPane } from '@/panes/review-pane'
 import { WorkspaceFrameHeaderContainer } from './workspace-frame-header-container'
@@ -485,6 +487,7 @@ function WorkspaceFrame({
   diffWorkspaceId = null,
   reviewWorkspaceId = null,
   tileLeaf,
+  parentDirection,
 }: {
   readonly workspaceId: string | undefined
   readonly subLayout: PanelNode
@@ -495,11 +498,14 @@ function WorkspaceFrame({
   readonly diffWorkspaceId?: string | null
   readonly reviewWorkspaceId?: string | null
   readonly tileLeaf?: WorkspaceTileLeaf | undefined
+  readonly parentDirection?: SplitDirection | undefined
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null)
   const dragHandleRef = useRef<HTMLDivElement | null>(null)
   const [isDragging, setIsDragging] = useState(false)
-  const [closestEdge, setClosestEdge] = useState<'top' | 'bottom' | null>(null)
+  const isHorizontal = parentDirection === 'horizontal'
+  type EdgeType = 'top' | 'bottom' | 'left' | 'right'
+  const [closestEdge, setClosestEdge] = useState<EdgeType | null>(null)
   const [isMinimized, setIsMinimized] = useState(false)
   const actions = usePanelActions()
 
@@ -592,7 +598,11 @@ function WorkspaceFrame({
           }
           const sourceIdx = source.data.index
           const targetIdx = self.data.index as number
-          setClosestEdge(sourceIdx < targetIdx ? 'bottom' : 'top')
+          if (isHorizontal) {
+            setClosestEdge(sourceIdx < targetIdx ? 'right' : 'left')
+          } else {
+            setClosestEdge(sourceIdx < targetIdx ? 'bottom' : 'top')
+          }
         },
         onDrag: ({ self, source }) => {
           if (!isWorkspaceFrameData(source.data)) {
@@ -600,7 +610,11 @@ function WorkspaceFrame({
           }
           const sourceIdx = source.data.index
           const targetIdx = self.data.index as number
-          setClosestEdge(sourceIdx < targetIdx ? 'bottom' : 'top')
+          if (isHorizontal) {
+            setClosestEdge(sourceIdx < targetIdx ? 'right' : 'left')
+          } else {
+            setClosestEdge(sourceIdx < targetIdx ? 'bottom' : 'top')
+          }
         },
         onDragLeave: () => setClosestEdge(null),
         onDrop: () => setClosestEdge(null),
@@ -725,6 +739,9 @@ function WorkspaceFrame({
       {closestEdge === 'top' && (
         <div className="absolute inset-x-0 top-0 z-10 h-0.5 bg-primary" />
       )}
+      {closestEdge === 'left' && (
+        <div className="absolute inset-y-0 left-0 z-10 w-0.5 bg-primary" />
+      )}
       <WorkspaceFrameHeaderContainer
         diffIsOpen={showDiff}
         dragHandleRef={dragHandleRef}
@@ -764,6 +781,9 @@ function WorkspaceFrame({
       )}
       {closestEdge === 'bottom' && (
         <div className="absolute inset-x-0 bottom-0 z-10 h-0.5 bg-primary" />
+      )}
+      {closestEdge === 'right' && (
+        <div className="absolute inset-y-0 right-0 z-10 w-0.5 bg-primary" />
       )}
     </div>
   )
@@ -863,6 +883,7 @@ function WorkspaceTileLeafFrame({
   index,
   diffWorkspaceId = null,
   reviewWorkspaceId = null,
+  parentDirection,
 }: {
   readonly leaf: WorkspaceTileLeaf
   readonly flatLayout: PanelNode
@@ -870,6 +891,7 @@ function WorkspaceTileLeafFrame({
   readonly index: number
   readonly diffWorkspaceId?: string | null
   readonly reviewWorkspaceId?: string | null
+  readonly parentDirection?: SplitDirection | undefined
 }) {
   // When the leaf has panel tabs, use the active tab's layout.
   // When it doesn't (pre-migration), fall back to extracting from the flat tree.
@@ -900,6 +922,7 @@ function WorkspaceTileLeafFrame({
       activePaneId={activePaneId}
       diffWorkspaceId={diffWorkspaceId}
       index={index}
+      parentDirection={parentDirection}
       reviewWorkspaceId={reviewWorkspaceId}
       subLayout={subLayout}
       tileLeaf={leaf}
@@ -920,6 +943,7 @@ function WorkspaceTileResizableChild({
   index,
   diffWorkspaceId = null,
   reviewWorkspaceId = null,
+  parentDirection,
 }: {
   readonly tileNode: WorkspaceTileNode
   readonly flatLayout: PanelNode
@@ -928,6 +952,7 @@ function WorkspaceTileResizableChild({
   readonly index: number
   readonly diffWorkspaceId?: string | null
   readonly reviewWorkspaceId?: string | null
+  readonly parentDirection?: SplitDirection | undefined
 }) {
   const panelRef = useRef<PanelImperativeHandle | null>(null)
 
@@ -946,6 +971,7 @@ function WorkspaceTileResizableChild({
           diffWorkspaceId={diffWorkspaceId}
           flatLayout={flatLayout}
           index={index}
+          parentDirection={parentDirection}
           reviewWorkspaceId={reviewWorkspaceId}
           tileNode={tileNode}
         />
@@ -972,6 +998,7 @@ function WorkspaceTileRenderer({
   index = 0,
   diffWorkspaceId = null,
   reviewWorkspaceId = null,
+  parentDirection,
 }: {
   readonly tileNode: WorkspaceTileNode
   readonly flatLayout: PanelNode
@@ -979,6 +1006,7 @@ function WorkspaceTileRenderer({
   readonly index?: number
   readonly diffWorkspaceId?: string | null
   readonly reviewWorkspaceId?: string | null
+  readonly parentDirection?: SplitDirection | undefined
 }) {
   if (tileNode._tag === 'WorkspaceTileLeaf') {
     return (
@@ -989,6 +1017,7 @@ function WorkspaceTileRenderer({
           flatLayout={flatLayout}
           index={index}
           leaf={tileNode}
+          parentDirection={parentDirection}
           reviewWorkspaceId={reviewWorkspaceId}
         />
       </TabErrorBoundary>
@@ -1013,6 +1042,7 @@ function WorkspaceTileRenderer({
             flatLayout={flatLayout}
             index={childIndex}
             key={child.id}
+            parentDirection={tileNode.direction}
             reviewWorkspaceId={reviewWorkspaceId}
             tileNode={child}
           />
@@ -1051,6 +1081,56 @@ export function WorkspaceFrames({
   readonly diffWorkspaceId?: string | null
   readonly reviewWorkspaceId?: string | null
 }) {
+  // Wire up a monitor for workspace frame drag-and-drop reordering.
+  // This must run unconditionally (React hooks rule) so it covers both
+  // the hierarchical tile layout path and the legacy flat layout path.
+  const actions = usePanelActions()
+
+  // Build the workspace ID list from whichever layout path is active.
+  const tileWorkspaceIds = useMemo(() => {
+    if (!workspaceTileLayout) {
+      return null
+    }
+    return getWorkspaceTileLeaves(workspaceTileLayout).map(
+      (leaf) => leaf.workspaceId
+    )
+  }, [workspaceTileLayout])
+
+  useEffect(() => {
+    // Only monitor when the tile layout path is active — the legacy
+    // path has its own monitor inside LegacyWorkspaceFrames.
+    if (!tileWorkspaceIds) {
+      return
+    }
+
+    return monitorForElements({
+      canMonitor: ({ source }) => isWorkspaceFrameData(source.data),
+      onDrop: ({ source, location }) => {
+        const destination = location.current.dropTargets[0]
+        if (!destination) {
+          return
+        }
+        const sourceData = source.data
+        const destData = destination.data
+        if (
+          !(isWorkspaceFrameData(sourceData) && isWorkspaceFrameData(destData))
+        ) {
+          return
+        }
+        if (sourceData.index === destData.index) {
+          return
+        }
+
+        const reordered = reorder({
+          list: tileWorkspaceIds,
+          startIndex: sourceData.index,
+          finishIndex: destData.index,
+        })
+        actions?.reorderWorkspaces(reordered)
+      },
+    })
+  }, [tileWorkspaceIds, actions])
+
   // -------------------------------------------------------------------
   // Hierarchical tile layout path — bidirectional workspace tiling
   // -------------------------------------------------------------------

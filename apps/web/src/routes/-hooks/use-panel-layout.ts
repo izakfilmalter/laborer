@@ -104,6 +104,7 @@ import {
 import {
   addWorkspaceToTab,
   removeWorkspaceFromTab,
+  reorderWorkspaceTiles,
 } from '@/panels/workspace-tile-utils'
 import { useInitialLayout } from './use-initial-layout'
 
@@ -1334,26 +1335,6 @@ export function usePanelLayout() {
     return false
   }, [])
 
-  /**
-   * Reorder workspace frames by persisting an explicit workspace ID ordering.
-   * Called when the user drag-and-drops workspace frames to rearrange them.
-   */
-  const handleReorderWorkspaces = useCallback(
-    (workspaceOrder: (string | undefined)[]) => {
-      // Filter out undefined entries — only persist concrete workspace IDs
-      const order = workspaceOrder.filter(
-        (id): id is string => id !== undefined
-      )
-      store.commit(
-        layoutWorkspacesReordered({
-          windowId: panelWindowId,
-          workspaceOrder: order,
-        })
-      )
-    },
-    [panelWindowId, store]
-  )
-
   // -------------------------------------------------------------------
   // Window tab actions — operate on the hierarchical WindowLayout.
   // -------------------------------------------------------------------
@@ -1382,6 +1363,50 @@ export function usePanelLayout() {
       )
     },
     [panelWindowId, store]
+  )
+
+  /**
+   * Reorder workspace frames by persisting an explicit workspace ID ordering.
+   * Called when the user drag-and-drops workspace frames to rearrange them.
+   *
+   * Handles both the hierarchical tile layout path (updates the WorkspaceTileNode
+   * tree within the active WindowTab) and the legacy flat layout path (persists
+   * a workspaceOrder array).
+   */
+  const handleReorderWorkspaces = useCallback(
+    (workspaceOrder: (string | undefined)[]) => {
+      // Filter out undefined entries — only persist concrete workspace IDs
+      const order = workspaceOrder.filter(
+        (id): id is string => id !== undefined
+      )
+
+      // Hierarchical path: reorder workspace tiles within the active WindowTab
+      if (persistedWindowLayout) {
+        const activeTab = getActiveWindowTab(persistedWindowLayout)
+        if (activeTab?.workspaceLayout) {
+          const updatedTab = reorderWorkspaceTiles(activeTab, order)
+          if (updatedTab !== activeTab) {
+            const newLayout: WindowLayout = {
+              ...persistedWindowLayout,
+              tabs: persistedWindowLayout.tabs.map((tab) =>
+                tab.id === activeTab.id ? updatedTab : tab
+              ),
+            }
+            commitWindowLayout(windowLayoutRestored, newLayout)
+            return
+          }
+        }
+      }
+
+      // Legacy fallback: persist workspace order array
+      store.commit(
+        layoutWorkspacesReordered({
+          windowId: panelWindowId,
+          workspaceOrder: order,
+        })
+      )
+    },
+    [panelWindowId, store, persistedWindowLayout, commitWindowLayout]
   )
 
   const handleAddWindowTab = useCallback(() => {

@@ -1,4 +1,5 @@
 import { ArrowDownToLine, ArrowUpToLine } from 'lucide-react'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Button } from '@/components/ui/button'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import {
@@ -6,6 +7,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { useWorkspaceSyncActions } from '@/hooks/use-workspace-sync-actions'
 import { cn } from '@/lib/utils'
 
@@ -27,6 +29,7 @@ function WorkspaceSyncStatus({
   size = 'card',
   workspaceId,
 }: WorkspaceSyncStatusProps) {
+  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const { pullWorkspace, pushWorkspace } = useWorkspaceSyncActions()
 
   const hasPush = (aheadCount ?? 0) > 0
@@ -51,8 +54,10 @@ function WorkspaceSyncStatus({
                   'border-sky-500/30 bg-sky-500/10 text-sky-700 hover:bg-sky-500/20 dark:text-sky-300',
                   buttonClassName
                 )}
+                disabled={!isServerReady}
                 onClick={() => pullWorkspace(workspaceId)}
                 size="sm"
+                title={isServerReady ? undefined : 'Connecting to server...'}
                 variant="outline"
               />
             }
@@ -80,8 +85,10 @@ function WorkspaceSyncStatus({
                   'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300',
                   buttonClassName
                 )}
+                disabled={!isServerReady}
                 onClick={() => pushWorkspace(workspaceId)}
                 size="sm"
+                title={isServerReady ? undefined : 'Connecting to server...'}
                 variant="outline"
               />
             }

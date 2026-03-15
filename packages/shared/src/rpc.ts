@@ -374,6 +374,27 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
+  // Lifecycle — Deferred service initialization status
+  // -----------------------------------------------------------------------
+
+  /**
+   * Returns the current initialization status of deferred services.
+   *
+   * The renderer polls this RPC after reaching Phase 2 (Ready) to detect
+   * when all deferred services have initialized, triggering the
+   * Restored → Eventually phase transition.
+   *
+   * @see Issue #15: Server "fully initialized" event
+   * @see PRD section: "Server Layer Graph Splitting"
+   */
+  Rpc.make('lifecycle.initStatus', {
+    success: Schema.Struct({
+      /** Whether all deferred services have finished initializing. */
+      ready: Schema.Boolean,
+    }),
+  }),
+
+  // -----------------------------------------------------------------------
   // Docker Prerequisite Detection
   // -----------------------------------------------------------------------
   Rpc.make('docker.status', {

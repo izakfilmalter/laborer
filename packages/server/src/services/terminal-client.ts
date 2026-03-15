@@ -8,21 +8,24 @@
  *
  * Responsibilities:
  * - RPC client for TerminalRpcs operations (spawn, kill, list)
- * - Subscribes to `terminal.events()` on startup to track workspace→terminal mapping
+ * - Subscribes to `terminal.events()` lazily to track workspace→terminal mapping
  * - Provides `killAllForWorkspace(workspaceId)` by iterating tracked terminal IDs
  * - Provides `spawnInWorkspace(workspaceId, command?)` that resolves workspace info and delegates
  * - Graceful handling of terminal service being temporarily unreachable
  *
+ * Connection is established lazily on first RPC call, not during layer
+ * construction. This allows the server to start and serve health checks
+ * without waiting for the terminal sidecar to be running.
+ *
  * @see PRD-terminal-extraction.md
  * @see Issue #143: Server TerminalClient + remove server terminal modules
  * @see Issue #163: Worktree detection polish — worktree existence check before spawn
+ * @see Issue #16: Lazy sidecar connections
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { FetchHttpClient } from '@effect/platform'
-import { RpcClient, RpcSerialization } from '@effect/rpc'
 import { RpcError, TerminalRpcs } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
 import {
@@ -33,12 +36,16 @@ import {
   Layer,
   pipe,
   Ref,
-  Schedule,
+  Scope,
   Stream,
 } from 'effect'
 import { ConfigService } from './config-service.js'
 import { LaborerStore } from './laborer-store.js'
 import { ProjectRegistry } from './project-registry.js'
+import {
+  createSidecarRpcClient,
+  sidecarEventStreamSchedule,
+} from './sidecar-rpc.js'
 import { WorkspaceProvider } from './workspace-provider.js'
 
 /** Logger tag used for structured Effect.log output in this module. */
@@ -61,6 +68,13 @@ interface TerminalRecord {
   readonly status: 'running' | 'stopped'
   readonly workspaceId: string
 }
+
+/** The inferred type of the terminal RPC client. */
+const _makeTerminalRpcClient = (url: string) =>
+  createSidecarRpcClient(TerminalRpcs, url)
+type TerminalRpc = Effect.Effect.Success<
+  ReturnType<typeof _makeTerminalRpcClient>
+>
 
 class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
   TerminalClient,
@@ -98,87 +112,106 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       const configService = yield* ConfigService
       const registry = yield* ProjectRegistry
 
-      // Build the RPC client for the terminal service.
-      // TERMINAL_PORT is resolved lazily to avoid import-time side effects.
-      const { env } = yield* Effect.promise(() => import('@laborer/env/server'))
-      const terminalServiceUrl = `http://localhost:${env.TERMINAL_PORT}`
-
-      const rpcClient = yield* RpcClient.make(TerminalRpcs).pipe(
-        Effect.provide(
-          RpcClient.layerProtocolHttp({
-            url: `${terminalServiceUrl}/rpc`,
-          }).pipe(
-            Layer.provide(FetchHttpClient.layer),
-            Layer.provide(RpcSerialization.layerJson)
-          )
-        )
-      )
+      // Capture the layer's scope so lazy connection can use it later.
+      // The scope lives for the lifetime of this service layer.
+      const layerScope = yield* Effect.scope
 
       // In-memory map of terminal ID → workspace ID.
       // Populated by the event stream subscriber.
       const terminalMapRef = yield* Ref.make<TerminalWorkspaceMap>(new Map())
 
-      // Seed the map from the terminal service's current terminal list.
-      // This handles the case where the server restarts but the terminal
-      // service has existing terminals from before.
-      yield* Effect.gen(function* () {
-        const existingTerminals = yield* rpcClient.terminal.list()
-        const initialMap = new Map<string, string>()
-        for (const terminal of existingTerminals) {
-          initialMap.set(terminal.id, terminal.workspaceId)
-        }
-        yield* Ref.set(terminalMapRef, initialMap)
-        yield* Effect.log(
-          `Seeded terminal map with ${initialMap.size} existing terminal(s)`
-        ).pipe(Effect.annotateLogs('module', logPrefix))
-      }).pipe(
-        Effect.catchAll((error) =>
-          Effect.logWarning(
-            `Failed to seed terminal map from terminal service: ${String(error)}`
-          ).pipe(Effect.annotateLogs('module', logPrefix))
-        )
-      )
-
-      // Subscribe to terminal lifecycle events from the terminal service.
-      // This stream runs as a background daemon fiber for the lifetime
-      // of this layer's scope. It keeps the workspace→terminal map in
-      // sync.
-      yield* rpcClient.terminal.events().pipe(
-        Stream.tap((event) =>
-          Effect.gen(function* () {
-            if (event._tag === 'Spawned') {
-              yield* Ref.update(terminalMapRef, (map) => {
-                const next = new Map(map)
-                next.set(event.id, event.workspaceId)
-                return next
-              })
-            } else if (event._tag === 'Removed') {
-              yield* Ref.update(terminalMapRef, (map) => {
-                const next = new Map(map)
-                next.delete(event.id)
-                return next
-              })
-            }
-          })
-        ),
-        Stream.runDrain,
-        // Retry with exponential backoff if the terminal service disconnects
-        Effect.retry(
-          Schedule.exponential('1 second').pipe(
-            Schedule.union(Schedule.spaced('30 seconds'))
+      /**
+       * Get or create the RPC client. On first call, establishes the
+       * connection to the terminal sidecar, seeds the terminal map,
+       * and starts the event stream subscription. Retries with
+       * exponential backoff if the sidecar is not yet available.
+       *
+       * Uses Effect.cached to ensure only one fiber runs initialization,
+       * preventing duplicate RPC connections and event stream subscriptions
+       * when multiple fibers call getOrCreateClient concurrently.
+       *
+       * Returns both the client and the terminal port so callers don't
+       * need to resolve the env separately.
+       *
+       * The captured layerScope is provided so the RPC client's lifecycle
+       * is tied to the layer, and the event stream fiber is forked into
+       * the layer's scope for proper cleanup on shutdown.
+       */
+      const getOrCreateClient = yield* Effect.cached(
+        Effect.gen(function* () {
+          // Resolve port lazily to avoid import-time side effects
+          const { env } = yield* Effect.promise(
+            () => import('@laborer/env/server')
           )
-        ),
-        Effect.catchAll((error) =>
-          Effect.logWarning(
-            `Terminal event stream ended: ${String(error)}`
-          ).pipe(Effect.annotateLogs('module', logPrefix))
-        ),
-        Effect.forkScoped
-      )
+          const terminalPort = env.TERMINAL_PORT
+          const terminalServiceUrl = `http://localhost:${terminalPort}`
 
-      yield* Effect.log(
-        `Connected to terminal service at ${terminalServiceUrl}`
-      ).pipe(Effect.annotateLogs('module', logPrefix))
+          const client = yield* createSidecarRpcClient(
+            TerminalRpcs,
+            `${terminalServiceUrl}/rpc`
+          ).pipe(Effect.provideService(Scope.Scope, layerScope))
+
+          // Seed the map from the terminal service's current terminal list.
+          // This handles the case where the server restarts but the terminal
+          // service has existing terminals from before.
+          yield* Effect.gen(function* () {
+            const existingTerminals = yield* client.terminal.list()
+            const initialMap = new Map<string, string>()
+            for (const terminal of existingTerminals) {
+              initialMap.set(terminal.id, terminal.workspaceId)
+            }
+            yield* Ref.set(terminalMapRef, initialMap)
+            yield* Effect.log(
+              `Seeded terminal map with ${initialMap.size} existing terminal(s)`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+          }).pipe(
+            Effect.catchAll((error) =>
+              Effect.logWarning(
+                `Failed to seed terminal map from terminal service: ${String(error)}`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+            )
+          )
+
+          // Subscribe to terminal lifecycle events from the terminal service.
+          // This runs as a background fiber in the layer's scope for the
+          // lifetime of the layer. It keeps the workspace→terminal map in sync.
+          yield* client.terminal.events().pipe(
+            Stream.tap((event) =>
+              Effect.gen(function* () {
+                if (event._tag === 'Spawned') {
+                  yield* Ref.update(terminalMapRef, (map) => {
+                    const next = new Map(map)
+                    next.set(event.id, event.workspaceId)
+                    return next
+                  })
+                } else if (event._tag === 'Removed') {
+                  yield* Ref.update(terminalMapRef, (map) => {
+                    const next = new Map(map)
+                    next.delete(event.id)
+                    return next
+                  })
+                }
+              })
+            ),
+            Stream.runDrain,
+            // Retry with exponential backoff if the terminal service disconnects
+            Effect.retry(sidecarEventStreamSchedule),
+            Effect.catchAll((error) =>
+              Effect.logWarning(
+                `Terminal event stream ended: ${String(error)}`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+            ),
+            Effect.provideService(Scope.Scope, layerScope),
+            Effect.forkIn(layerScope)
+          )
+
+          yield* Effect.log(
+            `Connected to terminal service at ${terminalServiceUrl}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          return { client, terminalPort }
+        })
+      )
 
       const defaultShell = process.env.SHELL ?? '/bin/sh'
 
@@ -275,9 +308,10 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
        */
       const buildAgentCommand = (
         agentCommand: string,
-        terminalId: string
+        terminalId: string,
+        terminalPort: number
       ): { command: string; extraEnv: Record<string, string> } => {
-        const hookUrl = `http://localhost:${env.TERMINAL_PORT}/hook/agent-status`
+        const hookUrl = `http://localhost:${terminalPort}/hook/agent-status`
         const extraEnv: Record<string, string> = {
           LABORER_TERMINAL_ID: terminalId,
           LABORER_HOOK_URL: hookUrl,
@@ -400,6 +434,7 @@ export const LaborerHookPlugin = async () => {
        * the shell to process each line.
        */
       const autoTypeScripts = (
+        rpcClient: TerminalRpc,
         terminalId: string,
         setupScripts: readonly string[],
         startCommand: string | null
@@ -462,6 +497,7 @@ export const LaborerHookPlugin = async () => {
        * command into a terminal. Runs as a fire-and-forget daemon fiber.
        */
       const scheduleAutoRun = (
+        rpcClient: TerminalRpc,
         terminalId: string,
         projectId: string,
         containerImage: string | null
@@ -497,6 +533,7 @@ export const LaborerHookPlugin = async () => {
             }
 
             yield* autoTypeScripts(
+              rpcClient,
               terminalId,
               setupScripts,
               resolvedConfig.devServer.startCommand.value
@@ -528,6 +565,8 @@ export const LaborerHookPlugin = async () => {
         command: string | undefined,
         autoRun: boolean | undefined
       ) {
+        const { client: rpcClient } = yield* getOrCreateClient
+
         const containerNameValue =
           workspace.containerUrl?.replace('.orb.local', '') ?? workspaceId
 
@@ -560,6 +599,7 @@ export const LaborerHookPlugin = async () => {
         // the spawn response back to the client.
         if (autoRun === true && command === undefined) {
           yield* scheduleAutoRun(
+            rpcClient,
             terminalInfo.id,
             workspace.projectId,
             workspace.containerImage ?? null
@@ -588,6 +628,8 @@ export const LaborerHookPlugin = async () => {
           workspaceId: string,
           command: string | undefined
         ) {
+          const { client: rpcClient, terminalPort } = yield* getOrCreateClient
+
           const workspaceEnv =
             yield* workspaceProvider.getWorkspaceEnv(workspaceId)
 
@@ -609,7 +651,7 @@ export const LaborerHookPlugin = async () => {
           // Build the command, potentially wrapping it with hook settings
           const { command: agentCmd, extraEnv } =
             isAgent && terminalId !== undefined
-              ? buildAgentCommand(command, terminalId)
+              ? buildAgentCommand(command, terminalId, terminalPort)
               : { command: command ?? defaultShell, extraEnv: {} }
 
           const resolvedCommand = command ?? defaultShell
@@ -696,46 +738,57 @@ export const LaborerHookPlugin = async () => {
         }
       )
 
-      const killAllForWorkspace = Effect.fn(
-        'TerminalClient.killAllForWorkspace'
-      )(function* (workspaceId: string) {
-        const map = yield* Ref.get(terminalMapRef)
-        const workspaceTerminalIds = pipe(
-          [...map.entries()],
-          Arr.filter(([_, wsId]) => wsId === workspaceId),
-          Arr.map(([terminalId]) => terminalId)
-        )
+      const killAllForWorkspace = (
+        workspaceId: string
+      ): Effect.Effect<number, never> =>
+        Effect.gen(function* () {
+          const { client: rpcClient } = yield* getOrCreateClient
+          const map = yield* Ref.get(terminalMapRef)
+          const workspaceTerminalIds = pipe(
+            [...map.entries()],
+            Arr.filter(([_, wsId]) => wsId === workspaceId),
+            Arr.map(([terminalId]) => terminalId)
+          )
 
-        if (workspaceTerminalIds.length === 0) {
-          return 0
-        }
+          if (workspaceTerminalIds.length === 0) {
+            return 0
+          }
 
-        let killedCount = 0
-        yield* Effect.forEach(
-          workspaceTerminalIds,
-          (terminalId) =>
-            pipe(
-              rpcClient.terminal.kill({ id: terminalId }),
-              Effect.tap(() =>
-                Effect.sync(() => {
-                  killedCount += 1
-                })
+          let killedCount = 0
+          yield* Effect.forEach(
+            workspaceTerminalIds,
+            (terminalId) =>
+              pipe(
+                rpcClient.terminal.kill({ id: terminalId }),
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    killedCount += 1
+                  })
+                ),
+                Effect.catchAll((err) =>
+                  Effect.logWarning(
+                    `Failed to kill terminal ${terminalId} during workspace cleanup: ${String(err)}`
+                  ).pipe(Effect.annotateLogs('module', logPrefix))
+                )
               ),
-              Effect.catchAll((err) =>
-                Effect.logWarning(
-                  `Failed to kill terminal ${terminalId} during workspace cleanup: ${String(err)}`
-                ).pipe(Effect.annotateLogs('module', logPrefix))
-              )
-            ),
-          { discard: true }
+            { discard: true }
+          )
+
+          yield* Effect.log(
+            `Killed ${killedCount}/${workspaceTerminalIds.length} terminals for workspace ${workspaceId}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          return killedCount
+        }).pipe(
+          Effect.catchAll((err) =>
+            Effect.gen(function* () {
+              yield* Effect.logWarning(
+                `Cannot kill terminals for workspace ${workspaceId}: terminal service unavailable (${String(err)})`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+              return 0
+            })
+          )
         )
-
-        yield* Effect.log(
-          `Killed ${killedCount}/${workspaceTerminalIds.length} terminals for workspace ${workspaceId}`
-        ).pipe(Effect.annotateLogs('module', logPrefix))
-
-        return killedCount
-      })
 
       yield* Effect.addFinalizer(() =>
         Effect.log('Shutdown: disconnecting from terminal service').pipe(

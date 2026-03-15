@@ -60,6 +60,12 @@ vi.mock('@/atoms/laborer-client', () => ({
   },
 }))
 
+// Mock useWhenPhase to always return true (simulate Phase 4 / Eventually)
+// so the component renders its content without phase gating.
+vi.mock('@/hooks/use-when-phase', () => ({
+  useWhenPhase: () => true,
+}))
+
 const mockAssignTerminalToPane = vi.fn()
 
 vi.mock('@/panels/panel-context', () => ({

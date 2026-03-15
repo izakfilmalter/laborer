@@ -20,11 +20,13 @@ import type { PrCommentReaction } from '@laborer/shared/rpc'
 import { ClipboardCheck } from 'lucide-react'
 import { useMemo } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { cn } from '@/lib/utils'
 
 interface ReviewFindingsCountProps {
@@ -60,7 +62,11 @@ function useUnresolvedFindingsCount(workspaceId: string): number {
   return result.value.findings.filter((f) => !isResolved(f.reactions)).length
 }
 
-function ReviewFindingsCount({
+/**
+ * Inner content — only mounted after Phase 4 so the RPC query
+ * never fires against deferred service proxies during startup.
+ */
+function ReviewFindingsCountContent({
   className,
   workspaceId,
 }: ReviewFindingsCountProps) {
@@ -91,6 +97,23 @@ function ReviewFindingsCount({
       </TooltipContent>
     </Tooltip>
   )
+}
+
+/**
+ * Review findings count — gated behind Phase 4 (Eventually) since review
+ * data depends on deferred services. Returns null before Phase 4,
+ * preventing unnecessary RPC errors during startup.
+ *
+ * @see Issue #12: Progressive feature enablement for Phases 3-4
+ */
+function ReviewFindingsCount(props: ReviewFindingsCountProps) {
+  const isEventually = useWhenPhase(LifecyclePhase.Eventually)
+
+  if (!isEventually) {
+    return null
+  }
+
+  return <ReviewFindingsCountContent {...props} />
 }
 
 export { ReviewFindingsCount, useUnresolvedFindingsCount }

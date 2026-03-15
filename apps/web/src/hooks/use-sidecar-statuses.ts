@@ -1,13 +1,18 @@
 /**
  * React hook that tracks the live status of all sidecar services.
  *
- * In Electron mode, subscribes to SidecarStatusEvent from the DesktopBridge.
- * In browser dev mode, polls health endpoints for each service through the
- * Vite proxy and synthesizes status events.
+ * In Electron production mode, subscribes to SidecarStatusEvent IPC from the
+ * DesktopBridge (events emitted by HealthMonitor in the main process).
+ *
+ * In dev mode (both browser and Electron dev), polls health endpoints for
+ * each service through the Vite proxy and synthesizes status events.
+ * The Electron main process does NOT spawn sidecars or emit IPC events in
+ * dev mode — services are run separately via `turbo dev`.
  *
  * @see packages/shared/src/desktop-bridge.ts — SidecarStatusEvent type
  * @see apps/web/src/lib/sidecar-statuses.ts — pure derivation logic
  * @see apps/web/vite.config.ts — /server-health, /terminal-health, /file-watcher-health proxies
+ * @see apps/desktop/src/main.ts — HealthMonitor only created when !isDev
  */
 
 import type {
@@ -27,6 +32,17 @@ const INITIAL_STATUSES = deriveSidecarStatuses([])
 
 /** Polling interval for dev mode health checks (ms). */
 const DEV_POLL_INTERVAL_MS = 3000
+
+/**
+ * Whether sidecar status should come from IPC events (Electron production)
+ * rather than HTTP health polling (dev mode).
+ *
+ * In Electron dev mode, the bridge exists but the main process does NOT
+ * create a HealthMonitor or emit sidecar status events (sidecars are run
+ * externally via `turbo dev`). So we must use HTTP polling in dev mode
+ * regardless of whether the bridge is present.
+ */
+const useIpcEvents = Boolean(getDesktopBridge()) && import.meta.env.PROD
 
 /**
  * Health endpoint paths for each service in dev mode.
@@ -54,8 +70,12 @@ function useSidecarStatuses(): SidecarStatuses {
     setStatuses(deriveSidecarStatuses(eventsRef.current))
   }, [])
 
-  // Electron mode: subscribe to sidecar status events via the DesktopBridge.
+  // Electron production: subscribe to sidecar status events via IPC.
   useEffect(() => {
+    if (!useIpcEvents) {
+      return
+    }
+
     const bridge = getDesktopBridge()
     if (!bridge) {
       return
@@ -64,39 +84,32 @@ function useSidecarStatuses(): SidecarStatuses {
     return bridge.onSidecarStatus(handleEvent)
   }, [handleEvent])
 
-  // Dev/browser mode: poll health endpoints for each service.
+  // Dev mode (browser or Electron dev): poll health endpoints.
   useEffect(() => {
-    const bridge = getDesktopBridge()
-    if (bridge) {
-      // In Electron mode, the bridge subscription handles status updates.
+    if (useIpcEvents) {
       return
     }
 
-    // Track health state per service to avoid duplicate events.
     const healthState = new Map<SidecarName, boolean>()
+    const failureCount = new Map<SidecarName, number>()
 
     async function pollService(name: SidecarName, endpoint: string) {
-      try {
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 2000)
-        const response = await fetch(endpoint, {
-          signal: controller.signal,
-          redirect: 'error',
-        })
-        clearTimeout(timeoutId)
+      const ok = await tryFetchHealth(endpoint)
 
-        if (response.ok) {
-          if (!healthState.get(name)) {
-            healthState.set(name, true)
-            handleEvent({ state: 'healthy', name })
-          }
-          return
+      if (ok) {
+        failureCount.set(name, 0)
+        if (!healthState.get(name)) {
+          healthState.set(name, true)
+          handleEvent({ state: 'healthy', name })
         }
-      } catch {
-        // Connection refused, timeout, etc.
+        return
       }
 
-      if (healthState.get(name)) {
+      const failures = (failureCount.get(name) ?? 0) + 1
+      failureCount.set(name, failures)
+      const wasHealthy = healthState.get(name) === true
+
+      if (wasHealthy || failures >= 3) {
         healthState.set(name, false)
         handleEvent({ state: 'crashed', name, error: 'Service unreachable' })
       }
@@ -130,6 +143,25 @@ function useSidecarStatuses(): SidecarStatuses {
   }, [handleEvent])
 
   return statuses
+}
+
+/**
+ * Attempt to fetch a health endpoint. Returns true if the response is ok.
+ */
+async function tryFetchHealth(endpoint: string): Promise<boolean> {
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 2000)
+    const response = await fetch(endpoint, {
+      signal: controller.signal,
+      redirect: 'error',
+    })
+    clearTimeout(timeoutId)
+
+    return response.ok
+  } catch {
+    return false
+  }
 }
 
 export { useSidecarStatuses }

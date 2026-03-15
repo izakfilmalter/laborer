@@ -17,12 +17,14 @@ import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { Eye } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
@@ -43,6 +45,7 @@ function ReviewPrForm({
   onTerminalSpawned,
   disabled,
 }: ReviewPrFormProps) {
+  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const reviewPr = useAtomSet(reviewPrMutation, { mode: 'promise' })
   const panelActions = usePanelActions()
@@ -94,7 +97,7 @@ function ReviewPrForm({
         render={
           <Button
             aria-label="Review PR"
-            disabled={disabled || isSubmitting}
+            disabled={!isServerReady || disabled || isSubmitting}
             onClick={handleClick}
             size="icon-xs"
             variant="ghost"

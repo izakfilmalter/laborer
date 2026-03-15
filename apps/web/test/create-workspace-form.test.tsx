@@ -73,6 +73,7 @@ vi.mock('@/components/ui/spinner', () => ({
 }))
 
 import { CreateWorkspaceForm } from '../src/components/create-workspace-form'
+import { ReadyPhaseWrapper } from './helpers/lifecycle-test-utils'
 
 const BRANCH_NAME_RE = /branch name/i
 const CREATE_WORKSPACE_RE = /create workspace/i
@@ -92,13 +93,21 @@ describe('CreateWorkspaceForm — branch name mask', () => {
   })
 
   it('autofocuses the branch name input', () => {
-    render(<CreateWorkspaceForm projectId="project-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" />
+      </ReadyPhaseWrapper>
+    )
     const input = getBranchInput()
     expect(document.activeElement).toBe(input)
   })
 
   it('renders the branch name input with correct placeholder', () => {
-    render(<CreateWorkspaceForm projectId="project-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" />
+      </ReadyPhaseWrapper>
+    )
     const input = getBranchInput()
     expect(input).toBeTruthy()
     expect(input.getAttribute('placeholder')).toBe('laborer/my-feature')
@@ -106,7 +115,11 @@ describe('CreateWorkspaceForm — branch name mask', () => {
 
   it('converts spaces to hyphens', async () => {
     const user = userEvent.setup()
-    render(<CreateWorkspaceForm projectId="project-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" />
+      </ReadyPhaseWrapper>
+    )
     const input = getBranchInput()
 
     await user.type(input, 'my feature branch')
@@ -118,7 +131,11 @@ describe('CreateWorkspaceForm — branch name mask', () => {
 
   it('converts uppercase to lowercase', async () => {
     const user = userEvent.setup()
-    render(<CreateWorkspaceForm projectId="project-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" />
+      </ReadyPhaseWrapper>
+    )
     const input = getBranchInput()
 
     await user.type(input, 'My-Feature')
@@ -130,7 +147,11 @@ describe('CreateWorkspaceForm — branch name mask', () => {
 
   it('allows forward slashes for namespaced branches', async () => {
     const user = userEvent.setup()
-    render(<CreateWorkspaceForm projectId="project-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" />
+      </ReadyPhaseWrapper>
+    )
     const input = getBranchInput()
 
     await user.type(input, 'laborer/my-feature')
@@ -142,7 +163,11 @@ describe('CreateWorkspaceForm — branch name mask', () => {
 
   it('allows hyphens and underscores', async () => {
     const user = userEvent.setup()
-    render(<CreateWorkspaceForm projectId="project-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" />
+      </ReadyPhaseWrapper>
+    )
     const input = getBranchInput()
 
     await user.type(input, 'my-feature_branch')
@@ -154,7 +179,11 @@ describe('CreateWorkspaceForm — branch name mask', () => {
 
   it('rejects special characters not allowed in branch names', async () => {
     const user = userEvent.setup()
-    render(<CreateWorkspaceForm projectId="project-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" />
+      </ReadyPhaseWrapper>
+    )
     const input = getBranchInput()
 
     await user.type(input, 'feat!@#$%ok')
@@ -175,7 +204,11 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       status: 'running',
     })
 
-    render(<CreateWorkspaceForm projectId="project-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" />
+      </ReadyPhaseWrapper>
+    )
 
     const submitButton = screen.getByRole('button', {
       name: CREATE_WORKSPACE_RE,
@@ -202,7 +235,11 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       status: 'running',
     })
 
-    render(<CreateWorkspaceForm projectId="project-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" />
+      </ReadyPhaseWrapper>
+    )
     const input = getBranchInput()
 
     await user.type(input, 'My Feature Branch')
@@ -237,7 +274,11 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       status: 'running',
     })
 
-    render(<CreateWorkspaceForm projectId="project-1" />)
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm projectId="project-1" />
+      </ReadyPhaseWrapper>
+    )
     const input = getBranchInput()
 
     await user.type(input, 'if/batch-column-variant-prd')

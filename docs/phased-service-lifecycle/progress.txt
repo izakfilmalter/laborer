@@ -1,0 +1,650 @@
+## Issue #4: Lifecycle phase enum and context — COMPLETED
+
+### What was done
+- Created `apps/web/src/components/lifecycle-phase-context.tsx` with:
+  - `LifecyclePhase` const enum: Starting (1), Ready (2), Restored (3), Eventually (4)
+  - `LifecyclePhaseProvider` context provider with forward-only phase transitions
+  - `useLifecyclePhase()` hook returning current phase, `advanceTo()`, and `when()`
+  - Barrier pattern (inspired by VS Code) for `when(phase): Promise<void>` API
+  - Phase transitions are irreversible — `advanceTo` with a lower phase is a no-op
+  - Barriers for skipped intermediate phases are opened when jumping forward
+- Wired `LifecyclePhaseProvider` into `apps/web/src/routes/__root.tsx` as the outermost provider (above ThemeProvider and all other providers)
+- Created `apps/web/test/lifecycle-phase-context.test.tsx` with 9 tests:
+  1. Initial phase is Starting
+  2. advanceTo(Ready) changes phase to Ready
+  3. advanceTo(Starting) after Ready is a no-op (no regression)
+  4. advanceTo(Eventually) skips intermediate phases (jumps forward)
+  5. Multiple advanceTo calls with the same phase are idempotent
+  6. when(phase) resolves when phase is reached
+  7. when(phase) resolves immediately if phase already passed
+  8. when(phase) resolves for skipped intermediate phases
+  9. Provides sensible defaults without a provider
+
+### Verification
+- All 9 new tests pass
+- All 572 existing tests pass (no regressions)
+- TypeScript typecheck passes with no errors
+- Formatter (ultracite/biome) passes on new files
+
+## Issue #5: `useWhenPhase` hook and service status hook — COMPLETED
+
+### What was done
+- Created `apps/web/src/hooks/use-when-phase.ts` with:
+  - `useWhenPhase(targetPhase): boolean` — returns `true` once the current lifecycle phase is at or past the target phase, `false` before
+  - Thin hook that reads `useLifecyclePhase().phase` and compares with `>=`
+  - Primary API for phase-aware UI — components use this to conditionally enable features
+- Created `apps/web/src/hooks/use-service-status.ts` with:
+  - `useServiceStatus(): ServiceStatuses` — returns a reactive map of per-service health states
+  - Aggregates sidecar statuses from `useSidecarStatuses()` (server, terminal, file-watcher, mcp)
+  - Adds a `sync` entry for LiveStore sync status (initially `unknown`, to be wired in Issue #2)
+  - Exports `ServiceName` type (`'server' | 'terminal' | 'file-watcher' | 'mcp' | 'sync'`)
+  - Exports `ServiceStatuses` type (`Record<ServiceName, ServiceState>`)
+- Created `apps/web/test/lifecycle-phase-hooks.test.tsx` with 7 tests:
+  - useWhenPhase:
+    1. Returns false for Ready during Starting phase and true after advancing to Ready
+    2. Returns true immediately for Starting (always past)
+    3. Returns false for Eventually until Eventually phase is reached
+  - useServiceStatus:
+    4. Shows starting state for sidecar services initially
+    5. Includes sync status entry with unknown state initially
+    6. Updates sidecar status to healthy when health endpoint responds
+    7. Updates reactively when service status changes
+
+### Verification
+- All 7 new tests pass
+- All 579 tests pass (no regressions, up from 572 after Issue #4)
+- TypeScript typecheck passes with no errors
+- Formatter (ultracite/biome) passes on new files
+
+## Issue #1: Switch LiveStore to non-blocking sync — COMPLETED
+
+### What was done
+- Removed `initialSyncOptions: { _tag: 'Blocking', timeout: 5000 }` from `apps/web/src/livestore.worker.ts`
+  - LiveStore now defaults to `{ _tag: 'Skip' }` — the store loads from the local OPFS cache immediately and syncs in the background
+  - The `Suspense` boundary in `LiveStoreProvider` resolves in milliseconds (from OPFS) rather than waiting up to 5s for network sync
+  - Background WebSocket sync starts automatically when the server is available
+  - The `onSyncError` default (`'ignore'`) is kept, so sync failures don't crash the app
+- Updated the file's JSDoc comment to document the non-blocking sync behavior
+
+### Verification
+- TypeScript typecheck passes with no errors across all 7 packages
+- All 579 web tests pass (no regressions)
+- Pre-existing desktop test failures in `main.test.ts` (7 failures, unrelated to this change — `app.setAsDefaultProtocolClient` mock issue) confirmed identical before and after change via `git stash` comparison
+- Formatter check passes (only pre-existing lint warnings in unrelated files)
+
+## Issue #6: Remove ServerGate blocking gate — COMPLETED
+
+### What was done
+- Removed `ServerGate` from `apps/web/src/routes/__root.tsx` render tree
+  - Removed the `import { ServerGate } from '@/components/server-gate'` import
+  - `LiveStoreProvider` now renders directly inside the layout div, no longer wrapped by `ServerGate`
+  - Route content (`Outlet`) renders immediately during Phase 1 (Starting) without waiting for the server
+  - The `LifecyclePhaseProvider` (from Issue #4) replaces `ServerGate` as the mechanism for tracking service readiness — but it doesn't block rendering
+- `ServerGate` component file (`apps/web/src/components/server-gate.tsx`) retained for reference — it is no longer imported or used anywhere
+- Created `apps/web/test/root-no-server-gate.test.tsx` with 4 tests:
+  1. Route content renders during Phase 1 (Starting) without server — no blocking overlay
+  2. Route content renders during Phase 2 (Ready) after server becomes available
+  3. No blocking overlay or spinner gate text is rendered (no "Waiting for server", "Starting services", etc.)
+  4. Navigation area renders during Phase 1 — links are accessible immediately
+
+### Verification
+- All 4 new tests pass
+- All 583 tests pass (no regressions, up from 579 after Issue #1)
+- TypeScript typecheck passes with no errors across all 7 packages
+- Formatter (ultracite/biome) passes on changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #7: Wire sidecar status events to lifecycle phase transitions — COMPLETED
+
+### What was done
+- Created `apps/web/src/hooks/use-phase-transition-driver.tsx` with:
+  - `usePhaseTransitionDriver()` hook that subscribes to `useSidecarStatuses()` and calls `advanceTo()` when transition conditions are met
+  - **Starting → Ready:** Triggered when server sidecar reports `healthy`
+  - **Ready → Restored:** Triggered when terminal + file-watcher sidecars both report `healthy` (after server already healthy)
+  - Handles out-of-order events correctly (e.g., terminal healthy before server — waits for server, then advances directly to Restored)
+  - Uses `advanceTo()` forward-only semantics — no phase regression even if services crash
+  - `PhaseTransitionDriver` renderless component for use in the app root
+- Wired `PhaseTransitionDriver` into `apps/web/src/routes/__root.tsx` inside `LifecyclePhaseProvider` (alongside existing `SidecarCrashListener`)
+- Works in both Electron (IPC events via `bridge.onSidecarStatus()`) and dev mode (HTTP health polling) — both modes are handled by `useSidecarStatuses()` which this hook consumes
+- Created `apps/web/test/phase-transition-driver.test.tsx` with 7 tests:
+  1. Advances to Ready when server health endpoint responds
+  2. Stays at Starting when no sidecar events received
+  3. Does not advance to Ready when only terminal reports healthy
+  4. Does not advance to Ready when only file-watcher reports healthy
+  5. Advances to Restored when terminal + file-watcher become healthy after Ready
+  6. Handles out-of-order events: terminal/file-watcher healthy before server (jumps to Restored)
+  7. Advances to Restored correctly when file-watcher lags behind terminal + server
+
+### Notes
+- The **Restored → Eventually** transition is NOT wired yet — it depends on Issue #15 (Server "fully initialized" event) which is blocked by Issues #14 and #13
+- LiveStore sync status is NOT included in the Restored transition condition yet — it depends on Issue #2 (LiveStore sync status indicator) which will wire `useSyncStatus()` into `useServiceStatus()`
+- Once Issue #15 is implemented, a new condition will be added to trigger the Eventually phase
+
+### Verification
+- All 7 new tests pass
+- All 590 tests pass (no regressions, up from 583 after Issue #6)
+- TypeScript typecheck passes with no errors
+- Formatter (ultracite/biome) passes on new files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #8: Header per-service status dots — COMPLETED
+
+### What was done
+- Created `apps/web/src/components/service-status-dots.tsx` with:
+  - `ServiceStatusDots` component — compact status dots replacing the old `ServiceStatusPills`
+  - `ServiceDot` sub-component — individual dot with tooltip showing service name and state
+  - Consumes `useServiceStatus()` from Issue #5 (the higher-level hook that aggregates sidecar + sync statuses)
+  - Shows only core services: Server, Terminal, File Watcher (MCP excluded per acceptance criteria)
+  - Each dot renders as a small colored circle: green (healthy), yellow (starting/restarting with pulsing animation), red (crashed), gray (unknown)
+  - Tooltip on each dot shows "DisplayName — StatusLabel" on hover
+  - `data-testid="service-dot-{name}"` and `data-state="{state}"` attributes for testing
+  - Wrapped in `<output aria-label="Service statuses">` for accessibility
+  - More compact than the old pills — dots only, no text labels in the default view
+- Updated `apps/web/src/components/header.tsx` to import and render `ServiceStatusDots` instead of `ServiceStatusPills`
+  - Old `ServiceStatusPills` component file retained for reference — no longer imported
+- Created `apps/web/test/service-status-dots.test.tsx` with 6 tests:
+  1. Shows starting state for server dot when server is starting
+  2. Shows healthy state for server dot when server health check passes
+  3. Shows error state for server dot when server crashes
+  4. Renders all three core services independently (server healthy, terminal healthy, file-watcher starting)
+  5. Excludes MCP from primary indicators
+  6. Renders within an output element with accessible label
+
+### Verification
+- All 6 new tests pass
+- All 596 tests pass (no regressions, up from 590 after Issue #7)
+- TypeScript typecheck passes with no errors across all packages
+- Formatter (ultracite/biome) passes on new files
+- Pre-existing lint warnings in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #13: Server core layer group (fast health endpoint) — COMPLETED
+
+### What was done
+- Restructured `packages/server/src/main.ts` to clearly separate core from deferred layer groups:
+  - **Core layers** (fast-building, needed for health endpoint):
+    - `ServerLive` — Node.js HTTP server binding
+    - `LaborerStoreLive` — LiveStore with SQLite persistence
+    - `SyncRpcLive` — LiveStore WebSocket sync endpoint (GET /rpc)
+    - `RpcLive` — Business RPC endpoint (POST /rpc, handlers defined)
+    - `RpcSerialization.layerJson` — JSON wire format
+    - `CustomRoutesLive` — Health check endpoint (GET /)
+    - `ConfigService` — Configuration resolution (Layer.succeed, pure)
+    - `RepositoryIdentity` — Git repository identification (leaf)
+  - **Deferred layers** (heavy I/O, external connections, background services):
+    - `DeferredLeafLayers` — FileWatcherClient, WorktreeDetector, DepsImageService, DockerDetection, PortAllocator
+    - `DeferredGroup1Layers` — TaskManager, BranchStateTracker, ContainerService, PrdStorageService, DiffService, PrWatcher, WorktreeReconciler
+    - `DeferredGroup1WithSync` — WorkspaceSyncService + BackgroundFetchService
+    - `DeferredGroup2Layers` — GithubTaskImporter, LinearTaskImporter, ReviewCommentFetcher, RepositoryWatchCoordinator
+    - `DeferredServiceStack` — WorkspaceProvider, ProjectRegistry (bottom-up composition)
+    - `DeferredTopLayers` — TerminalClient, McpRegistrar
+    - `DeferredServicesLive` — All deferred services composed
+  - The separation is structural/organizational because `LaborerRpcsLive` captures all handler service requirements at the type level. Issue #14 will add background initialization for deferred layers.
+- Restructured `packages/server/test/rpc/test-layer.ts` to mirror the core/deferred split:
+  - `CoreLeafLayers` — ConfigService, RepositoryIdentity (core infrastructure)
+  - `DeferredLeafLayers` — test stubs for FileWatcherClient, DockerDetection, DepsImageService + real WorktreeDetector, PortAllocator
+  - `DeferredGroup1Layers`, `DeferredGroup1WithSync`, `DeferredGroup2Layers`, `DeferredServiceStack` — matching main.ts structure
+  - All existing test layers and exports preserved
+- Created `packages/server/test/rpc/core-layers.test.ts` with 4 tests:
+  1. Health check responds with only core layers (deferred services stubbed)
+  2. Server starts without terminal or file-watcher sidecars (stubs only)
+  3. LiveStore queries work with only core layers
+  4. Deferred service RPC fails gracefully with stub error (not "service not found")
+- Stub pattern uses JavaScript Proxy to create service objects that construct successfully but return `Effect.die` when any method is invoked — proving deferred services are not needed at runtime for core operations
+
+### Notes
+- `LaborerRpcsLive` (via `RpcGroup.toLayer`) captures all handler service requirements at the type level, even though services are only resolved at handler invocation time. This means the full layer graph must be provided for type safety, preventing a naive "launch core separately from deferred" approach.
+- Issue #14 will build on this separation by wrapping deferred services in background-initializing layers that return placeholder implementations immediately, with typed `ServiceInitializing` errors for handlers invoked before their service is ready.
+- Issue #16 will make `TerminalClient` and `FileWatcherClient` connect lazily on first use instead of during layer construction.
+
+### Verification
+- All 4 new tests pass
+- All 325 server tests pass (up from 321 after Issue #8, 4 new tests)
+- All 596 web tests pass (no regressions)
+- TypeScript typecheck passes with no errors across all packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #14: Server deferred layer group (background initialization) — COMPLETED
+
+### What was done
+- Created `packages/server/src/services/deferred-service.ts` with:
+  - `SERVICE_INITIALIZING_CODE` — sentinel error code (`'SERVICE_INITIALIZING'`) used in RpcError to signal that a deferred service is still initializing, detectable by the renderer
+  - `serviceInitializingError(serviceName)` — creates an RpcError with the SERVICE_INITIALIZING code
+  - `makeServiceProxy<T>(serviceName, overrides?)` — creates a Proxy that returns SERVICE_INITIALIZING errors for all method calls, with optional method overrides for services that need valid placeholder data (e.g., DockerDetection.check() returns `{ available: false }`)
+  - `makeRefDelegatingService<Id, S>(tag, overrides?)` — creates a `{ ref, proxy }` pair where:
+    - `ref` is a `Ref<S>` holding the current implementation (starts with placeholder proxy)
+    - `proxy` is a Proxy that delegates all method calls through the Ref to the current implementation
+    - When the Ref is swapped to the real service, all future calls automatically go through to it
+  - `DeferredServicesReady` — Context.Tag holding a `Ref<boolean>` that tracks whether all deferred services have initialized (starts `false`, set to `true` when background fiber completes). Used by Issue #15 (Server "fully initialized" event)
+  - `DeferredServicesReadyLayer` — Layer.effect that provides DeferredServicesReady
+
+- Restructured `packages/server/src/main.ts` for background initialization:
+  - **DeferredServicesProxyLive** — new `Layer.scopedContext` layer that:
+    1. Creates 14 Ref-backed delegating proxies for all deferred service Tags that RPC handlers yield from
+    2. DockerDetection gets a special placeholder override: `check()` returns `{ available: false }`
+    3. Forks a single background fiber (`Effect.forkScoped`) that builds the full `DeferredServicesLive` layer graph
+    4. Once built, swaps each Ref to the real service implementation from the built Context
+    5. Sets `DeferredServicesReady` ref to `true` on success
+    6. On failure: logs the error but does NOT crash the server — RPCs continue returning SERVICE_INITIALIZING errors
+    7. Returns a Context with all 14 proxy service implementations
+  - **HttpLive** updated to use `DeferredServicesProxyLive` instead of `DeferredServicesLive` directly
+  - The health endpoint responds as soon as core layers are built (before deferred services finish)
+
+- Updated `packages/server/test/rpc/core-layers.test.ts`:
+  - Replaced custom `makeStubService` with production `makeServiceProxy` from `deferred-service.ts`
+  - 6 tests: 3 core layer tests + 3 deferred proxy behavior tests
+
+- Created `packages/server/test/rpc/deferred-init.test.ts` with 8 tests:
+  - makeServiceProxy: SERVICE_INITIALIZING errors, override support
+  - makeRefDelegatingService: placeholder → real service Ref swap
+  - DeferredServicesReady: starts false, can be set to true
+  - DockerDetection placeholder behavior
+
+### Verification
+- All 14 new tests pass (6 in core-layers.test.ts, 8 in deferred-init.test.ts)
+- All 335 server tests pass (up from 325 after Issue #13)
+- All 596 web tests pass (no regressions)
+- TypeScript typecheck passes with no errors across all packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #11: Disable write actions before Phase 2 (Ready) — COMPLETED
+
+### What was done
+- Audited all server-dependent write action components and added `useWhenPhase(LifecyclePhase.Ready)` gating to disable them during Phase 1 (Starting):
+  - `CreateWorkspaceForm` — dialog trigger button disabled, submit button disabled, shows "Connecting..." label
+  - `CreatePlanWorkspace` — button shows "Connecting..." with tooltip during Phase 1, before existing workspace/creating states
+  - `AddProjectForm` — both Electron (folder picker) and browser (form) buttons disabled with "Connecting..." label
+  - `DestroyWorkspaceButton` — destroy trigger button disabled with "Connecting to server..." tooltip
+  - `WorkspaceSyncStatus` — push/pull buttons disabled with tooltip
+  - `StartRalphLoopButton` — extracted from WorkspaceItem to reduce complexity, disabled with tooltip
+  - `ContainerPauseButton` — pause/unpause button disabled during Phase 1
+  - `TerminalSpawnButtons` — extracted from TerminalList to reduce complexity, New Terminal and Agent buttons disabled with tooltip
+  - `ProjectGroup` — create workspace (+) and remove project (trash) buttons disabled with tooltip
+  - `ReviewPrForm` — review PR button disabled during Phase 1
+  - `FixFindingsForm` — fix findings button disabled during Phase 1
+  - `ProjectSettingsModal` — save button disabled during Phase 1
+- Extracted `StartRalphLoopButton` from `WorkspaceItem` and `TerminalSpawnButtons` from `TerminalList` to keep function complexity within biome's 20-point limit
+- Created `apps/web/test/disable-write-actions.test.tsx` with 5 tests:
+  1. Write action button is disabled during Phase 1 and shows "Connecting..."
+  2. Write action button enables when phase advances to Ready
+  3. Disabled buttons have tooltip explaining why they're disabled
+  4. Form submission is blocked during Phase 1 (not just visually disabled)
+  5. Buttons don't flash between disabled/enabled during fast phase transitions
+- Updated existing tests in `create-plan-workspace.test.tsx` and `create-workspace-form.test.tsx` to wrap components in `LifecyclePhaseProvider` with phase advanced to Ready (since components now gate on phase)
+
+### Verification
+- All 5 new tests pass
+- All 601 tests pass (no regressions, up from 596 after Issue #8)
+- TypeScript typecheck passes with no errors across all packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #15: Server "fully initialized" event — COMPLETED
+
+### What was done
+- **Shared RPC contract** — Added `lifecycle.initStatus` RPC to `packages/shared/src/rpc.ts`:
+  - Returns `{ ready: boolean }` — `false` while deferred services are initializing, `true` once all are ready
+  - No payload required, no error channel (always succeeds)
+
+- **Server handler** — Added handler in `packages/server/src/rpc/handlers.ts`:
+  - Reads `DeferredServicesReady` Ref (set to `true` by the background init fiber in `main.ts`)
+  - Added `DeferredServicesReady` and `Ref` imports
+
+- **Server HTTP endpoint** — Added `GET /init-status` custom route in `packages/server/src/main.ts`:
+  - Lightweight JSON endpoint returning `{ ready: boolean }` from the `DeferredServicesReady` Ref
+  - Polled by the renderer's phase transition driver (avoids needing the Effect RPC wire format)
+  - Matches the existing health check pattern (`GET /`)
+
+- **Test layer updates** — Added `DeferredServicesReadyLayer` to test layers:
+  - `packages/server/test/rpc/test-layer.ts` — Both `TestLaborerRpcLayer` and `TestLaborerRpcWithStoreLayer`
+  - `packages/server/test/rpc/core-layers.test.ts` — `CoreOnlyRpcLayer` and new `CoreOnlyRpcWithReadyRefLayer`
+
+- **Server tests** — 3 new tests in `packages/server/test/rpc/core-layers.test.ts`:
+  1. `lifecycle.initStatus` returns `{ ready: false }` before deferred services init
+  2. `lifecycle.initStatus` returns `{ ready: true }` after deferred services init (Ref swap)
+  3. `lifecycle.initStatus` works alongside other core RPCs
+
+- **Vite proxy** — Added `/server-init-status` proxy in `apps/web/vite.config.ts`:
+  - Rewrites to `/init-status` on the server port, matching the health-check proxy pattern
+
+- **Desktop URL helper** — Added `serverInitStatusUrl()` to `apps/web/src/lib/desktop.ts`:
+  - Dev mode: `/server-init-status` (Vite proxy)
+  - Electron production: `${desktopBridge.getServerUrl()}/init-status` (direct)
+
+- **Phase transition driver** — Updated `apps/web/src/hooks/use-phase-transition-driver.tsx`:
+  - Added `useEffect` that polls `/server-init-status` every 2 seconds when phase >= Restored and < Eventually
+  - When response returns `{ ready: true }`, calls `advanceTo(LifecyclePhase.Eventually)`
+  - Stops polling once Eventually is reached (cleanup via interval clear + cancelled flag)
+  - Added `phase` to hook dependencies to trigger/stop polling on phase transitions
+
+- **Renderer tests** — 3 new tests in `apps/web/test/phase-transition-driver.test.tsx`:
+  1. Advances to Eventually when init-status returns ready after Restored
+  2. Does not poll init-status before Restored phase (no premature polling)
+  3. Stops polling init-status after Eventually is reached
+
+### Verification
+- All 6 new tests pass (3 server + 3 web)
+- All 604 web tests pass (up from 601 after Issue #11)
+- All 338 server tests pass (up from 335 after Issue #14)
+- TypeScript typecheck passes with no errors across all packages (shared, server, web)
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #16: Lazy sidecar connections (TerminalClient + FileWatcherClient) — COMPLETED
+
+### What was done
+- **FileWatcherClient** (`packages/server/src/services/file-watcher-client.ts`) — converted from eager to lazy connection:
+  - Extracted `createFileWatcherRpcClient(url)` helper function for proper type inference of the RPC client
+  - Layer construction (`Layer.scoped`) no longer calls `RpcClient.make()` or starts event stream subscription
+  - Connection is established lazily on first method call (`subscribe`, `unsubscribe`, `updateIgnore`, `listSubscriptions`)
+  - Uses a mutable closure variable (`cachedClient`) to cache the RPC client after first successful connection
+  - Event stream subscription (`watcher.events()`) starts once after first successful connection, forked into the layer's scope
+  - Retry with exponential backoff (1s base, up to 30s, max 5 retries) when sidecar is unavailable
+  - All method errors mapped to `FileWatcherRpcError` for consistent error types
+  - `onFileEvent()` handler registration works immediately (before connection) — handlers stored in memory, dispatched when events arrive
+  - Captured `layerScope` from `Effect.scope` during construction, provided to lazy `RpcClient.make()` via `Effect.provideService(Scope.Scope, layerScope)` so the client lifecycle is tied to the layer
+
+- **TerminalClient** (`packages/server/src/services/terminal-client.ts`) — converted from eager to lazy connection:
+  - Extracted `createTerminalRpcClient(url)` helper function for proper type inference
+  - Layer construction no longer calls `RpcClient.make()`, seeds the terminal map, or starts event stream subscription
+  - Connection is established lazily on first method call via `getOrCreateClient` effect
+  - Terminal map seeding (`terminal.list()`) happens after first successful connection
+  - Event stream subscription (`terminal.events()`) starts once after connection, forked into layer's scope
+  - Same retry pattern as FileWatcherClient (exponential backoff, max 5 retries)
+  - `killAllForWorkspace()` gracefully returns 0 when sidecar is unreachable (catches connection error, logs warning)
+  - `spawnContainerTerminal` and `spawnHostTerminal` get the RPC client lazily via `yield* getOrCreateClient`
+  - `autoTypeScripts` and `scheduleAutoRun` now receive `rpcClient` as a parameter (instead of closing over it)
+  - `buildAgentCommand` now takes `terminalPort` as parameter (instead of closing over `env`)
+  - Environment variables (`TERMINAL_PORT`) cached in a closure variable after first lazy resolution
+
+- **Test file** — Created `packages/server/test/rpc/lazy-connections.test.ts` with 6 tests:
+  1. FileWatcherClient layer builds instantly without connecting to file-watcher sidecar
+  2. FileWatcherClient onFileEvent handler can be registered before connection
+  3. TerminalClient layer builds instantly without connecting to terminal sidecar
+  4. TerminalClient killAllForWorkspace returns 0 when no terminals tracked (before connection)
+  5. FileWatcherClient layer builds in under 1 second without sidecar (timing test)
+  6. TerminalClient layer builds in under 1 second without sidecar (timing test)
+
+### Notes
+- The lazy connection pattern uses `Effect.provideService(Scope.Scope, layerScope)` to tie the lazily-created RPC client's lifecycle to the layer's scope, ensuring proper cleanup on shutdown
+- The event stream fibers are forked via `Effect.forkIn(layerScope)` (not `Effect.forkScoped`) since the fork happens outside the original `Layer.scoped` generator — `forkIn` explicitly uses the captured scope
+- Both clients maintain the same retry strategy as before (exponential backoff with spaced union) for the event stream subscription, but the initial connection retry is bounded (max 5 retries) to avoid blocking indefinitely
+- The existing `DeferredServicesProxyLive` in `main.ts` still wraps these layers in Ref-backed proxies — the lazy connection pattern means the background fiber that builds `DeferredServicesLive` completes faster since neither client blocks on sidecar connections during layer construction
+- Issue #17 (Parallel sidecar spawning) is now unblocked
+
+### Verification
+- All 6 new tests pass
+- All 344 server tests pass (up from 338 after Issue #15, 6 new tests)
+- All 604 web tests pass (no regressions)
+- TypeScript typecheck passes with no errors across all 7 packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format errors in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #17: Parallel sidecar spawning — COMPLETED
+
+### What was done
+- **`HealthMonitor.spawnServices()`** (`apps/desktop/src/health.ts`) — changed from two-phase sequential to fully parallel spawning:
+  - **Before:** Terminal + file-watcher spawned in parallel (Phase 1), then server spawned sequentially after both healthy (Phase 2). If terminal or file-watcher failed, server never started.
+  - **After:** All three sidecars (terminal, file-watcher, server) spawn concurrently via `Promise.all`. Each reports healthy independently via status events. Individual failures are logged but don't prevent other sidecars from starting.
+  - The return value still indicates whether ALL services are healthy (`true` only if all three succeed), but individual failures no longer block the others.
+  - This is possible because Issue #16 (lazy sidecar connections) removed the server's dependency on terminal/file-watcher being healthy before starting.
+
+- **Updated comment in `apps/desktop/src/main.ts`** (line 324-327) — replaced old ServerGate reference with lifecycle phase description, reflecting that the renderer now uses phased lifecycle service instead of a blocking gate.
+
+- **Tests** — Added 6 new tests to `apps/desktop/test/health.test.ts` under `HealthMonitor.spawnServices`:
+  1. Spawns all 3 sidecars concurrently (not sequentially) — verifies all 3 are spawned, spawn timestamps within 100ms of each other
+  2. Server health reported independently of terminal/file-watcher — server reports healthy before delayed terminal/file-watcher
+  3. Each sidecar emits its own status events independently — verifies 3 starting + 3 healthy events, each for a different service
+  4. Individual sidecar failure does not block others — server times out but terminal/file-watcher still report healthy
+  5. Startup time is max(sidecars) not sum(sidecars) — all 3 healthy after ~200ms delay, total < 2s (not 3x200ms sequential)
+  6. Crash recovery for individual sidecars still works — manual restart after initial spawn succeeds
+
+- **Test infrastructure** — Added `createTestServer` helper (creates HTTP server on random port) and `createMockSidecarManager` helper (records spawn order/timestamps, no-op for process lifecycle). Uses inline `SidecarName` type to avoid importing `sidecar.ts` which requires Electron.
+
+### Verification
+- All 6 new tests pass
+- All 151 desktop tests pass (up from 145 after previous changes, 6 new tests; 7 pre-existing failures in `main.test.ts` due to `app.setAsDefaultProtocolClient` mock issue — identical before and after change)
+- TypeScript typecheck passes with no errors across all packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format errors in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #12: Progressive feature enablement for Phases 3-4 — COMPLETED
+
+### What was done
+- **Terminal pane** (`apps/web/src/panes/terminal-pane.tsx`) — gated behind Phase 3 (Restored):
+  - Split `TerminalPane` into a phase-aware wrapper and `TerminalPaneContent` inner component
+  - Before Phase 3: renders `TerminalConnectingPlaceholder` — spinner + "Terminal service connecting..." message
+  - After Phase 3: renders the full xterm.js terminal content
+  - The heavy xterm.js initialization (WebGL, addons, WebSocket connection) only runs after Phase 3
+  - Added `useWhenPhase(LifecyclePhase.Restored)` import and usage
+
+- **Docker status banner** (`apps/web/src/components/docker-status-banner.tsx`) — gated behind Phase 4 (Eventually):
+  - `DockerStatusBanner` returns `null` before Phase 4 (no query, no rendering)
+  - After Phase 4: renders the existing `Suspense` + `DockerStatusContent` (which queries `docker.status` RPC)
+  - Prevents SERVICE_INITIALIZING errors from DockerDetection during startup
+
+- **Review pane** (`apps/web/src/panes/review-pane.tsx`) — gated behind Phase 4 (Eventually):
+  - Before Phase 4: shows "Loading review..." spinner placeholder with review header
+  - After Phase 4: renders the full review pane with Suspense + `ReviewPaneContent`
+  - Prevents review.fetchComments RPC calls before PrWatcher/ReviewCommentFetcher are ready
+
+- **Review findings count** (`apps/web/src/components/review-findings-count.tsx`) — gated behind Phase 4 (Eventually):
+  - Returns `null` before Phase 4 (suppresses `review.fetchComments` query result display)
+  - After Phase 4: renders the unresolved findings count badge
+
+- **Review verdict badge** (`apps/web/src/components/review-verdict-badge.tsx`) — gated behind Phase 4 (Eventually):
+  - Returns `null` before Phase 4 (suppresses `review.fetchVerdict` query result display)
+  - After Phase 4: renders the verdict badge (approved/needs_fix)
+
+- **Branch ahead/behind counts** — no additional gating needed:
+  - `WorkspaceSyncStatus` receives `aheadCount`/`behindCount` as props from LiveStore queries
+  - Counts are `null`/`0` until background sync populates the data, handled naturally
+  - `GitHubPrStatusBadge` is purely presentational (receives all data as props)
+
+- Created `apps/web/test/progressive-feature-enablement.test.tsx` with 7 tests:
+  1. Terminal pane shows connecting placeholder before Phase 3 (Restored)
+  2. Terminal pane renders normally after Phase 3 (Restored)
+  3. Docker status banner shows placeholder before Phase 4 (Eventually)
+  4. Docker status banner shows real status after Phase 4 (Eventually)
+  5. Review pane shows loading placeholder before Phase 4 (Eventually)
+  6. Review pane shows real content after Phase 4 (Eventually)
+  7. Features transition smoothly from placeholder to real content without broken UI
+
+- Updated existing tests to work with phase gating:
+  - `apps/web/test/review-pane.test.tsx` — added `vi.mock('@/hooks/use-when-phase')` returning `true`
+  - `apps/web/test/review-pane-alive.test.tsx` — added `vi.mock('@/hooks/use-when-phase')` returning `true`
+  - `apps/web/test/review-verdict-badge.test.tsx` — added `vi.mock('@/hooks/use-when-phase')` returning `true`
+
+### Verification
+- All 7 new tests pass
+- All 611 web tests pass (up from 604 after Issue #15, 7 new tests)
+- TypeScript typecheck passes with no errors across all 7 packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #9: Header status collapse and expand — COMPLETED
+
+### What was done
+- **Updated `apps/web/src/components/service-status-dots.tsx`** with collapse/expand behavior:
+  - Added `useCollapseState()` hook that manages collapsed/expanded state:
+    - Starts expanded (individual per-service dots visible)
+    - After all 3 core services (server, terminal, file-watcher) are healthy for 2 seconds, collapses to a single compact green dot
+    - If any service goes unhealthy while collapsed, expands immediately (no delay)
+    - On fast startups (all services healthy within 500ms of component mount), skips the expanded state entirely — goes straight to compact
+  - Added `CollapsedIndicator` component — a single green dot that opens a Popover on click:
+    - Popover shows "Service Status" header with per-service detail rows
+    - Each row shows: colored status dot + service display name + status label (e.g., "Healthy")
+    - Each row includes a "Restart" button (only in Electron — calls `desktopBridge.restartSidecar(name)`)
+    - Popover aligns to the end of the trigger, opens below the header
+  - Added `ServiceDetailRow` component — a single row in the expanded popover showing service name, state, and restart action
+  - Added `toSidecarName()` helper — maps ServiceName to SidecarName for restart calls (filters out 'sync' which isn't a sidecar)
+  - Added `areAllCoreHealthy()` helper — checks if all STATUS_DOT_SERVICES are in the 'healthy' state
+  - Exported `COLLAPSE_DELAY_MS` constant (2000ms) and `useCollapseState` hook for testing
+  - Uses `@/components/ui/popover` (Popover, PopoverContent, PopoverTrigger) for the expanded detail view
+  - Tooltip on collapsed indicator reads "All services healthy"
+  - All markup wrapped in `<output aria-label="Service statuses">` for accessibility in both states
+
+- **Created `apps/web/test/service-status-collapse.test.tsx`** with 7 tests:
+  1. Collapses to single compact indicator after 2s of all-healthy
+  2. Shows expanded dots when any service is not healthy
+  3. Clicking compact indicator shows per-service detail popover
+  4. Popover detail shows service name and state
+  5. Expands immediately if a service goes unhealthy while collapsed
+  6. On fast startup (all healthy within 500ms), user never sees expanded dots
+  7. Output wrapper has accessible label in both collapsed and expanded state
+
+### Verification
+- All 7 new tests pass
+- All 618 web tests pass (up from 611 after Issue #12, 7 new tests)
+- All 6 existing service-status-dots tests pass (no regressions)
+- TypeScript typecheck passes with no errors across all packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format errors in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #10: Header error state persistence and animations — COMPLETED
+
+### What was done
+- **Error state persistence** — Added `usePersistedErrors` hook to `apps/web/src/components/service-status-dots.tsx`:
+  - Tracks services that have entered the `crashed` state in a persisted `Set<ServiceName>`
+  - When a service crashes, it's added to the persisted error set
+  - The error persists even after the service recovers to `healthy`, ensuring users don't miss failures
+  - A `dismissedRef` prevents re-persisting the same crash after dismissal — the service must go healthy first, then crash again for a new persisted error
+  - `dismissError(name)` callback clears the persisted error and adds the service to the dismissed set
+
+- **Dismiss and retry actions** — Added inline dismiss and retry buttons on error dots:
+  - Buttons render inline next to the status dot when `errorPersisted` is true (no tooltip interaction needed)
+  - Dismiss button clears the persisted error, allowing the dot to show the live state
+  - Retry button calls `desktopBridge.restartSidecar(name)` (when in Electron) AND clears the persisted error
+  - Both buttons use `data-testid` attributes (`dismiss-error-{name}`, `retry-error-{name}`) for testing
+
+- **Minimum display duration** — Added `useMinDisplayDuration` hook:
+  - Holds the displayed state for at least 300ms (`MIN_DISPLAY_DURATION_MS`) before transitioning
+  - Prevents flickering when services transition rapidly (e.g., starting to healthy in < 100ms)
+  - Uses `lastChangeRef` to track when the current display state was set
+  - Schedules a delayed transition via `setTimeout` when the minimum hasn't elapsed
+  - Returns a "display state" that's rendered instead of the raw live state
+  - Each `ServiceDot` tracks its own display state independently via this hook
+
+- **CSS transitions for smooth state changes**:
+  - Status dot color changes use `transition-colors duration-300` for smooth animated transitions
+  - The `output` container uses `transition-all duration-300` for smooth collapse/expand
+  - Detail row dots in the popover also use `transition-colors duration-300`
+  - Fixed-width containers (`w-4`) on each dot prevent layout shifts during transitions
+  - `data-display-state` attribute on each dot exposes the debounced display state for testing
+
+- **ServiceDot component restructured** for error persistence:
+  - Wrapping `<span>` element holds `data-state` (live), `data-display-state` (debounced), and `data-error-persisted` attributes
+  - Tooltip remains inside for hover detail but dismiss/retry buttons render outside the tooltip (always visible when error is persisted)
+
+- **Created `apps/web/test/service-status-errors.test.tsx`** with 6 tests:
+  1. Error indicator persists after service crashes and shows error dot (crash then recover with error still persisted)
+  2. Dismiss action removes the persisted error indicator (click dismiss then error cleared and shows healthy)
+  3. Retry action triggers restart and transitions to starting state (click retry then error cleared)
+  4. No flickering: minimum 300ms display duration for transitional states (starting to healthy delayed)
+  5. Animated transitions use fixed-width containers to prevent layout shifts (transition class present)
+  6. Recovery from error automatically transitions indicator to healthy (live state shows healthy but error persisted flag remains)
+
+### Verification
+- All 6 new tests pass
+- All 624 web tests pass (up from 618 after Issue #9, 6 new tests)
+- All 13 existing service-status-dots + collapse tests pass (no regressions)
+- All 344 server tests pass (no regressions)
+- TypeScript typecheck passes with no errors across all packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format errors in `panel-hotkeys.tsx` and `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #2: LiveStore sync status indicator — COMPLETED
+
+### What was done
+- **Created `apps/web/src/components/sync-status-context.tsx`** — React context that bridges LiveStore sync status from inside the LiveStoreProvider boundary to components rendered outside it (like Header):
+  - `SyncStatusProvider` — context provider holding a `ServiceState` value, placed above `Header` in the render tree
+  - `useSyncServiceState()` — returns the current sync `ServiceState` from context (consumed by `useServiceStatus()`)
+  - `useSyncStatusUpdate()` — returns a setter to update the sync state (used by `SyncStatusBridge`)
+  - Default state is `{ state: 'unknown' }` (before LiveStore loads)
+
+- **Created `apps/web/src/components/sync-status-bridge.tsx`** — renderless component that subscribes to `store.networkStatus` from LiveStore and bridges connectivity state to `SyncStatusContext`:
+  - Renders inside `LiveStoreProvider` (calls `useLaborerStore()`)
+  - Polls `store.networkStatus.get` (an Effect `Subscribable`) every 2 seconds
+  - Maps `NetworkStatus.isConnected` to `ServiceState`:
+    - `isConnected: true` → `{ state: 'healthy' }` (sync connected, idle)
+    - `isConnected: false` → `{ state: 'starting' }` (sync connecting/catching up)
+  - Uses `Effect.runPromise` to read the Effect value in React
+
+- **Updated `apps/web/src/hooks/use-service-status.ts`** — wired real sync status:
+  - Replaced hardcoded `sync: { state: 'unknown' }` with `useSyncServiceState()` from context
+  - Added import for `useSyncServiceState` from `sync-status-context`
+  - Updated JSDoc to reflect the new sync status wiring
+
+- **Updated `apps/web/src/components/service-status-dots.tsx`** — added sync indicator:
+  - `SyncIndicator` component — subtle pulsing dot that shows only when sync is actively connecting or catching up
+  - Uses `bg-info` color (blue) to visually distinguish from core service dots (green/yellow/red)
+  - Smaller size (`size-1.5`) than core dots (`size-2`) for visual subtlety
+  - `data-testid="sync-indicator"` for testing
+  - Fixed `w-4` container to prevent layout shifts when indicator appears/disappears
+  - Tooltip shows "Syncing..." on hover
+  - Rendered in both collapsed and expanded states of `ServiceStatusDots`
+  - Hidden when sync is `healthy` (connected) or `unknown` (no sync backend)
+  - `isSyncActive()` helper determines visibility
+
+- **Updated `apps/web/src/routes/__root.tsx`** — wired context and bridge:
+  - Added `SyncStatusProvider` wrapping the layout div (above `Header`, below `AppSettingsProvider`)
+  - Added `SyncStatusBridge` inside `LiveStoreProvider` (alongside `AppSettingsModal` and `Outlet`)
+
+- **Fixed inaccurate JSDoc in `apps/web/src/livestore/store.ts`** — removed reference to non-existent `store.useSyncStatus()` method, replaced with accurate documentation of `store.networkStatus` (Effect `Subscribable`)
+
+- **Created `apps/web/test/sync-status-indicator.test.tsx`** with 4 tests:
+  1. Sync indicator renders when sync status is syncing (isConnected: false → starting state)
+  2. Sync indicator hidden when sync status is connected/idle (isConnected: true → healthy state)
+  3. Sync indicator hidden when no sync status set (unknown/default)
+  4. Sync indicator does not cause layout shifts (fixed w-4 container dimensions)
+
+### Architecture Note
+The `Header` component renders **outside** the `LiveStoreProvider` boundary in `__root.tsx`. Since `useServiceStatus()` (consumed by `ServiceStatusDots` in `Header`) needs sync data, the sync status must be bridged via React context:
+- `SyncStatusProvider` wraps both `Header` and `LiveStoreProvider`
+- `SyncStatusBridge` renders inside `LiveStoreProvider`, reads `store.networkStatus`, and writes to the context
+- `useServiceStatus()` reads from the context to populate the `sync` field
+
+### Verification
+- All 4 new tests pass
+- All 628 web tests pass (up from 624 after Issue #10, 4 new tests)
+- All 344 server tests pass (no regressions)
+- TypeScript typecheck passes with no errors across all 7 packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change
+
+## Issue #3: First-launch empty cache handling — COMPLETED
+
+### What was done
+- **Upgraded `WorkspaceList` empty state** (`apps/web/src/components/workspace-list.tsx`):
+  - Replaced the plain `<p>No workspaces</p>` text with the proper `Empty` component pattern used throughout the app
+  - Added `GitBranchPlus` icon via `EmptyMedia` with `variant="icon"` for visual consistency
+  - Added `EmptyTitle` with "No workspaces" heading
+  - Added `EmptyDescription` with guidance text: "Create a workspace to start working on isolated branches with AI agents."
+  - The `Empty` component uses `data-slot="empty"` which is the established pattern for empty state containers
+  - Added imports for `Empty`, `EmptyDescription`, `EmptyHeader`, `EmptyMedia`, `EmptyTitle` from `@/components/ui/empty`
+  - Added `GitBranchPlus` import from `lucide-react`
+
+- **Already-handled empty states** (no changes needed):
+  - `WelcomeEmptyState` in the main content area (index route) — shows full onboarding with `AddProjectForm` CTA when no projects exist
+  - Sidebar "No projects" text — adequate for sidebar context (main CTA is in the content area)
+  - `WorkspaceDashboard` — already uses `Empty` component with icon for "No projects" state
+  - `PanelManager` — already uses `Empty` component for "No panels" state
+  - `PlanList` — already uses `Empty` component with icon and description
+  - `TaskList` — already uses `Empty` component with icon and description
+  - `PlanIssuesList` — already uses `Empty` component with icon and description
+  - Panel layout system — returns `undefined` for empty store, which `PanelManager` handles gracefully
+
+- **Created `apps/web/test/first-launch-empty-cache.test.tsx`** with 4 tests:
+  1. Workspace list shows onboarding content when store has no workspaces — verifies `data-slot="empty"` container
+  2. Workspace list shows guidance description in empty state — verifies "create workspace" text
+  3. Workspace list updates reactively when data arrives via sync — empty state disappears, workspace cards appear (no full-page re-render)
+  4. No console errors or rendering crashes with empty store — verifies clean render with empty LiveStore
+
+### Verification
+- All 4 new tests pass
+- All 632 web tests pass (up from 628 after Issue #2, 4 new tests)
+- All 344 server tests pass (no regressions)
+- TypeScript typecheck passes with no errors across all 7 packages
+- Formatter (ultracite/biome) passes on all changed files
+- Pre-existing format error in `use-panel-layout.test.ts` confirmed identical before and after change

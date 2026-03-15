@@ -62,6 +62,27 @@ function isElectronProduction(): boolean {
 }
 
 /**
+ * Resolve the HTTP URL for the server's init-status endpoint.
+ *
+ * Used by the phase transition driver to poll whether all deferred
+ * services have finished initializing (triggering the Eventually phase).
+ *
+ * - Dev mode: `/server-init-status` (Vite proxy rewrites to server's /init-status)
+ * - Electron production: `${desktopBridge.getServerUrl()}/init-status` (direct)
+ *
+ * @see Issue #15: Server "fully initialized" event
+ */
+export function serverInitStatusUrl(): string {
+  if (isElectronProduction()) {
+    const bridge = getDesktopBridge()
+    if (bridge) {
+      return `${bridge.getServerUrl()}/init-status`
+    }
+  }
+  return '/server-init-status'
+}
+
+/**
  * Resolve the HTTP URL for the main server's RPC endpoint.
  *
  * - Dev mode: `/rpc` (Vite proxy handles routing)

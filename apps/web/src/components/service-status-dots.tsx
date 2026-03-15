@@ -103,28 +103,32 @@ function usePersistedErrors(statuses: Record<ServiceName, ServiceState>) {
 
   // Watch for new crash events and add them to persisted errors
   useEffect(() => {
-    const newErrors = new Set(persistedErrors)
-    let changed = false
     for (const name of STATUS_DOT_SERVICES) {
-      const state = statuses[name].state
-      if (
-        state === 'crashed' &&
-        !newErrors.has(name) &&
-        !dismissedRef.current.has(name)
-      ) {
-        newErrors.add(name)
-        changed = true
-      }
       // When a service recovers to healthy, clear the dismissed flag
       // so future crashes will be persisted again
-      if (state === 'healthy' && dismissedRef.current.has(name)) {
+      if (
+        statuses[name].state === 'healthy' &&
+        dismissedRef.current.has(name)
+      ) {
         dismissedRef.current.delete(name)
       }
     }
-    if (changed) {
-      setPersistedErrors(newErrors)
-    }
-  }, [statuses, persistedErrors])
+
+    setPersistedErrors((prev) => {
+      let next: Set<ServiceName> | undefined
+      for (const name of STATUS_DOT_SERVICES) {
+        if (
+          statuses[name].state === 'crashed' &&
+          !prev.has(name) &&
+          !dismissedRef.current.has(name)
+        ) {
+          next ??= new Set(prev)
+          next.add(name)
+        }
+      }
+      return next ?? prev
+    })
+  }, [statuses])
 
   const dismissError = useCallback((name: ServiceName) => {
     dismissedRef.current.add(name)

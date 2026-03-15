@@ -125,9 +125,13 @@ function HomeComponent() {
 
   const workspaceTileLayout = activeWindowTab?.workspaceLayout
 
-  // Detect when the active window tab exists but has no workspaces.
-  // This triggers the empty window tab state (workspace picker).
-  const isEmptyWindowTab = activeWindowTab !== undefined && !workspaceTileLayout
+  // Detect when the active window tab exists but has no workspaces,
+  // or when the window layout exists but all tabs have been closed.
+  // Both cases trigger the empty window tab state (workspace picker).
+  const isEmptyWindowTab =
+    (activeWindowTab !== undefined && !workspaceTileLayout) ||
+    (panelActions.windowLayout !== undefined &&
+      panelActions.windowLayout.tabs.length === 0)
 
   const store = useLaborerStore()
   const projectList = store.useQuery(sidebarProjects$)

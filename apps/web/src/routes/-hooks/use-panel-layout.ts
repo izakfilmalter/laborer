@@ -79,6 +79,8 @@ import {
 import {
   addWindowTab,
   addWorkspaceToTabUnique,
+  collectTerminalIdsFromPanelTree,
+  collectTerminalIdsFromTileTree,
   findTerminalLocation,
   findWorkspaceLocation,
   getActiveWindowTab,
@@ -280,8 +282,15 @@ export function usePanelLayout() {
   // available, derive the legacy flat tree from it so that hotkeys and other
   // legacy consumers see pane IDs that match the rendered layout. Falls back
   // to the persisted legacy tree or the auto-generated default layout.
+  //
+  // When a window layout exists but has no tabs (all tabs closed by user),
+  // return undefined so the UI shows the empty state instead of falling back
+  // to the default layout which would re-create panes.
   const layout = useMemo(() => {
     if (persistedWindowLayout) {
+      if (persistedWindowLayout.tabs.length === 0) {
+        return undefined
+      }
       const derived = deriveLegacyTreeFromHierarchical(persistedWindowLayout)
       if (derived) {
         return derived
@@ -1382,6 +1391,18 @@ export function usePanelLayout() {
     if (!activeId) {
       return
     }
+
+    // Kill terminal processes belonging to the tab being closed.
+    const closingTab = getActiveWindowTab(persistedWindowLayout)
+    if (closingTab?.workspaceLayout) {
+      const terminalIds = collectTerminalIdsFromTileTree(
+        closingTab.workspaceLayout
+      )
+      for (const terminalId of terminalIds) {
+        removeTerminalOptimistically(terminalId, '[close-window-tab]')
+      }
+    }
+
     const newLayout = removeWindowTab(persistedWindowLayout, activeId)
     commitWindowLayout(windowTabClosed, newLayout)
     // Restore focus to the new active tab's last-focused pane
@@ -1410,6 +1431,7 @@ export function usePanelLayout() {
     defaultLayout,
     store,
     panelWindowId,
+    removeTerminalOptimistically,
   ])
 
   /**
@@ -1500,7 +1522,15 @@ export function usePanelLayout() {
 
   const handleAddWorkspaceToCurrentTab = useCallback(
     async (workspaceId: string) => {
-      const base = persistedWindowLayout ?? { tabs: [], activeTabId: undefined }
+      let base = persistedWindowLayout ?? { tabs: [], activeTabId: undefined }
+
+      // If there are no tabs (all were closed), create a new tab first
+      // so the workspace has somewhere to land.
+      if (base.tabs.length === 0) {
+        base = addWindowTab(base)
+        commitWindowLayout(windowTabCreated, base)
+      }
+
       const activeTab = getActiveWindowTab(base)
       if (!activeTab) {
         return
@@ -1565,7 +1595,11 @@ export function usePanelLayout() {
   )
 
   const handleAddPanelTab = useCallback(
-    (workspaceId: string, panelType: PaneType) => {
+    (
+      workspaceId: string,
+      panelType: PaneType,
+      options?: { terminalId?: string }
+    ) => {
       if (!persistedWindowLayout) {
         return
       }
@@ -1574,7 +1608,11 @@ export function usePanelLayout() {
         persistedWindowLayout,
         workspaceId,
         (leaf) => {
-          const updated = addPanelTab(leaf, panelType)
+          const updated = addPanelTab(
+            leaf,
+            panelType,
+            options?.terminalId ? { terminalId: options.terminalId } : undefined
+          )
           // The newly added tab is always the last one and is set as active
           const newTab = updated.panelTabs.at(-1)
           if (newTab?.panelLayout._tag === 'PanelLeafNode') {
@@ -1586,8 +1624,9 @@ export function usePanelLayout() {
       commitPanelTabLayout(panelTabCreated, newLayout)
 
       // Auto-spawn a terminal for terminal-type panel tabs, mirroring
-      // the split-pane behaviour at handleSplitPane.
-      if (panelType === 'terminal' && newPaneId) {
+      // the split-pane behaviour at handleSplitPane — but skip if the
+      // caller already provided a terminal ID (e.g. sidebar spawn).
+      if (panelType === 'terminal' && newPaneId && !options?.terminalId) {
         const paneId = newPaneId
         spawnTerminal({ payload: { workspaceId } })
           .then((result) => {
@@ -1606,6 +1645,24 @@ export function usePanelLayout() {
       if (!persistedWindowLayout) {
         return
       }
+
+      // Kill terminal processes owned by the panel tab being removed.
+      const activeTab = getActiveWindowTab(persistedWindowLayout)
+      const tileLayout = activeTab?.workspaceLayout
+      if (tileLayout) {
+        const leaves = getWorkspaceTileLeaves(tileLayout)
+        const leaf = leaves.find((l) => l.workspaceId === workspaceId)
+        const panelTab = leaf?.panelTabs.find((t) => t.id === tabId)
+        if (panelTab) {
+          const terminalIds = collectTerminalIdsFromPanelTree(
+            panelTab.panelLayout
+          )
+          for (const terminalId of terminalIds) {
+            removeTerminalOptimistically(terminalId, '[close-panel-tab]')
+          }
+        }
+      }
+
       const newLayout = updateWorkspaceTileLeaf(
         persistedWindowLayout,
         workspaceId,
@@ -1613,7 +1670,7 @@ export function usePanelLayout() {
       )
       commitPanelTabLayout(panelTabClosed, newLayout)
     },
-    [persistedWindowLayout, commitPanelTabLayout]
+    [persistedWindowLayout, commitPanelTabLayout, removeTerminalOptimistically]
   )
 
   /**

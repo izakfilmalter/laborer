@@ -884,15 +884,17 @@ function countPanelLeaves(node: PanelTreeNode): number {
 
 /**
  * Determine whether closing the last item at this level should escalate
- * to closing the window tab or the app.
+ * to closing the window tab.
+ *
+ * Previously, the last remaining tab escalated to `close-app`. Now every
+ * tab — including the last one — can be closed, which leaves the window
+ * in an empty-tabs state that shows the workspace picker.
  */
 function resolveLastWorkspaceCloseAction(
-  layout: WindowLayout,
+  _layout: WindowLayout,
   activeTab: WindowTab
 ): ProgressiveCloseAction {
-  return layout.tabs.length <= 1
-    ? { kind: 'close-app' }
-    : { kind: 'close-window-tab', tabId: activeTab.id }
+  return { kind: 'close-window-tab', tabId: activeTab.id }
 }
 
 /**
@@ -916,30 +918,26 @@ function resolveEmptyWorkspaceAction(
 
 /**
  * Determine the close action when the active panel tab has exactly one
- * pane — escalate from panel tab to workspace to window tab.
+ * pane — always close the panel tab rather than escalating.
+ *
+ * This gives the user an explicit step before the progressive chain
+ * escalates to workspace/window-tab/app level on subsequent Cmd+W presses.
  */
 function resolveLastPaneCloseAction(
-  layout: WindowLayout,
-  activeTab: WindowTab,
-  workspaceLeaf: WorkspaceTileLeaf,
   activePanelTabId: string,
   activeWorkspaceId: string
 ): ProgressiveCloseAction {
-  // More than one panel tab → close just this tab
-  if (workspaceLeaf.panelTabs.length > 1) {
-    return {
-      kind: 'close-panel-tab',
-      tabId: activePanelTabId,
-      workspaceId: activeWorkspaceId,
-    }
+  return {
+    kind: 'close-panel-tab',
+    tabId: activePanelTabId,
+    workspaceId: activeWorkspaceId,
   }
-  // Last panel tab → escalate to workspace level
-  return resolveEmptyWorkspaceAction(layout, activeTab, activeWorkspaceId)
 }
 
 /**
  * Resolve the close action when no pane is focused (activePaneId is null).
- * Tries to find a pane via the layout hierarchy before falling back to close-app.
+ * Tries to find a pane via the layout hierarchy before falling back to
+ * closing the window tab or the app.
  */
 function resolveNullPaneCloseAction(
   layout: WindowLayout | undefined
@@ -952,9 +950,7 @@ function resolveNullPaneCloseAction(
         return { kind: 'close-pane', paneId: resolvedPaneId }
       }
       // Active tab exists but has no panes — close the tab
-      if (layout.tabs.length > 1) {
-        return { kind: 'close-window-tab', tabId: activeTab.id }
-      }
+      return { kind: 'close-window-tab', tabId: activeTab.id }
     }
   }
   return { kind: 'close-app' }
@@ -1030,14 +1026,8 @@ function computeProgressiveCloseAction(
     return { kind: 'close-pane', paneId: activePaneId }
   }
 
-  // Single pane → escalate
-  return resolveLastPaneCloseAction(
-    layout,
-    activeTab,
-    workspaceLeaf,
-    activePanelTab.id,
-    activeWorkspaceId
-  )
+  // Single pane → close the panel tab
+  return resolveLastPaneCloseAction(activePanelTab.id, activeWorkspaceId)
 }
 
 /**
@@ -1740,7 +1730,13 @@ function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
   }
 
   if (validTabs.length === 0) {
-    return { windowLayout: undefined, wasRepaired: true }
+    // Empty tabs is a valid state (all tabs were closed by the user).
+    // Return an empty layout rather than undefined so downstream code
+    // can distinguish "no tabs" from "no window layout data at all".
+    return {
+      windowLayout: { tabs: [], activeTabId: undefined },
+      wasRepaired: repaired,
+    }
   }
 
   // Validate activeTabId
@@ -1773,6 +1769,8 @@ function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
 export {
   addWindowTab,
   addWorkspaceToTabUnique,
+  collectTerminalIdsFromPanelTree,
+  collectTerminalIdsFromTileTree,
   computeProgressiveCloseAction,
   findTerminalLocation,
   findWorkspaceLocation,

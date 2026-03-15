@@ -6,10 +6,10 @@
  * escalates from innermost to outermost:
  *
  * 1. Multiple panes in active panel tab → close the active pane
- * 2. Single pane in active panel tab → close the panel tab
- * 3. Last panel tab in workspace → remove the workspace
- * 4. Last workspace in window tab → close the window tab
- * 5. Last window tab → close the app
+ * 2. Single pane (or last pane) in active panel tab → close the panel tab
+ * 3. Empty workspace with multiple workspaces → remove the workspace
+ * 4. Empty workspace (last workspace) with multiple window tabs → close the window tab
+ * 5. Empty workspace (last workspace, last window tab) → close the app
  *
  * @see apps/web/src/panels/window-tab-utils.ts — computeProgressiveCloseAction
  */
@@ -266,8 +266,8 @@ describe('computeProgressiveCloseAction', () => {
     })
   })
 
-  describe('close-workspace: last panel tab, multiple workspaces', () => {
-    it('closes workspace when single pane, single panel tab, multiple workspaces', () => {
+  describe('close-panel-tab: last panel tab in workspace (even with multiple workspaces)', () => {
+    it('closes panel tab when single pane, single panel tab, multiple workspaces', () => {
       const tab: WindowTab = {
         id: 'tab-1',
         workspaceLayout: makeWorkspaceTileSplit('split-1', [
@@ -289,16 +289,18 @@ describe('computeProgressiveCloseAction', () => {
         tabs: [tab],
         activeTabId: 'tab-1',
       }
+      // Now returns close-panel-tab instead of escalating to close-workspace
       const result = computeProgressiveCloseAction(layout, 'pane-1', 'ws-1')
       expect(result).toEqual({
-        kind: 'close-workspace',
+        kind: 'close-panel-tab',
+        tabId: 'pt-1',
         workspaceId: 'ws-1',
       })
     })
   })
 
-  describe('close-window-tab: last workspace, multiple window tabs', () => {
-    it('closes window tab when single workspace, single pane, multiple window tabs', () => {
+  describe('close-panel-tab: last workspace, multiple window tabs', () => {
+    it('closes panel tab when single workspace, single pane, multiple window tabs', () => {
       const tab1: WindowTab = {
         id: 'tab-1',
         workspaceLayout: makeWorkspaceTile(
@@ -321,16 +323,18 @@ describe('computeProgressiveCloseAction', () => {
         tabs: [tab1, tab2],
         activeTabId: 'tab-1',
       }
+      // Now returns close-panel-tab instead of escalating to close-window-tab
       const result = computeProgressiveCloseAction(layout, 'pane-1', 'ws-1')
       expect(result).toEqual({
-        kind: 'close-window-tab',
-        tabId: 'tab-1',
+        kind: 'close-panel-tab',
+        tabId: 'pt-1',
+        workspaceId: 'ws-1',
       })
     })
   })
 
-  describe('close-app: last window tab, last workspace, last pane', () => {
-    it('returns close-app when single tab, single workspace, single pane', () => {
+  describe('close-panel-tab: last window tab, last workspace, last pane', () => {
+    it('closes panel tab when single tab, single workspace, single pane', () => {
       const tab: WindowTab = {
         id: 'tab-1',
         workspaceLayout: makeWorkspaceTile(
@@ -344,8 +348,14 @@ describe('computeProgressiveCloseAction', () => {
         tabs: [tab],
         activeTabId: 'tab-1',
       }
+      // Now returns close-panel-tab instead of close-app — the user must
+      // close the tab first, then subsequent Cmd+W escalates further.
       const result = computeProgressiveCloseAction(layout, 'pane-1', 'ws-1')
-      expect(result).toEqual({ kind: 'close-app' })
+      expect(result).toEqual({
+        kind: 'close-panel-tab',
+        tabId: 'pt-1',
+        workspaceId: 'ws-1',
+      })
     })
   })
 
@@ -399,7 +409,7 @@ describe('computeProgressiveCloseAction', () => {
       })
     })
 
-    it('returns close-app when empty workspace is the only workspace and only tab', () => {
+    it('closes window tab when empty workspace is the only workspace and only tab', () => {
       const tab: WindowTab = {
         id: 'tab-1',
         workspaceLayout: makeWorkspaceTile('tile-1', 'ws-1', [], undefined),
@@ -409,7 +419,7 @@ describe('computeProgressiveCloseAction', () => {
         activeTabId: 'tab-1',
       }
       const result = computeProgressiveCloseAction(layout, 'pane-x', 'ws-1')
-      expect(result).toEqual({ kind: 'close-app' })
+      expect(result).toEqual({ kind: 'close-window-tab', tabId: 'tab-1' })
     })
   })
 
@@ -442,7 +452,7 @@ describe('computeProgressiveCloseAction', () => {
   })
 
   describe('nested workspace tiles', () => {
-    it('closes workspace from nested tile split', () => {
+    it('closes panel tab from nested tile split (before escalating to workspace)', () => {
       const tab: WindowTab = {
         id: 'tab-1',
         workspaceLayout: makeWorkspaceTileSplit('split-1', [
@@ -472,10 +482,11 @@ describe('computeProgressiveCloseAction', () => {
         tabs: [tab],
         activeTabId: 'tab-1',
       }
-      // Closing ws-2 should remove the workspace (3 workspaces exist)
+      // Closing ws-2's single pane should close the panel tab first
       const result = computeProgressiveCloseAction(layout, 'pane-2', 'ws-2')
       expect(result).toEqual({
-        kind: 'close-workspace',
+        kind: 'close-panel-tab',
+        tabId: 'pt-2',
         workspaceId: 'ws-2',
       })
     })
@@ -554,13 +565,32 @@ describe('computeProgressiveCloseAction', () => {
         activeTabId: 'tab-1',
       }
 
-      // Step 3: 1 panel tab, 1 workspace, 1 tab → close-app
+      // Step 3: 1 panel tab, 1 workspace, 1 tab → close-panel-tab
+      // (user must explicitly close the last panel tab before escalation)
       const step3 = computeProgressiveCloseAction(
         afterStep2Layout,
         'pane-2a',
         'ws-1'
       )
-      expect(step3.kind).toBe('close-app')
+      expect(step3.kind).toBe('close-panel-tab')
+
+      // Simulate: panel tab removed, workspace is now empty
+      const afterStep3Tab: WindowTab = {
+        id: 'tab-1',
+        workspaceLayout: makeWorkspaceTile('tile-1', 'ws-1', [], undefined),
+      }
+      const afterStep3Layout: WindowLayout = {
+        tabs: [afterStep3Tab],
+        activeTabId: 'tab-1',
+      }
+
+      // Step 4: empty workspace, 1 tab → close-window-tab
+      const step4 = computeProgressiveCloseAction(
+        afterStep3Layout,
+        'pane-x',
+        'ws-1'
+      )
+      expect(step4.kind).toBe('close-window-tab')
     })
   })
 

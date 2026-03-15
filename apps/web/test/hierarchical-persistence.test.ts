@@ -448,9 +448,9 @@ describe('repairWindowLayout', () => {
     })
   })
 
-  it('returns undefined when all tabs are invalid', () => {
+  it('returns empty layout when all tabs are invalid', () => {
     expect(repairWindowLayout({ tabs: [{ id: '' }, { id: 42 }] })).toEqual({
-      windowLayout: undefined,
+      windowLayout: { tabs: [], activeTabId: undefined },
       wasRepaired: true,
     })
   })

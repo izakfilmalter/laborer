@@ -56,9 +56,14 @@ interface PanelActions {
    *
    * @param workspaceId - The workspace to add the tab to
    * @param panelType - The panel type for the new tab
+   * @param options - Optional configuration (e.g. terminalId to skip auto-spawn)
    */
   readonly addPanelTab:
-    | ((workspaceId: string, panelType: PaneType) => void)
+    | ((
+        workspaceId: string,
+        panelType: PaneType,
+        options?: { terminalId?: string }
+      ) => void)
     | undefined
 
   // -- Window tab actions ---------------------------------------------------

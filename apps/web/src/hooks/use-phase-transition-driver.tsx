@@ -69,11 +69,10 @@ function usePhaseTransitionDriver(): void {
     }
 
     const url = serverInitStatusUrl()
-    let cancelled = false
+    const controller = new AbortController()
 
     async function pollInitStatus() {
       try {
-        const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), 2000)
         const response = await fetch(url, {
           signal: controller.signal,
@@ -81,12 +80,18 @@ function usePhaseTransitionDriver(): void {
         })
         clearTimeout(timeoutId)
 
-        if (!response.ok || cancelled) {
+        if (!response.ok || controller.signal.aborted) {
           return
         }
 
-        const data = (await response.json()) as { ready?: boolean }
-        if (data.ready && !cancelled) {
+        const data: unknown = await response.json()
+        if (
+          typeof data === 'object' &&
+          data !== null &&
+          'ready' in data &&
+          (data as { ready: unknown }).ready === true &&
+          !controller.signal.aborted
+        ) {
           advanceTo(LifecyclePhase.Eventually)
         }
       } catch {
@@ -100,7 +105,7 @@ function usePhaseTransitionDriver(): void {
     const intervalId = setInterval(pollInitStatus, INIT_STATUS_POLL_INTERVAL_MS)
 
     return () => {
-      cancelled = true
+      controller.abort()
       clearInterval(intervalId)
     }
   }, [phase, advanceTo])

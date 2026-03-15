@@ -94,24 +94,57 @@ export const makeRefDelegatingService = <Id, S extends object>(
     const placeholder = makeServiceProxy<S>(serviceName, overrides)
     const ref = yield* Ref.make<S>(placeholder)
 
+    const methodCache = new Map<
+      string,
+      (...args: readonly unknown[]) => Effect.Effect<unknown, unknown, unknown>
+    >()
+    let resolvedService: S | null = null
+
     const proxy = new Proxy({} as S, {
       get: (_target, prop) => {
         if (typeof prop === 'symbol' || PASSTHROUGH_PROPS.has(prop)) {
           return undefined
         }
-        return (...args: readonly unknown[]) =>
-          Effect.gen(function* () {
-            const current = yield* Ref.get(ref)
-            const method = (current as Record<string, unknown>)[prop]
+        const propName = prop as string
+        const cached = methodCache.get(propName)
+        if (cached) {
+          return cached
+        }
+
+        const wrapper = (...args: readonly unknown[]) => {
+          // Fast path: service already resolved, skip Ref.get overhead
+          if (resolvedService) {
+            const method = (resolvedService as Record<string, unknown>)[
+              propName
+            ]
             if (typeof method === 'function') {
-              return yield* (
+              return (
                 method as (
                   ...a: readonly unknown[]
                 ) => Effect.Effect<unknown, unknown, unknown>
               )(...args)
             }
-            return method
+            return Effect.succeed(method)
+          }
+          // Slow path: go through Ref (only used during initialization)
+          return Effect.flatMap(Ref.get(ref), (current) => {
+            if (current !== placeholder) {
+              resolvedService = current
+            }
+            const method = (current as Record<string, unknown>)[propName]
+            if (typeof method === 'function') {
+              return (
+                method as (
+                  ...a: readonly unknown[]
+                ) => Effect.Effect<unknown, unknown, unknown>
+              )(...args)
+            }
+            return Effect.succeed(method)
           })
+        }
+
+        methodCache.set(propName, wrapper)
+        return wrapper
       },
     }) as S
 

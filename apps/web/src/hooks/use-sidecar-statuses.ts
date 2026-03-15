@@ -94,7 +94,7 @@ function useSidecarStatuses(): SidecarStatuses {
     const failureCount = new Map<SidecarName, number>()
 
     async function pollService(name: SidecarName, endpoint: string) {
-      const ok = await tryFetchHealth(name, endpoint)
+      const ok = await tryFetchHealth(endpoint)
 
       if (ok) {
         failureCount.set(name, 0)
@@ -148,10 +148,7 @@ function useSidecarStatuses(): SidecarStatuses {
 /**
  * Attempt to fetch a health endpoint. Returns true if the response is ok.
  */
-async function tryFetchHealth(
-  _name: SidecarName,
-  endpoint: string
-): Promise<boolean> {
+async function tryFetchHealth(endpoint: string): Promise<boolean> {
   try {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 2000)

@@ -19,6 +19,7 @@ import { ChevronRight, FolderGit2, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { CreateWorkspaceForm } from '@/components/create-workspace-form'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { PlanList } from '@/components/plan-list'
 import { ProjectSettingsModal } from '@/components/project-settings-modal'
 import { TaskList } from '@/components/task-list'
@@ -49,6 +50,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { WorkspaceList } from '@/components/workspace-list'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 
@@ -74,6 +76,7 @@ function ProjectGroup({
   selectedPlanId,
   onSelectPlan,
 }: ProjectGroupProps) {
+  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
   const [taskSource, setTaskSource] = useState<TaskSourceFilter>('linear')
@@ -124,7 +127,13 @@ function ProjectGroup({
                         <Button
                           aria-label={`Create workspace in ${project.name}`}
                           className="h-7 w-7"
+                          disabled={!isServerReady}
                           size="icon-sm"
+                          title={
+                            isServerReady
+                              ? undefined
+                              : 'Connecting to server...'
+                          }
                           variant="ghost"
                         />
                       }
@@ -150,7 +159,11 @@ function ProjectGroup({
                       <Button
                         aria-label={`Remove project ${project.name}`}
                         className="h-7 w-7"
+                        disabled={!isServerReady}
                         size="icon-sm"
+                        title={
+                          isServerReady ? undefined : 'Connecting to server...'
+                        }
                         variant="ghost"
                       />
                     }

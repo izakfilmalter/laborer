@@ -14,10 +14,11 @@
 import { join } from 'node:path'
 import { LaborerRpcs, RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import { Array, Effect, pipe, Schema } from 'effect'
+import { Array, Effect, pipe, Ref, Schema } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { ContainerService } from '../services/container-service.js'
+import { DeferredServicesReady } from '../services/deferred-service.js'
 import { DiffService } from '../services/diff-service.js'
 import { DockerDetection } from '../services/docker-detection.js'
 import { GithubTaskImporter } from '../services/github-task-importer.js'
@@ -693,6 +694,16 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.succeed({
         status: 'ok' as const,
         uptime: (Date.now() - startTime) / 1000,
+      }),
+
+    // -------------------------------------------------------------------
+    // Lifecycle — Deferred service initialization status (Issue #15)
+    // -------------------------------------------------------------------
+    'lifecycle.initStatus': () =>
+      Effect.gen(function* () {
+        const { ref } = yield* DeferredServicesReady
+        const ready = yield* Ref.get(ref)
+        return { ready }
       }),
 
     // -------------------------------------------------------------------

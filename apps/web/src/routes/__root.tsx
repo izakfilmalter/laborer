@@ -10,11 +10,14 @@ import { AppSettingsProvider } from '@/components/app-settings-context'
 import { AppSettingsModal } from '@/components/app-settings-modal'
 import { DockerStatusBanner } from '@/components/docker-status-banner'
 import Header from '@/components/header'
-import { ServerGate } from '@/components/server-gate'
+import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
+import { SyncStatusBridge } from '@/components/sync-status-bridge'
+import { SyncStatusProvider } from '@/components/sync-status-context'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { TerminalRouterProvider } from '@/contexts/terminal-router-context'
+import { PhaseTransitionDriver } from '@/hooks/use-phase-transition-driver'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
 import { LiveStoreProvider } from '@/livestore/provider'
 
@@ -53,35 +56,39 @@ function RootComponent() {
   return (
     <>
       <HeadContent />
-      <ThemeProvider
-        attribute="class"
-        defaultTheme="dark"
-        disableTransitionOnChange
-        storageKey="vite-ui-theme"
-      >
-        <HotkeysProvider>
-          <TooltipProvider>
-            <AtomRegistryProvider>
-              <AppSettingsProvider>
-                <div className="grid h-svh grid-rows-[auto_auto_1fr]">
-                  <Header />
-                  <DockerStatusBanner />
-                  <ServerGate>
-                    <TerminalRouterProvider>
-                      <LiveStoreProvider>
-                        <AppSettingsModal />
-                        <Outlet />
-                      </LiveStoreProvider>
-                    </TerminalRouterProvider>
-                  </ServerGate>
-                </div>
-              </AppSettingsProvider>
-            </AtomRegistryProvider>
-            <Toaster richColors />
-            <SidecarCrashListener />
-          </TooltipProvider>
-        </HotkeysProvider>
-      </ThemeProvider>
+      <LifecyclePhaseProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          disableTransitionOnChange
+          storageKey="vite-ui-theme"
+        >
+          <HotkeysProvider>
+            <TooltipProvider>
+              <AtomRegistryProvider>
+                <AppSettingsProvider>
+                  <SyncStatusProvider>
+                    <div className="grid h-svh grid-rows-[auto_auto_1fr]">
+                      <Header />
+                      <DockerStatusBanner />
+                      <TerminalRouterProvider>
+                        <LiveStoreProvider>
+                          <SyncStatusBridge />
+                          <AppSettingsModal />
+                          <Outlet />
+                        </LiveStoreProvider>
+                      </TerminalRouterProvider>
+                    </div>
+                  </SyncStatusProvider>
+                </AppSettingsProvider>
+              </AtomRegistryProvider>
+              <Toaster richColors />
+              <PhaseTransitionDriver />
+              <SidecarCrashListener />
+            </TooltipProvider>
+          </HotkeysProvider>
+        </ThemeProvider>
+      </LifecyclePhaseProvider>
       <TanStackRouterDevtools position="bottom-left" />
     </>
   )

@@ -99,10 +99,10 @@ const adapter = makePersistedAdapter({
  * The returned store is augmented with React hooks:
  * - `store.useQuery(queryable)` — reactive query subscription
  * - `store.useClientDocument(table)` — useState-like for client documents
- * - `store.useSyncStatus()` — sync status subscription
  *
- * Also exposes `store.commit(event)` for committing events and
- * `store.query(table)` for synchronous queries.
+ * Also exposes `store.commit(event)` for committing events,
+ * `store.query(table)` for synchronous queries, and
+ * `store.networkStatus` (Effect `Subscribable`) for sync connectivity.
  */
 const useLaborerStore = () =>
   useStore({

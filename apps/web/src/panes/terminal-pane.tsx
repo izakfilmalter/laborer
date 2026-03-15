@@ -48,8 +48,10 @@ import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { FitAddon, init, Terminal } from 'ghostty-web'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Spinner } from '@/components/ui/spinner'
 import { useTerminalRouter } from '@/contexts/terminal-router-context'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { subscribeWindowResize } from '@/hooks/use-window-resize'
 import type { TerminalStatus } from '@/lib/terminal-session-router'
 import { isExactCtrlB, shouldBypassTerminal } from '@/panes/terminal-keys'
@@ -161,6 +163,50 @@ interface TerminalPaneProps {
  * Rapid resize events are coalesced via requestAnimationFrame.
  */
 function TerminalPane({
+  terminalId,
+  onTerminalExit,
+  onTitleChange,
+}: TerminalPaneProps) {
+  const isRestored = useWhenPhase(LifecyclePhase.Restored)
+
+  if (!isRestored) {
+    return <TerminalConnectingPlaceholder />
+  }
+
+  return (
+    <TerminalPaneContent
+      onTerminalExit={onTerminalExit}
+      onTitleChange={onTitleChange}
+      terminalId={terminalId}
+    />
+  )
+}
+
+/**
+ * Placeholder shown when the terminal service is still connecting (before
+ * Phase 3 / Restored). Shows a spinner and message explaining the state.
+ *
+ * @see Issue #12: Progressive feature enablement for Phases 3-4
+ */
+function TerminalConnectingPlaceholder() {
+  return (
+    <div
+      className="flex h-full w-full flex-col items-center justify-center gap-3 bg-background"
+      data-testid="terminal-connecting-placeholder"
+    >
+      <Spinner className="size-6 text-muted-foreground" />
+      <p className="text-muted-foreground text-sm">
+        Terminal service connecting...
+      </p>
+    </div>
+  )
+}
+
+/**
+ * Inner terminal pane component — only rendered after Phase 3 (Restored)
+ * when the terminal sidecar is available.
+ */
+function TerminalPaneContent({
   terminalId,
   onTerminalExit,
   onTitleChange,
@@ -311,7 +357,12 @@ function TerminalPane({
       onOutput: (data: string) => {
         const terminal = terminalRef.current
         if (terminal) {
-          terminal.write(data)
+          try {
+            terminal.write(data)
+          } catch (err) {
+            // ghostty-web WASM can throw RangeError intermittently
+            console.warn('[TerminalPane] Error writing output:', err)
+          }
         }
         markDataReceived()
         // Update connection status — if we're getting output, we're connected
@@ -322,8 +373,17 @@ function TerminalPane({
         if (terminal) {
           // Clear the terminal before writing screen state to avoid
           // duplicating content on reconnection.
-          terminal.clear()
-          terminal.write(state)
+          try {
+            terminal.clear()
+          } catch (err) {
+            console.warn('[TerminalPane] Error clearing terminal:', err)
+          }
+          try {
+            terminal.write(state)
+          } catch (err) {
+            // ghostty-web WASM can throw RangeError intermittently
+            console.warn('[TerminalPane] Error writing screenState:', err)
+          }
         }
         markDataReceived()
         setConnectionStatus('connected')
@@ -335,7 +395,11 @@ function TerminalPane({
         if (status === 'restarted') {
           const terminal = terminalRef.current
           if (terminal) {
-            terminal.clear()
+            try {
+              terminal.clear()
+            } catch (err) {
+              console.warn('[TerminalPane] Error clearing terminal:', err)
+            }
           }
           // Reset loading state on restart — new output will arrive
           hasReceivedDataRef.current = false

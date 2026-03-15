@@ -27,6 +27,12 @@ vi.mock('@/atoms/laborer-client', () => ({
   },
 }))
 
+// Mock useWhenPhase to always return true (simulate Phase 4 / Eventually)
+// so the component renders its content without phase gating.
+vi.mock('@/hooks/use-when-phase', () => ({
+  useWhenPhase: () => true,
+}))
+
 vi.mock('@/components/ui/tooltip', () => ({
   Tooltip: ({ children }: React.PropsWithChildren) => (
     <div data-testid="tooltip">{children}</div>

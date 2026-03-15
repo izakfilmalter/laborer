@@ -69,6 +69,7 @@ import {
   useState,
 } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
@@ -89,6 +90,7 @@ import {
 import { Markdown } from '@/components/ui/markdown'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { useDiffScrollDispatch } from '@/panels/diff-scroll-context'
@@ -1241,7 +1243,49 @@ function ReviewActionsBar({
   )
 }
 
+/**
+ * Review pane — gated behind Phase 4 (Eventually) since PR review data
+ * depends on deferred services (PrWatcher, ReviewCommentFetcher). Before
+ * Phase 4, shows a loading placeholder. After Phase 4, renders the full
+ * review pane with Suspense.
+ *
+ * @see Issue #12: Progressive feature enablement for Phases 3-4
+ */
 function ReviewPane({ onClose, workspaceId }: ReviewPaneProps) {
+  const isEventually = useWhenPhase(LifecyclePhase.Eventually)
+
+  if (!isEventually) {
+    return (
+      <div className="flex h-full w-full flex-col">
+        <div className="flex h-8 shrink-0 items-center gap-1.5 border-b bg-muted/30 px-3">
+          <ClipboardCheck className="size-3.5 text-muted-foreground" />
+          <span className="font-medium text-muted-foreground text-xs">
+            Review
+          </span>
+          {onClose && (
+            <div className="ml-auto">
+              <Button
+                aria-label="Close review pane"
+                className="size-6"
+                onClick={onClose}
+                size="icon"
+                variant="ghost"
+              >
+                <X className="size-3" />
+              </Button>
+            </div>
+          )}
+        </div>
+        <div className="flex flex-1 items-center justify-center">
+          <div className="flex flex-col items-center gap-2 text-muted-foreground">
+            <Spinner className="size-5" />
+            <span className="text-xs">Loading review...</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-full w-full flex-col">
       <Suspense

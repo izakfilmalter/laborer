@@ -6,23 +6,23 @@ Parent PRD: [PRD.md](./PRD.md)
 
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
-| 1 | Switch LiveStore to non-blocking sync | None | Ready |
-| 2 | LiveStore sync status indicator | #1 | Blocked |
-| 3 | First-launch empty cache handling | #1 | Blocked |
-| 4 | Lifecycle phase enum and context | None | Ready |
-| 5 | `useWhenPhase` hook and service status hook | #4 | Blocked |
-| 6 | Remove ServerGate blocking gate | #1, #4 | Blocked |
-| 7 | Wire sidecar status events to lifecycle phase transitions | #5, #6 | Blocked |
-| 8 | Header per-service status dots | #5 | Blocked |
-| 9 | Header status collapse and expand | #8 | Blocked |
-| 10 | Header error state persistence and animations | #8 | Blocked |
-| 11 | Disable write actions before Phase 2 (Ready) | #5, #6 | Blocked |
-| 12 | Progressive feature enablement for Phases 3-4 | #11 | Blocked |
-| 13 | Server core layer group (fast health endpoint) | None | Ready |
-| 14 | Server deferred layer group (background initialization) | #13 | Blocked |
-| 15 | Server "fully initialized" event | #14 | Blocked |
-| 16 | Lazy sidecar connections (TerminalClient + FileWatcherClient) | #14 | Blocked |
-| 17 | Parallel sidecar spawning | #16 | Blocked |
+| 1 | Switch LiveStore to non-blocking sync | None | Done |
+| 2 | LiveStore sync status indicator | #1 | Done |
+| 3 | First-launch empty cache handling | #1 | Done |
+| 4 | Lifecycle phase enum and context | None | Done |
+| 5 | `useWhenPhase` hook and service status hook | #4 | Done |
+| 6 | Remove ServerGate blocking gate | #1, #4 | Done |
+| 7 | Wire sidecar status events to lifecycle phase transitions | #5, #6 | Done |
+| 8 | Header per-service status dots | #5 | Done |
+| 9 | Header status collapse and expand | #8 | Done |
+| 10 | Header error state persistence and animations | #8 | Done |
+| 11 | Disable write actions before Phase 2 (Ready) | #5, #6 | Done |
+| 12 | Progressive feature enablement for Phases 3-4 | #11 | Done |
+| 13 | Server core layer group (fast health endpoint) | None | Done |
+| 14 | Server deferred layer group (background initialization) | #13 | Done |
+| 15 | Server "fully initialized" event | #14 | Done |
+| 16 | Lazy sidecar connections (TerminalClient + FileWatcherClient) | #14 | Done |
+| 17 | Parallel sidecar spawning | #16 | Done |
 
 **Parallelizable starting points:** Issues #1, #4, and #13 can all start immediately and in parallel. #1 and #4 are frontend work, #13 is backend.
 

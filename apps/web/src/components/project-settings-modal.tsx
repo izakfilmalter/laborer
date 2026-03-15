@@ -3,6 +3,7 @@ import { Plus, Settings, Trash2 } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -34,6 +35,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import {
@@ -101,6 +103,7 @@ function ProjectSettingsForm({
   >([])
   const [devServerStartCommand, setDevServerStartCommand] = useState('')
   const [initialized, setInitialized] = useState(false)
+  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [isSaving, setIsSaving] = useState(false)
   const lastLoadErrorMessageRef = useRef<string | null>(null)
 
@@ -535,7 +538,7 @@ function ProjectSettingsForm({
         </FieldSet>
       </div>
       <DialogFooter>
-        <Button disabled={isSaving} type="submit">
+        <Button disabled={!isServerReady || isSaving} type="submit">
           {isSaving && <Spinner className="size-3.5" />}
           {isSaving ? 'Saving...' : 'Save'}
         </Button>

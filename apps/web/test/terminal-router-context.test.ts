@@ -118,15 +118,13 @@ describe('TerminalRouterProvider context', () => {
       expect(rootContent).toMatch(CONTEXTS_IMPORT_RE)
     })
 
-    it('places TerminalRouterProvider inside ServerGate', () => {
-      // TerminalRouterProvider should appear after ServerGate opening tag
-      // and before LiveStoreProvider
-      const serverGateIdx = rootContent.indexOf('<ServerGate>')
+    it('places TerminalRouterProvider before LiveStoreProvider', () => {
+      // TerminalRouterProvider should appear before LiveStoreProvider
+      // (ServerGate was removed in favor of phased lifecycle)
       const routerProviderIdx = rootContent.indexOf('<TerminalRouterProvider>')
       const liveStoreIdx = rootContent.indexOf('<LiveStoreProvider>')
 
-      expect(serverGateIdx).toBeGreaterThan(-1)
-      expect(routerProviderIdx).toBeGreaterThan(serverGateIdx)
+      expect(routerProviderIdx).toBeGreaterThan(-1)
       expect(liveStoreIdx).toBeGreaterThan(routerProviderIdx)
     })
   })

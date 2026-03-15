@@ -27,6 +27,7 @@ import type { ReactNode } from 'react'
 import { useCallback, useState } from 'react'
 import { IMaskInput } from 'react-imask'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -47,6 +48,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { extractErrorCode, extractErrorMessage } from '@/lib/utils'
 
@@ -128,6 +130,7 @@ interface CreateWorkspaceFormProps {
 }
 
 function CreateWorkspaceForm({ projectId, trigger }: CreateWorkspaceFormProps) {
+  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [open, setOpen] = useState(false)
   const [creationError, setCreationError] =
     useState<WorkspaceCreationError | null>(null)
@@ -200,9 +203,18 @@ function CreateWorkspaceForm({ projectId, trigger }: CreateWorkspaceFormProps) {
       open={open}
     >
       {trigger ?? (
-        <DialogTrigger render={<Button size="sm" variant="outline" />}>
+        <DialogTrigger
+          render={
+            <Button
+              disabled={!isServerReady}
+              size="sm"
+              title={isServerReady ? undefined : 'Connecting to server...'}
+              variant="outline"
+            />
+          }
+        >
           <Layers className="size-3.5" />
-          Create Workspace
+          {isServerReady ? 'Create Workspace' : 'Connecting...'}
         </DialogTrigger>
       )}
       <DialogContent>
@@ -268,7 +280,10 @@ function CreateWorkspaceForm({ projectId, trigger }: CreateWorkspaceFormProps) {
           >
             {([canSubmit, isSubmitting]) => (
               <DialogFooter>
-                <Button disabled={!canSubmit || isSubmitting} type="submit">
+                <Button
+                  disabled={!(isServerReady && canSubmit) || isSubmitting}
+                  type="submit"
+                >
                   {isSubmitting && (
                     <>
                       <Spinner className="size-3.5" />

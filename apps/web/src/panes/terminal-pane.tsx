@@ -357,7 +357,12 @@ function TerminalPaneContent({
       onOutput: (data: string) => {
         const terminal = terminalRef.current
         if (terminal) {
-          terminal.write(data)
+          try {
+            terminal.write(data)
+          } catch (err) {
+            // ghostty-web WASM can throw RangeError intermittently
+            console.warn('[TerminalPane] Error writing output:', err)
+          }
         }
         markDataReceived()
         // Update connection status — if we're getting output, we're connected
@@ -368,8 +373,17 @@ function TerminalPaneContent({
         if (terminal) {
           // Clear the terminal before writing screen state to avoid
           // duplicating content on reconnection.
-          terminal.clear()
-          terminal.write(state)
+          try {
+            terminal.clear()
+          } catch (err) {
+            console.warn('[TerminalPane] Error clearing terminal:', err)
+          }
+          try {
+            terminal.write(state)
+          } catch (err) {
+            // ghostty-web WASM can throw RangeError intermittently
+            console.warn('[TerminalPane] Error writing screenState:', err)
+          }
         }
         markDataReceived()
         setConnectionStatus('connected')
@@ -381,7 +395,11 @@ function TerminalPaneContent({
         if (status === 'restarted') {
           const terminal = terminalRef.current
           if (terminal) {
-            terminal.clear()
+            try {
+              terminal.clear()
+            } catch (err) {
+              console.warn('[TerminalPane] Error clearing terminal:', err)
+            }
           }
           // Reset loading state on restart — new output will arrive
           hasReceivedDataRef.current = false

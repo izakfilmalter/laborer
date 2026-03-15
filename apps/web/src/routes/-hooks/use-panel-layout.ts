@@ -161,11 +161,24 @@ function syncLegacyTreeToHierarchical(
   // Convert to the new PanelTreeNode format
   const newPanelLayout = convertPanelTree(workspaceSubTree)
 
-  // Update the active panel tab's layout in the hierarchical tree
+  // Update the active panel tab's layout in the hierarchical tree.
+  // If the workspace tile has no panel tabs yet (e.g. it was just added
+  // to the tab by ensureWorkspaceInActiveTab), create a new panel tab
+  // from the legacy tree's layout so the terminal has somewhere to render.
   return updateWorkspaceTileLeaf(windowLayout, workspaceId, (leaf) => {
     const activeTabId = leaf.activePanelTabId
-    if (!activeTabId) {
-      return leaf
+    if (!activeTabId || leaf.panelTabs.length === 0) {
+      // Create a new panel tab with the synced layout
+      const newTabId = `panel-tab-sync-${Math.random().toString(36).slice(2, 8)}`
+      const newTab: import('@laborer/shared/types').PanelTab = {
+        id: newTabId,
+        panelLayout: newPanelLayout,
+      }
+      return {
+        ...leaf,
+        panelTabs: [newTab],
+        activePanelTabId: newTabId,
+      }
     }
     const updatedTabs = leaf.panelTabs.map((tab) => {
       if (tab.id !== activeTabId) {
@@ -859,9 +872,30 @@ export function usePanelLayout() {
         })
       )
 
+      // Ensure the workspace has a tile in the active window tab before
+      // syncing the legacy tree. Without this, assigning a terminal for a
+      // workspace that has no tile in the current tab leaves the terminal
+      // invisible (sidebar shows it, panel area doesn't).
+      let baseWindowLayout = persistedWindowLayout
+      if (baseWindowLayout) {
+        const activeTab = getActiveWindowTab(baseWindowLayout)
+        if (activeTab) {
+          const existing = findWorkspaceLocation(baseWindowLayout, workspaceId)
+          if (existing?.tabId !== activeTab.id) {
+            baseWindowLayout = addWorkspaceToTabUnique(
+              baseWindowLayout,
+              workspaceId,
+              activeTab.id,
+              removeWorkspaceFromTab,
+              addWorkspaceToTab
+            )
+          }
+        }
+      }
+
       // Sync the mutation to the hierarchical tree
       const updatedWindowLayout = syncLegacyTreeToHierarchical(
-        persistedWindowLayout,
+        baseWindowLayout,
         layoutTree,
         workspaceId
       )

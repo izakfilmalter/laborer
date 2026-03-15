@@ -1,6 +1,7 @@
 import { RotateCcw, Settings } from 'lucide-react'
 import { useCallback } from 'react'
 import { useAppSettings } from '@/components/app-settings-context'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -9,8 +10,32 @@ import {
 } from '@/components/ui/tooltip'
 import { isElectron } from '@/lib/desktop'
 
+import { LifecyclePhase, useLifecyclePhase } from './lifecycle-phase-context'
 import { ModeToggle } from './mode-toggle'
 import { ServiceStatusDots } from './service-status-dots'
+
+const PHASE_NAMES: Record<LifecyclePhase, string> = {
+  [LifecyclePhase.Starting]: 'Starting',
+  [LifecyclePhase.Ready]: 'Ready',
+  [LifecyclePhase.Restored]: 'Restored',
+  [LifecyclePhase.Eventually]: 'Eventually',
+}
+
+function PhaseIndicator() {
+  const { phase } = useLifecyclePhase()
+  const name = PHASE_NAMES[phase]
+
+  // Hide once everything is fully loaded
+  if (phase === LifecyclePhase.Eventually) {
+    return null
+  }
+
+  return (
+    <Badge className="text-muted-foreground" variant="outline">
+      Phase: {name}
+    </Badge>
+  )
+}
 
 function ResetButton() {
   const handleReset = useCallback(() => {
@@ -66,6 +91,7 @@ export default function Header() {
       >
         <span className="font-medium text-lg">laborer</span>
         <div className="flex items-center gap-2">
+          <PhaseIndicator />
           <ServiceStatusDots />
           <ResetButton />
           <SettingsButton />

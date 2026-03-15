@@ -2,9 +2,8 @@
  * Tests for LiveStore sync status indicator.
  *
  * Verifies that:
- * - Sync indicator renders when sync status is active (not connected/syncing)
- * - Sync indicator hidden when sync status is idle/connected
- * - Sync indicator hidden when no sync backend is configured (unknown)
+ * - Sync indicator is always visible regardless of sync state
+ * - Sync indicator reflects the current sync status (starting, healthy, unknown)
  * - Indicator does not cause layout shifts (fixed dimensions)
  *
  * @see Issue #2: LiveStore sync status indicator
@@ -67,7 +66,6 @@ describe('LiveStore sync status indicator', () => {
     globalThis.fetch = originalFetch
   })
 
-  // Tracer bullet: sync indicator is visible when sync is actively syncing
   it('sync indicator renders when sync status is syncing', async () => {
     mockAllSidecarsHealthy()
 
@@ -85,12 +83,11 @@ describe('LiveStore sync status indicator', () => {
       await Promise.resolve()
     })
 
-    // Sync indicator should be visible when syncing
     const syncIndicator = screen.getByTestId('sync-indicator')
     expect(syncIndicator).toBeTruthy()
   })
 
-  it('sync indicator hidden when sync status is connected/idle', async () => {
+  it('sync indicator visible when sync status is connected/idle', async () => {
     mockAllSidecarsHealthy()
 
     render(
@@ -107,11 +104,12 @@ describe('LiveStore sync status indicator', () => {
       await Promise.resolve()
     })
 
-    // Sync indicator should not be visible when connected and idle
-    expect(screen.queryByTestId('sync-indicator')).toBeNull()
+    // Sync indicator is always visible
+    const syncIndicator = screen.getByTestId('sync-indicator')
+    expect(syncIndicator).toBeTruthy()
   })
 
-  it('sync indicator hidden when no sync status set (unknown/default)', async () => {
+  it('sync indicator visible when no sync status set (unknown/default)', async () => {
     mockAllSidecarsHealthy()
 
     render(
@@ -127,8 +125,9 @@ describe('LiveStore sync status indicator', () => {
       await Promise.resolve()
     })
 
-    // No sync status set -> unknown -> indicator should not be visible
-    expect(screen.queryByTestId('sync-indicator')).toBeNull()
+    // Sync indicator is always visible, even when unknown
+    const syncIndicator = screen.getByTestId('sync-indicator')
+    expect(syncIndicator).toBeTruthy()
   })
 
   it('sync indicator does not cause layout shifts (fixed dimensions)', async () => {
@@ -149,7 +148,7 @@ describe('LiveStore sync status indicator', () => {
     })
 
     const syncIndicator = screen.getByTestId('sync-indicator')
-    // Should have fixed width class to prevent layout shifts
-    expect(syncIndicator.className).toContain('w-4')
+    // Badge-based indicator has fixed height (h-5) from Badge base styles.
+    expect(syncIndicator.className).toContain('h-5')
   })
 })

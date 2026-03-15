@@ -16,6 +16,7 @@ import { SyncStatusProvider } from '@/components/sync-status-context'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { TerminalRouterProvider } from '@/contexts/terminal-router-context'
 import { PhaseTransitionDriver } from '@/hooks/use-phase-transition-driver'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
 import { LiveStoreProvider } from '@/livestore/provider'
@@ -70,11 +71,13 @@ function RootComponent() {
                     <div className="grid h-svh grid-rows-[auto_auto_1fr]">
                       <Header />
                       <DockerStatusBanner />
-                      <LiveStoreProvider>
-                        <SyncStatusBridge />
-                        <AppSettingsModal />
-                        <Outlet />
-                      </LiveStoreProvider>
+                      <TerminalRouterProvider>
+                        <LiveStoreProvider>
+                          <SyncStatusBridge />
+                          <AppSettingsModal />
+                          <Outlet />
+                        </LiveStoreProvider>
+                      </TerminalRouterProvider>
                     </div>
                   </SyncStatusProvider>
                 </AppSettingsProvider>

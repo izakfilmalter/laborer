@@ -1600,27 +1600,50 @@ export function usePanelLayout() {
       panelType: PaneType,
       options?: { terminalId?: string }
     ) => {
-      if (!persistedWindowLayout) {
+      let base = persistedWindowLayout ?? {
+        tabs: [] as WindowLayout['tabs'],
+        activeTabId: undefined,
+      }
+
+      // If there are no window tabs (all were closed), create one so
+      // the workspace has somewhere to land.
+      if (base.tabs.length === 0) {
+        base = addWindowTab(base)
+        commitWindowLayout(windowTabCreated, base)
+      }
+
+      // Ensure the workspace exists in the active window tab. If it
+      // doesn't (e.g. "Empty tab" state), add it first.
+      const activeTab = getActiveWindowTab(base)
+      if (!activeTab) {
         return
       }
+      const existing = findWorkspaceLocation(base, workspaceId)
+      if (existing?.tabId !== activeTab.id) {
+        base = addWorkspaceToTabUnique(
+          base,
+          workspaceId,
+          activeTab.id,
+          removeWorkspaceFromTab,
+          addWorkspaceToTab
+        )
+        commitWindowLayout(windowLayoutRestored, base)
+      }
+
       let newPaneId: string | undefined
-      const newLayout = updateWorkspaceTileLeaf(
-        persistedWindowLayout,
-        workspaceId,
-        (leaf) => {
-          const updated = addPanelTab(
-            leaf,
-            panelType,
-            options?.terminalId ? { terminalId: options.terminalId } : undefined
-          )
-          // The newly added tab is always the last one and is set as active
-          const newTab = updated.panelTabs.at(-1)
-          if (newTab?.panelLayout._tag === 'PanelLeafNode') {
-            newPaneId = newTab.panelLayout.id
-          }
-          return updated
+      const newLayout = updateWorkspaceTileLeaf(base, workspaceId, (leaf) => {
+        const updated = addPanelTab(
+          leaf,
+          panelType,
+          options?.terminalId ? { terminalId: options.terminalId } : undefined
+        )
+        // The newly added tab is always the last one and is set as active
+        const newTab = updated.panelTabs.at(-1)
+        if (newTab?.panelLayout._tag === 'PanelLeafNode') {
+          newPaneId = newTab.panelLayout.id
         }
-      )
+        return updated
+      })
       commitPanelTabLayout(panelTabCreated, newLayout)
 
       // Auto-spawn a terminal for terminal-type panel tabs, mirroring
@@ -1637,7 +1660,12 @@ export function usePanelLayout() {
           })
       }
     },
-    [persistedWindowLayout, commitPanelTabLayout, spawnTerminal]
+    [
+      persistedWindowLayout,
+      commitPanelTabLayout,
+      commitWindowLayout,
+      spawnTerminal,
+    ]
   )
 
   const handleRemovePanelTab = useCallback(

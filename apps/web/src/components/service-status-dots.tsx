@@ -23,6 +23,7 @@
  */
 
 import type { SidecarName } from '@laborer/shared/desktop-bridge'
+import { RotateCcw, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -294,7 +295,7 @@ function ServiceStatusBadge({
             onClick={onDismissError}
             type="button"
           >
-            ✕
+            <X className="size-3" />
           </button>
           <button
             className="rounded px-0.5 text-muted-foreground text-xs hover:text-foreground"
@@ -302,7 +303,7 @@ function ServiceStatusBadge({
             onClick={onRetryError}
             type="button"
           >
-            ↻
+            <RotateCcw className="size-3" />
           </button>
         </span>
       )}

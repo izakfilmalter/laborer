@@ -67,11 +67,6 @@ const createFileWatcherRpcClient = (url: string) =>
     )
   )
 
-/** The inferred type of the file-watcher RPC client. */
-type FileWatcherRpc = Effect.Effect.Success<
-  ReturnType<typeof createFileWatcherRpcClient>
->
-
 class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
   FileWatcherClient,
   {
@@ -143,33 +138,21 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
       const handlers: FileEventHandler[] = []
 
       /**
-       * Lazily-initialized RPC client. Starts as null, populated on
-       * first method call. JS is single-threaded so no synchronization
-       * is needed beyond a simple null check.
-       *
-       * The connection is deferred to avoid blocking layer construction
-       * when the file-watcher sidecar is not yet running.
-       */
-      let cachedClient: FileWatcherRpc | null = null
-      let eventStreamStarted = false
-
-      /**
        * Get or create the RPC client. On first call, establishes the
        * connection to the file-watcher sidecar and starts the event
        * stream subscription. Retries with exponential backoff if the
        * sidecar is not yet available.
        *
+       * Uses Effect.cached to ensure only one fiber runs initialization,
+       * preventing duplicate RPC connections and event stream subscriptions
+       * when multiple fibers call getOrCreateClient concurrently.
+       *
        * The captured layerScope is provided so the RPC client's lifecycle
        * is tied to the layer, and forkScoped for the event stream uses
        * the layer's scope for proper cleanup on shutdown.
        */
-      const getOrCreateClient: Effect.Effect<FileWatcherRpc, unknown> =
+      const getOrCreateClient = yield* Effect.cached(
         Effect.gen(function* () {
-          // Fast path: client already created
-          if (cachedClient !== null) {
-            return cachedClient
-          }
-
           // Resolve port lazily to avoid import-time side effects
           const { env } = yield* Effect.promise(
             () => import('@laborer/env/server')
@@ -180,42 +163,38 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
             `${fileWatcherServiceUrl}/rpc`
           ).pipe(Effect.provideService(Scope.Scope, layerScope))
 
-          cachedClient = client
-
           yield* Effect.log(
             `Connected to file-watcher service at ${fileWatcherServiceUrl}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
 
-          // Start event stream subscription (only once)
-          if (!eventStreamStarted) {
-            eventStreamStarted = true
-            yield* client.watcher.events().pipe(
-              Stream.tap((event) =>
-                Effect.sync(() => {
-                  for (const handler of [...handlers]) {
-                    handler(event)
-                  }
-                })
-              ),
-              Stream.runDrain,
-              // Retry with exponential backoff if the file-watcher service disconnects
-              Effect.retry(
-                Schedule.exponential('1 second').pipe(
-                  Schedule.union(Schedule.spaced('30 seconds'))
-                )
-              ),
-              Effect.catchAll((error) =>
-                Effect.logWarning(
-                  `File watcher event stream ended: ${String(error)}`
-                ).pipe(Effect.annotateLogs('module', logPrefix))
-              ),
-              Effect.provideService(Scope.Scope, layerScope),
-              Effect.forkIn(layerScope)
-            )
-          }
+          // Start event stream subscription
+          yield* client.watcher.events().pipe(
+            Stream.tap((event) =>
+              Effect.sync(() => {
+                for (const handler of [...handlers]) {
+                  handler(event)
+                }
+              })
+            ),
+            Stream.runDrain,
+            // Retry with exponential backoff if the file-watcher service disconnects
+            Effect.retry(
+              Schedule.exponential('1 second').pipe(
+                Schedule.union(Schedule.spaced('30 seconds'))
+              )
+            ),
+            Effect.catchAll((error) =>
+              Effect.logWarning(
+                `File watcher event stream ended: ${String(error)}`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+            ),
+            Effect.provideService(Scope.Scope, layerScope),
+            Effect.forkIn(layerScope)
+          )
 
           return client
         })
+      )
 
       /**
        * Map any RPC transport error to a FileWatcherRpcError for

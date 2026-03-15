@@ -138,17 +138,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       // Populated by the event stream subscriber.
       const terminalMapRef = yield* Ref.make<TerminalWorkspaceMap>(new Map())
 
-      /**
-       * Lazily-initialized RPC client. Starts as null, populated on
-       * first method call. JS is single-threaded so no synchronization
-       * is needed beyond a simple null check.
-       *
-       * The connection is deferred to avoid blocking layer construction
-       * when the terminal sidecar is not yet running.
-       */
-      let cachedClient: TerminalRpc | null = null
-      let eventStreamStarted = false
-
       // TERMINAL_PORT is resolved lazily to avoid import-time side effects.
       let cachedEnv: { TERMINAL_PORT: number } | null = null
 
@@ -158,57 +147,53 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
        * and starts the event stream subscription. Retries with
        * exponential backoff if the sidecar is not yet available.
        *
+       * Uses Effect.cached to ensure only one fiber runs initialization,
+       * preventing duplicate RPC connections and event stream subscriptions
+       * when multiple fibers call getOrCreateClient concurrently.
+       *
        * The captured layerScope is provided so the RPC client's lifecycle
        * is tied to the layer, and the event stream fiber is forked into
        * the layer's scope for proper cleanup on shutdown.
        */
-      const getOrCreateClient = Effect.gen(function* () {
-        // Fast path: client already created
-        if (cachedClient !== null) {
-          return cachedClient
-        }
-
-        // Resolve port lazily
-        if (cachedEnv === null) {
-          const { env } = yield* Effect.promise(
-            () => import('@laborer/env/server')
-          )
-          cachedEnv = { TERMINAL_PORT: env.TERMINAL_PORT }
-        }
-        const terminalServiceUrl = `http://localhost:${cachedEnv.TERMINAL_PORT}`
-
-        const client = yield* createTerminalRpcClient(
-          `${terminalServiceUrl}/rpc`
-        ).pipe(Effect.provideService(Scope.Scope, layerScope))
-
-        cachedClient = client
-
-        // Seed the map from the terminal service's current terminal list.
-        // This handles the case where the server restarts but the terminal
-        // service has existing terminals from before.
-        yield* Effect.gen(function* () {
-          const existingTerminals = yield* client.terminal.list()
-          const initialMap = new Map<string, string>()
-          for (const terminal of existingTerminals) {
-            initialMap.set(terminal.id, terminal.workspaceId)
+      const getOrCreateClient = yield* Effect.cached(
+        Effect.gen(function* () {
+          // Resolve port lazily
+          if (cachedEnv === null) {
+            const { env } = yield* Effect.promise(
+              () => import('@laborer/env/server')
+            )
+            cachedEnv = { TERMINAL_PORT: env.TERMINAL_PORT }
           }
-          yield* Ref.set(terminalMapRef, initialMap)
-          yield* Effect.log(
-            `Seeded terminal map with ${initialMap.size} existing terminal(s)`
-          ).pipe(Effect.annotateLogs('module', logPrefix))
-        }).pipe(
-          Effect.catchAll((error) =>
-            Effect.logWarning(
-              `Failed to seed terminal map from terminal service: ${String(error)}`
-            ).pipe(Effect.annotateLogs('module', logPrefix))
-          )
-        )
+          const terminalServiceUrl = `http://localhost:${cachedEnv.TERMINAL_PORT}`
 
-        // Subscribe to terminal lifecycle events from the terminal service.
-        // This runs as a background fiber in the layer's scope for the
-        // lifetime of the layer. It keeps the workspace→terminal map in sync.
-        if (!eventStreamStarted) {
-          eventStreamStarted = true
+          const client = yield* createTerminalRpcClient(
+            `${terminalServiceUrl}/rpc`
+          ).pipe(Effect.provideService(Scope.Scope, layerScope))
+
+          // Seed the map from the terminal service's current terminal list.
+          // This handles the case where the server restarts but the terminal
+          // service has existing terminals from before.
+          yield* Effect.gen(function* () {
+            const existingTerminals = yield* client.terminal.list()
+            const initialMap = new Map<string, string>()
+            for (const terminal of existingTerminals) {
+              initialMap.set(terminal.id, terminal.workspaceId)
+            }
+            yield* Ref.set(terminalMapRef, initialMap)
+            yield* Effect.log(
+              `Seeded terminal map with ${initialMap.size} existing terminal(s)`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+          }).pipe(
+            Effect.catchAll((error) =>
+              Effect.logWarning(
+                `Failed to seed terminal map from terminal service: ${String(error)}`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+            )
+          )
+
+          // Subscribe to terminal lifecycle events from the terminal service.
+          // This runs as a background fiber in the layer's scope for the
+          // lifetime of the layer. It keeps the workspace→terminal map in sync.
           yield* client.terminal.events().pipe(
             Stream.tap((event) =>
               Effect.gen(function* () {
@@ -242,14 +227,14 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             Effect.provideService(Scope.Scope, layerScope),
             Effect.forkIn(layerScope)
           )
-        }
 
-        yield* Effect.log(
-          `Connected to terminal service at ${terminalServiceUrl}`
-        ).pipe(Effect.annotateLogs('module', logPrefix))
+          yield* Effect.log(
+            `Connected to terminal service at ${terminalServiceUrl}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
 
-        return client
-      })
+          return client
+        })
+      )
 
       const defaultShell = process.env.SHELL ?? '/bin/sh'
 

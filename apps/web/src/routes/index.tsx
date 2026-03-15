@@ -12,6 +12,7 @@ import { CreatePlanWorkspace } from '@/components/create-plan-workspace'
 import { PlanEditor } from '@/components/plan-editor'
 import { PlanIssuesList } from '@/components/plan-issues-list'
 import { ProjectGroup } from '@/components/project-group'
+import { SidebarFooter } from '@/components/sidebar-footer'
 import { SidebarSearch } from '@/components/sidebar-search'
 import {
   ResizableHandle,
@@ -920,6 +921,7 @@ function HomeComponent() {
                     )}
                 </div>
               </ScrollArea>
+              <SidebarFooter />
             </div>
           </ResizablePanel>
 

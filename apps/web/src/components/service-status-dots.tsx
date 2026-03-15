@@ -362,7 +362,7 @@ function ServiceStatusDots() {
   return (
     <output
       aria-label="Service statuses"
-      className="flex items-center gap-1 transition-all duration-300"
+      className="flex flex-wrap items-center gap-1 transition-all duration-300"
     >
       {STATUS_DOT_SERVICES.map((name) => (
         <ServiceStatusBadge

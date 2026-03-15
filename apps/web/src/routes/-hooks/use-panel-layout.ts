@@ -88,6 +88,7 @@ import {
   getWorkspaceTileLeaves,
   reconcileWindowLayout,
   removeWindowTab,
+  removeWorkspaceFromLayout,
   reorderWindowTabs,
   repairWindowLayout,
   resolveActivePaneForPanelTab,
@@ -1263,22 +1264,6 @@ export function usePanelLayout() {
             activePaneId: nextActivePaneId,
           })
         )
-
-        // Sync the workspace close to the hierarchical tree
-        const updatedWindowLayout = syncLegacyTreeToHierarchical(
-          persistedWindowLayout,
-          newTree,
-          workspaceId
-        )
-        if (updatedWindowLayout) {
-          store.commit(
-            windowLayoutRestored({
-              windowId: panelWindowId,
-              windowLayout: updatedWindowLayout,
-              activeWindowTabId: updatedWindowLayout.activeTabId ?? null,
-            })
-          )
-        }
       } else {
         // All panes closed — commit an empty placeholder
         store.commit(
@@ -1295,6 +1280,25 @@ export function usePanelLayout() {
           })
         )
         hasSeeded.current = false
+      }
+
+      // Remove the workspace tile from the hierarchical layout so the
+      // workspace frame disappears from the UI.
+      if (persistedWindowLayout) {
+        const updatedWindowLayout = removeWorkspaceFromLayout(
+          persistedWindowLayout,
+          workspaceId,
+          removeWorkspaceFromTab
+        )
+        if (updatedWindowLayout !== persistedWindowLayout) {
+          store.commit(
+            windowLayoutRestored({
+              windowId: panelWindowId,
+              windowLayout: updatedWindowLayout,
+              activeWindowTabId: updatedWindowLayout.activeTabId ?? null,
+            })
+          )
+        }
       }
     },
     [

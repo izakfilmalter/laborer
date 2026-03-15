@@ -26,8 +26,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { FetchHttpClient } from '@effect/platform'
-import { RpcClient, RpcSerialization } from '@effect/rpc'
 import { RpcError, TerminalRpcs } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
 import {
@@ -38,13 +36,16 @@ import {
   Layer,
   pipe,
   Ref,
-  Schedule,
   Scope,
   Stream,
 } from 'effect'
 import { ConfigService } from './config-service.js'
 import { LaborerStore } from './laborer-store.js'
 import { ProjectRegistry } from './project-registry.js'
+import {
+  createSidecarRpcClient,
+  sidecarEventStreamSchedule,
+} from './sidecar-rpc.js'
 import { WorkspaceProvider } from './workspace-provider.js'
 
 /** Logger tag used for structured Effect.log output in this module. */
@@ -68,30 +69,11 @@ interface TerminalRecord {
   readonly workspaceId: string
 }
 
-/**
- * Creates the RPC client for the terminal sidecar with retry logic.
- * Extracted as a standalone function so the return type is properly inferred
- * and can be cached via a mutable closure variable.
- */
-const createTerminalRpcClient = (url: string) =>
-  RpcClient.make(TerminalRpcs).pipe(
-    Effect.provide(
-      RpcClient.layerProtocolHttp({ url }).pipe(
-        Layer.provide(FetchHttpClient.layer),
-        Layer.provide(RpcSerialization.layerJson)
-      )
-    ),
-    Effect.retry(
-      Schedule.exponential('1 second').pipe(
-        Schedule.union(Schedule.spaced('30 seconds')),
-        Schedule.compose(Schedule.recurs(5))
-      )
-    )
-  )
-
 /** The inferred type of the terminal RPC client. */
+const _makeTerminalRpcClient = (url: string) =>
+  createSidecarRpcClient(TerminalRpcs, url)
 type TerminalRpc = Effect.Effect.Success<
-  ReturnType<typeof createTerminalRpcClient>
+  ReturnType<typeof _makeTerminalRpcClient>
 >
 
 class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
@@ -138,9 +120,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       // Populated by the event stream subscriber.
       const terminalMapRef = yield* Ref.make<TerminalWorkspaceMap>(new Map())
 
-      // TERMINAL_PORT is resolved lazily to avoid import-time side effects.
-      let cachedEnv: { TERMINAL_PORT: number } | null = null
-
       /**
        * Get or create the RPC client. On first call, establishes the
        * connection to the terminal sidecar, seeds the terminal map,
@@ -151,22 +130,24 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
        * preventing duplicate RPC connections and event stream subscriptions
        * when multiple fibers call getOrCreateClient concurrently.
        *
+       * Returns both the client and the terminal port so callers don't
+       * need to resolve the env separately.
+       *
        * The captured layerScope is provided so the RPC client's lifecycle
        * is tied to the layer, and the event stream fiber is forked into
        * the layer's scope for proper cleanup on shutdown.
        */
       const getOrCreateClient = yield* Effect.cached(
         Effect.gen(function* () {
-          // Resolve port lazily
-          if (cachedEnv === null) {
-            const { env } = yield* Effect.promise(
-              () => import('@laborer/env/server')
-            )
-            cachedEnv = { TERMINAL_PORT: env.TERMINAL_PORT }
-          }
-          const terminalServiceUrl = `http://localhost:${cachedEnv.TERMINAL_PORT}`
+          // Resolve port lazily to avoid import-time side effects
+          const { env } = yield* Effect.promise(
+            () => import('@laborer/env/server')
+          )
+          const terminalPort = env.TERMINAL_PORT
+          const terminalServiceUrl = `http://localhost:${terminalPort}`
 
-          const client = yield* createTerminalRpcClient(
+          const client = yield* createSidecarRpcClient(
+            TerminalRpcs,
             `${terminalServiceUrl}/rpc`
           ).pipe(Effect.provideService(Scope.Scope, layerScope))
 
@@ -214,11 +195,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             ),
             Stream.runDrain,
             // Retry with exponential backoff if the terminal service disconnects
-            Effect.retry(
-              Schedule.exponential('1 second').pipe(
-                Schedule.union(Schedule.spaced('30 seconds'))
-              )
-            ),
+            Effect.retry(sidecarEventStreamSchedule),
             Effect.catchAll((error) =>
               Effect.logWarning(
                 `Terminal event stream ended: ${String(error)}`
@@ -232,7 +209,7 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             `Connected to terminal service at ${terminalServiceUrl}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
 
-          return client
+          return { client, terminalPort }
         })
       )
 
@@ -588,7 +565,7 @@ export const LaborerHookPlugin = async () => {
         command: string | undefined,
         autoRun: boolean | undefined
       ) {
-        const rpcClient = yield* getOrCreateClient
+        const { client: rpcClient } = yield* getOrCreateClient
 
         const containerNameValue =
           workspace.containerUrl?.replace('.orb.local', '') ?? workspaceId
@@ -651,7 +628,7 @@ export const LaborerHookPlugin = async () => {
           workspaceId: string,
           command: string | undefined
         ) {
-          const rpcClient = yield* getOrCreateClient
+          const { client: rpcClient, terminalPort } = yield* getOrCreateClient
 
           const workspaceEnv =
             yield* workspaceProvider.getWorkspaceEnv(workspaceId)
@@ -671,18 +648,10 @@ export const LaborerHookPlugin = async () => {
             )
           }
 
-          // Resolve the terminal port for hook URL
-          if (cachedEnv === null) {
-            const { env } = yield* Effect.promise(
-              () => import('@laborer/env/server')
-            )
-            cachedEnv = { TERMINAL_PORT: env.TERMINAL_PORT }
-          }
-
           // Build the command, potentially wrapping it with hook settings
           const { command: agentCmd, extraEnv } =
             isAgent && terminalId !== undefined
-              ? buildAgentCommand(command, terminalId, cachedEnv.TERMINAL_PORT)
+              ? buildAgentCommand(command, terminalId, terminalPort)
               : { command: command ?? defaultShell, extraEnv: {} }
 
           const resolvedCommand = command ?? defaultShell
@@ -773,7 +742,7 @@ export const LaborerHookPlugin = async () => {
         workspaceId: string
       ): Effect.Effect<number, never> =>
         Effect.gen(function* () {
-          const rpcClient = yield* getOrCreateClient
+          const { client: rpcClient } = yield* getOrCreateClient
           const map = yield* Ref.get(terminalMapRef)
           const workspaceTerminalIds = pipe(
             [...map.entries()],

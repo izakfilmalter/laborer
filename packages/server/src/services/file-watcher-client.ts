@@ -22,14 +22,16 @@
  * @see Issue #16: Lazy sidecar connections
  */
 
-import { FetchHttpClient } from '@effect/platform'
-import { RpcClient, RpcSerialization } from '@effect/rpc'
 import {
   FileWatcherRpcError,
   FileWatcherRpcs,
   type WatchFileEvent,
 } from '@laborer/shared/rpc'
-import { Context, Effect, Layer, Schedule, Scope, Stream } from 'effect'
+import { Context, Effect, Layer, Scope, Stream } from 'effect'
+import {
+  createSidecarRpcClient,
+  sidecarEventStreamSchedule,
+} from './sidecar-rpc.js'
 
 /** Logger tag used for structured Effect.log output in this module. */
 const logPrefix = 'FileWatcherClient'
@@ -45,27 +47,6 @@ type FileEventHandler = (event: WatchFileEvent) => void
 interface FileEventSubscription {
   readonly unsubscribe: () => void
 }
-
-/**
- * Creates the RPC client for the file-watcher sidecar with retry logic.
- * Extracted as a standalone function so the return type is properly inferred
- * and can be cached via a mutable closure variable.
- */
-const createFileWatcherRpcClient = (url: string) =>
-  RpcClient.make(FileWatcherRpcs).pipe(
-    Effect.provide(
-      RpcClient.layerProtocolHttp({ url }).pipe(
-        Layer.provide(FetchHttpClient.layer),
-        Layer.provide(RpcSerialization.layerJson)
-      )
-    ),
-    Effect.retry(
-      Schedule.exponential('1 second').pipe(
-        Schedule.union(Schedule.spaced('30 seconds')),
-        Schedule.compose(Schedule.recurs(5))
-      )
-    )
-  )
 
 class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
   FileWatcherClient,
@@ -159,7 +140,8 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
           )
           const fileWatcherServiceUrl = `http://localhost:${env.FILE_WATCHER_PORT}`
 
-          const client = yield* createFileWatcherRpcClient(
+          const client = yield* createSidecarRpcClient(
+            FileWatcherRpcs,
             `${fileWatcherServiceUrl}/rpc`
           ).pipe(Effect.provideService(Scope.Scope, layerScope))
 
@@ -178,11 +160,7 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
             ),
             Stream.runDrain,
             // Retry with exponential backoff if the file-watcher service disconnects
-            Effect.retry(
-              Schedule.exponential('1 second').pipe(
-                Schedule.union(Schedule.spaced('30 seconds'))
-              )
-            ),
+            Effect.retry(sidecarEventStreamSchedule),
             Effect.catchAll((error) =>
               Effect.logWarning(
                 `File watcher event stream ended: ${String(error)}`

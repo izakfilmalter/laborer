@@ -30,27 +30,15 @@ import {
   Runtime,
   Schedule,
 } from 'effect'
-import { RingBuffer } from '../lib/ring-buffer.js'
+import { createBufferedDataHandler } from '../lib/buffered-data-handler.js'
+import { createHeadlessTerminalManager } from '../lib/headless-terminal.js'
 import { PtyHostClient } from './pty-host-client.js'
 
 /** Logger tag used for structured Effect.log output in this module. */
 const logPrefix = 'TerminalManager'
 
-/**
- * Default ring buffer capacity: 5MB per terminal for scrollback.
- *
- * At ~80 chars/line, 5MB holds ~62,500 lines of raw text output.
- * Combined with xterm.js's 100,000-line client-side scrollback buffer,
- * this ensures reconnection restores a substantial portion of terminal
- * history for long-running AI agent sessions.
- */
-const RING_BUFFER_CAPACITY = 5_242_880
-
 /** Default grace period for disconnected/orphaned terminals (60 seconds). */
 const DEFAULT_TERMINAL_GRACE_PERIOD_MS = 60_000
-
-/** UTF-8 text encoder shared across all terminal data callbacks. */
-const textEncoder = new TextEncoder()
 
 /** Regex for splitting whitespace in ps output lines. Defined at module level for performance. */
 const PS_WHITESPACE_REGEX = /\s+/
@@ -98,12 +86,12 @@ interface ManagedTerminal {
 }
 
 /**
- * Per-terminal scrollback and subscriber state.
- * Ring buffers survive terminal exit (retained until explicit removal)
- * so reconnecting clients can see output of stopped terminals.
+ * Per-terminal subscriber state.
+ * Subscribers are WebSocket connections receiving live terminal output.
+ * State survives terminal exit (retained until explicit removal) so
+ * reconnecting clients can receive screen state from the headless terminal.
  */
-interface TerminalBufferState {
-  readonly ringBuffer: RingBuffer
+interface TerminalSubscriberState {
   readonly subscribers: Map<string, OutputSubscriber>
 }
 
@@ -662,16 +650,28 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
     ) => Effect.Effect<number, never>
 
     /**
+     * Get the serialized screen state for a terminal as a compact VT
+     * escape sequence string (~4KB). Used by the WebSocket attach
+     * protocol for fast reconnection instead of replaying the full
+     * ring buffer.
+     *
+     * Returns empty string if the terminal does not exist or has no output.
+     */
+    readonly getScreenState: (terminalId: string) => string
+
+    /**
      * Subscribe to live terminal output for a WebSocket connection.
-     * Returns ring buffer scrollback and a subscriber ID.
+     * Returns a subscriber ID. The callback begins receiving live
+     * output immediately after registration.
+     *
+     * For reconnection, callers should use `getScreenState()` to
+     * obtain a compact screen state snapshot after subscribing
+     * (subscribe-before-serialize pattern for race-free attach).
      */
     readonly subscribe: (
       terminalId: string,
       callback: (data: string) => void
-    ) => Effect.Effect<
-      { readonly scrollback: string; readonly subscriberId: string },
-      TerminalRpcError
-    >
+    ) => Effect.Effect<{ readonly subscriberId: string }, TerminalRpcError>
 
     /** Unsubscribe a WebSocket connection from terminal output. */
     readonly unsubscribe: (
@@ -729,9 +729,13 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       // deleted) to revert to ps-based detection.
       const hookAgentStatusMap = new Map<string, AgentStatus>()
 
-      // Per-terminal ring buffer and subscriber state.
-      const bufferStates = new Map<string, TerminalBufferState>()
+      // Per-terminal subscriber state (WebSocket connections).
+      const subscriberStates = new Map<string, TerminalSubscriberState>()
       const graceTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
+
+      // Headless terminal state manager for compact screen state
+      // serialization (~4KB) and backend device query handling.
+      const headlessManager = createHeadlessTerminalManager()
 
       // Lifecycle event PubSub — unbounded so publishers never block.
       const lifecyclePubSub = yield* PubSub.unbounded<TerminalLifecycleEvent>()
@@ -802,16 +806,15 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         return previous
       }
 
-      const getOrCreateBufferState = (
+      const getOrCreateSubscriberState = (
         terminalId: string
-      ): TerminalBufferState => {
-        let state = bufferStates.get(terminalId)
+      ): TerminalSubscriberState => {
+        let state = subscriberStates.get(terminalId)
         if (state === undefined) {
           state = {
-            ringBuffer: new RingBuffer(RING_BUFFER_CAPACITY),
             subscribers: new Map(),
           }
-          bufferStates.set(terminalId, state)
+          subscriberStates.set(terminalId, state)
         }
         return state
       }
@@ -840,7 +843,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
                 return
               }
 
-              const state = bufferStates.get(terminalId)
+              const state = subscriberStates.get(terminalId)
               if ((state?.subscribers.size ?? 0) > 0) {
                 return
               }
@@ -968,7 +971,13 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           return next
         })
 
-        const bufferState = getOrCreateBufferState(id)
+        const subState = getOrCreateSubscriberState(id)
+
+        // Create headless terminal for screen state serialization and
+        // backend device query handling (DA1/DSR).
+        headlessManager.create(id, cols, rows, (data: string) => {
+          ptyHostClient.write(id, data)
+        })
 
         ptyHostClient.spawn(
           {
@@ -985,18 +994,19 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             cols,
             rows,
           },
-          // Data callback: write to ring buffer + notify subscribers
-          (data: string) => {
-            bufferState.ringBuffer.write(textEncoder.encode(data))
+          // Data callback: buffer incomplete escape sequences, then write
+          // to headless terminal + notify subscribers
+          createBufferedDataHandler((data: string) => {
+            headlessManager.write(id, data)
 
-            for (const subscriber of bufferState.subscribers.values()) {
+            for (const subscriber of subState.subscribers.values()) {
               try {
                 subscriber(data)
               } catch {
                 // Subscriber errors silently ignored
               }
             }
-          },
+          }),
           // Exit callback: mark as stopped (retain in memory)
           (exitCode: number, signal: number) => {
             clearGraceTimeout(id)
@@ -1102,6 +1112,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         }
 
         ptyHostClient.resize(terminalId, cols, rows)
+
+        // Keep headless terminal in sync with the real PTY dimensions
+        // so serialized screen state is always dimensionally accurate.
+        headlessManager.resize(terminalId, cols, rows)
       })
 
       // ---------------------------------------------------------------
@@ -1174,7 +1188,8 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           return next
         })
 
-        bufferStates.delete(terminalId)
+        subscriberStates.delete(terminalId)
+        headlessManager.dispose(terminalId)
         agentStatusMap.delete(terminalId)
         hookAgentStatusMap.delete(terminalId)
 
@@ -1307,9 +1322,14 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           return next
         })
 
-        // Clear and re-initialize ring buffer
-        const restartBufferState = getOrCreateBufferState(terminalId)
-        restartBufferState.ringBuffer.clear()
+        // Get or create subscriber state for the restarted terminal
+        const restartSubState = getOrCreateSubscriberState(terminalId)
+
+        // Re-create headless terminal for the restarted PTY.
+        // This disposes the old instance and creates a fresh one.
+        headlessManager.create(terminalId, 80, 24, (data: string) => {
+          ptyHostClient.write(terminalId, data)
+        })
 
         // Respawn PTY
         ptyHostClient.spawn(
@@ -1327,17 +1347,19 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             cols: 80,
             rows: 24,
           },
-          (data: string) => {
-            restartBufferState.ringBuffer.write(textEncoder.encode(data))
+          // Data callback: buffer incomplete escape sequences, then write
+          // to headless terminal + notify subscribers
+          createBufferedDataHandler((data: string) => {
+            headlessManager.write(terminalId, data)
 
-            for (const subscriber of restartBufferState.subscribers.values()) {
+            for (const subscriber of restartSubState.subscribers.values()) {
               try {
                 subscriber(data)
               } catch {
                 // Subscriber errors silently ignored
               }
             }
-          },
+          }),
           (exitCode: number, signal: number) => {
             clearGraceTimeout(terminalId)
 
@@ -1396,7 +1418,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
         emitEvent({ _tag: 'Restarted', terminal: record })
 
-        const restartState = bufferStates.get(terminalId)
+        const restartState = subscriberStates.get(terminalId)
         if ((restartState?.subscribers.size ?? 0) === 0) {
           scheduleGraceTimeout(terminalId, 'restart')
         }
@@ -1523,6 +1545,9 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           }
           graceTimeouts.clear()
 
+          // Clean up all headless terminal instances
+          headlessManager.disposeAll()
+
           yield* Effect.log(
             `Shutdown: killed ${killedCount}/${runningTerminals.length} terminal(s)`
           ).pipe(Effect.annotateLogs('module', logPrefix))
@@ -1547,25 +1572,23 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           })
         }
 
-        const state = getOrCreateBufferState(terminalId)
+        const state = getOrCreateSubscriberState(terminalId)
         const subscriberId = crypto.randomUUID()
         state.subscribers.set(subscriberId, callback)
         clearGraceTimeout(terminalId)
 
-        const scrollback = state.ringBuffer.readString()
-
         yield* Effect.log(
-          `WebSocket subscribed to terminal ${terminalId} (subscriber=${subscriberId}, scrollback=${scrollback.length} chars)`
+          `WebSocket subscribed to terminal ${terminalId} (subscriber=${subscriberId})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
-        return { scrollback, subscriberId }
+        return { subscriberId }
       })
 
       const unsubscribe = Effect.fn('TerminalManager.unsubscribe')(function* (
         terminalId: string,
         subscriberId: string
       ) {
-        const state = bufferStates.get(terminalId)
+        const state = subscriberStates.get(terminalId)
         if (state !== undefined) {
           state.subscribers.delete(subscriberId)
           if (state.subscribers.size === 0) {
@@ -1774,6 +1797,8 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         restart,
         listTerminals,
         killAllForWorkspace,
+        getScreenState: (terminalId: string) =>
+          headlessManager.getScreenState(terminalId),
         subscribe,
         unsubscribe,
         terminalExists,
@@ -1792,7 +1817,6 @@ export type {
   OutputSubscriber,
   ProcessCategory,
   SpawnPayload,
-  TerminalBufferState,
   TerminalExitedEvent,
   TerminalLifecycleEvent,
   TerminalProcessChangedEvent,

@@ -14,6 +14,7 @@ import { ServerGate } from '@/components/server-gate'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { TerminalRouterProvider } from '@/contexts/terminal-router-context'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
 import { LiveStoreProvider } from '@/livestore/provider'
 
@@ -66,10 +67,12 @@ function RootComponent() {
                   <Header />
                   <DockerStatusBanner />
                   <ServerGate>
-                    <LiveStoreProvider>
-                      <AppSettingsModal />
-                      <Outlet />
-                    </LiveStoreProvider>
+                    <TerminalRouterProvider>
+                      <LiveStoreProvider>
+                        <AppSettingsModal />
+                        <Outlet />
+                      </LiveStoreProvider>
+                    </TerminalRouterProvider>
                   </ServerGate>
                 </div>
               </AppSettingsProvider>

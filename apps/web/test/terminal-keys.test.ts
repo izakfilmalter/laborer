@@ -2,7 +2,7 @@
  * Unit tests for terminal keyboard event detection helpers.
  *
  * These test the pure functions that determine which keyboard events
- * bypass xterm.js and bubble to the global hotkey layer. Getting these
+ * bypass ghostty-web and bubble to the global hotkey layer. Getting these
  * wrong means either panel shortcuts don't work from within terminals,
  * or legitimate terminal input gets silently swallowed.
  *
@@ -99,12 +99,17 @@ describe('isMetaShiftEnter', () => {
 // Tests: shouldBypassTerminal
 //
 // This is the main public interface — it determines the complete set of
-// keyboard events that escape xterm.js to reach panel hotkeys. Every
-// supported global shortcut must return true, and normal terminal input
-// must return false.
+// keyboard events that escape ghostty-web to reach panel hotkeys.
+//
+// ghostty-web calls stopPropagation() on keys it processes, so all
+// app-level shortcuts must be explicitly bypassed. All Meta+ (Cmd)
+// combinations are bypassed since they are always app-level shortcuts.
+// Ctrl+B is bypassed for the tmux-style prefix key sequence.
 // ---------------------------------------------------------------------------
 
 describe('shouldBypassTerminal', () => {
+  // --- Meta+ (Cmd) shortcuts — all bypassed ---
+
   it('bypasses Cmd+W (close pane)', () => {
     expect(
       shouldBypassTerminal(makeKeyEvent({ key: 'w', metaKey: true }))
@@ -119,11 +124,59 @@ describe('shouldBypassTerminal', () => {
     ).toBe(true)
   })
 
+  it('bypasses Cmd+D (split horizontal)', () => {
+    expect(
+      shouldBypassTerminal(makeKeyEvent({ key: 'd', metaKey: true }))
+    ).toBe(true)
+  })
+
+  it('bypasses Cmd+Shift+D (split vertical)', () => {
+    expect(
+      shouldBypassTerminal(
+        makeKeyEvent({ key: 'd', metaKey: true, shiftKey: true })
+      )
+    ).toBe(true)
+  })
+
+  it('bypasses Cmd+P (push workspace)', () => {
+    expect(
+      shouldBypassTerminal(makeKeyEvent({ key: 'p', metaKey: true }))
+    ).toBe(true)
+  })
+
+  it('bypasses Cmd+Shift+P (pull workspace)', () => {
+    expect(
+      shouldBypassTerminal(
+        makeKeyEvent({ key: 'p', metaKey: true, shiftKey: true })
+      )
+    ).toBe(true)
+  })
+
+  it('bypasses any Meta+ combination (Cmd is always app-level)', () => {
+    expect(
+      shouldBypassTerminal(
+        makeKeyEvent({ key: 'w', metaKey: true, shiftKey: true })
+      )
+    ).toBe(true)
+    expect(
+      shouldBypassTerminal(
+        makeKeyEvent({ key: 'w', metaKey: true, altKey: true })
+      )
+    ).toBe(true)
+    expect(
+      shouldBypassTerminal(makeKeyEvent({ key: 'z', metaKey: true }))
+    ).toBe(true)
+  })
+
+  // --- Ctrl+B — prefix key ---
+
   it('bypasses Ctrl+B (panel prefix key)', () => {
     expect(
       shouldBypassTerminal(makeKeyEvent({ key: 'b', ctrlKey: true }))
     ).toBe(true)
   })
+
+  // --- Non-bypassed keys — normal terminal input ---
 
   it('does not bypass plain Enter (normal terminal input)', () => {
     expect(shouldBypassTerminal(makeKeyEvent({ key: 'Enter' }))).toBe(false)
@@ -144,24 +197,6 @@ describe('shouldBypassTerminal', () => {
   it('does not bypass Ctrl+D (terminal EOF)', () => {
     expect(
       shouldBypassTerminal(makeKeyEvent({ key: 'd', ctrlKey: true }))
-    ).toBe(false)
-  })
-
-  it('does not bypass Cmd+Shift+D (split vertical — handled by TanStack at document level)', () => {
-    // Cmd+Shift+D is a panel shortcut but NOT a terminal bypass —
-    // it's handled at the document level by TanStack Hotkeys which
-    // fires before xterm.js. Only shortcuts that xterm would otherwise
-    // consume need explicit bypass.
-    expect(
-      shouldBypassTerminal(
-        makeKeyEvent({ key: 'd', metaKey: true, shiftKey: true })
-      )
-    ).toBe(false)
-  })
-
-  it('does not bypass Cmd+D (split horizontal — same as above)', () => {
-    expect(
-      shouldBypassTerminal(makeKeyEvent({ key: 'd', metaKey: true }))
     ).toBe(false)
   })
 
@@ -210,19 +245,6 @@ describe('shouldBypassTerminal', () => {
     expect(
       shouldBypassTerminal(
         makeKeyEvent({ key: 'b', ctrlKey: true, shiftKey: true })
-      )
-    ).toBe(false)
-  })
-
-  it('does not bypass Cmd+W with extra modifiers (not exact Cmd+W)', () => {
-    expect(
-      shouldBypassTerminal(
-        makeKeyEvent({ key: 'w', metaKey: true, shiftKey: true })
-      )
-    ).toBe(false)
-    expect(
-      shouldBypassTerminal(
-        makeKeyEvent({ key: 'w', metaKey: true, altKey: true })
       )
     ).toBe(false)
   })

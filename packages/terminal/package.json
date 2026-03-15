@@ -25,6 +25,8 @@
     "@effect/workflow": "catalog:",
     "@laborer/env": "workspace:*",
     "@laborer/shared": "workspace:*",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
     "effect": "catalog:",
     "node-pty": "1.1.0"
   },

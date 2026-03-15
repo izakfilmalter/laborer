@@ -132,6 +132,8 @@ The `.reference/` directory contains shallow clones of key dependency repositori
 - `.reference/cmux/` — [cmux](https://github.com/manaflow-ai/cmux) terminal multiplexer
 - `.reference/brrr/` — [brrr](https://github.com/hsubra89/brrr) autonomous AI development loop CLI (ralph-loops, task orchestration)
 - `.reference/ghostty/` — [Ghostty](https://github.com/ghostty-org/ghostty) fast, native terminal emulator (Zig, GPU-accelerated rendering, platform integration)
+- `.reference/ghostty-web/` — [ghostty-web](https://github.com/coder/ghostty-web) Ghostty terminal emulator compiled for the web (WebAssembly, browser-based terminal)
+- `.reference/mux/` — [Mux](https://github.com/coder/mux) desktop app for isolated, parallel agentic development (coding agent multiplexer, Electron, TypeScript)
 
 <!-- effect-solutions:start -->
 ## Effect Best Practices

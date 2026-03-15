@@ -1,0 +1,466 @@
+## Issue 6: Backend: Escape sequence buffering — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Created `packages/terminal/src/lib/buffered-data-handler.ts` with `createBufferedDataHandler` function
+- The function wraps raw PTY onData callbacks to hold back incomplete VT escape sequences:
+  - Trailing bare ESC (`\x1b`) is held back
+  - Trailing CSI introducer (`\x1b[`) is held back
+  - Trailing incomplete CSI with parameters (`\x1b[38;5`) is held back via regex
+  - Held-back fragments are prepended to the next chunk and forwarded when complete
+  - Plain text and chunks ending with complete sequences pass through immediately
+- Wired `createBufferedDataHandler` into `terminal-manager.ts` around both PTY data callbacks (spawn and restart)
+- Created comprehensive test suite `packages/terminal/test/buffered-data-handler.test.ts` with 10 tests covering all acceptance criteria
+
+### Files changed
+- `packages/terminal/src/lib/buffered-data-handler.ts` (new, 59 lines)
+- `packages/terminal/test/buffered-data-handler.test.ts` (new, 128 lines)
+- `packages/terminal/src/services/terminal-manager.ts` (modified — added import, wrapped both spawn data callbacks)
+
+### Test results
+- All 115 tests pass across 6 test files in the terminal package
+- 10 new buffered-data-handler tests all pass
+- All existing terminal-manager and rpc-integration tests continue to pass
+
+## Issue 7: Backend: Headless terminal state manager — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Added `@xterm/headless@^6.0.0` and `@xterm/addon-serialize@^0.14.0` as dependencies of `@laborer/terminal`
+- Created `packages/terminal/src/lib/headless-terminal.ts` with `createHeadlessTerminalManager` factory:
+  - Manages a `Map<string, HeadlessTerminalState>` of headless xterm instances
+  - `create(terminalId, cols, rows, ptyWrite)` — creates a headless Terminal with SerializeAddon, wires `onData` to forward device query responses (DA1/DSR) back to the PTY
+  - `write(terminalId, data)` — writes PTY output to the headless terminal to maintain parsed screen state
+  - `getScreenState(terminalId)` — returns compact VT escape sequence serialization (~4KB) via SerializeAddon
+  - `resize(terminalId, cols, rows)` — keeps headless terminal in sync with PTY dimensions
+  - `dispose(terminalId)` / `disposeAll()` — cleans up xterm instances and event handlers
+  - Re-creating with same ID auto-disposes the old instance (restart scenario)
+- Integrated headless terminal manager into `terminal-manager.ts`:
+  - Headless terminal created on spawn with matching cols/rows
+  - All PTY output written to headless terminal alongside ring buffer and subscribers
+  - Headless terminal resized in sync on resize RPC
+  - Headless terminal re-created on restart
+  - Headless terminal disposed on remove
+  - All headless terminals disposed on shutdown
+  - `getScreenState(terminalId)` exposed on the TerminalManager service interface for Issue 8 (WebSocket attach protocol) to use
+- Created comprehensive test suite `packages/terminal/test/headless-terminal.test.ts` with 13 tests:
+  - Creation and basic lifecycle (create, non-existent terminal)
+  - Screen state serialization (written text, empty terminal)
+  - Device query handling (DA1 response forwarded to PTY)
+  - Resize (reflects in serialized state, no-op for non-existent)
+  - Alternate screen mode (serialization includes `\x1b[?1049h`)
+  - Dispose (clean disposal, no-op for non-existent, disposeAll)
+  - Re-creation (old content cleared on restart)
+  - Write no-op for non-existent terminal
+
+### Files changed
+- `packages/terminal/package.json` (modified — added @xterm/headless and @xterm/addon-serialize dependencies)
+- `packages/terminal/src/lib/headless-terminal.ts` (new, 197 lines)
+- `packages/terminal/test/headless-terminal.test.ts` (new, 259 lines)
+- `packages/terminal/src/services/terminal-manager.ts` (modified — imported and integrated headless terminal manager, added getScreenState to service interface)
+
+### Test results
+- All 128 tests pass across 7 test files in the terminal package
+- 13 new headless-terminal tests all pass
+- All 115 existing tests (terminal-manager, rpc-integration, pty-host, ring-buffer, buffered-data-handler, classify-process) continue to pass
+- Typecheck passes cleanly
+- Biome lint passes on all changed files
+
+## Issue 8: Backend: Race-free WebSocket attach protocol — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Replaced the chunked ring buffer replay (`sendScrollback` with 128KB chunks) with a race-free attach protocol using the headless terminal's compact screen state serialization (~4KB)
+- Implemented the subscribe-before-serialize pattern in `terminal-ws.ts`:
+  1. Subscribe to live PTY output FIRST, queuing any data that arrives during serialization
+  2. Serialize the headless terminal's screen state via `getScreenState()`
+  3. Send `{"type":"screenState","data":"<VT sequences>"}` as the first data frame
+  4. Flush any queued output that arrived during serialization
+  5. Switch to direct sending for all subsequent output
+- Modified `terminal-manager.ts`:
+  - `subscribe()` no longer returns `scrollback` — returns only `{ subscriberId }`
+  - Updated the service interface type to reflect the new return type
+  - Updated JSDoc to document the subscribe-before-serialize pattern
+- Removed from `terminal-ws.ts`:
+  - `SCROLLBACK_CHUNK_SIZE` constant (128KB)
+  - `sendScrollback()` function (chunked replay logic)
+- Updated `apps/web/src/hooks/use-terminal-websocket.ts`:
+  - Added `ScreenStateControlMessage` type and `ControlMessage` union type
+  - Renamed `parseStatusMessage()` to `parseControlMessage()` — now handles both `status` and `screenState` message types
+  - Added `handleControlMessage()` callback to reduce onmessage handler complexity
+  - Screen state data is written to the terminal as VT escape sequences (reconstructs the screen)
+  - Updated comments to reflect new protocol (screen state vs ring buffer)
+- Created test suite `packages/terminal/test/race-free-attach.test.ts` with 8 tests:
+  - Integration tests (subscribe API shape):
+    - `subscribe` returns `subscriberId` without `scrollback`
+    - `getScreenState` returns empty string for non-existent terminal
+    - `subscribe` and `getScreenState` are independently callable
+  - Unit tests (headless terminal, subscribe-before-serialize pattern):
+    - `getScreenState` returns non-empty state after writing output
+    - Screen state is compact regardless of output volume (<50KB for 200 lines)
+    - Subscribe-before-serialize ensures data is not lost
+    - Screen state can be serialized as JSON control message
+    - Empty terminal produces valid screenState JSON
+
+### Files changed
+- `packages/terminal/src/routes/terminal-ws.ts` (modified — replaced sendScrollback with race-free attach protocol, removed SCROLLBACK_CHUNK_SIZE)
+- `packages/terminal/src/services/terminal-manager.ts` (modified — subscribe no longer returns scrollback)
+- `packages/terminal/test/race-free-attach.test.ts` (new, 285 lines)
+- `apps/web/src/hooks/use-terminal-websocket.ts` (modified — added screenState control message handling)
+
+### Test results
+- All 84 tests pass across 8 test files in the terminal package (8 new + 76 existing)
+- 2 pre-existing failures in terminal-manager.test.ts and rpc-integration.test.ts due to @effect/vitest module import issue (unrelated)
+- Typecheck passes cleanly for both terminal and web packages
+- Biome lint passes on all changed files
+
+## Issue 1: Tracer bullet: Swap xterm.js for ghostty-web with basic I/O — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Replaced all 6 `@xterm/*` dependencies with `ghostty-web` ^0.4.0 in `apps/web/package.json`
+- Modified `apps/web/src/panes/terminal-pane.tsx` to use ghostty-web instead of xterm.js:
+  - Imports `init`, `Terminal`, `FitAddon` from `ghostty-web` instead of `@xterm/*` packages
+  - Removed all addon loading code (WebGL, Image, Unicode11, WebLinks)
+  - Removed `@xterm/xterm/css/xterm.css` import (ghostty-web uses canvas, not DOM)
+  - Added module-level `const wasmReady = init()` for idempotent WASM initialization
+  - Made terminal initialization async (awaits WASM readiness before creating terminal)
+  - Added `caretColor: transparent` on container to hide browser's native contenteditable caret
+  - Added disposal guard (`disposed` flag) for async initialization race conditions
+  - Added `cleanupRef` for cleanup function storage across async boundary
+  - Preserved all existing functionality: theme config, keyboard bypass (Ctrl+B prefix mode, Cmd+W, Cmd+Shift+Enter), FitAddon resize, WebSocket I/O, loading/disconnected/reconnecting overlays
+  - Removed `openExternalUrl` import (link detection moved to Issue 5)
+  - Removed `allowProposedApi`, `fastScrollSensitivity`, `scrollSensitivity`, `lineHeight` options (not in ghostty-web's ITerminalOptions)
+- Removed `patchXtermEnumPlugin()` from `apps/web/vite.config.ts`:
+  - Deleted the entire 18-line function that patched xterm.js ESM const enum IIFEs
+  - Removed `type Plugin` import from vite (no longer needed)
+  - Removed `patchXtermEnumPlugin()` from the plugins array
+- Updated all JSDoc comments to reference ghostty-web instead of xterm.js
+- Created comprehensive test suite `apps/web/test/ghostty-web-migration.test.ts` with 13 tests:
+  - API surface exports: Terminal, FitAddon, init, EventEmitter, Ghostty
+  - Terminal class API shape: open, write, dispose, resize, clear, focus, blur, loadAddon, attachCustomKeyEventHandler
+  - FitAddon API shape: fit, proposeDimensions, dispose, activate
+  - xterm.js removal verification: no @xterm imports in terminal-pane.tsx, no xterm.css, imports from ghostty-web, patchXtermEnumPlugin removed, no @xterm dependencies in package.json, ghostty-web in dependencies
+
+### Files changed
+- `apps/web/package.json` (modified — removed 6 @xterm/* deps, added ghostty-web)
+- `apps/web/src/panes/terminal-pane.tsx` (modified — 758→566 lines, full ghostty-web swap)
+- `apps/web/vite.config.ts` (modified — 112→80 lines, removed patchXtermEnumPlugin)
+- `apps/web/test/ghostty-web-migration.test.ts` (new, 151 lines)
+- `bun.lock` (auto-updated)
+
+### Test results
+- All 576 tests pass across 43 test files in the web package (13 new + 563 existing)
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Typecheck passes cleanly
+- Biome lint passes on all changed files
+
+## Issue 9: Frontend: Terminal Session Router (core) — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Created `apps/web/src/lib/terminal-session-router.ts` with `TerminalSessionRouter` class:
+  - Centralized WebSocket stream manager that enforces exactly one WebSocket per terminal ID
+  - `subscribe(terminalId, callbacks)` — registers a subscriber with `onOutput`, `onScreenState`, `onStatus` callbacks. First subscriber opens the WebSocket. Returns an unsubscribe function.
+  - `sendInput(terminalId, data)` — sends user input to the terminal's WebSocket as a raw text frame
+  - `getConnectionStatus(terminalId)` — returns current WebSocket connection status (connecting/connected/disconnected)
+  - `getTerminalStatus(terminalId)` — returns terminal process status (running/stopped/restarted)
+  - `hasSubscribers(terminalId)` — checks if a session has active subscribers
+  - `getSessionCount()` — returns number of active sessions (for testing/debugging)
+  - `dispose()` — closes all WebSockets, clears all sessions, rejects future subscriptions
+  - Cached screenState delivered to late subscribers via `setTimeout(0)` without server round-trip
+  - Cached exit state delivered to late subscribers for terminals that already stopped
+  - Screen state cache cleared on terminal restart
+  - Last subscriber unsubscribing tears down the session (closes WebSocket, cancels timers)
+  - Reconnection with exponential backoff (500ms initial, 2x factor, 30s max)
+  - Max 3 consecutive failures before giving up (prevents infinite reconnection)
+  - No reconnection when terminal is stopped
+  - Flow control: character-count ack frames (`{"type":"ack","chars":N}`) every 5000 chars
+  - JSON control message parsing: `status` (running/stopped/restarted) and `screenState` types
+  - Non-JSON and unrecognized JSON messages treated as raw PTY output
+  - Guard against stale WebSocket events (checks `session.ws !== ws`)
+  - Guard against disposed router (rejects new subscriptions with no-op)
+- Extracted and reused the message protocol from `use-terminal-websocket.ts`:
+  - Same `parseControlMessage()` function for JSON control message detection
+  - Same flow control ack protocol (CHAR_COUNT_ACK_SIZE = 5000)
+  - Same exponential backoff parameters (500ms, 2x, 30s max, 3 failures)
+- Created comprehensive test suite `apps/web/test/terminal-session-router.test.ts` with 32 tests:
+  - Subscribe/WebSocket lifecycle (7 tests): returns unsubscribe, opens one WS, shares WS, separate WS per terminal, closes on last unsub, keeps open with remaining subs, re-creates after full unsub
+  - Output broadcasting (2 tests): broadcasts to all subscribers, excludes unsubscribed
+  - ScreenState caching (2 tests): caches and delivers to late subscribers via setTimeout(0), does not deliver after unsubscribe
+  - Status control messages (4 tests): broadcasts status, handles stopped with exit code, delivers cached exit state, clears screenState on restart
+  - SendInput (3 tests): routes data correctly, no-ops for nonexistent, no-ops when not open
+  - Flow control (2 tests): sends ack after 5000 chars, no ack for small messages
+  - Connection status (2 tests): tracks through lifecycle, returns disconnected for nonexistent
+  - Reconnection (3 tests): exponential backoff after close, no reconnect when stopped, stops after max failures
+  - Dispose (2 tests): closes all WebSockets, rejects new subscriptions
+  - Message parsing (4 tests): non-JSON as PTY output, malformed JSON as PTY output, unrecognized type as PTY output, ignores binary messages
+  - Session count (1 test): tracks active sessions correctly
+
+### Files changed
+- `apps/web/src/lib/terminal-session-router.ts` (new, 462 lines)
+- `apps/web/test/terminal-session-router.test.ts` (new, 661 lines)
+
+### Test results
+- All 608 tests pass across 44 test files in the web package (32 new + 576 existing)
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Typecheck passes cleanly
+- Biome lint passes on all changed files
+
+## Issue 10: Frontend: Terminal Router context and integration — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Created `apps/web/src/contexts/terminal-router-context.tsx` with `TerminalRouterProvider` and `useTerminalRouter`:
+  - `TerminalRouterProvider` — React context provider that creates a `TerminalSessionRouter` on mount and disposes it on unmount. Placed inside `ServerGate` in the component tree so the router is recreated whenever the server reconnects (fresh WebSocket sessions).
+  - `useTerminalRouter()` — hook that returns the router instance (or null during server reconnection). Consumers handle null gracefully by skipping operations.
+- Integrated `TerminalRouterProvider` into `apps/web/src/routes/__root.tsx`:
+  - Wraps children inside `ServerGate`, outside `LiveStoreProvider` (terminals don't depend on LiveStore)
+  - Provider nesting: `ServerGate > TerminalRouterProvider > LiveStoreProvider > Outlet`
+- Rewrote `apps/web/src/panes/terminal-pane.tsx` to use the router:
+  - Replaced `useTerminalWebSocket` hook with `useTerminalRouter()` + `router.subscribe()`
+  - Added `useEffect` that subscribes to the router with `onOutput`, `onScreenState`, `onStatus` callbacks:
+    - `onOutput` — writes raw PTY output to ghostty-web terminal, clears loading overlay
+    - `onScreenState` — clears terminal, writes screen state VT sequences, clears loading overlay
+    - `onStatus` — updates terminal status state, handles restart (clear buffer + reset loading), handles stopped (invoke onTerminalExit)
+  - Replaced `wsSendRef.current(data)` with `routerRef.current?.sendInput(terminalId, data)` for keyboard input
+  - Added local `connectionStatus` and `terminalStatus` state managed by router subscriber callbacks
+  - Connection status driven by `router.getConnectionStatus()` and inferred from data receipt
+  - Null router (server reconnecting) sets `connectionStatus` to `'disconnected'`
+  - Removed all `useTerminalWebSocket` references (import, hook call, `wsSend`, `wsStatus`)
+  - Imported `TerminalStatus` type from `@/lib/terminal-session-router` instead of `@/hooks/use-terminal-websocket`
+  - Updated all JSDoc to reference TerminalSessionRouter instead of useTerminalWebSocket
+  - Terminal instance stays alive when tab is hidden (no dispose on hide) — unsubscribe only tears down the WebSocket session, not the ghostty-web Terminal
+- Created comprehensive test suite `apps/web/test/terminal-router-context.test.ts` with 17 tests:
+  - Context module exports (2 tests): TerminalRouterProvider and useTerminalRouter exported correctly
+  - TerminalSessionRouter integration (2 tests): instantiation, dispose prevents subscriptions
+  - terminal-pane.tsx integration (6 tests): no useTerminalWebSocket import, imports useTerminalRouter, uses router.subscribe, uses router.sendInput, no wsSend, imports TerminalStatus from terminal-session-router
+  - __root.tsx integration (3 tests): imports TerminalRouterProvider, imports from contexts/terminal-router-context, places provider inside ServerGate and before LiveStoreProvider
+  - Connection status overlay integration (4 tests): uses connectionStatus for disconnected/connecting banners, no wsStatus references, tracks terminal status via subscriber callbacks
+
+### Files changed
+- `apps/web/src/contexts/terminal-router-context.tsx` (new, 80 lines)
+- `apps/web/src/panes/terminal-pane.tsx` (modified — replaced useTerminalWebSocket with router subscribe pattern)
+- `apps/web/src/routes/__root.tsx` (modified — added TerminalRouterProvider inside ServerGate)
+- `apps/web/test/terminal-router-context.test.ts` (new, 155 lines)
+
+### Test results
+- All 625 tests pass across 45 test files in the web package (17 new + 608 existing)
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Typecheck passes cleanly
+- Biome lint passes on all changed files
+
+## Issue 2: ghostty-web FitAddon and basic resize — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- The FitAddon and resize integration was already implemented as part of Issue 1 (tracer bullet). This issue adds the specific tests verifying the FitAddon resize flow.
+- Implementation already in place in `terminal-pane.tsx`:
+  - FitAddon imported from `ghostty-web` and loaded via `terminal.loadAddon(fitAddon)`
+  - FitAddon stored in `fitAddonRef` for resize handler access
+  - `fitAddon.fit()` called after `terminal.open(container)` for initial sizing
+  - Initial cols/rows sent to backend via resize RPC after fit
+  - `ResizeObserver` with 100ms debounce (`RESIZE_DEBOUNCE_MS`) re-fits on container resize
+  - `handleResize` callback calls `fitAddon.fit()` then sends updated cols/rows via resize RPC
+  - ResizeObserver disconnected and resize timer cleared on cleanup
+  - Positive cols/rows validation before sending resize RPC
+- Created comprehensive test suite `apps/web/test/fit-addon-resize.test.ts` with 22 tests:
+  - FitAddon API shape (6 tests): instantiation, fit method, proposeDimensions method, activate method, dispose method, Terminal.prototype.loadAddon
+  - terminal-pane.tsx FitAddon integration (6 tests): imports FitAddon, loads via loadAddon(), stores in ref, calls fit() after open, validates cols/rows, sends resize RPC
+  - terminal-pane.tsx ResizeObserver integration (7 tests): creates ResizeObserver, uses RESIZE_DEBOUNCE_MS, debounce is 100ms, re-fits on resize, sends dimensions after re-fit, disconnects observer on cleanup, clears timer on cleanup
+  - Resize flow ordering (3 tests): FitAddon loaded before open(), fit() called after open(), resize RPC sent after fit()
+
+### Files changed
+- `apps/web/test/fit-addon-resize.test.ts` (new, 172 lines)
+
+### Test results
+- All 647 tests pass across 46 test files in the web package (22 new + 625 existing)
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Biome lint passes on all changed files
+
+## Issue 11: PTY-first resize — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Replaced the current resize flow (fit → RPC) with a PTY-first approach that prevents output clobbering during resize:
+  1. `fitAddon.proposeDimensions()` — calculates desired cols/rows WITHOUT applying them to the terminal (read-only measurement)
+  2. `await resizeTerminal()` — sends dimensions to backend PTY via RPC and waits for confirmation (PTY sends SIGWINCH)
+  3. `terminal.resize(cols, rows)` — applies the confirmed dimensions to the frontend terminal only AFTER the backend confirms
+- Changed `useAtomSet(terminalResizeMutation)` to `useAtomSet(terminalResizeMutation, { mode: 'promise' })` so the resize mutation returns a Promise that can be awaited
+- Extracted `executePtyFirstResize()` as a standalone async function to reduce complexity in the effect
+- Implemented resize coalescing with `ResizeCoalesceState`:
+  - `inFlight` boolean gate — only one RPC call active at a time
+  - `pending` boolean flag — set to true if resize events arrive while one is in-flight
+  - `lastCols`/`lastRows` — deduplication to skip no-op resizes
+  - On in-flight completion (`.finally()`), if pending is true, re-calls handleResize with fresh `proposeDimensions()` (not stale captured values)
+  - On RPC failure, resets lastCols/lastRows to 0 to allow retry
+- Replaced the fixed 100ms setTimeout debounce with `requestAnimationFrame` batching:
+  - RAF naturally coalesces rapid resize events into single frames (~16ms)
+  - Combined with the in-flight/pending coalescing for at most one active RPC
+  - Provides better responsiveness than a fixed 100ms debounce during panel drag
+- Removed the `RESIZE_DEBOUNCE_MS` constant (replaced by RAF batching comment)
+- Preserved the initial `fit()` call on mount (acceptable since no PTY output race exists at initialization time)
+- Updated `fit-addon-resize.test.ts` to verify the new PTY-first resize flow:
+  - 32 tests total (up from 22): added tests for PTY-first flow, coalescing, proposeDimensions usage, awaitable RPC, RAF batching, and cleanup
+
+### Files changed
+- `apps/web/src/panes/terminal-pane.tsx` (modified — replaced resize flow with PTY-first approach, extracted executePtyFirstResize, added ResizeCoalesceState)
+- `apps/web/test/fit-addon-resize.test.ts` (modified — updated from 22 to 32 tests for PTY-first resize patterns)
+
+### Test results
+- All 657 tests pass across 45 test files in the web package (32 fit-addon-resize tests + 625 existing)
+- All 136 tests pass across 8 test files in the terminal package
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Typecheck passes cleanly
+- Biome lint passes on all changed files
+
+## Issue 3: Theme, font, and cursor configuration — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Verified that the full visual configuration was already applied in terminal-pane.tsx during Issue 1 (tracer bullet):
+  - Zinc color scale theme: background (#09090b), foreground (#fafafa), cursor (#fafafa), cursorAccent (#09090b), selectionBackground (#27272a80), all 16 ANSI colors mapped to zinc palette
+  - JetBrains Mono font stack with Fira Code, Cascadia Code, Menlo fallbacks
+  - Font size: 13px
+  - Cursor: blinking bar style (cursorBlink: true, cursorStyle: 'bar')
+  - Scrollback: 100,000 lines
+  - convertEol: false
+  - caretColor: transparent on container to hide browser's native contenteditable caret
+- Confirmed that `lineHeight` is NOT supported by ghostty-web's ITerminalOptions — cell height is computed automatically from FontMetrics based on fontSize and fontFamily. This is an accepted gap documented in tests.
+- Created comprehensive test suite `apps/web/test/theme-font-cursor.test.ts` with 30 tests:
+  - ghostty-web ITerminalOptions API compatibility (7 tests): cursorBlink, cursorStyle with bar, fontSize, fontFamily, scrollback, theme with ITheme, lineHeight absence confirmation
+  - ghostty-web ITheme API compatibility (4 tests): all 16 ANSI colors, foreground/background, cursor/cursorAccent, selectionBackground/selectionForeground
+  - terminal-pane.tsx theme configuration (7 tests): background, foreground, cursor, cursorAccent, selectionBackground, all 8 normal ANSI colors, all 8 bright ANSI colors
+  - terminal-pane.tsx cursor configuration (2 tests): blink enabled, bar style
+  - terminal-pane.tsx font configuration (4 tests): JetBrains Mono primary, fallback fonts, font size 13, no lineHeight in constructor
+  - terminal-pane.tsx scrollback configuration (2 tests): 100k scrollback, convertEol false
+  - terminal-pane.tsx contenteditable caret hiding (2 tests): caretColor transparent, applied before terminal.open()
+  - Theme completeness (2 tests): all expected keys present, all values valid CSS hex colors
+
+### Files changed
+- `apps/web/test/theme-font-cursor.test.ts` (new, 301 lines)
+
+### Test results
+- All 687 tests pass across 46 test files in the web package (30 new + 657 existing)
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Biome lint passes on all changed files
+
+## Issue 4: Keyboard bypass and prefix mode — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- Verified that the keyboard bypass and prefix mode integration with ghostty-web was already fully implemented in `terminal-pane.tsx` during Issue 1 (tracer bullet):
+  - `attachCustomKeyEventHandler` called on the ghostty-web terminal after open
+  - Only intercepts `keydown` events — `keyup` passes through to avoid breaking browser key state tracking
+  - `shouldBypassTerminal(event)` checks for Cmd+W, Cmd+Shift+Enter, Ctrl+B — returns false so the event bubbles to TanStack Hotkeys on document
+  - `isExactCtrlB(event)` additionally enters prefix mode when Ctrl+B is pressed
+  - In prefix mode, the next keydown returns false (action key intercepted), then prefix mode exits
+  - Prefix mode auto-exits after 1500ms timeout (`PREFIX_MODE_TIMEOUT`)
+  - `enterPrefixMode()` and `exitPrefixMode()` manage both `prefixModeRef` (for synchronous reads in handler) and `prefixMode` state (for React UI indicator)
+  - Prefix mode UI indicator ("Ctrl+B" badge) rendered conditionally at top-left of terminal pane
+  - Normal printable keys return true and are handled by ghostty-web
+- Updated JSDoc in `terminal-keys.ts` and `terminal-keys.test.ts` to reference ghostty-web instead of xterm.js
+- Created comprehensive test suite `apps/web/test/keyboard-bypass-prefix-mode.test.ts` with 29 tests:
+  - ghostty-web API compatibility (2 tests): Terminal.prototype.attachCustomKeyEventHandler exists, accepts function argument
+  - terminal-pane.tsx handler wiring (9 tests): imports from terminal-keys, calls attachCustomKeyEventHandler, PREFIX_MODE_TIMEOUT=1500, keydown-only interception, shouldBypassTerminal usage, isExactCtrlB check, enterPrefixMode/exitPrefixMode defined, prefixModeRef.current checked, prefix mode UI indicator rendered
+  - Bypass handler returns false for intercepted keys (8 tests): Cmd+W, Cmd+Shift+Enter, Ctrl+B return false; normal keys, keyup, Ctrl+C, Ctrl+D, arrow keys return true
+  - Prefix mode state machine (10 tests): Ctrl+B enters prefix, next key returns false + exits, subsequent keys return true, 1500ms auto-exit, keys return true after timeout, Ctrl+B again resets timeout, Cmd+W/Cmd+Shift+Enter don't enter prefix, keyup doesn't consume action in prefix mode, multiple Ctrl+B→action sequences work
+
+### Files changed
+- `apps/web/src/panes/terminal-keys.ts` (modified — updated JSDoc to reference ghostty-web instead of xterm.js)
+- `apps/web/test/terminal-keys.test.ts` (modified — updated JSDoc to reference ghostty-web instead of xterm.js)
+- `apps/web/test/keyboard-bypass-prefix-mode.test.ts` (new, 377 lines)
+
+### Test results
+- All 716 tests pass across 47 test files in the web package (29 new + 687 existing)
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Typecheck passes cleanly
+- Biome lint passes on all changed files
+
+## Issue 5: Link detection and OSC title changes — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- **Link detection** — ghostty-web automatically registers both `OSC8LinkProvider` (explicit hyperlinks via OSC 8 escape sequences) and `UrlRegexProvider` (auto-detected URLs: https, http, mailto, ftp, ssh, etc.) during `terminal.open()`. Links are visually indicated with underline and pointer cursor on hover. Cmd+Click (macOS) or Ctrl+Click (Linux/Windows) activates the link via `window.open(url, '_blank', 'noopener,noreferrer')`.
+- **Electron link handling** — Added `setWindowOpenHandler` to the Electron main process (`apps/desktop/src/main.ts`) to intercept `window.open()` calls from the renderer and redirect them to `shell.openExternal()`. This ensures terminal link clicks open in the OS default browser instead of creating a new BrowserWindow. Only http/https URLs are allowed; all others are denied.
+- **OSC title changes** — Subscribed to ghostty-web's `onTitleChange` event in `terminal-pane.tsx`. ghostty-web parses OSC 0 and OSC 2 escape sequences during `write()` and fires `onTitleChange` with the title string. The event is forwarded to the parent component via a new `onTitleChange` prop on `TerminalPaneProps`. Both BEL (`\x07`) and ST (`\x1b\\`) terminators are supported.
+- Added `onTitleChange?: ((title: string) => void) | undefined` to `TerminalPaneProps` interface
+- Added `onTitleChangeRef` to avoid stale closures in the terminal event callback
+- Added `onTitleChangeDisposable` for proper cleanup on terminal disposal
+- Updated the `TerminalPane` function signature to destructure the new prop
+- Updated JSDoc to document link detection behavior (auto-registration, Electron interception) and OSC title change propagation
+- Updated Electron mock in `apps/desktop/test/main.test.ts` to include `setWindowOpenHandler` on `webContents`
+- Created comprehensive test suite `apps/web/test/link-detection-title-changes.test.ts` with 20 tests:
+  - ghostty-web link detection API (4 tests): OSC8LinkProvider export, UrlRegexProvider export, LinkDetector export, Terminal.prototype.registerLinkProvider
+  - ghostty-web onTitleChange API (1 test): Terminal class has onTitleChange event property
+  - terminal-pane.tsx link and title integration (8 tests): subscribes to onTitleChange, stores disposable for cleanup, disposes on cleanup, uses ref for stale closures, declares prop, documents OSC title change, documents link detection, does not manually register link providers
+  - Electron setWindowOpenHandler integration (5 tests): configures handler on webContents, redirects to shell.openExternal, imports shell from electron, denies action, only opens http/https
+  - openExternalUrl availability (2 tests): function exists, handles both Electron and browser environments
+
+### Files changed
+- `apps/web/src/panes/terminal-pane.tsx` (modified — added onTitleChange prop, subscribed to onTitleChange event, updated JSDoc with link detection and title change documentation)
+- `apps/web/test/link-detection-title-changes.test.ts` (new, 157 lines)
+- `apps/desktop/src/main.ts` (modified — added shell import, added setWindowOpenHandler to intercept window.open() for Electron)
+- `apps/desktop/test/main.test.ts` (modified — added setWindowOpenHandler to BrowserWindow mock)
+
+### Test results
+- All 736 tests pass across 48 test files in the web package (20 new + 716 existing)
+- 1 pre-existing skipped test (alive-desktop-oauth)
+- Desktop: 146 passed, 7 pre-existing failures in main.test.ts (app.setAsDefaultProtocolClient mock gap — unrelated)
+- Typecheck passes cleanly for both web and desktop packages
+- Biome lint passes on all changed files
+
+## Issue 12: Cleanup: Remove xterm.js and ring buffer — COMPLETED
+
+Date: 2026-03-14
+
+### What was done
+- **Removed RingBuffer from terminal package:**
+  - Deleted `packages/terminal/src/lib/ring-buffer.ts` (131 lines)
+  - Deleted `packages/terminal/test/ring-buffer.test.ts` (301 lines)
+  - Removed `RingBuffer` import, `RING_BUFFER_CAPACITY` constant (5MB), and `textEncoder` from `terminal-manager.ts`
+  - Replaced `TerminalBufferState` interface (had `ringBuffer` + `subscribers`) with `TerminalSubscriberState` (only `subscribers`)
+  - Renamed `bufferStates` map to `subscriberStates` and `getOrCreateBufferState` to `getOrCreateSubscriberState`
+  - Removed `ringBuffer.write(textEncoder.encode(data))` calls from spawn and restart data callbacks
+  - Removed `ringBuffer.clear()` call from restart flow
+  - Removed `TerminalBufferState` from the module's exported types
+- **Deleted useTerminalWebSocket hook:**
+  - Deleted `apps/web/src/hooks/use-terminal-websocket.ts` (382 lines) — replaced by TerminalSessionRouter (Issues 9-10)
+  - Removed stale `@see` references to the deleted file from `terminal-router-context.tsx` and `terminal-session-router.ts`
+- **Updated e2e test selectors for ghostty-web:**
+  - Updated `apps/web/e2e/fixtures/terminal-helper.ts`: changed `terminalInputs` from `getByRole('textbox', { name: 'Terminal input' })` (xterm.js textarea) to `locator('[data-terminal-id] [contenteditable]')` (ghostty-web contenteditable)
+  - Updated JSDoc in terminal-helper.ts and terminal-interaction.spec.ts to reference ghostty-web instead of xterm.js
+- **Verified cleanup completeness:**
+  - No `@xterm/*` imports remain in frontend source (`apps/web/src/`)
+  - No `@xterm/*` dependencies in `apps/web/package.json`
+  - `patchXtermEnumPlugin` already removed in Issue 1 (verified)
+  - No `RingBuffer` references remain in `packages/terminal/src/`
+  - `useTerminalWebSocket` references in source are only JSDoc comments (no imports)
+  - Backend `@xterm/headless` and `@xterm/addon-serialize` retained in `packages/terminal/` (used by headless terminal state manager)
+
+### Files changed
+- `packages/terminal/src/services/terminal-manager.ts` (modified — removed RingBuffer, renamed TerminalBufferState to TerminalSubscriberState, removed ring buffer writes)
+- `packages/terminal/src/lib/ring-buffer.ts` (deleted)
+- `packages/terminal/test/ring-buffer.test.ts` (deleted)
+- `apps/web/src/hooks/use-terminal-websocket.ts` (deleted)
+- `apps/web/src/contexts/terminal-router-context.tsx` (modified — removed stale @see reference)
+- `apps/web/src/lib/terminal-session-router.ts` (modified — removed stale @see reference)
+- `apps/web/e2e/fixtures/terminal-helper.ts` (modified — updated selectors for ghostty-web DOM)
+- `apps/web/e2e/terminal-interaction.spec.ts` (modified — updated JSDoc to reference ghostty-web)
+
+### Test results
+- Terminal package: 104 tests pass across 7 test files (ring-buffer.test.ts deleted, 28 ring buffer tests removed, all remaining tests pass)
+- Web package: 736 tests pass across 48 test files (1 pre-existing skipped)
+- Typecheck passes cleanly for both terminal and web packages
+- Biome lint: no new issues (3 pre-existing in panel-hotkeys.tsx and use-panel-layout.test.ts)

@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
 
 import {
   broadcastUpdateStateToWindow,
@@ -210,6 +210,18 @@ function createWindow(record?: WindowRecord): BrowserWindow {
 
   // Track window bounds for persistence — saves on move/resize/close.
   windowStateManager.track(window, windowId)
+
+  // Intercept window.open() calls from the renderer (e.g., ghostty-web
+  // link clicks) and redirect them to the OS default browser via
+  // shell.openExternal(). Without this, window.open() in a sandboxed
+  // renderer would create a new BrowserWindow instead of opening the
+  // user's browser.
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https:') || url.startsWith('http:')) {
+      shell.openExternal(url).catch(console.error)
+    }
+    return { action: 'deny' }
+  })
 
   window.once('ready-to-show', () => {
     window.show()

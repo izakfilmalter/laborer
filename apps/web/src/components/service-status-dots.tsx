@@ -1,5 +1,5 @@
 /**
- * ServiceStatusBadges — renders Badge-based status indicators in the header,
+ * ServiceStatusDots — renders Badge-based status indicators in the header,
  * one per core service (Server, Terminal, File Watcher), each showing the
  * service name and a colored dot indicating the live status.
  *

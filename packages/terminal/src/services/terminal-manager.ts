@@ -543,6 +543,51 @@ const detectProcessesForPids = async (
   return results
 }
 
+/**
+ * Heuristic: classify whether a terminal title indicates an idle shell prompt.
+ * Shells typically set title to shell name, cwd, or user@host:path when idle.
+ *
+ * Returns true for titles like:
+ * - Empty string
+ * - Paths starting with / or ~ (cwd)
+ * - user@host:path patterns (SSH-style prompts)
+ * - Shell names (bash, zsh, fish, sh, pwsh, powershell)
+ *
+ * Returns false for titles like "opencode", "vim main.ts", "npm run build"
+ * (active command names).
+ *
+ * @see .reference/mux/src/node/services/terminalService.ts — isIdleTitle
+ */
+const IDLE_SHELL_REGEX = /^(bash|zsh|fish|sh|pwsh|powershell)$/i
+const SSH_PROMPT_REGEX = /^[^\s@]+@[^\s:]+:/
+
+const isIdleTitle = (title: string): boolean => {
+  const trimmed = title.trim()
+  if (trimmed.length === 0) {
+    return true
+  }
+  if (trimmed.startsWith('/') || trimmed.startsWith('~')) {
+    return true
+  }
+  if (SSH_PROMPT_REGEX.test(trimmed)) {
+    return true
+  }
+  if (IDLE_SHELL_REGEX.test(trimmed)) {
+    return true
+  }
+  return false
+}
+
+/**
+ * Fallback timeout for non-OSC shells. When a terminal has not received
+ * any OSC title or prompt signals, the newline-based "running" heuristic
+ * auto-resets to idle after this duration. Prevents permanent false-running
+ * state in shells that don't set the terminal title.
+ *
+ * @see .reference/mux/src/constants/terminalActivity.ts
+ */
+const NO_OSC_IDLE_FALLBACK_MS = 10_000
+
 // ---------------------------------------------------------------------------
 // Lifecycle Events
 // ---------------------------------------------------------------------------
@@ -733,9 +778,148 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       const subscriberStates = new Map<string, TerminalSubscriberState>()
       const graceTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
 
+      // -------------------------------------------------------------------
+      // OSC-based activity detection state (follows Mux pattern)
+      //
+      // Supplements the 200ms ps-based detection with instant title-based
+      // detection. When a shell or program sets the terminal title via
+      // OSC 0/2, the headless terminal fires the title callback. The
+      // title is classified as idle or running and an immediate
+      // ProcessChanged event is emitted so the sidebar updates instantly.
+      //
+      // Tracks which terminals have received OSC signals so we can skip
+      // the fallback timer for OSC-capable shells.
+      // -------------------------------------------------------------------
+      const sessionsWithOscActivity = new Set<string>()
+      const noOscIdleFallbacks = new Map<
+        string,
+        ReturnType<typeof setTimeout>
+      >()
+
+      /**
+       * Per-terminal title derived from OSC 0/2 title changes.
+       * Used to build a ForegroundProcess from the title when ps-based
+       * detection hasn't run yet or the title provides better info.
+       */
+      const oscTitleMap = new Map<string, string>()
+
+      /**
+       * Per-terminal OSC prompt state from OSC 133 semantic markers.
+       * When a compatible shell emits prompt markers, we know instantly
+       * whether the terminal is idle or running a command.
+       */
+      const oscPromptState = new Map<string, 'idle' | 'running'>()
+
+      /**
+       * Handle an OSC title change. Classifies the title as idle or
+       * running and immediately triggers a detection re-evaluation for
+       * the terminal by directly emitting a ProcessChanged event.
+       */
+      const handleOscTitleChange = (
+        terminalId: string,
+        title: string
+      ): void => {
+        sessionsWithOscActivity.add(terminalId)
+        // Clear any no-OSC fallback timer since this shell supports OSC
+        const fallback = noOscIdleFallbacks.get(terminalId)
+        if (fallback !== undefined) {
+          clearTimeout(fallback)
+          noOscIdleFallbacks.delete(terminalId)
+        }
+
+        oscTitleMap.set(terminalId, title)
+
+        // Immediately trigger a detection re-evaluation by emitting
+        // a ProcessChanged event with the title-derived process info.
+        emitTitleBasedProcessChanged(terminalId, title)
+      }
+
+      /**
+       * Handle an OSC 133 semantic prompt state change.
+       */
+      const handleOscPromptState = (
+        terminalId: string,
+        state: 'idle' | 'running'
+      ): void => {
+        sessionsWithOscActivity.add(terminalId)
+        const fallback = noOscIdleFallbacks.get(terminalId)
+        if (fallback !== undefined) {
+          clearTimeout(fallback)
+          noOscIdleFallbacks.delete(terminalId)
+        }
+
+        oscPromptState.set(terminalId, state)
+
+        if (state === 'idle') {
+          // When prompt returns to idle, clear the OSC title so the
+          // ps-based detection takes over with its full process chain.
+          oscTitleMap.delete(terminalId)
+          emitTitleBasedProcessChanged(terminalId, '')
+        }
+      }
+
+      /**
+       * Emit a ProcessChanged event based on OSC title classification.
+       * Called when the headless terminal detects a title change. Uses
+       * the title to build a ForegroundProcess and immediately emits
+       * so the sidebar updates without waiting for the next ps tick.
+       */
+      const emitTitleBasedProcessChanged = (
+        terminalId: string,
+        title: string
+      ): void => {
+        const map = runSync(Ref.get(terminalsRef))
+        const terminal = map.get(terminalId)
+        if (terminal === undefined || terminal.status !== 'running') {
+          return
+        }
+
+        const idle = isIdleTitle(title)
+
+        // Build detection result from the title
+        let detected: ProcessDetectionResult
+        if (idle) {
+          detected = EMPTY_DETECTION
+        } else {
+          // Try to classify the title as a known process
+          const classified = classifyProcess(title)
+          if (classified !== null && classified.category !== 'shell') {
+            detected = {
+              foregroundProcess: classified,
+              hasChildProcess: true,
+              processChain: [classified],
+            }
+          } else {
+            // Unknown process running — still mark as having a child
+            detected = {
+              foregroundProcess: classified,
+              hasChildProcess: classified !== null,
+              processChain: classified !== null ? [classified] : [],
+            }
+          }
+        }
+
+        // Update the snapshot so the ps-based detection doesn't
+        // override with stale data on its next tick
+        lastProcessSnapshot.set(terminalId, detected)
+
+        const record = toTerminalRecord(terminal, detected)
+        const json = JSON.stringify(record)
+        const previous = lastRecordJson.get(terminalId)
+
+        if (json !== previous) {
+          lastRecordJson.set(terminalId, json)
+          emitEvent({ _tag: 'ProcessChanged', terminal: record })
+        }
+      }
+
       // Headless terminal state manager for compact screen state
-      // serialization (~4KB) and backend device query handling.
-      const headlessManager = createHeadlessTerminalManager()
+      // serialization (~4KB), backend device query handling, and
+      // OSC-based title/prompt activity detection.
+      const headlessManager = createHeadlessTerminalManager({
+        onTitleChange: handleOscTitleChange,
+        onPromptState: handleOscPromptState,
+      })
 
       // Lifecycle event PubSub — unbounded so publishers never block.
       const lifecyclePubSub = yield* PubSub.unbounded<TerminalLifecycleEvent>()
@@ -1084,6 +1268,33 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         }
 
         ptyHostClient.write(terminalId, data)
+
+        // Mark the terminal as "running" when the user sends a newline
+        // (submits a command). OSC handlers will flip it back to idle
+        // when the prompt returns. For non-OSC shells, arm a fallback
+        // timer that auto-resets to idle after NO_OSC_IDLE_FALLBACK_MS.
+        // This follows the Mux pattern in sendInput().
+        if (
+          (data.includes('\r') || data.includes('\n')) &&
+          !sessionsWithOscActivity.has(terminalId)
+        ) {
+          // Non-OSC shell: arm a fallback timer to prevent permanent
+          // "running" state. If the shell eventually emits OSC signals,
+          // the timer is cleared in handleOscTitleChange.
+          const existingFallback = noOscIdleFallbacks.get(terminalId)
+          if (existingFallback !== undefined) {
+            clearTimeout(existingFallback)
+          }
+          noOscIdleFallbacks.set(
+            terminalId,
+            setTimeout(() => {
+              noOscIdleFallbacks.delete(terminalId)
+              if (!sessionsWithOscActivity.has(terminalId)) {
+                emitTitleBasedProcessChanged(terminalId, '')
+              }
+            }, NO_OSC_IDLE_FALLBACK_MS)
+          )
+        }
       })
 
       // ---------------------------------------------------------------
@@ -1192,6 +1403,16 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         headlessManager.dispose(terminalId)
         agentStatusMap.delete(terminalId)
         hookAgentStatusMap.delete(terminalId)
+
+        // Clean up OSC activity tracking state
+        sessionsWithOscActivity.delete(terminalId)
+        oscTitleMap.delete(terminalId)
+        oscPromptState.delete(terminalId)
+        const oscFallback = noOscIdleFallbacks.get(terminalId)
+        if (oscFallback !== undefined) {
+          clearTimeout(oscFallback)
+          noOscIdleFallbacks.delete(terminalId)
+        }
 
         emitEvent({ _tag: 'Removed', id: terminalId })
 
@@ -1324,6 +1545,16 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
         // Get or create subscriber state for the restarted terminal
         const restartSubState = getOrCreateSubscriberState(terminalId)
+
+        // Reset OSC activity tracking for the restarted terminal
+        sessionsWithOscActivity.delete(terminalId)
+        oscTitleMap.delete(terminalId)
+        oscPromptState.delete(terminalId)
+        const restartFallback = noOscIdleFallbacks.get(terminalId)
+        if (restartFallback !== undefined) {
+          clearTimeout(restartFallback)
+          noOscIdleFallbacks.delete(terminalId)
+        }
 
         // Re-create headless terminal for the restarted PTY.
         // This disposes the old instance and creates a fresh one.
@@ -1547,6 +1778,15 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
           // Clean up all headless terminal instances
           headlessManager.disposeAll()
+
+          // Clean up OSC fallback timers
+          for (const timer of noOscIdleFallbacks.values()) {
+            clearTimeout(timer)
+          }
+          noOscIdleFallbacks.clear()
+          sessionsWithOscActivity.clear()
+          oscTitleMap.clear()
+          oscPromptState.clear()
 
           yield* Effect.log(
             `Shutdown: killed ${killedCount}/${runningTerminals.length} terminal(s)`

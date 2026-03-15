@@ -47,7 +47,6 @@ import {
 } from '@/panels/layout-utils'
 import { usePanelActions } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
-import { getActivePanelTab } from '@/panels/panel-tab-utils'
 import { getAllWorkspaceTileLeaves } from '@/panels/window-tab-utils'
 import { DiffPane } from '@/panes/diff-pane'
 import { ReviewPane } from '@/panes/review-pane'
@@ -349,21 +348,10 @@ function WorkspacePickerItem({
     onSelect(workspace.id)
   }, [onSelect, workspace.id])
 
-  const handleKeyDown = useCallback(
-    (event: React.KeyboardEvent) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault()
-        onSelect(workspace.id)
-      }
-    },
-    [onSelect, workspace.id]
-  )
-
   return (
     <Button
       className="h-auto justify-start gap-2 px-2 py-1.5 text-xs"
       onClick={handleClick}
-      onKeyDown={handleKeyDown}
       variant="ghost"
     >
       <GitBranch className="size-3 shrink-0 text-muted-foreground" />
@@ -517,10 +505,11 @@ function WorkspaceFrame({
 
   // Check if the active pane belongs to this workspace frame
   const leaves = useMemo(() => getLeafNodes(subLayout), [subLayout])
-  const isActiveFrame = useMemo(
+  const activePaneInFrame = useMemo(
     () => activePaneId != null && leaves.some((l) => l.id === activePaneId),
     [activePaneId, leaves]
   )
+  const isActiveFrame = activePaneInFrame
 
   // Handle header click: if minimized, expand; otherwise focus the first pane
   const handleHeaderClick = useCallback(() => {
@@ -565,12 +554,8 @@ function WorkspaceFrame({
       if (panel.isCollapsed()) {
         panel.expand()
       }
-    } catch (error) {
+    } catch {
       // Panel not yet registered with its group — will retry on next render.
-      console.warn(
-        '[WorkspaceFrame] Panel constraints not yet available:',
-        error
-      )
     }
   }, [isCollapsible, isMinimized, panelRef])
 
@@ -628,15 +613,12 @@ function WorkspaceFrame({
     reviewWorkspaceId !== null && reviewWorkspaceId === workspaceId
   const hasSidePanels = showDiff || showReview
   const workspacePaneId = useMemo(() => {
-    if (
-      activePaneId != null &&
-      leaves.some((leaf) => leaf.id === activePaneId)
-    ) {
+    if (activePaneInFrame) {
       return activePaneId
     }
 
     return leaves[0]?.id ?? null
-  }, [activePaneId, leaves])
+  }, [activePaneInFrame, activePaneId, leaves])
 
   const closeSidePanel = useCallback(
     (togglePanel: ((paneId: string) => boolean) | undefined) => {
@@ -680,20 +662,17 @@ function WorkspaceFrame({
   const isEmptyWorkspace =
     tileLeaf !== undefined && tileLeaf.panelTabs.length === 0
 
-  // The layout to render: in hierarchical mode, use the active panel tab's layout
-  // (cast to PanelNode since PanelManager accepts the legacy type and the structure
-  // is compatible at the rendering level). Falls back to subLayout for legacy rendering.
-  // Returns null when no active panel tab exists in hierarchical mode (empty workspace).
+  // The layout to render: in hierarchical mode, the caller (WorkspaceTileLeafFrame)
+  // has already converted the active panel tab's PanelTreeNode to legacy PanelNode
+  // and passed it as subLayout. We only need to check for the empty workspace case.
   const effectiveLayout: PanelNode | null = useMemo(() => {
     if (tileLeaf) {
-      const activeTab = getActivePanelTab(tileLeaf)
-      if (activeTab) {
-        // Convert the new PanelTreeNode to legacy PanelNode so that
-        // PanelManager and layout-utils can process it correctly.
-        return convertPanelTreeToLegacy(activeTab.panelLayout)
+      // When tileLeaf has no panel tabs, render the empty workspace state
+      if (tileLeaf.panelTabs.length === 0) {
+        return null
       }
-      // No active tab — empty workspace state will be rendered instead
-      return null
+      // subLayout already contains the converted active tab layout
+      return subLayout
     }
     return subLayout
   }, [tileLeaf, subLayout])
@@ -758,7 +737,7 @@ function WorkspaceFrame({
       />
       {showPanelTabBar && !isMinimized && (
         <TabBar
-          closeTooltip="Close tab (Cmd+W)"
+          closeTooltip="Close tab"
           items={panelTabItems}
           label="Panel Tabs"
           newTabTooltip="New panel tab (Ctrl+T)"
@@ -1077,8 +1056,8 @@ export function WorkspaceFrames({
   // -------------------------------------------------------------------
   // When a workspace tile layout is provided (from the active WindowTab),
   // use the recursive WorkspaceTileRenderer for bidirectional tiling.
-  // The flat PanelNode tree is still needed as a bridge to extract
-  // per-workspace sub-layouts until panel tabs (issue #10) are wired up.
+  // The flat PanelNode tree is kept for backward compatibility with
+  // legacy layout paths.
   if (workspaceTileLayout) {
     return (
       <WorkspaceTileRenderer

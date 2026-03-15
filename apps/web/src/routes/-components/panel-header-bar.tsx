@@ -5,7 +5,7 @@ import {
   PanelLeftOpen,
   Terminal,
 } from 'lucide-react'
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import type { TabBarItem } from '@/components/ui/tab-bar'
 import { TabBar } from '@/components/ui/tab-bar'
@@ -73,6 +73,28 @@ function WindowTabBar({
     })
   }, [windowLayout])
 
+  const handleClose = useCallback(() => {
+    onCloseTab?.()
+  }, [onCloseTab])
+
+  const handleNew = useCallback(() => {
+    onNewTab?.()
+  }, [onNewTab])
+
+  const handleReorder = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      onReorderTabs?.(fromIndex, toIndex)
+    },
+    [onReorderTabs]
+  )
+
+  const handleSelect = useCallback(
+    (tabId: string) => {
+      onSelectTab?.(tabId)
+    },
+    [onSelectTab]
+  )
+
   if (items.length === 0) {
     return null
   }
@@ -84,10 +106,10 @@ function WindowTabBar({
       items={items}
       label="Window Tabs"
       newTabTooltip="New window tab (Cmd+N)"
-      onClose={onCloseTab ? () => onCloseTab() : () => undefined}
-      onNew={onNewTab ?? (() => undefined)}
-      onReorder={onReorderTabs ?? (() => undefined)}
-      onSelect={onSelectTab ?? (() => undefined)}
+      onClose={handleClose}
+      onNew={handleNew}
+      onReorder={handleReorder}
+      onSelect={handleSelect}
     />
   )
 }

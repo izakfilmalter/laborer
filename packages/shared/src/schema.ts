@@ -882,7 +882,9 @@ const materializers = State.SQLite.materializers(events, {
       .insert({ windowId, layoutTree, activePaneId })
       .onConflict('windowId', 'update', { layoutTree, activePaneId }),
   'v1.LayoutWorkspacesReordered': ({ windowId, workspaceOrder }) =>
-    panelLayout.update({ workspaceOrder }).where({ windowId }),
+    panelLayout
+      .insert({ windowId, workspaceOrder })
+      .onConflict('windowId', 'update', { workspaceOrder }),
   // -- Hierarchical layout event materializers --------------------------------
   'v1.WindowTabCreated': ({ windowId, windowLayout, activeWindowTabId }) =>
     panelLayout

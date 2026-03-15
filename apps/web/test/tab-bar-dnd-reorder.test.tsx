@@ -582,10 +582,6 @@ describe('TabBar DnD reorder', () => {
       const target2 = getDropTarget(2)
       expect(target2.onDragEnter).toBeDefined()
 
-      // Verify onDrag is also registered for continuous edge updates
-      expect(target0.onDrag).toBeDefined()
-      expect(target2.onDrag).toBeDefined()
-
       // Verify onDragLeave clears edge
       expect(target0.onDragLeave).toBeDefined()
       expect(target2.onDragLeave).toBeDefined()

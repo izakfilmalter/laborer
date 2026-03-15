@@ -567,7 +567,7 @@ function PanelHotkeys({
     { timeout: SEQUENCE_TIMEOUT }
   )
 
-  // --- cmux-style direct navigation (Cmd+Option+Arrow) ---
+  // --- tmux-style direct navigation (Cmd+Option+Arrow) ---
   // Navigate to the pane in the given direction with a single shortcut,
   // no prefix key required. Uses raw keydown handler because TanStack
   // Hotkeys may not handle Alt+Meta+Arrow reliably on macOS (Option key
@@ -677,10 +677,12 @@ function PanelHotkeys({
       if (!activeWorkspaceId) {
         return
       }
-      if (event.key === '[') {
+      // Use event.code for layout-stable matching — event.key reports
+      // '{' / '}' when Shift is held, not '[' / ']'.
+      if (event.code === 'BracketLeft') {
         event.preventDefault()
         actions?.switchPanelTabRelative?.(activeWorkspaceId, -1)
-      } else if (event.key === ']') {
+      } else if (event.code === 'BracketRight') {
         event.preventDefault()
         actions?.switchPanelTabRelative?.(activeWorkspaceId, 1)
       }
@@ -753,10 +755,12 @@ function PanelHotkeys({
       if (!(event.metaKey && event.shiftKey) || event.ctrlKey || event.altKey) {
         return
       }
-      if (event.key === '[') {
+      // Use event.code for layout-stable matching — event.key reports
+      // '{' / '}' when Shift is held, not '[' / ']'.
+      if (event.code === 'BracketLeft') {
         event.preventDefault()
         actions?.switchWindowTabRelative?.(-1)
-      } else if (event.key === ']') {
+      } else if (event.code === 'BracketRight') {
         event.preventDefault()
         actions?.switchWindowTabRelative?.(1)
       }

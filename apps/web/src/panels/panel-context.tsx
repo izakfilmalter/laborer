@@ -198,6 +198,13 @@ interface PanelActions {
    */
   readonly setActivePaneId: (paneId: string | null) => void
   /**
+   * Show the panel type picker. When a type is selected, the corresponding
+   * action (split or new tab) is performed automatically.
+   *
+   * @param mode - Determines the action: split-right, split-down, or new-tab
+   */
+  readonly showPanelTypePicker: ((mode: PickerMode) => void) | undefined
+  /**
    * Split a pane into two. The original pane stays; a new sibling pane
    * is added in the given direction.
    *
@@ -205,13 +212,6 @@ interface PanelActions {
    * @param direction - "horizontal" (side-by-side) or "vertical" (stacked)
    * @param newPaneContent - Optional content for the new pane
    */
-  /**
-   * Show the panel type picker. When a type is selected, the corresponding
-   * action (split or new tab) is performed automatically.
-   *
-   * @param mode - Determines the action: split-right, split-down, or new-tab
-   */
-  readonly showPanelTypePicker: ((mode: PickerMode) => void) | undefined
   readonly splitPane: (
     paneId: string,
     direction: SplitDirection,

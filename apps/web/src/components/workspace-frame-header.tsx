@@ -23,7 +23,7 @@ import {
   Terminal,
   X,
 } from 'lucide-react'
-import { Suspense } from 'react'
+import { Suspense, useCallback } from 'react'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { useUnresolvedFindingsCount } from '@/components/review-findings-count'
 import { Badge } from '@/components/ui/badge'
@@ -210,13 +210,16 @@ function WorkspaceFrameHeader({
   const needsAttention = agentStatus === 'waiting_for_input'
 
   /** Shift focus to this workspace's pane before performing a panel action. */
-  const withFocus = (fn: (paneId: string) => void) => () => {
-    if (!activePaneId) {
-      return
-    }
-    actions?.setActivePaneId(activePaneId)
-    fn(activePaneId)
-  }
+  const withFocus = useCallback(
+    (fn: (paneId: string) => void) => () => {
+      if (!activePaneId) {
+        return
+      }
+      actions?.setActivePaneId(activePaneId)
+      fn(activePaneId)
+    },
+    [activePaneId, actions]
+  )
 
   const reviewButtonOnClick = withFocus((paneId) =>
     actions?.toggleReviewPane(paneId)

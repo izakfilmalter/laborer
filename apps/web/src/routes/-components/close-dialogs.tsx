@@ -347,10 +347,6 @@ export function CloseAppDialog({
     onOpenChange(false)
   }, [onOpenChange])
 
-  const handleCloseClick = useCallback(() => {
-    handleCloseToTray()
-  }, [handleCloseToTray])
-
   return (
     <AlertDialog onOpenChange={onOpenChange} open={open}>
       <AlertDialogContent>
@@ -363,7 +359,7 @@ export function CloseAppDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={handleCloseClick}>
+          <AlertDialogAction onClick={handleCloseToTray}>
             Close
           </AlertDialogAction>
         </AlertDialogFooter>

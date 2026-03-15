@@ -21,7 +21,7 @@ import {
   monitorForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -171,13 +171,6 @@ function TabBarTab({
           barId,
         }),
         onDragEnter: ({ source }) => {
-          if (!isTabBarDragData(source.data)) {
-            return
-          }
-          const sourceIndex = source.data.index
-          setClosestEdge(sourceIndex < index ? 'right' : 'left')
-        },
-        onDrag: ({ source }) => {
           if (!isTabBarDragData(source.data)) {
             return
           }
@@ -497,7 +490,10 @@ function TabBarInner({
   const knownIdsRef = useRef<ReadonlySet<string>>(
     new Set(items.map((i) => i.id))
   )
-  const newIds = useMemo(() => {
+  const [newIds, setNewIds] = useState<ReadonlySet<string>>(new Set())
+
+  // Detect newly added tabs after commit (safe for concurrent mode).
+  useEffect(() => {
     const known = knownIdsRef.current
     const added = new Set<string>()
     for (const item of items) {
@@ -505,20 +501,17 @@ function TabBarInner({
         added.add(item.id)
       }
     }
-    // Update known set for next render
     knownIdsRef.current = new Set(items.map((i) => i.id))
-    return added
+    if (added.size > 0) {
+      setNewIds(added)
+    }
   }, [items])
 
-  // Re-check overflow whenever items change. Using a microtask ensures the
-  // DOM has been updated with the new tab elements before we measure.
-  const prevItemCount = useRef(items.length)
-  if (prevItemCount.current !== items.length) {
-    prevItemCount.current = items.length
-    // Schedule a microtask to recheck after React commits the DOM update.
-    // This avoids reading stale scroll dimensions during render.
+  // Re-check overflow whenever items change, after React commits the DOM.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: items triggers the recheck when tabs are added/removed
+  useEffect(() => {
     queueMicrotask(recheckOverflow)
-  }
+  }, [items, recheckOverflow])
 
   // Auto-scroll the active tab into view when the active item changes
   useEffect(() => {
@@ -564,12 +557,8 @@ function TabBarInner({
   const handleScrollRight = useCallback(() => scrollBy(120), [scrollBy])
 
   // Monitor for drag-and-drop reorder events
-  const onReorderStable = useCallback(
-    (fromIndex: number, toIndex: number) => {
-      onReorder(fromIndex, toIndex)
-    },
-    [onReorder]
-  )
+  const onReorderRef = useRef(onReorder)
+  onReorderRef.current = onReorder
 
   useEffect(() => {
     return monitorForElements({
@@ -590,10 +579,10 @@ function TabBarInner({
         if (sourceData.index === targetData.index) {
           return
         }
-        onReorderStable(sourceData.index, targetData.index)
+        onReorderRef.current(sourceData.index, targetData.index)
       },
     })
-  }, [barId, onReorderStable])
+  }, [barId])
 
   return (
     <div

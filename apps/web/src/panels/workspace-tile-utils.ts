@@ -21,20 +21,15 @@ import type {
   WorkspaceTileSplit,
 } from '@laborer/shared/types'
 
+import { generateId } from './id-utils'
+
 // ---------------------------------------------------------------------------
 // ID generation
 // ---------------------------------------------------------------------------
 
-let _counter = 0
-
-/**
- * Generate a unique ID for new workspace tile nodes.
- * Uses an incrementing counter with a random suffix to avoid collisions.
- */
+/** Generate a unique ID for workspace tile nodes with the given prefix. */
 function generateTileId(prefix: string): string {
-  _counter += 1
-  const random = Math.random().toString(36).slice(2, 8)
-  return `${prefix}-${_counter}-${random}`
+  return generateId(prefix)
 }
 
 // ---------------------------------------------------------------------------
@@ -614,6 +609,7 @@ function reorderWorkspaceTiles(
 
 export {
   addWorkspaceToTab,
+  getWorkspaceTileLeaves,
   removeWorkspaceFromTab,
   reorderWorkspaceTiles,
   resizeWorkspaceTiles,

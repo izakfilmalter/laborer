@@ -860,8 +860,12 @@ function WorkspaceList({ projectId, repoPath }: WorkspaceListProps) {
   const prdList = store.useQuery(allPrds$)
 
   // Filter out destroyed workspaces, scoped to the given project
-  const activeWorkspaces = workspaceList.filter(
-    (ws) => ws.status !== 'destroyed' && ws.projectId === projectId
+  const activeWorkspaces = useMemo(
+    () =>
+      workspaceList.filter(
+        (ws) => ws.status !== 'destroyed' && ws.projectId === projectId
+      ),
+    [workspaceList, projectId]
   )
 
   // Build a map of plan/<slug> branch name → prdId for this project,

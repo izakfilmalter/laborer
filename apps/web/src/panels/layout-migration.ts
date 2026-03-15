@@ -35,22 +35,17 @@ import type {
   WorkspaceTileNode,
   WorkspaceTileSplit,
 } from '@laborer/shared/types'
+import { generateId } from './id-utils'
 import { filterTreeByWorkspace, getWorkspaceIds } from './layout-utils'
+import { getWorkspaceTileLeaves } from './workspace-tile-utils'
 
 // ---------------------------------------------------------------------------
 // ID generation
 // ---------------------------------------------------------------------------
 
-let _counter = 0
-
-/**
- * Generate a unique ID for migration-created nodes.
- * Uses an incrementing counter with a random suffix to avoid collisions.
- */
+/** Generate a unique ID for migration-created nodes with the given prefix. */
 function generateMigrationId(prefix: string): string {
-  _counter += 1
-  const random = Math.random().toString(36).slice(2, 8)
-  return `${prefix}-${_counter}-${random}`
+  return generateId(prefix)
 }
 
 // ---------------------------------------------------------------------------
@@ -277,15 +272,18 @@ function resolveFocusedPaneId(
 /**
  * Collect all leaf IDs from a PanelTreeNode in DFS order.
  */
-function collectPanelLeafIds(node: PanelTreeNode): string[] {
+function collectPanelLeafIds(
+  node: PanelTreeNode,
+  acc: string[] = []
+): string[] {
   if (node._tag === 'PanelLeafNode') {
-    return [node.id]
+    acc.push(node.id)
+    return acc
   }
-  const ids: string[] = []
   for (const child of node.children) {
-    ids.push(...collectPanelLeafIds(child))
+    collectPanelLeafIds(child, acc)
   }
-  return ids
+  return acc
 }
 
 // ---------------------------------------------------------------------------
@@ -427,7 +425,7 @@ function deriveLegacyTreeFromHierarchical(
 
   // Collect all workspace tile leaves from the active window tab,
   // skipping any with empty/missing workspaceId (invalid data)
-  const allLeaves = collectWorkspaceTileLeaves(activeTab.workspaceLayout)
+  const allLeaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
   const leaves = allLeaves.filter((l) => l.workspaceId !== '')
   if (leaves.length === 0) {
     return undefined
@@ -460,22 +458,6 @@ function deriveLegacyTreeFromHierarchical(
     children: legacySubTrees,
     sizes: legacySubTrees.map(() => 100 / legacySubTrees.length),
   }
-}
-
-/**
- * Recursively collect all WorkspaceTileLeaf nodes from a workspace tile tree.
- */
-function collectWorkspaceTileLeaves(
-  node: WorkspaceTileNode
-): WorkspaceTileLeaf[] {
-  if (node._tag === 'WorkspaceTileLeaf') {
-    return [node]
-  }
-  const result: WorkspaceTileLeaf[] = []
-  for (const child of node.children) {
-    result.push(...collectWorkspaceTileLeaves(child))
-  }
-  return result
 }
 
 // ---------------------------------------------------------------------------

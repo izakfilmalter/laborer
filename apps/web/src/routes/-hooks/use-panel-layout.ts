@@ -642,9 +642,19 @@ export function usePanelLayout() {
         })
       )
 
+      // Re-read the window layout from the store after committing so we
+      // operate on post-commit state instead of a stale closure value.
+      const currentRows = store.query(persistedLayout$)
+      const currentRow = currentRows.find(
+        (row) => row.windowId === panelWindowId
+      )
+      const freshWindowLayout =
+        (currentRow?.windowLayout as WindowLayout | undefined) ??
+        persistedWindowLayout
+
       // Sync the split to the hierarchical tree
       const updatedWindowLayout = syncLegacyTreeToHierarchical(
-        persistedWindowLayout,
+        freshWindowLayout,
         newTree,
         splitWorkspaceId
       )
@@ -1244,6 +1254,22 @@ export function usePanelLayout() {
             activePaneId: nextActivePaneId,
           })
         )
+
+        // Sync the workspace close to the hierarchical tree
+        const updatedWindowLayout = syncLegacyTreeToHierarchical(
+          persistedWindowLayout,
+          newTree,
+          workspaceId
+        )
+        if (updatedWindowLayout) {
+          store.commit(
+            windowLayoutRestored({
+              windowId: panelWindowId,
+              windowLayout: updatedWindowLayout,
+              activeWindowTabId: updatedWindowLayout.activeTabId ?? null,
+            })
+          )
+        }
       } else {
         // All panes closed — commit an empty placeholder
         store.commit(
@@ -1267,6 +1293,7 @@ export function usePanelLayout() {
       defaultLayout,
       panelWindowId,
       persistedActivePaneId,
+      persistedWindowLayout,
       store,
       removeTerminalOptimistically,
     ]
@@ -1326,7 +1353,8 @@ export function usePanelLayout() {
         | typeof windowTabCreated
         | typeof windowTabClosed
         | typeof windowTabSwitched
-        | typeof windowTabsReordered,
+        | typeof windowTabsReordered
+        | typeof windowLayoutRestored,
       newLayout: WindowLayout
     ) => {
       store.commit(
@@ -1503,7 +1531,7 @@ export function usePanelLayout() {
         addWorkspaceToTab
       )
 
-      commitWindowLayout(windowTabCreated, newLayout)
+      commitWindowLayout(windowLayoutRestored, newLayout)
     },
     [persistedWindowLayout, commitWindowLayout]
   )

@@ -76,7 +76,7 @@ const isMetaShiftBracket = (event: KeyboardEvent): boolean =>
   event.shiftKey &&
   !event.ctrlKey &&
   !event.altKey &&
-  (event.key === '[' || event.key === ']')
+  (event.code === 'BracketLeft' || event.code === 'BracketRight')
 
 /** Ctrl+T — new panel tab. */
 const isCtrlT = (event: KeyboardEvent): boolean =>
@@ -101,7 +101,7 @@ const isCtrlShiftBracket = (event: KeyboardEvent): boolean =>
   event.shiftKey &&
   !event.metaKey &&
   !event.altKey &&
-  (event.key === '[' || event.key === ']')
+  (event.code === 'BracketLeft' || event.code === 'BracketRight')
 
 /** Cmd+Option+Arrow — directional pane navigation (cmux-style). */
 const isMetaAltArrow = (event: KeyboardEvent): boolean =>

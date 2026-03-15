@@ -23,29 +23,20 @@ import type {
   WorkspaceTileLeaf,
 } from '@laborer/shared/types'
 
+import { generateId } from './id-utils'
+
 // ---------------------------------------------------------------------------
 // ID generation
 // ---------------------------------------------------------------------------
 
-let _counter = 0
-
-/**
- * Generate a unique ID for new panel tab nodes.
- * Uses an incrementing counter with a random suffix to avoid collisions.
- */
+/** Generate a unique ID for new panel tab nodes. */
 function generatePanelTabId(): string {
-  _counter += 1
-  const random = Math.random().toString(36).slice(2, 8)
-  return `panel-tab-${_counter}-${random}`
+  return generateId('panel-tab')
 }
 
-/**
- * Generate a unique ID for new panel leaf nodes.
- */
+/** Generate a unique ID for new panel leaf nodes. */
 function generatePaneId(): string {
-  _counter += 1
-  const random = Math.random().toString(36).slice(2, 8)
-  return `pane-${_counter}-${random}`
+  return generateId('pane')
 }
 
 // ---------------------------------------------------------------------------

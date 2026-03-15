@@ -211,32 +211,26 @@ function HomeComponent() {
     null
   )
 
-  // Auto-close review panel when the workspace no longer exists in the layout
-  // (e.g., if the workspace was closed while the review panel was open).
+  // Auto-close review/diff panels when the workspace no longer exists
+  // in the layout (e.g., if the workspace was closed while a side panel was open).
   useEffect(() => {
-    if (reviewPaneWorkspaceId && layout) {
-      const leaves = getLeafNodes(layout)
-      const workspaceExists = leaves.some(
-        (l) => l.workspaceId === reviewPaneWorkspaceId
-      )
-      if (!workspaceExists) {
+    if (!((reviewPaneWorkspaceId || diffPaneWorkspaceId) && layout)) {
+      return
+    }
+    const leaves = getLeafNodes(layout)
+    if (reviewPaneWorkspaceId) {
+      const exists = leaves.some((l) => l.workspaceId === reviewPaneWorkspaceId)
+      if (!exists) {
         setReviewPaneWorkspaceId(null)
       }
     }
-  }, [reviewPaneWorkspaceId, layout])
-
-  // Auto-close diff panel when the workspace no longer exists in the layout.
-  useEffect(() => {
-    if (diffPaneWorkspaceId && layout) {
-      const leaves = getLeafNodes(layout)
-      const workspaceExists = leaves.some(
-        (l) => l.workspaceId === diffPaneWorkspaceId
-      )
-      if (!workspaceExists) {
+    if (diffPaneWorkspaceId) {
+      const exists = leaves.some((l) => l.workspaceId === diffPaneWorkspaceId)
+      if (!exists) {
         setDiffPaneWorkspaceId(null)
       }
     }
-  }, [diffPaneWorkspaceId, layout])
+  }, [reviewPaneWorkspaceId, diffPaneWorkspaceId, layout])
 
   /**
    * Toggle the full-height review panel for the workspace of the given pane.
@@ -967,7 +961,7 @@ function HomeComponent() {
               <div className="flex h-full flex-col">
                 <PanelHeaderBar
                   mainView={mainView}
-                  onCloseWindowTab={panelActions.closeWindowTab}
+                  onCloseWindowTab={gatedPanelActions.closeWindowTab}
                   onNewWindowTab={panelActions.addWindowTab}
                   onReorderWindowTabs={panelActions.reorderWindowTabsDnd}
                   onSelectWindowTab={panelActions.switchWindowTab}

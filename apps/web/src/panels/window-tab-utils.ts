@@ -20,20 +20,15 @@ import type {
   WorkspaceTileNode,
 } from '@laborer/shared/types'
 
+import { generateId } from './id-utils'
+
 // ---------------------------------------------------------------------------
 // ID generation
 // ---------------------------------------------------------------------------
 
-let _counter = 0
-
-/**
- * Generate a unique ID for new window tab nodes.
- * Uses an incrementing counter with a random suffix to avoid collisions.
- */
+/** Generate a unique ID for new window tab nodes. */
 function generateWindowTabId(): string {
-  _counter += 1
-  const random = Math.random().toString(36).slice(2, 8)
-  return `window-tab-${_counter}-${random}`
+  return generateId('window-tab')
 }
 
 // ---------------------------------------------------------------------------
@@ -943,6 +938,29 @@ function resolveLastPaneCloseAction(
 }
 
 /**
+ * Resolve the close action when no pane is focused (activePaneId is null).
+ * Tries to find a pane via the layout hierarchy before falling back to close-app.
+ */
+function resolveNullPaneCloseAction(
+  layout: WindowLayout | undefined
+): ProgressiveCloseAction {
+  if (layout) {
+    const activeTab = getActiveWindowTab(layout)
+    if (activeTab) {
+      const resolvedPaneId = resolveActivePaneForWindowTab(activeTab)
+      if (resolvedPaneId) {
+        return { kind: 'close-pane', paneId: resolvedPaneId }
+      }
+      // Active tab exists but has no panes — close the tab
+      if (layout.tabs.length > 1) {
+        return { kind: 'close-window-tab', tabId: activeTab.id }
+      }
+    }
+  }
+  return { kind: 'close-app' }
+}
+
+/**
  * Determine the correct close action for the progressive `Cmd+W` chain.
  *
  * The chain escalates from innermost to outermost:
@@ -965,9 +983,11 @@ function computeProgressiveCloseAction(
   activePaneId: string | null,
   activeWorkspaceId: string | undefined
 ): ProgressiveCloseAction {
-  // No active pane and no layout → close app
+  // No active pane — attempt to resolve one from the layout before
+  // falling back to close-app. This handles the case where the user
+  // clicks outside any pane (deselecting focus) then presses Cmd+W.
   if (!activePaneId) {
-    return { kind: 'close-app' }
+    return resolveNullPaneCloseAction(layout)
   }
 
   // No hierarchical layout available → fall back to simple pane close
@@ -1519,7 +1539,9 @@ function resolveActivePanelTabId(
   }
   return {
     id: validTabs[0]?.id,
-    repaired: raw !== undefined,
+    // Always flag as repaired when activePanelTabId is being set from a
+    // non-string value so the caller re-persists the corrected layout.
+    repaired: true,
   }
 }
 
@@ -1733,9 +1755,9 @@ function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
     }
   } else {
     activeTabId = validTabs[0]?.id
-    if (layout.activeTabId !== undefined) {
-      repaired = true
-    }
+    // Always flag as repaired when activeTabId is being set from a
+    // non-string value (undefined or invalid type) so the caller re-persists.
+    repaired = true
   }
 
   return {

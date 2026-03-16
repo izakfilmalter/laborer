@@ -6,7 +6,7 @@ Parent PRD: [PRD.md](./PRD.md)
 
 ## Issue 1: PanelManager renders PanelTreeNode directly
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

@@ -46,12 +46,9 @@ vi.mock('@/lib/workspace-agent-status', () => ({
   deriveWorkspaceAgentStatus: () => null,
 }))
 
-vi.mock('@/panels/layout-utils', () => ({
-  findNodeById: () => ({ _tag: 'LeafNode', diffOpen: false }),
-  getLeafNodes: (node: { _tag: string; paneType?: string }) =>
-    node._tag === 'LeafNode' ? [node] : [],
-  getScopedActivePaneId: (_subLayout: unknown, activePaneId: string | null) =>
-    activePaneId,
+vi.mock('@/panels/window-tab-utils', () => ({
+  getPanelTreeLeafIds: (node: { _tag: string; id?: string }) =>
+    node._tag === 'PanelLeafNode' ? [node.id] : [],
 }))
 
 vi.mock('@/panels/panel-context', () => ({
@@ -66,7 +63,7 @@ vi.mock('@/components/workspace-frame-header', () => ({
 import { WorkspaceFrameHeaderContainer } from '../src/routes/-components/workspace-frame-header-container'
 
 const subLayout = {
-  _tag: 'LeafNode' as const,
+  _tag: 'PanelLeafNode' as const,
   id: 'pane-1',
   paneType: 'terminal' as const,
   terminalId: 'term-1',
@@ -123,7 +120,7 @@ describe('WorkspaceFrameHeaderContainer', () => {
     })
   })
 
-  it('does not refresh PR status when no pane in the workspace is focused', () => {
+  it('does not refresh PR status when no workspace ID is provided', () => {
     activePaneIdMock.mockReturnValue(null)
     useLaborerStoreMock.mockReturnValue({
       useQuery: () => [],
@@ -135,7 +132,7 @@ describe('WorkspaceFrameHeaderContainer', () => {
         onHeaderClick={() => undefined}
         onMinimize={() => undefined}
         subLayout={subLayout}
-        workspaceId="ws-1"
+        workspaceId={undefined}
       />
     )
 

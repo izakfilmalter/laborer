@@ -435,66 +435,64 @@ describe('LiveStore schema', () => {
     })
   )
 
-  it.scoped(
-    'keeps legacy panel layout events as no-op materializers',
-    () =>
-      Effect.gen(function* () {
-        const store = yield* makeTestStore
+  it.scoped('keeps legacy panel layout events as no-op materializers', () =>
+    Effect.gen(function* () {
+      const store = yield* makeTestStore
 
-        // Legacy events are now no-ops — they should not insert any rows
-        store.commit(
-          events.layoutSplit({
-            windowId: 'window-1',
-            layoutTree: splitLayout,
-            activePaneId: 'pane-1',
-          })
-        )
+      // Legacy events are now no-ops — they should not insert any rows
+      store.commit(
+        events.layoutSplit({
+          windowId: 'window-1',
+          layoutTree: splitLayout,
+          activePaneId: 'pane-1',
+        })
+      )
 
-        assert.deepStrictEqual(store.query(tables.panelLayout), [])
+      assert.deepStrictEqual(store.query(tables.panelLayout), [])
 
-        store.commit(
-          events.layoutPaneClosed({
-            windowId: 'window-1',
-            layoutTree: leafPane,
-            activePaneId: 'pane-1',
-          })
-        )
+      store.commit(
+        events.layoutPaneClosed({
+          windowId: 'window-1',
+          layoutTree: leafPane,
+          activePaneId: 'pane-1',
+        })
+      )
 
-        assert.deepStrictEqual(store.query(tables.panelLayout), [])
+      assert.deepStrictEqual(store.query(tables.panelLayout), [])
 
-        store.commit(
-          events.layoutPaneAssigned({
-            windowId: 'window-1',
-            layoutTree: {
-              ...leafPane,
-              terminalId: 'terminal-3',
-              id: 'pane-assigned',
-            },
-            activePaneId: 'pane-assigned',
-          })
-        )
+      store.commit(
+        events.layoutPaneAssigned({
+          windowId: 'window-1',
+          layoutTree: {
+            ...leafPane,
+            terminalId: 'terminal-3',
+            id: 'pane-assigned',
+          },
+          activePaneId: 'pane-assigned',
+        })
+      )
 
-        assert.deepStrictEqual(store.query(tables.panelLayout), [])
+      assert.deepStrictEqual(store.query(tables.panelLayout), [])
 
-        store.commit(
-          events.layoutRestored({
-            windowId: 'window-1',
-            layoutTree: restoredLayout,
-            activePaneId: null,
-          })
-        )
+      store.commit(
+        events.layoutRestored({
+          windowId: 'window-1',
+          layoutTree: restoredLayout,
+          activePaneId: null,
+        })
+      )
 
-        assert.deepStrictEqual(store.query(tables.panelLayout), [])
+      assert.deepStrictEqual(store.query(tables.panelLayout), [])
 
-        store.commit(
-          events.layoutWorkspacesReordered({
-            windowId: 'window-1',
-            workspaceOrder: ['workspace-2', 'workspace-1'],
-          })
-        )
+      store.commit(
+        events.layoutWorkspacesReordered({
+          windowId: 'window-1',
+          workspaceOrder: ['workspace-2', 'workspace-1'],
+        })
+      )
 
-        assert.deepStrictEqual(store.query(tables.panelLayout), [])
-      })
+      assert.deepStrictEqual(store.query(tables.panelLayout), [])
+    })
   )
 
   it.scoped('keeps deprecated terminal events as no-op materializers', () =>

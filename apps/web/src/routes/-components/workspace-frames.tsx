@@ -37,10 +37,9 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { TabBar, type TabBarItem } from '@/components/ui/tab-bar'
 import { TabErrorBoundary } from '@/components/ui/tab-error-boundary'
 import { useLaborerStore } from '@/livestore/store'
-import { convertPanelTreeToLegacy } from '@/panels/layout-migration'
+import { convertPanelTree } from '@/panels/layout-migration'
 import {
   filterTreeByWorkspace,
-  getLeafNodes,
   getWorkspaceIds,
   isWorkspaceFrameData,
   sortWorkspaceLayouts,
@@ -48,7 +47,10 @@ import {
 } from '@/panels/layout-utils'
 import { usePanelActions } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
-import { getAllWorkspaceTileLeaves } from '@/panels/window-tab-utils'
+import {
+  getAllWorkspaceTileLeaves,
+  getPanelTreeLeafIds,
+} from '@/panels/window-tab-utils'
 import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
 import { DiffPane } from '@/panes/diff-pane'
 import { ReviewPane } from '@/panes/review-pane'
@@ -388,7 +390,7 @@ function WorkspaceContent({
   readonly isEmptyWorkspace: boolean
   readonly workspaceId: string | undefined
   readonly hasSidePanels: boolean
-  readonly effectiveLayout: PanelNode | null
+  readonly effectiveLayout: PanelTreeNode | null
   readonly mainPanelSize: string
   readonly sidePanelSize: string
   readonly showDiff: boolean
@@ -490,7 +492,7 @@ function WorkspaceFrame({
   parentDirection,
 }: {
   readonly workspaceId: string | undefined
-  readonly subLayout: PanelNode
+  readonly subLayout: PanelTreeNode
   readonly activePaneId: string | null
   readonly index: number
   readonly isCollapsible?: boolean
@@ -510,10 +512,10 @@ function WorkspaceFrame({
   const actions = usePanelActions()
 
   // Check if the active pane belongs to this workspace frame
-  const leaves = useMemo(() => getLeafNodes(subLayout), [subLayout])
+  const leafIds = useMemo(() => getPanelTreeLeafIds(subLayout), [subLayout])
   const activePaneInFrame = useMemo(
-    () => activePaneId != null && leaves.some((l) => l.id === activePaneId),
-    [activePaneId, leaves]
+    () => activePaneId != null && leafIds.some((id) => id === activePaneId),
+    [activePaneId, leafIds]
   )
   const isActiveFrame = activePaneInFrame
 
@@ -524,11 +526,11 @@ function WorkspaceFrame({
       return
     }
     // Focus the first leaf pane in this workspace frame
-    const firstLeaf = leaves[0]
-    if (firstLeaf) {
-      actions?.setActivePaneId(firstLeaf.id)
+    const firstLeafId = leafIds[0]
+    if (firstLeafId) {
+      actions?.setActivePaneId(firstLeafId)
     }
-  }, [isMinimized, leaves, actions])
+  }, [isMinimized, leafIds, actions])
 
   const handleMinimize = useCallback(() => {
     setIsMinimized((prev) => !prev)
@@ -631,8 +633,8 @@ function WorkspaceFrame({
       return activePaneId
     }
 
-    return leaves[0]?.id ?? null
-  }, [activePaneInFrame, activePaneId, leaves])
+    return leafIds[0] ?? null
+  }, [activePaneInFrame, activePaneId, leafIds])
 
   const closeSidePanel = useCallback(
     (togglePanel: ((paneId: string) => boolean) | undefined) => {
@@ -676,10 +678,9 @@ function WorkspaceFrame({
   const isEmptyWorkspace =
     tileLeaf !== undefined && tileLeaf.panelTabs.length === 0
 
-  // The layout to render: in hierarchical mode, the caller (WorkspaceTileLeafFrame)
-  // has already converted the active panel tab's PanelTreeNode to legacy PanelNode
-  // and passed it as subLayout. We only need to check for the empty workspace case.
-  const effectiveLayout: PanelNode | null = useMemo(() => {
+  // The layout to render: in hierarchical mode, the active panel tab's PanelTreeNode
+  // is passed directly as subLayout. We only need to check for the empty workspace case.
+  const effectiveLayout: PanelTreeNode | null = useMemo(() => {
     if (tileLeaf) {
       // When tileLeaf has no panel tabs, render the empty workspace state
       if (tileLeaf.panelTabs.length === 0) {
@@ -832,7 +833,7 @@ function WorkspaceFrameResizableChild({
   reviewWorkspaceId = null,
 }: {
   readonly workspaceId: string | undefined
-  readonly subLayout: PanelNode
+  readonly subLayout: PanelTreeNode
   readonly activePaneId: string | null
   readonly defaultSize: number
   readonly index: number
@@ -880,7 +881,6 @@ function WorkspaceFrameResizableChild({
  */
 function WorkspaceTileLeafFrame({
   leaf,
-  flatLayout,
   activePaneId,
   index,
   diffWorkspaceId = null,
@@ -888,36 +888,32 @@ function WorkspaceTileLeafFrame({
   parentDirection,
 }: {
   readonly leaf: WorkspaceTileLeaf
-  readonly flatLayout: PanelNode
   readonly activePaneId: string | null
   readonly index: number
   readonly diffWorkspaceId?: string | null
   readonly reviewWorkspaceId?: string | null
   readonly parentDirection?: SplitDirection | undefined
 }) {
-  // When the leaf has panel tabs, use the active tab's layout.
-  // When it doesn't (pre-migration), fall back to extracting from the flat tree.
-  const subLayout = useMemo(() => {
+  // Use the active panel tab's PanelTreeNode directly.
+  // Panel tabs are always present in the hierarchical model.
+  const subLayout: PanelTreeNode = useMemo(() => {
     if (leaf.panelTabs.length > 0) {
-      // Convert the active tab's PanelTreeNode to legacy PanelNode so that
-      // the header's getScopedActivePaneId and getLeafNodes calls work correctly.
       const activeTab = leaf.panelTabs.find(
         (t) => t.id === leaf.activePanelTabId
       )
       if (activeTab) {
-        return convertPanelTreeToLegacy(activeTab.panelLayout)
+        return activeTab.panelLayout
       }
     }
-    return (
-      filterTreeByWorkspace(flatLayout, leaf.workspaceId) ?? {
-        _tag: 'LeafNode' as const,
-        id: `pane-tile-${leaf.id}`,
-        paneType: 'terminal' as const,
-        terminalId: undefined,
-        workspaceId: leaf.workspaceId,
-      }
-    )
-  }, [flatLayout, leaf])
+    // Fallback: create an empty PanelLeafNode for the workspace
+    return {
+      _tag: 'PanelLeafNode' as const,
+      id: `pane-tile-${leaf.id}`,
+      paneType: 'terminal' as const,
+      terminalId: undefined,
+      workspaceId: leaf.workspaceId,
+    }
+  }, [leaf])
 
   return (
     <WorkspaceFrame
@@ -939,7 +935,6 @@ function WorkspaceTileLeafFrame({
  */
 function WorkspaceTileResizableChild({
   tileNode,
-  flatLayout,
   activePaneId,
   defaultSize,
   index,
@@ -948,7 +943,6 @@ function WorkspaceTileResizableChild({
   parentDirection,
 }: {
   readonly tileNode: WorkspaceTileNode
-  readonly flatLayout: PanelNode
   readonly activePaneId: string | null
   readonly defaultSize: number
   readonly index: number
@@ -971,7 +965,6 @@ function WorkspaceTileResizableChild({
         <WorkspaceTileRenderer
           activePaneId={activePaneId}
           diffWorkspaceId={diffWorkspaceId}
-          flatLayout={flatLayout}
           index={index}
           parentDirection={parentDirection}
           reviewWorkspaceId={reviewWorkspaceId}
@@ -995,7 +988,6 @@ function WorkspaceTileResizableChild({
  */
 function WorkspaceTileRenderer({
   tileNode,
-  flatLayout,
   activePaneId,
   index = 0,
   diffWorkspaceId = null,
@@ -1003,7 +995,6 @@ function WorkspaceTileRenderer({
   parentDirection,
 }: {
   readonly tileNode: WorkspaceTileNode
-  readonly flatLayout: PanelNode
   readonly activePaneId: string | null
   readonly index?: number
   readonly diffWorkspaceId?: string | null
@@ -1016,7 +1007,6 @@ function WorkspaceTileRenderer({
         <WorkspaceTileLeafFrame
           activePaneId={activePaneId}
           diffWorkspaceId={diffWorkspaceId}
-          flatLayout={flatLayout}
           index={index}
           leaf={tileNode}
           parentDirection={parentDirection}
@@ -1041,7 +1031,6 @@ function WorkspaceTileRenderer({
             activePaneId={activePaneId}
             defaultSize={size}
             diffWorkspaceId={diffWorkspaceId}
-            flatLayout={flatLayout}
             index={childIndex}
             key={child.id}
             parentDirection={tileNode.direction}
@@ -1138,14 +1127,11 @@ export function WorkspaceFrames({
   // -------------------------------------------------------------------
   // When a workspace tile layout is provided (from the active WindowTab),
   // use the recursive WorkspaceTileRenderer for bidirectional tiling.
-  // The flat PanelNode tree is kept for backward compatibility with
-  // legacy layout paths.
   if (workspaceTileLayout) {
     return (
       <WorkspaceTileRenderer
         activePaneId={activePaneId}
         diffWorkspaceId={diffWorkspaceId}
-        flatLayout={layout}
         reviewWorkspaceId={reviewWorkspaceId}
         tileNode={workspaceTileLayout}
       />
@@ -1244,7 +1230,7 @@ function LegacyWorkspaceFrames({
         diffWorkspaceId={diffWorkspaceId}
         index={0}
         reviewWorkspaceId={reviewWorkspaceId}
-        subLayout={entry.subLayout}
+        subLayout={convertPanelTree(entry.subLayout)}
         workspaceId={entry.workspaceId}
       />
     )
@@ -1262,7 +1248,7 @@ function LegacyWorkspaceFrames({
           index={index}
           key={entry.workspaceId ?? 'no-workspace'}
           reviewWorkspaceId={reviewWorkspaceId}
-          subLayout={entry.subLayout}
+          subLayout={convertPanelTree(entry.subLayout)}
           workspaceId={entry.workspaceId}
         />
       ))}

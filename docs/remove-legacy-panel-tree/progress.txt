@@ -37,3 +37,53 @@ from `panelLayout` query results. These are expected and will be resolved by sub
 - Issue 3: handleSetActivePaneId (reads `activePaneId`)
 - Issue 12: Seeding/reconciliation (reads `layoutTree`, `activePaneId`, `workspaceOrder`)
 - Issue 10: index.tsx consumers (reads derived values)
+
+## Issue 1: PanelManager renders PanelTreeNode directly
+
+**Status:** done
+
+### Changes made
+
+1. **Updated `PanelManager` rendering pipeline** (`apps/web/src/panels/panel-manager.tsx`):
+   - `PanelManager` accepts `PanelTreeNode | undefined` as its `layout` prop (was `PanelNode`)
+   - `PanelRenderer` dispatches on `'PanelLeafNode'` / `'PanelSplitNode'` tags (was `'LeafNode'` / `'SplitNode'`)
+   - `SplitPanelRenderer` accepts `PanelSplitNode` (was `SplitNode`)
+   - `SplitChild` accepts `PanelTreeNode` children (was `PanelNode`)
+   - `LeafPaneRenderer` accepts `PanelLeafNode` (was `LeafNode`)
+   - `PaneContent` accepts `PanelLeafNode` (was `LeafNode`)
+
+2. **Simplified `TerminalPaneWithSidebars`** (`apps/web/src/panels/terminal-pane-with-sidebars.tsx`):
+   - Accepts `PanelLeafNode` (was `LeafNode`)
+   - Removed all sidebar rendering logic (`diffOpen`, `devServerOpen`, `devServerTerminalId`)
+   - In the hierarchical model, diff/review/dev-server are independent panel types
+   - Now renders a plain `TerminalPane` — sidebar flags no longer exist on `PanelLeafNode`
+
+3. **Updated `WorkspaceTileLeafFrame`** (`apps/web/src/routes/-components/workspace-frames.tsx`):
+   - Passes the active panel tab's `PanelTreeNode` directly to `WorkspaceFrame`
+   - Removed `convertPanelTreeToLegacy` call — no more legacy conversion at render time
+   - Removed `flatLayout` prop — no longer needed for the hierarchical path
+   - Removed `filterTreeByWorkspace` fallback for pre-migration tiles
+   - Fallback creates a `PanelLeafNode` (was `LeafNode`)
+
+4. **Updated `WorkspaceFrame` and related components** (`workspace-frames.tsx`):
+   - `WorkspaceFrame.subLayout` prop: `PanelTreeNode` (was `PanelNode`)
+   - `WorkspaceContent.effectiveLayout`: `PanelTreeNode | null` (was `PanelNode | null`)
+   - `WorkspaceFrameResizableChild.subLayout`: `PanelTreeNode` (was `PanelNode`)
+   - Replaced `getLeafNodes(subLayout)` with `getPanelTreeLeafIds(subLayout)` for active pane detection
+   - `WorkspaceTileRenderer` and `WorkspaceTileResizableChild` no longer accept `flatLayout` prop
+   - `LegacyWorkspaceFrames` uses `convertPanelTree()` at the boundary to convert `PanelNode` → `PanelTreeNode`
+
+5. **Updated `WorkspaceFrameHeaderContainer`** (`workspace-frame-header-container.tsx`):
+   - `subLayout` prop: `PanelTreeNode` (was `PanelNode`)
+   - Replaced `getScopedActivePaneId` (from `layout-utils`) with inline logic using `getPanelTreeLeafIds` (from `window-tab-utils`)
+
+6. **Updated test files**:
+   - `panel-manager.test.tsx`: Uses `PanelLeafNode` fixtures (was `LeafNode`), simplified to test the new simple `TerminalPaneWithSidebars` behavior
+   - `fullscreen-portal.test.tsx`: Uses `PanelLeafNode`/`PanelSplitNode`/`PanelTreeNode` fixtures
+   - `workspace-frame-header-container.test.tsx`: Uses `PanelLeafNode` fixture, updated mock from `getScopedActivePaneId` to `getPanelTreeLeafIds`
+
+### Test results
+
+- All 1299 tests in apps/web pass (1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- TypeScript clean except for pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)

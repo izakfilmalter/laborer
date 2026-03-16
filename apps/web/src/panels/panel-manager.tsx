@@ -1,10 +1,10 @@
 /**
  * PanelManager — tmux-style panel system for rendering terminal and diff panes.
  *
- * Renders a panel layout based on a `PanelNode` tree structure. Supports:
- * - Single pane rendering (LeafNode)
- * - Horizontal split (SplitNode with direction "horizontal") — side-by-side panes
- * - Vertical split (SplitNode with direction "vertical") — stacked panes
+ * Renders a panel layout based on a `PanelTreeNode` tree structure. Supports:
+ * - Single pane rendering (PanelLeafNode)
+ * - Horizontal split (PanelSplitNode with direction "horizontal") — side-by-side panes
+ * - Vertical split (PanelSplitNode with direction "vertical") — stacked panes
  * - Recursive nesting of splits to arbitrary depth (5+ levels tested)
  * - Close pane with automatic tree collapse
  *
@@ -30,7 +30,7 @@
  * Split/close/diff-toggle actions have moved to the PanelHeaderBar in the
  * route component. PanelActionsContext is still used for active-pane tracking.
  *
- * @see packages/shared/src/types.ts — PanelNode, LeafNode, SplitNode types
+ * @see packages/shared/src/types.ts — PanelTreeNode, PanelLeafNode, PanelSplitNode types
  * @see apps/web/src/panes/terminal-pane.tsx — Terminal pane component
  * @see apps/web/src/panels/layout-utils.ts — Tree manipulation functions
  * @see apps/web/src/panels/panel-context.tsx — PanelActionsContext
@@ -46,10 +46,10 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { workspaces } from '@laborer/shared/schema'
 import type {
-  LeafNode,
-  PanelNode,
+  PanelLeafNode,
+  PanelSplitNode,
+  PanelTreeNode,
   PaneType,
-  SplitNode,
 } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import { Layers, Plus, Server, Terminal as TerminalIcon } from 'lucide-react'
@@ -394,7 +394,7 @@ function EmptyDevServerPane({ paneId, workspaceId }: EmptyDevServerPaneProps) {
 
 interface PaneContentProps {
   /** The leaf node describing this pane's content. */
-  readonly node: LeafNode
+  readonly node: PanelLeafNode
   /** Callback invoked when the terminal process exits. */
   readonly onTerminalExit?: (() => void) | undefined
 }
@@ -402,11 +402,10 @@ interface PaneContentProps {
 /**
  * Renders the content of a single pane based on its type and assigned IDs.
  *
- * Terminal panes with `diffOpen: true` render the diff as an integrated
- * sidebar (resizable) alongside the terminal within the same pane container.
- * Dev server terminal panes render with `devServerOpen: true` as a right-hand
- * sidebar beside the main terminal. This matches the diff viewer placement
- * while keeping the dev server terminal visually coupled to its workspace.
+ * In the hierarchical layout model, diff, review, and dev server panes are
+ * independent panel types in separate panes/tabs rather than sidebar flags
+ * on terminal leaves. This simplifies PaneContent to a straightforward
+ * dispatch on pane type.
  */
 function PaneContent({ node, onTerminalExit }: PaneContentProps) {
   if (node.paneType === 'terminal' && node.terminalId) {
@@ -474,18 +473,18 @@ function PaneContent({ node, onTerminalExit }: PaneContentProps) {
 
 interface PanelRendererProps {
   /** The panel node tree to render. */
-  readonly node: PanelNode
+  readonly node: PanelTreeNode
 }
 
 /**
- * Renders a SplitNode as a resizable panel group with children separated
+ * Renders a PanelSplitNode as a resizable panel group with children separated
  * by drag handles.
  *
  * - direction "horizontal" → side-by-side panes (row layout)
  * - direction "vertical" → stacked panes (column layout)
  *
  * Each child is rendered recursively via PanelRenderer, supporting
- * arbitrary nesting depth. Panel sizes are taken from the SplitNode's
+ * arbitrary nesting depth. Panel sizes are taken from the PanelSplitNode's
  * sizes array (percentages that must sum to 100).
  *
  * Registers the ResizablePanelGroup's imperative handle with the
@@ -494,7 +493,7 @@ interface PanelRendererProps {
  *
  * @see Issue #79: Keyboard shortcut — resize panes
  */
-function SplitPanelRenderer({ node }: { readonly node: SplitNode }) {
+function SplitPanelRenderer({ node }: { readonly node: PanelSplitNode }) {
   const registry = usePanelGroupRegistry()
   const setGroupRef = useCallback(
     (handle: GroupImperativeHandle | null) => {
@@ -548,7 +547,7 @@ function SplitChild({
   defaultSize,
   index,
 }: {
-  readonly child: PanelNode
+  readonly child: PanelTreeNode
   readonly defaultSize: number
   readonly index: number
 }) {
@@ -619,7 +618,7 @@ function PanePickerOverlay({
  * @see Issue #134: Drag terminal from sidebar onto empty panel pane
  * @see Issue #148: Focused pane border fix
  */
-function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
+function LeafPaneRenderer({ node }: { readonly node: PanelLeafNode }) {
   const actions = usePanelActions()
   const activePaneId = useActivePaneId()
   const fullscreenPaneId = useFullscreenPaneId()
@@ -789,22 +788,22 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
 }
 
 /**
- * Recursively renders a PanelNode tree.
+ * Recursively renders a PanelTreeNode tree.
  *
- * - LeafNode → renders PaneContent with the appropriate component,
+ * - PanelLeafNode → renders PaneContent with the appropriate component,
  *   wrapped in a container with active-pane highlighting and drop target
  *   support for terminal drag-and-drop.
- * - SplitNode → renders a ResizablePanelGroup with each child in a
+ * - PanelSplitNode → renders a ResizablePanelGroup with each child in a
  *   ResizablePanel, separated by ResizableHandles. Supports horizontal
  *   (side-by-side) and vertical (stacked) orientations, and recursive
  *   nesting to arbitrary depth (5+ levels).
  */
 function PanelRenderer({ node }: PanelRendererProps) {
-  if (node._tag === 'LeafNode') {
+  if (node._tag === 'PanelLeafNode') {
     return <LeafPaneRenderer node={node} />
   }
 
-  // SplitNode — render children in a resizable panel group
+  // PanelSplitNode — render children in a resizable panel group
   if (node.children.length === 0) {
     return null
   }
@@ -817,7 +816,7 @@ interface PanelManagerProps {
    * The root panel node to render. When undefined, renders an empty state
    * guiding the user to create a workspace and spawn a terminal.
    */
-  readonly layout?: PanelNode | undefined
+  readonly layout?: PanelTreeNode | undefined
 }
 
 /**

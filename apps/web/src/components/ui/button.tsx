@@ -1,7 +1,6 @@
 import { Button as ButtonPrimitive } from '@base-ui/react/button'
 import { cva, type VariantProps } from 'class-variance-authority'
 
-import { haptics } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
 
 const buttonVariants = cva(
@@ -43,25 +42,12 @@ function Button({
   className,
   variant = 'default',
   size = 'default',
-  onClick,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
-  const handleClick: typeof onClick = onClick
-    ? (event) => {
-        if (variant === 'destructive') {
-          haptics.heavyImpact()
-        } else {
-          haptics.buttonTap()
-        }
-        onClick(event)
-      }
-    : undefined
-
   return (
     <ButtonPrimitive
       className={cn(buttonVariants({ variant, size, className }))}
       data-slot="button"
-      onClick={handleClick}
       {...props}
     />
   )

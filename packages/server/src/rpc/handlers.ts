@@ -271,6 +271,27 @@ export const handleConfigUpdate = ({
     yield* configService.writeProjectConfig(project.repoPath, config)
   })
 
+export const handleGlobalConfigGet = () =>
+  Effect.gen(function* () {
+    const configService = yield* ConfigService
+    const globalConfig = yield* configService.readGlobalConfig()
+    return {
+      agent: globalConfig.agent,
+    }
+  })
+
+export const handleGlobalConfigUpdate = ({
+  config,
+}: {
+  config: {
+    agent?: 'opencode' | 'claude' | 'codex' | undefined
+  }
+}) =>
+  Effect.gen(function* () {
+    const configService = yield* ConfigService
+    yield* configService.writeGlobalConfig(config)
+  })
+
 export const handlePrdCreate = ({
   projectId,
   title,
@@ -743,6 +764,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     'config.update': handleConfigUpdate,
 
     // -------------------------------------------------------------------
+    // Global Config RPCs
+    // -------------------------------------------------------------------
+    'globalConfig.get': handleGlobalConfigGet,
+    'globalConfig.update': handleGlobalConfigUpdate,
+
+    // -------------------------------------------------------------------
     // PRD RPCs (Issue #178)
     // -------------------------------------------------------------------
     'prd.create': handlePrdCreate,
@@ -845,6 +872,20 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.gen(function* () {
         const workspaceSyncService = yield* WorkspaceSyncService
         return yield* workspaceSyncService.pull(workspaceId)
+      }),
+    'workspace.startContainer': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const provider = yield* WorkspaceProvider
+        const diffService = yield* DiffService
+        const prWatcher = yield* PrWatcher
+        const workspaceSyncService = yield* WorkspaceSyncService
+        const onReady = (wsId: string) =>
+          Effect.gen(function* () {
+            yield* diffService.startPolling(wsId)
+            yield* prWatcher.startPolling(wsId)
+            yield* workspaceSyncService.startPolling(wsId)
+          })
+        yield* provider.startContainer(workspaceId, onReady)
       }),
 
     // -------------------------------------------------------------------

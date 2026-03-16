@@ -5,20 +5,16 @@ import {
   Outlet,
 } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
+import { useEffect, useState } from 'react'
 import { AtomRegistryProvider } from '@/atoms/provider'
-import { AppSettingsProvider } from '@/components/app-settings-context'
-import { AppSettingsModal } from '@/components/app-settings-modal'
 import { DockerStatusBanner } from '@/components/docker-status-banner'
 import Header from '@/components/header'
-import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
-import { SyncStatusBridge } from '@/components/sync-status-bridge'
-import { SyncStatusProvider } from '@/components/sync-status-context'
+import Loader from '@/components/loader'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { TerminalRouterProvider } from '@/contexts/terminal-router-context'
-import { PhaseTransitionDriver } from '@/hooks/use-phase-transition-driver'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
+import { waitForSidecars } from '@/lib/desktop'
 import { LiveStoreProvider } from '@/livestore/provider'
 
 import '../index.css'
@@ -52,44 +48,66 @@ function SidecarCrashListener(): null {
   return null
 }
 
+/**
+ * Gate that waits for sidecar services to become healthy before
+ * rendering children. In Electron, the main process handles health
+ * checking before showing the window, so this resolves immediately.
+ * In plain browser mode, also resolves immediately.
+ */
+function SidecarGate({ children }: { children: React.ReactNode }) {
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    console.log('[SidecarGate] origin:', globalThis.location?.origin)
+    console.log('[SidecarGate] Waiting for sidecars...')
+    waitForSidecars().then(
+      () => {
+        console.log('[SidecarGate] Sidecars ready')
+        setReady(true)
+      },
+      (error) => {
+        console.error('[SidecarGate] Sidecar initialization failed:', error)
+        setReady(true)
+      }
+    )
+  }, [])
+
+  if (!ready) {
+    return <Loader />
+  }
+
+  return children
+}
+
 function RootComponent() {
   return (
     <>
       <HeadContent />
-      <LifecyclePhaseProvider>
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="dark"
-          disableTransitionOnChange
-          storageKey="vite-ui-theme"
-        >
-          <HotkeysProvider>
-            <TooltipProvider>
+      <ThemeProvider
+        attribute="class"
+        defaultTheme="dark"
+        disableTransitionOnChange
+        storageKey="vite-ui-theme"
+      >
+        <HotkeysProvider>
+          <TooltipProvider>
+            <SidecarGate>
               <AtomRegistryProvider>
-                <AppSettingsProvider>
-                  <SyncStatusProvider>
-                    <div className="grid h-svh grid-rows-[auto_auto_1fr]">
-                      <Header />
-                      <DockerStatusBanner />
-                      <TerminalRouterProvider>
-                        <LiveStoreProvider>
-                          <SyncStatusBridge />
-                          <AppSettingsModal />
-                          <Outlet />
-                        </LiveStoreProvider>
-                      </TerminalRouterProvider>
-                    </div>
-                  </SyncStatusProvider>
-                </AppSettingsProvider>
+                <LiveStoreProvider>
+                  <div className="grid h-svh grid-rows-[auto_auto_1fr]">
+                    <Header />
+                    <DockerStatusBanner />
+                    <Outlet />
+                  </div>
+                </LiveStoreProvider>
               </AtomRegistryProvider>
-              <Toaster richColors />
-              <PhaseTransitionDriver />
-              <SidecarCrashListener />
-            </TooltipProvider>
-          </HotkeysProvider>
-        </ThemeProvider>
-      </LifecyclePhaseProvider>
-      <TanStackRouterDevtools position="bottom-right" />
+            </SidecarGate>
+            <Toaster richColors />
+            <SidecarCrashListener />
+          </TooltipProvider>
+        </HotkeysProvider>
+      </ThemeProvider>
+      <TanStackRouterDevtools position="bottom-left" />
     </>
   )
 }

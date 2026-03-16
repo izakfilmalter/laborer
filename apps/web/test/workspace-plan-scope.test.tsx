@@ -4,80 +4,40 @@
  * Verifies that workspaces associated with a plan (branch name `plan/<slug>`)
  * display a scoped PlanIssuesList showing only that plan's issues.
  *
- * @see Issue #193: Plan workspace scoped task list and brrr integration
+ * @see Issue #193: Plan workspace scoped task list and rlph integration
  */
 
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   destroyFn,
-  isElectronMock,
   startLoopFn,
-  closeWorkspaceMock,
   mutationMap,
-  openExternalUrlMock,
   queryDbMock,
   useLaborerStoreMock,
 } = vi.hoisted(() => ({
   destroyFn: vi.fn(),
-  isElectronMock: vi.fn(() => false),
   startLoopFn: vi.fn(),
-  closeWorkspaceMock: vi.fn(),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-  openExternalUrlMock: vi.fn(async () => true),
   queryDbMock: vi.fn((_table, options: { label: string }) => options),
   useLaborerStoreMock: vi.fn(),
-}))
-
-vi.mock('@/lib/desktop', () => ({
-  isElectron: isElectronMock,
-  openExternalUrl: openExternalUrlMock,
-  terminalRpcUrl: () => 'http://localhost:2101',
-}))
-
-// Stub the review findings count — not relevant for plan scope tests.
-vi.mock('@/components/review-findings-count', () => ({
-  ReviewFindingsCount: () => null,
-  useUnresolvedFindingsCount: () => 0,
-}))
-
-vi.mock('@/hooks/use-terminal-list', () => ({
-  useTerminalList: () => ({
-    terminals: [],
-    refresh: vi.fn(async () => []),
-    errorMessage: null,
-    isServiceAvailable: true,
-    isLoading: false,
-    serviceStatus: 'available' as const,
-  }),
 }))
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => {
     return mutationMap.get(atom) ?? vi.fn()
   },
-  useAtomValue: () => ({
-    _tag: 'Success',
-    value: { devServer: { autoOpen: { value: false } } },
-  }),
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
-  ConfigReactivityKeys: ['config'] as const,
   LaborerClient: {
     mutation: (name: string) => {
       const sentinel = Symbol.for(`mutation:${name}`)
       if (name === 'workspace.destroy') {
         mutationMap.set(sentinel, destroyFn)
       }
-      if (name === 'brrr.startLoop') {
+      if (name === 'rlph.startLoop') {
         mutationMap.set(sentinel, startLoopFn)
       }
       if (name === 'task.updateStatus') {
@@ -85,7 +45,6 @@ vi.mock('@/atoms/laborer-client', () => ({
       }
       return sentinel
     },
-    query: () => Symbol.for('query:stub'),
   },
 }))
 
@@ -103,16 +62,12 @@ vi.mock('@laborer/shared/schema', () => ({
   tasks: { name: 'tasks' },
 }))
 
-vi.mock('@/lib/toast', () => ({
-  toast: { error: vi.fn(), loading: vi.fn(() => 'toast-id'), success: vi.fn() },
+vi.mock('sonner', () => ({
+  toast: { error: vi.fn(), success: vi.fn() },
 }))
 
 vi.mock('@/panels/panel-context', () => ({
-  useActiveWorkspaceId: () => null,
-  usePanelActions: () => ({
-    closeWorkspace: closeWorkspaceMock,
-    forceCloseWorkspace: closeWorkspaceMock,
-  }),
+  usePanelActions: () => null,
 }))
 
 // Stub terminal list to avoid complex nested mocking
@@ -154,28 +109,17 @@ vi.mock('@/components/ui/alert-dialog', () => ({
   AlertDialogFooter: ({ children }: { children: React.ReactNode }) => (
     <div>{children}</div>
   ),
-  AlertDialogAction: ({
-    children,
-    ...props
-  }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
-    <button type="button" {...props}>
-      {children}
-    </button>
+  AlertDialogAction: ({ children }: { children: React.ReactNode }) => (
+    <button type="button">{children}</button>
   ),
-  AlertDialogCancel: ({
-    children,
-    ...props
-  }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
-    <button type="button" {...props}>
-      {children}
-    </button>
+  AlertDialogCancel: ({ children }: { children: React.ReactNode }) => (
+    <button type="button">{children}</button>
   ),
 }))
 
 import { WorkspaceList } from '../src/components/workspace-list'
 
 const START_RALPH_LOOP_RE = /start ralph loop/i
-const DESTROY_ACTION_RE = /destroy ⌘ ↵/i
 
 const WORKSPACE_PLAN = {
   id: 'ws-1',
@@ -199,16 +143,6 @@ const WORKSPACE_REGULAR = {
   origin: 'laborer',
   createdAt: '2026-03-06T00:00:00.000Z',
   taskSource: null,
-}
-
-const WORKSPACE_WITH_CLOSED_PR = {
-  ...WORKSPACE_REGULAR,
-  id: 'ws-3',
-  branchName: 'feature/has-pr',
-  prNumber: 77,
-  prState: 'CLOSED',
-  prTitle: 'Closed bug fix',
-  prUrl: null,
 }
 
 const PRD = {
@@ -249,33 +183,6 @@ describe('WorkspaceList plan association', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    isElectronMock.mockReturnValue(false)
-    destroyFn.mockResolvedValue(undefined)
-  })
-
-  it('closes open workspace panels after a successful destroy', async () => {
-    useLaborerStoreMock.mockReturnValue({
-      useQuery: (query: { label: string }) => {
-        if (query.label === 'workspaceList') {
-          return [WORKSPACE_REGULAR]
-        }
-        if (query.label === 'workspaceList.prds') {
-          return []
-        }
-        return []
-      },
-    })
-
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
-
-    fireEvent.click(screen.getByRole('button', { name: DESTROY_ACTION_RE }))
-
-    await waitFor(() => {
-      expect(destroyFn).toHaveBeenCalledWith({
-        payload: { workspaceId: 'ws-2', force: undefined },
-      })
-      expect(closeWorkspaceMock).toHaveBeenCalledWith('ws-2')
-    })
   })
 
   it('detects plan-associated workspace and shows scoped task list', () => {
@@ -295,7 +202,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" />)
 
     // Workspace card should be visible (branch name appears in card title
     // and destroy dialog, so use getAllByText)
@@ -327,7 +234,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" />)
 
     // Regular workspace card should be visible (branch name appears in
     // card title and destroy dialog)
@@ -355,7 +262,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" />)
 
     // Both workspaces should be visible
     expect(screen.getAllByText('plan/my-cool-feature').length).toBeGreaterThan(
@@ -391,7 +298,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" />)
 
     // Workspace card should be visible
     expect(screen.getAllByText('plan/my-cool-feature').length).toBeGreaterThan(
@@ -418,7 +325,7 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" />)
 
     // Plan Issues heading should still appear
     expect(screen.getByText('Plan Issues')).toBeTruthy()
@@ -448,13 +355,13 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" />)
 
     // Destroyed workspaces should not render at all
     expect(screen.getByText('No workspaces')).toBeTruthy()
   })
 
-  it('ralph start loop button is present on plan-associated workspace', () => {
+  it('rlph start loop button is present on plan-associated workspace', () => {
     useLaborerStoreMock.mockReturnValue({
       useQuery: (query: { label: string }) => {
         if (query.label === 'workspaceList') {
@@ -470,61 +377,12 @@ describe('WorkspaceList plan association', () => {
       },
     })
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" />)
 
-    // The ralph start loop button should be present
+    // The rlph start loop button should be present
     const startButton = screen.getByRole('button', {
       name: START_RALPH_LOOP_RE,
     })
     expect(startButton).toBeTruthy()
-  })
-
-  it('shows the GitHub status badge in the sidebar even when the PR URL is missing', () => {
-    useLaborerStoreMock.mockReturnValue({
-      useQuery: (query: { label: string }) => {
-        if (query.label === 'workspaceList') {
-          return [WORKSPACE_WITH_CLOSED_PR]
-        }
-        if (query.label === 'workspaceList.prds') {
-          return []
-        }
-        return []
-      },
-    })
-
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
-
-    expect(screen.getByText('#77')).toBeTruthy()
-    expect(screen.getByText('closed')).toBeTruthy()
-  })
-
-  it('opens container links in the OS browser when running in Electron', () => {
-    isElectronMock.mockReturnValue(true)
-    useLaborerStoreMock.mockReturnValue({
-      useQuery: (query: { label: string }) => {
-        if (query.label === 'workspaceList') {
-          return [
-            {
-              ...WORKSPACE_REGULAR,
-              containerId: 'container-1',
-              containerStatus: 'running',
-              containerUrl: 'preview.example.com',
-            },
-          ]
-        }
-        if (query.label === 'workspaceList.prds') {
-          return []
-        }
-        return []
-      },
-    })
-
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
-
-    fireEvent.click(screen.getByRole('link', { name: 'preview.example.com' }))
-
-    expect(openExternalUrlMock).toHaveBeenCalledWith(
-      'https://preview.example.com'
-    )
   })
 })

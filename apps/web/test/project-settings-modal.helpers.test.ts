@@ -30,23 +30,19 @@ describe('project settings modal helpers', () => {
 
   it('builds update payload with only changed config fields', () => {
     const result = buildConfigUpdates({
-      agent: 'opencode',
       devServerImage: 'node:22',
       devServerInstallCommand: 'yarn install --frozen-lockfile',
       devServerNetwork: 'myproject_default',
-      devServerAutoOpen: true,
       devServerSetupScripts: [{ id: '1', value: 'apt-get install -y curl' }],
       devServerStartCommand: 'npm run dev',
-      brrrConfig: '.brrr/config.toml',
+      rlphConfig: '.rlph/config.toml',
       resolvedConfig: {
-        agent: 'claude',
         devServerImage: 'node:lts',
         devServerInstallCommand: null,
         devServerNetwork: null,
-        devServerAutoOpen: false,
         devServerSetupScripts: ['corepack enable'],
         devServerStartCommand: null,
-        brrrConfig: null,
+        rlphConfig: null,
         setupScripts: ['bun install'],
         worktreeDir: '/tmp/worktrees',
       },
@@ -58,16 +54,14 @@ describe('project settings modal helpers', () => {
     })
 
     expect(result).toEqual({
-      agent: 'opencode',
       devServer: {
         image: 'node:22',
         installCommand: 'yarn install --frozen-lockfile',
         network: 'myproject_default',
-        autoOpen: true,
         setupScripts: ['apt-get install -y curl'],
         startCommand: 'npm run dev',
       },
-      brrrConfig: '.brrr/config.toml',
+      rlphConfig: '.rlph/config.toml',
       setupScripts: ['bun install', 'bun test'],
       worktreeDir: '~/worktrees',
     })
@@ -75,26 +69,22 @@ describe('project settings modal helpers', () => {
 
   it('returns empty updates when normalized values match resolved config', () => {
     const result = buildConfigUpdates({
-      agent: 'claude',
       devServerImage: 'node:lts',
       devServerInstallCommand: '',
       devServerNetwork: '',
-      devServerAutoOpen: false,
       devServerSetupScripts: [
         { id: '1', value: ' corepack enable ' },
         { id: '2', value: '' },
       ],
       devServerStartCommand: '',
-      brrrConfig: '  ',
+      rlphConfig: '  ',
       resolvedConfig: {
-        agent: 'claude',
         devServerImage: 'node:lts',
         devServerInstallCommand: null,
         devServerNetwork: null,
-        devServerAutoOpen: false,
         devServerSetupScripts: ['corepack enable'],
         devServerStartCommand: null,
-        brrrConfig: null,
+        rlphConfig: null,
         setupScripts: ['bun install'],
         worktreeDir: '/tmp/worktrees',
       },

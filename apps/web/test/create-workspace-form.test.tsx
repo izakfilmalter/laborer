@@ -2,10 +2,13 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { createWorkspaceFn, mutationMap } = vi.hoisted(() => ({
-  createWorkspaceFn: vi.fn(),
-  mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-}))
+const { createWorkspaceFn, mutationMap, queryDbMock, useLaborerStoreMock } =
+  vi.hoisted(() => ({
+    createWorkspaceFn: vi.fn(),
+    mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+    queryDbMock: vi.fn((_table, options: { label: string }) => options),
+    useLaborerStoreMock: vi.fn(),
+  }))
 
 vi.mock('@effect-atom/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => {
@@ -25,7 +28,19 @@ vi.mock('@/atoms/laborer-client', () => ({
   },
 }))
 
-vi.mock('@/lib/toast', () => ({
+vi.mock('@livestore/livestore', () => ({
+  queryDb: queryDbMock,
+}))
+
+vi.mock('@/livestore/store', () => ({
+  useLaborerStore: useLaborerStoreMock,
+}))
+
+vi.mock('@laborer/shared/schema', () => ({
+  projects: { name: 'projects' },
+}))
+
+vi.mock('sonner', () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }))
 
@@ -63,6 +78,46 @@ vi.mock('@/components/ui/dialog', () => ({
   DialogTrigger: () => null,
 }))
 
+// Mock Select to render as a native select for testability
+vi.mock('@/components/ui/select', () => ({
+  Select: ({
+    children,
+    onValueChange,
+    value,
+  }: {
+    children: React.ReactNode
+    onValueChange: (value: string) => void
+    value: string | null
+  }) => (
+    <div data-testid="select" data-value={value}>
+      <select
+        aria-label="Project"
+        onChange={(e) => onValueChange(e.target.value)}
+        value={value ?? ''}
+      >
+        <option value="">Select a project</option>
+      </select>
+      {children}
+    </div>
+  ),
+  SelectContent: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+  SelectItem: ({
+    children,
+    value,
+  }: {
+    children: React.ReactNode
+    value: string
+  }) => <option value={value}>{children}</option>,
+  SelectTrigger: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+  SelectValue: ({ placeholder }: { placeholder: string }) => (
+    <span>{placeholder}</span>
+  ),
+}))
+
 // Mock progress/spinner — not relevant for input mask tests
 vi.mock('@/components/ui/progress', () => ({
   Progress: () => null,
@@ -73,10 +128,24 @@ vi.mock('@/components/ui/spinner', () => ({
 }))
 
 import { CreateWorkspaceForm } from '../src/components/create-workspace-form'
-import { ReadyPhaseWrapper } from './helpers/lifecycle-test-utils'
 
 const BRANCH_NAME_RE = /branch name/i
 const CREATE_WORKSPACE_RE = /create workspace/i
+
+const PROJECTS = [
+  { id: 'project-1', name: 'laborer', repoPath: '/path/to/repo' },
+]
+
+function setupStore() {
+  useLaborerStoreMock.mockReturnValue({
+    useQuery: (query: { label: string }) => {
+      if (query.label === 'createWorkspaceProjects') {
+        return PROJECTS
+      }
+      return []
+    },
+  })
+}
 
 /** Return the branch name input (dialog is always rendered inline by the mock). */
 function getBranchInput() {
@@ -90,24 +159,11 @@ describe('CreateWorkspaceForm — branch name mask', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-  })
-
-  it('autofocuses the branch name input', () => {
-    render(
-      <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
-      </ReadyPhaseWrapper>
-    )
-    const input = getBranchInput()
-    expect(document.activeElement).toBe(input)
+    setupStore()
   })
 
   it('renders the branch name input with correct placeholder', () => {
-    render(
-      <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
-      </ReadyPhaseWrapper>
-    )
+    render(<CreateWorkspaceForm />)
     const input = getBranchInput()
     expect(input).toBeTruthy()
     expect(input.getAttribute('placeholder')).toBe('laborer/my-feature')
@@ -115,11 +171,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
 
   it('converts spaces to hyphens', async () => {
     const user = userEvent.setup()
-    render(
-      <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
-      </ReadyPhaseWrapper>
-    )
+    render(<CreateWorkspaceForm />)
     const input = getBranchInput()
 
     await user.type(input, 'my feature branch')
@@ -131,11 +183,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
 
   it('converts uppercase to lowercase', async () => {
     const user = userEvent.setup()
-    render(
-      <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
-      </ReadyPhaseWrapper>
-    )
+    render(<CreateWorkspaceForm />)
     const input = getBranchInput()
 
     await user.type(input, 'My-Feature')
@@ -147,11 +195,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
 
   it('allows forward slashes for namespaced branches', async () => {
     const user = userEvent.setup()
-    render(
-      <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
-      </ReadyPhaseWrapper>
-    )
+    render(<CreateWorkspaceForm />)
     const input = getBranchInput()
 
     await user.type(input, 'laborer/my-feature')
@@ -163,11 +207,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
 
   it('allows hyphens and underscores', async () => {
     const user = userEvent.setup()
-    render(
-      <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
-      </ReadyPhaseWrapper>
-    )
+    render(<CreateWorkspaceForm />)
     const input = getBranchInput()
 
     await user.type(input, 'my-feature_branch')
@@ -179,48 +219,13 @@ describe('CreateWorkspaceForm — branch name mask', () => {
 
   it('rejects special characters not allowed in branch names', async () => {
     const user = userEvent.setup()
-    render(
-      <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
-      </ReadyPhaseWrapper>
-    )
+    render(<CreateWorkspaceForm />)
     const input = getBranchInput()
 
     await user.type(input, 'feat!@#$%ok')
 
     await waitFor(() => {
       expect((input as HTMLInputElement).value).toBe('featok')
-    })
-  })
-
-  it('submits with only projectId when branch name is empty', async () => {
-    const user = userEvent.setup()
-    createWorkspaceFn.mockResolvedValue({
-      id: 'ws-new',
-      projectId: 'project-1',
-      branchName: 'auto-generated-branch',
-      worktreePath: '/path/to/worktree',
-      port: 3001,
-      status: 'running',
-    })
-
-    render(
-      <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
-      </ReadyPhaseWrapper>
-    )
-
-    const submitButton = screen.getByRole('button', {
-      name: CREATE_WORKSPACE_RE,
-    })
-    await user.click(submitButton)
-
-    await waitFor(() => {
-      expect(createWorkspaceFn).toHaveBeenCalledWith({
-        payload: {
-          projectId: 'project-1',
-        },
-      })
     })
   })
 
@@ -235,11 +240,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       status: 'running',
     })
 
-    render(
-      <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
-      </ReadyPhaseWrapper>
-    )
+    render(<CreateWorkspaceForm defaultProjectId="project-1" />)
     const input = getBranchInput()
 
     await user.type(input, 'My Feature Branch')
@@ -258,47 +259,6 @@ describe('CreateWorkspaceForm — branch name mask', () => {
         payload: {
           projectId: 'project-1',
           branchName: 'my-feature-branch',
-        },
-      })
-    })
-  })
-
-  it('replaces forward slashes with hyphens on submit', async () => {
-    const user = userEvent.setup()
-    createWorkspaceFn.mockResolvedValue({
-      id: 'ws-new',
-      projectId: 'project-1',
-      branchName: 'if-batch-column-variant-prd',
-      worktreePath: '/path/to/worktree',
-      port: 3001,
-      status: 'running',
-    })
-
-    render(
-      <ReadyPhaseWrapper>
-        <CreateWorkspaceForm projectId="project-1" />
-      </ReadyPhaseWrapper>
-    )
-    const input = getBranchInput()
-
-    await user.type(input, 'if/batch-column-variant-prd')
-
-    await waitFor(() => {
-      expect((input as HTMLInputElement).value).toBe(
-        'if/batch-column-variant-prd'
-      )
-    })
-
-    const submitButton = screen.getByRole('button', {
-      name: CREATE_WORKSPACE_RE,
-    })
-    await user.click(submitButton)
-
-    await waitFor(() => {
-      expect(createWorkspaceFn).toHaveBeenCalledWith({
-        payload: {
-          projectId: 'project-1',
-          branchName: 'if-batch-column-variant-prd',
         },
       })
     })

@@ -41,7 +41,7 @@ vi.mock('@laborer/shared/schema', () => ({
   workspaces: { name: 'workspaces' },
 }))
 
-vi.mock('@/lib/toast', () => ({
+vi.mock('sonner', () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }))
 
@@ -61,7 +61,6 @@ import {
   CreatePlanWorkspace,
   planBranchName,
 } from '../src/components/create-plan-workspace'
-import { ReadyPhaseWrapper } from './helpers/lifecycle-test-utils'
 
 const CREATE_WORKSPACE_RE = /Create Workspace/i
 
@@ -94,11 +93,7 @@ describe('CreatePlanWorkspace', () => {
       },
     })
 
-    render(
-      <ReadyPhaseWrapper>
-        <CreatePlanWorkspace prdId="prd-1" />
-      </ReadyPhaseWrapper>
-    )
+    render(<CreatePlanWorkspace prdId="prd-1" />)
 
     const button = screen.getByRole('button', { name: CREATE_WORKSPACE_RE })
     expect(button).toBeTruthy()
@@ -126,11 +121,7 @@ describe('CreatePlanWorkspace', () => {
       },
     })
 
-    render(
-      <ReadyPhaseWrapper>
-        <CreatePlanWorkspace prdId="prd-1" />
-      </ReadyPhaseWrapper>
-    )
+    render(<CreatePlanWorkspace prdId="prd-1" />)
 
     const button = screen.getByRole('button', { name: CREATE_WORKSPACE_RE })
     expect(button.hasAttribute('disabled')).toBe(true)
@@ -161,11 +152,7 @@ describe('CreatePlanWorkspace', () => {
       },
     })
 
-    render(
-      <ReadyPhaseWrapper>
-        <CreatePlanWorkspace prdId="prd-1" />
-      </ReadyPhaseWrapper>
-    )
+    render(<CreatePlanWorkspace prdId="prd-1" />)
 
     const button = screen.getByRole('button', { name: CREATE_WORKSPACE_RE })
     expect(button.getAttribute('disabled')).toBeNull()
@@ -191,11 +178,7 @@ describe('CreatePlanWorkspace', () => {
       },
     })
 
-    render(
-      <ReadyPhaseWrapper>
-        <CreatePlanWorkspace prdId="prd-1" />
-      </ReadyPhaseWrapper>
-    )
+    render(<CreatePlanWorkspace prdId="prd-1" />)
 
     const button = screen.getByRole('button', { name: CREATE_WORKSPACE_RE })
     await user.click(button)
@@ -213,11 +196,7 @@ describe('CreatePlanWorkspace', () => {
       useQuery: () => [],
     })
 
-    const { container } = render(
-      <ReadyPhaseWrapper>
-        <CreatePlanWorkspace prdId="prd-missing" />
-      </ReadyPhaseWrapper>
-    )
+    const { container } = render(<CreatePlanWorkspace prdId="prd-missing" />)
     expect(container.innerHTML).toBe('')
   })
 
@@ -242,11 +221,7 @@ describe('CreatePlanWorkspace', () => {
       },
     })
 
-    render(
-      <ReadyPhaseWrapper>
-        <CreatePlanWorkspace prdId="prd-1" />
-      </ReadyPhaseWrapper>
-    )
+    render(<CreatePlanWorkspace prdId="prd-1" />)
 
     const button = screen.getByRole('button', { name: CREATE_WORKSPACE_RE })
     expect(button.getAttribute('disabled')).toBeNull()

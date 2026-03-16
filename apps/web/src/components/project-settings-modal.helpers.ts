@@ -4,29 +4,25 @@ interface SetupScriptItem {
 }
 
 interface ResolvedConfigSnapshot {
-  readonly agent: 'opencode' | 'claude' | 'codex'
-  readonly brrrConfig: string | null
-  readonly devServerAutoOpen: boolean
   readonly devServerImage: string | null
   readonly devServerInstallCommand: string | null
   readonly devServerNetwork: string | null
   readonly devServerSetupScripts: readonly string[]
   readonly devServerStartCommand: string | null
+  readonly rlphConfig: string | null
   readonly setupScripts: readonly string[]
   readonly worktreeDir: string
 }
 
 interface ConfigUpdates {
-  agent?: 'opencode' | 'claude' | 'codex'
-  brrrConfig?: string
   devServer?: {
-    autoOpen?: boolean
     image?: string
     installCommand?: string
     network?: string
     setupScripts?: string[]
     startCommand?: string
   }
+  rlphConfig?: string
   setupScripts?: string[]
   worktreeDir?: string
 }
@@ -61,7 +57,6 @@ const areStringArraysEqual = (
  */
 const buildDevServerUpdates = (
   current: {
-    autoOpen: boolean
     image: string
     installCommand: string
     network: string
@@ -70,7 +65,6 @@ const buildDevServerUpdates = (
   },
   resolved: ResolvedConfigSnapshot
 ): ConfigUpdates['devServer'] | undefined => {
-  const autoOpenChanged = current.autoOpen !== resolved.devServerAutoOpen
   const imageChanged = current.image !== (resolved.devServerImage ?? '')
   const installCommandChanged =
     current.installCommand !== (resolved.devServerInstallCommand ?? '')
@@ -84,7 +78,6 @@ const buildDevServerUpdates = (
 
   if (
     !(
-      autoOpenChanged ||
       imageChanged ||
       installCommandChanged ||
       networkChanged ||
@@ -96,9 +89,6 @@ const buildDevServerUpdates = (
   }
 
   const devServer: ConfigUpdates['devServer'] = {}
-  if (autoOpenChanged) {
-    devServer.autoOpen = current.autoOpen
-  }
   if (imageChanged) {
     devServer.image = current.image
   }
@@ -118,39 +108,31 @@ const buildDevServerUpdates = (
 }
 
 const buildConfigUpdates = ({
-  agent,
-  devServerAutoOpen,
   devServerImage,
   devServerInstallCommand,
   devServerNetwork,
   devServerSetupScripts,
   devServerStartCommand,
-  brrrConfig,
+  rlphConfig,
   resolvedConfig,
   setupScripts,
   worktreeDir,
 }: {
-  agent: 'opencode' | 'claude' | 'codex'
-  devServerAutoOpen: boolean
   devServerImage: string
   devServerInstallCommand: string
   devServerNetwork: string
   devServerSetupScripts: readonly SetupScriptItem[]
   devServerStartCommand: string
-  brrrConfig: string
+  rlphConfig: string
   resolvedConfig: ResolvedConfigSnapshot
   setupScripts: readonly SetupScriptItem[]
   worktreeDir: string
 }): ConfigUpdates => {
   const updates: ConfigUpdates = {}
 
-  if (agent !== resolvedConfig.agent) {
-    updates.agent = agent
-  }
-
   const normalizedWorktreeDir = worktreeDir.trim()
   const normalizedSetupScripts = normalizeSetupScripts(setupScripts)
-  const normalizedBrrrConfig = brrrConfig.trim()
+  const normalizedRlphConfig = rlphConfig.trim()
 
   if (
     normalizedWorktreeDir.length > 0 &&
@@ -166,15 +148,14 @@ const buildConfigUpdates = ({
   }
 
   if (
-    normalizedBrrrConfig.length > 0 &&
-    normalizedBrrrConfig !== (resolvedConfig.brrrConfig ?? '')
+    normalizedRlphConfig.length > 0 &&
+    normalizedRlphConfig !== (resolvedConfig.rlphConfig ?? '')
   ) {
-    updates.brrrConfig = normalizedBrrrConfig
+    updates.rlphConfig = normalizedRlphConfig
   }
 
   const devServerUpdate = buildDevServerUpdates(
     {
-      autoOpen: devServerAutoOpen,
       image: devServerImage.trim(),
       installCommand: devServerInstallCommand.trim(),
       network: devServerNetwork.trim(),

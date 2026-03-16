@@ -795,6 +795,25 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
     ) => Effect.Effect<readonly string[], RpcError>
 
     /**
+     * Start a container for an existing workspace.
+     *
+     * Converts a non-containerized workspace (typically one detected from
+     * an existing git worktree with origin 'external') into a fully
+     * containerized laborer workspace. Transitions the workspace to
+     * 'running' status, updates origin to 'laborer', and runs container
+     * setup as a background fiber.
+     *
+     * @param workspaceId - ID of the workspace to containerize
+     * @param onReady - Optional effect to run when workspace is ready
+     *   (e.g. start diff/PR polling). Errors are logged but do not
+     *   affect workspace status.
+     */
+    readonly startContainer: (
+      workspaceId: string,
+      onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>
+    ) => Effect.Effect<void, RpcError>
+
+    /**
      * Get environment variables for a workspace.
      *
      * Returns a Record of env vars that should be injected into all
@@ -1788,6 +1807,150 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         }
       )
 
+      const startContainer = Effect.fn('WorkspaceProvider.startContainer')(
+        function* (
+          workspaceId: string,
+          onReady?: (workspaceId: string) => Effect.Effect<void, RpcError>
+        ) {
+          // 1. Look up the workspace in LiveStore
+          const allWorkspaces = store.query(tables.workspaces)
+          const workspaceOpt = pipe(
+            allWorkspaces,
+            Arr.findFirst((w) => w.id === workspaceId)
+          )
+
+          if (workspaceOpt._tag === 'None') {
+            return yield* new RpcError({
+              message: `Workspace not found: ${workspaceId}`,
+              code: 'NOT_FOUND',
+            })
+          }
+
+          const workspace = workspaceOpt.value
+
+          // 2. Reject if workspace already has a container
+          if (workspace.containerId != null) {
+            return yield* new RpcError({
+              message: `Workspace ${workspaceId} already has a container`,
+              code: 'ALREADY_CONTAINERIZED',
+            })
+          }
+
+          // 3. Look up the project and resolve config
+          const project = yield* registry.getProject(workspace.projectId)
+          const resolvedConfig = yield* configService
+            .resolveConfig(project.repoPath, project.name)
+            .pipe(
+              Effect.mapError(
+                (e) =>
+                  new RpcError({
+                    message: e.message,
+                    code: 'CONFIG_VALIDATION_ERROR',
+                  })
+              )
+            )
+
+          const devServerImage = resolvedConfig.devServer.image.value
+          if (devServerImage === null) {
+            return yield* new RpcError({
+              message:
+                'No devServer.image configured in laborer.json — cannot start container',
+              code: 'NO_DEV_SERVER_IMAGE',
+            })
+          }
+
+          // 4. Allocate a port if the workspace doesn't have one (external
+          //    workspaces are created with port=0)
+          let port = workspace.port
+          if (port === 0) {
+            port = yield* portAllocator.allocate()
+          }
+
+          yield* Effect.logInfo(
+            `Starting container for workspace: id=${workspaceId}, branch=${workspace.branchName}, path=${workspace.worktreePath}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          // 5. Transition workspace: update origin to 'laborer' and status
+          //    to 'running'
+          if (workspace.origin === 'external') {
+            store.commit(
+              events.workspaceOriginChanged({
+                id: workspaceId,
+                origin: 'laborer',
+              })
+            )
+          }
+          if (workspace.status !== 'running') {
+            store.commit(
+              events.workspaceStatusChanged({
+                id: workspaceId,
+                status: 'running',
+              })
+            )
+          }
+
+          // 6. Run the onReady callback (e.g. start diff/PR polling)
+          if (onReady) {
+            yield* onReady(workspaceId).pipe(
+              Effect.catchAll((err) =>
+                Effect.logWarning(
+                  `onReady callback failed for workspace ${workspaceId}: ${err.message}`
+                ).pipe(Effect.annotateLogs('module', logPrefix))
+              )
+            )
+          }
+
+          // 7. Fork container setup as a background fiber (same pattern
+          //    as createWorktree)
+          const containerSetupEffect = Effect.gen(function* () {
+            yield* performContainerSetup({
+              id: workspaceId,
+              branchName: workspace.branchName,
+              worktreePath: workspace.worktreePath,
+              port,
+              repoPath: project.repoPath,
+              projectName: project.name,
+              devServerImage,
+              devServer: resolvedConfig.devServer,
+            })
+          }).pipe(
+            Effect.catchAll((err) =>
+              Effect.gen(function* () {
+                yield* Effect.logWarning(
+                  `Container setup failed for workspace ${workspaceId}: ${String(err)}`
+                ).pipe(Effect.annotateLogs('module', logPrefix))
+
+                // Clear container setup step
+                store.commit(
+                  events.containerSetupStepChanged({
+                    workspaceId,
+                    step: null,
+                  })
+                )
+              })
+            )
+          )
+
+          const fiber = yield* containerSetupEffect.pipe(Effect.forkIn(scope))
+
+          // Track the fiber so destroyWorktree can interrupt it
+          yield* Ref.update(setupFibers, (m) => {
+            const next = new Map(m)
+            next.set(workspaceId, fiber)
+            return next
+          })
+
+          // Remove tracking when the fiber completes
+          fiber.addObserver(() => {
+            Ref.update(setupFibers, (m) => {
+              const n = new Map(m)
+              n.delete(workspaceId)
+              return n
+            }).pipe(Effect.runSync)
+          })
+        }
+      )
+
       const checkDirtyFiles = Effect.fn('WorkspaceProvider.checkDirtyFiles')(
         function* (workspaceId: string) {
           const allWorkspaces = store.query(tables.workspaces)
@@ -1897,6 +2060,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       return WorkspaceProvider.of({
         createWorktree,
         destroyWorktree,
+        startContainer,
         checkDirtyFiles,
         getWorkspaceEnv,
       })

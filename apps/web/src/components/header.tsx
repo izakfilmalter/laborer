@@ -1,32 +1,39 @@
-import { Badge } from '@/components/ui/badge'
+import { Link } from '@tanstack/react-router'
+import { RotateCcw } from 'lucide-react'
+import { useCallback } from 'react'
+
+import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { isElectron } from '@/lib/desktop'
 
-import { LifecyclePhase, useLifecyclePhase } from './lifecycle-phase-context'
+import { ModeToggle } from './mode-toggle'
 
-const PHASE_NAMES: Record<LifecyclePhase, string> = {
-  [LifecyclePhase.Starting]: 'Starting',
-  [LifecyclePhase.Ready]: 'Ready',
-  [LifecyclePhase.Restored]: 'Restored',
-  [LifecyclePhase.Eventually]: 'Eventually',
-}
-
-function PhaseIndicator() {
-  const { phase } = useLifecyclePhase()
-  const name = PHASE_NAMES[phase]
-
-  // Hide once everything is fully loaded
-  if (phase === LifecyclePhase.Eventually) {
-    return null
-  }
+function ResetButton() {
+  const handleReset = useCallback(() => {
+    const url = new URL(globalThis.location.href)
+    url.searchParams.set('reset', '')
+    globalThis.location.href = url.toString()
+  }, [])
 
   return (
-    <Badge className="text-muted-foreground" variant="outline">
-      Phase: {name}
-    </Badge>
+    <Tooltip>
+      <TooltipTrigger
+        render={<Button onClick={handleReset} size="icon" variant="outline" />}
+      >
+        <RotateCcw className="h-[1.2rem] w-[1.2rem]" />
+        <span className="sr-only">Reset persistence</span>
+      </TooltipTrigger>
+      <TooltipContent>Reset persistence</TooltipContent>
+    </Tooltip>
   )
 }
 
 export default function Header() {
+  const links = [{ to: '/', label: 'Home' }] as const
   const electron = isElectron()
 
   return (
@@ -36,9 +43,18 @@ export default function Header() {
           electron ? 'h-[52px] pl-[80px]' : 'py-1'
         }`}
       >
-        <span className="font-medium text-lg">laborer</span>
+        <nav className="flex gap-4 text-lg">
+          {links.map(({ to, label }) => {
+            return (
+              <Link key={to} to={to}>
+                {label}
+              </Link>
+            )
+          })}
+        </nav>
         <div className="flex items-center gap-2">
-          <PhaseIndicator />
+          <ResetButton />
+          <ModeToggle />
         </div>
       </div>
       <hr />

@@ -1,11 +1,9 @@
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { Plus, Settings, Trash2 } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
-import { AGENT_ICONS } from '@/components/agent-icons'
-import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { toast } from 'sonner'
+import { LaborerClient } from '@/atoms/laborer-client'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -22,38 +20,18 @@ import {
   FieldSet,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { useWhenPhase } from '@/hooks/use-when-phase'
-import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import {
   buildConfigUpdates,
   getSettingsLoadErrorMessage,
   type SetupScriptItem,
 } from './project-settings-modal.helpers'
-
-type AgentProvider = 'opencode' | 'claude' | 'codex'
-
-const AGENT_OPTIONS: ReadonlyArray<{
-  readonly label: string
-  readonly value: AgentProvider
-}> = [
-  { label: 'OpenCode', value: 'opencode' },
-  { label: 'Claude', value: 'claude' },
-  { label: 'Codex', value: 'codex' },
-]
 
 const updateConfigMutation = LaborerClient.mutation('config.update')
 const provenanceClassName = 'text-[11px] leading-tight text-muted-foreground/70'
@@ -79,31 +57,23 @@ function ProjectSettingsForm({
   readonly onSaved: () => void
 }) {
   const configGet$ = useMemo(
-    () =>
-      LaborerClient.query(
-        'config.get',
-        { projectId },
-        { reactivityKeys: ConfigReactivityKeys }
-      ),
+    () => LaborerClient.query('config.get', { projectId }),
     [projectId]
   )
   const configResult = useAtomValue(configGet$)
   const updateConfig = useAtomSet(updateConfigMutation, { mode: 'promise' })
 
-  const [agent, setAgent] = useState<AgentProvider>('opencode')
   const [worktreeDir, setWorktreeDir] = useState('')
   const [setupScripts, setSetupScripts] = useState<SetupScriptItem[]>([])
-  const [brrrConfig, setBrrrConfig] = useState('')
+  const [rlphConfig, setRlphConfig] = useState('')
   const [devServerImage, setDevServerImage] = useState('')
   const [devServerInstallCommand, setDevServerInstallCommand] = useState('')
   const [devServerNetwork, setDevServerNetwork] = useState('')
-  const [devServerAutoOpen, setDevServerAutoOpen] = useState(false)
   const [devServerSetupScripts, setDevServerSetupScripts] = useState<
     SetupScriptItem[]
   >([])
   const [devServerStartCommand, setDevServerStartCommand] = useState('')
   const [initialized, setInitialized] = useState(false)
-  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [isSaving, setIsSaving] = useState(false)
   const lastLoadErrorMessageRef = useRef<string | null>(null)
 
@@ -117,11 +87,9 @@ function ProjectSettingsForm({
       return
     }
 
-    setAgent(configResult.value.agent.value)
     setWorktreeDir(configResult.value.worktreeDir.value)
     setSetupScripts(toSetupScriptItems(configResult.value.setupScripts.value))
-    setBrrrConfig(configResult.value.brrrConfig.value ?? '')
-    setDevServerAutoOpen(configResult.value.devServer.autoOpen.value)
+    setRlphConfig(configResult.value.rlphConfig.value ?? '')
     setDevServerImage(configResult.value.devServer.image.value ?? '')
     setDevServerInstallCommand(
       configResult.value.devServer.installCommand.value ?? ''
@@ -176,23 +144,19 @@ function ProjectSettingsForm({
 
   const handleSave = async () => {
     const updates = buildConfigUpdates({
-      agent,
-      devServerAutoOpen,
       devServerImage,
       devServerInstallCommand,
       devServerNetwork,
       devServerSetupScripts,
       devServerStartCommand,
-      brrrConfig,
+      rlphConfig,
       resolvedConfig: {
-        agent: resolvedConfig.agent.value,
-        devServerAutoOpen: resolvedConfig.devServer.autoOpen.value,
         devServerImage: resolvedConfig.devServer.image.value,
         devServerInstallCommand: resolvedConfig.devServer.installCommand.value,
         devServerNetwork: resolvedConfig.devServer.network.value,
         devServerSetupScripts: resolvedConfig.devServer.setupScripts.value,
         devServerStartCommand: resolvedConfig.devServer.startCommand.value,
-        brrrConfig: resolvedConfig.brrrConfig.value,
+        rlphConfig: resolvedConfig.rlphConfig.value,
         setupScripts: resolvedConfig.setupScripts.value,
         worktreeDir: resolvedConfig.worktreeDir.value,
       },
@@ -212,7 +176,6 @@ function ProjectSettingsForm({
           projectId,
           config: updates,
         },
-        reactivityKeys: ConfigReactivityKeys,
       })
       toast.success(`Saved settings for ${projectName}`)
       onSaved()
@@ -231,43 +194,6 @@ function ProjectSettingsForm({
     <form className="contents" onSubmit={handleSubmit}>
       <div className="grid gap-4 py-2">
         <FieldSet>
-          <Field>
-            <FieldLabel>Agent</FieldLabel>
-            <Select
-              onValueChange={(value) => setAgent(value as AgentProvider)}
-              value={agent}
-            >
-              <SelectTrigger>
-                <SelectValue>
-                  {(() => {
-                    const option = AGENT_OPTIONS.find((o) => o.value === agent)
-                    const Icon = AGENT_ICONS[agent]
-                    return (
-                      <>
-                        <Icon className="size-3.5" />
-                        {option?.label ?? agent}
-                      </>
-                    )
-                  })()}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {AGENT_OPTIONS.map((option) => {
-                  const Icon = AGENT_ICONS[option.value]
-                  return (
-                    <SelectItem key={option.value} value={option.value}>
-                      <Icon className="size-3.5" />
-                      {option.label}
-                    </SelectItem>
-                  )
-                })}
-              </SelectContent>
-            </Select>
-            <FieldDescription className={provenanceClassName}>
-              Source: {resolvedConfig.agent.source}
-            </FieldDescription>
-          </Field>
-
           <Field>
             <FieldLabel htmlFor={`worktree-dir-${projectId}`}>
               Worktree directory
@@ -356,30 +282,6 @@ function ProjectSettingsForm({
                 <Plus className="size-3.5" />
                 Add script
               </Button>
-            </div>
-          </Field>
-
-          <Field>
-            <div className="flex items-start justify-between gap-3">
-              <div className="grid gap-1">
-                <FieldLabel htmlFor={`dev-server-auto-open-${projectId}`}>
-                  Auto-open dev server
-                </FieldLabel>
-                <FieldDescription>
-                  Open the dev server on the right when spawning a workspace
-                  terminal.
-                </FieldDescription>
-                <FieldDescription className={provenanceClassName}>
-                  Source: {resolvedConfig.devServer.autoOpen.source}
-                </FieldDescription>
-              </div>
-              <Checkbox
-                checked={devServerAutoOpen}
-                id={`dev-server-auto-open-${projectId}`}
-                onCheckedChange={(checked) =>
-                  setDevServerAutoOpen(checked === true)
-                }
-              />
             </div>
           </Field>
 
@@ -522,23 +424,23 @@ function ProjectSettingsForm({
           </Field>
 
           <Field>
-            <FieldLabel htmlFor={`brrr-config-${projectId}`}>
-              brrr config
+            <FieldLabel htmlFor={`rlph-config-${projectId}`}>
+              rlph config
             </FieldLabel>
             <Input
-              id={`brrr-config-${projectId}`}
-              onChange={(event) => setBrrrConfig(event.target.value)}
-              placeholder=".brrr/config.toml"
-              value={brrrConfig}
+              id={`rlph-config-${projectId}`}
+              onChange={(event) => setRlphConfig(event.target.value)}
+              placeholder=".rlph/config.json"
+              value={rlphConfig}
             />
             <FieldDescription className={provenanceClassName}>
-              Source: {resolvedConfig.brrrConfig.source}
+              Source: {resolvedConfig.rlphConfig.source}
             </FieldDescription>
           </Field>
         </FieldSet>
       </div>
       <DialogFooter>
-        <Button disabled={!isServerReady || isSaving} type="submit">
+        <Button disabled={isSaving} type="submit">
           {isSaving && <Spinner className="size-3.5" />}
           {isSaving ? 'Saving...' : 'Save'}
         </Button>
@@ -578,7 +480,7 @@ function ProjectSettingsModal({
         <DialogHeader>
           <DialogTitle>Project settings</DialogTitle>
           <DialogDescription>
-            Configure dev server, worktree path, setup scripts, and brrr config
+            Configure dev server, worktree path, setup scripts, and rlph config
             for {projectName}.
           </DialogDescription>
         </DialogHeader>

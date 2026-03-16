@@ -3,7 +3,7 @@
  *
  * Covers the real terminal pipeline by creating a workspace, spawning a
  * terminal into the empty pane, sending a shell command, and verifying the
- * rendered output appears in the ghostty-web canvas terminal.
+ * rendered output appears in xterm.js.
  *
  * @see PRD-e2e-test-coverage.md - Issue 15
  */

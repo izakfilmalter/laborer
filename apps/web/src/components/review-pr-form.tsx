@@ -7,62 +7,43 @@
  * displayed via a toast.
  *
  * On success, the spawned terminal is auto-assigned to a panel pane so the
- * user immediately sees the brrr TUI output in xterm.js.
+ * user immediately sees the rlph TUI output in xterm.js.
  *
  * @see Issue #97: "Review PR" button + PR number input
- * @see Issue #96: brrr.review RPC handler
+ * @see Issue #96: rlph.review RPC handler
  */
 
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { Eye } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
-import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
-import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { useCallback, useState } from 'react'
+import { toast } from 'sonner'
+import { LaborerClient } from '@/atoms/laborer-client'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { useWhenPhase } from '@/hooks/use-when-phase'
-import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 
-const reviewPrMutation = LaborerClient.mutation('brrr.review')
+const reviewPrMutation = LaborerClient.mutation('rlph.review')
 
 interface ReviewPrFormProps {
   /** Disable the button (e.g., when no PR exists for the branch). */
   readonly disabled?: boolean
   readonly onTerminalSpawned?: () => void
-  readonly projectId: string
   readonly workspaceId: string
 }
 
 function ReviewPrForm({
-  projectId,
   workspaceId,
   onTerminalSpawned,
   disabled,
 }: ReviewPrFormProps) {
-  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const reviewPr = useAtomSet(reviewPrMutation, { mode: 'promise' })
   const panelActions = usePanelActions()
-  const configGet$ = useMemo(
-    () =>
-      LaborerClient.query(
-        'config.get',
-        { projectId },
-        { reactivityKeys: ConfigReactivityKeys }
-      ),
-    [projectId]
-  )
-  const configResult = useAtomValue(configGet$)
-  const autoOpenDevServer =
-    configResult._tag === 'Success'
-      ? configResult.value.devServer.autoOpen.value
-      : false
 
   const handleClick = useCallback(async () => {
     setIsSubmitting(true)
@@ -72,9 +53,7 @@ function ReviewPrForm({
       })
       toast.success('Review started')
       if (panelActions) {
-        panelActions.assignTerminalToPane(result.id, workspaceId, undefined, {
-          autoOpenDevServer,
-        })
+        panelActions.assignTerminalToPane(result.id, workspaceId)
       }
       onTerminalSpawned?.()
     } catch (error: unknown) {
@@ -83,13 +62,7 @@ function ReviewPrForm({
     } finally {
       setIsSubmitting(false)
     }
-  }, [
-    autoOpenDevServer,
-    workspaceId,
-    reviewPr,
-    panelActions,
-    onTerminalSpawned,
-  ])
+  }, [workspaceId, reviewPr, panelActions, onTerminalSpawned])
 
   return (
     <Tooltip>
@@ -97,7 +70,7 @@ function ReviewPrForm({
         render={
           <Button
             aria-label="Review PR"
-            disabled={!isServerReady || disabled || isSubmitting}
+            disabled={disabled || isSubmitting}
             onClick={handleClick}
             size="icon-xs"
             variant="ghost"

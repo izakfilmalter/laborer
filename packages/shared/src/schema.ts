@@ -254,6 +254,14 @@ export const workspaceSyncStatusUpdated = Events.synced({
   }),
 })
 
+export const workspaceOriginChanged = Events.synced({
+  name: 'v1.WorkspaceOriginChanged',
+  schema: Schema.Struct({
+    id: Schema.String,
+    origin: Schema.String,
+  }),
+})
+
 export const containerStarted = Events.synced({
   name: 'v1.ContainerStarted',
   schema: Schema.Struct({
@@ -622,6 +630,7 @@ export const events = {
   workspaceDestroyed,
   workspacePrUpdated,
   workspaceSyncStatusUpdated,
+  workspaceOriginChanged,
   containerStarted,
   containerStopped,
   containerPaused,
@@ -748,6 +757,8 @@ const materializers = State.SQLite.materializers(events, {
     workspaces.update({ prNumber, prUrl, prTitle, prState }).where({ id }),
   'v1.WorkspaceSyncStatusUpdated': ({ id, aheadCount, behindCount }) =>
     workspaces.update({ aheadCount, behindCount }).where({ id }),
+  'v1.WorkspaceOriginChanged': ({ id, origin }) =>
+    workspaces.update({ origin }).where({ id }),
   'v1.ContainerStarted': ({
     workspaceId,
     containerId,

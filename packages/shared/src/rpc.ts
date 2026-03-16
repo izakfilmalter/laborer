@@ -123,6 +123,15 @@ export const ProjectResponse = Schema.Struct({
 
 export type ProjectResponse = typeof ProjectResponse.Type
 
+export const AgentProviderSchema = Schema.Literal('opencode', 'claude', 'codex')
+
+export type AgentProvider = typeof AgentProviderSchema.Type
+
+const ConfigResolvedValueAgent = Schema.Struct({
+  value: AgentProviderSchema,
+  source: Schema.String,
+})
+
 const ConfigResolvedValueString = Schema.Struct({
   value: Schema.String,
   source: Schema.String,
@@ -152,15 +161,6 @@ const DevServerConfigResponse = Schema.Struct({
   setupScripts: ConfigResolvedValueStringArray,
   startCommand: ConfigResolvedValueNullableString,
   workdir: ConfigResolvedValueString,
-})
-
-export const AgentProviderSchema = Schema.Literal('opencode', 'claude', 'codex')
-
-export type AgentProvider = typeof AgentProviderSchema.Type
-
-const ConfigResolvedValueAgent = Schema.Struct({
-  value: AgentProviderSchema,
-  source: Schema.String,
 })
 
 const ConfigResponse = Schema.Struct({
@@ -462,6 +462,25 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
+  // Global Config RPCs
+  // -----------------------------------------------------------------------
+  Rpc.make('globalConfig.get', {
+    success: Schema.Struct({
+      agent: Schema.optional(AgentProviderSchema),
+    }),
+    error: RpcError,
+  }),
+
+  Rpc.make('globalConfig.update', {
+    error: RpcError,
+    payload: {
+      config: Schema.Struct({
+        agent: Schema.optional(AgentProviderSchema),
+      }),
+    },
+  }),
+
+  // -----------------------------------------------------------------------
   // PRD RPCs
   // -----------------------------------------------------------------------
   Rpc.make('prd.create', {
@@ -606,6 +625,13 @@ export class LaborerRpcs extends RpcGroup.make(
 
   Rpc.make('workspace.pull', {
     success: WorkspaceSyncStatusResponse,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  Rpc.make('workspace.startContainer', {
     error: RpcError,
     payload: {
       workspaceId: Schema.String,

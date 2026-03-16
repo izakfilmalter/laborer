@@ -83,8 +83,8 @@ import {
   useState,
   useTransition,
 } from 'react'
+import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { Button } from '@/components/ui/button'
 import {
   Empty,
   EmptyDescription,
@@ -94,10 +94,8 @@ import {
 } from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
-import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
-import { useOnDiffScrollRequest } from '@/panels/diff-scroll-context'
 
 /** Module-level query — shared across all DiffPane instances with the same label. */
 const allDiffs$ = queryDb(diffs, { label: 'diffPane' })
@@ -144,36 +142,8 @@ const UNIFIED_DIFF_THRESHOLD = 500
 const UPDATE_FLASH_DURATION = 1500
 
 interface DiffPaneProps {
-  /** Optional close action for the diff side panel header. */
-  readonly onClose?: (() => void) | undefined
   /** The workspace ID to display diffs for. */
   readonly workspaceId: string
-}
-
-function DiffPaneHeader({
-  onClose,
-}: {
-  readonly onClose?: (() => void) | undefined
-}) {
-  return (
-    <div className="flex h-8 shrink-0 items-center gap-1.5 border-b bg-muted/30 px-3">
-      <FileCode2 className="size-3.5 text-muted-foreground" />
-      <span className="font-medium text-muted-foreground text-xs">Diff</span>
-      {onClose && (
-        <div className="ml-auto">
-          <Button
-            aria-label="Close diff viewer"
-            className="size-6"
-            onClick={onClose}
-            size="icon"
-            variant="ghost"
-          >
-            <X className="size-3" />
-          </Button>
-        </div>
-      )}
-    </div>
-  )
 }
 
 /**
@@ -252,7 +222,7 @@ function hunkHasChanges(hunk: Hunk): boolean {
  * large diff re-renders, scroll position is preserved across updates,
  * and a brief flash indicator shows when new content arrives.
  */
-function DiffPane({ onClose, workspaceId }: DiffPaneProps) {
+function DiffPane({ workspaceId }: DiffPaneProps) {
   const store = useLaborerStore()
   const diffRows = store.useQuery(allDiffs$)
   const openEditor = useAtomSet(editorOpenMutation, { mode: 'promise' })
@@ -282,22 +252,11 @@ function DiffPane({ onClose, workspaceId }: DiffPaneProps) {
 
   // --- Derive diff content and metadata from the reactive query ---
   const diffRow = useMemo(() => {
-    const row =
+    return (
       diffRows.find(
         (r: { workspaceId: string }) => r.workspaceId === workspaceId
       ) ?? null
-
-    // Diagnostic logging: helps identify whether the issue is on the
-    // server side (no DiffUpdated event committed) or the sync layer
-    // (event not reaching the client's LiveStore).
-    console.debug(
-      `[DiffPane] workspaceId=${workspaceId} diffRows.length=${diffRows.length} matchingRow=${row !== null ? `found (diffLen=${row.diffContent.length}, lastUpdated=${row.lastUpdated})` : 'NULL — no diff row for this workspace'}`,
-      row === null
-        ? `Available workspaceIds in diffs table: ${diffRows.map((r: { workspaceId: string }) => r.workspaceId.slice(0, 8)).join(', ') || 'none'}`
-        : ''
     )
-
-    return row
   }, [diffRows, workspaceId])
 
   const rawDiffContent = diffRow?.diffContent ?? ''
@@ -594,60 +553,21 @@ function DiffPane({ onClose, workspaceId }: DiffPaneProps) {
     }
   }, [])
 
-  // --- Cross-pane diff scroll (Issue #11) ---
-  // When the review pane dispatches a "scroll to file:line" event for this
-  // workspace, find the matching <diffs-container> element in the scroll
-  // container and scroll it into view smoothly.
-  const deferredFileDiffsRef = useRef(deferredFileDiffs)
-  deferredFileDiffsRef.current = deferredFileDiffs
-
-  useOnDiffScrollRequest(
-    workspaceId,
-    useCallback((target: { file: string; line: number }) => {
-      const container = scrollContainerRef.current
-      if (!container) {
-        return
-      }
-
-      const fileDiffsList = deferredFileDiffsRef.current
-      const fileIndex = fileDiffsList.findIndex((fd) => fd.name === target.file)
-      if (fileIndex === -1) {
-        return
-      }
-
-      // Each child of the scroll container corresponds to a diffs-container
-      // element for one file, rendered in the same order as deferredFileDiffs.
-      const fileElement = container.children[fileIndex]
-      if (fileElement) {
-        fileElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }
-    }, [])
-  )
-
   // --- Loading state ---
   // When diffRow is null, the DiffService hasn't polled yet for this workspace.
   // Show a loading spinner instead of the "No changes" empty state so the user
   // knows the diff is being computed rather than that there are genuinely no changes.
   if (diffRow === null) {
-    console.warn(
-      `[DiffPane] LOADING STATE — workspaceId=${workspaceId} has NO row in diffs table. ` +
-        'This means the server DiffService has not committed a DiffUpdated event for this workspace, ' +
-        'OR the LiveStore sync has not delivered it to the client yet. ' +
-        'Check server logs for [DiffService.getDiff] and [DiffService.startPolling] entries for this workspace.'
-    )
     return (
-      <div className="flex h-full w-full flex-col bg-background">
-        <DiffPaneHeader onClose={onClose} />
-        <div className="flex flex-1 items-center justify-center gap-3">
-          <Spinner className="size-6 text-muted-foreground" />
-          <div className="flex flex-col items-center gap-1">
-            <p className="font-medium text-muted-foreground text-sm">
-              Computing diff...
-            </p>
-            <p className="text-muted-foreground/70 text-xs">
-              Waiting for the first diff computation to complete
-            </p>
-          </div>
+      <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-background">
+        <Spinner className="size-6 text-muted-foreground" />
+        <div className="flex flex-col items-center gap-1">
+          <p className="font-medium text-muted-foreground text-sm">
+            Computing diff...
+          </p>
+          <p className="text-muted-foreground/70 text-xs">
+            Waiting for the first diff computation to complete
+          </p>
         </div>
       </div>
     )
@@ -659,28 +579,20 @@ function DiffPane({ onClose, workspaceId }: DiffPaneProps) {
   // Uses rawDiffContent (not debounced diffContent) to avoid briefly showing
   // the empty state while the debounce timer settles after new content arrives.
   if (!rawDiffContent) {
-    console.debug(
-      `[DiffPane] EMPTY STATE — workspaceId=${workspaceId} has a diffs row but diffContent is empty. ` +
-        'This means DiffService polled successfully but git diff returned no changes. ' +
-        `lastUpdated=${lastUpdated}`
-    )
     return (
-      <div className="flex h-full w-full flex-col bg-background">
-        <DiffPaneHeader onClose={onClose} />
-        <div className="flex flex-1 items-center justify-center">
-          <Empty>
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <FileCode2 />
-              </EmptyMedia>
-              <EmptyTitle>No changes</EmptyTitle>
-              <EmptyDescription>
-                No file changes detected in this workspace. Changes will appear
-                here automatically as the agent modifies files.
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        </div>
+      <div className="flex h-full w-full items-center justify-center bg-background">
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FileCode2 />
+            </EmptyMedia>
+            <EmptyTitle>No changes</EmptyTitle>
+            <EmptyDescription>
+              No file changes detected in this workspace. Changes will appear
+              here automatically as the agent modifies files.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       </div>
     )
   }
@@ -690,11 +602,9 @@ function DiffPane({ onClose, workspaceId }: DiffPaneProps) {
       className="relative flex h-full w-full flex-col bg-background"
       ref={containerRef}
     >
-      <DiffPaneHeader onClose={onClose} />
-
       {/* Update flash indicator — fades in/out when new diff content arrives */}
       {showUpdateFlash && (
-        <div className="fade-in absolute top-10 right-2 z-10 flex animate-in items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-primary text-xs duration-200">
+        <div className="fade-in absolute top-2 right-2 z-10 flex animate-in items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-primary text-xs duration-200">
           <RefreshCw className="h-3 w-3" />
           Updated
         </div>
@@ -702,7 +612,7 @@ function DiffPane({ onClose, workspaceId }: DiffPaneProps) {
 
       {/* Pending indicator — shows when a large diff is being processed */}
       {isPending && (
-        <div className="absolute top-10 left-2 z-10 flex items-center gap-1.5 rounded-md bg-muted/90 px-2 py-1 text-muted-foreground text-xs backdrop-blur-sm">
+        <div className="absolute top-2 left-2 z-10 flex items-center gap-1.5 rounded-md bg-muted/90 px-2 py-1 text-muted-foreground text-xs backdrop-blur-sm">
           <RefreshCw className="h-3 w-3 animate-spin" />
           Updating...
         </div>

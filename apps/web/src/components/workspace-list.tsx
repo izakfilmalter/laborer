@@ -10,7 +10,7 @@
  * are in progress.
  * Updates reactively when workspace state changes.
  * Includes a destroy button with confirmation dialog per workspace.
- * Includes brrr action buttons (Start Ralph Loop, Review PR,
+ * Includes rlph action buttons (Start Ralph Loop, Review PR,
  * Fix Findings) on every non-destroyed workspace for triggering agent
  * workflows.
  *
@@ -33,38 +33,28 @@
  * @see Issue #121: Loading state — workspace creation
  * @see Issue #113: Project switcher — filter workspaces by active project
  * @see Issue #160: UI for detected workspaces
- * @see Issue #193: Plan workspace scoped task list and brrr integration
+ * @see Issue #193: Plan workspace scoped task list and rlph integration
  */
 
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { prds, workspaces } from '@laborer/shared/schema'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import {
   ExternalLink,
   GitBranch,
-  GitBranchPlus,
+  GitPullRequest,
   Pause,
   Play,
   Trash2,
 } from 'lucide-react'
-import {
-  type FC,
-  type KeyboardEvent,
-  Suspense,
-  useCallback,
-  useMemo,
-  useState,
-} from 'react'
-import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
+import { type FC, useCallback, useMemo, useState } from 'react'
+import { toast } from 'sonner'
+import { LaborerClient } from '@/atoms/laborer-client'
 import { CopyButton } from '@/components/copy-button'
 import { FixFindingsForm } from '@/components/fix-findings-form'
-import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
-import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { PlanIssuesList } from '@/components/plan-issues-list'
-import { ReviewFindingsCount } from '@/components/review-findings-count'
 import { ReviewPrForm } from '@/components/review-pr-form'
-import { ReviewVerdictBadge } from '@/components/review-verdict-badge'
 import { TerminalList } from '@/components/terminal-list'
 import {
   AlertDialog,
@@ -86,43 +76,38 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/components/ui/empty'
-import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
-import {
-  type ActiveTerminal,
-  useDestroyWorkspaceChecks,
-} from '@/hooks/use-destroy-workspace-checks'
-import { useWhenPhase } from '@/hooks/use-when-phase'
-import { isElectron, openExternalUrl } from '@/lib/desktop'
-import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
-import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
-import { useActiveWorkspaceId, usePanelActions } from '@/panels/panel-context'
+import { usePanelActions } from '@/panels/panel-context'
 
 const allWorkspaces$ = queryDb(workspaces, { label: 'workspaceList' })
 const allPrds$ = queryDb(prds, { label: 'workspaceList.prds' })
 
 const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
-const startLoopMutation = LaborerClient.mutation('brrr.startLoop')
+const checkDirtyMutation = LaborerClient.mutation('workspace.checkDirty')
+const startLoopMutation = LaborerClient.mutation('rlph.startLoop')
 const pauseContainerMutation = LaborerClient.mutation('container.pause')
 const unpauseContainerMutation = LaborerClient.mutation('container.unpause')
 
 /** Prefix used to associate workspaces with plans by branch name convention. */
 const PLAN_BRANCH_PREFIX = 'plan/'
+
+/** Map PR state to icon color class. */
+function getPrStateColorClass(prState: string | null): string {
+  if (prState === 'MERGED') {
+    return 'text-purple-500'
+  }
+  if (prState === 'CLOSED') {
+    return 'text-destructive'
+  }
+  return 'text-success'
+}
 
 type WorkspaceStatus =
   | 'creating'
@@ -265,7 +250,6 @@ function ContainerPauseButton({
   readonly workspaceId: string
   readonly isPaused: boolean
 }) {
-  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [isLoading, setIsLoading] = useState(false)
   const pauseContainer = useAtomSet(pauseContainerMutation, {
     mode: 'promise',
@@ -299,7 +283,7 @@ function ContainerPauseButton({
         render={
           <Button
             aria-label={isPaused ? 'Resume container' : 'Pause container'}
-            disabled={!isServerReady || isLoading}
+            disabled={isLoading}
             onClick={handleToggle}
             size="icon-xs"
             variant="ghost"
@@ -332,95 +316,49 @@ function ContainerPauseButton({
 }
 
 /**
+ * Returns the label for the destroy button based on current state.
+ */
+/**
  * Destroy dialog description text. Extracted to avoid nested ternaries.
- *
- * Shows a checking spinner while dirty/terminal state is loading, then
- * displays any uncommitted files and active terminal sessions that will
- * be lost. When there are no warnings, shows a generic confirmation.
  */
 function DestroyDialogDescription({
-  activeTerminals,
   branchName,
   dirtyFiles,
-  isCheckingDirtyFiles,
-  isCheckingTerminals,
+  isCheckingDirty,
 }: {
-  readonly activeTerminals: readonly ActiveTerminal[]
   readonly branchName: string
   readonly dirtyFiles: readonly string[]
-  readonly isCheckingDirtyFiles: boolean
-  readonly isCheckingTerminals: boolean
+  readonly isCheckingDirty: boolean
 }) {
-  const isChecking = isCheckingDirtyFiles || isCheckingTerminals
-  const hasWarnings = dirtyFiles.length > 0 || activeTerminals.length > 0
-  const warningsSummary = [
-    dirtyFiles.length > 0 ? ' uncommitted changes' : null,
-    activeTerminals.length > 0
-      ? ` ${activeTerminals.length} active terminal${activeTerminals.length > 1 ? 's' : ''}`
-      : null,
-  ].filter((value) => value != null)
-  let additionalChecksLabel: string | null = null
-
-  if (isCheckingDirtyFiles && isCheckingTerminals) {
-    additionalChecksLabel =
-      'Checking for additional uncommitted changes and running terminals...'
-  } else if (isCheckingDirtyFiles) {
-    additionalChecksLabel = 'Checking for additional uncommitted changes...'
-  } else if (isCheckingTerminals) {
-    additionalChecksLabel = 'Checking for additional running terminals...'
-  }
-
-  if (isChecking && !hasWarnings) {
+  if (isCheckingDirty) {
     return (
       <AlertDialogDescription>
-        <span className="flex flex-col items-center gap-2">
+        <span className="flex items-center gap-2">
           <Spinner className="size-3" />
-          <span>
-            Checking workspace{' '}
-            <strong className="font-mono text-foreground">{branchName}</strong>{' '}
-            for uncommitted changes...
-          </span>
+          Checking workspace{' '}
+          <strong className="font-mono text-foreground">{branchName}</strong>{' '}
+          for uncommitted changes...
         </span>
       </AlertDialogDescription>
     )
   }
 
-  if (hasWarnings) {
+  if (dirtyFiles.length > 0) {
     return (
       <>
         <AlertDialogDescription>
           Workspace{' '}
           <strong className="font-mono text-foreground">{branchName}</strong>{' '}
-          has {warningsSummary.join(' and')} that will be lost. Are you sure you
-          want to force destroy it?
+          has uncommitted changes that will be lost. Are you sure you want to
+          force destroy it?
         </AlertDialogDescription>
-        {additionalChecksLabel && (
-          <p className="flex items-center gap-2 text-muted-foreground text-xs">
-            <Spinner className="size-3" />
-            {additionalChecksLabel}
-          </p>
-        )}
-        {dirtyFiles.length > 0 && (
-          <ul className="max-h-40 list-none overflow-y-auto rounded-md border bg-muted/50 p-2 font-mono text-xs">
-            {dirtyFiles.map((file) => (
-              <li className="break-all py-0.5 text-muted-foreground" key={file}>
-                {file}
-              </li>
-            ))}
-          </ul>
-        )}
-        {activeTerminals.length > 0 && (
-          <ul className="max-h-40 list-none overflow-y-auto rounded-md border bg-muted/50 p-2 font-mono text-xs">
-            {activeTerminals.map((terminal) => (
-              <li
-                className="break-all py-0.5 text-muted-foreground"
-                key={terminal.id}
-              >
-                {terminal.label}
-              </li>
-            ))}
-          </ul>
-        )}
+        <ul className="max-h-40 list-none overflow-y-auto rounded-md border bg-muted/50 p-2 font-mono text-xs">
+          {dirtyFiles.map((file) => (
+            <li className="truncate py-0.5 text-muted-foreground" key={file}>
+              {file}
+            </li>
+          ))}
+        </ul>
       </>
     )
   }
@@ -436,56 +374,9 @@ function DestroyDialogDescription({
   )
 }
 
-/**
- * Start Ralph Loop button — extracted to avoid excessive complexity
- * in WorkspaceItem and to encapsulate the phase-gating logic.
- */
-function StartRalphLoopButton({
-  isStartingLoop,
-  onClick,
-}: {
-  readonly isStartingLoop: boolean
-  readonly onClick: () => void
-}) {
-  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            aria-label="Start ralph loop"
-            disabled={!isServerReady || isStartingLoop}
-            onClick={onClick}
-            size="icon-xs"
-            title={isServerReady ? undefined : 'Connecting to server...'}
-            variant="ghost"
-          />
-        }
-      >
-        <Play
-          className={cn(
-            'size-3.5',
-            isStartingLoop
-              ? 'animate-pulse text-muted-foreground'
-              : 'text-success'
-          )}
-        />
-      </TooltipTrigger>
-      <TooltipContent>Start Ralph Loop</TooltipContent>
-    </Tooltip>
-  )
-}
-
 interface WorkspaceItemProps {
   /** The prdId of the plan this workspace is associated with, if any. */
   readonly associatedPrdId?: string | undefined
-  /**
-   * Whether this workspace is the root workspace (main git checkout).
-   * Root workspaces cannot be destroyed as they represent the original
-   * repository clone.
-   */
-  readonly isRootWorkspace?: boolean | undefined
   readonly workspace: {
     readonly id: string
     readonly projectId: string
@@ -505,166 +396,68 @@ interface WorkspaceItemProps {
     readonly prUrl: string | null
     readonly prTitle: string | null
     readonly prState: string | null
-    readonly aheadCount: number | null
-    readonly behindCount: number | null
   }
 }
 
-function DestroyWorkspaceButton({
-  workspaceId,
-  branchName,
-}: {
-  readonly workspaceId: string
-  readonly branchName: string
-}) {
-  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
+function WorkspaceItem({ workspace, associatedPrdId }: WorkspaceItemProps) {
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [isCheckingDirty, setIsCheckingDirty] = useState(false)
+  const [dirtyFiles, setDirtyFiles] = useState<string[]>([])
+  const [isStartingLoop, setIsStartingLoop] = useState(false)
   const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
     mode: 'promise',
   })
+  const checkDirty = useAtomSet(checkDirtyMutation, {
+    mode: 'promise',
+  })
+  const startLoop = useAtomSet(startLoopMutation, {
+    mode: 'promise',
+  })
   const panelActions = usePanelActions()
-  const {
-    activeTerminals,
-    dirtyFiles,
-    isCheckingDirtyFiles,
-    isCheckingTerminals,
-    reset: resetDestroyChecks,
-    startChecks,
-  } = useDestroyWorkspaceChecks(workspaceId)
-
-  const hasWarnings = dirtyFiles.length > 0 || activeTerminals.length > 0
-  const isCheckingDestroyState = isCheckingDirtyFiles || isCheckingTerminals
 
   const handleDialogOpen = (open: boolean) => {
     setDialogOpen(open)
     if (!open) {
-      resetDestroyChecks()
+      setDirtyFiles([])
+      setIsCheckingDirty(false)
       return
     }
-
-    startChecks()
+    // Check for dirty files when the dialog opens
+    setIsCheckingDirty(true)
+    checkDirty({ payload: { workspaceId: workspace.id } })
+      .then((files) => {
+        setDirtyFiles(files.length > 0 ? [...files] : [])
+        setIsCheckingDirty(false)
+      })
+      .catch(() => {
+        // If check fails, allow destroy without dirty warning
+        setIsCheckingDirty(false)
+      })
   }
 
   const handleDestroy = (force?: boolean) => {
     // Close dialog immediately and run destruction in the background
     setDialogOpen(false)
-    resetDestroyChecks()
+    setDirtyFiles([])
 
-    const toastId = toast.loading(`Destroying workspace "${branchName}"...`)
+    const toastId = toast.loading(
+      `Destroying workspace "${workspace.branchName}"...`
+    )
 
     destroyWorkspace({
-      payload: { workspaceId, force },
+      payload: { workspaceId: workspace.id, force },
     })
       .then(() => {
-        // Use forceCloseWorkspace to bypass the running-process confirmation
-        // gate — the user already confirmed destruction in this dialog which
-        // warned about active terminals.
-        panelActions?.forceCloseWorkspace(workspaceId)
-        toast.success(`Workspace "${branchName}" destroyed successfully`, {
-          id: toastId,
-        })
+        toast.success(
+          `Workspace "${workspace.branchName}" destroyed successfully`,
+          { id: toastId }
+        )
       })
       .catch((error: unknown) => {
         const message = extractErrorMessage(error)
         toast.error(message, { id: toastId })
       })
   }
-
-  return (
-    <AlertDialog onOpenChange={handleDialogOpen} open={dialogOpen}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <AlertDialogTrigger
-              render={
-                <Button
-                  aria-label={`Destroy workspace ${branchName}`}
-                  disabled={!isServerReady}
-                  size="icon-xs"
-                  title={isServerReady ? undefined : 'Connecting to server...'}
-                  variant="ghost"
-                />
-              }
-            />
-          }
-        >
-          <Trash2 className="size-3.5 text-muted-foreground" />
-        </TooltipTrigger>
-        <TooltipContent>Destroy workspace</TooltipContent>
-      </Tooltip>
-      <AlertDialogContent
-        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
-          if (isExactEnter(event.nativeEvent)) {
-            event.preventDefault()
-            event.stopPropagation()
-            return
-          }
-          if (isMetaEnter(event.nativeEvent) && !isCheckingDestroyState) {
-            event.preventDefault()
-            handleDestroy(hasWarnings ? true : undefined)
-          }
-        }}
-      >
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            {hasWarnings ? 'Unsaved work' : 'Destroy workspace?'}
-          </AlertDialogTitle>
-          <DestroyDialogDescription
-            activeTerminals={activeTerminals}
-            branchName={branchName}
-            dirtyFiles={dirtyFiles}
-            isCheckingDirtyFiles={isCheckingDirtyFiles}
-            isCheckingTerminals={isCheckingTerminals}
-          />
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>
-            Cancel <Kbd>Esc</Kbd>
-          </AlertDialogCancel>
-          <AlertDialogAction
-            disabled={isCheckingDestroyState}
-            onClick={() => handleDestroy(hasWarnings ? true : undefined)}
-            variant="destructive"
-          >
-            {hasWarnings ? 'Force Destroy' : 'Destroy'}
-            <Kbd>⌘</Kbd>
-            <Kbd>↵</Kbd>
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  )
-}
-
-function WorkspaceItem({
-  workspace,
-  associatedPrdId,
-  isRootWorkspace,
-}: WorkspaceItemProps) {
-  const [isStartingLoop, setIsStartingLoop] = useState(false)
-  const [workspaceAgentStatus, setWorkspaceAgentStatus] = useState<
-    'active' | 'waiting_for_input' | null
-  >(null)
-  const startLoop = useAtomSet(startLoopMutation, {
-    mode: 'promise',
-  })
-  const panelActions = usePanelActions()
-  const activeWorkspaceId = useActiveWorkspaceId()
-  const isActiveWorkspace = activeWorkspaceId === workspace.id
-  const configGet$ = useMemo(
-    () =>
-      LaborerClient.query(
-        'config.get',
-        { projectId: workspace.projectId },
-        { reactivityKeys: ConfigReactivityKeys }
-      ),
-    [workspace.projectId]
-  )
-  const configResult = useAtomValue(configGet$)
-  const autoOpenDevServer =
-    configResult._tag === 'Success'
-      ? configResult.value.devServer.autoOpen.value
-      : false
 
   const handleStartLoop = useCallback(async () => {
     setIsStartingLoop(true)
@@ -675,22 +468,17 @@ function WorkspaceItem({
       toast.success('Ralph loop started')
       // Auto-assign the spawned terminal to a pane
       if (panelActions) {
-        panelActions.assignTerminalToPane(result.id, workspace.id, undefined, {
-          autoOpenDevServer,
-        })
+        panelActions.assignTerminalToPane(result.id, workspace.id)
       }
     } catch (error: unknown) {
       toast.error(`Failed to start ralph loop: ${extractErrorMessage(error)}`)
     } finally {
       setIsStartingLoop(false)
     }
-  }, [autoOpenDevServer, startLoop, workspace.id, panelActions])
+  }, [startLoop, workspace.id, panelActions])
 
   const isContainerized = workspace.containerId != null
   const isContainerPaused = workspace.containerStatus === 'paused'
-  const containerLink = workspace.containerUrl
-    ? `https://${workspace.containerUrl}`
-    : null
 
   /**
    * For containerized workspaces, derive the display status from the
@@ -700,31 +488,10 @@ function WorkspaceItem({
   const displayStatus =
     isContainerized && isContainerPaused ? 'paused' : workspace.status
 
-  const needsAttention = workspaceAgentStatus === 'waiting_for_input'
-
-  const handleContainerLinkClick = async (
-    event: React.MouseEvent<HTMLAnchorElement>
-  ) => {
-    if (!(isElectron() && containerLink)) {
-      return
-    }
-
-    event.preventDefault()
-    await openExternalUrl(containerLink)
-  }
-
   return (
-    <Card
-      className={cn(
-        isActiveWorkspace && 'border-primary',
-        needsAttention &&
-          'animate-pulse border-amber-400/50 shadow-[0_0_8px_rgba(251,191,36,0.15)]'
-      )}
-      size="sm"
-    >
+    <Card size="sm">
       <CardHeader className="gap-2">
-        {/* Row 1 — Git: branch name, PR info, review/fix actions, destroy */}
-        <div className="flex min-w-0 flex-wrap items-start gap-2">
+        <div className="flex items-start gap-2">
           <div className="flex min-w-0 flex-1 items-start gap-2 overflow-hidden">
             <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <CardTitle className="min-w-0 font-mono text-sm">
@@ -741,117 +508,164 @@ function WorkspaceItem({
             </CardTitle>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <GitHubPrStatusBadge
-              prNumber={workspace.prNumber}
-              prState={workspace.prState}
-              prTitle={workspace.prTitle}
-              prUrl={workspace.prUrl}
-            />
-            <WorkspaceSyncStatus
-              aheadCount={workspace.aheadCount}
-              behindCount={workspace.behindCount}
-              workspaceId={workspace.id}
-            />
-            {workspace.prNumber != null && (
-              <Suspense fallback={null}>
-                <ReviewVerdictBadge workspaceId={workspace.id} />
-              </Suspense>
-            )}
-            {workspace.prNumber != null && (
-              <Suspense fallback={null}>
-                <ReviewFindingsCount workspaceId={workspace.id} />
-              </Suspense>
-            )}
-            {workspace.prNumber != null && (
-              <ReviewPrForm
-                projectId={workspace.projectId}
-                workspaceId={workspace.id}
-              />
-            )}
-            {workspace.prNumber != null && (
-              <FixFindingsForm
-                projectId={workspace.projectId}
-                workspaceId={workspace.id}
-              />
-            )}
-            {!isRootWorkspace && (
-              <DestroyWorkspaceButton
-                branchName={workspace.branchName}
-                workspaceId={workspace.id}
-              />
-            )}
-          </div>
-        </div>
-        {/* Row 2 — Infra: container URL/port, status, pause/play (hidden for root workspace) */}
-        {!isRootWorkspace && (
-          <div className="flex min-w-0 items-center justify-between gap-2">
-            {containerLink ? (
-              <CardDescription className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-                <span className="group/copyable flex min-w-0 items-center gap-1 overflow-hidden">
+            {workspace.prNumber != null && workspace.prUrl != null && (
+              <Tooltip>
+                <TooltipTrigger>
                   <a
-                    className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
-                    href={containerLink}
-                    onClick={handleContainerLinkClick}
+                    className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-xs transition-colors hover:bg-accent"
+                    href={workspace.prUrl}
                     rel="noopener"
                     target="_blank"
-                    title={`Open ${containerLink}`}
                   >
-                    {workspace.containerUrl}
+                    <GitPullRequest
+                      className={cn(
+                        'size-3',
+                        getPrStateColorClass(workspace.prState)
+                      )}
+                    />
+                    <span>#{workspace.prNumber}</span>
                   </a>
-                  <span className="-mr-14 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
-                    <CopyButton title="Copy URL" value={containerLink} />
-                    <Tooltip>
-                      <TooltipTrigger>
-                        <a
-                          aria-label="Open in browser"
-                          className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                          href={containerLink}
-                          onClick={handleContainerLinkClick}
-                          rel="noopener"
-                          target="_blank"
-                        >
-                          <ExternalLink className="size-3" />
-                        </a>
-                      </TooltipTrigger>
-                      <TooltipContent>Open in browser</TooltipContent>
-                    </Tooltip>
-                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {workspace.prTitle ?? `PR #${workspace.prNumber}`}
+                </TooltipContent>
+              </Tooltip>
+            )}
+            <Badge
+              className={cn('shrink-0 border', getStatusClasses(displayStatus))}
+              variant="outline"
+            >
+              <StatusDot status={displayStatus} />
+              {displayStatus}
+            </Badge>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          {workspace.containerUrl ? (
+            <CardDescription className="flex min-w-0 items-center gap-2">
+              <span className="group/copyable flex min-w-0 items-center gap-1">
+                <a
+                  className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
+                  href={`https://${workspace.containerUrl}`}
+                  rel="noopener"
+                  target="_blank"
+                  title={`Open https://${workspace.containerUrl}`}
+                >
+                  {workspace.containerUrl}
+                </a>
+                <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:opacity-100">
+                  <CopyButton
+                    title="Copy URL"
+                    value={`https://${workspace.containerUrl}`}
+                  />
+                  <a
+                    className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                    href={`https://${workspace.containerUrl}`}
+                    rel="noopener"
+                    target="_blank"
+                    title="Open in browser"
+                  >
+                    <ExternalLink className="size-3" />
+                  </a>
+                </span>
+              </span>
+            </CardDescription>
+          ) : (
+            workspace.port > 0 && (
+              <CardDescription className="flex items-center gap-2">
+                <span className="font-mono text-muted-foreground">
+                  :{workspace.port}
                 </span>
               </CardDescription>
+            )
+          )}
+          <div className="ml-auto flex items-center gap-1">
+            {isContainerized ? (
+              <ContainerPauseButton
+                isPaused={isContainerPaused}
+                workspaceId={workspace.id}
+              />
             ) : (
-              workspace.port > 0 && (
-                <CardDescription className="flex items-center gap-2">
-                  <span className="font-mono text-muted-foreground">
-                    :{workspace.port}
-                  </span>
-                </CardDescription>
-              )
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label="Start ralph loop"
+                      disabled={isStartingLoop}
+                      onClick={handleStartLoop}
+                      size="icon-xs"
+                      variant="ghost"
+                    />
+                  }
+                >
+                  <Play
+                    className={cn(
+                      'size-3.5',
+                      isStartingLoop
+                        ? 'animate-pulse text-muted-foreground'
+                        : 'text-success'
+                    )}
+                  />
+                </TooltipTrigger>
+                <TooltipContent>Start Ralph Loop</TooltipContent>
+              </Tooltip>
             )}
-            <div className="ml-auto flex shrink-0 items-center gap-1">
-              <Badge
-                className={cn(
-                  'shrink-0 border',
-                  getStatusClasses(displayStatus)
-                )}
-                variant="outline"
-              >
-                <StatusDot status={displayStatus} />
-                {displayStatus}
-              </Badge>
-              {isContainerized ? (
-                <ContainerPauseButton
-                  isPaused={isContainerPaused}
-                  workspaceId={workspace.id}
-                />
-              ) : (
-                <StartRalphLoopButton
-                  isStartingLoop={isStartingLoop}
-                  onClick={handleStartLoop}
-                />
-              )}
-            </div>
+            <ReviewPrForm
+              disabled={workspace.prNumber == null}
+              workspaceId={workspace.id}
+            />
+            <FixFindingsForm
+              disabled={workspace.prNumber == null}
+              workspaceId={workspace.id}
+            />
+            <AlertDialog onOpenChange={handleDialogOpen} open={dialogOpen}>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <AlertDialogTrigger
+                      render={
+                        <Button
+                          aria-label={`Destroy workspace ${workspace.branchName}`}
+                          size="icon-xs"
+                          variant="ghost"
+                        />
+                      }
+                    />
+                  }
+                >
+                  <Trash2 className="size-3.5 text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent>Destroy workspace</TooltipContent>
+              </Tooltip>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    {dirtyFiles.length > 0
+                      ? 'Uncommitted changes'
+                      : 'Destroy workspace?'}
+                  </AlertDialogTitle>
+                  <DestroyDialogDescription
+                    branchName={workspace.branchName}
+                    dirtyFiles={dirtyFiles}
+                    isCheckingDirty={isCheckingDirty}
+                  />
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={isCheckingDirty}
+                    onClick={() =>
+                      handleDestroy(dirtyFiles.length > 0 ? true : undefined)
+                    }
+                    variant="destructive"
+                  >
+                    {dirtyFiles.length > 0 ? 'Force Destroy' : 'Destroy'}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
-        )}
+        </div>
       </CardHeader>
       <CardContent>
         {workspace.worktreeSetupStep != null && (
@@ -867,11 +681,7 @@ function WorkspaceItem({
           </div>
         )}
         <div className="border-t pt-2">
-          <TerminalList
-            onAgentStatusChange={setWorkspaceAgentStatus}
-            projectId={workspace.projectId}
-            workspaceId={workspace.id}
-          />
+          <TerminalList workspaceId={workspace.id} />
         </div>
         {associatedPrdId && (
           <div className="border-t pt-2">
@@ -889,25 +699,16 @@ function WorkspaceItem({
 interface WorkspaceListProps {
   /** Only workspaces belonging to this project are shown. */
   readonly projectId: string
-  /**
-   * The repository path (project.repoPath) used to identify the root workspace.
-   * The root workspace is the one where worktreePath matches this path.
-   */
-  readonly repoPath: string
 }
 
-function WorkspaceList({ projectId, repoPath }: WorkspaceListProps) {
+function WorkspaceList({ projectId }: WorkspaceListProps) {
   const store = useLaborerStore()
   const workspaceList = store.useQuery(allWorkspaces$)
   const prdList = store.useQuery(allPrds$)
 
   // Filter out destroyed workspaces, scoped to the given project
-  const activeWorkspaces = useMemo(
-    () =>
-      workspaceList.filter(
-        (ws) => ws.status !== 'destroyed' && ws.projectId === projectId
-      ),
-    [workspaceList, projectId]
+  const activeWorkspaces = workspaceList.filter(
+    (ws) => ws.status !== 'destroyed' && ws.projectId === projectId
   )
 
   // Build a map of plan/<slug> branch name → prdId for this project,
@@ -923,20 +724,7 @@ function WorkspaceList({ projectId, repoPath }: WorkspaceListProps) {
   }, [prdList, projectId])
 
   if (activeWorkspaces.length === 0) {
-    return (
-      <Empty className="py-4">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <GitBranchPlus />
-          </EmptyMedia>
-          <EmptyTitle>No workspaces</EmptyTitle>
-          <EmptyDescription>
-            Create a workspace to start working on isolated branches with AI
-            agents.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    )
+    return <p className="py-2 text-muted-foreground text-xs">No workspaces</p>
   }
 
   return (
@@ -944,7 +732,6 @@ function WorkspaceList({ projectId, repoPath }: WorkspaceListProps) {
       {activeWorkspaces.map((workspace) => (
         <WorkspaceItem
           associatedPrdId={branchToPrdId.get(workspace.branchName)}
-          isRootWorkspace={workspace.worktreePath === repoPath}
           key={workspace.id}
           workspace={workspace}
         />

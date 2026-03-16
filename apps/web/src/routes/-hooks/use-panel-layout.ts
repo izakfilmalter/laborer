@@ -39,7 +39,7 @@ import {
 } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
 import { generateId } from '@/panels/id-utils'
-import { deriveLegacyTreeFromHierarchical } from '@/panels/layout-migration'
+
 import type { AssignTerminalToPaneOptions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import {
@@ -258,20 +258,6 @@ export function usePanelLayout() {
       }
     }
     return null
-  }, [persistedWindowLayout])
-
-  // Derive a legacy-compatible PanelNode layout for consumers that still
-  // need it (index.tsx close gates, review/diff toggle, PanelHotkeys).
-  // These consumers will be ported by Issues 10, 11, and 13.
-  // When all tabs are closed, return undefined to show the empty state.
-  const layout = useMemo(() => {
-    if (!persistedWindowLayout) {
-      return undefined
-    }
-    if (persistedWindowLayout.tabs.length === 0) {
-      return undefined
-    }
-    return deriveLegacyTreeFromHierarchical(persistedWindowLayout) ?? undefined
   }, [persistedWindowLayout])
 
   // Persist repaired window layout to LiveStore.
@@ -1937,16 +1923,11 @@ export function usePanelLayout() {
   }, [persistedWindowLayout])
 
   return {
-    layout,
     panelActions,
     activePaneId: persistedActivePaneId,
     activeWorkspaceId,
     leafPaneIds,
     isReconciling,
     liveTerminals,
-    // Legacy workspaceOrder is no longer tracked — workspace ordering is
-    // now part of the hierarchical tile layout. Kept as null for consumers
-    // that still reference it (Issue 13 will remove them).
-    workspaceOrder: null as string[] | null,
   }
 }

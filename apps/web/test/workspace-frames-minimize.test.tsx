@@ -1,3 +1,4 @@
+import type { WorkspaceTileNode } from '@laborer/shared/types'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PanelActions } from '@/panels/panel-context'
@@ -168,26 +169,53 @@ vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
 // Import after mocks are set up
 import { WorkspaceFrames } from '../src/routes/-components/workspace-frames'
 
-const layout = {
-  _tag: 'SplitNode' as const,
+/**
+ * Hierarchical workspace tile layout with two workspaces stacked vertically.
+ */
+const workspaceTileLayout: WorkspaceTileNode = {
+  _tag: 'WorkspaceTileSplit',
+  id: 'tile-root',
+  direction: 'vertical',
   children: [
     {
-      _tag: 'LeafNode' as const,
-      id: 'pane-1',
-      paneType: 'terminal' as const,
-      terminalId: 'term-1',
+      _tag: 'WorkspaceTileLeaf',
+      id: 'tile-ws1',
       workspaceId: 'ws-1',
+      activePanelTabId: 'tab-ws1',
+      panelTabs: [
+        {
+          id: 'tab-ws1',
+          panelLayout: {
+            _tag: 'PanelLeafNode',
+            id: 'pane-1',
+            paneType: 'terminal',
+            terminalId: 'term-1',
+            workspaceId: 'ws-1',
+          },
+          focusedPaneId: 'pane-1',
+        },
+      ],
     },
     {
-      _tag: 'LeafNode' as const,
-      id: 'pane-2',
-      paneType: 'terminal' as const,
-      terminalId: 'term-2',
+      _tag: 'WorkspaceTileLeaf',
+      id: 'tile-ws2',
       workspaceId: 'ws-2',
+      activePanelTabId: 'tab-ws2',
+      panelTabs: [
+        {
+          id: 'tab-ws2',
+          panelLayout: {
+            _tag: 'PanelLeafNode',
+            id: 'pane-2',
+            paneType: 'terminal',
+            terminalId: 'term-2',
+            workspaceId: 'ws-2',
+          },
+          focusedPaneId: 'pane-2',
+        },
+      ],
     },
   ],
-  direction: 'vertical' as const,
-  id: 'root',
   sizes: [50, 50],
 }
 
@@ -207,8 +235,7 @@ describe('WorkspaceFrames minimize behavior', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        layout={layout}
-        workspaceOrder={null}
+        workspaceTileLayout={workspaceTileLayout}
       />
     )
 
@@ -222,8 +249,7 @@ describe('WorkspaceFrames minimize behavior', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        layout={layout}
-        workspaceOrder={null}
+        workspaceTileLayout={workspaceTileLayout}
       />
     )
 

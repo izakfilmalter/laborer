@@ -469,7 +469,7 @@ See PRD Module 6: "Seeding and reconciliation".
 
 ## Issue 13: Remove LegacyWorkspaceFrames and flatLayout prop
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

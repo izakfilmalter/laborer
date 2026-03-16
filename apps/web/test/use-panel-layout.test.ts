@@ -391,13 +391,9 @@ describe('usePanelLayout', () => {
 
     const { result } = renderHook(() => usePanelLayout())
 
-    // The layout is derived from the hierarchical WindowLayout.
-    expect(result.current.layout).toBeDefined()
     // activePaneId resolves from the hierarchical tree's focus state.
     // The first workspace (workspace-a) has focusedPaneId 'pane-a-left'.
     expect(result.current.activePaneId).toBe('pane-a-left')
-    // workspaceOrder is no longer tracked as a separate column
-    expect(result.current.workspaceOrder).toBeNull()
   })
 
   it('derives active pane selection from the current window session only', () => {
@@ -416,7 +412,6 @@ describe('usePanelLayout', () => {
 
     const { result } = renderHook(() => usePanelLayout())
 
-    expect(result.current.layout).toBeDefined()
     expect(result.current.activePaneId).toBe('pane-a-left')
     expect(result.current.activePaneId).not.toBe('pane-b-only')
   })
@@ -438,8 +433,7 @@ describe('usePanelLayout', () => {
 
     const { result } = renderHook(() => usePanelLayout())
 
-    // The layout is derived from WINDOW_B_LAYOUT
-    expect(result.current.layout).toBeDefined()
+    // The active pane is derived from WINDOW_B_LAYOUT
     expect(result.current.activePaneId).toBe('pane-b-only')
     expect(result.current.leafPaneIds).toEqual(['pane-b-only'])
   })

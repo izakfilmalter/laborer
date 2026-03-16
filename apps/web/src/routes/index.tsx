@@ -95,14 +95,12 @@ const sidebarWorkspaces$ = queryDb(workspaces, {
 
 function HomeComponent() {
   const {
-    layout,
     panelActions,
     activePaneId,
     activeWorkspaceId,
     leafPaneIds,
     isReconciling,
     liveTerminals,
-    workspaceOrder,
   } = usePanelLayout()
 
   // Extract the active window tab's workspace tile layout for bidirectional tiling.
@@ -1004,10 +1002,8 @@ function HomeComponent() {
                       fullscreenPaneId={fullscreenPaneId}
                       isEmptyWindowTab={isEmptyWindowTab}
                       isReconciling={isReconciling}
-                      layout={layout}
                       reviewPaneOpen={reviewPaneWorkspaceId !== null}
                       reviewWorkspaceId={reviewPaneWorkspaceId}
-                      workspaceOrder={workspaceOrder}
                       workspaceTileLayout={workspaceTileLayout}
                     />
                   </>

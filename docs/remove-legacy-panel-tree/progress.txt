@@ -494,54 +494,61 @@ from `panelLayout` query results. These are expected and will be resolved by sub
 - All 71 tests in packages/shared pass
 - TypeScript: 0 errors
 - No new type errors introduced
-- Format check passes (pre-existing `isHorizontal` dependency info only)
+- Format check passes
 
-## Issue 9: handleResizePane walks PanelTreeNode
+## Issue 13: Remove LegacyWorkspaceFrames and flatLayout prop
 
 **Status:** done
 
 ### Changes made
 
-1. **Added `computeResizePanelTree` and helpers to `window-tab-utils.ts`**:
-   - `buildPanelTreePath(root, targetId)`: Builds the path from root to target in a `PanelTreeNode` tree
-   - `getResizeDeltaPanelTree(direction, splitOrientation)`: Computes resize delta (+/- 5%) based on arrow key and split orientation
-   - `applyPanelTreeResizeDelta(ancestor, childIndex, delta)`: Applies resize delta to a `PanelSplitNode`, enforcing min size (5%)
-   - `computeResizeFromPanelTreePath(path, direction)`: Walks up the path to find a resizable ancestor split
-   - `computeResizePanelTree(root, activePaneId, direction)`: Entry point — finds the parent split that can be resized and computes new sizes
-   - All functions are mechanical ports of the legacy versions from `layout-utils.ts` with `PanelNode` → `PanelTreeNode`, `'SplitNode'` → `'PanelSplitNode'`
+1. **Removed `LegacyWorkspaceFrames` component** (`apps/web/src/routes/-components/workspace-frames.tsx`):
+   - Deleted the entire `LegacyWorkspaceFrames` function (~100 lines) that extracted workspaces from the flat `PanelNode` tree and stacked them vertically
+   - Deleted `WorkspaceFrameResizableChild` (~45 lines) which was only used by `LegacyWorkspaceFrames`
+   - Removed imports: `convertPanelTree` from `layout-migration`, `filterTreeByWorkspace`, `getWorkspaceIds`, `sortWorkspaceLayouts` from `layout-utils`
+   - Removed `PanelNode` type import
 
-2. **Added `findPanelTreeRootForPane` to `window-tab-utils.ts`**:
-   - Searches all tabs → workspace tiles → panel tabs to find the `PanelTreeNode` root containing a pane
-   - Returns the panel tab's `panelLayout` (the root `PanelTreeNode`), or undefined if not found
+2. **Simplified `WorkspaceFrames` component** (`workspace-frames.tsx`):
+   - Removed `layout` (PanelNode) prop — no longer accepts a legacy flat tree
+   - Removed `workspaceOrder` prop — workspace ordering is part of the hierarchical tile layout
+   - `workspaceTileLayout` is now required (was optional with legacy fallback)
+   - Removed the conditional branch that fell back to `LegacyWorkspaceFrames`
+   - Simplified drag-and-drop monitor setup (no conditional for tile path)
 
-3. **Added `NavigationDirection` type to `window-tab-utils.ts`**:
-   - `'left' | 'right' | 'up' | 'down'` — same as in `layout-utils.ts`
-   - Exported as a type so consumers can import from `window-tab-utils` instead of `layout-utils`
+3. **Propagated `isCollapsible` and `panelRef` to hierarchical path** (`workspace-frames.tsx`):
+   - `WorkspaceTileResizableChild` now passes `isCollapsible` and `panelRef` to `WorkspaceTileRenderer`
+   - `WorkspaceTileRenderer` passes them through to `WorkspaceTileLeafFrame` for leaf nodes
+   - `WorkspaceTileLeafFrame` passes them to `WorkspaceFrame`
+   - This preserves the minimize/collapse behavior that previously only worked in `LegacyWorkspaceFrames`
 
-4. **Rewrote `handleResizePane`** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
-   - No longer reads from `layout` (derived legacy `PanelNode` tree)
-   - No longer calls `computeResize()` from `layout-utils.ts`
-   - Now uses `findPanelTreeRootForPane(persistedWindowLayout, paneId)` to locate the panel tree
-   - Uses `computeResizePanelTree(panelTreeRoot, paneId, direction)` to compute new sizes
-   - Dependency changed from `[layout, registry]` to `[persistedWindowLayout, registry]`
+4. **Simplified `PanelContent` component** (`apps/web/src/routes/-components/panel-content.tsx`):
+   - Removed `layout` (PanelNode) prop
+   - Removed `workspaceOrder` prop
+   - Guard changed from `if (layout)` to `if (workspaceTileLayout)` — renders workspace frames when a hierarchical tile layout is available
+   - Removed `PanelNode` type import
 
-5. **Removed `layout-utils` imports from `use-panel-layout.ts`**:
-   - Removed: `import type { NavigationDirection } from '@/panels/layout-utils'`
-   - Removed: `import { computeResize } from '@/panels/layout-utils'`
-   - Added: `import type { NavigationDirection } from '@/panels/window-tab-utils'`
-   - `use-panel-layout.ts` no longer imports anything from `layout-utils.ts`
+5. **Removed `layout` and `workspaceOrder` from `usePanelLayout()` return** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - Removed the `layout` memo that derived a legacy `PanelNode` via `deriveLegacyTreeFromHierarchical`
+   - Removed the `workspaceOrder: null` return value
+   - Removed `deriveLegacyTreeFromHierarchical` import from `layout-migration`
+   - `usePanelLayout()` no longer returns any legacy types
 
-6. **Added unit tests** (`apps/web/test/window-tab-utils.test.ts`):
-   - `computeResizePanelTree`: 10 tests covering single leaf, not-found, horizontal grow/shrink, vertical grow/shrink, direction mismatch, min size enforcement, nested tree walk-up, inner split resize
-   - `findPanelTreeRootForPane`: 5 tests covering single pane, not-found, split tree, empty layout, cross-tab search
+6. **Updated `index.tsx`** (`apps/web/src/routes/index.tsx`):
+   - Removed `layout` and `workspaceOrder` from `usePanelLayout()` destructuring
+   - Removed `layout` and `workspaceOrder` props from `PanelContent`
+
+7. **Updated test files**:
+   - `workspace-frames-minimize.test.tsx`: Converted `PanelNode` fixture to `WorkspaceTileNode` fixture with `WorkspaceTileLeaf` nodes containing `PanelTab` with `PanelLeafNode` layouts. Both tests pass.
+   - `full-height-review-panel.test.tsx`: Converted `PanelNode` fixtures (`SINGLE_WORKSPACE_LAYOUT`, `TWO_WORKSPACE_LAYOUT`) to `WorkspaceTileNode` fixtures. Updated "renders the workspace header above the side panel group" test to account for the `TabBar` rendered between header and content in hierarchical mode. Updated `PanelContent` test to remove `layout` and `workspaceOrder` props. All 13 tests pass.
+   - `use-panel-layout.test.ts`: Removed assertions on `result.current.layout` and `result.current.workspaceOrder`. All 12 tests pass.
 
 ### Test results
 
-- All 1349 tests in apps/web pass (was 1334, added 15 new; 1 skipped, pre-existing)
+- All 1361 tests in apps/web pass (1 skipped, pre-existing)
 - All 71 tests in packages/shared pass
 - TypeScript: 0 errors
 - No new type errors introduced
-- Format check passes
+- Format check passes (pre-existing `isHorizontal` dependency info only)
 
 ## Issue 11: Port PanelHotkeys to hierarchical tree
 

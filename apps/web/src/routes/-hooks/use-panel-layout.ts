@@ -80,6 +80,7 @@ import {
 import {
   addWindowTab,
   addWorkspaceToTabUnique,
+  closeTerminalInWindowLayout,
   collectTerminalIdsFromPanelTree,
   collectTerminalIdsFromTileTree,
   findTerminalLocation,
@@ -1213,9 +1214,15 @@ export function usePanelLayout() {
   /**
    * Close a terminal and its associated pane (ungated — no confirmation).
    * If the terminal has no pane, removes it from the service directly.
+   *
+   * Searches the active panel tab's legacy tree first (fast path), then
+   * falls back to searching all panel tabs in the hierarchical layout.
+   * This ensures that closing a terminal from the sidebar works even
+   * when the terminal is in a non-active panel tab.
    */
   const handleCloseTerminalPane = useCallback(
     (terminalId: string) => {
+      // Fast path: terminal is in the active panel tab's legacy tree
       const base = persistedLayoutTree ?? defaultLayout
       if (base) {
         const leaf = findLeafByTerminalId(base, terminalId)
@@ -1224,12 +1231,35 @@ export function usePanelLayout() {
           return
         }
       }
-      // No pane found — remove the terminal from the service directly
+
+      // Slow path: search all panel tabs in the hierarchical layout
+      if (persistedWindowLayout) {
+        const newLayout = closeTerminalInWindowLayout(
+          persistedWindowLayout,
+          terminalId
+        )
+        if (newLayout !== persistedWindowLayout) {
+          removeTerminalOptimistically(terminalId, '[close-terminal-pane]')
+          store.commit(
+            panelTabClosed({
+              windowId: panelWindowId,
+              windowLayout: newLayout,
+              activeWindowTabId: newLayout.activeTabId ?? null,
+            })
+          )
+          return
+        }
+      }
+
+      // No pane found anywhere — remove the terminal from the service directly
       removeTerminalOptimistically(terminalId, '[close-terminal-pane]')
     },
     [
       persistedLayoutTree,
       defaultLayout,
+      persistedWindowLayout,
+      panelWindowId,
+      store,
       handleClosePane,
       removeTerminalOptimistically,
     ]

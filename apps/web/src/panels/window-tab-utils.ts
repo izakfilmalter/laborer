@@ -21,6 +21,7 @@ import type {
 } from '@laborer/shared/types'
 
 import { generateId } from './id-utils'
+import { removePanelTab } from './panel-tab-utils'
 import { generateRandomTabName } from './random-name'
 
 // ---------------------------------------------------------------------------
@@ -904,6 +905,139 @@ function countPanelLeaves(node: PanelTreeNode): number {
     count += countPanelLeaves(child)
   }
   return count
+}
+
+/**
+ * Collapse a list of panel tree children after a removal.
+ * Returns the single remaining child, a new split node, or undefined if empty.
+ */
+function collapseChildren(
+  parent: PanelTreeNode & { readonly _tag: 'PanelSplitNode' },
+  children: PanelTreeNode[]
+): PanelTreeNode | undefined {
+  if (children.length === 0) {
+    return undefined
+  }
+  if (children.length === 1) {
+    return children[0]
+  }
+  const equalSize = 100 / children.length
+  return {
+    ...parent,
+    children,
+    sizes: children.map(() => equalSize),
+  }
+}
+
+/**
+ * Close a pane (leaf) in a PanelTreeNode tree by its ID.
+ * Returns the updated tree, or undefined if the pane was the root
+ * (meaning the entire tree is now empty).
+ */
+function closePaneInPanelTree(
+  root: PanelTreeNode,
+  paneId: string
+): PanelTreeNode | undefined {
+  if (root._tag === 'PanelLeafNode') {
+    return root.id === paneId ? undefined : root
+  }
+
+  // Check if a direct child is the target
+  const targetIndex = root.children.findIndex(
+    (child) => child._tag === 'PanelLeafNode' && child.id === paneId
+  )
+  if (targetIndex !== -1) {
+    const remaining = root.children.filter((_, i) => i !== targetIndex)
+    return collapseChildren(root, remaining)
+  }
+
+  // Recurse into split children
+  const newChildren: PanelTreeNode[] = []
+  let changed = false
+
+  for (const child of root.children) {
+    if (child._tag === 'PanelSplitNode') {
+      const result = closePaneInPanelTree(child, paneId)
+      if (result !== child) {
+        changed = true
+        if (result) {
+          newChildren.push(result)
+        }
+      } else {
+        newChildren.push(child)
+      }
+    } else {
+      newChildren.push(child)
+    }
+  }
+
+  if (!changed) {
+    return root
+  }
+
+  return collapseChildren(root, newChildren)
+}
+
+/**
+ * Close a terminal's pane in the hierarchical window layout.
+ *
+ * Searches all window tabs, workspaces, and panel tabs for the terminal.
+ * If the pane is the only one in its panel tab, removes the entire panel tab.
+ * Otherwise, removes just the pane from the panel tree.
+ *
+ * Returns the updated WindowLayout, or the original if nothing changed.
+ */
+function closeTerminalInWindowLayout(
+  layout: WindowLayout,
+  terminalId: string
+): WindowLayout {
+  const location = findTerminalLocation(layout, terminalId)
+  if (!location) {
+    return layout
+  }
+
+  const paneCount = (() => {
+    for (const tab of layout.tabs) {
+      if (tab.id !== location.tabId || !tab.workspaceLayout) {
+        continue
+      }
+      const tile = findWorkspaceTileLeaf(
+        tab.workspaceLayout,
+        location.workspaceId
+      )
+      if (!tile) {
+        continue
+      }
+      const panelTab = tile.panelTabs.find((t) => t.id === location.panelTabId)
+      if (panelTab) {
+        return countPanelLeaves(panelTab.panelLayout)
+      }
+    }
+    return 0
+  })()
+
+  if (paneCount <= 1) {
+    // Last pane in the panel tab — remove the entire panel tab
+    return updateWorkspaceTileLeaf(layout, location.workspaceId, (leaf) =>
+      removePanelTab(leaf, location.panelTabId)
+    )
+  }
+
+  // Multiple panes — remove just the pane from the panel tree
+  return updateWorkspaceTileLeaf(layout, location.workspaceId, (leaf) => {
+    const newTabs = leaf.panelTabs.map((tab) => {
+      if (tab.id !== location.panelTabId) {
+        return tab
+      }
+      const newLayout = closePaneInPanelTree(tab.panelLayout, location.paneId)
+      if (!newLayout) {
+        // Should not happen since paneCount > 1, but handle defensively
+        return tab
+      }
+      return { ...tab, panelLayout: newLayout }
+    })
+    return { ...leaf, panelTabs: newTabs }
+  })
 }
 
 /**
@@ -1793,6 +1927,7 @@ function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
 export {
   addWindowTab,
   addWorkspaceToTabUnique,
+  closeTerminalInWindowLayout,
   collectTerminalIdsFromPanelTree,
   collectTerminalIdsFromTileTree,
   computeProgressiveCloseAction,

@@ -10,6 +10,7 @@
 
 import type {
   PanelLeafNode,
+  PanelSplitNode,
   PanelTab,
   WindowLayout,
   WindowTab,
@@ -20,6 +21,8 @@ import type {
 import { describe, expect, it } from 'vitest'
 import {
   addWindowTab,
+  findNewPanelTreeLeaf,
+  findSiblingPaneIdInPanelTree,
   findTerminalLocation,
   findWorkspaceLocation,
   getActiveWindowTab,
@@ -27,6 +30,7 @@ import {
   getWorkspaceTileLeaves,
   removeWindowTab,
   reorderWindowTabs,
+  splitPaneInPanelTree,
   switchWindowTab,
   switchWindowTabByIndex,
   switchWindowTabRelative,
@@ -707,5 +711,184 @@ describe('combined operations', () => {
     // Tab order is now: tab-2, tab-3, tab-1
     const switched = switchWindowTabByIndex(reordered, 3)
     expect(switched.activeTabId).toBe('tab-1')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// splitPaneInPanelTree
+// ---------------------------------------------------------------------------
+
+describe('splitPaneInPanelTree', () => {
+  it('wraps a leaf in a split with a new sibling', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const result = splitPaneInPanelTree(leaf, 'pane-1', 'horizontal')
+    expect(result._tag).toBe('PanelSplitNode')
+    const split = result as PanelSplitNode
+    expect(split.direction).toBe('horizontal')
+    expect(split.children).toHaveLength(2)
+    expect(split.children[0]).toBe(leaf)
+    expect(split.children[1]?._tag).toBe('PanelLeafNode')
+    expect(split.sizes).toEqual([50, 50])
+  })
+
+  it('new pane inherits workspaceId from target', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const result = splitPaneInPanelTree(leaf, 'pane-1', 'vertical')
+    const split = result as PanelSplitNode
+    const newLeaf = split.children[1]
+    expect(newLeaf?._tag).toBe('PanelLeafNode')
+    if (newLeaf?._tag === 'PanelLeafNode') {
+      expect(newLeaf.workspaceId).toBe('ws-1')
+      expect(newLeaf.paneType).toBe('terminal')
+    }
+  })
+
+  it('respects newPaneContent overrides', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const result = splitPaneInPanelTree(leaf, 'pane-1', 'horizontal', {
+      paneType: 'agent',
+      workspaceId: 'ws-2',
+    })
+    const split = result as PanelSplitNode
+    const newLeaf = split.children[1]
+    if (newLeaf?._tag === 'PanelLeafNode') {
+      expect(newLeaf.paneType).toBe('agent')
+      expect(newLeaf.workspaceId).toBe('ws-2')
+    }
+  })
+
+  it('inserts adjacent when direction matches parent split', () => {
+    const leaf1 = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const leaf2 = makeLeaf('pane-2', 'term-2', 'ws-1')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    // Split pane-1 horizontally — should insert adjacent, not nest
+    const result = splitPaneInPanelTree(split, 'pane-1', 'horizontal')
+    expect(result._tag).toBe('PanelSplitNode')
+    const resultSplit = result as PanelSplitNode
+    expect(resultSplit.children).toHaveLength(3)
+    expect(resultSplit.children[0]?.id).toBe('pane-1')
+    expect(resultSplit.children[1]?._tag).toBe('PanelLeafNode')
+    expect(resultSplit.children[2]?.id).toBe('pane-2')
+    // Equal sizes for 3 children
+    const expectedSize = 100 / 3
+    for (const size of resultSplit.sizes) {
+      expect(size).toBeCloseTo(expectedSize)
+    }
+  })
+
+  it('nests when direction differs from parent split', () => {
+    const leaf1 = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const leaf2 = makeLeaf('pane-2', 'term-2', 'ws-1')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    // Split pane-1 vertically — should nest since parent is horizontal
+    const result = splitPaneInPanelTree(split, 'pane-1', 'vertical')
+    expect(result._tag).toBe('PanelSplitNode')
+    const resultSplit = result as PanelSplitNode
+    // Parent still has 2 children
+    expect(resultSplit.children).toHaveLength(2)
+    // First child is now a vertical split
+    expect(resultSplit.children[0]?._tag).toBe('PanelSplitNode')
+    const nestedSplit = resultSplit.children[0] as PanelSplitNode
+    expect(nestedSplit.direction).toBe('vertical')
+    expect(nestedSplit.children).toHaveLength(2)
+    expect(nestedSplit.children[0]).toBe(leaf1)
+  })
+
+  it('returns unchanged tree when pane not found', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const result = splitPaneInPanelTree(leaf, 'nonexistent', 'horizontal')
+    expect(result).toBe(leaf)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findNewPanelTreeLeaf
+// ---------------------------------------------------------------------------
+
+describe('findNewPanelTreeLeaf', () => {
+  it('finds the new leaf after a split', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const after = splitPaneInPanelTree(leaf, 'pane-1', 'horizontal')
+    const newLeaf = findNewPanelTreeLeaf(leaf, after)
+    expect(newLeaf).toBeDefined()
+    expect(newLeaf?.id).not.toBe('pane-1')
+    expect(newLeaf?._tag).toBe('PanelLeafNode')
+  })
+
+  it('returns undefined when trees are identical', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const result = findNewPanelTreeLeaf(leaf, leaf)
+    expect(result).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findSiblingPaneIdInPanelTree
+// ---------------------------------------------------------------------------
+
+describe('findSiblingPaneIdInPanelTree', () => {
+  it('returns sibling after target in a split', () => {
+    const leaf1 = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const leaf2 = makeLeaf('pane-2', 'term-2', 'ws-1')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    expect(findSiblingPaneIdInPanelTree(split, 'pane-1')).toBe('pane-2')
+  })
+
+  it('returns sibling before target when target is last', () => {
+    const leaf1 = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const leaf2 = makeLeaf('pane-2', 'term-2', 'ws-1')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    expect(findSiblingPaneIdInPanelTree(split, 'pane-2')).toBe('pane-1')
+  })
+
+  it('returns undefined for a single leaf', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    expect(findSiblingPaneIdInPanelTree(leaf, 'pane-1')).toBeUndefined()
+  })
+
+  it('finds sibling in nested tree', () => {
+    const leaf1 = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const leaf2 = makeLeaf('pane-2', 'term-2', 'ws-1')
+    const leaf3 = makeLeaf('pane-3', 'term-3', 'ws-1')
+    const innerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-inner',
+      direction: 'vertical',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    const outerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-outer',
+      direction: 'horizontal',
+      children: [innerSplit, leaf3],
+      sizes: [50, 50],
+    }
+    // pane-1's sibling within the inner split is pane-2
+    expect(findSiblingPaneIdInPanelTree(outerSplit, 'pane-1')).toBe('pane-2')
   })
 })

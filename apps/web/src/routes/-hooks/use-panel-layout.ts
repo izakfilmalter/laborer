@@ -2,7 +2,6 @@ import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import {
   layoutPaneClosed,
   layoutRestored,
-  layoutSplit,
   layoutWorkspacesReordered,
   panelLayout,
   panelTabClosed,
@@ -11,6 +10,7 @@ import {
   panelTabsReordered,
   windowLayoutPaneAssigned,
   windowLayoutRestored,
+  windowLayoutSplit,
   windowTabClosed,
   windowTabCreated,
   windowTabRenamed,
@@ -20,7 +20,9 @@ import {
 } from '@laborer/shared/schema'
 import type {
   LeafNode,
+  PanelLeafNode,
   PanelNode,
+  PanelTreeNode,
   PaneType,
   WindowLayout,
 } from '@laborer/shared/types'
@@ -53,7 +55,6 @@ import {
   ensureValidActivePaneId,
   filterTreeByWorkspace,
   findLeafByTerminalId,
-  findNewLeafAfterSplit,
   findNodeById,
   findSiblingPaneId,
   getFirstLeafId,
@@ -65,7 +66,6 @@ import {
   reconcileLayout,
   repairPanelLayoutTree,
   replaceNode,
-  splitPane,
 } from '@/panels/layout-utils'
 import type { AssignTerminalToPaneOptions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
@@ -84,9 +84,12 @@ import {
   closeTerminalInWindowLayout,
   collectTerminalIdsFromPanelTree,
   collectTerminalIdsFromTileTree,
+  findNewPanelTreeLeaf,
+  findPanelTreeLeaf,
   findTerminalLocation,
   findWorkspaceLocation,
   getActiveWindowTab,
+  getAllWorkspaceTileLeaves,
   getStaleTerminalLeavesHierarchical,
   getWorkspaceTileLeaves,
   reconcileWindowLayout,
@@ -98,6 +101,7 @@ import {
   resolveActivePaneForWindowTab,
   resolveActiveWorkspaceForWindowTab,
   saveFocusedPaneId,
+  splitPaneInPanelTree,
   switchWindowTab,
   switchWindowTabByIndex,
   switchWindowTabRelative,
@@ -196,6 +200,25 @@ function syncLegacyTreeToHierarchical(
     })
     return { ...leaf, panelTabs: updatedTabs }
   })
+}
+
+/**
+ * Find the workspace ID that contains a given pane ID by searching all
+ * workspace tile leaves across every tab in the layout.
+ */
+function findWorkspaceForPane(
+  layout: WindowLayout,
+  paneId: string
+): string | undefined {
+  const allLeaves = getAllWorkspaceTileLeaves(layout)
+  for (const leaf of allLeaves) {
+    for (const panelTab of leaf.panelTabs) {
+      if (findPanelTreeLeaf(panelTab.panelLayout, paneId)) {
+        return leaf.workspaceId
+      }
+    }
+  }
+  return undefined
 }
 
 /**
@@ -645,61 +668,69 @@ export function usePanelLayout() {
     (
       paneId: string,
       direction: 'horizontal' | 'vertical',
-      newPaneContent?: Partial<LeafNode>
+      newPaneContent?: Partial<PanelLeafNode>
     ) => {
-      const base = persistedLayoutTree ?? defaultLayout
-      if (!base) {
+      if (!persistedWindowLayout) {
         return
       }
 
-      // Resolve the workspace for the pane being split (needed for hierarchical sync)
-      const sourceNode = findNodeById(base, paneId)
-      const splitWorkspaceId =
-        sourceNode?._tag === 'LeafNode' ? sourceNode.workspaceId : undefined
+      // Find the workspace containing the pane being split.
+      const splitWorkspaceId = findWorkspaceForPane(
+        persistedWindowLayout,
+        paneId
+      )
+      if (!splitWorkspaceId) {
+        return
+      }
 
-      const newTree = splitPane(base, paneId, direction, newPaneContent)
+      // Split the panel tree directly within the active panel tab of the
+      // workspace that owns the pane. Track the before/after trees so we
+      // can diff-find the new leaf.
+      let beforeTree: PanelTreeNode | undefined
+      let afterTree: PanelTreeNode | undefined
+      const updatedLayout = updateWorkspaceTileLeaf(
+        persistedWindowLayout,
+        splitWorkspaceId,
+        (leaf) => {
+          const activeTabId = leaf.activePanelTabId
+          const updatedTabs = leaf.panelTabs.map((tab) => {
+            if (tab.id !== activeTabId) {
+              return tab
+            }
+            beforeTree = tab.panelLayout
+            afterTree = splitPaneInPanelTree(
+              tab.panelLayout,
+              paneId,
+              direction,
+              newPaneContent
+            )
+            return { ...tab, panelLayout: afterTree }
+          })
+          return { ...leaf, panelTabs: updatedTabs }
+        }
+      )
+
+      if (!(beforeTree && afterTree)) {
+        return
+      }
 
       // Find the newly created pane via leaf-diffing
-      const newLeaf = findNewLeafAfterSplit(base, newTree)
+      const newLeaf = findNewPanelTreeLeaf(beforeTree, afterTree)
 
       // Focus the new pane after splitting so the user can immediately
       // interact with it. This matches the PRD requirement: "After
       // splitting: focus lands on the new pane."
-      const newActivePaneId = newLeaf?.id ?? persistedActivePaneId
+      const finalLayout = newLeaf
+        ? saveFocusedPaneId(updatedLayout, newLeaf.id)
+        : updatedLayout
 
       store.commit(
-        layoutSplit({
+        windowLayoutSplit({
           windowId: panelWindowId,
-          layoutTree: newTree,
-          activePaneId: newActivePaneId,
+          windowLayout: finalLayout,
+          activeWindowTabId: finalLayout.activeTabId ?? null,
         })
       )
-
-      // Re-read the window layout from the store after committing so we
-      // operate on post-commit state instead of a stale closure value.
-      const currentRows = store.query(persistedLayout$)
-      const currentRow = currentRows.find(
-        (row) => row.windowId === panelWindowId
-      )
-      const freshWindowLayout =
-        (currentRow?.windowLayout as WindowLayout | undefined) ??
-        persistedWindowLayout
-
-      // Sync the split to the hierarchical tree
-      const updatedWindowLayout = syncLegacyTreeToHierarchical(
-        freshWindowLayout,
-        newTree,
-        splitWorkspaceId
-      )
-      if (updatedWindowLayout) {
-        store.commit(
-          windowLayoutRestored({
-            windowId: panelWindowId,
-            windowLayout: updatedWindowLayout,
-            activeWindowTabId: updatedWindowLayout.activeTabId ?? null,
-          })
-        )
-      }
 
       if (!newLeaf?.workspaceId) {
         return
@@ -723,15 +754,7 @@ export function usePanelLayout() {
           console.warn('[split-pane] auto-spawn failed:', error)
         })
     },
-    [
-      persistedLayoutTree,
-      defaultLayout,
-      panelWindowId,
-      persistedActivePaneId,
-      persistedWindowLayout,
-      store,
-      spawnTerminal,
-    ]
+    [panelWindowId, persistedWindowLayout, store, spawnTerminal]
   )
 
   const handleClosePane = useCallback(
@@ -1422,7 +1445,8 @@ export function usePanelLayout() {
         | typeof windowTabRenamed
         | typeof windowTabSwitched
         | typeof windowTabsReordered
-        | typeof windowLayoutRestored,
+        | typeof windowLayoutRestored
+        | typeof windowLayoutSplit,
       newLayout: WindowLayout
     ) => {
       store.commit(

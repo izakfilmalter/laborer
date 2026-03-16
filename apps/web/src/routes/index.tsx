@@ -1,6 +1,6 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { projects, workspaces } from '@laborer/shared/schema'
-import type { LeafNode, PaneType } from '@laborer/shared/types'
+import type { PaneType } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -607,12 +607,12 @@ function HomeComponent() {
         panelActions.splitPane(pickerMode.paneId, 'horizontal', {
           paneType: type,
           workspaceId: pickerMode.workspaceId,
-        } as Partial<LeafNode>)
+        })
       } else if (pickerMode.kind === 'split-down') {
         panelActions.splitPane(pickerMode.paneId, 'vertical', {
           paneType: type,
           workspaceId: pickerMode.workspaceId,
-        } as Partial<LeafNode>)
+        })
       } else if (pickerMode.kind === 'new-tab') {
         panelActions.addPanelTab?.(pickerMode.workspaceId, type)
       }

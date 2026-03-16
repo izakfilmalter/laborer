@@ -12,7 +12,7 @@
  */
 
 import type {
-  LeafNode,
+  PanelLeafNode,
   PaneType,
   SplitDirection,
   WindowLayout,
@@ -222,14 +222,14 @@ interface PanelActions {
    * Split a pane into two. The original pane stays; a new sibling pane
    * is added in the given direction.
    *
-   * @param paneId - The ID of the LeafNode to split
+   * @param paneId - The ID of the pane to split
    * @param direction - "horizontal" (side-by-side) or "vertical" (stacked)
    * @param newPaneContent - Optional content for the new pane
    */
   readonly splitPane: (
     paneId: string,
     direction: SplitDirection,
-    newPaneContent?: Partial<LeafNode>
+    newPaneContent?: Partial<PanelLeafNode>
   ) => void
 
   /**

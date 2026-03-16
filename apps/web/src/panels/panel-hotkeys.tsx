@@ -44,7 +44,7 @@
  * @see Issue #90: Toggle diff alongside terminal
  */
 
-import type { LeafNode, PanelNode } from '@laborer/shared/types'
+import type { PanelNode } from '@laborer/shared/types'
 import { useHotkeySequence } from '@tanstack/react-hotkeys'
 import { useCallback, useEffect, useRef } from 'react'
 import { useWorkspaceSyncActions } from '@/hooks/use-workspace-sync-actions'
@@ -435,7 +435,7 @@ function PanelHotkeys({
         actions.splitPane(activePaneId, 'horizontal', {
           paneType: 'agent',
           workspaceId: activeWorkspaceId,
-        } as Partial<LeafNode>)
+        })
       } else if (activeWorkspaceId) {
         // No active pane — add as a new panel tab
         actions.addPanelTab?.(activeWorkspaceId, 'agent')
@@ -457,7 +457,7 @@ function PanelHotkeys({
         actions.splitPane(activePaneId, 'horizontal', {
           paneType: 'diff',
           workspaceId: activeWorkspaceId,
-        } as Partial<LeafNode>)
+        })
       } else if (activeWorkspaceId) {
         // No active pane — add as a new panel tab
         actions.addPanelTab?.(activeWorkspaceId, 'diff')
@@ -479,7 +479,7 @@ function PanelHotkeys({
         actions.splitPane(activePaneId, 'horizontal', {
           paneType: 'review',
           workspaceId: activeWorkspaceId,
-        } as Partial<LeafNode>)
+        })
       } else if (activeWorkspaceId) {
         // No active pane — add as a new panel tab
         actions.addPanelTab?.(activeWorkspaceId, 'review')
@@ -501,7 +501,7 @@ function PanelHotkeys({
         actions.splitPane(activePaneId, 'horizontal', {
           paneType: 'devServerTerminal',
           workspaceId: activeWorkspaceId,
-        } as Partial<LeafNode>)
+        })
       } else if (activeWorkspaceId) {
         // No active pane — add as a new panel tab
         actions.addPanelTab?.(activeWorkspaceId, 'devServerTerminal')

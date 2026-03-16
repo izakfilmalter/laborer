@@ -123,7 +123,7 @@ See PRD Module 3: "Focus tracking consolidation" and the focus border fix analys
 
 ## Issue 4: handleSplitPane operates on hierarchical tree
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

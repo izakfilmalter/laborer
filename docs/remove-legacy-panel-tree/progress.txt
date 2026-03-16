@@ -145,3 +145,51 @@ from `panelLayout` query results. These are expected and will be resolved by sub
 - All 1299 tests in apps/web pass (1 skipped, pre-existing)
 - All 71 tests in packages/shared pass
 - TypeScript: 4 pre-existing errors remain in `use-panel-layout.ts` (accessing removed `layoutTree` and `activePaneId` columns in legacy reconciliation code — will be resolved by Issue 12)
+
+## Issue 4: handleSplitPane operates on hierarchical tree
+
+**Status:** done
+
+### Changes made
+
+1. **Rewrote `handleSplitPane`** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - No longer reads from `persistedLayoutTree` or `defaultLayout` (legacy `PanelNode` tree)
+   - No longer calls `splitPane()` from `layout-utils.ts` (legacy)
+   - No longer calls `syncLegacyTreeToHierarchical()` to bridge legacy → hierarchical
+   - No longer commits `layoutSplit` (legacy event, now a no-op)
+   - Now operates directly on `persistedWindowLayout` (hierarchical `WindowLayout`)
+   - Uses `findWorkspaceForPane()` (new helper) to locate the workspace containing the target pane
+   - Uses `updateWorkspaceTileLeaf()` + `splitPaneInPanelTree()` to split the active panel tab's tree
+   - Uses `findNewPanelTreeLeaf()` to identify the newly created pane via leaf-diffing
+   - Uses `saveFocusedPaneId()` to set focus on the new pane
+   - Commits `windowLayoutSplit` (hierarchical event) instead of `layoutSplit`
+   - Auto-spawn terminal behavior preserved for terminal-type panes
+
+2. **Added `findWorkspaceForPane` helper** (`use-panel-layout.ts`):
+   - Searches all workspace tile leaves across all tabs for a pane ID
+   - Returns the workspace ID that contains the pane
+   - Extracted to reduce cognitive complexity of `handleSplitPane`
+
+3. **Updated `splitPane` type signature** across the codebase:
+   - `panel-context.tsx`: `splitPane` parameter changed from `Partial<LeafNode>` to `Partial<PanelLeafNode>`
+   - `panel-hotkeys.tsx`: Removed 4 `as Partial<LeafNode>` casts (no longer needed)
+   - `index.tsx`: Removed 2 `as Partial<LeafNode>` casts
+
+4. **Added imports**:
+   - `windowLayoutSplit` from `@laborer/shared/schema`
+   - `findNewPanelTreeLeaf`, `findPanelTreeLeaf`, `getAllWorkspaceTileLeaves`, `splitPaneInPanelTree` from `window-tab-utils`
+   - `PanelLeafNode`, `PanelTreeNode` type imports from `@laborer/shared/types`
+
+5. **Added `windowLayoutSplit` to `commitWindowLayout` event union** (`use-panel-layout.ts`):
+   - Extended the accepted event types for the commit helper
+
+6. **Added unit tests** (`apps/web/test/window-tab-utils.test.ts`):
+   - `splitPaneInPanelTree`: 6 tests covering leaf split, workspace inheritance, content overrides, adjacent insertion, nesting, and not-found case
+   - `findNewPanelTreeLeaf`: 2 tests covering successful diff-find and identical-tree case
+   - `findSiblingPaneIdInPanelTree`: 4 tests covering sibling after, sibling before, single leaf, and nested tree
+
+### Test results
+
+- All 79 tests in window-tab-utils.test.ts pass (was 67, added 12 new)
+- TypeScript: same 4 pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)
+- No new type errors introduced

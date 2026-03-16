@@ -129,6 +129,136 @@ function executeResize(
 }
 
 // ---------------------------------------------------------------------------
+// Custom wheel handler — fix TUI scroll targeting (mouse tracking)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute 1-based terminal cell coordinates from a MouseEvent.
+ *
+ * Uses the canvas element's bounding rect and the terminal's col/row
+ * dimensions to convert pixel coordinates into cell positions. This
+ * mirrors the logic in ghostty-web's InputHandler.pixelToCell().
+ */
+function pixelToCell(
+  event: MouseEvent,
+  canvas: HTMLCanvasElement,
+  cols: number,
+  rows: number
+): { col: number; row: number } | null {
+  const rect = canvas.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null
+  }
+
+  const x = event.clientX - rect.left
+  const y = event.clientY - rect.top
+  const cellWidth = rect.width / cols
+  const cellHeight = rect.height / rows
+
+  return {
+    col: Math.max(1, Math.floor(x / cellWidth) + 1),
+    row: Math.max(1, Math.floor(y / cellHeight) + 1),
+  }
+}
+
+/**
+ * Encode a mouse event as an SGR escape sequence.
+ *
+ * SGR extended mode (mode 1006) format:
+ *   Press/motion: \x1b[<Btn;Col;RowM
+ *   Release:      \x1b[<Btn;Col;Rowm
+ *
+ * For wheel events: button 64 = scroll up, button 65 = scroll down.
+ */
+function encodeSgrMouse(
+  button: number,
+  col: number,
+  row: number,
+  modifiers: number
+): string {
+  return `\x1b[<${button + modifiers};${col};${row}M`
+}
+
+/**
+ * Get modifier flags from a mouse/wheel event for SGR encoding.
+ * Matches ghostty-web's InputHandler.getMouseModifiers().
+ *
+ * SGR modifier bits: 4 = shift, 8 = meta, 16 = ctrl.
+ * Values are additive (no overlapping bits) so addition is
+ * equivalent to bitwise OR here.
+ */
+function getMouseModifiers(event: MouseEvent): number {
+  let mods = 0
+  if (event.shiftKey) {
+    mods += 4
+  }
+  if (event.metaKey) {
+    mods += 8
+  }
+  if (event.ctrlKey) {
+    mods += 16
+  }
+  return mods
+}
+
+/**
+ * Create a custom wheel event handler for ghostty-web.
+ *
+ * ghostty-web's built-in wheel handler has a bug on alternate screen
+ * (TUIs like opencode, lazygit, etc.): it sends arrow key sequences
+ * (\x1b[A / \x1b[B) instead of SGR mouse wheel events. Arrow keys
+ * have no positional information, so the TUI routes them to whichever
+ * widget has focus — not the one under the mouse pointer.
+ *
+ * This handler intercepts wheel events when the TUI has mouse tracking
+ * enabled and sends proper SGR mouse events with cell coordinates.
+ * The TUI can then determine which widget the pointer is over and
+ * scroll the correct one.
+ *
+ * When mouse tracking is NOT active, returns `false` so ghostty-web's
+ * default behavior (viewport scrollback or arrow keys) takes over.
+ *
+ * @returns A handler suitable for `terminal.attachCustomWheelEventHandler()`.
+ *          Returns `true` to consume the event, `false` to pass through.
+ */
+function createWheelHandler(
+  terminal: Terminal,
+  container: HTMLElement
+): (event: WheelEvent) => boolean {
+  return (event: WheelEvent): boolean => {
+    // Only intercept when the TUI has mouse tracking enabled.
+    // Without mouse tracking, ghostty-web's default handling
+    // (viewport scrollback in normal mode, arrow keys in alt screen)
+    // is correct.
+    if (!terminal.hasMouseTracking()) {
+      return false
+    }
+
+    const canvas = container.querySelector('canvas')
+    if (!canvas) {
+      return false
+    }
+
+    const cell = pixelToCell(event, canvas, terminal.cols, terminal.rows)
+    if (!cell) {
+      return false
+    }
+
+    // SGR wheel buttons: 64 = scroll up, 65 = scroll down
+    const button = event.deltaY < 0 ? 64 : 65
+    const modifiers = getMouseModifiers(event)
+    const sequence = encodeSgrMouse(button, cell.col, cell.row, modifiers)
+
+    // Send the SGR mouse event to the PTY via terminal.input().
+    // Use wasUserInput=true so it triggers the onData event which
+    // routes through the TerminalSessionRouter to the PTY.
+    terminal.input(sequence, true)
+
+    return true
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Clipboard & keyboard handler for ghostty-web
 // ---------------------------------------------------------------------------
 
@@ -688,6 +818,13 @@ function TerminalPaneContent({
           exitPrefixMode,
           prefixModeRef,
         })
+      )
+
+      // Fix TUI scroll targeting: when mouse tracking is enabled,
+      // send SGR mouse wheel events with coordinates instead of
+      // arrow keys. See createWheelHandler() for details.
+      terminal.attachCustomWheelEventHandler(
+        createWheelHandler(terminal, container)
       )
 
       // Wire keyboard input to server PTY via the TerminalSessionRouter.

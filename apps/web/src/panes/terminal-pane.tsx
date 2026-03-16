@@ -53,8 +53,13 @@ import { Spinner } from '@/components/ui/spinner'
 import { useTerminalRouter } from '@/contexts/terminal-router-context'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { subscribeWindowResize } from '@/hooks/use-window-resize'
+import {
+  detectCopyShortcut,
+  isPasteShortcut,
+  isPrefixKey,
+  shouldBypassTerminal,
+} from '@/lib/keybinds'
 import type { TerminalStatus } from '@/lib/terminal-session-router'
-import { isExactCtrlB, shouldBypassTerminal } from '@/panes/terminal-keys'
 
 /**
  * Module-level WASM initialization promise.
@@ -127,58 +132,6 @@ function executeResize(
 // Clipboard & keyboard handler for ghostty-web
 // ---------------------------------------------------------------------------
 
-/**
- * Platform-aware clipboard shortcut detection matching VS Code's integrated
- * terminal conventions:
- * - macOS: Cmd+C/V
- * - Linux: Ctrl+Shift+C/V (Ctrl+C reserved for SIGINT)
- * - Windows: Ctrl+C/V (copy only when selection exists, otherwise SIGINT)
- *
- * @see https://code.visualstudio.com/docs/terminal/basics#_copy-paste
- */
-const IS_MAC = navigator.platform.includes('Mac')
-const IS_WINDOWS = navigator.platform.includes('Win')
-
-/** Detect platform-appropriate paste shortcut. */
-function isPasteShortcut(event: KeyboardEvent): boolean {
-  const key = event.key.toLowerCase()
-  if (IS_MAC) {
-    return event.metaKey && key === 'v'
-  }
-  if (IS_WINDOWS) {
-    return event.ctrlKey && !event.shiftKey && key === 'v'
-  }
-  // Linux: Ctrl+Shift+V
-  return event.ctrlKey && event.shiftKey && key === 'v'
-}
-
-/**
- * Detect platform-appropriate copy shortcut.
- * Returns 'mac' | 'linux' | 'windows' | false for the matched platform,
- * so callers can apply platform-specific behavior (e.g. Linux always
- * swallows the key to prevent SIGINT).
- */
-function detectCopyPlatform(
-  event: KeyboardEvent
-): 'mac' | 'linux' | 'windows' | false {
-  const key = event.key.toLowerCase()
-  if (IS_MAC && event.metaKey && key === 'c') {
-    return 'mac'
-  }
-  if (
-    !(IS_MAC || IS_WINDOWS) &&
-    event.ctrlKey &&
-    event.shiftKey &&
-    key === 'c'
-  ) {
-    return 'linux'
-  }
-  if (IS_WINDOWS && event.ctrlKey && !event.shiftKey && key === 'c') {
-    return 'windows'
-  }
-  return false
-}
-
 /** Fire-and-forget clipboard read + terminal paste. */
 function performPaste(term: Terminal): void {
   navigator.clipboard.readText().then(
@@ -212,21 +165,21 @@ function handleClipboardShortcut(
 ): boolean {
   // --- Paste ---
   // ghostty-web's built-in paste handling relies on the browser's native
-  // paste event, but shouldBypassTerminal() consumes all Meta+ keys
-  // (preventing the native event from firing). We read from the clipboard
-  // API and call terminal.paste() which correctly wraps data in bracketed
-  // paste sequences (DEC mode 2004) when the shell has enabled them.
+  // paste event, but app keybinds that match the same modifier (e.g. Meta+)
+  // are intercepted by shouldBypassTerminal() before the native event fires.
+  // We read from the clipboard API and call terminal.paste() which correctly
+  // wraps data in bracketed paste sequences (DEC mode 2004) when the shell
+  // has enabled them.
   if (isPasteShortcut(event)) {
     performPaste(term)
     return true
   }
 
   // --- Copy ---
-  // Same reasoning: Meta+ keys are consumed by shouldBypassTerminal().
-  const copyPlatform = detectCopyPlatform(event)
+  const copyResult = detectCopyShortcut(event)
 
   // Linux: Always swallow Ctrl+Shift+C to prevent it becoming SIGINT
-  if (copyPlatform === 'linux') {
+  if (copyResult === 'linux') {
     if (term.hasSelection()) {
       performCopy(term)
     }
@@ -234,7 +187,7 @@ function handleClipboardShortcut(
   }
 
   // Mac/Windows: Only intercept when there's a selection
-  if (copyPlatform && term.hasSelection()) {
+  if (copyResult === 'copy' && term.hasSelection()) {
     performCopy(term)
     return true
   }
@@ -252,14 +205,16 @@ interface PrefixModeCallbacks {
  * Create the custom key event handler for ghostty-web.
  *
  * Handles three concerns in order:
- * 1. Clipboard shortcuts (paste/copy) — must be checked before
- *    shouldBypassTerminal since that catches all Meta+ keys
+ * 1. Clipboard shortcuts (paste/copy) — checked first since they share
+ *    modifiers with app keybinds that would otherwise be bypassed
  * 2. App-level shortcuts that should bubble to TanStack Hotkeys
  * 3. Prefix mode for tmux-style Ctrl+B sequences
  *
  * ghostty-web convention: return `true` = consumed (prevent default),
  * return `false` = pass through (let ghostty-web handle it).
  * NOTE: This is the OPPOSITE of xterm.js.
+ *
+ * @see apps/web/src/lib/keybinds.ts — centralized keybind definitions
  */
 function createTerminalKeyHandler(
   term: Terminal,
@@ -272,17 +227,16 @@ function createTerminalKeyHandler(
       return false
     }
 
-    // Clipboard shortcuts must be checked first, before the blanket
-    // metaKey bypass in shouldBypassTerminal().
+    // Clipboard shortcuts must be checked first, before the app-level
+    // keybind bypass check which may match the same modifiers.
     if (handleClipboardShortcut(event, term)) {
       return true
     }
 
-    // Let global shortcuts (Cmd+W, Cmd+Shift+Enter) bubble to
-    // TanStack Hotkeys on document — consume the event so ghostty-web
-    // does not process it as terminal input.
+    // Let app-level shortcuts bubble to TanStack Hotkeys on document —
+    // consume the event so ghostty-web does not process it as terminal input.
     if (shouldBypassTerminal(event)) {
-      if (isExactCtrlB(event)) {
+      if (isPrefixKey(event)) {
         enterPrefixMode()
       }
       return true

@@ -142,6 +142,8 @@ const UNIFIED_DIFF_THRESHOLD = 500
 const UPDATE_FLASH_DURATION = 1500
 
 interface DiffPaneProps {
+  /** Called when the user closes the diff pane. */
+  readonly onClose?: (() => void) | undefined
   /** The workspace ID to display diffs for. */
   readonly workspaceId: string
 }

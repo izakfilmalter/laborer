@@ -230,7 +230,7 @@ describe('First-launch empty cache handling', () => {
       useQuery: () => [],
     })
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" />)
 
     // Should use the Empty component pattern — not just plain "No workspaces" text
     const emptySlot = screen.getByText('No workspaces')
@@ -244,7 +244,7 @@ describe('First-launch empty cache handling', () => {
       useQuery: () => [],
     })
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" />)
 
     // Should have a description guiding the user to create their first workspace
     expect(screen.getByText(CREATE_WORKSPACE_PATTERN)).toBeTruthy()
@@ -263,9 +263,7 @@ describe('First-launch empty cache handling', () => {
       },
     })
 
-    const { rerender } = render(
-      <WorkspaceList projectId="project-1" repoPath="/repo" />
-    )
+    const { rerender } = render(<WorkspaceList projectId="project-1" />)
 
     // Initially shows empty state
     expect(screen.getByText('No workspaces')).toBeTruthy()
@@ -299,7 +297,7 @@ describe('First-launch empty cache handling', () => {
       },
     ]
 
-    rerender(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    rerender(<WorkspaceList projectId="project-1" />)
 
     // Empty state should be gone, workspace card should be visible
     expect(screen.queryByText('No workspaces')).toBeNull()
@@ -318,7 +316,7 @@ describe('First-launch empty cache handling', () => {
 
     // Should not throw during render
     expect(() => {
-      render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+      render(<WorkspaceList projectId="project-1" />)
     }).not.toThrow()
 
     // Should not produce console errors

@@ -281,7 +281,7 @@ describe('Workspace card layout — Row 1 (Git row)', () => {
   it('hides Review PR and Fix Findings buttons when workspace has no PR', () => {
     mockStore([makeWorkspace()])
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" />)
 
     expect(screen.queryByRole('button', { name: REVIEW_PR_RE })).toBeNull()
     expect(screen.queryByRole('button', { name: FIX_FINDINGS_RE })).toBeNull()
@@ -297,7 +297,7 @@ describe('Workspace card layout — Row 1 (Git row)', () => {
       }),
     ])
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" />)
 
     expect(screen.getByRole('button', { name: REVIEW_PR_RE })).toBeTruthy()
     expect(screen.getByRole('button', { name: FIX_FINDINGS_RE })).toBeTruthy()
@@ -323,7 +323,7 @@ describe('Workspace card layout — Row 2 (Docker/Infra row)', () => {
       }),
     ])
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" />)
 
     // Status badge should be present
     expect(screen.getByText('running')).toBeTruthy()
@@ -342,7 +342,7 @@ describe('Workspace card layout — Row 2 (Docker/Infra row)', () => {
   it('shows status badge on infra row for non-containerized workspace', () => {
     mockStore([makeWorkspace()])
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" />)
 
     // Status badge should be present
     expect(screen.getByText('running')).toBeTruthy()
@@ -362,7 +362,7 @@ describe('Workspace card layout — Row 2 (Docker/Infra row)', () => {
       }),
     ])
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" />)
 
     expect(screen.getByText('paused')).toBeTruthy()
     expect(

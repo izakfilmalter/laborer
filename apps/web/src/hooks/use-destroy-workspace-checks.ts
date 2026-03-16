@@ -93,7 +93,7 @@ function useDestroyWorkspaceChecks(
       })
 
     refresh()
-      .then((nextTerminals) => {
+      .then((nextTerminals: readonly TerminalInfo[]) => {
         if (requestIdRef.current !== requestId) {
           return
         }

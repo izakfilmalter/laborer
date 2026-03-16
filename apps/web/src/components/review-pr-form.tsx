@@ -27,7 +27,7 @@ import {
 import { extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 
-const reviewPrMutation = LaborerClient.mutation('rlph.review')
+const reviewPrMutation = LaborerClient.mutation('brrr.review')
 
 interface ReviewPrFormProps {
   /** Disable the button (e.g., when no PR exists for the branch). */

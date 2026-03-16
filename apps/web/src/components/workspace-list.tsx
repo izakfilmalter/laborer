@@ -91,7 +91,7 @@ const allPrds$ = queryDb(prds, { label: 'workspaceList.prds' })
 
 const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
 const checkDirtyMutation = LaborerClient.mutation('workspace.checkDirty')
-const startLoopMutation = LaborerClient.mutation('rlph.startLoop')
+const startLoopMutation = LaborerClient.mutation('brrr.startLoop')
 const pauseContainerMutation = LaborerClient.mutation('container.pause')
 const unpauseContainerMutation = LaborerClient.mutation('container.unpause')
 

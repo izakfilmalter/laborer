@@ -446,7 +446,6 @@ export function usePanelLayout() {
             foregroundProcess: null,
             hasChildProcess: false,
             id: result.id,
-            processChain: [],
             status: result.status,
             workspaceId: wsId,
           })

@@ -752,14 +752,14 @@ function LeafPaneRenderer({ node }: { readonly node: PanelLeafNode }) {
           paneId={node.id}
         />
       )}
-      {pendingClose.paneId === node.id && (
+      {pendingClose?.paneId === node.id && (
         <PaneCloseConfirmDialog
           onCancel={pendingClose.onCancel}
           onCloseAndDestroy={pendingClose.onCloseAndDestroy}
           onConfirm={pendingClose.onConfirm}
         />
       )}
-      {pendingPicker.paneId === node.id && (
+      {pendingPicker?.paneId === node.id && (
         <PanePickerOverlay
           onCancel={pendingPicker.onCancel}
           onSelect={pendingPicker.onSelect}

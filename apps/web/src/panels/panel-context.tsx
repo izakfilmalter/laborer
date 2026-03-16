@@ -11,7 +11,12 @@
  * @see Issue #75: Keyboard shortcut — split horizontal
  */
 
-import type { PanelLeafNode, SplitDirection } from '@laborer/shared/types'
+import type {
+  PanelLeafNode,
+  PaneType,
+  SplitDirection,
+  WindowLayout,
+} from '@laborer/shared/types'
 import { createContext, useContext } from 'react'
 
 /**
@@ -20,7 +25,33 @@ import { createContext, useContext } from 'react'
  */
 type ResizeDirection = 'left' | 'right' | 'up' | 'down'
 
+/** Mode for the panel type picker overlay. */
+type PickerMode =
+  | {
+      readonly kind: 'split-right'
+      readonly paneId: string
+      readonly workspaceId: string
+    }
+  | {
+      readonly kind: 'split-down'
+      readonly paneId: string
+      readonly workspaceId: string
+    }
+  | { readonly kind: 'new-tab'; readonly workspaceId: string }
+
 interface PanelActions {
+  /** Add a new panel tab for a workspace with the given pane type. */
+  readonly addPanelTab:
+    | ((
+        workspaceId: string,
+        panelType: PaneType,
+        options?: { terminalId?: string }
+      ) => void)
+    | undefined
+  /** Add a new window tab. */
+  readonly addWindowTab: (() => void) | undefined
+  /** Add a workspace to the current window tab. */
+  readonly addWorkspaceToCurrentTab: ((workspaceId: string) => void) | undefined
   /**
    * Assign a terminal to an existing pane or the first available empty pane.
    * If no paneId is given, finds the first empty terminal pane in the tree
@@ -42,6 +73,30 @@ interface PanelActions {
    * @param paneId - The ID of the LeafNode to close
    */
   readonly closePane: (paneId: string) => void
+  /** Close the terminal pane with the given terminal ID. */
+  readonly closeTerminalPane: (terminalId: string) => void
+  /** Close a window tab. */
+  readonly closeWindowTab: (() => void) | undefined
+  /** Close a workspace and remove it from the layout. */
+  readonly closeWorkspace: (workspaceId: string) => void
+  /** Force-close a workspace, bypassing dirty checks. */
+  readonly forceCloseWorkspace: (workspaceId: string) => void
+  /** Remove a panel tab from a workspace. */
+  readonly removePanelTab:
+    | ((workspaceId: string, tabId: string) => void)
+    | undefined
+  /** Rename a window tab. */
+  readonly renameWindowTab: ((tabId: string, label: string) => void) | undefined
+  /** Reorder panel tabs via drag-and-drop. */
+  readonly reorderPanelTabsDnd:
+    | ((workspaceId: string, fromIndex: number, toIndex: number) => void)
+    | undefined
+  /** Reorder window tabs via drag-and-drop. */
+  readonly reorderWindowTabsDnd:
+    | ((fromIndex: number, toIndex: number) => void)
+    | undefined
+  /** Reorder workspaces in the sidebar. */
+  readonly reorderWorkspaces: (workspaceOrder: (string | undefined)[]) => void
   /**
    * Resize the active pane in the given direction.
    *
@@ -64,6 +119,8 @@ interface PanelActions {
    * @param paneId - The ID of the pane to focus, or null to clear focus
    */
   readonly setActivePaneId: (paneId: string | null) => void
+  /** Show the panel type picker overlay. */
+  readonly showPanelTypePicker: ((mode: PickerMode) => void) | undefined
   /**
    * Split a pane into two. The original pane stays; a new sibling pane
    * is added in the given direction.
@@ -77,6 +134,24 @@ interface PanelActions {
     direction: SplitDirection,
     newPaneContent?: Partial<PanelLeafNode>
   ) => void
+  /** Switch to a specific panel tab by ID. */
+  readonly switchPanelTab:
+    | ((workspaceId: string, tabId: string) => void)
+    | undefined
+  /** Switch to a panel tab by its index position. */
+  readonly switchPanelTabByIndex:
+    | ((workspaceId: string, index: number) => void)
+    | undefined
+  /** Switch to the next or previous panel tab. */
+  readonly switchPanelTabRelative:
+    | ((workspaceId: string, delta: number) => void)
+    | undefined
+  /** Switch to a specific window tab by ID. */
+  readonly switchWindowTab: ((tabId: string) => void) | undefined
+  /** Switch to a window tab by its index position. */
+  readonly switchWindowTabByIndex: ((index: number) => void) | undefined
+  /** Switch to the next or previous window tab. */
+  readonly switchWindowTabRelative: ((delta: number) => void) | undefined
   /**
    * Toggle the dev server terminal alongside a terminal pane.
    *
@@ -103,10 +178,47 @@ interface PanelActions {
    * @returns Whether the diff pane is now visible (true = toggled on)
    */
   readonly toggleDiffPane: (paneId: string) => boolean
+  /** Toggle fullscreen for the active pane. */
+  readonly toggleFullscreenPane: () => void
+  /** Toggle the review side panel. */
+  readonly toggleReviewPane: (paneId: string) => boolean
+  /** The current window layout. */
+  readonly windowLayout: WindowLayout | undefined
+}
+
+/** Options passed to assignTerminalToPane. */
+interface AssignTerminalToPaneOptions {
+  /** Whether to auto-open a dev server split alongside. */
+  readonly autoOpenDevServer?: boolean
+}
+
+/** State for the close-confirmation dialog on a terminal pane. */
+interface PendingCloseState {
+  readonly onCancel: () => void
+  readonly onCloseAndDestroy?: (() => void) | undefined
+  readonly onConfirm: () => void
+  readonly paneId: string | null
+}
+
+/** State for the panel type picker overlay. */
+interface PendingPickerState {
+  readonly onCancel: () => void
+  readonly onSelect: (type: PaneType) => void
+  readonly paneId: string | null
 }
 
 const PanelActionsContext = createContext<PanelActions | null>(null)
 const ActivePaneIdContext = createContext<string | null>(null)
+const FullscreenPaneIdContext = createContext<string | null>(null)
+const ActiveWorkspaceIdContext = createContext<string | null>(null)
+const PendingCloseContext = createContext<PendingCloseState | null>(null)
+const PendingPickerContext = createContext<PendingPickerState | null>(null)
+
+/**
+ * Context for the fullscreen portal DOM element.
+ * When non-null, the fullscreened pane renders into this container via a portal.
+ */
+const FullscreenPortalContext = createContext<HTMLElement | null>(null)
 
 /**
  * Provider component that makes panel actions and active pane state
@@ -114,17 +226,33 @@ const ActivePaneIdContext = createContext<string | null>(null)
  */
 function PanelActionsProvider({
   activePaneId,
+  activeWorkspaceId,
   children,
+  fullscreenPaneId,
+  pendingClose,
+  pendingPicker,
   value,
 }: {
   readonly activePaneId: string | null
+  readonly activeWorkspaceId?: string | null
   readonly children: React.ReactNode
+  readonly fullscreenPaneId?: string | null
+  readonly pendingClose?: PendingCloseState | null
+  readonly pendingPicker?: PendingPickerState | null
   readonly value: PanelActions
 }) {
   return (
     <PanelActionsContext.Provider value={value}>
       <ActivePaneIdContext.Provider value={activePaneId}>
-        {children}
+        <FullscreenPaneIdContext.Provider value={fullscreenPaneId ?? null}>
+          <ActiveWorkspaceIdContext.Provider value={activeWorkspaceId ?? null}>
+            <PendingCloseContext.Provider value={pendingClose ?? null}>
+              <PendingPickerContext.Provider value={pendingPicker ?? null}>
+                {children}
+              </PendingPickerContext.Provider>
+            </PendingCloseContext.Provider>
+          </ActiveWorkspaceIdContext.Provider>
+        </FullscreenPaneIdContext.Provider>
       </ActivePaneIdContext.Provider>
     </PanelActionsContext.Provider>
   )
@@ -146,5 +274,40 @@ function useActivePaneId(): string | null {
   return useContext(ActivePaneIdContext)
 }
 
-export { PanelActionsProvider, useActivePaneId, usePanelActions }
-export type { PanelActions }
+/** Hook to read the currently fullscreened pane ID, if any. */
+function useFullscreenPaneId(): string | null {
+  return useContext(FullscreenPaneIdContext)
+}
+
+/** Hook to read the fullscreen portal DOM element. */
+function useFullscreenPortal(): HTMLElement | null {
+  return useContext(FullscreenPortalContext)
+}
+
+/** Hook to read the pending close-confirmation dialog state. */
+function usePendingClosePane(): PendingCloseState | null {
+  return useContext(PendingCloseContext)
+}
+
+/** Hook to read the pending panel type picker overlay state. */
+function usePendingPicker(): PendingPickerState | null {
+  return useContext(PendingPickerContext)
+}
+
+export {
+  FullscreenPortalContext,
+  PanelActionsProvider,
+  useActivePaneId,
+  useFullscreenPaneId,
+  useFullscreenPortal,
+  usePanelActions,
+  usePendingClosePane,
+  usePendingPicker,
+}
+export type {
+  AssignTerminalToPaneOptions,
+  PanelActions,
+  PendingCloseState,
+  PendingPickerState,
+  PickerMode,
+}

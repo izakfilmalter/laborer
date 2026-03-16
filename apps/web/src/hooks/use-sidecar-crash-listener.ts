@@ -21,6 +21,7 @@ import { getDesktopBridge } from '@/lib/desktop'
 
 /** Human-readable display names for sidecar services. */
 const DISPLAY_NAMES: Record<SidecarName, string> = {
+  'file-watcher': 'File Watcher',
   server: 'Server',
   terminal: 'Terminal',
   mcp: 'MCP',

@@ -141,4 +141,62 @@ export function terminalWsUrl(terminalId: string): string {
   return `${protocol}//${globalThis.location.host}/terminal?id=${encoded}`
 }
 
+/**
+ * Open a URL in the user's default browser.
+ *
+ * In Electron, delegates to the DesktopBridge's shell.openExternal.
+ * In browser mode, falls back to window.open.
+ */
+export async function openExternalUrl(url: string): Promise<void> {
+  const bridge = getDesktopBridge()
+  if (bridge) {
+    await bridge.openExternal(url)
+    return
+  }
+  window.open(url, '_blank', 'noopener,noreferrer')
+}
+
+/**
+ * Resolve the HTTP URL for the server's init-status health endpoint.
+ *
+ * - Dev mode: `/init-status` (Vite proxy handles routing)
+ * - Electron production: `${desktopBridge.getServerUrl()}/init-status` (direct)
+ */
+export function serverInitStatusUrl(): string {
+  if (isElectronProduction()) {
+    const bridge = getDesktopBridge()
+    if (bridge) {
+      return `${bridge.getServerUrl()}/init-status`
+    }
+  }
+  return '/init-status'
+}
+
+/**
+ * Get the stable identity of the current Electron window.
+ * Returns null when running outside Electron.
+ */
+export function getCurrentWindowId(): string | null {
+  const bridge = getDesktopBridge()
+  return bridge ? bridge.getWindowId() : null
+}
+
+/**
+ * Check if a workspace is already open in another Electron window and
+ * focus that window instead of duplicating the workspace here.
+ * Returns true if another window was focused, false otherwise.
+ * Always returns false when running outside Electron.
+ */
+export function focusExistingWindowForWorkspace(
+  _workspaceId: string
+): Promise<boolean> {
+  const bridge = getDesktopBridge()
+  if (!bridge) {
+    return Promise.resolve(false)
+  }
+  // Multi-window workspace deduplication is not yet implemented in the
+  // desktop bridge. Return false so callers proceed normally.
+  return Promise.resolve(false)
+}
+
 export { getDesktopBridge }

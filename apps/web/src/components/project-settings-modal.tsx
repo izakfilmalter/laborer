@@ -65,7 +65,7 @@ function ProjectSettingsForm({
 
   const [worktreeDir, setWorktreeDir] = useState('')
   const [setupScripts, setSetupScripts] = useState<SetupScriptItem[]>([])
-  const [rlphConfig, setRlphConfig] = useState('')
+  const [brrrConfig, setBrrrConfig] = useState('')
   const [devServerImage, setDevServerImage] = useState('')
   const [devServerInstallCommand, setDevServerInstallCommand] = useState('')
   const [devServerNetwork, setDevServerNetwork] = useState('')
@@ -89,7 +89,7 @@ function ProjectSettingsForm({
 
     setWorktreeDir(configResult.value.worktreeDir.value)
     setSetupScripts(toSetupScriptItems(configResult.value.setupScripts.value))
-    setRlphConfig(configResult.value.rlphConfig.value ?? '')
+    setBrrrConfig(configResult.value.brrrConfig.value ?? '')
     setDevServerImage(configResult.value.devServer.image.value ?? '')
     setDevServerInstallCommand(
       configResult.value.devServer.installCommand.value ?? ''
@@ -149,14 +149,14 @@ function ProjectSettingsForm({
       devServerNetwork,
       devServerSetupScripts,
       devServerStartCommand,
-      rlphConfig,
+      brrrConfig,
       resolvedConfig: {
         devServerImage: resolvedConfig.devServer.image.value,
         devServerInstallCommand: resolvedConfig.devServer.installCommand.value,
         devServerNetwork: resolvedConfig.devServer.network.value,
         devServerSetupScripts: resolvedConfig.devServer.setupScripts.value,
         devServerStartCommand: resolvedConfig.devServer.startCommand.value,
-        rlphConfig: resolvedConfig.rlphConfig.value,
+        brrrConfig: resolvedConfig.brrrConfig.value,
         setupScripts: resolvedConfig.setupScripts.value,
         worktreeDir: resolvedConfig.worktreeDir.value,
       },
@@ -424,17 +424,17 @@ function ProjectSettingsForm({
           </Field>
 
           <Field>
-            <FieldLabel htmlFor={`rlph-config-${projectId}`}>
-              rlph config
+            <FieldLabel htmlFor={`brrr-config-${projectId}`}>
+              brrr config
             </FieldLabel>
             <Input
-              id={`rlph-config-${projectId}`}
-              onChange={(event) => setRlphConfig(event.target.value)}
-              placeholder=".rlph/config.json"
-              value={rlphConfig}
+              id={`brrr-config-${projectId}`}
+              onChange={(event) => setBrrrConfig(event.target.value)}
+              placeholder=".brrr/config.json"
+              value={brrrConfig}
             />
             <FieldDescription className={provenanceClassName}>
-              Source: {resolvedConfig.rlphConfig.source}
+              Source: {resolvedConfig.brrrConfig.source}
             </FieldDescription>
           </Field>
         </FieldSet>
@@ -480,7 +480,7 @@ function ProjectSettingsModal({
         <DialogHeader>
           <DialogTitle>Project settings</DialogTitle>
           <DialogDescription>
-            Configure dev server, worktree path, setup scripts, and rlph config
+            Configure dev server, worktree path, setup scripts, and brrr config
             for {projectName}.
           </DialogDescription>
         </DialogHeader>

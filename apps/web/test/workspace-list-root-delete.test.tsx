@@ -291,7 +291,7 @@ describe('WorkspaceList — root workspace delete protection', () => {
 
     mockStore([rootWorkspace])
 
-    render(<WorkspaceList projectId="project-1" repoPath={PROJECT_REPO_PATH} />)
+    render(<WorkspaceList projectId="project-1" />)
 
     // The destroy button should NOT be present for the root workspace
     expect(
@@ -308,7 +308,7 @@ describe('WorkspaceList — root workspace delete protection', () => {
 
     mockStore([linkedWorkspace])
 
-    render(<WorkspaceList projectId="project-1" repoPath={PROJECT_REPO_PATH} />)
+    render(<WorkspaceList projectId="project-1" />)
 
     // The destroy button SHOULD be present for non-root workspaces
     expect(
@@ -330,7 +330,7 @@ describe('WorkspaceList — root workspace delete protection', () => {
 
     mockStore([rootWorkspace, linkedWorkspace])
 
-    render(<WorkspaceList projectId="project-1" repoPath={PROJECT_REPO_PATH} />)
+    render(<WorkspaceList projectId="project-1" />)
 
     // Should have exactly ONE destroy button (for the linked workspace only)
     const destroyButtons = screen.getAllByRole('button', {

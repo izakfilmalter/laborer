@@ -27,7 +27,7 @@ import {
 import { extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 
-const fixFindingsMutation = LaborerClient.mutation('rlph.fix')
+const fixFindingsMutation = LaborerClient.mutation('brrr.fix')
 
 interface FixFindingsFormProps {
   /** Disable the button (e.g., when no PR exists for the branch). */

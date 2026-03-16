@@ -213,6 +213,8 @@ const isExactCtrlB = (event: KeyboardEvent): boolean =>
   !event.metaKey
 
 interface TerminalPaneProps {
+  /** Called when the terminal session exits. */
+  readonly onTerminalExit?: (() => void) | undefined
   /** The terminal ID to subscribe to for output events. */
   readonly terminalId: string
 }

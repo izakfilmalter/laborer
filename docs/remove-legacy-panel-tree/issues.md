@@ -275,7 +275,7 @@ See PRD Module 2: "handleCloseWorkspace" and "handleCloseTerminalPane" sections.
 
 ## Issue 8: handleToggleDevServerPane as panel tab toggle
 
-**Status:** open
+**Status:** done
 
 ### What to build
 
@@ -344,7 +344,7 @@ See PRD Module 2: "handleResizePane" section.
 
 ## Issue 10: Port index.tsx consumers to hierarchical tree
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

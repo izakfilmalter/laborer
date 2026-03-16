@@ -429,3 +429,69 @@ from `panelLayout` query results. These are expected and will be resolved by sub
 - TypeScript: 0 errors (the 4 pre-existing errors from Issue 2 are now resolved)
 - No new type errors introduced
 - Format check passes
+
+## Issue 10: Port index.tsx consumers to hierarchical tree
+
+**Status:** done
+
+### Changes made
+
+1. **Added new utility functions to `window-tab-utils.ts`**:
+   - `findPaneInWindowLayout(layout, paneId)`: Finds a `PanelLeafNode` and its context (workspaceId, panelTabId, tabId) by searching across all tabs, workspace tiles, panel tabs, and panel trees. Replaces `findNodeById(layout, paneId)` for pane lookups.
+   - `computeClosePaneGateActionHierarchical(layout, paneId, terminals, prState)`: Hierarchical equivalent of `computeClosePaneGateAction` from `layout-utils`. Operates on `WindowLayout` instead of `PanelNode`. Returns the same `ClosePaneGateResult` discriminated union.
+   - `computeCloseWorkspaceActionHierarchical(layout, workspaceId, terminals)`: Hierarchical equivalent of `computeCloseWorkspaceAction`. Collects terminal IDs across all panel tabs of a workspace tile leaf.
+   - All three functions + `PaneLocation` and `ClosePaneGateResult` types exported.
+
+2. **Ported `getPanePrState`** (`apps/web/src/routes/index.tsx`):
+   - Replaced `findNodeById(layout, paneId)` with `findPaneInWindowLayout(windowLayout, paneId)`
+   - Reads workspace ID from `location.workspaceId` instead of `node.workspaceId`
+   - Dependency changed from `layout` to `panelActions.windowLayout`
+
+3. **Ported fullscreen auto-exit** (`index.tsx`):
+   - Replaced `findNodeById(layout, fullscreenPaneId)` with `findPaneInWindowLayout(windowLayout, fullscreenPaneId)`
+   - Checks `location` existence instead of `node` existence
+
+4. **Ported auto-close review/diff** (`index.tsx`):
+   - Replaced `getLeafNodes(layout).some(l => l.workspaceId === wsId)` with `findWorkspaceLocation(windowLayout, wsId)`
+   - Uses hierarchical workspace location check instead of flat leaf scan
+
+5. **Ported `toggleReviewPane` and `toggleDiffPane`** (`index.tsx`):
+   - Replaced `findNodeById(layout, paneId)` with `findPaneInWindowLayout(windowLayout, paneId)`
+   - Reads workspace ID from `location.workspaceId`
+
+6. **Ported `gatedClosePane`** (`index.tsx`):
+   - Replaced `computeClosePaneGateAction(layout, ...)` with `computeClosePaneGateActionHierarchical(panelActions.windowLayout, ...)`
+   - Same return type and behavior, but operates on hierarchical tree
+
+7. **Ported `gatedCloseTerminalPane`** (`index.tsx`):
+   - Replaced `findLeafByTerminalId(layout, terminalId)` with `findTerminalLocation(windowLayout, terminalId)`
+   - Uses `location.paneId` instead of `leaf.id` to delegate to `gatedClosePane`
+
+8. **Ported `gatedCloseWorkspace`** (`index.tsx`):
+   - Replaced `computeCloseWorkspaceAction(layout, ...)` with `computeCloseWorkspaceActionHierarchical(panelActions.windowLayout, ...)`
+
+9. **Ported `handleNotificationClicked`** (`index.tsx`):
+   - Replaced `getLeafNodes(layout).find(l => l.workspaceId === wsId)` with hierarchical lookup via `getAllWorkspaceTileLeaves(windowLayout)` + `resolveActivePaneForPanelTab`
+   - Finds the workspace tile, resolves its active panel tab's focused pane, and activates it
+
+10. **Removed `layout-utils` imports from `index.tsx`**:
+    - Removed: `computeClosePaneGateAction`, `computeCloseWorkspaceAction`, `findLeafByTerminalId`, `findNodeById`, `getLeafNodes`
+    - Added: `computeClosePaneGateActionHierarchical`, `computeCloseWorkspaceActionHierarchical`, `findPaneInWindowLayout`, `findTerminalLocation`, `findWorkspaceLocation`, `getAllWorkspaceTileLeaves`, `resolveActivePaneForPanelTab`
+
+11. **Note: `layout` still returned from `usePanelLayout()` and passed to downstream components**:
+    - `PanelHotkeys` still receives `layout` prop (Issue 11 will port it)
+    - `PanelContent` still receives `layout` prop (Issue 13 will remove it)
+    - The `layout` destructure remains in `HomeComponent` for these consumers
+
+12. **Added unit tests** (`apps/web/test/window-tab-utils.test.ts`):
+    - `findPaneInWindowLayout`: 5 tests (single-tab, cross-tab, different-tab, not-found, empty)
+    - `computeClosePaneGateActionHierarchical`: 7 tests (undefined layout, not-found, no process, running process, prompt-destroy, confirm-with-destroy, multiple panes)
+    - `computeCloseWorkspaceActionHierarchical`: 5 tests (undefined, not-found, no process, running process, any-running)
+
+### Test results
+
+- All 1334 tests in apps/web pass (was 1317, added 17 new; 1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- TypeScript: 0 errors
+- No new type errors introduced
+- Format check passes (pre-existing `isHorizontal` dependency info only)

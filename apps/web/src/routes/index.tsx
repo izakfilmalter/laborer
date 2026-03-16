@@ -32,13 +32,6 @@ import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { DiffScrollProvider } from '@/panels/diff-scroll-context'
 import {
-  computeClosePaneGateAction,
-  computeCloseWorkspaceAction,
-  findLeafByTerminalId,
-  findNodeById,
-  getLeafNodes,
-} from '@/panels/layout-utils'
-import {
   PanelActionsProvider,
   type PendingCloseState,
   type PendingPickerState,
@@ -47,8 +40,15 @@ import {
 import { PanelGroupRegistryProvider } from '@/panels/panel-group-registry'
 import { PanelHotkeys } from '@/panels/panel-hotkeys'
 import {
+  computeClosePaneGateActionHierarchical,
+  computeCloseWorkspaceActionHierarchical,
+  findPaneInWindowLayout,
+  findTerminalLocation,
+  findWorkspaceLocation,
   getActiveWindowTab,
+  getAllWorkspaceTileLeaves,
   getWorkspaceTileLeaves,
+  resolveActivePaneForPanelTab,
   shouldConfirmClosePanelTab,
   shouldConfirmCloseWindowTab,
 } from '@/panels/window-tab-utils'
@@ -153,16 +153,17 @@ function HomeComponent() {
    */
   const getPanePrState = useCallback(
     (paneId: string): string | null => {
-      if (!layout) {
+      const windowLayout = panelActions.windowLayout
+      if (!windowLayout) {
         return null
       }
-      const node = findNodeById(layout, paneId)
-      if (!node || node._tag !== 'LeafNode' || !node.workspaceId) {
+      const location = findPaneInWindowLayout(windowLayout, paneId)
+      if (!location?.workspaceId) {
         return null
       }
-      return getWorkspacePrState(node.workspaceId)
+      return getWorkspacePrState(location.workspaceId)
     },
-    [layout, getWorkspacePrState]
+    [panelActions.windowLayout, getWorkspacePrState]
   )
 
   // Fullscreen pane state — transient UI mode (not persisted to LiveStore).
@@ -173,13 +174,14 @@ function HomeComponent() {
   // Auto-exit fullscreen when the fullscreened pane no longer exists in the layout
   // (e.g., if the pane was closed while fullscreened).
   useEffect(() => {
-    if (fullscreenPaneId && layout) {
-      const node = findNodeById(layout, fullscreenPaneId)
-      if (!node) {
+    const windowLayout = panelActions.windowLayout
+    if (fullscreenPaneId && windowLayout) {
+      const location = findPaneInWindowLayout(windowLayout, fullscreenPaneId)
+      if (!location) {
         setFullscreenPaneId(null)
       }
     }
-  }, [fullscreenPaneId, layout])
+  }, [fullscreenPaneId, panelActions.windowLayout])
 
   const toggleFullscreenPane = useCallback(() => {
     setFullscreenPaneId((current) => {
@@ -211,23 +213,23 @@ function HomeComponent() {
   // Auto-close review/diff panels when the workspace no longer exists
   // in the layout (e.g., if the workspace was closed while a side panel was open).
   useEffect(() => {
-    if (!((reviewPaneWorkspaceId || diffPaneWorkspaceId) && layout)) {
+    const windowLayout = panelActions.windowLayout
+    if (!((reviewPaneWorkspaceId || diffPaneWorkspaceId) && windowLayout)) {
       return
     }
-    const leaves = getLeafNodes(layout)
     if (reviewPaneWorkspaceId) {
-      const exists = leaves.some((l) => l.workspaceId === reviewPaneWorkspaceId)
+      const exists = findWorkspaceLocation(windowLayout, reviewPaneWorkspaceId)
       if (!exists) {
         setReviewPaneWorkspaceId(null)
       }
     }
     if (diffPaneWorkspaceId) {
-      const exists = leaves.some((l) => l.workspaceId === diffPaneWorkspaceId)
+      const exists = findWorkspaceLocation(windowLayout, diffPaneWorkspaceId)
       if (!exists) {
         setDiffPaneWorkspaceId(null)
       }
     }
-  }, [reviewPaneWorkspaceId, diffPaneWorkspaceId, layout])
+  }, [reviewPaneWorkspaceId, diffPaneWorkspaceId, panelActions.windowLayout])
 
   /**
    * Toggle the full-height review panel for the workspace of the given pane.
@@ -239,16 +241,17 @@ function HomeComponent() {
    */
   const toggleReviewPane = useCallback(
     (paneId: string): boolean => {
-      if (!layout) {
+      const windowLayout = panelActions.windowLayout
+      if (!windowLayout) {
         return false
       }
 
-      const node = findNodeById(layout, paneId)
-      if (!node || node._tag !== 'LeafNode' || !node.workspaceId) {
+      const location = findPaneInWindowLayout(windowLayout, paneId)
+      if (!location?.workspaceId) {
         return false
       }
 
-      const workspaceId = node.workspaceId
+      const workspaceId = location.workspaceId
 
       setReviewPaneWorkspaceId((current) => {
         if (current === workspaceId) {
@@ -262,7 +265,7 @@ function HomeComponent() {
       // Return true if the panel will be open after this toggle
       return reviewPaneWorkspaceId !== workspaceId
     },
-    [layout, reviewPaneWorkspaceId]
+    [panelActions.windowLayout, reviewPaneWorkspaceId]
   )
 
   /**
@@ -275,16 +278,17 @@ function HomeComponent() {
    */
   const toggleDiffPane = useCallback(
     (paneId: string): boolean => {
-      if (!layout) {
+      const windowLayout = panelActions.windowLayout
+      if (!windowLayout) {
         return false
       }
 
-      const node = findNodeById(layout, paneId)
-      if (!node || node._tag !== 'LeafNode' || !node.workspaceId) {
+      const location = findPaneInWindowLayout(windowLayout, paneId)
+      if (!location?.workspaceId) {
         return false
       }
 
-      const workspaceId = node.workspaceId
+      const workspaceId = location.workspaceId
 
       setDiffPaneWorkspaceId((current) => {
         if (current === workspaceId) {
@@ -298,7 +302,7 @@ function HomeComponent() {
       // Return true if the panel will be open after this toggle
       return diffPaneWorkspaceId !== workspaceId
     },
-    [layout, diffPaneWorkspaceId]
+    [panelActions.windowLayout, diffPaneWorkspaceId]
   )
 
   // Close-terminal confirmation dialog state — the pane ID is stored in
@@ -364,8 +368,8 @@ function HomeComponent() {
   const gatedClosePane = useCallback(
     (paneId: string) => {
       const prState = getPanePrState(paneId)
-      const result = computeClosePaneGateAction(
-        layout,
+      const result = computeClosePaneGateActionHierarchical(
+        panelActions.windowLayout,
         paneId,
         liveTerminals,
         prState
@@ -385,7 +389,7 @@ function HomeComponent() {
         setDestroyOnCloseDialogOpen(true)
       }
     },
-    [getPanePrState, layout, liveTerminals, panelActions]
+    [getPanePrState, panelActions, liveTerminals]
   )
 
   const handleConfirmCloseTerminal = useCallback(() => {
@@ -462,17 +466,18 @@ function HomeComponent() {
    */
   const gatedCloseTerminalPane = useCallback(
     (terminalId: string) => {
-      if (layout) {
-        const leaf = findLeafByTerminalId(layout, terminalId)
-        if (leaf) {
-          gatedClosePane(leaf.id)
+      const windowLayout = panelActions.windowLayout
+      if (windowLayout) {
+        const location = findTerminalLocation(windowLayout, terminalId)
+        if (location) {
+          gatedClosePane(location.paneId)
           return
         }
       }
       // No pane found — delegate to the ungated handler
       panelActions.closeTerminalPane(terminalId)
     },
-    [layout, gatedClosePane, panelActions]
+    [panelActions, gatedClosePane]
   )
 
   // Close-workspace confirmation dialog state
@@ -491,8 +496,11 @@ function HomeComponent() {
   const gatedCloseWorkspace = useCallback(
     (workspaceId: string) => {
       if (
-        computeCloseWorkspaceAction(layout, workspaceId, liveTerminals) ===
-        'confirm'
+        computeCloseWorkspaceActionHierarchical(
+          panelActions.windowLayout,
+          workspaceId,
+          liveTerminals
+        ) === 'confirm'
       ) {
         pendingCloseWorkspaceIdRef.current = workspaceId
         setCloseWorkspaceDialogOpen(true)
@@ -500,7 +508,7 @@ function HomeComponent() {
       }
       panelActions.closeWorkspace(workspaceId)
     },
-    [layout, liveTerminals, panelActions]
+    [panelActions, liveTerminals]
   )
 
   const handleConfirmCloseWorkspace = useCallback(() => {
@@ -696,18 +704,28 @@ function HomeComponent() {
 
   const handleNotificationClicked = useCallback(
     (workspaceId: string) => {
-      if (!layout) {
+      const windowLayout = panelActions.windowLayout
+      if (!windowLayout) {
         return
       }
-      // Find the first leaf pane belonging to this workspace and activate it
-      const leaf = getLeafNodes(layout).find(
-        (l) => l.workspaceId === workspaceId
-      )
-      if (leaf) {
-        panelActions.setActivePaneId(leaf.id)
+      // Find the workspace and activate its focused pane
+      const allLeaves = getAllWorkspaceTileLeaves(windowLayout)
+      const wsTile = allLeaves.find((l) => l.workspaceId === workspaceId)
+      if (!wsTile) {
+        return
+      }
+      // Resolve the pane that should be focused in this workspace
+      const activePanelTab =
+        wsTile.panelTabs.find((t) => t.id === wsTile.activePanelTabId) ??
+        wsTile.panelTabs[0]
+      if (activePanelTab) {
+        const paneId = resolveActivePaneForPanelTab(activePanelTab)
+        if (paneId) {
+          panelActions.setActivePaneId(paneId)
+        }
       }
     },
-    [layout, panelActions]
+    [panelActions]
   )
 
   useAgentNotifications(

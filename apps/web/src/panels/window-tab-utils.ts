@@ -970,6 +970,175 @@ function shouldConfirmCloseWindowTab(
 }
 
 // ---------------------------------------------------------------------------
+// Pane location lookup — find a pane across the entire layout hierarchy
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of a pane location lookup.
+ */
+interface PaneLocation {
+  /** The PanelLeafNode found */
+  readonly leaf: PanelLeafNode
+  /** The panel tab ID */
+  readonly panelTabId: string
+  /** The window tab ID */
+  readonly tabId: string
+  /** The workspace ID the pane belongs to */
+  readonly workspaceId: string
+}
+
+/**
+ * Find a pane by ID across the entire window layout hierarchy.
+ *
+ * Searches: all tabs > all workspace tile leaves > all panel tabs >
+ * all pane leaves in their split trees.
+ *
+ * @param layout - The window layout to search
+ * @param paneId - The pane ID to find
+ * @returns The pane location with the leaf node, or undefined if not found
+ */
+function findPaneInWindowLayout(
+  layout: WindowLayout,
+  paneId: string
+): PaneLocation | undefined {
+  for (const tab of layout.tabs) {
+    if (!tab.workspaceLayout) {
+      continue
+    }
+    const leaves = getWorkspaceTileLeaves(tab.workspaceLayout)
+    for (const tile of leaves) {
+      for (const panelTab of tile.panelTabs) {
+        const leaf = findPanelTreeLeaf(panelTab.panelLayout, paneId)
+        if (leaf) {
+          return {
+            leaf,
+            workspaceId: tile.workspaceId,
+            panelTabId: panelTab.id,
+            tabId: tab.id,
+          }
+        }
+      }
+    }
+  }
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
+// Close gate logic — hierarchical equivalents of layout-utils functions
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of computing the close-pane gate action.
+ *
+ * - `'close'`: close immediately
+ * - `'confirm'`: show "process running" dialog (Cancel, Close)
+ * - `'confirm-with-destroy'`: process running + last pane for workspace +
+ *   PR merged — show dialog with 3 actions (Cancel, Close, Close & Destroy)
+ * - `'prompt-destroy'`: no running process + last pane + PR merged —
+ *   show "destroy workspace?" dialog
+ */
+type ClosePaneGateResult =
+  | { readonly action: 'close' }
+  | { readonly action: 'confirm' }
+  | { readonly action: 'confirm-with-destroy'; readonly workspaceId: string }
+  | { readonly action: 'prompt-destroy'; readonly workspaceId: string }
+
+/**
+ * Compute whether closing a pane should proceed immediately or show
+ * a confirmation dialog. Operates on the hierarchical `WindowLayout`.
+ *
+ * @param layout - The window layout (may be undefined)
+ * @param paneId - The ID of the pane being closed
+ * @param terminals - The cached terminal list from useTerminalList
+ * @param prState - The PR state of the pane's workspace (e.g. 'merged', 'open', null)
+ * @returns A discriminated union describing which dialog (if any) to show
+ */
+function computeClosePaneGateActionHierarchical(
+  layout: WindowLayout | undefined,
+  paneId: string,
+  terminals: readonly TerminalProcessInfo[],
+  prState: string | null
+): ClosePaneGateResult {
+  if (!layout) {
+    return { action: 'close' }
+  }
+
+  const location = findPaneInWindowLayout(layout, paneId)
+  if (!location) {
+    return { action: 'close' }
+  }
+
+  const { leaf, workspaceId } = location
+
+  // Check if this pane's terminal has a running child process
+  const hasProcess =
+    leaf.terminalId !== undefined &&
+    terminals.some(
+      (t) => t.id === leaf.terminalId && t.hasChildProcess === true
+    )
+
+  const isPrMerged = prState === 'MERGED'
+
+  // Check if this is the last pane for the workspace across all panel tabs
+  let isLastPaneForWorkspace = false
+  if (workspaceId && isPrMerged) {
+    // Count all terminal panes across all panel tabs of this workspace
+    const allLeaves = getAllWorkspaceTileLeaves(layout)
+    const wsTile = allLeaves.find((l) => l.workspaceId === workspaceId)
+    if (wsTile) {
+      let paneCount = 0
+      for (const pt of wsTile.panelTabs) {
+        paneCount += getPanelTreeLeafIds(pt.panelLayout).length
+      }
+      isLastPaneForWorkspace = paneCount === 1
+    }
+  }
+
+  if (hasProcess && isLastPaneForWorkspace && workspaceId) {
+    return { action: 'confirm-with-destroy', workspaceId }
+  }
+
+  if (hasProcess) {
+    return { action: 'confirm' }
+  }
+
+  if (isLastPaneForWorkspace && workspaceId) {
+    return { action: 'prompt-destroy', workspaceId }
+  }
+
+  return { action: 'close' }
+}
+
+/**
+ * Compute whether closing a workspace should proceed immediately or show
+ * a confirmation dialog. Operates on the hierarchical `WindowLayout`.
+ *
+ * @param layout - The window layout (may be undefined)
+ * @param workspaceId - The workspace being closed
+ * @param terminals - The cached terminal list from useTerminalList
+ * @returns `'close'` to close immediately, `'confirm'` to show dialog
+ */
+function computeCloseWorkspaceActionHierarchical(
+  layout: WindowLayout | undefined,
+  workspaceId: string,
+  terminals: readonly TerminalProcessInfo[]
+): 'close' | 'confirm' {
+  if (!layout) {
+    return 'close'
+  }
+  const allLeaves = getAllWorkspaceTileLeaves(layout)
+  const wsTile = allLeaves.find((l) => l.workspaceId === workspaceId)
+  if (!wsTile) {
+    return 'close'
+  }
+  // Collect all terminal IDs across all panel tabs
+  const terminalIds = wsTile.panelTabs.flatMap((pt) =>
+    collectTerminalIdsFromPanelTree(pt.panelLayout)
+  )
+  return hasRunningProcess(terminalIds, terminals) ? 'confirm' : 'close'
+}
+
+// ---------------------------------------------------------------------------
 // Progressive close logic
 // ---------------------------------------------------------------------------
 
@@ -2216,9 +2385,12 @@ export {
   closeTerminalInWindowLayout,
   collectTerminalIdsFromPanelTree,
   collectTerminalIdsFromTileTree,
+  computeClosePaneGateActionHierarchical,
+  computeCloseWorkspaceActionHierarchical,
   computeProgressiveCloseAction,
   findEmptyPanelTreeLeaf,
   findNewPanelTreeLeaf,
+  findPaneInWindowLayout,
   findPanelTreeLeaf,
   findSiblingPaneIdInPanelTree,
   findTerminalLocation,
@@ -2251,6 +2423,8 @@ export {
 }
 
 export type {
+  ClosePaneGateResult,
+  PaneLocation,
   ProgressiveCloseAction,
   RepairWindowLayoutResult,
   StaleTerminalLeaf,

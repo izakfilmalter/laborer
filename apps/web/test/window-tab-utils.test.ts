@@ -21,8 +21,11 @@ import type {
 import { describe, expect, it } from 'vitest'
 import {
   addWindowTab,
+  computeClosePaneGateActionHierarchical,
+  computeCloseWorkspaceActionHierarchical,
   findEmptyPanelTreeLeaf,
   findNewPanelTreeLeaf,
+  findPaneInWindowLayout,
   findSiblingPaneIdInPanelTree,
   findTerminalLocation,
   findWorkspaceLocation,
@@ -1054,5 +1057,231 @@ describe('findEmptyPanelTreeLeaf', () => {
       sizes: [50, 50],
     }
     expect(findEmptyPanelTreeLeaf(split)).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findPaneInWindowLayout
+// ---------------------------------------------------------------------------
+
+describe('findPaneInWindowLayout', () => {
+  it('finds a pane in a single-tab layout', () => {
+    const result = findPaneInWindowLayout(singleTabLayout, 'pane-term-1')
+    expect(result).toBeDefined()
+    expect(result?.leaf.id).toBe('pane-term-1')
+    expect(result?.workspaceId).toBe('ws-1')
+    expect(result?.tabId).toBe('tab-1')
+  })
+
+  it('finds a pane across tabs in a complex layout', () => {
+    const result = findPaneInWindowLayout(complexLayout, 'pane-B1')
+    expect(result).toBeDefined()
+    expect(result?.leaf.id).toBe('pane-B1')
+    expect(result?.workspaceId).toBe('ws-B')
+    expect(result?.tabId).toBe('tab-1')
+  })
+
+  it('finds a pane in a different tab', () => {
+    const result = findPaneInWindowLayout(complexLayout, 'pane-term-C1')
+    expect(result).toBeDefined()
+    expect(result?.leaf.id).toBe('pane-term-C1')
+    expect(result?.workspaceId).toBe('ws-C')
+    expect(result?.tabId).toBe('tab-2')
+  })
+
+  it('returns undefined for a non-existent pane', () => {
+    expect(
+      findPaneInWindowLayout(singleTabLayout, 'no-such-pane')
+    ).toBeUndefined()
+  })
+
+  it('returns undefined for an empty layout', () => {
+    expect(findPaneInWindowLayout(emptyLayout, 'any-pane')).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// computeClosePaneGateActionHierarchical
+// ---------------------------------------------------------------------------
+
+describe('computeClosePaneGateActionHierarchical', () => {
+  const terminals = [
+    { id: 'term-1', hasChildProcess: false },
+    { id: 'term-running', hasChildProcess: true },
+  ]
+
+  it('returns close when layout is undefined', () => {
+    const result = computeClosePaneGateActionHierarchical(
+      undefined,
+      'pane-1',
+      terminals,
+      null
+    )
+    expect(result.action).toBe('close')
+  })
+
+  it('returns close when pane is not found', () => {
+    const result = computeClosePaneGateActionHierarchical(
+      singleTabLayout,
+      'non-existent',
+      terminals,
+      null
+    )
+    expect(result.action).toBe('close')
+  })
+
+  it('returns close for a pane with no running process', () => {
+    const result = computeClosePaneGateActionHierarchical(
+      singleTabLayout,
+      'pane-term-1',
+      terminals,
+      null
+    )
+    expect(result.action).toBe('close')
+  })
+
+  it('returns confirm when the pane has a running process', () => {
+    // Build a layout with a running terminal
+    const leaf = makeLeaf('pane-running', 'term-running', 'ws-run')
+    const pt = makePanelTab('pt-run', leaf)
+    const tile = makeWorkspaceTile('tile-run', 'ws-run', [pt])
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-run', workspaceLayout: tile }],
+      activeTabId: 'tab-run',
+    }
+    const result = computeClosePaneGateActionHierarchical(
+      layout,
+      'pane-running',
+      terminals,
+      null
+    )
+    expect(result.action).toBe('confirm')
+  })
+
+  it('returns prompt-destroy when last pane + merged PR + no process', () => {
+    const result = computeClosePaneGateActionHierarchical(
+      singleTabLayout,
+      'pane-term-1',
+      terminals,
+      'MERGED'
+    )
+    expect(result.action).toBe('prompt-destroy')
+    if (result.action === 'prompt-destroy') {
+      expect(result.workspaceId).toBe('ws-1')
+    }
+  })
+
+  it('returns confirm-with-destroy when last pane + merged PR + running process', () => {
+    const leaf = makeLeaf('pane-running', 'term-running', 'ws-run')
+    const pt = makePanelTab('pt-run', leaf)
+    const tile = makeWorkspaceTile('tile-run', 'ws-run', [pt])
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-run', workspaceLayout: tile }],
+      activeTabId: 'tab-run',
+    }
+    const result = computeClosePaneGateActionHierarchical(
+      layout,
+      'pane-running',
+      terminals,
+      'MERGED'
+    )
+    expect(result.action).toBe('confirm-with-destroy')
+    if (result.action === 'confirm-with-destroy') {
+      expect(result.workspaceId).toBe('ws-run')
+    }
+  })
+
+  it('returns close when PR is merged but workspace has multiple panes', () => {
+    const leaf1 = makeLeaf('pane-1', 'term-1', 'ws-multi')
+    const leaf2 = makeLeaf('pane-2', 'term-2', 'ws-multi')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    const pt: PanelTab = {
+      id: 'pt-multi',
+      panelLayout: split,
+      focusedPaneId: 'pane-1',
+    }
+    const tile = makeWorkspaceTile('tile-multi', 'ws-multi', [pt])
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-multi', workspaceLayout: tile }],
+      activeTabId: 'tab-multi',
+    }
+    const result = computeClosePaneGateActionHierarchical(
+      layout,
+      'pane-1',
+      [
+        { id: 'term-1', hasChildProcess: false },
+        { id: 'term-2', hasChildProcess: false },
+      ],
+      'MERGED'
+    )
+    expect(result.action).toBe('close')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// computeCloseWorkspaceActionHierarchical
+// ---------------------------------------------------------------------------
+
+describe('computeCloseWorkspaceActionHierarchical', () => {
+  it('returns close when layout is undefined', () => {
+    expect(computeCloseWorkspaceActionHierarchical(undefined, 'ws-1', [])).toBe(
+      'close'
+    )
+  })
+
+  it('returns close when workspace is not found', () => {
+    expect(
+      computeCloseWorkspaceActionHierarchical(singleTabLayout, 'no-such-ws', [])
+    ).toBe('close')
+  })
+
+  it('returns close when workspace has no running processes', () => {
+    expect(
+      computeCloseWorkspaceActionHierarchical(singleTabLayout, 'ws-1', [
+        { id: 'term-1', hasChildProcess: false },
+      ])
+    ).toBe('close')
+  })
+
+  it('returns confirm when workspace has a running process', () => {
+    expect(
+      computeCloseWorkspaceActionHierarchical(singleTabLayout, 'ws-1', [
+        { id: 'term-1', hasChildProcess: true },
+      ])
+    ).toBe('confirm')
+  })
+
+  it('returns confirm when any terminal in the workspace has a running process', () => {
+    const leaf1 = makeLeaf('pane-1', 'term-1', 'ws-multi')
+    const leaf2 = makeLeaf('pane-2', 'term-2', 'ws-multi')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    const pt: PanelTab = {
+      id: 'pt-multi',
+      panelLayout: split,
+      focusedPaneId: 'pane-1',
+    }
+    const tile = makeWorkspaceTile('tile-multi', 'ws-multi', [pt])
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-multi', workspaceLayout: tile }],
+      activeTabId: 'tab-multi',
+    }
+    expect(
+      computeCloseWorkspaceActionHierarchical(layout, 'ws-multi', [
+        { id: 'term-1', hasChildProcess: false },
+        { id: 'term-2', hasChildProcess: true },
+      ])
+    ).toBe('confirm')
   })
 })

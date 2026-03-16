@@ -46,7 +46,7 @@ None - can start immediately.
 
 ## Issue 2: Schema: no-op legacy materializers and remove deprecated columns
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

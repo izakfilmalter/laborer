@@ -436,11 +436,12 @@ describe('LiveStore schema', () => {
   )
 
   it.scoped(
-    'materializes panel layout events into the panel_layout table',
+    'keeps legacy panel layout events as no-op materializers',
     () =>
       Effect.gen(function* () {
         const store = yield* makeTestStore
 
+        // Legacy events are now no-ops — they should not insert any rows
         store.commit(
           events.layoutSplit({
             windowId: 'window-1',
@@ -449,16 +450,7 @@ describe('LiveStore schema', () => {
           })
         )
 
-        assert.deepStrictEqual(store.query(tables.panelLayout), [
-          {
-            windowId: 'window-1',
-            layoutTree: splitLayout,
-            activePaneId: 'pane-1',
-            workspaceOrder: null,
-            windowLayout: null,
-            activeWindowTabId: null,
-          },
-        ])
+        assert.deepStrictEqual(store.query(tables.panelLayout), [])
 
         store.commit(
           events.layoutPaneClosed({
@@ -468,16 +460,7 @@ describe('LiveStore schema', () => {
           })
         )
 
-        assert.deepStrictEqual(store.query(tables.panelLayout), [
-          {
-            windowId: 'window-1',
-            layoutTree: leafPane,
-            activePaneId: 'pane-1',
-            workspaceOrder: null,
-            windowLayout: null,
-            activeWindowTabId: null,
-          },
-        ])
+        assert.deepStrictEqual(store.query(tables.panelLayout), [])
 
         store.commit(
           events.layoutPaneAssigned({
@@ -491,20 +474,7 @@ describe('LiveStore schema', () => {
           })
         )
 
-        assert.deepStrictEqual(store.query(tables.panelLayout), [
-          {
-            windowId: 'window-1',
-            layoutTree: {
-              ...leafPane,
-              terminalId: 'terminal-3',
-              id: 'pane-assigned',
-            },
-            activePaneId: 'pane-assigned',
-            workspaceOrder: null,
-            windowLayout: null,
-            activeWindowTabId: null,
-          },
-        ])
+        assert.deepStrictEqual(store.query(tables.panelLayout), [])
 
         store.commit(
           events.layoutRestored({
@@ -514,89 +484,8 @@ describe('LiveStore schema', () => {
           })
         )
 
-        assert.deepStrictEqual(store.query(tables.panelLayout), [
-          {
-            windowId: 'window-1',
-            layoutTree: restoredLayout,
-            activePaneId: null,
-            workspaceOrder: null,
-            windowLayout: null,
-            activeWindowTabId: null,
-          },
-        ])
-      })
-  )
+        assert.deepStrictEqual(store.query(tables.panelLayout), [])
 
-  it.scoped(
-    'stores multiple window-scoped panel layouts without overwriting each other',
-    () =>
-      Effect.gen(function* () {
-        const store = yield* makeTestStore
-
-        store.commit(
-          events.layoutRestored({
-            windowId: 'window-1',
-            layoutTree: splitLayout,
-            activePaneId: 'pane-1',
-          })
-        )
-        store.commit(
-          events.layoutRestored({
-            windowId: 'window-2',
-            layoutTree: restoredLayout,
-            activePaneId: 'pane-restored',
-          })
-        )
-
-        assert.deepStrictEqual(store.query(tables.panelLayout), [
-          {
-            windowId: 'window-1',
-            layoutTree: splitLayout,
-            activePaneId: 'pane-1',
-            workspaceOrder: null,
-            windowLayout: null,
-            activeWindowTabId: null,
-          },
-          {
-            windowId: 'window-2',
-            layoutTree: restoredLayout,
-            activePaneId: 'pane-restored',
-            workspaceOrder: null,
-            windowLayout: null,
-            activeWindowTabId: null,
-          },
-        ])
-      })
-  )
-
-  it.scoped(
-    'materializes layoutWorkspacesReordered into the panel_layout table',
-    () =>
-      Effect.gen(function* () {
-        const store = yield* makeTestStore
-
-        // Seed a layout first
-        store.commit(
-          events.layoutRestored({
-            windowId: 'window-1',
-            layoutTree: splitLayout,
-            activePaneId: 'pane-1',
-          })
-        )
-
-        // Existing row should have null workspaceOrder
-        assert.deepStrictEqual(store.query(tables.panelLayout), [
-          {
-            windowId: 'window-1',
-            layoutTree: splitLayout,
-            activePaneId: 'pane-1',
-            workspaceOrder: null,
-            windowLayout: null,
-            activeWindowTabId: null,
-          },
-        ])
-
-        // Reorder workspaces
         store.commit(
           events.layoutWorkspacesReordered({
             windowId: 'window-1',
@@ -604,111 +493,7 @@ describe('LiveStore schema', () => {
           })
         )
 
-        // workspaceOrder should be updated, layout and activePaneId preserved
-        assert.deepStrictEqual(store.query(tables.panelLayout), [
-          {
-            windowId: 'window-1',
-            layoutTree: splitLayout,
-            activePaneId: 'pane-1',
-            workspaceOrder: ['workspace-2', 'workspace-1'],
-            windowLayout: null,
-            activeWindowTabId: null,
-          },
-        ])
-      })
-  )
-
-  it.scoped(
-    'preserves workspaceOrder when layout events fire after a reorder',
-    () =>
-      Effect.gen(function* () {
-        const store = yield* makeTestStore
-
-        // Seed a layout
-        store.commit(
-          events.layoutRestored({
-            windowId: 'session-1',
-            layoutTree: splitLayout,
-            activePaneId: 'pane-1',
-          })
-        )
-
-        // Reorder workspaces
-        store.commit(
-          events.layoutWorkspacesReordered({
-            windowId: 'session-1',
-            workspaceOrder: ['workspace-2', 'workspace-1'],
-          })
-        )
-
-        // Verify reorder was persisted
-        assert.deepStrictEqual(
-          store.query(tables.panelLayout)[0]?.workspaceOrder,
-          ['workspace-2', 'workspace-1']
-        )
-
-        // Now simulate clicking a pane (layoutPaneAssigned)
-        store.commit(
-          events.layoutPaneAssigned({
-            windowId: 'session-1',
-            layoutTree: splitLayout,
-            activePaneId: 'pane-2',
-          })
-        )
-
-        // workspaceOrder must survive the layoutPaneAssigned event
-        assert.deepStrictEqual(store.query(tables.panelLayout), [
-          {
-            windowId: 'session-1',
-            layoutTree: splitLayout,
-            activePaneId: 'pane-2',
-            workspaceOrder: ['workspace-2', 'workspace-1'],
-            windowLayout: null,
-            activeWindowTabId: null,
-          },
-        ])
-
-        // Also verify layoutSplit preserves workspaceOrder
-        store.commit(
-          events.layoutSplit({
-            windowId: 'session-1',
-            layoutTree: splitLayout,
-            activePaneId: 'pane-1',
-          })
-        )
-
-        assert.deepStrictEqual(
-          store.query(tables.panelLayout)[0]?.workspaceOrder,
-          ['workspace-2', 'workspace-1']
-        )
-
-        // Also verify layoutPaneClosed preserves workspaceOrder
-        store.commit(
-          events.layoutPaneClosed({
-            windowId: 'session-1',
-            layoutTree: leafPane,
-            activePaneId: 'pane-1',
-          })
-        )
-
-        assert.deepStrictEqual(
-          store.query(tables.panelLayout)[0]?.workspaceOrder,
-          ['workspace-2', 'workspace-1']
-        )
-
-        // Also verify layoutRestored preserves workspaceOrder
-        store.commit(
-          events.layoutRestored({
-            windowId: 'session-1',
-            layoutTree: restoredLayout,
-            activePaneId: null,
-          })
-        )
-
-        assert.deepStrictEqual(
-          store.query(tables.panelLayout)[0]?.workspaceOrder,
-          ['workspace-2', 'workspace-1']
-        )
+        assert.deepStrictEqual(store.query(tables.panelLayout), [])
       })
   )
 
@@ -910,10 +695,6 @@ describe('LiveStore schema', () => {
       assert.strictEqual(result[0]?.windowId, 'window-1')
       assert.deepStrictEqual(result[0]?.windowLayout, singleTabLayout)
       assert.strictEqual(result[0]?.activeWindowTabId, 'wtab-1')
-      // Legacy columns should be null (not touched by new events)
-      assert.strictEqual(result[0]?.layoutTree, null)
-      assert.strictEqual(result[0]?.activePaneId, null)
-      assert.strictEqual(result[0]?.workspaceOrder, null)
     })
   )
 
@@ -1384,70 +1165,36 @@ describe('LiveStore schema', () => {
       })
   )
 
-  it.scoped('hierarchical events do not overwrite legacy columns', () =>
-    Effect.gen(function* () {
-      const store = yield* makeTestStore
+  it.scoped(
+    'legacy events are no-ops and do not affect hierarchical columns',
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTestStore
 
-      // Seed with legacy event
-      store.commit(
-        events.layoutRestored({
-          windowId: 'window-1',
-          layoutTree: leafPane,
-          activePaneId: 'pane-1',
-        })
-      )
+        // Seed with hierarchical event
+        store.commit(
+          events.windowTabCreated({
+            windowId: 'window-1',
+            windowLayout: singleTabLayout,
+            activeWindowTabId: 'wtab-1',
+          })
+        )
 
-      // Then write hierarchical event — should update windowLayout without touching layoutTree
-      store.commit(
-        events.windowTabCreated({
-          windowId: 'window-1',
-          windowLayout: singleTabLayout,
-          activeWindowTabId: 'wtab-1',
-        })
-      )
+        // Legacy events are no-ops — they should not modify the row
+        store.commit(
+          events.layoutRestored({
+            windowId: 'window-1',
+            layoutTree: leafPane,
+            activePaneId: 'pane-1',
+          })
+        )
 
-      const result = store.query(tables.panelLayout)
-      assert.strictEqual(result.length, 1)
-      // Legacy columns preserved
-      assert.deepStrictEqual(result[0]?.layoutTree, leafPane)
-      assert.strictEqual(result[0]?.activePaneId, 'pane-1')
-      // New columns populated
-      assert.deepStrictEqual(result[0]?.windowLayout, singleTabLayout)
-      assert.strictEqual(result[0]?.activeWindowTabId, 'wtab-1')
-    })
-  )
-
-  it.scoped('legacy events do not overwrite hierarchical columns', () =>
-    Effect.gen(function* () {
-      const store = yield* makeTestStore
-
-      // Seed with hierarchical event
-      store.commit(
-        events.windowTabCreated({
-          windowId: 'window-1',
-          windowLayout: singleTabLayout,
-          activeWindowTabId: 'wtab-1',
-        })
-      )
-
-      // Then write legacy event — should update layoutTree without touching windowLayout
-      store.commit(
-        events.layoutRestored({
-          windowId: 'window-1',
-          layoutTree: leafPane,
-          activePaneId: 'pane-1',
-        })
-      )
-
-      const result = store.query(tables.panelLayout)
-      assert.strictEqual(result.length, 1)
-      // Legacy columns updated
-      assert.deepStrictEqual(result[0]?.layoutTree, leafPane)
-      assert.strictEqual(result[0]?.activePaneId, 'pane-1')
-      // Hierarchical columns preserved
-      assert.deepStrictEqual(result[0]?.windowLayout, singleTabLayout)
-      assert.strictEqual(result[0]?.activeWindowTabId, 'wtab-1')
-    })
+        const result = store.query(tables.panelLayout)
+        assert.strictEqual(result.length, 1)
+        // Hierarchical columns preserved — legacy no-ops had no effect
+        assert.deepStrictEqual(result[0]?.windowLayout, singleTabLayout)
+        assert.strictEqual(result[0]?.activeWindowTabId, 'wtab-1')
+      })
   )
 
   it.scoped(

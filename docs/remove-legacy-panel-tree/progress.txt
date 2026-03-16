@@ -1,0 +1,39 @@
+## Issue 2: Schema: no-op legacy materializers and remove deprecated columns
+
+**Status:** done
+
+### Changes made
+
+1. **Removed deprecated columns from `panelLayout` table** (`packages/shared/src/schema.ts`):
+   - Removed `layoutTree` (json, `PanelNodeSchema`)
+   - Removed `activePaneId` (text, nullable)
+   - Removed `workspaceOrder` (json, array of strings)
+   - Table now has only: `windowId` (primary key), `windowLayout`, `activeWindowTabId`
+
+2. **Made legacy event materializers no-ops** (`packages/shared/src/schema.ts`):
+   - `v1.LayoutSplit` → `() => []`
+   - `v1.LayoutPaneClosed` → `() => []`
+   - `v1.LayoutPaneAssigned` → `() => []`
+   - `v1.LayoutRestored` → `() => []`
+   - `v1.LayoutWorkspacesReordered` → `() => []`
+   - Follows the same pattern used for deprecated terminal events (Issue #145)
+
+3. **Legacy event definitions retained** — event schemas (`layoutEventSchema`, etc.) remain
+   in the schema so old events in the eventlog still have valid definitions.
+
+4. **Hierarchical event materializers unchanged** — all `windowLayout*`, `windowTab*`,
+   `panelTab*` materializers correctly upsert `{ windowId, windowLayout, activeWindowTabId }`.
+
+5. **Updated `schema.test.ts`** (`packages/shared/test/schema.test.ts`):
+   - Rewrote legacy materialization tests to verify no-op behavior (table stays empty)
+   - Removed assertions on `layoutTree`, `activePaneId`, `workspaceOrder` from hierarchical event tests
+   - Replaced coexistence tests with a single test verifying legacy events don't affect hierarchical columns
+   - All 71 tests in packages/shared pass
+
+### Known downstream impact
+
+Removing the columns causes TypeScript errors in consumer code that reads these fields
+from `panelLayout` query results. These are expected and will be resolved by subsequent issues:
+- Issue 3: handleSetActivePaneId (reads `activePaneId`)
+- Issue 12: Seeding/reconciliation (reads `layoutTree`, `activePaneId`, `workspaceOrder`)
+- Issue 10: index.tsx consumers (reads derived values)

@@ -44,26 +44,23 @@
  * @see Issue #90: Toggle diff alongside terminal
  */
 
-import type { PanelNode } from '@laborer/shared/types'
 import { useHotkeySequence } from '@tanstack/react-hotkeys'
 import { useCallback, useEffect, useRef } from 'react'
 import { useWorkspaceSyncActions } from '@/hooks/use-workspace-sync-actions'
 import { getDesktopBridge } from '@/lib/desktop'
-import type { NavigationDirection } from '@/panels/layout-utils'
-import { findNodeById, findPaneInDirection } from '@/panels/layout-utils'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
-import { computeProgressiveCloseAction } from '@/panels/window-tab-utils'
+import type { NavigationDirection } from '@/panels/window-tab-utils'
+import {
+  computeProgressiveCloseAction,
+  findPaneInDirectionPanelTree,
+  findPaneInWindowLayout,
+  findPanelTreeRootForPane,
+} from '@/panels/window-tab-utils'
 
 /** Timeout for the prefix key sequence (ms). */
 const SEQUENCE_TIMEOUT = 1500
 
 interface PanelHotkeysProps {
-  /**
-   * The root panel layout tree, used for directional navigation
-   * (arrow key shortcuts). Needed to resolve spatial relationships
-   * between panes based on split orientations.
-   */
-  readonly layout?: PanelNode | undefined
   /**
    * All leaf pane IDs in order, used for cycling focus between panes.
    * Passed from the layout owner which has access to the full tree.
@@ -122,11 +119,7 @@ function arrowKeyToDirection(key: string): NavigationDirection | null {
  * Must be rendered inside a PanelActionsProvider and HotkeysProvider.
  * This component renders nothing — it only registers event handlers.
  */
-function PanelHotkeys({
-  layout,
-  leafPaneIds,
-  onMetaWWithoutPane,
-}: PanelHotkeysProps) {
+function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
   const actions = usePanelActions()
   const activePaneId = useActivePaneId()
   const { pullWorkspace, pushWorkspace } = useWorkspaceSyncActions()
@@ -155,10 +148,12 @@ function PanelHotkeys({
     }
   }, [])
 
-  const activePaneNode =
-    activePaneId && layout ? findNodeById(layout, activePaneId) : undefined
-  const activeWorkspaceId =
-    activePaneNode?._tag === 'LeafNode' ? activePaneNode.workspaceId : undefined
+  const windowLayout = actions?.windowLayout
+  const paneLocation =
+    activePaneId && windowLayout
+      ? findPaneInWindowLayout(windowLayout, activePaneId)
+      : undefined
+  const activeWorkspaceId = paneLocation?.workspaceId
 
   /**
    * Execute the progressive close chain: determines the correct close
@@ -547,19 +542,27 @@ function PanelHotkeys({
   // --- Directional navigation (Ctrl+b then arrow key) ---
   // Navigate to the pane in the given direction based on the layout
   // tree's spatial structure (split orientations).
-  const navigateDirection = (
-    event: KeyboardEvent,
-    direction: NavigationDirection
-  ) => {
-    event.preventDefault()
-    if (!(actions && activePaneId && layout)) {
-      return
-    }
-    const targetId = findPaneInDirection(layout, activePaneId, direction)
-    if (targetId) {
-      actions.setActivePaneId(targetId)
-    }
-  }
+  const navigateDirection = useCallback(
+    (event: KeyboardEvent, direction: NavigationDirection) => {
+      event.preventDefault()
+      if (!(actions && activePaneId && windowLayout)) {
+        return
+      }
+      const panelTreeRoot = findPanelTreeRootForPane(windowLayout, activePaneId)
+      if (!panelTreeRoot) {
+        return
+      }
+      const targetId = findPaneInDirectionPanelTree(
+        panelTreeRoot,
+        activePaneId,
+        direction
+      )
+      if (targetId) {
+        actions.setActivePaneId(targetId)
+      }
+    },
+    [actions, activePaneId, windowLayout]
+  )
 
   // Ctrl+b then ArrowLeft → move focus to the pane on the left
   useHotkeySequence(
@@ -601,21 +604,14 @@ function PanelHotkeys({
       }
       const direction = arrowKeyToDirection(event.key)
       if (direction) {
-        event.preventDefault()
-        if (!(actions && activePaneId && layout)) {
-          return
-        }
-        const targetId = findPaneInDirection(layout, activePaneId, direction)
-        if (targetId) {
-          actions.setActivePaneId(targetId)
-        }
+        navigateDirection(event, direction)
       }
     }
     window.addEventListener('keydown', handleMetaAltArrow)
     return () => {
       window.removeEventListener('keydown', handleMetaAltArrow)
     }
-  }, [actions, activePaneId, layout])
+  }, [navigateDirection])
 
   // --- Panel tab shortcuts ---
 

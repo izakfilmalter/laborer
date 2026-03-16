@@ -26,6 +26,7 @@ import {
   computeResizePanelTree,
   findEmptyPanelTreeLeaf,
   findNewPanelTreeLeaf,
+  findPaneInDirectionPanelTree,
   findPaneInWindowLayout,
   findPanelTreeRootForPane,
   findSiblingPaneIdInPanelTree,
@@ -1517,5 +1518,202 @@ describe('findPanelTreeRootForPane', () => {
     const root = findPanelTreeRootForPane(multiTabLayout, 'pane-term-2')
     expect(root).toBeDefined()
     expect(root?.id).toBe('pane-term-2')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findPaneInDirectionPanelTree
+// ---------------------------------------------------------------------------
+
+describe('findPaneInDirectionPanelTree', () => {
+  it('returns undefined for a single leaf (no neighbors)', () => {
+    const leaf = makeLeaf('pane-a')
+    expect(findPaneInDirectionPanelTree(leaf, 'pane-a', 'left')).toBeUndefined()
+    expect(
+      findPaneInDirectionPanelTree(leaf, 'pane-a', 'right')
+    ).toBeUndefined()
+    expect(findPaneInDirectionPanelTree(leaf, 'pane-a', 'up')).toBeUndefined()
+    expect(findPaneInDirectionPanelTree(leaf, 'pane-a', 'down')).toBeUndefined()
+  })
+
+  it('returns undefined when pane ID is not found', () => {
+    const leaf = makeLeaf('pane-a')
+    expect(
+      findPaneInDirectionPanelTree(leaf, 'nonexistent', 'right')
+    ).toBeUndefined()
+  })
+
+  it('navigates right in a horizontal split', () => {
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [makeLeaf('pane-left'), makeLeaf('pane-right')],
+      sizes: [50, 50],
+    }
+    expect(findPaneInDirectionPanelTree(split, 'pane-left', 'right')).toBe(
+      'pane-right'
+    )
+  })
+
+  it('navigates left in a horizontal split', () => {
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [makeLeaf('pane-left'), makeLeaf('pane-right')],
+      sizes: [50, 50],
+    }
+    expect(findPaneInDirectionPanelTree(split, 'pane-right', 'left')).toBe(
+      'pane-left'
+    )
+  })
+
+  it('navigates down in a vertical split', () => {
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'vertical',
+      children: [makeLeaf('pane-top'), makeLeaf('pane-bottom')],
+      sizes: [50, 50],
+    }
+    expect(findPaneInDirectionPanelTree(split, 'pane-top', 'down')).toBe(
+      'pane-bottom'
+    )
+  })
+
+  it('navigates up in a vertical split', () => {
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'vertical',
+      children: [makeLeaf('pane-top'), makeLeaf('pane-bottom')],
+      sizes: [50, 50],
+    }
+    expect(findPaneInDirectionPanelTree(split, 'pane-bottom', 'up')).toBe(
+      'pane-top'
+    )
+  })
+
+  it('returns undefined at the edge (no neighbor in that direction)', () => {
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [makeLeaf('pane-left'), makeLeaf('pane-right')],
+      sizes: [50, 50],
+    }
+    // At the left edge, can't go further left
+    expect(
+      findPaneInDirectionPanelTree(split, 'pane-left', 'left')
+    ).toBeUndefined()
+    // At the right edge, can't go further right
+    expect(
+      findPaneInDirectionPanelTree(split, 'pane-right', 'right')
+    ).toBeUndefined()
+  })
+
+  it('returns undefined for mismatched direction (horizontal split, vertical navigation)', () => {
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [makeLeaf('pane-left'), makeLeaf('pane-right')],
+      sizes: [50, 50],
+    }
+    expect(
+      findPaneInDirectionPanelTree(split, 'pane-left', 'up')
+    ).toBeUndefined()
+    expect(
+      findPaneInDirectionPanelTree(split, 'pane-left', 'down')
+    ).toBeUndefined()
+  })
+
+  it('navigates into a nested subtree (enters from edge)', () => {
+    // Layout: [A] | [B / C] (horizontal split, right child is vertical split)
+    const innerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'inner-split',
+      direction: 'vertical',
+      children: [makeLeaf('pane-b'), makeLeaf('pane-c')],
+      sizes: [50, 50],
+    }
+    const outerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'outer-split',
+      direction: 'horizontal',
+      children: [makeLeaf('pane-a'), innerSplit],
+      sizes: [50, 50],
+    }
+    // Moving right from A should enter the first leaf of the right subtree (B)
+    expect(findPaneInDirectionPanelTree(outerSplit, 'pane-a', 'right')).toBe(
+      'pane-b'
+    )
+  })
+
+  it('navigates out of a nested subtree to parent split neighbor', () => {
+    // Layout: [A] | [B / C] (horizontal split, right child is vertical split)
+    const innerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'inner-split',
+      direction: 'vertical',
+      children: [makeLeaf('pane-b'), makeLeaf('pane-c')],
+      sizes: [50, 50],
+    }
+    const outerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'outer-split',
+      direction: 'horizontal',
+      children: [makeLeaf('pane-a'), innerSplit],
+      sizes: [50, 50],
+    }
+    // Moving left from B (inside the inner split) should go to A
+    expect(findPaneInDirectionPanelTree(outerSplit, 'pane-b', 'left')).toBe(
+      'pane-a'
+    )
+    // Moving left from C should also go to A
+    expect(findPaneInDirectionPanelTree(outerSplit, 'pane-c', 'left')).toBe(
+      'pane-a'
+    )
+  })
+
+  it('enters from the last edge when navigating left into a subtree', () => {
+    // Layout: [A / B] | [C] (horizontal split, left child is vertical split)
+    const innerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'inner-split',
+      direction: 'vertical',
+      children: [makeLeaf('pane-a'), makeLeaf('pane-b')],
+      sizes: [50, 50],
+    }
+    const outerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'outer-split',
+      direction: 'horizontal',
+      children: [innerSplit, makeLeaf('pane-c')],
+      sizes: [50, 50],
+    }
+    // Moving left from C should enter the last leaf of the left subtree (B)
+    expect(findPaneInDirectionPanelTree(outerSplit, 'pane-c', 'left')).toBe(
+      'pane-b'
+    )
+  })
+
+  it('navigates through a 3-way horizontal split', () => {
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [makeLeaf('pane-a'), makeLeaf('pane-b'), makeLeaf('pane-c')],
+      sizes: [33, 34, 33],
+    }
+    expect(findPaneInDirectionPanelTree(split, 'pane-a', 'right')).toBe(
+      'pane-b'
+    )
+    expect(findPaneInDirectionPanelTree(split, 'pane-b', 'right')).toBe(
+      'pane-c'
+    )
+    expect(findPaneInDirectionPanelTree(split, 'pane-c', 'left')).toBe('pane-b')
+    expect(findPaneInDirectionPanelTree(split, 'pane-b', 'left')).toBe('pane-a')
   })
 })

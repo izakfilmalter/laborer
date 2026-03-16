@@ -542,3 +542,51 @@ from `panelLayout` query results. These are expected and will be resolved by sub
 - TypeScript: 0 errors
 - No new type errors introduced
 - Format check passes
+
+## Issue 11: Port PanelHotkeys to hierarchical tree
+
+**Status:** done
+
+### Changes made
+
+1. **Added `findPaneInDirectionPanelTree` and helpers to `window-tab-utils.ts`**:
+   - `getEdgePanelTreeLeaf(node, edge)`: Gets the first or last leaf from a `PanelTreeNode` subtree, used when entering a subtree from a directional navigation
+   - `tryNavigateAtPanelTreeAncestor(path, index, targetOrientation, delta)`: Tries to navigate from a specific path index in the given direction, returns the target leaf ID or undefined
+   - `findPaneInDirectionPanelTree(root, activePaneId, direction)`: Entry point — builds the path from root to the active pane, walks up the path to find the nearest ancestor `PanelSplitNode` whose orientation matches the navigation direction, finds the adjacent child, and drills into the subtree to find the nearest leaf on the entering edge
+   - All three functions are mechanical ports of the legacy `getEdgeLeaf`, `tryNavigateAtAncestor`, `findPaneInDirection` from `layout-utils.ts` with `PanelNode` → `PanelTreeNode`, `'SplitNode'` → `'PanelSplitNode'`, `'LeafNode'` → `'PanelLeafNode'`
+
+2. **Updated `PanelHotkeys` component** (`apps/web/src/panels/panel-hotkeys.tsx`):
+   - Removed `layout?: PanelNode` prop — PanelHotkeys no longer accepts a legacy `PanelNode` tree
+   - Derives `windowLayout` from `actions.windowLayout` (the hierarchical `WindowLayout` from panel context)
+   - Replaced `findNodeById(layout, activePaneId)` → `findPaneInWindowLayout(windowLayout, activePaneId)` for `activeWorkspaceId` derivation
+   - Replaced `findPaneInDirection(layout, ...)` → `findPanelTreeRootForPane(windowLayout, activePaneId)` + `findPaneInDirectionPanelTree(panelTreeRoot, activePaneId, direction)` for directional navigation
+   - Wrapped `navigateDirection` in `useCallback` to fix exhaustive-deps lint warning in the Cmd+Option+Arrow `useEffect`
+   - Simplified the Cmd+Option+Arrow `useEffect` to call `navigateDirection` directly, reducing cognitive complexity from 21 to under the limit
+   - Removed imports: `PanelNode` from `@laborer/shared/types`, `findNodeById`/`findPaneInDirection` from `layout-utils`
+   - Added imports: `findPaneInDirectionPanelTree`/`findPaneInWindowLayout`/`findPanelTreeRootForPane` from `window-tab-utils`, `NavigationDirection` type from `window-tab-utils`
+   - `leafPaneIds` prop unchanged — already derived from the hierarchical tree in `use-panel-layout.ts`
+
+3. **Updated `index.tsx`** (`apps/web/src/routes/index.tsx`):
+   - Removed `layout={layout}` prop from `<PanelHotkeys>` — only `leafPaneIds` and `onMetaWWithoutPane` remain
+   - `layout` is still destructured from `usePanelLayout()` and passed to `PanelContent` (Issue 13 will remove it)
+
+4. **Added unit tests** (`apps/web/test/window-tab-utils.test.ts`):
+   - `findPaneInDirectionPanelTree`: 12 tests covering:
+     - Single leaf (no neighbors in any direction)
+     - Pane not found
+     - Navigate right/left in horizontal split
+     - Navigate down/up in vertical split
+     - Edge cases (at left/right boundary)
+     - Mismatched direction (horizontal split, vertical navigation)
+     - Entering nested subtree from first edge
+     - Exiting nested subtree to parent neighbor
+     - Entering subtree from last edge (left navigation)
+     - 3-way horizontal split traversal
+
+### Test results
+
+- All 1361 tests in apps/web pass (was 1349, added 12 new; 1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- TypeScript: 0 errors
+- No new type errors introduced
+- Format check passes

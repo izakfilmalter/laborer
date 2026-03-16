@@ -389,7 +389,7 @@ See PRD Module 4: "Consumer porting" section.
 
 ## Issue 11: Port PanelHotkeys to hierarchical tree
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

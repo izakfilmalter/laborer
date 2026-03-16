@@ -994,7 +994,6 @@ function HomeComponent() {
                 {mainView === 'panels' && (
                   <>
                     <PanelHotkeys
-                      layout={layout}
                       leafPaneIds={leafPaneIds}
                       onMetaWWithoutPane={handleMetaWWithoutPane}
                     />

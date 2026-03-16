@@ -2570,6 +2570,121 @@ function findPanelTreeRootForPane(
 }
 
 // ---------------------------------------------------------------------------
+// Directional navigation — find pane in a given direction
+// ---------------------------------------------------------------------------
+
+/**
+ * Get the edge leaf from a PanelTreeNode subtree.
+ *
+ * - "first" → leftmost / topmost leaf (DFS, always pick first child)
+ * - "last" → rightmost / bottommost leaf (DFS, always pick last child)
+ *
+ * When entering a subtree from a directional navigation, we want:
+ * - Moving right → enter the left edge of the new subtree (first)
+ * - Moving left → enter the right edge of the new subtree (last)
+ * - Moving down → enter the top edge of the new subtree (first)
+ * - Moving up → enter the bottom edge of the new subtree (last)
+ */
+function getEdgePanelTreeLeaf(
+  node: PanelTreeNode,
+  edge: 'first' | 'last'
+): PanelLeafNode {
+  if (node._tag === 'PanelLeafNode') {
+    return node
+  }
+  const child = edge === 'first' ? node.children[0] : node.children.at(-1)
+  // Safety: PanelSplitNode always has at least one child in valid trees
+  if (!child) {
+    return node as unknown as PanelLeafNode
+  }
+  return getEdgePanelTreeLeaf(child, edge)
+}
+
+/**
+ * Try to navigate from a specific path index in the given direction.
+ * Returns the target leaf ID if a neighbor is found at this ancestor, or
+ * undefined to signal the caller to continue walking up.
+ */
+function tryNavigateAtPanelTreeAncestor(
+  path: PanelTreeNode[],
+  index: number,
+  targetOrientation: 'horizontal' | 'vertical',
+  delta: number
+): string | undefined {
+  const ancestor = path[index]
+  if (!ancestor || ancestor._tag !== 'PanelSplitNode') {
+    return undefined
+  }
+  if (ancestor.direction !== targetOrientation) {
+    return undefined
+  }
+
+  const childInPath = path[index + 1]
+  if (!childInPath) {
+    return undefined
+  }
+  const childIndex = ancestor.children.findIndex((c) => c.id === childInPath.id)
+  if (childIndex === -1) {
+    return undefined
+  }
+
+  const neighborIndex = childIndex + delta
+  const neighbor = ancestor.children[neighborIndex]
+  if (!neighbor) {
+    return undefined
+  }
+
+  const edge = delta > 0 ? 'first' : 'last'
+  return getEdgePanelTreeLeaf(neighbor, edge).id
+}
+
+/**
+ * Find the pane to navigate to from the active pane in a given direction,
+ * operating on PanelTreeNode trees.
+ *
+ * The algorithm:
+ * 1. Build the path from root to the active pane.
+ * 2. Walk up the path to find the nearest ancestor PanelSplitNode whose
+ *    orientation matches the navigation direction.
+ *    - horizontal splits handle left/right
+ *    - vertical splits handle up/down
+ * 3. In that split, find the adjacent child in the requested direction.
+ * 4. Drill into the adjacent subtree to find the nearest leaf on the
+ *    entering edge (e.g., moving right enters from the left edge).
+ *
+ * Returns the target leaf ID, or undefined if navigation is not possible
+ * (at the edge of the layout in that direction).
+ */
+function findPaneInDirectionPanelTree(
+  root: PanelTreeNode,
+  activePaneId: string,
+  direction: NavigationDirection
+): string | undefined {
+  const path = buildPanelTreePath(root, activePaneId)
+  if (!path || path.length < 2) {
+    return undefined
+  }
+
+  const targetOrientation: 'horizontal' | 'vertical' =
+    direction === 'left' || direction === 'right' ? 'horizontal' : 'vertical'
+  const delta = direction === 'left' || direction === 'up' ? -1 : 1
+
+  for (let i = path.length - 2; i >= 0; i--) {
+    const result = tryNavigateAtPanelTreeAncestor(
+      path,
+      i,
+      targetOrientation,
+      delta
+    )
+    if (result) {
+      return result
+    }
+  }
+
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -2587,6 +2702,7 @@ export {
   computeResizePanelTree,
   findEmptyPanelTreeLeaf,
   findNewPanelTreeLeaf,
+  findPaneInDirectionPanelTree,
   findPaneInWindowLayout,
   findPanelTreeLeaf,
   findPanelTreeRootForPane,

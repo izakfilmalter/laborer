@@ -283,6 +283,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "ghostty-web@0.4.0": "patches/ghostty-web@0.4.0.patch",
+  },
   "overrides": {
     "@effect/cli": "0.72.1",
     "@effect/cluster": "0.55.0",

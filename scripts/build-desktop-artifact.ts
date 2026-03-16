@@ -43,6 +43,9 @@ import { parseArgs } from 'node:util'
 
 import desktopPkg from '../apps/desktop/package.json' with { type: 'json' }
 import rootPkg from '../package.json' with { type: 'json' }
+import fileWatcherPkg from '../packages/file-watcher/package.json' with {
+  type: 'json',
+}
 import mcpPkg from '../packages/mcp/package.json' with { type: 'json' }
 import serverPkg from '../packages/server/package.json' with { type: 'json' }
 import terminalPkg from '../packages/terminal/package.json' with {
@@ -111,6 +114,7 @@ const DIST_DIRS = {
   webDist: join(REPO_ROOT, 'apps/web/dist'),
   serverDist: join(REPO_ROOT, 'packages/server/dist'),
   terminalDist: join(REPO_ROOT, 'packages/terminal/dist'),
+  fileWatcherDist: join(REPO_ROOT, 'packages/file-watcher/dist'),
   mcpDist: join(REPO_ROOT, 'packages/mcp/dist'),
 }
 
@@ -343,6 +347,8 @@ interface StagePackageJson {
  *         dist/                 <- bundled server
  *       terminal/
  *         dist/                 <- bundled terminal service
+ *       file-watcher/
+ *         dist/                 <- bundled file-watcher service
  *       mcp/
  *         dist/                 <- bundled MCP service
  *     dist/                     <- electron-builder output
@@ -369,6 +375,7 @@ function stage(stageRoot: string): void {
   mkdirSync(join(stageAppDir, 'apps/web'), { recursive: true })
   mkdirSync(join(stageAppDir, 'packages/server'), { recursive: true })
   mkdirSync(join(stageAppDir, 'packages/terminal'), { recursive: true })
+  mkdirSync(join(stageAppDir, 'packages/file-watcher'), { recursive: true })
   mkdirSync(join(stageAppDir, 'packages/mcp'), { recursive: true })
 
   // Copy built artifacts.
@@ -391,6 +398,11 @@ function stage(stageRoot: string): void {
   cpSync(DIST_DIRS.terminalDist, join(stageAppDir, 'packages/terminal/dist'), {
     recursive: true,
   })
+  cpSync(
+    DIST_DIRS.fileWatcherDist,
+    join(stageAppDir, 'packages/file-watcher/dist'),
+    { recursive: true }
+  )
   cpSync(DIST_DIRS.mcpDist, join(stageAppDir, 'packages/mcp/dist'), {
     recursive: true,
   })
@@ -400,6 +412,10 @@ function stage(stageRoot: string): void {
   const resolvedTerminalDeps = resolveServiceDeps(
     terminalPkg,
     'packages/terminal'
+  )
+  const resolvedFileWatcherDeps = resolveServiceDeps(
+    fileWatcherPkg,
+    'packages/file-watcher'
   )
   const resolvedMcpDeps = resolveServiceDeps(mcpPkg, 'packages/mcp')
   const resolvedDesktopDeps = resolveDesktopRuntimeDeps()
@@ -420,6 +436,7 @@ function stage(stageRoot: string): void {
     dependencies: {
       ...resolvedServerDeps,
       ...resolvedTerminalDeps,
+      ...resolvedFileWatcherDeps,
       ...resolvedMcpDeps,
       ...resolvedDesktopDeps,
     },

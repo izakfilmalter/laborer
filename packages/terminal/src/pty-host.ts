@@ -122,6 +122,12 @@ interface ResumedEvent {
   readonly type: 'resumed'
 }
 
+interface SpawnedEvent {
+  readonly id: string
+  readonly pid: number
+  readonly type: 'spawned'
+}
+
 type PtyEvent =
   | ReadyEvent
   | DataEvent
@@ -129,6 +135,7 @@ type PtyEvent =
   | ErrorEvent
   | PausedEvent
   | ResumedEvent
+  | SpawnedEvent
 
 // ---------------------------------------------------------------------------
 // State
@@ -392,6 +399,7 @@ function handleSpawn(cmd: SpawnCommand): void {
       emit({ type: 'exit', id: cmd.id, exitCode: code, signal: sig })
     })
 
+    emit({ type: 'spawned', id: cmd.id, pid: pty.pid })
     debug('Spawned PTY id=%s pid=%d shell=%s', cmd.id, pty.pid, cmd.shell)
   } catch (error) {
     emit({

@@ -119,6 +119,8 @@ describe(
       assert.strictEqual(result.cwd, TEST_CWD)
       assert.strictEqual(result.status, 'running')
       assert.deepStrictEqual(result.args, [])
+      // hasChildProcess must be a boolean in the RPC response
+      assert.strictEqual(typeof result.hasChildProcess, 'boolean')
 
       // Wait for the short-lived echo to exit
       await delay(2000)
@@ -346,6 +348,7 @@ describe(
       assert.strictEqual(restarted.cwd, TEST_CWD)
       assert.strictEqual(restarted.status, 'running')
       assert.strictEqual(restarted.workspaceId, TEST_WORKSPACE_ID)
+      assert.strictEqual(typeof restarted.hasChildProcess, 'boolean')
 
       // Verify it's alive by writing
       await run(
@@ -411,9 +414,12 @@ describe(
 
       assert.isDefined(runningTerminal)
       assert.strictEqual(runningTerminal?.status, 'running')
+      assert.strictEqual(typeof runningTerminal?.hasChildProcess, 'boolean')
 
       assert.isDefined(stoppedTerminal)
       assert.strictEqual(stoppedTerminal?.status, 'stopped')
+      // Stopped terminals always report hasChildProcess as false
+      assert.strictEqual(stoppedTerminal?.hasChildProcess, false)
 
       // Clean up
       await run(client.terminal.kill({ id: running.id }))
@@ -481,6 +487,184 @@ describe(
         assert.strictEqual(spawnedEvent.command, 'echo "rpc-events-test"')
         assert.strictEqual(spawnedEvent.status, 'running')
       }
+    })
+
+    // -----------------------------------------------------------------------
+    // foregroundProcess in terminal.list and terminal.spawn
+    // -----------------------------------------------------------------------
+
+    it('terminal.list includes foregroundProcess field through the RPC schema', async () => {
+      // Spawn 'cat' which blocks on stdin — the shell execs into cat
+      const terminal = await run(
+        client.terminal.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      )
+
+      // Give the process time to start
+      await delay(1000)
+
+      const terminals = await run(client.terminal.list())
+      const found = terminals.find((t) => t.id === terminal.id)
+
+      assert.isDefined(found)
+      // foregroundProcess should be present in the schema response
+      assert.isDefined(found?.foregroundProcess)
+      assert.strictEqual(found?.foregroundProcess?.rawName, 'cat')
+      assert.strictEqual(found?.foregroundProcess?.category, 'unknown')
+      assert.strictEqual(typeof found?.foregroundProcess?.label, 'string')
+
+      await run(client.terminal.kill({ id: terminal.id }))
+    })
+
+    it('terminal.spawn returns foregroundProcess as null initially', async () => {
+      const terminal = await run(
+        client.terminal.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      )
+
+      // spawn() returns before process tree is fully established
+      assert.strictEqual(terminal.foregroundProcess, null)
+
+      await delay(500)
+      await run(client.terminal.kill({ id: terminal.id }))
+    })
+
+    it('terminal.list returns null foregroundProcess for stopped terminals', async () => {
+      const terminal = await run(
+        client.terminal.spawn({
+          command: 'echo "rpc-fg-stopped"',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      )
+
+      // Wait for echo to finish
+      await delay(2000)
+
+      const terminals = await run(client.terminal.list())
+      const found = terminals.find((t) => t.id === terminal.id)
+
+      assert.isDefined(found)
+      assert.strictEqual(found?.status, 'stopped')
+      assert.strictEqual(found?.foregroundProcess, null)
+
+      await run(client.terminal.remove({ id: terminal.id }))
+    })
+
+    // -----------------------------------------------------------------------
+    // terminal.spawn with pre-generated id
+    // -----------------------------------------------------------------------
+
+    it('terminal.spawn with id field uses the provided ID', async () => {
+      const customId = 'rpc-custom-id-test-12345'
+      const terminal = await run(
+        client.terminal.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+          id: customId,
+        })
+      )
+
+      assert.strictEqual(terminal.id, customId)
+
+      await run(client.terminal.kill({ id: terminal.id }))
+    })
+
+    // -----------------------------------------------------------------------
+    // terminal.events streams ProcessChanged with full TerminalInfo
+    // -----------------------------------------------------------------------
+
+    it('terminal.events streams ProcessChanged with full TerminalInfo through the RPC layer', async () => {
+      // Spawn a shell, then set agent status via the hook endpoint.
+      // This triggers an immediate ProcessChanged event. Verify it
+      // arrives through the terminal.events RPC stream with full
+      // TerminalInfo shape (not just sparse lifecycle data).
+      const collectedEvents: Array<{
+        readonly _tag: string
+        readonly terminal?: {
+          readonly id: string
+          readonly agentStatus: string | null
+          readonly hasChildProcess: boolean
+          readonly foregroundProcess: unknown
+          readonly processChain: readonly unknown[]
+        }
+      }> = []
+
+      // Get the event stream from the RPC client
+      const eventStream = client.terminal.events()
+
+      const collectFiber = Effect.runFork(
+        eventStream.pipe(
+          Stream.take(20),
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              collectedEvents.push(event as (typeof collectedEvents)[number])
+            })
+          ),
+          Effect.timeout('5 seconds'),
+          Effect.catchAll(() => Effect.void)
+        )
+      )
+
+      // Give the subscriber time to attach
+      await delay(300)
+
+      // Spawn a terminal
+      const terminal = await run(
+        client.terminal.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: `rpc-pc-test-ws-${crypto.randomUUID().slice(0, 8)}`,
+        })
+      )
+
+      // Wait for the background detection fiber to emit ProcessChanged
+      // events as it detects the process tree.
+      await delay(1500)
+
+      // Interrupt the collector
+      await Effect.runPromise(Fiber.interrupt(collectFiber))
+
+      // Filter for ProcessChanged events for our terminal
+      const processChangedEvents = collectedEvents.filter(
+        (e) => e._tag === 'ProcessChanged' && e.terminal?.id === terminal.id
+      )
+
+      // Should have at least one ProcessChanged
+      assert.isTrue(
+        processChangedEvents.length >= 1,
+        `Expected at least 1 ProcessChanged event, got ${processChangedEvents.length}`
+      )
+
+      // Verify the event carries the full TerminalInfo shape
+      const event = processChangedEvents[0]
+      assert.isDefined(event?.terminal)
+      if (event?.terminal !== undefined) {
+        assert.strictEqual(event.terminal.id, terminal.id)
+        assert.strictEqual(typeof event.terminal.hasChildProcess, 'boolean')
+        // processChain should be an array (even if empty)
+        assert.isTrue(Array.isArray(event.terminal.processChain))
+      }
+
+      // Clean up
+      await run(client.terminal.kill({ id: terminal.id }))
     })
   }
 )

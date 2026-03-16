@@ -47,20 +47,6 @@ echo "  Vite:           http://localhost:$VITE_PORT"
 echo "  Terminal:       http://localhost:$TERMINAL_PORT"
 echo "  Workspace range: $PORT_RANGE_START-$PORT_RANGE_END"
 
-# Copy AI tool config directories from root worktree
-if [ -d "$ROOT_WORKTREE_PATH/.opencode" ]; then
-    cp -r "$ROOT_WORKTREE_PATH/.opencode" .opencode
-    echo "  Copied .opencode directory"
-fi
-if [ -d "$ROOT_WORKTREE_PATH/.cursor" ]; then
-    cp -r "$ROOT_WORKTREE_PATH/.cursor" .cursor
-    echo "  Copied .cursor directory"
-fi
-if [ -d "$ROOT_WORKTREE_PATH/.claude" ]; then
-    cp -r "$ROOT_WORKTREE_PATH/.claude" .claude
-    echo "  Copied .claude directory"
-fi
-
 # Copy .reference from root worktree
 if [ -d "$ROOT_WORKTREE_PATH/.reference" ] && [ ! -e ".reference" ]; then
     cp -r "$ROOT_WORKTREE_PATH/.reference" .reference

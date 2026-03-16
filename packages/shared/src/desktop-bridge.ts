@@ -10,7 +10,7 @@ export interface ContextMenuItem<T extends string = string> {
 /**
  * Sidecar service names managed by the Electron main process.
  */
-export type SidecarName = 'server' | 'terminal' | 'mcp'
+export type SidecarName = 'server' | 'terminal' | 'file-watcher' | 'mcp'
 
 /**
  * Sidecar status reported to the renderer.
@@ -95,6 +95,24 @@ export interface DesktopUpdateActionResult {
 }
 
 // ---------------------------------------------------------------------------
+// Agent notification types
+// ---------------------------------------------------------------------------
+
+/**
+ * Payload for a desktop notification triggered by agent status transitions.
+ * The renderer sends this to the main process via IPC; clicking the resulting
+ * OS notification sends `workspaceId` back so the renderer can focus the pane.
+ */
+export interface AgentNotificationPayload {
+  /** Notification body text (e.g., "Claude is waiting for input"). */
+  readonly body: string
+  /** Notification title (e.g., workspace branch name). */
+  readonly title: string
+  /** Workspace that triggered the notification — used to focus the right pane on click. */
+  readonly workspaceId: string
+}
+
+// ---------------------------------------------------------------------------
 // DesktopBridge interface
 // ---------------------------------------------------------------------------
 
@@ -113,6 +131,17 @@ export interface DesktopBridge {
   /** Triggers download of an available update. */
   downloadUpdate: () => Promise<DesktopUpdateActionResult>
 
+  /**
+   * Checks if a workspace is already visible in another window.
+   * If so, focuses that window, tells the target renderer to activate
+   * the workspace's pane, and returns true. If not, returns false so
+   * the caller can proceed with opening the workspace in the current window.
+   *
+   * Returns false when the workspace is only in the requesting window
+   * or is not open in any window.
+   */
+  focusWindowForWorkspace: (workspaceId: string) => Promise<boolean>
+
   /** Returns the HTTP base URL for the server service (e.g., "http://127.0.0.1:12345"). */
   getServerUrl: () => string
 
@@ -122,14 +151,42 @@ export interface DesktopBridge {
   /** Returns the current auto-update state. */
   getUpdateState: () => Promise<DesktopUpdateState>
 
+  /** Returns the stable identity of the current native window. */
+  getWindowId: () => string
+
   /** Triggers quit-and-install of a downloaded update. */
   installUpdate: () => Promise<DesktopUpdateActionResult>
+
+  /**
+   * Subscribes to workspace activation events from the main process.
+   * Fired when another window's `focusWindowForWorkspace` call determined
+   * this window owns the target workspace. The callback receives the
+   * `workspaceId` so the renderer can focus the appropriate pane.
+   * Returns an unsubscribe function.
+   */
+  onActivateWorkspace: (listener: (workspaceId: string) => void) => () => void
+
+  /**
+   * Subscribes to GitHub OAuth callback events.
+   * Fired when the OS routes an `x-github-desktop-dev-auth://oauth?code=...&state=...`
+   * URL to the app. The callback receives the full URL string.
+   * Returns an unsubscribe function.
+   */
+  onGithubOAuthCallback: (listener: (url: string) => void) => () => void
 
   /**
    * Subscribes to application menu actions (e.g., "settings").
    * Returns an unsubscribe function.
    */
   onMenuAction: (listener: (action: string) => void) => () => void
+
+  /**
+   * Subscribes to notification click events.
+   * Fired when the user clicks an OS notification created by `sendNotification`.
+   * The callback receives the `workspaceId` so the renderer can focus that pane.
+   * Returns an unsubscribe function.
+   */
+  onNotificationClicked: (listener: (workspaceId: string) => void) => () => void
 
   /**
    * Subscribes to sidecar status change events.
@@ -151,8 +208,22 @@ export interface DesktopBridge {
   /** Opens a native macOS folder picker dialog. Returns the selected path, or null if cancelled. */
   pickFolder: () => Promise<string | null>
 
+  /**
+   * Reports the workspace IDs currently visible in this window's panel layout.
+   * The main process uses this to route notification clicks and other
+   * workspace-targeting actions to the correct window.
+   */
+  reportVisibleWorkspaces: (workspaceIds: readonly string[]) => Promise<void>
+
   /** Manually restarts a sidecar service by name. */
   restartSidecar: (name: SidecarName) => Promise<void>
+
+  /**
+   * Sends a native OS notification for an agent status change.
+   * The main process creates an Electron `Notification`; clicking it
+   * fires the `onNotificationClicked` listener with the workspace ID.
+   */
+  sendNotification: (payload: AgentNotificationPayload) => Promise<void>
 
   /**
    * Shows a native context menu at the cursor or specified position.
@@ -162,6 +233,13 @@ export interface DesktopBridge {
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number }
   ) => Promise<T | null>
+
+  /**
+   * Opens the GitHub OAuth authorization page in the user's browser.
+   * The state parameter is a CSRF token the caller generates and validates
+   * when the callback arrives.
+   */
+  startGithubOAuth: (state: string) => Promise<void>
 
   /** Updates the system tray tooltip with the current workspace count. */
   updateTrayWorkspaceCount: (count: number) => Promise<void>

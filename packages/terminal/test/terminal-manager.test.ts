@@ -24,6 +24,7 @@ import { assert, describe } from '@effect/vitest'
 import {
   type Context,
   Effect,
+  Either,
   Exit,
   Fiber,
   Layer,
@@ -558,9 +559,11 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
             workspaceId: TEST_WORKSPACE_ID,
           })
 
-          // Create a stream from the PubSub — same as terminal.events handler
-          // Filter to only events for our terminal to avoid cross-test noise
+          // Create a stream from the PubSub — same as terminal.events handler.
+          // Filter to our terminal and exclude ProcessChanged events from the
+          // background detection fiber so we capture the expected lifecycle event.
           const eventStream = Stream.fromPubSub(tm.lifecycleEvents).pipe(
+            Stream.filter((event) => event._tag !== 'ProcessChanged'),
             Stream.map((event) => ({
               _tag: event._tag,
               id:
@@ -769,5 +772,889 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
         'stopped'
       )
     })
+  })
+
+  it('listTerminals() reports hasChildProcess true when a child process is running', async () => {
+    // Spawn an interactive shell that then has a child process.
+    // Using `/bin/sh -c 'sleep 999 & wait'` keeps the shell alive with
+    // `sleep` as a backgrounded child. The `& wait` prevents sh from
+    // exec-replacing itself with sleep (which would make sleep the PID
+    // itself instead of a child).
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: '/bin/sh',
+          args: ['-c', 'sleep 999 & wait'],
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Give time for the PTY to start and the spawned event to set shellPid
+    await delay(1500)
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.status, 'running')
+    assert.strictEqual(terminal?.hasChildProcess, true)
+
+    // Clean up
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('listTerminals() reports hasChildProcess false for an idle shell', async () => {
+    // Spawn an interactive shell — no child process, just sitting at a prompt.
+    // `cat` is a good stand-in: it reads stdin but doesn't fork children.
+    // However, `cat` IS the shell process itself, so shellPid points at it.
+    // A better test: spawn `/bin/sh` interactively (no `-c`). The shell
+    // process itself won't have any children until the user runs something.
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: '/bin/sh',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Give time for the PTY to start and the spawned event to set shellPid
+    await delay(1500)
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.status, 'running')
+    assert.strictEqual(terminal?.hasChildProcess, false)
+
+    // Clean up
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('listTerminals() reports hasChildProcess true when the shell exec-replaces into a running command', async () => {
+    // `defaultShell -c "sleep 999"` commonly exec-replaces the shell with
+    // `sleep`, so the original shell PID becomes the running process itself
+    // with no child process under it. We still need to treat that terminal as
+    // active so close confirmation appears reliably.
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'sleep 999',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    await delay(1000)
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.status, 'running')
+    assert.strictEqual(terminal?.hasChildProcess, true)
+    assert.isDefined(terminal?.foregroundProcess)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  // -------------------------------------------------------------------------
+  // Foreground process detection
+  // -------------------------------------------------------------------------
+
+  it('listTerminals() detects foregroundProcess for a running child process', async () => {
+    // Spawn 'cat' which blocks on stdin — it becomes the foreground process.
+    // The shell runs 'cat' via `sh -c cat`, so the process tree is:
+    // sh -> cat
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Give cat time to start and shell PID to be set
+    await delay(1000)
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.isDefined(terminal?.foregroundProcess)
+    // cat is not in our known processes list, so it should be 'unknown'
+    assert.strictEqual(terminal?.foregroundProcess?.category, 'unknown')
+    assert.strictEqual(terminal?.foregroundProcess?.rawName, 'cat')
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('listTerminals() returns null foregroundProcess for stopped terminals', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'echo "done"',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Wait for the echo to finish and terminal to stop
+    await delay(2000)
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.status, 'stopped')
+    assert.strictEqual(terminal?.foregroundProcess, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.remove(result.id)
+      })
+    )
+  })
+
+  it('spawn() returns foregroundProcess as null initially', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // spawn() returns immediately before the process tree is established
+    assert.strictEqual(result.foregroundProcess, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  // -------------------------------------------------------------------------
+  // Agent status tracking
+  // -------------------------------------------------------------------------
+
+  it('spawn() returns agentStatus as null initially', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    assert.strictEqual(result.agentStatus, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('listTerminals() returns null agentStatus for non-agent processes', async () => {
+    // Spawn 'cat' — not an agent
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    await delay(1000)
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.agentStatus, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('listTerminals() returns null agentStatus for stopped terminals', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'echo "done"',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    await delay(2000)
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.status, 'stopped')
+    assert.strictEqual(terminal?.agentStatus, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.remove(result.id)
+      })
+    )
+  })
+
+  // -------------------------------------------------------------------------
+  // Hook-based agent status overrides
+  // -------------------------------------------------------------------------
+
+  it('setAgentStatusFromHook("active") makes listTerminals return agentStatus "active"', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.setAgentStatusFromHook(result.id, 'active')
+      })
+    )
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.agentStatus, 'active')
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('setAgentStatusFromHook("waiting_for_input") makes listTerminals return agentStatus "waiting_for_input"', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.setAgentStatusFromHook(result.id, 'waiting_for_input')
+      })
+    )
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.agentStatus, 'waiting_for_input')
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('setAgentStatusFromHook("clear") reverts to ps-based detection', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Set a hook override, then clear it
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.setAgentStatusFromHook(result.id, 'active')
+        yield* tm.setAgentStatusFromHook(result.id, 'clear')
+      })
+    )
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    // After clearing, ps-based detection takes over. The agentStatusMap
+    // was synced to 'active' by the hook, so the ps-based state machine
+    // sees "was active, now idle" → 'waiting_for_input'. This is correct:
+    // clearing a hook doesn't erase the agent context, it just removes
+    // the override so the ps-based transitions resume naturally.
+    const terminal = terminals.find((t) => t.id === result.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.agentStatus, 'waiting_for_input')
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('hook status takes priority over ps-based detection', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Without a hook, 'cat' has null agentStatus (not an agent)
+    const beforeHook = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+    const beforeTerminal = beforeHook.find((t) => t.id === result.id)
+    assert.isDefined(beforeTerminal)
+    assert.strictEqual(beforeTerminal?.agentStatus, null)
+
+    // Hook override should take priority
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.setAgentStatusFromHook(result.id, 'waiting_for_input')
+      })
+    )
+
+    const afterHook = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+    const afterTerminal = afterHook.find((t) => t.id === result.id)
+    assert.isDefined(afterTerminal)
+    assert.strictEqual(afterTerminal?.agentStatus, 'waiting_for_input')
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  it('setAgentStatusFromHook on non-existent terminal returns error', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* Effect.either(
+          tm.setAgentStatusFromHook('non-existent-terminal-id', 'active')
+        )
+      })
+    )
+
+    assert.isTrue(Either.isLeft(result))
+  })
+
+  it('remove() clears hook status override', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Set a hook override, then remove the terminal
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.setAgentStatusFromHook(result.id, 'active')
+        yield* tm.remove(result.id)
+      })
+    )
+
+    // Respawn with the same workspace — the old hook status should not leak
+    const respawned = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === respawned.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.agentStatus, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(respawned.id)
+      })
+    )
+  })
+
+  it('restart() clears hook status override', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    // Set a hook override, then restart the terminal
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.setAgentStatusFromHook(result.id, 'active')
+      })
+    )
+
+    const restarted = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.restart(result.id)
+      })
+    )
+
+    const terminals = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.listTerminals()
+      })
+    )
+
+    const terminal = terminals.find((t) => t.id === restarted.id)
+    assert.isDefined(terminal)
+    assert.strictEqual(terminal?.agentStatus, null)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(restarted.id)
+      })
+    )
+  })
+
+  it('spawn() with pre-generated id uses that ID', async () => {
+    const customId = 'custom-test-terminal-id-12345'
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+          id: customId,
+        })
+      })
+    )
+
+    assert.strictEqual(result.id, customId)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.kill(result.id)
+      })
+    )
+  })
+
+  // -------------------------------------------------------------------------
+  // Background detection fiber — ProcessChanged events
+  // -------------------------------------------------------------------------
+
+  it('background detection fiber emits ProcessChanged when process state changes', async () => {
+    // Spawn a shell, then run a child process. The background detection
+    // fiber (200ms interval) should notice the process tree changed and
+    // emit a ProcessChanged event with the updated TerminalRecord.
+    //
+    // We use withGracePeriod to get a fresh TerminalManager so we can
+    // control the lifecycle cleanly.
+    await withGracePeriod(60_000, async (runLocalEffect) => {
+      const collectedEvents: TerminalLifecycleEvent[] = []
+
+      const terminalId = await runLocalEffect(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const tm = yield* TerminalManager
+
+            // Subscribe to lifecycle events
+            const dequeue = yield* tm.lifecycleEvents.subscribe
+
+            const collectFiber = yield* Effect.fork(
+              Effect.gen(function* () {
+                while (true) {
+                  const event = yield* Queue.take(dequeue)
+                  collectedEvents.push(event)
+                }
+              })
+            )
+
+            // Spawn an interactive shell
+            const terminal = yield* tm.spawn({
+              command: '/bin/sh',
+              cwd: TEST_CWD,
+              cols: 80,
+              rows: 24,
+              workspaceId: TEST_WORKSPACE_ID,
+            })
+
+            // Wait for the detection fiber to establish a baseline snapshot
+            yield* Effect.sleep(500)
+
+            // Run a child process — this changes the process tree
+            yield* tm.write(terminal.id, 'cat\n')
+
+            // Wait for the detection fiber to pick up the change (~200ms per tick)
+            yield* Effect.sleep(1000)
+
+            yield* Fiber.interrupt(collectFiber)
+            return terminal.id
+          })
+        )
+      )
+
+      // Filter for ProcessChanged events for our terminal
+      const processChangedEvents = collectedEvents.filter(
+        (e) => e._tag === 'ProcessChanged' && e.terminal.id === terminalId
+      )
+
+      // Should have at least one ProcessChanged — the detection fiber
+      // noticed the process tree changed when 'cat' became the foreground process.
+      assert.isTrue(
+        processChangedEvents.length >= 1,
+        `Expected at least 1 ProcessChanged event, got ${processChangedEvents.length}`
+      )
+
+      // The most recent ProcessChanged should have the cat foreground process
+      const lastEvent = processChangedEvents.at(-1)
+      assert.isDefined(lastEvent)
+      if (lastEvent?._tag === 'ProcessChanged') {
+        assert.isDefined(lastEvent.terminal.foregroundProcess)
+      }
+
+      // Clean up
+      await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          yield* tm.kill(terminalId)
+        })
+      )
+    })
+  })
+
+  it('detection fiber does not emit duplicate ProcessChanged for unchanged state', async () => {
+    // Spawn a shell and let it idle. After an initial ProcessChanged
+    // establishes the snapshot, subsequent ticks should NOT emit more
+    // ProcessChanged events because the state hasn't changed.
+    await withGracePeriod(60_000, async (runLocalEffect) => {
+      const collectedEvents: TerminalLifecycleEvent[] = []
+
+      const terminalId = await runLocalEffect(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const tm = yield* TerminalManager
+
+            const dequeue = yield* tm.lifecycleEvents.subscribe
+
+            const collectFiber = yield* Effect.fork(
+              Effect.gen(function* () {
+                while (true) {
+                  const event = yield* Queue.take(dequeue)
+                  collectedEvents.push(event)
+                }
+              })
+            )
+
+            // Spawn an idle shell — no child processes
+            const terminal = yield* tm.spawn({
+              command: '/bin/sh',
+              cwd: TEST_CWD,
+              cols: 80,
+              rows: 24,
+              workspaceId: TEST_WORKSPACE_ID,
+            })
+
+            // Wait for the detection fiber to establish the initial snapshot.
+            // This may emit 1-2 ProcessChanged events as the snapshot stabilises.
+            yield* Effect.sleep(1000)
+
+            // Clear collected events — now we measure from a stable state
+            collectedEvents.length = 0
+
+            // Wait another full second (5× the 200ms interval). No process
+            // state change should occur → no new ProcessChanged events.
+            yield* Effect.sleep(1000)
+
+            yield* Fiber.interrupt(collectFiber)
+            return terminal.id
+          })
+        )
+      )
+
+      const duplicateEvents = collectedEvents.filter(
+        (e) => e._tag === 'ProcessChanged' && e.terminal.id === terminalId
+      )
+
+      // After the snapshot stabilised, we should have zero ProcessChanged
+      // events because nothing changed in the idle shell.
+      assert.strictEqual(
+        duplicateEvents.length,
+        0,
+        `Expected 0 duplicate ProcessChanged events, got ${duplicateEvents.length}`
+      )
+
+      // Clean up
+      await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          yield* tm.kill(terminalId)
+        })
+      )
+    })
+  })
+
+  it('setAgentStatusFromHook emits ProcessChanged immediately', async () => {
+    // When a hook sets the agent status, a ProcessChanged event should
+    // be emitted immediately (not waiting for the next 200ms tick).
+    const collectedEvents: TerminalLifecycleEvent[] = []
+
+    await runEffect(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+
+          // Spawn a terminal
+          const terminal = yield* tm.spawn({
+            command: 'cat',
+            cwd: TEST_CWD,
+            cols: 80,
+            rows: 24,
+            workspaceId: TEST_WORKSPACE_ID,
+          })
+
+          // Subscribe to lifecycle events
+          const dequeue = yield* tm.lifecycleEvents.subscribe
+
+          const collectFiber = yield* Effect.fork(
+            Effect.gen(function* () {
+              while (true) {
+                const event = yield* Queue.take(dequeue)
+                collectedEvents.push(event)
+              }
+            })
+          )
+
+          // Wait a moment for the subscriber to be fully wired
+          yield* Effect.sleep(100)
+
+          // Clear any previously collected events
+          collectedEvents.length = 0
+
+          // Set agent status via hook — should emit ProcessChanged immediately
+          yield* tm.setAgentStatusFromHook(terminal.id, 'active')
+
+          // Only wait 50ms — way less than a detection tick (200ms).
+          // If ProcessChanged arrives, it came from the hook, not the fiber.
+          yield* Effect.sleep(50)
+
+          yield* Fiber.interrupt(collectFiber)
+
+          // Verify a ProcessChanged event was emitted with agentStatus 'active'
+          const hookEvents = collectedEvents.filter(
+            (e) => e._tag === 'ProcessChanged' && e.terminal.id === terminal.id
+          )
+
+          assert.isTrue(
+            hookEvents.length >= 1,
+            `Expected at least 1 ProcessChanged from hook, got ${hookEvents.length}`
+          )
+
+          const hookEvent = hookEvents[0]
+          if (hookEvent?._tag === 'ProcessChanged') {
+            assert.strictEqual(hookEvent.terminal.agentStatus, 'active')
+          }
+
+          // Clean up
+          yield* tm.kill(terminal.id)
+        })
+      )
+    )
   })
 })

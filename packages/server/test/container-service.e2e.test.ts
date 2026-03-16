@@ -220,14 +220,18 @@ describe('ContainerService e2e', () => {
           'not-found'
         )
 
-        // Verify: LiveStore was updated — container fields cleared
+        // Verify: LiveStore was updated — container runtime fields cleared,
+        // but containerUrl and containerImage are preserved for display
         const workspaceRows = store.query(
           tables.workspaces.where('id', workspaceId)
         )
         assert.strictEqual(workspaceRows.length, 1)
         assert.strictEqual(workspaceRows[0]?.containerId, null)
-        assert.strictEqual(workspaceRows[0]?.containerUrl, null)
-        assert.strictEqual(workspaceRows[0]?.containerImage, null)
+        assert.strictEqual(
+          workspaceRows[0]?.containerUrl,
+          'e2e-destroy--test-project.orb.local'
+        )
+        assert.strictEqual(workspaceRows[0]?.containerImage, 'alpine:latest')
         assert.strictEqual(workspaceRows[0]?.containerStatus, null)
       }).pipe(Effect.provide(TestLayer)),
     { timeout: 60_000 }
@@ -483,8 +487,10 @@ describe('ContainerService e2e', () => {
         yield* containerService.destroyContainer(workspaceId)
         assert.strictEqual(containerStatus(containerName), 'not-found')
         assert.strictEqual(queryWorkspace()?.containerId, null)
-        assert.strictEqual(queryWorkspace()?.containerUrl, null)
-        assert.strictEqual(queryWorkspace()?.containerImage, null)
+        // containerUrl and containerImage are preserved after destroy
+        // so the URL can still be shown in the UI
+        assert.ok(queryWorkspace()?.containerUrl != null)
+        assert.ok(queryWorkspace()?.containerImage != null)
         assert.strictEqual(queryWorkspace()?.containerStatus, null)
       }).pipe(Effect.provide(TestLayer)),
     { timeout: 60_000 }

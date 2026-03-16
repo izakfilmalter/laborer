@@ -27,7 +27,7 @@ interface LinearConfigValues {
   readonly team: string
 }
 
-interface ParsedRlphConfig {
+interface ParsedBrrrConfig {
   readonly label: string
   readonly linear: LinearConfigValues | null
 }
@@ -38,8 +38,8 @@ interface LinearIssueNode {
 }
 
 const LINEAR_API_URL = 'https://api.linear.app/graphql'
-const DEFAULT_RLPH_CONFIG_PATH = '.rlph/config.toml'
-const DEFAULT_LABEL = 'rlph'
+const DEFAULT_BRRR_CONFIG_PATH = '.brrr/config.toml'
+const DEFAULT_LABEL = 'brrr'
 const DEFAULT_LINEAR_API_KEY_ENV = 'LINEAR_API_KEY'
 const DEFAULT_IN_PROGRESS_STATE = 'In Progress'
 const DEFAULT_IN_REVIEW_STATE = 'In Review'
@@ -100,7 +100,7 @@ const applyLinearValue = (
   }
 }
 
-const parseRlphConfig = (content: string): ParsedRlphConfig => {
+const parseBrrrConfig = (content: string): ParsedBrrrConfig => {
   let currentSection: 'linear' | null = null
   let label = DEFAULT_LABEL
   const linearState = {
@@ -155,29 +155,29 @@ const parseRlphConfig = (content: string): ParsedRlphConfig => {
 
 const getConfigPath = (
   projectRepoPath: string,
-  rlphConfigPath: string | null
+  brrrConfigPath: string | null
 ): string => {
-  const configPath = rlphConfigPath?.trim() || DEFAULT_RLPH_CONFIG_PATH
+  const configPath = brrrConfigPath?.trim() || DEFAULT_BRRR_CONFIG_PATH
   return isAbsolute(configPath)
     ? configPath
     : resolve(projectRepoPath, configPath)
 }
 
 /**
- * Read and parse the rlph config file.
+ * Read and parse the brrr config file.
  * Returns a clear error if the file doesn't exist, is invalid,
  * or is missing a [linear] section.
  */
-const readRlphConfig = (
+const readBrrrConfig = (
   configPath: string
 ): Effect.Effect<
-  ParsedRlphConfig & { readonly linear: LinearConfigValues },
+  ParsedBrrrConfig & { readonly linear: LinearConfigValues },
   RpcError
 > =>
   Effect.gen(function* () {
     if (!existsSync(configPath)) {
       return yield* new RpcError({
-        message: `No rlph config found at ${configPath}. Create a .rlph/config.toml with a [linear] section to enable Linear import.`,
+        message: `No brrr config found at ${configPath}. Create a .brrr/config.toml with a [linear] section to enable Linear import.`,
         code: 'LINEAR_CONFIG_NOT_FOUND',
       })
     }
@@ -188,20 +188,20 @@ const readRlphConfig = (
         new RpcError({
           message:
             error instanceof Error
-              ? `Could not read rlph config at ${configPath}: ${error.message}`
-              : `Could not read rlph config at ${configPath}`,
+              ? `Could not read brrr config at ${configPath}: ${error.message}`
+              : `Could not read brrr config at ${configPath}`,
           code: 'LINEAR_CONFIG_NOT_FOUND',
         }),
     })
 
     const parsedConfig = yield* Effect.try({
-      try: () => parseRlphConfig(configContent),
+      try: () => parseBrrrConfig(configContent),
       catch: (error) =>
         new RpcError({
           message:
             error instanceof Error
-              ? `Invalid rlph config at ${configPath}: ${error.message}`
-              : `Invalid rlph config at ${configPath}`,
+              ? `Invalid brrr config at ${configPath}: ${error.message}`
+              : `Invalid brrr config at ${configPath}`,
           code: 'LINEAR_CONFIG_INVALID',
         }),
     })
@@ -209,7 +209,7 @@ const readRlphConfig = (
     if (!parsedConfig.linear) {
       return yield* new RpcError({
         message:
-          'The rlph config is missing a [linear] section with a team value',
+          'The brrr config is missing a [linear] section with a team value',
         code: 'LINEAR_CONFIG_MISSING_TEAM',
       })
     }
@@ -317,10 +317,10 @@ class LinearTaskImporter extends Context.Tag('@laborer/LinearTaskImporter')<
           )
         const configPath = getConfigPath(
           project.repoPath,
-          resolvedConfig.rlphConfig.value
+          resolvedConfig.brrrConfig.value
         )
 
-        const parsedConfig = yield* readRlphConfig(configPath)
+        const parsedConfig = yield* readBrrrConfig(configPath)
         const linearConfig = parsedConfig.linear
 
         const apiKey = process.env[linearConfig.apiKeyEnv]
@@ -433,5 +433,5 @@ class LinearTaskImporter extends Context.Tag('@laborer/LinearTaskImporter')<
   )
 }
 
-export { LinearTaskImporter, parseRlphConfig }
-export type { LinearIssuesResponse, ParsedRlphConfig }
+export { LinearTaskImporter, parseBrrrConfig }
+export type { LinearIssuesResponse, ParsedBrrrConfig }

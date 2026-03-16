@@ -9,7 +9,7 @@
  * Responsibilities:
  * - Run `gh pr view --json number,url,title,state` in a workspace's worktree
  * - Commit WorkspacePrUpdated events to LiveStore when PR state changes
- * - Poll on interval (default 60s) for active workspaces
+ * - Poll on interval (default 5s) for active workspaces
  * - Start/stop polling per workspace
  * - Deduplicate unchanged PR state to avoid unnecessary LiveStore events
  *
@@ -58,9 +58,9 @@ const EMPTY_PR: PrData = {
 
 /**
  * Default polling interval in milliseconds.
- * PR state changes infrequently so 60 seconds is sufficient.
+ * Keep PR status reasonably fresh while avoiding excessive `gh` churn.
  */
-const DEFAULT_POLL_INTERVAL_MS = 60_000
+const DEFAULT_POLL_INTERVAL_MS = 5000
 
 class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
   PrWatcher,
@@ -78,11 +78,11 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
     /**
      * Start polling PR status for a workspace on an interval.
      *
-     * Runs `checkPr` every `intervalMs` milliseconds (default 60000).
+     * Runs `checkPr` every `intervalMs` milliseconds (default 5000).
      * Calling on an already-polled workspace is a no-op.
      *
      * @param workspaceId - ID of the workspace to poll
-     * @param intervalMs - Polling interval in milliseconds (default 60000)
+     * @param intervalMs - Polling interval in milliseconds (default 5000)
      */
     readonly startPolling: (
       workspaceId: string,
@@ -207,15 +207,26 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
 
         if (workspaceOpt._tag === 'None') {
           yield* Effect.logWarning(
-            `[PrWatcher] Workspace not found: ${workspaceId}`
+            `[PrWatcher] Workspace not found in LiveStore, cleaning up. workspaceId=${workspaceId}`
           )
+
+          // Commit a workspaceDestroyed event to ensure any stale references
+          // are cleaned up. This is idempotent — the materializer is a
+          // DELETE WHERE, safe even if the row is already gone.
+          store.commit(events.workspaceDestroyed({ id: workspaceId }))
+
+          // Stop the polling fiber so this warning doesn't repeat every interval.
+          yield* stopPolling(workspaceId)
+
           return EMPTY_PR
         }
 
         const workspace = workspaceOpt.value
 
-        // Only check active workspaces
-        if (workspace.status !== 'running' && workspace.status !== 'creating') {
+        // Skip destroyed workspaces (worktree is removed).
+        // All other statuses (running, creating, stopped, errored) still have
+        // a valid worktree path where `gh pr view` can run.
+        if (workspace.status === 'destroyed') {
           return EMPTY_PR
         }
 
@@ -344,6 +355,41 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         const currentFibers = yield* Ref.get(pollingFibers)
         return currentFibers.has(workspaceId)
       })
+
+      const bootstrapPolling = Effect.fn('PrWatcher.bootstrapPolling')(
+        function* () {
+          const allWorkspaces = store
+            .query(tables.workspaces)
+            .filter((workspace) => workspace.status !== 'destroyed')
+
+          const activeWorkspaces = allWorkspaces.filter(
+            (workspace) =>
+              workspace.status === 'running' || workspace.status === 'creating'
+          )
+
+          const inactiveWorkspaces = allWorkspaces.filter(
+            (workspace) =>
+              workspace.status !== 'running' && workspace.status !== 'creating'
+          )
+
+          // Start continuous polling for active workspaces
+          yield* Effect.forEach(
+            activeWorkspaces,
+            (workspace) => startPolling(workspace.id),
+            { discard: true }
+          )
+
+          // Run a one-time PR check for inactive (stopped/errored) workspaces
+          // so their PR status is populated on startup without continuous polling.
+          yield* Effect.forEach(
+            inactiveWorkspaces,
+            (workspace) => checkPr(workspace.id),
+            { discard: true }
+          )
+        }
+      )
+
+      yield* bootstrapPolling()
 
       // Clean up all polling fibers on service shutdown
       yield* Effect.addFinalizer(() => stopAllPolling())

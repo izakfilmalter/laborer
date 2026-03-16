@@ -17,6 +17,7 @@ export const env = createEnv({
   server: {
     PORT: port.default(2100),
     TERMINAL_PORT: port.default(2102),
+    FILE_WATCHER_PORT: port.default(2104),
     TERMINAL_GRACE_PERIOD_MS: z.coerce
       .number()
       .int()

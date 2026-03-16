@@ -6,14 +6,14 @@
  *   1. The canonical common git directory — for metadata changes that
  *      affect branch state, worktree membership, and HEAD.
  *   2. The canonical checkout root — for repo-wide file change events
- *      that are normalized and published through the RepositoryEventBus.
+ *      that are normalized and published through the file-watcher service.
  *
  * Watch events are treated as invalidation signals only. The
  * coordinator does not mutate project or workspace state directly;
  * instead, it debounces events and delegates to refresh services:
  *   - WorktreeReconciler for worktree membership changes
  *   - BranchStateTracker for branch metadata refresh
- *   - RepositoryEventBus for normalized file change fanout
+ *   - FileWatcherClient for normalized file change fanout
  *
  * Events are classified by concern and debounced independently so
  * that rapid branch switches do not delay worktree reconciliation
@@ -24,26 +24,23 @@
  * via the Effect finalizer.
  *
  * @see PRD-opencode-inspired-repo-watching.md — Issues 3, 4 & 5
+ * @see PRD-file-watcher-extraction.md
  */
 
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import type { WatchFileEvent } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Context, Data, Effect, Layer, Ref, Runtime } from 'effect'
 import { BranchStateTracker } from './branch-state-tracker.js'
 import { ConfigService } from './config-service.js'
-import {
-  FileWatcher,
-  type WatchEvent,
-  type WatchSubscription,
-} from './file-watcher.js'
+import { FileWatcherClient } from './file-watcher-client.js'
 import { LaborerStore } from './laborer-store.js'
-import { RepositoryEventBus } from './repository-event-bus.js'
 import { RepositoryIdentity } from './repository-identity.js'
 import { WorktreeReconciler } from './worktree-reconciler.js'
 
 /**
- * Per-project watcher state. Tracks active subscriptions so they
+ * Per-project watcher state. Tracks active subscription IDs so they
  * can be individually torn down on project removal.
  */
 interface ProjectWatcherState {
@@ -53,18 +50,18 @@ interface ProjectWatcherState {
   closed: boolean
   /** Canonical path to the git common directory */
   readonly gitDirPath: string
-  /** Subscription to the git metadata root for HEAD/refs changes */
-  gitDirRootSubscription: WatchSubscription | null
+  /** Remote subscription ID for the git metadata root watcher */
+  gitDirRootSubscriptionId: string | null
   /** Project identifier */
   readonly projectId: string
   /** Pending retry timer for watcher recovery */
   recoveryTimer: ReturnType<typeof setTimeout> | null
   /** Canonical repo checkout root */
   readonly repoPath: string
-  /** Subscription to the repo checkout root for file change events */
-  repoRootSubscription: WatchSubscription | null
-  /** Subscription to the shared worktrees directory for linked-worktree metadata */
-  worktreesSubscription: WatchSubscription | null
+  /** Remote subscription ID for the repo checkout root watcher */
+  repoRootSubscriptionId: string | null
+  /** Remote subscription ID for the shared worktrees directory watcher */
+  worktreesSubscriptionId: string | null
   /** Pending debounce timer for worktree reconciliation */
   worktreeTimer: ReturnType<typeof setTimeout> | null
 }
@@ -125,13 +122,11 @@ const BRANCH_RELATED_FILES = new Set([
  */
 const isBranchRelatedEvent = (fileName: string | null): boolean => {
   if (fileName === null) {
-    // If fileName is unavailable, treat as both concerns
     return true
   }
   if (BRANCH_RELATED_FILES.has(fileName)) {
     return true
   }
-  // refs/ directory changes (e.g., refs/heads/main) indicate branch updates
   if (fileName.startsWith('refs')) {
     return true
   }
@@ -144,7 +139,6 @@ const isBranchRelatedEvent = (fileName: string | null): boolean => {
  */
 const isWorktreeRelatedEvent = (fileName: string | null): boolean => {
   if (fileName === null) {
-    // If fileName is unavailable, treat as both concerns
     return true
   }
   if (fileName === 'worktrees' || fileName.startsWith('worktrees')) {
@@ -203,8 +197,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
       const reconciler = yield* WorktreeReconciler
       const branchTracker = yield* BranchStateTracker
       const repoIdentity = yield* RepositoryIdentity
-      const fileWatcher = yield* FileWatcher
-      const eventBus = yield* RepositoryEventBus
+      const fileWatcherClient = yield* FileWatcherClient
       const configService = yield* ConfigService
       const runtime = yield* Effect.runtime<never>()
 
@@ -235,6 +228,22 @@ class RepositoryWatchCoordinator extends Context.Tag(
         return updatedProject
       })
       const statesRef = yield* Ref.make(new Map<string, ProjectWatcherState>())
+
+      /**
+       * Mapping from remote subscription ID → project ID.
+       * Used to route incoming file events to the correct project state.
+       */
+      const subscriptionToProjectRef = yield* Ref.make(
+        new Map<string, string>()
+      )
+
+      /**
+       * Mapping from remote subscription ID → subscription purpose.
+       * Used to classify incoming events from git dir vs repo root watchers.
+       */
+      const subscriptionPurposeRef = yield* Ref.make(
+        new Map<string, 'git-dir' | 'worktrees' | 'repo-root'>()
+      )
 
       const runPromise = Runtime.runPromise(runtime)
 
@@ -268,21 +277,48 @@ class RepositoryWatchCoordinator extends Context.Tag(
       ): Effect.Effect<void, never> =>
         Effect.logWarning(formatWatcherWarning(summary, params))
 
+      const cleanupSubscriptionId = (subId: string | null): void => {
+        if (subId !== null) {
+          runPromise(
+            fileWatcherClient
+              .unsubscribe(subId)
+              .pipe(Effect.catchAll(() => Effect.void))
+          ).catch(() => undefined)
+        }
+      }
+
+      const removeSubscriptionMapping = (subId: string | null): void => {
+        if (subId !== null) {
+          runPromise(
+            Ref.update(subscriptionToProjectRef, (map) => {
+              const next = new Map(map)
+              next.delete(subId)
+              return next
+            }).pipe(
+              Effect.zipRight(
+                Ref.update(subscriptionPurposeRef, (map) => {
+                  const next = new Map(map)
+                  next.delete(subId)
+                  return next
+                })
+              )
+            )
+          ).catch(() => undefined)
+        }
+      }
+
       const closeState = (state: ProjectWatcherState): void => {
         state.closed = true
         clearTimers(state)
-        if (state.gitDirRootSubscription !== null) {
-          state.gitDirRootSubscription.close()
-          state.gitDirRootSubscription = null
-        }
-        if (state.worktreesSubscription !== null) {
-          state.worktreesSubscription.close()
-          state.worktreesSubscription = null
-        }
-        if (state.repoRootSubscription !== null) {
-          state.repoRootSubscription.close()
-          state.repoRootSubscription = null
-        }
+        cleanupSubscriptionId(state.gitDirRootSubscriptionId)
+        removeSubscriptionMapping(state.gitDirRootSubscriptionId)
+        state.gitDirRootSubscriptionId = null
+        cleanupSubscriptionId(state.worktreesSubscriptionId)
+        removeSubscriptionMapping(state.worktreesSubscriptionId)
+        state.worktreesSubscriptionId = null
+        cleanupSubscriptionId(state.repoRootSubscriptionId)
+        removeSubscriptionMapping(state.repoRootSubscriptionId)
+        state.repoRootSubscriptionId = null
       }
 
       const reconcileWithWarning = (
@@ -395,7 +431,85 @@ class RepositoryWatchCoordinator extends Context.Tag(
         }, RECOVERY_RETRY_MS)
       }
 
-      // ── Git metadata watcher ─────────────────────────────────
+      // ── Event handler for file-watcher service events ────────
+
+      /**
+       * Handle incoming file events from the file-watcher service.
+       * Routes events to the appropriate handler based on subscription
+       * purpose (git-dir, worktrees, or repo-root).
+       */
+      const handleFileEvent = (event: WatchFileEvent): void => {
+        // Look up project and purpose synchronously from mutable state
+        // We can't use Effect.runSync inside callbacks easily, so we
+        // maintain a parallel mutable lookup for the hot path.
+        const projectId = subscriptionToProjectMap.get(event.subscriptionId)
+        const purpose = subscriptionPurposeMap.get(event.subscriptionId)
+        if (projectId === undefined || purpose === undefined) {
+          return
+        }
+
+        // Look up state
+        const state = projectWatcherStatesMap.get(projectId)
+        if (state === undefined || !isActive(state)) {
+          return
+        }
+
+        if (purpose === 'git-dir') {
+          handleGitDirEvent(state, event)
+        } else if (purpose === 'worktrees') {
+          handleWorktreesEvent(state)
+        }
+        // repo-root events are handled by the file-watcher service's
+        // normalization and streamed directly to DiffService via
+        // FileWatcherClient.onFileEvent — the coordinator doesn't
+        // need to handle them here.
+      }
+
+      // Mutable shadow maps for synchronous access in callbacks.
+      // Kept in sync with the Ref-based maps.
+      const subscriptionToProjectMap = new Map<string, string>()
+      const subscriptionPurposeMap = new Map<
+        string,
+        'git-dir' | 'worktrees' | 'repo-root'
+      >()
+      const projectWatcherStatesMap = new Map<string, ProjectWatcherState>()
+
+      // Register the event handler with the FileWatcherClient
+      const eventSubscription = fileWatcherClient.onFileEvent(handleFileEvent)
+
+      // ── Git metadata event handlers ──────────────────────────
+
+      const handleGitDirEvent = (
+        state: ProjectWatcherState,
+        event: WatchFileEvent
+      ): void => {
+        if (!isActive(state)) {
+          return
+        }
+
+        if (event.fileName === 'worktrees') {
+          const switched = switchToWorktreesWatcher(state, 'worktrees-created')
+          if (!switched) {
+            scheduleReconcile(state, 'worktrees-created')
+          }
+        }
+
+        if (isBranchRelatedEvent(event.fileName)) {
+          scheduleBranchRefresh(state, 'git-metadata-change')
+        }
+
+        if (isWorktreeRelatedEvent(event.fileName)) {
+          scheduleReconcile(state, 'git-metadata-change')
+        }
+      }
+
+      const handleWorktreesEvent = (state: ProjectWatcherState): void => {
+        if (!isActive(state)) {
+          return
+        }
+        scheduleReconcile(state, 'worktree-metadata-change')
+        scheduleBranchRefresh(state, 'worktree-metadata-change')
+      }
 
       /**
        * Attempt to add the dedicated worktrees watcher when the
@@ -409,7 +523,10 @@ class RepositoryWatchCoordinator extends Context.Tag(
           return false
         }
         const worktreesDir = join(state.gitDirPath, 'worktrees')
-        if (state.worktreesSubscription !== null || !existsSync(worktreesDir)) {
+        if (
+          state.worktreesSubscriptionId !== null ||
+          !existsSync(worktreesDir)
+        ) {
           return false
         }
 
@@ -419,7 +536,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
               const latest = states.get(state.projectId)
               if (
                 latest === undefined ||
-                latest.worktreesSubscription !== null
+                latest.worktreesSubscriptionId !== null
               ) {
                 return Effect.void
               }
@@ -448,136 +565,61 @@ class RepositoryWatchCoordinator extends Context.Tag(
         return true
       }
 
-      const handleGitDirRootEvent = (
-        state: ProjectWatcherState,
-        event: WatchEvent
-      ): void => {
-        if (!isActive(state)) {
-          return
-        }
-        if (event.fileName === 'worktrees') {
-          const switched = switchToWorktreesWatcher(state, 'worktrees-created')
-          if (!switched) {
-            scheduleReconcile(state, 'worktrees-created')
-          }
-        }
+      // ── Subscribe helpers (via FileWatcherClient) ────────────
 
-        if (isBranchRelatedEvent(event.fileName)) {
-          scheduleBranchRefresh(state, 'git-metadata-change')
-        }
-
-        if (isWorktreeRelatedEvent(event.fileName)) {
-          scheduleReconcile(state, 'git-metadata-change')
-        }
-      }
-
-      const handleWorktreesEvent = (
-        state: ProjectWatcherState,
-        _event: WatchEvent
-      ): void => {
-        if (!isActive(state)) {
-          return
-        }
-        scheduleReconcile(state, 'worktree-metadata-change')
-        scheduleBranchRefresh(state, 'worktree-metadata-change')
-      }
+      const registerSubscription = (
+        subId: string,
+        projectId: string,
+        purpose: 'git-dir' | 'worktrees' | 'repo-root'
+      ): Effect.Effect<void> =>
+        Effect.gen(function* () {
+          yield* Ref.update(subscriptionToProjectRef, (map) => {
+            const next = new Map(map)
+            next.set(subId, projectId)
+            return next
+          })
+          yield* Ref.update(subscriptionPurposeRef, (map) => {
+            const next = new Map(map)
+            next.set(subId, purpose)
+            return next
+          })
+          // Keep mutable shadow maps in sync
+          subscriptionToProjectMap.set(subId, projectId)
+          subscriptionPurposeMap.set(subId, purpose)
+        })
 
       const subscribeGitDirRoot = (
         projectId: string,
-        gitDirPath: string,
-        state: ProjectWatcherState
-      ): Effect.Effect<WatchSubscription | null, never> =>
-        fileWatcher
-          .subscribe(
-            gitDirPath,
-            (event) => {
-              if (!isActive(state)) {
-                return
-              }
-              handleGitDirRootEvent(state, event)
-            },
-            (error) => {
-              if (!isActive(state)) {
-                return
-              }
-              runPromise(
-                logWatcherWarning('Git watcher error', {
-                  projectId,
-                  path: gitDirPath,
-                  detail: error.message,
-                  retrying: true,
-                })
-              ).catch(() => undefined)
-              scheduleReconcile(state, 'watcher-error')
-              scheduleBranchRefresh(state, 'watcher-error')
-              scheduleRecovery(state, 'git-watcher-error')
-            },
-            { recursive: true }
+        gitDirPath: string
+      ): Effect.Effect<string | null, never> =>
+        fileWatcherClient.subscribe(gitDirPath, { recursive: true }).pipe(
+          Effect.tap((sub) =>
+            registerSubscription(sub.id, projectId, 'git-dir')
+          ),
+          Effect.map((sub) => sub.id),
+          Effect.catchAll((error) =>
+            logWatcherWarning('Failed to watch git dir', {
+              projectId,
+              path: gitDirPath,
+              detail: error.message,
+              retrying: true,
+            }).pipe(Effect.as(null))
           )
-          .pipe(
-            Effect.tap((subscription) =>
-              subscription === null
-                ? logWatcherWarning('Git watch target unavailable', {
-                    projectId,
-                    path: gitDirPath,
-                    retrying: true,
-                  })
-                : Effect.void
-            ),
-            Effect.catchAll((error) =>
-              logWatcherWarning('Failed to watch git dir', {
-                projectId,
-                path: gitDirPath,
-                detail: error.message,
-                retrying: true,
-              }).pipe(Effect.as(null))
-            )
-          )
+        )
 
       const subscribeWorktreesDir = (
         projectId: string,
-        gitDirPath: string,
-        state: ProjectWatcherState
-      ): Effect.Effect<WatchSubscription | null, never> => {
+        gitDirPath: string
+      ): Effect.Effect<string | null, never> => {
         const worktreesDir = join(gitDirPath, 'worktrees')
 
-        return fileWatcher
-          .subscribe(
-            worktreesDir,
-            (event) => {
-              if (!isActive(state)) {
-                return
-              }
-              handleWorktreesEvent(state, event)
-            },
-            (error) => {
-              if (!isActive(state)) {
-                return
-              }
-              runPromise(
-                logWatcherWarning('Worktrees watcher error', {
-                  projectId,
-                  path: worktreesDir,
-                  detail: error.message,
-                  retrying: true,
-                })
-              ).catch(() => undefined)
-              scheduleReconcile(state, 'watcher-error')
-              scheduleBranchRefresh(state, 'watcher-error')
-              scheduleRecovery(state, 'worktrees-watcher-error')
-            },
-            { recursive: true }
-          )
+        return fileWatcherClient
+          .subscribe(worktreesDir, { recursive: true })
           .pipe(
-            Effect.tap((subscription) =>
-              subscription === null
-                ? logWatcherWarning('Git worktrees watch target unavailable', {
-                    projectId,
-                    path: worktreesDir,
-                    retrying: true,
-                  })
-                : Effect.void
+            Effect.tap((sub) =>
+              registerSubscription(sub.id, projectId, 'worktrees')
             ),
+            Effect.map((sub) => sub.id),
             Effect.catchAll((error) =>
               logWatcherWarning('Failed to watch worktrees dir', {
                 projectId,
@@ -589,115 +631,23 @@ class RepositoryWatchCoordinator extends Context.Tag(
           )
       }
 
-      // ── Repo-root file watcher ───────────────────────────────
-
-      /**
-       * Subscribe to the canonical repo checkout root for file-level
-       * change events. Events are normalized and published through
-       * the RepositoryEventBus. Ignored paths are suppressed before
-       * publishing.
-       */
-      /**
-       * Map a raw `WatchEvent` to a normalized
-       * `RepositoryFileEventType`.
-       *
-       * When the native watcher backend provides an authoritative
-       * `nativeKind` (create/update/delete), the mapping is
-       * direct and does not require filesystem probing. When
-       * `nativeKind` is absent (fs.watch fallback), the
-       * coordinator falls back to the legacy `existsSync`
-       * inference for `"rename"` events.
-       */
-      const resolveEventType = (
-        event: WatchEvent,
-        repoPath: string
-      ): 'add' | 'change' | 'delete' => {
-        // Prefer backend-native classification when available
-        if (event.nativeKind !== undefined) {
-          switch (event.nativeKind) {
-            case 'create':
-              return 'add'
-            case 'update':
-              return 'change'
-            case 'delete':
-              return 'delete'
-            default:
-              // Unknown native kind — fall through to legacy inference
-              break
-          }
-        }
-
-        // Fallback: infer from legacy type + existsSync
-        if (event.type === 'rename') {
-          const absolutePath = join(repoPath, event.fileName ?? '')
-          return existsSync(absolutePath) ? 'add' : 'delete'
-        }
-        return 'change'
-      }
-
       const subscribeRepoRoot = (
         projectId: string,
         repoPath: string,
-        state: ProjectWatcherState,
         ignoreGlobs?: string[]
-      ): Effect.Effect<WatchSubscription | null, never> =>
-        fileWatcher
+      ): Effect.Effect<string | null, never> =>
+        fileWatcherClient
           .subscribe(
             repoPath,
-            (event) => {
-              if (!isActive(state)) {
-                return
-              }
-              const eventType = resolveEventType(event, repoPath)
-              const normalized = eventBus.normalizeEvent({
-                type: eventType,
-                fileName: event.fileName,
-                repoRoot: repoPath,
-                projectId,
-              })
-              if (normalized !== null) {
-                Runtime.runSync(runtime)(eventBus.publish(normalized))
-              }
-            },
-            (error) => {
-              if (!isActive(state)) {
-                return
-              }
-              runPromise(
-                logWatcherWarning('Repo watcher error', {
-                  projectId,
-                  path: repoPath,
-                  detail: error.message,
-                  retrying: true,
-                })
-              ).catch(() => undefined)
-              runPromise(
-                Ref.get(statesRef).pipe(
-                  Effect.flatMap((states) => {
-                    const state = states.get(projectId)
-                    if (state === undefined) {
-                      return Effect.void
-                    }
-                    scheduleRecovery(state, 'repo-watcher-error')
-                    return Effect.void
-                  })
-                )
-              ).catch(() => undefined)
-            },
             ignoreGlobs !== undefined && ignoreGlobs.length > 0
-              ? { recursive: true, ignore: ignoreGlobs }
+              ? { recursive: true, ignoreGlobs }
               : { recursive: true }
           )
           .pipe(
-            Effect.tap((subscription) =>
-              subscription === null
-                ? logWatcherWarning('Repo watch target unavailable', {
-                    projectId,
-                    path: repoPath,
-                    retrying: true,
-                  })
-                : Effect.void
+            Effect.tap((sub) =>
+              registerSubscription(sub.id, projectId, 'repo-root')
             ),
+            Effect.map((sub) => sub.id),
             Effect.catchAll((error) =>
               logWatcherWarning('Failed to watch repo root', {
                 projectId,
@@ -718,6 +668,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
           const existing = next.get(projectId)
           if (existing !== undefined) {
             closeState(existing)
+            projectWatcherStatesMap.delete(projectId)
             next.delete(projectId)
           }
           return next
@@ -743,11 +694,12 @@ class RepositoryWatchCoordinator extends Context.Tag(
             )
           )
 
-        // Wire additional ignore prefixes from config into the event bus
+        // Compute ignore globs from config
         const additionalIgnores = resolvedConfig?.watchIgnore.value ?? []
-        if (additionalIgnores.length > 0) {
-          eventBus.setAdditionalIgnorePrefixes(additionalIgnores)
-        }
+        const ignoreGlobs =
+          additionalIgnores.length > 0
+            ? additionalIgnores.map((prefix) => `${prefix}/**`)
+            : []
 
         const gitDirPath = canonicalGitCommonDir
         const hasWorktreesDir = existsSync(join(gitDirPath, 'worktrees'))
@@ -757,48 +709,44 @@ class RepositoryWatchCoordinator extends Context.Tag(
           projectId,
           repoPath,
           gitDirPath,
-          gitDirRootSubscription: null,
-          worktreesSubscription: null,
-          repoRootSubscription: null,
+          gitDirRootSubscriptionId: null,
+          worktreesSubscriptionId: null,
+          repoRootSubscriptionId: null,
           worktreeTimer: null,
           branchTimer: null,
           recoveryTimer: null,
         }
 
-        state.gitDirRootSubscription = yield* subscribeGitDirRoot(
+        state.gitDirRootSubscriptionId = yield* subscribeGitDirRoot(
           projectId,
-          gitDirPath,
-          state
+          gitDirPath
         )
 
         if (hasWorktreesDir) {
-          state.worktreesSubscription = yield* subscribeWorktreesDir(
+          state.worktreesSubscriptionId = yield* subscribeWorktreesDir(
             projectId,
-            gitDirPath,
-            state
+            gitDirPath
           )
         }
 
-        // Pass ignore globs to the repo-root watcher so the native
-        // backend can suppress noisy directories before events
-        // reach user-space.
-        state.repoRootSubscription = yield* subscribeRepoRoot(
+        state.repoRootSubscriptionId = yield* subscribeRepoRoot(
           projectId,
           repoPath,
-          state,
-          [...eventBus.ignoreGlobs]
+          ignoreGlobs
         )
 
+        // Update Ref-based and mutable shadow maps
         yield* Ref.update(statesRef, (states) => {
           const next = new Map(states)
           next.set(projectId, state)
           return next
         })
+        projectWatcherStatesMap.set(projectId, state)
 
         if (
-          state.gitDirRootSubscription === null ||
-          state.repoRootSubscription === null ||
-          (hasWorktreesDir && state.worktreesSubscription === null)
+          state.gitDirRootSubscriptionId === null ||
+          state.repoRootSubscriptionId === null ||
+          (hasWorktreesDir && state.worktreesSubscriptionId === null)
         ) {
           scheduleRecovery(state, 'watch-target-unavailable')
         }
@@ -891,6 +839,7 @@ class RepositoryWatchCoordinator extends Context.Tag(
               for (const state of states.values()) {
                 closeState(state)
               }
+              eventSubscription.unsubscribe()
             })
           )
         )

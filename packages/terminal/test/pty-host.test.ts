@@ -51,6 +51,12 @@ interface ResumedEvent {
   readonly type: 'resumed'
 }
 
+interface SpawnedEvent {
+  readonly id: string
+  readonly pid: number
+  readonly type: 'spawned'
+}
+
 type PtyEvent =
   | ReadyEvent
   | DataEvent
@@ -58,6 +64,7 @@ type PtyEvent =
   | ErrorEvent
   | PausedEvent
   | ResumedEvent
+  | SpawnedEvent
 
 // ---------------------------------------------------------------------------
 // Push-based event queue
@@ -915,6 +922,39 @@ describe('PTY Host', { timeout: 30_000 }, () => {
 
     // The PTY should have been resumed after the ack
     expect(resumedEvents.length).toBeGreaterThanOrEqual(1)
+
+    // Clean up
+    host.sendCommand({ type: 'kill', id: testId })
+  })
+
+  it('spawn emits a spawned event with the shell PID', async () => {
+    const host = spawnPtyHost()
+    currentHost = host
+
+    await waitForReady(host.events)
+
+    const testId = 'test-spawned-event-1'
+    host.sendCommand({
+      type: 'spawn',
+      id: testId,
+      shell: '/bin/sh',
+      args: ['-c', 'sleep 1'],
+      cwd: '/tmp',
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+      cols: 80,
+      rows: 24,
+    })
+
+    // The spawned event should arrive before any data or exit events
+    const spawnedEvent = await waitForEvent(
+      host.events,
+      (e) => e.type === 'spawned' && e.id === testId
+    )
+
+    expect(spawnedEvent.type).toBe('spawned')
+    expect((spawnedEvent as SpawnedEvent).id).toBe(testId)
+    expect((spawnedEvent as SpawnedEvent).pid).toBeGreaterThan(0)
+    expect(Number.isInteger((spawnedEvent as SpawnedEvent).pid)).toBe(true)
 
     // Clean up
     host.sendCommand({ type: 'kill', id: testId })

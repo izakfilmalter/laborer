@@ -60,7 +60,7 @@ interface CreateContainerParams {
     readonly dockerfile: string | null
     /** Base Docker image name (e.g. "node:22"). */
     readonly image: string | null
-    /** Docker network to join. When null, uses --network=host. */
+    /** Docker network to join. When null, uses default bridge networking. */
     readonly network: string | null
     /** Mount point inside the container. */
     readonly workdir: string
@@ -179,10 +179,16 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
             `Creating container "${name}" from image "${image}"${depsImageName ? ' (cached deps)' : ''} with worktree mounted at ${workdir}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
 
-          // Build network flags: use specified network or fall back to --network=host
+          // Build network flags: use specified network or fall back to default
+          // bridge networking. Bridge mode gives each container its own IP and
+          // .orb.local domain, enabling isolated port spaces across workspaces.
+          // Containers can still reach:
+          //  - Native Mac services via host.docker.internal (OrbStack provides this)
+          //  - Other Docker containers via their .orb.local domains
+          //  - Docker-compose services via service.project.orb.local
           const networkFlags = devServerConfig.network
             ? ['--network', devServerConfig.network]
-            : ['--network=host']
+            : []
 
           // Build volume flags: bind mount for worktree source code.
           // node_modules are pre-seeded into the worktree by DepsImageService

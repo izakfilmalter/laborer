@@ -2,13 +2,14 @@ import { RpcTest } from '@effect/rpc'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import { Context, Effect, Layer, Ref } from 'effect'
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
+import { BackgroundFetchService } from '../../src/services/background-fetch-service.js'
 import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
 import { ConfigService } from '../../src/services/config-service.js'
 import { ContainerService } from '../../src/services/container-service.js'
+import { DeferredServicesReadyLayer } from '../../src/services/deferred-service.js'
 import { DepsImageService } from '../../src/services/deps-image-service.js'
 import { DiffService } from '../../src/services/diff-service.js'
 import { DockerDetection } from '../../src/services/docker-detection.js'
-import { FileWatcher } from '../../src/services/file-watcher.js'
 import { GithubTaskImporter } from '../../src/services/github-task-importer.js'
 import { LaborerStore } from '../../src/services/laborer-store.js'
 import { LinearTaskImporter } from '../../src/services/linear-task-importer.js'
@@ -16,14 +17,16 @@ import { PortAllocator } from '../../src/services/port-allocator.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { PrdStorageService } from '../../src/services/prd-storage-service.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
-import { RepositoryEventBus } from '../../src/services/repository-event-bus.js'
 import { RepositoryIdentity } from '../../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../../src/services/repository-watch-coordinator.js'
+import { ReviewCommentFetcher } from '../../src/services/review-comment-fetcher.js'
 import { TaskManager } from '../../src/services/task-manager.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
+import { WorkspaceSyncService } from '../../src/services/workspace-sync-service.js'
 import { WorktreeDetector } from '../../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../../src/services/worktree-reconciler.js'
+import { TestFileWatcherClientLayer } from '../helpers/test-file-watcher-client.js'
 import { TestLaborerStore } from '../helpers/test-store.js'
 
 class TestTerminalClientRecorder extends Context.Tag(
@@ -111,14 +114,29 @@ const TestDepsImageService = Layer.succeed(
   })
 )
 
+// ---------------------------------------------------------------------------
+// Core layers (match main.ts CoreHttpLive — fast-building, no I/O)
+// ---------------------------------------------------------------------------
+
 /**
- * Leaf layers with no service dependencies (Group 0).
+ * Core infrastructure layers that build fast and have no external
+ * I/O dependencies. These mirror the core layers in main.ts.
  */
-const LeafLayers = Layer.mergeAll(
+const CoreLeafLayers = Layer.mergeAll(
   ConfigService.layer,
-  RepositoryEventBus.layer,
-  FileWatcher.layer,
-  RepositoryIdentity.layer,
+  RepositoryIdentity.layer
+)
+
+// ---------------------------------------------------------------------------
+// Deferred layers (match main.ts DeferredServicesLive — heavy I/O)
+// ---------------------------------------------------------------------------
+
+/**
+ * Deferred leaf layers with test stubs for external services.
+ * Mirrors DeferredLeafLayers in main.ts but with test-safe stubs.
+ */
+const DeferredLeafLayers = Layer.mergeAll(
+  TestFileWatcherClientLayer,
   WorktreeDetector.layer,
   TestDepsImageService,
   TestDockerDetection,
@@ -126,9 +144,9 @@ const LeafLayers = Layer.mergeAll(
 )
 
 /**
- * Layers that depend only on LaborerStore + leaf layers (Group 1).
+ * Deferred Group 1 — services depending on LaborerStore + leaf layers.
  */
-const Group1Layers = Layer.mergeAll(
+const DeferredGroup1Layers = Layer.mergeAll(
   TaskManager.layer,
   BranchStateTracker.layer,
   ContainerService.layer,
@@ -138,38 +156,65 @@ const Group1Layers = Layer.mergeAll(
   WorktreeReconciler.layer
 )
 
+const TestBackgroundFetchLayer = Layer.succeed(
+  BackgroundFetchService,
+  BackgroundFetchService.of({
+    startFetching: () => Effect.void,
+    stopFetching: () => Effect.void,
+    stopAllFetching: () => Effect.void,
+    fetchNow: () => Effect.succeed(false),
+  })
+)
+
+const DeferredGroup1WithSync = WorkspaceSyncService.layer.pipe(
+  Layer.provide(TestBackgroundFetchLayer),
+  Layer.provideMerge(DeferredGroup1Layers)
+)
+
 /**
- * Layers that depend on Group 1 (Group 2).
+ * Deferred Group 2 — services depending on Group 1.
  */
-const Group2Layers = Layer.mergeAll(
+const DeferredGroup2Layers = Layer.mergeAll(
   GithubTaskImporter.layer,
   LinearTaskImporter.layer,
+  ReviewCommentFetcher.layer,
   RepositoryWatchCoordinator.layer
 )
 
 /**
- * Full service dependency stack built bottom-up.
+ * Full deferred service stack built bottom-up.
  * Each group uses provideMerge so all services remain available as outputs.
  */
-const ServiceLayers = WorkspaceProvider.layer.pipe(
+const DeferredServiceStack = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(ProjectRegistry.layer),
-  Layer.provideMerge(Group2Layers),
-  Layer.provideMerge(Group1Layers)
+  Layer.provideMerge(DeferredGroup2Layers),
+  Layer.provideMerge(DeferredGroup1WithSync)
 )
 
+// ---------------------------------------------------------------------------
+// Combined test layers
+// ---------------------------------------------------------------------------
+
+/**
+ * All layers (core + deferred) composed for full RPC testing.
+ */
 export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
-  Layer.provide(ServiceLayers),
-  Layer.provide(LeafLayers),
+  Layer.provide(DeferredServiceStack),
+  Layer.provide(DeferredLeafLayers),
+  Layer.provide(CoreLeafLayers),
+  Layer.provide(DeferredServicesReadyLayer),
   Layer.provide(TestLaborerStore)
 )
 
 const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
-  Layer.provide(ServiceLayers),
-  Layer.provide(LeafLayers),
+  Layer.provide(DeferredServiceStack),
+  Layer.provide(DeferredLeafLayers),
+  Layer.provide(CoreLeafLayers),
+  Layer.provide(DeferredServicesReadyLayer),
   Layer.provideMerge(TestLaborerStore)
 )
 

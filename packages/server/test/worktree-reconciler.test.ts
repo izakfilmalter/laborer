@@ -157,6 +157,48 @@ describe('WorktreeReconciler', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
+  it.scoped(
+    'does not remove workspaces with creating status whose worktree is not yet on disk',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('reconciler-creating', tempRoots)
+        const pendingPath = join(repoPath, '.worktrees', 'pending-branch')
+
+        const { store } = yield* LaborerStore
+        store.commit(
+          events.workspaceCreated({
+            id: 'creating-workspace',
+            projectId: 'project-creating',
+            taskSource: null,
+            branchName: 'feature/pending',
+            worktreePath: pendingPath,
+            port: 4200,
+            status: 'creating',
+            origin: 'laborer',
+            createdAt: new Date().toISOString(),
+            baseSha: null,
+          })
+        )
+
+        const reconciler = yield* WorktreeReconciler
+        const result = yield* reconciler.reconcile('project-creating', repoPath)
+
+        // The creating workspace should NOT be removed
+        assert.strictEqual(result.removed, 0)
+
+        const rows = store.query(
+          tables.workspaces.where('projectId', 'project-creating')
+        )
+
+        // The creating workspace should still exist
+        assert.isTrue(rows.some((row) => row.id === 'creating-workspace'))
+        assert.strictEqual(
+          rows.find((row) => row.id === 'creating-workspace')?.status,
+          'creating'
+        )
+      }).pipe(Effect.provide(TestLayer))
+  )
+
   it.scoped('handles mixed add, remove, and unchanged reconciliation', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('reconciler-mixed', tempRoots)

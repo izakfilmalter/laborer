@@ -1,5 +1,5 @@
 /**
- * Agent provider icons for the settings modal agent picker.
+ * Agent provider icons for the sidebar agent button and settings.
  *
  * SVG icons sourced from .reference/t3code/apps/web/src/components/Icons.tsx.
  * Each icon corresponds to a CLI agent provider: opencode, claude, codex.

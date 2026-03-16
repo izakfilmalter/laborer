@@ -16,11 +16,17 @@
     ".": "./src/main.ts"
   },
   "dependencies": {
+    "@effect/cluster": "catalog:",
+    "@effect/experimental": "catalog:",
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/rpc": "catalog:",
+    "@effect/sql": "catalog:",
+    "@effect/workflow": "catalog:",
     "@laborer/env": "workspace:*",
     "@laborer/shared": "workspace:*",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
     "effect": "catalog:",
     "node-pty": "1.1.0"
   },

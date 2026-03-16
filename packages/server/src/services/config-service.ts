@@ -18,7 +18,7 @@
  *   "worktreeDir": "~/.config/laborer/my-project",
  *   "prdsDir": "~/.config/laborer/my-project/prds",
  *   "setupScripts": ["bun install", "cp .env.example .env"],
- *   "rlphConfig": "path/to/rlph.json"
+ *   "brrrConfig": "path/to/brrr/config.toml"
  * }
  * ```
  *
@@ -91,13 +91,15 @@ const logPrefix = 'ConfigService'
  * `image` and `dockerfile` are mutually exclusive.
  */
 interface DevServerConfig {
+  /** Automatically open the dev server sidebar when a workspace terminal is spawned. */
+  readonly autoOpen?: boolean | undefined
   /** Path to a Dockerfile for building the container image. */
   readonly dockerfile?: string | undefined
   /** Base Docker image name (e.g. "node:22"). */
   readonly image?: string | undefined
   /** Override the auto-detected install command for cached deps images (e.g. "pnpm install --frozen-lockfile"). */
   readonly installCommand?: string | undefined
-  /** Docker network to join (e.g. "myproject_default" for docker-compose services). When not set, uses --network=host. */
+  /** Docker network to join (e.g. "myproject_default" for docker-compose services). When not set, uses default bridge networking. Containers can reach other Docker containers via .orb.local domains and host services via host.docker.internal. */
   readonly network?: string | undefined
   /** Scripts to run inside the container before the start command (e.g. "apt-get install -y python3"). */
   readonly setupScripts?: readonly string[] | undefined
@@ -113,10 +115,11 @@ interface DevServerConfig {
  * configs or hardcoded defaults.
  */
 interface LaborerConfig {
+  /** Preferred AI coding agent. The value is also the CLI command to run. */
   readonly agent?: AgentProvider
+  readonly brrrConfig?: string
   readonly devServer?: DevServerConfig
   readonly prdsDir?: string
-  readonly rlphConfig?: string
   readonly setupScripts?: readonly string[]
   readonly watchIgnore?: readonly string[]
   readonly worktreeDir?: string
@@ -125,9 +128,9 @@ interface LaborerConfig {
 /** Partial updates accepted by writeProjectConfig() and writeGlobalConfig(). */
 interface ProjectConfigUpdates {
   readonly agent?: AgentProvider | undefined
+  readonly brrrConfig?: string | undefined
   readonly devServer?: DevServerConfig | undefined
   readonly prdsDir?: string | undefined
-  readonly rlphConfig?: string | undefined
   readonly setupScripts?: readonly string[] | undefined
   readonly watchIgnore?: readonly string[] | undefined
   readonly worktreeDir?: string | undefined
@@ -149,6 +152,7 @@ interface ResolvedValue<T> {
  * All fields have concrete values (no undefined).
  */
 interface ResolvedDevServerConfig {
+  readonly autoOpen: ResolvedValue<boolean>
   readonly dockerfile: ResolvedValue<string | null>
   readonly image: ResolvedValue<string | null>
   readonly installCommand: ResolvedValue<string | null>
@@ -163,12 +167,12 @@ interface ResolvedDevServerConfig {
  * All fields have concrete values (no undefined).
  */
 interface ResolvedLaborerConfig {
-  /** The agent CLI provider to use (e.g. opencode, claude, codex). */
+  /** Preferred AI coding agent CLI command (defaults to "opencode"). */
   readonly agent: ResolvedValue<AgentProvider>
+  readonly brrrConfig: ResolvedValue<string | null>
   readonly devServer: ResolvedDevServerConfig
   /** Absolute path with `~` already expanded. */
   readonly prdsDir: ResolvedValue<string>
-  readonly rlphConfig: ResolvedValue<string | null>
   readonly setupScripts: ResolvedValue<readonly string[]>
   /**
    * Additional ignore patterns appended to the default set.
@@ -330,6 +334,9 @@ const mergeDevServerUpdates = (
 ): Record<string, unknown> => {
   const merged = { ...existing }
 
+  if (updates.autoOpen !== undefined) {
+    merged.autoOpen = updates.autoOpen
+  }
   if (updates.image !== undefined) {
     merged.image = updates.image
   }
@@ -381,8 +388,8 @@ const applyConfigUpdates = (
     next.setupScripts = [...updates.setupScripts]
   }
 
-  if (updates.rlphConfig !== undefined) {
-    next.rlphConfig = updates.rlphConfig
+  if (updates.brrrConfig !== undefined) {
+    next.brrrConfig = updates.brrrConfig
   }
 
   if (updates.watchIgnore !== undefined) {
@@ -518,6 +525,10 @@ const ensureGlobalConfigDir = (): Effect.Effect<void, never> =>
 const mergeDevServerConfig = (
   configLayers: ReadonlyArray<{ config: LaborerConfig; path: string }>
 ): ResolvedDevServerConfig => {
+  let autoOpen: ResolvedValue<boolean> = {
+    value: false,
+    source: 'default',
+  }
   let image: ResolvedValue<string | null> = {
     value: 'node:lts',
     source: 'default',
@@ -547,36 +558,52 @@ const mergeDevServerConfig = (
     source: 'default',
   }
 
+  const applyImage = (value: string, path: string) => {
+    image = { value, source: path }
+    if (dockerfile.source === path) {
+      return
+    }
+    dockerfile = { value: null, source: 'default' }
+  }
+
+  const applyDockerfile = (value: string, path: string) => {
+    dockerfile = { value, source: path }
+    if (image.source === path) {
+      return
+    }
+    image = { value: null, source: 'default' }
+  }
+
+  const applyOptionalField = <T>(
+    value: T | undefined,
+    apply: (resolvedValue: T) => void
+  ) => {
+    if (value !== undefined) {
+      apply(value)
+    }
+  }
+
   const applyDevServerLayer = (ds: DevServerConfig, path: string) => {
-    if (ds.image !== undefined) {
-      image = { value: ds.image, source: path }
-      // image and dockerfile are mutually exclusive — setting one clears the other
-      if (ds.dockerfile === undefined) {
-        dockerfile = { value: null, source: 'default' }
-      }
-    }
-    if (ds.dockerfile !== undefined) {
-      dockerfile = { value: ds.dockerfile, source: path }
-      // image and dockerfile are mutually exclusive — setting one clears the other
-      if (ds.image === undefined) {
-        image = { value: null, source: 'default' }
-      }
-    }
-    if (ds.installCommand !== undefined) {
-      installCommand = { value: ds.installCommand, source: path }
-    }
-    if (ds.network !== undefined) {
-      network = { value: ds.network, source: path }
-    }
-    if (ds.setupScripts !== undefined) {
-      setupScripts = { value: ds.setupScripts, source: path }
-    }
-    if (ds.startCommand !== undefined) {
-      startCommand = { value: ds.startCommand, source: path }
-    }
-    if (ds.workdir !== undefined) {
-      workdir = { value: ds.workdir, source: path }
-    }
+    applyOptionalField(ds.autoOpen, (value) => {
+      autoOpen = { value, source: path }
+    })
+    applyOptionalField(ds.image, (value) => applyImage(value, path))
+    applyOptionalField(ds.dockerfile, (value) => applyDockerfile(value, path))
+    applyOptionalField(ds.installCommand, (value) => {
+      installCommand = { value, source: path }
+    })
+    applyOptionalField(ds.network, (value) => {
+      network = { value, source: path }
+    })
+    applyOptionalField(ds.setupScripts, (value) => {
+      setupScripts = { value, source: path }
+    })
+    applyOptionalField(ds.startCommand, (value) => {
+      startCommand = { value, source: path }
+    })
+    applyOptionalField(ds.workdir, (value) => {
+      workdir = { value, source: path }
+    })
   }
 
   for (let i = configLayers.length - 1; i >= 0; i--) {
@@ -592,6 +619,7 @@ const mergeDevServerConfig = (
   }
 
   return {
+    autoOpen,
     dockerfile,
     image,
     installCommand,
@@ -641,7 +669,7 @@ const mergeConfigs = (
     value: [],
     source: 'default',
   }
-  let rlphConfig: ResolvedValue<string | null> = {
+  let brrrConfig: ResolvedValue<string | null> = {
     value: null,
     source: 'default',
   }
@@ -659,11 +687,11 @@ const mergeConfigs = (
     }
     const { config, path } = layer
 
-    if (
-      config.agent !== undefined &&
-      VALID_AGENT_PROVIDERS.includes(config.agent)
-    ) {
-      agent = { value: config.agent, source: path }
+    if (config.agent !== undefined) {
+      agent = {
+        value: config.agent,
+        source: path,
+      }
     }
 
     if (config.worktreeDir !== undefined) {
@@ -693,9 +721,9 @@ const mergeConfigs = (
       }
     }
 
-    if (config.rlphConfig !== undefined) {
-      rlphConfig = {
-        value: config.rlphConfig,
+    if (config.brrrConfig !== undefined) {
+      brrrConfig = {
+        value: config.brrrConfig,
         source: path,
       }
     }
@@ -716,7 +744,7 @@ const mergeConfigs = (
     prdsDir,
     worktreeDir,
     setupScripts,
-    rlphConfig,
+    brrrConfig,
     watchIgnore,
   }
 }
@@ -810,7 +838,7 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
         }
 
         yield* Effect.logDebug(
-          `Resolved config for "${projectName}": worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), prdsDir="${resolved.prdsDir.value}" (from ${resolved.prdsDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), rlphConfig=${resolved.rlphConfig.value ?? 'null'} (from ${resolved.rlphConfig.source}), devServer.image=${resolved.devServer.image.value ?? 'null'} (from ${resolved.devServer.image.source}), devServer.workdir="${resolved.devServer.workdir.value}" (from ${resolved.devServer.workdir.source})`
+          `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), prdsDir="${resolved.prdsDir.value}" (from ${resolved.prdsDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source}), brrrConfig=${resolved.brrrConfig.value ?? 'null'} (from ${resolved.brrrConfig.source}), devServer.image=${resolved.devServer.image.value ?? 'null'} (from ${resolved.devServer.image.source}), devServer.workdir="${resolved.devServer.workdir.value}" (from ${resolved.devServer.workdir.source})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
         return resolved
@@ -867,8 +895,9 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
 }
 
 export {
-  ConfigService,
+  type ConfigService,
   ConfigValidationError,
+  VALID_AGENT_PROVIDERS,
   // Exported for testing
   CONFIG_FILE_NAME,
   expandTilde,
@@ -893,5 +922,3 @@ export type {
   ResolvedLaborerConfig,
   ResolvedValue,
 }
-
-export { VALID_AGENT_PROVIDERS }

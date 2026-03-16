@@ -16,7 +16,6 @@ export default defineConfig({
   // step via electron-builder's dependency bundling).
   external: [
     'better-sqlite3',
-    '@parcel/watcher',
     // LiveStore packages use wa-sqlite WASM and native SQLite adapters
     // that must be resolved from node_modules at runtime.
     '@livestore/adapter-node',

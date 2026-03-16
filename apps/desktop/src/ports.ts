@@ -41,6 +41,8 @@ export function reservePort(host = '127.0.0.1'): Promise<number> {
 export interface ServicePorts {
   /** Random auth token to secure child process communication. */
   readonly authToken: string
+  /** Port for the file-watcher service (HTTP for filesystem watch RPC). */
+  readonly fileWatcherPort: number
   /** Port for the server (HTTP + WebSocket for LiveStore sync + RPC). */
   readonly serverPort: number
   /** Port for the terminal service (HTTP + WebSocket for PTY I/O). */
@@ -54,12 +56,13 @@ export interface ServicePorts {
  * The MCP service communicates over stdio, so it doesn't need a port.
  */
 export async function reserveServicePorts(): Promise<ServicePorts> {
-  const [serverPort, terminalPort] = await Promise.all([
+  const [serverPort, terminalPort, fileWatcherPort] = await Promise.all([
+    reservePort(),
     reservePort(),
     reservePort(),
   ])
 
   const authToken = randomBytes(24).toString('hex')
 
-  return { serverPort, terminalPort, authToken }
+  return { serverPort, terminalPort, fileWatcherPort, authToken }
 }

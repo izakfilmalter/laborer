@@ -21,7 +21,7 @@ const KILL_GRACE_MS = 2000
 // ---------------------------------------------------------------------------
 
 /** Identifies a sidecar service. */
-export type SidecarName = 'server' | 'terminal' | 'mcp'
+export type SidecarName = 'server' | 'terminal' | 'file-watcher' | 'mcp'
 
 /** A tracked child process with its stderr ring buffer. */
 interface TrackedSidecar {
@@ -76,19 +76,24 @@ function resolveEntryPath(name: SidecarName): string {
         return join(root, 'packages/server/src/main.ts')
       case 'terminal':
         return join(root, 'packages/terminal/src/main.ts')
+      case 'file-watcher':
+        return join(root, 'packages/file-watcher/src/main.ts')
       default:
         return join(root, 'packages/mcp/src/main.ts')
     }
   }
 
-  // Production: bundled entry points
+  // Production: bundled entry points.
+  // tsdown outputs .mjs for ESM format, so use the correct extension.
   switch (name) {
     case 'server':
-      return join(root, 'packages/server/dist/main.js')
+      return join(root, 'packages/server/dist/main.mjs')
     case 'terminal':
-      return join(root, 'packages/terminal/dist/main.js')
+      return join(root, 'packages/terminal/dist/main.mjs')
+    case 'file-watcher':
+      return join(root, 'packages/file-watcher/dist/main.mjs')
     default:
-      return join(root, 'packages/mcp/dist/main.js')
+      return join(root, 'packages/mcp/dist/main.mjs')
   }
 }
 
@@ -138,6 +143,7 @@ function buildSidecarEnv(
     ...filterEnv(process.env),
     PORT: String(ports.serverPort),
     TERMINAL_PORT: String(ports.terminalPort),
+    FILE_WATCHER_PORT: String(ports.fileWatcherPort),
   }
 
   // In production, set ELECTRON_RUN_AS_NODE so the Electron binary

@@ -54,7 +54,7 @@ describe('LaborerRpcs project management', () => {
           const canonicalGitCommonDir = realpathSync(join(repoPath, '.git'))
           assert.strictEqual(project.repoPath, canonicalRepoPath)
           assert.strictEqual(project.name, basename(canonicalRepoPath))
-          assert.strictEqual(project.rlphConfig, undefined)
+          assert.strictEqual(project.brrrConfig, undefined)
           const storedProject = store.query(
             tables.projects.where('id', project.id)
           )
@@ -71,7 +71,7 @@ describe('LaborerRpcs project management', () => {
               repoId: storedProject[0]?.repoId ?? null,
               canonicalGitCommonDir,
               name: basename(canonicalRepoPath),
-              rlphConfig: null,
+              brrrConfig: null,
             },
           ])
 

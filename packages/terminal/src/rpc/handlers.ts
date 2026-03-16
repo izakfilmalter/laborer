@@ -79,6 +79,11 @@ const toLifecycleEventSchema = (
         command: event.terminal.command,
         status: event.terminal.status,
       }
+    case 'ProcessChanged':
+      return {
+        _tag: 'ProcessChanged' as const,
+        terminal: toTerminalInfo(event.terminal),
+      }
     default: {
       const _exhaustive: never = event
       return _exhaustive
@@ -94,10 +99,22 @@ const toLifecycleEventSchema = (
  * compile time.
  */
 const toTerminalInfo = (record: {
+  readonly agentStatus: 'active' | 'waiting_for_input' | null
   readonly args: readonly string[]
   readonly command: string
   readonly cwd: string
+  readonly foregroundProcess: {
+    readonly category: 'agent' | 'editor' | 'devServer' | 'shell' | 'unknown'
+    readonly label: string
+    readonly rawName: string
+  } | null
+  readonly hasChildProcess: boolean
   readonly id: string
+  readonly processChain: readonly {
+    readonly category: 'agent' | 'editor' | 'devServer' | 'shell' | 'unknown'
+    readonly label: string
+    readonly rawName: string
+  }[]
   readonly status: 'running' | 'stopped'
   readonly workspaceId: string
 }) => ({
@@ -106,6 +123,10 @@ const toTerminalInfo = (record: {
   command: record.command,
   args: [...record.args],
   cwd: record.cwd,
+  agentStatus: record.agentStatus,
+  foregroundProcess: record.foregroundProcess,
+  hasChildProcess: record.hasChildProcess,
+  processChain: [...record.processChain],
   status: record.status,
 })
 
@@ -134,6 +155,7 @@ export const TerminalRpcsLive = TerminalRpcs.toLayer(
         args,
         cwd,
         env,
+        id,
         cols,
         rows,
         workspaceId,
@@ -144,6 +166,7 @@ export const TerminalRpcsLive = TerminalRpcs.toLayer(
             args: args ?? [],
             cwd,
             env: env ?? undefined,
+            id: id ?? undefined,
             cols,
             rows,
             workspaceId,

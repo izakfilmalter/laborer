@@ -8,26 +8,34 @@
  *
  * Protocol:
  * - Server → Client: Raw UTF-8 terminal output as text frames
- * - Server → Client: JSON control messages for terminal status:
+ * - Server → Client: JSON control messages:
  *   - `{"type":"status","status":"running"}` — sent on initial connection
  *   - `{"type":"status","status":"stopped","exitCode":N}` — PTY exited
  *   - `{"type":"status","status":"restarted"}` — terminal restarted
+ *   - `{"type":"screenState","data":"<VT sequences>"}` — compact screen
+ *     state snapshot (~4KB) sent on initial connection for fast reconnection
  * - Client → Server: Raw terminal input (keystrokes) as text frames,
  *   or JSON control messages (e.g., `{"type":"ack","chars":5000}` for
  *   flow control)
  *
- * Connection lifecycle:
+ * Connection lifecycle (race-free attach):
  * 1. Client connects with `?id=<terminalId>`
  * 2. Server validates terminal exists
  * 3. Server sends `{"type":"status","status":"running"}` control message
- * 4. Server sends ring buffer scrollback as initial text frame(s)
- * 5. Server subscribes to live output and forwards as text frames
- * 6. Server subscribes to lifecycle events for status control messages
- * 7. Client text frames are forwarded to PTY as input
- * 8. On disconnect: server unsubscribes, cleans up
+ * 4. Server subscribes to live PTY output FIRST (queuing any output)
+ * 5. Server serializes headless terminal screen state
+ * 6. Server sends `{"type":"screenState","data":"..."}` as first data frame
+ * 7. Server flushes any queued output from step 4
+ * 8. Server continues streaming live output
+ * 9. Server subscribes to lifecycle events for status control messages
+ * 10. Client text frames are forwarded to PTY as input
+ * 11. On disconnect: server unsubscribes, cleans up
  *
- * @see PRD-terminal-extraction.md — "WebSocket Control Messages"
- * @see Issue #140: Move terminal WebSocket route to terminal package
+ * The subscribe-before-serialize pattern ensures no output is lost
+ * between the screen state snapshot and the start of live streaming.
+ *
+ * @see PRD-ghostty-web-migration.md — Module 2: Backend: WebSocket Attach Protocol
+ * @see Issue #8: Backend: Race-free WebSocket attach protocol
  */
 
 import {
@@ -42,18 +50,6 @@ import {
   type TerminalLifecycleEvent,
   TerminalManager,
 } from '../services/terminal-manager.js'
-
-/**
- * Maximum size (in characters) for a single scrollback text frame.
- * Large scrollback buffers are split into chunks to avoid overwhelming
- * the WebSocket send buffer.
- *
- * Increased from 64KB to 128KB to reduce the number of frames needed
- * when sending the 5MB ring buffer on reconnection (~40 frames vs ~80).
- *
- * @see Issue #127: Terminal scroll performance (100k+ lines)
- */
-const SCROLLBACK_CHUNK_SIZE = 131_072
 
 /**
  * Handle incoming WebSocket messages from the client.
@@ -85,32 +81,6 @@ const handleClientMessage = (
 
   ptyWrite(terminalId, data)
 }
-
-/**
- * Send scrollback data to the client via the write function.
- * Large buffers are split into chunks to avoid overwhelming the
- * WebSocket send buffer.
- */
-const sendScrollback = (
-  writeFn: (chunk: string) => Effect.Effect<void, Socket.SocketError>,
-  scrollback: string
-): Effect.Effect<void, Socket.SocketError> =>
-  Effect.gen(function* () {
-    if (scrollback.length === 0) {
-      return
-    }
-    if (scrollback.length <= SCROLLBACK_CHUNK_SIZE) {
-      yield* writeFn(scrollback)
-      return
-    }
-    for (
-      let offset = 0;
-      offset < scrollback.length;
-      offset += SCROLLBACK_CHUNK_SIZE
-    ) {
-      yield* writeFn(scrollback.slice(offset, offset + SCROLLBACK_CHUNK_SIZE))
-    }
-  })
 
 /**
  * Send a JSON status control message to the client.
@@ -250,10 +220,29 @@ const TerminalWsRouteLive = HttpRouter.Default.use((router) =>
           // Send initial status control message
           sendStatusMessage(wsSend, 'running')
 
-          // Subscribe to terminal output (ring buffer + live data)
-          const { scrollback, subscriberId } = yield* terminalManager.subscribe(
+          // Race-free attach: subscribe-before-serialize pattern.
+          //
+          // 1. Subscribe to live PTY output FIRST, queuing any data
+          //    that arrives during screen state serialization.
+          // 2. Serialize the headless terminal's screen state.
+          // 3. Send the screen state as the first data frame.
+          // 4. Flush any queued output that arrived during serialization.
+          // 5. Switch to direct sending for all subsequent output.
+          //
+          // This ensures no output is lost between the screen state
+          // snapshot and the start of live streaming.
+          const outputQueue: string[] = []
+          let sendDirect = false
+
+          const { subscriberId } = yield* terminalManager.subscribe(
             terminalId,
-            wsSend
+            (data: string) => {
+              if (sendDirect) {
+                wsSend(data)
+              } else {
+                outputQueue.push(data)
+              }
+            }
           )
 
           // Subscribe to lifecycle events for status control messages.
@@ -282,9 +271,25 @@ const TerminalWsRouteLive = HttpRouter.Default.use((router) =>
                 )
               },
               {
-                onOpen: sendScrollback(writeFn, scrollback).pipe(
-                  Effect.catchAll(() => Effect.void)
-                ),
+                onOpen: Effect.gen(function* () {
+                  // Serialize screen state AFTER subscription is set up.
+                  // Any output arriving during serialization is queued.
+                  const screenState = terminalManager.getScreenState(terminalId)
+
+                  // Send screen state as JSON control message
+                  yield* writeFn(
+                    JSON.stringify({ type: 'screenState', data: screenState })
+                  )
+
+                  // Flush any output that arrived during serialization
+                  for (const queued of outputQueue) {
+                    wsSend(queued)
+                  }
+                  outputQueue.length = 0
+
+                  // Switch to direct sending for all subsequent output
+                  sendDirect = true
+                }).pipe(Effect.catchAll(() => Effect.void)),
               }
             )
             .pipe(

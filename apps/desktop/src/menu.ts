@@ -7,6 +7,8 @@ import {
 
 import { MENU_ACTION_CHANNEL } from './ipc.js'
 
+type CreateWindowFn = () => void
+
 // ---------------------------------------------------------------------------
 // Menu action dispatch
 // ---------------------------------------------------------------------------
@@ -80,12 +82,24 @@ export function dispatchMenuAction(
  */
 export function configureApplicationMenu(
   getMainWindow: () => BrowserWindow | null,
-  createWindowFn?: () => void
+  createWindowFn?: CreateWindowFn
 ): void {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(
+      buildApplicationMenuTemplate(getMainWindow, createWindowFn)
+    )
+  )
+}
+
+export function buildApplicationMenuTemplate(
+  getMainWindow: () => BrowserWindow | null,
+  createWindowFn?: CreateWindowFn,
+  platform: NodeJS.Platform = process.platform
+): MenuItemConstructorOptions[] {
   const template: MenuItemConstructorOptions[] = []
 
   // macOS app-name menu
-  if (process.platform === 'darwin') {
+  if (platform === 'darwin') {
     template.push({
       label: app.name,
       submenu: [
@@ -110,11 +124,19 @@ export function configureApplicationMenu(
   }
 
   // File menu
+  const fileMenu: MenuItemConstructorOptions[] = []
+  const newWindowMenuItem = createNewWindowMenuItem(createWindowFn)
+
+  if (newWindowMenuItem) {
+    fileMenu.push(newWindowMenuItem, { type: 'separator' })
+  }
+
   template.push({
     label: 'File',
     submenu: [
+      ...fileMenu,
       // On non-macOS, put Settings in the File menu.
-      ...(process.platform === 'darwin'
+      ...(platform === 'darwin'
         ? []
         : [
             {
@@ -129,11 +151,37 @@ export function configureApplicationMenu(
             },
             { type: 'separator' as const },
           ]),
-      {
-        role: (process.platform === 'darwin' ? 'close' : 'quit') as
-          | 'close'
-          | 'quit',
-      },
+      ...(platform === 'darwin'
+        ? [
+            {
+              label: 'Push Workspace',
+              accelerator: 'CmdOrCtrl+P' as const,
+              click: () =>
+                dispatchMenuAction(
+                  'push-workspace',
+                  getMainWindow,
+                  createWindowFn
+                ),
+            },
+            {
+              label: 'Pull Workspace',
+              accelerator: 'CmdOrCtrl+Shift+P' as const,
+              click: () =>
+                dispatchMenuAction(
+                  'pull-workspace',
+                  getMainWindow,
+                  createWindowFn
+                ),
+            },
+            { type: 'separator' as const },
+            {
+              label: 'Close Pane',
+              accelerator: 'CmdOrCtrl+W' as const,
+              click: () =>
+                dispatchMenuAction('close-pane', getMainWindow, createWindowFn),
+            },
+          ]
+        : [{ role: 'quit' as const }]),
     ],
   })
 
@@ -144,5 +192,19 @@ export function configureApplicationMenu(
     { role: 'windowMenu' }
   )
 
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+  return template
+}
+
+function createNewWindowMenuItem(
+  createWindowFn?: CreateWindowFn
+): MenuItemConstructorOptions | null {
+  if (!createWindowFn) {
+    return null
+  }
+
+  return {
+    label: 'New Window',
+    accelerator: 'CmdOrCtrl+N',
+    click: () => createWindowFn(),
+  }
 }

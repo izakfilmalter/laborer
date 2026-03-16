@@ -1,0 +1,88 @@
+2026-03-12 - Issue 1: Window Identity Plumbing
+- Selected Issue 1 as the highest-priority task because it unblocks the new-window command, window-scoped panel storage, and persisted window records.
+- Added `windowId` bootstrap plumbing in the desktop shell by generating a stable ID per created window and passing it through Electron preload arguments.
+- Exposed `getWindowId()` on the shared desktop bridge and added a renderer helper so the web app can read the current native window identity during bootstrap.
+- Added desktop and web tests covering preload arg round-tripping and renderer bootstrap access to the correct `windowId`.
+- Verified with `bun run test` and `bun run typecheck` in `apps/desktop`, plus `bun run test` and `bun run typecheck` in `apps/web`.
+- `bun run format` at the repo root still fails because of a pre-existing formatting issue in `.opencode/package.json` unrelated to this feature.
+
+2026-03-12 - Issue 2: New Window Command
+- Selected Issue 2 as the highest-priority remaining task because it is the next vertical slice from the PRD's recommended delivery order and unlocks real multi-window workflows without waiting for persistence work.
+- Added a dedicated `New Window` application menu item with the standard `CmdOrCtrl+N` accelerator so window creation is available from both keyboard and menu paths.
+- Refactored desktop window creation to keep each `BrowserWindow` instance self-contained, which lets opening a second window leave the originating window alive and untouched.
+- Switched desktop IPC fallback window selection to resolve dynamically so menu actions, dialogs, and notification clicks still target a valid open window after additional windows are created.
+- Added desktop tests covering the new menu item wiring and re-verified `apps/desktop` with `bun run test` and `bun run typecheck`.
+
+2026-03-12 - Issue 3: Panel Layout Storage by Window
+- Selected Issue 3 as the highest-priority remaining task because it is the next unblocked storage slice in the PRD's delivery order and it unlocks renderer isolation work for reads, writes, and default seeding.
+- Renamed persisted panel-layout identity from a generic session `id` to explicit `windowId` keys in the shared schema, layout events, and materializers so panel state is modeled as window-scoped data.
+- Updated the web panel-layout hook to use the new `windowId` storage contract, with a `default` fallback for non-desktop contexts while the rest of the multi-window renderer work lands.
+- Added shared schema coverage proving two window-scoped panel layout rows can be stored at the same time without overwriting each other.
+- Verified with `bun run typecheck` and `bun x vitest run --pool=threads` in `packages/shared`, plus `bun run test` and `bun run typecheck` in `apps/web`.
+- `bun run test` in `packages/shared` still hits a pre-existing Vitest worker/process issue in this environment, so I used `bun x vitest run --pool=threads` to complete the feedback loop successfully.
+
+2026-03-12 - Issue 4: Renderer Reads Only Its Own Session
+- Selected Issue 4 as the highest-priority remaining task because it is the next renderer isolation slice in the PRD's delivery order and it directly unblocks renderer-scoped writes plus default blank session seeding.
+- Added a focused `usePanelLayout` hook test suite that boots the renderer against multiple persisted panel-layout rows and proves it hydrates only the row for the current `windowId`.
+- Added coverage showing active-pane fallback is derived from the current window's layout only, so a stale pane id in one session does not leak focus state from another window.
+- Added coverage for booting a second renderer window id against the same persisted data set, proving each renderer instance reads its own session independently.
+- Verified with `bun run test` and `bun run typecheck` in `apps/web`.
+
+2026-03-12 - Issue 5: Renderer Writes Only Its Own Session
+- Selected Issue 5 as the highest-priority remaining task because window-scoped write isolation is the next unblocked vertical slice, and it is the prerequisite for workspace-targeting flows to behave safely across multiple windows.
+- Extended the `usePanelLayout` hook tests to exercise split, close, terminal-assignment, and workspace-reorder actions against two persisted window sessions at once.
+- Added commit-side test harness behavior that replays window-scoped layout events into mocked persisted rows, proving writes for window A leave window B unchanged.
+- Verified with `bun run test` and `bun run typecheck` in `apps/web`.
+
+2026-03-12 - Issue 6: Default Blank Session Seeding
+- Selected Issue 6 as the highest-priority remaining task because it is the next unblocked restore prerequisite after write isolation, and it prevents newly opened windows from inheriting unrelated terminal or workspace context.
+- Updated `usePanelLayout` so native windows seed from a deterministic blank panel session instead of deriving a layout from the current global terminal and workspace state.
+- Extended the hook tests to prove a fresh native window does not clone another window's pane tree and that repeated new-window creation always seeds the same blank session.
+- Verified with `bun run test` and `bun run typecheck` in `apps/web`.
+
+2026-03-12 - Issue 7: Persist Window Records
+- Selected Issue 7 as the highest-priority remaining task because it is the next unblocked slice in the PRD's recommended delivery order and it unlocks both full multi-window relaunch restore and preserved closed-window sessions.
+- Reworked desktop window-state persistence from a single saved main-window payload into a multi-window record collection keyed by stable `windowId`, while keeping the current boot path compatible by restoring the first saved record until full multi-window relaunch lands.
+- Updated desktop window tracking so every created Laborer window writes its own restoration metadata, including `windowId`, bounds, and maximized state, into the shared persisted record set.
+- Added desktop tests for parsing/serializing multi-window record payloads plus a disk-backed manager test that saves and reloads multiple window records successfully.
+- Verified with `bun run test` and `bun run typecheck` in `apps/desktop`.
+
+2026-03-12 - Issue 10: Preserve Closed Window Sessions
+- Selected Issue 10 as the highest-priority remaining task because close semantics are a core multi-window lifecycle behavior, and preserving non-last window sessions on close is more foundational to the v1 desktop model than window-aware workspace targeting.
+- Updated the desktop close handler so only the last visible window follows the existing close-to-tray path; closing any other window now closes it normally while leaving its persisted session intact for relaunch restore.
+- Added desktop main-process tests covering both branches of the close behavior: non-last windows close without being hidden, while the last visible window still prevents close and hides to the tray.
+- Added a `WindowStateManager` test that tracks a closing window and proves its persisted record remains on disk alongside the rest of the saved window set for later restore.
+- Verified with `bun run test` and `bun run typecheck` in `apps/desktop`.
+
+2026-03-12 - Issue 8: Restore All Windows on Relaunch
+- Selected Issue 8 as the highest-priority remaining task because it is the next slice in the PRD's recommended delivery order and it unblocks invalid-session repair plus final multi-window UX hardening.
+- Updated desktop startup to restore every persisted window record on relaunch instead of only reopening the first saved window.
+- Kept each restored native window bound to its own persisted `windowId`, so bootstrap arguments continue to hydrate the matching window-scoped panel session in the renderer.
+- Added a desktop main-process test that exercises a multi-window relaunch and verifies both restored windows are recreated with their own bounds, `windowId`, and maximized state.
+- Verified with `bun run test` and `bun run typecheck` in `apps/desktop`.
+
+2026-03-12 - Issue 9: Invalid Session Repair
+- Selected Issue 9 as the highest-priority remaining task because restore repair is the most foundational remaining slice: it hardens multi-window relaunch correctness before window-targeting flows and unblocks the final UX-hardening pass.
+- Added panel-layout repair logic that sanitizes persisted pane trees on restore, drops invalid leaf metadata, collapses malformed split nodes, and falls back to the deterministic blank native-window session when a saved layout cannot be repaired.
+- Updated `usePanelLayout` to persist repaired sessions back to LiveStore, so stale `activePaneId` pointers and corrupted window-session records self-heal instead of lingering across launches.
+- Added unit coverage for layout repair helpers plus hook coverage for both stale pane references and a corrupted restore record falling back to a safe default window session.
+- Verified with `bun run test` and `bun run typecheck` in `apps/web`.
+
+2026-03-12 - Issue 11: Focus Existing Window for Open Workspace
+- Selected Issue 11 as the highest-priority remaining task because it is the only unblocked issue left and completing it unblocks the final UX-hardening pass (Issue 12).
+- Added `focusWindowForWorkspace` method to the DesktopBridge interface so the renderer can ask the main process whether a workspace is already visible in another window.
+- Added a new `FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL` IPC handler in the main process that uses the existing `WorkspaceWindowRegistry` to find the target window, compares it against the requesting window to avoid self-focus, and sends an `ACTIVATE_WORKSPACE_CHANNEL` message to the target renderer so it can activate the workspace's pane.
+- Added `onActivateWorkspace` subscription to the DesktopBridge so the target renderer receives workspace activation events, and created a `useActivateWorkspace` hook that wires the event to the existing pane-focus logic.
+- Gated `handleAssignTerminalToPane` in the central panel layout hook with the `focusExistingWindowForWorkspace` check, so all eight user-facing call sites (start loop, spawn terminal, spawn agent, select terminal, review PR, fix findings, drag-drop, and empty pane spawn) are covered by a single choke point.
+- Added desktop IPC tests covering cross-window focus, same-window no-op, and unknown-workspace fallback.
+- Added web panel layout tests proving that terminal assignment is skipped when the workspace is open in another window and proceeds normally when it is not.
+- Verified with `bun run test` and `bun run typecheck` in both `apps/desktop` and `apps/web`.
+
+2026-03-12 - Issue 12: Multi-Window UX Hardening
+- Selected Issue 12 as the only remaining task; all blockers (Issues 8, 9, 10, 11) were already complete.
+- Fixed focus-sensitive IPC handlers (folder picker, confirm dialog, context menu) to resolve the owner window from `BrowserWindow.fromWebContents(event.sender)` instead of `BrowserWindow.getFocusedWindow()`, so dialogs and menus always target the window that initiated the request even after repeated window switches.
+- Moved `registerIpcHandlers` and callback wiring (`setTrayCountHandler`, `setRestartSidecarHandler`) out of `createWindow` and into the one-time bootstrap sequence, eliminating redundant `removeHandler`/`handle` re-registration on every window creation.
+- Added desktop IPC tests proving the folder picker, confirm dialog, and context menu all resolve to the sender window rather than the focused or fallback window, plus a fallback test for when the sender window cannot be resolved.
+- Added a main-process test proving IPC handlers are registered exactly once even when multiple windows are created on startup.
+- Verified with `bun run test` (144 pass) and `bun run typecheck` in `apps/desktop`, plus `bun run test` (343 pass) and `bun run typecheck` in `apps/web`.
+- `bun run format` at the repo root reports only pre-existing lint issues unrelated to this feature.

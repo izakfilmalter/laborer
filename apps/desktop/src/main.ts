@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
 
 import {
   broadcastUpdateStateToWindow,
@@ -13,6 +13,7 @@ import {
 import { fixPath } from './fix-path.js'
 import { HealthMonitor } from './health.js'
 import {
+  getWorkspaceWindowRegistry,
   registerIpcHandlers,
   setDownloadUpdateHandler,
   setGetUpdateStateHandler,
@@ -30,7 +31,8 @@ import {
 } from './protocol.js'
 import { SidecarManager } from './sidecar.js'
 import { registerGlobalShortcut, TrayManager } from './tray.js'
-import { WindowStateManager } from './window-state.js'
+import { buildWindowBootstrapArgs, createWindowId } from './window-identity.js'
+import { type WindowRecord, WindowStateManager } from './window-state.js'
 
 // Fix PATH before anything else — must happen synchronously before
 // any child processes are spawned. On macOS, apps launched from
@@ -40,6 +42,43 @@ fixPath()
 // Register the custom laborer:// protocol scheme as privileged.
 // MUST happen synchronously before app.whenReady().
 registerSchemeAsPrivileged()
+
+// ---------------------------------------------------------------------------
+// GitHub OAuth protocol handler
+// ---------------------------------------------------------------------------
+// Register x-github-desktop-dev-auth:// so the OS routes the OAuth callback
+// back to this app after the user authorizes in the browser.
+
+const GITHUB_OAUTH_PROTOCOL = 'x-github-desktop-dev-auth'
+
+/** Pending OAuth URL received before a window was ready. */
+let pendingOAuthUrl: string | null = null
+
+/**
+ * Broadcast a GitHub OAuth callback URL to all renderer windows.
+ */
+function handleGithubOAuthUrl(url: string): void {
+  const windows = BrowserWindow.getAllWindows()
+  if (windows.length === 0) {
+    // Window not ready yet — store for later delivery.
+    pendingOAuthUrl = url
+    return
+  }
+
+  for (const window of windows) {
+    window.webContents.send('desktop:github-oauth-callback', url)
+  }
+}
+
+// macOS: the OS delivers custom-protocol URLs via the open-url event.
+// This MUST be registered before app.whenReady() to catch URLs that
+// triggered the app launch.
+app.on('open-url', (event, url) => {
+  if (url.startsWith(`${GITHUB_OAUTH_PROTOCOL}://`)) {
+    event.preventDefault()
+    handleGithubOAuthUrl(url)
+  }
+})
 
 /**
  * Vite dev server URL, set by the dev-electron script.
@@ -57,6 +96,7 @@ const isDev = Boolean(VITE_DEV_SERVER_URL)
 /** Traffic light button inset for the hidden title bar. */
 const TRAFFIC_LIGHT_POSITION = { x: 16, y: 12 } as const
 
+const openWindows = new Set<BrowserWindow>()
 let mainWindow: BrowserWindow | null = null
 
 /**
@@ -113,11 +153,38 @@ export function getHealthMonitor(): HealthMonitor | null {
   return healthMonitor
 }
 
-function createWindow(): void {
-  // Restore persisted window bounds (or default to centered 800x600).
-  const savedState = windowStateManager.load()
+function getMainWindow(): BrowserWindow | null {
+  const focusedWindow = BrowserWindow.getFocusedWindow()
 
-  mainWindow = new BrowserWindow({
+  if (focusedWindow && !focusedWindow.isDestroyed()) {
+    return focusedWindow
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    return mainWindow
+  }
+
+  return BrowserWindow.getAllWindows()[0] ?? null
+}
+
+function shouldHideOnClose(window: BrowserWindow): boolean {
+  if (isQuitting) {
+    return false
+  }
+
+  const otherVisibleWindows = BrowserWindow.getAllWindows().filter(
+    (candidate) =>
+      candidate !== window && !candidate.isDestroyed() && candidate.isVisible()
+  )
+
+  return otherVisibleWindows.length === 0
+}
+
+function createWindow(record?: WindowRecord): BrowserWindow {
+  const savedState = record ?? windowStateManager.load()
+  const windowId = record?.windowId ?? createWindowId()
+
+  const window = new BrowserWindow({
     ...savedState.bounds,
     minWidth: 840,
     minHeight: 620,
@@ -129,67 +196,79 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      additionalArguments: buildPreloadArgs(),
+      additionalArguments: buildPreloadArgs(windowId),
     },
   })
 
+  openWindows.add(window)
+  mainWindow ??= window
+
   // Restore maximized state after window creation.
   if (savedState.isMaximized) {
-    mainWindow.maximize()
+    window.maximize()
   }
 
   // Track window bounds for persistence — saves on move/resize/close.
-  windowStateManager.track(mainWindow)
+  windowStateManager.track(window, windowId)
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show()
+  // Intercept window.open() calls from the renderer (e.g., ghostty-web
+  // link clicks) and redirect them to the OS default browser via
+  // shell.openExternal(). Without this, window.open() in a sandboxed
+  // renderer would create a new BrowserWindow instead of opening the
+  // user's browser.
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https:') || url.startsWith('http:')) {
+      shell.openExternal(url).catch(console.error)
+    }
+    return { action: 'deny' }
+  })
+
+  window.once('ready-to-show', () => {
+    window.show()
   })
 
   if (VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(VITE_DEV_SERVER_URL).catch(console.error)
+    window.loadURL(VITE_DEV_SERVER_URL).catch(console.error)
   } else {
     // Production: serve the frontend via the custom laborer:// protocol.
-    mainWindow
-      .loadURL(`${DESKTOP_SCHEME}://app/index.html`)
-      .catch(console.error)
+    // Load the root path (not /index.html) so TanStack Router matches "/".
+    window.loadURL(`${DESKTOP_SCHEME}://app/`).catch(console.error)
   }
 
-  // Close-to-tray: when the user clicks the close button (X or Cmd+W),
-  // hide the window instead of quitting. The app continues running in
-  // the system tray. The user can actually quit via Cmd+Q, tray "Quit",
-  // or the app menu "Quit" — those set `isQuitting = true` via `before-quit`.
-  mainWindow.on('close', (event) => {
-    if (!isQuitting) {
+  window.webContents.on('did-finish-load', () => {
+    broadcastUpdateStateToWindow(window)
+  })
+
+  // Preserve the last visible window's existing close-to-tray behavior, but
+  // let non-last windows close normally so their sessions stay restorable.
+  let hiddenToTray = false
+
+  window.on('close', (event) => {
+    if (shouldHideOnClose(window)) {
+      hiddenToTray = true
       event.preventDefault()
-      mainWindow?.hide()
+      window.hide()
     }
   })
 
-  mainWindow.on('closed', () => {
-    mainWindow = null
-  })
+  window.on('closed', () => {
+    openWindows.delete(window)
+    getWorkspaceWindowRegistry().remove(window)
 
-  // Register IPC handlers for the DesktopBridge contract.
-  registerIpcHandlers(mainWindow)
-
-  // Wire tray workspace count updates from the renderer to the tray manager.
-  setTrayCountHandler((count) => {
-    trayManager.updateWorkspaceCount(count)
-  })
-
-  // Wire sidecar restart requests from the renderer to the health monitor.
-  setRestartSidecarHandler(async (name) => {
-    const validNames = ['server', 'terminal', 'mcp'] as const
-    type ValidName = (typeof validNames)[number]
-    if (!validNames.includes(name as ValidName)) {
-      return
+    // Remove the persisted record for windows the user intentionally closed.
+    // During app quit, only windows that were previously hidden to tray
+    // (i.e. the user already closed them) get their records removed.
+    // Windows that were still open at quit time keep their records for restore.
+    if (!isQuitting || hiddenToTray) {
+      windowStateManager.removeWindowRecord(windowId)
     }
-    if (healthMonitor) {
-      await healthMonitor.manualRestart(name as ValidName)
-    } else if (sidecarManager) {
-      await sidecarManager.restart(name as ValidName)
+
+    if (mainWindow === window) {
+      mainWindow = openWindows.values().next().value ?? null
     }
   })
+
+  return window
 }
 
 /**
@@ -201,18 +280,16 @@ function createWindow(): void {
  *
  * Format: `--laborer-<key>=<value>` (prefixed to avoid collisions).
  */
-function buildPreloadArgs(): string[] {
+function buildPreloadArgs(windowId: string): string[] {
   if (!servicePorts) {
     return []
   }
 
-  const serverUrl = `http://127.0.0.1:${servicePorts.serverPort}`
-  const terminalUrl = `http://127.0.0.1:${servicePorts.terminalPort}`
-
-  return [
-    `--laborer-server-url=${serverUrl}`,
-    `--laborer-terminal-url=${terminalUrl}`,
-  ]
+  return buildWindowBootstrapArgs({
+    serverUrl: `http://127.0.0.1:${servicePorts.serverPort}`,
+    terminalUrl: `http://127.0.0.1:${servicePorts.terminalPort}`,
+    windowId,
+  })
 }
 
 app
@@ -251,66 +328,102 @@ app
           )
         }
 
-        // Forward to renderer window if available.
-        if (mainWindow?.webContents) {
-          mainWindow.webContents.send('sidecar:status', status)
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.webContents.send('sidecar:status', status)
         }
       })
 
-      // Spawn terminal first (server depends on it), then server.
-      // Health monitor polls HTTP endpoints and blocks until healthy.
-      const servicesOk = await healthMonitor.spawnServices()
-
-      if (!servicesOk) {
-        console.error(
-          '[main] One or more services failed to become healthy on startup'
-        )
-        // Continue anyway — the health monitor will keep retrying via
-        // the crash handler's exponential backoff.
-      }
+      // Spawn all three sidecars in parallel without blocking the window.
+      // Each sidecar reports healthy independently via status events.
+      // The renderer's lifecycle phase service advances phases as each
+      // sidecar becomes ready (Starting → Ready → Restored → Eventually).
+      healthMonitor.spawnServices().then((servicesOk) => {
+        if (!servicesOk) {
+          console.error(
+            '[main] One or more services failed to become healthy on startup'
+          )
+        }
+      })
     }
 
-    createWindow()
+    // Register x-github-desktop-dev-auth:// as a protocol handler so
+    // the OAuth callback from GitHub lands back in this app.
+    app.setAsDefaultProtocolClient(GITHUB_OAUTH_PROTOCOL)
 
-    // Build the macOS-native application menu (About, Settings, Edit, View, Window).
-    configureApplicationMenu(
-      () => mainWindow,
-      () => createWindow()
-    )
+    // Deliver any pending OAuth URL that arrived before windows were ready.
+    if (pendingOAuthUrl) {
+      handleGithubOAuthUrl(pendingOAuthUrl)
+      pendingOAuthUrl = null
+    }
 
-    // Create the system tray icon with dynamic tooltip and context menu.
-    trayManager.create(() => mainWindow)
+    // Register IPC handlers once for the DesktopBridge contract.
+    // Handlers use event.sender to resolve the requesting window,
+    // so they work correctly regardless of which window invokes them.
+    registerIpcHandlers(() => getMainWindow())
 
-    // Register global shortcut: Cmd+Shift+L (macOS) / Ctrl+Shift+L (other).
-    unregisterShortcut = registerGlobalShortcut(() => mainWindow)
+    // Wire tray workspace count updates from the renderer to the tray manager.
+    setTrayCountHandler((count) => {
+      trayManager.updateWorkspaceCount(count)
+    })
+
+    // Wire sidecar restart requests from the renderer to the health monitor.
+    setRestartSidecarHandler(async (name) => {
+      const validNames = ['server', 'terminal', 'file-watcher', 'mcp'] as const
+      type ValidName = (typeof validNames)[number]
+      if (!validNames.includes(name as ValidName)) {
+        return
+      }
+      if (healthMonitor) {
+        await healthMonitor.manualRestart(name as ValidName)
+      } else if (sidecarManager) {
+        await sidecarManager.restart(name as ValidName)
+      }
+    })
 
     // Wire auto-update IPC handlers.
     setGetUpdateStateHandler(() => getUpdateState())
     setDownloadUpdateHandler(() => triggerDownloadUpdate())
     setInstallUpdateHandler(() => triggerInstallUpdate())
 
+    const savedWindowRecords = windowStateManager.loadWindowRecords()
+
+    if (savedWindowRecords.length > 0) {
+      for (const savedWindowRecord of savedWindowRecords) {
+        createWindow(savedWindowRecord)
+      }
+    } else {
+      createWindow()
+    }
+
+    // Build the macOS-native application menu (About, Settings, Edit, View, Window).
+    configureApplicationMenu(
+      () => getMainWindow(),
+      () => createWindow()
+    )
+
+    // Create the system tray icon with dynamic tooltip and context menu.
+    trayManager.create(() => getMainWindow())
+
+    // Register global shortcut: Cmd+Shift+L (macOS) / Ctrl+Shift+L (other).
+    unregisterShortcut = registerGlobalShortcut(() => getMainWindow())
+
     // Configure and start the auto-updater.
     configureAutoUpdater(() => {
       isQuitting = true
     })
 
-    // Broadcast update state to the window when it finishes loading.
-    if (mainWindow) {
-      mainWindow.webContents.on('did-finish-load', () => {
-        if (mainWindow) {
-          broadcastUpdateStateToWindow(mainWindow)
-        }
-      })
-    }
-
     app.on('activate', () => {
       // macOS: re-create window when dock icon is clicked and no windows exist.
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow()
-      } else if (mainWindow && !mainWindow.isVisible()) {
+      } else {
+        const window = getMainWindow()
+
         // If the window was hidden by close-to-tray, show it again.
-        mainWindow.show()
-        mainWindow.focus()
+        if (window && !window.isVisible()) {
+          window.show()
+          window.focus()
+        }
       }
     })
   })

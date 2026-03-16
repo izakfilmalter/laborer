@@ -14,10 +14,11 @@
 import { join } from 'node:path'
 import { LaborerRpcs, RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import { Array, Effect, pipe, Schema } from 'effect'
+import { Array, Effect, pipe, Ref, Schema } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { ContainerService } from '../services/container-service.js'
+import { DeferredServicesReady } from '../services/deferred-service.js'
 import { DiffService } from '../services/diff-service.js'
 import { DockerDetection } from '../services/docker-detection.js'
 import { GithubTaskImporter } from '../services/github-task-importer.js'
@@ -30,9 +31,11 @@ import {
   slugifyPrdTitle,
 } from '../services/prd-storage-service.js'
 import { ProjectRegistry } from '../services/project-registry.js'
+import { ReviewCommentFetcher } from '../services/review-comment-fetcher.js'
 import { TaskManager } from '../services/task-manager.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
+import { WorkspaceSyncService } from '../services/workspace-sync-service.js'
 
 const startTime = Date.now()
 const PRD_ISSUE_EXTERNAL_ID_REGEX = /:issue:(\d+)$/u
@@ -197,6 +200,7 @@ export const handleConfigUpdate = ({
     agent?: 'opencode' | 'claude' | 'codex' | undefined
     devServer?:
       | {
+          autoOpen?: boolean | undefined
           dockerfile?: string | undefined
           image?: string | undefined
           setupScripts?: readonly string[] | undefined
@@ -205,12 +209,16 @@ export const handleConfigUpdate = ({
         }
       | undefined
     prdsDir?: string | undefined
-    rlphConfig?: string | undefined
+    brrrConfig?: string | undefined
     setupScripts?: readonly string[] | undefined
     worktreeDir?: string | undefined
   }
 }) =>
   Effect.gen(function* () {
+    const validAgents = ['opencode', 'claude', 'codex'] as const
+    const isValidAgent =
+      config.agent === undefined || validAgents.some((a) => a === config.agent)
+
     const isValidSetupScripts =
       config.setupScripts === undefined ||
       (config.setupScripts.every((script) => typeof script === 'string') &&
@@ -226,6 +234,8 @@ export const handleConfigUpdate = ({
     const isValidDevServer =
       config.devServer === undefined ||
       (typeof config.devServer === 'object' &&
+        (config.devServer.autoOpen === undefined ||
+          typeof config.devServer.autoOpen === 'boolean') &&
         (config.devServer.image === undefined ||
           typeof config.devServer.image === 'string') &&
         (config.devServer.dockerfile === undefined ||
@@ -237,11 +247,12 @@ export const handleConfigUpdate = ({
           typeof config.devServer.workdir === 'string'))
 
     const isValidConfig =
+      isValidAgent &&
       (config.prdsDir === undefined || typeof config.prdsDir === 'string') &&
       (config.worktreeDir === undefined ||
         typeof config.worktreeDir === 'string') &&
-      (config.rlphConfig === undefined ||
-        typeof config.rlphConfig === 'string') &&
+      (config.brrrConfig === undefined ||
+        typeof config.brrrConfig === 'string') &&
       isValidSetupScripts &&
       isValidDevServer
 
@@ -249,7 +260,7 @@ export const handleConfigUpdate = ({
       return yield* new RpcError({
         code: 'INVALID_INPUT',
         message:
-          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, rlphConfig, setupScripts as string array, and devServer with optional string fields.',
+          'Invalid config payload. Expected optional string fields for prdsDir, worktreeDir, brrrConfig, agent (opencode/claude/codex), setupScripts as string array, and devServer with optional string fields.',
       })
     }
 
@@ -670,7 +681,7 @@ export const handleProjectList = () =>
       id: project.id,
       repoPath: project.repoPath,
       name: project.name,
-      rlphConfig: project.rlphConfig ?? undefined,
+      brrrConfig: project.brrrConfig ?? undefined,
     }))
   })
 
@@ -688,9 +699,9 @@ export const handleProjectList = () =>
  * - terminal.write/resize/kill/remove/restart: stub — proxied by web app directly to terminal service (Issue #143)
  * - diff.refresh: delegates to DiffService.getDiff (Issue #82)
  * - editor.open: opens file in configured editor (Issue #111)
- * - rlph.startLoop: delegates to TerminalClient.spawnInWorkspace with `rlph --once` (Issue #92/#143)
- * - rlph.review: delegates to TerminalClient.spawnInWorkspace with `rlph review <prNumber>` (Issue #96/#143)
- * - rlph.fix: delegates to TerminalClient.spawnInWorkspace with `rlph fix <prNumber>` (Issue #98/#143)
+ * - brrr.startLoop: delegates to TerminalClient.spawnInWorkspace with `brrr build --once` (Issue #92/#143)
+ * - brrr.review: delegates to TerminalClient.spawnInWorkspace with `brrr review <prNumber>` (Issue #96/#143)
+ * - brrr.fix: delegates to TerminalClient.spawnInWorkspace with `brrr fix <prNumber>` (Issue #98/#143)
  * - task.create: delegates to TaskManager.createTask (Issue #100)
  * - task.updateStatus: delegates to TaskManager.updateTaskStatus + auto-creates workspace on "in_progress" + auto-destroys on "completed"/"cancelled" (Issue #101/#105/#106)
  * - task.remove: delegates to TaskManager.removeTask (Issue #100)
@@ -704,6 +715,16 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.succeed({
         status: 'ok' as const,
         uptime: (Date.now() - startTime) / 1000,
+      }),
+
+    // -------------------------------------------------------------------
+    // Lifecycle — Deferred service initialization status (Issue #15)
+    // -------------------------------------------------------------------
+    'lifecycle.initStatus': () =>
+      Effect.gen(function* () {
+        const { ref } = yield* DeferredServicesReady
+        const ready = yield* Ref.get(ref)
+        return { ready }
       }),
 
     // -------------------------------------------------------------------
@@ -726,7 +747,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           id: project.id,
           repoPath: project.repoPath,
           name: project.name,
-          rlphConfig: project.rlphConfig ?? undefined,
+          brrrConfig: project.brrrConfig ?? undefined,
         }
       }),
     'project.remove': ({ projectId }) =>
@@ -772,10 +793,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         // background worktree setup completes and the workspace is 'running'.
         const diffService = yield* DiffService
         const prWatcher = yield* PrWatcher
+        const workspaceSyncService = yield* WorkspaceSyncService
         const onReady = (workspaceId: string) =>
           Effect.gen(function* () {
             yield* diffService.startPolling(workspaceId)
             yield* prWatcher.startPolling(workspaceId)
+            yield* workspaceSyncService.startPolling(workspaceId)
           })
         const workspace = yield* provider.createWorktree(
           projectId,
@@ -808,6 +831,9 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         const prWatcher = yield* PrWatcher
         yield* prWatcher.stopPolling(workspaceId)
 
+        const workspaceSyncService = yield* WorkspaceSyncService
+        yield* workspaceSyncService.stopPolling(workspaceId)
+
         // Issue #44/#143: Kill all workspace terminals via terminal service.
         const tc = yield* TerminalClient
         yield* tc.killAllForWorkspace(workspaceId)
@@ -819,6 +845,47 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.gen(function* () {
         const provider = yield* WorkspaceProvider
         return yield* provider.checkDirtyFiles(workspaceId)
+      }),
+    'workspace.refreshPr': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const prWatcher = yield* PrWatcher
+        const prData = yield* prWatcher.checkPr(workspaceId)
+
+        return {
+          number: prData.number,
+          state: prData.state,
+          title: prData.title,
+          url: prData.url,
+        }
+      }),
+    'workspace.refreshSyncStatus': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspaceSyncService = yield* WorkspaceSyncService
+        return yield* workspaceSyncService.checkStatus(workspaceId)
+      }),
+    'workspace.push': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspaceSyncService = yield* WorkspaceSyncService
+        return yield* workspaceSyncService.push(workspaceId)
+      }),
+    'workspace.pull': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspaceSyncService = yield* WorkspaceSyncService
+        return yield* workspaceSyncService.pull(workspaceId)
+      }),
+    'workspace.startContainer': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const provider = yield* WorkspaceProvider
+        const diffService = yield* DiffService
+        const prWatcher = yield* PrWatcher
+        const workspaceSyncService = yield* WorkspaceSyncService
+        const onReady = (wsId: string) =>
+          Effect.gen(function* () {
+            yield* diffService.startPolling(wsId)
+            yield* prWatcher.startPolling(wsId)
+            yield* workspaceSyncService.startPolling(wsId)
+          })
+        yield* provider.startContainer(workspaceId, onReady)
       }),
 
     // -------------------------------------------------------------------
@@ -918,28 +985,28 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       }),
 
     // -------------------------------------------------------------------
-    // rlph RPCs (Issue #92-98, #143)
+    // brrr RPCs (Issue #92-98, #143)
     // Now delegate to TerminalClient.spawnInWorkspace instead of TerminalManager.
     // -------------------------------------------------------------------
-    'rlph.startLoop': ({ workspaceId }) =>
+    'brrr.startLoop': ({ workspaceId }) =>
       Effect.gen(function* () {
         const tc = yield* TerminalClient
-        return yield* tc.spawnInWorkspace(workspaceId, 'rlph --once')
+        return yield* tc.spawnInWorkspace(workspaceId, 'brrr build --once')
       }),
-    'rlph.review': ({ workspaceId }) =>
+    'brrr.review': ({ workspaceId }) =>
       Effect.gen(function* () {
         const prNumber = yield* detectPrNumber(workspaceId)
         const tc = yield* TerminalClient
         return yield* tc.spawnInWorkspace(
           workspaceId,
-          `rlph review ${prNumber}`
+          `brrr review ${prNumber}`
         )
       }),
-    'rlph.fix': ({ workspaceId }) =>
+    'brrr.fix': ({ workspaceId }) =>
       Effect.gen(function* () {
         const prNumber = yield* detectPrNumber(workspaceId)
         const tc = yield* TerminalClient
-        return yield* tc.spawnInWorkspace(workspaceId, `rlph fix ${prNumber}`)
+        return yield* tc.spawnInWorkspace(workspaceId, `brrr fix ${prNumber}`)
       }),
 
     // -------------------------------------------------------------------
@@ -997,10 +1064,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
             const provider = yield* WorkspaceProvider
             const diffService = yield* DiffService
             const prWatcher = yield* PrWatcher
+            const workspaceSyncService = yield* WorkspaceSyncService
             const onReady = (workspaceId: string) =>
               Effect.gen(function* () {
                 yield* diffService.startPolling(workspaceId)
                 yield* prWatcher.startPolling(workspaceId)
+                yield* workspaceSyncService.startPolling(workspaceId)
               })
             yield* provider.createWorktree(
               task.projectId,
@@ -1031,6 +1100,9 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
               const prWatcher = yield* PrWatcher
               yield* prWatcher.stopPolling(workspace.id)
 
+              const workspaceSyncService = yield* WorkspaceSyncService
+              yield* workspaceSyncService.stopPolling(workspace.id)
+
               const tc = yield* TerminalClient
               yield* tc.killAllForWorkspace(workspace.id)
 
@@ -1050,6 +1122,108 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.gen(function* () {
         const taskManager = yield* TaskManager
         yield* taskManager.removeTask(taskId)
+      }),
+
+    // -------------------------------------------------------------------
+    // Review RPCs
+    // -------------------------------------------------------------------
+    'review.fetchComments': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const fetcher = yield* ReviewCommentFetcher
+        return yield* fetcher.fetchComments(workspaceId)
+      }),
+    'review.fetchVerdict': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const fetcher = yield* ReviewCommentFetcher
+        return yield* fetcher.fetchVerdict(workspaceId)
+      }),
+    'review.addReaction': ({ workspaceId, commentId, content }) =>
+      Effect.gen(function* () {
+        const fetcher = yield* ReviewCommentFetcher
+        return yield* fetcher.addReaction(workspaceId, commentId, content)
+      }),
+    'review.removeReaction': ({ workspaceId, commentId, reactionId }) =>
+      Effect.gen(function* () {
+        const fetcher = yield* ReviewCommentFetcher
+        yield* fetcher.removeReaction(workspaceId, commentId, reactionId)
+      }),
+
+    // -------------------------------------------------------------------
+    // Alive-driven individual fetch RPCs
+    // -------------------------------------------------------------------
+    'review.fetchSingleIssueComment': ({ workspaceId, commentId }) =>
+      Effect.gen(function* () {
+        const fetcher = yield* ReviewCommentFetcher
+        return yield* fetcher.fetchSingleIssueComment(workspaceId, commentId)
+      }),
+    'review.fetchSingleReviewComment': ({ workspaceId, commentId }) =>
+      Effect.gen(function* () {
+        const fetcher = yield* ReviewCommentFetcher
+        return yield* fetcher.fetchSingleReviewComment(workspaceId, commentId)
+      }),
+    'review.fetchSingleReview': ({ workspaceId, reviewId }) =>
+      Effect.gen(function* () {
+        const fetcher = yield* ReviewCommentFetcher
+        return yield* fetcher.fetchSingleReview(workspaceId, reviewId)
+      }),
+
+    // -------------------------------------------------------------------
+    // GitHub OAuth RPCs
+    // -------------------------------------------------------------------
+    'github.exchangeOAuthCode': ({ code }) =>
+      Effect.gen(function* () {
+        // GitHub Desktop dev OAuth App credentials (public, from open-source repo)
+        const clientId = '3a723b10ac5575cc5bb9'
+        const clientSecret = '22c34d87789a365981ed921352a7b9a8c3f69d54'
+
+        const res = yield* Effect.tryPromise({
+          try: () =>
+            fetch('https://github.com/login/oauth/access_token', {
+              method: 'POST',
+              headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'User-Agent': 'GitHubDesktop/3.4.12 (Macintosh)',
+              },
+              body: JSON.stringify({
+                client_id: clientId,
+                client_secret: clientSecret,
+                code,
+              }),
+            }),
+          catch: (err) =>
+            new RpcError({
+              message: `GitHub OAuth token exchange failed: ${String(err)}`,
+            }),
+        })
+
+        const body = yield* Effect.tryPromise({
+          try: () =>
+            res.json() as Promise<{
+              access_token?: string
+              scope?: string
+              token_type?: string
+              error?: string
+              error_description?: string
+            }>,
+          catch: () =>
+            new RpcError({ message: 'Failed to parse GitHub OAuth response' }),
+        })
+
+        if (body.error || !body.access_token) {
+          return yield* new RpcError({
+            message:
+              body.error_description ??
+              body.error ??
+              'No access token returned',
+          })
+        }
+
+        return {
+          accessToken: body.access_token,
+          scope: body.scope ?? '',
+          tokenType: body.token_type ?? 'bearer',
+        }
       }),
   })
 )

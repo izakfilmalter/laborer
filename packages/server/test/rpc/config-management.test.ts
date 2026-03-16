@@ -17,7 +17,7 @@ type RpcTestContext = Effect.Effect.Success<typeof makeScopedTestRpcContext>
 
 const CUSTOM_FIELD_PATTERN = /"customField": "preserve-me"/
 const PRDS_DIR_PATTERN = /"prdsDir": "\/tmp\/existing-prds"/
-const RLPH_CONFIG_PATTERN = /"rlphConfig": "rlph\/project\.json"/
+const BRRR_CONFIG_PATTERN = /"brrrConfig": "brrr\/project\.json"/
 const SETUP_SCRIPTS_PATTERN = /"setupScripts": \[\s+"bun install"\s+\]/m
 const WORKTREE_DIR_PATTERN = /"worktreeDir": "~\/updated-worktrees"/
 
@@ -75,7 +75,7 @@ describe('LaborerRpcs config management', () => {
           initRepoAt(repoPath)
 
           const ancestorConfigPath = writeLaborerConfig(parentDir, {
-            rlphConfig: 'ancestor-rlph.json',
+            brrrConfig: 'ancestor-brrr.json',
             worktreeDir: '~/ancestor-worktrees',
           })
           const projectConfigPath = writeLaborerConfig(repoPath, {
@@ -94,6 +94,7 @@ describe('LaborerRpcs config management', () => {
           assert.deepStrictEqual(config, {
             agent: { source: 'default', value: 'opencode' },
             devServer: {
+              autoOpen: { source: 'default', value: false },
               dockerfile: { source: 'default', value: null },
               image: { source: 'default', value: 'node:lts' },
               installCommand: { source: 'default', value: null },
@@ -109,9 +110,9 @@ describe('LaborerRpcs config management', () => {
               source: canonicalProjectConfigPath,
               value: '/tmp/project-prds',
             },
-            rlphConfig: {
+            brrrConfig: {
               source: canonicalAncestorConfigPath,
-              value: 'ancestor-rlph.json',
+              value: 'ancestor-brrr.json',
             },
             setupScripts: {
               source: canonicalProjectConfigPath,
@@ -173,7 +174,10 @@ describe('LaborerRpcs config management', () => {
           yield* client.config.update({
             projectId: project.id,
             config: {
-              rlphConfig: 'rlph/project.json',
+              devServer: {
+                autoOpen: true,
+              },
+              brrrConfig: 'brrr/project.json',
               setupScripts: ['bun install'],
               worktreeDir: '~/updated-worktrees',
             },
@@ -186,7 +190,7 @@ describe('LaborerRpcs config management', () => {
 
           assert.match(writtenConfig, CUSTOM_FIELD_PATTERN)
           assert.match(writtenConfig, PRDS_DIR_PATTERN)
-          assert.match(writtenConfig, RLPH_CONFIG_PATTERN)
+          assert.match(writtenConfig, BRRR_CONFIG_PATTERN)
           assert.match(writtenConfig, SETUP_SCRIPTS_PATTERN)
           assert.match(writtenConfig, WORKTREE_DIR_PATTERN)
 
@@ -195,6 +199,7 @@ describe('LaborerRpcs config management', () => {
           assert.deepStrictEqual(resolved, {
             agent: { source: 'default', value: 'opencode' },
             devServer: {
+              autoOpen: { source: canonicalConfigPath, value: true },
               dockerfile: { source: 'default', value: null },
               image: { source: 'default', value: 'node:lts' },
               installCommand: { source: 'default', value: null },
@@ -210,9 +215,9 @@ describe('LaborerRpcs config management', () => {
               source: canonicalConfigPath,
               value: '/tmp/existing-prds',
             },
-            rlphConfig: {
+            brrrConfig: {
               source: canonicalConfigPath,
-              value: 'rlph/project.json',
+              value: 'brrr/project.json',
             },
             setupScripts: {
               source: canonicalConfigPath,

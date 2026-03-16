@@ -1,0 +1,514 @@
+## Issue 1: Review pane type + panel system wiring — DONE
+
+Completed all acceptance criteria:
+
+- Added 'review' to PaneType Schema.Literal in packages/shared/src/types.ts
+- Added 'review' to VALID_PANE_TYPES in apps/web/src/panels/layout-utils.ts
+- Created placeholder ReviewPane component in apps/web/src/panes/review-pane.tsx
+  (renders heading with ClipboardCheck icon and workspace ID)
+- Added routing branch in PaneContent (panel-manager.tsx) for paneType === 'review'
+- Added toggleReviewPane action to PanelActions interface (panel-context.tsx)
+  - Splits right from active pane with paneType: 'review', inheriting workspaceId
+  - Toggles off by finding and closing existing review pane for the workspace
+- Implemented handleToggleReviewPane in use-panel-layout.ts
+- Added 6 tests in layout-utils.test.ts covering:
+  - repairPanelLayoutTree preserves valid review leaves
+  - repairPanelLayoutTree preserves review panes in splits
+  - splitPane creates review pane with newPaneContent
+  - split-right creates exactly one new leaf
+  - findNewLeafAfterSplit finds the review pane
+  - closePane removes review pane and collapses split
+- Updated mock PanelActions in 3 test files to include toggleReviewPane
+- All 387 tests pass, TypeScript clean, formatting clean
+
+## Issue 2: PR comment fetching RPC + server service — DONE
+
+Completed all acceptance criteria:
+
+- Defined shared response schemas in packages/shared/src/rpc.ts:
+  - PrCommentReaction (id, content, userId)
+  - PrComment (id, commentType, authorLogin, authorAvatarUrl, body, filePath,
+    line, createdAt, reactions)
+  - ReviewFetchCommentsResponse (comments array)
+- Added review.fetchComments RPC to LaborerRpcs group with workspaceId payload
+- Created ReviewCommentFetcher server service (packages/server/src/services/review-comment-fetcher.ts):
+  - Context.Tag + Layer.effect pattern matching existing services
+  - fetchComments method resolves workspace from LiveStore, detects PR number
+    (cached or fallback to gh pr view), detects owner/repo from git remote
+  - Fetches issue comments via gh api repos/{owner}/{repo}/issues/{pr}/comments --paginate
+  - Fetches inline review comments via gh api repos/{owner}/{repo}/pulls/{pr}/comments --paginate
+  - Fetches reactions for each comment in parallel (concurrency: 5)
+  - Returns typed PrComment[] with commentType, author info, body, file/line, reactions
+  - Handles paginated gh output (concatenated JSON arrays)
+  - Actionable error messages for auth failures, rate limits, missing PR
+- Reuses parseGithubRepo from GithubTaskImporter for SSH/HTTPS remote URL parsing
+- Added review.fetchComments handler in handlers.ts delegating to ReviewCommentFetcher
+- Wired ReviewCommentFetcher.layer into main.ts and test-layer.ts
+- Added 6 tests in review-comment-fetcher.test.ts covering:
+  - Fetches and maps issue + review comments with reactions
+  - Parses owner/repo from SSH remote URL (git@github.com:...)
+  - Parses owner/repo from HTTPS remote URL (https://github.com/...)
+  - Returns PR_NOT_FOUND when no PR exists and prNumber not cached
+  - Returns NOT_FOUND when workspace does not exist
+  - Handles gh auth failure with actionable error message
+- All 269 tests pass, TypeScript clean, formatting clean
+
+## Issue 4: Finding extraction (server-side parsing) — DONE
+
+Completed all acceptance criteria:
+
+- Defined new shared schemas in packages/shared/src/rpc.ts:
+  - ReviewSeverity (literal: 'critical' | 'warning' | 'info')
+  - ReviewFinding (id, file, line, severity, description, suggestedFixes,
+    category, dependsOn, commentId, reactions)
+  - ReviewVerdict (literal: 'approved' | 'needs_fix')
+- Updated ReviewFetchCommentsResponse to new shape:
+  { verdict: ReviewVerdict | null, findings: ReviewFinding[], comments: PrComment[] }
+- Implemented finding extraction in review-comment-fetcher.ts:
+  - Parses `<!-- brrr-finding:{json} -->` markers from inline review comment bodies
+  - Extracts all ReviewFinding fields including suggestedFixes, category, dependsOn
+  - Handles brrr's `\u002d\u002d` escaping for `--` in HTML comments
+  - Comments with valid finding markers go to `findings` array
+  - Comments with malformed JSON fall back to `comments` array gracefully
+  - Missing markers produce empty `findings` array
+- Implemented verdict extraction:
+  - Detects `<!-- brrr-review -->` marker in issue comments
+  - Parses verdict from rendered text: `- Verdict: ✅ \`approved\`` / `- Verdict: ❌ \`needs_fix\``
+  - Returns null verdict when no summary comment exists
+  - Summary comment still included in `comments` array for context
+- Added 7 new tests in review-comment-fetcher.test.ts covering:
+  - Valid finding marker parsing with all fields (severity, suggestedFixes, etc.)
+  - Malformed JSON falls back to comments array gracefully
+  - Multiple findings across multiple review comments (incl. null depends_on normalization)
+  - Approved verdict extraction from summary comment
+  - needs_fix verdict extraction from summary comment
+  - Null verdict when no brrr-review comment exists
+  - Mixed comments: findings separated from human comments, verdict extracted
+- All 276 tests pass (269 + 7 new), TypeScript clean, formatting clean
+
+## Issue 3: Review pane renders fetched comments — DONE
+
+Completed all acceptance criteria:
+
+- Replaced placeholder ReviewPane component with data-fetching implementation
+  in apps/web/src/panes/review-pane.tsx
+- Uses LaborerClient.query('review.fetchComments', { workspaceId }) with
+  useMemo for reactive data fetching on mount
+- Inner ReviewPaneContent component wrapped in Suspense for loading state
+- Loading state: Spinner with "Loading comments..." text (both Suspense
+  fallback and Initial/waiting state)
+- Empty state (no PR): detects PR_NOT_FOUND error code via extractErrorCode,
+  shows GitPullRequestClosed icon with guidance to create a PR
+- Error state: Alert with destructive variant showing error message
+- Empty state (PR exists, no comments): ClipboardCheck icon with guidance
+- Comment rendering via CommentCard component:
+  - Avatar with author image and 2-letter fallback
+  - Author login name and formatted timestamp
+  - File path and line number reference for inline review comments
+    (FileCode icon, shows file:line or just file when line is null)
+  - Full comment body with whitespace preservation
+- ScrollArea wrapping the comment list for overflow handling
+- Added 11 tests in apps/web/test/review-pane.test.tsx covering:
+  - Renders loading state during initial fetch
+  - Renders loading state when waiting for data
+  - Renders empty state when no PR exists (PR_NOT_FOUND)
+  - Renders error state when RPC fails
+  - Renders comments with author info and body
+  - Renders inline review comments with file path and line number
+  - Renders file path without line number when line is null
+  - Does not show file reference for issue comments
+  - Renders multiple comments
+  - Renders empty state when PR has no comments or findings
+  - Renders the review header bar
+- All 398 tests pass, TypeScript clean, formatting clean
+
+## Issue 5: Grouped display with severity badges — DONE
+
+Completed all acceptance criteria:
+
+- Replaced flat comment list with two grouped sections: "Findings" and "Comments"
+- Each section uses a collapsible ReviewSection component with:
+  - ChevronRight toggle icon with rotate-90 transition (matching project-group pattern)
+  - Section icon (Search for Findings, MessageSquare for Comments)
+  - Section heading and count Badge
+- FindingCard component renders structured finding data:
+  - SeverityBadge with data-severity attribute and brrr-convention colors:
+    red (bg-red-500/10 text-red-600) for critical,
+    yellow (bg-yellow-500/10 text-yellow-700) for warning,
+    blue (bg-blue-500/10 text-blue-600) for info
+  - Category tag as secondary Badge (hidden when category is null)
+  - File:line reference with FileCode icon
+  - Description text with whitespace preservation
+  - Collapsible suggested fixes using Collapsible component
+    (collapsed by default, shows "Suggested fix(es) (N)" trigger)
+- Findings sorted by severity: critical first, then warning, then info
+  via SEVERITY_ORDER lookup and Array.sort
+- CommentCard retained from Issue 3 (author avatar, login, timestamp,
+  file:line for inline comments, body)
+- Sections conditionally rendered: Findings section hidden when no findings,
+  Comments section hidden when no comments
+- Added 12 new tests in review-pane.test.tsx (23 total) covering:
+  - Findings render with correct severity badges
+  - Finding cards show file:line reference, category, and description
+  - Findings and Comments appear as separate grouped sections
+  - Section counts displayed in badges
+  - Findings sorted by severity (critical > warning > info)
+  - Collapsible suggested fixes expand on click
+  - No suggested fixes trigger when finding has no fixes
+  - Findings section hidden when no findings
+  - Comments section hidden when no comments
+  - Finding without category renders without category badge
+  - Severity badges have correct data-severity attributes
+  - Comments render with author info in Comments section
+- All 410 tests pass (web: 410, server: 276), TypeScript clean, formatting clean
+
+## Issue 6: Polling + manual refresh — DONE
+
+Completed all acceptance criteria:
+
+- Added 30-second polling interval via useEffect + setInterval calling
+  useAtomRefresh from @effect-atom/atom-react/Hooks
+- Polling starts automatically on mount and stops cleanly on unmount
+  (clearInterval in useEffect cleanup, intervalRef nulled)
+- Manual refresh button (RefreshCw icon, ghost variant, aria-label
+  "Refresh comments") triggers immediate fetch and resets the polling
+  timer so the next automatic poll is always 30s after the last action
+- Subtle refresh indicator ("Refreshing..." with spinning RefreshCw icon)
+  shown during background refetch when existing data is present
+  (result._tag === 'Success' && result.waiting) — does NOT replace
+  existing content, avoiding layout shifts and content flicker
+- Initial loading state still shows full-screen spinner (no data yet)
+- ReviewHeaderBar component extracted: renders refresh indicator and
+  manual refresh button, included in all content states (loading,
+  error, empty, populated) so refresh is always accessible
+- POLL_INTERVAL_MS constant (30_000) defined at module scope
+- Implementation uses useCallback for stable function references and
+  useRef for the interval ID to avoid stale closures
+- Added 8 new tests in review-pane.test.tsx (31 total) covering:
+  - Polling starts on mount and calls refresh after 30 seconds
+  - Polling stops when the pane is unmounted (no leaked intervals)
+  - Renders the refresh button
+  - Manual refresh button triggers immediate fetch
+  - Manual refresh resets the polling timer (verified with fake timers)
+  - Subtle refresh indicator shown when refetching with existing data
+  - Refresh indicator hidden when not refetching
+  - Refresh button renders in all content states (error, no-PR)
+- All 418 tests pass (web: 418, server: 276), TypeScript clean, formatting clean
+
+## Issue 7: Verdict badge on workspace card — DONE
+
+Completed all acceptance criteria:
+
+- Defined new `review.fetchVerdict` RPC in packages/shared/src/rpc.ts:
+  - ReviewFetchVerdictResponse schema with `verdict: Schema.NullOr(ReviewVerdict)`
+  - Lightweight RPC with workspaceId payload, returns only verdict
+- Added `fetchVerdict` method to ReviewCommentFetcher service
+  (packages/server/src/services/review-comment-fetcher.ts):
+  - Reuses workspace resolution, PR detection, and owner/repo detection
+  - Fetches only issue comments (skips inline review comments and reactions)
+  - Extracts verdict from `<!-- brrr-review -->` marker using existing
+    isBrrrReviewComment + extractVerdict helpers
+  - Much lighter than fetchComments — single API call vs 3+ calls
+- Added `review.fetchVerdict` handler in packages/server/src/rpc/handlers.ts
+  delegating to ReviewCommentFetcher.fetchVerdict
+- Created ReviewVerdictBadge component
+  (apps/web/src/components/review-verdict-badge.tsx):
+  - Self-manages data fetching via LaborerClient.query + useAtomValue
+  - Returns null when loading, on error, or when verdict is null (no review)
+  - Shows green checkmark icon (Check) for "approved" verdict with
+    border-success/30 bg-success/10 text-success styling
+  - Shows red X icon (X) for "needs_fix" verdict with
+    border-destructive/30 bg-destructive/10 text-destructive styling
+  - Compact badge (icon only) wrapped in Tooltip showing "Review: approved"
+    or "Review: needs fix"
+  - data-testid="review-verdict-badge" and data-verdict attribute for testing
+  - Follows GitHubPrStatusBadge pattern (cn(), Tooltip, lucide icons)
+- Integrated into workspace card (apps/web/src/components/workspace-list.tsx):
+  - ReviewVerdictBadge renders next to GitHubPrStatusBadge in the card header
+  - Only rendered when workspace.prNumber is non-null (PR exists)
+  - Wrapped in Suspense with null fallback so loading doesn't block the card
+- Added 6 server tests in review-comment-fetcher.test.ts covering:
+  - Returns approved verdict from brrr-review summary comment
+  - Returns needs_fix verdict from brrr-review summary comment
+  - Returns null verdict when no brrr-review comment exists
+  - Returns null verdict when issue comments are empty
+  - Does not fetch inline review comments or reactions (lightweight check)
+  - Returns error when workspace does not exist
+- Added 10 UI tests in apps/web/test/review-verdict-badge.test.tsx covering:
+  - Renders nothing during initial loading
+  - Renders nothing when the fetch fails
+  - Renders nothing when verdict is null (no review exists)
+  - Renders approved badge with correct data-verdict attribute
+  - Renders needs_fix badge with correct data-verdict attribute
+  - Renders approved badge with green success styling
+  - Renders needs_fix badge with red destructive styling
+  - Renders tooltip with "Review: approved" for approved verdict
+  - Renders tooltip with "Review: needs fix" for needs_fix verdict
+  - Renders badge as compact (icon only, no text)
+- All 710 tests pass (web: 428, server: 282), TypeScript clean, formatting clean
+
+## Issue 8: Checkbox selection + reaction state display — DONE
+
+Completed all acceptance criteria:
+
+- Added checkbox (Checkbox from @base-ui/react) to each FindingCard component
+  for triage selection, with aria-label for accessibility
+- Selection state managed via useState<ReadonlySet<number>> in ReviewPaneContent,
+  tracking commentIds of selected findings (local to pane, not persisted)
+- Selected findings have highlighted background (bg-accent/50) and
+  data-selected="true" attribute for testing
+- Selected count displayed in ReviewHeaderBar ("N selected" text) via
+  data-testid="selected-count"
+- Reaction state indicators on each finding via ReactionIndicators component:
+  - Rocket icon (orange) for queued findings (content === 'rocket')
+  - ThumbsUp icon (green) for fixed findings (content === 'thumbs_up')
+  - Confused emoji (gray) for won't-fix findings (content === 'confused')
+  - data-testid attributes: reaction-rocket, reaction-thumbs-up, reaction-confused
+  - No indicators rendered when finding has no relevant reactions
+- Already-resolved findings (thumbs_up or confused reactions) are visually dimmed
+  with opacity-50 and data-resolved="true" attribute
+- Select all / deselect all toggle button in ReviewHeaderBar:
+  - Shows "Select all" when not all findings are selected
+  - Shows "Deselect all" when all findings are selected
+  - Only displayed when findings exist (findingsCount > 0)
+  - data-testid="select-toggle-button" and "selection-controls"
+- Selection hooks (useState, useCallback) placed before early returns to satisfy
+  Rules of Hooks — extracted findings from result state above early return guards
+- ReviewHeaderBar props extended: selectedCount, allSelected, findingsCount,
+  onSelectAll, onDeselectAll (all optional except isRefreshing, onRefresh,
+  selectedCount)
+- Added Checkbox mock in test file for @/components/ui/checkbox
+- Added 3 new test fixtures: QUEUED_FINDING (rocket), FIXED_FINDING (thumbs_up),
+  WONTFIX_FINDING (confused)
+- Added 12 new tests in review-pane.test.tsx (43 total) covering:
+  - Renders a checkbox on each finding card
+  - Toggles finding selection when checkbox is clicked
+  - Shows selected count when findings are selected
+  - Selected findings have highlighted background (data-selected)
+  - Renders rocket reaction indicator for queued findings
+  - Renders thumbs-up reaction indicator for fixed findings
+  - Renders confused reaction indicator for won't-fix findings
+  - Does not render reaction indicators when finding has no reactions
+  - Dims resolved findings (thumbs-up or confused) via data-resolved
+  - Select all button selects all findings
+  - Deselect all button deselects all findings
+  - Does not show selection controls when there are no findings
+- All 722 tests pass (web: 440, server: 282), TypeScript clean, formatting clean
+
+## Issue 9: Rocket reaction RPCs + Fix Selected action — DONE
+
+Completed all acceptance criteria:
+
+- Defined new RPCs in packages/shared/src/rpc.ts:
+  - `review.addReaction`: payload { workspaceId, commentId, content },
+    success PrCommentReaction, error RpcError
+  - `review.removeReaction`: payload { workspaceId, commentId, reactionId },
+    error RpcError (void success)
+- Added `ghApiMutate` helper in review-comment-fetcher.ts for POST/DELETE
+  `gh api` calls (non-paginated, supports -X method and -f field args)
+- Added `resolveWorkspaceRepo` shared helper to avoid duplicating workspace
+  lookup + owner/repo detection across addReaction/removeReaction
+- Added `addReaction` method to ReviewCommentFetcher service:
+  - Calls `gh api repos/{owner}/{repo}/pulls/comments/{commentId}/reactions`
+    with `-X POST -f content=rocket`
+  - Returns { id, content, userId } from the created reaction
+- Added `removeReaction` method to ReviewCommentFetcher service:
+  - Calls `gh api repos/{owner}/{repo}/pulls/comments/{commentId}/reactions/{reactionId}`
+    with `-X DELETE`
+- Added RPC handlers for `review.addReaction` and `review.removeReaction`
+  in packages/server/src/rpc/handlers.ts delegating to ReviewCommentFetcher
+- Updated review pane UI (apps/web/src/panes/review-pane.tsx):
+  - "Fix Selected" button in ReviewHeaderBar:
+    - Disabled when no findings are selected, shows count "(N)"
+    - Hidden when no findings exist
+    - On click: adds rocket reactions to all selected findings concurrently,
+      then spawns `brrr fix` terminal via brrr.fix RPC, assigns terminal
+      to panel pane, clears selection, refreshes data
+    - Uses toast for success/error feedback
+  - "Unqueue" button on individual findings with rocket reaction:
+    - Appears as ghost button with X icon + "Unqueue" text
+    - Disabled while unqueue is in progress for that finding
+    - On click: removes rocket reaction via review.removeReaction RPC,
+      shows toast feedback, refreshes data
+  - Added mutation hooks: useAtomSet for addReactionMutation,
+    removeReactionMutation, fixFindingsMutation
+  - Added usePanelActions for terminal pane assignment
+  - Added isFixing / unqueuingCommentId loading state
+- Added 6 server tests in review-comment-fetcher.test.ts covering:
+  - addReaction: adds rocket reaction via gh api POST with correct endpoint
+  - addReaction: returns error when workspace does not exist (NOT_FOUND)
+  - addReaction: returns error when gh api call fails (GH_API_FAILED)
+  - removeReaction: removes reaction via gh api DELETE with correct endpoint
+  - removeReaction: returns error when workspace does not exist (NOT_FOUND)
+  - removeReaction: returns error when gh api DELETE fails (GH_API_FAILED)
+- Added 8 UI tests in review-pane.test.tsx covering:
+  - Fix Selected button renders when findings exist
+  - Fix Selected button disabled when no findings selected
+  - Fix Selected button enabled when findings are selected
+  - Fix Selected button shows count when findings are selected
+  - Fix Selected button not rendered when no findings exist
+  - Unqueue button renders on findings with rocket reaction
+  - Unqueue button not rendered on findings without rocket reaction
+  - Unqueue button not rendered on findings with only thumbs-up reaction
+- All 736 tests pass (web: 448, server: 288), TypeScript clean, formatting clean
+
+## Issue 10: Click-to-open-in-editor — DONE
+
+Completed all acceptance criteria:
+
+- File:line references in finding cards are now clickable buttons
+  (previously static `<span>` elements, now `<button>` with
+  `data-testid="file-line-link"`)
+- File:line references in inline comment cards are now clickable buttons
+  (same pattern, only rendered when `comment.filePath !== null`)
+- Clicking calls `editor.open` RPC with the workspace ID and file path
+  via the existing `LaborerClient.mutation('editor.open')` pattern
+  (matches diff-pane.tsx implementation)
+- Uses `useRef` for stable `openEditorRef` to avoid stale closures,
+  same pattern as diff pane's `openEditorRef`
+- Toast feedback: "Opened {filePath} in editor" on success,
+  "Failed to open file: {message}" on error
+- Visual affordance: underline with `decoration-muted-foreground/40`,
+  `underline-offset-2`, hover transitions to `text-foreground` with
+  `decoration-foreground/40`, focus-visible ring for keyboard access
+- Title attribute shows "Open {file}:{line} in editor" for tooltip
+- `onOpenFile` callback threaded from `ReviewPaneContent` through
+  `FindingCard` and `CommentCard` as required prop
+- Module-level `editorOpenMutation` atom defined alongside existing
+  mutation atoms (addReaction, removeReaction, fixFindings)
+- `handleOpenFile` async callback in `ReviewPaneContent` using
+  `useCallback` with `[workspaceId]` dependency
+- Added 6 new tests in review-pane.test.tsx (57 total) covering:
+  - Renders file:line references as clickable links in finding cards
+  - Renders file:line references as clickable links in inline comment cards
+  - Clicking file:line in finding card triggers editor.open RPC
+  - Clicking file:line in comment card triggers editor.open RPC
+  - Does not render file:line link for issue comments without file path
+  - File:line link has visual affordance (underline styling)
+- All 454 web tests pass, all server tests pass, TypeScript clean, formatting clean
+
+## Issue 11: Cross-pane diff scroll — DONE
+
+Completed all acceptance criteria:
+
+- Created DiffScrollContext (apps/web/src/panels/diff-scroll-context.tsx):
+  - Panel-level React context with ref-based listener registry for
+    cross-pane communication without causing re-renders
+  - DiffScrollProvider wraps the panel tree (alongside PanelActionsProvider)
+  - scrollDiffToFile(workspaceId, file, line) dispatches events to all
+    subscribed listeners
+  - useOnDiffScrollRequest(workspaceId, callback) subscribes to events
+    filtered by workspace ID — only diff panes for the matching workspace
+    respond; events for other workspaces are silently ignored
+  - useDiffScrollDispatch() returns a stable dispatch function for callers
+  - Automatic unsubscribe on unmount via useEffect cleanup
+- Wired DiffScrollProvider into the panel tree (apps/web/src/routes/index.tsx):
+  - Wraps PanelActionsProvider so all pane components can access the context
+- Updated review pane to emit scroll events on file:line click
+  (apps/web/src/panes/review-pane.tsx):
+  - handleOpenFile now accepts (filePath, line) instead of just (filePath)
+  - When line is non-null, dispatches scrollDiffToFile(workspaceId, file, line)
+    before opening the file in the editor — both actions fire on same click
+  - FindingCard passes finding.line to onOpenFile (previously only file path)
+  - CommentCard passes comment.line to onOpenFile (previously only file path)
+  - When line is null (e.g., file-level comments), diff scroll is skipped
+- Updated diff pane to subscribe to scroll events
+  (apps/web/src/panes/diff-pane.tsx):
+  - useOnDiffScrollRequest subscribes for the pane's workspaceId
+  - On scroll event, finds the matching file in deferredFileDiffs by name
+  - Scrolls the matching <diffs-container> element into view with
+    smooth scroll behavior (behavior: 'smooth', block: 'start')
+  - Uses deferredFileDiffsRef to avoid stale closures in the callback
+  - If no matching file is found, event is silently ignored
+  - If no diff pane is open for the workspace, no listener exists
+    and event is silently ignored
+- Added 6 tests in diff-scroll-context.test.tsx covering:
+  - Dispatches scroll event to a subscribed listener
+  - Only dispatches to listeners matching the workspace ID
+  - Supports multiple listeners for the same workspace
+  - Unsubscribes listener on unmount (no leaked subscriptions)
+  - Silently ignores events when no listeners are subscribed
+  - Dispatch is a no-op when no provider is present
+- Added 4 tests in review-pane.test.tsx (61 total) covering:
+  - Clicking file:line in finding card dispatches diff scroll event
+  - Clicking file:line in comment card dispatches diff scroll event with line
+  - Clicking file:line in comment card without line does not dispatch scroll
+  - Clicking file:line dispatches both editor open and diff scroll
+- All 464 web tests pass (34 test files), TypeScript clean, formatting clean
+
+## Issue 12: Keyboard shortcut + error handling + polish — DONE
+
+Completed all acceptance criteria:
+
+- Added Ctrl+B then R keyboard shortcut to toggle review pane for the
+  active workspace (panel-hotkeys.tsx):
+  - Follows existing tmux-prefix pattern matching Ctrl+B then D (diff)
+    and Ctrl+B then S (dev server)
+  - Uses `actions.toggleReviewPane(activePaneId)` with standard
+    action guard pattern
+  - Updated JSDoc comment block to document the new shortcut
+- Added review pane toggle button to workspace frame header
+  (workspace-frame-header.tsx):
+  - ClipboardCheck icon button rendered between diff toggle and close
+    workspace buttons, matching the existing toggle button pattern
+  - `reviewIsOpen` prop controls active state styling (bg-accent) and
+    aria-label ("Open review pane" / "Close review pane")
+  - Button disabled when no active pane, uses `withFocus` helper to
+    set active pane before toggling (same pattern as diff toggle)
+  - Hidden when workspace frame is minimized (matches existing behavior)
+- Added `reviewIsOpen` computation to WorkspaceFrameHeaderContainer
+  (workspace-frame-header-container.tsx):
+  - Uses `getLeafNodes(subLayout).some(leaf => leaf.paneType === 'review')`
+    to detect if a review pane exists in the workspace's sub-tree
+  - Different from `diffIsOpen` (which checks a flag on the active leaf)
+    because review panes are standalone leaves, not sidebar flags
+  - Passed as prop to presentational WorkspaceFrameHeader
+- Improved error handling with actionable guidance (review-pane.tsx):
+  - Added `getErrorGuidance()` helper that maps error codes to
+    user-friendly instructions:
+    - GH_AUTH_FAILED: "Run 'gh auth login' in your terminal..."
+    - GH_RATE_LIMITED: "GitHub API rate limit exceeded. Wait..."
+    - GH_COMMAND_FAILED: "Ensure the GitHub CLI (gh) is installed..."
+  - Error state Alert now includes a secondary guidance paragraph
+    with the actionable message (when applicable)
+  - Error toasts in "Fix Selected" and "Unqueue" handlers now use
+    `toast.error(title, { description })` pattern with guidance from
+    `getErrorGuidance()`, falling back to the raw error message
+- Smooth transitions for collapsible sections (review-pane.tsx):
+  - Added `h-[var(--collapsible-panel-height)] overflow-hidden
+    transition-[height] duration-200` to CollapsibleContent in
+    ReviewSection and suggested fixes collapsible
+  - Uses @base-ui/react Collapsible.Panel's native CSS custom property
+    for smooth height animations on expand/collapse
+  - ChevronRight icons already had `transition-transform duration-200`
+- Verified severity badge colors match brrr convention with dark mode:
+  - Critical: red (bg-red-500/10 text-red-600 dark:bg-red-500/20 dark:text-red-400)
+  - Warning: yellow (bg-yellow-500/10 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-400)
+  - Info: blue (bg-blue-500/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400)
+  - All reaction indicators also have dark mode variants
+- Verified keyboard accessibility:
+  - All buttons use `<button>` elements with proper `aria-label` attributes
+  - Focus-visible ring styles on all interactive elements
+  - Added `aria-label` to "Fix Selected" button with dynamic count
+  - CollapsibleTrigger renders as native button (keyboard accessible)
+  - File:line links are `<button>` elements with focus-visible ring
+- Verified design system compliance:
+  - Uses shadcn/ui components (Button, Badge, Alert, Tooltip, Collapsible,
+    Avatar, Checkbox, ScrollArea, Empty, Spinner)
+  - Tailwind CSS classes throughout, consistent with project patterns
+- Added 7 new tests in workspace-frame-header.test.tsx (37 total) covering:
+  - Renders the review pane toggle button
+  - Calls toggleReviewPane with the active pane ID when clicked
+  - Applies bg-accent class to review toggle when review is open
+  - Does not apply bg-accent class when review is closed
+  - Disables the review toggle button when no pane is active
+  - Labels the button "Open review pane" when review is closed
+  - Labels the button "Close review pane" when review is open
+- Updated existing tests:
+  - workspace-frame-header.test.tsx: Added reviewIsOpen to BASE_PROPS,
+    updated "hides buttons when minimized" and "shows all buttons" tests
+    to include review pane button assertions
+  - workspace-frame-header-container.test.tsx: Added getLeafNodes mock
+    to layout-utils mock to support reviewIsOpen computation
+- All 471 web tests pass (34 test files), all 288 server tests pass (36 files),
+  TypeScript clean, formatting clean

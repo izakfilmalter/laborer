@@ -42,6 +42,23 @@ export const TerminalRestartedEvent = Schema.TaggedStruct('Restarted', {
 })
 
 /**
+ * Pushed when a terminal's process-level state changes (foreground process,
+ * agent status, child process presence, or process chain). Emitted by the
+ * server-side background detection fiber whenever the diff against the
+ * previous snapshot is non-empty, and immediately when a hook-reported
+ * agent status arrives.
+ *
+ * Carries the full `TerminalInfo` so subscribers can replace their local
+ * state in one shot without a round-trip `terminal.list` fetch.
+ */
+export const TerminalProcessChangedEvent = Schema.TaggedStruct(
+  'ProcessChanged',
+  {
+    terminal: Schema.suspend(() => TerminalInfo),
+  }
+)
+
+/**
  * Union of all terminal lifecycle events for the `terminal.events` stream.
  *
  * @see Issue #142: Terminal event stream RPC
@@ -51,7 +68,8 @@ export const TerminalLifecycleEventSchema = Schema.Union(
   TerminalStatusChangedEvent,
   TerminalExitedEvent,
   TerminalRemovedEvent,
-  TerminalRestartedEvent
+  TerminalRestartedEvent,
+  TerminalProcessChangedEvent
 )
 
 export type TerminalLifecycleEventSchema =
@@ -100,7 +118,7 @@ export const ProjectResponse = Schema.Struct({
   id: Schema.String,
   repoPath: Schema.String,
   name: Schema.String,
-  rlphConfig: Schema.optional(Schema.String),
+  brrrConfig: Schema.optional(Schema.String),
 })
 
 export type ProjectResponse = typeof ProjectResponse.Type
@@ -124,12 +142,18 @@ const ConfigResolvedValueStringArray = Schema.Struct({
   source: Schema.String,
 })
 
+const ConfigResolvedValueBoolean = Schema.Struct({
+  value: Schema.Boolean,
+  source: Schema.String,
+})
+
 const ConfigResolvedValueNullableString = Schema.Struct({
   value: Schema.NullOr(Schema.String),
   source: Schema.String,
 })
 
 const DevServerConfigResponse = Schema.Struct({
+  autoOpen: ConfigResolvedValueBoolean,
   image: ConfigResolvedValueNullableString,
   dockerfile: ConfigResolvedValueNullableString,
   installCommand: ConfigResolvedValueNullableString,
@@ -145,7 +169,7 @@ const ConfigResponse = Schema.Struct({
   prdsDir: ConfigResolvedValueString,
   worktreeDir: ConfigResolvedValueString,
   setupScripts: ConfigResolvedValueStringArray,
-  rlphConfig: ConfigResolvedValueNullableString,
+  brrrConfig: ConfigResolvedValueNullableString,
   watchIgnore: ConfigResolvedValueStringArray,
 })
 
@@ -212,6 +236,131 @@ const DiffResponse = Schema.Struct({
   lastUpdated: Schema.String,
 })
 
+const PrStatusResponse = Schema.Struct({
+  number: Schema.NullOr(Schema.Int),
+  state: Schema.NullOr(Schema.String),
+  title: Schema.NullOr(Schema.String),
+  url: Schema.NullOr(Schema.String),
+})
+
+const WorkspaceSyncStatusResponse = Schema.Struct({
+  aheadCount: Schema.NullOr(Schema.Int),
+  behindCount: Schema.NullOr(Schema.Int),
+})
+
+// ---------------------------------------------------------------------------
+// Review Comment Schemas
+// ---------------------------------------------------------------------------
+
+/**
+ * Reaction on a GitHub PR comment (e.g. rocket, thumbs_up, confused).
+ * Used to determine triage/resolution state of findings.
+ */
+export const PrCommentReaction = Schema.Struct({
+  id: Schema.Number,
+  content: Schema.String,
+  userId: Schema.Number,
+})
+
+export type PrCommentReaction = typeof PrCommentReaction.Type
+
+/**
+ * A single PR comment fetched from GitHub.
+ * Includes both issue comments and inline review comments.
+ * Comments that contain a brrr-finding marker are returned in the
+ * `findings` array instead of `comments`.
+ */
+export const PrComment = Schema.Struct({
+  /** GitHub comment ID */
+  id: Schema.Number,
+  /** 'issue' for issue comments, 'review' for inline review comments */
+  commentType: Schema.Literal('issue', 'review'),
+  /** GitHub login of the comment author */
+  authorLogin: Schema.String,
+  /** Avatar URL of the comment author */
+  authorAvatarUrl: Schema.String,
+  /** Comment body (markdown) */
+  body: Schema.String,
+  /** File path for inline review comments (null for issue comments) */
+  filePath: Schema.NullOr(Schema.String),
+  /** Line number for inline review comments (null for issue comments) */
+  line: Schema.NullOr(Schema.Number),
+  /** ISO 8601 timestamp */
+  createdAt: Schema.String,
+  /** Reactions on this comment */
+  reactions: Schema.Array(PrCommentReaction),
+})
+
+export type PrComment = typeof PrComment.Type
+
+/**
+ * Severity level for a brrr review finding.
+ */
+export const ReviewSeverity = Schema.Literal('critical', 'warning', 'info')
+
+export type ReviewSeverity = typeof ReviewSeverity.Type
+
+/**
+ * A structured finding extracted from a brrr inline review comment.
+ * Parsed from the `<!-- brrr-finding:{json} -->` HTML comment marker.
+ */
+export const ReviewFinding = Schema.Struct({
+  /** Short slugified identifier (e.g. "sql-injection") */
+  id: Schema.String,
+  /** File path where the finding applies */
+  file: Schema.String,
+  /** Line number in the file */
+  line: Schema.Number,
+  /** Severity level: critical, warning, or info */
+  severity: ReviewSeverity,
+  /** Human-readable description of the finding */
+  description: Schema.String,
+  /** Suggested fixes (may be empty) */
+  suggestedFixes: Schema.Array(Schema.String),
+  /** Finding category (e.g. "correctness", "security", "style"); null if unset */
+  category: Schema.NullOr(Schema.String),
+  /** IDs of other findings this one depends on (may be empty) */
+  dependsOn: Schema.Array(Schema.String),
+  /** GitHub comment ID of the inline review comment containing this finding */
+  commentId: Schema.Number,
+  /** Reactions on the comment containing this finding */
+  reactions: Schema.Array(PrCommentReaction),
+})
+
+export type ReviewFinding = typeof ReviewFinding.Type
+
+/**
+ * Review verdict extracted from the brrr summary comment.
+ * The summary comment is identified by the `<!-- brrr-review -->` marker.
+ */
+export const ReviewVerdict = Schema.Literal('approved', 'needs_fix')
+
+export type ReviewVerdict = typeof ReviewVerdict.Type
+
+/**
+ * Response from review.fetchComments RPC.
+ * Comments with brrr-finding markers appear in `findings`, not `comments`.
+ * The verdict is extracted from the `<!-- brrr-review -->` summary comment.
+ */
+const ReviewFetchCommentsResponse = Schema.Struct({
+  /** Review verdict (approved/needs_fix), or null if no brrr review summary exists */
+  verdict: Schema.NullOr(ReviewVerdict),
+  /** Structured findings extracted from brrr inline review comments */
+  findings: Schema.Array(ReviewFinding),
+  /** PR comments without brrr-finding markers (human comments + non-finding brrr comments) */
+  comments: Schema.Array(PrComment),
+})
+
+/**
+ * Response from review.fetchVerdict RPC.
+ * Lightweight response containing only the verdict — used by workspace
+ * cards to show a review status badge without fetching all comments.
+ */
+const ReviewFetchVerdictResponse = Schema.Struct({
+  /** Review verdict (approved/needs_fix), or null if no brrr review summary exists */
+  verdict: Schema.NullOr(ReviewVerdict),
+})
+
 // ---------------------------------------------------------------------------
 // RPC Definitions
 // ---------------------------------------------------------------------------
@@ -222,6 +371,27 @@ export class LaborerRpcs extends RpcGroup.make(
   // -----------------------------------------------------------------------
   Rpc.make('health.check', {
     success: HealthCheckResponse,
+  }),
+
+  // -----------------------------------------------------------------------
+  // Lifecycle — Deferred service initialization status
+  // -----------------------------------------------------------------------
+
+  /**
+   * Returns the current initialization status of deferred services.
+   *
+   * The renderer polls this RPC after reaching Phase 2 (Ready) to detect
+   * when all deferred services have initialized, triggering the
+   * Restored → Eventually phase transition.
+   *
+   * @see Issue #15: Server "fully initialized" event
+   * @see PRD section: "Server Layer Graph Splitting"
+   */
+  Rpc.make('lifecycle.initStatus', {
+    success: Schema.Struct({
+      /** Whether all deferred services have finished initializing. */
+      ready: Schema.Boolean,
+    }),
   }),
 
   // -----------------------------------------------------------------------
@@ -273,6 +443,7 @@ export class LaborerRpcs extends RpcGroup.make(
         agent: Schema.optional(AgentProviderSchema),
         devServer: Schema.optional(
           Schema.Struct({
+            autoOpen: Schema.optional(Schema.Boolean),
             image: Schema.optional(Schema.String),
             dockerfile: Schema.optional(Schema.String),
             installCommand: Schema.optional(Schema.String),
@@ -285,7 +456,7 @@ export class LaborerRpcs extends RpcGroup.make(
         prdsDir: Schema.optional(Schema.String),
         worktreeDir: Schema.optional(Schema.String),
         setupScripts: Schema.optional(Schema.Array(Schema.String)),
-        rlphConfig: Schema.optional(Schema.String),
+        brrrConfig: Schema.optional(Schema.String),
       }),
     },
   }),
@@ -428,6 +599,45 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
+  Rpc.make('workspace.refreshPr', {
+    success: PrStatusResponse,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  Rpc.make('workspace.refreshSyncStatus', {
+    success: WorkspaceSyncStatusResponse,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  Rpc.make('workspace.push', {
+    success: WorkspaceSyncStatusResponse,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  Rpc.make('workspace.pull', {
+    success: WorkspaceSyncStatusResponse,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  Rpc.make('workspace.startContainer', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
   // -----------------------------------------------------------------------
   // Container RPCs (Issue 10)
   // -----------------------------------------------------------------------
@@ -486,9 +696,9 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
-  // rlph RPCs
+  // brrr RPCs
   // -----------------------------------------------------------------------
-  Rpc.make('rlph.startLoop', {
+  Rpc.make('brrr.startLoop', {
     success: TerminalResponse,
     error: RpcError,
     payload: {
@@ -496,7 +706,7 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
-  Rpc.make('rlph.review', {
+  Rpc.make('brrr.review', {
     success: TerminalResponse,
     error: RpcError,
     payload: {
@@ -504,7 +714,7 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
-  Rpc.make('rlph.fix', {
+  Rpc.make('brrr.fix', {
     success: TerminalResponse,
     error: RpcError,
     payload: {
@@ -555,6 +765,290 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       taskId: Schema.String,
     },
+  }),
+
+  // -----------------------------------------------------------------------
+  // Review RPCs
+  // -----------------------------------------------------------------------
+
+  /**
+   * Fetch all PR comments (issue comments + inline review comments) for a
+   * workspace's pull request. Returns raw comment data including author info,
+   * body, file/line references, and reactions.
+   *
+   * @see PRD-review-findings-panel.md — "PR Comment Fetcher" section
+   */
+  Rpc.make('review.fetchComments', {
+    success: ReviewFetchCommentsResponse,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * Fetch only the review verdict for a workspace's PR. This is a
+   * lightweight call that only fetches issue comments (not inline review
+   * comments or reactions) and parses the `<!-- brrr-review -->` marker.
+   * Used by workspace cards to show a verdict badge without the overhead
+   * of fetching all findings and comments.
+   *
+   * @see PRD-review-findings-panel.md — "Verdict Badge Data Source" section
+   */
+  Rpc.make('review.fetchVerdict', {
+    success: ReviewFetchVerdictResponse,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * Add a reaction (e.g. rocket) to an inline review comment on GitHub.
+   * Used by the review pane to queue findings for brrr fix.
+   *
+   * @see PRD-review-findings-panel.md — "Rocket Reaction Service" section
+   */
+  Rpc.make('review.addReaction', {
+    success: PrCommentReaction,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      commentId: Schema.Number,
+      content: Schema.String,
+    },
+  }),
+
+  /**
+   * Remove a reaction from an inline review comment on GitHub.
+   * Used by the review pane to unqueue findings from brrr fix.
+   *
+   * @see PRD-review-findings-panel.md — "Rocket Reaction Service" section
+   */
+  Rpc.make('review.removeReaction', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      commentId: Schema.Number,
+      reactionId: Schema.Number,
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // GitHub OAuth RPCs
+  // -----------------------------------------------------------------------
+
+  /**
+   * Exchange a GitHub OAuth authorization code for an access token.
+   * Uses the GitHub Desktop dev OAuth App credentials (public, open-source).
+   * The client_secret is kept server-side.
+   */
+  Rpc.make('github.exchangeOAuthCode', {
+    success: Schema.Struct({
+      accessToken: Schema.String,
+      scope: Schema.String,
+      tokenType: Schema.String,
+    }),
+    error: RpcError,
+    payload: {
+      code: Schema.String,
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // Alive-driven individual fetch RPCs
+  // -----------------------------------------------------------------------
+
+  /**
+   * Fetch a single issue comment by ID, applying brrr finding/verdict parsing.
+   * Used by Alive event handler when a `pr-comment` (subtype: issue-comment)
+   * event arrives, avoiding a full fetchComments round-trip.
+   */
+  Rpc.make('review.fetchSingleIssueComment', {
+    success: Schema.Struct({
+      comment: PrComment,
+      /** Non-null if this comment is the brrr review summary. */
+      verdict: Schema.NullOr(ReviewVerdict),
+    }),
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      commentId: Schema.Number,
+    },
+  }),
+
+  /**
+   * Fetch a single PR review comment (inline) by ID, applying brrr finding
+   * parsing. Returns either a plain comment or a structured finding.
+   */
+  Rpc.make('review.fetchSingleReviewComment', {
+    success: Schema.Union(
+      Schema.Struct({
+        kind: Schema.Literal('comment'),
+        comment: PrComment,
+      }),
+      Schema.Struct({
+        kind: Schema.Literal('finding'),
+        finding: ReviewFinding,
+      })
+    ),
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      commentId: Schema.Number,
+    },
+  }),
+
+  /**
+   * Fetch a single PR review by ID. Returns the review state which can be
+   * used to update the verdict badge immediately.
+   */
+  Rpc.make('review.fetchSingleReview', {
+    success: Schema.Struct({
+      reviewId: Schema.Number,
+      state: Schema.String,
+      authorLogin: Schema.String,
+      body: Schema.String,
+    }),
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      reviewId: Schema.Number,
+    },
+  })
+) {}
+
+// ---------------------------------------------------------------------------
+// File Watcher Service RPC Contract
+// ---------------------------------------------------------------------------
+// The file-watcher service runs as a separate HTTP server process. These RPCs
+// define the contract between the server (or any client) and the file-watcher
+// service. Defined here in @laborer/shared so both @laborer/server and
+// @laborer/file-watcher can import the same types.
+//
+// @see PRD-file-watcher-extraction.md
+// ---------------------------------------------------------------------------
+
+/**
+ * Tagged error type for file-watcher service RPC operations.
+ *
+ * Error codes:
+ * - `SUBSCRIBE_FAILED` — failed to start watching a path
+ * - `NOT_FOUND` — no subscription with the given ID
+ * - `INTERNAL_ERROR` — unexpected internal failure
+ */
+export class FileWatcherRpcError extends Schema.TaggedError<FileWatcherRpcError>()(
+  'FileWatcherRpcError',
+  {
+    message: Schema.String,
+    code: Schema.optional(Schema.String),
+  }
+) {}
+
+/**
+ * Information about an active watch subscription.
+ */
+export const WatchSubscriptionInfo = Schema.Struct({
+  id: Schema.String,
+  path: Schema.String,
+  recursive: Schema.Boolean,
+  ignoreGlobs: Schema.Array(Schema.String),
+})
+
+export type WatchSubscriptionInfo = typeof WatchSubscriptionInfo.Type
+
+/**
+ * A normalized file event emitted by the file-watcher service.
+ *
+ * Events are classified as add/change/delete. When the native
+ * `@parcel/watcher` backend is active, classification is authoritative.
+ * When the `fs.watch` fallback is in use, add/delete are inferred from
+ * `existsSync` checks and should be treated as best-effort.
+ */
+export const WatchFileEvent = Schema.Struct({
+  /** Which subscription generated this event */
+  subscriptionId: Schema.String,
+  /** The type of file change */
+  type: Schema.Literal('add', 'change', 'delete'),
+  /** Relative path of the changed file within the watched directory */
+  fileName: Schema.NullOr(Schema.String),
+  /** Absolute path of the changed file */
+  absolutePath: Schema.String,
+})
+
+export type WatchFileEvent = typeof WatchFileEvent.Type
+
+/**
+ * RPC group for the standalone file-watcher service (`@laborer/file-watcher`).
+ *
+ * Endpoints:
+ * - `watcher.subscribe` — start watching a directory path
+ * - `watcher.unsubscribe` — stop watching by subscription ID
+ * - `watcher.updateIgnore` — update ignore patterns for an active subscription
+ * - `watcher.list` — list all active subscriptions
+ * - `watcher.events` — streaming endpoint pushing file change events
+ *
+ * @see PRD-file-watcher-extraction.md
+ */
+export class FileWatcherRpcs extends RpcGroup.make(
+  // -----------------------------------------------------------------------
+  // watcher.subscribe — start watching a directory
+  // -----------------------------------------------------------------------
+  Rpc.make('watcher.subscribe', {
+    success: WatchSubscriptionInfo,
+    error: FileWatcherRpcError,
+    payload: {
+      /** Absolute path of the directory to watch. */
+      path: Schema.String,
+      /** Whether to watch recursively (default true). */
+      recursive: Schema.optional(Schema.Boolean),
+      /** Glob patterns to ignore (e.g. "node_modules/**"). */
+      ignoreGlobs: Schema.optional(Schema.Array(Schema.String)),
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // watcher.unsubscribe — stop watching by subscription ID
+  // -----------------------------------------------------------------------
+  Rpc.make('watcher.unsubscribe', {
+    error: FileWatcherRpcError,
+    payload: {
+      id: Schema.String,
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // watcher.updateIgnore — update ignore patterns for a subscription
+  // -----------------------------------------------------------------------
+  Rpc.make('watcher.updateIgnore', {
+    error: FileWatcherRpcError,
+    payload: {
+      id: Schema.String,
+      ignoreGlobs: Schema.Array(Schema.String),
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // watcher.list — list all active subscriptions
+  // -----------------------------------------------------------------------
+  Rpc.make('watcher.list', {
+    success: Schema.Array(WatchSubscriptionInfo),
+    error: FileWatcherRpcError,
+  }),
+
+  // -----------------------------------------------------------------------
+  // watcher.events — streaming file change events
+  // -----------------------------------------------------------------------
+  /**
+   * Streaming RPC that pushes normalized file change events as they occur.
+   *
+   * Events include: add, change, delete with file path and subscription ID.
+   * The stream stays open until the client disconnects.
+   */
+  Rpc.make('watcher.events', {
+    success: WatchFileEvent,
+    error: FileWatcherRpcError,
+    stream: true,
   })
 ) {}
 
@@ -571,6 +1065,51 @@ export class LaborerRpcs extends RpcGroup.make(
 // ---------------------------------------------------------------------------
 
 /**
+ * Category of a detected foreground process.
+ *
+ * - `agent` — AI coding agents (claude, opencode, codex, aider, etc.)
+ * - `editor` — Text editors (vim, nvim, nano, emacs, helix, etc.)
+ * - `devServer` — Dev servers, runtimes, build tools (node, bun, python, etc.)
+ * - `shell` — The shell itself (zsh, bash, fish) — means idle at prompt
+ * - `unknown` — A process is running but not in the known list
+ */
+export const ProcessCategorySchema = Schema.Literal(
+  'agent',
+  'editor',
+  'devServer',
+  'shell',
+  'unknown'
+)
+
+export type ProcessCategory = typeof ProcessCategorySchema.Type
+
+/**
+ * Information about the foreground process running in a terminal.
+ * Used by the sidebar to show what's actually happening in each terminal.
+ */
+export const ForegroundProcessSchema = Schema.Struct({
+  /** The category of the detected process. */
+  category: ProcessCategorySchema,
+  /** Human-readable label for display (e.g., "Claude", "vim", "Node.js"). */
+  label: Schema.String,
+  /** Raw process name from ps (e.g., "claude", "nvim", "node"). */
+  rawName: Schema.String,
+})
+
+export type ForegroundProcess = typeof ForegroundProcessSchema.Type
+
+/**
+ * Agent status for a terminal, derived from foreground process transitions.
+ *
+ * - `active` — an AI agent is currently the foreground process
+ * - `waiting_for_input` — an agent was running but is now idle
+ *   (needs user input or has completed its task)
+ */
+export const AgentStatusSchema = Schema.Literal('active', 'waiting_for_input')
+
+export type AgentStatus = typeof AgentStatusSchema.Type
+
+/**
  * Information about a single terminal instance, returned by spawn, restart,
  * and list operations. Includes the opaque `workspaceId` metadata that the
  * caller passed at spawn time.
@@ -581,6 +1120,28 @@ export const TerminalInfo = Schema.Struct({
   command: Schema.String,
   args: Schema.Array(Schema.String),
   cwd: Schema.String,
+  /**
+   * Agent status derived from foreground process transitions.
+   * Null when no agent has been detected in this terminal.
+   */
+  agentStatus: Schema.NullOr(AgentStatusSchema),
+  /**
+   * Information about the foreground process running in the terminal.
+   * Null when the shell is idle at a prompt or the terminal is stopped.
+   */
+  foregroundProcess: Schema.NullOr(ForegroundProcessSchema),
+  /**
+   * Whether the shell has child processes running (e.g., vim, dev server,
+   * opencode). False when the shell is idle at a prompt. Used by the UI
+   * to decide whether to show a close confirmation dialog.
+   */
+  hasChildProcess: Schema.Boolean,
+  /**
+   * Classified processes along the tree from the shell's first child
+   * down to the deepest leaf. Used by the UI to show the full chain,
+   * e.g. "OpenCode › biome". Empty when the shell is idle or stopped.
+   */
+  processChain: Schema.Array(ForegroundProcessSchema),
   status: TerminalStatus,
 })
 
@@ -615,7 +1176,7 @@ export class TerminalRpcs extends RpcGroup.make(
     success: TerminalInfo,
     error: TerminalRpcError,
     payload: {
-      /** Shell command to execute (e.g., "bash", "opencode", "rlph --once"). */
+      /** Shell command to execute (e.g., "bash", "opencode", "brrr build --once"). */
       command: Schema.String,
       /** Command arguments (optional, default []). */
       args: Schema.optional(Schema.Array(Schema.String)),
@@ -625,6 +1186,13 @@ export class TerminalRpcs extends RpcGroup.make(
       env: Schema.optional(
         Schema.Record({ key: Schema.String, value: Schema.String })
       ),
+      /**
+       * Optional pre-generated terminal ID. When provided, the terminal
+       * manager uses this ID instead of generating a new UUID. Allows the
+       * caller to inject the terminal ID into the environment before spawn
+       * (needed for agent hook scripts to identify their terminal).
+       */
+      id: Schema.optional(Schema.String),
       /** Initial terminal column count. */
       cols: Schema.Int,
       /** Initial terminal row count. */

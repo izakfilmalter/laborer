@@ -75,13 +75,22 @@ interface ReadyEvent {
   readonly type: 'ready'
 }
 
-type PtyEvent = ReadyEvent | DataEvent | ExitEvent | ErrorEvent
+interface SpawnedEvent {
+  readonly id: string
+  readonly pid: number
+  readonly type: 'spawned'
+}
+
+type PtyEvent = ReadyEvent | DataEvent | ExitEvent | ErrorEvent | SpawnedEvent
 
 /** Callback invoked when a PTY produces output (raw UTF-8). */
 type DataCallback = (data: string) => void
 
 /** Callback invoked when a PTY process exits. */
 type ExitCallback = (exitCode: number, signal: number) => void
+
+/** Callback invoked when the PTY Host confirms a PTY has been spawned. */
+type SpawnedCallback = (pid: number) => void
 
 /** Callback invoked when the PTY Host process crashes. */
 type CrashCallback = () => void
@@ -95,12 +104,13 @@ class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
   {
     /**
      * Spawn a new PTY in the PTY Host.
-     * Sends a `spawn` command and registers data/exit callbacks.
+     * Sends a `spawn` command and registers data/exit/spawned callbacks.
      */
     readonly spawn: (
       params: SpawnParams,
       onData: DataCallback,
-      onExit: ExitCallback
+      onExit: ExitCallback,
+      onSpawned?: SpawnedCallback
     ) => void
 
     /** Write data to a PTY's stdin. */
@@ -138,19 +148,20 @@ class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
       //   packages/terminal/src/services/pty-host-client.ts -> ../pty-host.ts
       //
       // In bundled mode (running as a tsdown-bundled JS file for Electron),
-      // import.meta.url points to dist/main.js. The PTY Host is bundled as
-      // a separate entry (dist/pty-host.js) in the same directory.
+      // import.meta.url points to dist/main.mjs. The PTY Host is bundled as
+      // a separate entry (dist/pty-host.mjs) in the same directory.
       //
-      // Detection: Source files end in .ts, bundled files end in .js.
+      // Detection: Source files end in .ts, bundled files end in .mjs/.js.
       const currentPath = fileURLToPath(import.meta.url)
-      const IS_BUNDLED = currentPath.endsWith('.js')
+      const IS_BUNDLED = !currentPath.endsWith('.ts')
       const ptyHostPath = IS_BUNDLED
-        ? join(dirname(currentPath), 'pty-host.js')
+        ? join(dirname(currentPath), 'pty-host.mjs')
         : join(dirname(currentPath), '..', 'pty-host.ts')
 
       // Per-terminal callbacks
       const dataCallbacks = new Map<string, DataCallback>()
       const exitCallbacks = new Map<string, ExitCallback>()
+      const spawnedCallbacks = new Map<string, SpawnedCallback>()
       const crashCallbacks: CrashCallback[] = []
 
       // Deferred that resolves when the PTY Host sends the `ready` event
@@ -162,9 +173,13 @@ class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
       const runtime = yield* Effect.runtime<never>()
       const runFork = Runtime.runFork(runtime)
 
-      // Spawn the PTY Host as a Node.js child process via node:child_process.
-      const child = spawnChild('node', [ptyHostPath], {
+      // Spawn the PTY Host as a child process via node:child_process.
+      // In production (Electron), use process.execPath (the Electron binary)
+      // with ELECTRON_RUN_AS_NODE=1 so the child can read files from the
+      // asar archive. In dev mode, plain 'node' works fine.
+      const child = spawnChild(process.execPath, [ptyHostPath], {
         stdio: ['pipe', 'pipe', 'inherit'], // PTY Host debug logs go to our stderr
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       })
 
       /** Send a JSON command to the PTY Host via stdin. */
@@ -189,6 +204,7 @@ class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
         }
         dataCallbacks.delete(event.id)
         exitCallbacks.delete(event.id)
+        spawnedCallbacks.delete(event.id)
       }
 
       /** Log an error event from the PTY Host. */
@@ -196,6 +212,15 @@ class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
         const prefix =
           event.id !== undefined ? `PTY error id=${event.id}` : 'Host error'
         console.error(`[PtyHostClient] ${prefix}: ${event.message}`)
+      }
+
+      /** Route a `spawned` event to the registered callback and clean up. */
+      const handleSpawnedEvent = (event: SpawnedEvent): void => {
+        const cb = spawnedCallbacks.get(event.id)
+        if (cb !== undefined) {
+          cb(event.pid)
+          spawnedCallbacks.delete(event.id)
+        }
       }
 
       /** Route an incoming event to the appropriate handler. */
@@ -211,6 +236,9 @@ class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
             break
           case 'error':
             handleErrorEvent(event)
+            break
+          case 'spawned':
+            handleSpawnedEvent(event)
             break
           default:
             console.error(
@@ -336,10 +364,13 @@ class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
       )
 
       return PtyHostClient.of({
-        spawn: (params, onData, onExit) => {
+        spawn: (params, onData, onExit, onSpawned) => {
           // Register callbacks before sending the command to avoid races
           dataCallbacks.set(params.id, onData)
           exitCallbacks.set(params.id, onExit)
+          if (onSpawned) {
+            spawnedCallbacks.set(params.id, onSpawned)
+          }
 
           sendCommand({
             type: 'spawn',
@@ -378,4 +409,10 @@ class PtyHostClient extends Context.Tag('@laborer/PtyHostClient')<
 }
 
 export { PtyHostClient }
-export type { CrashCallback, DataCallback, ExitCallback, SpawnParams }
+export type {
+  CrashCallback,
+  DataCallback,
+  ExitCallback,
+  SpawnParams,
+  SpawnedCallback,
+}

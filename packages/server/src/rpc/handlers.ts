@@ -194,6 +194,7 @@ export const handleConfigUpdate = ({
 }: {
   projectId: string
   config: {
+    agent?: 'opencode' | 'claude' | 'codex' | undefined
     devServer?:
       | {
           dockerfile?: string | undefined
@@ -257,6 +258,27 @@ export const handleConfigUpdate = ({
 
     const project = yield* registry.getProject(projectId)
     yield* configService.writeProjectConfig(project.repoPath, config)
+  })
+
+export const handleGlobalConfigGet = () =>
+  Effect.gen(function* () {
+    const configService = yield* ConfigService
+    const globalConfig = yield* configService.readGlobalConfig()
+    return {
+      agent: globalConfig.agent,
+    }
+  })
+
+export const handleGlobalConfigUpdate = ({
+  config,
+}: {
+  config: {
+    agent?: 'opencode' | 'claude' | 'codex' | undefined
+  }
+}) =>
+  Effect.gen(function* () {
+    const configService = yield* ConfigService
+    yield* configService.writeGlobalConfig(config)
   })
 
 export const handlePrdCreate = ({
@@ -719,6 +741,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // -------------------------------------------------------------------
     'config.get': handleConfigGet,
     'config.update': handleConfigUpdate,
+
+    // -------------------------------------------------------------------
+    // Global Config RPCs
+    // -------------------------------------------------------------------
+    'globalConfig.get': handleGlobalConfigGet,
+    'globalConfig.update': handleGlobalConfigUpdate,
 
     // -------------------------------------------------------------------
     // PRD RPCs (Issue #178)

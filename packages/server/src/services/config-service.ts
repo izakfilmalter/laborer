@@ -64,6 +64,16 @@ class ConfigValidationError extends Data.TaggedError('ConfigValidationError')<{
   readonly message: string
 }> {}
 
+/** Valid agent provider identifiers. */
+type AgentProvider = 'opencode' | 'claude' | 'codex'
+
+/** Ordered list of valid agent provider values (used for validation). */
+const VALID_AGENT_PROVIDERS: readonly AgentProvider[] = [
+  'opencode',
+  'claude',
+  'codex',
+]
+
 /** Config file name used at all levels (project root, ancestors, global). */
 const CONFIG_FILE_NAME = 'laborer.json'
 
@@ -103,6 +113,7 @@ interface DevServerConfig {
  * configs or hardcoded defaults.
  */
 interface LaborerConfig {
+  readonly agent?: AgentProvider
   readonly devServer?: DevServerConfig
   readonly prdsDir?: string
   readonly rlphConfig?: string
@@ -111,8 +122,9 @@ interface LaborerConfig {
   readonly worktreeDir?: string
 }
 
-/** Partial updates accepted by writeProjectConfig(). */
+/** Partial updates accepted by writeProjectConfig() and writeGlobalConfig(). */
 interface ProjectConfigUpdates {
+  readonly agent?: AgentProvider | undefined
   readonly devServer?: DevServerConfig | undefined
   readonly prdsDir?: string | undefined
   readonly rlphConfig?: string | undefined
@@ -151,6 +163,8 @@ interface ResolvedDevServerConfig {
  * All fields have concrete values (no undefined).
  */
 interface ResolvedLaborerConfig {
+  /** The agent CLI provider to use (e.g. opencode, claude, codex). */
+  readonly agent: ResolvedValue<AgentProvider>
   readonly devServer: ResolvedDevServerConfig
   /** Absolute path with `~` already expanded. */
   readonly prdsDir: ResolvedValue<string>
@@ -350,6 +364,10 @@ const applyConfigUpdates = (
   updates: ProjectConfigUpdates
 ): Record<string, unknown> => {
   const next = { ...existing }
+
+  if (updates.agent !== undefined) {
+    next.agent = updates.agent
+  }
 
   if (updates.prdsDir !== undefined) {
     next.prdsDir = updates.prdsDir
@@ -607,6 +625,10 @@ const mergeConfigs = (
   const defaultWorktreeDir = join(GLOBAL_CONFIG_DIR, projectName)
   const defaultPrdsDir = join(defaultWorktreeDir, 'prds')
 
+  let agent: ResolvedValue<AgentProvider> = {
+    value: 'opencode',
+    source: 'default',
+  }
   let worktreeDir: ResolvedValue<string> = {
     value: defaultWorktreeDir,
     source: 'default',
@@ -636,6 +658,13 @@ const mergeConfigs = (
       continue
     }
     const { config, path } = layer
+
+    if (
+      config.agent !== undefined &&
+      VALID_AGENT_PROVIDERS.includes(config.agent)
+    ) {
+      agent = { value: config.agent, source: path }
+    }
 
     if (config.worktreeDir !== undefined) {
       worktreeDir = {
@@ -682,6 +711,7 @@ const mergeConfigs = (
   const devServer = mergeDevServerConfig(configLayers)
 
   return {
+    agent,
     devServer,
     prdsDir,
     worktreeDir,
@@ -730,6 +760,15 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
      */
     readonly writeProjectConfig: (
       projectRepoPath: string,
+      updates: ProjectConfigUpdates
+    ) => Effect.Effect<void, never>
+
+    /**
+     * Write global config updates to `~/.config/laborer/laborer.json`.
+     * Merges partial updates with existing file content, preserves unknown
+     * fields, and uses an atomic temp-file + rename write strategy.
+     */
+    readonly writeGlobalConfig: (
       updates: ProjectConfigUpdates
     ) => Effect.Effect<void, never>
   }
@@ -806,6 +845,23 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
           ).pipe(Effect.annotateLogs('module', logPrefix))
         }
       ),
+
+      writeGlobalConfig: Effect.fn('ConfigService.writeGlobalConfig')(
+        function* (updates: ProjectConfigUpdates) {
+          yield* ensureGlobalConfigDir()
+
+          const existing =
+            (yield* readRawConfigObject(GLOBAL_CONFIG_PATH)) ??
+            ({} as Record<string, unknown>)
+          const next = applyConfigUpdates(existing, updates)
+
+          yield* writeJsonAtomic(GLOBAL_CONFIG_PATH, next)
+
+          yield* Effect.logDebug(
+            `Wrote global config at ${GLOBAL_CONFIG_PATH}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+        }
+      ),
     })
   )
 }
@@ -829,6 +885,7 @@ export {
 }
 
 export type {
+  AgentProvider,
   DevServerConfig,
   LaborerConfig,
   ProjectConfigUpdates,
@@ -836,3 +893,5 @@ export type {
   ResolvedLaborerConfig,
   ResolvedValue,
 }
+
+export { VALID_AGENT_PROVIDERS }

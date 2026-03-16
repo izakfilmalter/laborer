@@ -105,6 +105,15 @@ export const ProjectResponse = Schema.Struct({
 
 export type ProjectResponse = typeof ProjectResponse.Type
 
+export const AgentProviderSchema = Schema.Literal('opencode', 'claude', 'codex')
+
+export type AgentProvider = typeof AgentProviderSchema.Type
+
+const ConfigResolvedValueAgent = Schema.Struct({
+  value: AgentProviderSchema,
+  source: Schema.String,
+})
+
 const ConfigResolvedValueString = Schema.Struct({
   value: Schema.String,
   source: Schema.String,
@@ -131,6 +140,7 @@ const DevServerConfigResponse = Schema.Struct({
 })
 
 const ConfigResponse = Schema.Struct({
+  agent: ConfigResolvedValueAgent,
   devServer: DevServerConfigResponse,
   prdsDir: ConfigResolvedValueString,
   worktreeDir: ConfigResolvedValueString,
@@ -260,6 +270,7 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       projectId: Schema.String,
       config: Schema.Struct({
+        agent: Schema.optional(AgentProviderSchema),
         devServer: Schema.optional(
           Schema.Struct({
             image: Schema.optional(Schema.String),
@@ -275,6 +286,25 @@ export class LaborerRpcs extends RpcGroup.make(
         worktreeDir: Schema.optional(Schema.String),
         setupScripts: Schema.optional(Schema.Array(Schema.String)),
         rlphConfig: Schema.optional(Schema.String),
+      }),
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // Global Config RPCs
+  // -----------------------------------------------------------------------
+  Rpc.make('globalConfig.get', {
+    success: Schema.Struct({
+      agent: Schema.optional(AgentProviderSchema),
+    }),
+    error: RpcError,
+  }),
+
+  Rpc.make('globalConfig.update', {
+    error: RpcError,
+    payload: {
+      config: Schema.Struct({
+        agent: Schema.optional(AgentProviderSchema),
       }),
     },
   }),

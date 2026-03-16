@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router'
-import { RotateCcw } from 'lucide-react'
+import { RotateCcw, Settings } from 'lucide-react'
 import { useCallback } from 'react'
-
+import { useAppSettings } from '@/components/app-settings-context'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -11,6 +11,28 @@ import {
 import { isElectron } from '@/lib/desktop'
 
 import { ModeToggle } from './mode-toggle'
+
+function SettingsButton() {
+  const { onOpenChange } = useAppSettings()
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            onClick={() => onOpenChange(true)}
+            size="icon"
+            variant="outline"
+          />
+        }
+      >
+        <Settings className="h-[1.2rem] w-[1.2rem]" />
+        <span className="sr-only">Settings</span>
+      </TooltipTrigger>
+      <TooltipContent>Settings</TooltipContent>
+    </Tooltip>
+  )
+}
 
 function ResetButton() {
   const handleReset = useCallback(() => {
@@ -54,6 +76,7 @@ export default function Header() {
         </nav>
         <div className="flex items-center gap-2">
           <ResetButton />
+          <SettingsButton />
           <ModeToggle />
         </div>
       </div>

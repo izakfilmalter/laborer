@@ -7,6 +7,8 @@ import {
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { useEffect, useState } from 'react'
 import { AtomRegistryProvider } from '@/atoms/provider'
+import { AppSettingsProvider } from '@/components/app-settings-context'
+import { AppSettingsModal } from '@/components/app-settings-modal'
 import { DockerStatusBanner } from '@/components/docker-status-banner'
 import Header from '@/components/header'
 import Loader from '@/components/loader'
@@ -92,15 +94,18 @@ function RootComponent() {
         <HotkeysProvider>
           <TooltipProvider>
             <SidecarGate>
-              <AtomRegistryProvider>
-                <LiveStoreProvider>
-                  <div className="grid h-svh grid-rows-[auto_auto_1fr]">
-                    <Header />
-                    <DockerStatusBanner />
-                    <Outlet />
-                  </div>
-                </LiveStoreProvider>
-              </AtomRegistryProvider>
+              <AppSettingsProvider>
+                <AtomRegistryProvider>
+                  <LiveStoreProvider>
+                    <div className="grid h-svh grid-rows-[auto_auto_1fr]">
+                      <Header />
+                      <DockerStatusBanner />
+                      <Outlet />
+                    </div>
+                    <AppSettingsModal />
+                  </LiveStoreProvider>
+                </AtomRegistryProvider>
+              </AppSettingsProvider>
             </SidecarGate>
             <Toaster richColors />
             <SidecarCrashListener />

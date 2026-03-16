@@ -193,3 +193,47 @@ from `panelLayout` query results. These are expected and will be resolved by sub
 - All 79 tests in window-tab-utils.test.ts pass (was 67, added 12 new)
 - TypeScript: same 4 pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)
 - No new type errors introduced
+
+## Issue 5: handleClosePane operates on hierarchical tree
+
+**Status:** done
+
+### Changes made
+
+1. **Rewrote `handleClosePane`** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - No longer reads from `persistedLayoutTree` or `defaultLayout` (legacy `PanelNode` tree)
+   - No longer calls `closePane()` from `layout-utils.ts` (legacy)
+   - No longer calls `findSiblingPaneId()` from `layout-utils.ts` (legacy)
+   - No longer calls `getTerminalIdsToRemove()` from `layout-utils.ts` (legacy)
+   - No longer calls `findNodeById()` from `layout-utils.ts` (legacy)
+   - No longer calls `ensureValidActivePaneId()` from `layout-utils.ts` (legacy)
+   - No longer calls `syncLegacyTreeToHierarchical()` to bridge legacy → hierarchical
+   - No longer commits `layoutPaneClosed` (legacy event, now a no-op)
+   - Now operates directly on `persistedWindowLayout` (hierarchical `WindowLayout`)
+   - Uses `findWorkspaceForPane()` to locate the workspace containing the target pane
+   - Uses `updateWorkspaceTileLeaf()` + `closePaneInPanelTree()` to close the pane in the active panel tab
+   - Uses `findPanelTreeLeaf()` to find the closing leaf and extract its terminal ID
+   - Uses `findSiblingPaneIdInPanelTree()` to compute focus transfer target before closing
+   - Uses `saveFocusedPaneId()` to transfer focus to the sibling pane
+   - Commits `windowLayoutPaneClosed` (hierarchical event) instead of `layoutPaneClosed`
+
+2. **All-panes-closed edge case**:
+   - When `closePaneInPanelTree` returns `undefined` (all panes removed), creates an empty
+     `PanelLeafNode` placeholder so the panel tab shows the empty state CTA
+   - No longer commits a legacy `LeafNode` placeholder or resets `hasSeeded`
+
+3. **Terminal cleanup**:
+   - Extracts terminal ID from the `PanelLeafNode` in the hierarchical tree
+   - Calls `removeTerminalOptimistically()` after the tree mutation (same effect, cleaner ordering)
+
+4. **Import changes**:
+   - Added `windowLayoutPaneClosed` import from `@laborer/shared/schema`
+   - Added `closePaneInPanelTree`, `findSiblingPaneIdInPanelTree` imports from `window-tab-utils`
+   - Added `windowLayoutPaneClosed` to the `commitWindowLayout` event union type
+
+### Test results
+
+- All 79 tests in window-tab-utils.test.ts pass (including findSiblingPaneIdInPanelTree tests from Issue 4)
+- All 211 related tests pass (focus-consistency, progressive-close, hierarchical-persistence, panel-tab-utils)
+- TypeScript: same 4 pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)
+- No new type errors introduced

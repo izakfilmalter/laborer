@@ -9,6 +9,7 @@ import {
   panelTabSwitched,
   panelTabsReordered,
   windowLayoutPaneAssigned,
+  windowLayoutPaneClosed,
   windowLayoutRestored,
   windowLayoutSplit,
   windowTabClosed,
@@ -48,7 +49,6 @@ import {
 } from '@/panels/layout-migration'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import {
-  closePane,
   closeWorkspacePanes,
   computeResize,
   computeTerminalPaneAssignment,
@@ -56,12 +56,10 @@ import {
   filterTreeByWorkspace,
   findLeafByTerminalId,
   findNodeById,
-  findSiblingPaneId,
   getFirstLeafId,
   getLeafIds,
   getLeafNodes,
   getStaleTerminalLeaves,
-  getTerminalIdsToRemove,
   getWorkspaceTerminalIds,
   reconcileLayout,
   repairPanelLayoutTree,
@@ -81,11 +79,13 @@ import {
   addWindowTab,
   addWorkspaceToTabUnique,
   assignTerminalInPanelTree,
+  closePaneInPanelTree,
   closeTerminalInWindowLayout,
   collectTerminalIdsFromPanelTree,
   collectTerminalIdsFromTileTree,
   findNewPanelTreeLeaf,
   findPanelTreeLeaf,
+  findSiblingPaneIdInPanelTree,
   findTerminalLocation,
   findWorkspaceLocation,
   getActiveWindowTab,
@@ -759,92 +759,82 @@ export function usePanelLayout() {
 
   const handleClosePane = useCallback(
     (paneId: string) => {
-      const base = persistedLayoutTree ?? defaultLayout
-      if (!base) {
+      if (!persistedWindowLayout) {
         return
       }
 
-      // Resolve the workspace for the pane being closed (needed for hierarchical sync)
-      const closingNode = findNodeById(base, paneId)
-      const closeWorkspaceId =
-        closingNode?._tag === 'LeafNode' ? closingNode.workspaceId : undefined
-
-      // Kill terminal processes associated with the pane being closed.
-      // You shouldn't have running terminals that aren't in a pane.
-      const terminalIds = getTerminalIdsToRemove(base, paneId)
-      for (const terminalId of terminalIds) {
-        removeTerminalOptimistically(terminalId, '[close-pane]')
+      // Find the workspace containing the pane being closed.
+      const closeWorkspaceId = findWorkspaceForPane(
+        persistedWindowLayout,
+        paneId
+      )
+      if (!closeWorkspaceId) {
+        return
       }
 
-      // Compute the sibling BEFORE the close mutation removes the pane.
-      // This ensures we can find the correct sibling in the original tree.
-      // If the closing pane is the currently active pane, transfer focus
-      // to its sibling. Otherwise, keep the current active pane.
-      const candidateActivePaneId =
-        persistedActivePaneId === paneId
-          ? findSiblingPaneId(base, paneId)
-          : persistedActivePaneId
-
-      const newTree = closePane(base, paneId)
-      if (newTree) {
-        // Defense-in-depth: validate the candidate activePaneId is a valid
-        // leaf in the post-close tree. Handles edge cases where the active
-        // pane reference becomes stale after tree mutations.
-        // @see Issue #150: Guaranteed active pane invariant
-        const nextActivePaneId = ensureValidActivePaneId(
-          newTree,
-          candidateActivePaneId
-        )
-
-        store.commit(
-          layoutPaneClosed({
-            windowId: panelWindowId,
-            layoutTree: newTree,
-            activePaneId: nextActivePaneId,
+      // Close the pane in the active panel tab's PanelTreeNode.
+      // Track the closing leaf's terminal ID and sibling for focus transfer.
+      // Both must be computed BEFORE the close mutation removes the pane.
+      let closingTerminalId: string | undefined
+      let siblingPaneId: string | undefined
+      const updatedLayout = updateWorkspaceTileLeaf(
+        persistedWindowLayout,
+        closeWorkspaceId,
+        (leaf) => {
+          const activeTabId = leaf.activePanelTabId
+          const updatedTabs = leaf.panelTabs.map((tab) => {
+            if (tab.id !== activeTabId) {
+              return tab
+            }
+            // Find the closing leaf to get its terminal ID
+            const closingLeaf = findPanelTreeLeaf(tab.panelLayout, paneId)
+            closingTerminalId = closingLeaf?.terminalId
+            // Compute sibling before closing
+            siblingPaneId = findSiblingPaneIdInPanelTree(
+              tab.panelLayout,
+              paneId
+            )
+            const newTree = closePaneInPanelTree(tab.panelLayout, paneId)
+            if (!newTree) {
+              // All panes in this tab were closed — return an empty leaf
+              // so the panel tab shows the empty state CTA.
+              return {
+                ...tab,
+                panelLayout: {
+                  _tag: 'PanelLeafNode' as const,
+                  id: `pane-empty-${Math.random().toString(36).slice(2, 8)}`,
+                  paneType: 'terminal' as const,
+                  terminalId: undefined,
+                  workspaceId: leaf.workspaceId,
+                },
+              }
+            }
+            return { ...tab, panelLayout: newTree }
           })
-        )
-
-        // Sync the close to the hierarchical tree
-        const updatedWindowLayout = syncLegacyTreeToHierarchical(
-          persistedWindowLayout,
-          newTree,
-          closeWorkspaceId
-        )
-        if (updatedWindowLayout) {
-          store.commit(
-            windowLayoutRestored({
-              windowId: panelWindowId,
-              windowLayout: updatedWindowLayout,
-              activeWindowTabId: updatedWindowLayout.activeTabId ?? null,
-            })
-          )
+          return { ...leaf, panelTabs: updatedTabs }
         }
-      } else {
-        // All panes closed — remove the persisted layout so the
-        // empty state renders and a new initial layout can seed.
-        store.commit(
-          layoutPaneClosed({
-            windowId: panelWindowId,
-            // Commit a single empty leaf as a placeholder since
-            // the schema requires a valid PanelNode.
-            // The PanelManager will show the empty state because
-            // the pane has no terminal assigned.
-            layoutTree: {
-              _tag: 'LeafNode' as const,
-              id: 'pane-empty',
-              paneType: 'terminal' as const,
-              terminalId: undefined,
-              workspaceId: undefined,
-            },
-            activePaneId: null,
-          })
-        )
-        hasSeeded.current = false
+      )
+
+      // Kill terminal process associated with the closed pane.
+      if (closingTerminalId) {
+        removeTerminalOptimistically(closingTerminalId, '[close-pane]')
       }
+
+      // Transfer focus to the sibling pane if the closed pane was focused.
+      const finalLayout =
+        persistedActivePaneId === paneId && siblingPaneId
+          ? saveFocusedPaneId(updatedLayout, siblingPaneId)
+          : updatedLayout
+
+      store.commit(
+        windowLayoutPaneClosed({
+          windowId: panelWindowId,
+          windowLayout: finalLayout,
+          activeWindowTabId: finalLayout.activeTabId ?? null,
+        })
+      )
     },
     [
-      persistedLayoutTree,
-      defaultLayout,
       panelWindowId,
       persistedActivePaneId,
       persistedWindowLayout,
@@ -1446,7 +1436,8 @@ export function usePanelLayout() {
         | typeof windowTabSwitched
         | typeof windowTabsReordered
         | typeof windowLayoutRestored
-        | typeof windowLayoutSplit,
+        | typeof windowLayoutSplit
+        | typeof windowLayoutPaneClosed,
       newLayout: WindowLayout
     ) => {
       store.commit(

@@ -165,7 +165,7 @@ See PRD Module 2: "handleSplitPane" section.
 
 ## Issue 5: handleClosePane operates on hierarchical tree
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

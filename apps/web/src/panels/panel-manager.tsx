@@ -32,7 +32,7 @@
  *
  * @see packages/shared/src/types.ts — PanelTreeNode, PanelLeafNode, PanelSplitNode types
  * @see apps/web/src/panes/terminal-pane.tsx — Terminal pane component
- * @see apps/web/src/panels/layout-utils.ts — Tree manipulation functions
+ * @see apps/web/src/panels/window-tab-utils.ts — Tree manipulation functions
  * @see apps/web/src/panels/panel-context.tsx — PanelActionsContext
  * @see Issue #66: PanelManager — single pane rendering
  * @see Issue #67: PanelManager — horizontal split

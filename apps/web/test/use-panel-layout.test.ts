@@ -6,8 +6,6 @@ const {
   currentWindowIdRef,
   focusExistingWindowForWorkspaceMock,
   initialLayoutRef,
-  layoutPaneAssignedMock,
-  layoutRestoredMock,
   panelTabClosedMock,
   panelTabCreatedMock,
   panelTabSwitchedMock,
@@ -35,11 +33,6 @@ const {
   ),
   reportVisibleWorkspacesMock: vi.fn(async () => undefined),
   initialLayoutRef: { current: undefined as WindowLayout | undefined },
-  layoutPaneAssignedMock: vi.fn((payload) => ({
-    payload,
-    type: 'layoutPaneAssigned',
-  })),
-  layoutRestoredMock: vi.fn((payload) => ({ payload, type: 'layoutRestored' })),
   windowLayoutPaneAssignedMock: vi.fn((payload) => ({
     payload,
     type: 'windowLayoutPaneAssigned',
@@ -118,8 +111,6 @@ vi.mock('@effect-atom/atom-react/Hooks', () => ({
 }))
 
 vi.mock('@laborer/shared/schema', () => ({
-  layoutPaneAssigned: layoutPaneAssignedMock,
-  layoutRestored: layoutRestoredMock,
   panelLayout: { table: 'panel_layout' },
   panelTabCreated: panelTabCreatedMock,
   panelTabClosed: panelTabClosedMock,
@@ -277,7 +268,6 @@ const WINDOW_B_LAYOUT: WindowLayout = {
 type PersistedLayoutRow = (typeof persistedRowsRef.current)[number]
 
 type PersistedLayoutEvent =
-  | ReturnType<typeof layoutRestoredMock>
   | ReturnType<typeof windowLayoutPaneAssignedMock>
   | ReturnType<typeof windowLayoutPaneClosedMock>
   | ReturnType<typeof windowLayoutRestoredMock>
@@ -346,8 +336,6 @@ describe('usePanelLayout', () => {
     terminalListRef.current = { isLoading: false, terminals: [] }
     focusExistingWindowForWorkspaceMock.mockReset()
     focusExistingWindowForWorkspaceMock.mockResolvedValue(false)
-    layoutPaneAssignedMock.mockClear()
-    layoutRestoredMock.mockClear()
     windowLayoutPaneAssignedMock.mockClear()
     windowLayoutPaneClosedMock.mockClear()
     windowLayoutSplitMock.mockClear()
@@ -458,7 +446,6 @@ describe('usePanelLayout', () => {
         windowId: 'window-new',
       })
     )
-    expect(layoutRestoredMock).not.toHaveBeenCalled()
     // The seeded layout should produce a valid active pane
     expect(result.current.activePaneId).toBeDefined()
     // Window A should be unaffected
@@ -588,8 +575,6 @@ describe('usePanelLayout', () => {
     expect(windowLayoutPaneAssignedMock).toHaveBeenCalledWith(
       expect.objectContaining({ windowId: 'window-a' })
     )
-    // layoutPaneAssigned should NOT have been called (legacy path removed)
-    expect(layoutPaneAssignedMock).not.toHaveBeenCalled()
     // Window B should remain unchanged
     expect(windowBRow?.windowId).toBe('window-b')
   })
@@ -626,7 +611,6 @@ describe('usePanelLayout', () => {
     expect(focusExistingWindowForWorkspaceMock).toHaveBeenCalledWith(
       'workspace-c'
     )
-    expect(layoutPaneAssignedMock).not.toHaveBeenCalled()
     expect(windowLayoutPaneAssignedMock).not.toHaveBeenCalled()
     // Window A's layout should be unchanged
     const windowARow = getPersistedRow('window-a')

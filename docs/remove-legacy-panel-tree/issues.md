@@ -509,7 +509,7 @@ See PRD Module 4: "WorkspaceFrames" and "PanelContent" sections.
 
 ## Issue 14: Dead code removal
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

@@ -36,12 +36,14 @@ import {
   getAllWorkspaceTileLeaves,
   getLastPanelTreeLeafId,
   getWorkspaceTileLeaves,
+  isWorkspaceFrameData,
   removeWindowTab,
   reorderWindowTabs,
   splitPaneInPanelTree,
   switchWindowTab,
   switchWindowTabByIndex,
   switchWindowTabRelative,
+  WORKSPACE_FRAME_TYPE,
 } from '../src/panels/window-tab-utils'
 
 // ---------------------------------------------------------------------------
@@ -1715,5 +1717,39 @@ describe('findPaneInDirectionPanelTree', () => {
     )
     expect(findPaneInDirectionPanelTree(split, 'pane-c', 'left')).toBe('pane-b')
     expect(findPaneInDirectionPanelTree(split, 'pane-b', 'left')).toBe('pane-a')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isWorkspaceFrameData
+// ---------------------------------------------------------------------------
+
+describe('isWorkspaceFrameData', () => {
+  it('returns true for valid workspace frame drag data', () => {
+    expect(
+      isWorkspaceFrameData({
+        type: WORKSPACE_FRAME_TYPE,
+        workspaceId: 'ws-1',
+        index: 0,
+      })
+    ).toBe(true)
+  })
+
+  it('returns false when type does not match', () => {
+    expect(
+      isWorkspaceFrameData({
+        type: 'something-else',
+        workspaceId: 'ws-1',
+        index: 0,
+      })
+    ).toBe(false)
+  })
+
+  it('returns false for empty object', () => {
+    expect(isWorkspaceFrameData({})).toBe(false)
+  })
+
+  it('returns false when type is missing', () => {
+    expect(isWorkspaceFrameData({ workspaceId: 'ws-1', index: 0 })).toBe(false)
   })
 })

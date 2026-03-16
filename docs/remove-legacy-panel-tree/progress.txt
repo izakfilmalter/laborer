@@ -597,3 +597,65 @@ from `panelLayout` query results. These are expected and will be resolved by sub
 - TypeScript: 0 errors
 - No new type errors introduced
 - Format check passes
+
+## Issue 14: Dead code removal
+
+**Status:** done
+
+### Changes made
+
+1. **Deleted `layout-migration.ts`** (`apps/web/src/panels/layout-migration.ts`):
+   - Removed the entire file (474 lines) — `migrateToWindowLayout`, `convertPanelTree`, `convertPanelTreeToLegacy`, `convertLeafNode`, `collectSidebarFlags`, `deriveLegacyTreeFromHierarchical`, and all internal helpers
+   - No production code imported from this module (only its own test file)
+
+2. **Deleted `layout-utils.ts`** (`apps/web/src/panels/layout-utils.ts`):
+   - Removed the entire file (1736 lines) — `splitPane`, `closePane`, `findNodeById`, `findSiblingPaneId`, `findPaneInDirection`, `computeResize`, `computeTerminalPaneAssignment`, `reconcileLayout`, `repairPanelLayoutTree`, `filterTreeByWorkspace`, `getWorkspaceIds`, `getLeafNodes`, `getLeafIds`, `getScopedActivePaneId`, `computeClosePaneGateAction`, `computeCloseWorkspaceAction`, `shouldConfirmClose`, `shouldConfirmCloseWorkspace`, `getWorkspaceTerminalIds`, `getWorkspaceActiveTerminals`, `closeWorkspacePanes`, `sortWorkspaceLayouts`, `findLeafByTerminalId`, `findNewLeafAfterSplit`, `getTerminalIdsToRemove`, `ensureValidActivePaneId`, `getFirstLeafId`, `getLastLeafId`, `findEmptyTerminalPane`, `replaceNode`, `findParent`, `countLeaves`, `getTreeDepth`, `generateId`, and all internal helpers
+   - Two surviving symbols (`isWorkspaceFrameData`, `WORKSPACE_FRAME_TYPE`) relocated to `window-tab-utils.ts`
+
+3. **Relocated `isWorkspaceFrameData` and `WORKSPACE_FRAME_TYPE`** to `window-tab-utils.ts`:
+   - Added at the end of the file as workspace frame drag-and-drop helpers
+   - Updated import in `workspace-frames.tsx` to source from `@/panels/window-tab-utils`
+   - Moved the 4 unit tests from `layout-utils.test.ts` to `window-tab-utils.test.ts`
+
+4. **Deleted 7 legacy test files**:
+   - `apps/web/test/layout-migration.test.ts` (965 lines) — tested only legacy migration functions
+   - `apps/web/test/layout-utils.test.ts` (2043 lines) — tested only legacy `PanelNode` functions (surviving `isWorkspaceFrameData` tests moved to `window-tab-utils.test.ts`)
+   - `apps/web/test/close-terminal.test.ts` (164 lines) — tested only `getTerminalIdsToRemove` on legacy tree
+   - `apps/web/test/close-workspace.test.ts` (514 lines) — tested only legacy workspace close functions
+   - `apps/web/test/close-pane-gating.test.ts` (427 lines) — tested only legacy close-pane gating
+   - `apps/web/test/workspace-frame-reorder.test.tsx` (446 lines) — tested legacy reorder pipeline
+
+5. **Cleaned up `use-panel-layout.test.ts`**:
+   - Removed `layoutPaneAssignedMock` and `layoutRestoredMock` from hoisted mocks, vi.mock, beforeEach, type union
+   - Removed negative assertions (`expect(layoutPaneAssignedMock).not.toHaveBeenCalled()`) that tested the absence of legacy events — these were always true since the production code no longer imports the legacy events
+
+6. **Added `@deprecated` JSDoc tags to legacy types** (`packages/shared/src/types.ts`):
+   - `LeafNode`, `SplitNode`, `PanelNode` interfaces — "Use PanelLeafNode/PanelSplitNode/PanelTreeNode instead"
+   - `LeafNodeSchema`, `SplitNodeSchema`, `PanelNodeSchema`, `PanelLayout`, `PanelLayoutSchema` — "Kept for eventlog backward compatibility"
+   - Added section header comment explaining these types exist only for LiveStore eventlog decoding
+
+7. **Updated stale comments** across the codebase:
+   - `panel-context.tsx`: Updated `@see` reference from `layout-utils` to `window-tab-utils`
+   - `panel-manager.tsx`: Updated `@see` reference from `layout-utils.ts` to `window-tab-utils.ts`
+   - `workspace-tile-utils.ts`: Updated `@see` references and description
+   - `id-utils.ts`: Removed mention of `layout-migration` from module list
+   - `window-tab-utils.ts`: Removed `@see layout-utils.ts` reference, cleaned up section comment
+
+### Code removed (summary)
+
+- **Source files deleted:** 2 (layout-migration.ts, layout-utils.ts) — ~2,210 lines
+- **Test files deleted:** 7 (layout-migration.test.ts, layout-utils.test.ts, close-terminal.test.ts, close-workspace.test.ts, close-pane-gating.test.ts, workspace-frame-reorder.test.tsx) — ~4,559 lines
+- **Total lines removed:** ~6,769 lines of legacy code and tests
+- **No legacy event names** (`layoutSplit`, `layoutPaneClosed`, `layoutPaneAssigned`, `layoutRestored`) are committed anywhere in the app
+- **`syncLegacyTreeToHierarchical`** was already removed in Issue 12
+- **`LeafNode`, `SplitNode`, `PanelNode` types** are deprecated (kept for eventlog backward compatibility via `PanelNodeSchema`)
+
+### Test results
+
+- All 1123 tests in apps/web pass (was 1361, removed 238 legacy-only tests, added 4 relocated tests; 1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- All 158 tests in apps/desktop pass
+- All 344 tests in packages/server pass
+- TypeScript: 0 errors
+- Format check passes
+- `bun run check`: 15/15 tasks successful

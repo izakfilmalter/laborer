@@ -21,7 +21,7 @@ import { createContext, useContext } from 'react'
 
 /**
  * Direction for pane resize operations.
- * Duplicated from layout-utils to avoid circular imports.
+ * Duplicated from window-tab-utils to avoid circular imports.
  */
 type ResizeDirection = 'left' | 'right' | 'up' | 'down'
 

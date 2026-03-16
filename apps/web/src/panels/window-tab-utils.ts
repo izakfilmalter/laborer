@@ -8,7 +8,6 @@
  * All functions return a new layout — the original is never mutated.
  *
  * @see packages/shared/src/types.ts — WindowLayout, WindowTab, WorkspaceTileNode
- * @see apps/web/src/panels/layout-utils.ts — panel-level tree utilities
  */
 
 import type {
@@ -1024,7 +1023,7 @@ function findPaneInWindowLayout(
 }
 
 // ---------------------------------------------------------------------------
-// Close gate logic — hierarchical equivalents of layout-utils functions
+// Close gate logic
 // ---------------------------------------------------------------------------
 
 /**
@@ -2736,6 +2735,22 @@ export {
   updateWorkspaceTileLeaf,
 }
 
+// ---------------------------------------------------------------------------
+// Workspace frame drag-and-drop helpers
+// ---------------------------------------------------------------------------
+
+/** Custom data type identifier for workspace frame drag operations. */
+const WORKSPACE_FRAME_TYPE = 'workspace-frame'
+
+/** Type guard: check if drag source data is a workspace frame. */
+function isWorkspaceFrameData(data: Record<string, unknown>): data is {
+  type: typeof WORKSPACE_FRAME_TYPE
+  workspaceId: string
+  index: number
+} {
+  return data.type === WORKSPACE_FRAME_TYPE
+}
+
 export type {
   ClosePaneGateResult,
   NavigationDirection,
@@ -2747,3 +2762,5 @@ export type {
   TerminalProcessInfo,
   WorkspaceLocation,
 }
+
+export { isWorkspaceFrameData, WORKSPACE_FRAME_TYPE }

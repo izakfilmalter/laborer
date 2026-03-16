@@ -2,7 +2,7 @@
  * Shared ID generation for panel layout nodes.
  *
  * Centralizes the counter + random suffix pattern used across panel-tab-utils,
- * window-tab-utils, workspace-tile-utils, and layout-migration. A bug fix or
+ * window-tab-utils, and workspace-tile-utils. A bug fix or
  * strategy change now only needs to happen in one place.
  */
 

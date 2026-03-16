@@ -8,7 +8,6 @@
  * All functions return a new layout — the original is never mutated.
  *
  * @see packages/shared/src/types.ts — WindowLayout, WindowTab, WorkspaceTileNode
- * @see apps/web/src/panels/layout-utils.ts — panel-level tree utilities
  */
 
 import type {
@@ -455,6 +454,53 @@ function getFirstPanelTreeLeafId(node: PanelTreeNode): string | undefined {
 }
 
 /**
+ * Get the last leaf pane ID from a PanelTreeNode tree (reverse DFS order).
+ * Used to find the split target when all panes are occupied.
+ */
+function getLastPanelTreeLeafId(node: PanelTreeNode): string | undefined {
+  if (node._tag === 'PanelLeafNode') {
+    return node.id
+  }
+  for (let i = node.children.length - 1; i >= 0; i--) {
+    const child = node.children[i]
+    if (child) {
+      const leafId = getLastPanelTreeLeafId(child)
+      if (leafId) {
+        return leafId
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Find an empty terminal pane in a PanelTreeNode tree.
+ * An empty terminal pane is a PanelLeafNode with paneType 'terminal' and no
+ * terminalId assigned. Returns the first such leaf found in DFS order,
+ * or undefined if all panes are occupied.
+ */
+function findEmptyPanelTreeLeaf(
+  node: PanelTreeNode
+): PanelLeafNode | undefined {
+  if (
+    node._tag === 'PanelLeafNode' &&
+    node.paneType === 'terminal' &&
+    !node.terminalId
+  ) {
+    return node
+  }
+  if (node._tag === 'PanelSplitNode') {
+    for (const child of node.children) {
+      const found = findEmptyPanelTreeLeaf(child)
+      if (found) {
+        return found
+      }
+    }
+  }
+  return undefined
+}
+
+/**
  * Resolve the pane that should receive focus for a given panel tab.
  * Prefers `focusedPaneId` if set, falls back to the first leaf pane.
  */
@@ -498,6 +544,39 @@ function resolveActivePaneForWindowTab(tab: WindowTab): string | undefined {
       const paneId = resolveActivePaneForPanelTab(firstTab)
       if (paneId) {
         return paneId
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Resolve the workspace ID that the focused pane belongs to within a window tab.
+ *
+ * Walks the workspace tile leaves to find which workspace contains the
+ * given pane. If no paneId is provided, resolves the active pane first and
+ * then finds its workspace.
+ *
+ * @param tab - The window tab to search
+ * @param paneId - Optional pane ID to find (defaults to the tab's active pane)
+ * @returns The workspace ID that contains the pane, or undefined
+ */
+function resolveActiveWorkspaceForWindowTab(
+  tab: WindowTab,
+  paneId?: string
+): string | undefined {
+  if (!tab.workspaceLayout) {
+    return undefined
+  }
+  const effectivePaneId = paneId ?? resolveActivePaneForWindowTab(tab)
+  if (!effectivePaneId) {
+    return undefined
+  }
+  const leaves = getWorkspaceTileLeaves(tab.workspaceLayout)
+  for (const leaf of leaves) {
+    for (const panelTab of leaf.panelTabs) {
+      if (panelTreeContainsPane(panelTab.panelLayout, effectivePaneId)) {
+        return leaf.workspaceId
       }
     }
   }
@@ -887,6 +966,175 @@ function shouldConfirmCloseWindowTab(
   }
   const terminalIds = collectTerminalIdsFromTileTree(windowTab.workspaceLayout)
   return hasRunningProcess(terminalIds, terminals)
+}
+
+// ---------------------------------------------------------------------------
+// Pane location lookup — find a pane across the entire layout hierarchy
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of a pane location lookup.
+ */
+interface PaneLocation {
+  /** The PanelLeafNode found */
+  readonly leaf: PanelLeafNode
+  /** The panel tab ID */
+  readonly panelTabId: string
+  /** The window tab ID */
+  readonly tabId: string
+  /** The workspace ID the pane belongs to */
+  readonly workspaceId: string
+}
+
+/**
+ * Find a pane by ID across the entire window layout hierarchy.
+ *
+ * Searches: all tabs > all workspace tile leaves > all panel tabs >
+ * all pane leaves in their split trees.
+ *
+ * @param layout - The window layout to search
+ * @param paneId - The pane ID to find
+ * @returns The pane location with the leaf node, or undefined if not found
+ */
+function findPaneInWindowLayout(
+  layout: WindowLayout,
+  paneId: string
+): PaneLocation | undefined {
+  for (const tab of layout.tabs) {
+    if (!tab.workspaceLayout) {
+      continue
+    }
+    const leaves = getWorkspaceTileLeaves(tab.workspaceLayout)
+    for (const tile of leaves) {
+      for (const panelTab of tile.panelTabs) {
+        const leaf = findPanelTreeLeaf(panelTab.panelLayout, paneId)
+        if (leaf) {
+          return {
+            leaf,
+            workspaceId: tile.workspaceId,
+            panelTabId: panelTab.id,
+            tabId: tab.id,
+          }
+        }
+      }
+    }
+  }
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
+// Close gate logic
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of computing the close-pane gate action.
+ *
+ * - `'close'`: close immediately
+ * - `'confirm'`: show "process running" dialog (Cancel, Close)
+ * - `'confirm-with-destroy'`: process running + last pane for workspace +
+ *   PR merged — show dialog with 3 actions (Cancel, Close, Close & Destroy)
+ * - `'prompt-destroy'`: no running process + last pane + PR merged —
+ *   show "destroy workspace?" dialog
+ */
+type ClosePaneGateResult =
+  | { readonly action: 'close' }
+  | { readonly action: 'confirm' }
+  | { readonly action: 'confirm-with-destroy'; readonly workspaceId: string }
+  | { readonly action: 'prompt-destroy'; readonly workspaceId: string }
+
+/**
+ * Compute whether closing a pane should proceed immediately or show
+ * a confirmation dialog. Operates on the hierarchical `WindowLayout`.
+ *
+ * @param layout - The window layout (may be undefined)
+ * @param paneId - The ID of the pane being closed
+ * @param terminals - The cached terminal list from useTerminalList
+ * @param prState - The PR state of the pane's workspace (e.g. 'merged', 'open', null)
+ * @returns A discriminated union describing which dialog (if any) to show
+ */
+function computeClosePaneGateActionHierarchical(
+  layout: WindowLayout | undefined,
+  paneId: string,
+  terminals: readonly TerminalProcessInfo[],
+  prState: string | null
+): ClosePaneGateResult {
+  if (!layout) {
+    return { action: 'close' }
+  }
+
+  const location = findPaneInWindowLayout(layout, paneId)
+  if (!location) {
+    return { action: 'close' }
+  }
+
+  const { leaf, workspaceId } = location
+
+  // Check if this pane's terminal has a running child process
+  const hasProcess =
+    leaf.terminalId !== undefined &&
+    terminals.some(
+      (t) => t.id === leaf.terminalId && t.hasChildProcess === true
+    )
+
+  const isPrMerged = prState === 'MERGED'
+
+  // Check if this is the last pane for the workspace across all panel tabs
+  let isLastPaneForWorkspace = false
+  if (workspaceId && isPrMerged) {
+    // Count all terminal panes across all panel tabs of this workspace
+    const allLeaves = getAllWorkspaceTileLeaves(layout)
+    const wsTile = allLeaves.find((l) => l.workspaceId === workspaceId)
+    if (wsTile) {
+      let paneCount = 0
+      for (const pt of wsTile.panelTabs) {
+        paneCount += getPanelTreeLeafIds(pt.panelLayout).length
+      }
+      isLastPaneForWorkspace = paneCount === 1
+    }
+  }
+
+  if (hasProcess && isLastPaneForWorkspace && workspaceId) {
+    return { action: 'confirm-with-destroy', workspaceId }
+  }
+
+  if (hasProcess) {
+    return { action: 'confirm' }
+  }
+
+  if (isLastPaneForWorkspace && workspaceId) {
+    return { action: 'prompt-destroy', workspaceId }
+  }
+
+  return { action: 'close' }
+}
+
+/**
+ * Compute whether closing a workspace should proceed immediately or show
+ * a confirmation dialog. Operates on the hierarchical `WindowLayout`.
+ *
+ * @param layout - The window layout (may be undefined)
+ * @param workspaceId - The workspace being closed
+ * @param terminals - The cached terminal list from useTerminalList
+ * @returns `'close'` to close immediately, `'confirm'` to show dialog
+ */
+function computeCloseWorkspaceActionHierarchical(
+  layout: WindowLayout | undefined,
+  workspaceId: string,
+  terminals: readonly TerminalProcessInfo[]
+): 'close' | 'confirm' {
+  if (!layout) {
+    return 'close'
+  }
+  const allLeaves = getAllWorkspaceTileLeaves(layout)
+  const wsTile = allLeaves.find((l) => l.workspaceId === workspaceId)
+  if (!wsTile) {
+    return 'close'
+  }
+  // Collect all terminal IDs across all panel tabs
+  const terminalIds = wsTile.panelTabs.flatMap((pt) =>
+    collectTerminalIdsFromPanelTree(pt.panelLayout)
+  )
+  return hasRunningProcess(terminalIds, terminals) ? 'confirm' : 'close'
 }
 
 // ---------------------------------------------------------------------------
@@ -2125,6 +2373,317 @@ function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
 }
 
 // ---------------------------------------------------------------------------
+// Panel tree resize
+// ---------------------------------------------------------------------------
+
+/** Resize step percentage — how much the active pane grows or shrinks per press. */
+const RESIZE_STEP = 5
+
+/** Minimum pane size percentage — prevents panes from being resized to nothing. */
+const MIN_PANE_SIZE = 5
+
+/** Cardinal direction for keyboard navigation / resize. */
+type NavigationDirection = 'left' | 'right' | 'up' | 'down'
+
+/**
+ * Build the path from the root PanelTreeNode to a target node.
+ * Returns an array from root to target (inclusive), or undefined if not found.
+ */
+function buildPanelTreePath(
+  root: PanelTreeNode,
+  targetId: string
+): PanelTreeNode[] | undefined {
+  if (root.id === targetId) {
+    return [root]
+  }
+  if (root._tag === 'PanelSplitNode') {
+    for (const child of root.children) {
+      const childPath = buildPanelTreePath(child, targetId)
+      if (childPath) {
+        return [root, ...childPath]
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Compute the resize delta based on the keyboard arrow and the split orientation.
+ *
+ * Returns a positive delta to grow or negative delta to shrink, or undefined
+ * if the arrow direction doesn't match the split orientation.
+ */
+function getResizeDeltaPanelTree(
+  direction: NavigationDirection,
+  splitOrientation: 'horizontal' | 'vertical'
+): number | undefined {
+  if (splitOrientation === 'horizontal') {
+    if (direction === 'right') {
+      return RESIZE_STEP
+    }
+    if (direction === 'left') {
+      return -RESIZE_STEP
+    }
+    return undefined
+  }
+  // vertical
+  if (direction === 'down') {
+    return RESIZE_STEP
+  }
+  if (direction === 'up') {
+    return -RESIZE_STEP
+  }
+  return undefined
+}
+
+/**
+ * Apply a resize delta to a PanelSplitNode at a given child index.
+ * Returns the new layout or undefined if resize is not possible.
+ */
+function applyPanelTreeResizeDelta(
+  ancestor: PanelTreeNode & { readonly _tag: 'PanelSplitNode' },
+  childIndex: number,
+  delta: number
+): { splitNodeId: string; newSizes: Record<string, number> } | undefined {
+  const siblingIndex = delta > 0 ? childIndex + 1 : childIndex - 1
+  const siblingExists =
+    siblingIndex >= 0 && siblingIndex < ancestor.children.length
+  if (!siblingExists) {
+    return undefined
+  }
+
+  const currentSize = ancestor.sizes[childIndex] ?? 50
+  const siblingSize = ancestor.sizes[siblingIndex] ?? 50
+
+  const newSize = currentSize + delta
+  const newSiblingSize = siblingSize - delta
+
+  if (newSize < MIN_PANE_SIZE || newSiblingSize < MIN_PANE_SIZE) {
+    return undefined
+  }
+
+  const newSizes: Record<string, number> = {}
+  for (let j = 0; j < ancestor.children.length; j++) {
+    const child = ancestor.children[j]
+    if (!child) {
+      continue
+    }
+    if (j === childIndex) {
+      newSizes[child.id] = newSize
+    } else if (j === siblingIndex) {
+      newSizes[child.id] = newSiblingSize
+    } else {
+      newSizes[child.id] = ancestor.sizes[j] ?? 100 / ancestor.children.length
+    }
+  }
+
+  return { splitNodeId: ancestor.id, newSizes }
+}
+
+/**
+ * Walk up the path from the active pane to find a resizable ancestor.
+ * Extracted from computeResizePanelTree to keep complexity under Biome's limit.
+ */
+function computeResizeFromPanelTreePath(
+  path: PanelTreeNode[],
+  direction: NavigationDirection
+): { splitNodeId: string; newSizes: Record<string, number> } | undefined {
+  for (let i = path.length - 2; i >= 0; i--) {
+    const ancestor = path[i]
+    if (!ancestor || ancestor._tag !== 'PanelSplitNode') {
+      continue
+    }
+
+    const delta = getResizeDeltaPanelTree(direction, ancestor.direction)
+    if (delta === undefined) {
+      continue
+    }
+
+    const childInPath = path[i + 1]
+    if (!childInPath) {
+      continue
+    }
+
+    const childIndex = ancestor.children.findIndex(
+      (c) => c.id === childInPath.id
+    )
+    if (childIndex === -1) {
+      continue
+    }
+
+    return applyPanelTreeResizeDelta(ancestor, childIndex, delta)
+  }
+
+  return undefined
+}
+
+/**
+ * Find the parent PanelSplitNode of the active pane that can be resized in
+ * the given direction, and compute the new sizes array.
+ *
+ * Walks up from the active pane toward the root looking for a PanelSplitNode
+ * whose orientation matches the resize direction. Once found, adjusts the
+ * sizes array by moving `RESIZE_STEP` percentage points between siblings.
+ *
+ * Returns the parent split node ID and new sizes, or undefined if resize
+ * is not possible.
+ */
+function computeResizePanelTree(
+  root: PanelTreeNode,
+  activePaneId: string,
+  direction: NavigationDirection
+): { splitNodeId: string; newSizes: Record<string, number> } | undefined {
+  const path = buildPanelTreePath(root, activePaneId)
+  if (!path || path.length < 2) {
+    return undefined
+  }
+
+  return computeResizeFromPanelTreePath(path, direction)
+}
+
+/**
+ * Find the PanelTreeNode root containing a pane by searching all tabs,
+ * workspace tiles, and panel tabs in the layout.
+ *
+ * Returns the panel tab's `panelLayout` (PanelTreeNode) that contains
+ * the pane, or undefined if not found.
+ */
+function findPanelTreeRootForPane(
+  layout: WindowLayout,
+  paneId: string
+): PanelTreeNode | undefined {
+  for (const tab of layout.tabs) {
+    if (!tab.workspaceLayout) {
+      continue
+    }
+    const leaves = getWorkspaceTileLeaves(tab.workspaceLayout)
+    for (const tile of leaves) {
+      for (const panelTab of tile.panelTabs) {
+        if (findPanelTreeLeaf(panelTab.panelLayout, paneId)) {
+          return panelTab.panelLayout
+        }
+      }
+    }
+  }
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
+// Directional navigation — find pane in a given direction
+// ---------------------------------------------------------------------------
+
+/**
+ * Get the edge leaf from a PanelTreeNode subtree.
+ *
+ * - "first" → leftmost / topmost leaf (DFS, always pick first child)
+ * - "last" → rightmost / bottommost leaf (DFS, always pick last child)
+ *
+ * When entering a subtree from a directional navigation, we want:
+ * - Moving right → enter the left edge of the new subtree (first)
+ * - Moving left → enter the right edge of the new subtree (last)
+ * - Moving down → enter the top edge of the new subtree (first)
+ * - Moving up → enter the bottom edge of the new subtree (last)
+ */
+function getEdgePanelTreeLeaf(
+  node: PanelTreeNode,
+  edge: 'first' | 'last'
+): PanelLeafNode {
+  if (node._tag === 'PanelLeafNode') {
+    return node
+  }
+  const child = edge === 'first' ? node.children[0] : node.children.at(-1)
+  // Safety: PanelSplitNode always has at least one child in valid trees
+  if (!child) {
+    return node as unknown as PanelLeafNode
+  }
+  return getEdgePanelTreeLeaf(child, edge)
+}
+
+/**
+ * Try to navigate from a specific path index in the given direction.
+ * Returns the target leaf ID if a neighbor is found at this ancestor, or
+ * undefined to signal the caller to continue walking up.
+ */
+function tryNavigateAtPanelTreeAncestor(
+  path: PanelTreeNode[],
+  index: number,
+  targetOrientation: 'horizontal' | 'vertical',
+  delta: number
+): string | undefined {
+  const ancestor = path[index]
+  if (!ancestor || ancestor._tag !== 'PanelSplitNode') {
+    return undefined
+  }
+  if (ancestor.direction !== targetOrientation) {
+    return undefined
+  }
+
+  const childInPath = path[index + 1]
+  if (!childInPath) {
+    return undefined
+  }
+  const childIndex = ancestor.children.findIndex((c) => c.id === childInPath.id)
+  if (childIndex === -1) {
+    return undefined
+  }
+
+  const neighborIndex = childIndex + delta
+  const neighbor = ancestor.children[neighborIndex]
+  if (!neighbor) {
+    return undefined
+  }
+
+  const edge = delta > 0 ? 'first' : 'last'
+  return getEdgePanelTreeLeaf(neighbor, edge).id
+}
+
+/**
+ * Find the pane to navigate to from the active pane in a given direction,
+ * operating on PanelTreeNode trees.
+ *
+ * The algorithm:
+ * 1. Build the path from root to the active pane.
+ * 2. Walk up the path to find the nearest ancestor PanelSplitNode whose
+ *    orientation matches the navigation direction.
+ *    - horizontal splits handle left/right
+ *    - vertical splits handle up/down
+ * 3. In that split, find the adjacent child in the requested direction.
+ * 4. Drill into the adjacent subtree to find the nearest leaf on the
+ *    entering edge (e.g., moving right enters from the left edge).
+ *
+ * Returns the target leaf ID, or undefined if navigation is not possible
+ * (at the edge of the layout in that direction).
+ */
+function findPaneInDirectionPanelTree(
+  root: PanelTreeNode,
+  activePaneId: string,
+  direction: NavigationDirection
+): string | undefined {
+  const path = buildPanelTreePath(root, activePaneId)
+  if (!path || path.length < 2) {
+    return undefined
+  }
+
+  const targetOrientation: 'horizontal' | 'vertical' =
+    direction === 'left' || direction === 'right' ? 'horizontal' : 'vertical'
+  const delta = direction === 'left' || direction === 'up' ? -1 : 1
+
+  for (let i = path.length - 2; i >= 0; i--) {
+    const result = tryNavigateAtPanelTreeAncestor(
+      path,
+      i,
+      targetOrientation,
+      delta
+    )
+    if (result) {
+      return result
+    }
+  }
+
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -2136,15 +2695,23 @@ export {
   closeTerminalInWindowLayout,
   collectTerminalIdsFromPanelTree,
   collectTerminalIdsFromTileTree,
+  computeClosePaneGateActionHierarchical,
+  computeCloseWorkspaceActionHierarchical,
   computeProgressiveCloseAction,
+  computeResizePanelTree,
+  findEmptyPanelTreeLeaf,
   findNewPanelTreeLeaf,
+  findPaneInDirectionPanelTree,
+  findPaneInWindowLayout,
   findPanelTreeLeaf,
+  findPanelTreeRootForPane,
   findSiblingPaneIdInPanelTree,
   findTerminalLocation,
   findWorkspaceLocation,
   getActiveWindowTab,
   getAllWorkspaceTileLeaves,
   getFirstPanelTreeLeafId,
+  getLastPanelTreeLeafId,
   getPanelTreeLeafIds,
   getStaleTerminalLeavesHierarchical,
   getWorkspaceTileLeaves,
@@ -2157,6 +2724,7 @@ export {
   repairWindowLayout,
   resolveActivePaneForPanelTab,
   resolveActivePaneForWindowTab,
+  resolveActiveWorkspaceForWindowTab,
   saveFocusedPaneId,
   shouldConfirmClosePanelTab,
   shouldConfirmCloseWindowTab,
@@ -2167,7 +2735,26 @@ export {
   updateWorkspaceTileLeaf,
 }
 
+// ---------------------------------------------------------------------------
+// Workspace frame drag-and-drop helpers
+// ---------------------------------------------------------------------------
+
+/** Custom data type identifier for workspace frame drag operations. */
+const WORKSPACE_FRAME_TYPE = 'workspace-frame'
+
+/** Type guard: check if drag source data is a workspace frame. */
+function isWorkspaceFrameData(data: Record<string, unknown>): data is {
+  type: typeof WORKSPACE_FRAME_TYPE
+  workspaceId: string
+  index: number
+} {
+  return data.type === WORKSPACE_FRAME_TYPE
+}
+
 export type {
+  ClosePaneGateResult,
+  NavigationDirection,
+  PaneLocation,
   ProgressiveCloseAction,
   RepairWindowLayoutResult,
   StaleTerminalLeaf,
@@ -2175,3 +2762,5 @@ export type {
   TerminalProcessInfo,
   WorkspaceLocation,
 }
+
+export { isWorkspaceFrameData, WORKSPACE_FRAME_TYPE }

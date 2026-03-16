@@ -14,7 +14,11 @@
  * size, and need no re-fit on fullscreen exit.
  */
 
-import type { LeafNode, PanelNode, SplitNode } from '@laborer/shared/types'
+import type {
+  PanelLeafNode,
+  PanelSplitNode,
+  PanelTreeNode,
+} from '@laborer/shared/types'
 import { cleanup, render, screen } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -75,7 +79,11 @@ vi.mock('@/panels/panel-group-registry', () => ({
 }))
 
 vi.mock('@/panels/terminal-pane-with-sidebars', () => ({
-  TerminalPaneWithSidebars: ({ node }: { node: LeafNode }) => (
+  TerminalPaneWithSidebars: ({
+    node,
+  }: {
+    node: { id: string; terminalId?: string }
+  }) => (
     <div data-pane-type="terminal" data-testid={`terminal-${node.id}`}>
       terminal:{node.terminalId}
     </div>
@@ -155,24 +163,24 @@ function mockActions() {
   }
 }
 
-const LEAF_1: LeafNode = {
-  _tag: 'LeafNode',
+const LEAF_1: PanelLeafNode = {
+  _tag: 'PanelLeafNode',
   id: 'pane-1',
   paneType: 'terminal',
   terminalId: 'term-1',
   workspaceId: 'ws-1',
 }
 
-const LEAF_2: LeafNode = {
-  _tag: 'LeafNode',
+const LEAF_2: PanelLeafNode = {
+  _tag: 'PanelLeafNode',
   id: 'pane-2',
   paneType: 'terminal',
   terminalId: 'term-2',
   workspaceId: 'ws-1',
 }
 
-const SPLIT_LAYOUT: SplitNode = {
-  _tag: 'SplitNode',
+const SPLIT_LAYOUT: PanelSplitNode = {
+  _tag: 'PanelSplitNode',
   id: 'split-root',
   direction: 'horizontal',
   children: [LEAF_1, LEAF_2],
@@ -190,7 +198,7 @@ function TestHarness({
   layout,
   fullscreenPaneId = null,
 }: {
-  readonly layout: PanelNode
+  readonly layout: PanelTreeNode
   readonly fullscreenPaneId?: string | null
 }) {
   const [portalElement, setPortalElement] = useState<HTMLElement | null>(null)

@@ -122,36 +122,19 @@ export const appSettings = State.SQLite.table({
  * Uses a single row per window session (keyed by `windowId`) with the full
  * tree serialized as JSON.
  *
- * Legacy columns (`layoutTree`, `activePaneId`, `workspaceOrder`) store the
- * old flat `PanelNode` format. New columns (`windowLayout`, `activeWindowTabId`)
- * store the hierarchical `WindowLayout` format. During migration both may
- * coexist; consumers should prefer `windowLayout` when present.
+ * The hierarchical `WindowLayout` is the single source of truth for all layout
+ * state. Legacy columns (`layoutTree`, `activePaneId`, `workspaceOrder`) have
+ * been removed; legacy event materializers are no-ops retained for backward
+ * compatibility with existing eventlogs.
  */
 export const panelLayout = State.SQLite.table({
   name: 'panel_layout',
   columns: {
     windowId: State.SQLite.text({ primaryKey: true }),
-    /** @deprecated — Legacy flat layout tree. Use `windowLayout` for new code. */
-    layoutTree: State.SQLite.json({
-      schema: Schema.NullOr(PanelNodeSchema),
-      nullable: true,
-      default: null,
-    }),
-    /** @deprecated — Legacy active pane ID. Focus state is now embedded in `windowLayout`. */
-    activePaneId: State.SQLite.text({ nullable: true }),
-    /**
-     * @deprecated — Legacy workspace ordering. Now embedded in `windowLayout`'s
-     * workspace tile tree.
-     */
-    workspaceOrder: State.SQLite.json({
-      schema: Schema.NullOr(Schema.Array(Schema.String)),
-      nullable: true,
-      default: null,
-    }),
     /**
      * The hierarchical layout tree: WindowLayout > WindowTab > WorkspaceTileNode > PanelTab.
      * Contains all window tabs, workspace tiling, panel tabs, and split trees.
-     * Null when the row was written by legacy events that only populated `layoutTree`.
+     * Null when no layout has been persisted yet.
      */
     windowLayout: State.SQLite.json({
       schema: Schema.NullOr(WindowLayoutSchema),
@@ -160,7 +143,7 @@ export const panelLayout = State.SQLite.table({
     }),
     /**
      * ID of the currently active window tab within this Electron window.
-     * Null when using legacy layout format or when no tab is active.
+     * Null when no tab is active.
      */
     activeWindowTabId: State.SQLite.text({ nullable: true }),
   },
@@ -883,26 +866,11 @@ const materializers = State.SQLite.materializers(events, {
   'v1.PrdRemoved': ({ id }) => prds.delete().where({ id }),
   'v1.AppSettingChanged': ({ key, value }) =>
     appSettings.insert({ key, value }).onConflict('key', 'replace'),
-  'v1.LayoutSplit': ({ windowId, layoutTree, activePaneId }) =>
-    panelLayout
-      .insert({ windowId, layoutTree, activePaneId })
-      .onConflict('windowId', 'update', { layoutTree, activePaneId }),
-  'v1.LayoutPaneClosed': ({ windowId, layoutTree, activePaneId }) =>
-    panelLayout
-      .insert({ windowId, layoutTree, activePaneId })
-      .onConflict('windowId', 'update', { layoutTree, activePaneId }),
-  'v1.LayoutPaneAssigned': ({ windowId, layoutTree, activePaneId }) =>
-    panelLayout
-      .insert({ windowId, layoutTree, activePaneId })
-      .onConflict('windowId', 'update', { layoutTree, activePaneId }),
-  'v1.LayoutRestored': ({ windowId, layoutTree, activePaneId }) =>
-    panelLayout
-      .insert({ windowId, layoutTree, activePaneId })
-      .onConflict('windowId', 'update', { layoutTree, activePaneId }),
-  'v1.LayoutWorkspacesReordered': ({ windowId, workspaceOrder }) =>
-    panelLayout
-      .insert({ windowId, workspaceOrder })
-      .onConflict('windowId', 'update', { workspaceOrder }),
+  'v1.LayoutSplit': () => [], // @deprecated — no-op materializer retained for backward compat
+  'v1.LayoutPaneClosed': () => [], // @deprecated — no-op materializer retained for backward compat
+  'v1.LayoutPaneAssigned': () => [], // @deprecated — no-op materializer retained for backward compat
+  'v1.LayoutRestored': () => [], // @deprecated — no-op materializer retained for backward compat
+  'v1.LayoutWorkspacesReordered': () => [], // @deprecated — no-op materializer retained for backward compat
   // -- Hierarchical layout event materializers --------------------------------
   'v1.WindowTabCreated': ({ windowId, windowLayout, activeWindowTabId }) =>
     panelLayout

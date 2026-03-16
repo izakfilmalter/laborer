@@ -127,9 +127,15 @@ export class Diff extends Schema.Class<Diff>('Diff')({
 }) {}
 
 // ---------------------------------------------------------------------------
-// Panel Layout Tree
+// Panel Layout Tree (DEPRECATED — kept for LiveStore eventlog backward compatibility)
+//
+// These legacy types are only used by the event schema definitions in schema.ts
+// so that old events in the eventlog can still be decoded. No production code
+// should create or consume these types. Use the hierarchical layout types
+// (PanelTreeNode, PanelLeafNode, PanelSplitNode) instead.
 // ---------------------------------------------------------------------------
 
+/** @deprecated Use PanelLeafNode instead. Kept for eventlog backward compatibility. */
 export interface LeafNode {
   readonly _tag: 'LeafNode'
   /** Whether the dev server terminal sidebar is open for this pane. */
@@ -144,6 +150,7 @@ export interface LeafNode {
   readonly workspaceId?: string | undefined
 }
 
+/** @deprecated Use PanelSplitNode instead. Kept for eventlog backward compatibility. */
 export interface SplitNode {
   readonly _tag: 'SplitNode'
   readonly children: readonly PanelNode[]
@@ -152,8 +159,10 @@ export interface SplitNode {
   readonly sizes: readonly number[]
 }
 
+/** @deprecated Use PanelTreeNode instead. Kept for eventlog backward compatibility. */
 export type PanelNode = LeafNode | SplitNode
 
+/** @deprecated Kept for eventlog backward compatibility. */
 export const LeafNodeSchema: Schema.Schema<LeafNode> = Schema.TaggedStruct(
   'LeafNode',
   {
@@ -167,6 +176,7 @@ export const LeafNodeSchema: Schema.Schema<LeafNode> = Schema.TaggedStruct(
   }
 )
 
+/** @deprecated Kept for eventlog backward compatibility. */
 export const SplitNodeSchema: Schema.Schema<SplitNode> = Schema.TaggedStruct(
   'SplitNode',
   {
@@ -179,16 +189,19 @@ export const SplitNodeSchema: Schema.Schema<SplitNode> = Schema.TaggedStruct(
   }
 )
 
+/** @deprecated Kept for eventlog backward compatibility. */
 export const PanelNodeSchema: Schema.Schema<PanelNode> = Schema.Union(
   LeafNodeSchema,
   SplitNodeSchema
 )
 
+/** @deprecated Kept for eventlog backward compatibility. */
 export interface PanelLayout {
   readonly activePaneId?: string | undefined
   readonly root: PanelNode
 }
 
+/** @deprecated Kept for eventlog backward compatibility. */
 export const PanelLayoutSchema: Schema.Schema<PanelLayout> = Schema.Struct({
   root: PanelNodeSchema,
   activePaneId: Schema.optional(Schema.String),

@@ -6,7 +6,7 @@ Parent PRD: [PRD.md](./PRD.md)
 
 ## Issue 1: PanelManager renders PanelTreeNode directly
 
-**Status:** open
+**Status:** done
 
 ### What to build
 
@@ -46,7 +46,7 @@ None - can start immediately.
 
 ## Issue 2: Schema: no-op legacy materializers and remove deprecated columns
 
-**Status:** open
+**Status:** done
 
 ### What to build
 
@@ -80,7 +80,7 @@ None - can start immediately.
 
 ## Issue 3: handleSetActivePaneId uses hierarchical focus only
 
-**Status:** open
+**Status:** done
 
 ### What to build
 
@@ -123,7 +123,7 @@ See PRD Module 3: "Focus tracking consolidation" and the focus border fix analys
 
 ## Issue 4: handleSplitPane operates on hierarchical tree
 
-**Status:** open
+**Status:** done
 
 ### What to build
 
@@ -165,7 +165,7 @@ See PRD Module 2: "handleSplitPane" section.
 
 ## Issue 5: handleClosePane operates on hierarchical tree
 
-**Status:** open
+**Status:** done
 
 ### What to build
 
@@ -204,7 +204,7 @@ See PRD Module 2: "handleClosePane" section.
 
 ## Issue 6: handleAssignTerminalToPane uses hierarchical tree
 
-**Status:** open
+**Status:** done
 
 ### What to build
 
@@ -240,7 +240,7 @@ See PRD Module 2: "handleAssignTerminalToPane" section.
 
 ## Issue 7: handleCloseWorkspace and handleCloseTerminalPane use hierarchical tree
 
-**Status:** open
+**Status:** done
 
 ### What to build
 
@@ -275,7 +275,7 @@ See PRD Module 2: "handleCloseWorkspace" and "handleCloseTerminalPane" sections.
 
 ## Issue 8: handleToggleDevServerPane as panel tab toggle
 
-**Status:** open
+**Status:** done
 
 ### What to build
 
@@ -310,7 +310,7 @@ See PRD Module 2: "handleToggleDevServerPane" section.
 
 ## Issue 9: handleResizePane walks PanelTreeNode
 
-**Status:** open
+**Status:** done
 
 ### What to build
 
@@ -344,7 +344,7 @@ See PRD Module 2: "handleResizePane" section.
 
 ## Issue 10: Port index.tsx consumers to hierarchical tree
 
-**Status:** open
+**Status:** done
 
 ### What to build
 
@@ -389,7 +389,7 @@ See PRD Module 4: "Consumer porting" section.
 
 ## Issue 11: Port PanelHotkeys to hierarchical tree
 
-**Status:** open
+**Status:** done
 
 ### What to build
 
@@ -426,7 +426,7 @@ See PRD Module 4: "PanelHotkeys" section.
 
 ## Issue 12: Seeding and reconciliation: hierarchical only
 
-**Status:** open
+**Status:** done
 
 ### What to build
 
@@ -469,7 +469,7 @@ See PRD Module 6: "Seeding and reconciliation".
 
 ## Issue 13: Remove LegacyWorkspaceFrames and flatLayout prop
 
-**Status:** open
+**Status:** done
 
 ### What to build
 
@@ -509,7 +509,7 @@ See PRD Module 4: "WorkspaceFrames" and "PanelContent" sections.
 
 ## Issue 14: Dead code removal
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

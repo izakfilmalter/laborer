@@ -11,12 +11,12 @@
  * @see Issue #75: Keyboard shortcut — split horizontal
  */
 
-import type { LeafNode, SplitDirection } from '@laborer/shared/types'
+import type { PanelLeafNode, SplitDirection } from '@laborer/shared/types'
 import { createContext, useContext } from 'react'
 
 /**
  * Direction for pane resize operations.
- * Duplicated from layout-utils to avoid circular imports.
+ * Duplicated from window-tab-utils to avoid circular imports.
  */
 type ResizeDirection = 'left' | 'right' | 'up' | 'down'
 
@@ -68,14 +68,14 @@ interface PanelActions {
    * Split a pane into two. The original pane stays; a new sibling pane
    * is added in the given direction.
    *
-   * @param paneId - The ID of the LeafNode to split
+   * @param paneId - The ID of the pane to split
    * @param direction - "horizontal" (side-by-side) or "vertical" (stacked)
    * @param newPaneContent - Optional content for the new pane
    */
   readonly splitPane: (
     paneId: string,
     direction: SplitDirection,
-    newPaneContent?: Partial<LeafNode>
+    newPaneContent?: Partial<PanelLeafNode>
   ) => void
   /**
    * Toggle the dev server terminal alongside a terminal pane.

@@ -1,10 +1,10 @@
 /**
  * PanelManager — tmux-style panel system for rendering terminal and diff panes.
  *
- * Renders a panel layout based on a `PanelNode` tree structure. Supports:
- * - Single pane rendering (LeafNode)
- * - Horizontal split (SplitNode with direction "horizontal") — side-by-side panes
- * - Vertical split (SplitNode with direction "vertical") — stacked panes
+ * Renders a panel layout based on a `PanelTreeNode` tree structure. Supports:
+ * - Single pane rendering (PanelLeafNode)
+ * - Horizontal split (PanelSplitNode with direction "horizontal") — side-by-side panes
+ * - Vertical split (PanelSplitNode with direction "vertical") — stacked panes
  * - Recursive nesting of splits to arbitrary depth (5+ levels tested)
  * - Close pane with automatic tree collapse
  *
@@ -30,9 +30,9 @@
  * Split/close/diff-toggle actions have moved to the PanelHeaderBar in the
  * route component. PanelActionsContext is still used for active-pane tracking.
  *
- * @see packages/shared/src/types.ts — PanelNode, LeafNode, SplitNode types
+ * @see packages/shared/src/types.ts — PanelTreeNode, PanelLeafNode, PanelSplitNode types
  * @see apps/web/src/panes/terminal-pane.tsx — Terminal pane component
- * @see apps/web/src/panels/layout-utils.ts — Tree manipulation functions
+ * @see apps/web/src/panels/window-tab-utils.ts — Tree manipulation functions
  * @see apps/web/src/panels/panel-context.tsx — PanelActionsContext
  * @see Issue #66: PanelManager — single pane rendering
  * @see Issue #67: PanelManager — horizontal split
@@ -45,13 +45,19 @@
 
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { workspaces } from '@laborer/shared/schema'
-import type { LeafNode, PanelNode, SplitNode } from '@laborer/shared/types'
+import type {
+  PanelLeafNode,
+  PanelSplitNode,
+  PanelTreeNode,
+  PaneType,
+} from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
-import { Layers, Plus, Terminal as TerminalIcon } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { Layers, Plus, Server, Terminal as TerminalIcon } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { GroupImperativeHandle } from 'react-resizable-panels'
-import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { TerminalOverlayToolbar } from '@/components/terminal-overlay-toolbar'
 import { Button } from '@/components/ui/button'
 import {
   Empty,
@@ -61,6 +67,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { PanelTypePicker } from '@/components/ui/panel-type-picker'
 import {
   ResizableHandle,
   ResizablePanel,
@@ -74,13 +81,23 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
+import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
-import { usePanelActions } from '@/panels/panel-context'
+import {
+  useActivePaneId,
+  useFullscreenPaneId,
+  useFullscreenPortal,
+  usePanelActions,
+  usePendingClosePane,
+  usePendingPicker,
+} from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
+import { TerminalPaneWithSidebars } from '@/panels/terminal-pane-with-sidebars'
 import { DevServerTerminalPane } from '@/panes/dev-server-terminal-pane'
 import { DiffPane } from '@/panes/diff-pane'
-import { TerminalPane } from '@/panes/terminal-pane'
+import { ReviewPane } from '@/panes/review-pane'
+import { PaneCloseConfirmDialog } from '@/routes/-components/close-dialogs'
 
 const allWorkspaces$ = queryDb(workspaces, { label: 'paneWorkspaces' })
 const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
@@ -143,14 +160,14 @@ interface EmptyTerminalPaneProps {
 }
 
 /**
- * Empty state for terminal panes with no terminal assigned.
+ * Transient empty state for terminal panes with no terminal assigned.
  *
- * Provides a CTA to spawn a terminal directly in this pane:
- * - If the pane has a workspaceId or exactly one active workspace exists,
- *   a single "Spawn Terminal" button spawns and assigns immediately.
- * - If multiple active workspaces exist, a dropdown lets the user pick
- *   which workspace to spawn in.
- * - If no active workspaces exist, shows guidance pointing to the sidebar.
+ * This state is normally very brief — callers like `handleAddPanelTab` and
+ * `handleSplitPane` already auto-spawn a terminal and assign it to the pane.
+ * This component shows a loading indicator while the spawn is in flight.
+ *
+ * If the spawn fails or no active workspace exists, falls back to a manual
+ * CTA so the user can retry or select a workspace.
  */
 function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
   const store = useLaborerStore()
@@ -160,7 +177,11 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
     mode: 'promise',
   })
   const [isSpawning, setIsSpawning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('')
+  // Show loading initially — callers typically auto-spawn before this renders.
+  // After a short delay, if still no terminal, show the manual CTA.
+  const [showCta, setShowCta] = useState(false)
 
   const activeWorkspaces = workspaceList.filter(
     (ws) => ws.status === 'running' || ws.status === 'creating'
@@ -177,11 +198,11 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
       return
     }
     setIsSpawning(true)
+    setError(null)
     try {
       const result = await spawnTerminal({
         payload: { workspaceId: resolvedWorkspaceId },
       })
-      toast.success(`Terminal spawned: ${result.command}`)
       if (panelActions) {
         panelActions.assignTerminalToPane(
           result.id,
@@ -189,14 +210,54 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
           paneId
         )
       }
-    } catch (error) {
-      toast.error(`Failed to spawn terminal: ${extractErrorMessage(error)}`)
+    } catch (spawnError) {
+      setError(extractErrorMessage(spawnError))
+      toast.error(
+        `Failed to spawn terminal: ${extractErrorMessage(spawnError)}`
+      )
     } finally {
       setIsSpawning(false)
     }
   }, [spawnTerminal, resolvedWorkspaceId, panelActions, paneId])
 
+  // If this component is still mounted after a short delay, the caller's
+  // auto-spawn either failed or wasn't triggered. Show the manual CTA.
+  useEffect(() => {
+    // No workspace available — show CTA immediately so user gets guidance.
+    if (activeWorkspaces.length === 0) {
+      setShowCta(true)
+      return
+    }
+    const timer = setTimeout(() => {
+      setShowCta(true)
+    }, 3000)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [activeWorkspaces.length])
+
   const hasMultipleWorkspaces = !workspaceId && activeWorkspaces.length > 1
+
+  const getDescription = (): string => {
+    if (isSpawning) {
+      return 'Spawning a terminal...'
+    }
+    if (error) {
+      return error
+    }
+    if (!showCta) {
+      return 'Spawning a terminal...'
+    }
+    if (activeWorkspaces.length === 0) {
+      return 'Create a workspace first, then spawn a terminal to see output here.'
+    }
+    return 'Spawn a terminal in a workspace to see output here.'
+  }
+  const description = getDescription()
+
+  const getButtonLabel = (err: string | null): string =>
+    err ? 'Retry' : 'Spawn Terminal'
+  const showActions = showCta && activeWorkspaces.length > 0
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-background">
@@ -205,14 +266,12 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
           <EmptyMedia variant="icon">
             <TerminalIcon />
           </EmptyMedia>
-          <EmptyTitle>No terminal</EmptyTitle>
-          <EmptyDescription>
-            {activeWorkspaces.length === 0
-              ? 'Create a workspace first, then spawn a terminal to see output here.'
-              : 'Spawn a terminal in a workspace to see output here.'}
-          </EmptyDescription>
+          <EmptyTitle>
+            {showCta && !isSpawning ? 'No terminal' : 'Starting terminal...'}
+          </EmptyTitle>
+          <EmptyDescription>{description}</EmptyDescription>
         </EmptyHeader>
-        {activeWorkspaces.length > 0 && (
+        {(showActions || error) && (
           <EmptyContent>
             {hasMultipleWorkspaces && (
               <Select
@@ -238,7 +297,93 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
               variant="outline"
             >
               <Plus className="size-3.5" />
-              {isSpawning ? 'Spawning...' : 'Spawn Terminal'}
+              {isSpawning ? 'Spawning...' : getButtonLabel(error)}
+            </Button>
+          </EmptyContent>
+        )}
+      </Empty>
+    </div>
+  )
+}
+
+interface EmptyDevServerPaneProps {
+  /** The pane ID, used to assign the spawned dev server terminal to this pane. */
+  readonly paneId: string
+  /** Pre-assigned workspace ID from the pane node. */
+  readonly workspaceId: string
+}
+
+/**
+ * Empty state for dev server terminal panes with no terminal assigned.
+ *
+ * Automatically spawns a dev server terminal with `autoRun: true` on mount.
+ * While spawning, shows a loading indicator. If the spawn fails, shows an
+ * error with a retry button.
+ */
+function EmptyDevServerPane({ paneId, workspaceId }: EmptyDevServerPaneProps) {
+  const panelActions = usePanelActions()
+  const spawnTerminal = useAtomSet(spawnTerminalMutation, {
+    mode: 'promise',
+  })
+  const [isSpawning, setIsSpawning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const hasSpawned = useRef(false)
+
+  const description = isSpawning
+    ? 'Spawning the dev server terminal for this workspace.'
+    : (error ?? 'The dev server terminal will start automatically.')
+
+  const handleSpawn = useCallback(async () => {
+    setIsSpawning(true)
+    setError(null)
+    try {
+      const result = await spawnTerminal({
+        payload: { workspaceId, autoRun: true },
+      })
+      if (panelActions) {
+        panelActions.assignTerminalToPane(result.id, workspaceId, paneId)
+      }
+    } catch (spawnError) {
+      setError(extractErrorMessage(spawnError))
+      toast.error(
+        `Failed to spawn dev server: ${extractErrorMessage(spawnError)}`
+      )
+    } finally {
+      setIsSpawning(false)
+    }
+  }, [spawnTerminal, workspaceId, panelActions, paneId])
+
+  // Auto-spawn on mount
+  useEffect(() => {
+    if (hasSpawned.current) {
+      return
+    }
+    hasSpawned.current = true
+    handleSpawn()
+  }, [handleSpawn])
+
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-background">
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Server />
+          </EmptyMedia>
+          <EmptyTitle>
+            {isSpawning ? 'Starting dev server...' : 'Dev server'}
+          </EmptyTitle>
+          <EmptyDescription>{description}</EmptyDescription>
+        </EmptyHeader>
+        {error && (
+          <EmptyContent>
+            <Button
+              disabled={isSpawning}
+              onClick={handleSpawn}
+              size="sm"
+              variant="outline"
+            >
+              <Plus className="size-3.5" />
+              Retry
             </Button>
           </EmptyContent>
         )}
@@ -249,93 +394,24 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
 
 interface PaneContentProps {
   /** The leaf node describing this pane's content. */
-  readonly node: LeafNode
-}
-
-/**
- * Renders a terminal pane with optional sidebars (diff, dev server terminal).
- * Extracted to keep PaneContent under complexity limits.
- */
-function TerminalPaneWithSidebars({ node }: PaneContentProps) {
-  const { paneMin } = useResponsiveLayout()
-
-  const showDiff = node.diffOpen === true && node.workspaceId !== undefined
-  const showDevServer =
-    node.devServerOpen === true && node.devServerTerminalId !== undefined
-
-  // No sidebars — render terminal only
-  if (!(showDiff || showDevServer)) {
-    return <TerminalPane terminalId={node.terminalId as string} />
-  }
-
-  // Diff sidebar only
-  if (showDiff && !showDevServer) {
-    return (
-      <ResizablePanelGroup orientation="horizontal">
-        <ResizablePanel defaultSize="60%" minSize={paneMin}>
-          <TerminalPane terminalId={node.terminalId as string} />
-        </ResizablePanel>
-        <ResizableHandle />
-        <ResizablePanel defaultSize="40%" minSize={paneMin}>
-          <DiffPane workspaceId={node.workspaceId as string} />
-        </ResizablePanel>
-      </ResizablePanelGroup>
-    )
-  }
-
-  // Dev server sidebar only
-  if (showDevServer && !showDiff) {
-    return (
-      <ResizablePanelGroup orientation="vertical">
-        <ResizablePanel defaultSize="60%" minSize={paneMin}>
-          <TerminalPane terminalId={node.terminalId as string} />
-        </ResizablePanel>
-        <ResizableHandle />
-        <ResizablePanel defaultSize="40%" minSize={paneMin}>
-          <DevServerTerminalPane
-            terminalId={node.devServerTerminalId as string}
-          />
-        </ResizablePanel>
-      </ResizablePanelGroup>
-    )
-  }
-
-  // Both sidebars — terminal + diff on right, dev server below terminal
-  return (
-    <ResizablePanelGroup orientation="vertical">
-      <ResizablePanel defaultSize="60%" minSize={paneMin}>
-        <ResizablePanelGroup orientation="horizontal">
-          <ResizablePanel defaultSize="60%" minSize={paneMin}>
-            <TerminalPane terminalId={node.terminalId as string} />
-          </ResizablePanel>
-          <ResizableHandle />
-          <ResizablePanel defaultSize="40%" minSize={paneMin}>
-            <DiffPane workspaceId={node.workspaceId as string} />
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      </ResizablePanel>
-      <ResizableHandle />
-      <ResizablePanel defaultSize="40%" minSize={paneMin}>
-        <DevServerTerminalPane
-          terminalId={node.devServerTerminalId as string}
-        />
-      </ResizablePanel>
-    </ResizablePanelGroup>
-  )
+  readonly node: PanelLeafNode
+  /** Callback invoked when the terminal process exits. */
+  readonly onTerminalExit?: (() => void) | undefined
 }
 
 /**
  * Renders the content of a single pane based on its type and assigned IDs.
  *
- * Terminal panes with `diffOpen: true` render the diff as an integrated
- * sidebar (resizable) alongside the terminal within the same pane container.
- * Dev server terminal panes render with `devServerOpen: true` as a vertically
- * stacked panel below the main terminal. This keeps the dev server terminal
- * visually coupled to its workspace terminal.
+ * In the hierarchical layout model, diff, review, and dev server panes are
+ * independent panel types in separate panes/tabs rather than sidebar flags
+ * on terminal leaves. This simplifies PaneContent to a straightforward
+ * dispatch on pane type.
  */
-function PaneContent({ node }: PaneContentProps) {
+function PaneContent({ node, onTerminalExit }: PaneContentProps) {
   if (node.paneType === 'terminal' && node.terminalId) {
-    return <TerminalPaneWithSidebars node={node} />
+    return (
+      <TerminalPaneWithSidebars node={node} onTerminalExit={onTerminalExit} />
+    )
   }
 
   // Dev server terminal rendered as a standalone pane
@@ -343,9 +419,34 @@ function PaneContent({ node }: PaneContentProps) {
     return <DevServerTerminalPane terminalId={node.terminalId} />
   }
 
+  // Dev server pane without terminal — auto-spawn dev server
+  if (node.paneType === 'devServerTerminal' && node.workspaceId) {
+    return (
+      <EmptyDevServerPane paneId={node.id} workspaceId={node.workspaceId} />
+    )
+  }
+
+  // Agent pane — agent is a terminal running the configured agent command.
+  // This branch handles the edge case where an 'agent' pane type is
+  // persisted directly (normally, 'agent' is converted to 'terminal'
+  // before layout creation). Render as an empty terminal pane.
+  if (node.paneType === 'agent') {
+    return <EmptyTerminalPane paneId={node.id} workspaceId={node.workspaceId} />
+  }
+
   // Empty pane — use guided empty state with CTA for terminal panes
   if (node.paneType === 'terminal') {
     return <EmptyTerminalPane paneId={node.id} workspaceId={node.workspaceId} />
+  }
+
+  // Diff pane — displays workspace diffs as a standalone panel
+  if (node.paneType === 'diff' && node.workspaceId) {
+    return <DiffPane workspaceId={node.workspaceId} />
+  }
+
+  // Review pane — displays PR review findings and comments
+  if (node.paneType === 'review' && node.workspaceId) {
+    return <ReviewPane workspaceId={node.workspaceId} />
   }
 
   // Generic empty pane (non-terminal)
@@ -372,18 +473,18 @@ function PaneContent({ node }: PaneContentProps) {
 
 interface PanelRendererProps {
   /** The panel node tree to render. */
-  readonly node: PanelNode
+  readonly node: PanelTreeNode
 }
 
 /**
- * Renders a SplitNode as a resizable panel group with children separated
+ * Renders a PanelSplitNode as a resizable panel group with children separated
  * by drag handles.
  *
  * - direction "horizontal" → side-by-side panes (row layout)
  * - direction "vertical" → stacked panes (column layout)
  *
  * Each child is rendered recursively via PanelRenderer, supporting
- * arbitrary nesting depth. Panel sizes are taken from the SplitNode's
+ * arbitrary nesting depth. Panel sizes are taken from the PanelSplitNode's
  * sizes array (percentages that must sum to 100).
  *
  * Registers the ResizablePanelGroup's imperative handle with the
@@ -392,7 +493,7 @@ interface PanelRendererProps {
  *
  * @see Issue #79: Keyboard shortcut — resize panes
  */
-function SplitPanelRenderer({ node }: { readonly node: SplitNode }) {
+function SplitPanelRenderer({ node }: { readonly node: PanelSplitNode }) {
   const registry = usePanelGroupRegistry()
   const setGroupRef = useCallback(
     (handle: GroupImperativeHandle | null) => {
@@ -446,7 +547,7 @@ function SplitChild({
   defaultSize,
   index,
 }: {
-  readonly child: PanelNode
+  readonly child: PanelTreeNode
   readonly defaultSize: number
   readonly index: number
 }) {
@@ -466,10 +567,44 @@ function SplitChild({
 }
 
 /**
+ * Inline panel type picker overlay, rendered within a pane's container.
+ * Follows the same pattern as PaneCloseConfirmDialog — absolute positioning
+ * with a backdrop, centered content, keyboard focus captured on mount.
+ */
+function PanePickerOverlay({
+  onSelect,
+  onCancel,
+}: {
+  readonly onSelect: (type: PaneType) => void
+  readonly onCancel: () => void
+}) {
+  return (
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Picker overlay needs click-outside-to-dismiss on backdrop
+    <div
+      className="absolute inset-0 z-50 flex items-center justify-center"
+      onMouseDown={(e) => {
+        // Clicking the backdrop (not the picker) cancels
+        if (e.target === e.currentTarget) {
+          onCancel()
+        }
+      }}
+      role="dialog"
+    >
+      {/* Backdrop — covers only the pane */}
+      <div className="absolute inset-0 bg-foreground/10 supports-backdrop-filter:backdrop-blur-xs" />
+      {/* Picker content */}
+      <div className="relative z-10">
+        <PanelTypePicker onCancel={onCancel} onSelect={onSelect} />
+      </div>
+    </div>
+  )
+}
+
+/**
  * Renders a LeafNode pane with drop target support for terminal drag-and-drop.
  *
- * The active-pane focus border is rendered on the outer panel container
- * (in the route component), not on individual leaf panes.
+ * The active pane gets a subtle `ring-1 ring-primary/50` highlight to
+ * distinguish it from unfocused panes within a split.
  * Drag-over drop target uses `border-primary bg-primary/5` for visual feedback.
  *
  * Empty terminal panes (no terminalId assigned) accept drops from the
@@ -483,11 +618,58 @@ function SplitChild({
  * @see Issue #134: Drag terminal from sidebar onto empty panel pane
  * @see Issue #148: Focused pane border fix
  */
-function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
+function LeafPaneRenderer({ node }: { readonly node: PanelLeafNode }) {
   const actions = usePanelActions()
+  const activePaneId = useActivePaneId()
+  const fullscreenPaneId = useFullscreenPaneId()
+  const fullscreenPortalRef = useFullscreenPortal()
+  const pendingClose = usePendingClosePane()
+  const pendingPicker = usePendingPicker()
   const [isDragOver, setIsDragOver] = useState(false)
+  const paneContainerRef = useRef<HTMLDivElement | null>(null)
+
+  const isFullscreen = fullscreenPaneId === node.id
+  const isActive = activePaneId === node.id
+
+  // When this pane becomes active (via keyboard navigation, tab switch, or
+  // split), transfer DOM focus to it. This ensures terminal panes receive
+  // keyboard input immediately without requiring a click.
+  useEffect(() => {
+    if (!isActive) {
+      return
+    }
+    const container = paneContainerRef.current
+    if (!container) {
+      return
+    }
+    // Check if focus is already inside this pane
+    if (container.contains(document.activeElement)) {
+      return
+    }
+    // Focus the first focusable element inside (xterm.js canvas for terminals,
+    // or the container itself for non-terminal panes).
+    const focusable = container.querySelector<HTMLElement>(
+      'canvas, textarea, input, [tabindex="0"]'
+    )
+    if (focusable) {
+      focusable.focus()
+    } else {
+      container.focus()
+    }
+  }, [isActive])
+
+  /**
+   * Auto-close the pane when the terminal process exits.
+   * Invoked by TerminalPane when it receives a "stopped" status
+   * control message from the WebSocket.
+   */
+  const handleTerminalExit = useCallback(() => {
+    actions?.closePane(node.id)
+  }, [actions, node.id])
 
   const isEmptyTerminalPane = node.paneType === 'terminal' && !node.terminalId
+  const isOccupiedTerminalPane =
+    node.paneType === 'terminal' && !!node.terminalId
 
   const handleDragOver = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
@@ -542,9 +724,11 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
   let borderClass = ''
   if (isDragOver) {
     borderClass = 'border-2 border-primary bg-primary/5'
+  } else if (isActive) {
+    borderClass = 'ring-1 ring-primary/50'
   }
 
-  return (
+  const paneContent = (
     // biome-ignore lint/a11y/useSemanticElements: Panel pane container requires drag-and-drop target behavior
     // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Drag-and-drop handlers on pane container are essential for terminal assignment
     <div
@@ -556,30 +740,70 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
       onDrop={handleDrop}
       onFocusCapture={() => actions?.setActivePaneId(node.id)}
       onMouseDownCapture={() => actions?.setActivePaneId(node.id)}
+      ref={paneContainerRef}
       role="region"
+      tabIndex={-1}
     >
-      <PaneContent node={node} />
+      <PaneContent node={node} onTerminalExit={handleTerminalExit} />
+      {isOccupiedTerminalPane && (
+        <TerminalOverlayToolbar
+          actions={actions}
+          isFullscreen={isFullscreen}
+          paneId={node.id}
+        />
+      )}
+      {pendingClose.paneId === node.id && (
+        <PaneCloseConfirmDialog
+          onCancel={pendingClose.onCancel}
+          onCloseAndDestroy={pendingClose.onCloseAndDestroy}
+          onConfirm={pendingClose.onConfirm}
+        />
+      )}
+      {pendingPicker.paneId === node.id && (
+        <PanePickerOverlay
+          onCancel={pendingPicker.onCancel}
+          onSelect={pendingPicker.onSelect}
+        />
+      )}
     </div>
   )
+
+  // When fullscreened, portal the pane content into a container that sits
+  // above the entire panel hierarchy. The pane stays mounted in React's
+  // component tree (preserving xterm.js instance, WebGL context, WebSocket
+  // connection, and all hook state) but its DOM output renders into an
+  // absolutely-positioned overlay at the PanelContent level.
+  //
+  // Sibling terminals are completely untouched — they keep their DOM
+  // position, dimensions, and ResizeObserver state. Only the fullscreened
+  // pane needs a re-fit (handled by its ResizeObserver when the portal
+  // container expands to fill the panel area). When fullscreen exits, the
+  // portal is removed and the pane renders back in its original slot —
+  // its ResizeObserver fires one resize, but siblings never changed.
+  if (isFullscreen && fullscreenPortalRef) {
+    return createPortal(paneContent, fullscreenPortalRef)
+  }
+
+  return paneContent
 }
 
 /**
- * Recursively renders a PanelNode tree.
+ * Recursively renders a PanelTreeNode tree.
  *
- * - LeafNode → renders PaneContent with the appropriate component,
+ * - PanelLeafNode → renders PaneContent with the appropriate component,
  *   wrapped in a container with active-pane highlighting and drop target
  *   support for terminal drag-and-drop.
- * - SplitNode → renders a ResizablePanelGroup with each child in a
+ * - PanelSplitNode → renders a ResizablePanelGroup with each child in a
  *   ResizablePanel, separated by ResizableHandles. Supports horizontal
  *   (side-by-side) and vertical (stacked) orientations, and recursive
  *   nesting to arbitrary depth (5+ levels).
  */
 function PanelRenderer({ node }: PanelRendererProps) {
-  if (node._tag === 'LeafNode') {
+  if (node._tag === 'PanelLeafNode') {
     return <LeafPaneRenderer node={node} />
   }
 
-  // SplitNode — render children in a resizable panel group
+  // PanelSplitNode — render children in a resizable panel group
   if (node.children.length === 0) {
     return null
   }
@@ -592,7 +816,7 @@ interface PanelManagerProps {
    * The root panel node to render. When undefined, renders an empty state
    * guiding the user to create a workspace and spawn a terminal.
    */
-  readonly layout?: PanelNode | undefined
+  readonly layout?: PanelTreeNode | undefined
 }
 
 /**

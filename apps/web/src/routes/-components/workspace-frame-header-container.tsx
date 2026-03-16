@@ -1,6 +1,6 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { projects, workspaces } from '@laborer/shared/schema'
-import type { PanelNode } from '@laborer/shared/types'
+import type { PanelTreeNode } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
 import { useEffect, useMemo } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -8,8 +8,8 @@ import { WorkspaceFrameHeader } from '@/components/workspace-frame-header'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
 import { useLaborerStore } from '@/livestore/store'
-import { getScopedActivePaneId } from '@/panels/layout-utils'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
+import { getPanelTreeLeafIds } from '@/panels/window-tab-utils'
 
 /** LiveStore query for projects (used by PanelHeaderBar to resolve names). */
 const allProjects$ = queryDb(projects, { label: 'headerProjects' })
@@ -35,7 +35,7 @@ export function WorkspaceFrameHeaderContainer({
   reviewIsOpen,
 }: {
   readonly workspaceId: string | undefined
-  readonly subLayout: PanelNode
+  readonly subLayout: PanelTreeNode
   readonly dragHandleRef?:
     | { readonly current: HTMLDivElement | null }
     | undefined
@@ -55,10 +55,16 @@ export function WorkspaceFrameHeaderContainer({
   // Scope the active pane to this workspace's sub-tree so header buttons
   // always operate on a pane within their own workspace, not the globally
   // focused one that may belong to a different workspace.
-  const scopedActivePaneId = useMemo(
-    () => getScopedActivePaneId(subLayout, globalActivePaneId),
-    [subLayout, globalActivePaneId]
-  )
+  const scopedActivePaneId = useMemo(() => {
+    const leafIds = getPanelTreeLeafIds(subLayout)
+    if (
+      globalActivePaneId != null &&
+      leafIds.some((id) => id === globalActivePaneId)
+    ) {
+      return globalActivePaneId
+    }
+    return leafIds[0] ?? null
+  }, [subLayout, globalActivePaneId])
 
   // Derive workspace-level agent status from the terminal list
   const { terminals } = useTerminalList()

@@ -10,6 +10,7 @@
 
 import type {
   PanelLeafNode,
+  PanelSplitNode,
   PanelTab,
   WindowLayout,
   WindowTab,
@@ -20,16 +21,29 @@ import type {
 import { describe, expect, it } from 'vitest'
 import {
   addWindowTab,
+  computeClosePaneGateActionHierarchical,
+  computeCloseWorkspaceActionHierarchical,
+  computeResizePanelTree,
+  findEmptyPanelTreeLeaf,
+  findNewPanelTreeLeaf,
+  findPaneInDirectionPanelTree,
+  findPaneInWindowLayout,
+  findPanelTreeRootForPane,
+  findSiblingPaneIdInPanelTree,
   findTerminalLocation,
   findWorkspaceLocation,
   getActiveWindowTab,
   getAllWorkspaceTileLeaves,
+  getLastPanelTreeLeafId,
   getWorkspaceTileLeaves,
+  isWorkspaceFrameData,
   removeWindowTab,
   reorderWindowTabs,
+  splitPaneInPanelTree,
   switchWindowTab,
   switchWindowTabByIndex,
   switchWindowTabRelative,
+  WORKSPACE_FRAME_TYPE,
 } from '../src/panels/window-tab-utils'
 
 // ---------------------------------------------------------------------------
@@ -707,5 +721,1035 @@ describe('combined operations', () => {
     // Tab order is now: tab-2, tab-3, tab-1
     const switched = switchWindowTabByIndex(reordered, 3)
     expect(switched.activeTabId).toBe('tab-1')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// splitPaneInPanelTree
+// ---------------------------------------------------------------------------
+
+describe('splitPaneInPanelTree', () => {
+  it('wraps a leaf in a split with a new sibling', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const result = splitPaneInPanelTree(leaf, 'pane-1', 'horizontal')
+    expect(result._tag).toBe('PanelSplitNode')
+    const split = result as PanelSplitNode
+    expect(split.direction).toBe('horizontal')
+    expect(split.children).toHaveLength(2)
+    expect(split.children[0]).toBe(leaf)
+    expect(split.children[1]?._tag).toBe('PanelLeafNode')
+    expect(split.sizes).toEqual([50, 50])
+  })
+
+  it('new pane inherits workspaceId from target', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const result = splitPaneInPanelTree(leaf, 'pane-1', 'vertical')
+    const split = result as PanelSplitNode
+    const newLeaf = split.children[1]
+    expect(newLeaf?._tag).toBe('PanelLeafNode')
+    if (newLeaf?._tag === 'PanelLeafNode') {
+      expect(newLeaf.workspaceId).toBe('ws-1')
+      expect(newLeaf.paneType).toBe('terminal')
+    }
+  })
+
+  it('respects newPaneContent overrides', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const result = splitPaneInPanelTree(leaf, 'pane-1', 'horizontal', {
+      paneType: 'agent',
+      workspaceId: 'ws-2',
+    })
+    const split = result as PanelSplitNode
+    const newLeaf = split.children[1]
+    if (newLeaf?._tag === 'PanelLeafNode') {
+      expect(newLeaf.paneType).toBe('agent')
+      expect(newLeaf.workspaceId).toBe('ws-2')
+    }
+  })
+
+  it('inserts adjacent when direction matches parent split', () => {
+    const leaf1 = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const leaf2 = makeLeaf('pane-2', 'term-2', 'ws-1')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    // Split pane-1 horizontally — should insert adjacent, not nest
+    const result = splitPaneInPanelTree(split, 'pane-1', 'horizontal')
+    expect(result._tag).toBe('PanelSplitNode')
+    const resultSplit = result as PanelSplitNode
+    expect(resultSplit.children).toHaveLength(3)
+    expect(resultSplit.children[0]?.id).toBe('pane-1')
+    expect(resultSplit.children[1]?._tag).toBe('PanelLeafNode')
+    expect(resultSplit.children[2]?.id).toBe('pane-2')
+    // Equal sizes for 3 children
+    const expectedSize = 100 / 3
+    for (const size of resultSplit.sizes) {
+      expect(size).toBeCloseTo(expectedSize)
+    }
+  })
+
+  it('nests when direction differs from parent split', () => {
+    const leaf1 = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const leaf2 = makeLeaf('pane-2', 'term-2', 'ws-1')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    // Split pane-1 vertically — should nest since parent is horizontal
+    const result = splitPaneInPanelTree(split, 'pane-1', 'vertical')
+    expect(result._tag).toBe('PanelSplitNode')
+    const resultSplit = result as PanelSplitNode
+    // Parent still has 2 children
+    expect(resultSplit.children).toHaveLength(2)
+    // First child is now a vertical split
+    expect(resultSplit.children[0]?._tag).toBe('PanelSplitNode')
+    const nestedSplit = resultSplit.children[0] as PanelSplitNode
+    expect(nestedSplit.direction).toBe('vertical')
+    expect(nestedSplit.children).toHaveLength(2)
+    expect(nestedSplit.children[0]).toBe(leaf1)
+  })
+
+  it('returns unchanged tree when pane not found', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const result = splitPaneInPanelTree(leaf, 'nonexistent', 'horizontal')
+    expect(result).toBe(leaf)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findNewPanelTreeLeaf
+// ---------------------------------------------------------------------------
+
+describe('findNewPanelTreeLeaf', () => {
+  it('finds the new leaf after a split', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const after = splitPaneInPanelTree(leaf, 'pane-1', 'horizontal')
+    const newLeaf = findNewPanelTreeLeaf(leaf, after)
+    expect(newLeaf).toBeDefined()
+    expect(newLeaf?.id).not.toBe('pane-1')
+    expect(newLeaf?._tag).toBe('PanelLeafNode')
+  })
+
+  it('returns undefined when trees are identical', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const result = findNewPanelTreeLeaf(leaf, leaf)
+    expect(result).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findSiblingPaneIdInPanelTree
+// ---------------------------------------------------------------------------
+
+describe('findSiblingPaneIdInPanelTree', () => {
+  it('returns sibling after target in a split', () => {
+    const leaf1 = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const leaf2 = makeLeaf('pane-2', 'term-2', 'ws-1')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    expect(findSiblingPaneIdInPanelTree(split, 'pane-1')).toBe('pane-2')
+  })
+
+  it('returns sibling before target when target is last', () => {
+    const leaf1 = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const leaf2 = makeLeaf('pane-2', 'term-2', 'ws-1')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    expect(findSiblingPaneIdInPanelTree(split, 'pane-2')).toBe('pane-1')
+  })
+
+  it('returns undefined for a single leaf', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    expect(findSiblingPaneIdInPanelTree(leaf, 'pane-1')).toBeUndefined()
+  })
+
+  it('finds sibling in nested tree', () => {
+    const leaf1 = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const leaf2 = makeLeaf('pane-2', 'term-2', 'ws-1')
+    const leaf3 = makeLeaf('pane-3', 'term-3', 'ws-1')
+    const innerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-inner',
+      direction: 'vertical',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    const outerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-outer',
+      direction: 'horizontal',
+      children: [innerSplit, leaf3],
+      sizes: [50, 50],
+    }
+    // pane-1's sibling within the inner split is pane-2
+    expect(findSiblingPaneIdInPanelTree(outerSplit, 'pane-1')).toBe('pane-2')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getLastPanelTreeLeafId
+// ---------------------------------------------------------------------------
+
+describe('getLastPanelTreeLeafId', () => {
+  it('returns the ID of a single leaf', () => {
+    const leaf: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-only',
+      paneType: 'terminal',
+      terminalId: 'term-1',
+      workspaceId: 'ws-1',
+    }
+    expect(getLastPanelTreeLeafId(leaf)).toBe('pane-only')
+  })
+
+  it('returns the last leaf in DFS order for a flat split', () => {
+    const leaf1: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-1',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    const leaf2: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-2',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    expect(getLastPanelTreeLeafId(split)).toBe('pane-2')
+  })
+
+  it('returns the rightmost leaf in a nested tree', () => {
+    const leaf1: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-1',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    const leaf2: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-2',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    const leaf3: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-3',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    const innerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-inner',
+      direction: 'vertical',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    const outerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-outer',
+      direction: 'horizontal',
+      children: [innerSplit, leaf3],
+      sizes: [50, 50],
+    }
+    expect(getLastPanelTreeLeafId(outerSplit)).toBe('pane-3')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findEmptyPanelTreeLeaf
+// ---------------------------------------------------------------------------
+
+describe('findEmptyPanelTreeLeaf', () => {
+  it('returns undefined for a leaf with a terminal assigned', () => {
+    const leaf: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-1',
+      paneType: 'terminal',
+      terminalId: 'term-1',
+      workspaceId: 'ws-1',
+    }
+    expect(findEmptyPanelTreeLeaf(leaf)).toBeUndefined()
+  })
+
+  it('returns the leaf if it has no terminalId', () => {
+    const leaf: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-empty',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    expect(findEmptyPanelTreeLeaf(leaf)).toBe(leaf)
+  })
+
+  it('returns undefined for a non-terminal pane type', () => {
+    const leaf: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-agent',
+      paneType: 'agent',
+      workspaceId: 'ws-1',
+    }
+    expect(findEmptyPanelTreeLeaf(leaf)).toBeUndefined()
+  })
+
+  it('finds the first empty terminal pane in a split tree', () => {
+    const occupiedLeaf: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-1',
+      paneType: 'terminal',
+      terminalId: 'term-1',
+      workspaceId: 'ws-1',
+    }
+    const emptyLeaf: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-empty',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [occupiedLeaf, emptyLeaf],
+      sizes: [50, 50],
+    }
+    expect(findEmptyPanelTreeLeaf(split)).toBe(emptyLeaf)
+  })
+
+  it('returns undefined when all panes are occupied', () => {
+    const leaf1: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-1',
+      paneType: 'terminal',
+      terminalId: 'term-1',
+      workspaceId: 'ws-1',
+    }
+    const leaf2: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-2',
+      paneType: 'terminal',
+      terminalId: 'term-2',
+      workspaceId: 'ws-1',
+    }
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    expect(findEmptyPanelTreeLeaf(split)).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findPaneInWindowLayout
+// ---------------------------------------------------------------------------
+
+describe('findPaneInWindowLayout', () => {
+  it('finds a pane in a single-tab layout', () => {
+    const result = findPaneInWindowLayout(singleTabLayout, 'pane-term-1')
+    expect(result).toBeDefined()
+    expect(result?.leaf.id).toBe('pane-term-1')
+    expect(result?.workspaceId).toBe('ws-1')
+    expect(result?.tabId).toBe('tab-1')
+  })
+
+  it('finds a pane across tabs in a complex layout', () => {
+    const result = findPaneInWindowLayout(complexLayout, 'pane-B1')
+    expect(result).toBeDefined()
+    expect(result?.leaf.id).toBe('pane-B1')
+    expect(result?.workspaceId).toBe('ws-B')
+    expect(result?.tabId).toBe('tab-1')
+  })
+
+  it('finds a pane in a different tab', () => {
+    const result = findPaneInWindowLayout(complexLayout, 'pane-term-C1')
+    expect(result).toBeDefined()
+    expect(result?.leaf.id).toBe('pane-term-C1')
+    expect(result?.workspaceId).toBe('ws-C')
+    expect(result?.tabId).toBe('tab-2')
+  })
+
+  it('returns undefined for a non-existent pane', () => {
+    expect(
+      findPaneInWindowLayout(singleTabLayout, 'no-such-pane')
+    ).toBeUndefined()
+  })
+
+  it('returns undefined for an empty layout', () => {
+    expect(findPaneInWindowLayout(emptyLayout, 'any-pane')).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// computeClosePaneGateActionHierarchical
+// ---------------------------------------------------------------------------
+
+describe('computeClosePaneGateActionHierarchical', () => {
+  const terminals = [
+    { id: 'term-1', hasChildProcess: false },
+    { id: 'term-running', hasChildProcess: true },
+  ]
+
+  it('returns close when layout is undefined', () => {
+    const result = computeClosePaneGateActionHierarchical(
+      undefined,
+      'pane-1',
+      terminals,
+      null
+    )
+    expect(result.action).toBe('close')
+  })
+
+  it('returns close when pane is not found', () => {
+    const result = computeClosePaneGateActionHierarchical(
+      singleTabLayout,
+      'non-existent',
+      terminals,
+      null
+    )
+    expect(result.action).toBe('close')
+  })
+
+  it('returns close for a pane with no running process', () => {
+    const result = computeClosePaneGateActionHierarchical(
+      singleTabLayout,
+      'pane-term-1',
+      terminals,
+      null
+    )
+    expect(result.action).toBe('close')
+  })
+
+  it('returns confirm when the pane has a running process', () => {
+    // Build a layout with a running terminal
+    const leaf = makeLeaf('pane-running', 'term-running', 'ws-run')
+    const pt = makePanelTab('pt-run', leaf)
+    const tile = makeWorkspaceTile('tile-run', 'ws-run', [pt])
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-run', workspaceLayout: tile }],
+      activeTabId: 'tab-run',
+    }
+    const result = computeClosePaneGateActionHierarchical(
+      layout,
+      'pane-running',
+      terminals,
+      null
+    )
+    expect(result.action).toBe('confirm')
+  })
+
+  it('returns prompt-destroy when last pane + merged PR + no process', () => {
+    const result = computeClosePaneGateActionHierarchical(
+      singleTabLayout,
+      'pane-term-1',
+      terminals,
+      'MERGED'
+    )
+    expect(result.action).toBe('prompt-destroy')
+    if (result.action === 'prompt-destroy') {
+      expect(result.workspaceId).toBe('ws-1')
+    }
+  })
+
+  it('returns confirm-with-destroy when last pane + merged PR + running process', () => {
+    const leaf = makeLeaf('pane-running', 'term-running', 'ws-run')
+    const pt = makePanelTab('pt-run', leaf)
+    const tile = makeWorkspaceTile('tile-run', 'ws-run', [pt])
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-run', workspaceLayout: tile }],
+      activeTabId: 'tab-run',
+    }
+    const result = computeClosePaneGateActionHierarchical(
+      layout,
+      'pane-running',
+      terminals,
+      'MERGED'
+    )
+    expect(result.action).toBe('confirm-with-destroy')
+    if (result.action === 'confirm-with-destroy') {
+      expect(result.workspaceId).toBe('ws-run')
+    }
+  })
+
+  it('returns close when PR is merged but workspace has multiple panes', () => {
+    const leaf1 = makeLeaf('pane-1', 'term-1', 'ws-multi')
+    const leaf2 = makeLeaf('pane-2', 'term-2', 'ws-multi')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    const pt: PanelTab = {
+      id: 'pt-multi',
+      panelLayout: split,
+      focusedPaneId: 'pane-1',
+    }
+    const tile = makeWorkspaceTile('tile-multi', 'ws-multi', [pt])
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-multi', workspaceLayout: tile }],
+      activeTabId: 'tab-multi',
+    }
+    const result = computeClosePaneGateActionHierarchical(
+      layout,
+      'pane-1',
+      [
+        { id: 'term-1', hasChildProcess: false },
+        { id: 'term-2', hasChildProcess: false },
+      ],
+      'MERGED'
+    )
+    expect(result.action).toBe('close')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// computeCloseWorkspaceActionHierarchical
+// ---------------------------------------------------------------------------
+
+describe('computeCloseWorkspaceActionHierarchical', () => {
+  it('returns close when layout is undefined', () => {
+    expect(computeCloseWorkspaceActionHierarchical(undefined, 'ws-1', [])).toBe(
+      'close'
+    )
+  })
+
+  it('returns close when workspace is not found', () => {
+    expect(
+      computeCloseWorkspaceActionHierarchical(singleTabLayout, 'no-such-ws', [])
+    ).toBe('close')
+  })
+
+  it('returns close when workspace has no running processes', () => {
+    expect(
+      computeCloseWorkspaceActionHierarchical(singleTabLayout, 'ws-1', [
+        { id: 'term-1', hasChildProcess: false },
+      ])
+    ).toBe('close')
+  })
+
+  it('returns confirm when workspace has a running process', () => {
+    expect(
+      computeCloseWorkspaceActionHierarchical(singleTabLayout, 'ws-1', [
+        { id: 'term-1', hasChildProcess: true },
+      ])
+    ).toBe('confirm')
+  })
+
+  it('returns confirm when any terminal in the workspace has a running process', () => {
+    const leaf1 = makeLeaf('pane-1', 'term-1', 'ws-multi')
+    const leaf2 = makeLeaf('pane-2', 'term-2', 'ws-multi')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    const pt: PanelTab = {
+      id: 'pt-multi',
+      panelLayout: split,
+      focusedPaneId: 'pane-1',
+    }
+    const tile = makeWorkspaceTile('tile-multi', 'ws-multi', [pt])
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-multi', workspaceLayout: tile }],
+      activeTabId: 'tab-multi',
+    }
+    expect(
+      computeCloseWorkspaceActionHierarchical(layout, 'ws-multi', [
+        { id: 'term-1', hasChildProcess: false },
+        { id: 'term-2', hasChildProcess: true },
+      ])
+    ).toBe('confirm')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// computeResizePanelTree
+// ---------------------------------------------------------------------------
+
+describe('computeResizePanelTree', () => {
+  it('returns undefined for a single leaf (no split to resize)', () => {
+    const leaf = makeLeaf('pane-1')
+    expect(computeResizePanelTree(leaf, 'pane-1', 'right')).toBeUndefined()
+  })
+
+  it('returns undefined when pane ID is not found', () => {
+    const leaf = makeLeaf('pane-1')
+    expect(computeResizePanelTree(leaf, 'nonexistent', 'right')).toBeUndefined()
+  })
+
+  it('grows the first child when resizing right in a horizontal split', () => {
+    const left = makeLeaf('left')
+    const right = makeLeaf('right')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-h',
+      direction: 'horizontal',
+      children: [left, right],
+      sizes: [50, 50],
+    }
+
+    const result = computeResizePanelTree(split, 'left', 'right')
+    expect(result).toBeDefined()
+    expect(result?.splitNodeId).toBe('split-h')
+    expect(result?.newSizes.left).toBe(55)
+    expect(result?.newSizes.right).toBe(45)
+  })
+
+  it('shrinks the first child when resizing left in a horizontal split', () => {
+    const left = makeLeaf('left')
+    const right = makeLeaf('right')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-h',
+      direction: 'horizontal',
+      children: [left, right],
+      sizes: [50, 50],
+    }
+
+    const result = computeResizePanelTree(split, 'left', 'left')
+    // left is the first child; shrinking left means delta=-5, sibling=-1 which is out of bounds
+    expect(result).toBeUndefined()
+  })
+
+  it('grows the second child when resizing left (takes from sibling)', () => {
+    const left = makeLeaf('left')
+    const right = makeLeaf('right')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-h',
+      direction: 'horizontal',
+      children: [left, right],
+      sizes: [50, 50],
+    }
+
+    // Resizing "right" pane to the left means shrinking it (delta = -5),
+    // sibling index = 1 - 1 = 0 (left), so left grows
+    const result = computeResizePanelTree(split, 'right', 'left')
+    expect(result).toBeDefined()
+    expect(result?.splitNodeId).toBe('split-h')
+    expect(result?.newSizes.right).toBe(45)
+    expect(result?.newSizes.left).toBe(55)
+  })
+
+  it('handles vertical splits with up/down directions', () => {
+    const top = makeLeaf('top')
+    const bottom = makeLeaf('bottom')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-v',
+      direction: 'vertical',
+      children: [top, bottom],
+      sizes: [50, 50],
+    }
+
+    const result = computeResizePanelTree(split, 'top', 'down')
+    expect(result).toBeDefined()
+    expect(result?.splitNodeId).toBe('split-v')
+    expect(result?.newSizes.top).toBe(55)
+    expect(result?.newSizes.bottom).toBe(45)
+  })
+
+  it('returns undefined when direction does not match split orientation', () => {
+    const left = makeLeaf('left')
+    const right = makeLeaf('right')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-h',
+      direction: 'horizontal',
+      children: [left, right],
+      sizes: [50, 50],
+    }
+
+    // up/down on a horizontal split should not produce a result
+    expect(computeResizePanelTree(split, 'left', 'up')).toBeUndefined()
+    expect(computeResizePanelTree(split, 'left', 'down')).toBeUndefined()
+  })
+
+  it('prevents resizing below minimum size', () => {
+    const left = makeLeaf('left')
+    const right = makeLeaf('right')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-h',
+      direction: 'horizontal',
+      children: [left, right],
+      sizes: [93, 7],
+    }
+
+    // Growing left (size 93) by 5 → right (size 7) becomes 2 → below MIN_PANE_SIZE (5)
+    const result = computeResizePanelTree(split, 'left', 'right')
+    expect(result).toBeUndefined()
+  })
+
+  it('walks up to find the correct ancestor in a nested tree', () => {
+    const innerLeft = makeLeaf('inner-left')
+    const innerRight = makeLeaf('inner-right')
+    const innerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'inner-split',
+      direction: 'vertical',
+      children: [innerLeft, innerRight],
+      sizes: [50, 50],
+    }
+    const outerRight = makeLeaf('outer-right')
+    const outerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'outer-split',
+      direction: 'horizontal',
+      children: [innerSplit, outerRight],
+      sizes: [60, 40],
+    }
+
+    // Resizing inner-left to the right — inner-split is vertical, so it
+    // doesn't match horizontal. Walk up to outer-split which is horizontal.
+    const result = computeResizePanelTree(outerSplit, 'inner-left', 'right')
+    expect(result).toBeDefined()
+    expect(result?.splitNodeId).toBe('outer-split')
+    expect(result?.newSizes['inner-split']).toBe(65)
+    expect(result?.newSizes['outer-right']).toBe(35)
+  })
+
+  it('resizes inner split when direction matches inner orientation', () => {
+    const innerLeft = makeLeaf('inner-top')
+    const innerRight = makeLeaf('inner-bottom')
+    const innerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'inner-split',
+      direction: 'vertical',
+      children: [innerLeft, innerRight],
+      sizes: [50, 50],
+    }
+    const outerRight = makeLeaf('outer-right')
+    const outerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'outer-split',
+      direction: 'horizontal',
+      children: [innerSplit, outerRight],
+      sizes: [60, 40],
+    }
+
+    // Resizing inner-top downward should hit the inner vertical split
+    const result = computeResizePanelTree(outerSplit, 'inner-top', 'down')
+    expect(result).toBeDefined()
+    expect(result?.splitNodeId).toBe('inner-split')
+    expect(result?.newSizes['inner-top']).toBe(55)
+    expect(result?.newSizes['inner-bottom']).toBe(45)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findPanelTreeRootForPane
+// ---------------------------------------------------------------------------
+
+describe('findPanelTreeRootForPane', () => {
+  it('finds the panel tree root containing a pane', () => {
+    const root = findPanelTreeRootForPane(singleTabLayout, 'pane-term-1')
+    expect(root).toBeDefined()
+    expect(root?._tag).toBe('PanelLeafNode')
+    expect(root?.id).toBe('pane-term-1')
+  })
+
+  it('returns undefined when pane is not in the layout', () => {
+    expect(
+      findPanelTreeRootForPane(singleTabLayout, 'nonexistent')
+    ).toBeUndefined()
+  })
+
+  it('finds a pane in a split panel tree', () => {
+    const leaf1 = makeLeaf('pane-a', 'term-a', 'ws-split')
+    const leaf2 = makeLeaf('pane-b', 'term-b', 'ws-split')
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    const pt: PanelTab = {
+      id: 'pt-split',
+      panelLayout: split,
+      focusedPaneId: 'pane-a',
+    }
+    const tile = makeWorkspaceTile('tile-split', 'ws-split', [pt])
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-split', workspaceLayout: tile }],
+      activeTabId: 'tab-split',
+    }
+
+    const root = findPanelTreeRootForPane(layout, 'pane-b')
+    expect(root).toBeDefined()
+    // The root should be the split node, not the leaf
+    expect(root?._tag).toBe('PanelSplitNode')
+    expect(root?.id).toBe('split-1')
+  })
+
+  it('returns undefined for an empty layout', () => {
+    expect(findPanelTreeRootForPane(emptyLayout, 'any-pane')).toBeUndefined()
+  })
+
+  it('finds a pane across different tabs', () => {
+    const root = findPanelTreeRootForPane(multiTabLayout, 'pane-term-2')
+    expect(root).toBeDefined()
+    expect(root?.id).toBe('pane-term-2')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findPaneInDirectionPanelTree
+// ---------------------------------------------------------------------------
+
+describe('findPaneInDirectionPanelTree', () => {
+  it('returns undefined for a single leaf (no neighbors)', () => {
+    const leaf = makeLeaf('pane-a')
+    expect(findPaneInDirectionPanelTree(leaf, 'pane-a', 'left')).toBeUndefined()
+    expect(
+      findPaneInDirectionPanelTree(leaf, 'pane-a', 'right')
+    ).toBeUndefined()
+    expect(findPaneInDirectionPanelTree(leaf, 'pane-a', 'up')).toBeUndefined()
+    expect(findPaneInDirectionPanelTree(leaf, 'pane-a', 'down')).toBeUndefined()
+  })
+
+  it('returns undefined when pane ID is not found', () => {
+    const leaf = makeLeaf('pane-a')
+    expect(
+      findPaneInDirectionPanelTree(leaf, 'nonexistent', 'right')
+    ).toBeUndefined()
+  })
+
+  it('navigates right in a horizontal split', () => {
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [makeLeaf('pane-left'), makeLeaf('pane-right')],
+      sizes: [50, 50],
+    }
+    expect(findPaneInDirectionPanelTree(split, 'pane-left', 'right')).toBe(
+      'pane-right'
+    )
+  })
+
+  it('navigates left in a horizontal split', () => {
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [makeLeaf('pane-left'), makeLeaf('pane-right')],
+      sizes: [50, 50],
+    }
+    expect(findPaneInDirectionPanelTree(split, 'pane-right', 'left')).toBe(
+      'pane-left'
+    )
+  })
+
+  it('navigates down in a vertical split', () => {
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'vertical',
+      children: [makeLeaf('pane-top'), makeLeaf('pane-bottom')],
+      sizes: [50, 50],
+    }
+    expect(findPaneInDirectionPanelTree(split, 'pane-top', 'down')).toBe(
+      'pane-bottom'
+    )
+  })
+
+  it('navigates up in a vertical split', () => {
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'vertical',
+      children: [makeLeaf('pane-top'), makeLeaf('pane-bottom')],
+      sizes: [50, 50],
+    }
+    expect(findPaneInDirectionPanelTree(split, 'pane-bottom', 'up')).toBe(
+      'pane-top'
+    )
+  })
+
+  it('returns undefined at the edge (no neighbor in that direction)', () => {
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [makeLeaf('pane-left'), makeLeaf('pane-right')],
+      sizes: [50, 50],
+    }
+    // At the left edge, can't go further left
+    expect(
+      findPaneInDirectionPanelTree(split, 'pane-left', 'left')
+    ).toBeUndefined()
+    // At the right edge, can't go further right
+    expect(
+      findPaneInDirectionPanelTree(split, 'pane-right', 'right')
+    ).toBeUndefined()
+  })
+
+  it('returns undefined for mismatched direction (horizontal split, vertical navigation)', () => {
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [makeLeaf('pane-left'), makeLeaf('pane-right')],
+      sizes: [50, 50],
+    }
+    expect(
+      findPaneInDirectionPanelTree(split, 'pane-left', 'up')
+    ).toBeUndefined()
+    expect(
+      findPaneInDirectionPanelTree(split, 'pane-left', 'down')
+    ).toBeUndefined()
+  })
+
+  it('navigates into a nested subtree (enters from edge)', () => {
+    // Layout: [A] | [B / C] (horizontal split, right child is vertical split)
+    const innerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'inner-split',
+      direction: 'vertical',
+      children: [makeLeaf('pane-b'), makeLeaf('pane-c')],
+      sizes: [50, 50],
+    }
+    const outerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'outer-split',
+      direction: 'horizontal',
+      children: [makeLeaf('pane-a'), innerSplit],
+      sizes: [50, 50],
+    }
+    // Moving right from A should enter the first leaf of the right subtree (B)
+    expect(findPaneInDirectionPanelTree(outerSplit, 'pane-a', 'right')).toBe(
+      'pane-b'
+    )
+  })
+
+  it('navigates out of a nested subtree to parent split neighbor', () => {
+    // Layout: [A] | [B / C] (horizontal split, right child is vertical split)
+    const innerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'inner-split',
+      direction: 'vertical',
+      children: [makeLeaf('pane-b'), makeLeaf('pane-c')],
+      sizes: [50, 50],
+    }
+    const outerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'outer-split',
+      direction: 'horizontal',
+      children: [makeLeaf('pane-a'), innerSplit],
+      sizes: [50, 50],
+    }
+    // Moving left from B (inside the inner split) should go to A
+    expect(findPaneInDirectionPanelTree(outerSplit, 'pane-b', 'left')).toBe(
+      'pane-a'
+    )
+    // Moving left from C should also go to A
+    expect(findPaneInDirectionPanelTree(outerSplit, 'pane-c', 'left')).toBe(
+      'pane-a'
+    )
+  })
+
+  it('enters from the last edge when navigating left into a subtree', () => {
+    // Layout: [A / B] | [C] (horizontal split, left child is vertical split)
+    const innerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'inner-split',
+      direction: 'vertical',
+      children: [makeLeaf('pane-a'), makeLeaf('pane-b')],
+      sizes: [50, 50],
+    }
+    const outerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'outer-split',
+      direction: 'horizontal',
+      children: [innerSplit, makeLeaf('pane-c')],
+      sizes: [50, 50],
+    }
+    // Moving left from C should enter the last leaf of the left subtree (B)
+    expect(findPaneInDirectionPanelTree(outerSplit, 'pane-c', 'left')).toBe(
+      'pane-b'
+    )
+  })
+
+  it('navigates through a 3-way horizontal split', () => {
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [makeLeaf('pane-a'), makeLeaf('pane-b'), makeLeaf('pane-c')],
+      sizes: [33, 34, 33],
+    }
+    expect(findPaneInDirectionPanelTree(split, 'pane-a', 'right')).toBe(
+      'pane-b'
+    )
+    expect(findPaneInDirectionPanelTree(split, 'pane-b', 'right')).toBe(
+      'pane-c'
+    )
+    expect(findPaneInDirectionPanelTree(split, 'pane-c', 'left')).toBe('pane-b')
+    expect(findPaneInDirectionPanelTree(split, 'pane-b', 'left')).toBe('pane-a')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isWorkspaceFrameData
+// ---------------------------------------------------------------------------
+
+describe('isWorkspaceFrameData', () => {
+  it('returns true for valid workspace frame drag data', () => {
+    expect(
+      isWorkspaceFrameData({
+        type: WORKSPACE_FRAME_TYPE,
+        workspaceId: 'ws-1',
+        index: 0,
+      })
+    ).toBe(true)
+  })
+
+  it('returns false when type does not match', () => {
+    expect(
+      isWorkspaceFrameData({
+        type: 'something-else',
+        workspaceId: 'ws-1',
+        index: 0,
+      })
+    ).toBe(false)
+  })
+
+  it('returns false for empty object', () => {
+    expect(isWorkspaceFrameData({})).toBe(false)
+  })
+
+  it('returns false when type is missing', () => {
+    expect(isWorkspaceFrameData({ workspaceId: 'ws-1', index: 0 })).toBe(false)
   })
 })

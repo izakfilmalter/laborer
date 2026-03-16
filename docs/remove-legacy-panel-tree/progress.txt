@@ -1,0 +1,661 @@
+## Issue 2: Schema: no-op legacy materializers and remove deprecated columns
+
+**Status:** done
+
+### Changes made
+
+1. **Removed deprecated columns from `panelLayout` table** (`packages/shared/src/schema.ts`):
+   - Removed `layoutTree` (json, `PanelNodeSchema`)
+   - Removed `activePaneId` (text, nullable)
+   - Removed `workspaceOrder` (json, array of strings)
+   - Table now has only: `windowId` (primary key), `windowLayout`, `activeWindowTabId`
+
+2. **Made legacy event materializers no-ops** (`packages/shared/src/schema.ts`):
+   - `v1.LayoutSplit` → `() => []`
+   - `v1.LayoutPaneClosed` → `() => []`
+   - `v1.LayoutPaneAssigned` → `() => []`
+   - `v1.LayoutRestored` → `() => []`
+   - `v1.LayoutWorkspacesReordered` → `() => []`
+   - Follows the same pattern used for deprecated terminal events (Issue #145)
+
+3. **Legacy event definitions retained** — event schemas (`layoutEventSchema`, etc.) remain
+   in the schema so old events in the eventlog still have valid definitions.
+
+4. **Hierarchical event materializers unchanged** — all `windowLayout*`, `windowTab*`,
+   `panelTab*` materializers correctly upsert `{ windowId, windowLayout, activeWindowTabId }`.
+
+5. **Updated `schema.test.ts`** (`packages/shared/test/schema.test.ts`):
+   - Rewrote legacy materialization tests to verify no-op behavior (table stays empty)
+   - Removed assertions on `layoutTree`, `activePaneId`, `workspaceOrder` from hierarchical event tests
+   - Replaced coexistence tests with a single test verifying legacy events don't affect hierarchical columns
+   - All 71 tests in packages/shared pass
+
+### Known downstream impact
+
+Removing the columns causes TypeScript errors in consumer code that reads these fields
+from `panelLayout` query results. These are expected and will be resolved by subsequent issues:
+- Issue 3: handleSetActivePaneId (reads `activePaneId`)
+- Issue 12: Seeding/reconciliation (reads `layoutTree`, `activePaneId`, `workspaceOrder`)
+- Issue 10: index.tsx consumers (reads derived values)
+
+## Issue 1: PanelManager renders PanelTreeNode directly
+
+**Status:** done
+
+### Changes made
+
+1. **Updated `PanelManager` rendering pipeline** (`apps/web/src/panels/panel-manager.tsx`):
+   - `PanelManager` accepts `PanelTreeNode | undefined` as its `layout` prop (was `PanelNode`)
+   - `PanelRenderer` dispatches on `'PanelLeafNode'` / `'PanelSplitNode'` tags (was `'LeafNode'` / `'SplitNode'`)
+   - `SplitPanelRenderer` accepts `PanelSplitNode` (was `SplitNode`)
+   - `SplitChild` accepts `PanelTreeNode` children (was `PanelNode`)
+   - `LeafPaneRenderer` accepts `PanelLeafNode` (was `LeafNode`)
+   - `PaneContent` accepts `PanelLeafNode` (was `LeafNode`)
+
+2. **Simplified `TerminalPaneWithSidebars`** (`apps/web/src/panels/terminal-pane-with-sidebars.tsx`):
+   - Accepts `PanelLeafNode` (was `LeafNode`)
+   - Removed all sidebar rendering logic (`diffOpen`, `devServerOpen`, `devServerTerminalId`)
+   - In the hierarchical model, diff/review/dev-server are independent panel types
+   - Now renders a plain `TerminalPane` — sidebar flags no longer exist on `PanelLeafNode`
+
+3. **Updated `WorkspaceTileLeafFrame`** (`apps/web/src/routes/-components/workspace-frames.tsx`):
+   - Passes the active panel tab's `PanelTreeNode` directly to `WorkspaceFrame`
+   - Removed `convertPanelTreeToLegacy` call — no more legacy conversion at render time
+   - Removed `flatLayout` prop — no longer needed for the hierarchical path
+   - Removed `filterTreeByWorkspace` fallback for pre-migration tiles
+   - Fallback creates a `PanelLeafNode` (was `LeafNode`)
+
+4. **Updated `WorkspaceFrame` and related components** (`workspace-frames.tsx`):
+   - `WorkspaceFrame.subLayout` prop: `PanelTreeNode` (was `PanelNode`)
+   - `WorkspaceContent.effectiveLayout`: `PanelTreeNode | null` (was `PanelNode | null`)
+   - `WorkspaceFrameResizableChild.subLayout`: `PanelTreeNode` (was `PanelNode`)
+   - Replaced `getLeafNodes(subLayout)` with `getPanelTreeLeafIds(subLayout)` for active pane detection
+   - `WorkspaceTileRenderer` and `WorkspaceTileResizableChild` no longer accept `flatLayout` prop
+   - `LegacyWorkspaceFrames` uses `convertPanelTree()` at the boundary to convert `PanelNode` → `PanelTreeNode`
+
+5. **Updated `WorkspaceFrameHeaderContainer`** (`workspace-frame-header-container.tsx`):
+   - `subLayout` prop: `PanelTreeNode` (was `PanelNode`)
+   - Replaced `getScopedActivePaneId` (from `layout-utils`) with inline logic using `getPanelTreeLeafIds` (from `window-tab-utils`)
+
+6. **Updated test files**:
+   - `panel-manager.test.tsx`: Uses `PanelLeafNode` fixtures (was `LeafNode`), simplified to test the new simple `TerminalPaneWithSidebars` behavior
+   - `fullscreen-portal.test.tsx`: Uses `PanelLeafNode`/`PanelSplitNode`/`PanelTreeNode` fixtures
+   - `workspace-frame-header-container.test.tsx`: Uses `PanelLeafNode` fixture, updated mock from `getScopedActivePaneId` to `getPanelTreeLeafIds`
+
+### Test results
+
+- All 1299 tests in apps/web pass (1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- TypeScript clean except for pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)
+
+## Issue 3: handleSetActivePaneId uses hierarchical focus only
+
+**Status:** done
+
+### Changes made
+
+1. **Rewrote `handleSetActivePaneId`** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - Removed `layoutPaneAssigned` event commit entirely
+   - Now uses `saveFocusedPaneId()` on the hierarchical `WindowLayout` and commits `windowLayoutPaneAssigned`
+   - Validates pane ID against the hierarchical tree via `resolveActivePaneForWindowTab` when null is passed
+   - No longer depends on `layout`, `persistedLayoutTree`, or `defaultLayout`
+
+2. **Derived `persistedActivePaneId` from hierarchical tree**:
+   - Primary path: `resolveActivePaneForWindowTab(activeTab)` walks the hierarchy (active window tab > workspace tile leaves > active panel tab > focusedPaneId)
+   - Fallback: `ensureValidActivePaneId(layout, null)` for cases where hierarchical resolution returns no result (e.g., empty migrated layout with no workspace tiles)
+
+3. **Derived `activeWorkspaceId` from hierarchical tree**:
+   - Added `resolveActiveWorkspaceForWindowTab()` to `window-tab-utils.ts`
+   - Walks workspace tile leaves to find which workspace contains the focused pane
+   - Returned from `usePanelLayout()` hook, consumed directly in `index.tsx`
+   - Removed `findNodeById(layout, activePaneId)` derivation from `index.tsx`
+
+4. **Removed `layoutPaneAssigned` from all focus-restoration callbacks**:
+   - `commitWindowTabSwitchWithFocus`: Simplified to just `commitWindowLayout(windowTabSwitched, newLayout)` — hierarchical focusedPaneId is sufficient
+   - `commitPanelTabSwitchWithFocus`: Simplified to just `commitPanelTabLayout(panelTabSwitched, newLayout)`
+   - `handleCloseWindowTab`: Removed legacy tree derivation and `layoutPaneAssigned` commit after tab close
+   - `handleAssignTerminalToPane` step 3: Replaced `layoutPaneAssigned` with `saveFocusedPaneId` + `windowLayoutPaneAssigned`
+
+5. **Replaced `layoutPaneAssigned` in `commitAssignment` helper**:
+   - Removed the dual-write pattern (legacy event + sync to hierarchical)
+   - Now: sync legacy tree to hierarchical, save focus, commit single `windowLayoutPaneAssigned`
+
+6. **Replaced `layoutPaneAssigned` in `handleToggleDevServerPane`**:
+   - Extracted `commitDevServerSync` and `spawnAndAssignDevServer` helpers to reduce complexity
+   - All dev server toggle paths now sync to hierarchical tree and commit `windowLayoutPaneAssigned`
+
+7. **Hardcoded `rawPersistedActivePaneId` and `persistedWorkspaceOrder` to null**:
+   - These legacy columns were removed from the schema in Issue 2
+   - Code still references them for backward-compatible migration paths but always reads null
+
+8. **Import changes**:
+   - Added `windowLayoutPaneAssigned` import from `@laborer/shared/schema`
+   - Removed `layoutPaneAssigned` import (no longer committed anywhere)
+   - Added `resolveActiveWorkspaceForWindowTab` import from `window-tab-utils`
+
+9. **Updated tests** (`apps/web/test/use-panel-layout.test.ts`):
+   - Added `windowLayoutPaneAssignedMock` to hoisted mocks, schema mock, event types, and beforeEach
+   - Updated "hydrates" test: workspaceOrder is now null, children follow natural order
+   - Updated "scopes terminal assignment" test: expects `windowLayoutPaneAssigned` instead of `layoutPaneAssigned`
+   - Updated "skips terminal assignment" test: checks both `layoutPaneAssigned` and `windowLayoutPaneAssigned` not called
+   - Updated "proceeds with assignment" test: expects `windowLayoutPaneAssigned`
+
+### Test results
+
+- All 1299 tests in apps/web pass (1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- TypeScript: 4 pre-existing errors remain in `use-panel-layout.ts` (accessing removed `layoutTree` and `activePaneId` columns in legacy reconciliation code — will be resolved by Issue 12)
+
+## Issue 4: handleSplitPane operates on hierarchical tree
+
+**Status:** done
+
+### Changes made
+
+1. **Rewrote `handleSplitPane`** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - No longer reads from `persistedLayoutTree` or `defaultLayout` (legacy `PanelNode` tree)
+   - No longer calls `splitPane()` from `layout-utils.ts` (legacy)
+   - No longer calls `syncLegacyTreeToHierarchical()` to bridge legacy → hierarchical
+   - No longer commits `layoutSplit` (legacy event, now a no-op)
+   - Now operates directly on `persistedWindowLayout` (hierarchical `WindowLayout`)
+   - Uses `findWorkspaceForPane()` (new helper) to locate the workspace containing the target pane
+   - Uses `updateWorkspaceTileLeaf()` + `splitPaneInPanelTree()` to split the active panel tab's tree
+   - Uses `findNewPanelTreeLeaf()` to identify the newly created pane via leaf-diffing
+   - Uses `saveFocusedPaneId()` to set focus on the new pane
+   - Commits `windowLayoutSplit` (hierarchical event) instead of `layoutSplit`
+   - Auto-spawn terminal behavior preserved for terminal-type panes
+
+2. **Added `findWorkspaceForPane` helper** (`use-panel-layout.ts`):
+   - Searches all workspace tile leaves across all tabs for a pane ID
+   - Returns the workspace ID that contains the pane
+   - Extracted to reduce cognitive complexity of `handleSplitPane`
+
+3. **Updated `splitPane` type signature** across the codebase:
+   - `panel-context.tsx`: `splitPane` parameter changed from `Partial<LeafNode>` to `Partial<PanelLeafNode>`
+   - `panel-hotkeys.tsx`: Removed 4 `as Partial<LeafNode>` casts (no longer needed)
+   - `index.tsx`: Removed 2 `as Partial<LeafNode>` casts
+
+4. **Added imports**:
+   - `windowLayoutSplit` from `@laborer/shared/schema`
+   - `findNewPanelTreeLeaf`, `findPanelTreeLeaf`, `getAllWorkspaceTileLeaves`, `splitPaneInPanelTree` from `window-tab-utils`
+   - `PanelLeafNode`, `PanelTreeNode` type imports from `@laborer/shared/types`
+
+5. **Added `windowLayoutSplit` to `commitWindowLayout` event union** (`use-panel-layout.ts`):
+   - Extended the accepted event types for the commit helper
+
+6. **Added unit tests** (`apps/web/test/window-tab-utils.test.ts`):
+   - `splitPaneInPanelTree`: 6 tests covering leaf split, workspace inheritance, content overrides, adjacent insertion, nesting, and not-found case
+   - `findNewPanelTreeLeaf`: 2 tests covering successful diff-find and identical-tree case
+   - `findSiblingPaneIdInPanelTree`: 4 tests covering sibling after, sibling before, single leaf, and nested tree
+
+### Test results
+
+- All 79 tests in window-tab-utils.test.ts pass (was 67, added 12 new)
+- TypeScript: same 4 pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)
+- No new type errors introduced
+
+## Issue 5: handleClosePane operates on hierarchical tree
+
+**Status:** done
+
+### Changes made
+
+1. **Rewrote `handleClosePane`** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - No longer reads from `persistedLayoutTree` or `defaultLayout` (legacy `PanelNode` tree)
+   - No longer calls `closePane()` from `layout-utils.ts` (legacy)
+   - No longer calls `findSiblingPaneId()` from `layout-utils.ts` (legacy)
+   - No longer calls `getTerminalIdsToRemove()` from `layout-utils.ts` (legacy)
+   - No longer calls `findNodeById()` from `layout-utils.ts` (legacy)
+   - No longer calls `ensureValidActivePaneId()` from `layout-utils.ts` (legacy)
+   - No longer calls `syncLegacyTreeToHierarchical()` to bridge legacy → hierarchical
+   - No longer commits `layoutPaneClosed` (legacy event, now a no-op)
+   - Now operates directly on `persistedWindowLayout` (hierarchical `WindowLayout`)
+   - Uses `findWorkspaceForPane()` to locate the workspace containing the target pane
+   - Uses `updateWorkspaceTileLeaf()` + `closePaneInPanelTree()` to close the pane in the active panel tab
+   - Uses `findPanelTreeLeaf()` to find the closing leaf and extract its terminal ID
+   - Uses `findSiblingPaneIdInPanelTree()` to compute focus transfer target before closing
+   - Uses `saveFocusedPaneId()` to transfer focus to the sibling pane
+   - Commits `windowLayoutPaneClosed` (hierarchical event) instead of `layoutPaneClosed`
+
+2. **All-panes-closed edge case**:
+   - When `closePaneInPanelTree` returns `undefined` (all panes removed), creates an empty
+     `PanelLeafNode` placeholder so the panel tab shows the empty state CTA
+   - No longer commits a legacy `LeafNode` placeholder or resets `hasSeeded`
+
+3. **Terminal cleanup**:
+   - Extracts terminal ID from the `PanelLeafNode` in the hierarchical tree
+   - Calls `removeTerminalOptimistically()` after the tree mutation (same effect, cleaner ordering)
+
+4. **Import changes**:
+   - Added `windowLayoutPaneClosed` import from `@laborer/shared/schema`
+   - Added `closePaneInPanelTree`, `findSiblingPaneIdInPanelTree` imports from `window-tab-utils`
+   - Added `windowLayoutPaneClosed` to the `commitWindowLayout` event union type
+
+### Test results
+
+- All 79 tests in window-tab-utils.test.ts pass (including findSiblingPaneIdInPanelTree tests from Issue 4)
+- All 211 related tests pass (focus-consistency, progressive-close, hierarchical-persistence, panel-tab-utils)
+- TypeScript: same 4 pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)
+- No new type errors introduced
+
+## Issue 6: handleAssignTerminalToPane uses hierarchical tree
+
+**Status:** done
+
+### Changes made
+
+1. **Added two new helper functions to `window-tab-utils.ts`**:
+   - `getLastPanelTreeLeafId`: Gets the last leaf ID in reverse DFS order (used to find the split target when all panes are occupied)
+   - `findEmptyPanelTreeLeaf`: Finds an empty terminal pane (PanelLeafNode with paneType 'terminal' and no terminalId)
+   - Both exported from window-tab-utils.ts
+
+2. **Rewrote `handleAssignTerminalToPane`** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - No longer reads from `persistedLayoutTree` or `defaultLayout` (legacy `PanelNode` tree)
+   - No longer calls `computeTerminalPaneAssignment()` from `layout-utils.ts` (legacy)
+   - No longer calls `syncLegacyTreeToHierarchical()` to bridge legacy → hierarchical
+   - Now operates directly on `persistedWindowLayout` (hierarchical `WindowLayout`)
+   - Fast path (terminal already exists): Unchanged — navigates via `findTerminalLocation`
+   - Fallback path rewritten with 3-step hierarchical resolution:
+     1. Specific pane ID given → `assignTerminalInPanelTree` within `updateWorkspaceTileLeaf`
+     2. Empty terminal pane found → `findEmptyPanelTreeLeaf` + `assignTerminalInPanelTree`
+     3. No empty pane → `splitPaneInPanelTree` on last leaf + `findNewPanelTreeLeaf`
+   - Commits `windowLayoutPaneAssigned` (not `layoutPaneAssigned`)
+
+3. **Removed `commitAssignment` helper** — replaced with three extracted helpers:
+   - `ensureWorkspaceInActiveTab`: Ensures workspace tile exists in active tab with at least one panel tab
+   - `assignTerminalToActivePanelTab`: Assigns terminal to a pane in the workspace's active panel tab
+   - `commitAssignmentResult`: Saves focus and commits `windowLayoutPaneAssigned`, optionally triggers dev server auto-open
+   - `navigateToExistingTerminal`: Extracted "navigate to existing terminal" logic to reduce complexity
+
+4. **Import changes**:
+   - Added `generateId` from `@/panels/id-utils`
+   - Added `findEmptyPanelTreeLeaf`, `getLastPanelTreeLeafId` from `window-tab-utils`
+   - Added `PanelTab` type from `@laborer/shared/types`
+   - `computeTerminalPaneAssignment` is no longer imported
+
+5. **Added unit tests** (`apps/web/test/window-tab-utils.test.ts`):
+   - `getLastPanelTreeLeafId`: 3 tests (single leaf, flat split, nested tree)
+   - `findEmptyPanelTreeLeaf`: 5 tests (occupied leaf, empty leaf, non-terminal pane, split tree with empty, all occupied)
+
+### Test results
+
+- All 87 tests in window-tab-utils.test.ts pass (was 79, added 8 new)
+- All 75 related tests pass (focus-consistency, progressive-close, hierarchical-persistence, panel-manager)
+- TypeScript: same 4 pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)
+- No new type errors introduced
+
+## Issue 7: handleCloseWorkspace and handleCloseTerminalPane use hierarchical tree
+
+**Status:** done
+
+### Changes made
+
+1. **Rewrote `handleCloseTerminalPane`** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - No longer reads from `persistedLayoutTree` or `defaultLayout` (legacy `PanelNode` tree)
+   - No longer calls `findLeafByTerminalId()` from `layout-utils.ts` (legacy fast path)
+   - No longer delegates to `handleClosePane` as a fast path — uses `closeTerminalInWindowLayout` as the sole path
+   - No longer commits `panelTabClosed` in the slow path — commits `windowLayoutPaneClosed` for all cases
+   - Now operates directly on `persistedWindowLayout` (hierarchical `WindowLayout`)
+   - Uses `findTerminalLocation()` before closing to determine if focus transfer is needed
+   - Uses `findPanelTreeForLocation()` (new helper) to look up the original panel tree for sibling resolution
+   - Uses `findSiblingPaneIdInPanelTree()` + `saveFocusedPaneId()` to transfer focus when the closed pane was focused
+   - Handles "terminal not found" case by removing terminal from service directly
+
+2. **Rewrote `handleCloseWorkspace`** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - No longer reads from `persistedLayoutTree` or `defaultLayout` (legacy `PanelNode` tree)
+   - No longer calls `getWorkspaceTerminalIds()` from `layout-utils.ts` (legacy)
+   - No longer calls `closeWorkspacePanes()` from `layout-utils.ts` (legacy)
+   - No longer calls `ensureValidActivePaneId()` from `layout-utils.ts` (legacy)
+   - No longer commits `layoutPaneClosed` (legacy event, now a no-op)
+   - No longer commits both legacy + hierarchical events (dual-write pattern removed)
+   - No longer resets `hasSeeded.current` on all-panes-closed edge case
+   - Now operates directly on `persistedWindowLayout` (hierarchical `WindowLayout`)
+   - Uses `getAllWorkspaceTileLeaves()` to find the workspace tile and collect terminal IDs via `collectTerminalIdsFromPanelTree()`
+   - Uses `removeWorkspaceFromLayout()` (already existed) to remove the workspace tile
+   - Commits single `windowLayoutPaneClosed` instead of dual `layoutPaneClosed` + `windowLayoutRestored`
+
+3. **Added `findPanelTreeForLocation` helper** (`use-panel-layout.ts`):
+   - Resolves the PanelTreeNode for a terminal at a known TerminalLocation
+   - Walks window tabs → workspace tiles → panel tabs to find the exact tree
+   - Used by `handleCloseTerminalPane` for focus transfer
+
+4. **Updated test mocks** (`apps/web/test/use-panel-layout.test.ts`):
+   - Added `windowLayoutPaneClosedMock` and `windowLayoutSplitMock` to hoisted mocks, destructured variables, schema mock, event type union, and beforeEach resets
+   - Added `windowLayoutPaneClosed` and `windowLayoutSplit` to `WINDOW_LAYOUT_EVENT_TYPES` set
+   - Fixed legacy event handler in `applyPersistedLayoutEvent` to preserve `windowLayout` column when legacy events upsert rows
+   - Updated "writes split operations" test: expects `windowLayoutSplitMock` instead of `layoutSplitMock`
+   - Updated "writes close operations" test: expects `windowLayoutPaneClosedMock` instead of `layoutPaneClosedMock`, expects 2 leaf panes (hierarchical model keeps workspace-a with empty placeholder)
+
+### Test results
+
+- All 1319 tests in apps/web pass (1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- TypeScript: same 4 pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)
+- No new type errors introduced
+
+## Issue 12: Seeding and reconciliation: hierarchical only
+
+**Status:** done
+
+### Changes made
+
+1. **Rewrote `useInitialLayout`** (`apps/web/src/routes/-hooks/use-initial-layout.ts`):
+   - Now returns `WindowLayout | undefined` instead of `PanelNode | undefined`
+   - Groups running terminals by workspace into `WorkspaceTileLeaf` nodes
+   - Builds a full `WindowLayout` with `WindowTab`, `WorkspaceTileNode`, `PanelTab`, `PanelTreeNode`
+   - Uses `generateId` for all node IDs (previously used `pane-${id}` pattern)
+   - Multiple workspaces produce a `WorkspaceTileSplit`; single workspace produces `WorkspaceTileLeaf`
+
+2. **Removed all legacy seeding/reconciliation from `use-panel-layout.ts`**:
+   - Removed `persistedLayoutRepair` memo and `repairPanelLayoutTree` call
+   - Removed `persistedLayoutTree` (no longer read from persisted row)
+   - Removed `rawPersistedActivePaneId` (hardcoded null, now fully removed)
+   - Removed `persistedWorkspaceOrder` (hardcoded null, now fully removed)
+   - Removed `migrateToWindowLayout` call from `persistedWindowLayout` memo
+   - `persistedWindowLayout` now simply reads from `windowLayoutRepair.windowLayout`
+
+3. **Simplified seeding** (`use-panel-layout.ts`):
+   - Replaced `DEFAULT_NEW_WINDOW_LAYOUT` (`LeafNode`) with `createBlankWindowLayout()` that produces a `WindowLayout`
+   - `defaultWindowLayout` is now a `WindowLayout` (was `PanelNode`)
+   - Seeding commits `windowLayoutRestored` instead of `layoutRestored`
+   - No longer calls `getFirstLeafId` — focus is embedded in the `WindowLayout` via `focusedPaneId`
+
+4. **Removed legacy repair useEffect** (`use-panel-layout.ts`):
+   - Removed the `shouldRepairPersistedSession` effect that committed `layoutRestored`
+   - Only the hierarchical `repairWindowLayout` + `windowLayoutRestored` path remains
+
+5. **Simplified reconciliation** (`use-panel-layout.ts`):
+   - `collectStaleLeaves` now only calls `getStaleTerminalLeavesHierarchical` (removed legacy `getStaleTerminalLeaves` fallback)
+   - `commitReconciledLayouts` now only reconciles the hierarchical `WindowLayout` (removed legacy `reconcileLayout` + `layoutRestored` path)
+   - `isReconciling` initial state only checks `persistedWindowLayout` (removed `persistedLayoutTree` check)
+   - Reconciliation effect no longer depends on `persistedLayoutTree`
+
+6. **Removed `syncLegacyTreeToHierarchical`** (`use-panel-layout.ts`):
+   - Removed the entire 45-line function
+   - Removed `commitDevServerSync` helper that called it
+   - Removed `spawnAndAssignDevServer` helper that used legacy tree operations
+
+7. **Rewrote `handleToggleDevServerPane`** (`use-panel-layout.ts`):
+   - Now operates directly on the hierarchical `WindowLayout`
+   - Toggle ON: Creates a `devServerTerminal` panel tab via `addPanelTab`
+   - Toggle OFF: Removes the `devServerTerminal` panel tab via `removePanelTab`
+   - No longer references `persistedLayoutTree`, `defaultLayout`, `findNodeById`, `replaceNode`, `LeafNode`
+   - Commits `windowLayoutPaneAssigned` (was syncing legacy tree then committing)
+
+8. **Simplified `handleReorderWorkspaces`** (`use-panel-layout.ts`):
+   - Removed legacy fallback that committed `layoutWorkspacesReordered`
+   - Only uses the hierarchical `reorderWorkspaceTiles` path
+
+9. **Simplified `handleResizePane`** (`use-panel-layout.ts`):
+   - Uses the derived legacy `layout` instead of `persistedLayoutTree ?? defaultLayout`
+   - `computeResize` still operates on `PanelNode` (Issue 9 will port it to `PanelTreeNode`)
+
+10. **Derived `layout` from hierarchical tree** (`use-panel-layout.ts`):
+    - `layout` is now computed via `deriveLegacyTreeFromHierarchical(persistedWindowLayout)`
+    - Still returned for consumers in `index.tsx` (Issues 10, 11, 13 will port them)
+    - No longer falls back to `persistedLayoutTree ?? defaultLayout`
+
+11. **Derived `leafPaneIds` from hierarchical tree** (`use-panel-layout.ts`):
+    - Uses `getWorkspaceTileLeaves` + `getPanelTreeLeafIds` instead of `getLeafIds(layout)`
+    - Collects leaf IDs from the active panel tab of each workspace tile
+
+12. **Derived `workspaceOrder` as null** (`use-panel-layout.ts`):
+    - Workspace ordering is now part of the hierarchical tile layout
+    - Returns `null` for consumers that still reference it (Issue 13 will remove them)
+
+13. **Removed unused imports** (`use-panel-layout.ts`):
+    - Removed: `layoutRestored`, `layoutWorkspacesReordered` from schema
+    - Removed: `LeafNode`, `PanelNode` from types
+    - Removed: `convertPanelTree`, `migrateToWindowLayout` from layout-migration
+    - Removed: `ensureValidActivePaneId`, `filterTreeByWorkspace`, `findNodeById`, `getFirstLeafId`, `getLeafIds`, `getLeafNodes`, `getStaleTerminalLeaves`, `reconcileLayout`, `repairPanelLayoutTree`, `replaceNode` from layout-utils
+    - Kept: `deriveLegacyTreeFromHierarchical` (for legacy `layout` derivation, consumed by index.tsx)
+    - Kept: `computeResize` (still operates on `PanelNode`, Issue 9 will port)
+
+14. **Updated visible workspace reporting** (`use-panel-layout.ts`):
+    - Uses `getAllWorkspaceTileLeaves` instead of `getLeafNodes(layout)` to report workspace IDs to the desktop bridge
+
+15. **Updated test file** (`apps/web/test/use-panel-layout.test.ts`):
+    - All fixtures now use `WindowLayout` instead of `PanelNode`
+    - Persisted rows no longer have `layoutTree`, `activePaneId`, `workspaceOrder` columns
+    - Seeding tests assert `windowLayoutRestored` instead of `layoutRestored`
+    - Reconciliation tests use hierarchical stale layout fixtures
+    - Removed legacy event mocks: `layoutSplitMock`, `layoutPaneClosedMock`, `layoutWorkspacesReorderedMock`
+    - 12 tests pass (was 14, removed 2 that tested legacy-only paths: corrupted layout fallback and stale active-pane repair)
+
+### Test results
+
+- All 1317 tests in apps/web pass (1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- TypeScript: 0 errors (the 4 pre-existing errors from Issue 2 are now resolved)
+- No new type errors introduced
+- Format check passes
+
+## Issue 10: Port index.tsx consumers to hierarchical tree
+
+**Status:** done
+
+### Changes made
+
+1. **Added new utility functions to `window-tab-utils.ts`**:
+   - `findPaneInWindowLayout(layout, paneId)`: Finds a `PanelLeafNode` and its context (workspaceId, panelTabId, tabId) by searching across all tabs, workspace tiles, panel tabs, and panel trees. Replaces `findNodeById(layout, paneId)` for pane lookups.
+   - `computeClosePaneGateActionHierarchical(layout, paneId, terminals, prState)`: Hierarchical equivalent of `computeClosePaneGateAction` from `layout-utils`. Operates on `WindowLayout` instead of `PanelNode`. Returns the same `ClosePaneGateResult` discriminated union.
+   - `computeCloseWorkspaceActionHierarchical(layout, workspaceId, terminals)`: Hierarchical equivalent of `computeCloseWorkspaceAction`. Collects terminal IDs across all panel tabs of a workspace tile leaf.
+   - All three functions + `PaneLocation` and `ClosePaneGateResult` types exported.
+
+2. **Ported `getPanePrState`** (`apps/web/src/routes/index.tsx`):
+   - Replaced `findNodeById(layout, paneId)` with `findPaneInWindowLayout(windowLayout, paneId)`
+   - Reads workspace ID from `location.workspaceId` instead of `node.workspaceId`
+   - Dependency changed from `layout` to `panelActions.windowLayout`
+
+3. **Ported fullscreen auto-exit** (`index.tsx`):
+   - Replaced `findNodeById(layout, fullscreenPaneId)` with `findPaneInWindowLayout(windowLayout, fullscreenPaneId)`
+   - Checks `location` existence instead of `node` existence
+
+4. **Ported auto-close review/diff** (`index.tsx`):
+   - Replaced `getLeafNodes(layout).some(l => l.workspaceId === wsId)` with `findWorkspaceLocation(windowLayout, wsId)`
+   - Uses hierarchical workspace location check instead of flat leaf scan
+
+5. **Ported `toggleReviewPane` and `toggleDiffPane`** (`index.tsx`):
+   - Replaced `findNodeById(layout, paneId)` with `findPaneInWindowLayout(windowLayout, paneId)`
+   - Reads workspace ID from `location.workspaceId`
+
+6. **Ported `gatedClosePane`** (`index.tsx`):
+   - Replaced `computeClosePaneGateAction(layout, ...)` with `computeClosePaneGateActionHierarchical(panelActions.windowLayout, ...)`
+   - Same return type and behavior, but operates on hierarchical tree
+
+7. **Ported `gatedCloseTerminalPane`** (`index.tsx`):
+   - Replaced `findLeafByTerminalId(layout, terminalId)` with `findTerminalLocation(windowLayout, terminalId)`
+   - Uses `location.paneId` instead of `leaf.id` to delegate to `gatedClosePane`
+
+8. **Ported `gatedCloseWorkspace`** (`index.tsx`):
+   - Replaced `computeCloseWorkspaceAction(layout, ...)` with `computeCloseWorkspaceActionHierarchical(panelActions.windowLayout, ...)`
+
+9. **Ported `handleNotificationClicked`** (`index.tsx`):
+   - Replaced `getLeafNodes(layout).find(l => l.workspaceId === wsId)` with hierarchical lookup via `getAllWorkspaceTileLeaves(windowLayout)` + `resolveActivePaneForPanelTab`
+   - Finds the workspace tile, resolves its active panel tab's focused pane, and activates it
+
+10. **Removed `layout-utils` imports from `index.tsx`**:
+    - Removed: `computeClosePaneGateAction`, `computeCloseWorkspaceAction`, `findLeafByTerminalId`, `findNodeById`, `getLeafNodes`
+    - Added: `computeClosePaneGateActionHierarchical`, `computeCloseWorkspaceActionHierarchical`, `findPaneInWindowLayout`, `findTerminalLocation`, `findWorkspaceLocation`, `getAllWorkspaceTileLeaves`, `resolveActivePaneForPanelTab`
+
+11. **Note: `layout` still returned from `usePanelLayout()` and passed to downstream components**:
+    - `PanelHotkeys` still receives `layout` prop (Issue 11 will port it)
+    - `PanelContent` still receives `layout` prop (Issue 13 will remove it)
+    - The `layout` destructure remains in `HomeComponent` for these consumers
+
+12. **Added unit tests** (`apps/web/test/window-tab-utils.test.ts`):
+    - `findPaneInWindowLayout`: 5 tests (single-tab, cross-tab, different-tab, not-found, empty)
+    - `computeClosePaneGateActionHierarchical`: 7 tests (undefined layout, not-found, no process, running process, prompt-destroy, confirm-with-destroy, multiple panes)
+    - `computeCloseWorkspaceActionHierarchical`: 5 tests (undefined, not-found, no process, running process, any-running)
+
+### Test results
+
+- All 1334 tests in apps/web pass (was 1317, added 17 new; 1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- TypeScript: 0 errors
+- No new type errors introduced
+- Format check passes
+
+## Issue 13: Remove LegacyWorkspaceFrames and flatLayout prop
+
+**Status:** done
+
+### Changes made
+
+1. **Removed `LegacyWorkspaceFrames` component** (`apps/web/src/routes/-components/workspace-frames.tsx`):
+   - Deleted the entire `LegacyWorkspaceFrames` function (~100 lines) that extracted workspaces from the flat `PanelNode` tree and stacked them vertically
+   - Deleted `WorkspaceFrameResizableChild` (~45 lines) which was only used by `LegacyWorkspaceFrames`
+   - Removed imports: `convertPanelTree` from `layout-migration`, `filterTreeByWorkspace`, `getWorkspaceIds`, `sortWorkspaceLayouts` from `layout-utils`
+   - Removed `PanelNode` type import
+
+2. **Simplified `WorkspaceFrames` component** (`workspace-frames.tsx`):
+   - Removed `layout` (PanelNode) prop — no longer accepts a legacy flat tree
+   - Removed `workspaceOrder` prop — workspace ordering is part of the hierarchical tile layout
+   - `workspaceTileLayout` is now required (was optional with legacy fallback)
+   - Removed the conditional branch that fell back to `LegacyWorkspaceFrames`
+   - Simplified drag-and-drop monitor setup (no conditional for tile path)
+
+3. **Propagated `isCollapsible` and `panelRef` to hierarchical path** (`workspace-frames.tsx`):
+   - `WorkspaceTileResizableChild` now passes `isCollapsible` and `panelRef` to `WorkspaceTileRenderer`
+   - `WorkspaceTileRenderer` passes them through to `WorkspaceTileLeafFrame` for leaf nodes
+   - `WorkspaceTileLeafFrame` passes them to `WorkspaceFrame`
+   - This preserves the minimize/collapse behavior that previously only worked in `LegacyWorkspaceFrames`
+
+4. **Simplified `PanelContent` component** (`apps/web/src/routes/-components/panel-content.tsx`):
+   - Removed `layout` (PanelNode) prop
+   - Removed `workspaceOrder` prop
+   - Guard changed from `if (layout)` to `if (workspaceTileLayout)` — renders workspace frames when a hierarchical tile layout is available
+   - Removed `PanelNode` type import
+
+5. **Removed `layout` and `workspaceOrder` from `usePanelLayout()` return** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - Removed the `layout` memo that derived a legacy `PanelNode` via `deriveLegacyTreeFromHierarchical`
+   - Removed the `workspaceOrder: null` return value
+   - Removed `deriveLegacyTreeFromHierarchical` import from `layout-migration`
+   - `usePanelLayout()` no longer returns any legacy types
+
+6. **Updated `index.tsx`** (`apps/web/src/routes/index.tsx`):
+   - Removed `layout` and `workspaceOrder` from `usePanelLayout()` destructuring
+   - Removed `layout` and `workspaceOrder` props from `PanelContent`
+
+7. **Updated test files**:
+   - `workspace-frames-minimize.test.tsx`: Converted `PanelNode` fixture to `WorkspaceTileNode` fixture with `WorkspaceTileLeaf` nodes containing `PanelTab` with `PanelLeafNode` layouts. Both tests pass.
+   - `full-height-review-panel.test.tsx`: Converted `PanelNode` fixtures (`SINGLE_WORKSPACE_LAYOUT`, `TWO_WORKSPACE_LAYOUT`) to `WorkspaceTileNode` fixtures. Updated "renders the workspace header above the side panel group" test to account for the `TabBar` rendered between header and content in hierarchical mode. Updated `PanelContent` test to remove `layout` and `workspaceOrder` props. All 13 tests pass.
+   - `use-panel-layout.test.ts`: Removed assertions on `result.current.layout` and `result.current.workspaceOrder`. All 12 tests pass.
+
+### Test results
+
+- All 1361 tests in apps/web pass (1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- TypeScript: 0 errors
+- No new type errors introduced
+- Format check passes (pre-existing `isHorizontal` dependency info only)
+
+## Issue 11: Port PanelHotkeys to hierarchical tree
+
+**Status:** done
+
+### Changes made
+
+1. **Added `findPaneInDirectionPanelTree` and helpers to `window-tab-utils.ts`**:
+   - `getEdgePanelTreeLeaf(node, edge)`: Gets the first or last leaf from a `PanelTreeNode` subtree, used when entering a subtree from a directional navigation
+   - `tryNavigateAtPanelTreeAncestor(path, index, targetOrientation, delta)`: Tries to navigate from a specific path index in the given direction, returns the target leaf ID or undefined
+   - `findPaneInDirectionPanelTree(root, activePaneId, direction)`: Entry point — builds the path from root to the active pane, walks up the path to find the nearest ancestor `PanelSplitNode` whose orientation matches the navigation direction, finds the adjacent child, and drills into the subtree to find the nearest leaf on the entering edge
+   - All three functions are mechanical ports of the legacy `getEdgeLeaf`, `tryNavigateAtAncestor`, `findPaneInDirection` from `layout-utils.ts` with `PanelNode` → `PanelTreeNode`, `'SplitNode'` → `'PanelSplitNode'`, `'LeafNode'` → `'PanelLeafNode'`
+
+2. **Updated `PanelHotkeys` component** (`apps/web/src/panels/panel-hotkeys.tsx`):
+   - Removed `layout?: PanelNode` prop — PanelHotkeys no longer accepts a legacy `PanelNode` tree
+   - Derives `windowLayout` from `actions.windowLayout` (the hierarchical `WindowLayout` from panel context)
+   - Replaced `findNodeById(layout, activePaneId)` → `findPaneInWindowLayout(windowLayout, activePaneId)` for `activeWorkspaceId` derivation
+   - Replaced `findPaneInDirection(layout, ...)` → `findPanelTreeRootForPane(windowLayout, activePaneId)` + `findPaneInDirectionPanelTree(panelTreeRoot, activePaneId, direction)` for directional navigation
+   - Wrapped `navigateDirection` in `useCallback` to fix exhaustive-deps lint warning in the Cmd+Option+Arrow `useEffect`
+   - Simplified the Cmd+Option+Arrow `useEffect` to call `navigateDirection` directly, reducing cognitive complexity from 21 to under the limit
+   - Removed imports: `PanelNode` from `@laborer/shared/types`, `findNodeById`/`findPaneInDirection` from `layout-utils`
+   - Added imports: `findPaneInDirectionPanelTree`/`findPaneInWindowLayout`/`findPanelTreeRootForPane` from `window-tab-utils`, `NavigationDirection` type from `window-tab-utils`
+   - `leafPaneIds` prop unchanged — already derived from the hierarchical tree in `use-panel-layout.ts`
+
+3. **Updated `index.tsx`** (`apps/web/src/routes/index.tsx`):
+   - Removed `layout={layout}` prop from `<PanelHotkeys>` — only `leafPaneIds` and `onMetaWWithoutPane` remain
+   - `layout` is still destructured from `usePanelLayout()` and passed to `PanelContent` (Issue 13 will remove it)
+
+4. **Added unit tests** (`apps/web/test/window-tab-utils.test.ts`):
+   - `findPaneInDirectionPanelTree`: 12 tests covering:
+     - Single leaf (no neighbors in any direction)
+     - Pane not found
+     - Navigate right/left in horizontal split
+     - Navigate down/up in vertical split
+     - Edge cases (at left/right boundary)
+     - Mismatched direction (horizontal split, vertical navigation)
+     - Entering nested subtree from first edge
+     - Exiting nested subtree to parent neighbor
+     - Entering subtree from last edge (left navigation)
+     - 3-way horizontal split traversal
+
+### Test results
+
+- All 1361 tests in apps/web pass (was 1349, added 12 new; 1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- TypeScript: 0 errors
+- No new type errors introduced
+- Format check passes
+
+## Issue 14: Dead code removal
+
+**Status:** done
+
+### Changes made
+
+1. **Deleted `layout-migration.ts`** (`apps/web/src/panels/layout-migration.ts`):
+   - Removed the entire file (474 lines) — `migrateToWindowLayout`, `convertPanelTree`, `convertPanelTreeToLegacy`, `convertLeafNode`, `collectSidebarFlags`, `deriveLegacyTreeFromHierarchical`, and all internal helpers
+   - No production code imported from this module (only its own test file)
+
+2. **Deleted `layout-utils.ts`** (`apps/web/src/panels/layout-utils.ts`):
+   - Removed the entire file (1736 lines) — `splitPane`, `closePane`, `findNodeById`, `findSiblingPaneId`, `findPaneInDirection`, `computeResize`, `computeTerminalPaneAssignment`, `reconcileLayout`, `repairPanelLayoutTree`, `filterTreeByWorkspace`, `getWorkspaceIds`, `getLeafNodes`, `getLeafIds`, `getScopedActivePaneId`, `computeClosePaneGateAction`, `computeCloseWorkspaceAction`, `shouldConfirmClose`, `shouldConfirmCloseWorkspace`, `getWorkspaceTerminalIds`, `getWorkspaceActiveTerminals`, `closeWorkspacePanes`, `sortWorkspaceLayouts`, `findLeafByTerminalId`, `findNewLeafAfterSplit`, `getTerminalIdsToRemove`, `ensureValidActivePaneId`, `getFirstLeafId`, `getLastLeafId`, `findEmptyTerminalPane`, `replaceNode`, `findParent`, `countLeaves`, `getTreeDepth`, `generateId`, and all internal helpers
+   - Two surviving symbols (`isWorkspaceFrameData`, `WORKSPACE_FRAME_TYPE`) relocated to `window-tab-utils.ts`
+
+3. **Relocated `isWorkspaceFrameData` and `WORKSPACE_FRAME_TYPE`** to `window-tab-utils.ts`:
+   - Added at the end of the file as workspace frame drag-and-drop helpers
+   - Updated import in `workspace-frames.tsx` to source from `@/panels/window-tab-utils`
+   - Moved the 4 unit tests from `layout-utils.test.ts` to `window-tab-utils.test.ts`
+
+4. **Deleted 7 legacy test files**:
+   - `apps/web/test/layout-migration.test.ts` (965 lines) — tested only legacy migration functions
+   - `apps/web/test/layout-utils.test.ts` (2043 lines) — tested only legacy `PanelNode` functions (surviving `isWorkspaceFrameData` tests moved to `window-tab-utils.test.ts`)
+   - `apps/web/test/close-terminal.test.ts` (164 lines) — tested only `getTerminalIdsToRemove` on legacy tree
+   - `apps/web/test/close-workspace.test.ts` (514 lines) — tested only legacy workspace close functions
+   - `apps/web/test/close-pane-gating.test.ts` (427 lines) — tested only legacy close-pane gating
+   - `apps/web/test/workspace-frame-reorder.test.tsx` (446 lines) — tested legacy reorder pipeline
+
+5. **Cleaned up `use-panel-layout.test.ts`**:
+   - Removed `layoutPaneAssignedMock` and `layoutRestoredMock` from hoisted mocks, vi.mock, beforeEach, type union
+   - Removed negative assertions (`expect(layoutPaneAssignedMock).not.toHaveBeenCalled()`) that tested the absence of legacy events — these were always true since the production code no longer imports the legacy events
+
+6. **Added `@deprecated` JSDoc tags to legacy types** (`packages/shared/src/types.ts`):
+   - `LeafNode`, `SplitNode`, `PanelNode` interfaces — "Use PanelLeafNode/PanelSplitNode/PanelTreeNode instead"
+   - `LeafNodeSchema`, `SplitNodeSchema`, `PanelNodeSchema`, `PanelLayout`, `PanelLayoutSchema` — "Kept for eventlog backward compatibility"
+   - Added section header comment explaining these types exist only for LiveStore eventlog decoding
+
+7. **Updated stale comments** across the codebase:
+   - `panel-context.tsx`: Updated `@see` reference from `layout-utils` to `window-tab-utils`
+   - `panel-manager.tsx`: Updated `@see` reference from `layout-utils.ts` to `window-tab-utils.ts`
+   - `workspace-tile-utils.ts`: Updated `@see` references and description
+   - `id-utils.ts`: Removed mention of `layout-migration` from module list
+   - `window-tab-utils.ts`: Removed `@see layout-utils.ts` reference, cleaned up section comment
+
+### Code removed (summary)
+
+- **Source files deleted:** 2 (layout-migration.ts, layout-utils.ts) — ~2,210 lines
+- **Test files deleted:** 7 (layout-migration.test.ts, layout-utils.test.ts, close-terminal.test.ts, close-workspace.test.ts, close-pane-gating.test.ts, workspace-frame-reorder.test.tsx) — ~4,559 lines
+- **Total lines removed:** ~6,769 lines of legacy code and tests
+- **No legacy event names** (`layoutSplit`, `layoutPaneClosed`, `layoutPaneAssigned`, `layoutRestored`) are committed anywhere in the app
+- **`syncLegacyTreeToHierarchical`** was already removed in Issue 12
+- **`LeafNode`, `SplitNode`, `PanelNode` types** are deprecated (kept for eventlog backward compatibility via `PanelNodeSchema`)
+
+### Test results
+
+- All 1123 tests in apps/web pass (was 1361, removed 238 legacy-only tests, added 4 relocated tests; 1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- All 158 tests in apps/desktop pass
+- All 344 tests in packages/server pass
+- TypeScript: 0 errors
+- Format check passes
+- `bun run check`: 15/15 tasks successful

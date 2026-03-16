@@ -8,7 +8,7 @@
  * @see Issue: Diff and review panel placement
  */
 
-import type { PanelNode } from '@laborer/shared/types'
+import type { WorkspaceTileNode } from '@laborer/shared/types'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -39,7 +39,7 @@ vi.mock('@atlaskit/pragmatic-drag-and-drop/reorder', () => ({
 }))
 
 vi.mock('@/panels/panel-manager', () => ({
-  PanelManager: ({ layout }: { layout: PanelNode | undefined }) => (
+  PanelManager: ({ layout }: { layout: unknown }) => (
     <div data-layout={JSON.stringify(layout)} data-testid="panel-manager" />
   ),
 }))
@@ -182,35 +182,77 @@ vi.mock('@/components/ui/resizable', () => ({
 // Import after mocks are set up
 import { WorkspaceFrames } from '../src/routes/-components/workspace-frames'
 
-const TWO_WORKSPACE_LAYOUT: PanelNode = {
-  _tag: 'SplitNode',
-  id: 'split-root',
+/**
+ * Hierarchical tile layout with two workspaces stacked vertically.
+ */
+const TWO_WORKSPACE_TILE_LAYOUT: WorkspaceTileNode = {
+  _tag: 'WorkspaceTileSplit',
+  id: 'tile-root',
   direction: 'vertical',
   children: [
     {
-      _tag: 'LeafNode',
-      id: 'pane-1',
-      paneType: 'terminal',
-      terminalId: 'term-1',
+      _tag: 'WorkspaceTileLeaf',
+      id: 'tile-ws1',
       workspaceId: 'workspace-1',
+      activePanelTabId: 'tab-ws1',
+      panelTabs: [
+        {
+          id: 'tab-ws1',
+          panelLayout: {
+            _tag: 'PanelLeafNode',
+            id: 'pane-1',
+            paneType: 'terminal',
+            terminalId: 'term-1',
+            workspaceId: 'workspace-1',
+          },
+          focusedPaneId: 'pane-1',
+        },
+      ],
     },
     {
-      _tag: 'LeafNode',
-      id: 'pane-2',
-      paneType: 'terminal',
-      terminalId: 'term-2',
+      _tag: 'WorkspaceTileLeaf',
+      id: 'tile-ws2',
       workspaceId: 'workspace-2',
+      activePanelTabId: 'tab-ws2',
+      panelTabs: [
+        {
+          id: 'tab-ws2',
+          panelLayout: {
+            _tag: 'PanelLeafNode',
+            id: 'pane-2',
+            paneType: 'terminal',
+            terminalId: 'term-2',
+            workspaceId: 'workspace-2',
+          },
+          focusedPaneId: 'pane-2',
+        },
+      ],
     },
   ],
   sizes: [50, 50],
 }
 
-const SINGLE_WORKSPACE_LAYOUT: PanelNode = {
-  _tag: 'LeafNode',
-  id: 'pane-1',
-  paneType: 'terminal',
-  terminalId: 'term-1',
+/**
+ * Hierarchical tile layout with a single workspace.
+ */
+const SINGLE_WORKSPACE_TILE_LAYOUT: WorkspaceTileNode = {
+  _tag: 'WorkspaceTileLeaf',
+  id: 'tile-ws1',
   workspaceId: 'workspace-1',
+  activePanelTabId: 'tab-ws1',
+  panelTabs: [
+    {
+      id: 'tab-ws1',
+      panelLayout: {
+        _tag: 'PanelLeafNode',
+        id: 'pane-1',
+        paneType: 'terminal',
+        terminalId: 'term-1',
+        workspaceId: 'workspace-1',
+      },
+      focusedPaneId: 'pane-1',
+    },
+  ],
 }
 
 describe('Workspace-scoped review panel', () => {
@@ -225,9 +267,8 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE_LAYOUT}
       />
     )
 
@@ -241,9 +282,8 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId={null}
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE_LAYOUT}
       />
     )
 
@@ -254,9 +294,8 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        layout={TWO_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
+        workspaceTileLayout={TWO_WORKSPACE_TILE_LAYOUT}
       />
     )
 
@@ -285,9 +324,8 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        layout={TWO_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-2"
-        workspaceOrder={null}
+        workspaceTileLayout={TWO_WORKSPACE_TILE_LAYOUT}
       />
     )
 
@@ -309,8 +347,7 @@ describe('Workspace-scoped diff panel', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-1"
-        layout={SINGLE_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE_LAYOUT}
       />
     )
 
@@ -324,8 +361,7 @@ describe('Workspace-scoped diff panel', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId={null}
-        layout={SINGLE_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE_LAYOUT}
       />
     )
 
@@ -337,8 +373,7 @@ describe('Workspace-scoped diff panel', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-2"
-        layout={TWO_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
+        workspaceTileLayout={TWO_WORKSPACE_TILE_LAYOUT}
       />
     )
 
@@ -361,9 +396,8 @@ describe('Both panels in same workspace', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-1"
-        layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE_LAYOUT}
       />
     )
 
@@ -376,17 +410,25 @@ describe('Both panels in same workspace', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-1"
-        layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE_LAYOUT}
       />
     )
 
     const frame = screen.getByTestId('workspace-frame')
     const frameChildren = Array.from(frame.children)
 
+    // Header is always the first child
     expect(frameChildren[0]).toBe(screen.getByTestId('workspace-frame-header'))
-    expect(frameChildren[1]).toBe(screen.getByTestId('resizable-panel-group'))
+    // In hierarchical mode, a TabBar may appear between the header and
+    // the resizable panel group. Verify the header precedes the panel group.
+    const headerIndex = frameChildren.indexOf(
+      screen.getByTestId('workspace-frame-header')
+    )
+    const panelGroupIndex = frameChildren.indexOf(
+      screen.getByTestId('resizable-panel-group')
+    )
+    expect(headerIndex).toBeLessThan(panelGroupIndex)
   })
 
   it('closes the diff viewer from the side panel header', async () => {
@@ -396,8 +438,7 @@ describe('Both panels in same workspace', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-1"
-        layout={SINGLE_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE_LAYOUT}
       />
     )
 
@@ -412,9 +453,8 @@ describe('Both panels in same workspace', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE_LAYOUT}
       />
     )
 
@@ -428,9 +468,8 @@ describe('Both panels in same workspace', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-2"
-        layout={TWO_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
+        workspaceTileLayout={TWO_WORKSPACE_TILE_LAYOUT}
       />
     )
 
@@ -474,10 +513,9 @@ describe('PanelContent passes through side panel state', () => {
         activePaneId="pane-1"
         fullscreenPaneId={null}
         isReconciling={true}
-        layout={TWO_WORKSPACE_LAYOUT}
         reviewPaneOpen
         reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
+        workspaceTileLayout={TWO_WORKSPACE_TILE_LAYOUT}
       />
     )
 

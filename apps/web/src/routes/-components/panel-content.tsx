@@ -1,4 +1,4 @@
-import type { PanelNode, WorkspaceTileNode } from '@laborer/shared/types'
+import type { WorkspaceTileNode } from '@laborer/shared/types'
 import { useState } from 'react'
 import { FullscreenPortalContext } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
@@ -12,10 +12,8 @@ interface PanelContentProps {
   /** True when the active window tab exists but has no workspace layout. */
   readonly isEmptyWindowTab?: boolean
   readonly isReconciling: boolean
-  readonly layout: PanelNode | undefined
   readonly reviewPaneOpen?: boolean
   readonly reviewWorkspaceId?: string | null
-  readonly workspaceOrder: string[] | null
   readonly workspaceTileLayout?: WorkspaceTileNode | undefined
 }
 
@@ -34,10 +32,8 @@ interface PanelContentProps {
  */
 export function PanelContent({
   isReconciling,
-  layout,
   activePaneId,
   fullscreenPaneId,
-  workspaceOrder,
   workspaceTileLayout,
   isEmptyWindowTab = false,
   reviewPaneOpen = false,
@@ -62,16 +58,14 @@ export function PanelContent({
     return <EmptyWindowTabState />
   }
 
-  if (layout) {
+  if (workspaceTileLayout) {
     return (
       <FullscreenPortalContext.Provider value={portalElement}>
         <div className="relative h-full w-full">
           <WorkspaceFrames
             activePaneId={activePaneId}
             diffWorkspaceId={diffPaneOpen ? diffWorkspaceId : null}
-            layout={layout}
             reviewWorkspaceId={reviewPaneOpen ? reviewWorkspaceId : null}
-            workspaceOrder={workspaceOrder}
             workspaceTileLayout={workspaceTileLayout}
           />
           {/* Fullscreen portal target — panes portal into this overlay

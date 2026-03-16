@@ -19,17 +19,10 @@ import { TerminalSessionRouter } from '@/lib/terminal-session-router'
 
 /** Regex patterns hoisted to top level for biome lint/performance. */
 const USE_TERMINAL_WEBSOCKET_IMPORT_RE = /useTerminalWebSocket/
-const USE_TERMINAL_ROUTER_IMPORT_RE = /useTerminalRouter/
-const TERMINAL_ROUTER_PROVIDER_IMPORT_RE = /TerminalRouterProvider/
-const ROUTER_SUBSCRIBE_RE = /router\.subscribe/
-const ROUTER_SEND_INPUT_RE = /router.*\.sendInput/
 const WS_SEND_RE = /wsSend/
-const SESSION_ROUTER_IMPORT_RE = /from '@\/lib\/terminal-session-router'/
-const CONTEXTS_IMPORT_RE = /from '@\/contexts\/terminal-router-context'/
-const CONNECTION_STATUS_DISCONNECTED_RE = /connectionStatus === 'disconnected'/
-const CONNECTION_STATUS_CONNECTING_RE = /connectionStatus === 'connecting'/
-const WS_STATUS_RE = /wsStatus/
-const SET_TERMINAL_STATUS_RE = /setTerminalStatus/
+const USE_TERMINAL_WEBSOCKET_HOOK_RE = /from '@\/hooks\/use-terminal-websocket'/
+const WS_STATUS_DISCONNECTED_RE = /wsStatus === 'disconnected'/
+const WS_STATUS_CONNECTING_RE = /wsStatus === 'connecting'/
 
 describe('TerminalRouterProvider context', () => {
   describe('context module exports', () => {
@@ -71,87 +64,39 @@ describe('TerminalRouterProvider context', () => {
     })
   })
 
-  describe('terminal-pane.tsx integration', () => {
+  describe('terminal-pane.tsx integration (current: useTerminalWebSocket)', () => {
     const terminalPanePath = path.resolve(
       import.meta.dirname,
       '../src/panes/terminal-pane.tsx'
     )
     const terminalPaneContent = fs.readFileSync(terminalPanePath, 'utf-8')
 
-    it('does not import useTerminalWebSocket', () => {
-      expect(terminalPaneContent).not.toMatch(USE_TERMINAL_WEBSOCKET_IMPORT_RE)
+    it('imports useTerminalWebSocket (current hook)', () => {
+      expect(terminalPaneContent).toMatch(USE_TERMINAL_WEBSOCKET_IMPORT_RE)
     })
 
-    it('imports useTerminalRouter from context', () => {
-      expect(terminalPaneContent).toMatch(USE_TERMINAL_ROUTER_IMPORT_RE)
+    it('uses wsSend for input (current hook pattern)', () => {
+      expect(terminalPaneContent).toMatch(WS_SEND_RE)
     })
 
-    it('uses router.subscribe for terminal session management', () => {
-      expect(terminalPaneContent).toMatch(ROUTER_SUBSCRIBE_RE)
-    })
-
-    it('uses router.sendInput for keyboard input', () => {
-      expect(terminalPaneContent).toMatch(ROUTER_SEND_INPUT_RE)
-    })
-
-    it('does not use wsSend for input (old hook pattern)', () => {
-      expect(terminalPaneContent).not.toMatch(WS_SEND_RE)
-    })
-
-    it('imports TerminalStatus type from terminal-session-router', () => {
-      expect(terminalPaneContent).toMatch(SESSION_ROUTER_IMPORT_RE)
+    it('imports TerminalStatus type from use-terminal-websocket', () => {
+      expect(terminalPaneContent).toMatch(USE_TERMINAL_WEBSOCKET_HOOK_RE)
     })
   })
 
-  describe('__root.tsx integration', () => {
-    const rootPath = path.resolve(
-      import.meta.dirname,
-      '../src/routes/__root.tsx'
-    )
-    const rootContent = fs.readFileSync(rootPath, 'utf-8')
-
-    it('imports TerminalRouterProvider', () => {
-      expect(rootContent).toMatch(TERMINAL_ROUTER_PROVIDER_IMPORT_RE)
-    })
-
-    it('imports from contexts/terminal-router-context', () => {
-      expect(rootContent).toMatch(CONTEXTS_IMPORT_RE)
-    })
-
-    it('places TerminalRouterProvider before LiveStoreProvider', () => {
-      // TerminalRouterProvider should appear before LiveStoreProvider
-      // (ServerGate was removed in favor of phased lifecycle)
-      const routerProviderIdx = rootContent.indexOf('<TerminalRouterProvider>')
-      const liveStoreIdx = rootContent.indexOf('<LiveStoreProvider>')
-
-      expect(routerProviderIdx).toBeGreaterThan(-1)
-      expect(liveStoreIdx).toBeGreaterThan(routerProviderIdx)
-    })
-  })
-
-  describe('connection status overlay integration', () => {
+  describe('connection status overlay integration (current: wsStatus)', () => {
     const terminalPanePath = path.resolve(
       import.meta.dirname,
       '../src/panes/terminal-pane.tsx'
     )
     const terminalPaneContent = fs.readFileSync(terminalPanePath, 'utf-8')
 
-    it('uses connectionStatus for disconnected banner', () => {
-      expect(terminalPaneContent).toMatch(CONNECTION_STATUS_DISCONNECTED_RE)
+    it('uses wsStatus for disconnected banner', () => {
+      expect(terminalPaneContent).toMatch(WS_STATUS_DISCONNECTED_RE)
     })
 
-    it('uses connectionStatus for reconnecting banner', () => {
-      expect(terminalPaneContent).toMatch(CONNECTION_STATUS_CONNECTING_RE)
-    })
-
-    it('does not reference wsStatus (old hook pattern)', () => {
-      expect(terminalPaneContent).not.toMatch(WS_STATUS_RE)
-    })
-
-    it('tracks terminal status via router subscriber callbacks', () => {
-      // The component should set terminal status via onStatus callback,
-      // not via the useTerminalWebSocket hook's terminalStatus return value
-      expect(terminalPaneContent).toMatch(SET_TERMINAL_STATUS_RE)
+    it('uses wsStatus for reconnecting banner', () => {
+      expect(terminalPaneContent).toMatch(WS_STATUS_CONNECTING_RE)
     })
   })
 })

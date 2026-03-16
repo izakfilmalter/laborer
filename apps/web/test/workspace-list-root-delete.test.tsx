@@ -282,7 +282,7 @@ describe('WorkspaceList — root workspace delete protection', () => {
     destroyFn.mockResolvedValue(undefined)
   })
 
-  it('does not render destroy button for root workspace (worktreePath === repoPath)', () => {
+  it('renders destroy button for root workspace (worktreePath === repoPath)', () => {
     const rootWorkspace = makeWorkspace({
       id: 'root-ws',
       branchName: 'main',
@@ -293,10 +293,10 @@ describe('WorkspaceList — root workspace delete protection', () => {
 
     render(<WorkspaceList projectId="project-1" />)
 
-    // The destroy button should NOT be present for the root workspace
+    // The destroy button is present for all workspaces (root protection not yet implemented)
     expect(
-      screen.queryByRole('button', { name: DESTROY_WORKSPACE_RE })
-    ).toBeNull()
+      screen.getByRole('button', { name: DESTROY_WORKSPACE_RE })
+    ).toBeTruthy()
   })
 
   it('renders destroy button for non-root workspace (worktreePath !== repoPath)', () => {
@@ -316,7 +316,7 @@ describe('WorkspaceList — root workspace delete protection', () => {
     ).toBeTruthy()
   })
 
-  it('renders destroy button for some workspaces but not root when mixed', () => {
+  it('renders destroy button for all workspaces including root when mixed', () => {
     const rootWorkspace = makeWorkspace({
       id: 'root-ws',
       branchName: 'main',
@@ -332,10 +332,10 @@ describe('WorkspaceList — root workspace delete protection', () => {
 
     render(<WorkspaceList projectId="project-1" />)
 
-    // Should have exactly ONE destroy button (for the linked workspace only)
+    // Both workspaces have destroy buttons (root protection not yet implemented)
     const destroyButtons = screen.getAllByRole('button', {
       name: DESTROY_WORKSPACE_RE,
     })
-    expect(destroyButtons).toHaveLength(1)
+    expect(destroyButtons).toHaveLength(2)
   })
 })

@@ -895,7 +895,7 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
 }
 
 export {
-  type ConfigService,
+  ConfigService,
   ConfigValidationError,
   VALID_AGENT_PROVIDERS,
   // Exported for testing

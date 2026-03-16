@@ -333,7 +333,7 @@ describe('PhaseTransitionDriver', () => {
         return Promise.resolve({ ok: true })
       }
       // Init-status endpoint
-      if (url === '/server-init-status') {
+      if (url === '/init-status') {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({ ready: initStatusReady }),
@@ -392,7 +392,7 @@ describe('PhaseTransitionDriver', () => {
       if (url === '/server-health') {
         return Promise.resolve({ ok: true })
       }
-      if (url === '/server-init-status') {
+      if (url === '/init-status') {
         initStatusCalls.push(url)
         return Promise.resolve({
           ok: true,
@@ -448,7 +448,7 @@ describe('PhaseTransitionDriver', () => {
       if (url === '/file-watcher-health') {
         return Promise.resolve({ ok: true })
       }
-      if (url === '/server-init-status') {
+      if (url === '/init-status') {
         initStatusCallCount++
         return Promise.resolve({
           ok: true,

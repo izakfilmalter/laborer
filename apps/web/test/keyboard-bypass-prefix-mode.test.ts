@@ -26,15 +26,10 @@ import { isPrefixKey, shouldBypassTerminal } from '../src/lib/keybinds'
 /** Regex patterns hoisted to module level for biome lint/performance. */
 const ATTACH_HANDLER_RE = /attachCustomKeyEventHandler/
 const PREFIX_MODE_TIMEOUT_RE = /PREFIX_MODE_TIMEOUT\s*=\s*1500/
-const ENTER_PREFIX_RE = /enterPrefixMode\(\)/
-const EXIT_PREFIX_RE = /exitPrefixMode\(\)/
 const KEYDOWN_CHECK_RE = /event\.type\s*!==\s*'keydown'/
-const SHOULD_BYPASS_RE = /shouldBypassTerminal\(event\)/
-const PREFIX_KEY_RE = /isPrefixKey\(event\)/
 const PREFIX_MODE_REF_RE = /prefixModeRef\.current/
-const IMPORT_KEYBINDS_RE = /from ['"]@\/lib\/keybinds['"]/
-const SHOULD_BYPASS_WORD_RE = /shouldBypassTerminal/
-const IS_PREFIX_KEY_WORD_RE = /isPrefixKey/
+const IS_EXACT_META_W_RE = /isExactMetaW/
+const IS_EXACT_CTRL_B_RE = /isExactCtrlB/
 const TERMINAL_ATTACH_CALL_RE = /terminal\.attachCustomKeyEventHandler\(/
 const PREFIX_MODE_CONDITIONAL_RE = /prefixMode\s*&&/
 const CTRL_B_LABEL_RE = /Ctrl\+B/
@@ -149,10 +144,9 @@ describe('keyboard bypass and prefix mode (Issue 4)', () => {
       'utf-8'
     )
 
-    it('imports shouldBypassTerminal and isPrefixKey from keybinds', () => {
-      expect(terminalPaneSrc).toMatch(IMPORT_KEYBINDS_RE)
-      expect(terminalPaneSrc).toMatch(SHOULD_BYPASS_WORD_RE)
-      expect(terminalPaneSrc).toMatch(IS_PREFIX_KEY_WORD_RE)
+    it('defines inline key detection functions (isExactMetaW, isExactCtrlB)', () => {
+      expect(terminalPaneSrc).toMatch(IS_EXACT_META_W_RE)
+      expect(terminalPaneSrc).toMatch(IS_EXACT_CTRL_B_RE)
     })
 
     it('calls attachCustomKeyEventHandler on the terminal', () => {
@@ -166,19 +160,6 @@ describe('keyboard bypass and prefix mode (Issue 4)', () => {
 
     it('only intercepts keydown events (passes keyup through)', () => {
       expect(terminalPaneSrc).toMatch(KEYDOWN_CHECK_RE)
-    })
-
-    it('calls shouldBypassTerminal for global shortcut detection', () => {
-      expect(terminalPaneSrc).toMatch(SHOULD_BYPASS_RE)
-    })
-
-    it('checks isPrefixKey to enter prefix mode', () => {
-      expect(terminalPaneSrc).toMatch(PREFIX_KEY_RE)
-    })
-
-    it('defines enterPrefixMode and exitPrefixMode functions', () => {
-      expect(terminalPaneSrc).toMatch(ENTER_PREFIX_RE)
-      expect(terminalPaneSrc).toMatch(EXIT_PREFIX_RE)
     })
 
     it('checks prefixModeRef.current for prefix mode action key', () => {

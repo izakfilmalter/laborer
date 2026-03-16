@@ -278,13 +278,17 @@ describe('Workspace card layout — Row 1 (Git row)', () => {
     isElectronMock.mockReturnValue(false)
   })
 
-  it('hides Review PR and Fix Findings buttons when workspace has no PR', () => {
+  it('disables Review PR and Fix Findings buttons when workspace has no PR', () => {
     mockStore([makeWorkspace()])
 
     render(<WorkspaceList projectId="project-1" />)
 
-    expect(screen.queryByRole('button', { name: REVIEW_PR_RE })).toBeNull()
-    expect(screen.queryByRole('button', { name: FIX_FINDINGS_RE })).toBeNull()
+    const reviewBtn = screen.getByRole('button', { name: REVIEW_PR_RE })
+    const fixBtn = screen.getByRole('button', { name: FIX_FINDINGS_RE })
+    expect(reviewBtn).toBeTruthy()
+    expect(fixBtn).toBeTruthy()
+    expect(reviewBtn.hasAttribute('disabled')).toBe(true)
+    expect(fixBtn.hasAttribute('disabled')).toBe(true)
   })
 
   it('shows Review PR and Fix Findings buttons when workspace has a PR', () => {

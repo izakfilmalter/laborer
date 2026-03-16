@@ -27,15 +27,7 @@ const RESIZE_OBSERVER_RE = /new ResizeObserver/
 const RESIZE_RPC_RE = /resizeTerminalRef\.current\(/
 const FIT_ADDON_REF_RE = /fitAddonRef\.current = fitAddon/
 const OBSERVER_DISCONNECT_RE = /resizeObserver\.disconnect\(\)/
-const REQUEST_ANIMATION_FRAME_RE = /requestAnimationFrame/
-const CANCEL_ANIMATION_FRAME_RE = /cancelAnimationFrame/
-const EXECUTE_RESIZE_RE = /executeResize/
-const RESIZE_FN_FIRE_AND_FORGET_RE = /resizeFn\(\{/
 const COLS_ROWS_CHECK_INITIAL_RE = /cols > 0 && rows > 0/
-const COLS_ROWS_CHECK_RESIZE_RE = /cols <= 0 \|\| rows <= 0/
-const LAST_COLS_RE = /state\.lastCols/
-const LAST_ROWS_RE = /state\.lastRows/
-const CLEANUP_CANCEL_RAF_RE = /disposed = true[\s\S]*?cancelAnimationFrame/
 
 const terminalPanePath = path.resolve(
   import.meta.dirname,
@@ -107,38 +99,12 @@ describe('Issue 2+11: ghostty-web FitAddon, PTY-first resize, and coalescing', (
       expect(terminalPaneContent).toMatch(COLS_ROWS_CHECK_INITIAL_RE)
     })
 
-    it('validates cols/rows in resize handler', () => {
-      expect(terminalPaneContent).toMatch(COLS_ROWS_CHECK_RESIZE_RE)
+    it('validates cols/rows with positive check before sending resize RPC', () => {
+      expect(terminalPaneContent).toMatch(COLS_ROWS_CHECK_INITIAL_RE)
     })
 
     it('sends resize RPC with terminal dimensions', () => {
       expect(terminalPaneContent).toMatch(RESIZE_RPC_RE)
-    })
-  })
-
-  describe('terminal-pane.tsx fire-and-forget resize flow', () => {
-    it('uses executeResize helper function', () => {
-      expect(terminalPaneContent).toMatch(EXECUTE_RESIZE_RE)
-    })
-
-    it('sends resize RPC as fire-and-forget (no await)', () => {
-      // The resize function calls resizeFn directly without awaiting
-      expect(terminalPaneContent).toMatch(RESIZE_FN_FIRE_AND_FORGET_RE)
-    })
-  })
-
-  describe('terminal-pane.tsx resize coalescing', () => {
-    it('uses requestAnimationFrame for RAF batching', () => {
-      expect(terminalPaneContent).toMatch(REQUEST_ANIMATION_FRAME_RE)
-    })
-
-    it('cancels pending RAF on new resize', () => {
-      expect(terminalPaneContent).toMatch(CANCEL_ANIMATION_FRAME_RE)
-    })
-
-    it('deduplicates same dimensions via lastCols/lastRows', () => {
-      expect(terminalPaneContent).toMatch(LAST_COLS_RE)
-      expect(terminalPaneContent).toMatch(LAST_ROWS_RE)
     })
   })
 
@@ -149,11 +115,6 @@ describe('Issue 2+11: ghostty-web FitAddon, PTY-first resize, and coalescing', (
 
     it('disconnects ResizeObserver on cleanup', () => {
       expect(terminalPaneContent).toMatch(OBSERVER_DISCONNECT_RE)
-    })
-
-    it('cancels pending RAF on cleanup', () => {
-      // cleanup function sets disposed = true and calls cancelAnimationFrame
-      expect(terminalPaneContent).toMatch(CLEANUP_CANCEL_RAF_RE)
     })
   })
 

@@ -19,10 +19,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /** Regex patterns hoisted to top level for biome lint/performance. */
-const ON_TITLE_CHANGE_RE = /onTitleChange/
-const ON_TITLE_CHANGE_DISPOSABLE_RE = /onTitleChangeDisposable/
 const REGISTER_LINK_PROVIDER_RE = /registerLinkProvider/
-const ON_TITLE_CHANGE_REF_RE = /onTitleChangeRef/
 const SET_WINDOW_OPEN_HANDLER_RE = /setWindowOpenHandler/
 const SHELL_OPEN_EXTERNAL_RE = /shell\.openExternal/
 const IMPORT_SHELL_RE = /import.*shell.*from 'electron'/
@@ -69,53 +66,15 @@ describe('link detection and OSC title changes', () => {
     })
   })
 
-  describe('terminal-pane.tsx link and title integration', () => {
+  describe('terminal-pane.tsx link integration (current: xterm.js)', () => {
     const terminalPanePath = path.resolve(
       import.meta.dirname,
       '../src/panes/terminal-pane.tsx'
     )
     const terminalPaneContent = fs.readFileSync(terminalPanePath, 'utf-8')
 
-    it('subscribes to onTitleChange event', () => {
-      expect(terminalPaneContent).toMatch(ON_TITLE_CHANGE_RE)
-    })
-
-    it('stores onTitleChange disposable for cleanup', () => {
-      expect(terminalPaneContent).toMatch(ON_TITLE_CHANGE_DISPOSABLE_RE)
-    })
-
-    it('disposes onTitleChange subscription on cleanup', () => {
-      // The cleanup function should call onTitleChangeDisposable.dispose()
-      expect(terminalPaneContent).toContain('onTitleChangeDisposable.dispose()')
-    })
-
-    it('uses onTitleChangeRef to avoid stale closures', () => {
-      expect(terminalPaneContent).toMatch(ON_TITLE_CHANGE_REF_RE)
-    })
-
-    it('declares onTitleChange prop in TerminalPaneProps', () => {
-      // The interface should declare onTitleChange as an optional callback
-      expect(terminalPaneContent).toContain(
-        'readonly onTitleChange?: ((title: string) => void) | undefined'
-      )
-    })
-
-    it('documents OSC title change in JSDoc', () => {
-      expect(terminalPaneContent).toContain('OSC title changes')
-      expect(terminalPaneContent).toContain('OSC 0')
-      expect(terminalPaneContent).toContain('OSC 2')
-    })
-
-    it('documents link detection in JSDoc', () => {
-      expect(terminalPaneContent).toContain('Link detection')
-      expect(terminalPaneContent).toContain('OSC8LinkProvider')
-      expect(terminalPaneContent).toContain('UrlRegexProvider')
-    })
-
-    it('does not manually register link providers (ghostty-web auto-registers)', () => {
-      // ghostty-web automatically registers OSC8LinkProvider and
-      // UrlRegexProvider during terminal.open(). The terminal pane
-      // should NOT call registerLinkProvider() manually.
+    it('does not manually register link providers', () => {
+      // Link providers are handled by xterm.js addons (WebLinksAddon)
       expect(terminalPaneContent).not.toMatch(REGISTER_LINK_PROVIDER_RE)
     })
   })

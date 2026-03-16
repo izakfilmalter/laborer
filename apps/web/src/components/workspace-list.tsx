@@ -76,6 +76,12 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
@@ -724,7 +730,16 @@ function WorkspaceList({ projectId }: WorkspaceListProps) {
   }, [prdList, projectId])
 
   if (activeWorkspaces.length === 0) {
-    return <p className="py-2 text-muted-foreground text-xs">No workspaces</p>
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>No workspaces</EmptyTitle>
+          <EmptyDescription>
+            Create a workspace to get started with your project.
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
   }
 
   return (

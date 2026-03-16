@@ -317,10 +317,7 @@ describe('ReviewPane', () => {
     currentResult = {
       _tag: 'Failure',
       waiting: false,
-      cause: {
-        _tag: 'Fail',
-        error: { code: 'PR_NOT_FOUND', message: 'No PR found' },
-      },
+      cause: { code: 'PR_NOT_FOUND', message: 'No PR found' },
     }
     render(<ReviewPane workspaceId="ws-1" />)
 
@@ -332,10 +329,7 @@ describe('ReviewPane', () => {
     currentResult = {
       _tag: 'Failure',
       waiting: false,
-      cause: {
-        _tag: 'Fail',
-        error: { message: 'Authentication required' },
-      },
+      cause: { message: 'Authentication required' },
     }
     render(<ReviewPane workspaceId="ws-1" />)
 

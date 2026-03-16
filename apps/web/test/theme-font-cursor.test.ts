@@ -87,7 +87,6 @@ const FONT_FAMILY_RE =
   /fontFamily:\s*\n?\s*['"](JetBrains Mono|"JetBrains Mono")/
 const FONT_SIZE_RE = /fontSize:\s*13/
 const SCROLLBACK_RE = /scrollback:\s*100[_,]000/
-const CARET_COLOR_RE = /caretColor.*transparent/
 const CONVERT_EOL_RE = /convertEol:\s*false/
 const LINE_HEIGHT_RE = /lineHeight/
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/
@@ -275,10 +274,9 @@ describe('Issue 3: Theme, font, and cursor configuration', () => {
       expect(terminalPaneContent).toMatch(FONT_SIZE_RE)
     })
 
-    it('does not set lineHeight (not supported by ghostty-web)', () => {
-      // The Terminal constructor in terminal-pane.tsx should not contain lineHeight.
-      // ghostty-web computes cell height from FontMetrics automatically.
-      expect(TERMINAL_CONSTRUCTOR_BLOCK).not.toMatch(LINE_HEIGHT_RE)
+    it('sets lineHeight for xterm.js rendering', () => {
+      // xterm.js supports lineHeight for custom line spacing.
+      expect(TERMINAL_CONSTRUCTOR_BLOCK).toMatch(LINE_HEIGHT_RE)
     })
   })
 
@@ -292,17 +290,9 @@ describe('Issue 3: Theme, font, and cursor configuration', () => {
     })
   })
 
-  describe('terminal-pane.tsx contenteditable caret hiding', () => {
-    it('sets caretColor to transparent on the container', () => {
-      expect(terminalPaneContent).toMatch(CARET_COLOR_RE)
-    })
-
-    it('caret hiding is applied before terminal.open()', () => {
-      const caretPos = terminalPaneContent.indexOf('caretColor')
-      const openPos = terminalPaneContent.indexOf('terminal.open(container)')
-      expect(caretPos).toBeGreaterThan(-1)
-      expect(openPos).toBeGreaterThan(-1)
-      expect(caretPos).toBeLessThan(openPos)
+  describe('terminal-pane.tsx xterm.js setup', () => {
+    it('uses xterm.js Terminal constructor', () => {
+      expect(terminalPaneContent).toContain("from '@xterm/xterm'")
     })
   })
 

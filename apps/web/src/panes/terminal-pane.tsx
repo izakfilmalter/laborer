@@ -55,7 +55,6 @@ import { useWhenPhase } from '@/hooks/use-when-phase'
 import { subscribeWindowResize } from '@/hooks/use-window-resize'
 import {
   detectCopyShortcut,
-  isPasteShortcut,
   isPrefixKey,
   shouldBypassTerminal,
 } from '@/lib/keybinds'
@@ -259,22 +258,8 @@ function createWheelHandler(
 }
 
 // ---------------------------------------------------------------------------
-// Clipboard & keyboard handler for ghostty-web
+// Clipboard helper for ghostty-web (Linux Ctrl+Shift+C only)
 // ---------------------------------------------------------------------------
-
-/** Fire-and-forget clipboard read + terminal paste. */
-function performPaste(term: Terminal): void {
-  navigator.clipboard.readText().then(
-    (text) => {
-      if (text) {
-        term.paste(text)
-      }
-    },
-    () => {
-      // Clipboard read failed (e.g. permission denied) — silently ignore
-    }
-  )
-}
 
 /** Fire-and-forget clipboard write from terminal selection. */
 function performCopy(term: Terminal): void {
@@ -284,41 +269,38 @@ function performCopy(term: Terminal): void {
 }
 
 /**
- * Handle clipboard shortcuts for a ghostty-web Terminal.
+ * Handle Linux Ctrl+Shift+C copy shortcut.
  *
- * Returns `true` if the event was consumed (ghostty-web should ignore it),
- * `false` to let ghostty-web process it normally.
+ * ghostty-web natively handles paste (Cmd+V / Ctrl+V) by letting the
+ * browser's native paste ClipboardEvent fire, and handles Cmd+C copy
+ * via its built-in onCopy callback. These must NOT be intercepted here
+ * because:
+ * 1. Paste: TUIs (opencode, claude code, etc.) detect the paste key in
+ *    the PTY, then read the system clipboard directly via OS commands
+ *    (osascript, xclip, etc.) to get image data. Intercepting the key
+ *    prevents it from reaching the PTY, breaking image paste.
+ * 2. Copy (Mac/Windows): ghostty-web's InputHandler already handles
+ *    Cmd+C with selection via copySelection().
+ *
+ * The only case that needs manual handling is Linux Ctrl+Shift+C, which
+ * ghostty-web doesn't handle natively. Without interception, Ctrl+Shift+C
+ * would be encoded as a key sequence and sent to the PTY (potentially
+ * triggering unintended behavior).
+ *
+ * Returns `true` if the event was consumed, `false` otherwise.
  */
-function handleClipboardShortcut(
+function handleLinuxCopyShortcut(
   event: KeyboardEvent,
   term: Terminal
 ): boolean {
-  // --- Paste ---
-  // ghostty-web's built-in paste handling relies on the browser's native
-  // paste event, but app keybinds that match the same modifier (e.g. Meta+)
-  // are intercepted by shouldBypassTerminal() before the native event fires.
-  // We read from the clipboard API and call terminal.paste() which correctly
-  // wraps data in bracketed paste sequences (DEC mode 2004) when the shell
-  // has enabled them.
-  if (isPasteShortcut(event)) {
-    performPaste(term)
-    return true
-  }
-
-  // --- Copy ---
   const copyResult = detectCopyShortcut(event)
 
-  // Linux: Always swallow Ctrl+Shift+C to prevent it becoming SIGINT
+  // Linux: Always swallow Ctrl+Shift+C to prevent it becoming a terminal
+  // input sequence. Copy selection if available.
   if (copyResult === 'linux') {
     if (term.hasSelection()) {
       performCopy(term)
     }
-    return true
-  }
-
-  // Mac/Windows: Only intercept when there's a selection
-  if (copyResult === 'copy' && term.hasSelection()) {
-    performCopy(term)
     return true
   }
 
@@ -335,10 +317,16 @@ interface PrefixModeCallbacks {
  * Create the custom key event handler for ghostty-web.
  *
  * Handles three concerns in order:
- * 1. Clipboard shortcuts (paste/copy) — checked first since they share
- *    modifiers with app keybinds that would otherwise be bypassed
+ * 1. Linux Ctrl+Shift+C copy (ghostty-web doesn't handle this natively)
  * 2. App-level shortcuts that should bubble to TanStack Hotkeys
  * 3. Prefix mode for tmux-style Ctrl+B sequences
+ *
+ * Paste (Cmd+V / Ctrl+V) and copy (Cmd+C) are NOT intercepted — ghostty-web
+ * handles these natively. For paste, this is critical: ghostty-web lets the
+ * browser's native paste event fire, which sends paste data to the PTY.
+ * TUIs then detect the paste and read the system clipboard directly via
+ * OS commands to get image data. Intercepting the key here would prevent
+ * it from reaching the PTY, breaking image paste for all TUIs.
  *
  * ghostty-web convention: return `true` = consumed (prevent default),
  * return `false` = pass through (let ghostty-web handle it).
@@ -357,9 +345,9 @@ function createTerminalKeyHandler(
       return false
     }
 
-    // Clipboard shortcuts must be checked first, before the app-level
-    // keybind bypass check which may match the same modifiers.
-    if (handleClipboardShortcut(event, term)) {
+    // Linux Ctrl+Shift+C: ghostty-web doesn't handle this natively.
+    // Intercept to prevent it from being sent as a terminal sequence.
+    if (handleLinuxCopyShortcut(event, term)) {
       return true
     }
 

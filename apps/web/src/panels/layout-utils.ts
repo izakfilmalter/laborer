@@ -767,6 +767,7 @@ interface RepairPanelLayoutTreeResult {
 }
 
 const VALID_PANE_TYPES = new Set([
+  'agent',
   'terminal',
   'diff',
   'devServerTerminal',

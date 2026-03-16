@@ -160,14 +160,14 @@ interface EmptyTerminalPaneProps {
 }
 
 /**
- * Empty state for terminal panes with no terminal assigned.
+ * Transient empty state for terminal panes with no terminal assigned.
  *
- * Provides a CTA to spawn a terminal directly in this pane:
- * - If the pane has a workspaceId or exactly one active workspace exists,
- *   a single "Spawn Terminal" button spawns and assigns immediately.
- * - If multiple active workspaces exist, a dropdown lets the user pick
- *   which workspace to spawn in.
- * - If no active workspaces exist, shows guidance pointing to the sidebar.
+ * This state is normally very brief — callers like `handleAddPanelTab` and
+ * `handleSplitPane` already auto-spawn a terminal and assign it to the pane.
+ * This component shows a loading indicator while the spawn is in flight.
+ *
+ * If the spawn fails or no active workspace exists, falls back to a manual
+ * CTA so the user can retry or select a workspace.
  */
 function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
   const store = useLaborerStore()
@@ -177,7 +177,11 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
     mode: 'promise',
   })
   const [isSpawning, setIsSpawning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('')
+  // Show loading initially — callers typically auto-spawn before this renders.
+  // After a short delay, if still no terminal, show the manual CTA.
+  const [showCta, setShowCta] = useState(false)
 
   const activeWorkspaces = workspaceList.filter(
     (ws) => ws.status === 'running' || ws.status === 'creating'
@@ -194,11 +198,11 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
       return
     }
     setIsSpawning(true)
+    setError(null)
     try {
       const result = await spawnTerminal({
         payload: { workspaceId: resolvedWorkspaceId },
       })
-      toast.success(`Terminal spawned: ${result.command}`)
       if (panelActions) {
         panelActions.assignTerminalToPane(
           result.id,
@@ -206,14 +210,54 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
           paneId
         )
       }
-    } catch (error) {
-      toast.error(`Failed to spawn terminal: ${extractErrorMessage(error)}`)
+    } catch (spawnError) {
+      setError(extractErrorMessage(spawnError))
+      toast.error(
+        `Failed to spawn terminal: ${extractErrorMessage(spawnError)}`
+      )
     } finally {
       setIsSpawning(false)
     }
   }, [spawnTerminal, resolvedWorkspaceId, panelActions, paneId])
 
+  // If this component is still mounted after a short delay, the caller's
+  // auto-spawn either failed or wasn't triggered. Show the manual CTA.
+  useEffect(() => {
+    // No workspace available — show CTA immediately so user gets guidance.
+    if (activeWorkspaces.length === 0) {
+      setShowCta(true)
+      return
+    }
+    const timer = setTimeout(() => {
+      setShowCta(true)
+    }, 3000)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [activeWorkspaces.length])
+
   const hasMultipleWorkspaces = !workspaceId && activeWorkspaces.length > 1
+
+  const getDescription = (): string => {
+    if (isSpawning) {
+      return 'Spawning a terminal...'
+    }
+    if (error) {
+      return error
+    }
+    if (!showCta) {
+      return 'Spawning a terminal...'
+    }
+    if (activeWorkspaces.length === 0) {
+      return 'Create a workspace first, then spawn a terminal to see output here.'
+    }
+    return 'Spawn a terminal in a workspace to see output here.'
+  }
+  const description = getDescription()
+
+  const getButtonLabel = (err: string | null): string =>
+    err ? 'Retry' : 'Spawn Terminal'
+  const showActions = showCta && activeWorkspaces.length > 0
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-background">
@@ -222,14 +266,12 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
           <EmptyMedia variant="icon">
             <TerminalIcon />
           </EmptyMedia>
-          <EmptyTitle>No terminal</EmptyTitle>
-          <EmptyDescription>
-            {activeWorkspaces.length === 0
-              ? 'Create a workspace first, then spawn a terminal to see output here.'
-              : 'Spawn a terminal in a workspace to see output here.'}
-          </EmptyDescription>
+          <EmptyTitle>
+            {showCta && !isSpawning ? 'No terminal' : 'Starting terminal...'}
+          </EmptyTitle>
+          <EmptyDescription>{description}</EmptyDescription>
         </EmptyHeader>
-        {activeWorkspaces.length > 0 && (
+        {(showActions || error) && (
           <EmptyContent>
             {hasMultipleWorkspaces && (
               <Select
@@ -255,7 +297,7 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
               variant="outline"
             >
               <Plus className="size-3.5" />
-              {isSpawning ? 'Spawning...' : 'Spawn Terminal'}
+              {isSpawning ? 'Spawning...' : getButtonLabel(error)}
             </Button>
           </EmptyContent>
         )}
@@ -383,6 +425,14 @@ function PaneContent({ node, onTerminalExit }: PaneContentProps) {
     return (
       <EmptyDevServerPane paneId={node.id} workspaceId={node.workspaceId} />
     )
+  }
+
+  // Agent pane — agent is a terminal running the configured agent command.
+  // This branch handles the edge case where an 'agent' pane type is
+  // persisted directly (normally, 'agent' is converted to 'terminal'
+  // before layout creation). Render as an empty terminal pane.
+  if (node.paneType === 'agent') {
+    return <EmptyTerminalPane paneId={node.id} workspaceId={node.workspaceId} />
   }
 
   // Empty pane — use guided empty state with CTA for terminal panes

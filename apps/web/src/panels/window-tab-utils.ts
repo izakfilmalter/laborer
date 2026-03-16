@@ -12,8 +12,11 @@
  */
 
 import type {
+  PanelLeafNode,
   PanelTab,
   PanelTreeNode,
+  PaneType,
+  SplitDirection,
   WindowLayout,
   WindowTab,
   WorkspaceTileLeaf,
@@ -791,6 +794,34 @@ function collectTerminalIdsFromPanelTree(
 }
 
 /**
+ * Assign a terminal ID to a specific pane leaf within a PanelTreeNode tree.
+ *
+ * Recursively walks the tree and replaces the `terminalId` on the leaf
+ * whose `id` matches `paneId`. Returns the original tree unchanged
+ * (referential equality) if no matching leaf is found.
+ */
+function assignTerminalInPanelTree(
+  node: PanelTreeNode,
+  paneId: string,
+  terminalId: string
+): PanelTreeNode {
+  if (node._tag === 'PanelLeafNode') {
+    if (node.id === paneId) {
+      return { ...node, terminalId }
+    }
+    return node
+  }
+  const newChildren = node.children.map((child) =>
+    assignTerminalInPanelTree(child, paneId, terminalId)
+  )
+  // Only create a new object if something changed
+  if (newChildren.every((child, i) => child === node.children[i])) {
+    return node
+  }
+  return { ...node, children: newChildren }
+}
+
+/**
  * Check whether any terminal in the given IDs has a running child process.
  */
 function hasRunningProcess(
@@ -976,6 +1007,178 @@ function closePaneInPanelTree(
   }
 
   return collapseChildren(root, newChildren)
+}
+
+/**
+ * Split a pane in a PanelTreeNode tree by inserting a new sibling leaf.
+ *
+ * The original pane stays in place and a new leaf is inserted next to it.
+ * If the target pane is already a direct child of a split with the same
+ * direction, the new pane is inserted adjacent instead of nesting — keeping
+ * the tree flat when possible.
+ *
+ * @param root - The root PanelTreeNode tree
+ * @param paneId - The ID of the leaf to split
+ * @param direction - "horizontal" or "vertical"
+ * @param newPaneContent - Optional partial content for the new leaf
+ * @returns The updated tree (original unchanged if paneId not found)
+ */
+function splitPaneInPanelTree(
+  root: PanelTreeNode,
+  paneId: string,
+  direction: SplitDirection,
+  newPaneContent?: Partial<PanelLeafNode>
+): PanelTreeNode {
+  return splitPanelTreeRecursive(root, paneId, direction, newPaneContent)
+}
+
+function splitPanelTreeRecursive(
+  node: PanelTreeNode,
+  paneId: string,
+  direction: SplitDirection,
+  newPaneContent?: Partial<PanelLeafNode>
+): PanelTreeNode {
+  // Found the target leaf — wrap it in a split with a new sibling
+  if (node._tag === 'PanelLeafNode' && node.id === paneId) {
+    const newPane: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: generateId('pane'),
+      paneType: (newPaneContent?.paneType ?? 'terminal') as PaneType,
+      terminalId: newPaneContent?.terminalId,
+      workspaceId: newPaneContent?.workspaceId ?? node.workspaceId,
+    }
+    return {
+      _tag: 'PanelSplitNode',
+      id: generateId('split'),
+      direction,
+      children: [node, newPane],
+      sizes: [50, 50],
+    }
+  }
+
+  // Recurse into PanelSplitNode children
+  if (node._tag === 'PanelSplitNode') {
+    // Check if any direct child is the target and has the same direction.
+    // If so, insert adjacent instead of nesting.
+    if (node.direction === direction) {
+      const targetIndex = node.children.findIndex(
+        (child) => child._tag === 'PanelLeafNode' && child.id === paneId
+      )
+      if (targetIndex !== -1) {
+        const targetChild = node.children[targetIndex] as PanelLeafNode
+        const newPane: PanelLeafNode = {
+          _tag: 'PanelLeafNode',
+          id: generateId('pane'),
+          paneType: (newPaneContent?.paneType ?? 'terminal') as PaneType,
+          terminalId: newPaneContent?.terminalId,
+          workspaceId: newPaneContent?.workspaceId ?? targetChild.workspaceId,
+        }
+        const newChildren = [
+          ...node.children.slice(0, targetIndex + 1),
+          newPane,
+          ...node.children.slice(targetIndex + 1),
+        ]
+        const equalSize = 100 / newChildren.length
+        return {
+          ...node,
+          children: newChildren,
+          sizes: newChildren.map(() => equalSize),
+        }
+      }
+    }
+
+    // Recurse into children
+    const newChildren = node.children.map((child) =>
+      splitPanelTreeRecursive(child, paneId, direction, newPaneContent)
+    )
+    const changed = newChildren.some((child, i) => child !== node.children[i])
+    if (!changed) {
+      return node
+    }
+    return { ...node, children: newChildren }
+  }
+
+  return node
+}
+
+/**
+ * Find a leaf by ID in a PanelTreeNode tree.
+ * Returns the leaf if found, or undefined.
+ */
+function findPanelTreeLeaf(
+  node: PanelTreeNode,
+  paneId: string
+): PanelLeafNode | undefined {
+  if (node._tag === 'PanelLeafNode') {
+    return node.id === paneId ? node : undefined
+  }
+  for (const child of node.children) {
+    const found = findPanelTreeLeaf(child, paneId)
+    if (found) {
+      return found
+    }
+  }
+  return undefined
+}
+
+/**
+ * Collect all leaf IDs from a PanelTreeNode tree (DFS order).
+ */
+function getPanelTreeLeafIds(node: PanelTreeNode): string[] {
+  if (node._tag === 'PanelLeafNode') {
+    return [node.id]
+  }
+  return node.children.flatMap(getPanelTreeLeafIds)
+}
+
+/**
+ * Find the new leaf added to a PanelTreeNode tree after a split.
+ * Compares leaf IDs before and after to find the new one.
+ */
+function findNewPanelTreeLeaf(
+  before: PanelTreeNode,
+  after: PanelTreeNode
+): PanelLeafNode | undefined {
+  const beforeIds = new Set(getPanelTreeLeafIds(before))
+  const afterIds = getPanelTreeLeafIds(after)
+  const newId = afterIds.find((id) => !beforeIds.has(id))
+  if (!newId) {
+    return undefined
+  }
+  return findPanelTreeLeaf(after, newId)
+}
+
+/**
+ * Find the sibling pane ID for a given pane in a PanelTreeNode tree.
+ * Used to determine where focus should go after closing a pane.
+ */
+function findSiblingPaneIdInPanelTree(
+  root: PanelTreeNode,
+  paneId: string
+): string | undefined {
+  if (root._tag === 'PanelLeafNode') {
+    return undefined
+  }
+  // Check if the target is a direct child of this split
+  const idx = root.children.findIndex(
+    (child) => child._tag === 'PanelLeafNode' && child.id === paneId
+  )
+  if (idx !== -1) {
+    // Prefer the sibling after, then before
+    const sibling = root.children[idx + 1] ?? root.children[idx - 1]
+    if (sibling) {
+      return getFirstPanelTreeLeafId(sibling)
+    }
+    return undefined
+  }
+  // Recurse
+  for (const child of root.children) {
+    const found = findSiblingPaneIdInPanelTree(child, paneId)
+    if (found) {
+      return found
+    }
+  }
+  return undefined
 }
 
 /**
@@ -1400,6 +1603,7 @@ function reconcileWindowLayout(
 
 /** Valid pane types for repair validation. */
 const VALID_PANE_TYPES = new Set([
+  'agent',
   'terminal',
   'diff',
   'devServerTerminal',
@@ -1927,15 +2131,21 @@ function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
 export {
   addWindowTab,
   addWorkspaceToTabUnique,
+  assignTerminalInPanelTree,
+  closePaneInPanelTree,
   closeTerminalInWindowLayout,
   collectTerminalIdsFromPanelTree,
   collectTerminalIdsFromTileTree,
   computeProgressiveCloseAction,
+  findNewPanelTreeLeaf,
+  findPanelTreeLeaf,
+  findSiblingPaneIdInPanelTree,
   findTerminalLocation,
   findWorkspaceLocation,
   getActiveWindowTab,
   getAllWorkspaceTileLeaves,
   getFirstPanelTreeLeafId,
+  getPanelTreeLeafIds,
   getStaleTerminalLeavesHierarchical,
   getWorkspaceTileLeaves,
   moveWorkspace,
@@ -1950,6 +2160,7 @@ export {
   saveFocusedPaneId,
   shouldConfirmClosePanelTab,
   shouldConfirmCloseWindowTab,
+  splitPaneInPanelTree,
   switchWindowTab,
   switchWindowTabByIndex,
   switchWindowTabRelative,

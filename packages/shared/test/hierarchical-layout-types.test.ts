@@ -169,6 +169,7 @@ describe('PanelLeafNodeSchema', () => {
 
   it('round-trips all pane types', () => {
     for (const paneType of [
+      'agent',
       'terminal',
       'diff',
       'devServerTerminal',

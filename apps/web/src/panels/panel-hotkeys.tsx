@@ -422,6 +422,28 @@ function PanelHotkeys({
     { timeout: SEQUENCE_TIMEOUT }
   )
 
+  // Ctrl+b then a → create a new agent panel in a right-side split
+  useHotkeySequence(
+    ['Control+B', 'A'],
+    (event) => {
+      event.preventDefault()
+      if (!actions) {
+        return
+      }
+      if (activePaneId && activeWorkspaceId) {
+        // Split right with an agent pane inheriting the workspace context
+        actions.splitPane(activePaneId, 'horizontal', {
+          paneType: 'agent',
+          workspaceId: activeWorkspaceId,
+        } as Partial<LeafNode>)
+      } else if (activeWorkspaceId) {
+        // No active pane — add as a new panel tab
+        actions.addPanelTab?.(activeWorkspaceId, 'agent')
+      }
+    },
+    { timeout: SEQUENCE_TIMEOUT }
+  )
+
   // Ctrl+b then d → create a new diff panel in a right-side split
   useHotkeySequence(
     ['Control+B', 'D'],

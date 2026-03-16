@@ -30,7 +30,12 @@ import {
 /** A panel leaf node for use in fixtures. */
 function makeLeaf(
   id: string,
-  paneType: 'terminal' | 'diff' | 'review' | 'devServerTerminal' = 'terminal',
+  paneType:
+    | 'agent'
+    | 'terminal'
+    | 'diff'
+    | 'review'
+    | 'devServerTerminal' = 'terminal',
   terminalId?: string
 ): PanelLeafNode {
   return {

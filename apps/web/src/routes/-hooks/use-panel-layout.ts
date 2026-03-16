@@ -813,18 +813,24 @@ export function usePanelLayout() {
 
   const handleSetActivePaneId = useCallback(
     (paneId: string | null) => {
-      const base = persistedLayoutTree ?? defaultLayout
-      if (!base) {
+      // Use the effective layout (which includes pane IDs from the
+      // hierarchical window layout) instead of the raw persisted legacy
+      // tree. When using the hierarchical layout path, pane IDs are
+      // derived from panel tab layouts and may not exist in the legacy
+      // tree — validating against the legacy tree would silently replace
+      // the clicked pane ID with a stale fallback.
+      const effectiveLayout = layout ?? persistedLayoutTree ?? defaultLayout
+      if (!effectiveLayout) {
         return
       }
       // Enforce the invariant: do not accept null when panes exist.
       // If null is passed (e.g., by legacy code), fall back to the first leaf.
       // @see Issue #150: Guaranteed active pane invariant
-      const validatedPaneId = ensureValidActivePaneId(base, paneId)
+      const validatedPaneId = ensureValidActivePaneId(effectiveLayout, paneId)
       store.commit(
         layoutPaneAssigned({
           windowId: panelWindowId,
-          layoutTree: base,
+          layoutTree: effectiveLayout,
           activePaneId: validatedPaneId,
         })
       )
@@ -847,6 +853,7 @@ export function usePanelLayout() {
       }
     },
     [
+      layout,
       persistedLayoutTree,
       defaultLayout,
       panelWindowId,
@@ -991,13 +998,17 @@ export function usePanelLayout() {
             })
           )
 
-          // 3. Focus the pane containing the terminal
-          const base = persistedLayoutTree ?? defaultLayout
-          if (base) {
+          // 3. Focus the pane containing the terminal.
+          // Derive the legacy tree from the updated hierarchical layout
+          // so that the pane ID (from the hierarchical tree) is valid.
+          const derivedTree = deriveLegacyTreeFromHierarchical(layout)
+          const effectiveBase =
+            derivedTree ?? persistedLayoutTree ?? defaultLayout
+          if (effectiveBase) {
             store.commit(
               layoutPaneAssigned({
                 windowId: panelWindowId,
-                layoutTree: base,
+                layoutTree: effectiveBase,
                 activePaneId: location.paneId,
               })
             )
@@ -1478,8 +1489,11 @@ export function usePanelLayout() {
 
     const newLayout = removeWindowTab(persistedWindowLayout, activeId)
     commitWindowLayout(windowTabClosed, newLayout)
-    // Restore focus to the new active tab's last-focused pane
-    const base = persistedLayoutTree ?? defaultLayout
+    // Restore focus to the new active tab's last-focused pane.
+    // Derive the legacy tree from the updated hierarchical layout so
+    // that the resolved pane ID is valid in the persisted tree.
+    const derivedTree = deriveLegacyTreeFromHierarchical(newLayout)
+    const base = derivedTree ?? persistedLayoutTree ?? defaultLayout
     if (!base) {
       return
     }
@@ -1516,8 +1530,11 @@ export function usePanelLayout() {
   const commitWindowTabSwitchWithFocus = useCallback(
     (newLayout: WindowLayout) => {
       commitWindowLayout(windowTabSwitched, newLayout)
-      // Restore activePaneId to the destination tab's last-focused pane
-      const base = persistedLayoutTree ?? defaultLayout
+      // Restore activePaneId to the destination tab's last-focused pane.
+      // Derive the legacy tree from the new hierarchical layout so that
+      // the resolved pane ID is valid in the persisted tree.
+      const derivedTree = deriveLegacyTreeFromHierarchical(newLayout)
+      const base = derivedTree ?? persistedLayoutTree ?? defaultLayout
       if (!base) {
         return
       }
@@ -1782,8 +1799,11 @@ export function usePanelLayout() {
   const commitPanelTabSwitchWithFocus = useCallback(
     (newLayout: WindowLayout, workspaceId: string) => {
       commitPanelTabLayout(panelTabSwitched, newLayout)
-      // Restore activePaneId to the destination panel tab's last-focused pane
-      const base = persistedLayoutTree ?? defaultLayout
+      // Restore activePaneId to the destination panel tab's last-focused pane.
+      // Derive the legacy tree from the updated hierarchical layout so that
+      // the resolved pane ID is valid in the persisted tree.
+      const derivedTree = deriveLegacyTreeFromHierarchical(newLayout)
+      const base = derivedTree ?? persistedLayoutTree ?? defaultLayout
       if (!base) {
         return
       }

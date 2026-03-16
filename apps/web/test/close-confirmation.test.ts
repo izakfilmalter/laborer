@@ -32,7 +32,12 @@ function makeLeaf(
   id: string,
   terminalId?: string,
   workspaceId?: string,
-  paneType: 'terminal' | 'diff' | 'review' | 'devServerTerminal' = 'terminal'
+  paneType:
+    | 'agent'
+    | 'terminal'
+    | 'diff'
+    | 'review'
+    | 'devServerTerminal' = 'terminal'
 ): PanelLeafNode {
   return {
     _tag: 'PanelLeafNode',

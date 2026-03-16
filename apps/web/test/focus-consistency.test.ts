@@ -36,7 +36,12 @@ import {
 
 function makeLeaf(
   id: string,
-  paneType: 'terminal' | 'diff' | 'review' | 'devServerTerminal' = 'terminal',
+  paneType:
+    | 'agent'
+    | 'terminal'
+    | 'diff'
+    | 'review'
+    | 'devServerTerminal' = 'terminal',
   workspaceId?: string
 ): PanelLeafNode {
   return {

@@ -56,6 +56,7 @@ export const PrdStatus = Schema.Literal('draft', 'active', 'completed')
 export type PrdStatus = typeof PrdStatus.Type
 
 export const PaneType = Schema.Literal(
+  'agent',
   'terminal',
   'diff',
   'devServerTerminal',

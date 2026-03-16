@@ -796,6 +796,8 @@ function WorkspaceFrame({
 function getPanelTabLabel(layout: PanelTreeNode): string {
   if (layout._tag === 'PanelLeafNode') {
     switch (layout.paneType) {
+      case 'agent':
+        return 'Agent'
       case 'terminal':
         return 'Terminal'
       case 'diff':

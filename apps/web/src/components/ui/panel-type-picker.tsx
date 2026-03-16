@@ -5,7 +5,7 @@
  *
  * Interaction:
  * - Arrow keys (up/down) to navigate with wrapping
- * - Number keys (1-4) to select directly
+ * - Number keys (1-5) to select directly
  * - Enter to confirm selection
  * - Escape to cancel
  * - Mouse click to select
@@ -17,7 +17,7 @@
  */
 
 import type { PaneType } from '@laborer/shared/types'
-import { Eye, FileCode2, Server, Terminal } from 'lucide-react'
+import { Bot, Eye, FileCode2, Server, Terminal } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 
@@ -50,6 +50,7 @@ interface PanelTypePickerProps {
 // ---------------------------------------------------------------------------
 
 const PANEL_TYPE_OPTIONS: readonly PanelTypeOption[] = [
+  { type: 'agent', label: 'Agent', icon: <Bot className="size-4" /> },
   {
     type: 'terminal',
     label: 'Terminal',
@@ -114,7 +115,8 @@ function PanelTypePicker({
         case '1':
         case '2':
         case '3':
-        case '4': {
+        case '4':
+        case '5': {
           e.preventDefault()
           const index = Number.parseInt(e.key, 10) - 1
           const option = PANEL_TYPE_OPTIONS[index]

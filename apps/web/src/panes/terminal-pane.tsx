@@ -53,8 +53,13 @@ import { Spinner } from '@/components/ui/spinner'
 import { useTerminalRouter } from '@/contexts/terminal-router-context'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { subscribeWindowResize } from '@/hooks/use-window-resize'
+import {
+  detectCopyShortcut,
+  isPasteShortcut,
+  isPrefixKey,
+  shouldBypassTerminal,
+} from '@/lib/keybinds'
 import type { TerminalStatus } from '@/lib/terminal-session-router'
-import { isExactCtrlB, shouldBypassTerminal } from '@/panes/terminal-keys'
 
 /**
  * Module-level WASM initialization promise.
@@ -121,6 +126,132 @@ function executeResize(
   state.lastRows = rows
 
   resizeFn({ payload: { id: terminalId, cols, rows } })
+}
+
+// ---------------------------------------------------------------------------
+// Clipboard & keyboard handler for ghostty-web
+// ---------------------------------------------------------------------------
+
+/** Fire-and-forget clipboard read + terminal paste. */
+function performPaste(term: Terminal): void {
+  navigator.clipboard.readText().then(
+    (text) => {
+      if (text) {
+        term.paste(text)
+      }
+    },
+    () => {
+      // Clipboard read failed (e.g. permission denied) — silently ignore
+    }
+  )
+}
+
+/** Fire-and-forget clipboard write from terminal selection. */
+function performCopy(term: Terminal): void {
+  navigator.clipboard.writeText(term.getSelection()).catch(() => {
+    // Clipboard write failed — silently ignore
+  })
+}
+
+/**
+ * Handle clipboard shortcuts for a ghostty-web Terminal.
+ *
+ * Returns `true` if the event was consumed (ghostty-web should ignore it),
+ * `false` to let ghostty-web process it normally.
+ */
+function handleClipboardShortcut(
+  event: KeyboardEvent,
+  term: Terminal
+): boolean {
+  // --- Paste ---
+  // ghostty-web's built-in paste handling relies on the browser's native
+  // paste event, but app keybinds that match the same modifier (e.g. Meta+)
+  // are intercepted by shouldBypassTerminal() before the native event fires.
+  // We read from the clipboard API and call terminal.paste() which correctly
+  // wraps data in bracketed paste sequences (DEC mode 2004) when the shell
+  // has enabled them.
+  if (isPasteShortcut(event)) {
+    performPaste(term)
+    return true
+  }
+
+  // --- Copy ---
+  const copyResult = detectCopyShortcut(event)
+
+  // Linux: Always swallow Ctrl+Shift+C to prevent it becoming SIGINT
+  if (copyResult === 'linux') {
+    if (term.hasSelection()) {
+      performCopy(term)
+    }
+    return true
+  }
+
+  // Mac/Windows: Only intercept when there's a selection
+  if (copyResult === 'copy' && term.hasSelection()) {
+    performCopy(term)
+    return true
+  }
+
+  return false
+}
+
+interface PrefixModeCallbacks {
+  readonly enterPrefixMode: () => void
+  readonly exitPrefixMode: () => void
+  readonly prefixModeRef: React.RefObject<boolean>
+}
+
+/**
+ * Create the custom key event handler for ghostty-web.
+ *
+ * Handles three concerns in order:
+ * 1. Clipboard shortcuts (paste/copy) — checked first since they share
+ *    modifiers with app keybinds that would otherwise be bypassed
+ * 2. App-level shortcuts that should bubble to TanStack Hotkeys
+ * 3. Prefix mode for tmux-style Ctrl+B sequences
+ *
+ * ghostty-web convention: return `true` = consumed (prevent default),
+ * return `false` = pass through (let ghostty-web handle it).
+ * NOTE: This is the OPPOSITE of xterm.js.
+ *
+ * @see apps/web/src/lib/keybinds.ts — centralized keybind definitions
+ */
+function createTerminalKeyHandler(
+  term: Terminal,
+  { enterPrefixMode, exitPrefixMode, prefixModeRef }: PrefixModeCallbacks
+): (event: KeyboardEvent) => boolean {
+  return (event: KeyboardEvent) => {
+    // Only intercept keydown events — keyup should pass through
+    // to avoid breaking key state tracking in the browser.
+    if (event.type !== 'keydown') {
+      return false
+    }
+
+    // Clipboard shortcuts must be checked first, before the app-level
+    // keybind bypass check which may match the same modifiers.
+    if (handleClipboardShortcut(event, term)) {
+      return true
+    }
+
+    // Let app-level shortcuts bubble to TanStack Hotkeys on document —
+    // consume the event so ghostty-web does not process it as terminal input.
+    if (shouldBypassTerminal(event)) {
+      if (isPrefixKey(event)) {
+        enterPrefixMode()
+      }
+      return true
+    }
+
+    // In prefix mode: consume the action key so it bubbles to
+    // TanStack Hotkeys. This is the second key in the Ctrl+B -> action sequence.
+    if (prefixModeRef.current) {
+      exitPrefixMode()
+      return true
+    }
+
+    // Normal key — let ghostty-web handle it as terminal input
+    return false
+  }
 }
 
 interface TerminalPaneProps {
@@ -528,18 +659,7 @@ function TerminalPaneContent({
         // Container may not have dimensions yet
       }
 
-      // Keyboard shortcut scope isolation (Issue #80).
-      //
-      // ghostty-web captures keyboard events within its container.
-      // `attachCustomKeyEventHandler` intercepts KeyboardEvent objects
-      // before ghostty-web processes them:
-      // - Return `true` → custom handler CONSUMED the event, ghostty-web
-      //   calls preventDefault() and stops processing (key bubbles to document)
-      // - Return `false` → custom handler did NOT consume, ghostty-web
-      //   continues normal key processing (terminal input)
-      //
-      // NOTE: This is the OPPOSITE convention from xterm.js, where
-      // `true` means "let xterm handle it" and `false` means "ignore it".
+      // Prefix mode for tmux-style Ctrl+B sequences (Issue #80).
       const enterPrefixMode = () => {
         prefixModeRef.current = true
         setPrefixMode(true)
@@ -562,34 +682,13 @@ function TerminalPaneContent({
         }
       }
 
-      terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-        // Only intercept keydown events — keyup should pass through
-        // to avoid breaking key state tracking in the browser.
-        if (event.type !== 'keydown') {
-          return false
-        }
-
-        // Let global shortcuts (Cmd+W, Cmd+Shift+Enter) bubble to
-        // TanStack Hotkeys on document — consume the event so ghostty-web
-        // does not process it as terminal input.
-        if (shouldBypassTerminal(event)) {
-          // Ctrl+B additionally enters prefix mode for tmux-style sequences.
-          if (isExactCtrlB(event)) {
-            enterPrefixMode()
-          }
-          return true
-        }
-
-        // In prefix mode: consume the action key so it bubbles to
-        // TanStack Hotkeys. This is the second key in the Ctrl+B -> action sequence.
-        if (prefixModeRef.current) {
-          exitPrefixMode()
-          return true
-        }
-
-        // Normal key — let ghostty-web handle it as terminal input
-        return false
-      })
+      terminal.attachCustomKeyEventHandler(
+        createTerminalKeyHandler(terminal, {
+          enterPrefixMode,
+          exitPrefixMode,
+          prefixModeRef,
+        })
+      )
 
       // Wire keyboard input to server PTY via the TerminalSessionRouter.
       // ghostty-web's onData fires for every keystroke (including special

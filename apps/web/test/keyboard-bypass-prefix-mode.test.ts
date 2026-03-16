@@ -14,14 +14,14 @@
  * the source code verified to call `attachCustomKeyEventHandler`.
  *
  * @see apps/web/src/panes/terminal-pane.tsx — handler wiring
- * @see apps/web/src/panes/terminal-keys.ts — pure bypass detection functions
- * @see apps/web/test/terminal-keys.test.ts — pure function unit tests
+ * @see apps/web/src/lib/keybinds.ts — centralized keybind definitions
+ * @see apps/web/test/terminal-keys.test.ts — keybind matching unit tests
  */
 
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { isExactCtrlB, shouldBypassTerminal } from '../src/panes/terminal-keys'
+import { isPrefixKey, shouldBypassTerminal } from '../src/lib/keybinds'
 
 /** Regex patterns hoisted to module level for biome lint/performance. */
 const ATTACH_HANDLER_RE = /attachCustomKeyEventHandler/
@@ -30,11 +30,11 @@ const ENTER_PREFIX_RE = /enterPrefixMode\(\)/
 const EXIT_PREFIX_RE = /exitPrefixMode\(\)/
 const KEYDOWN_CHECK_RE = /event\.type\s*!==\s*'keydown'/
 const SHOULD_BYPASS_RE = /shouldBypassTerminal\(event\)/
-const CTRL_B_PREFIX_RE = /isExactCtrlB\(event\)/
+const PREFIX_KEY_RE = /isPrefixKey\(event\)/
 const PREFIX_MODE_REF_RE = /prefixModeRef\.current/
-const IMPORT_TERMINAL_KEYS_RE = /from ['"]@\/panes\/terminal-keys['"]/
+const IMPORT_KEYBINDS_RE = /from ['"]@\/lib\/keybinds['"]/
 const SHOULD_BYPASS_WORD_RE = /shouldBypassTerminal/
-const IS_EXACT_CTRL_B_WORD_RE = /isExactCtrlB/
+const IS_PREFIX_KEY_WORD_RE = /isPrefixKey/
 const TERMINAL_ATTACH_CALL_RE = /terminal\.attachCustomKeyEventHandler\(/
 const PREFIX_MODE_CONDITIONAL_RE = /prefixMode\s*&&/
 const CTRL_B_LABEL_RE = /Ctrl\+B/
@@ -45,6 +45,7 @@ function makeKeyEvent(
 ): KeyboardEvent {
   return {
     key: '',
+    code: '',
     type: 'keydown',
     metaKey: false,
     ctrlKey: false,
@@ -56,7 +57,7 @@ function makeKeyEvent(
 
 /**
  * Simulates the prefix mode state machine as implemented in terminal-pane.tsx.
- * This mirrors the exact logic from the attachCustomKeyEventHandler callback.
+ * This mirrors the exact logic from the createTerminalKeyHandler callback.
  *
  * ghostty-web convention (OPPOSITE of xterm.js):
  * - Return `true` → custom handler CONSUMED the event, ghostty-web stops
@@ -93,7 +94,7 @@ function createPrefixModeHandler() {
       return false
     }
     if (shouldBypassTerminal(event)) {
-      if (isExactCtrlB(event)) {
+      if (isPrefixKey(event)) {
         enterPrefixMode()
       }
       return true
@@ -148,15 +149,14 @@ describe('keyboard bypass and prefix mode (Issue 4)', () => {
       'utf-8'
     )
 
-    it('imports shouldBypassTerminal and isExactCtrlB from terminal-keys', () => {
-      expect(terminalPaneSrc).toMatch(IMPORT_TERMINAL_KEYS_RE)
+    it('imports shouldBypassTerminal and isPrefixKey from keybinds', () => {
+      expect(terminalPaneSrc).toMatch(IMPORT_KEYBINDS_RE)
       expect(terminalPaneSrc).toMatch(SHOULD_BYPASS_WORD_RE)
-      expect(terminalPaneSrc).toMatch(IS_EXACT_CTRL_B_WORD_RE)
+      expect(terminalPaneSrc).toMatch(IS_PREFIX_KEY_WORD_RE)
     })
 
     it('calls attachCustomKeyEventHandler on the terminal', () => {
       expect(terminalPaneSrc).toMatch(ATTACH_HANDLER_RE)
-      // Verify it's called as terminal.attachCustomKeyEventHandler(...)
       expect(terminalPaneSrc).toMatch(TERMINAL_ATTACH_CALL_RE)
     })
 
@@ -172,8 +172,8 @@ describe('keyboard bypass and prefix mode (Issue 4)', () => {
       expect(terminalPaneSrc).toMatch(SHOULD_BYPASS_RE)
     })
 
-    it('checks isExactCtrlB to enter prefix mode', () => {
-      expect(terminalPaneSrc).toMatch(CTRL_B_PREFIX_RE)
+    it('checks isPrefixKey to enter prefix mode', () => {
+      expect(terminalPaneSrc).toMatch(PREFIX_KEY_RE)
     })
 
     it('defines enterPrefixMode and exitPrefixMode functions', () => {
@@ -186,7 +186,6 @@ describe('keyboard bypass and prefix mode (Issue 4)', () => {
     })
 
     it('renders a prefix mode UI indicator when active', () => {
-      // Verify the "Ctrl+B" badge is rendered conditionally
       expect(terminalPaneSrc).toMatch(PREFIX_MODE_CONDITIONAL_RE)
       expect(terminalPaneSrc).toMatch(CTRL_B_LABEL_RE)
     })
@@ -194,10 +193,6 @@ describe('keyboard bypass and prefix mode (Issue 4)', () => {
 
   // ---------------------------------------------------------------------------
   // Bypass handler behavior (functional tests)
-  //
-  // ghostty-web convention:
-  //   true  = consumed by handler → ghostty-web STOPS processing (bypass)
-  //   false = not consumed → ghostty-web CONTINUES processing (terminal input)
   // ---------------------------------------------------------------------------
   describe('bypass handler returns true (consumed) for intercepted keys', () => {
     let ctx: ReturnType<typeof createPrefixModeHandler>
@@ -280,67 +275,51 @@ describe('keyboard bypass and prefix mode (Issue 4)', () => {
     })
 
     it('in prefix mode, next key returns true (consumed — action key intercepted)', () => {
-      // Ctrl+B: enter prefix mode
       ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
       expect(ctx.isPrefixMode()).toBe(true)
 
-      // Next key (e.g., '1' for panel 1): returns true (consumed), exits prefix mode
       const result = ctx.handler(makeKeyEvent({ key: '1' }))
       expect(result).toBe(true)
       expect(ctx.isPrefixMode()).toBe(false)
     })
 
     it('after action key, subsequent keys return false (not consumed — normal input)', () => {
-      // Ctrl+B
       ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
-      // Action key
       ctx.handler(makeKeyEvent({ key: '1' }))
-      // Normal key — should return false (not consumed, terminal handles it)
       expect(ctx.handler(makeKeyEvent({ key: 'a' }))).toBe(false)
       expect(ctx.handler(makeKeyEvent({ key: 'b' }))).toBe(false)
     })
 
     it('prefix mode auto-exits after 1500ms timeout', () => {
-      // Ctrl+B: enter prefix mode
       ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
       expect(ctx.isPrefixMode()).toBe(true)
 
-      // Advance 1499ms — still in prefix mode
       vi.advanceTimersByTime(1499)
       expect(ctx.isPrefixMode()).toBe(true)
 
-      // Advance 1ms more (total 1500ms) — prefix mode exits
       vi.advanceTimersByTime(1)
       expect(ctx.isPrefixMode()).toBe(false)
     })
 
     it('after timeout, keys return false (not consumed — normal input)', () => {
-      // Ctrl+B
       ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
-      // Wait for timeout
       vi.advanceTimersByTime(1500)
-      // Normal key — should return false (not consumed, prefix mode expired)
       expect(ctx.handler(makeKeyEvent({ key: '1' }))).toBe(false)
     })
 
     it('pressing Ctrl+B again resets the timeout', () => {
-      // First Ctrl+B
       ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
       expect(ctx.isPrefixMode()).toBe(true)
 
-      // Wait 1000ms
       vi.advanceTimersByTime(1000)
       expect(ctx.isPrefixMode()).toBe(true)
 
-      // Second Ctrl+B resets the timeout
       ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
       expect(ctx.isPrefixMode()).toBe(true)
 
-      // Wait 1000ms more (total 2000ms from first, but only 1000ms from second)
       vi.advanceTimersByTime(1000)
       expect(ctx.isPrefixMode()).toBe(true)
 
-      // Wait 500ms more (total 1500ms from second Ctrl+B) — should exit
       vi.advanceTimersByTime(500)
       expect(ctx.isPrefixMode()).toBe(false)
     })
@@ -356,28 +335,22 @@ describe('keyboard bypass and prefix mode (Issue 4)', () => {
     })
 
     it('prefix mode does not intercept keyup events', () => {
-      // Enter prefix mode
       ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
       expect(ctx.isPrefixMode()).toBe(true)
 
-      // keyup events pass through even in prefix mode (returns false — not consumed)
       const result = ctx.handler(makeKeyEvent({ key: '1', type: 'keyup' }))
       expect(result).toBe(false)
-      // Prefix mode still active (keyup didn't consume the action)
       expect(ctx.isPrefixMode()).toBe(true)
     })
 
     it('multiple Ctrl+B → action sequences work correctly', () => {
-      // First sequence: Ctrl+B → 1
       ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
       expect(ctx.isPrefixMode()).toBe(true)
       ctx.handler(makeKeyEvent({ key: '1' }))
       expect(ctx.isPrefixMode()).toBe(false)
 
-      // Normal input works between sequences (not consumed — terminal handles)
       expect(ctx.handler(makeKeyEvent({ key: 'a' }))).toBe(false)
 
-      // Second sequence: Ctrl+B → 2
       ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
       expect(ctx.isPrefixMode()).toBe(true)
       ctx.handler(makeKeyEvent({ key: '2' }))

@@ -21,12 +21,14 @@ import type {
 import { describe, expect, it } from 'vitest'
 import {
   addWindowTab,
+  findEmptyPanelTreeLeaf,
   findNewPanelTreeLeaf,
   findSiblingPaneIdInPanelTree,
   findTerminalLocation,
   findWorkspaceLocation,
   getActiveWindowTab,
   getAllWorkspaceTileLeaves,
+  getLastPanelTreeLeafId,
   getWorkspaceTileLeaves,
   removeWindowTab,
   reorderWindowTabs,
@@ -890,5 +892,167 @@ describe('findSiblingPaneIdInPanelTree', () => {
     }
     // pane-1's sibling within the inner split is pane-2
     expect(findSiblingPaneIdInPanelTree(outerSplit, 'pane-1')).toBe('pane-2')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getLastPanelTreeLeafId
+// ---------------------------------------------------------------------------
+
+describe('getLastPanelTreeLeafId', () => {
+  it('returns the ID of a single leaf', () => {
+    const leaf: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-only',
+      paneType: 'terminal',
+      terminalId: 'term-1',
+      workspaceId: 'ws-1',
+    }
+    expect(getLastPanelTreeLeafId(leaf)).toBe('pane-only')
+  })
+
+  it('returns the last leaf in DFS order for a flat split', () => {
+    const leaf1: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-1',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    const leaf2: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-2',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    expect(getLastPanelTreeLeafId(split)).toBe('pane-2')
+  })
+
+  it('returns the rightmost leaf in a nested tree', () => {
+    const leaf1: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-1',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    const leaf2: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-2',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    const leaf3: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-3',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    const innerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-inner',
+      direction: 'vertical',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    const outerSplit: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-outer',
+      direction: 'horizontal',
+      children: [innerSplit, leaf3],
+      sizes: [50, 50],
+    }
+    expect(getLastPanelTreeLeafId(outerSplit)).toBe('pane-3')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findEmptyPanelTreeLeaf
+// ---------------------------------------------------------------------------
+
+describe('findEmptyPanelTreeLeaf', () => {
+  it('returns undefined for a leaf with a terminal assigned', () => {
+    const leaf: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-1',
+      paneType: 'terminal',
+      terminalId: 'term-1',
+      workspaceId: 'ws-1',
+    }
+    expect(findEmptyPanelTreeLeaf(leaf)).toBeUndefined()
+  })
+
+  it('returns the leaf if it has no terminalId', () => {
+    const leaf: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-empty',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    expect(findEmptyPanelTreeLeaf(leaf)).toBe(leaf)
+  })
+
+  it('returns undefined for a non-terminal pane type', () => {
+    const leaf: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-agent',
+      paneType: 'agent',
+      workspaceId: 'ws-1',
+    }
+    expect(findEmptyPanelTreeLeaf(leaf)).toBeUndefined()
+  })
+
+  it('finds the first empty terminal pane in a split tree', () => {
+    const occupiedLeaf: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-1',
+      paneType: 'terminal',
+      terminalId: 'term-1',
+      workspaceId: 'ws-1',
+    }
+    const emptyLeaf: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-empty',
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    }
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [occupiedLeaf, emptyLeaf],
+      sizes: [50, 50],
+    }
+    expect(findEmptyPanelTreeLeaf(split)).toBe(emptyLeaf)
+  })
+
+  it('returns undefined when all panes are occupied', () => {
+    const leaf1: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-1',
+      paneType: 'terminal',
+      terminalId: 'term-1',
+      workspaceId: 'ws-1',
+    }
+    const leaf2: PanelLeafNode = {
+      _tag: 'PanelLeafNode',
+      id: 'pane-2',
+      paneType: 'terminal',
+      terminalId: 'term-2',
+      workspaceId: 'ws-1',
+    }
+    const split: PanelSplitNode = {
+      _tag: 'PanelSplitNode',
+      id: 'split-root',
+      direction: 'horizontal',
+      children: [leaf1, leaf2],
+      sizes: [50, 50],
+    }
+    expect(findEmptyPanelTreeLeaf(split)).toBeUndefined()
   })
 })

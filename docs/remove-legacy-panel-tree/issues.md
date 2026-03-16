@@ -204,7 +204,7 @@ See PRD Module 2: "handleClosePane" section.
 
 ## Issue 6: handleAssignTerminalToPane uses hierarchical tree
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

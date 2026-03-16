@@ -455,6 +455,53 @@ function getFirstPanelTreeLeafId(node: PanelTreeNode): string | undefined {
 }
 
 /**
+ * Get the last leaf pane ID from a PanelTreeNode tree (reverse DFS order).
+ * Used to find the split target when all panes are occupied.
+ */
+function getLastPanelTreeLeafId(node: PanelTreeNode): string | undefined {
+  if (node._tag === 'PanelLeafNode') {
+    return node.id
+  }
+  for (let i = node.children.length - 1; i >= 0; i--) {
+    const child = node.children[i]
+    if (child) {
+      const leafId = getLastPanelTreeLeafId(child)
+      if (leafId) {
+        return leafId
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Find an empty terminal pane in a PanelTreeNode tree.
+ * An empty terminal pane is a PanelLeafNode with paneType 'terminal' and no
+ * terminalId assigned. Returns the first such leaf found in DFS order,
+ * or undefined if all panes are occupied.
+ */
+function findEmptyPanelTreeLeaf(
+  node: PanelTreeNode
+): PanelLeafNode | undefined {
+  if (
+    node._tag === 'PanelLeafNode' &&
+    node.paneType === 'terminal' &&
+    !node.terminalId
+  ) {
+    return node
+  }
+  if (node._tag === 'PanelSplitNode') {
+    for (const child of node.children) {
+      const found = findEmptyPanelTreeLeaf(child)
+      if (found) {
+        return found
+      }
+    }
+  }
+  return undefined
+}
+
+/**
  * Resolve the pane that should receive focus for a given panel tab.
  * Prefers `focusedPaneId` if set, falls back to the first leaf pane.
  */
@@ -2170,6 +2217,7 @@ export {
   collectTerminalIdsFromPanelTree,
   collectTerminalIdsFromTileTree,
   computeProgressiveCloseAction,
+  findEmptyPanelTreeLeaf,
   findNewPanelTreeLeaf,
   findPanelTreeLeaf,
   findSiblingPaneIdInPanelTree,
@@ -2178,6 +2226,7 @@ export {
   getActiveWindowTab,
   getAllWorkspaceTileLeaves,
   getFirstPanelTreeLeafId,
+  getLastPanelTreeLeafId,
   getPanelTreeLeafIds,
   getStaleTerminalLeavesHierarchical,
   getWorkspaceTileLeaves,

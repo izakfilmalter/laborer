@@ -23,6 +23,7 @@ import type {
   LeafNode,
   PanelLeafNode,
   PanelNode,
+  PanelTab,
   PanelTreeNode,
   PaneType,
   WindowLayout,
@@ -42,6 +43,7 @@ import {
   getDesktopBridge,
 } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
+import { generateId } from '@/panels/id-utils'
 import {
   convertPanelTree,
   deriveLegacyTreeFromHierarchical,
@@ -51,7 +53,6 @@ import type { NavigationDirection } from '@/panels/layout-utils'
 import {
   closeWorkspacePanes,
   computeResize,
-  computeTerminalPaneAssignment,
   ensureValidActivePaneId,
   filterTreeByWorkspace,
   findLeafByTerminalId,
@@ -83,6 +84,7 @@ import {
   closeTerminalInWindowLayout,
   collectTerminalIdsFromPanelTree,
   collectTerminalIdsFromTileTree,
+  findEmptyPanelTreeLeaf,
   findNewPanelTreeLeaf,
   findPanelTreeLeaf,
   findSiblingPaneIdInPanelTree,
@@ -90,6 +92,7 @@ import {
   findWorkspaceLocation,
   getActiveWindowTab,
   getAllWorkspaceTileLeaves,
+  getLastPanelTreeLeafId,
   getStaleTerminalLeavesHierarchical,
   getWorkspaceTileLeaves,
   reconcileWindowLayout,
@@ -899,65 +902,200 @@ export function usePanelLayout() {
   >(null)
 
   /**
-   * Helper: commit a layout assignment and optionally auto-open the dev
-   * server pane for containerized workspaces. Extracted to reduce cognitive
-   * complexity in `handleAssignTerminalToPane`.
+   * Helper: ensure the workspace has a tile in the active window tab.
+   * If the workspace is not in the active tab, moves it there so the
+   * terminal is visible in the panel area (not just the sidebar).
+   *
+   * Also ensures the workspace tile has at least one panel tab so
+   * terminal assignment has a tree to operate on.
    */
-  const commitAssignment = useCallback(
-    (
-      layoutTree: PanelNode,
-      activePaneId: string,
-      workspaceId: string,
-      triggerDevServer: boolean
-    ) => {
-      // Ensure the workspace has a tile in the active window tab before
-      // syncing the legacy tree. Without this, assigning a terminal for a
-      // workspace that has no tile in the current tab leaves the terminal
-      // invisible (sidebar shows it, panel area doesn't).
-      let baseWindowLayout = persistedWindowLayout
-      if (baseWindowLayout) {
-        const activeTab = getActiveWindowTab(baseWindowLayout)
-        if (activeTab) {
-          const existing = findWorkspaceLocation(baseWindowLayout, workspaceId)
-          if (existing?.tabId !== activeTab.id) {
-            baseWindowLayout = addWorkspaceToTabUnique(
-              baseWindowLayout,
-              workspaceId,
-              activeTab.id,
-              removeWorkspaceFromTab,
-              addWorkspaceToTab
-            )
-          }
+  const ensureWorkspaceInActiveTab = useCallback(
+    (layout: WindowLayout, workspaceId: string): WindowLayout => {
+      const activeTab = getActiveWindowTab(layout)
+      if (!activeTab) {
+        return layout
+      }
+      const existing = findWorkspaceLocation(layout, workspaceId)
+      let result = layout
+      if (existing?.tabId !== activeTab.id) {
+        result = addWorkspaceToTabUnique(
+          result,
+          workspaceId,
+          activeTab.id,
+          removeWorkspaceFromTab,
+          addWorkspaceToTab
+        )
+      }
+      // Ensure the workspace tile has at least one panel tab
+      result = updateWorkspaceTileLeaf(result, workspaceId, (leaf) => {
+        if (leaf.panelTabs.length > 0) {
+          return leaf
         }
-      }
+        const newTabId = generateId('panel-tab')
+        const newPaneId = generateId('pane')
+        const newTab: PanelTab = {
+          id: newTabId,
+          panelLayout: {
+            _tag: 'PanelLeafNode',
+            id: newPaneId,
+            paneType: 'terminal',
+            workspaceId,
+          },
+        }
+        return {
+          ...leaf,
+          panelTabs: [newTab],
+          activePanelTabId: newTabId,
+        }
+      })
+      return result
+    },
+    []
+  )
 
-      // Sync the mutation to the hierarchical tree and save focus
-      let updatedWindowLayout = syncLegacyTreeToHierarchical(
-        baseWindowLayout,
-        layoutTree,
-        workspaceId
+  /**
+   * Helper: get the active panel tab's panel layout for a workspace,
+   * plus a function to write it back into the layout.
+   */
+  const getActivePanelTreeForWorkspace = useCallback(
+    (
+      layout: WindowLayout,
+      workspaceId: string
+    ): { panelTree: PanelTreeNode; panelTabId: string } | undefined => {
+      const allLeaves = getAllWorkspaceTileLeaves(layout)
+      const leaf = allLeaves.find((l) => l.workspaceId === workspaceId)
+      if (!leaf) {
+        return undefined
+      }
+      const activeTabId = leaf.activePanelTabId
+      const panelTab = activeTabId
+        ? leaf.panelTabs.find((t) => t.id === activeTabId)
+        : leaf.panelTabs[0]
+      if (!panelTab) {
+        return undefined
+      }
+      return { panelTree: panelTab.panelLayout, panelTabId: panelTab.id }
+    },
+    []
+  )
+
+  /**
+   * Helper: commit an assignment result and optionally auto-open the dev
+   * server pane for containerized workspaces.
+   */
+  const commitAssignmentResult = useCallback(
+    (
+      layout: WindowLayout,
+      focusPaneId: string,
+      workspaceId: string,
+      shouldAutoOpenDevServer: boolean
+    ) => {
+      const focusUpdated = saveFocusedPaneId(layout, focusPaneId)
+      store.commit(
+        windowLayoutPaneAssigned({
+          windowId: panelWindowId,
+          windowLayout: focusUpdated,
+          activeWindowTabId: focusUpdated.activeTabId ?? null,
+        })
       )
-      if (updatedWindowLayout) {
-        updatedWindowLayout = saveFocusedPaneId(
-          updatedWindowLayout,
-          activePaneId
-        )
-        store.commit(
-          windowLayoutPaneAssigned({
-            windowId: panelWindowId,
-            windowLayout: updatedWindowLayout,
-            activeWindowTabId: updatedWindowLayout.activeTabId ?? null,
-          })
-        )
-      }
 
-      if (triggerDevServer && isWorkspaceContainerized(workspaceId)) {
-        autoOpenDevServerRef.current?.(activePaneId)?.catch((error) => {
+      if (shouldAutoOpenDevServer && isWorkspaceContainerized(workspaceId)) {
+        autoOpenDevServerRef.current?.(focusPaneId)?.catch((error) => {
           console.warn('[auto-open] dev server spawn failed:', error)
         })
       }
     },
-    [panelWindowId, store, isWorkspaceContainerized, persistedWindowLayout]
+    [panelWindowId, store, isWorkspaceContainerized]
+  )
+
+  /**
+   * Helper: navigate to an existing terminal in the hierarchical layout.
+   * Switches window tab and panel tab as needed, then focuses the pane.
+   * Returns true if the terminal was found and navigated to.
+   */
+  const navigateToExistingTerminal = useCallback(
+    (terminalId: string): boolean => {
+      if (!persistedWindowLayout) {
+        return false
+      }
+      const location = findTerminalLocation(persistedWindowLayout, terminalId)
+      if (!location) {
+        return false
+      }
+      let layout = persistedWindowLayout
+
+      // 1. Switch to the correct window tab (if not already active)
+      if (layout.activeTabId !== location.tabId) {
+        layout = switchWindowTab(layout, location.tabId)
+        store.commit(
+          windowTabSwitched({
+            windowId: panelWindowId,
+            windowLayout: layout,
+            activeWindowTabId: layout.activeTabId ?? null,
+          })
+        )
+      }
+
+      // 2. Switch to the correct panel tab within the workspace
+      layout = updateWorkspaceTileLeaf(layout, location.workspaceId, (leaf) =>
+        switchPanelTab(leaf, location.panelTabId)
+      )
+      store.commit(
+        panelTabSwitched({
+          windowId: panelWindowId,
+          windowLayout: layout,
+          activeWindowTabId: layout.activeTabId ?? null,
+        })
+      )
+
+      // 3. Focus the pane containing the terminal.
+      const focusUpdated = saveFocusedPaneId(layout, location.paneId)
+      if (focusUpdated !== layout) {
+        store.commit(
+          windowLayoutPaneAssigned({
+            windowId: panelWindowId,
+            windowLayout: focusUpdated,
+            activeWindowTabId: focusUpdated.activeTabId ?? null,
+          })
+        )
+      }
+      return true
+    },
+    [persistedWindowLayout, panelWindowId, store]
+  )
+
+  /**
+   * Helper: assign a terminal to a specific pane in the workspace's active
+   * panel tab and update the panel tree. Returns the updated layout.
+   */
+  const assignTerminalToActivePanelTab = useCallback(
+    (
+      layout: WindowLayout,
+      workspaceId: string,
+      targetPaneId: string,
+      terminalId: string
+    ): WindowLayout =>
+      updateWorkspaceTileLeaf(layout, workspaceId, (leaf) => {
+        const activeTabId = leaf.activePanelTabId ?? leaf.panelTabs[0]?.id
+        if (!activeTabId) {
+          return leaf
+        }
+        const updatedTabs = leaf.panelTabs.map((tab) => {
+          if (tab.id !== activeTabId) {
+            return tab
+          }
+          return {
+            ...tab,
+            panelLayout: assignTerminalInPanelTree(
+              tab.panelLayout,
+              targetPaneId,
+              terminalId
+            ),
+          }
+        })
+        return { ...leaf, panelTabs: updatedTabs }
+      }),
+    []
   )
 
   const handleAssignTerminalToPane = useCallback(
@@ -975,77 +1113,110 @@ export function usePanelLayout() {
         return
       }
 
-      // If the terminal already exists in the hierarchical layout,
-      // navigate to its exact location (switch window tab, panel tab,
-      // and focus the pane) instead of creating a new pane.
-      if (!paneId && persistedWindowLayout) {
-        const location = findTerminalLocation(persistedWindowLayout, terminalId)
-        if (location) {
-          let layout = persistedWindowLayout
-
-          // 1. Switch to the correct window tab (if not already active)
-          if (layout.activeTabId !== location.tabId) {
-            layout = switchWindowTab(layout, location.tabId)
-            store.commit(
-              windowTabSwitched({
-                windowId: panelWindowId,
-                windowLayout: layout,
-                activeWindowTabId: layout.activeTabId ?? null,
-              })
-            )
-          }
-
-          // 2. Switch to the correct panel tab within the workspace
-          layout = updateWorkspaceTileLeaf(
-            layout,
-            location.workspaceId,
-            (leaf) => switchPanelTab(leaf, location.panelTabId)
-          )
-          store.commit(
-            panelTabSwitched({
-              windowId: panelWindowId,
-              windowLayout: layout,
-              activeWindowTabId: layout.activeTabId ?? null,
-            })
-          )
-
-          // 3. Focus the pane containing the terminal via the hierarchical tree.
-          const focusUpdated = saveFocusedPaneId(layout, location.paneId)
-          if (focusUpdated !== layout) {
-            store.commit(
-              windowLayoutPaneAssigned({
-                windowId: panelWindowId,
-                windowLayout: focusUpdated,
-                activeWindowTabId: focusUpdated.activeTabId ?? null,
-              })
-            )
-          }
-          return
-        }
+      if (!persistedWindowLayout) {
+        return
       }
 
-      const base = persistedLayoutTree ?? defaultLayout
-      const result = computeTerminalPaneAssignment(
-        base,
-        terminalId,
-        workspaceId,
-        paneId,
-        options
+      // If the terminal already exists in the hierarchical layout,
+      // navigate to its exact location instead of creating a new pane.
+      if (!paneId && navigateToExistingTerminal(terminalId)) {
+        return
+      }
+
+      const shouldAutoOpenDevServer = options?.autoOpenDevServer === true
+
+      // Ensure the workspace has a tile with a panel tab in the active window tab.
+      let layout = ensureWorkspaceInActiveTab(
+        persistedWindowLayout,
+        workspaceId
       )
-      commitAssignment(
-        result.layoutTree,
-        result.activePaneId,
-        workspaceId,
-        result.triggerDevServer
-      )
+
+      // 1. Specific pane ID given — assign terminal to that pane directly.
+      if (paneId) {
+        layout = assignTerminalToActivePanelTab(
+          layout,
+          workspaceId,
+          paneId,
+          terminalId
+        )
+        commitAssignmentResult(
+          layout,
+          paneId,
+          workspaceId,
+          shouldAutoOpenDevServer
+        )
+        return
+      }
+
+      // Get the active panel tab's tree for the workspace.
+      const panelInfo = getActivePanelTreeForWorkspace(layout, workspaceId)
+      if (!panelInfo) {
+        return
+      }
+      const { panelTree, panelTabId } = panelInfo
+
+      // 2. Find an empty terminal pane and assign the terminal to it.
+      const emptyLeaf = findEmptyPanelTreeLeaf(panelTree)
+      if (emptyLeaf) {
+        layout = assignTerminalToActivePanelTab(
+          layout,
+          workspaceId,
+          emptyLeaf.id,
+          terminalId
+        )
+        commitAssignmentResult(
+          layout,
+          emptyLeaf.id,
+          workspaceId,
+          shouldAutoOpenDevServer
+        )
+        return
+      }
+
+      // 3. No empty pane — split the last leaf and assign terminal to the new pane.
+      const lastLeafId = getLastPanelTreeLeafId(panelTree)
+      if (lastLeafId) {
+        const newPaneContent: Partial<PanelLeafNode> = {
+          paneType: 'terminal',
+          terminalId,
+          workspaceId,
+        }
+        const splitTree = splitPaneInPanelTree(
+          panelTree,
+          lastLeafId,
+          'vertical',
+          newPaneContent
+        )
+        const newLeaf = findNewPanelTreeLeaf(panelTree, splitTree)
+        const focusPaneId = newLeaf?.id ?? lastLeafId
+        layout = updateWorkspaceTileLeaf(layout, workspaceId, (leaf) => {
+          const updatedTabs = leaf.panelTabs.map((tab) => {
+            if (tab.id !== panelTabId) {
+              return tab
+            }
+            return { ...tab, panelLayout: splitTree }
+          })
+          return { ...leaf, panelTabs: updatedTabs }
+        })
+        commitAssignmentResult(
+          layout,
+          focusPaneId,
+          workspaceId,
+          shouldAutoOpenDevServer
+        )
+        return
+      }
+
+      // Fallback — should not happen for valid trees.
+      commitAssignmentResult(layout, '', workspaceId, false)
     },
     [
-      persistedLayoutTree,
-      defaultLayout,
-      commitAssignment,
       persistedWindowLayout,
-      panelWindowId,
-      store,
+      ensureWorkspaceInActiveTab,
+      getActivePanelTreeForWorkspace,
+      navigateToExistingTerminal,
+      assignTerminalToActivePanelTab,
+      commitAssignmentResult,
     ]
   )
 

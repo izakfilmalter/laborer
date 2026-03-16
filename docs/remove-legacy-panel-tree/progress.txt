@@ -237,3 +237,49 @@ from `panelLayout` query results. These are expected and will be resolved by sub
 - All 211 related tests pass (focus-consistency, progressive-close, hierarchical-persistence, panel-tab-utils)
 - TypeScript: same 4 pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)
 - No new type errors introduced
+
+## Issue 6: handleAssignTerminalToPane uses hierarchical tree
+
+**Status:** done
+
+### Changes made
+
+1. **Added two new helper functions to `window-tab-utils.ts`**:
+   - `getLastPanelTreeLeafId`: Gets the last leaf ID in reverse DFS order (used to find the split target when all panes are occupied)
+   - `findEmptyPanelTreeLeaf`: Finds an empty terminal pane (PanelLeafNode with paneType 'terminal' and no terminalId)
+   - Both exported from window-tab-utils.ts
+
+2. **Rewrote `handleAssignTerminalToPane`** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - No longer reads from `persistedLayoutTree` or `defaultLayout` (legacy `PanelNode` tree)
+   - No longer calls `computeTerminalPaneAssignment()` from `layout-utils.ts` (legacy)
+   - No longer calls `syncLegacyTreeToHierarchical()` to bridge legacy → hierarchical
+   - Now operates directly on `persistedWindowLayout` (hierarchical `WindowLayout`)
+   - Fast path (terminal already exists): Unchanged — navigates via `findTerminalLocation`
+   - Fallback path rewritten with 3-step hierarchical resolution:
+     1. Specific pane ID given → `assignTerminalInPanelTree` within `updateWorkspaceTileLeaf`
+     2. Empty terminal pane found → `findEmptyPanelTreeLeaf` + `assignTerminalInPanelTree`
+     3. No empty pane → `splitPaneInPanelTree` on last leaf + `findNewPanelTreeLeaf`
+   - Commits `windowLayoutPaneAssigned` (not `layoutPaneAssigned`)
+
+3. **Removed `commitAssignment` helper** — replaced with three extracted helpers:
+   - `ensureWorkspaceInActiveTab`: Ensures workspace tile exists in active tab with at least one panel tab
+   - `assignTerminalToActivePanelTab`: Assigns terminal to a pane in the workspace's active panel tab
+   - `commitAssignmentResult`: Saves focus and commits `windowLayoutPaneAssigned`, optionally triggers dev server auto-open
+   - `navigateToExistingTerminal`: Extracted "navigate to existing terminal" logic to reduce complexity
+
+4. **Import changes**:
+   - Added `generateId` from `@/panels/id-utils`
+   - Added `findEmptyPanelTreeLeaf`, `getLastPanelTreeLeafId` from `window-tab-utils`
+   - Added `PanelTab` type from `@laborer/shared/types`
+   - `computeTerminalPaneAssignment` is no longer imported
+
+5. **Added unit tests** (`apps/web/test/window-tab-utils.test.ts`):
+   - `getLastPanelTreeLeafId`: 3 tests (single leaf, flat split, nested tree)
+   - `findEmptyPanelTreeLeaf`: 5 tests (occupied leaf, empty leaf, non-terminal pane, split tree with empty, all occupied)
+
+### Test results
+
+- All 87 tests in window-tab-utils.test.ts pass (was 79, added 8 new)
+- All 75 related tests pass (focus-consistency, progressive-close, hierarchical-persistence, panel-manager)
+- TypeScript: same 4 pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)
+- No new type errors introduced

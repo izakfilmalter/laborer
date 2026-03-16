@@ -61,6 +61,21 @@ vi.mock('@/panes/review-pane', () => ({
   ),
 }))
 
+// Mock LiveStore dependencies (workspace-frames.tsx imports @laborer/shared/schema)
+vi.mock('@livestore/livestore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@livestore/livestore')>()
+  return {
+    ...actual,
+    queryDb: vi.fn(() => ({})),
+  }
+})
+
+vi.mock('@/livestore/store', () => ({
+  useLaborerStore: () => ({
+    useQuery: () => [],
+  }),
+}))
+
 vi.mock('@/panes/diff-pane', () => ({
   DiffPane: ({
     onClose,
@@ -88,11 +103,26 @@ vi.mock('@/panels/panel-context', () => ({
     reorderWorkspaces: vi.fn(),
     resizePane: vi.fn(),
     setActivePaneId: vi.fn(),
+    showPanelTypePicker: vi.fn(),
     splitPane: vi.fn(),
     toggleDevServerPane: vi.fn(async () => false),
     toggleDiffPane: toggleDiffPaneMock,
     toggleFullscreenPane: vi.fn(),
     toggleReviewPane: toggleReviewPaneMock,
+    addPanelTab: vi.fn(),
+    addWorkspaceToCurrentTab: vi.fn(),
+    addWindowTab: vi.fn(),
+    closeWindowTab: vi.fn(),
+    removePanelTab: vi.fn(),
+    reorderPanelTabsDnd: vi.fn(),
+    switchPanelTab: vi.fn(),
+    switchPanelTabByIndex: vi.fn(),
+    switchPanelTabRelative: vi.fn(),
+    switchWindowTab: vi.fn(),
+    switchWindowTabByIndex: vi.fn(),
+    switchWindowTabRelative: vi.fn(),
+    reorderWindowTabsDnd: vi.fn(),
+    windowLayout: undefined,
   }),
 }))
 

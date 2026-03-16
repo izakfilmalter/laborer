@@ -89,7 +89,7 @@ function RootComponent() {
           </HotkeysProvider>
         </ThemeProvider>
       </LifecyclePhaseProvider>
-      <TanStackRouterDevtools position="bottom-left" />
+      <TanStackRouterDevtools position="bottom-right" />
     </>
   )
 }

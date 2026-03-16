@@ -251,6 +251,86 @@ export function DestroyWorkspaceOnCloseDialog({
   )
 }
 
+/**
+ * Confirmation dialog shown when attempting to close a panel tab that has
+ * terminals with running processes. Warns the user that terminals in the
+ * tab will be killed.
+ */
+export function ClosePanelTabDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+}: {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+  readonly onConfirm: () => void
+}) {
+  const handleConfirm = useCallback(() => {
+    onConfirm()
+    onOpenChange(false)
+  }, [onConfirm, onOpenChange])
+
+  return (
+    <AlertDialog onOpenChange={onOpenChange} open={open}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Close tab?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This tab has terminals with running processes. Closing the tab will
+            kill all of them.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={handleConfirm}>
+            Close tab
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
+/**
+ * Confirmation dialog shown when attempting to close a window tab that has
+ * terminals with running processes across any workspace. Warns the user
+ * that all terminals in all workspaces within the tab will be killed.
+ */
+export function CloseWindowTabDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+}: {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+  readonly onConfirm: () => void
+}) {
+  const handleConfirm = useCallback(() => {
+    onConfirm()
+    onOpenChange(false)
+  }, [onConfirm, onOpenChange])
+
+  return (
+    <AlertDialog onOpenChange={onOpenChange} open={open}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Close window tab?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This window tab has terminals with running processes. Closing the
+            tab will kill all of them.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={handleConfirm}>
+            Close window tab
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
 export function CloseAppDialog({
   open,
   onOpenChange,
@@ -267,10 +347,6 @@ export function CloseAppDialog({
     onOpenChange(false)
   }, [onOpenChange])
 
-  const handleCloseClick = useCallback(() => {
-    handleCloseToTray()
-  }, [handleCloseToTray])
-
   return (
     <AlertDialog onOpenChange={onOpenChange} open={open}>
       <AlertDialogContent>
@@ -283,7 +359,7 @@ export function CloseAppDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={handleCloseClick}>
+          <AlertDialogAction onClick={handleCloseToTray}>
             Close
           </AlertDialogAction>
         </AlertDialogFooter>

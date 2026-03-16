@@ -199,10 +199,6 @@ function TerminalList({
     configResult._tag === 'Success'
       ? configResult.value.agent.value
       : 'opencode'
-  const autoOpenDevServer =
-    configResult._tag === 'Success'
-      ? configResult.value.devServer.autoOpen.value
-      : false
   // Filter terminals for this workspace and derive aggregate agent status
   const workspaceTerminals = terminalList.filter(
     (t) => t.workspaceId === workspaceId
@@ -229,10 +225,12 @@ function TerminalList({
       })
       upsertTerminalListItem(buildOptimisticTerminalInfo(result))
       toast.success(`Terminal spawned: ${result.command}`)
-      // Auto-assign the new terminal to a pane
+      // Create a panel tab with the terminal directly. This works
+      // correctly even when the workspace has no existing panel tabs,
+      // unlike assignTerminalToPane which requires an active window tab.
       if (panelActions) {
-        panelActions.assignTerminalToPane(result.id, workspaceId, undefined, {
-          autoOpenDevServer,
+        panelActions.addPanelTab?.(workspaceId, 'terminal', {
+          terminalId: result.id,
         })
       }
     } catch (error) {
@@ -240,13 +238,7 @@ function TerminalList({
     } finally {
       setIsSpawning(false)
     }
-  }, [
-    autoOpenDevServer,
-    isServiceAvailable,
-    spawnTerminal,
-    workspaceId,
-    panelActions,
-  ])
+  }, [isServiceAvailable, spawnTerminal, workspaceId, panelActions])
 
   const handleSpawnAgent = useCallback(async () => {
     if (!isServiceAvailable) {
@@ -260,9 +252,12 @@ function TerminalList({
       })
       upsertTerminalListItem(buildOptimisticTerminalInfo(result))
       toast.success(`Agent spawned: ${agentProvider}`)
+      // Create a panel tab with the terminal directly. This works
+      // correctly even when the workspace has no existing panel tabs,
+      // unlike assignTerminalToPane which requires an active window tab.
       if (panelActions) {
-        panelActions.assignTerminalToPane(result.id, workspaceId, undefined, {
-          autoOpenDevServer,
+        panelActions.addPanelTab?.(workspaceId, 'terminal', {
+          terminalId: result.id,
         })
       }
     } catch (error) {
@@ -276,7 +271,6 @@ function TerminalList({
     workspaceId,
     panelActions,
     agentProvider,
-    autoOpenDevServer,
   ])
 
   const handleCloseTerminal = useCallback(

@@ -1,0 +1,118 @@
+/**
+ * Random name generator for window tabs.
+ *
+ * Produces human-friendly names like "Swift Falcon" or "Bold Cypress"
+ * using an adjective + noun pattern. Used as the default label when
+ * creating new window tabs.
+ */
+
+const ADJECTIVES = [
+  'Bold',
+  'Brave',
+  'Bright',
+  'Calm',
+  'Clear',
+  'Cool',
+  'Crisp',
+  'Deft',
+  'Fair',
+  'Fast',
+  'Fierce',
+  'Fleet',
+  'Fresh',
+  'Grand',
+  'Keen',
+  'Light',
+  'Lucid',
+  'Noble',
+  'Prime',
+  'Quick',
+  'Rapid',
+  'Sharp',
+  'Sleek',
+  'Smart',
+  'Stark',
+  'Steady',
+  'Still',
+  'Strong',
+  'Sure',
+  'Swift',
+  'True',
+  'Vast',
+  'Vivid',
+  'Warm',
+  'Wise',
+] as const
+
+const NOUNS = [
+  'Arch',
+  'Birch',
+  'Bloom',
+  'Cedar',
+  'Cloud',
+  'Coral',
+  'Crane',
+  'Creek',
+  'Crest',
+  'Crown',
+  'Cypress',
+  'Dawn',
+  'Delta',
+  'Drift',
+  'Dusk',
+  'Eagle',
+  'Elm',
+  'Ember',
+  'Falcon',
+  'Fern',
+  'Flint',
+  'Forge',
+  'Frost',
+  'Gale',
+  'Glen',
+  'Grove',
+  'Haven',
+  'Hawk',
+  'Heath',
+  'Heron',
+  'Iris',
+  'Jade',
+  'Lake',
+  'Lark',
+  'Maple',
+  'Marsh',
+  'Mesa',
+  'Moss',
+  'Oak',
+  'Onyx',
+  'Orbit',
+  'Peak',
+  'Pine',
+  'Plume',
+  'Prism',
+  'Quartz',
+  'Raven',
+  'Reed',
+  'Ridge',
+  'River',
+  'Sage',
+  'Shore',
+  'Slate',
+  'Spark',
+  'Spruce',
+  'Stone',
+  'Storm',
+  'Summit',
+  'Tide',
+  'Vale',
+  'Wren',
+] as const
+
+/** Generate a random human-friendly name for a window tab. */
+function generateRandomTabName(): string {
+  const adjective = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)]
+  return `${adjective} ${noun}`
+}
+
+export { generateRandomTabName }

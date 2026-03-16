@@ -80,7 +80,7 @@ None - can start immediately.
 
 ## Issue 3: handleSetActivePaneId uses hierarchical focus only
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

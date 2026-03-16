@@ -505,6 +505,39 @@ function resolveActivePaneForWindowTab(tab: WindowTab): string | undefined {
 }
 
 /**
+ * Resolve the workspace ID that the focused pane belongs to within a window tab.
+ *
+ * Walks the workspace tile leaves to find which workspace contains the
+ * given pane. If no paneId is provided, resolves the active pane first and
+ * then finds its workspace.
+ *
+ * @param tab - The window tab to search
+ * @param paneId - Optional pane ID to find (defaults to the tab's active pane)
+ * @returns The workspace ID that contains the pane, or undefined
+ */
+function resolveActiveWorkspaceForWindowTab(
+  tab: WindowTab,
+  paneId?: string
+): string | undefined {
+  if (!tab.workspaceLayout) {
+    return undefined
+  }
+  const effectivePaneId = paneId ?? resolveActivePaneForWindowTab(tab)
+  if (!effectivePaneId) {
+    return undefined
+  }
+  const leaves = getWorkspaceTileLeaves(tab.workspaceLayout)
+  for (const leaf of leaves) {
+    for (const panelTab of leaf.panelTabs) {
+      if (panelTreeContainsPane(panelTab.panelLayout, effectivePaneId)) {
+        return leaf.workspaceId
+      }
+    }
+  }
+  return undefined
+}
+
+/**
  * Save the current focusedPaneId on the active panel tab of the workspace
  * that contains the given pane. Walks all tabs > all workspaces > all panel
  * tabs to find the pane and update its panel tab's focusedPaneId.
@@ -2157,6 +2190,7 @@ export {
   repairWindowLayout,
   resolveActivePaneForPanelTab,
   resolveActivePaneForWindowTab,
+  resolveActiveWorkspaceForWindowTab,
   saveFocusedPaneId,
   shouldConfirmClosePanelTab,
   shouldConfirmCloseWindowTab,

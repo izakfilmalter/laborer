@@ -98,20 +98,12 @@ function HomeComponent() {
     layout,
     panelActions,
     activePaneId,
+    activeWorkspaceId,
     leafPaneIds,
     isReconciling,
     liveTerminals,
     workspaceOrder,
   } = usePanelLayout()
-
-  // Derive the active workspace ID from the active pane for sidebar highlighting.
-  const activeWorkspaceId = useMemo(() => {
-    if (!(activePaneId && layout)) {
-      return null
-    }
-    const node = findNodeById(layout, activePaneId)
-    return node?._tag === 'LeafNode' ? (node.workspaceId ?? null) : null
-  }, [activePaneId, layout])
 
   // Extract the active window tab's workspace tile layout for bidirectional tiling.
   // When available, WorkspaceFrames uses this for hierarchical rendering instead

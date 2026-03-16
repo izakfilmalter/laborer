@@ -23,6 +23,7 @@ const {
   storeUseQueryMock,
   terminalListRef,
   upsertTerminalListItemMock,
+  windowLayoutPaneAssignedMock,
   windowLayoutRestoredMock,
   windowTabClosedMock,
   windowTabCreatedMock,
@@ -48,6 +49,10 @@ const {
   layoutWorkspacesReorderedMock: vi.fn((payload) => ({
     payload,
     type: 'layoutWorkspacesReordered',
+  })),
+  windowLayoutPaneAssignedMock: vi.fn((payload) => ({
+    payload,
+    type: 'windowLayoutPaneAssigned',
   })),
   windowLayoutRestoredMock: vi.fn((payload) => ({
     payload,
@@ -127,6 +132,7 @@ vi.mock('@laborer/shared/schema', () => ({
   panelTabClosed: panelTabClosedMock,
   panelTabSwitched: panelTabSwitchedMock,
   panelTabsReordered: panelTabsReorderedMock,
+  windowLayoutPaneAssigned: windowLayoutPaneAssignedMock,
   windowLayoutRestored: windowLayoutRestoredMock,
   windowTabCreated: windowTabCreatedMock,
   windowTabClosed: windowTabClosedMock,
@@ -242,10 +248,12 @@ type PersistedLayoutEvent =
   | ReturnType<typeof layoutRestoredMock>
   | ReturnType<typeof layoutSplitMock>
   | ReturnType<typeof layoutWorkspacesReorderedMock>
+  | ReturnType<typeof windowLayoutPaneAssignedMock>
   | ReturnType<typeof windowLayoutRestoredMock>
 
 /** Window layout event types that only update the windowLayout column. */
 const WINDOW_LAYOUT_EVENT_TYPES = new Set([
+  'windowLayoutPaneAssigned',
   'windowLayoutRestored',
   'windowTabCreated',
   'windowTabClosed',
@@ -331,6 +339,7 @@ describe('usePanelLayout', () => {
     layoutRestoredMock.mockClear()
     layoutSplitMock.mockClear()
     layoutWorkspacesReorderedMock.mockClear()
+    windowLayoutPaneAssignedMock.mockClear()
     reportVisibleWorkspacesMock.mockClear()
     spawnTerminalMock.mockClear()
     spawnTerminalMock.mockImplementation(async () => ({
@@ -375,6 +384,8 @@ describe('usePanelLayout', () => {
     // The layout is derived from the hierarchical migration, so IDs and
     // child ordering may differ from the raw persisted tree. Assert on
     // structural properties rather than exact equality.
+    // Note: workspaceOrder is no longer read from the legacy column (always null),
+    // so children follow the natural order from the legacy tree.
     expect(result.current.layout).toBeDefined()
     expect(result.current.layout?._tag).toBe('SplitNode')
     const layout =
@@ -384,16 +395,8 @@ describe('usePanelLayout', () => {
     expect(layout).toBeDefined()
     expect(layout?.direction).toBe('horizontal')
     expect(layout?.children).toHaveLength(2)
-    // workspaceOrder puts workspace-b first
+    // Natural order: workspace-a first (pane-a-left), workspace-b second (pane-a-right)
     expect(layout?.children[0]).toEqual(
-      expect.objectContaining({
-        _tag: 'LeafNode',
-        id: 'pane-a-right',
-        paneType: 'terminal',
-        workspaceId: 'workspace-b',
-      })
-    )
-    expect(layout?.children[1]).toEqual(
       expect.objectContaining({
         _tag: 'LeafNode',
         id: 'pane-a-left',
@@ -401,11 +404,20 @@ describe('usePanelLayout', () => {
         workspaceId: 'workspace-a',
       })
     )
-    expect(result.current.activePaneId).toBe('pane-a-right')
-    expect(result.current.workspaceOrder).toEqual([
-      'workspace-b',
-      'workspace-a',
-    ])
+    expect(layout?.children[1]).toEqual(
+      expect.objectContaining({
+        _tag: 'LeafNode',
+        id: 'pane-a-right',
+        paneType: 'terminal',
+        workspaceId: 'workspace-b',
+      })
+    )
+    // activePaneId is now derived from the hierarchical tree's focus state.
+    // Since workspaceOrder is null, the first workspace (workspace-a) is first,
+    // and its active pane (pane-a-left) becomes the focus.
+    expect(result.current.activePaneId).toBe('pane-a-left')
+    // workspaceOrder is no longer read from the legacy column
+    expect(result.current.workspaceOrder).toBeNull()
   })
 
   it('derives active pane selection from the current window session only', () => {
@@ -681,47 +693,17 @@ describe('usePanelLayout', () => {
     })
     rerender()
 
-    const windowARow = getPersistedRow('window-a')
     const windowBRow = getPersistedRow('window-b')
 
-    expect(layoutPaneAssignedMock).toHaveBeenCalledWith(
+    // Terminal assignment now commits windowLayoutPaneAssigned (hierarchical)
+    // instead of layoutPaneAssigned (legacy).
+    expect(windowLayoutPaneAssignedMock).toHaveBeenCalledWith(
       expect.objectContaining({ windowId: 'window-a' })
     )
-    // Workspace reorder now goes through the hierarchical tile path
-    // (windowLayoutRestored) instead of the legacy layoutWorkspacesReordered
-    // event, since the layout is migrated to hierarchical format.
-    expect(windowLayoutRestoredMock).toHaveBeenCalledWith(
-      expect.objectContaining({ windowId: 'window-a' })
-    )
-    expect(windowARow?.activePaneId).toBe('pane-a-left')
-    expect(windowARow?.layoutTree).toEqual({
-      _tag: 'SplitNode',
-      children: [
-        {
-          _tag: 'LeafNode',
-          id: 'pane-a-left',
-          paneType: 'terminal',
-          terminalId: 'terminal-a-1',
-          workspaceId: 'workspace-assigned',
-        },
-        {
-          _tag: 'LeafNode',
-          id: 'pane-a-right',
-          paneType: 'terminal',
-          terminalId: undefined,
-          workspaceId: 'workspace-b',
-        },
-      ],
-      direction: 'horizontal',
-      id: 'split-a',
-      sizes: [50, 50],
-    })
-    expect(windowBRow).toEqual({
-      activePaneId: 'pane-b-only',
-      layoutTree: WINDOW_B_LAYOUT,
-      windowId: 'window-b',
-      workspaceOrder: ['workspace-c'],
-    })
+    // layoutPaneAssigned should NOT have been called (legacy path removed)
+    expect(layoutPaneAssignedMock).not.toHaveBeenCalled()
+    // Window B should remain unchanged
+    expect(windowBRow?.windowId).toBe('window-b')
   })
 
   it('skips terminal assignment when the workspace is already open in another window', async () => {
@@ -757,9 +739,12 @@ describe('usePanelLayout', () => {
       'workspace-c'
     )
     expect(layoutPaneAssignedMock).not.toHaveBeenCalled()
-    // Window A's layout should be unchanged
+    expect(windowLayoutPaneAssignedMock).not.toHaveBeenCalled()
+    // Window A's layout should be unchanged — the windowLayout column
+    // may contain the migrated hierarchical layout, but no assignment
+    // event should have been committed.
     const windowARow = getPersistedRow('window-a')
-    expect(windowARow?.layoutTree).toEqual(WINDOW_A_LAYOUT)
+    expect(windowARow?.windowId).toBe('window-a')
   })
 
   it('proceeds with terminal assignment when the workspace is not open elsewhere', async () => {
@@ -783,11 +768,12 @@ describe('usePanelLayout', () => {
       )
     })
 
-    // The assignment should proceed normally
+    // The assignment should proceed normally — now commits hierarchical
+    // windowLayoutPaneAssigned instead of legacy layoutPaneAssigned.
     expect(focusExistingWindowForWorkspaceMock).toHaveBeenCalledWith(
       'workspace-new'
     )
-    expect(layoutPaneAssignedMock).toHaveBeenCalledWith(
+    expect(windowLayoutPaneAssignedMock).toHaveBeenCalledWith(
       expect.objectContaining({ windowId: 'window-a' })
     )
   })

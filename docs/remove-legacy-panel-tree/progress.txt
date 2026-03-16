@@ -87,3 +87,61 @@ from `panelLayout` query results. These are expected and will be resolved by sub
 - All 1299 tests in apps/web pass (1 skipped, pre-existing)
 - All 71 tests in packages/shared pass
 - TypeScript clean except for pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)
+
+## Issue 3: handleSetActivePaneId uses hierarchical focus only
+
+**Status:** done
+
+### Changes made
+
+1. **Rewrote `handleSetActivePaneId`** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - Removed `layoutPaneAssigned` event commit entirely
+   - Now uses `saveFocusedPaneId()` on the hierarchical `WindowLayout` and commits `windowLayoutPaneAssigned`
+   - Validates pane ID against the hierarchical tree via `resolveActivePaneForWindowTab` when null is passed
+   - No longer depends on `layout`, `persistedLayoutTree`, or `defaultLayout`
+
+2. **Derived `persistedActivePaneId` from hierarchical tree**:
+   - Primary path: `resolveActivePaneForWindowTab(activeTab)` walks the hierarchy (active window tab > workspace tile leaves > active panel tab > focusedPaneId)
+   - Fallback: `ensureValidActivePaneId(layout, null)` for cases where hierarchical resolution returns no result (e.g., empty migrated layout with no workspace tiles)
+
+3. **Derived `activeWorkspaceId` from hierarchical tree**:
+   - Added `resolveActiveWorkspaceForWindowTab()` to `window-tab-utils.ts`
+   - Walks workspace tile leaves to find which workspace contains the focused pane
+   - Returned from `usePanelLayout()` hook, consumed directly in `index.tsx`
+   - Removed `findNodeById(layout, activePaneId)` derivation from `index.tsx`
+
+4. **Removed `layoutPaneAssigned` from all focus-restoration callbacks**:
+   - `commitWindowTabSwitchWithFocus`: Simplified to just `commitWindowLayout(windowTabSwitched, newLayout)` — hierarchical focusedPaneId is sufficient
+   - `commitPanelTabSwitchWithFocus`: Simplified to just `commitPanelTabLayout(panelTabSwitched, newLayout)`
+   - `handleCloseWindowTab`: Removed legacy tree derivation and `layoutPaneAssigned` commit after tab close
+   - `handleAssignTerminalToPane` step 3: Replaced `layoutPaneAssigned` with `saveFocusedPaneId` + `windowLayoutPaneAssigned`
+
+5. **Replaced `layoutPaneAssigned` in `commitAssignment` helper**:
+   - Removed the dual-write pattern (legacy event + sync to hierarchical)
+   - Now: sync legacy tree to hierarchical, save focus, commit single `windowLayoutPaneAssigned`
+
+6. **Replaced `layoutPaneAssigned` in `handleToggleDevServerPane`**:
+   - Extracted `commitDevServerSync` and `spawnAndAssignDevServer` helpers to reduce complexity
+   - All dev server toggle paths now sync to hierarchical tree and commit `windowLayoutPaneAssigned`
+
+7. **Hardcoded `rawPersistedActivePaneId` and `persistedWorkspaceOrder` to null**:
+   - These legacy columns were removed from the schema in Issue 2
+   - Code still references them for backward-compatible migration paths but always reads null
+
+8. **Import changes**:
+   - Added `windowLayoutPaneAssigned` import from `@laborer/shared/schema`
+   - Removed `layoutPaneAssigned` import (no longer committed anywhere)
+   - Added `resolveActiveWorkspaceForWindowTab` import from `window-tab-utils`
+
+9. **Updated tests** (`apps/web/test/use-panel-layout.test.ts`):
+   - Added `windowLayoutPaneAssignedMock` to hoisted mocks, schema mock, event types, and beforeEach
+   - Updated "hydrates" test: workspaceOrder is now null, children follow natural order
+   - Updated "scopes terminal assignment" test: expects `windowLayoutPaneAssigned` instead of `layoutPaneAssigned`
+   - Updated "skips terminal assignment" test: checks both `layoutPaneAssigned` and `windowLayoutPaneAssigned` not called
+   - Updated "proceeds with assignment" test: expects `windowLayoutPaneAssigned`
+
+### Test results
+
+- All 1299 tests in apps/web pass (1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- TypeScript: 4 pre-existing errors remain in `use-panel-layout.ts` (accessing removed `layoutTree` and `activePaneId` columns in legacy reconciliation code — will be resolved by Issue 12)

@@ -43,14 +43,6 @@ export function isElectron(): boolean {
 }
 
 /**
- * Returns the stable identity of the current native window when running in
- * Electron. Browser-based development does not have a native window ID.
- */
-export function getCurrentWindowId(): string | null {
-  return getDesktopBridge()?.getWindowId() ?? null
-}
-
-/**
  * Check if the frontend is in Electron production mode where the Vite
  * dev proxy is NOT available.
  *
@@ -62,24 +54,19 @@ function isElectronProduction(): boolean {
 }
 
 /**
- * Resolve the HTTP URL for the server's init-status endpoint.
+ * Wait for Electron sidecar services to become healthy.
  *
- * Used by the phase transition driver to poll whether all deferred
- * services have finished initializing (triggering the Eventually phase).
+ * In Electron production mode, the DesktopBridge provides service URLs
+ * which are only available once the preload script has run. The actual
+ * health checking is handled by the Electron main process — by the time
+ * the window loads, services should already be healthy.
  *
- * - Dev mode: `/server-init-status` (Vite proxy rewrites to server's /init-status)
- * - Electron production: `${desktopBridge.getServerUrl()}/init-status` (direct)
- *
- * @see Issue #15: Server "fully initialized" event
+ * In dev mode or non-Electron environments, resolves immediately.
  */
-export function serverInitStatusUrl(): string {
-  if (isElectronProduction()) {
-    const bridge = getDesktopBridge()
-    if (bridge) {
-      return `${bridge.getServerUrl()}/init-status`
-    }
-  }
-  return '/server-init-status'
+export function waitForSidecars(): Promise<void> {
+  // In Electron, the main process handles health checking before showing
+  // the window. The renderer doesn't need to wait.
+  return Promise.resolve()
 }
 
 /**
@@ -152,49 +139,6 @@ export function terminalWsUrl(terminalId: string): string {
   }
   const protocol = globalThis.location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${protocol}//${globalThis.location.host}/terminal?id=${encoded}`
-}
-
-/**
- * Open a URL in the user's default browser.
- *
- * In Electron, this delegates to the preload bridge so the OS browser opens
- * instead of a new Electron window. In plain browser mode, it falls back to
- * `window.open()`.
- */
-export async function openExternalUrl(url: string): Promise<boolean> {
-  const bridge = getDesktopBridge()
-  if (bridge) {
-    return await bridge.openExternal(url)
-  }
-
-  if (typeof window === 'undefined') {
-    return false
-  }
-
-  const openedWindow = window.open(url, '_blank', 'noopener,noreferrer')
-  return openedWindow !== null
-}
-
-/**
- * Attempt to focus an existing window that has the given workspace open.
- * Returns true if another window was focused (the caller should abort its
- * local workspace-opening flow). Returns false if the workspace is not open
- * in any other window (the caller should proceed normally).
- *
- * In non-Electron contexts, always returns false.
- */
-export async function focusExistingWindowForWorkspace(
-  workspaceId: string
-): Promise<boolean> {
-  const bridge = getDesktopBridge()
-  if (!bridge?.focusWindowForWorkspace) {
-    return false
-  }
-  try {
-    return await bridge.focusWindowForWorkspace(workspaceId)
-  } catch {
-    return false
-  }
 }
 
 export { getDesktopBridge }

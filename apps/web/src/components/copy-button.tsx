@@ -12,7 +12,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { haptics } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
 
 interface CopyButtonProps
@@ -56,7 +55,6 @@ export function CopyButton({
             className={cn('relative z-10', className)}
             onClick={() => {
               copyToClipboardWithMeta(value).then(() => {
-                haptics.copy()
                 setHasCopied(true)
               })
             }}

@@ -11,12 +11,7 @@
  * @see Issue #75: Keyboard shortcut — split horizontal
  */
 
-import type {
-  LeafNode,
-  PaneType,
-  SplitDirection,
-  WindowLayout,
-} from '@laborer/shared/types'
+import type { LeafNode, SplitDirection } from '@laborer/shared/types'
 import { createContext, useContext } from 'react'
 
 /**
@@ -25,62 +20,7 @@ import { createContext, useContext } from 'react'
  */
 type ResizeDirection = 'left' | 'right' | 'up' | 'down'
 
-interface AssignTerminalToPaneOptions {
-  /** Whether assigning this terminal should auto-open the workspace dev server. */
-  readonly autoOpenDevServer?: boolean | undefined
-}
-
-/**
- * Mode for the panel type picker — determines what happens after a type
- * is selected.
- */
-type PickerMode =
-  | {
-      readonly kind: 'split-right'
-      readonly paneId: string
-      readonly workspaceId: string
-    }
-  | {
-      readonly kind: 'split-down'
-      readonly paneId: string
-      readonly workspaceId: string
-    }
-  | { readonly kind: 'new-tab'; readonly workspaceId: string }
-
 interface PanelActions {
-  // -- Panel tab actions ---------------------------------------------------
-
-  /**
-   * Add a new panel tab of the given type to the focused workspace.
-   * Triggered by Ctrl+T (with type picker).
-   *
-   * @param workspaceId - The workspace to add the tab to
-   * @param panelType - The panel type for the new tab
-   * @param options - Optional configuration (e.g. terminalId to skip auto-spawn)
-   */
-  readonly addPanelTab:
-    | ((
-        workspaceId: string,
-        panelType: PaneType,
-        options?: { terminalId?: string }
-      ) => void)
-    | undefined
-
-  // -- Window tab actions ---------------------------------------------------
-
-  /**
-   * Add a new empty window tab and switch to it.
-   * Triggered by Cmd+N.
-   */
-  readonly addWindowTab: (() => void) | undefined
-
-  /**
-   * Add an existing workspace to the active window tab.
-   * Shown in the empty window tab state workspace picker.
-   *
-   * @param workspaceId - The workspace to add to the current window tab
-   */
-  readonly addWorkspaceToCurrentTab: ((workspaceId: string) => void) | undefined
   /**
    * Assign a terminal to an existing pane or the first available empty pane.
    * If no paneId is given, finds the first empty terminal pane in the tree
@@ -93,8 +33,7 @@ interface PanelActions {
   readonly assignTerminalToPane: (
     terminalId: string,
     workspaceId: string,
-    paneId?: string,
-    options?: AssignTerminalToPaneOptions
+    paneId?: string
   ) => void
   /**
    * Close a pane and remove it from the layout.
@@ -103,92 +42,6 @@ interface PanelActions {
    * @param paneId - The ID of the LeafNode to close
    */
   readonly closePane: (paneId: string) => void
-
-  /**
-   * Close a terminal and remove its pane from the layout.
-   *
-   * Finds the pane associated with the given terminal, then closes it
-   * (which also removes the terminal from the service). If no pane is
-   * found, the terminal is removed from the service directly.
-   *
-   * @param terminalId - The ID of the terminal to close
-   */
-  readonly closeTerminalPane: (terminalId: string) => void
-
-  /**
-   * Close the active window tab.
-   * Triggered by Cmd+Shift+W.
-   */
-  readonly closeWindowTab: (() => void) | undefined
-  /**
-   * Close all panes belonging to a workspace, killing their terminals.
-   *
-   * Finds every leaf node with the given workspaceId and closes them,
-   * removing the associated terminals from the terminal service. If
-   * the workspace has running child processes, callers should show a
-   * confirmation dialog before invoking this action.
-   *
-   * @param workspaceId - The workspace whose panes should be closed
-   */
-  readonly closeWorkspace: (workspaceId: string) => void
-  /**
-   * Close all panes belonging to a workspace without confirmation.
-   *
-   * Identical to closeWorkspace but bypasses the running-process
-   * confirmation gate. Used by workspace destruction which has its own
-   * confirmation dialog that already warns the user about active
-   * terminals.
-   *
-   * @param workspaceId - The workspace whose panes should be closed
-   */
-  readonly forceCloseWorkspace: (workspaceId: string) => void
-
-  /**
-   * Remove a panel tab by ID from a workspace.
-   *
-   * @param workspaceId - The workspace containing the tab
-   * @param tabId - The ID of the panel tab to remove
-   */
-  readonly removePanelTab:
-    | ((workspaceId: string, tabId: string) => void)
-    | undefined
-
-  /**
-   * Rename a window tab label.
-   * Triggered by double-clicking a window tab to edit its name inline.
-   *
-   * @param tabId - The ID of the window tab to rename
-   * @param label - The new label
-   */
-  readonly renameWindowTab: ((tabId: string, label: string) => void) | undefined
-
-  /**
-   * Reorder panel tabs within a workspace (for drag-and-drop).
-   *
-   * @param workspaceId - The workspace containing the tabs
-   * @param fromIndex - Source tab index (0-based)
-   * @param toIndex - Target tab index (0-based)
-   */
-  readonly reorderPanelTabsDnd:
-    | ((workspaceId: string, fromIndex: number, toIndex: number) => void)
-    | undefined
-
-  /**
-   * Reorder window tabs (for drag-and-drop).
-   */
-  readonly reorderWindowTabsDnd:
-    | ((fromIndex: number, toIndex: number) => void)
-    | undefined
-  /**
-   * Reorder workspace frames in the panel view.
-   *
-   * Persists a new explicit ordering of workspace IDs, overriding the
-   * default DFS-derived order from the layout tree. Called when the user
-   * drag-and-drops workspace frames to rearrange them.
-   *
-   * @param workspaceOrder - The new ordered array of workspace IDs
-   */
-  readonly reorderWorkspaces: (workspaceOrder: (string | undefined)[]) => void
   /**
    * Resize the active pane in the given direction.
    *
@@ -212,13 +65,6 @@ interface PanelActions {
    */
   readonly setActivePaneId: (paneId: string | null) => void
   /**
-   * Show the panel type picker. When a type is selected, the corresponding
-   * action (split or new tab) is performed automatically.
-   *
-   * @param mode - Determines the action: split-right, split-down, or new-tab
-   */
-  readonly showPanelTypePicker: ((mode: PickerMode) => void) | undefined
-  /**
    * Split a pane into two. The original pane stays; a new sibling pane
    * is added in the given direction.
    *
@@ -231,60 +77,11 @@ interface PanelActions {
     direction: SplitDirection,
     newPaneContent?: Partial<LeafNode>
   ) => void
-
-  /**
-   * Switch the active panel tab by ID within a workspace.
-   *
-   * @param workspaceId - The workspace containing the tab
-   * @param tabId - The ID of the panel tab to activate
-   */
-  readonly switchPanelTab:
-    | ((workspaceId: string, tabId: string) => void)
-    | undefined
-
-  /**
-   * Switch the active panel tab by 1-based index within the focused workspace.
-   * Triggered by Ctrl+1 through Ctrl+8 (index 9 = last tab).
-   *
-   * @param workspaceId - The workspace containing the tabs
-   * @param index - 1-based tab index (1-8, or 9 for last)
-   */
-  readonly switchPanelTabByIndex:
-    | ((workspaceId: string, index: number) => void)
-    | undefined
-
-  /**
-   * Cycle to the next or previous panel tab within the focused workspace.
-   * Triggered by Ctrl+Shift+] (delta=1) and Ctrl+Shift+[ (delta=-1).
-   *
-   * @param workspaceId - The workspace containing the tabs
-   * @param delta - +1 for next, -1 for previous
-   */
-  readonly switchPanelTabRelative:
-    | ((workspaceId: string, delta: number) => void)
-    | undefined
-
-  /**
-   * Switch to a specific window tab by ID.
-   */
-  readonly switchWindowTab: ((tabId: string) => void) | undefined
-
-  /**
-   * Switch to a window tab by its 1-based index.
-   * Triggered by Cmd+1 through Cmd+8 (index 9 = last tab).
-   */
-  readonly switchWindowTabByIndex: ((index: number) => void) | undefined
-
-  /**
-   * Cycle to the next or previous window tab.
-   * Triggered by Cmd+Shift+] (delta=1) and Cmd+Shift+[ (delta=-1).
-   */
-  readonly switchWindowTabRelative: ((delta: number) => void) | undefined
   /**
    * Toggle the dev server terminal alongside a terminal pane.
    *
-   * When toggled ON: the dev server terminal pane is rendered to the right of
-   * the main terminal in a horizontal split. If no dev server terminal session
+   * When toggled ON: the dev server terminal pane is rendered below the
+   * main terminal in a vertical split. If no dev server terminal session
    * exists yet, one is spawned via `terminal.spawn` with `autoRun: true`.
    * When toggled OFF: hides the dev server terminal pane but keeps the
    * terminal session alive for later reconnection.
@@ -306,163 +103,28 @@ interface PanelActions {
    * @returns Whether the diff pane is now visible (true = toggled on)
    */
   readonly toggleDiffPane: (paneId: string) => boolean
-  /**
-   * Toggle fullscreen mode for the active terminal pane.
-   *
-   * When toggled ON: hides all other workspaces and all sibling panes
-   * within the current workspace, showing only the active terminal pane
-   * at full size. The workspace bar header remains visible.
-   *
-   * When toggled OFF: restores the normal multi-pane, multi-workspace view.
-   *
-   * This is a transient UI state (not persisted to LiveStore).
-   */
-  readonly toggleFullscreenPane: () => void
-  /**
-   * Toggle a review pane for a workspace.
-   *
-   * When toggled ON: splits right from the given pane with a new review
-   * pane showing the same workspace's PR review findings and comments.
-   * When toggled OFF: closes the existing review pane for that workspace.
-   *
-   * Unlike diff and dev server panes (which are sidebars on a terminal
-   * pane), the review pane is a standalone pane in the layout tree.
-   *
-   * @param paneId - The ID of the pane to split from (used to inherit workspaceId)
-   * @returns Whether the review pane is now visible (true = toggled on)
-   */
-  readonly toggleReviewPane: (paneId: string) => boolean
-
-  /**
-   * The current window layout (for rendering the tab bar).
-   */
-  readonly windowLayout: WindowLayout | undefined
 }
-
-/**
- * The ID of the pane currently in fullscreen mode, or null if no pane
- * is fullscreened. Provided alongside PanelActions for UI components
- * that need to adjust rendering based on fullscreen state.
- */
-const FullscreenPaneIdContext = createContext<string | null>(null)
 
 const PanelActionsContext = createContext<PanelActions | null>(null)
 const ActivePaneIdContext = createContext<string | null>(null)
-/**
- * The workspace ID that is currently focused (i.e., contains the active pane).
- * Used by the sidebar to highlight the workspace matching the focused workspace.
- */
-const ActiveWorkspaceIdContext = createContext<string | null>(null)
 
 /**
- * State for the pane-scoped close confirmation dialog.
- * When a pane has a running process and the user attempts to close it,
- * the pane ID is stored here so the LeafPaneRenderer can render an
- * inline confirmation dialog within that specific pane's bounds.
- */
-interface PendingCloseState {
-  /** Cancel the close — dismisses the dialog. */
-  readonly onCancel: () => void
-  /**
-   * Optional handler for "Close & Destroy" — closes the pane AND
-   * destroys the workspace worktree. Present only when the pane is
-   * the last for a workspace whose PR is merged.
-   */
-  readonly onCloseAndDestroy?: (() => void) | undefined
-  /** Confirm the close — kills the process and removes the pane. */
-  readonly onConfirm: () => void
-  /** The pane ID awaiting close confirmation, or null if none. */
-  readonly paneId: string | null
-}
-
-/**
- * State for the panel type picker overlay.
- * When active, the picker is shown on the pane (for split operations)
- * or on the workspace frame (for new tab). On selection, the appropriate
- * split or tab creation action is performed.
- */
-interface PendingPickerState {
-  /** Cancel the picker — dismisses without creating anything. */
-  readonly onCancel: () => void
-  /** Called when a panel type is selected — performs the action. */
-  readonly onSelect: (type: PaneType) => void
-  /**
-   * The pane ID to anchor the picker to, or null when no picker is active.
-   * For new-tab actions, this is the workspace's active pane (if any).
-   */
-  readonly paneId: string | null
-}
-
-const noop = () => undefined
-
-const defaultPendingClose: PendingCloseState = {
-  paneId: null,
-  onConfirm: noop,
-  onCancel: noop,
-}
-
-const defaultPendingPicker: PendingPickerState = {
-  paneId: null,
-  onSelect: noop,
-  onCancel: noop,
-}
-
-const PendingClosePaneContext =
-  createContext<PendingCloseState>(defaultPendingClose)
-
-const PendingPickerContext =
-  createContext<PendingPickerState>(defaultPendingPicker)
-
-/**
- * The DOM element where the fullscreened pane portals its content.
- * The portal target sits at the PanelContent level, positioned absolutely
- * over the entire panel area. This lets the fullscreened pane escape its
- * ResizablePanel container without unmounting siblings.
- *
- * Uses `HTMLElement | null` (not a ref) so that setting the element via
- * a callback ref + useState triggers a re-render — ensuring the portal
- * target is available to `createPortal` on the first render after mount.
- */
-const FullscreenPortalContext = createContext<HTMLElement | null>(null)
-
-/**
- * Provider component that makes panel actions, active pane state,
- * fullscreen pane state, and pending close confirmation state available
- * to all pane components in the tree.
+ * Provider component that makes panel actions and active pane state
+ * available to all pane components in the tree.
  */
 function PanelActionsProvider({
   activePaneId,
-  activeWorkspaceId,
   children,
-  fullscreenPaneId,
-  pendingClose,
-  pendingPicker,
   value,
 }: {
   readonly activePaneId: string | null
-  readonly activeWorkspaceId?: string | null | undefined
   readonly children: React.ReactNode
-  readonly fullscreenPaneId: string | null
-  readonly pendingClose?: PendingCloseState | undefined
-  readonly pendingPicker?: PendingPickerState | undefined
   readonly value: PanelActions
 }) {
   return (
     <PanelActionsContext.Provider value={value}>
       <ActivePaneIdContext.Provider value={activePaneId}>
-        <ActiveWorkspaceIdContext.Provider value={activeWorkspaceId ?? null}>
-          <FullscreenPaneIdContext.Provider value={fullscreenPaneId}>
-            <PendingClosePaneContext.Provider
-              value={pendingClose ?? defaultPendingClose}
-            >
-              <PendingPickerContext.Provider
-                value={pendingPicker ?? defaultPendingPicker}
-              >
-                {children}
-              </PendingPickerContext.Provider>
-            </PendingClosePaneContext.Provider>
-          </FullscreenPaneIdContext.Provider>
-        </ActiveWorkspaceIdContext.Provider>
+        {children}
       </ActivePaneIdContext.Provider>
     </PanelActionsContext.Provider>
   )
@@ -484,65 +146,5 @@ function useActivePaneId(): string | null {
   return useContext(ActivePaneIdContext)
 }
 
-/**
- * Hook to read the workspace ID that is currently focused.
- * Used by the sidebar workspace list to highlight the active workspace.
- * Returns null if no workspace is focused or no provider is present.
- */
-function useActiveWorkspaceId(): string | null {
-  return useContext(ActiveWorkspaceIdContext)
-}
-
-/**
- * Hook to read the pane ID that is currently in fullscreen mode.
- * Returns null if no pane is fullscreened or no provider is present.
- */
-function useFullscreenPaneId(): string | null {
-  return useContext(FullscreenPaneIdContext)
-}
-
-/**
- * Hook to read the pending close confirmation state.
- * Used by LeafPaneRenderer to render an inline confirmation dialog
- * within the pane that is awaiting close confirmation.
- */
-function usePendingClosePane(): PendingCloseState {
-  return useContext(PendingClosePaneContext)
-}
-
-/**
- * Hook to read the pending panel type picker state.
- * Used by LeafPaneRenderer to render an inline picker overlay
- * within the pane that triggered a split or new tab action.
- */
-function usePendingPicker(): PendingPickerState {
-  return useContext(PendingPickerContext)
-}
-
-/**
- * Hook to access the fullscreen portal target element.
- * Used by LeafPaneRenderer to portal the fullscreened pane's content
- * into a container that sits above the panel hierarchy.
- */
-function useFullscreenPortal(): HTMLElement | null {
-  return useContext(FullscreenPortalContext)
-}
-
-export {
-  FullscreenPortalContext,
-  PanelActionsProvider,
-  useActivePaneId,
-  useActiveWorkspaceId,
-  useFullscreenPaneId,
-  useFullscreenPortal,
-  usePanelActions,
-  usePendingClosePane,
-  usePendingPicker,
-}
-export type {
-  AssignTerminalToPaneOptions,
-  PanelActions,
-  PendingCloseState,
-  PendingPickerState,
-  PickerMode,
-}
+export { PanelActionsProvider, useActivePaneId, usePanelActions }
+export type { PanelActions }

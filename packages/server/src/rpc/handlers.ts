@@ -271,6 +271,27 @@ export const handleConfigUpdate = ({
     yield* configService.writeProjectConfig(project.repoPath, config)
   })
 
+export const handleGlobalConfigGet = () =>
+  Effect.gen(function* () {
+    const configService = yield* ConfigService
+    const globalConfig = yield* configService.readGlobalConfig()
+    return {
+      agent: globalConfig.agent,
+    }
+  })
+
+export const handleGlobalConfigUpdate = ({
+  config,
+}: {
+  config: {
+    agent?: 'opencode' | 'claude' | 'codex' | undefined
+  }
+}) =>
+  Effect.gen(function* () {
+    const configService = yield* ConfigService
+    yield* configService.writeGlobalConfig(config)
+  })
+
 export const handlePrdCreate = ({
   projectId,
   title,
@@ -741,6 +762,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // -------------------------------------------------------------------
     'config.get': handleConfigGet,
     'config.update': handleConfigUpdate,
+
+    // -------------------------------------------------------------------
+    // Global Config RPCs
+    // -------------------------------------------------------------------
+    'globalConfig.get': handleGlobalConfigGet,
+    'globalConfig.update': handleGlobalConfigUpdate,
 
     // -------------------------------------------------------------------
     // PRD RPCs (Issue #178)

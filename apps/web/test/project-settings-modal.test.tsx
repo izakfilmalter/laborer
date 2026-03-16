@@ -1,6 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
@@ -28,21 +27,16 @@ const {
 interface ConfigResult {
   readonly _tag: 'Success'
   readonly value: {
-    readonly agent: {
-      readonly value: 'opencode' | 'claude' | 'codex'
-      readonly source: string
-    }
     readonly worktreeDir: { readonly value: string; readonly source: string }
     readonly setupScripts: {
       readonly value: readonly string[]
       readonly source: string
     }
-    readonly brrrConfig: {
+    readonly rlphConfig: {
       readonly value: string | null
       readonly source: string
     }
     readonly devServer: {
-      readonly autoOpen: { readonly value: boolean; readonly source: string }
       readonly image: { readonly value: string | null; readonly source: string }
       readonly installCommand: {
         readonly value: string | null
@@ -67,7 +61,6 @@ interface ConfigResult {
 let configResult: ConfigResult
 
 vi.mock('@/atoms/laborer-client', () => ({
-  ConfigReactivityKeys: ['config'],
   LaborerClient: {
     mutation: mutationMock,
     query: queryMock,
@@ -84,7 +77,7 @@ vi.mock('@/components/project-settings-modal.helpers', () => ({
   getSettingsLoadErrorMessage: () => 'Failed to load project settings.',
 }))
 
-vi.mock('@/lib/toast', () => ({
+vi.mock('sonner', () => ({
   toast: {
     error: toastErrorMock,
     message: toastMessageMock,
@@ -92,35 +85,7 @@ vi.mock('@/lib/toast', () => ({
   },
 }))
 
-vi.mock('@/components/agent-icons', () => ({
-  AGENT_ICONS: {
-    opencode: (props: Record<string, unknown>) => <span {...props}>OC</span>,
-    claude: (props: Record<string, unknown>) => <span {...props}>CL</span>,
-    codex: (props: Record<string, unknown>) => <span {...props}>CX</span>,
-  },
-}))
-
-vi.mock('@/components/ui/select', () => ({
-  Select: ({
-    children,
-  }: {
-    children: React.ReactNode
-    onValueChange: (value: string) => void
-    value: string
-  }) => <div>{children}</div>,
-  SelectContent: ({ children }: { children: React.ReactNode }) => (
-    <>{children}</>
-  ),
-  SelectItem: ({ children }: { children: React.ReactNode; value: string }) => (
-    <div>{children}</div>
-  ),
-  SelectTrigger: ({ children }: { children: React.ReactNode }) => (
-    <>{children}</>
-  ),
-  SelectValue: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-}))
-
-import { toast } from '@/lib/toast'
+import { toast } from 'sonner'
 import { ProjectSettingsModal } from '../src/components/project-settings-modal'
 
 describe('ProjectSettingsModal', () => {
@@ -130,12 +95,10 @@ describe('ProjectSettingsModal', () => {
     configResult = {
       _tag: 'Success',
       value: {
-        agent: { value: 'opencode', source: 'default' },
         worktreeDir: { value: '/tmp/worktrees', source: 'laborer.json' },
         setupScripts: { value: ['bun install'], source: 'laborer.json' },
-        brrrConfig: { value: '.brrr/config.toml', source: 'laborer.json' },
+        rlphConfig: { value: '.rlph/config.toml', source: 'laborer.json' },
         devServer: {
-          autoOpen: { value: false, source: 'default' },
           image: { value: null, source: 'default' },
           installCommand: { value: null, source: 'default' },
           network: { value: null, source: 'default' },
@@ -165,12 +128,10 @@ describe('ProjectSettingsModal', () => {
     expect(screen.getByText('Project settings')).toBeTruthy()
     expect(screen.getByDisplayValue('/tmp/worktrees')).toBeTruthy()
     expect(screen.getByDisplayValue('bun install')).toBeTruthy()
-    expect(screen.getByDisplayValue('.brrr/config.toml')).toBeTruthy()
-    expect(queryMock).toHaveBeenCalledWith(
-      'config.get',
-      { projectId: 'project-1' },
-      { reactivityKeys: ['config'] }
-    )
+    expect(screen.getByDisplayValue('.rlph/config.toml')).toBeTruthy()
+    expect(queryMock).toHaveBeenCalledWith('config.get', {
+      projectId: 'project-1',
+    })
   })
 
   it('saves updated fields and shows success toast', async () => {
@@ -190,7 +151,6 @@ describe('ProjectSettingsModal', () => {
             worktreeDir: '~/dev/worktrees',
           },
         },
-        reactivityKeys: ['config'],
       })
     })
 

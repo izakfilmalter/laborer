@@ -1,71 +1,192 @@
 /**
- * Terminal pane component — renders PTY output via ghostty-web using the
- * centralized TerminalSessionRouter for WebSocket stream management.
+ * Terminal pane component — renders PTY output via xterm.js using a
+ * dedicated WebSocket connection for terminal data.
  *
- * Data flow:
+ * Data flow (Issue #140 — WebSocket data path):
  * 1. Terminal service PTY emits output via node-pty `onData`
- * 2. TerminalManager writes to headless terminal + notifies subscribers
+ * 2. TerminalManager writes to per-terminal ring buffer + notifies subscribers
  * 3. Terminal WebSocket route forwards data as text frames to connected clients
- * 4. TerminalSessionRouter receives frames and broadcasts to subscribers
- * 5. This component's subscriber callbacks write output to ghostty-web Terminal
+ * 4. This component receives text frames via `useTerminalWebSocket` hook
+ * 5. Output is written directly to xterm.js Terminal instance
  *
  * Input flow:
- * - Keystrokes captured by ghostty-web `onData` callback
- * - Sent via `router.sendInput()` as raw WebSocket text frames
+ * - Keystrokes captured by xterm.js `onData` callback
+ * - Sent as raw WebSocket text frames (NOT via terminal.write RPC)
  * - Terminal service WebSocket route forwards to PTY via PtyHostClient.write()
  *
- * Terminal status:
- * Terminal status is derived from WebSocket control messages parsed by
- * the TerminalSessionRouter. The `onStatus` subscriber callback updates
- * local state for UI decisions.
+ * Terminal status (Issue #141 — WebSocket-derived status):
+ * Terminal status is now derived from WebSocket control messages sent by
+ * the terminal service, NOT from LiveStore `queryDb(terminals)`. The
+ * terminal service sends JSON control messages:
+ * - `{"type":"status","status":"running"}` — on initial connection
+ * - `{"type":"status","status":"stopped","exitCode":N}` — PTY process exited
+ * - `{"type":"status","status":"restarted"}` — terminal was restarted
+ *
+ * The `useTerminalWebSocket` hook parses these messages and exposes
+ * `terminalStatus` for UI decisions (isRunning, exit banner, restart
+ * buffer clear). The LiveStore `terminals` query is no longer used.
+ *
+ * Terminal restart handling (Issue #141):
+ * Previously subscribed to LiveStore `v1.TerminalRestarted` events.
+ * Now handled via the WebSocket `{"type":"status","status":"restarted"}`
+ * control message. The `onStatus` callback clears the xterm.js buffer
+ * when a restart is detected.
  *
  * Keyboard shortcut scope isolation (Issue #80):
- * - ghostty-web greedily captures all keyboard events within its container.
+ * - xterm.js greedily captures all keyboard events within its canvas.
+ * - Panel shortcuts (Ctrl+B prefix sequences) must still work when a
+ *   terminal has focus.
  * - `attachCustomKeyEventHandler` intercepts keyboard events before
- *   ghostty-web processes them, with the same bypass logic as before.
- * - Cmd+W, Cmd+Shift+Enter, and Ctrl+B prefix mode all work identically.
+ *   xterm.js processes them. When Ctrl+B is pressed, the handler
+ *   returns `false` (letting the event bubble to `document` where
+ *   TanStack Hotkeys catches it) and enters "prefix mode".
+ * - Cmd+W (Meta+W) is also returned `false` so the global close-pane
+ *   shortcut can run even when the terminal has focus.
+ * - In prefix mode, the next keydown is also returned `false` so the
+ *   action key (H, V, X, O, P, D) reaches TanStack Hotkeys.
+ * - After the action key (or a 1500ms timeout matching SEQUENCE_TIMEOUT),
+ *   prefix mode exits and all keys go to the terminal again.
+ * - This gives the same UX as tmux: Ctrl+B escapes the terminal to the
+ *   panel shortcut layer, then the next key is the panel action.
  *
  * Reconnection:
- * - TerminalSessionRouter manages WebSocket reconnection with exponential
- *   backoff (500ms initial, 30s max, 3 consecutive failure limit)
- * - Server sends compact screen state snapshot (~4KB) on connect
- * - Screen state is cached by the router for late subscribers
+ * - On page reload or network disruption, the WebSocket reconnects with
+ *   exponential backoff
+ * - Server sends ring buffer scrollback (5MB) as initial text frames
+ * - New live output continues streaming after scrollback
  *
- * Rendering:
- * - ghostty-web uses Ghostty's WASM-compiled VT100 parser with a
- *   60fps canvas renderer (~400KB bundle)
- * - Handles Unicode 15.1, link detection, and keyboard input natively
- *   without separate addons
- * - No WebGL dependency — canvas-based rendering is the default
+ * What stays on LiveStore (lifecycle events):
+ * - Panel layout persistence — terminal-to-pane assignments
+ *
+ * What moved to WebSocket (Issues #140, #141):
+ * - Terminal output data — was LiveStore `v1.TerminalOutput` events
+ * - Terminal keyboard input — was `terminal.write` RPC mutation
+ * - Terminal status — was LiveStore `queryDb(terminals)` for running/stopped
+ * - Terminal restart detection — was LiveStore `v1.TerminalRestarted` events
+ *
+ * What remains as RPC:
+ * - `terminal.resize` — low-frequency, needs TerminalManager service
  *
  * @see packages/terminal/src/routes/terminal-ws.ts — WebSocket endpoint
- * @see packages/terminal/src/services/terminal-manager.ts — headless terminal + subscribers
- * @see apps/web/src/lib/terminal-session-router.ts — TerminalSessionRouter class
- * @see apps/web/src/contexts/terminal-router-context.tsx — React context provider
+ * @see packages/terminal/src/services/terminal-manager.ts — ring buffer + subscribers
+ * @see apps/web/src/hooks/use-terminal-websocket.ts — WebSocket hook
+ * @see PRD-terminal-perf.md — "Web Client Terminal Pane Update"
+ * @see PRD-terminal-extraction.md — "WebSocket Control Messages"
+ * Loading state (Issue #122):
+ * When a terminal pane first mounts, xterm.js is initialized but no output
+ * has arrived yet. A loading overlay (spinner + "Starting terminal...")
+ * covers the blank terminal canvas until the first data arrives via
+ * WebSocket. This provides visual feedback that the PTY is being spawned
+ * and connected. The overlay fades out on first data receipt. For stopped
+ * terminals (reconnection), the overlay is skipped since scrollback data
+ * arrives immediately on WebSocket connect.
+ *
+ * @see Issue #60: xterm.js terminal pane — render output
+ * @see Issue #61: xterm.js terminal pane — send keyboard input
+ * @see Issue #62: xterm.js terminal pane — handle resize
+ * @see Issue #64: Terminal session reconnection
+ * @see Issue #80: Keyboard shortcut scope isolation
+ * @see Issue #122: Loading state — terminal spawning
+ * @see Issue #140: Web client terminal pane — WebSocket data path
+ * @see Issue #141: Update Vite proxy + web app WebSocket hook
+ *
+ * Scroll performance (Issue #127):
+ * - Scrollback buffer set to 100,000 lines to handle long-running agent sessions
+ * - WebGL renderer (GPU-accelerated) used by default, canvas fallback on context loss
+ * - Unicode11 addon loaded for correct Unicode character width calculation
+ * - xterm.js virtualizes the viewport (only visible rows are in the DOM) so
+ *   large scrollback doesn't impact rendering performance
+ * - Fast scroll sensitivity increased for quicker navigation through large buffers
+ * - Alt+scroll modifier enables accelerated scrolling (5x speed)
+ *
+ * Terminal fidelity — Claude Code TUI (Issue #125):
+ * Verified and enhanced xterm.js rendering for Claude Code's TUI output:
+ * - TERM=xterm-256color set at PTY spawn (supports 256-color + true color)
+ * - 16-color palette mapped to Tailwind zinc scale for dark theme consistency
+ * - WebGL renderer handles rapid full-screen redraws from agent tool output
+ * - Unicode11 addon ensures correct width for box-drawing chars, emoji, spinners
+ * - Web Links addon (@xterm/addon-web-links) enables clickable URLs in agent
+ *   output (PRs, docs, file paths) — Cmd+Click opens in default browser
+ * - convertEol: false preserves raw escape sequences for cursor positioning
+ * - allowProposedApi: true enables advanced features agents may use
+ * - 100K line scrollback handles long agent sessions with extensive tool output
+ * - Data coalescing (5ms) smooths rapid output bursts from agent tool calls
+ * - Flow control prevents output buffer overflow during fast code generation
+ *
+ * Terminal fidelity — Codex CLI TUI (Issue #126):
+ * Verified xterm.js rendering for OpenAI's Codex CLI (Rust-based TUI using
+ * ratatui + crossterm). Codex uses a hybrid inline viewport + alternate screen
+ * model: primary view renders inline with scrolling regions (DECSTBM), while
+ * overlay views (diff, pager, agent picker) use the alternate screen buffer.
+ * - TERM=xterm-256color + COLORTERM=truecolor set at PTY spawn — Codex's
+ *   `supports-color` crate detects true color support from these env vars.
+ *   Without COLORTERM, shimmer animations and RGB blending fall back to
+ *   256-color approximation via CIE76 color distance in Lab space.
+ * - Focus events (CSI ? 1004 h) supported natively by xterm.js — Codex
+ *   enables FocusChange tracking to re-query terminal palette colors on
+ *   focus gain and to gate desktop notifications (only notify when unfocused).
+ * - Synchronized output (CSI ? 2026 h) supported natively by xterm.js —
+ *   Codex wraps draw calls in SynchronizedUpdate to prevent tearing. xterm.js
+ *   buffers output when this mode is enabled and renders atomically.
+ * - OSC 10/11 color queries: Codex's custom crossterm fork queries the
+ *   terminal's actual foreground/background colors for adaptive light/dark
+ *   theming. xterm.js does not respond to OSC 10/11 — Codex gracefully
+ *   handles the case where no response arrives (falls back to default theme).
+ * - Keyboard enhancement (CSI u / kitty protocol): Codex uses crossterm's
+ *   PushKeyboardEnhancementFlags for modifier disambiguation. xterm.js does
+ *   not support the kitty keyboard protocol — Codex gracefully degrades via
+ *   `supports_keyboard_enhancement()` detection.
+ * - Bracketed paste (CSI ? 2004 h) supported natively by xterm.js — Codex
+ *   enables this for paste detection.
+ * - Scrolling regions (DECSTBM) supported natively by xterm.js — used by
+ *   Codex's inline viewport to scroll content without affecting terminal
+ *   scrollback above.
+ * - Cursor position report (CPR / DSR 6) supported by xterm.js — Codex
+ *   uses this for inline viewport positioning.
+ * - Mouse events NOT used by Codex — no mouse capture configuration needed.
+ * - Inline images NOT used by Codex — ImageAddon already loaded for opencode.
+ * - No specific cursor style set by Codex — current "bar" style is fine.
+ * - Unicode box-drawing characters (e.g., "▌" for gutter prefix) handled
+ *   correctly by the Unicode11 addon.
+ * - WebGL renderer handles Codex's shimmer text animations (per-character
+ *   RGB blending with time-based sweep) efficiently.
+ * - All pre-existing features (WebGL, Unicode11, WebLinks, ImageAddon, flow
+ *   control, 100K scrollback, 5ms coalescing) fully apply to Codex as well.
+ *
+ * Terminal fidelity — opencode TUI (Issue #124):
+ * Verified and enhanced xterm.js rendering for opencode's full-screen TUI:
+ * - COLORTERM=truecolor injected at PTY spawn — opencode checks this env
+ *   var to decide whether to use 24-bit RGB colors. Without it, colors
+ *   fall back to the nearest 256-color approximation.
+ * - Image addon (@xterm/addon-image) loaded for inline image rendering.
+ *   opencode supports drag-and-drop of images into the terminal prompt
+ *   and may render inline image previews via iTerm2/Sixel protocols.
+ * - Alternate screen buffer (smcup/rmcup) supported natively by xterm.js
+ *   — opencode is a full-screen TUI that uses cursor positioning,
+ *   alternate screen, and direct cursor movement for layout rendering.
+ * - Mouse event passthrough to xterm.js — opencode uses scroll events
+ *   and configurable scroll acceleration. xterm.js handles mouse
+ *   tracking protocols (SGR, URXVT, etc.) transparently.
+ * - cursorStyle "bar" matches opencode's default cursor appearance
+ * - All pre-existing features (WebGL, Unicode11, WebLinks, flow control,
+ *   100K scrollback, 5ms coalescing) fully apply to opencode as well.
  */
 
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
-import { FitAddon, init, Terminal } from 'ghostty-web'
+import { FitAddon } from '@xterm/addon-fit'
+import { ImageAddon } from '@xterm/addon-image'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
+import { WebLinksAddon } from '@xterm/addon-web-links'
+import { WebglAddon } from '@xterm/addon-webgl'
+import { Terminal } from '@xterm/xterm'
+import '@xterm/xterm/css/xterm.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
-import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Spinner } from '@/components/ui/spinner'
-import { useTerminalRouter } from '@/contexts/terminal-router-context'
-import { useWhenPhase } from '@/hooks/use-when-phase'
-import { subscribeWindowResize } from '@/hooks/use-window-resize'
 import {
-  detectCopyShortcut,
-  isPrefixKey,
-  shouldBypassTerminal,
-} from '@/lib/keybinds'
-import type { TerminalStatus } from '@/lib/terminal-session-router'
-
-/**
- * Module-level WASM initialization promise.
- * ghostty-web's init() is idempotent — safe to call multiple times.
- * This ensures the WASM module is loaded before any terminal is created.
- */
-const wasmReady = init()
+  type TerminalStatus,
+  useTerminalWebSocket,
+} from '@/hooks/use-terminal-websocket'
 
 /** Module-level mutation atom for terminal.resize — shared across all TerminalPane instances. */
 const terminalResizeMutation = TerminalServiceClient.mutation('terminal.resize')
@@ -77,313 +198,21 @@ const terminalResizeMutation = TerminalServiceClient.mutation('terminal.resize')
  */
 const PREFIX_MODE_TIMEOUT = 1500
 
-/**
- * State for resize deduplication and RAF batching.
- */
-interface ResizeState {
-  /** Last cols sent to the backend (for deduplication). */
-  lastCols: number
-  /** Last rows sent to the backend (for deduplication). */
-  lastRows: number
-  /** ID of the pending requestAnimationFrame (for cancellation). */
-  rafId: number | null
-}
+const isExactMetaW = (event: KeyboardEvent): boolean =>
+  event.key === 'w' &&
+  event.metaKey &&
+  !event.ctrlKey &&
+  !event.shiftKey &&
+  !event.altKey
 
-/**
- * Execute a fit-first resize: fit terminal to container, then notify PTY.
- *
- * Fits the terminal to its container (calculating cols/rows from the
- * container's dimensions), then sends the new dimensions to the backend
- * PTY as a fire-and-forget RPC. The PTY sends SIGWINCH so the shell
- * process can reflow its output.
- */
-function executeResize(
-  fitAddon: FitAddon,
-  terminal: Terminal,
-  terminalId: string,
-  resizeFn: (arg: {
-    payload: { id: string; cols: number; rows: number }
-  }) => void,
-  state: ResizeState
-): void {
-  try {
-    fitAddon.fit()
-  } catch {
-    return
-  }
-
-  const { cols, rows } = terminal
-  if (cols <= 0 || rows <= 0) {
-    return
-  }
-
-  if (cols === state.lastCols && rows === state.lastRows) {
-    return
-  }
-
-  state.lastCols = cols
-  state.lastRows = rows
-
-  resizeFn({ payload: { id: terminalId, cols, rows } })
-}
-
-// ---------------------------------------------------------------------------
-// Custom wheel handler — fix TUI scroll targeting (mouse tracking)
-// ---------------------------------------------------------------------------
-
-/**
- * Compute 1-based terminal cell coordinates from a MouseEvent.
- *
- * Uses the canvas element's bounding rect and the terminal's col/row
- * dimensions to convert pixel coordinates into cell positions. This
- * mirrors the logic in ghostty-web's InputHandler.pixelToCell().
- */
-function pixelToCell(
-  event: MouseEvent,
-  canvas: HTMLCanvasElement,
-  cols: number,
-  rows: number
-): { col: number; row: number } | null {
-  const rect = canvas.getBoundingClientRect()
-  if (rect.width <= 0 || rect.height <= 0) {
-    return null
-  }
-
-  const x = event.clientX - rect.left
-  const y = event.clientY - rect.top
-  const cellWidth = rect.width / cols
-  const cellHeight = rect.height / rows
-
-  return {
-    col: Math.max(1, Math.floor(x / cellWidth) + 1),
-    row: Math.max(1, Math.floor(y / cellHeight) + 1),
-  }
-}
-
-/**
- * Encode a mouse event as an SGR escape sequence.
- *
- * SGR extended mode (mode 1006) format:
- *   Press/motion: \x1b[<Btn;Col;RowM
- *   Release:      \x1b[<Btn;Col;Rowm
- *
- * For wheel events: button 64 = scroll up, button 65 = scroll down.
- */
-function encodeSgrMouse(
-  button: number,
-  col: number,
-  row: number,
-  modifiers: number
-): string {
-  return `\x1b[<${button + modifiers};${col};${row}M`
-}
-
-/**
- * Get modifier flags from a mouse/wheel event for SGR encoding.
- * Matches ghostty-web's InputHandler.getMouseModifiers().
- *
- * SGR modifier bits: 4 = shift, 8 = meta, 16 = ctrl.
- * Values are additive (no overlapping bits) so addition is
- * equivalent to bitwise OR here.
- */
-function getMouseModifiers(event: MouseEvent): number {
-  let mods = 0
-  if (event.shiftKey) {
-    mods += 4
-  }
-  if (event.metaKey) {
-    mods += 8
-  }
-  if (event.ctrlKey) {
-    mods += 16
-  }
-  return mods
-}
-
-/**
- * Create a custom wheel event handler for ghostty-web.
- *
- * ghostty-web's built-in wheel handler has a bug on alternate screen
- * (TUIs like opencode, lazygit, etc.): it sends arrow key sequences
- * (\x1b[A / \x1b[B) instead of SGR mouse wheel events. Arrow keys
- * have no positional information, so the TUI routes them to whichever
- * widget has focus — not the one under the mouse pointer.
- *
- * This handler intercepts wheel events when the TUI has mouse tracking
- * enabled and sends proper SGR mouse events with cell coordinates.
- * The TUI can then determine which widget the pointer is over and
- * scroll the correct one.
- *
- * When mouse tracking is NOT active, returns `false` so ghostty-web's
- * default behavior (viewport scrollback or arrow keys) takes over.
- *
- * @returns A handler suitable for `terminal.attachCustomWheelEventHandler()`.
- *          Returns `true` to consume the event, `false` to pass through.
- */
-function createWheelHandler(
-  terminal: Terminal,
-  container: HTMLElement
-): (event: WheelEvent) => boolean {
-  return (event: WheelEvent): boolean => {
-    // Only intercept when the TUI has mouse tracking enabled.
-    // Without mouse tracking, ghostty-web's default handling
-    // (viewport scrollback in normal mode, arrow keys in alt screen)
-    // is correct.
-    if (!terminal.hasMouseTracking()) {
-      return false
-    }
-
-    const canvas = container.querySelector('canvas')
-    if (!canvas) {
-      return false
-    }
-
-    const cell = pixelToCell(event, canvas, terminal.cols, terminal.rows)
-    if (!cell) {
-      return false
-    }
-
-    // SGR wheel buttons: 64 = scroll up, 65 = scroll down
-    const button = event.deltaY < 0 ? 64 : 65
-    const modifiers = getMouseModifiers(event)
-    const sequence = encodeSgrMouse(button, cell.col, cell.row, modifiers)
-
-    // Send the SGR mouse event to the PTY via terminal.input().
-    // Use wasUserInput=true so it triggers the onData event which
-    // routes through the TerminalSessionRouter to the PTY.
-    terminal.input(sequence, true)
-
-    return true
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Clipboard helper for ghostty-web (Linux Ctrl+Shift+C only)
-// ---------------------------------------------------------------------------
-
-/** Fire-and-forget clipboard write from terminal selection. */
-function performCopy(term: Terminal): void {
-  navigator.clipboard.writeText(term.getSelection()).catch(() => {
-    // Clipboard write failed — silently ignore
-  })
-}
-
-/**
- * Handle Linux Ctrl+Shift+C copy shortcut.
- *
- * ghostty-web natively handles paste (Cmd+V / Ctrl+V) by letting the
- * browser's native paste ClipboardEvent fire, and handles Cmd+C copy
- * via its built-in onCopy callback. These must NOT be intercepted here
- * because:
- * 1. Paste: TUIs (opencode, claude code, etc.) detect the paste key in
- *    the PTY, then read the system clipboard directly via OS commands
- *    (osascript, xclip, etc.) to get image data. Intercepting the key
- *    prevents it from reaching the PTY, breaking image paste.
- * 2. Copy (Mac/Windows): ghostty-web's InputHandler already handles
- *    Cmd+C with selection via copySelection().
- *
- * The only case that needs manual handling is Linux Ctrl+Shift+C, which
- * ghostty-web doesn't handle natively. Without interception, Ctrl+Shift+C
- * would be encoded as a key sequence and sent to the PTY (potentially
- * triggering unintended behavior).
- *
- * Returns `true` if the event was consumed, `false` otherwise.
- */
-function handleLinuxCopyShortcut(
-  event: KeyboardEvent,
-  term: Terminal
-): boolean {
-  const copyResult = detectCopyShortcut(event)
-
-  // Linux: Always swallow Ctrl+Shift+C to prevent it becoming a terminal
-  // input sequence. Copy selection if available.
-  if (copyResult === 'linux') {
-    if (term.hasSelection()) {
-      performCopy(term)
-    }
-    return true
-  }
-
-  return false
-}
-
-interface PrefixModeCallbacks {
-  readonly enterPrefixMode: () => void
-  readonly exitPrefixMode: () => void
-  readonly prefixModeRef: React.RefObject<boolean>
-}
-
-/**
- * Create the custom key event handler for ghostty-web.
- *
- * Handles three concerns in order:
- * 1. Linux Ctrl+Shift+C copy (ghostty-web doesn't handle this natively)
- * 2. App-level shortcuts that should bubble to TanStack Hotkeys
- * 3. Prefix mode for tmux-style Ctrl+B sequences
- *
- * Paste (Cmd+V / Ctrl+V) and copy (Cmd+C) are NOT intercepted — ghostty-web
- * handles these natively. For paste, this is critical: ghostty-web lets the
- * browser's native paste event fire, which sends paste data to the PTY.
- * TUIs then detect the paste and read the system clipboard directly via
- * OS commands to get image data. Intercepting the key here would prevent
- * it from reaching the PTY, breaking image paste for all TUIs.
- *
- * ghostty-web convention: return `true` = consumed (prevent default),
- * return `false` = pass through (let ghostty-web handle it).
- * NOTE: This is the OPPOSITE of xterm.js.
- *
- * @see apps/web/src/lib/keybinds.ts — centralized keybind definitions
- */
-function createTerminalKeyHandler(
-  term: Terminal,
-  { enterPrefixMode, exitPrefixMode, prefixModeRef }: PrefixModeCallbacks
-): (event: KeyboardEvent) => boolean {
-  return (event: KeyboardEvent) => {
-    // Only intercept keydown events — keyup should pass through
-    // to avoid breaking key state tracking in the browser.
-    if (event.type !== 'keydown') {
-      return false
-    }
-
-    // Linux Ctrl+Shift+C: ghostty-web doesn't handle this natively.
-    // Intercept to prevent it from being sent as a terminal sequence.
-    if (handleLinuxCopyShortcut(event, term)) {
-      return true
-    }
-
-    // Let app-level shortcuts bubble to TanStack Hotkeys on document —
-    // consume the event so ghostty-web does not process it as terminal input.
-    if (shouldBypassTerminal(event)) {
-      if (isPrefixKey(event)) {
-        enterPrefixMode()
-      }
-      return true
-    }
-
-    // In prefix mode: consume the action key so it bubbles to
-    // TanStack Hotkeys. This is the second key in the Ctrl+B -> action sequence.
-    if (prefixModeRef.current) {
-      exitPrefixMode()
-      return true
-    }
-
-    // Normal key — let ghostty-web handle it as terminal input
-    return false
-  }
-}
+const isExactCtrlB = (event: KeyboardEvent): boolean =>
+  event.key === 'b' &&
+  event.ctrlKey &&
+  !event.shiftKey &&
+  !event.altKey &&
+  !event.metaKey
 
 interface TerminalPaneProps {
-  /**
-   * Callback invoked when the terminal process exits (status becomes "stopped").
-   * Used by the panel system to auto-close the pane when a terminal is closed.
-   */
-  readonly onTerminalExit?: (() => void) | undefined
-  /**
-   * Callback invoked when the terminal's title changes via OSC 0 or OSC 2
-   * escape sequences (e.g., shell prompt sets window title). The title string
-   * is the parsed value from the escape sequence.
-   */
-  readonly onTitleChange?: ((title: string) => void) | undefined
   /** The terminal ID to subscribe to for output events. */
   readonly terminalId: string
 }
@@ -391,89 +220,31 @@ interface TerminalPaneProps {
 /**
  * TerminalPane renders a live terminal view for a given terminal ID.
  *
- * It initializes a ghostty-web Terminal (WASM-based VT100 parser with
- * canvas renderer), subscribes to the TerminalSessionRouter for WebSocket
- * stream management, and pipes output directly to ghostty-web. Keyboard
- * input is sent via `router.sendInput()`.
+ * It initializes an xterm.js Terminal, connects to the terminal service
+ * via a dedicated WebSocket (`/terminal?id=<terminalId>`), and pipes
+ * output directly to xterm.js. Keyboard input is sent as WebSocket text
+ * frames.
  *
- * On reconnection (page reload), the router delivers a cached screen state
- * snapshot (~4KB) immediately to late subscribers without a server round-trip.
+ * On reconnection (page reload), the server sends ring buffer scrollback
+ * (up to 5MB) as initial text frames, restoring the terminal's recent
+ * output history.
  *
- * Terminal status is derived from router subscriber callbacks. When the
- * terminal process exits, keyboard input is disabled. When the terminal
- * is restarted, the buffer is cleared.
+ * Terminal status is derived from WebSocket control messages. When the
+ * terminal process exits, a `{"type":"status","status":"stopped"}` message
+ * is received and keyboard input is disabled. When the terminal is
+ * restarted, a `{"type":"status","status":"restarted"}` message triggers
+ * an xterm.js buffer clear.
  *
- * Resize flow:
  * When the container is resized (by panel splits, window resize, etc.),
- * `fitAddon.fit()` calculates cols/rows from the container dimensions
- * and resizes the terminal canvas in one step. The new dimensions are
- * then sent to the backend PTY as a fire-and-forget RPC (no awaiting).
- * The PTY sends SIGWINCH so the shell process can reflow its output.
- * Rapid resize events are coalesced via requestAnimationFrame.
+ * the fit addon recalculates cols/rows and the new dimensions are sent
+ * to the server PTY via the `terminal.resize` RPC mutation. This ensures
+ * the PTY sends SIGWINCH to the running process so it can reflow output.
  */
-function TerminalPane({
-  terminalId,
-  onTerminalExit,
-  onTitleChange,
-}: TerminalPaneProps) {
-  const isRestored = useWhenPhase(LifecyclePhase.Restored)
-
-  if (!isRestored) {
-    return <TerminalConnectingPlaceholder />
-  }
-
-  return (
-    <TerminalPaneContent
-      onTerminalExit={onTerminalExit}
-      onTitleChange={onTitleChange}
-      terminalId={terminalId}
-    />
-  )
-}
-
-/**
- * Placeholder shown when the terminal service is still connecting (before
- * Phase 3 / Restored). Shows a spinner and message explaining the state.
- *
- * @see Issue #12: Progressive feature enablement for Phases 3-4
- */
-function TerminalConnectingPlaceholder() {
-  return (
-    <div
-      className="flex h-full w-full flex-col items-center justify-center gap-3 bg-background"
-      data-testid="terminal-connecting-placeholder"
-    >
-      <Spinner className="size-6 text-muted-foreground" />
-      <p className="text-muted-foreground text-sm">
-        Terminal service connecting...
-      </p>
-    </div>
-  )
-}
-
-/**
- * Inner terminal pane component — only rendered after Phase 3 (Restored)
- * when the terminal sidecar is available.
- */
-function TerminalPaneContent({
-  terminalId,
-  onTerminalExit,
-  onTitleChange,
-}: TerminalPaneProps) {
-  const router = useTerminalRouter()
+function TerminalPane({ terminalId }: TerminalPaneProps) {
   const resizeTerminal = useAtomSet(terminalResizeMutation)
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
-  const cleanupRef = useRef<(() => void) | null>(null)
-
-  /**
-   * Ref to hold the resize handler so it can be called from the terminal
-   * setup effect after initialization completes. The resize observer
-   * effect creates the handler and stores it here; the setup effect
-   * calls it after fit() to ensure the initial dimensions are sent.
-   */
-  const handleResizeRef = useRef<(() => void) | null>(null)
 
   /**
    * Ref to hold the latest resizeTerminal function so the ResizeObserver
@@ -500,55 +271,26 @@ function TerminalPaneContent({
    *
    * When the terminal pane first mounts, no output has arrived yet.
    * `hasReceivedData` starts as `false` and flips to `true` on the
-   * first data (output or screenState). A loading overlay is shown while false.
+   * first WebSocket data frame. A loading overlay is shown while false.
    * Uses a ref for the hot-path check (every data frame) and state
    * for React rendering.
-   *
-   * The spinner display is delayed by 200ms (`showSpinner`) so that
-   * fast-loading terminals don't flash the loading overlay.
    */
   const [hasReceivedData, setHasReceivedData] = useState(false)
   const hasReceivedDataRef = useRef(false)
-  const [showSpinner, setShowSpinner] = useState(false)
 
   /**
-   * Connection and terminal status state.
-   *
-   * Updated by the router's subscriber callbacks. The connection status
-   * is polled from the router on status changes (since the router manages
-   * it per-session rather than broadcasting). The terminal status is
-   * delivered via the onStatus callback.
+   * Callback for terminal output data received via WebSocket.
+   * Writes raw UTF-8 data directly to xterm.js.
+   * On first data receipt, clears the loading overlay.
    */
-  const [connectionStatus, setConnectionStatus] = useState<
-    'connecting' | 'connected' | 'disconnected'
-  >('connecting')
-  const [terminalStatus, setTerminalStatus] =
-    useState<TerminalStatus>('running')
+  const handleTerminalData = useCallback((data: string) => {
+    const terminal = terminalRef.current
+    if (terminal) {
+      terminal.write(data)
+    }
 
-  const isRunning = terminalStatus !== 'stopped'
-
-  /** Ref for isRunning so the onData callback can check it. */
-  const isRunningRef = useRef(isRunning)
-  isRunningRef.current = isRunning
-
-  /** Ref for router so the onData callback can send input without stale closures. */
-  const routerRef = useRef(router)
-  routerRef.current = router
-
-  /** Ref for onTerminalExit to avoid stale closures in subscriber callbacks. */
-  const onTerminalExitRef = useRef(onTerminalExit)
-  onTerminalExitRef.current = onTerminalExit
-
-  /** Ref for onTitleChange to avoid stale closures in terminal event callbacks. */
-  const onTitleChangeRef = useRef(onTitleChange)
-  onTitleChangeRef.current = onTitleChange
-
-  /**
-   * Mark data as received — clears the loading overlay.
-   * Uses a ref for the hot-path check (every data frame) to avoid
-   * calling setState on every subsequent frame.
-   */
-  const markDataReceived = useCallback(() => {
+    // Clear loading overlay on first data (Issue #122).
+    // Ref check avoids calling setState on every subsequent data frame.
     if (!hasReceivedDataRef.current) {
       hasReceivedDataRef.current = true
       setHasReceivedData(true)
@@ -556,135 +298,60 @@ function TerminalPaneContent({
   }, [])
 
   /**
-   * Delay showing the loading spinner by 200ms so that fast-loading
-   * terminals (e.g., reconnections with cached screen state) never
-   * flash the overlay. If data arrives within the delay, the spinner
-   * is never shown.
-   */
-  useEffect(() => {
-    if (hasReceivedData) {
-      setShowSpinner(false)
-      return
-    }
-    const timer = setTimeout(() => {
-      setShowSpinner(true)
-    }, 200)
-    return () => {
-      clearTimeout(timer)
-    }
-  }, [hasReceivedData])
-
-  /**
-   * Subscribe to the TerminalSessionRouter for this terminal's output.
+   * Callback for terminal status control messages received via WebSocket.
+   * Handles "restarted" status by clearing the xterm.js buffer, replacing
+   * the previous LiveStore `v1.TerminalRestarted` event subscription.
    *
-   * The router enforces one WebSocket per terminal ID. When the component
-   * subscribes, the router either creates a new session (first subscriber)
-   * or reuses an existing one. Cached screen state is delivered immediately
-   * to late subscribers via setTimeout(0).
-   *
-   * On unmount, the unsubscribe function is called. If this is the last
-   * subscriber, the router tears down the session (closes WebSocket).
+   * @see Issue #141: WebSocket-derived terminal status
    */
-  useEffect(() => {
-    if (!router) {
-      // Router not available (server reconnecting). Update connection
-      // status to reflect the disconnected state.
-      setConnectionStatus('disconnected')
-      return
-    }
-
-    // Update connection status from the router's current state for this terminal.
-    // The router tracks connection status per-session.
-    const updateConnectionStatus = () => {
-      setConnectionStatus(router.getConnectionStatus(terminalId))
-    }
-
-    // Initial connection status
-    updateConnectionStatus()
-
-    const unsubscribe = router.subscribe(terminalId, {
-      onOutput: (data: string) => {
+  const handleTerminalStatus = useCallback(
+    (status: TerminalStatus, _exitCode: number | undefined) => {
+      if (status === 'restarted') {
         const terminal = terminalRef.current
         if (terminal) {
-          try {
-            terminal.write(data)
-          } catch (err) {
-            // ghostty-web WASM can throw RangeError intermittently
-            console.warn('[TerminalPane] Error writing output:', err)
-          }
+          terminal.clear()
         }
-        markDataReceived()
-        // Update connection status — if we're getting output, we're connected
-        setConnectionStatus('connected')
-      },
-      onScreenState: (state: string) => {
-        const terminal = terminalRef.current
-        if (terminal) {
-          // Clear the terminal before writing screen state to avoid
-          // duplicating content on reconnection.
-          try {
-            terminal.clear()
-          } catch (err) {
-            console.warn('[TerminalPane] Error clearing terminal:', err)
-          }
-          try {
-            terminal.write(state)
-          } catch (err) {
-            // ghostty-web WASM can throw RangeError intermittently
-            console.warn('[TerminalPane] Error writing screenState:', err)
-          }
-        }
-        markDataReceived()
-        setConnectionStatus('connected')
-      },
-      onStatus: (status: TerminalStatus, _exitCode: number | undefined) => {
-        setTerminalStatus(status)
-        updateConnectionStatus()
-
-        if (status === 'restarted') {
-          const terminal = terminalRef.current
-          if (terminal) {
-            try {
-              terminal.clear()
-            } catch (err) {
-              console.warn('[TerminalPane] Error clearing terminal:', err)
-            }
-          }
-          // Reset loading state on restart — new output will arrive
-          hasReceivedDataRef.current = false
-          setHasReceivedData(false)
-        }
-        if (status === 'stopped') {
-          onTerminalExitRef.current?.()
-        }
-      },
-    })
-
-    return unsubscribe
-  }, [router, terminalId, markDataReceived])
+      }
+    },
+    []
+  )
 
   /**
-   * Initialize ghostty-web terminal instance.
+   * WebSocket connection to the terminal output endpoint.
+   * Provides: scrollback on connect, live output streaming, input via send(),
+   * terminal status via control messages.
    *
-   * Waits for WASM to load, creates the Terminal, loads the FitAddon,
-   * opens in the container, and wires keyboard input to the router.
+   * `terminalStatus` replaces the LiveStore `queryDb(terminals)` query
+   * for determining whether the terminal is running or stopped.
+   */
+  const {
+    send: wsSend,
+    status: wsStatus,
+    terminalStatus,
+  } = useTerminalWebSocket({
+    terminalId,
+    onData: handleTerminalData,
+    onStatus: handleTerminalStatus,
+  })
+
+  const isRunning = terminalStatus !== 'stopped'
+
+  /** Ref for isRunning so the xterm.js onData callback can check it. */
+  const isRunningRef = useRef(isRunning)
+  isRunningRef.current = isRunning
+
+  // Ref to hold latest wsSend for the xterm.js onData callback
+  const wsSendRef = useRef(wsSend)
+  wsSendRef.current = wsSend
+
+  /**
+   * Initialize xterm.js instance.
    *
-   * ghostty-web handles Unicode 15.1, link detection, and canvas
-   * rendering natively — no separate addons needed for WebGL, Image,
-   * Unicode, or WebLinks.
+   * Creates the Terminal, attaches addons (fit, WebGL), opens in the
+   * container, and wires keyboard input to WebSocket.
    *
-   * Link detection:
-   * ghostty-web automatically registers OSC8LinkProvider (explicit
-   * hyperlinks) and UrlRegexProvider (auto-detected URLs) during
-   * terminal.open(). Cmd+Click on a detected link opens it via
-   * window.open(). In Electron, setWindowOpenHandler in the main
-   * process redirects window.open() calls to shell.openExternal()
-   * so links open in the OS default browser.
-   *
-   * OSC title changes:
-   * ghostty-web fires onTitleChange when OSC 0 or OSC 2 escape
-   * sequences set the window title. This event is forwarded to the
-   * parent component via the onTitleChange prop.
+   * Terminal restart is handled via WebSocket control messages (Issue #141)
+   * — no LiveStore event subscription needed.
    */
   useEffect(() => {
     const container = containerRef.current
@@ -692,95 +359,168 @@ function TerminalPaneContent({
       return
     }
 
-    let disposed = false
+    // Create xterm.js Terminal instance
+    const terminal = new Terminal({
+      cursorBlink: true,
+      cursorStyle: 'bar',
+      fontFamily:
+        '"JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace',
+      fontSize: 13,
+      lineHeight: 1.2,
+      theme: {
+        background: '#09090b', // zinc-950 — matches dark theme
+        foreground: '#fafafa', // zinc-50
+        cursor: '#fafafa',
+        cursorAccent: '#09090b',
+        selectionBackground: '#27272a80', // zinc-800 with alpha
+        black: '#09090b',
+        red: '#ef4444',
+        green: '#22c55e',
+        yellow: '#eab308',
+        blue: '#3b82f6',
+        magenta: '#a855f7',
+        cyan: '#06b6d4',
+        white: '#fafafa',
+        brightBlack: '#52525b',
+        brightRed: '#f87171',
+        brightGreen: '#4ade80',
+        brightYellow: '#facc15',
+        brightBlue: '#60a5fa',
+        brightMagenta: '#c084fc',
+        brightCyan: '#22d3ee',
+        brightWhite: '#ffffff',
+      },
+      scrollback: 100_000,
+      convertEol: false,
+      allowProposedApi: true,
+      fastScrollSensitivity: 5,
+      scrollSensitivity: 3,
+    })
 
-    const setup = async () => {
-      // Wait for WASM to be ready (idempotent — resolves immediately
-      // if already initialized)
-      await wasmReady
+    terminalRef.current = terminal
 
-      if (disposed) {
-        return
-      }
+    // Attach fit addon for responsive sizing
+    const fitAddon = new FitAddon()
+    terminal.loadAddon(fitAddon)
+    fitAddonRef.current = fitAddon
 
-      // Create ghostty-web Terminal instance with full visual config.
-      const terminal = new Terminal({
-        cursorBlink: true,
-        cursorStyle: 'bar',
-        fontFamily:
-          '"JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace',
-        fontSize: 13,
-        theme: {
-          background: '#09090b', // zinc-950 — matches dark theme
-          foreground: '#fafafa', // zinc-50
-          cursor: '#fafafa',
-          cursorAccent: '#09090b',
-          selectionBackground: '#27272a80', // zinc-800 with alpha
-          black: '#09090b',
-          red: '#ef4444',
-          green: '#22c55e',
-          yellow: '#eab308',
-          blue: '#3b82f6',
-          magenta: '#a855f7',
-          cyan: '#06b6d4',
-          white: '#fafafa',
-          brightBlack: '#52525b',
-          brightRed: '#f87171',
-          brightGreen: '#4ade80',
-          brightYellow: '#facc15',
-          brightBlue: '#60a5fa',
-          brightMagenta: '#c084fc',
-          brightCyan: '#22d3ee',
-          brightWhite: '#ffffff',
-        },
-        scrollback: 100_000,
-        convertEol: false,
+    // Open terminal in the container
+    terminal.open(container)
+
+    // Attempt WebGL rendering for better performance (GPU-accelerated).
+    // Critical for scroll performance with 100k+ lines — WebGL renders
+    // only visible rows via the GPU, avoiding DOM reflow on scroll.
+    try {
+      const webglAddon = new WebglAddon()
+      webglAddon.onContextLoss(() => {
+        webglAddon.dispose()
       })
+      terminal.loadAddon(webglAddon)
+    } catch {
+      // WebGL not available — fall back to canvas renderer (default)
+    }
 
-      if (disposed) {
-        terminal.dispose()
-        return
+    // Load Image addon for inline image rendering (Issue #124).
+    // opencode supports drag-and-drop of images into the terminal and
+    // may render inline image previews. The addon handles iTerm2 inline
+    // image protocol (OSC 1337) and Sixel graphics. Images render
+    // within the terminal cell grid. The addon requires WebGL or
+    // canvas renderer — loaded after WebGL addon for best performance.
+    try {
+      const imageAddon = new ImageAddon()
+      terminal.loadAddon(imageAddon)
+    } catch {
+      // Image addon failed to load — inline images not supported
+    }
+
+    // Load Unicode 11 addon for correct character width calculation.
+    // Without this, CJK characters, emoji, and other wide Unicode
+    // characters may be measured incorrectly, causing cursor misalignment
+    // and rendering glitches — especially problematic in long terminal
+    // output from AI agents that may include Unicode in their responses.
+    try {
+      const unicode11Addon = new Unicode11Addon()
+      terminal.loadAddon(unicode11Addon)
+      terminal.unicode.activeVersion = '11'
+    } catch {
+      // Unicode11 addon failed to load — default width calculation used
+    }
+
+    // Load Web Links addon for clickable URL detection (Issue #125).
+    // Agent TUIs (Claude Code, opencode, codex) frequently output URLs
+    // in their responses — file paths, documentation links, PR URLs.
+    // Without this addon, URLs are plain text. With it, URLs are
+    // auto-detected and rendered as clickable links that open in the
+    // user's default browser. Uses Cmd+Click (macOS) / Ctrl+Click
+    // (Linux/Windows) to avoid accidental activation during text selection.
+    try {
+      const webLinksAddon = new WebLinksAddon()
+      terminal.loadAddon(webLinksAddon)
+    } catch {
+      // Web Links addon failed to load — URLs remain plain text
+    }
+
+    // Initial fit — also send dimensions to server PTY so it starts
+    // with the correct size (or re-syncs on reconnection).
+    try {
+      fitAddon.fit()
+      const { cols, rows } = terminal
+      if (cols > 0 && rows > 0) {
+        resizeTerminalRef.current({
+          payload: { id: terminalId, cols, rows },
+        })
+      }
+    } catch {
+      // Container may not have dimensions yet
+    }
+
+    // Keyboard shortcut scope isolation (Issue #80).
+    //
+    // xterm.js greedily captures all keyboard events within its canvas.
+    // Panel shortcuts (Ctrl+B prefix sequences registered via TanStack
+    // Hotkeys on `document`) would never fire because xterm.js consumes
+    // the events before they bubble.
+    //
+    // `attachCustomKeyEventHandler` intercepts KeyboardEvent objects
+    // before xterm.js processes them:
+    // - Return `true` → xterm.js handles the key (normal terminal input)
+    // - Return `false` → xterm.js ignores the key (it bubbles to document)
+    //
+    // When Ctrl+B is detected:
+    // 1. Enter prefix mode (next key will also be passed through)
+    // 2. Return `false` so Ctrl+B bubbles to TanStack Hotkeys as the
+    //    first key of the sequence
+    //
+    // When in prefix mode and the next key arrives:
+    // 1. Exit prefix mode
+    // 2. Return `false` so the action key (H, V, X, O, P, D) bubbles
+    //    to TanStack Hotkeys as the second key of the sequence
+    //
+    // After the action key (or PREFIX_MODE_TIMEOUT), all keys go to
+    // the terminal again.
+    terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      // Only intercept keydown events — keyup should pass through
+      // to avoid breaking key state tracking in the browser.
+      if (event.type !== 'keydown') {
+        return true
       }
 
-      terminalRef.current = terminal
-
-      // Attach fit addon for responsive sizing
-      const fitAddon = new FitAddon()
-      terminal.loadAddon(fitAddon)
-      fitAddonRef.current = fitAddon
-
-      // Hide the browser's native contenteditable caret.
-      // ghostty-web uses a contenteditable element for input capture,
-      // but we render our own cursor via the canvas renderer.
-      container.style.caretColor = 'transparent'
-
-      // Open terminal in the container — mounts the canvas
-      terminal.open(container)
-
-      // Explicitly focus the terminal so keyboard input works immediately.
-      // ghostty-web calls focus() at the end of open(), but because this
-      // runs inside an async setup function (after WASM init), the browser
-      // may have shifted focus elsewhere by the time open() completes.
-      terminal.focus()
-
-      // Initial fit — also send dimensions to server PTY so it starts
-      // with the correct size (or re-syncs on reconnection).
-      try {
-        fitAddon.fit()
-        const { cols, rows } = terminal
-        if (cols > 0 && rows > 0) {
-          resizeTerminalRef.current({
-            payload: { id: terminalId, cols, rows },
-          })
-        }
-      } catch {
-        // Container may not have dimensions yet
+      // Let Cmd+W bubble so the global close-pane hotkey can run.
+      if (isExactMetaW(event)) {
+        return false
       }
 
-      // Prefix mode for tmux-style Ctrl+B sequences (Issue #80).
-      const enterPrefixMode = () => {
+      // Check for Ctrl+B (the panel prefix key).
+      // Must be exactly Ctrl+B — not Ctrl+Shift+B, not Ctrl+Alt+B.
+      if (isExactCtrlB(event)) {
+        // Enter prefix mode: the next keydown will also be passed
+        // through to TanStack Hotkeys.
         prefixModeRef.current = true
         setPrefixMode(true)
+
+        // Auto-exit prefix mode after timeout (matches SEQUENCE_TIMEOUT
+        // in panel-hotkeys.tsx). If the user presses Ctrl+B but doesn't
+        // follow up with an action key, the terminal resumes normal input.
         if (prefixTimeoutRef.current !== null) {
           clearTimeout(prefixTimeoutRef.current)
         }
@@ -789,104 +529,105 @@ function TerminalPaneContent({
           setPrefixMode(false)
           prefixTimeoutRef.current = null
         }, PREFIX_MODE_TIMEOUT)
+
+        // Let Ctrl+B bubble to document for TanStack Hotkeys
+        return false
       }
 
-      const exitPrefixMode = () => {
+      // In prefix mode: pass the action key through to TanStack Hotkeys.
+      // This is the second key in the Ctrl+B -> action sequence.
+      if (prefixModeRef.current) {
+        // Exit prefix mode — the action key has been consumed.
         prefixModeRef.current = false
         setPrefixMode(false)
         if (prefixTimeoutRef.current !== null) {
           clearTimeout(prefixTimeoutRef.current)
           prefixTimeoutRef.current = null
         }
+
+        // Let the action key bubble to document
+        return false
       }
 
-      terminal.attachCustomKeyEventHandler(
-        createTerminalKeyHandler(terminal, {
-          enterPrefixMode,
-          exitPrefixMode,
-          prefixModeRef,
-        })
-      )
+      // Normal key — let xterm.js handle it
+      return true
+    })
 
-      // Fix TUI scroll targeting: when mouse tracking is enabled,
-      // send SGR mouse wheel events with coordinates instead of
-      // arrow keys. See createWheelHandler() for details.
-      terminal.attachCustomWheelEventHandler(
-        createWheelHandler(terminal, container)
-      )
-
-      // Wire keyboard input to server PTY via the TerminalSessionRouter.
-      // ghostty-web's onData fires for every keystroke (including special
-      // keys like enter, backspace, ctrl-c, arrows) with the data already
-      // encoded as the correct ANSI escape sequences.
-      //
-      // Keyboard input is only sent when the terminal is running.
-      // When the terminal has stopped, keystrokes are silently dropped.
-      const onDataDisposable = terminal.onData((data: string) => {
-        if (!isRunningRef.current) {
-          return
-        }
-        routerRef.current?.sendInput(terminalId, data)
-      })
-
-      // Subscribe to OSC title changes (OSC 0 and OSC 2 escape sequences).
-      // ghostty-web parses these sequences during write() and fires onTitleChange
-      // with the title string. This allows the parent component to update tab
-      // labels, window titles, or other UI based on the running process's title.
-      const onTitleChangeDisposable = terminal.onTitleChange(
-        (title: string) => {
-          onTitleChangeRef.current?.(title)
-        }
-      )
-
-      // Trigger an initial resize now that refs are populated. The
-      // ResizeObserver's initial observation already fired (and was
-      // skipped because refs were null at that point), so we need
-      // this explicit call to sync dimensions.
-      handleResizeRef.current?.()
-
-      // Store cleanup function for disposal
-      cleanupRef.current = () => {
-        onDataDisposable.dispose()
-        onTitleChangeDisposable.dispose()
-        terminal.dispose()
-        terminalRef.current = null
-        fitAddonRef.current = null
-        // Clear prefix mode timeout to prevent stale state updates
-        if (prefixTimeoutRef.current !== null) {
-          clearTimeout(prefixTimeoutRef.current)
-          prefixTimeoutRef.current = null
-        }
-        prefixModeRef.current = false
+    // Wire keyboard input to server PTY via WebSocket text frames.
+    // xterm.js's onData fires for every keystroke (including special keys
+    // like enter, backspace, ctrl-c, arrows) with the data already encoded
+    // as the correct ANSI escape sequences. We send this data directly
+    // to the server via WebSocket.
+    //
+    // Uses fire-and-forget mode — each keystroke is sent immediately as
+    // a WebSocket text frame without waiting for a response.
+    // The character echoes back from the PTY via WebSocket text frames,
+    // completing the input -> output loop.
+    //
+    // Keyboard input is only sent when the terminal is running.
+    // When the terminal has stopped, keystrokes are silently dropped.
+    //
+    // Note: Keys that were passed through to TanStack Hotkeys via the
+    // custom key event handler (Ctrl+B and action keys) do NOT trigger
+    // onData because xterm.js skips them when the handler returns false.
+    const onDataDisposable = terminal.onData((data: string) => {
+      if (!isRunningRef.current) {
+        return
       }
-    }
-
-    setup()
+      wsSendRef.current(data)
+    })
 
     // Cleanup on unmount
     return () => {
-      disposed = true
-      cleanupRef.current?.()
-      cleanupRef.current = null
+      onDataDisposable.dispose()
+      terminal.dispose()
+      terminalRef.current = null
+      fitAddonRef.current = null
+      // Clear prefix mode timeout to prevent stale state updates
+      if (prefixTimeoutRef.current !== null) {
+        clearTimeout(prefixTimeoutRef.current)
+        prefixTimeoutRef.current = null
+      }
+      prefixModeRef.current = false
     }
   }, [terminalId])
 
   /**
-   * Resize handler — fit terminal then notify backend (fire-and-forget).
+   * Handle container resize — re-fit the terminal when the
+   * pane dimensions change, then send new dimensions to the
+   * server PTY via `terminal.resize` RPC mutation.
    *
-   * Two resize sources feed the same handler:
-   * 1. A `ResizeObserver` on the container div — panel splits, drags
-   * 2. The module-level `subscribeWindowResize` signal — window resize
-   *
-   * The handler reads `fitAddonRef` and `terminalRef` on each invocation.
-   * If the terminal hasn't finished async init yet, it returns early.
-   * Once the setup effect completes, it calls `handleResizeRef.current()`
-   * to trigger the first resize explicitly.
-   *
-   * Uses RAF to batch rapid events. No async, no in-flight tracking —
-   * just fit + fire-and-forget RPC, matching the pre-migration xterm.js
-   * approach. The previous PTY-first async flow caused deadlocks when
-   * the RPC promise hung (e.g. during server reconnects).
+   * The fit addon recalculates cols/rows based on the container
+   * size and font metrics. After fitting, we read the new dimensions
+   * from the xterm.js Terminal instance and dispatch a resize mutation.
+   * The server PTY sends SIGWINCH so the process can reflow output.
+   */
+  const handleResize = useCallback(() => {
+    const fitAddon = fitAddonRef.current
+    const terminal = terminalRef.current
+    if (!(fitAddon && terminal)) {
+      return
+    }
+
+    try {
+      fitAddon.fit()
+    } catch {
+      // Ignore errors during resize (container may have 0 dimensions)
+      return
+    }
+
+    // Send new dimensions to the server PTY
+    const { cols, rows } = terminal
+    if (cols > 0 && rows > 0) {
+      resizeTerminalRef.current({
+        payload: { id: terminalId, cols, rows },
+      })
+    }
+  }, [terminalId])
+
+  /**
+   * Observe the container element for size changes using ResizeObserver.
+   * This handles allotment pane resizing, window resizing, etc.
    */
   useEffect(() => {
     const container = containerRef.current
@@ -894,92 +635,31 @@ function TerminalPaneContent({
       return
     }
 
-    const state: ResizeState = {
-      lastCols: 0,
-      lastRows: 0,
-      rafId: null,
-    }
-    let disposed = false
+    const resizeObserver = new ResizeObserver(() => {
+      handleResize()
+    })
 
-    const handleResize = () => {
-      if (disposed) {
-        return
-      }
-
-      const fitAddon = fitAddonRef.current
-      const terminal = terminalRef.current
-      if (!(fitAddon && terminal)) {
-        return
-      }
-
-      // Cancel any pending RAF to coalesce rapid events
-      if (state.rafId !== null) {
-        cancelAnimationFrame(state.rafId)
-      }
-
-      state.rafId = requestAnimationFrame(() => {
-        state.rafId = null
-        if (disposed) {
-          return
-        }
-
-        const fitAddonNow = fitAddonRef.current
-        const terminalNow = terminalRef.current
-        if (!(fitAddonNow && terminalNow)) {
-          return
-        }
-
-        executeResize(
-          fitAddonNow,
-          terminalNow,
-          terminalId,
-          resizeTerminalRef.current,
-          state
-        )
-      })
-    }
-
-    // Store the handler so the terminal setup effect can trigger
-    // an initial resize after the terminal is created.
-    handleResizeRef.current = handleResize
-
-    // Observe container for panel resizes (splits, drags)
-    const resizeObserver = new ResizeObserver(handleResize)
     resizeObserver.observe(container)
 
-    // Subscribe to the module-level window resize signal.
-    const unsubWindow = subscribeWindowResize(handleResize)
-
     return () => {
-      disposed = true
-      handleResizeRef.current = null
-      if (state.rafId !== null) {
-        cancelAnimationFrame(state.rafId)
-      }
       resizeObserver.disconnect()
-      unsubWindow()
     }
-  }, [terminalId])
+  }, [handleResize])
 
   return (
     <div
       className="relative h-full w-full overflow-hidden"
       data-terminal-id={terminalId}
     >
-      {/* ghostty-web terminal container — uses the same layout structure
-          as the Mux reference: flex column parent with flex:1 + min-h-0
-          child. The overflow:hidden prevents the canvas from pushing the
-          container larger than the available space. */}
-      <div className="h-full w-full overflow-hidden" ref={containerRef} />
+      {/* xterm.js container */}
+      <div className="h-full w-full" ref={containerRef} />
 
       {/* Loading overlay (Issue #122) — shown while the PTY is spawning
 			    and no output has arrived yet. Covers the blank terminal canvas
-			    with a spinner and message. Disappears on first data (output or
-			    screenState). Only shown for running terminals (stopped terminals
-			    get immediate screen state on reconnection). */}
-      {!hasReceivedData && isRunning && showSpinner && (
-        <TerminalLoadingOverlay />
-      )}
+			    with a spinner and message. Disappears on first WebSocket data frame.
+			    Only shown for running terminals (stopped terminals get immediate
+			    scrollback on reconnection). */}
+      {!hasReceivedData && isRunning && <TerminalLoadingOverlay />}
 
       {/* Prefix mode indicator (Issue #80) — shown when Ctrl+B was pressed
 			    and the terminal is waiting for the next key to complete a panel
@@ -992,12 +672,10 @@ function TerminalPaneContent({
       )}
 
       {/* WebSocket disconnection indicator */}
-      {connectionStatus === 'disconnected' && isRunning && (
-        <DisconnectedBanner />
-      )}
+      {wsStatus === 'disconnected' && isRunning && <DisconnectedBanner />}
 
       {/* Reconnecting indicator */}
-      {connectionStatus === 'connecting' && isRunning && <ReconnectingBanner />}
+      {wsStatus === 'connecting' && isRunning && <ReconnectingBanner />}
 
       {/* Status banner — shown when terminal process has exited */}
       {!isRunning && (

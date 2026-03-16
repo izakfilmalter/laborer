@@ -17,29 +17,20 @@
  * @see Issue #144: Web app LiveStore terminal query replacement
  */
 
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import {
   AlertTriangle,
-  AppWindow,
-  FileCode,
-  MonitorDot,
   Plus,
   RotateCw,
+  Square,
   Terminal as TerminalIcon,
-  X,
+  Trash2,
 } from 'lucide-react'
 import type React from 'react'
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from 'react'
-import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
+import { useCallback, useState } from 'react'
+import { toast } from 'sonner'
+import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
-import { AGENT_ICONS } from '@/components/agent-icons'
-import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -48,127 +39,28 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import type {
-  AgentStatus,
-  ForegroundProcess,
-  TerminalInfo,
-} from '@/hooks/use-terminal-list'
-import {
-  upsertTerminalListItem,
-  useTerminalList,
-} from '@/hooks/use-terminal-list'
-import { useWhenPhase } from '@/hooks/use-when-phase'
-import { toast } from '@/lib/toast'
+import { useTerminalList } from '@/hooks/use-terminal-list'
 import { cn, extractErrorMessage } from '@/lib/utils'
-import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
 import { usePanelActions } from '@/panels/panel-context'
 
 const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
+const killTerminalMutation = TerminalServiceClient.mutation('terminal.kill')
+const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
 const restartTerminalMutation =
   TerminalServiceClient.mutation('terminal.restart')
 
 interface TerminalListProps {
-  /** Called when the aggregate agent status for this workspace changes. */
-  readonly onAgentStatusChange?:
-    | ((status: AgentStatus | null) => void)
-    | undefined
-  /** The project ID this workspace belongs to (for agent config resolution). */
-  readonly projectId: string
   /** The workspace ID to filter terminals for. */
   readonly workspaceId: string
 }
-
-const buildOptimisticTerminalInfo = (terminal: {
-  readonly command: string
-  readonly id: string
-  readonly status: 'running' | 'stopped'
-  readonly workspaceId: string
-}): TerminalInfo => ({
-  agentStatus: null,
-  args: [],
-  command: terminal.command,
-  cwd: '',
-  foregroundProcess: null,
-  hasChildProcess: false,
-  id: terminal.id,
-  processChain: [],
-  status: terminal.status,
-  workspaceId: terminal.workspaceId,
-})
 
 /**
  * Terminal list for a single workspace.
  *
  * Shows all terminals belonging to the workspace, with a "New Terminal"
- * button, an "Agent" button (spawns the configured AI agent), and
- * click-to-select behavior for switching the active panel pane.
+ * button and click-to-select behavior for switching the active panel pane.
  */
-/**
- * Spawn buttons for creating new terminals and agents.
- * Extracted to encapsulate phase-gating logic and reduce complexity.
- */
-function TerminalSpawnButtons({
-  agentProvider,
-  isServiceAvailable,
-  isSpawning,
-  isSpawningAgent,
-  onSpawnAgent,
-  onSpawnTerminal,
-}: {
-  readonly agentProvider: string
-  readonly isServiceAvailable: boolean
-  readonly isSpawning: boolean
-  readonly isSpawningAgent: boolean
-  readonly onSpawnAgent: () => void
-  readonly onSpawnTerminal: () => void
-}) {
-  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
-  const AgentIcon =
-    AGENT_ICONS[agentProvider as keyof typeof AGENT_ICONS] ??
-    AGENT_ICONS.opencode
-
-  return (
-    <div className="flex items-center gap-1">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              aria-label={`Start ${agentProvider} agent`}
-              disabled={
-                !isServerReady || isSpawningAgent || !isServiceAvailable
-              }
-              onClick={onSpawnAgent}
-              size="xs"
-              title={isServerReady ? undefined : 'Connecting to server...'}
-              variant="outline"
-            />
-          }
-        >
-          <AgentIcon className="size-3" />
-          {isSpawningAgent ? 'Starting...' : 'Agent'}
-        </TooltipTrigger>
-        <TooltipContent>Start {agentProvider} in a new terminal</TooltipContent>
-      </Tooltip>
-      <Button
-        aria-label="New terminal"
-        disabled={!isServerReady || isSpawning || !isServiceAvailable}
-        onClick={onSpawnTerminal}
-        size="xs"
-        title={isServerReady ? undefined : 'Connecting to server...'}
-        variant="outline"
-      >
-        <Plus className="size-3" />
-        {isSpawning ? 'Spawning...' : 'New'}
-      </Button>
-    </div>
-  )
-}
-
-function TerminalList({
-  onAgentStatusChange,
-  projectId,
-  workspaceId,
-}: TerminalListProps) {
+function TerminalList({ workspaceId }: TerminalListProps) {
   const {
     errorMessage,
     isServiceAvailable,
@@ -178,40 +70,21 @@ function TerminalList({
   const spawnTerminal = useAtomSet(spawnTerminalMutation, {
     mode: 'promise',
   })
+  const killTerminal = useAtomSet(killTerminalMutation, {
+    mode: 'promise',
+  })
+  const removeTerminal = useAtomSet(removeTerminalMutation, {
+    mode: 'promise',
+  })
   const restartTerminal = useAtomSet(restartTerminalMutation, {
     mode: 'promise',
   })
   const [isSpawning, setIsSpawning] = useState(false)
-  const [isSpawningAgent, setIsSpawningAgent] = useState(false)
 
-  // Fetch the project config to determine which agent to use
-  const configGet$ = useMemo(
-    () =>
-      LaborerClient.query(
-        'config.get',
-        { projectId },
-        { reactivityKeys: ConfigReactivityKeys }
-      ),
-    [projectId]
-  )
-  const configResult = useAtomValue(configGet$)
-  const agentProvider =
-    configResult._tag === 'Success'
-      ? configResult.value.agent.value
-      : 'opencode'
-  // Filter terminals for this workspace and derive aggregate agent status
+  // Filter terminals for this workspace
   const workspaceTerminals = terminalList.filter(
     (t) => t.workspaceId === workspaceId
   )
-
-  const workspaceAgentStatus = useMemo(
-    () => deriveWorkspaceAgentStatus(workspaceTerminals),
-    [workspaceTerminals]
-  )
-
-  useEffect(() => {
-    onAgentStatusChange?.(workspaceAgentStatus)
-  }, [onAgentStatusChange, workspaceAgentStatus])
 
   const handleSpawnTerminal = useCallback(async () => {
     if (!isServiceAvailable) {
@@ -223,15 +96,10 @@ function TerminalList({
       const result = await spawnTerminal({
         payload: { workspaceId },
       })
-      upsertTerminalListItem(buildOptimisticTerminalInfo(result))
       toast.success(`Terminal spawned: ${result.command}`)
-      // Create a panel tab with the terminal directly. This works
-      // correctly even when the workspace has no existing panel tabs,
-      // unlike assignTerminalToPane which requires an active window tab.
+      // Auto-assign the new terminal to a pane
       if (panelActions) {
-        panelActions.addPanelTab?.(workspaceId, 'terminal', {
-          terminalId: result.id,
-        })
+        panelActions.assignTerminalToPane(result.id, workspaceId)
       }
     } catch (error) {
       toast.error(`Failed to spawn terminal: ${extractErrorMessage(error)}`)
@@ -240,46 +108,32 @@ function TerminalList({
     }
   }, [isServiceAvailable, spawnTerminal, workspaceId, panelActions])
 
-  const handleSpawnAgent = useCallback(async () => {
-    if (!isServiceAvailable) {
-      toast.error('Terminal service unavailable')
-      return
-    }
-    setIsSpawningAgent(true)
-    try {
-      const result = await spawnTerminal({
-        payload: { workspaceId, command: agentProvider },
-      })
-      upsertTerminalListItem(buildOptimisticTerminalInfo(result))
-      toast.success(`Agent spawned: ${agentProvider}`)
-      // Create a panel tab with the terminal directly. This works
-      // correctly even when the workspace has no existing panel tabs,
-      // unlike assignTerminalToPane which requires an active window tab.
-      if (panelActions) {
-        panelActions.addPanelTab?.(workspaceId, 'terminal', {
-          terminalId: result.id,
+  const handleKillTerminal = useCallback(
+    async (terminalId: string) => {
+      try {
+        await killTerminal({
+          payload: { id: terminalId },
         })
-      }
-    } catch (error) {
-      toast.error(`Failed to spawn agent: ${extractErrorMessage(error)}`)
-    } finally {
-      setIsSpawningAgent(false)
-    }
-  }, [
-    isServiceAvailable,
-    spawnTerminal,
-    workspaceId,
-    panelActions,
-    agentProvider,
-  ])
-
-  const handleCloseTerminal = useCallback(
-    (terminalId: string) => {
-      if (panelActions) {
-        panelActions.closeTerminalPane(terminalId)
+        toast.success('Terminal stopped')
+      } catch (error) {
+        toast.error(`Failed to stop terminal: ${extractErrorMessage(error)}`)
       }
     },
-    [panelActions]
+    [killTerminal]
+  )
+
+  const handleRemoveTerminal = useCallback(
+    async (terminalId: string) => {
+      try {
+        await removeTerminal({
+          payload: { id: terminalId },
+        })
+        toast.success('Terminal removed')
+      } catch (error) {
+        toast.error(`Failed to remove terminal: ${extractErrorMessage(error)}`)
+      }
+    },
+    [removeTerminal]
   )
 
   const handleRestartTerminal = useCallback(
@@ -323,14 +177,16 @@ function TerminalList({
         {unavailableAlert}
         <div className="flex items-center justify-between gap-2">
           <span className="text-muted-foreground text-xs">No terminals</span>
-          <TerminalSpawnButtons
-            agentProvider={agentProvider}
-            isServiceAvailable={isServiceAvailable}
-            isSpawning={isSpawning}
-            isSpawningAgent={isSpawningAgent}
-            onSpawnAgent={handleSpawnAgent}
-            onSpawnTerminal={handleSpawnTerminal}
-          />
+          <Button
+            aria-label="New terminal"
+            disabled={isSpawning || !isServiceAvailable}
+            onClick={handleSpawnTerminal}
+            size="xs"
+            variant="outline"
+          >
+            <Plus className="size-3" />
+            {isSpawning ? 'Spawning...' : 'New'}
+          </Button>
         </div>
       </div>
     )
@@ -343,19 +199,22 @@ function TerminalList({
         <span className="font-medium text-muted-foreground text-xs">
           Terminals ({workspaceTerminals.length})
         </span>
-        <TerminalSpawnButtons
-          agentProvider={agentProvider}
-          isServiceAvailable={isServiceAvailable}
-          isSpawning={isSpawning}
-          isSpawningAgent={isSpawningAgent}
-          onSpawnAgent={handleSpawnAgent}
-          onSpawnTerminal={handleSpawnTerminal}
-        />
+        <Button
+          aria-label="New terminal"
+          disabled={isSpawning || !isServiceAvailable}
+          onClick={handleSpawnTerminal}
+          size="xs"
+          variant="outline"
+        >
+          <Plus className="size-3" />
+          {isSpawning ? 'Spawning...' : 'New'}
+        </Button>
       </div>
       {workspaceTerminals.map((terminal) => (
         <TerminalItem
           key={terminal.id}
-          onClose={handleCloseTerminal}
+          onKill={handleKillTerminal}
+          onRemove={handleRemoveTerminal}
           onRestart={handleRestartTerminal}
           onSelect={handleSelectTerminal}
           terminal={terminal}
@@ -366,16 +225,14 @@ function TerminalList({
 }
 
 interface TerminalItemProps {
-  readonly onClose: (terminalId: string) => void
+  readonly onKill: (terminalId: string) => void
+  readonly onRemove: (terminalId: string) => void
   readonly onRestart: (terminalId: string) => void
   readonly onSelect: (terminalId: string) => void
   readonly terminal: {
     readonly id: string
     readonly workspaceId: string
     readonly command: string
-    readonly agentStatus: AgentStatus | null
-    readonly foregroundProcess: ForegroundProcess | null
-    readonly processChain: readonly ForegroundProcess[]
     readonly status: string
   }
 }
@@ -386,229 +243,14 @@ interface TerminalItemProps {
  */
 const TERMINAL_DRAG_MIME = 'application/x-laborer-terminal'
 
-/**
- * Map from agent rawName to its icon component for sidebar display.
- * Only includes agents that have dedicated icons.
- */
-const AGENT_ICON_BY_RAW_NAME: Record<
-  string,
-  ((props: { className?: string }) => ReactNode) | undefined
-> = {
-  claude: AGENT_ICONS.claude,
-  opencode: AGENT_ICONS.opencode,
-  codex: AGENT_ICONS.codex,
-}
-
-/**
- * Map from agent command names (lowercase) to their display label and icon.
- *
- * Used as a fallback when `foregroundProcess` is null (idle / pre-detection).
- * Without this, agent terminals show the raw command string ("opencode")
- * and a generic terminal icon until the background detection fiber detects
- * the process. This map ensures agent branding is shown immediately.
- */
-const AGENT_COMMAND_DISPLAY: Record<
-  string,
-  { readonly label: string; readonly icon: ReactNode } | undefined
-> = {
-  claude: {
-    label: 'Claude',
-    icon: <AGENT_ICONS.claude className="size-3.5 shrink-0" />,
-  },
-  opencode: {
-    label: 'OpenCode',
-    icon: <AGENT_ICONS.opencode className="size-3.5 shrink-0" />,
-  },
-  codex: {
-    label: 'Codex',
-    icon: <AGENT_ICONS.codex className="size-3.5 shrink-0" />,
-  },
-}
-
-/**
- * Get the icon for a process based on its category and raw name.
- */
-function getProcessIcon(
-  category: ForegroundProcess['category'],
-  rawName: string
-): ReactNode {
-  switch (category) {
-    case 'agent': {
-      const AgentIcon = AGENT_ICON_BY_RAW_NAME[rawName]
-      return AgentIcon ? (
-        <AgentIcon className="size-3.5 shrink-0" />
-      ) : (
-        <MonitorDot className="size-3.5 shrink-0 text-blue-400" />
-      )
-    }
-    case 'editor':
-      return <FileCode className="size-3.5 shrink-0 text-amber-400" />
-    case 'devServer':
-      return <AppWindow className="size-3.5 shrink-0 text-emerald-400" />
-    default:
-      return <TerminalIcon className="size-3.5 shrink-0 text-success" />
-  }
-}
-
-/**
- * Build a display label from the process chain. Shows the root process
- * label followed by " › subprocess" for each deeper process in the chain.
- * e.g. "OpenCode › biome", "OpenCode › Node.js"
- */
-function buildChainLabel(processChain: readonly ForegroundProcess[]): string {
-  return processChain.map((p) => p.label).join(' \u203A ')
-}
-
-/**
- * Get the badge info for a process category.
- */
-function getCategoryBadge(category: ForegroundProcess['category']): {
-  badgeLabel: string
-  badgeClassName: string
-} {
-  switch (category) {
-    case 'agent':
-      return {
-        badgeLabel: 'agent',
-        badgeClassName: 'border-blue-400/30 bg-blue-400/10 text-blue-400',
-      }
-    case 'editor':
-      return {
-        badgeLabel: 'editor',
-        badgeClassName: 'border-amber-400/30 bg-amber-400/10 text-amber-400',
-      }
-    case 'devServer':
-      return {
-        badgeLabel: 'running',
-        badgeClassName:
-          'border-emerald-400/30 bg-emerald-400/10 text-emerald-400',
-      }
-    case 'shell':
-      return {
-        badgeLabel: 'idle',
-        badgeClassName: 'border-success/30 bg-success/10 text-success',
-      }
-    default:
-      return {
-        badgeLabel: 'running',
-        badgeClassName: 'border-success/30 bg-success/10 text-success',
-      }
-  }
-}
-
-/**
- * Get the icon and label to display for a terminal based on its
- * process chain and agent status. Uses the root process (first in chain)
- * for the icon, and shows the full chain as "root › sub › sub" in the label.
- * Falls back to the terminal command name when idle.
- */
-function getTerminalDisplay(
-  command: string,
-  foregroundProcess: ForegroundProcess | null,
-  isRunning: boolean,
-  agentStatus: AgentStatus | null,
-  processChain: readonly ForegroundProcess[] = []
-): {
-  icon: ReactNode
-  label: string
-  badgeLabel: string | null
-  badgeClassName: string | null
-} {
-  const rootProcess = processChain[0] ?? null
-  const commandLabel = command || 'shell'
-
-  // Fallback agent display derived from the terminal command name.
-  // Ensures agent branding (icon + capitalised label) is shown even when
-  // `foregroundProcess` is null (pre-detection, idle, or shell at prompt).
-  const agentCommandInfo = AGENT_COMMAND_DISPLAY[command.toLowerCase()]
-
-  if (!isRunning) {
-    return {
-      icon: agentCommandInfo?.icon ?? (
-        <TerminalIcon className="size-3.5 shrink-0 text-muted-foreground" />
-      ),
-      label: agentCommandInfo?.label ?? commandLabel,
-      badgeLabel: 'stopped',
-      badgeClassName:
-        'border-muted-foreground/30 bg-muted text-muted-foreground',
-    }
-  }
-
-  // Agent finished / waiting for user input — pulsing amber badge.
-  // Show the root process label if available, otherwise fall back to
-  // the agent command display (icon + label) or the raw command name.
-  if (agentStatus === 'waiting_for_input') {
-    return {
-      icon: rootProcess
-        ? getProcessIcon(rootProcess.category, rootProcess.rawName)
-        : (agentCommandInfo?.icon ?? (
-            <TerminalIcon className="size-3.5 shrink-0 text-amber-400" />
-          )),
-      label: rootProcess
-        ? rootProcess.label
-        : (agentCommandInfo?.label ?? commandLabel),
-      badgeLabel: 'needs input',
-      badgeClassName:
-        'animate-pulse border-amber-400/30 bg-amber-400/10 text-amber-400',
-    }
-  }
-
-  // No foreground process detected — shell is idle at prompt.
-  // For agent commands, show the agent icon and label instead of
-  // the raw command string.
-  if (foregroundProcess === null) {
-    return {
-      icon: agentCommandInfo?.icon ?? (
-        <TerminalIcon className="size-3.5 shrink-0 text-success" />
-      ),
-      label: agentCommandInfo?.label ?? commandLabel,
-      badgeLabel: 'idle',
-      badgeClassName: 'border-success/30 bg-success/10 text-success',
-    }
-  }
-
-  // Use the root process for the icon, the full chain for the label,
-  // and the deepest (foreground) process for the badge category.
-  const displayRoot = rootProcess ?? foregroundProcess
-  const icon = getProcessIcon(displayRoot.category, displayRoot.rawName)
-  const label =
-    processChain.length > 0
-      ? buildChainLabel(processChain)
-      : foregroundProcess.label
-
-  // Shell category means idle at prompt
-  if (foregroundProcess.category === 'shell') {
-    return {
-      icon: agentCommandInfo?.icon ?? (
-        <TerminalIcon className="size-3.5 shrink-0 text-success" />
-      ),
-      label: agentCommandInfo?.label ?? commandLabel,
-      badgeLabel: 'idle',
-      badgeClassName: 'border-success/30 bg-success/10 text-success',
-    }
-  }
-
-  const { badgeLabel, badgeClassName } = getCategoryBadge(
-    foregroundProcess.category
-  )
-
-  return { icon, label, badgeLabel, badgeClassName }
-}
-
 function TerminalItem({
   terminal,
   onSelect,
-  onClose,
+  onKill,
+  onRemove,
   onRestart,
 }: TerminalItemProps) {
   const isRunning = terminal.status === 'running'
-  const { icon, label, badgeLabel, badgeClassName } = getTerminalDisplay(
-    terminal.command,
-    terminal.foregroundProcess,
-    isRunning,
-    terminal.agentStatus,
-    terminal.processChain
-  )
 
   const handleDragStart = useCallback(
     (e: React.DragEvent<HTMLButtonElement>) => {
@@ -625,33 +267,38 @@ function TerminalItem({
   )
 
   return (
-    <div
+    <button
       className={cn(
-        'flex w-full min-w-0 items-center gap-2 rounded-md border px-2 py-1.5 text-left text-xs transition-colors',
-        'hover:bg-accent hover:text-accent-foreground'
+        'flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left text-xs transition-colors',
+        'hover:bg-accent hover:text-accent-foreground',
+        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+        'cursor-grab active:cursor-grabbing'
       )}
+      draggable
+      onClick={() => onSelect(terminal.id)}
+      onDragStart={handleDragStart}
+      type="button"
     >
-      <button
-        className="flex min-w-0 flex-1 cursor-grab items-center gap-2 text-left focus-visible:outline-none active:cursor-grabbing"
-        draggable
-        onClick={() => onSelect(terminal.id)}
-        onDragStart={handleDragStart}
-        type="button"
-      >
-        {icon}
-        <span className="min-w-0 flex-1 truncate font-mono">{label}</span>
-        {badgeLabel !== null && badgeClassName !== null && (
-          <Badge
-            className={cn(
-              'shrink-0 border text-[10px] leading-none',
-              badgeClassName
-            )}
-            variant="outline"
-          >
-            {badgeLabel}
-          </Badge>
+      <TerminalIcon
+        className={cn(
+          'size-3.5 shrink-0',
+          isRunning ? 'text-success' : 'text-muted-foreground'
         )}
-      </button>
+      />
+      <span className="min-w-0 flex-1 truncate font-mono">
+        {terminal.command || 'shell'}
+      </span>
+      <Badge
+        className={cn(
+          'shrink-0 border text-[10px] leading-none',
+          isRunning
+            ? 'border-success/30 bg-success/10 text-success'
+            : 'border-muted-foreground/30 bg-muted text-muted-foreground'
+        )}
+        variant="outline"
+      >
+        {terminal.status}
+      </Badge>
       <Tooltip>
         <TooltipTrigger
           render={
@@ -671,27 +318,50 @@ function TerminalItem({
         </TooltipTrigger>
         <TooltipContent>Restart</TooltipContent>
       </Tooltip>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              aria-label="Close terminal"
-              className="size-5 shrink-0 text-muted-foreground hover:text-destructive"
-              onClick={(e) => {
-                e.stopPropagation()
-                onClose(terminal.id)
-              }}
-              size="icon-sm"
-              variant="ghost"
-            />
-          }
-        >
-          <X className="size-2.5" />
-        </TooltipTrigger>
-        <TooltipContent>Close</TooltipContent>
-      </Tooltip>
-    </div>
+      {isRunning && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label="Stop terminal"
+                className="size-5 shrink-0"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onKill(terminal.id)
+                }}
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
+          >
+            <Square className="size-2.5" />
+          </TooltipTrigger>
+          <TooltipContent>Stop</TooltipContent>
+        </Tooltip>
+      )}
+      {!isRunning && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label="Remove terminal"
+                className="size-5 shrink-0 text-muted-foreground hover:text-destructive"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onRemove(terminal.id)
+                }}
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
+          >
+            <Trash2 className="size-2.5" />
+          </TooltipTrigger>
+          <TooltipContent>Remove</TooltipContent>
+        </Tooltip>
+      )}
+    </button>
   )
 }
 
-export { getTerminalDisplay, TerminalList }
+export { TerminalList }

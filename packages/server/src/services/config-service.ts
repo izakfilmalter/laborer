@@ -64,6 +64,16 @@ class ConfigValidationError extends Data.TaggedError('ConfigValidationError')<{
   readonly message: string
 }> {}
 
+/** Valid agent provider identifiers. */
+type AgentProvider = 'opencode' | 'claude' | 'codex'
+
+/** Ordered list of valid agent provider values (used for validation). */
+const VALID_AGENT_PROVIDERS: readonly AgentProvider[] = [
+  'opencode',
+  'claude',
+  'codex',
+]
+
 /** Config file name used at all levels (project root, ancestors, global). */
 const CONFIG_FILE_NAME = 'laborer.json'
 
@@ -100,19 +110,6 @@ interface DevServerConfig {
 }
 
 /**
- * Valid agent provider values.
- * Each value is also the CLI command used to launch the agent.
- */
-type AgentProvider = 'opencode' | 'claude' | 'codex'
-
-/** All valid agent provider values for runtime validation. */
-const VALID_AGENT_PROVIDERS: readonly AgentProvider[] = [
-  'opencode',
-  'claude',
-  'codex',
-]
-
-/**
  * Shape of a `laborer.json` config file.
  * All fields are optional — missing fields are resolved from ancestor
  * configs or hardcoded defaults.
@@ -128,7 +125,7 @@ interface LaborerConfig {
   readonly worktreeDir?: string
 }
 
-/** Partial updates accepted by writeProjectConfig(). */
+/** Partial updates accepted by writeProjectConfig() and writeGlobalConfig(). */
 interface ProjectConfigUpdates {
   readonly agent?: AgentProvider | undefined
   readonly brrrConfig?: string | undefined
@@ -793,6 +790,15 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
       projectRepoPath: string,
       updates: ProjectConfigUpdates
     ) => Effect.Effect<void, never>
+
+    /**
+     * Write global config updates to `~/.config/laborer/laborer.json`.
+     * Merges partial updates with existing file content, preserves unknown
+     * fields, and uses an atomic temp-file + rename write strategy.
+     */
+    readonly writeGlobalConfig: (
+      updates: ProjectConfigUpdates
+    ) => Effect.Effect<void, never>
   }
 >() {
   static readonly layer = Layer.succeed(
@@ -867,12 +873,29 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
           ).pipe(Effect.annotateLogs('module', logPrefix))
         }
       ),
+
+      writeGlobalConfig: Effect.fn('ConfigService.writeGlobalConfig')(
+        function* (updates: ProjectConfigUpdates) {
+          yield* ensureGlobalConfigDir()
+
+          const existing =
+            (yield* readRawConfigObject(GLOBAL_CONFIG_PATH)) ??
+            ({} as Record<string, unknown>)
+          const next = applyConfigUpdates(existing, updates)
+
+          yield* writeJsonAtomic(GLOBAL_CONFIG_PATH, next)
+
+          yield* Effect.logDebug(
+            `Wrote global config at ${GLOBAL_CONFIG_PATH}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+        }
+      ),
     })
   )
 }
 
 export {
-  ConfigService,
+  type ConfigService,
   ConfigValidationError,
   VALID_AGENT_PROVIDERS,
   // Exported for testing

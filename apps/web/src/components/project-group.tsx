@@ -17,9 +17,9 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { ChevronRight, FolderGit2, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { CreateWorkspaceForm } from '@/components/create-workspace-form'
-import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { PlanList } from '@/components/plan-list'
 import { ProjectSettingsModal } from '@/components/project-settings-modal'
 import { TaskList } from '@/components/task-list'
@@ -50,8 +50,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { WorkspaceList } from '@/components/workspace-list'
-import { useWhenPhase } from '@/hooks/use-when-phase'
-import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 
 const removeProjectMutation = LaborerClient.mutation('project.remove')
@@ -64,7 +62,7 @@ interface ProjectGroupProps {
     readonly id: string
     readonly name: string
     readonly repoPath: string
-    readonly brrrConfig: string | null
+    readonly rlphConfig: string | null
   }
   readonly selectedPlanId?: string | null | undefined
 }
@@ -76,7 +74,6 @@ function ProjectGroup({
   selectedPlanId,
   onSelectPlan,
 }: ProjectGroupProps) {
-  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
   const [taskSource, setTaskSource] = useState<TaskSourceFilter>('linear')
@@ -117,7 +114,7 @@ function ProjectGroup({
         </CollapsibleTrigger>
         <div className="flex shrink-0 items-center gap-0.5">
           <CreateWorkspaceForm
-            projectId={project.id}
+            defaultProjectId={project.id}
             trigger={
               <Tooltip>
                 <TooltipTrigger
@@ -127,13 +124,7 @@ function ProjectGroup({
                         <Button
                           aria-label={`Create workspace in ${project.name}`}
                           className="h-7 w-7"
-                          disabled={!isServerReady}
                           size="icon-sm"
-                          title={
-                            isServerReady
-                              ? undefined
-                              : 'Connecting to server...'
-                          }
                           variant="ghost"
                         />
                       }
@@ -159,11 +150,7 @@ function ProjectGroup({
                       <Button
                         aria-label={`Remove project ${project.name}`}
                         className="h-7 w-7"
-                        disabled={!isServerReady}
                         size="icon-sm"
-                        title={
-                          isServerReady ? undefined : 'Connecting to server...'
-                        }
                         variant="ghost"
                       />
                     }
@@ -200,7 +187,7 @@ function ProjectGroup({
       </div>
       <CollapsibleContent>
         <div className="mt-1 ml-2 border-l pl-2">
-          <WorkspaceList projectId={project.id} repoPath={project.repoPath} />
+          <WorkspaceList projectId={project.id} />
           <Separator className="my-2" />
           <PlanList
             onSelectPlan={onSelectPlan}

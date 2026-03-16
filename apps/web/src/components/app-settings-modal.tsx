@@ -1,22 +1,45 @@
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { appSettings, events } from '@laborer/shared/schema'
 import { queryDb } from '@livestore/livestore'
 import { Check, ExternalLink, Github, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { AGENT_ICONS } from '@/components/agent-icons'
 import { useAppSettings } from '@/components/app-settings-context'
 import { getDesktopBridge, openExternalUrl } from '@/lib/desktop'
+import { toast } from '@/lib/toast'
+import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 import { Button } from './ui/button'
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from './ui/dialog'
-import { Field, FieldDescription, FieldLabel } from './ui/field'
+import { Field, FieldDescription, FieldLabel, FieldSet } from './ui/field'
 import { Input } from './ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select'
+import { Spinner } from './ui/spinner'
+
+type AgentProvider = 'opencode' | 'claude' | 'codex'
+
+const AGENT_OPTIONS: ReadonlyArray<{
+  readonly label: string
+  readonly value: AgentProvider
+}> = [
+  { label: 'OpenCode', value: 'opencode' },
+  { label: 'Claude', value: 'claude' },
+  { label: 'Codex', value: 'codex' },
+]
 
 const GITHUB_OAUTH_SCOPES = 'repo user workflow'
 const GITHUB_OAUTH_CLIENT_ID = '3a723b10ac5575cc5bb9'
@@ -27,12 +50,23 @@ const allAppSettings$ = queryDb(appSettings, {
 })
 
 const exchangeCodeMutation = LaborerClient.mutation('github.exchangeOAuthCode')
+const updateGlobalConfigMutation = LaborerClient.mutation('globalConfig.update')
 
 export function AppSettingsModal() {
   const { open, onOpenChange } = useAppSettings()
   const store = useLaborerStore()
   const settings = store.useQuery(allAppSettings$)
   const exchangeCode = useAtomSet(exchangeCodeMutation, { mode: 'promise' })
+
+  const globalConfigGet$ = useMemo(
+    // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
+    () => LaborerClient.query('globalConfig.get', undefined as void),
+    []
+  )
+  const globalConfigResult = useAtomValue(globalConfigGet$)
+  const updateGlobalConfig = useAtomSet(updateGlobalConfigMutation, {
+    mode: 'promise',
+  })
 
   const githubToken = settings.find((s) => s.key === 'github_desktop_token')
   const hasToken = Boolean(githubToken?.value)
@@ -41,6 +75,35 @@ export function AppSettingsModal() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const csrfStateRef = useRef<string>('')
+
+  const [agent, setAgent] = useState<AgentProvider>('opencode')
+  const [agentInitialized, setAgentInitialized] = useState(false)
+  const [isSavingAgent, setIsSavingAgent] = useState(false)
+
+  useEffect(() => {
+    if (globalConfigResult._tag !== 'Success' || agentInitialized) {
+      return
+    }
+
+    setAgent(globalConfigResult.value.agent ?? 'opencode')
+    setAgentInitialized(true)
+  }, [globalConfigResult, agentInitialized])
+
+  const handleSaveAgent = useCallback(async () => {
+    setIsSavingAgent(true)
+    try {
+      await updateGlobalConfig({
+        payload: {
+          config: { agent },
+        },
+      })
+      toast.success('Saved default agent')
+    } catch (err: unknown) {
+      toast.error(extractErrorMessage(err))
+    } finally {
+      setIsSavingAgent(false)
+    }
+  }, [agent, updateGlobalConfig])
 
   const handleExchangeFromUrl = useCallback(
     async (url: string) => {
@@ -144,6 +207,7 @@ export function AppSettingsModal() {
         setCallbackUrl('')
         setError(null)
         setIsExchanging(false)
+        setAgentInitialized(false)
       }
       onOpenChange(nextOpen)
     },
@@ -157,6 +221,13 @@ export function AppSettingsModal() {
     return hasToken ? 'connected' : 'not connected'
   }, [hasToken, success])
 
+  const AgentIcon =
+    agent in AGENT_ICONS ? AGENT_ICONS[agent] : AGENT_ICONS.opencode
+
+  const isLoadingAgent =
+    globalConfigResult._tag !== 'Success' &&
+    (globalConfigResult._tag === 'Initial' || globalConfigResult.waiting)
+
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
       <DialogContent className="sm:max-w-lg">
@@ -168,6 +239,62 @@ export function AppSettingsModal() {
         </DialogHeader>
 
         <div className="space-y-6 py-2">
+          {/* Default Agent Section */}
+          <FieldSet>
+            <Field>
+              <FieldLabel>Default agent</FieldLabel>
+              {isLoadingAgent ? (
+                <div className="flex items-center gap-2 py-2 text-muted-foreground text-sm">
+                  <Spinner className="size-4" />
+                  Loading...
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <Select
+                      onValueChange={(value) =>
+                        setAgent(value as AgentProvider)
+                      }
+                      value={agent}
+                    >
+                      <SelectTrigger>
+                        <SelectValue>
+                          <AgentIcon className="size-3.5" />
+                          {AGENT_OPTIONS.find((o) => o.value === agent)
+                            ?.label ?? agent}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {AGENT_OPTIONS.map((option) => {
+                          const Icon = AGENT_ICONS[option.value]
+                          return (
+                            <SelectItem key={option.value} value={option.value}>
+                              <Icon className="size-3.5" />
+                              {option.label}
+                            </SelectItem>
+                          )
+                        })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    disabled={isSavingAgent}
+                    onClick={handleSaveAgent}
+                    size="sm"
+                    variant="outline"
+                  >
+                    {isSavingAgent && <Spinner className="size-3.5" />}
+                    {isSavingAgent ? 'Saving...' : 'Save'}
+                  </Button>
+                </div>
+              )}
+              <FieldDescription>
+                The CLI agent to use when opening new agent panels. Projects can
+                override this in their own laborer.json.
+              </FieldDescription>
+            </Field>
+          </FieldSet>
+
           {/* GitHub Connection Section */}
           <div className="space-y-4">
             <div className="flex items-center gap-2">
@@ -258,6 +385,8 @@ export function AppSettingsModal() {
             )}
           </div>
         </div>
+
+        <DialogFooter />
       </DialogContent>
     </Dialog>
   )

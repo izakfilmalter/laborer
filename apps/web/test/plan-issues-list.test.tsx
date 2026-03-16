@@ -39,7 +39,7 @@ vi.mock('@laborer/shared/schema', () => ({
   tasks: { name: 'tasks' },
 }))
 
-vi.mock('@/lib/toast', () => ({
+vi.mock('sonner', () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }))
 

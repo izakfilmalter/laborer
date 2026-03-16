@@ -240,7 +240,7 @@ See PRD Module 2: "handleAssignTerminalToPane" section.
 
 ## Issue 7: handleCloseWorkspace and handleCloseTerminalPane use hierarchical tree
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

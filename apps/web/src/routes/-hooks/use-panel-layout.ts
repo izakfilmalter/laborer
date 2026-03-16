@@ -1,6 +1,5 @@
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import {
-  layoutPaneClosed,
   layoutRestored,
   layoutWorkspacesReordered,
   panelLayout,
@@ -51,17 +50,14 @@ import {
 } from '@/panels/layout-migration'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import {
-  closeWorkspacePanes,
   computeResize,
   ensureValidActivePaneId,
   filterTreeByWorkspace,
-  findLeafByTerminalId,
   findNodeById,
   getFirstLeafId,
   getLeafIds,
   getLeafNodes,
   getStaleTerminalLeaves,
-  getWorkspaceTerminalIds,
   reconcileLayout,
   repairPanelLayoutTree,
   replaceNode,
@@ -209,6 +205,29 @@ function syncLegacyTreeToHierarchical(
  * Find the workspace ID that contains a given pane ID by searching all
  * workspace tile leaves across every tab in the layout.
  */
+/**
+ * Look up the PanelTreeNode for a terminal at a known location.
+ * Walks the window layout's tabs → workspace tiles → panel tabs
+ * to resolve the exact panel tree that contains the terminal.
+ */
+function findPanelTreeForLocation(
+  layout: WindowLayout,
+  location: { tabId: string; workspaceId: string; panelTabId: string }
+): PanelTreeNode | undefined {
+  for (const tab of layout.tabs) {
+    if (tab.id !== location.tabId || !tab.workspaceLayout) {
+      continue
+    }
+    const leaves = getWorkspaceTileLeaves(tab.workspaceLayout)
+    const tile = leaves.find((l) => l.workspaceId === location.workspaceId)
+    const panelTab = tile?.panelTabs.find((t) => t.id === location.panelTabId)
+    if (panelTab) {
+      return panelTab.panelLayout
+    }
+  }
+  return undefined
+}
+
 function findWorkspaceForPane(
   layout: WindowLayout,
   paneId: string
@@ -1440,52 +1459,63 @@ export function usePanelLayout() {
    * Close a terminal and its associated pane (ungated — no confirmation).
    * If the terminal has no pane, removes it from the service directly.
    *
-   * Searches the active panel tab's legacy tree first (fast path), then
-   * falls back to searching all panel tabs in the hierarchical layout.
-   * This ensures that closing a terminal from the sidebar works even
-   * when the terminal is in a non-active panel tab.
+   * Searches all panel tabs across all window tabs in the hierarchical
+   * layout via `closeTerminalInWindowLayout`. This handles terminals in
+   * any panel tab (active or not).
    */
   const handleCloseTerminalPane = useCallback(
     (terminalId: string) => {
-      // Fast path: terminal is in the active panel tab's legacy tree
-      const base = persistedLayoutTree ?? defaultLayout
-      if (base) {
-        const leaf = findLeafByTerminalId(base, terminalId)
-        if (leaf) {
-          handleClosePane(leaf.id)
-          return
-        }
+      if (!persistedWindowLayout) {
+        removeTerminalOptimistically(terminalId, '[close-terminal-pane]')
+        return
       }
 
-      // Slow path: search all panel tabs in the hierarchical layout
-      if (persistedWindowLayout) {
-        const newLayout = closeTerminalInWindowLayout(
-          persistedWindowLayout,
-          terminalId
-        )
-        if (newLayout !== persistedWindowLayout) {
-          removeTerminalOptimistically(terminalId, '[close-terminal-pane]')
-          store.commit(
-            panelTabClosed({
-              windowId: panelWindowId,
-              windowLayout: newLayout,
-              activeWindowTabId: newLayout.activeTabId ?? null,
-            })
-          )
-          return
-        }
+      // Find the terminal's location before closing so we can transfer focus.
+      const location = findTerminalLocation(persistedWindowLayout, terminalId)
+
+      // Close the terminal pane in the hierarchical layout.
+      const newLayout = closeTerminalInWindowLayout(
+        persistedWindowLayout,
+        terminalId
+      )
+
+      if (newLayout === persistedWindowLayout) {
+        // Terminal not found in any pane — remove from service directly.
+        removeTerminalOptimistically(terminalId, '[close-terminal-pane]')
+        return
       }
 
-      // No pane found anywhere — remove the terminal from the service directly
       removeTerminalOptimistically(terminalId, '[close-terminal-pane]')
+
+      // Transfer focus if the closed pane was the currently focused pane.
+      // Use the sibling from the *original* tree (before close mutation).
+      let finalLayout = newLayout
+      if (location && persistedActivePaneId === location.paneId) {
+        const originalTree = findPanelTreeForLocation(
+          persistedWindowLayout,
+          location
+        )
+        const siblingId = originalTree
+          ? findSiblingPaneIdInPanelTree(originalTree, location.paneId)
+          : undefined
+        if (siblingId) {
+          finalLayout = saveFocusedPaneId(newLayout, siblingId)
+        }
+      }
+
+      store.commit(
+        windowLayoutPaneClosed({
+          windowId: panelWindowId,
+          windowLayout: finalLayout,
+          activeWindowTabId: finalLayout.activeTabId ?? null,
+        })
+      )
     },
     [
-      persistedLayoutTree,
-      defaultLayout,
       persistedWindowLayout,
+      persistedActivePaneId,
       panelWindowId,
       store,
-      handleClosePane,
       removeTerminalOptimistically,
     ]
   )
@@ -1494,80 +1524,54 @@ export function usePanelLayout() {
    * Close all panes belonging to a workspace and kill their terminals.
    * This is the ungated version — callers should check for running
    * child processes and show a confirmation dialog before invoking.
+   *
+   * Operates exclusively on the hierarchical `WindowLayout`:
+   * 1. Finds the workspace tile leaf and collects all terminal IDs
+   * 2. Kills all terminals
+   * 3. Removes the workspace tile from the layout
+   * 4. Commits `windowLayoutPaneClosed`
    */
   const handleCloseWorkspace = useCallback(
     (workspaceId: string) => {
-      const base = persistedLayoutTree ?? defaultLayout
-      if (!base) {
+      if (!persistedWindowLayout) {
         return
       }
 
-      // Kill all terminals belonging to this workspace
-      const terminalIds = getWorkspaceTerminalIds(base, workspaceId)
-      for (const terminalId of terminalIds) {
-        removeTerminalOptimistically(terminalId, '[close-workspace]')
-      }
-
-      // Remove all workspace panes from the layout tree
-      const newTree = closeWorkspacePanes(base, workspaceId)
-      if (newTree) {
-        const nextActivePaneId = ensureValidActivePaneId(
-          newTree,
-          persistedActivePaneId
+      // Collect all terminal IDs from the workspace's panel tabs in the
+      // hierarchical tree, then kill them.
+      const workspaceTile = getAllWorkspaceTileLeaves(
+        persistedWindowLayout
+      ).find((leaf) => leaf.workspaceId === workspaceId)
+      if (workspaceTile) {
+        const terminalIds = workspaceTile.panelTabs.flatMap((tab) =>
+          collectTerminalIdsFromPanelTree(tab.panelLayout)
         )
-        store.commit(
-          layoutPaneClosed({
-            windowId: panelWindowId,
-            layoutTree: newTree,
-            activePaneId: nextActivePaneId,
-          })
-        )
-      } else {
-        // All panes closed — commit an empty placeholder
-        store.commit(
-          layoutPaneClosed({
-            windowId: panelWindowId,
-            layoutTree: {
-              _tag: 'LeafNode' as const,
-              id: 'pane-empty',
-              paneType: 'terminal' as const,
-              terminalId: undefined,
-              workspaceId: undefined,
-            },
-            activePaneId: null,
-          })
-        )
-        hasSeeded.current = false
-      }
-
-      // Remove the workspace tile from the hierarchical layout so the
-      // workspace frame disappears from the UI.
-      if (persistedWindowLayout) {
-        const updatedWindowLayout = removeWorkspaceFromLayout(
-          persistedWindowLayout,
-          workspaceId,
-          removeWorkspaceFromTab
-        )
-        if (updatedWindowLayout !== persistedWindowLayout) {
-          store.commit(
-            windowLayoutRestored({
-              windowId: panelWindowId,
-              windowLayout: updatedWindowLayout,
-              activeWindowTabId: updatedWindowLayout.activeTabId ?? null,
-            })
-          )
+        for (const terminalId of terminalIds) {
+          removeTerminalOptimistically(terminalId, '[close-workspace]')
         }
       }
+
+      // Remove the workspace tile from the hierarchical layout.
+      const updatedLayout = removeWorkspaceFromLayout(
+        persistedWindowLayout,
+        workspaceId,
+        removeWorkspaceFromTab
+      )
+
+      if (updatedLayout === persistedWindowLayout) {
+        // Workspace not found in the layout — nothing to commit.
+        return
+      }
+
+      store.commit(
+        windowLayoutPaneClosed({
+          windowId: panelWindowId,
+          windowLayout: updatedLayout,
+          activeWindowTabId: updatedLayout.activeTabId ?? null,
+        })
+      )
     },
-    [
-      persistedLayoutTree,
-      defaultLayout,
-      panelWindowId,
-      persistedActivePaneId,
-      persistedWindowLayout,
-      store,
-      removeTerminalOptimistically,
-    ]
+    [persistedWindowLayout, panelWindowId, store, removeTerminalOptimistically]
   )
 
   /**

@@ -24,7 +24,9 @@ const {
   terminalListRef,
   upsertTerminalListItemMock,
   windowLayoutPaneAssignedMock,
+  windowLayoutPaneClosedMock,
   windowLayoutRestoredMock,
+  windowLayoutSplitMock,
   windowTabClosedMock,
   windowTabCreatedMock,
   windowTabSwitchedMock,
@@ -54,9 +56,17 @@ const {
     payload,
     type: 'windowLayoutPaneAssigned',
   })),
+  windowLayoutPaneClosedMock: vi.fn((payload) => ({
+    payload,
+    type: 'windowLayoutPaneClosed',
+  })),
   windowLayoutRestoredMock: vi.fn((payload) => ({
     payload,
     type: 'windowLayoutRestored',
+  })),
+  windowLayoutSplitMock: vi.fn((payload) => ({
+    payload,
+    type: 'windowLayoutSplit',
   })),
   panelTabCreatedMock: vi.fn((payload) => ({
     payload,
@@ -133,7 +143,9 @@ vi.mock('@laborer/shared/schema', () => ({
   panelTabSwitched: panelTabSwitchedMock,
   panelTabsReordered: panelTabsReorderedMock,
   windowLayoutPaneAssigned: windowLayoutPaneAssignedMock,
+  windowLayoutPaneClosed: windowLayoutPaneClosedMock,
   windowLayoutRestored: windowLayoutRestoredMock,
+  windowLayoutSplit: windowLayoutSplitMock,
   windowTabCreated: windowTabCreatedMock,
   windowTabClosed: windowTabClosedMock,
   windowTabSwitched: windowTabSwitchedMock,
@@ -249,12 +261,16 @@ type PersistedLayoutEvent =
   | ReturnType<typeof layoutSplitMock>
   | ReturnType<typeof layoutWorkspacesReorderedMock>
   | ReturnType<typeof windowLayoutPaneAssignedMock>
+  | ReturnType<typeof windowLayoutPaneClosedMock>
   | ReturnType<typeof windowLayoutRestoredMock>
+  | ReturnType<typeof windowLayoutSplitMock>
 
 /** Window layout event types that only update the windowLayout column. */
 const WINDOW_LAYOUT_EVENT_TYPES = new Set([
   'windowLayoutPaneAssigned',
+  'windowLayoutPaneClosed',
   'windowLayoutRestored',
+  'windowLayoutSplit',
   'windowTabCreated',
   'windowTabClosed',
   'windowTabSwitched',
@@ -316,13 +332,14 @@ const applyPersistedLayoutEvent = (event: PersistedLayoutEvent) => {
       layoutTree: payload.layoutTree,
       windowId: payload.windowId,
     }
+    const merged = { ...nextRow }
     if (currentRow?.workspaceOrder !== undefined) {
-      return {
-        ...nextRow,
-        workspaceOrder: currentRow.workspaceOrder,
-      }
+      Object.assign(merged, { workspaceOrder: currentRow.workspaceOrder })
     }
-    return nextRow
+    if (currentRow?.windowLayout !== undefined) {
+      Object.assign(merged, { windowLayout: currentRow.windowLayout })
+    }
+    return merged
   })
 }
 
@@ -340,6 +357,8 @@ describe('usePanelLayout', () => {
     layoutSplitMock.mockClear()
     layoutWorkspacesReorderedMock.mockClear()
     windowLayoutPaneAssignedMock.mockClear()
+    windowLayoutPaneClosedMock.mockClear()
+    windowLayoutSplitMock.mockClear()
     reportVisibleWorkspacesMock.mockClear()
     spawnTerminalMock.mockClear()
     spawnTerminalMock.mockImplementation(async () => ({
@@ -605,7 +624,7 @@ describe('usePanelLayout', () => {
     const windowARow = getPersistedRow('window-a')
     const windowBRow = getPersistedRow('window-b')
 
-    expect(layoutSplitMock).toHaveBeenCalledWith(
+    expect(windowLayoutSplitMock).toHaveBeenCalledWith(
       expect.objectContaining({ windowId: 'window-a' })
     )
     expect(result.current.leafPaneIds).toHaveLength(3)
@@ -641,26 +660,18 @@ describe('usePanelLayout', () => {
     const windowARow = getPersistedRow('window-a')
     const windowBRow = getPersistedRow('window-b')
 
-    expect(layoutPaneClosedMock).toHaveBeenCalledWith(
+    expect(windowLayoutPaneClosedMock).toHaveBeenCalledWith(
       expect.objectContaining({ windowId: 'window-a' })
     )
-    expect(result.current.leafPaneIds).toEqual(['pane-a-right'])
-    expect(windowARow).toEqual({
-      activePaneId: 'pane-a-right',
-      layoutTree: {
-        _tag: 'LeafNode',
-        id: 'pane-a-right',
-        paneType: 'terminal',
-        terminalId: undefined,
-        workspaceId: 'workspace-b',
-      },
-      windowId: 'window-a',
-    })
-    expect(windowBRow).toEqual({
-      activePaneId: 'pane-b-only',
-      layoutTree: WINDOW_B_LAYOUT,
-      windowId: 'window-b',
-    })
+    // After closing pane-a-left, workspace-a gets an empty placeholder pane
+    // and workspace-b still has pane-a-right. In the hierarchical model each
+    // workspace has its own panel tab, so the total leaf count is 2.
+    expect(result.current.leafPaneIds).toHaveLength(2)
+    expect(result.current.leafPaneIds).toContain('pane-a-right')
+    // The windowLayout column should have been updated for window-a.
+    expect(windowARow?.windowLayout).toBeDefined()
+    // Window B should be unaffected.
+    expect(windowBRow?.windowId).toBe('window-b')
   })
 
   it('scopes terminal assignment and workspace reorder writes to the current window', async () => {

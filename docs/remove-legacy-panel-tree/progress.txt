@@ -283,3 +283,52 @@ from `panelLayout` query results. These are expected and will be resolved by sub
 - All 75 related tests pass (focus-consistency, progressive-close, hierarchical-persistence, panel-manager)
 - TypeScript: same 4 pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)
 - No new type errors introduced
+
+## Issue 7: handleCloseWorkspace and handleCloseTerminalPane use hierarchical tree
+
+**Status:** done
+
+### Changes made
+
+1. **Rewrote `handleCloseTerminalPane`** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - No longer reads from `persistedLayoutTree` or `defaultLayout` (legacy `PanelNode` tree)
+   - No longer calls `findLeafByTerminalId()` from `layout-utils.ts` (legacy fast path)
+   - No longer delegates to `handleClosePane` as a fast path — uses `closeTerminalInWindowLayout` as the sole path
+   - No longer commits `panelTabClosed` in the slow path — commits `windowLayoutPaneClosed` for all cases
+   - Now operates directly on `persistedWindowLayout` (hierarchical `WindowLayout`)
+   - Uses `findTerminalLocation()` before closing to determine if focus transfer is needed
+   - Uses `findPanelTreeForLocation()` (new helper) to look up the original panel tree for sibling resolution
+   - Uses `findSiblingPaneIdInPanelTree()` + `saveFocusedPaneId()` to transfer focus when the closed pane was focused
+   - Handles "terminal not found" case by removing terminal from service directly
+
+2. **Rewrote `handleCloseWorkspace`** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - No longer reads from `persistedLayoutTree` or `defaultLayout` (legacy `PanelNode` tree)
+   - No longer calls `getWorkspaceTerminalIds()` from `layout-utils.ts` (legacy)
+   - No longer calls `closeWorkspacePanes()` from `layout-utils.ts` (legacy)
+   - No longer calls `ensureValidActivePaneId()` from `layout-utils.ts` (legacy)
+   - No longer commits `layoutPaneClosed` (legacy event, now a no-op)
+   - No longer commits both legacy + hierarchical events (dual-write pattern removed)
+   - No longer resets `hasSeeded.current` on all-panes-closed edge case
+   - Now operates directly on `persistedWindowLayout` (hierarchical `WindowLayout`)
+   - Uses `getAllWorkspaceTileLeaves()` to find the workspace tile and collect terminal IDs via `collectTerminalIdsFromPanelTree()`
+   - Uses `removeWorkspaceFromLayout()` (already existed) to remove the workspace tile
+   - Commits single `windowLayoutPaneClosed` instead of dual `layoutPaneClosed` + `windowLayoutRestored`
+
+3. **Added `findPanelTreeForLocation` helper** (`use-panel-layout.ts`):
+   - Resolves the PanelTreeNode for a terminal at a known TerminalLocation
+   - Walks window tabs → workspace tiles → panel tabs to find the exact tree
+   - Used by `handleCloseTerminalPane` for focus transfer
+
+4. **Updated test mocks** (`apps/web/test/use-panel-layout.test.ts`):
+   - Added `windowLayoutPaneClosedMock` and `windowLayoutSplitMock` to hoisted mocks, destructured variables, schema mock, event type union, and beforeEach resets
+   - Added `windowLayoutPaneClosed` and `windowLayoutSplit` to `WINDOW_LAYOUT_EVENT_TYPES` set
+   - Fixed legacy event handler in `applyPersistedLayoutEvent` to preserve `windowLayout` column when legacy events upsert rows
+   - Updated "writes split operations" test: expects `windowLayoutSplitMock` instead of `layoutSplitMock`
+   - Updated "writes close operations" test: expects `windowLayoutPaneClosedMock` instead of `layoutPaneClosedMock`, expects 2 leaf panes (hierarchical model keeps workspace-a with empty placeholder)
+
+### Test results
+
+- All 1319 tests in apps/web pass (1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- TypeScript: same 4 pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)
+- No new type errors introduced

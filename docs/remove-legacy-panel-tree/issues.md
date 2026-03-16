@@ -426,7 +426,7 @@ See PRD Module 4: "PanelHotkeys" section.
 
 ## Issue 12: Seeding and reconciliation: hierarchical only
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

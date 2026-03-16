@@ -332,3 +332,100 @@ from `panelLayout` query results. These are expected and will be resolved by sub
 - All 71 tests in packages/shared pass
 - TypeScript: same 4 pre-existing errors in `use-panel-layout.ts` (from Issue 2 column removal)
 - No new type errors introduced
+
+## Issue 12: Seeding and reconciliation: hierarchical only
+
+**Status:** done
+
+### Changes made
+
+1. **Rewrote `useInitialLayout`** (`apps/web/src/routes/-hooks/use-initial-layout.ts`):
+   - Now returns `WindowLayout | undefined` instead of `PanelNode | undefined`
+   - Groups running terminals by workspace into `WorkspaceTileLeaf` nodes
+   - Builds a full `WindowLayout` with `WindowTab`, `WorkspaceTileNode`, `PanelTab`, `PanelTreeNode`
+   - Uses `generateId` for all node IDs (previously used `pane-${id}` pattern)
+   - Multiple workspaces produce a `WorkspaceTileSplit`; single workspace produces `WorkspaceTileLeaf`
+
+2. **Removed all legacy seeding/reconciliation from `use-panel-layout.ts`**:
+   - Removed `persistedLayoutRepair` memo and `repairPanelLayoutTree` call
+   - Removed `persistedLayoutTree` (no longer read from persisted row)
+   - Removed `rawPersistedActivePaneId` (hardcoded null, now fully removed)
+   - Removed `persistedWorkspaceOrder` (hardcoded null, now fully removed)
+   - Removed `migrateToWindowLayout` call from `persistedWindowLayout` memo
+   - `persistedWindowLayout` now simply reads from `windowLayoutRepair.windowLayout`
+
+3. **Simplified seeding** (`use-panel-layout.ts`):
+   - Replaced `DEFAULT_NEW_WINDOW_LAYOUT` (`LeafNode`) with `createBlankWindowLayout()` that produces a `WindowLayout`
+   - `defaultWindowLayout` is now a `WindowLayout` (was `PanelNode`)
+   - Seeding commits `windowLayoutRestored` instead of `layoutRestored`
+   - No longer calls `getFirstLeafId` — focus is embedded in the `WindowLayout` via `focusedPaneId`
+
+4. **Removed legacy repair useEffect** (`use-panel-layout.ts`):
+   - Removed the `shouldRepairPersistedSession` effect that committed `layoutRestored`
+   - Only the hierarchical `repairWindowLayout` + `windowLayoutRestored` path remains
+
+5. **Simplified reconciliation** (`use-panel-layout.ts`):
+   - `collectStaleLeaves` now only calls `getStaleTerminalLeavesHierarchical` (removed legacy `getStaleTerminalLeaves` fallback)
+   - `commitReconciledLayouts` now only reconciles the hierarchical `WindowLayout` (removed legacy `reconcileLayout` + `layoutRestored` path)
+   - `isReconciling` initial state only checks `persistedWindowLayout` (removed `persistedLayoutTree` check)
+   - Reconciliation effect no longer depends on `persistedLayoutTree`
+
+6. **Removed `syncLegacyTreeToHierarchical`** (`use-panel-layout.ts`):
+   - Removed the entire 45-line function
+   - Removed `commitDevServerSync` helper that called it
+   - Removed `spawnAndAssignDevServer` helper that used legacy tree operations
+
+7. **Rewrote `handleToggleDevServerPane`** (`use-panel-layout.ts`):
+   - Now operates directly on the hierarchical `WindowLayout`
+   - Toggle ON: Creates a `devServerTerminal` panel tab via `addPanelTab`
+   - Toggle OFF: Removes the `devServerTerminal` panel tab via `removePanelTab`
+   - No longer references `persistedLayoutTree`, `defaultLayout`, `findNodeById`, `replaceNode`, `LeafNode`
+   - Commits `windowLayoutPaneAssigned` (was syncing legacy tree then committing)
+
+8. **Simplified `handleReorderWorkspaces`** (`use-panel-layout.ts`):
+   - Removed legacy fallback that committed `layoutWorkspacesReordered`
+   - Only uses the hierarchical `reorderWorkspaceTiles` path
+
+9. **Simplified `handleResizePane`** (`use-panel-layout.ts`):
+   - Uses the derived legacy `layout` instead of `persistedLayoutTree ?? defaultLayout`
+   - `computeResize` still operates on `PanelNode` (Issue 9 will port it to `PanelTreeNode`)
+
+10. **Derived `layout` from hierarchical tree** (`use-panel-layout.ts`):
+    - `layout` is now computed via `deriveLegacyTreeFromHierarchical(persistedWindowLayout)`
+    - Still returned for consumers in `index.tsx` (Issues 10, 11, 13 will port them)
+    - No longer falls back to `persistedLayoutTree ?? defaultLayout`
+
+11. **Derived `leafPaneIds` from hierarchical tree** (`use-panel-layout.ts`):
+    - Uses `getWorkspaceTileLeaves` + `getPanelTreeLeafIds` instead of `getLeafIds(layout)`
+    - Collects leaf IDs from the active panel tab of each workspace tile
+
+12. **Derived `workspaceOrder` as null** (`use-panel-layout.ts`):
+    - Workspace ordering is now part of the hierarchical tile layout
+    - Returns `null` for consumers that still reference it (Issue 13 will remove them)
+
+13. **Removed unused imports** (`use-panel-layout.ts`):
+    - Removed: `layoutRestored`, `layoutWorkspacesReordered` from schema
+    - Removed: `LeafNode`, `PanelNode` from types
+    - Removed: `convertPanelTree`, `migrateToWindowLayout` from layout-migration
+    - Removed: `ensureValidActivePaneId`, `filterTreeByWorkspace`, `findNodeById`, `getFirstLeafId`, `getLeafIds`, `getLeafNodes`, `getStaleTerminalLeaves`, `reconcileLayout`, `repairPanelLayoutTree`, `replaceNode` from layout-utils
+    - Kept: `deriveLegacyTreeFromHierarchical` (for legacy `layout` derivation, consumed by index.tsx)
+    - Kept: `computeResize` (still operates on `PanelNode`, Issue 9 will port)
+
+14. **Updated visible workspace reporting** (`use-panel-layout.ts`):
+    - Uses `getAllWorkspaceTileLeaves` instead of `getLeafNodes(layout)` to report workspace IDs to the desktop bridge
+
+15. **Updated test file** (`apps/web/test/use-panel-layout.test.ts`):
+    - All fixtures now use `WindowLayout` instead of `PanelNode`
+    - Persisted rows no longer have `layoutTree`, `activePaneId`, `workspaceOrder` columns
+    - Seeding tests assert `windowLayoutRestored` instead of `layoutRestored`
+    - Reconciliation tests use hierarchical stale layout fixtures
+    - Removed legacy event mocks: `layoutSplitMock`, `layoutPaneClosedMock`, `layoutWorkspacesReorderedMock`
+    - 12 tests pass (was 14, removed 2 that tested legacy-only paths: corrupted layout fallback and stale active-pane repair)
+
+### Test results
+
+- All 1317 tests in apps/web pass (1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- TypeScript: 0 errors (the 4 pre-existing errors from Issue 2 are now resolved)
+- No new type errors introduced
+- Format check passes

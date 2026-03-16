@@ -133,6 +133,9 @@ const allWorkspaces$ = queryDb(workspaces, { label: 'homePanelWorkspaces' })
 /** Mutation atom for spawning terminals via the server's terminal.spawn RPC. */
 const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
 
+/** Mutation atom for fetching the project config (used imperatively to resolve the agent provider). */
+const configGetMutation = LaborerClient.mutation('config.get')
+
 /** Mutation atom for removing terminals via the terminal service's terminal.remove RPC. */
 const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
 
@@ -412,6 +415,9 @@ export function usePanelLayout() {
   const spawnTerminal = useAtomSet(spawnTerminalMutation, {
     mode: 'promise',
   })
+  const getConfig = useAtomSet(configGetMutation, {
+    mode: 'promise',
+  })
   const removeTerminal = useAtomSet(removeTerminalMutation, {
     mode: 'promise',
   })
@@ -639,7 +645,14 @@ export function usePanelLayout() {
       const splitWorkspaceId =
         sourceNode?._tag === 'LeafNode' ? sourceNode.workspaceId : undefined
 
-      const newTree = splitPane(base, paneId, direction, newPaneContent)
+      // Agent panes are terminals running the configured agent command.
+      // Store as 'terminal' so the renderer treats them uniformly.
+      const effectiveContent =
+        newPaneContent?.paneType === 'agent'
+          ? { ...newPaneContent, paneType: 'terminal' as const }
+          : newPaneContent
+
+      const newTree = splitPane(base, paneId, direction, effectiveContent)
 
       // Find the newly created pane via leaf-diffing
       const newLeaf = findNewLeafAfterSplit(base, newTree)
@@ -687,17 +700,42 @@ export function usePanelLayout() {
         return
       }
 
-      // Only auto-spawn a terminal for terminal-type panes.
-      // Diff, review, and dev server panes handle their own content.
+      // Only auto-spawn a terminal for terminal-type and agent-type
+      // panes. Diff, review, and dev server panes handle their own
+      // content.
       const newPaneType = newPaneContent?.paneType ?? 'terminal'
-      if (newPaneType !== 'terminal') {
+      if (newPaneType !== 'terminal' && newPaneType !== 'agent') {
         return
       }
 
-      // Auto-spawn a terminal in the new pane
+      // Auto-spawn a terminal in the new pane. For agent panes, resolve
+      // the configured agent provider first.
       const wsId = newLeaf.workspaceId
       const newPaneId = newLeaf.id
-      spawnTerminal({ payload: { workspaceId: wsId } })
+
+      const resolveCommand = async (): Promise<string | undefined> => {
+        if (newPaneType !== 'agent') {
+          return undefined
+        }
+        const wsList = store.query(allWorkspaces$)
+        const ws = wsList.find((w) => w.id === wsId)
+        if (!ws?.projectId) {
+          return 'opencode'
+        }
+        try {
+          const config = await getConfig({
+            payload: { projectId: ws.projectId },
+          })
+          return config.agent.value ?? 'opencode'
+        } catch {
+          return 'opencode'
+        }
+      }
+
+      resolveCommand()
+        .then((command) =>
+          spawnTerminal({ payload: { workspaceId: wsId, command } })
+        )
         .then((result) => {
           assignTerminalToPaneRef.current?.(result.id, wsId, newPaneId)
         })
@@ -712,6 +750,7 @@ export function usePanelLayout() {
       persistedActivePaneId,
       persistedWindowLayout,
       store,
+      getConfig,
       spawnTerminal,
     ]
   )
@@ -1721,11 +1760,15 @@ export function usePanelLayout() {
         commitWindowLayout(windowLayoutRestored, base)
       }
 
+      // Agent panes are terminals running the configured agent command.
+      // Store as 'terminal' so the renderer treats them uniformly.
+      const effectivePanelType = panelType === 'agent' ? 'terminal' : panelType
+
       let newPaneId: string | undefined
       const newLayout = updateWorkspaceTileLeaf(base, workspaceId, (leaf) => {
         const updated = addPanelTab(
           leaf,
-          panelType,
+          effectivePanelType,
           options?.terminalId ? { terminalId: options.terminalId } : undefined
         )
         // The newly added tab is always the last one and is set as active
@@ -1737,10 +1780,15 @@ export function usePanelLayout() {
       })
       commitPanelTabLayout(panelTabCreated, newLayout)
 
-      // Auto-spawn a terminal for terminal-type panel tabs, mirroring
-      // the split-pane behaviour at handleSplitPane — but skip if the
-      // caller already provided a terminal ID (e.g. sidebar spawn).
-      if (panelType === 'terminal' && newPaneId && !options?.terminalId) {
+      // Auto-spawn a terminal for terminal-type and agent-type panel
+      // tabs, mirroring the split-pane behaviour at handleSplitPane —
+      // but skip if the caller already provided a terminal ID (e.g.
+      // sidebar spawn).
+      if (
+        (panelType === 'terminal' || panelType === 'agent') &&
+        newPaneId &&
+        !options?.terminalId
+      ) {
         const paneId = newPaneId
         // Capture the layout that was just committed — the `.then()`
         // callback fires asynchronously and `persistedWindowLayout`
@@ -1748,7 +1796,31 @@ export function usePanelLayout() {
         // committed with the empty pane.
         const layoutSnapshot = newLayout
 
-        spawnTerminal({ payload: { workspaceId } })
+        // Resolve the spawn command: for agents, look up the workspace's
+        // project config to determine which agent provider to use.
+        const resolveCommand = async (): Promise<string | undefined> => {
+          if (panelType !== 'agent') {
+            return undefined
+          }
+          const wsList = store.query(allWorkspaces$)
+          const ws = wsList.find((w) => w.id === workspaceId)
+          if (!ws?.projectId) {
+            return 'opencode'
+          }
+          try {
+            const config = await getConfig({
+              payload: { projectId: ws.projectId },
+            })
+            return config.agent.value ?? 'opencode'
+          } catch {
+            return 'opencode'
+          }
+        }
+
+        resolveCommand()
+          .then((command) =>
+            spawnTerminal({ payload: { workspaceId, command } })
+          )
           .then((result) => {
             // Directly update the hierarchical layout to assign the
             // terminal to the pane. Going through the legacy
@@ -1781,7 +1853,9 @@ export function usePanelLayout() {
       persistedWindowLayout,
       commitPanelTabLayout,
       commitWindowLayout,
+      getConfig,
       spawnTerminal,
+      store,
     ]
   )
 

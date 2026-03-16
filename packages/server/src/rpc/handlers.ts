@@ -846,6 +846,20 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         const workspaceSyncService = yield* WorkspaceSyncService
         return yield* workspaceSyncService.pull(workspaceId)
       }),
+    'workspace.startContainer': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const provider = yield* WorkspaceProvider
+        const diffService = yield* DiffService
+        const prWatcher = yield* PrWatcher
+        const workspaceSyncService = yield* WorkspaceSyncService
+        const onReady = (wsId: string) =>
+          Effect.gen(function* () {
+            yield* diffService.startPolling(wsId)
+            yield* prWatcher.startPolling(wsId)
+            yield* workspaceSyncService.startPolling(wsId)
+          })
+        yield* provider.startContainer(workspaceId, onReady)
+      }),
 
     // -------------------------------------------------------------------
     // Container RPCs (Issue 10)

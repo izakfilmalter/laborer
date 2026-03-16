@@ -36,7 +36,7 @@
  * @see Issue #193: Plan workspace scoped task list and brrr integration
  */
 
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { prds, workspaces } from '@laborer/shared/schema'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
 import { queryDb } from '@livestore/livestore'
@@ -56,7 +56,7 @@ import {
   useMemo,
   useState,
 } from 'react'
-import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
+import { LaborerClient } from '@/atoms/laborer-client'
 import { CopyButton } from '@/components/copy-button'
 import { FixFindingsForm } from '@/components/fix-findings-form'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
@@ -117,7 +117,9 @@ const allWorkspaces$ = queryDb(workspaces, { label: 'workspaceList' })
 const allPrds$ = queryDb(prds, { label: 'workspaceList.prds' })
 
 const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
-const startLoopMutation = LaborerClient.mutation('brrr.startLoop')
+const startContainerMutation = LaborerClient.mutation(
+  'workspace.startContainer'
+)
 const pauseContainerMutation = LaborerClient.mutation('container.pause')
 const unpauseContainerMutation = LaborerClient.mutation('container.unpause')
 
@@ -437,14 +439,14 @@ function DestroyDialogDescription({
 }
 
 /**
- * Start Ralph Loop button — extracted to avoid excessive complexity
- * in WorkspaceItem and to encapsulate the phase-gating logic.
+ * Start Container button — starts a container for a non-containerized
+ * workspace, converting it into a laborer-managed workspace.
  */
-function StartRalphLoopButton({
-  isStartingLoop,
+function StartContainerButton({
+  isStarting,
   onClick,
 }: {
-  readonly isStartingLoop: boolean
+  readonly isStarting: boolean
   readonly onClick: () => void
 }) {
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
@@ -454,8 +456,8 @@ function StartRalphLoopButton({
       <TooltipTrigger
         render={
           <Button
-            aria-label="Start ralph loop"
-            disabled={!isServerReady || isStartingLoop}
+            aria-label="Start container"
+            disabled={!isServerReady || isStarting}
             onClick={onClick}
             size="icon-xs"
             title={isServerReady ? undefined : 'Connecting to server...'}
@@ -466,13 +468,11 @@ function StartRalphLoopButton({
         <Play
           className={cn(
             'size-3.5',
-            isStartingLoop
-              ? 'animate-pulse text-muted-foreground'
-              : 'text-success'
+            isStarting ? 'animate-pulse text-muted-foreground' : 'text-success'
           )}
         />
       </TooltipTrigger>
-      <TooltipContent>Start Ralph Loop</TooltipContent>
+      <TooltipContent>Start Container</TooltipContent>
     </Tooltip>
   )
 }
@@ -641,50 +641,29 @@ function WorkspaceItem({
   associatedPrdId,
   isRootWorkspace,
 }: WorkspaceItemProps) {
-  const [isStartingLoop, setIsStartingLoop] = useState(false)
+  const [isStartingContainer, setIsStartingContainer] = useState(false)
   const [workspaceAgentStatus, setWorkspaceAgentStatus] = useState<
     'active' | 'waiting_for_input' | null
   >(null)
-  const startLoop = useAtomSet(startLoopMutation, {
+  const startContainer = useAtomSet(startContainerMutation, {
     mode: 'promise',
   })
-  const panelActions = usePanelActions()
   const activeWorkspaceId = useActiveWorkspaceId()
   const isActiveWorkspace = activeWorkspaceId === workspace.id
-  const configGet$ = useMemo(
-    () =>
-      LaborerClient.query(
-        'config.get',
-        { projectId: workspace.projectId },
-        { reactivityKeys: ConfigReactivityKeys }
-      ),
-    [workspace.projectId]
-  )
-  const configResult = useAtomValue(configGet$)
-  const autoOpenDevServer =
-    configResult._tag === 'Success'
-      ? configResult.value.devServer.autoOpen.value
-      : false
 
-  const handleStartLoop = useCallback(async () => {
-    setIsStartingLoop(true)
+  const handleStartContainer = useCallback(async () => {
+    setIsStartingContainer(true)
     try {
-      const result = await startLoop({
+      await startContainer({
         payload: { workspaceId: workspace.id },
       })
-      toast.success('Ralph loop started')
-      // Auto-assign the spawned terminal to a pane
-      if (panelActions) {
-        panelActions.assignTerminalToPane(result.id, workspace.id, undefined, {
-          autoOpenDevServer,
-        })
-      }
+      toast.success('Container started')
     } catch (error: unknown) {
-      toast.error(`Failed to start ralph loop: ${extractErrorMessage(error)}`)
+      toast.error(`Failed to start container: ${extractErrorMessage(error)}`)
     } finally {
-      setIsStartingLoop(false)
+      setIsStartingContainer(false)
     }
-  }, [autoOpenDevServer, startLoop, workspace.id, panelActions])
+  }, [startContainer, workspace.id])
 
   const isContainerized = workspace.containerId != null
   const isContainerPaused = workspace.containerStatus === 'paused'
@@ -844,9 +823,9 @@ function WorkspaceItem({
                   workspaceId={workspace.id}
                 />
               ) : (
-                <StartRalphLoopButton
-                  isStartingLoop={isStartingLoop}
-                  onClick={handleStartLoop}
+                <StartContainerButton
+                  isStarting={isStartingContainer}
+                  onClick={handleStartContainer}
                 />
               )}
             </div>

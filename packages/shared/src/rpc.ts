@@ -612,6 +612,13 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
+  Rpc.make('workspace.startContainer', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
   // -----------------------------------------------------------------------
   // Container RPCs (Issue 10)
   // -----------------------------------------------------------------------

@@ -80,6 +80,7 @@ import {
 import {
   addWindowTab,
   addWorkspaceToTabUnique,
+  assignTerminalInPanelTree,
   closeTerminalInWindowLayout,
   collectTerminalIdsFromPanelTree,
   collectTerminalIdsFromTileTree,
@@ -1741,9 +1742,35 @@ export function usePanelLayout() {
       // caller already provided a terminal ID (e.g. sidebar spawn).
       if (panelType === 'terminal' && newPaneId && !options?.terminalId) {
         const paneId = newPaneId
+        // Capture the layout that was just committed — the `.then()`
+        // callback fires asynchronously and `persistedWindowLayout`
+        // may be stale, but `newLayout` is the exact layout we just
+        // committed with the empty pane.
+        const layoutSnapshot = newLayout
+
         spawnTerminal({ payload: { workspaceId } })
           .then((result) => {
-            assignTerminalToPaneRef.current?.(result.id, workspaceId, paneId)
+            // Directly update the hierarchical layout to assign the
+            // terminal to the pane. Going through the legacy
+            // `assignTerminalToPane` doesn't work here because the
+            // pane ID only exists in the hierarchical layout, not in
+            // the legacy `persistedLayoutTree`.
+            const updated = updateWorkspaceTileLeaf(
+              layoutSnapshot,
+              workspaceId,
+              (leaf) => ({
+                ...leaf,
+                panelTabs: leaf.panelTabs.map((tab) => ({
+                  ...tab,
+                  panelLayout: assignTerminalInPanelTree(
+                    tab.panelLayout,
+                    paneId,
+                    result.id
+                  ),
+                })),
+              })
+            )
+            commitPanelTabLayout(panelTabCreated, updated)
           })
           .catch((error) => {
             console.warn('[add-panel-tab] auto-spawn failed:', error)

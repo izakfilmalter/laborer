@@ -115,14 +115,14 @@ describe('addWorkspaceToTab', () => {
     expect(leaf.panelTabs).toEqual([])
   })
 
-  it('adds second workspace to a tab with a single workspace (creates horizontal split)', () => {
+  it('adds second workspace to a tab with a single workspace (creates vertical split)', () => {
     const tile = makeTile('tile-1', 'ws-1')
     const tab = makeTab('tab-1', tile)
     const result = addWorkspaceToTab(tab, 'ws-2')
 
     expect(result.workspaceLayout?._tag).toBe('WorkspaceTileSplit')
     const split = result.workspaceLayout as WorkspaceTileSplit
-    expect(split.direction).toBe('horizontal')
+    expect(split.direction).toBe('vertical')
     expect(split.children.length).toBe(2)
     expect(split.sizes).toEqual([50, 50])
 
@@ -132,30 +132,7 @@ describe('addWorkspaceToTab', () => {
     expect((split.children[1] as WorkspaceTileLeaf).workspaceId).toBe('ws-2')
   })
 
-  it('adds to an existing horizontal split (flattens)', () => {
-    const split = makeTileSplit(
-      'split-1',
-      'horizontal',
-      [makeTile('tile-1', 'ws-1'), makeTile('tile-2', 'ws-2')],
-      [50, 50]
-    )
-    const tab = makeTab('tab-1', split)
-    const result = addWorkspaceToTab(tab, 'ws-3')
-
-    expect(result.workspaceLayout?._tag).toBe('WorkspaceTileSplit')
-    const newSplit = result.workspaceLayout as WorkspaceTileSplit
-    expect(newSplit.direction).toBe('horizontal')
-    expect(newSplit.children.length).toBe(3)
-    expect(getWorkspaceIds(newSplit)).toEqual(['ws-1', 'ws-2', 'ws-3'])
-
-    // Sizes redistributed evenly
-    const expectedSize = 100 / 3
-    for (const size of newSplit.sizes) {
-      expect(size).toBeCloseTo(expectedSize)
-    }
-  })
-
-  it('wraps a vertical root split in a new horizontal split', () => {
+  it('adds to an existing vertical split (flattens)', () => {
     const split = makeTileSplit(
       'split-1',
       'vertical',
@@ -167,11 +144,34 @@ describe('addWorkspaceToTab', () => {
 
     expect(result.workspaceLayout?._tag).toBe('WorkspaceTileSplit')
     const newSplit = result.workspaceLayout as WorkspaceTileSplit
-    expect(newSplit.direction).toBe('horizontal')
+    expect(newSplit.direction).toBe('vertical')
+    expect(newSplit.children.length).toBe(3)
+    expect(getWorkspaceIds(newSplit)).toEqual(['ws-1', 'ws-2', 'ws-3'])
+
+    // Sizes redistributed evenly
+    const expectedSize = 100 / 3
+    for (const size of newSplit.sizes) {
+      expect(size).toBeCloseTo(expectedSize)
+    }
+  })
+
+  it('wraps a horizontal root split in a new vertical split', () => {
+    const split = makeTileSplit(
+      'split-1',
+      'horizontal',
+      [makeTile('tile-1', 'ws-1'), makeTile('tile-2', 'ws-2')],
+      [50, 50]
+    )
+    const tab = makeTab('tab-1', split)
+    const result = addWorkspaceToTab(tab, 'ws-3')
+
+    expect(result.workspaceLayout?._tag).toBe('WorkspaceTileSplit')
+    const newSplit = result.workspaceLayout as WorkspaceTileSplit
+    expect(newSplit.direction).toBe('vertical')
     expect(newSplit.children.length).toBe(2)
     expect(newSplit.sizes).toEqual([50, 50])
 
-    // First child is the original vertical split
+    // First child is the original horizontal split
     expect(newSplit.children[0]).toBe(split)
     // Second child is the new workspace
     expect((newSplit.children[1] as WorkspaceTileLeaf).workspaceId).toBe('ws-3')
@@ -684,9 +684,9 @@ describe('reorderWorkspaceTiles', () => {
     expect(getWorkspaceIds(newSplit)).toEqual(['ws-2', 'ws-1'])
   })
 
-  it('flattens a nested split tree into a flat horizontal split on reorder', () => {
+  it('flattens a nested split tree into a flat vertical split on reorder', () => {
     // Layout: H-Split(ws-1, V-Split(ws-2, ws-3))
-    // After reorder, should be flat: H-Split(ws-3, ws-2, ws-1)
+    // After reorder, should be flat: V-Split(ws-3, ws-2, ws-1)
     const innerSplit = makeTileSplit('inner', 'vertical', [
       makeTile('tile-2', 'ws-2'),
       makeTile('tile-3', 'ws-3'),
@@ -699,7 +699,7 @@ describe('reorderWorkspaceTiles', () => {
 
     const result = reorderWorkspaceTiles(tab, ['ws-3', 'ws-2', 'ws-1'])
     const newSplit = result.workspaceLayout as WorkspaceTileSplit
-    expect(newSplit.direction).toBe('horizontal')
+    expect(newSplit.direction).toBe('vertical')
     expect(newSplit.children.length).toBe(3)
     expect(getWorkspaceIds(newSplit)).toEqual(['ws-3', 'ws-2', 'ws-1'])
   })
@@ -773,8 +773,8 @@ describe('combined operations', () => {
     expect(firstChild).toBeDefined()
     const firstTileId = (firstChild as WorkspaceTileNode).id
 
-    // Resize first tile to the right
-    const resized = resizeWorkspaceTiles(tab, firstTileId, 'right')
+    // Resize first tile downward
+    const resized = resizeWorkspaceTiles(tab, firstTileId, 'down')
     const resizedSplit = resized.workspaceLayout as WorkspaceTileSplit
     const expectedBase = 100 / 3
     expect(resizedSplit.sizes[0]).toBeCloseTo(expectedBase + 5)

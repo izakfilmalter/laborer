@@ -495,3 +495,50 @@ from `panelLayout` query results. These are expected and will be resolved by sub
 - TypeScript: 0 errors
 - No new type errors introduced
 - Format check passes (pre-existing `isHorizontal` dependency info only)
+
+## Issue 9: handleResizePane walks PanelTreeNode
+
+**Status:** done
+
+### Changes made
+
+1. **Added `computeResizePanelTree` and helpers to `window-tab-utils.ts`**:
+   - `buildPanelTreePath(root, targetId)`: Builds the path from root to target in a `PanelTreeNode` tree
+   - `getResizeDeltaPanelTree(direction, splitOrientation)`: Computes resize delta (+/- 5%) based on arrow key and split orientation
+   - `applyPanelTreeResizeDelta(ancestor, childIndex, delta)`: Applies resize delta to a `PanelSplitNode`, enforcing min size (5%)
+   - `computeResizeFromPanelTreePath(path, direction)`: Walks up the path to find a resizable ancestor split
+   - `computeResizePanelTree(root, activePaneId, direction)`: Entry point — finds the parent split that can be resized and computes new sizes
+   - All functions are mechanical ports of the legacy versions from `layout-utils.ts` with `PanelNode` → `PanelTreeNode`, `'SplitNode'` → `'PanelSplitNode'`
+
+2. **Added `findPanelTreeRootForPane` to `window-tab-utils.ts`**:
+   - Searches all tabs → workspace tiles → panel tabs to find the `PanelTreeNode` root containing a pane
+   - Returns the panel tab's `panelLayout` (the root `PanelTreeNode`), or undefined if not found
+
+3. **Added `NavigationDirection` type to `window-tab-utils.ts`**:
+   - `'left' | 'right' | 'up' | 'down'` — same as in `layout-utils.ts`
+   - Exported as a type so consumers can import from `window-tab-utils` instead of `layout-utils`
+
+4. **Rewrote `handleResizePane`** (`apps/web/src/routes/-hooks/use-panel-layout.ts`):
+   - No longer reads from `layout` (derived legacy `PanelNode` tree)
+   - No longer calls `computeResize()` from `layout-utils.ts`
+   - Now uses `findPanelTreeRootForPane(persistedWindowLayout, paneId)` to locate the panel tree
+   - Uses `computeResizePanelTree(panelTreeRoot, paneId, direction)` to compute new sizes
+   - Dependency changed from `[layout, registry]` to `[persistedWindowLayout, registry]`
+
+5. **Removed `layout-utils` imports from `use-panel-layout.ts`**:
+   - Removed: `import type { NavigationDirection } from '@/panels/layout-utils'`
+   - Removed: `import { computeResize } from '@/panels/layout-utils'`
+   - Added: `import type { NavigationDirection } from '@/panels/window-tab-utils'`
+   - `use-panel-layout.ts` no longer imports anything from `layout-utils.ts`
+
+6. **Added unit tests** (`apps/web/test/window-tab-utils.test.ts`):
+   - `computeResizePanelTree`: 10 tests covering single leaf, not-found, horizontal grow/shrink, vertical grow/shrink, direction mismatch, min size enforcement, nested tree walk-up, inner split resize
+   - `findPanelTreeRootForPane`: 5 tests covering single pane, not-found, split tree, empty layout, cross-tab search
+
+### Test results
+
+- All 1349 tests in apps/web pass (was 1334, added 15 new; 1 skipped, pre-existing)
+- All 71 tests in packages/shared pass
+- TypeScript: 0 errors
+- No new type errors introduced
+- Format check passes

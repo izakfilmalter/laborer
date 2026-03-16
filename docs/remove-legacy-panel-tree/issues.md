@@ -310,7 +310,7 @@ See PRD Module 2: "handleToggleDevServerPane" section.
 
 ## Issue 9: handleResizePane walks PanelTreeNode
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

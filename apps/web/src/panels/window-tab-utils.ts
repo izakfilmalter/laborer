@@ -2374,6 +2374,202 @@ function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
 }
 
 // ---------------------------------------------------------------------------
+// Panel tree resize
+// ---------------------------------------------------------------------------
+
+/** Resize step percentage — how much the active pane grows or shrinks per press. */
+const RESIZE_STEP = 5
+
+/** Minimum pane size percentage — prevents panes from being resized to nothing. */
+const MIN_PANE_SIZE = 5
+
+/** Cardinal direction for keyboard navigation / resize. */
+type NavigationDirection = 'left' | 'right' | 'up' | 'down'
+
+/**
+ * Build the path from the root PanelTreeNode to a target node.
+ * Returns an array from root to target (inclusive), or undefined if not found.
+ */
+function buildPanelTreePath(
+  root: PanelTreeNode,
+  targetId: string
+): PanelTreeNode[] | undefined {
+  if (root.id === targetId) {
+    return [root]
+  }
+  if (root._tag === 'PanelSplitNode') {
+    for (const child of root.children) {
+      const childPath = buildPanelTreePath(child, targetId)
+      if (childPath) {
+        return [root, ...childPath]
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Compute the resize delta based on the keyboard arrow and the split orientation.
+ *
+ * Returns a positive delta to grow or negative delta to shrink, or undefined
+ * if the arrow direction doesn't match the split orientation.
+ */
+function getResizeDeltaPanelTree(
+  direction: NavigationDirection,
+  splitOrientation: 'horizontal' | 'vertical'
+): number | undefined {
+  if (splitOrientation === 'horizontal') {
+    if (direction === 'right') {
+      return RESIZE_STEP
+    }
+    if (direction === 'left') {
+      return -RESIZE_STEP
+    }
+    return undefined
+  }
+  // vertical
+  if (direction === 'down') {
+    return RESIZE_STEP
+  }
+  if (direction === 'up') {
+    return -RESIZE_STEP
+  }
+  return undefined
+}
+
+/**
+ * Apply a resize delta to a PanelSplitNode at a given child index.
+ * Returns the new layout or undefined if resize is not possible.
+ */
+function applyPanelTreeResizeDelta(
+  ancestor: PanelTreeNode & { readonly _tag: 'PanelSplitNode' },
+  childIndex: number,
+  delta: number
+): { splitNodeId: string; newSizes: Record<string, number> } | undefined {
+  const siblingIndex = delta > 0 ? childIndex + 1 : childIndex - 1
+  const siblingExists =
+    siblingIndex >= 0 && siblingIndex < ancestor.children.length
+  if (!siblingExists) {
+    return undefined
+  }
+
+  const currentSize = ancestor.sizes[childIndex] ?? 50
+  const siblingSize = ancestor.sizes[siblingIndex] ?? 50
+
+  const newSize = currentSize + delta
+  const newSiblingSize = siblingSize - delta
+
+  if (newSize < MIN_PANE_SIZE || newSiblingSize < MIN_PANE_SIZE) {
+    return undefined
+  }
+
+  const newSizes: Record<string, number> = {}
+  for (let j = 0; j < ancestor.children.length; j++) {
+    const child = ancestor.children[j]
+    if (!child) {
+      continue
+    }
+    if (j === childIndex) {
+      newSizes[child.id] = newSize
+    } else if (j === siblingIndex) {
+      newSizes[child.id] = newSiblingSize
+    } else {
+      newSizes[child.id] = ancestor.sizes[j] ?? 100 / ancestor.children.length
+    }
+  }
+
+  return { splitNodeId: ancestor.id, newSizes }
+}
+
+/**
+ * Walk up the path from the active pane to find a resizable ancestor.
+ * Extracted from computeResizePanelTree to keep complexity under Biome's limit.
+ */
+function computeResizeFromPanelTreePath(
+  path: PanelTreeNode[],
+  direction: NavigationDirection
+): { splitNodeId: string; newSizes: Record<string, number> } | undefined {
+  for (let i = path.length - 2; i >= 0; i--) {
+    const ancestor = path[i]
+    if (!ancestor || ancestor._tag !== 'PanelSplitNode') {
+      continue
+    }
+
+    const delta = getResizeDeltaPanelTree(direction, ancestor.direction)
+    if (delta === undefined) {
+      continue
+    }
+
+    const childInPath = path[i + 1]
+    if (!childInPath) {
+      continue
+    }
+
+    const childIndex = ancestor.children.findIndex(
+      (c) => c.id === childInPath.id
+    )
+    if (childIndex === -1) {
+      continue
+    }
+
+    return applyPanelTreeResizeDelta(ancestor, childIndex, delta)
+  }
+
+  return undefined
+}
+
+/**
+ * Find the parent PanelSplitNode of the active pane that can be resized in
+ * the given direction, and compute the new sizes array.
+ *
+ * Walks up from the active pane toward the root looking for a PanelSplitNode
+ * whose orientation matches the resize direction. Once found, adjusts the
+ * sizes array by moving `RESIZE_STEP` percentage points between siblings.
+ *
+ * Returns the parent split node ID and new sizes, or undefined if resize
+ * is not possible.
+ */
+function computeResizePanelTree(
+  root: PanelTreeNode,
+  activePaneId: string,
+  direction: NavigationDirection
+): { splitNodeId: string; newSizes: Record<string, number> } | undefined {
+  const path = buildPanelTreePath(root, activePaneId)
+  if (!path || path.length < 2) {
+    return undefined
+  }
+
+  return computeResizeFromPanelTreePath(path, direction)
+}
+
+/**
+ * Find the PanelTreeNode root containing a pane by searching all tabs,
+ * workspace tiles, and panel tabs in the layout.
+ *
+ * Returns the panel tab's `panelLayout` (PanelTreeNode) that contains
+ * the pane, or undefined if not found.
+ */
+function findPanelTreeRootForPane(
+  layout: WindowLayout,
+  paneId: string
+): PanelTreeNode | undefined {
+  for (const tab of layout.tabs) {
+    if (!tab.workspaceLayout) {
+      continue
+    }
+    const leaves = getWorkspaceTileLeaves(tab.workspaceLayout)
+    for (const tile of leaves) {
+      for (const panelTab of tile.panelTabs) {
+        if (findPanelTreeLeaf(panelTab.panelLayout, paneId)) {
+          return panelTab.panelLayout
+        }
+      }
+    }
+  }
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -2388,10 +2584,12 @@ export {
   computeClosePaneGateActionHierarchical,
   computeCloseWorkspaceActionHierarchical,
   computeProgressiveCloseAction,
+  computeResizePanelTree,
   findEmptyPanelTreeLeaf,
   findNewPanelTreeLeaf,
   findPaneInWindowLayout,
   findPanelTreeLeaf,
+  findPanelTreeRootForPane,
   findSiblingPaneIdInPanelTree,
   findTerminalLocation,
   findWorkspaceLocation,
@@ -2424,6 +2622,7 @@ export {
 
 export type {
   ClosePaneGateResult,
+  NavigationDirection,
   PaneLocation,
   ProgressiveCloseAction,
   RepairWindowLayoutResult,

@@ -40,8 +40,6 @@ import {
 import { useLaborerStore } from '@/livestore/store'
 import { generateId } from '@/panels/id-utils'
 import { deriveLegacyTreeFromHierarchical } from '@/panels/layout-migration'
-import type { NavigationDirection } from '@/panels/layout-utils'
-import { computeResize } from '@/panels/layout-utils'
 import type { AssignTerminalToPaneOptions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import {
@@ -52,6 +50,7 @@ import {
   switchPanelTabByIndex,
   switchPanelTabRelative,
 } from '@/panels/panel-tab-utils'
+import type { NavigationDirection } from '@/panels/window-tab-utils'
 import {
   addWindowTab,
   addWorkspaceToTabUnique,
@@ -60,9 +59,11 @@ import {
   closeTerminalInWindowLayout,
   collectTerminalIdsFromPanelTree,
   collectTerminalIdsFromTileTree,
+  computeResizePanelTree,
   findEmptyPanelTreeLeaf,
   findNewPanelTreeLeaf,
   findPanelTreeLeaf,
+  findPanelTreeRootForPane,
   findSiblingPaneIdInPanelTree,
   findTerminalLocation,
   findWorkspaceLocation,
@@ -1093,13 +1094,19 @@ export function usePanelLayout() {
    */
   const handleResizePane = useCallback(
     (paneId: string, direction: NavigationDirection) => {
-      // computeResize still operates on legacy PanelNode types.
-      // Use the derived legacy layout until Issue 9 ports it to PanelTreeNode.
-      if (!layout) {
+      if (!persistedWindowLayout) {
         return
       }
 
-      const result = computeResize(layout, paneId, direction)
+      const panelTreeRoot = findPanelTreeRootForPane(
+        persistedWindowLayout,
+        paneId
+      )
+      if (!panelTreeRoot) {
+        return
+      }
+
+      const result = computeResizePanelTree(panelTreeRoot, paneId, direction)
       if (!result) {
         return
       }
@@ -1111,7 +1118,7 @@ export function usePanelLayout() {
 
       groupHandle.setLayout(result.newSizes)
     },
-    [layout, registry]
+    [persistedWindowLayout, registry]
   )
 
   /**

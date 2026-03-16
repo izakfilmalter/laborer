@@ -240,6 +240,28 @@ describe('shouldBypassTerminal', () => {
       shouldBypassTerminal(makeKeyEvent({ key: 'z', metaKey: true }))
     ).toBe(false)
   })
+
+  it('does not bypass Cmd+V (paste must reach ghostty-web for TUI image paste)', () => {
+    // Cmd+V must NOT be bypassed — ghostty-web handles paste natively by
+    // letting the browser's native paste event fire. TUIs (opencode, claude
+    // code, etc.) detect the paste key in the PTY and read the system
+    // clipboard directly via OS commands to get image data.
+    expect(
+      shouldBypassTerminal(makeKeyEvent({ key: 'v', metaKey: true }))
+    ).toBe(false)
+  })
+
+  it('does not bypass Ctrl+V (paste must reach ghostty-web for TUI image paste)', () => {
+    expect(
+      shouldBypassTerminal(makeKeyEvent({ key: 'v', ctrlKey: true }))
+    ).toBe(false)
+  })
+
+  it('does not bypass Cmd+C (copy handled natively by ghostty-web)', () => {
+    expect(
+      shouldBypassTerminal(makeKeyEvent({ key: 'c', metaKey: true }))
+    ).toBe(false)
+  })
 })
 
 // ---------------------------------------------------------------------------

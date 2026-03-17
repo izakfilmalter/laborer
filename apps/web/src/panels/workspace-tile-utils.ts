@@ -246,25 +246,25 @@ function addWorkspaceToTab(tab: WindowTab, workspaceId: string): WindowTab {
     }
   }
 
-  // Tab already has a workspace layout — split root vertically
+  // Tab already has a workspace layout — split root horizontally
   const root = tab.workspaceLayout
   if (root._tag === 'WorkspaceTileLeaf') {
-    // Single workspace — wrap both in a vertical split
+    // Single workspace — wrap both in a horizontal split
     return {
       ...tab,
       workspaceLayout: {
         _tag: 'WorkspaceTileSplit',
         id: generateTileId('ws-split'),
-        direction: 'vertical',
+        direction: 'horizontal',
         children: [root, newTile],
         sizes: [50, 50],
       },
     }
   }
 
-  // Root is a split — add to the root's children if vertical,
-  // or wrap in a new vertical split
-  if (root.direction === 'vertical') {
+  // Root is a split — add to the root's children if horizontal,
+  // or wrap in a new horizontal split
+  if (root.direction === 'horizontal') {
     const newChildren = [...root.children, newTile]
     const equalSize = 100 / newChildren.length
     const newSizes = newChildren.map(() => equalSize)
@@ -278,13 +278,13 @@ function addWorkspaceToTab(tab: WindowTab, workspaceId: string): WindowTab {
     }
   }
 
-  // Root is horizontal — wrap in a new vertical split
+  // Root is vertical — wrap in a new horizontal split
   return {
     ...tab,
     workspaceLayout: {
       _tag: 'WorkspaceTileSplit',
       id: generateTileId('ws-split'),
-      direction: 'vertical',
+      direction: 'horizontal',
       children: [root, newTile],
       sizes: [50, 50],
     },
@@ -596,7 +596,7 @@ function reorderWorkspaceTiles(
     workspaceLayout: {
       _tag: 'WorkspaceTileSplit',
       id: generateTileId('ws-split'),
-      direction: 'vertical',
+      direction: 'horizontal',
       children: ordered,
       sizes: newSizes,
     },

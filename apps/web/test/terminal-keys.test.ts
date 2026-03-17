@@ -17,6 +17,7 @@ import {
   matchesKeybind,
   shouldBypassTerminal,
 } from '../src/lib/keybinds'
+import { isMetaAltArrow } from '../src/panes/terminal-keys'
 
 // ---------------------------------------------------------------------------
 // Helper — create a minimal KeyboardEvent-shaped object for testing.
@@ -226,6 +227,38 @@ describe('shouldBypassTerminal', () => {
     )
   })
 
+  it('bypasses Cmd+Option+ArrowLeft (directional pane navigation)', () => {
+    expect(
+      shouldBypassTerminal(
+        makeKeyEvent({ key: 'ArrowLeft', metaKey: true, altKey: true })
+      )
+    ).toBe(true)
+  })
+
+  it('bypasses Cmd+Option+ArrowRight (directional pane navigation)', () => {
+    expect(
+      shouldBypassTerminal(
+        makeKeyEvent({ key: 'ArrowRight', metaKey: true, altKey: true })
+      )
+    ).toBe(true)
+  })
+
+  it('bypasses Cmd+Option+ArrowUp (directional pane navigation)', () => {
+    expect(
+      shouldBypassTerminal(
+        makeKeyEvent({ key: 'ArrowUp', metaKey: true, altKey: true })
+      )
+    ).toBe(true)
+  })
+
+  it('bypasses Cmd+Option+ArrowDown (directional pane navigation)', () => {
+    expect(
+      shouldBypassTerminal(
+        makeKeyEvent({ key: 'ArrowDown', metaKey: true, altKey: true })
+      )
+    ).toBe(true)
+  })
+
   it('does not bypass Ctrl+Shift+B (not exact Ctrl+B)', () => {
     expect(
       shouldBypassTerminal(
@@ -353,5 +386,94 @@ describe('matchesKeybind with KEYBINDS.NAV_LEFT (Cmd+Option+ArrowLeft)', () => {
     expect(matchesKeybind(makeKeyEvent({ key: 'ArrowLeft' }), keybind)).toBe(
       false
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: isMetaAltArrow (Cmd+Option+Arrow — directional pane navigation)
+// ---------------------------------------------------------------------------
+
+describe('isMetaAltArrow', () => {
+  it('returns true for Cmd+Option+ArrowLeft', () => {
+    expect(
+      isMetaAltArrow(
+        makeKeyEvent({ key: 'ArrowLeft', metaKey: true, altKey: true })
+      )
+    ).toBe(true)
+  })
+
+  it('returns true for Cmd+Option+ArrowRight', () => {
+    expect(
+      isMetaAltArrow(
+        makeKeyEvent({ key: 'ArrowRight', metaKey: true, altKey: true })
+      )
+    ).toBe(true)
+  })
+
+  it('returns true for Cmd+Option+ArrowUp', () => {
+    expect(
+      isMetaAltArrow(
+        makeKeyEvent({ key: 'ArrowUp', metaKey: true, altKey: true })
+      )
+    ).toBe(true)
+  })
+
+  it('returns true for Cmd+Option+ArrowDown', () => {
+    expect(
+      isMetaAltArrow(
+        makeKeyEvent({ key: 'ArrowDown', metaKey: true, altKey: true })
+      )
+    ).toBe(true)
+  })
+
+  it('returns false when meta is not held', () => {
+    expect(
+      isMetaAltArrow(makeKeyEvent({ key: 'ArrowLeft', altKey: true }))
+    ).toBe(false)
+  })
+
+  it('returns false when alt is not held', () => {
+    expect(
+      isMetaAltArrow(makeKeyEvent({ key: 'ArrowLeft', metaKey: true }))
+    ).toBe(false)
+  })
+
+  it('returns false when ctrl is also held', () => {
+    expect(
+      isMetaAltArrow(
+        makeKeyEvent({
+          key: 'ArrowLeft',
+          metaKey: true,
+          altKey: true,
+          ctrlKey: true,
+        })
+      )
+    ).toBe(false)
+  })
+
+  it('returns false when shift is also held', () => {
+    expect(
+      isMetaAltArrow(
+        makeKeyEvent({
+          key: 'ArrowLeft',
+          metaKey: true,
+          altKey: true,
+          shiftKey: true,
+        })
+      )
+    ).toBe(false)
+  })
+
+  it('returns false for non-arrow keys with same modifiers', () => {
+    expect(
+      isMetaAltArrow(makeKeyEvent({ key: 'a', metaKey: true, altKey: true }))
+    ).toBe(false)
+  })
+
+  it('returns false for plain arrow keys', () => {
+    expect(isMetaAltArrow(makeKeyEvent({ key: 'ArrowLeft' }))).toBe(false)
+    expect(isMetaAltArrow(makeKeyEvent({ key: 'ArrowRight' }))).toBe(false)
+    expect(isMetaAltArrow(makeKeyEvent({ key: 'ArrowUp' }))).toBe(false)
+    expect(isMetaAltArrow(makeKeyEvent({ key: 'ArrowDown' }))).toBe(false)
   })
 })

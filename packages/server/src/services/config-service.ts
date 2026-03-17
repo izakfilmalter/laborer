@@ -128,7 +128,7 @@ interface LaborerConfig {
   readonly worktreeDir?: string
 }
 
-/** Partial updates accepted by writeProjectConfig(). */
+/** Partial updates accepted by writeProjectConfig() and writeGlobalConfig(). */
 interface ProjectConfigUpdates {
   readonly agent?: AgentProvider | undefined
   readonly brrrConfig?: string | undefined
@@ -793,6 +793,15 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
       projectRepoPath: string,
       updates: ProjectConfigUpdates
     ) => Effect.Effect<void, never>
+
+    /**
+     * Write global config updates to `~/.config/laborer/laborer.json`.
+     * Merges partial updates with existing file content, preserves unknown
+     * fields, and uses an atomic temp-file + rename write strategy.
+     */
+    readonly writeGlobalConfig: (
+      updates: ProjectConfigUpdates
+    ) => Effect.Effect<void, never>
   }
 >() {
   static readonly layer = Layer.succeed(
@@ -864,6 +873,23 @@ class ConfigService extends Context.Tag('@laborer/ConfigService')<
 
           yield* Effect.logDebug(
             `Wrote project config at ${projectConfigPath}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+        }
+      ),
+
+      writeGlobalConfig: Effect.fn('ConfigService.writeGlobalConfig')(
+        function* (updates: ProjectConfigUpdates) {
+          yield* ensureGlobalConfigDir()
+
+          const existing =
+            (yield* readRawConfigObject(GLOBAL_CONFIG_PATH)) ??
+            ({} as Record<string, unknown>)
+          const next = applyConfigUpdates(existing, updates)
+
+          yield* writeJsonAtomic(GLOBAL_CONFIG_PATH, next)
+
+          yield* Effect.logDebug(
+            `Wrote global config at ${GLOBAL_CONFIG_PATH}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
         }
       ),

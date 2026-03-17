@@ -462,6 +462,25 @@ export class LaborerRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
+  // Global Config RPCs
+  // -----------------------------------------------------------------------
+  Rpc.make('globalConfig.get', {
+    success: Schema.Struct({
+      agent: Schema.optional(AgentProviderSchema),
+    }),
+    error: RpcError,
+  }),
+
+  Rpc.make('globalConfig.update', {
+    error: RpcError,
+    payload: {
+      config: Schema.Struct({
+        agent: Schema.optional(AgentProviderSchema),
+      }),
+    },
+  }),
+
+  // -----------------------------------------------------------------------
   // PRD RPCs
   // -----------------------------------------------------------------------
   Rpc.make('prd.create', {

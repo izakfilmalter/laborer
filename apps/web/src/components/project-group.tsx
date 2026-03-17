@@ -16,6 +16,7 @@
 
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { ChevronRight, FolderGit2, Plus, Trash2 } from 'lucide-react'
+import type { KeyboardEvent } from 'react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -43,6 +44,7 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import { DialogTrigger } from '@/components/ui/dialog'
+import { Kbd } from '@/components/ui/kbd'
 import { Separator } from '@/components/ui/separator'
 import {
   Tooltip,
@@ -50,6 +52,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { WorkspaceList } from '@/components/workspace-list'
+import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { cn, extractErrorMessage } from '@/lib/utils'
 
 const removeProjectMutation = LaborerClient.mutation('project.remove')
@@ -161,7 +164,22 @@ function ProjectGroup({
               </TooltipTrigger>
               <TooltipContent>Remove project</TooltipContent>
             </Tooltip>
-            <AlertDialogContent>
+            <AlertDialogContent
+              onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+                if (isExactEnter(event.nativeEvent)) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  return
+                }
+                if (isMetaEnter(event.nativeEvent)) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  if (!isRemoving) {
+                    handleRemove()
+                  }
+                }
+              }}
+            >
               <AlertDialogHeader>
                 <AlertDialogTitle>Remove project?</AlertDialogTitle>
                 <AlertDialogDescription>
@@ -172,13 +190,17 @@ function ProjectGroup({
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogCancel>
+                  Cancel <Kbd>Esc</Kbd>
+                </AlertDialogCancel>
                 <AlertDialogAction
                   disabled={isRemoving}
                   onClick={handleRemove}
                   variant="destructive"
                 >
                   {isRemoving ? 'Removing...' : 'Remove'}
+                  <Kbd>⌘</Kbd>
+                  <Kbd>↵</Kbd>
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

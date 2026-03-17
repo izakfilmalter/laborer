@@ -31,6 +31,7 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react'
+import type { KeyboardEvent } from 'react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -59,6 +60,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { Kbd } from '@/components/ui/kbd'
 import {
   Select,
   SelectContent,
@@ -72,6 +74,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
 
@@ -246,7 +249,22 @@ function TaskItem({ task }: TaskItemProps) {
                 </TooltipTrigger>
                 <TooltipContent>Remove task</TooltipContent>
               </Tooltip>
-              <AlertDialogContent>
+              <AlertDialogContent
+                onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+                  if (isExactEnter(event.nativeEvent)) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    return
+                  }
+                  if (isMetaEnter(event.nativeEvent)) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    if (!isRemoving) {
+                      handleRemove()
+                    }
+                  }
+                }}
+              >
                 <AlertDialogHeader>
                   <AlertDialogTitle>Remove task?</AlertDialogTitle>
                   <AlertDialogDescription>
@@ -256,13 +274,17 @@ function TaskItem({ task }: TaskItemProps) {
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogCancel>
+                    Cancel <Kbd>Esc</Kbd>
+                  </AlertDialogCancel>
                   <AlertDialogAction
                     disabled={isRemoving}
                     onClick={handleRemove}
                     variant="destructive"
                   >
                     {isRemoving ? 'Removing...' : 'Remove'}
+                    <Kbd>⌘</Kbd>
+                    <Kbd>↵</Kbd>
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>

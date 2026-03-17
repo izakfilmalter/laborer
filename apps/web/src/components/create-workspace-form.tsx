@@ -49,6 +49,7 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { inputClassName } from '@/components/ui/input'
+import { Kbd } from '@/components/ui/kbd'
 import {
   Select,
   SelectContent,
@@ -336,6 +337,7 @@ function CreateWorkspaceForm({
                   )}
                   {!isSubmitting && creationError && 'Retry'}
                   {!(isSubmitting || creationError) && 'Create Workspace'}
+                  {!isSubmitting && <Kbd>↵</Kbd>}
                 </Button>
               </DialogFooter>
             )}

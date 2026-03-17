@@ -2,7 +2,7 @@
  * Unit tests for centralized keybind matching and terminal bypass logic.
  *
  * These test the pure functions that determine which keyboard events
- * bypass ghostty-web and bubble to the global hotkey layer. Getting these
+ * bypass xterm.js and bubble to the global hotkey layer. Getting these
  * wrong means either panel shortcuts don't work from within terminals,
  * or legitimate terminal input gets silently swallowed.
  *
@@ -17,7 +17,6 @@ import {
   matchesKeybind,
   shouldBypassTerminal,
 } from '../src/lib/keybinds'
-import { isMetaAltArrow } from '../src/panes/terminal-keys'
 
 // ---------------------------------------------------------------------------
 // Helper — create a minimal KeyboardEvent-shaped object for testing.
@@ -106,7 +105,7 @@ describe('matchesKeybind with KEYBINDS.TOGGLE_FULLSCREEN (Cmd+Shift+Enter)', () 
 // Tests: shouldBypassTerminal
 //
 // This is the main public interface — it determines the complete set of
-// keyboard events that escape ghostty-web to reach panel hotkeys.
+// keyboard events that escape xterm.js to reach panel hotkeys.
 // ---------------------------------------------------------------------------
 
 describe('shouldBypassTerminal', () => {
@@ -274,23 +273,22 @@ describe('shouldBypassTerminal', () => {
     ).toBe(false)
   })
 
-  it('does not bypass Cmd+V (paste must reach ghostty-web for TUI image paste)', () => {
-    // Cmd+V must NOT be bypassed — ghostty-web handles paste natively by
-    // letting the browser's native paste event fire. TUIs (opencode, claude
-    // code, etc.) detect the paste key in the PTY and read the system
-    // clipboard directly via OS commands to get image data.
+  it('does not bypass Cmd+V (paste must reach xterm.js for TUI image paste)', () => {
+    // Cmd+V must NOT be bypassed — xterm.js handles paste natively.
+    // TUIs (opencode, claude code, etc.) detect the paste key in the PTY
+    // and read the system clipboard directly via OS commands to get image data.
     expect(
       shouldBypassTerminal(makeKeyEvent({ key: 'v', metaKey: true }))
     ).toBe(false)
   })
 
-  it('does not bypass Ctrl+V (paste must reach ghostty-web for TUI image paste)', () => {
+  it('does not bypass Ctrl+V (paste must reach xterm.js for TUI image paste)', () => {
     expect(
       shouldBypassTerminal(makeKeyEvent({ key: 'v', ctrlKey: true }))
     ).toBe(false)
   })
 
-  it('does not bypass Cmd+C (copy handled natively by ghostty-web)', () => {
+  it('does not bypass Cmd+C (copy handled natively by xterm.js)', () => {
     expect(
       shouldBypassTerminal(makeKeyEvent({ key: 'c', metaKey: true }))
     ).toBe(false)
@@ -390,90 +388,113 @@ describe('matchesKeybind with KEYBINDS.NAV_LEFT (Cmd+Option+ArrowLeft)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Tests: isMetaAltArrow (Cmd+Option+Arrow — directional pane navigation)
+// Tests: NAV_LEFT/RIGHT/UP/DOWN (Cmd+Option+Arrow — directional pane navigation)
 // ---------------------------------------------------------------------------
 
-describe('isMetaAltArrow', () => {
-  it('returns true for Cmd+Option+ArrowLeft', () => {
+describe('directional pane navigation keybinds', () => {
+  it('matches Cmd+Option+ArrowLeft', () => {
     expect(
-      isMetaAltArrow(
-        makeKeyEvent({ key: 'ArrowLeft', metaKey: true, altKey: true })
+      matchesKeybind(
+        makeKeyEvent({ key: 'ArrowLeft', metaKey: true, altKey: true }),
+        KEYBINDS.NAV_LEFT
       )
     ).toBe(true)
   })
 
-  it('returns true for Cmd+Option+ArrowRight', () => {
+  it('matches Cmd+Option+ArrowRight', () => {
     expect(
-      isMetaAltArrow(
-        makeKeyEvent({ key: 'ArrowRight', metaKey: true, altKey: true })
+      matchesKeybind(
+        makeKeyEvent({ key: 'ArrowRight', metaKey: true, altKey: true }),
+        KEYBINDS.NAV_RIGHT
       )
     ).toBe(true)
   })
 
-  it('returns true for Cmd+Option+ArrowUp', () => {
+  it('matches Cmd+Option+ArrowUp', () => {
     expect(
-      isMetaAltArrow(
-        makeKeyEvent({ key: 'ArrowUp', metaKey: true, altKey: true })
+      matchesKeybind(
+        makeKeyEvent({ key: 'ArrowUp', metaKey: true, altKey: true }),
+        KEYBINDS.NAV_UP
       )
     ).toBe(true)
   })
 
-  it('returns true for Cmd+Option+ArrowDown', () => {
+  it('matches Cmd+Option+ArrowDown', () => {
     expect(
-      isMetaAltArrow(
-        makeKeyEvent({ key: 'ArrowDown', metaKey: true, altKey: true })
+      matchesKeybind(
+        makeKeyEvent({ key: 'ArrowDown', metaKey: true, altKey: true }),
+        KEYBINDS.NAV_DOWN
       )
     ).toBe(true)
   })
 
-  it('returns false when meta is not held', () => {
+  it('does not match when meta is not held', () => {
     expect(
-      isMetaAltArrow(makeKeyEvent({ key: 'ArrowLeft', altKey: true }))
+      matchesKeybind(
+        makeKeyEvent({ key: 'ArrowLeft', altKey: true }),
+        KEYBINDS.NAV_LEFT
+      )
     ).toBe(false)
   })
 
-  it('returns false when alt is not held', () => {
+  it('does not match when alt is not held', () => {
     expect(
-      isMetaAltArrow(makeKeyEvent({ key: 'ArrowLeft', metaKey: true }))
+      matchesKeybind(
+        makeKeyEvent({ key: 'ArrowLeft', metaKey: true }),
+        KEYBINDS.NAV_LEFT
+      )
     ).toBe(false)
   })
 
-  it('returns false when ctrl is also held', () => {
+  it('does not match when ctrl is also held', () => {
     expect(
-      isMetaAltArrow(
+      matchesKeybind(
         makeKeyEvent({
           key: 'ArrowLeft',
           metaKey: true,
           altKey: true,
           ctrlKey: true,
-        })
+        }),
+        KEYBINDS.NAV_LEFT
       )
     ).toBe(false)
   })
 
-  it('returns false when shift is also held', () => {
+  it('does not match when shift is also held', () => {
     expect(
-      isMetaAltArrow(
+      matchesKeybind(
         makeKeyEvent({
           key: 'ArrowLeft',
           metaKey: true,
           altKey: true,
           shiftKey: true,
-        })
+        }),
+        KEYBINDS.NAV_LEFT
       )
     ).toBe(false)
   })
 
-  it('returns false for non-arrow keys with same modifiers', () => {
+  it('does not match non-arrow keys with same modifiers', () => {
     expect(
-      isMetaAltArrow(makeKeyEvent({ key: 'a', metaKey: true, altKey: true }))
+      matchesKeybind(
+        makeKeyEvent({ key: 'a', metaKey: true, altKey: true }),
+        KEYBINDS.NAV_LEFT
+      )
     ).toBe(false)
   })
 
-  it('returns false for plain arrow keys', () => {
-    expect(isMetaAltArrow(makeKeyEvent({ key: 'ArrowLeft' }))).toBe(false)
-    expect(isMetaAltArrow(makeKeyEvent({ key: 'ArrowRight' }))).toBe(false)
-    expect(isMetaAltArrow(makeKeyEvent({ key: 'ArrowUp' }))).toBe(false)
-    expect(isMetaAltArrow(makeKeyEvent({ key: 'ArrowDown' }))).toBe(false)
+  it('does not match plain arrow keys', () => {
+    expect(
+      matchesKeybind(makeKeyEvent({ key: 'ArrowLeft' }), KEYBINDS.NAV_LEFT)
+    ).toBe(false)
+    expect(
+      matchesKeybind(makeKeyEvent({ key: 'ArrowRight' }), KEYBINDS.NAV_RIGHT)
+    ).toBe(false)
+    expect(
+      matchesKeybind(makeKeyEvent({ key: 'ArrowUp' }), KEYBINDS.NAV_UP)
+    ).toBe(false)
+    expect(
+      matchesKeybind(makeKeyEvent({ key: 'ArrowDown' }), KEYBINDS.NAV_DOWN)
+    ).toBe(false)
   })
 })

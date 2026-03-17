@@ -2,7 +2,7 @@
  * TerminalHelper — Convenience methods for terminal pane interactions.
  *
  * Provides helpers for typing commands and waiting for output in
- * terminal panes rendered via ghostty-web (canvas-based terminal).
+ * terminal panes rendered via xterm.js.
  *
  * @see PRD-e2e-test-coverage.md — Page Object Pattern
  */
@@ -18,19 +18,18 @@ export class TerminalHelper {
 
   /**
    * Get terminal pane containers.
-   * ghostty-web renders into elements with `data-terminal-id` attribute.
+   * xterm.js renders into elements with `data-terminal-id` attribute.
    */
   get terminalPanes(): Locator {
     return this.page.locator('[data-terminal-id]')
   }
 
   /**
-   * Get ghostty-web's contenteditable input elements.
-   * ghostty-web uses a contenteditable element for input capture
-   * instead of xterm.js's hidden textarea.
+   * Get xterm.js's hidden textarea input elements.
+   * xterm.js uses a hidden textarea for input capture.
    */
   get terminalInputs(): Locator {
-    return this.page.locator('[data-terminal-id] [contenteditable]')
+    return this.page.locator('[data-terminal-id] textarea')
   }
 
   /** Focus a terminal pane before typing. */
@@ -49,7 +48,7 @@ export class TerminalHelper {
   /**
    * Type a command into the focused terminal.
    * Uses keyboard.type for character-by-character input matching
-   * how a real user types into a ghostty-web terminal.
+   * how a real user types into an xterm.js terminal.
    */
   async typeCommand(command: string, index = 0): Promise<void> {
     await this.focusTerminal(index)

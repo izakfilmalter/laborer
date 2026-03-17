@@ -225,7 +225,7 @@ function matchesKeybind(event: KeyboardEvent, keybind: Keybind): boolean {
  *
  * These are the shortcuts registered in panel-hotkeys.tsx via TanStack
  * Hotkeys. The terminal key handler uses this list to decide which keys
- * should bypass ghostty-web and bubble to the global hotkey layer.
+ * should bypass xterm.js and bubble to the global hotkey layer.
  *
  * Prefix-key sequences (Ctrl+B then action) are not listed here because
  * only the prefix key (Ctrl+B) needs to bypass the terminal — the action

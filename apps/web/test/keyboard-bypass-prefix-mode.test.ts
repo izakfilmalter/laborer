@@ -1,17 +1,15 @@
 /**
- * Tests for keyboard bypass and prefix mode integration with ghostty-web
- * (Issue 4).
+ * Tests for keyboard bypass and prefix mode integration with xterm.js.
  *
  * Verifies that:
- * 1. ghostty-web's Terminal class exposes `attachCustomKeyEventHandler`
- * 2. terminal-pane.tsx wires the handler to ghostty-web
- * 3. The bypass handler correctly intercepts Cmd+W, Cmd+Shift+Enter, Ctrl+B
- * 4. Prefix mode state machine works (enter → action key → exit, 1500ms timeout)
- * 5. Normal keys pass through to ghostty-web
+ * 1. terminal-pane.tsx wires `attachCustomKeyEventHandler` to xterm.js
+ * 2. The bypass handler correctly intercepts Cmd+W, Cmd+Shift+Enter, Ctrl+B
+ * 3. Prefix mode state machine works (enter -> action key -> exit, 1500ms timeout)
+ * 4. Normal keys pass through to xterm.js
  *
- * Note: WASM-dependent tests cannot run in jsdom. The keyboard handler is
- * tested as a standalone function (same logic used in terminal-pane.tsx) with
- * the source code verified to call `attachCustomKeyEventHandler`.
+ * xterm.js convention:
+ * - Return `true` -> xterm.js handles the key (normal terminal input)
+ * - Return `false` -> xterm.js ignores the key (it bubbles to document)
  *
  * @see apps/web/src/panes/terminal-pane.tsx — handler wiring
  * @see apps/web/src/lib/keybinds.ts — centralized keybind definitions
@@ -57,13 +55,11 @@ function makeKeyEvent(
 
 /**
  * Simulates the prefix mode state machine as implemented in terminal-pane.tsx.
- * This mirrors the exact logic from the createTerminalKeyHandler callback.
+ * This mirrors the exact logic from the attachCustomKeyEventHandler callback.
  *
- * ghostty-web convention (OPPOSITE of xterm.js):
- * - Return `true` → custom handler CONSUMED the event, ghostty-web stops
- *   processing (key bubbles to document for TanStack Hotkeys)
- * - Return `false` → custom handler did NOT consume, ghostty-web continues
- *   normal key processing (terminal input)
+ * xterm.js convention:
+ * - Return `true` -> xterm.js handles the key (normal terminal input)
+ * - Return `false` -> xterm.js ignores the key (it bubbles to document)
  */
 function createPrefixModeHandler() {
   let prefixMode = false
@@ -91,19 +87,19 @@ function createPrefixModeHandler() {
 
   const handler = (event: KeyboardEvent): boolean => {
     if (event.type !== 'keydown') {
-      return false
+      return true
     }
     if (shouldBypassTerminal(event)) {
       if (isPrefixKey(event)) {
         enterPrefixMode()
       }
-      return true
+      return false
     }
     if (prefixMode) {
       exitPrefixMode()
-      return true
+      return false
     }
-    return false
+    return true
   }
 
   return {
@@ -117,29 +113,7 @@ function createPrefixModeHandler() {
   }
 }
 
-describe('keyboard bypass and prefix mode (Issue 4)', () => {
-  // ---------------------------------------------------------------------------
-  // ghostty-web API compatibility
-  // ---------------------------------------------------------------------------
-  describe('ghostty-web attachCustomKeyEventHandler API', () => {
-    it('Terminal.prototype has attachCustomKeyEventHandler method', async () => {
-      const ghosttyWeb = await import('ghostty-web')
-      expect(
-        ghosttyWeb.Terminal.prototype.attachCustomKeyEventHandler
-      ).toBeDefined()
-      expect(
-        typeof ghosttyWeb.Terminal.prototype.attachCustomKeyEventHandler
-      ).toBe('function')
-    })
-
-    it('attachCustomKeyEventHandler accepts a function argument', async () => {
-      const ghosttyWeb = await import('ghostty-web')
-      // Verify the method exists — full invocation requires WASM (jsdom limitation)
-      const method = ghosttyWeb.Terminal.prototype.attachCustomKeyEventHandler
-      expect(method.length).toBeGreaterThanOrEqual(1)
-    })
-  })
-
+describe('keyboard bypass and prefix mode', () => {
   // ---------------------------------------------------------------------------
   // terminal-pane.tsx integration (source code verification)
   // ---------------------------------------------------------------------------
@@ -194,7 +168,7 @@ describe('keyboard bypass and prefix mode (Issue 4)', () => {
   // ---------------------------------------------------------------------------
   // Bypass handler behavior (functional tests)
   // ---------------------------------------------------------------------------
-  describe('bypass handler returns true (consumed) for intercepted keys', () => {
+  describe('bypass handler returns false (bypass) for intercepted keys', () => {
     let ctx: ReturnType<typeof createPrefixModeHandler>
 
     beforeEach(() => {
@@ -205,50 +179,50 @@ describe('keyboard bypass and prefix mode (Issue 4)', () => {
       ctx.cleanup()
     })
 
-    it('returns true for Cmd+W keydown (consumed — bubbles to close pane)', () => {
+    it('returns false for Cmd+W keydown (bypass — bubbles to close pane)', () => {
       const event = makeKeyEvent({ key: 'w', metaKey: true })
-      expect(ctx.handler(event)).toBe(true)
+      expect(ctx.handler(event)).toBe(false)
     })
 
-    it('returns true for Cmd+Shift+Enter keydown (consumed — bubbles to fullscreen toggle)', () => {
+    it('returns false for Cmd+Shift+Enter keydown (bypass — bubbles to fullscreen toggle)', () => {
       const event = makeKeyEvent({
         key: 'Enter',
         metaKey: true,
         shiftKey: true,
       })
-      expect(ctx.handler(event)).toBe(true)
+      expect(ctx.handler(event)).toBe(false)
     })
 
-    it('returns true for Ctrl+B keydown (consumed — enters prefix mode)', () => {
+    it('returns false for Ctrl+B keydown (bypass — enters prefix mode)', () => {
       const event = makeKeyEvent({ key: 'b', ctrlKey: true })
+      expect(ctx.handler(event)).toBe(false)
+    })
+
+    it('returns true for normal printable keys (handled — terminal input)', () => {
+      expect(ctx.handler(makeKeyEvent({ key: 'a' }))).toBe(true)
+      expect(ctx.handler(makeKeyEvent({ key: 'z' }))).toBe(true)
+      expect(ctx.handler(makeKeyEvent({ key: '1' }))).toBe(true)
+      expect(ctx.handler(makeKeyEvent({ key: ' ' }))).toBe(true)
+    })
+
+    it('returns true for keyup events (handled — xterm.js processes)', () => {
+      const event = makeKeyEvent({ key: 'w', metaKey: true, type: 'keyup' })
       expect(ctx.handler(event)).toBe(true)
     })
 
-    it('returns false for normal printable keys (not consumed — terminal input)', () => {
-      expect(ctx.handler(makeKeyEvent({ key: 'a' }))).toBe(false)
-      expect(ctx.handler(makeKeyEvent({ key: 'z' }))).toBe(false)
-      expect(ctx.handler(makeKeyEvent({ key: '1' }))).toBe(false)
-      expect(ctx.handler(makeKeyEvent({ key: ' ' }))).toBe(false)
-    })
-
-    it('returns false for keyup events (not consumed — ghostty-web handles)', () => {
-      const event = makeKeyEvent({ key: 'w', metaKey: true, type: 'keyup' })
-      expect(ctx.handler(event)).toBe(false)
-    })
-
-    it('returns false for Ctrl+C (not consumed — terminal interrupt)', () => {
+    it('returns true for Ctrl+C (handled — terminal interrupt)', () => {
       const event = makeKeyEvent({ key: 'c', ctrlKey: true })
-      expect(ctx.handler(event)).toBe(false)
+      expect(ctx.handler(event)).toBe(true)
     })
 
-    it('returns false for Ctrl+D (not consumed — terminal EOF)', () => {
+    it('returns true for Ctrl+D (handled — terminal EOF)', () => {
       const event = makeKeyEvent({ key: 'd', ctrlKey: true })
-      expect(ctx.handler(event)).toBe(false)
+      expect(ctx.handler(event)).toBe(true)
     })
 
-    it('returns false for arrow keys (not consumed — terminal cursor movement)', () => {
-      expect(ctx.handler(makeKeyEvent({ key: 'ArrowUp' }))).toBe(false)
-      expect(ctx.handler(makeKeyEvent({ key: 'ArrowDown' }))).toBe(false)
+    it('returns true for arrow keys (handled — terminal cursor movement)', () => {
+      expect(ctx.handler(makeKeyEvent({ key: 'ArrowUp' }))).toBe(true)
+      expect(ctx.handler(makeKeyEvent({ key: 'ArrowDown' }))).toBe(true)
     })
   })
 
@@ -274,20 +248,20 @@ describe('keyboard bypass and prefix mode (Issue 4)', () => {
       expect(ctx.isPrefixMode()).toBe(true)
     })
 
-    it('in prefix mode, next key returns true (consumed — action key intercepted)', () => {
+    it('in prefix mode, next key returns false (bypass — action key intercepted)', () => {
       ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
       expect(ctx.isPrefixMode()).toBe(true)
 
       const result = ctx.handler(makeKeyEvent({ key: '1' }))
-      expect(result).toBe(true)
+      expect(result).toBe(false)
       expect(ctx.isPrefixMode()).toBe(false)
     })
 
-    it('after action key, subsequent keys return false (not consumed — normal input)', () => {
+    it('after action key, subsequent keys return true (handled — normal input)', () => {
       ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
       ctx.handler(makeKeyEvent({ key: '1' }))
-      expect(ctx.handler(makeKeyEvent({ key: 'a' }))).toBe(false)
-      expect(ctx.handler(makeKeyEvent({ key: 'b' }))).toBe(false)
+      expect(ctx.handler(makeKeyEvent({ key: 'a' }))).toBe(true)
+      expect(ctx.handler(makeKeyEvent({ key: 'b' }))).toBe(true)
     })
 
     it('prefix mode auto-exits after 1500ms timeout', () => {
@@ -301,10 +275,10 @@ describe('keyboard bypass and prefix mode (Issue 4)', () => {
       expect(ctx.isPrefixMode()).toBe(false)
     })
 
-    it('after timeout, keys return false (not consumed — normal input)', () => {
+    it('after timeout, keys return true (handled — normal input)', () => {
       ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
       vi.advanceTimersByTime(1500)
-      expect(ctx.handler(makeKeyEvent({ key: '1' }))).toBe(false)
+      expect(ctx.handler(makeKeyEvent({ key: '1' }))).toBe(true)
     })
 
     it('pressing Ctrl+B again resets the timeout', () => {
@@ -339,17 +313,17 @@ describe('keyboard bypass and prefix mode (Issue 4)', () => {
       expect(ctx.isPrefixMode()).toBe(true)
 
       const result = ctx.handler(makeKeyEvent({ key: '1', type: 'keyup' }))
-      expect(result).toBe(false)
+      expect(result).toBe(true)
       expect(ctx.isPrefixMode()).toBe(true)
     })
 
-    it('multiple Ctrl+B → action sequences work correctly', () => {
+    it('multiple Ctrl+B -> action sequences work correctly', () => {
       ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
       expect(ctx.isPrefixMode()).toBe(true)
       ctx.handler(makeKeyEvent({ key: '1' }))
       expect(ctx.isPrefixMode()).toBe(false)
 
-      expect(ctx.handler(makeKeyEvent({ key: 'a' }))).toBe(false)
+      expect(ctx.handler(makeKeyEvent({ key: 'a' }))).toBe(true)
 
       ctx.handler(makeKeyEvent({ key: 'b', ctrlKey: true }))
       expect(ctx.isPrefixMode()).toBe(true)

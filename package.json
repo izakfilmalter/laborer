@@ -78,7 +78,5 @@
     "@effect/typeclass": "0.38.0",
     "@effect/workflow": "0.15.2"
   },
-  "patchedDependencies": {
-    "ghostty-web@0.4.0": "patches/ghostty-web@0.4.0.patch"
-  }
+  "patchedDependencies": {}
 }

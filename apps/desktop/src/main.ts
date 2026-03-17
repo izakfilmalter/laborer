@@ -211,7 +211,7 @@ function createWindow(record?: WindowRecord): BrowserWindow {
   // Track window bounds for persistence — saves on move/resize/close.
   windowStateManager.track(window, windowId)
 
-  // Intercept window.open() calls from the renderer (e.g., ghostty-web
+  // Intercept window.open() calls from the renderer (e.g., xterm.js
   // link clicks) and redirect them to the OS default browser via
   // shell.openExternal(). Without this, window.open() in a sandboxed
   // renderer would create a new BrowserWindow instead of opening the

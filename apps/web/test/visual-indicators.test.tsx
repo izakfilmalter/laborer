@@ -51,7 +51,15 @@ vi.mock('@/components/ui/tooltip', () => ({
     render?: React.ReactElement
   }) => {
     if (render && isValidElement(render)) {
-      return <>{cloneElement(render, render.props, children)}</>
+      return (
+        <>
+          {cloneElement(
+            render,
+            render.props as Record<string, unknown>,
+            children
+          )}
+        </>
+      )
     }
 
     return <>{children}</>

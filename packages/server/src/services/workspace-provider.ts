@@ -1902,17 +1902,15 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
 
           // 7. Fork container setup as a background fiber (same pattern
           //    as createWorktree)
-          const containerSetupEffect = Effect.gen(function* () {
-            yield* performContainerSetup({
-              id: workspaceId,
-              branchName: workspace.branchName,
-              worktreePath: workspace.worktreePath,
-              port,
-              repoPath: project.repoPath,
-              projectName: project.name,
-              devServerImage,
-              devServer: resolvedConfig.devServer,
-            })
+          const containerSetupEffect = performContainerSetup({
+            id: workspaceId,
+            branchName: workspace.branchName,
+            worktreePath: workspace.worktreePath,
+            port,
+            repoPath: project.repoPath,
+            projectName: project.name,
+            devServerImage,
+            devServer: resolvedConfig.devServer,
           }).pipe(
             Effect.catchAll((err) =>
               Effect.gen(function* () {

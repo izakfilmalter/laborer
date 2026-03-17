@@ -1,3 +1,4 @@
+// @effect-diagnostics effect/preferSchemaOverJson:off
 /**
  * TDD tests for the individual fetch RPCs used by Alive event handling:
  * - fetchSingleIssueComment

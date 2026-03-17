@@ -779,16 +779,7 @@ export const LaborerHookPlugin = async () => {
           ).pipe(Effect.annotateLogs('module', logPrefix))
 
           return killedCount
-        }).pipe(
-          Effect.catchAll((err) =>
-            Effect.gen(function* () {
-              yield* Effect.logWarning(
-                `Cannot kill terminals for workspace ${workspaceId}: terminal service unavailable (${String(err)})`
-              ).pipe(Effect.annotateLogs('module', logPrefix))
-              return 0
-            })
-          )
-        )
+        })
 
       yield* Effect.addFinalizer(() =>
         Effect.log('Shutdown: disconnecting from terminal service').pipe(

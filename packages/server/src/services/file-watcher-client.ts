@@ -202,7 +202,7 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
                   : undefined,
             })
             .pipe(Effect.mapError(mapError))
-        }).pipe(Effect.catchAll((error) => Effect.fail(mapError(error))))
+        }).pipe(Effect.mapError(mapError))
 
       const unsubscribe: FileWatcherClient['Type']['unsubscribe'] = (id) =>
         Effect.gen(function* () {
@@ -210,7 +210,7 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
           return yield* client.watcher
             .unsubscribe({ id })
             .pipe(Effect.mapError(mapError))
-        }).pipe(Effect.catchAll((error) => Effect.fail(mapError(error))))
+        }).pipe(Effect.mapError(mapError))
 
       const updateIgnore: FileWatcherClient['Type']['updateIgnore'] = (
         id,
@@ -221,7 +221,7 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
           return yield* client.watcher
             .updateIgnore({ id, ignoreGlobs: [...ignoreGlobs] })
             .pipe(Effect.mapError(mapError))
-        }).pipe(Effect.catchAll((error) => Effect.fail(mapError(error))))
+        }).pipe(Effect.mapError(mapError))
 
       const onFileEvent = (
         handler: FileEventHandler
@@ -242,7 +242,7 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
           Effect.gen(function* () {
             const client = yield* getOrCreateClient
             return yield* client.watcher.list().pipe(Effect.mapError(mapError))
-          }).pipe(Effect.catchAll((error) => Effect.fail(mapError(error))))
+          }).pipe(Effect.mapError(mapError))
 
       yield* Effect.addFinalizer(() =>
         Effect.log('Shutdown: disconnecting from file-watcher service').pipe(

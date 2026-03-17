@@ -620,7 +620,7 @@ function WorkspaceFrame({
         onDrop: () => setClosestEdge(null),
       })
     )
-  }, [workspaceId, index])
+  }, [workspaceId, index, isHorizontal])
 
   const showDiff = diffWorkspaceId !== null && diffWorkspaceId === workspaceId
   const showReview =

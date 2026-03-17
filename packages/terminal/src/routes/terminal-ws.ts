@@ -83,6 +83,12 @@ const handleClientMessage = (
 }
 
 /**
+ * Encode a screen state snapshot into a JSON control message string.
+ */
+const encodeScreenState = (data: string): string =>
+  JSON.stringify({ type: 'screenState', data })
+
+/**
  * Send a JSON status control message to the client.
  * These messages inform the client about terminal lifecycle events.
  */
@@ -277,9 +283,8 @@ const TerminalWsRouteLive = HttpRouter.Default.use((router) =>
                   const screenState = terminalManager.getScreenState(terminalId)
 
                   // Send screen state as JSON control message
-                  yield* writeFn(
-                    JSON.stringify({ type: 'screenState', data: screenState })
-                  )
+                  const payload = encodeScreenState(screenState)
+                  yield* writeFn(payload)
 
                   // Flush any output that arrived during serialization
                   for (const queued of outputQueue) {

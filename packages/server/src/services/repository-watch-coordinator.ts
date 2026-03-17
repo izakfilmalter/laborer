@@ -514,6 +514,9 @@ class RepositoryWatchCoordinator extends Context.Tag(
       /**
        * Attempt to add the dedicated worktrees watcher when the
        * shared worktrees directory appears inside the git dir.
+       * Instead of tearing down all watchers and re-subscribing,
+       * this adds the worktrees subscription incrementally and
+       * triggers immediate reconciliation.
        */
       const switchToWorktreesWatcher = (
         state: ProjectWatcherState,
@@ -530,35 +533,26 @@ class RepositoryWatchCoordinator extends Context.Tag(
           return false
         }
 
+        // Subscribe to the worktrees directory incrementally (without
+        // tearing down existing watchers) and trigger reconciliation.
         runPromise(
-          Ref.get(statesRef).pipe(
-            Effect.flatMap((states) => {
-              const latest = states.get(state.projectId)
-              if (
-                latest === undefined ||
-                latest.worktreesSubscriptionId !== null
-              ) {
-                return Effect.void
-              }
-              return watchProject(latest.projectId, latest.repoPath).pipe(
-                Effect.zipRight(
-                  Ref.get(statesRef).pipe(
-                    Effect.flatMap((nextStates) => {
-                      const refreshed = nextStates.get(state.projectId)
-                      if (refreshed === undefined) {
-                        return Effect.void
-                      }
-
-                      return reconcileWithWarning(
-                        refreshed.projectId,
-                        refreshed.repoPath,
-                        reason
-                      )
-                    })
-                  )
-                )
-              )
-            })
+          subscribeWorktreesDir(state.projectId, state.gitDirPath).pipe(
+            Effect.tap((subId) =>
+              Effect.gen(function* () {
+                state.worktreesSubscriptionId = subId
+                yield* Ref.update(statesRef, (states) => {
+                  const next = new Map(states)
+                  const current = next.get(state.projectId)
+                  if (current !== undefined) {
+                    current.worktreesSubscriptionId = subId
+                  }
+                  return next
+                })
+              })
+            ),
+            Effect.zipRight(
+              reconcileWithWarning(state.projectId, state.repoPath, reason)
+            )
           )
         ).catch(() => undefined)
 

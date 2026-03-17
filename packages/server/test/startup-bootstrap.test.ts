@@ -17,7 +17,7 @@ import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientRealLayer } from './helpers/test-file-watcher-client.js'
 import { TestLaborerStore } from './helpers/test-store.js'
-import { delay, waitFor } from './helpers/timing-helpers.js'
+import { delay, waitForWithNudge } from './helpers/timing-helpers.js'
 
 const tempRoots: string[] = []
 
@@ -113,6 +113,8 @@ describe('Startup bootstrap and project lifecycle integration', () => {
 
       const registry = yield* ProjectRegistry
       const project = yield* registry.addProject(repoPath)
+      // Allow @parcel/watcher FSEvents subscription to fully initialize
+      yield* Effect.promise(() => delay(500))
 
       const { store } = yield* LaborerStore
 
@@ -122,11 +124,13 @@ describe('Startup bootstrap and project lifecycle integration', () => {
       git(`worktree add -b feature/boot-watcher ${worktreePath}`, repoPath)
 
       yield* Effect.promise(() =>
-        waitFor(() =>
-          Promise.resolve(
-            store.query(tables.workspaces.where('projectId', project.id))
-              .length === 2
-          )
+        waitForWithNudge(
+          () =>
+            Promise.resolve(
+              store.query(tables.workspaces.where('projectId', project.id))
+                .length === 2
+            ),
+          repoPath
         )
       )
 
@@ -195,11 +199,13 @@ describe('Startup bootstrap and project lifecycle integration', () => {
       git(`worktree add -b feature/boot-restore ${worktreePath}`, repoPath)
 
       yield* Effect.promise(() =>
-        waitFor(() =>
-          Promise.resolve(
-            store.query(tables.workspaces.where('projectId', projectId))
-              .length === 2
-          )
+        waitForWithNudge(
+          () =>
+            Promise.resolve(
+              store.query(tables.workspaces.where('projectId', projectId))
+                .length === 2
+            ),
+          repoPath
         )
       )
 
@@ -355,7 +361,8 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         const { store } = yield* LaborerStore
 
         const project = yield* registry.addProject(repoPath)
-        yield* Effect.promise(() => delay(200))
+        // Allow @parcel/watcher FSEvents subscription to fully initialize
+        yield* Effect.promise(() => delay(500))
 
         writeFileSync(
           join(repoPath, 'README.md'),
@@ -365,7 +372,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         git(`worktree add -b feature/public-a ${linkedA}`, repoPath)
 
         yield* Effect.promise(() =>
-          waitFor(() => {
+          waitForWithNudge(() => {
             const workspaces = store.query(
               tables.workspaces.where('projectId', project.id)
             ) as readonly {
@@ -380,13 +387,13 @@ describe('Startup bootstrap and project lifecycle integration', () => {
                     workspace.worktreePath === realpathSync(linkedA)
                 )
             )
-          })
+          }, repoPath)
         )
 
         git(`worktree add -b feature/public-b ${linkedB}`, repoPath)
 
         yield* Effect.promise(() =>
-          waitFor(() => {
+          waitForWithNudge(() => {
             const workspaces = store.query(
               tables.workspaces.where('projectId', project.id)
             ) as readonly {
@@ -400,13 +407,13 @@ describe('Startup bootstrap and project lifecycle integration', () => {
                   (workspace) => workspace.branchName === 'feature/public-b'
                 )
             )
-          })
+          }, repoPath)
         )
 
         git(`worktree remove --force ${linkedA}`, repoPath)
 
         yield* Effect.promise(() =>
-          waitFor(() => {
+          waitForWithNudge(() => {
             const workspaces = store.query(
               tables.workspaces.where('projectId', project.id)
             ) as readonly {
@@ -424,14 +431,14 @@ describe('Startup bootstrap and project lifecycle integration', () => {
                   (workspace) => workspace.branchName === 'feature/public-b'
                 )
             )
-          })
+          }, repoPath)
         )
         yield* Effect.promise(() => delay(700))
 
         git('checkout -b feature/public-main-refresh', repoPath)
 
         yield* Effect.promise(() =>
-          waitFor(() => {
+          waitForWithNudge(() => {
             const workspaces = store.query(
               tables.workspaces.where('projectId', project.id)
             ) as readonly {
@@ -446,7 +453,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
                   workspace.branchName === 'feature/public-main-refresh'
               )
             )
-          })
+          }, repoPath)
         )
       }).pipe(Effect.provide(TestLayer))
   )
@@ -516,11 +523,13 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         git(`worktree add -b feature/persisted-wt2 ${newWt}`, repoPath)
 
         yield* Effect.promise(() =>
-          waitFor(() =>
-            Promise.resolve(
-              store.query(tables.workspaces.where('projectId', projectId))
-                .length === 3
-            )
+          waitForWithNudge(
+            () =>
+              Promise.resolve(
+                store.query(tables.workspaces.where('projectId', projectId))
+                  .length === 3
+              ),
+            repoPath
           )
         )
 

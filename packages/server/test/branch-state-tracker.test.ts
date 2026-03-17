@@ -15,7 +15,7 @@ import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientRealLayer } from './helpers/test-file-watcher-client.js'
 import { TestLaborerStore } from './helpers/test-store.js'
-import { waitFor } from './helpers/timing-helpers.js'
+import { delay, waitFor, waitForWithNudge } from './helpers/timing-helpers.js'
 
 const tempRoots: string[] = []
 
@@ -317,6 +317,8 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
 
         const coordinator = yield* RepositoryWatchCoordinator
         yield* coordinator.watchAll()
+        // Allow @parcel/watcher FSEvents subscription to fully initialize
+        yield* Effect.promise(() => delay(500))
 
         // Wait for initial reconciliation to create workspace record
         yield* Effect.promise(() =>
@@ -339,7 +341,7 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
 
         // Wait for the branch name to be refreshed
         yield* Effect.promise(() =>
-          waitFor(() => {
+          waitForWithNudge(() => {
             const workspaces = store.query(
               tables.workspaces.where('projectId', projectId)
             ) as readonly { readonly branchName: string }[]
@@ -348,7 +350,7 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
                 (w) => w.branchName === 'feature/coord-branch-updated'
               )
             )
-          })
+          }, repoPath)
         )
 
         const workspaces = store.query(
@@ -392,6 +394,8 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
 
         const coordinator = yield* RepositoryWatchCoordinator
         yield* coordinator.watchAll()
+        // Allow @parcel/watcher FSEvents subscription to fully initialize
+        yield* Effect.promise(() => delay(500))
 
         yield* Effect.promise(() =>
           waitFor(() =>
@@ -405,7 +409,7 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         git('checkout -b feature/main-after-linked', repoPath)
 
         yield* Effect.promise(() =>
-          waitFor(() => {
+          waitForWithNudge(() => {
             const workspaces = store.query(
               tables.workspaces.where('projectId', projectId)
             ) as readonly {
@@ -420,7 +424,7 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
                   workspace.branchName === 'feature/main-after-linked'
               )
             )
-          })
+          }, repoPath)
         )
 
         const workspaces = store.query(
@@ -465,6 +469,8 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
 
         const coordinator = yield* RepositoryWatchCoordinator
         yield* coordinator.watchAll()
+        // Allow @parcel/watcher FSEvents subscription to fully initialize
+        yield* Effect.promise(() => delay(500))
 
         yield* Effect.promise(() =>
           waitFor(() =>
@@ -478,7 +484,7 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         git('checkout -b feature/linked-updated', linkedPath)
 
         yield* Effect.promise(() =>
-          waitFor(() => {
+          waitForWithNudge(() => {
             const workspaces = store.query(
               tables.workspaces.where('projectId', projectId)
             ) as readonly {
@@ -493,7 +499,7 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
                   workspace.branchName === 'feature/linked-updated'
               )
             )
-          })
+          }, repoPath)
         )
 
         const workspaces = store.query(
@@ -531,6 +537,8 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
 
         const coordinator = yield* RepositoryWatchCoordinator
         yield* coordinator.watchAll()
+        // Allow @parcel/watcher FSEvents subscription to fully initialize
+        yield* Effect.promise(() => delay(500))
 
         // Wait for initial reconciliation (main worktree only)
         yield* Effect.promise(() =>
@@ -549,11 +557,13 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
 
         // Wait for the new worktree to appear as a workspace
         yield* Effect.promise(() =>
-          waitFor(() =>
-            Promise.resolve(
-              store.query(tables.workspaces.where('projectId', projectId))
-                .length >= 2
-            )
+          waitForWithNudge(
+            () =>
+              Promise.resolve(
+                store.query(tables.workspaces.where('projectId', projectId))
+                  .length >= 2
+              ),
+            repoPath
           )
         )
 

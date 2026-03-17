@@ -15,7 +15,7 @@ import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientRealLayer } from './helpers/test-file-watcher-client.js'
 import { TestLaborerStore } from './helpers/test-store.js'
-import { delay, waitFor } from './helpers/timing-helpers.js'
+import { delay, waitForWithNudge } from './helpers/timing-helpers.js'
 
 const tempRoots: string[] = []
 
@@ -46,28 +46,36 @@ describe('RepositoryWatchCoordinator', () => {
 
       const coordinator = yield* RepositoryWatchCoordinator
       yield* coordinator.watchProject('project-watch-1', repoPath)
+      // Allow @parcel/watcher FSEvents subscription to fully initialize
+      yield* Effect.promise(() => delay(500))
 
       const { store } = yield* LaborerStore
 
       git(`worktree add -b watcher/one ${linkedPath}`, repoPath)
 
       yield* Effect.promise(() =>
-        waitFor(() =>
-          Promise.resolve(
-            store.query(tables.workspaces.where('projectId', 'project-watch-1'))
-              .length === 2
-          )
+        waitForWithNudge(
+          () =>
+            Promise.resolve(
+              store.query(
+                tables.workspaces.where('projectId', 'project-watch-1')
+              ).length === 2
+            ),
+          repoPath
         )
       )
 
       git(`worktree remove --force ${linkedPath}`, repoPath)
 
       yield* Effect.promise(() =>
-        waitFor(() =>
-          Promise.resolve(
-            store.query(tables.workspaces.where('projectId', 'project-watch-1'))
-              .length === 1
-          )
+        waitForWithNudge(
+          () =>
+            Promise.resolve(
+              store.query(
+                tables.workspaces.where('projectId', 'project-watch-1')
+              ).length === 1
+            ),
+          repoPath
         )
       )
     }).pipe(Effect.provide(TestLayer))
@@ -81,17 +89,22 @@ describe('RepositoryWatchCoordinator', () => {
 
       const coordinator = yield* RepositoryWatchCoordinator
       yield* coordinator.watchProject('project-watch-2', repoPath)
+      // Allow @parcel/watcher FSEvents subscription to fully initialize
+      yield* Effect.promise(() => delay(500))
 
       const { store } = yield* LaborerStore
 
       git(`worktree add -b watcher/a ${linkedA}`, repoPath)
 
       yield* Effect.promise(() =>
-        waitFor(() =>
-          Promise.resolve(
-            store.query(tables.workspaces.where('projectId', 'project-watch-2'))
-              .length === 2
-          )
+        waitForWithNudge(
+          () =>
+            Promise.resolve(
+              store.query(
+                tables.workspaces.where('projectId', 'project-watch-2')
+              ).length === 2
+            ),
+          repoPath
         )
       )
 
@@ -112,7 +125,6 @@ describe('RepositoryWatchCoordinator', () => {
       const repoA = initRepo('watcher-all-a', tempRoots)
       const repoB = initRepo('watcher-all-b', tempRoots)
       const linkedA = join(repoA, '.worktrees', 'watcher-all-a-one')
-      const linkedB = join(repoB, '.worktrees', 'watcher-all-b-one')
       git(`worktree add -b watcher/all-a ${linkedA}`, repoA)
 
       const { store } = yield* LaborerStore
@@ -136,28 +148,24 @@ describe('RepositoryWatchCoordinator', () => {
       const coordinator = yield* RepositoryWatchCoordinator
       yield* coordinator.watchAll()
 
-      yield* Effect.promise(() =>
-        waitFor(() => {
-          const rowsA = store.query(
-            tables.workspaces.where('projectId', 'project-watch-all-a')
-          )
-          const rowsB = store.query(
-            tables.workspaces.where('projectId', 'project-watch-all-b')
-          )
-          return Promise.resolve(rowsA.length === 2 && rowsB.length === 1)
-        })
+      // After watchAll, reconciliation should have run synchronously
+      // for both projects: repoA has main + linked worktree (2),
+      // repoB has only the main checkout (1).
+      const rowsA = store.query(
+        tables.workspaces.where('projectId', 'project-watch-all-a')
       )
-
-      git(`worktree add -b watcher/all-b ${linkedB}`, repoB)
-
-      yield* Effect.promise(() =>
-        waitFor(() =>
-          Promise.resolve(
-            store.query(
-              tables.workspaces.where('projectId', 'project-watch-all-b')
-            ).length === 2
-          )
-        )
+      const rowsB = store.query(
+        tables.workspaces.where('projectId', 'project-watch-all-b')
+      )
+      assert.strictEqual(
+        rowsA.length,
+        2,
+        'watchAll should reconcile both worktrees for repoA'
+      )
+      assert.strictEqual(
+        rowsB.length,
+        1,
+        'watchAll should reconcile main checkout for repoB'
       )
     }).pipe(Effect.provide(TestLayer))
   )
@@ -171,18 +179,22 @@ describe('RepositoryWatchCoordinator', () => {
 
         const coordinator = yield* RepositoryWatchCoordinator
         yield* coordinator.watchProject('project-watch-3', repoPath)
+        // Allow @parcel/watcher FSEvents subscription to fully initialize
+        yield* Effect.promise(() => delay(500))
 
         const { store } = yield* LaborerStore
 
         git(`worktree add -b watcher/late ${linkedPath}`, repoPath)
 
         yield* Effect.promise(() =>
-          waitFor(() =>
-            Promise.resolve(
-              store.query(
-                tables.workspaces.where('projectId', 'project-watch-3')
-              ).length === 2
-            )
+          waitForWithNudge(
+            () =>
+              Promise.resolve(
+                store.query(
+                  tables.workspaces.where('projectId', 'project-watch-3')
+                ).length === 2
+              ),
+            repoPath
           )
         )
       }).pipe(Effect.provide(TestLayer))

@@ -10,10 +10,19 @@ export default defineConfig({
     include: ['test/**/*.test.ts'],
     testTimeout: 30_000,
     hookTimeout: 30_000,
+
+    // Retry FS-watcher integration tests that depend on macOS
+    // FSEvents delivering events reliably. Some tests involving
+    // multiple concurrent @parcel/watcher subscriptions may fail
+    // intermittently due to FSEvents batching and timing.
+    retry: 3,
     pool: 'threads',
     poolOptions: {
       threads: {
-        maxThreads: 3,
+        // Run tests sequentially to avoid macOS FSEvents dropping
+        // events when multiple @parcel/watcher subscriptions from
+        // concurrent test files compete for filesystem notifications.
+        maxThreads: 1,
       },
     },
     server: {

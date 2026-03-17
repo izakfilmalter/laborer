@@ -23,6 +23,7 @@ import {
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import {
   Tooltip,
   TooltipContent,
@@ -47,7 +48,7 @@ interface TabBarItem {
   /** Display label for the tab. */
   readonly label: string
   /** Optional keyboard shortcut hint shown in a tooltip on hover. */
-  readonly shortcutHint?: string | undefined
+  readonly shortcutHint?: React.ReactNode
 }
 
 /** Props for the TabBar component. */
@@ -56,14 +57,14 @@ interface TabBarProps {
   readonly autoHide?: boolean | undefined
   /** Additional CSS classes for the root container. */
   readonly className?: string | undefined
-  /** Tooltip text for the close button on each tab (e.g. "Close tab (Cmd+W)"). */
-  readonly closeTooltip?: string | undefined
+  /** Tooltip content for the close button on each tab. */
+  readonly closeTooltip?: React.ReactNode
   /** Ordered list of tab items to render. */
   readonly items: readonly TabBarItem[]
   /** Optional label shown at the leading edge of the tab bar (e.g. "Window Tabs"). */
   readonly label?: string | undefined
-  /** Tooltip text for the new tab (+) button. */
-  readonly newTabTooltip?: string | undefined
+  /** Tooltip content for the new tab (+) button. */
+  readonly newTabTooltip?: React.ReactNode
   /** Called when a tab's close button is clicked. */
   readonly onClose: (id: string) => void
   /** Called when the new tab (+) button is clicked. */
@@ -123,7 +124,7 @@ function TabBarTab({
   readonly onSelect: (id: string) => void
   readonly onClose: (id: string) => void
   readonly onRename?: ((id: string, label: string) => void) | undefined
-  readonly closeTooltip?: string | undefined
+  readonly closeTooltip?: React.ReactNode
   /** Whether this tab was newly added (for entrance animation). */
   readonly isNew?: boolean
 }) {
@@ -175,6 +176,44 @@ function TabBarTab({
     setEditValue(item.label)
     setIsEditing(true)
   }, [item.label, onRename])
+
+  let labelContent: React.ReactNode
+  if (isEditing) {
+    labelContent = (
+      <input
+        className="min-w-0 max-w-[140px] rounded bg-transparent px-0.5 text-xs outline-none ring-1 ring-primary"
+        onBlur={commitRename}
+        onChange={(e) => setEditValue(e.target.value)}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            commitRename()
+          } else if (e.key === 'Escape') {
+            e.preventDefault()
+            cancelRename()
+          }
+          e.stopPropagation()
+        }}
+        ref={inputRef}
+        type="text"
+        value={editValue}
+      />
+    )
+  } else if (item.shortcutHint) {
+    labelContent = (
+      <Tooltip>
+        <TooltipTrigger render={<span className="min-w-0 truncate" />}>
+          {item.label}
+        </TooltipTrigger>
+        <TooltipContent>
+          <KbdGroup>{item.shortcutHint}</KbdGroup>
+        </TooltipContent>
+      </Tooltip>
+    )
+  } else {
+    labelContent = <span className="min-w-0 truncate">{item.label}</span>
+  }
 
   useEffect(() => {
     const el = tabRef.current
@@ -257,7 +296,6 @@ function TabBarTab({
         }}
         role="tab"
         tabIndex={item.isActive ? 0 : -1}
-        title={item.shortcutHint}
       >
         {/* Active indicator — bottom border line */}
         {item.isActive && (
@@ -266,29 +304,7 @@ function TabBarTab({
         {item.icon && (
           <span className="flex shrink-0 items-center">{item.icon}</span>
         )}
-        {isEditing ? (
-          <input
-            className="min-w-0 max-w-[140px] rounded bg-transparent px-0.5 text-xs outline-none ring-1 ring-primary"
-            onBlur={commitRename}
-            onChange={(e) => setEditValue(e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                commitRename()
-              } else if (e.key === 'Escape') {
-                e.preventDefault()
-                cancelRename()
-              }
-              e.stopPropagation()
-            }}
-            ref={inputRef}
-            type="text"
-            value={editValue}
-          />
-        ) : (
-          <span className="min-w-0 truncate">{item.label}</span>
-        )}
+        {labelContent}
         {item.isDirty && (
           <span
             className="size-1.5 shrink-0 rounded-full bg-amber-400"
@@ -382,7 +398,11 @@ function TabBar({
   autoHide = false,
   closeTooltip,
   label,
-  newTabTooltip = 'New tab',
+  newTabTooltip = (
+    <KbdGroup>
+      <Kbd>N</Kbd>
+    </KbdGroup>
+  ),
   className,
 }: TabBarProps) {
   const [barId] = useState(() => {
@@ -548,6 +568,9 @@ function TabBarInner({
   className,
   barId,
 }: TabBarProps & { readonly barId: string }) {
+  const newTabAriaLabel =
+    typeof newTabTooltip === 'string' ? newTabTooltip : 'New tab'
+
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const { overflow, recheckOverflow } = useScrollOverflow(scrollRef)
 
@@ -733,7 +756,7 @@ function TabBarInner({
           <TooltipTrigger
             render={
               <Button
-                aria-label={newTabTooltip}
+                aria-label={newTabAriaLabel}
                 onClick={onNew}
                 size="icon-xs"
                 variant="ghost"

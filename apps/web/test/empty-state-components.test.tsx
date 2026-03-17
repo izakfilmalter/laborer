@@ -191,7 +191,11 @@ describe('EmptyWorkspaceState', () => {
 
   it('shows Ctrl+T keyboard shortcut hint', () => {
     render(<EmptyWorkspaceState workspaceId="ws-1" />)
-    expect(screen.getByText('Ctrl+T')).toBeDefined()
+    const shortcutKeys = screen
+      .getByTestId('empty-workspace-state')
+      .querySelectorAll('[data-slot="kbd"]')
+    expect(shortcutKeys[0]?.textContent).toBe('Ctrl')
+    expect(shortcutKeys[1]?.textContent).toBe('T')
   })
 
   it('embeds the PanelTypePicker with 5 options', () => {
@@ -277,7 +281,11 @@ describe('EmptyPanelTabState', () => {
 
   it('shows Cmd+D keyboard shortcut hint', () => {
     render(<EmptyPanelTabState workspaceId="ws-1" />)
-    expect(screen.getByText('Cmd+D')).toBeDefined()
+    const shortcutKeys = screen
+      .getByTestId('empty-panel-tab-state')
+      .querySelectorAll('[data-slot="kbd"]')
+    expect(shortcutKeys[0]?.textContent).toBe('Cmd')
+    expect(shortcutKeys[1]?.textContent).toBe('D')
   })
 
   it('embeds the PanelTypePicker with 5 options', () => {

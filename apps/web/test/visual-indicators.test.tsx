@@ -8,7 +8,8 @@
  * @see docs/tabbed-window-layout/issues.md — Issue #26
  */
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cloneElement, isValidElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // ---------------------------------------------------------------------------
@@ -48,7 +49,13 @@ vi.mock('@/components/ui/tooltip', () => ({
   }: {
     children?: React.ReactNode
     render?: React.ReactElement
-  }) => <>{render ?? children}</>,
+  }) => {
+    if (render && isValidElement(render)) {
+      return <>{cloneElement(render, render.props, children)}</>
+    }
+
+    return <>{children}</>
+  },
   TooltipContent: ({ children }: { children: React.ReactNode }) => (
     <span data-testid="tooltip-content">{children}</span>
   ),
@@ -58,6 +65,7 @@ vi.mock('@/components/ui/tooltip', () => ({
 // Import components under test AFTER mocks
 // ---------------------------------------------------------------------------
 
+import { Kbd } from '../src/components/ui/kbd'
 import { PanelTypePicker } from '../src/components/ui/panel-type-picker'
 import type { TabBarItem } from '../src/components/ui/tab-bar'
 import { TabBar } from '../src/components/ui/tab-bar'
@@ -133,7 +141,7 @@ describe('Tab bar close button tooltips', () => {
 // ---------------------------------------------------------------------------
 
 describe('Tab shortcut hints', () => {
-  it('renders title attribute with shortcutHint on tab', () => {
+  it('renders shortcut hints in a tooltip instead of a title attribute', async () => {
     render(
       <TabBar
         items={[
@@ -141,9 +149,14 @@ describe('Tab shortcut hints', () => {
             id: '1',
             label: 'First',
             isActive: true,
-            shortcutHint: 'Cmd+1',
+            shortcutHint: (
+              <>
+                <Kbd>Cmd</Kbd>
+                <Kbd>1</Kbd>
+              </>
+            ),
           }),
-          makeItem({ id: '2', label: 'Second', shortcutHint: 'Cmd+2' }),
+          makeItem({ id: '2', label: 'Second' }),
         ]}
         onClose={vi.fn()}
         onNew={vi.fn()}
@@ -152,8 +165,10 @@ describe('Tab shortcut hints', () => {
       />
     )
     const tabs = screen.getAllByTestId('tab-bar-tab')
-    expect(tabs[0]?.getAttribute('title')).toBe('Cmd+1')
-    expect(tabs[1]?.getAttribute('title')).toBe('Cmd+2')
+    expect(tabs[0]?.getAttribute('title')).toBeNull()
+    fireEvent.mouseEnter(screen.getByText('First'))
+    expect(await screen.findByText('Cmd')).toBeTruthy()
+    expect(await screen.findByText('1')).toBeTruthy()
   })
 
   it('does not render title when shortcutHint is undefined', () => {

@@ -19,6 +19,7 @@
 import type { PaneType } from '@laborer/shared/types'
 import { Bot, Eye, FileCode2, Server, Terminal } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Kbd } from '@/components/ui/kbd'
 import { cn } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
@@ -166,9 +167,9 @@ function PanelTypePicker({
           role="option"
           tabIndex={-1}
         >
-          <kbd className="flex size-4 shrink-0 items-center justify-center rounded border border-muted-foreground/30 bg-muted/50 font-mono text-[10px] text-muted-foreground">
+          <Kbd className="size-4 shrink-0 justify-center border border-muted-foreground/30 bg-muted/50 px-0 font-mono text-[10px] text-muted-foreground">
             {index + 1}
-          </kbd>
+          </Kbd>
           <span className="flex shrink-0 items-center">{option.icon}</span>
           <span>{option.label}</span>
         </div>

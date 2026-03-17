@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
+import { Kbd } from '@/components/ui/kbd'
 import type { TabBarItem } from '@/components/ui/tab-bar'
 import { TabBar } from '@/components/ui/tab-bar'
 import {
@@ -60,12 +61,23 @@ function WindowTabBar({
       return []
     }
     return windowLayout.tabs.map((tab, index) => {
-      let shortcutHint: string | undefined
+      let shortcutHint: React.ReactNode
       if (index < 8) {
-        shortcutHint = `Cmd+${index + 1}`
+        shortcutHint = (
+          <>
+            <Kbd>Cmd</Kbd>
+            <Kbd>{index + 1}</Kbd>
+          </>
+        )
       } else if (index === windowLayout.tabs.length - 1) {
-        shortcutHint = 'Cmd+9'
+        shortcutHint = (
+          <>
+            <Kbd>Cmd</Kbd>
+            <Kbd>9</Kbd>
+          </>
+        )
       }
+
       return {
         id: tab.id,
         label: tab.label ?? `Tab ${index + 1}`,
@@ -111,10 +123,21 @@ function WindowTabBar({
   return (
     <TabBar
       className="border-b-0"
-      closeTooltip="Close tab (Cmd+Shift+W)"
+      closeTooltip={
+        <>
+          Close tab <Kbd>Cmd</Kbd>
+          <Kbd>Shift</Kbd>
+          <Kbd>W</Kbd>
+        </>
+      }
       items={items}
       label="Window Tabs"
-      newTabTooltip="New window tab (Cmd+N)"
+      newTabTooltip={
+        <>
+          New window tab <Kbd>Cmd</Kbd>
+          <Kbd>N</Kbd>
+        </>
+      }
       onClose={handleClose}
       onNew={handleNew}
       onRename={handleRename}

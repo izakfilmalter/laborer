@@ -27,6 +27,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { Kbd } from '@/components/ui/kbd'
 import { PanelTypePicker } from '@/components/ui/panel-type-picker'
 import {
   ResizableHandle,
@@ -98,11 +99,8 @@ export function EmptyWorkspaceState({
           </EmptyMedia>
           <EmptyTitle>No panel tabs</EmptyTitle>
           <EmptyDescription>
-            Select a panel type to create a new tab, or press{' '}
-            <kbd className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">
-              Ctrl+T
-            </kbd>{' '}
-            to open the panel picker.
+            Select a panel type to create a new tab, or press <Kbd>Ctrl</Kbd>
+            <Kbd>T</Kbd> to open the panel picker.
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
@@ -151,11 +149,8 @@ export function EmptyPanelTabState({
           </EmptyMedia>
           <EmptyTitle>Empty tab</EmptyTitle>
           <EmptyDescription>
-            This tab has no panels. Select a type below, or press{' '}
-            <kbd className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">
-              Cmd+D
-            </kbd>{' '}
-            to split.
+            This tab has no panels. Select a type below, or press <Kbd>Cmd</Kbd>
+            <Kbd>D</Kbd> to split.
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
@@ -657,12 +652,23 @@ function WorkspaceFrame({
       return []
     }
     return tileLeaf.panelTabs.map((tab, index) => {
-      let shortcutHint: string | undefined
+      let shortcutHint: React.ReactNode
       if (index < 8) {
-        shortcutHint = `Ctrl+${index + 1}`
+        shortcutHint = (
+          <>
+            <Kbd>Ctrl</Kbd>
+            <Kbd>{index + 1}</Kbd>
+          </>
+        )
       } else if (index === tileLeaf.panelTabs.length - 1) {
-        shortcutHint = 'Ctrl+9'
+        shortcutHint = (
+          <>
+            <Kbd>Ctrl</Kbd>
+            <Kbd>9</Kbd>
+          </>
+        )
       }
+
       return {
         id: tab.id,
         label: tab.label ?? getPanelTabLabel(tab.panelLayout),
@@ -757,7 +763,12 @@ function WorkspaceFrame({
           closeTooltip="Close tab"
           items={panelTabItems}
           label="Panel Tabs"
-          newTabTooltip="New panel tab (Ctrl+T)"
+          newTabTooltip={
+            <>
+              New panel tab <Kbd>Ctrl</Kbd>
+              <Kbd>T</Kbd>
+            </>
+          }
           onClose={handlePanelTabClose}
           onNew={handlePanelTabNew}
           onReorder={handlePanelTabReorder}

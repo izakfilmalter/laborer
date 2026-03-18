@@ -68,13 +68,11 @@ function RootComponent() {
                   <SyncStatusProvider>
                     <div className="grid h-svh grid-rows-[auto_1fr]">
                       <DockerStatusBanner />
-                      <div className="min-h-0">
-                        <LiveStoreProvider>
-                          <SyncStatusBridge />
-                          <AppSettingsModal />
-                          <Outlet />
-                        </LiveStoreProvider>
-                      </div>
+                      <LiveStoreProvider>
+                        <SyncStatusBridge />
+                        <AppSettingsModal />
+                        <Outlet />
+                      </LiveStoreProvider>
                     </div>
                   </SyncStatusProvider>
                 </AppSettingsProvider>

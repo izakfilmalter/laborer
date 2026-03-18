@@ -17,6 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { isElectron } from '@/lib/desktop'
 
 interface SidebarSearchProps {
   /** Called when the user types in the search input. */
@@ -26,6 +27,7 @@ interface SidebarSearchProps {
 }
 
 function SidebarSearch({ value, onChange }: SidebarSearchProps) {
+  const electron = isElectron()
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handleClear = useCallback(() => {
@@ -44,35 +46,37 @@ function SidebarSearch({ value, onChange }: SidebarSearchProps) {
   )
 
   return (
-    <div className="relative">
-      <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-      <Input
-        aria-label="Search projects and workspaces"
-        className="pr-7 pl-7"
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="Search projects..."
-        ref={inputRef}
-        type="text"
-        value={value}
-      />
-      {value.length > 0 && (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                aria-label="Clear search"
-                className="absolute top-1/2 right-1.5 flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                onClick={handleClear}
-                type="button"
-              />
-            }
-          >
-            <X className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent>Clear search</TooltipContent>
-        </Tooltip>
-      )}
+    <div className={electron ? 'drag-region pt-2 pl-[76px]' : undefined}>
+      <div className="relative">
+        <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          aria-label="Search projects and workspaces"
+          className="pr-7 pl-7"
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Search projects..."
+          ref={inputRef}
+          type="text"
+          value={value}
+        />
+        {value.length > 0 && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  aria-label="Clear search"
+                  className="absolute top-1/2 right-1.5 flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={handleClear}
+                  type="button"
+                />
+              }
+            >
+              <X className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent>Clear search</TooltipContent>
+          </Tooltip>
+        )}
+      </div>
     </div>
   )
 }

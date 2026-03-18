@@ -9,7 +9,6 @@ import { AtomRegistryProvider } from '@/atoms/provider'
 import { AppSettingsProvider } from '@/components/app-settings-context'
 import { AppSettingsModal } from '@/components/app-settings-modal'
 import { DockerStatusBanner } from '@/components/docker-status-banner'
-import Header from '@/components/header'
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
 import { SyncStatusBridge } from '@/components/sync-status-bridge'
 import { SyncStatusProvider } from '@/components/sync-status-context'
@@ -67,14 +66,15 @@ function RootComponent() {
               <AtomRegistryProvider>
                 <AppSettingsProvider>
                   <SyncStatusProvider>
-                    <div className="grid h-svh grid-rows-[auto_auto_1fr]">
-                      <Header />
+                    <div className="grid h-svh grid-rows-[auto_1fr]">
                       <DockerStatusBanner />
-                      <LiveStoreProvider>
-                        <SyncStatusBridge />
-                        <AppSettingsModal />
-                        <Outlet />
-                      </LiveStoreProvider>
+                      <div className="min-h-0">
+                        <LiveStoreProvider>
+                          <SyncStatusBridge />
+                          <AppSettingsModal />
+                          <Outlet />
+                        </LiveStoreProvider>
+                      </div>
                     </div>
                   </SyncStatusProvider>
                 </AppSettingsProvider>

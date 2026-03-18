@@ -875,16 +875,19 @@ function HomeComponent() {
             onResize={handleSidebarResize}
             panelRef={sidebarPanelRef}
           >
-            <div className="flex h-full flex-col">
+            <div className="flex h-full min-h-0 flex-col">
+              {/* Search bar — part of the shared top row with the main header */}
+              {hasProjects && (
+                <div className="drag-region flex h-8 shrink-0 items-center border-b px-3 pl-[76px]">
+                  <SidebarSearch
+                    className="w-full"
+                    onChange={setSearchQuery}
+                    value={searchQuery}
+                  />
+                </div>
+              )}
               <ScrollArea className="min-h-0 flex-1">
                 <div className="grid gap-4 p-3">
-                  {/* Search bar — filters projects and workspaces in real-time */}
-                  {hasProjects && (
-                    <SidebarSearch
-                      onChange={setSearchQuery}
-                      value={searchQuery}
-                    />
-                  )}
                   <div className="flex items-center justify-between">
                     <h2 className="font-medium text-sm">Projects</h2>
                     <AddProjectForm />

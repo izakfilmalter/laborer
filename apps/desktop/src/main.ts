@@ -94,7 +94,7 @@ const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 const isDev = Boolean(VITE_DEV_SERVER_URL)
 
 /** Traffic light button inset for the hidden title bar. */
-const TRAFFIC_LIGHT_POSITION = { x: 16, y: 24 } as const
+const TRAFFIC_LIGHT_POSITION = { x: 16, y: 12 } as const
 
 const openWindows = new Set<BrowserWindow>()
 let mainWindow: BrowserWindow | null = null

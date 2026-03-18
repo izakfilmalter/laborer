@@ -876,22 +876,19 @@ function HomeComponent() {
             panelRef={sidebarPanelRef}
           >
             <div className="flex h-full min-h-0 flex-col">
-              {/* Search bar — part of the shared top row with the main header */}
+              {/* Search bar + Add Project — shared top row */}
               {hasProjects && (
-                <div className="drag-region flex h-8 shrink-0 items-center border-b px-3 pl-[76px]">
+                <div className="drag-region flex h-10 shrink-0 items-center gap-2 border-b px-2 pl-[88px]">
                   <SidebarSearch
-                    className="w-full"
+                    className="min-w-0 flex-1"
                     onChange={setSearchQuery}
                     value={searchQuery}
                   />
+                  <AddProjectForm />
                 </div>
               )}
               <ScrollArea className="min-h-0 flex-1">
                 <div className="grid gap-4 p-3">
-                  <div className="flex items-center justify-between">
-                    <h2 className="font-medium text-sm">Projects</h2>
-                    <AddProjectForm />
-                  </div>
                   {/* Project-grouped tree — each project is a collapsible heading */}
                   {filteredProjects.map((project) => (
                     <ProjectGroup

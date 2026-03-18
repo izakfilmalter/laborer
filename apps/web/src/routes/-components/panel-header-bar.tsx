@@ -184,7 +184,7 @@ export function PanelHeaderBar({
     | undefined
 }) {
   return (
-    <div className="flex h-8 shrink-0 items-center justify-between border-b px-2">
+    <div className="drag-region flex h-10 shrink-0 items-center justify-between border-b px-2">
       {/* Left: sidebar toggle + view toggle + view label */}
       <div className="flex items-center gap-2">
         {onToggleSidebar && (

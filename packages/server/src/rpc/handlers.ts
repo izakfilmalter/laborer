@@ -910,7 +910,29 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.gen(function* () {
         const containerService = yield* ContainerService
         yield* containerService.unpauseContainer(workspaceId)
-      }),
+      }).pipe(
+        Effect.catchIf(
+          (err) =>
+            err._tag === 'RpcError' && err.code === 'CONTAINER_NOT_FOUND',
+          () =>
+            Effect.gen(function* () {
+              yield* Effect.logInfo(
+                `Container not found for workspace "${workspaceId}", recreating`
+              )
+              const provider = yield* WorkspaceProvider
+              const diffService = yield* DiffService
+              const prWatcher = yield* PrWatcher
+              const workspaceSyncService = yield* WorkspaceSyncService
+              const onReady = (wsId: string) =>
+                Effect.gen(function* () {
+                  yield* diffService.startPolling(wsId)
+                  yield* prWatcher.startPolling(wsId)
+                  yield* workspaceSyncService.startPolling(wsId)
+                })
+              yield* provider.startContainer(workspaceId, onReady)
+            })
+        )
+      ),
 
     // -------------------------------------------------------------------
     // Terminal RPCs (Issue #50-59, #143)

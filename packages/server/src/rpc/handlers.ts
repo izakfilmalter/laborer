@@ -187,6 +187,17 @@ export const handleConfigGet = ({ projectId }: { projectId: string }) =>
               message: e.message,
               code: 'CONFIG_VALIDATION_ERROR',
             })
+        ),
+        Effect.catchAllDefect((defect) =>
+          Effect.fail(
+            new RpcError({
+              message:
+                defect instanceof Error
+                  ? defect.message
+                  : 'Unexpected error resolving config',
+              code: 'CONFIG_RESOLUTION_ERROR',
+            })
+          )
         )
       )
   })

@@ -118,9 +118,19 @@ describe('project settings modal helpers', () => {
     )
   })
 
-  it('falls back to generic message for unrelated failures', () => {
+  it('maps devServer mutual exclusion errors to user-friendly copy', () => {
+    expect(
+      getSettingsLoadErrorMessage(
+        'devServer.image and devServer.dockerfile are mutually exclusive. image from /repo/laborer.json, dockerfile from /global/laborer.json'
+      )
+    ).toBe(
+      'devServer.image and devServer.dockerfile cannot both be set. Remove one from your laborer.json.'
+    )
+  })
+
+  it('includes raw error message in fallback for unrecognized failures', () => {
     expect(getSettingsLoadErrorMessage('request timeout')).toBe(
-      'Failed to load project settings.'
+      'Failed to load project settings: request timeout'
     )
   })
 })

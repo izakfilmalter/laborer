@@ -135,7 +135,7 @@ function WindowTabBar({
       newTabTooltip={
         <>
           New window tab <Kbd>Cmd</Kbd>
-          <Kbd>N</Kbd>
+          <Kbd>T</Kbd>
         </>
       }
       onClose={handleClose}

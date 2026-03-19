@@ -255,8 +255,8 @@ const KEYBINDS = {
   PULL_WORKSPACE: { key: 'p', meta: true, shift: true },
 
   // -- Window tabs --
-  /** Cmd+N — new window tab */
-  NEW_WINDOW_TAB: { key: 'n', meta: true },
+  /** Cmd+T — new window tab */
+  NEW_WINDOW_TAB: { key: 't', meta: true },
   /** Cmd+1-9 — switch window tab by index */
   WINDOW_TAB_1: { key: '1', meta: true },
   WINDOW_TAB_2: { key: '2', meta: true },

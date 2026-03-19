@@ -717,8 +717,8 @@ function PanelHotkeys({
 
   // --- Window tab shortcuts ---
 
-  // Cmd+N → create new window tab
-  useHotkeySequence(['Meta+N'], (event) => {
+  // Cmd+T → create new window tab
+  useHotkeySequence(['Meta+T'], (event) => {
     event.preventDefault()
     actions?.addWindowTab?.()
   })

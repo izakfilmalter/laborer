@@ -23,7 +23,7 @@
  */
 
 import { RpcError } from '@laborer/shared/rpc'
-import { Context, Effect, Layer, Ref } from 'effect'
+import { Context, Duration, Effect, Layer, Ref, Schedule } from 'effect'
 
 /**
  * Sentinel code used in RpcError to signal that a deferred service is
@@ -111,36 +111,47 @@ export const makeRefDelegatingService = <Id, S extends object>(
           return cached
         }
 
+        const callMethod = (
+          service: S,
+          ...args: readonly unknown[]
+        ): Effect.Effect<unknown, unknown, unknown> => {
+          const method = (service as Record<string, unknown>)[propName]
+          if (typeof method === 'function') {
+            return (
+              method as (
+                ...a: readonly unknown[]
+              ) => Effect.Effect<unknown, unknown, unknown>
+            )(...args)
+          }
+          return Effect.succeed(method)
+        }
+
         const wrapper = (...args: readonly unknown[]) => {
           // Fast path: service already resolved, skip Ref.get overhead
           if (resolvedService) {
-            const method = (resolvedService as Record<string, unknown>)[
-              propName
-            ]
-            if (typeof method === 'function') {
-              return (
-                method as (
-                  ...a: readonly unknown[]
-                ) => Effect.Effect<unknown, unknown, unknown>
-              )(...args)
-            }
-            return Effect.succeed(method)
+            return callMethod(resolvedService, ...args)
           }
-          // Slow path: go through Ref (only used during initialization)
-          return Effect.flatMap(Ref.get(ref), (current) => {
+          // Slow path: wait for the real service to be swapped in.
+          // Polls the Ref on a short schedule until the placeholder is
+          // replaced, then delegates the call to the real implementation.
+          const waitForService = Effect.flatMap(Ref.get(ref), (current) => {
             if (current !== placeholder) {
               resolvedService = current
+              return Effect.succeed(current)
             }
-            const method = (current as Record<string, unknown>)[propName]
-            if (typeof method === 'function') {
-              return (
-                method as (
-                  ...a: readonly unknown[]
-                ) => Effect.Effect<unknown, unknown, unknown>
-              )(...args)
-            }
-            return Effect.succeed(method)
-          })
+            return Effect.fail('still-initializing' as const)
+          }).pipe(
+            Effect.retry(
+              Schedule.spaced(Duration.millis(250)).pipe(
+                Schedule.upTo(Duration.seconds(30))
+              )
+            ),
+            Effect.mapError(() => serviceInitializingError(serviceName))
+          )
+
+          return Effect.flatMap(waitForService, (service) =>
+            callMethod(service, ...args)
+          )
         }
 
         methodCache.set(propName, wrapper)

@@ -60,16 +60,7 @@ import { join } from 'node:path'
 import { containerName } from '@laborer/shared/container-name'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import {
-  Array as Arr,
-  Context,
-  Data,
-  Effect,
-  Fiber,
-  Layer,
-  pipe,
-  Ref,
-} from 'effect'
+import { Array as Arr, Context, Effect, Fiber, Layer, pipe, Ref } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from './config-service.js'
 import { ContainerService } from './container-service.js'
@@ -95,11 +86,6 @@ interface WorkspaceRecord {
   readonly taskSource: string | null
   readonly worktreePath: string
 }
-
-class GitSpawnError extends Data.TaggedError('GitSpawnError')<{
-  readonly cause: unknown
-  readonly message: string
-}> {}
 
 /**
  * Slugify a branch name for use as a directory name.
@@ -289,126 +275,6 @@ const buildSetupFailureMessage = (failure: {
 
   return `Setup script '${failure.command}' failed with exit code ${failure.exitCode}.${outputSuffix}`
 }
-
-/**
- * Rollback a partially-created workspace. Cleans up in order:
- * 1. Set workspace status to "errored" in LiveStore (if workspace was committed)
- * 2. Remove the git worktree directory via `git worktree remove --force`
- * 3. Delete the branch via `git branch -D`
- * 4. Free the allocated port
- *
- * All steps are best-effort — failures are logged but don't prevent
- * subsequent cleanup steps from running.
- *
- * @param repoPath - Path to the main git repo
- * @param worktreePath - Path to the worktree directory to remove
- * @param branchName - Branch name to delete
- * @param port - Port to free
- * @param portAllocator - PortAllocator service instance
- */
-const rollbackWorktree = (
-  repoPath: string,
-  worktreePath: string,
-  branchName: string,
-  port: number,
-  portAllocator: {
-    readonly free: (port: number) => Effect.Effect<void, RpcError>
-  }
-): Effect.Effect<void, never> =>
-  Effect.gen(function* () {
-    yield* Effect.logInfo(
-      `Rolling back workspace: removing worktree, branch, and freeing port ${port}`
-    ).pipe(Effect.annotateLogs('module', logPrefix))
-
-    // 1. Remove the git worktree directory
-    yield* Effect.tryPromise({
-      try: async () => {
-        const proc = spawn(
-          ['git', 'worktree', 'remove', '--force', worktreePath],
-          {
-            cwd: repoPath,
-            stdout: 'pipe',
-            stderr: 'pipe',
-          }
-        )
-        const exitCode = await proc.exited
-        const stderr = await new Response(proc.stderr).text()
-        return { exitCode, stderr }
-      },
-      catch: (cause) =>
-        new GitSpawnError({
-          cause,
-          message: `Failed to spawn git worktree remove during rollback: ${String(cause)}`,
-        }),
-    }).pipe(
-      Effect.tap(({ exitCode, stderr }) =>
-        exitCode !== 0
-          ? Effect.logWarning(
-              `Rollback: git worktree remove failed (exit ${exitCode}): ${stderr.trim()}`
-            ).pipe(Effect.annotateLogs('module', logPrefix))
-          : Effect.logDebug('Rollback: worktree removed').pipe(
-              Effect.annotateLogs('module', logPrefix)
-            )
-      ),
-      Effect.catchAll((error) =>
-        Effect.logWarning(
-          `Rollback: failed to remove worktree: ${String(error)}`
-        ).pipe(Effect.annotateLogs('module', logPrefix))
-      )
-    )
-
-    // 2. Delete the branch
-    yield* Effect.tryPromise({
-      try: async () => {
-        const proc = spawn(['git', 'branch', '-D', branchName], {
-          cwd: repoPath,
-          stdout: 'pipe',
-          stderr: 'pipe',
-        })
-        const exitCode = await proc.exited
-        const stderr = await new Response(proc.stderr).text()
-        return { exitCode, stderr }
-      },
-      catch: (cause) =>
-        new GitSpawnError({
-          cause,
-          message: `Failed to spawn git branch -D during rollback: ${String(cause)}`,
-        }),
-    }).pipe(
-      Effect.tap(({ exitCode, stderr }) =>
-        exitCode !== 0
-          ? Effect.logWarning(
-              `Rollback: git branch -D failed (exit ${exitCode}): ${stderr.trim()}`
-            ).pipe(Effect.annotateLogs('module', logPrefix))
-          : Effect.logDebug('Rollback: branch deleted').pipe(
-              Effect.annotateLogs('module', logPrefix)
-            )
-      ),
-      Effect.catchAll((error) =>
-        Effect.logWarning(
-          `Rollback: failed to delete branch: ${String(error)}`
-        ).pipe(Effect.annotateLogs('module', logPrefix))
-      )
-    )
-
-    // 3. Free the allocated port
-    yield* portAllocator.free(port).pipe(
-      Effect.tap(() =>
-        Effect.logDebug(`Rollback: freed port ${port}`).pipe(
-          Effect.annotateLogs('module', logPrefix)
-        )
-      ),
-      Effect.catchAll((error) =>
-        Effect.logWarning(
-          `Rollback: failed to free port ${port}: ${String(error)}`
-        ).pipe(Effect.annotateLogs('module', logPrefix))
-      )
-    )
-
-    yield* Effect.logInfo(
-      'Rollback complete: worktree, branch, and port cleaned up'
-    ).pipe(Effect.annotateLogs('module', logPrefix))
-  })
 
 const dockerContainerExists = (name: string): Effect.Effect<boolean, never> =>
   Effect.tryPromise({
@@ -1175,27 +1041,16 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               Effect.tapError((containerError) =>
                 Effect.gen(function* () {
                   yield* Effect.logWarning(
-                    `Container creation failed, rolling back workspace: ${containerError.message}`
+                    `Container creation failed for workspace ${id}: ${containerError.message}`
                   ).pipe(Effect.annotateLogs('module', logPrefix))
 
-                  // Clear setup step before rollback
+                  // Clear setup step so the UI no longer shows a spinner
                   store.commit(
                     events.containerSetupStepChanged({
                       workspaceId: id,
                       step: null,
                     })
                   )
-
-                  // Full rollback
-                  yield* rollbackWorktree(
-                    repoPath,
-                    worktreePath,
-                    branchName,
-                    params.port,
-                    portAllocator
-                  )
-
-                  store.commit(events.workspaceDestroyed({ id }))
                 })
               )
             )
@@ -1362,22 +1217,12 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   })
                 )
 
-                // Set workspace to errored status
+                // Set workspace to errored status so the user can decide
+                // whether to retry or destroy it. Never auto-destroy — the
+                // worktree may contain uncommitted work.
                 store.commit(
                   events.workspaceStatusChanged({ id, status: 'errored' })
                 )
-
-                // Full rollback: remove worktree, delete branch, free port
-                yield* rollbackWorktree(
-                  project.repoPath,
-                  worktreePath,
-                  resolvedBranch,
-                  port,
-                  portAllocator
-                )
-
-                // Remove the errored workspace from LiveStore after rollback
-                store.commit(events.workspaceDestroyed({ id }))
               })
             )
           )
@@ -1923,6 +1768,15 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   events.containerSetupStepChanged({
                     workspaceId,
                     step: null,
+                  })
+                )
+
+                // Set workspace to errored status so the user can decide
+                // whether to retry or destroy it.
+                store.commit(
+                  events.workspaceStatusChanged({
+                    id: workspaceId,
+                    status: 'errored',
                   })
                 )
               })

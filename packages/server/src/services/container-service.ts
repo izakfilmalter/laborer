@@ -38,7 +38,7 @@
 import { containerName } from '@laborer/shared/container-name'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import { Array as Arr, Context, Effect, Layer, pipe } from 'effect'
+import { Array as Arr, Context, Effect, Layer, pipe, Runtime } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { LaborerStore } from './laborer-store.js'
 
@@ -140,7 +140,7 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
     ) => Effect.Effect<void, RpcError>
   }
 >() {
-  static readonly layer = Layer.effect(
+  static readonly layer = Layer.scoped(
     ContainerService,
     Effect.gen(function* () {
       const { store } = yield* LaborerStore
@@ -394,6 +394,39 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
         return { workspace, name }
       }
 
+      /**
+       * Query the actual Docker container status via `docker inspect`.
+       * Returns the status string (e.g. "running", "paused", "exited", "created")
+       * or null if the container doesn't exist or inspect fails.
+       */
+      const getDockerContainerStatus = (
+        containerName: string
+      ): Effect.Effect<string | null> =>
+        Effect.tryPromise({
+          try: async () => {
+            const proc = spawn(
+              [
+                'docker',
+                'inspect',
+                '--format',
+                '{{.State.Status}}',
+                containerName,
+              ],
+              {
+                stdout: 'pipe',
+                stderr: 'pipe',
+              }
+            )
+            const exitCode = await proc.exited
+            const stdout = await new Response(proc.stdout).text()
+            if (exitCode !== 0) {
+              return null
+            }
+            return stdout.trim() || null
+          },
+          catch: () => null,
+        }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+
       const pauseContainer = Effect.fn('ContainerService.pauseContainer')(
         function* (workspaceId: string) {
           const lookup = lookupContainer(workspaceId)
@@ -405,14 +438,34 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
             })
           }
 
-          const { workspace, name: containerNameValue } = lookup
+          const { name: containerNameValue } = lookup
 
-          // Idempotent: if already paused, return gracefully
-          if (workspace.containerStatus === 'paused') {
+          // Check actual Docker state to handle external state changes
+          // (e.g. user paused/stopped via OrbStack UI)
+          const dockerStatus =
+            yield* getDockerContainerStatus(containerNameValue)
+
+          // Container is already paused — sync LiveStore and return gracefully
+          if (dockerStatus === 'paused') {
             yield* Effect.logDebug(
-              `Container "${containerNameValue}" is already paused, skipping`
+              `Container "${containerNameValue}" is already paused in Docker, syncing LiveStore`
             ).pipe(Effect.annotateLogs('module', logPrefix))
+            store.commit(events.containerPaused({ workspaceId }))
             return
+          }
+
+          // Container is not running (exited, stopped, or gone) — sync LiveStore
+          // and report the actual state instead of failing with a confusing
+          // Docker daemon error
+          if (dockerStatus !== 'running') {
+            yield* Effect.logWarning(
+              `Container "${containerNameValue}" is not running (docker status: ${dockerStatus ?? 'not found'}), syncing LiveStore`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+            store.commit(events.containerStopped({ workspaceId }))
+            return yield* new RpcError({
+              message: `Container "${containerNameValue}" is not running (status: ${dockerStatus ?? 'not found'})`,
+              code: 'CONTAINER_NOT_FOUND',
+            })
           }
 
           yield* Effect.logInfo(
@@ -466,14 +519,33 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
             })
           }
 
-          const { workspace, name: containerNameValue } = lookup
+          const { name: containerNameValue } = lookup
 
-          // Idempotent: if already running (not paused), return gracefully
-          if (workspace.containerStatus !== 'paused') {
+          // Check actual Docker state to handle external state changes
+          // (e.g. user resumed via OrbStack UI)
+          const dockerStatus =
+            yield* getDockerContainerStatus(containerNameValue)
+
+          // Container is already running — sync LiveStore and return gracefully
+          if (dockerStatus === 'running') {
             yield* Effect.logDebug(
-              `Container "${containerNameValue}" is not paused (status: ${workspace.containerStatus}), skipping unpause`
+              `Container "${containerNameValue}" is already running in Docker, syncing LiveStore`
             ).pipe(Effect.annotateLogs('module', logPrefix))
+            store.commit(events.containerUnpaused({ workspaceId }))
             return
+          }
+
+          // Container is not paused (exited, stopped, or gone) — sync LiveStore
+          // and report the actual state
+          if (dockerStatus !== 'paused') {
+            yield* Effect.logWarning(
+              `Container "${containerNameValue}" is not paused (docker status: ${dockerStatus ?? 'not found'}), syncing LiveStore`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+            store.commit(events.containerStopped({ workspaceId }))
+            return yield* new RpcError({
+              message: `Container "${containerNameValue}" is not available (status: ${dockerStatus ?? 'not found'})`,
+              code: 'CONTAINER_NOT_FOUND',
+            })
           }
 
           yield* Effect.logInfo(
@@ -514,6 +586,280 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
             `Container "${containerNameValue}" unpaused`
           ).pipe(Effect.annotateLogs('module', logPrefix))
         }
+      )
+
+      // ── Startup reconciliation ──────────────────────────────────
+      // On startup, check every workspace that LiveStore thinks has a
+      // container and verify against actual Docker state. This catches
+      // containers that were stopped/removed/paused while the app was
+      // not running (e.g. OrbStack restart, manual `docker stop`, etc.).
+
+      /**
+       * Reconcile a single workspace's container state against Docker.
+       * Commits the appropriate LiveStore event if the states diverge.
+       */
+      const reconcileWorkspaceContainer = Effect.fn(
+        'ContainerService.reconcileWorkspaceContainer'
+      )(function* (workspace: {
+        readonly id: string
+        readonly containerId: string | null
+        readonly containerUrl: string | null
+        readonly containerStatus: string | null
+      }) {
+        const name =
+          workspace.containerUrl?.replace('.orb.local', '') ?? workspace.id
+        const dockerStatus = yield* getDockerContainerStatus(name)
+        const lsStatus = workspace.containerStatus
+
+        // Already in sync — nothing to do
+        if (
+          (dockerStatus === 'running' && lsStatus === 'running') ||
+          (dockerStatus === 'paused' && lsStatus === 'paused')
+        ) {
+          return
+        }
+
+        yield* Effect.logInfo(
+          `Reconcile: container "${name}" is ${dockerStatus ?? 'not found'} in Docker but "${lsStatus}" in LiveStore, syncing`
+        ).pipe(Effect.annotateLogs('module', logPrefix))
+
+        if (dockerStatus === 'paused') {
+          store.commit(events.containerPaused({ workspaceId: workspace.id }))
+        } else if (dockerStatus === 'running') {
+          store.commit(events.containerUnpaused({ workspaceId: workspace.id }))
+        } else {
+          // exited, dead, not found, etc. — container is gone
+          store.commit(events.containerStopped({ workspaceId: workspace.id }))
+        }
+      })
+
+      // Run reconciliation for all containerized workspaces at startup
+      const containerized = store
+        .query(tables.workspaces)
+        .filter((ws) => ws.containerId !== null)
+
+      if (containerized.length > 0) {
+        yield* Effect.logInfo(
+          `Reconciling Docker state for ${containerized.length} containerized workspace(s)`
+        ).pipe(Effect.annotateLogs('module', logPrefix))
+
+        yield* Effect.forEach(
+          containerized,
+          (workspace) =>
+            reconcileWorkspaceContainer(workspace).pipe(
+              Effect.catchAll((error) =>
+                Effect.logWarning(
+                  `Reconcile: failed to check workspace "${workspace.id}": ${String(error)}`
+                ).pipe(Effect.annotateLogs('module', logPrefix))
+              )
+            ),
+          { discard: true }
+        )
+      }
+
+      // ── Docker events listener ────────────────────────────────
+      // Spawn `docker events` as a long-running subprocess that streams
+      // container state changes in real time. When a tracked container
+      // (one that exists in LiveStore) is paused, unpaused, stopped, or
+      // dies externally (e.g. via OrbStack UI or `docker` CLI), we sync
+      // the LiveStore state to match reality so the UI updates immediately.
+
+      /**
+       * Build a reverse lookup from container name → workspaceId so we can
+       * match incoming Docker events to our tracked workspaces.
+       */
+      const getContainerNameToWorkspaceId = () => {
+        const allWorkspaces = store.query(tables.workspaces)
+        const map = new Map<string, string>()
+        for (const workspace of allWorkspaces) {
+          if (workspace.containerId === null) {
+            continue
+          }
+          const name =
+            workspace.containerUrl?.replace('.orb.local', '') ?? workspace.id
+          map.set(name, workspace.id)
+        }
+        return map
+      }
+
+      /**
+       * Process a single line from `docker events` JSON output.
+       * Matches the container name against tracked workspaces and commits
+       * the appropriate LiveStore event when external state changes are detected.
+       */
+      const handleDockerEvent = Effect.fn('ContainerService.handleDockerEvent')(
+        function* (line: string) {
+          // Parse the JSON event line. docker events --format '{{json .}}'
+          // produces objects with fields: status, id, from, Type, Action,
+          // Actor (with Attributes.name), time, timeNano
+          const parsed = yield* Effect.try({
+            try: () =>
+              JSON.parse(line) as {
+                readonly Action?: string
+                readonly Actor?: {
+                  readonly Attributes?: { readonly name?: string }
+                }
+                readonly status?: string
+              },
+            catch: () => new Error('Invalid JSON from docker events'),
+          }).pipe(Effect.option)
+
+          if (parsed._tag === 'None') {
+            return
+          }
+
+          const event = parsed.value
+          const containerNameValue = event.Actor?.Attributes?.name
+          if (containerNameValue === undefined) {
+            return
+          }
+
+          const lookup = getContainerNameToWorkspaceId()
+          const workspaceId = lookup.get(containerNameValue)
+          if (workspaceId === undefined) {
+            return // Not one of our tracked containers
+          }
+
+          const action = event.Action ?? event.status
+          if (action === undefined) {
+            return
+          }
+
+          switch (action) {
+            case 'pause': {
+              yield* Effect.logInfo(
+                `Docker event: container "${containerNameValue}" paused externally, syncing LiveStore`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+              store.commit(events.containerPaused({ workspaceId }))
+              break
+            }
+            case 'unpause': {
+              yield* Effect.logInfo(
+                `Docker event: container "${containerNameValue}" unpaused externally, syncing LiveStore`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+              store.commit(events.containerUnpaused({ workspaceId }))
+              break
+            }
+            case 'die':
+            case 'stop': {
+              yield* Effect.logInfo(
+                `Docker event: container "${containerNameValue}" ${action} externally, syncing LiveStore`
+              ).pipe(Effect.annotateLogs('module', logPrefix))
+              store.commit(events.containerStopped({ workspaceId }))
+              break
+            }
+            default:
+              // Ignore other events (start, create, destroy, etc.)
+              // We handle 'start' via our own createContainer flow
+              break
+          }
+        }
+      )
+
+      /**
+       * Read lines from a ReadableStream, buffering partial lines across
+       * chunks. Calls onLine for each complete line.
+       */
+      const readLines = async (
+        stream: ReadableStream<Uint8Array>,
+        onLine: (line: string) => void
+      ) => {
+        const reader = stream.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) {
+              break
+            }
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            // Last element is the incomplete line (or empty string)
+            buffer = lines.pop() ?? ''
+            for (const line of lines) {
+              const trimmed = line.trim()
+              if (trimmed.length > 0) {
+                onLine(trimmed)
+              }
+            }
+          }
+          // Process any remaining data in buffer
+          const remaining = buffer.trim()
+          if (remaining.length > 0) {
+            onLine(remaining)
+          }
+        } catch {
+          // Stream closed or errored — expected on shutdown
+        }
+      }
+
+      /**
+       * Start the docker events listener as a long-running subprocess.
+       * Uses the Effect runtime to fork event handlers so they run with
+       * the full service context (logging, etc.).
+       */
+      let dockerEventsProc: ReturnType<typeof spawn> | null = null
+
+      const runtime = yield* Effect.runtime<never>()
+
+      const startDockerEventsListener = Effect.gen(function* () {
+        yield* Effect.logInfo('Starting docker events listener').pipe(
+          Effect.annotateLogs('module', logPrefix)
+        )
+
+        const proc = spawn(
+          [
+            'docker',
+            'events',
+            '--filter',
+            'type=container',
+            '--format',
+            '{{json .}}',
+          ],
+          { stdout: 'pipe', stderr: 'ignore' }
+        )
+        dockerEventsProc = proc
+
+        // Read lines from the docker events stream. Each line is processed
+        // to detect external state changes and sync LiveStore.
+        yield* Effect.tryPromise({
+          try: () =>
+            readLines(proc.stdout, (line) => {
+              // Fork each event handler on the service runtime so it has
+              // access to the full service context (logging, etc.)
+              Runtime.runFork(runtime)(handleDockerEvent(line))
+            }),
+          catch: () => new Error('Docker events stream ended'),
+        }).pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning(
+              `Docker events listener stopped: ${String(error)}`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+          ),
+          Effect.catchAll(() => Effect.void)
+        )
+      })
+
+      // Fork the docker events listener as a daemon fiber so it runs
+      // in the background for the lifetime of the service.
+      yield* Effect.forkDaemon(startDockerEventsListener)
+
+      // Clean up the docker events subprocess on service shutdown
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (dockerEventsProc !== null) {
+            dockerEventsProc.kill()
+            dockerEventsProc = null
+          }
+        }).pipe(
+          Effect.tap(() =>
+            Effect.logInfo('Docker events listener stopped').pipe(
+              Effect.annotateLogs('module', logPrefix)
+            )
+          )
+        )
       )
 
       return ContainerService.of({

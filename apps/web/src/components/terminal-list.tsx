@@ -322,7 +322,7 @@ function TerminalList({
       <div className="grid gap-2 py-1">
         {unavailableAlert}
         <div className="flex items-center justify-between gap-2">
-          <span className="text-muted-foreground text-xs">No terminals</span>
+          <span className="text-muted-foreground/70 text-xs">No terminals</span>
           <TerminalSpawnButtons
             agentProvider={agentProvider}
             isServiceAvailable={isServiceAvailable}

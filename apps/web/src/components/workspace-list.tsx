@@ -51,6 +51,7 @@ import {
 import {
   type FC,
   type KeyboardEvent,
+  type ReactNode,
   Suspense,
   useCallback,
   useMemo,
@@ -667,17 +668,33 @@ function WorkspaceItem({
 
   const isContainerized = workspace.containerId != null
   const isContainerPaused = workspace.containerStatus === 'paused'
-  const containerLink = workspace.containerUrl
-    ? `https://${workspace.containerUrl}`
-    : null
+  const hasContainerConfig = workspace.containerUrl != null
+  // Only show the container link when a container actually exists.
+  // containerUrl is intentionally preserved after container destruction
+  // for display purposes, but we don't want to show a clickable link
+  // to a container that no longer exists.
+  const containerLink =
+    isContainerized && workspace.containerUrl
+      ? `https://${workspace.containerUrl}`
+      : null
 
   /**
-   * For containerized workspaces, derive the display status from the
-   * container state (paused vs running) rather than the workspace
-   * lifecycle status, so the badge accurately reflects container state.
+   * Derive display status from the container state. The badge reflects
+   * the container lifecycle, not the workspace lifecycle:
+   * - Container running → "running"
+   * - Container paused → "paused"
+   * - Container gone (was containerized but containerId cleared) → "stopped"
+   * - Never containerized → fall back to workspace.status
    */
-  const displayStatus =
-    isContainerized && isContainerPaused ? 'paused' : workspace.status
+  const displayStatus = (() => {
+    if (isContainerized) {
+      return isContainerPaused ? 'paused' : 'running'
+    }
+    if (hasContainerConfig) {
+      return 'stopped'
+    }
+    return workspace.status
+  })()
 
   const needsAttention = workspaceAgentStatus === 'waiting_for_input'
 
@@ -690,6 +707,54 @@ function WorkspaceItem({
 
     event.preventDefault()
     await openExternalUrl(containerLink)
+  }
+
+  let infraLabel: ReactNode = (
+    <span className="text-muted-foreground/70 text-xs">No container</span>
+  )
+  if (containerLink) {
+    infraLabel = (
+      <CardDescription className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+        <span className="group/copyable flex min-w-0 items-center gap-1 overflow-hidden">
+          <a
+            className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
+            href={containerLink}
+            onClick={handleContainerLinkClick}
+            rel="noopener"
+            target="_blank"
+            title={`Open ${containerLink}`}
+          >
+            {workspace.containerUrl}
+          </a>
+          <span className="-mr-14 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
+            <CopyButton title="Copy URL" value={containerLink} />
+            <Tooltip>
+              <TooltipTrigger>
+                <a
+                  aria-label="Open in browser"
+                  className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                  href={containerLink}
+                  onClick={handleContainerLinkClick}
+                  rel="noopener"
+                  target="_blank"
+                >
+                  <ExternalLink className="size-3" />
+                </a>
+              </TooltipTrigger>
+              <TooltipContent>Open in browser</TooltipContent>
+            </Tooltip>
+          </span>
+        </span>
+      </CardDescription>
+    )
+  } else if (workspace.port > 0) {
+    infraLabel = (
+      <CardDescription className="flex items-center gap-2">
+        <span className="font-mono text-muted-foreground">
+          :{workspace.port}
+        </span>
+      </CardDescription>
+    )
   }
 
   return (
@@ -764,48 +829,7 @@ function WorkspaceItem({
         {/* Row 2 — Infra: container URL/port, status, pause/play (hidden for root workspace) */}
         {!isRootWorkspace && (
           <div className="flex min-w-0 items-center justify-between gap-2">
-            {containerLink ? (
-              <CardDescription className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-                <span className="group/copyable flex min-w-0 items-center gap-1 overflow-hidden">
-                  <a
-                    className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
-                    href={containerLink}
-                    onClick={handleContainerLinkClick}
-                    rel="noopener"
-                    target="_blank"
-                    title={`Open ${containerLink}`}
-                  >
-                    {workspace.containerUrl}
-                  </a>
-                  <span className="-mr-14 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
-                    <CopyButton title="Copy URL" value={containerLink} />
-                    <Tooltip>
-                      <TooltipTrigger>
-                        <a
-                          aria-label="Open in browser"
-                          className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                          href={containerLink}
-                          onClick={handleContainerLinkClick}
-                          rel="noopener"
-                          target="_blank"
-                        >
-                          <ExternalLink className="size-3" />
-                        </a>
-                      </TooltipTrigger>
-                      <TooltipContent>Open in browser</TooltipContent>
-                    </Tooltip>
-                  </span>
-                </span>
-              </CardDescription>
-            ) : (
-              workspace.port > 0 && (
-                <CardDescription className="flex items-center gap-2">
-                  <span className="font-mono text-muted-foreground">
-                    :{workspace.port}
-                  </span>
-                </CardDescription>
-              )
-            )}
+            {infraLabel}
             <div className="ml-auto flex shrink-0 items-center gap-1">
               <Badge
                 className={cn(

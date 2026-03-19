@@ -208,9 +208,13 @@ function getDisplayStatus(ws: {
   readonly status: string
   readonly containerId?: string | null
   readonly containerStatus?: string | null
+  readonly containerUrl?: string | null
 }): string {
-  if (ws.containerId != null && ws.containerStatus === 'paused') {
-    return 'paused'
+  if (ws.containerId != null) {
+    return ws.containerStatus === 'paused' ? 'paused' : 'running'
+  }
+  if (ws.containerUrl != null) {
+    return 'stopped'
   }
   return ws.status
 }
@@ -221,6 +225,7 @@ function computeWorkspaceCounts(
     readonly status: string
     readonly containerId?: string | null
     readonly containerStatus?: string | null
+    readonly containerUrl?: string | null
   }>
 ): WorkspaceCounts {
   let running = 0
@@ -531,8 +536,16 @@ function DashboardWorkspaceRow({
     (workspace.origin as WorkspaceOrigin) === 'external'
   const isContainerized = workspace.containerId != null
   const isContainerPaused = workspace.containerStatus === 'paused'
-  const displayStatus =
-    isContainerized && isContainerPaused ? 'paused' : workspace.status
+  const hasContainerConfig = workspace.containerUrl != null
+  const displayStatus = (() => {
+    if (isContainerized) {
+      return isContainerPaused ? 'paused' : 'running'
+    }
+    if (hasContainerConfig) {
+      return 'stopped'
+    }
+    return workspace.status
+  })()
 
   return (
     <div className="flex items-center gap-2 rounded-md border px-3 py-2">
@@ -545,7 +558,7 @@ function DashboardWorkspaceRow({
           Detected
         </span>
       )}
-      {workspace.containerUrl ? (
+      {isContainerized && workspace.containerUrl ? (
         <a
           className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
           href={`https://${workspace.containerUrl}`}

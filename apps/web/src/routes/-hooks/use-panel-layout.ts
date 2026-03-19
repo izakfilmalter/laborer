@@ -1859,6 +1859,84 @@ export function usePanelLayout() {
     ]
   )
 
+  /**
+   * When removing a panel tab leaves the workspace empty (zero tabs),
+   * auto-close the workspace by cleaning up the legacy layout tree and
+   * removing the workspace tile from the hierarchical layout.
+   *
+   * @returns `true` if the workspace was auto-closed, `false` otherwise.
+   */
+  const autoCloseEmptyWorkspace = useCallback(
+    (newLayout: WindowLayout, workspaceId: string): boolean => {
+      const newActiveTab = getActiveWindowTab(newLayout)
+      const newTileLayout = newActiveTab?.workspaceLayout
+      if (!newTileLayout) {
+        return false
+      }
+      const newLeaves = getWorkspaceTileLeaves(newTileLayout)
+      const updatedLeaf = newLeaves.find((l) => l.workspaceId === workspaceId)
+      if (!updatedLeaf || updatedLeaf.panelTabs.length > 0) {
+        return false
+      }
+
+      // Clean up the legacy layout tree for this workspace
+      const base = persistedLayoutTree ?? defaultLayout
+      if (base) {
+        const newTree = closeWorkspacePanes(base, workspaceId)
+        if (newTree) {
+          const nextActivePaneId = ensureValidActivePaneId(
+            newTree,
+            persistedActivePaneId
+          )
+          store.commit(
+            layoutPaneClosed({
+              windowId: panelWindowId,
+              layoutTree: newTree,
+              activePaneId: nextActivePaneId,
+            })
+          )
+        } else {
+          store.commit(
+            layoutPaneClosed({
+              windowId: panelWindowId,
+              layoutTree: {
+                _tag: 'LeafNode' as const,
+                id: 'pane-empty',
+                paneType: 'terminal' as const,
+                terminalId: undefined,
+                workspaceId: undefined,
+              },
+              activePaneId: null,
+            })
+          )
+          hasSeeded.current = false
+        }
+      }
+
+      // Remove the workspace tile from the hierarchical layout
+      const finalLayout = removeWorkspaceFromLayout(
+        newLayout,
+        workspaceId,
+        removeWorkspaceFromTab
+      )
+      store.commit(
+        windowLayoutRestored({
+          windowId: panelWindowId,
+          windowLayout: finalLayout,
+          activeWindowTabId: finalLayout.activeTabId ?? null,
+        })
+      )
+      return true
+    },
+    [
+      persistedLayoutTree,
+      defaultLayout,
+      persistedActivePaneId,
+      panelWindowId,
+      store,
+    ]
+  )
+
   const handleRemovePanelTab = useCallback(
     (workspaceId: string, tabId: string) => {
       if (!persistedWindowLayout) {
@@ -1887,9 +1965,21 @@ export function usePanelLayout() {
         workspaceId,
         (leaf) => removePanelTab(leaf, tabId)
       )
+
+      // If this was the last panel tab, auto-close the workspace
+      // instead of leaving an empty "No panel tabs" state.
+      if (autoCloseEmptyWorkspace(newLayout, workspaceId)) {
+        return
+      }
+
       commitPanelTabLayout(panelTabClosed, newLayout)
     },
-    [persistedWindowLayout, commitPanelTabLayout, removeTerminalOptimistically]
+    [
+      persistedWindowLayout,
+      commitPanelTabLayout,
+      removeTerminalOptimistically,
+      autoCloseEmptyWorkspace,
+    ]
   )
 
   /**

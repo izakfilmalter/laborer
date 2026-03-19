@@ -702,7 +702,7 @@ function TabBarInner({
       )}
       {/* Scrollable tab area */}
       <div
-        className="relative min-w-0 flex-1"
+        className="relative min-w-0 shrink"
         data-testid="tab-bar-scroll-area"
       >
         <div

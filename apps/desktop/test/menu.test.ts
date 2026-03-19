@@ -96,6 +96,26 @@ describe('buildApplicationMenuTemplate', () => {
     expect(closePaneItem?.click).toBeTypeOf('function')
   })
 
+  it('does not use role:windowMenu on macOS to avoid stealing Cmd+T from the web layer', () => {
+    const template = buildApplicationMenuTemplate(() => null, vi.fn(), 'darwin')
+
+    // The template should not contain role: 'windowMenu' on macOS because
+    // Electron's native windowMenu includes a "New Tab" item bound to Cmd+T
+    // at the Chromium level, which fires before the web content's keydown
+    // handler and prevents the app from using Cmd+T for window tabs.
+    const hasRoleWindowMenu = template.some(
+      (item) => item.role === 'windowMenu'
+    )
+
+    expect(hasRoleWindowMenu).toBe(false)
+
+    // Should have a custom Window menu with standard items instead
+    const windowMenu = template.find((item) => item.label === 'Window')
+
+    expect(windowMenu).toBeDefined()
+    expect(Array.isArray(windowMenu?.submenu)).toBe(true)
+  })
+
   it('adds push and pull workspace shortcuts on macOS', () => {
     const template = buildApplicationMenuTemplate(() => null, vi.fn(), 'darwin')
     const fileMenuItems = getFileMenuItems(template)

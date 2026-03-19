@@ -189,7 +189,20 @@ export function buildApplicationMenuTemplate(
   template.push(
     { role: 'editMenu' },
     { role: 'viewMenu' },
-    { role: 'windowMenu' }
+    // Explicit Window menu instead of `{ role: 'windowMenu' }` because
+    // Electron's built-in windowMenu on macOS includes a native "New Tab"
+    // item bound to Cmd+T at the Chromium level, which fires before the
+    // web content's keydown handler and steals the shortcut.
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        ...(platform === 'darwin'
+          ? [{ type: 'separator' as const }, { role: 'front' as const }]
+          : [{ role: 'close' as const }]),
+      ],
+    }
   )
 
   return template

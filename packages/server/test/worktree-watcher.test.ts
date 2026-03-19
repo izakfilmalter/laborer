@@ -7,7 +7,6 @@ import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
-import { PortAllocator } from '../src/services/port-allocator.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
@@ -26,7 +25,6 @@ const TestLayer = RepositoryWatchCoordinator.layer.pipe(
   Layer.provide(WorktreeReconciler.layer),
   Layer.provide(WorktreeDetector.layer),
   Layer.provide(RepositoryIdentity.layer),
-  Layer.provide(PortAllocator.make(4300, 4310)),
   Layer.provideMerge(TestLaborerStore)
 )
 

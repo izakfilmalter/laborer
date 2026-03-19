@@ -2,11 +2,11 @@
  * Workspace list UI component.
  *
  * Displays a reactive list of workspaces for a given project from LiveStore.
- * Each workspace shows its branch name, port, and status with color-coded
+ * Each workspace shows its branch name and status with color-coded
  * badges: creating=yellow, running=green, stopped=gray, errored=red,
  * destroyed=dim.
  * Workspaces with "creating" status show a spinner and progress description
- * to indicate that worktree creation, port allocation, and setup scripts
+ * to indicate that worktree creation and setup scripts
  * are in progress.
  * Updates reactively when workspace state changes.
  * Includes a destroy button with confirmation dialog per workspace.
@@ -433,8 +433,7 @@ function DestroyDialogDescription({
       This will permanently destroy workspace{' '}
       <strong className="font-mono text-foreground">{branchName}</strong>. All
       running processes (terminals, dev servers, agents) will be killed, the git
-      worktree will be removed, and the allocated port will be freed. This
-      action cannot be undone.
+      worktree will be removed. This action cannot be undone.
     </AlertDialogDescription>
   )
 }
@@ -492,7 +491,6 @@ interface WorkspaceItemProps {
     readonly projectId: string
     readonly branchName: string
     readonly worktreePath: string
-    readonly port: number
     readonly status: string
     readonly origin: WorkspaceOrigin | string
     readonly createdAt: string
@@ -747,14 +745,6 @@ function WorkspaceItem({
         </span>
       </CardDescription>
     )
-  } else if (workspace.port > 0) {
-    infraLabel = (
-      <CardDescription className="flex items-center gap-2">
-        <span className="font-mono text-muted-foreground">
-          :{workspace.port}
-        </span>
-      </CardDescription>
-    )
   }
 
   return (
@@ -826,7 +816,7 @@ function WorkspaceItem({
             )}
           </div>
         </div>
-        {/* Row 2 — Infra: container URL/port, status, pause/play (hidden for root workspace) */}
+        {/* Row 2 — Infra: container URL, status, pause/play (hidden for root workspace) */}
         {!isRootWorkspace && (
           <div className="flex min-w-0 items-center justify-between gap-2">
             {infraLabel}

@@ -200,7 +200,6 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       projectId: 'project-1',
       branchName: 'auto-generated-branch',
       worktreePath: '/path/to/worktree',
-      port: 3001,
       status: 'running',
     })
 
@@ -231,7 +230,6 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       projectId: 'project-1',
       branchName: 'my-feature-branch',
       worktreePath: '/path/to/worktree',
-      port: 3001,
       status: 'running',
     })
 
@@ -270,7 +268,6 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       projectId: 'project-1',
       branchName: 'if-batch-column-variant-prd',
       worktreePath: '/path/to/worktree',
-      port: 3001,
       status: 'running',
     })
 

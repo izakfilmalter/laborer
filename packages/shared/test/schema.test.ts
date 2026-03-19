@@ -140,7 +140,6 @@ describe('LiveStore schema', () => {
             taskSource: 'manual',
             branchName: 'feature/test-coverage',
             worktreePath: '/tmp/project-1/.laborer/workspace-1',
-            port: 4321,
             status: 'creating',
             origin: 'laborer',
             createdAt: '2026-03-06T00:00:00.000Z',
@@ -159,7 +158,6 @@ describe('LiveStore schema', () => {
           taskSource: 'manual',
           branchName: 'feature/test-coverage',
           worktreePath: '/tmp/project-1/.laborer/workspace-1',
-          port: 4321,
           status: 'creating',
           origin: 'laborer',
           createdAt: '2026-03-06T00:00:00.000Z',
@@ -215,7 +213,6 @@ describe('LiveStore schema', () => {
             taskSource: null,
             branchName: 'feature/container-test',
             worktreePath: '/tmp/project-1/.laborer/workspace-container',
-            port: 4322,
             status: 'running',
             origin: 'laborer',
             createdAt: '2026-03-06T00:00:00.000Z',
@@ -306,7 +303,6 @@ describe('LiveStore schema', () => {
 
         // Verify other workspace fields are preserved after container events
         assert.strictEqual(afterStop[0]?.branchName, 'feature/container-test')
-        assert.strictEqual(afterStop[0]?.port, 4322)
         assert.strictEqual(afterStop[0]?.status, 'running')
       })
   )

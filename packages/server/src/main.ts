@@ -2,7 +2,7 @@
  * Laborer Server — Entry Point
  *
  * Node.js server running Effect TS services. Manages all side effects:
- * git operations, file system access, port allocation, and delegates
+ * git operations, file system access, and delegates
  * terminal operations to the standalone terminal service.
  *
  * Architecture:
@@ -61,7 +61,6 @@ import { GithubTaskImporter } from './services/github-task-importer.js'
 import { LaborerStoreLive } from './services/laborer-store.js'
 import { LinearTaskImporter } from './services/linear-task-importer.js'
 import { McpRegistrar } from './services/mcp-registrar.js'
-import { PortAllocator } from './services/port-allocator.js'
 import { PrWatcher } from './services/pr-watcher.js'
 import { PrdStorageService } from './services/prd-storage-service.js'
 import { ProjectRegistry } from './services/project-registry.js'
@@ -161,14 +160,13 @@ const ServerLive = NodeHttpServer.layer(createServer, { port: env.PORT })
 
 /**
  * Deferred Leaf Layers — no inter-service dependencies but run I/O
- * that can block (Docker CLI, sidecar connections, git commands, ports).
+ * that can block (Docker CLI, sidecar connections, git commands).
  */
 const DeferredLeafLayers = Layer.mergeAll(
   FileWatcherClient.layer,
   WorktreeDetector.layer,
   DepsImageService.layer,
-  DockerDetection.layer,
-  PortAllocator.layer
+  DockerDetection.layer
 )
 
 /**

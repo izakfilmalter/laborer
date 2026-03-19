@@ -13,7 +13,6 @@ import {
   FileWatcherClient,
 } from '../src/services/file-watcher-client.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
-import { PortAllocator } from '../src/services/port-allocator.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
@@ -97,8 +96,6 @@ const createRecordingClientLayer = () => {
 }
 
 const createTestLayerWithRecording = (
-  portStart: number,
-  portEnd: number,
   clientLayer: Layer.Layer<FileWatcherClient>
 ) =>
   RepositoryWatchCoordinator.layer.pipe(
@@ -108,7 +105,6 @@ const createTestLayerWithRecording = (
     Layer.provide(WorktreeReconciler.layer),
     Layer.provide(WorktreeDetector.layer),
     Layer.provide(RepositoryIdentity.layer),
-    Layer.provide(PortAllocator.make(portStart, portEnd)),
     Layer.provideMerge(TestLaborerStore)
   )
 
@@ -120,11 +116,7 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
         const recording = createRecordingClientLayer()
         const repoPath = initRepo('coord-scoped-1', tempRoots)
         const linkedPath = join(repoPath, '.worktrees', 'coord-one')
-        const testLayer = createTestLayerWithRecording(
-          4500,
-          4505,
-          recording.layer
-        )
+        const testLayer = createTestLayerWithRecording(recording.layer)
 
         yield* Effect.gen(function* () {
           const coordinator = yield* RepositoryWatchCoordinator
@@ -178,11 +170,7 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
         const recording = createRecordingClientLayer()
         const repoPath = initRepo('coord-gitdir-1', tempRoots)
         const linkedPath = join(repoPath, '.worktrees', 'coord-gitdir')
-        const testLayer = createTestLayerWithRecording(
-          4506,
-          4510,
-          recording.layer
-        )
+        const testLayer = createTestLayerWithRecording(recording.layer)
 
         yield* Effect.gen(function* () {
           const coordinator = yield* RepositoryWatchCoordinator
@@ -229,11 +217,7 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
       const repoPath = initRepo('coord-teardown-1', tempRoots)
       const linkedA = join(repoPath, '.worktrees', 'coord-teardown-a')
       const linkedB = join(repoPath, '.worktrees', 'coord-teardown-b')
-      const testLayer = createTestLayerWithRecording(
-        4531,
-        4540,
-        recording.layer
-      )
+      const testLayer = createTestLayerWithRecording(recording.layer)
 
       yield* Effect.gen(function* () {
         const coordinator = yield* RepositoryWatchCoordinator
@@ -299,11 +283,7 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
         const recording = createRecordingClientLayer()
         const repoPath = initRepo('coord-shutdown-1', tempRoots)
 
-        const ScopedTestLayer = createTestLayerWithRecording(
-          4511,
-          4520,
-          recording.layer
-        )
+        const ScopedTestLayer = createTestLayerWithRecording(recording.layer)
 
         // Create a manual scope to simulate server lifecycle
         const scope = yield* Scope.make()
@@ -330,9 +310,7 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
           'All subscribed watchers should be unsubscribed on scope cleanup'
         )
       }).pipe(
-        Effect.provide(
-          createTestLayerWithRecording(4541, 4550, TestFileWatcherClientLayer)
-        )
+        Effect.provide(createTestLayerWithRecording(TestFileWatcherClientLayer))
       )
   )
 
@@ -341,11 +319,7 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
       const recording = createRecordingClientLayer()
       const repoPath = initRepo('coord-abstraction-1', tempRoots)
 
-      const ScopedTestLayer = createTestLayerWithRecording(
-        4521,
-        4530,
-        recording.layer
-      )
+      const ScopedTestLayer = createTestLayerWithRecording(recording.layer)
 
       const scope = yield* Scope.make()
       const ctx = yield* Layer.buildWithScope(ScopedTestLayer, scope)
@@ -370,9 +344,7 @@ describe('RepositoryWatchCoordinator scoped lifecycle', () => {
 
       yield* Scope.close(scope, Exit.succeed(undefined))
     }).pipe(
-      Effect.provide(
-        createTestLayerWithRecording(4551, 4560, TestFileWatcherClientLayer)
-      )
+      Effect.provide(createTestLayerWithRecording(TestFileWatcherClientLayer))
     )
   )
 })

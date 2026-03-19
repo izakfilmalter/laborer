@@ -207,7 +207,6 @@ const makeWorkspace = (
     projectId: string
     branchName: string
     worktreePath: string
-    port: number
     status: string
     origin: string
     createdAt: string
@@ -229,7 +228,6 @@ const makeWorkspace = (
   projectId: 'project-1',
   branchName: 'main',
   worktreePath: PROJECT_REPO_PATH,
-  port: 3000,
   status: 'running',
   origin: 'external',
   createdAt: new Date().toISOString(),

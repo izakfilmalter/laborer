@@ -8,7 +8,6 @@ import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
-import { PortAllocator } from '../src/services/port-allocator.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
@@ -52,7 +51,6 @@ const TestLayer = ProjectRegistry.layer.pipe(
   Layer.provide(WorktreeReconciler.layer),
   Layer.provide(WorktreeDetector.layer),
   Layer.provide(RepositoryIdentity.layer),
-  Layer.provide(PortAllocator.make(4700, 4750)),
   Layer.provideMerge(TestLaborerStore)
 )
 
@@ -169,8 +167,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         Layer.provide(TestFileWatcherClientRealLayer),
         Layer.provide(WorktreeReconciler.layer),
         Layer.provide(WorktreeDetector.layer),
-        Layer.provide(RepositoryIdentity.layer),
-        Layer.provide(PortAllocator.make(4751, 4760))
+        Layer.provide(RepositoryIdentity.layer)
       )
 
       // Use a manual scope to simulate server lifecycle
@@ -240,7 +237,6 @@ describe('Startup bootstrap and project lifecycle integration', () => {
             taskSource: null,
             branchName: 'main',
             worktreePath: repoPath,
-            port: 0,
             status: 'stopped',
             origin: 'external',
             createdAt: new Date().toISOString(),
@@ -261,8 +257,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
           Layer.provide(TestFileWatcherClientRealLayer),
           Layer.provide(WorktreeReconciler.layer),
           Layer.provide(WorktreeDetector.layer),
-          Layer.provide(RepositoryIdentity.layer),
-          Layer.provide(PortAllocator.make(4761, 4770))
+          Layer.provide(RepositoryIdentity.layer)
         )
 
         const scope = yield* Scope.make()
@@ -493,8 +488,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
           Layer.provide(TestFileWatcherClientRealLayer),
           Layer.provide(WorktreeReconciler.layer),
           Layer.provide(WorktreeDetector.layer),
-          Layer.provide(RepositoryIdentity.layer),
-          Layer.provide(PortAllocator.make(4771, 4780))
+          Layer.provide(RepositoryIdentity.layer)
         )
 
         const scope = yield* Scope.make()
@@ -609,8 +603,7 @@ describe('Startup bootstrap and project lifecycle integration', () => {
           Layer.provide(TestFileWatcherClientRealLayer),
           Layer.provide(WorktreeReconciler.layer),
           Layer.provide(WorktreeDetector.layer),
-          Layer.provide(RepositoryIdentity.layer),
-          Layer.provide(PortAllocator.make(4781, 4790))
+          Layer.provide(RepositoryIdentity.layer)
         )
 
         const scope = yield* Scope.make()

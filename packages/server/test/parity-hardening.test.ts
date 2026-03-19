@@ -32,7 +32,6 @@ import {
   FileWatcherClient,
 } from '../src/services/file-watcher-client.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
-import { PortAllocator } from '../src/services/port-allocator.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import {
   DEFAULT_IGNORED_PREFIXES,
@@ -229,7 +228,6 @@ describe('Persisted identity migration and dedupe hardening', () => {
     Layer.provide(WorktreeReconciler.layer),
     Layer.provide(WorktreeDetector.layer),
     Layer.provide(RepositoryIdentity.layer),
-    Layer.provide(PortAllocator.make(4900, 4920)),
     Layer.provideMerge(TestLaborerStore)
   )
 
@@ -589,7 +587,6 @@ describe('End-to-end downstream invalidation hardening', () => {
               taskSource: null,
               branchName: 'main',
               worktreePath: repoPath,
-              port: 0,
               status: 'running',
               origin: 'laborer',
               createdAt: new Date().toISOString(),
@@ -670,7 +667,6 @@ describe('End-to-end downstream invalidation hardening', () => {
               taskSource: null,
               branchName: 'main',
               worktreePath: repoPath,
-              port: 0,
               status: 'running',
               origin: 'laborer',
               createdAt: new Date().toISOString(),

@@ -2,20 +2,19 @@
  * WorkspaceProvider — Effect Service
  *
  * Manages isolated workspace environments via git worktrees. Each workspace
- * gets its own branch, directory, and allocated port. The provider interface
+ * gets its own branch and directory. The provider interface
  * is designed to be pluggable — v1 ships with git worktrees, but future
  * implementations could use Docker or Daytona.
  *
  * Responsibilities:
  * - Worktree creation via `git worktree add`
  * - Worktree destruction via `git worktree remove` + `git branch -D`
- * - Port allocation via PortAllocator
  * - Project validation via ProjectRegistry
  * - Workspace state tracking via LiveStore
  * - Branch management and naming
  * - Worktree directory validation after creation (Issue #34)
  * - File watcher scoping via environment variables (Issue #34)
- * - Environment variable injection (PORT, watcher scoping, etc.) for workspace processes
+ * - Environment variable injection (watcher scoping, etc.) for workspace processes
  * - Setup script execution after worktree creation (Issue #35)
  * - Full rollback on setup script failure (Issue #37)
  * - Git fetch failure handling (Issue #39)
@@ -28,9 +27,9 @@
  * ```
  *
  * Each script is executed in the worktree directory with the workspace
- * environment variables (PORT, etc.) injected. Scripts run sequentially
+ * environment variables injected. Scripts run sequentially
  * and any non-zero exit code aborts the remaining scripts. On failure,
- * the workspace is rolled back: worktree removed, port freed, branch
+ * the workspace is rolled back: worktree removed, branch
  * deleted. The error includes the script's stdout + stderr output.
  *
  * Usage:
@@ -39,7 +38,6 @@
  *   const provider = yield* WorkspaceProvider
  *   const workspace = yield* provider.createWorktree("project-id", "feature/my-branch")
  *   const env = yield* provider.getWorkspaceEnv("workspace-id")
- *   // env.PORT === "3142"
  *   yield* provider.destroyWorktree("workspace-id")
  * })
  * ```
@@ -47,7 +45,6 @@
  * Issue #33: createWorktree method
  * Issue #34: worktree directory validation + file watcher scoping
  * Issue #35: run setup scripts in worktree
- * Issue #36: inject PORT env var
  * Issue #37: handle setup script failure (rollback)
  * Issue #38: handle dirty git state error
  * Issue #39: handle git fetch failure
@@ -66,7 +63,6 @@ import { ConfigService } from './config-service.js'
 import { ContainerService } from './container-service.js'
 import { DepsImageService } from './deps-image-service.js'
 import { LaborerStore } from './laborer-store.js'
-import { PortAllocator } from './port-allocator.js'
 import { ProjectRegistry } from './project-registry.js'
 
 /**
@@ -80,7 +76,6 @@ interface WorkspaceRecord {
   readonly createdAt: string
   readonly id: string
   readonly origin: 'laborer' | 'external'
-  readonly port: number
   readonly projectId: string
   readonly status: string
   readonly taskSource: string | null
@@ -349,7 +344,7 @@ const destroyContainerByName = (
  * the git stderr output for diagnosis (e.g., "Could not resolve host" or
  * "Permission denied").
  *
- * This step is placed before port allocation so no resources need cleanup
+ * This step is placed early so no resources need cleanup
  * on failure — matching the design of the dirty state check (Issue #38).
  *
  * @param repoPath - Path to the git repository to fetch in
@@ -625,8 +620,8 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
     ) => Effect.Effect<WorkspaceRecord, RpcError>
 
     /**
-     * Destroy a workspace by removing its git worktree, freeing the
-     * allocated port, and committing a WorkspaceDestroyed event to LiveStore.
+     * Destroy a workspace by removing its git worktree and committing a
+     * WorkspaceDestroyed event to LiveStore.
      * The branch is kept so it can be reused when creating a new workspace.
      * All workspaces have their worktree removed regardless of origin.
      *
@@ -634,8 +629,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
      * 1. Look up the workspace in LiveStore
      * 2. Look up the project to get the repo path
      * 3. Run `git worktree remove --force` to remove the worktree directory
-     * 4. Free the allocated port via PortAllocator
-     * 5. Commit WorkspaceDestroyed event to LiveStore
+     * 4. Commit WorkspaceDestroyed event to LiveStore
      *
      * If the worktree has uncommitted changes and `force` is not set,
      * returns a `DIRTY_WORKTREE` error so the client can warn the user.
@@ -685,7 +679,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
      * Returns a Record of env vars that should be injected into all
      * processes running in the workspace (setup scripts, terminals,
      * dev servers). Includes:
-     * - PORT: the allocated port for dev servers
      * - LABORER_WORKSPACE_ID: the workspace ID
      * - LABORER_WORKSPACE_PATH: the worktree directory path
      * - LABORER_BRANCH: the workspace branch name
@@ -713,7 +706,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         new Map<string, Fiber.RuntimeFiber<void, never>>()
       )
       const { store } = yield* LaborerStore
-      const portAllocator = yield* PortAllocator
       const registry = yield* ProjectRegistry
       const configService = yield* ConfigService
       const containerService = yield* ContainerService
@@ -727,15 +719,13 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
       const performWorktreeSetup = (params: {
         readonly id: string
         readonly branchName: string
-        readonly port: number
         readonly repoPath: string
         readonly worktreeDir: string
         readonly worktreePath: string
         readonly setupScripts: readonly string[]
       }): Effect.Effect<string | null, RpcError> =>
         Effect.gen(function* () {
-          const { id, branchName, repoPath, worktreeDir, worktreePath, port } =
-            params
+          const { id, branchName, repoPath, worktreeDir, worktreePath } = params
 
           // Signal UI: fetching remote refs
           store.commit(
@@ -919,7 +909,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
 
           // Run setup scripts from resolved config (Issue #35, #37, #156)
           const scriptEnv = {
-            PORT: String(port),
             LABORER_WORKSPACE_ID: id,
             LABORER_WORKSPACE_PATH: worktreePath,
             LABORER_BRANCH: branchName,
@@ -959,7 +948,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
         readonly id: string
         readonly branchName: string
         readonly worktreePath: string
-        readonly port: number
         readonly repoPath: string
         readonly projectName: string
         readonly devServerImage: string
@@ -1085,14 +1073,11 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           const resolvedBranch =
             branchName ?? `laborer/${crypto.randomUUID().slice(0, 8)}`
 
-          // 3. Allocate a port for this workspace (fast, in-memory)
-          const port = yield* portAllocator.allocate()
-
-          // 4. Compute worktree path from resolved config
+          // 3. Compute worktree path from resolved config
           const worktreeDir = resolvedConfig.worktreeDir.value
           const worktreePath = join(worktreeDir, slugify(resolvedBranch))
 
-          // 5. Generate workspace ID and commit to LiveStore immediately
+          // 4. Generate workspace ID and commit to LiveStore immediately
           // with status 'creating'. The UI sees the workspace right away
           // in the card list; heavy setup runs as a background fiber.
           const id = crypto.randomUUID()
@@ -1104,7 +1089,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             taskSource: taskId ?? null,
             branchName: resolvedBranch,
             worktreePath,
-            port,
             status: 'creating',
             origin: 'laborer',
             createdAt,
@@ -1118,7 +1102,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               taskSource: workspace.taskSource,
               branchName: workspace.branchName,
               worktreePath: workspace.worktreePath,
-              port: workspace.port,
               status: workspace.status,
               origin: workspace.origin,
               createdAt: workspace.createdAt,
@@ -1126,7 +1109,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             })
           )
 
-          // 6. Fork the heavy setup work into a background fiber.
+          // 5. Fork the heavy setup work into a background fiber.
           // This includes: git fetch, branch check, worktree creation,
           // validation, setup scripts, and optional container setup.
           // Progress is communicated via worktreeSetupStepChanged events.
@@ -1151,7 +1134,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             const baseSha = yield* performWorktreeSetup({
               id,
               branchName: resolvedBranch,
-              port,
               repoPath: project.repoPath,
               worktreeDir,
               worktreePath,
@@ -1187,7 +1169,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 id,
                 branchName: resolvedBranch,
                 worktreePath,
-                port,
                 repoPath: project.repoPath,
                 projectName: project.name,
                 devServerImage,
@@ -1379,7 +1360,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           )
 
           // 3b. Fork slow cleanup (container destroy, git worktree remove,
-          //     branch delete, port free) into a background daemon fiber so
+          //     branch delete) into a background daemon fiber so
           //     the RPC response returns immediately. The UI already reflects
           //     the "destroyed" status via the LiveStore event above.
           yield* Effect.logInfo('Forking background cleanup fiber').pipe(
@@ -1595,24 +1576,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
               `Post-cleanup: directory ${workspace.worktreePath} exists=${String(dirStillExists)}`
             ).pipe(Effect.annotateLogs('module', logPrefix))
 
-            if (workspace.port > 0) {
-              // 5. Free the allocated port
-              yield* Effect.logInfo(`Freeing port ${workspace.port}`).pipe(
-                Effect.annotateLogs('module', logPrefix)
-              )
-
-              yield* portAllocator
-                .free(workspace.port)
-                .pipe(
-                  Effect.catchAll((err) =>
-                    Effect.logWarning(
-                      `Failed to free port ${workspace.port}: ${err.message}`
-                    )
-                  )
-                )
-            }
-
-            // 6. Commit WorkspaceDestroyed event to LiveStore
+            // 5. Commit WorkspaceDestroyed event to LiveStore
             //    This removes the row from the workspaces table
             yield* Effect.logInfo(
               `Committing WorkspaceDestroyed event for ${workspaceId}`
@@ -1704,18 +1668,11 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             })
           }
 
-          // 4. Allocate a port if the workspace doesn't have one (external
-          //    workspaces are created with port=0)
-          let port = workspace.port
-          if (port === 0) {
-            port = yield* portAllocator.allocate()
-          }
-
           yield* Effect.logInfo(
             `Starting container for workspace: id=${workspaceId}, branch=${workspace.branchName}, path=${workspace.worktreePath}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
 
-          // 5. Transition workspace: update origin to 'laborer' and status
+          // 4. Transition workspace: update origin to 'laborer' and status
           //    to 'running'
           if (workspace.origin === 'external') {
             store.commit(
@@ -1734,7 +1691,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             )
           }
 
-          // 6. Run the onReady callback (e.g. start diff/PR polling)
+          // 5. Run the onReady callback (e.g. start diff/PR polling)
           if (onReady) {
             yield* onReady(workspaceId).pipe(
               Effect.catchAll((err) =>
@@ -1745,13 +1702,12 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
             )
           }
 
-          // 7. Fork container setup as a background fiber (same pattern
+          // 6. Fork container setup as a background fiber (same pattern
           //    as createWorktree)
           const containerSetupEffect = performContainerSetup({
             id: workspaceId,
             branchName: workspace.branchName,
             worktreePath: workspace.worktreePath,
-            port,
             repoPath: project.repoPath,
             projectName: project.name,
             devServerImage,
@@ -1890,7 +1846,6 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           // OS file descriptor limit (Issue #34, User Story #23).
           return {
             // Core workspace identification
-            PORT: String(ws.port),
             LABORER_WORKSPACE_ID: ws.id,
             LABORER_WORKSPACE_PATH: ws.worktreePath,
             LABORER_BRANCH: ws.branchName,

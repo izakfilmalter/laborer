@@ -86,7 +86,6 @@ export class Workspace extends Schema.Class<Workspace>('Workspace')({
   taskSource: Schema.optional(Schema.String),
   branchName: Schema.String,
   worktreePath: Schema.String,
-  port: Schema.Int,
   status: WorkspaceStatus,
   origin: WorkspaceOrigin,
   createdAt: Schema.Date,

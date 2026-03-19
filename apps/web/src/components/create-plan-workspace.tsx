@@ -100,9 +100,7 @@ function CreatePlanWorkspace({ prdId }: CreatePlanWorkspaceProps) {
       })
       // The RPC now returns immediately with status 'creating'.
       // The workspace card will show setup progress via worktreeSetupStep.
-      toast.success(
-        `Workspace "${result.branchName}" is being set up (port ${result.port})`
-      )
+      toast.success(`Workspace "${result.branchName}" is being set up`)
     } catch (err: unknown) {
       const message = extractErrorMessage(err)
       setError(message)

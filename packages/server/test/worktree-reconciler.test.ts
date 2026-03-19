@@ -11,7 +11,6 @@ import { events, tables } from '@laborer/shared/schema'
 import { Effect, Layer } from 'effect'
 import { afterAll } from 'vitest'
 import { LaborerStore } from '../src/services/laborer-store.js'
-import { PortAllocator } from '../src/services/port-allocator.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
@@ -45,7 +44,6 @@ const getDetectedWorktreePaths = (repoPath: string): string[] =>
 const TestLayer = WorktreeReconciler.layer.pipe(
   Layer.provideMerge(RepositoryIdentity.layer),
   Layer.provideMerge(WorktreeDetector.layer),
-  Layer.provideMerge(PortAllocator.make(4100, 4110)),
   Layer.provideMerge(TestLaborerStore)
 )
 
@@ -78,7 +76,6 @@ describe('WorktreeReconciler', () => {
       for (const row of rows) {
         assert.strictEqual(row.origin, 'external')
         assert.strictEqual(row.status, 'stopped')
-        assert.strictEqual(row.port, 0)
       }
     }).pipe(Effect.provide(TestLayer))
   )
@@ -96,7 +93,6 @@ describe('WorktreeReconciler', () => {
           taskSource: null,
           branchName: 'custom/main',
           worktreePath: mainWorktreePath ?? repoPath,
-          port: 4321,
           status: 'running',
           origin: 'laborer',
           createdAt: new Date().toISOString(),
@@ -119,7 +115,6 @@ describe('WorktreeReconciler', () => {
       assert.strictEqual(rows[0]?.id, 'existing-main-workspace')
       assert.strictEqual(rows[0]?.origin, 'laborer')
       assert.strictEqual(rows[0]?.status, 'running')
-      assert.strictEqual(rows[0]?.port, 4321)
     }).pipe(Effect.provide(TestLayer))
   )
 
@@ -136,7 +131,6 @@ describe('WorktreeReconciler', () => {
           taskSource: null,
           branchName: 'feature/missing',
           worktreePath: stalePath,
-          port: 0,
           status: 'stopped',
           origin: 'external',
           createdAt: new Date().toISOString(),
@@ -172,7 +166,6 @@ describe('WorktreeReconciler', () => {
             taskSource: null,
             branchName: 'feature/pending',
             worktreePath: pendingPath,
-            port: 4200,
             status: 'creating',
             origin: 'laborer',
             createdAt: new Date().toISOString(),
@@ -215,7 +208,6 @@ describe('WorktreeReconciler', () => {
           taskSource: null,
           branchName: 'main',
           worktreePath: mainWorktreePath ?? repoPath,
-          port: 0,
           status: 'stopped',
           origin: 'external',
           createdAt: new Date().toISOString(),
@@ -229,7 +221,6 @@ describe('WorktreeReconciler', () => {
           taskSource: null,
           branchName: 'feature/stale',
           worktreePath: stalePath,
-          port: 0,
           status: 'stopped',
           origin: 'external',
           createdAt: new Date().toISOString(),
@@ -277,39 +268,6 @@ describe('WorktreeReconciler', () => {
 
       assert.strictEqual(rows.length, 1)
       assert.strictEqual(rows[0]?.baseSha, expectedBaseSha)
-    }).pipe(Effect.provide(TestLayer))
-  )
-
-  it.scoped('frees allocated port when removing stale workspace', () =>
-    Effect.gen(function* () {
-      const repoPath = initRepo('reconciler-free-port', tempRoots)
-      const stalePath = join(repoPath, '.worktrees', 'missing-port')
-
-      const allocator = yield* PortAllocator
-      const allocatedPort = yield* allocator.allocate()
-      const { store } = yield* LaborerStore
-      store.commit(
-        events.workspaceCreated({
-          id: 'stale-port-workspace',
-          projectId: 'project-free-port',
-          taskSource: null,
-          branchName: 'feature/stale-port',
-          worktreePath: stalePath,
-          port: allocatedPort,
-          status: 'stopped',
-          origin: 'external',
-          createdAt: new Date().toISOString(),
-          baseSha: null,
-        })
-      )
-
-      const reconciler = yield* WorktreeReconciler
-      const result = yield* reconciler.reconcile('project-free-port', repoPath)
-
-      assert.strictEqual(result.removed, 1)
-
-      const reusedPort = yield* allocator.allocate()
-      assert.strictEqual(reusedPort, 4100)
     }).pipe(Effect.provide(TestLayer))
   )
 })
@@ -442,7 +400,6 @@ describe('WorktreeReconciler canonical path support', () => {
             taskSource: null,
             branchName: 'main',
             worktreePath: canonicalRepoPath,
-            port: 0,
             status: 'stopped',
             origin: 'external',
             createdAt: new Date().toISOString(),

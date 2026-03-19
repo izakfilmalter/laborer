@@ -50,7 +50,6 @@ const makeWorkspaceFixture = (
         createdAt: new Date().toISOString(),
         id: workspaceId,
         origin: 'external',
-        port: 4100,
         projectId: project.id,
         status: 'running',
         taskSource: null,

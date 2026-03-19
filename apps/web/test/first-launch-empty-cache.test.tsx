@@ -280,7 +280,6 @@ describe('First-launch empty cache handling', () => {
         projectId: 'project-1',
         branchName: 'feature/first',
         worktreePath: '/repo/worktrees/feature-first',
-        port: 3001,
         status: 'running',
         origin: 'manual',
         createdAt: '2026-03-14T00:00:00.000Z',

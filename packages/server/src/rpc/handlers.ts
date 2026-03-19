@@ -823,7 +823,6 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           projectId: workspace.projectId,
           branchName: workspace.branchName,
           worktreePath: workspace.worktreePath,
-          port: workspace.port,
           status: workspace.status as
             | 'creating'
             | 'running'

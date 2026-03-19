@@ -13,7 +13,6 @@ import { DockerDetection } from '../../src/services/docker-detection.js'
 import { GithubTaskImporter } from '../../src/services/github-task-importer.js'
 import { LaborerStore } from '../../src/services/laborer-store.js'
 import { LinearTaskImporter } from '../../src/services/linear-task-importer.js'
-import { PortAllocator } from '../../src/services/port-allocator.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { PrdStorageService } from '../../src/services/prd-storage-service.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
@@ -139,8 +138,7 @@ const DeferredLeafLayers = Layer.mergeAll(
   TestFileWatcherClientLayer,
   WorktreeDetector.layer,
   TestDepsImageService,
-  TestDockerDetection,
-  PortAllocator.make(4100, 4199)
+  TestDockerDetection
 )
 
 /**

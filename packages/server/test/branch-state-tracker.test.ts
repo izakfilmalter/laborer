@@ -7,7 +7,6 @@ import { afterAll } from 'vitest'
 import { BranchStateTracker } from '../src/services/branch-state-tracker.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
-import { PortAllocator } from '../src/services/port-allocator.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
 import { WorktreeDetector } from '../src/services/worktree-detector.js'
@@ -30,7 +29,6 @@ const CoordinatorTestLayer = RepositoryWatchCoordinator.layer.pipe(
   Layer.provide(WorktreeReconciler.layer),
   Layer.provide(WorktreeDetector.layer),
   Layer.provide(RepositoryIdentity.layer),
-  Layer.provide(PortAllocator.make(4600, 4620)),
   Layer.provideMerge(TestLaborerStore)
 )
 
@@ -68,7 +66,6 @@ describe('BranchStateTracker', () => {
           taskSource: null,
           branchName: 'feature/stale',
           worktreePath,
-          port: 0,
           status: 'stopped',
           origin: 'external',
           createdAt: new Date().toISOString(),
@@ -115,7 +112,6 @@ describe('BranchStateTracker', () => {
           taskSource: null,
           branchName: 'feature/current',
           worktreePath,
-          port: 0,
           status: 'stopped',
           origin: 'external',
           createdAt: new Date().toISOString(),
@@ -162,7 +158,6 @@ describe('BranchStateTracker', () => {
           taskSource: null,
           branchName: 'feature/multi-a',
           worktreePath: worktreeA,
-          port: 0,
           status: 'stopped',
           origin: 'external',
           createdAt: new Date().toISOString(),
@@ -176,7 +171,6 @@ describe('BranchStateTracker', () => {
           taskSource: null,
           branchName: 'feature/multi-b',
           worktreePath: worktreeB,
-          port: 0,
           status: 'stopped',
           origin: 'external',
           createdAt: new Date().toISOString(),
@@ -224,7 +218,6 @@ describe('BranchStateTracker', () => {
           taskSource: null,
           branchName: 'main',
           worktreePath: repoPath,
-          port: 0,
           status: 'stopped',
           origin: 'external',
           createdAt: new Date().toISOString(),
@@ -271,7 +264,6 @@ describe('BranchStateTracker', () => {
           taskSource: null,
           branchName: 'feature/detach',
           worktreePath,
-          port: 0,
           status: 'stopped',
           origin: 'external',
           createdAt: new Date().toISOString(),

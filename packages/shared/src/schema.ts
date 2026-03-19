@@ -25,7 +25,6 @@ export const workspaces = State.SQLite.table({
     taskSource: State.SQLite.text({ nullable: true }),
     branchName: State.SQLite.text(),
     worktreePath: State.SQLite.text(),
-    port: State.SQLite.integer(),
     status: State.SQLite.text({ default: 'creating' }),
     origin: State.SQLite.text({ default: 'laborer' }),
     createdAt: State.SQLite.text(),
@@ -207,7 +206,8 @@ export const workspaceCreated = Events.synced({
     taskSource: Schema.NullOr(Schema.String),
     branchName: Schema.String,
     worktreePath: Schema.String,
-    port: Schema.Number,
+    /** @deprecated — Port allocation removed. Field retained for backward compatibility with old events. */
+    port: Schema.optional(Schema.Number),
     status: Schema.String,
     origin: Schema.optionalWith(Schema.String, {
       default: () => 'laborer',
@@ -731,7 +731,6 @@ const materializers = State.SQLite.materializers(events, {
     taskSource,
     branchName,
     worktreePath,
-    port,
     status,
     origin,
     createdAt,
@@ -743,7 +742,6 @@ const materializers = State.SQLite.materializers(events, {
       taskSource,
       branchName,
       worktreePath,
-      port,
       status,
       origin,
       createdAt,

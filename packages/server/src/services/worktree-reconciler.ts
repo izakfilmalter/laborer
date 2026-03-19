@@ -4,7 +4,6 @@ import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Context, Effect, Layer } from 'effect'
 import { LaborerStore } from './laborer-store.js'
-import { PortAllocator } from './port-allocator.js'
 import { withFsmonitorDisabled } from './repo-watching-git.js'
 import { RepositoryIdentity } from './repository-identity.js'
 import { WorktreeDetector } from './worktree-detector.js'
@@ -12,7 +11,6 @@ import { WorktreeDetector } from './worktree-detector.js'
 interface WorkspaceRecord {
   readonly branchName: string
   readonly id: string
-  readonly port: number
   readonly projectId: string
   readonly status: string
   readonly worktreePath: string
@@ -153,7 +151,6 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
     WorktreeReconciler,
     Effect.gen(function* () {
       const { store } = yield* LaborerStore
-      const portAllocator = yield* PortAllocator
       const detector = yield* WorktreeDetector
       const repoIdentity = yield* RepositoryIdentity
 
@@ -255,7 +252,6 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
               taskSource: null,
               branchName,
               worktreePath: canonicalDetectedPath,
-              port: 0,
               status: 'stopped',
               origin: 'external',
               createdAt: new Date().toISOString(),
@@ -269,12 +265,6 @@ class WorktreeReconciler extends Context.Tag('@laborer/WorktreeReconciler')<
           const canonicalWorkspacePath = canonicalize(workspace.worktreePath)
           if (detectedCanonicalPaths.has(canonicalWorkspacePath)) {
             continue
-          }
-
-          if (workspace.port > 0) {
-            yield* portAllocator
-              .free(workspace.port)
-              .pipe(Effect.catchAll(() => Effect.void))
           }
 
           store.commit(events.workspaceDestroyed({ id: workspace.id }))

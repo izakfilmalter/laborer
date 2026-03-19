@@ -117,7 +117,6 @@ describe('CreatePlanWorkspace', () => {
             projectId: 'project-1',
             branchName: 'plan/my-test-plan',
             worktreePath: '/path/to/worktree',
-            port: 2101,
             status: 'running',
             origin: 'laborer',
             createdAt: '2026-03-06T00:00:00.000Z',
@@ -152,7 +151,6 @@ describe('CreatePlanWorkspace', () => {
             projectId: 'project-1',
             branchName: 'plan/my-test-plan',
             worktreePath: '/path/to/worktree',
-            port: 2101,
             status: 'destroyed',
             origin: 'laborer',
             createdAt: '2026-03-06T00:00:00.000Z',
@@ -178,7 +176,6 @@ describe('CreatePlanWorkspace', () => {
       projectId: 'project-1',
       branchName: 'plan/my-test-plan',
       worktreePath: '/path/to/worktree',
-      port: 3001,
       status: 'running',
     })
 
@@ -233,7 +230,6 @@ describe('CreatePlanWorkspace', () => {
             projectId: 'different-project',
             branchName: 'plan/my-test-plan',
             worktreePath: '/path/to/worktree',
-            port: 2101,
             status: 'running',
             origin: 'laborer',
             createdAt: '2026-03-06T00:00:00.000Z',

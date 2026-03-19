@@ -50,7 +50,6 @@ const setupWorkspace = (
       projectId: 'project-1',
       branchName: 'feature/test',
       worktreePath: repoPath,
-      port: 4000,
       status: 'running',
       taskSource: null,
       origin: 'laborer',

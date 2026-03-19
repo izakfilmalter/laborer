@@ -6,8 +6,7 @@
  * sidebar with their branch names and status badges, and confirm removal.
  *
  * All tests exercise the full stack: browser UI -> RPC mutation -> backend
- * (worktree creation, port allocation, setup scripts) -> LiveStore sync
- * -> UI re-render.
+ * (worktree creation, setup scripts) -> LiveStore sync -> UI re-render.
  *
  * Uses the temp git repository created by globalSetup.
  *
@@ -92,8 +91,8 @@ test.describe('workspace lifecycle', () => {
     await submitButton.click()
 
     // Wait for the "Creating..." state, then the success toast.
-    // Workspace creation involves worktree creation, port allocation, and
-    // potentially setup scripts, so give it a generous timeout.
+    // Workspace creation involves worktree creation and potentially
+    // setup scripts, so give it a generous timeout.
     const successToast = page.getByText('Workspace created on branch', {
       exact: false,
     })

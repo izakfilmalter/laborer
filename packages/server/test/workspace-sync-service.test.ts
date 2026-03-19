@@ -143,7 +143,6 @@ const createWorkspace = (
       taskSource: null,
       branchName: 'main',
       worktreePath,
-      port: 0,
       status,
       origin: 'external',
       createdAt: new Date().toISOString(),

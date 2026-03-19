@@ -214,7 +214,6 @@ const WorkspaceResponse = Schema.Struct({
   projectId: Schema.String,
   branchName: Schema.String,
   worktreePath: Schema.String,
-  port: Schema.Int,
   status: WorkspaceStatus,
 })
 

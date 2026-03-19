@@ -11,7 +11,6 @@ import { ConfigService } from '../src/services/config-service.js'
 import { ContainerService } from '../src/services/container-service.js'
 import { DepsImageService } from '../src/services/deps-image-service.js'
 import { LaborerStore } from '../src/services/laborer-store.js'
-import { PortAllocator } from '../src/services/port-allocator.js'
 import { ProjectRegistry } from '../src/services/project-registry.js'
 import { RepositoryIdentity } from '../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../src/services/repository-watch-coordinator.js'
@@ -38,7 +37,6 @@ const TestLayer = WorkspaceProvider.layer.pipe(
   Layer.provideMerge(WorktreeDetector.layer),
   Layer.provideMerge(RepositoryIdentity.layer),
   Layer.provideMerge(ConfigService.layer),
-  Layer.provideMerge(PortAllocator.make(4300, 4300)),
   Layer.provideMerge(TestLaborerStore)
 )
 
@@ -80,9 +78,6 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
       const projectId = crypto.randomUUID()
       const workspaceId = crypto.randomUUID()
 
-      const allocator = yield* PortAllocator
-      const allocatedPort = yield* allocator.allocate()
-
       const { store } = yield* LaborerStore
       store.commit(
         events.projectCreated({
@@ -99,7 +94,6 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
           taskSource: null,
           branchName,
           worktreePath,
-          port: allocatedPort,
           status: 'stopped',
           origin: 'external',
           createdAt: new Date().toISOString(),
@@ -116,9 +110,6 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
 
       assert.isFalse(existsSync(worktreePath))
       assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
-
-      const reallocatedPort = yield* allocator.allocate()
-      assert.strictEqual(reallocatedPort, allocatedPort)
     }).pipe(Effect.provide(TestLayer))
   )
 
@@ -148,7 +139,6 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
           taskSource: null,
           branchName,
           worktreePath,
-          port: 0,
           status: 'stopped',
           origin: 'laborer',
           createdAt: new Date().toISOString(),
@@ -210,7 +200,6 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
             taskSource: null,
             branchName,
             worktreePath,
-            port: 0,
             status: 'stopped',
             origin: 'laborer',
             createdAt: new Date().toISOString(),

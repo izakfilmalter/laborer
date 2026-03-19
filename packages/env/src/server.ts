@@ -23,8 +23,7 @@ export const env = createEnv({
       .int()
       .positive()
       .default(60_000),
-    PORT_RANGE_START: port.default(2200),
-    PORT_RANGE_END: port.default(2999),
+
     EDITOR_COMMAND: z
       .enum(['cursor', 'code', 'vim', 'nvim', 'emacs'])
       .default('cursor'),

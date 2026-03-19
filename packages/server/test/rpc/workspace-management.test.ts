@@ -102,7 +102,7 @@ const initRemoteRepo = (prefix: string, tempRoots: string[]) => {
 
 describe('LaborerRpcs workspace management', () => {
   it.scopedLive(
-    'workspace.create creates a worktree, allocates a port, and runs setup scripts',
+    'workspace.create creates a worktree and runs setup scripts',
     () =>
       runWithRpcTestContext(({ client, store }) =>
         Effect.gen(function* () {
@@ -118,7 +118,7 @@ describe('LaborerRpcs workspace management', () => {
           writeLaborerConfig(repoPath, {
             devServer: { image: null },
             setupScripts: [
-              `printf '%s' "$PORT,$LABORER_WORKSPACE_ID,$LABORER_BRANCH,$LABORER_WORKSPACE_PATH" > ${SETUP_ENV_FILE}`,
+              `printf '%s' "$LABORER_WORKSPACE_ID,$LABORER_BRANCH,$LABORER_WORKSPACE_PATH" > ${SETUP_ENV_FILE}`,
             ],
             worktreeDir: worktreeRoot,
           })
@@ -133,7 +133,6 @@ describe('LaborerRpcs workspace management', () => {
 
           assert.strictEqual(workspace.projectId, project.id)
           assert.strictEqual(workspace.branchName, branchName)
-          assert.strictEqual(workspace.port, 4100)
           // workspace.create returns immediately with 'creating' status;
           // the background fiber transitions to 'running' asynchronously.
           assert.strictEqual(workspace.status, 'creating')
@@ -186,7 +185,7 @@ describe('LaborerRpcs workspace management', () => {
 
           assert.strictEqual(
             setupEnvContents,
-            `${workspace.port},${workspace.id},${branchName},${workspace.worktreePath}`
+            `${workspace.id},${branchName},${workspace.worktreePath}`
           )
 
           const workspaceRows = store.query(
@@ -205,7 +204,6 @@ describe('LaborerRpcs workspace management', () => {
           assert.strictEqual(workspaceRow.branchName, branchName)
           assert.strictEqual(workspaceRow.id, workspace.id)
           assert.strictEqual(workspaceRow.origin, 'laborer')
-          assert.strictEqual(workspaceRow.port, 4100)
           assert.strictEqual(workspaceRow.projectId, project.id)
           assert.strictEqual(workspaceRow.status, 'running')
           assert.isNull(workspaceRow.taskSource)
@@ -324,7 +322,6 @@ describe('LaborerRpcs workspace management', () => {
               createdAt: new Date().toISOString(),
               id: externalWorkspaceId,
               origin: 'external',
-              port: 0,
               projectId: project.id,
               status: 'stopped',
               taskSource: null,
@@ -508,7 +505,6 @@ describe('LaborerRpcs workspace management', () => {
             taskSource: null,
             branchName: 'main',
             worktreePath: localPath,
-            port: 0,
             status: 'stopped',
             origin: 'external',
             createdAt: new Date().toISOString(),
@@ -552,7 +548,6 @@ describe('LaborerRpcs workspace management', () => {
             taskSource: null,
             branchName: 'main',
             worktreePath: localPath,
-            port: 0,
             status: 'stopped',
             origin: 'external',
             createdAt: new Date().toISOString(),
@@ -604,7 +599,6 @@ describe('LaborerRpcs workspace management', () => {
               taskSource: null,
               branchName: 'main',
               worktreePath: localPath,
-              port: 0,
               status: 'stopped',
               origin: 'external',
               createdAt: new Date().toISOString(),

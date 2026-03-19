@@ -10,7 +10,7 @@
  * - Project name and repo path
  * - Task summary counts (pending, in progress, completed, cancelled)
  * - All workspaces for that project with status badges, branch names,
- *   ports, and terminal counts
+ *   and terminal counts
  *
  * Workspace and task data comes from LiveStore queries. Terminal counts
  * come from the terminal service via the `useTerminalList` polling hook.
@@ -318,7 +318,6 @@ interface ProjectSection {
     readonly projectId: string
     readonly branchName: string
     readonly worktreePath: string
-    readonly port: number
     readonly status: string
     readonly origin: WorkspaceOrigin | string
     readonly createdAt: string
@@ -523,7 +522,6 @@ function DashboardWorkspaceRow({
   readonly workspace: {
     readonly id: string
     readonly branchName: string
-    readonly port: number
     readonly status: string
     readonly origin: WorkspaceOrigin | string
     readonly containerId: string | null
@@ -568,13 +566,7 @@ function DashboardWorkspaceRow({
         >
           {workspace.containerUrl}
         </a>
-      ) : (
-        workspace.port > 0 && (
-          <span className="text-muted-foreground text-xs">
-            :{workspace.port}
-          </span>
-        )
-      )}
+      ) : null}
       {terminalCount > 0 && (
         <span className="text-muted-foreground text-xs">
           {terminalCount} terminal{terminalCount !== 1 ? 's' : ''}

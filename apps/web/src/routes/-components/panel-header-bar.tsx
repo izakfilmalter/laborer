@@ -184,9 +184,9 @@ export function PanelHeaderBar({
     | undefined
 }) {
   return (
-    <div className="drag-region flex h-10 shrink-0 items-center justify-between border-b px-2">
+    <div className="drag-region flex h-10 shrink-0 items-center border-b px-2">
       {/* Left: sidebar toggle + view toggle + view label */}
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         {onToggleSidebar && (
           <Tooltip>
             <TooltipTrigger
@@ -251,7 +251,7 @@ export function PanelHeaderBar({
         </div>
       </div>
 
-      {/* Right: window tab bar (auto-hides with 1 tab) */}
+      {/* Window tab bar, right after the view label (auto-hides with 1 tab) */}
       {mainView === 'panels' && (
         <WindowTabBar
           onCloseTab={onCloseWindowTab}

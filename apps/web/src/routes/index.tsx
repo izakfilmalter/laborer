@@ -467,12 +467,19 @@ function HomeComponent() {
    * If the terminal is running, shows a confirmation dialog first.
    * If the terminal has no pane, falls back to the ungated handler
    * which removes it from the service directly.
+   *
+   * When the close is initiated from the sidebar, the terminal's pane
+   * may not be the active pane. We activate it first so the inline
+   * confirmation dialog (if shown) is visible to the user.
    */
   const gatedCloseTerminalPane = useCallback(
     (terminalId: string) => {
       if (layout) {
         const leaf = findLeafByTerminalId(layout, terminalId)
         if (leaf) {
+          // Ensure the pane is active so the inline confirmation dialog
+          // is visible even when the close was initiated from the sidebar.
+          panelActions.setActivePaneId(leaf.id)
           gatedClosePane(leaf.id)
           return
         }

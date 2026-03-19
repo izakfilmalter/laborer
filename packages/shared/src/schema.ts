@@ -34,6 +34,8 @@ export const workspaces = State.SQLite.table({
     containerId: State.SQLite.text({ nullable: true }),
     /** The `.orb.local` URL for the containerized dev server. Null when no container exists. */
     containerUrl: State.SQLite.text({ nullable: true }),
+    /** Port the dev server listens on inside the container. Null when not configured. */
+    containerPort: State.SQLite.integer({ nullable: true }),
     /** The Docker image used for the container (e.g., `node:22`). Null when no container exists. */
     containerImage: State.SQLite.text({ nullable: true }),
     /** The current container status: 'running' or 'paused'. Null when no container exists. */
@@ -286,6 +288,17 @@ export const containerStarted = Events.synced({
     containerId: Schema.String,
     containerUrl: Schema.String,
     containerImage: Schema.String,
+    /** Port the dev server listens on. Optional for backward compat with old events. */
+    containerPort: Schema.optional(Schema.Number),
+  }),
+})
+
+export const containerPortChanged = Events.synced({
+  name: 'v1.ContainerPortChanged',
+  schema: Schema.Struct({
+    workspaceId: Schema.String,
+    /** The new port, or null to clear. */
+    containerPort: Schema.NullOr(Schema.Number),
   }),
 })
 
@@ -649,6 +662,7 @@ export const events = {
   workspaceSyncStatusUpdated,
   workspaceOriginChanged,
   containerStarted,
+  containerPortChanged,
   containerStopped,
   containerPaused,
   containerUnpaused,
@@ -779,16 +793,20 @@ const materializers = State.SQLite.materializers(events, {
     containerId,
     containerUrl,
     containerImage,
+    containerPort,
   }) =>
     workspaces
       .update({
         containerId,
         containerUrl,
         containerImage,
+        containerPort: containerPort ?? null,
         containerStatus: 'running',
         containerSetupStep: null,
       })
       .where({ id: workspaceId }),
+  'v1.ContainerPortChanged': ({ workspaceId, containerPort }) =>
+    workspaces.update({ containerPort }).where({ id: workspaceId }),
   'v1.ContainerStopped': ({ workspaceId }) =>
     workspaces
       .update({

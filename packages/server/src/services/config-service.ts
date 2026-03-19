@@ -91,6 +91,8 @@ interface DevServerConfig {
   readonly installCommand?: string | undefined
   /** Docker network to join (e.g. "myproject_default" for docker-compose services). When not set, uses default bridge networking. Containers can reach other Docker containers via .orb.local domains and host services via host.docker.internal. */
   readonly network?: string | undefined
+  /** Port the dev server listens on inside the container. Appended to the .orb.local URL so the workspace card link works. */
+  readonly port?: number | undefined
   /** Scripts to run inside the container before the start command (e.g. "apt-get install -y python3"). */
   readonly setupScripts?: readonly string[] | undefined
   /** Command to start the dev server (e.g. "bun dev"). */
@@ -160,6 +162,7 @@ interface ResolvedDevServerConfig {
   readonly image: ResolvedValue<string | null>
   readonly installCommand: ResolvedValue<string | null>
   readonly network: ResolvedValue<string | null>
+  readonly port: ResolvedValue<number | null>
   readonly setupScripts: ResolvedValue<readonly string[]>
   readonly startCommand: ResolvedValue<string | null>
   readonly workdir: ResolvedValue<string>
@@ -552,6 +555,10 @@ const mergeDevServerConfig = (
     value: null,
     source: 'default',
   }
+  let port: ResolvedValue<number | null> = {
+    value: null,
+    source: 'default',
+  }
   let startCommand: ResolvedValue<string | null> = {
     value: null,
     source: 'default',
@@ -598,6 +605,9 @@ const mergeDevServerConfig = (
     applyOptionalField(ds.network, (value) => {
       network = { value, source: path }
     })
+    applyOptionalField(ds.port, (value) => {
+      port = { value, source: path }
+    })
     applyOptionalField(ds.setupScripts, (value) => {
       setupScripts = { value, source: path }
     })
@@ -627,6 +637,7 @@ const mergeDevServerConfig = (
     image,
     installCommand,
     network,
+    port,
     setupScripts,
     startCommand,
     workdir,

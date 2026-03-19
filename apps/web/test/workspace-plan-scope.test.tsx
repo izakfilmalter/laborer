@@ -522,7 +522,7 @@ describe('WorkspaceList plan association', () => {
     fireEvent.click(screen.getByRole('link', { name: 'preview.example.com' }))
 
     expect(openExternalUrlMock).toHaveBeenCalledWith(
-      'https://preview.example.com'
+      'http://preview.example.com'
     )
   })
 })

@@ -119,6 +119,7 @@ describe('ContainerService e2e', () => {
             image: 'alpine:latest',
             dockerfile: null,
             network: null,
+            port: null,
             workdir: '/app',
           },
         })
@@ -199,6 +200,7 @@ describe('ContainerService e2e', () => {
             image: 'alpine:latest',
             dockerfile: null,
             network: null,
+            port: null,
             workdir: '/app',
           },
         })
@@ -283,6 +285,7 @@ describe('ContainerService e2e', () => {
             image: 'alpine:latest',
             dockerfile: null,
             network: null,
+            port: null,
             workdir: '/app',
           },
         })
@@ -350,6 +353,7 @@ describe('ContainerService e2e', () => {
             image: 'alpine:latest',
             dockerfile: null,
             network: null,
+            port: null,
             workdir: '/app',
           },
         })
@@ -442,6 +446,7 @@ describe('ContainerService e2e', () => {
             image: 'alpine:latest',
             dockerfile: null,
             network: null,
+            port: null,
             workdir: '/app',
           },
         })
@@ -540,6 +545,7 @@ describe('ContainerService e2e', () => {
               image: 'nonexistent-image-that-does-not-exist:9999',
               dockerfile: null,
               network: null,
+              port: null,
               workdir: '/app',
             },
           })

@@ -44,6 +44,7 @@ import {
   ExternalLink,
   GitBranch,
   GitBranchPlus,
+  Globe,
   Pause,
   Play,
   Trash2,
@@ -94,7 +95,13 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { Input } from '@/components/ui/input'
 import { Kbd } from '@/components/ui/kbd'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
@@ -121,6 +128,7 @@ const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
 const startContainerMutation = LaborerClient.mutation(
   'workspace.startContainer'
 )
+const setContainerPortMutation = LaborerClient.mutation('container.setPort')
 const pauseContainerMutation = LaborerClient.mutation('container.pause')
 const unpauseContainerMutation = LaborerClient.mutation('container.unpause')
 
@@ -334,6 +342,101 @@ function ContainerPauseButton({
   )
 }
 
+function ContainerPortButton({
+  workspaceId,
+  currentPort,
+}: {
+  readonly workspaceId: string
+  readonly currentPort: number | null
+}) {
+  const isServerReady = useWhenPhase(LifecyclePhase.Ready)
+  const [isOpen, setIsOpen] = useState(false)
+  const [portValue, setPortValue] = useState(
+    currentPort != null ? String(currentPort) : ''
+  )
+  const setContainerPort = useAtomSet(setContainerPortMutation, {
+    mode: 'promise',
+  })
+
+  const handleSave = useCallback(async () => {
+    const parsed = portValue.trim() === '' ? null : Number(portValue)
+    if (
+      parsed != null &&
+      (Number.isNaN(parsed) || parsed < 1 || parsed > 65_535)
+    ) {
+      toast.error('Port must be between 1 and 65535')
+      return
+    }
+    try {
+      await setContainerPort({
+        payload: { workspaceId, port: parsed },
+      })
+      setIsOpen(false)
+      toast.success(parsed != null ? `Port set to ${parsed}` : 'Port cleared')
+    } catch (error: unknown) {
+      toast.error(`Failed to set port: ${extractErrorMessage(error)}`)
+    }
+  }, [portValue, setContainerPort, workspaceId])
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter') {
+        handleSave()
+      }
+    },
+    [handleSave]
+  )
+
+  return (
+    <Popover onOpenChange={setIsOpen} open={isOpen}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={
+                <Button
+                  aria-label="Set container port"
+                  disabled={!isServerReady}
+                  size="icon-xs"
+                  variant="ghost"
+                />
+              }
+            >
+              <Globe
+                className={cn(
+                  'size-3.5',
+                  currentPort != null
+                    ? 'text-foreground'
+                    : 'text-muted-foreground'
+                )}
+              />
+            </PopoverTrigger>
+          }
+        />
+        <TooltipContent>
+          {currentPort != null ? `Port: ${currentPort}` : 'Set container port'}
+        </TooltipContent>
+      </Tooltip>
+      <PopoverContent className="w-48 p-2">
+        <div className="flex items-center gap-1">
+          <Input
+            autoFocus
+            className="h-7 text-xs"
+            onChange={(event) => setPortValue(event.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="e.g. 3000"
+            type="number"
+            value={portValue}
+          />
+          <Button className="h-7 text-xs" onClick={handleSave} size="sm">
+            Set
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 /**
  * Destroy dialog description text. Extracted to avoid nested ternaries.
  *
@@ -497,6 +600,7 @@ interface WorkspaceItemProps {
     readonly taskSource: string | null
     readonly containerId: string | null
     readonly containerUrl: string | null
+    readonly containerPort: number | null
     readonly containerStatus: string | null
     readonly containerSetupStep: string | null
     readonly worktreeSetupStep: string | null
@@ -673,7 +777,7 @@ function WorkspaceItem({
   // to a container that no longer exists.
   const containerLink =
     isContainerized && workspace.containerUrl
-      ? `http://${workspace.containerUrl}`
+      ? `http://${workspace.containerUrl}${workspace.containerPort != null ? `:${workspace.containerPort}` : ''}`
       : null
 
   /**
@@ -832,10 +936,16 @@ function WorkspaceItem({
                 {displayStatus}
               </Badge>
               {isContainerized ? (
-                <ContainerPauseButton
-                  isPaused={isContainerPaused}
-                  workspaceId={workspace.id}
-                />
+                <>
+                  <ContainerPauseButton
+                    isPaused={isContainerPaused}
+                    workspaceId={workspace.id}
+                  />
+                  <ContainerPortButton
+                    currentPort={workspace.containerPort}
+                    workspaceId={workspace.id}
+                  />
+                </>
               ) : (
                 <StartContainerButton
                   isStarting={isStartingContainer}

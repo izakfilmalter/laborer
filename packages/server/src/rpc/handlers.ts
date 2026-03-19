@@ -901,6 +901,16 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // -------------------------------------------------------------------
     // Container RPCs (Issue 10)
     // -------------------------------------------------------------------
+    'container.setPort': ({ workspaceId, port }) =>
+      Effect.gen(function* () {
+        const { store } = yield* LaborerStore
+        store.commit(
+          events.containerPortChanged({
+            workspaceId,
+            containerPort: port,
+          })
+        )
+      }),
     'container.pause': ({ workspaceId }) =>
       Effect.gen(function* () {
         const containerService = yield* ContainerService

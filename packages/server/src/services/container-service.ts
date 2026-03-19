@@ -62,6 +62,8 @@ interface CreateContainerParams {
     readonly image: string | null
     /** Docker network to join. When null, uses default bridge networking. */
     readonly network: string | null
+    /** Port the dev server listens on. Appended to the .orb.local URL when set. */
+    readonly port: number | null
     /** Mount point inside the container. */
     readonly workdir: string
   }
@@ -255,6 +257,9 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
               containerId,
               containerUrl: url,
               containerImage: image,
+              ...(devServerConfig.port != null
+                ? { containerPort: devServerConfig.port }
+                : {}),
             })
           )
         }

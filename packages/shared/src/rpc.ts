@@ -640,6 +640,15 @@ export class LaborerRpcs extends RpcGroup.make(
   // -----------------------------------------------------------------------
   // Container RPCs (Issue 10)
   // -----------------------------------------------------------------------
+  Rpc.make('container.setPort', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      /** The port number, or null to clear. */
+      port: Schema.NullOr(Schema.Int),
+    },
+  }),
+
   Rpc.make('container.pause', {
     error: RpcError,
     payload: {

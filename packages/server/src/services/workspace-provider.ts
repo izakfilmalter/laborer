@@ -955,6 +955,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
           readonly dockerfile: { readonly value: string | null }
           readonly installCommand: { readonly value: string | null }
           readonly network: { readonly value: string | null }
+          readonly port: { readonly value: number | null }
           readonly setupScripts: { readonly value: readonly string[] }
           readonly workdir: { readonly value: string }
         }
@@ -1022,6 +1023,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 image: params.devServerImage,
                 dockerfile: params.devServer.dockerfile.value,
                 network: params.devServer.network.value,
+                port: params.devServer.port.value,
                 workdir: params.devServer.workdir.value,
               },
             })

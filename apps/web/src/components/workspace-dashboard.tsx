@@ -323,6 +323,7 @@ interface ProjectSection {
     readonly createdAt: string
     readonly containerId: string | null
     readonly containerUrl: string | null
+    readonly containerPort: number | null
     readonly containerStatus: string | null
   }>
 }
@@ -526,6 +527,7 @@ function DashboardWorkspaceRow({
     readonly origin: WorkspaceOrigin | string
     readonly containerId: string | null
     readonly containerUrl: string | null
+    readonly containerPort: number | null
     readonly containerStatus: string | null
   }
   readonly terminalCount: number
@@ -559,12 +561,13 @@ function DashboardWorkspaceRow({
       {isContainerized && workspace.containerUrl ? (
         <a
           className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
-          href={`http://${workspace.containerUrl}`}
+          href={`http://${workspace.containerUrl}${workspace.containerPort != null ? `:${workspace.containerPort}` : ''}`}
           rel="noopener"
           target="_blank"
-          title={`Open http://${workspace.containerUrl}`}
+          title={`Open http://${workspace.containerUrl}${workspace.containerPort != null ? `:${workspace.containerPort}` : ''}`}
         >
           {workspace.containerUrl}
+          {workspace.containerPort != null ? `:${workspace.containerPort}` : ''}
         </a>
       ) : null}
       {terminalCount > 0 && (

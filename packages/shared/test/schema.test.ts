@@ -164,6 +164,7 @@ describe('LiveStore schema', () => {
           baseSha: 'abc123',
           containerId: null,
           containerUrl: null,
+          containerPort: null,
           containerImage: null,
           containerStatus: null,
           containerSetupStep: null,

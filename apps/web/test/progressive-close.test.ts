@@ -133,13 +133,37 @@ describe('computeProgressiveCloseAction', () => {
   })
 
   describe('no workspace context', () => {
-    it('returns close-pane when no activeWorkspaceId', () => {
+    it('returns close-window-tab when no activeWorkspaceId and empty tab', () => {
       const layout: WindowLayout = {
         tabs: [{ id: 'tab-1' }],
         activeTabId: 'tab-1',
       }
+      // Tab has no workspaceLayout → stale paneId should not cause close-pane
       const result = computeProgressiveCloseAction(layout, 'pane-1', undefined)
-      expect(result).toEqual({ kind: 'close-pane', paneId: 'pane-1' })
+      expect(result).toEqual({ kind: 'close-window-tab', tabId: 'tab-1' })
+    })
+
+    it('returns close-pane when no activeWorkspaceId but tab has workspaces', () => {
+      const tab: WindowTab = {
+        id: 'tab-1',
+        workspaceLayout: makeWorkspaceTile(
+          'tile-1',
+          'ws-1',
+          [makePanelTab('pt-1', makeLeaf('pane-1', 'term-1', 'ws-1'))],
+          'pt-1'
+        ),
+      }
+      const layout: WindowLayout = {
+        tabs: [tab],
+        activeTabId: 'tab-1',
+      }
+      // Pane has no workspace association, but tab has real workspaces → close-pane
+      const result = computeProgressiveCloseAction(
+        layout,
+        'pane-orphan',
+        undefined
+      )
+      expect(result).toEqual({ kind: 'close-pane', paneId: 'pane-orphan' })
     })
 
     it('returns close-pane when workspace not found in active tab', () => {
@@ -448,6 +472,48 @@ describe('computeProgressiveCloseAction', () => {
       )
       // Workspace not found → falls back to close-pane
       expect(result).toEqual({ kind: 'close-pane', paneId: 'pane-x' })
+    })
+
+    it('returns close-window-tab when empty tab has stale pane-empty placeholder and no workspace', () => {
+      // Bug scenario: after closing the last workspace from a tab, the legacy
+      // layout tree has a "pane-empty" placeholder leaf and activePaneId is
+      // set to "pane-empty" by ensureValidActivePaneId. The activeWorkspaceId
+      // is undefined because the placeholder has no workspace.
+      const tab1: WindowTab = { id: 'tab-1' }
+      const tab2: WindowTab = {
+        id: 'tab-2',
+        workspaceLayout: makeWorkspaceTile(
+          'tile-2',
+          'ws-2',
+          [makePanelTab('pt-2', makeLeaf('pane-2', 'term-2', 'ws-2'))],
+          'pt-2'
+        ),
+      }
+      const layout: WindowLayout = {
+        tabs: [tab1, tab2],
+        activeTabId: 'tab-1',
+      }
+      // Stale activePaneId from legacy placeholder, no workspace context
+      const result = computeProgressiveCloseAction(
+        layout,
+        'pane-empty',
+        undefined
+      )
+      expect(result).toEqual({ kind: 'close-window-tab', tabId: 'tab-1' })
+    })
+
+    it('returns close-window-tab when empty tab is the only tab with stale pane', () => {
+      const tab: WindowTab = { id: 'tab-1' }
+      const layout: WindowLayout = {
+        tabs: [tab],
+        activeTabId: 'tab-1',
+      }
+      const result = computeProgressiveCloseAction(
+        layout,
+        'pane-empty',
+        undefined
+      )
+      expect(result).toEqual({ kind: 'close-window-tab', tabId: 'tab-1' })
     })
   })
 

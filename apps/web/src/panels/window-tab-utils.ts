@@ -1358,8 +1358,19 @@ function computeProgressiveCloseAction(
     return { kind: 'close-app' }
   }
 
-  // If no workspace context, just close the pane
+  // If no workspace context, check whether the active tab is empty.
+  // When all workspaces have been closed, the legacy layout tree still
+  // contains a "pane-empty" placeholder, so activePaneId is non-null but
+  // stale. In that case, close the window tab rather than trying to close
+  // a phantom pane.
   if (!activeWorkspaceId) {
+    if (!activeTab.workspaceLayout) {
+      return { kind: 'close-window-tab', tabId: activeTab.id }
+    }
+    const leaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+    if (leaves.length === 0) {
+      return { kind: 'close-window-tab', tabId: activeTab.id }
+    }
     return { kind: 'close-pane', paneId: activePaneId }
   }
 

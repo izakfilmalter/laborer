@@ -379,6 +379,7 @@ function WorkspaceContent({
   diffWorkspaceId,
   reviewWorkspaceId,
   closeSidePanel,
+  tabBar,
 }: {
   readonly isEmptyWorkspace: boolean
   readonly workspaceId: string | undefined
@@ -393,6 +394,7 @@ function WorkspaceContent({
   readonly closeSidePanel: (
     togglePanel: ((paneId: string) => boolean) | undefined
   ) => void
+  readonly tabBar?: React.ReactNode
 }) {
   const actions = usePanelActions()
 
@@ -409,6 +411,7 @@ function WorkspaceContent({
       <ResizablePanelGroup className="h-full" orientation="horizontal">
         <ResizablePanel defaultSize={mainPanelSize} minSize="30%">
           <div className="flex h-full min-h-0 flex-col">
+            {tabBar}
             <div className="min-h-0 flex-1">
               <PanelManager layout={effectiveLayout ?? undefined} />
             </div>
@@ -736,6 +739,24 @@ function WorkspaceFrame({
 
   const showPanelTabBar = tileLeaf !== undefined
 
+  const tabBarElement = showPanelTabBar ? (
+    <TabBar
+      closeTooltip="Close tab"
+      items={panelTabItems}
+      label="Panel Tabs"
+      newTabTooltip={
+        <>
+          New panel tab <Kbd>Ctrl</Kbd>
+          <Kbd>T</Kbd>
+        </>
+      }
+      onClose={handlePanelTabClose}
+      onNew={handlePanelTabNew}
+      onReorder={handlePanelTabReorder}
+      onSelect={handlePanelTabSelect}
+    />
+  ) : null
+
   return (
     <div
       className={`relative flex ${isMinimized ? 'h-auto' : 'h-full'} flex-col border-2 ${isActiveFrame ? 'border-primary' : 'border-transparent'} ${isDragging ? 'opacity-40' : ''}`}
@@ -758,23 +779,7 @@ function WorkspaceFrame({
         subLayout={subLayout}
         workspaceId={workspaceId}
       />
-      {showPanelTabBar && !isMinimized && (
-        <TabBar
-          closeTooltip="Close tab"
-          items={panelTabItems}
-          label="Panel Tabs"
-          newTabTooltip={
-            <>
-              New panel tab <Kbd>Ctrl</Kbd>
-              <Kbd>T</Kbd>
-            </>
-          }
-          onClose={handlePanelTabClose}
-          onNew={handlePanelTabNew}
-          onReorder={handlePanelTabReorder}
-          onSelect={handlePanelTabSelect}
-        />
-      )}
+      {!(isMinimized || hasSidePanels) && tabBarElement}
       {!isMinimized && (
         <WorkspaceContent
           closeSidePanel={closeSidePanel}
@@ -787,6 +792,7 @@ function WorkspaceFrame({
           showDiff={showDiff}
           showReview={showReview}
           sidePanelSize={sidePanelSize}
+          tabBar={hasSidePanels ? tabBarElement : undefined}
           workspaceId={workspaceId}
         />
       )}

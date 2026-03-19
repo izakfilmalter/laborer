@@ -215,7 +215,7 @@ function StatusBadgeCore({
         render={
           <Badge
             className={cn(
-              'gap-1.5 transition-colors duration-300',
+              'cursor-default gap-1.5 transition-colors duration-300',
               color === 'green' && 'border-success/40 text-success',
               color === 'yellow' && 'border-warning/40 text-warning',
               color === 'red' && 'border-destructive text-destructive',

@@ -38,9 +38,27 @@
 import { containerName } from '@laborer/shared/container-name'
 import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import { Array as Arr, Context, Effect, Layer, pipe, Runtime } from 'effect'
+import {
+  Array as Arr,
+  Context,
+  Data,
+  Effect,
+  Layer,
+  pipe,
+  Runtime,
+} from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { LaborerStore } from './laborer-store.js'
+
+class DockerEventParseError extends Data.TaggedError('DockerEventParseError')<{
+  readonly message: string
+}> {}
+
+class DockerEventsStreamError extends Data.TaggedError(
+  'DockerEventsStreamError'
+)<{
+  readonly message: string
+}> {}
 
 /**
  * Configuration for creating a container, derived from the resolved
@@ -650,14 +668,7 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
 
         yield* Effect.forEach(
           containerized,
-          (workspace) =>
-            reconcileWorkspaceContainer(workspace).pipe(
-              Effect.catchAll((error) =>
-                Effect.logWarning(
-                  `Reconcile: failed to check workspace "${workspace.id}": ${String(error)}`
-                ).pipe(Effect.annotateLogs('module', logPrefix))
-              )
-            ),
+          (workspace) => reconcileWorkspaceContainer(workspace),
           { discard: true }
         )
       }
@@ -706,7 +717,10 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
                 }
                 readonly status?: string
               },
-            catch: () => new Error('Invalid JSON from docker events'),
+            catch: () =>
+              new DockerEventParseError({
+                message: 'Invalid JSON from docker events',
+              }),
           }).pipe(Effect.option)
 
           if (parsed._tag === 'None') {
@@ -836,7 +850,10 @@ class ContainerService extends Context.Tag('@laborer/ContainerService')<
               // access to the full service context (logging, etc.)
               Runtime.runFork(runtime)(handleDockerEvent(line))
             }),
-          catch: () => new Error('Docker events stream ended'),
+          catch: () =>
+            new DockerEventsStreamError({
+              message: 'Docker events stream ended',
+            }),
         }).pipe(
           Effect.tapError((error) =>
             Effect.logWarning(

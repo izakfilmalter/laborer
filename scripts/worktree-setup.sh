@@ -12,8 +12,19 @@
 #   - Copying .reference directory
 #   - Updating .env.local with worktree-specific ports
 #   - Running bun install
+#
+# Flags:
+#   --no-ports  Skip custom port assignment; use default ports from .env.local
 
 set -e
+
+# Parse flags
+NO_PORTS=false
+for arg in "$@"; do
+    case "$arg" in
+        --no-ports) NO_PORTS=true ;;
+    esac
+done
 
 # Get the root worktree path (main repo)
 ROOT_WORKTREE_PATH="$(git rev-parse --path-format=absolute --git-common-dir | sed 's|/.git$||')"
@@ -28,24 +39,30 @@ echo "$WORKTREE_INDEX" > .worktree-index
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 WORKTREE_SLUG="$(bash "$ROOT_WORKTREE_PATH/scripts/worktree-slug.sh" "$BRANCH_NAME")"
 
-# Worktree-specific ports offset by index
-# Base ports (worktree #0 / main): PORT=2100, Vite=2101, TERMINAL_PORT=2102
-# Each worktree gets a 10-port stride to avoid collisions
-STRIDE=$((WORKTREE_INDEX * 10))
-SERVER_PORT=$((2100 + STRIDE))
-VITE_PORT=$((2101 + STRIDE))
-TERMINAL_PORT=$((2102 + STRIDE))
-# Each worktree gets a dedicated 10-port workspace allocation range
-PORT_RANGE_START=$((2200 + STRIDE))
-PORT_RANGE_END=$((2209 + STRIDE))
+if [ "$NO_PORTS" = false ]; then
+    # Worktree-specific ports offset by index
+    # Base ports (worktree #0 / main): PORT=2100, Vite=2101, TERMINAL_PORT=2102
+    # Each worktree gets a 10-port stride to avoid collisions
+    STRIDE=$((WORKTREE_INDEX * 10))
+    SERVER_PORT=$((2100 + STRIDE))
+    VITE_PORT=$((2101 + STRIDE))
+    TERMINAL_PORT=$((2102 + STRIDE))
+    # Each worktree gets a dedicated 10-port workspace allocation range
+    PORT_RANGE_START=$((2200 + STRIDE))
+    PORT_RANGE_END=$((2209 + STRIDE))
 
-echo "Setting up worktree #$WORKTREE_INDEX"
-echo "  Branch:         $BRANCH_NAME"
-echo "  Slug:           $WORKTREE_SLUG"
-echo "  Server:         http://localhost:$SERVER_PORT"
-echo "  Vite:           http://localhost:$VITE_PORT"
-echo "  Terminal:       http://localhost:$TERMINAL_PORT"
-echo "  Workspace range: $PORT_RANGE_START-$PORT_RANGE_END"
+    echo "Setting up worktree #$WORKTREE_INDEX"
+    echo "  Branch:         $BRANCH_NAME"
+    echo "  Slug:           $WORKTREE_SLUG"
+    echo "  Server:         http://localhost:$SERVER_PORT"
+    echo "  Vite:           http://localhost:$VITE_PORT"
+    echo "  Terminal:       http://localhost:$TERMINAL_PORT"
+    echo "  Workspace range: $PORT_RANGE_START-$PORT_RANGE_END"
+else
+    echo "Setting up worktree #$WORKTREE_INDEX (no custom ports)"
+    echo "  Branch:         $BRANCH_NAME"
+    echo "  Slug:           $WORKTREE_SLUG"
+fi
 
 # Copy .reference from root worktree
 if [ -d "$ROOT_WORKTREE_PATH/.reference" ] && [ ! -e ".reference" ]; then
@@ -56,7 +73,8 @@ fi
 # Append worktree-specific config to .env.local
 # Later values override earlier ones, so we just append at the bottom
 if [ -f ".env.local" ]; then
-    cat >> .env.local << EOF
+    if [ "$NO_PORTS" = false ]; then
+        cat >> .env.local << EOF
 
 # Worktree #$WORKTREE_INDEX overrides
 WORKTREE_SLUG=$WORKTREE_SLUG
@@ -70,6 +88,14 @@ VITE_SERVER_PORT=$SERVER_PORT
 VITE_TERMINAL_PORT=$TERMINAL_PORT
 VITE_PORT=$VITE_PORT
 EOF
+    else
+        cat >> .env.local << EOF
+
+# Worktree #$WORKTREE_INDEX overrides (no custom ports)
+WORKTREE_SLUG=$WORKTREE_SLUG
+WORKTREE_INDEX=$WORKTREE_INDEX
+EOF
+    fi
     echo "  Appended worktree overrides to .env.local"
 fi
 

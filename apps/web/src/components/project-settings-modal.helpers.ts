@@ -199,7 +199,14 @@ const getSettingsLoadErrorMessage = (message: string): string => {
     return 'Could not read laborer.json. Fix the JSON syntax and reopen project settings.'
   }
 
-  return 'Failed to load project settings.'
+  if (
+    lowercaseMessage.includes('mutually exclusive') &&
+    lowercaseMessage.includes('devserver')
+  ) {
+    return 'devServer.image and devServer.dockerfile cannot both be set. Remove one from your laborer.json.'
+  }
+
+  return `Failed to load project settings: ${message}`
 }
 
 export {

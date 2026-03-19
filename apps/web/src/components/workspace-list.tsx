@@ -673,7 +673,7 @@ function WorkspaceItem({
   // to a container that no longer exists.
   const containerLink =
     isContainerized && workspace.containerUrl
-      ? `https://${workspace.containerUrl}`
+      ? `http://${workspace.containerUrl}`
       : null
 
   /**

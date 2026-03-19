@@ -559,10 +559,10 @@ function DashboardWorkspaceRow({
       {isContainerized && workspace.containerUrl ? (
         <a
           className="truncate font-mono text-muted-foreground text-xs hover:text-foreground hover:underline"
-          href={`https://${workspace.containerUrl}`}
+          href={`http://${workspace.containerUrl}`}
           rel="noopener"
           target="_blank"
-          title={`Open https://${workspace.containerUrl}`}
+          title={`Open http://${workspace.containerUrl}`}
         >
           {workspace.containerUrl}
         </a>

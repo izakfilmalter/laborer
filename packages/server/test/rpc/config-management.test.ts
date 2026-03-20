@@ -99,6 +99,7 @@ describe('LaborerRpcs config management', () => {
               image: { source: 'default', value: 'node:lts' },
               installCommand: { source: 'default', value: null },
               network: { source: 'default', value: null },
+              port: { source: 'default', value: null },
               setupScripts: {
                 source: 'default',
                 value: ['corepack enable', 'pnpm install --force', 'exec bash'],
@@ -204,6 +205,7 @@ describe('LaborerRpcs config management', () => {
               image: { source: 'default', value: 'node:lts' },
               installCommand: { source: 'default', value: null },
               network: { source: 'default', value: null },
+              port: { source: 'default', value: null },
               setupScripts: {
                 source: 'default',
                 value: ['corepack enable', 'pnpm install --force', 'exec bash'],

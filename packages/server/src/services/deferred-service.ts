@@ -23,7 +23,7 @@
  */
 
 import { RpcError } from '@laborer/shared/rpc'
-import { Context, Duration, Effect, Layer, Ref, Schedule } from 'effect'
+import { Context, Effect, Layer, Ref } from 'effect'
 
 /**
  * Sentinel code used in RpcError to signal that a deferred service is
@@ -131,27 +131,15 @@ export const makeRefDelegatingService = <Id, S extends object>(
           if (resolvedService) {
             return callMethod(resolvedService, ...args)
           }
-          // Slow path: wait for the real service to be swapped in.
-          // Polls the Ref on a short schedule until the placeholder is
-          // replaced, then delegates the call to the real implementation.
-          const waitForService = Effect.flatMap(Ref.get(ref), (current) => {
+          // Read the Ref once: if swapped, delegate to the real service;
+          // otherwise delegate to the placeholder (which handles overrides
+          // and SERVICE_INITIALIZING errors immediately).
+          return Effect.flatMap(Ref.get(ref), (current) => {
             if (current !== placeholder) {
               resolvedService = current
-              return Effect.succeed(current)
             }
-            return Effect.fail('still-initializing' as const)
-          }).pipe(
-            Effect.retry(
-              Schedule.spaced(Duration.millis(250)).pipe(
-                Schedule.upTo(Duration.seconds(30))
-              )
-            ),
-            Effect.mapError(() => serviceInitializingError(serviceName))
-          )
-
-          return Effect.flatMap(waitForService, (service) =>
-            callMethod(service, ...args)
-          )
+            return callMethod(current, ...args)
+          })
         }
 
         methodCache.set(propName, wrapper)

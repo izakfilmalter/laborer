@@ -358,10 +358,10 @@ function HomeComponent() {
    * Gated closePane that checks if the terminal has a running child process
    * and whether the pane is the last for a merged-PR workspace.
    *
-   * Uses the cached terminal list (from the 5-second poll) to make an
-   * instant, synchronous decision — no RPC calls at close time. This
-   * follows the same pattern as VS Code's ChildProcessMonitor: process
-   * state is pre-cached and read synchronously at close time.
+   * Uses the push-based terminal list (updated via the 200ms detection
+   * fiber's event stream) to make an instant, synchronous decision — no
+   * RPC calls at close time. Process state is pre-cached and read
+   * synchronously at close time.
    *
    * Returns one of four outcomes:
    * - close: close immediately

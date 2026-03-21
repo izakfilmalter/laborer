@@ -491,8 +491,10 @@ function WorkspaceFrame({
   readonly subLayout: PanelNode
   readonly activePaneId: string | null
   readonly index: number
-  readonly isCollapsible?: boolean
-  readonly panelRef?: { readonly current: PanelImperativeHandle | null }
+  readonly isCollapsible?: boolean | undefined
+  readonly panelRef?:
+    | { readonly current: PanelImperativeHandle | null }
+    | undefined
   readonly diffWorkspaceId?: string | null
   readonly reviewWorkspaceId?: string | null
   readonly tileLeaf?: WorkspaceTileLeaf | undefined
@@ -903,6 +905,8 @@ function WorkspaceTileLeafFrame({
   diffWorkspaceId = null,
   reviewWorkspaceId = null,
   parentDirection,
+  isCollapsible = false,
+  panelRef,
 }: {
   readonly leaf: WorkspaceTileLeaf
   readonly flatLayout: PanelNode
@@ -911,6 +915,10 @@ function WorkspaceTileLeafFrame({
   readonly diffWorkspaceId?: string | null
   readonly reviewWorkspaceId?: string | null
   readonly parentDirection?: SplitDirection | undefined
+  readonly isCollapsible?: boolean | undefined
+  readonly panelRef?:
+    | { readonly current: PanelImperativeHandle | null }
+    | undefined
 }) {
   // When the leaf has panel tabs, use the active tab's layout.
   // When it doesn't (pre-migration), fall back to extracting from the flat tree.
@@ -941,6 +949,8 @@ function WorkspaceTileLeafFrame({
       activePaneId={activePaneId}
       diffWorkspaceId={diffWorkspaceId}
       index={index}
+      isCollapsible={isCollapsible}
+      panelRef={panelRef}
       parentDirection={parentDirection}
       reviewWorkspaceId={reviewWorkspaceId}
       subLayout={subLayout}
@@ -974,13 +984,14 @@ function WorkspaceTileResizableChild({
   readonly parentDirection?: SplitDirection | undefined
 }) {
   const panelRef = useRef<PanelImperativeHandle | null>(null)
+  const isLeaf = tileNode._tag === 'WorkspaceTileLeaf'
 
   return (
     <>
       {index > 0 && <ResizableHandle />}
       <ResizablePanel
         collapsedSize="2.5rem"
-        collapsible={tileNode._tag === 'WorkspaceTileLeaf'}
+        collapsible={isLeaf}
         defaultSize={`${defaultSize}%`}
         minSize="10%"
         panelRef={panelRef}
@@ -990,6 +1001,8 @@ function WorkspaceTileResizableChild({
           diffWorkspaceId={diffWorkspaceId}
           flatLayout={flatLayout}
           index={index}
+          isCollapsible={isLeaf}
+          panelRef={isLeaf ? panelRef : undefined}
           parentDirection={parentDirection}
           reviewWorkspaceId={reviewWorkspaceId}
           tileNode={tileNode}
@@ -1018,6 +1031,8 @@ function WorkspaceTileRenderer({
   diffWorkspaceId = null,
   reviewWorkspaceId = null,
   parentDirection,
+  isCollapsible = false,
+  panelRef,
 }: {
   readonly tileNode: WorkspaceTileNode
   readonly flatLayout: PanelNode
@@ -1026,6 +1041,10 @@ function WorkspaceTileRenderer({
   readonly diffWorkspaceId?: string | null
   readonly reviewWorkspaceId?: string | null
   readonly parentDirection?: SplitDirection | undefined
+  readonly isCollapsible?: boolean | undefined
+  readonly panelRef?:
+    | { readonly current: PanelImperativeHandle | null }
+    | undefined
 }) {
   if (tileNode._tag === 'WorkspaceTileLeaf') {
     return (
@@ -1035,7 +1054,9 @@ function WorkspaceTileRenderer({
           diffWorkspaceId={diffWorkspaceId}
           flatLayout={flatLayout}
           index={index}
+          isCollapsible={isCollapsible}
           leaf={tileNode}
+          panelRef={panelRef}
           parentDirection={parentDirection}
           reviewWorkspaceId={reviewWorkspaceId}
         />

@@ -1,8 +1,13 @@
 import type { PanelNode, WorkspaceTileNode } from '@laborer/shared/types'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { findNodeById } from '@/panels/layout-utils'
 import { FullscreenPortalContext } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
+import { WorkspaceFrameHeaderContainer } from './workspace-frame-header-container'
 import { EmptyWindowTabState, WorkspaceFrames } from './workspace-frames'
+
+/** No-op callback for fullscreen workspace header handlers. */
+const noop = () => undefined
 
 interface PanelContentProps {
   readonly activePaneId: string | null
@@ -47,6 +52,19 @@ export function PanelContent({
 }: PanelContentProps) {
   const [portalElement, setPortalElement] = useState<HTMLElement | null>(null)
 
+  // Resolve the workspace ID for the fullscreened pane so we can render
+  // its workspace header above the fullscreen overlay.
+  const fullscreenWorkspaceId = useMemo(() => {
+    if (!(fullscreenPaneId && layout)) {
+      return undefined
+    }
+    const node = findNodeById(layout, fullscreenPaneId)
+    if (node && node._tag === 'LeafNode') {
+      return node.workspaceId
+    }
+    return undefined
+  }, [fullscreenPaneId, layout])
+
   if (isReconciling) {
     return (
       <div className="flex h-full items-center justify-center bg-background">
@@ -65,21 +83,43 @@ export function PanelContent({
   if (layout) {
     return (
       <FullscreenPortalContext.Provider value={portalElement}>
-        <div className="relative h-full w-full">
-          <WorkspaceFrames
-            activePaneId={activePaneId}
-            diffWorkspaceId={diffPaneOpen ? diffWorkspaceId : null}
-            layout={layout}
-            reviewWorkspaceId={reviewPaneOpen ? reviewWorkspaceId : null}
-            workspaceOrder={workspaceOrder}
-            workspaceTileLayout={workspaceTileLayout}
-          />
-          {/* Fullscreen portal target — panes portal into this overlay
-              when fullscreened. Positioned absolutely to cover the entire
-              panel area without affecting the normal layout flow. */}
-          {fullscreenPaneId && (
-            <div className="absolute inset-0 z-10" ref={setPortalElement} />
+        <div className="relative flex h-full w-full flex-col">
+          {/* When a pane is fullscreened, render the workspace header for
+              its workspace above the fullscreen overlay so the user can
+              still see the project name, branch, PR status, and actions. */}
+          {fullscreenPaneId && fullscreenWorkspaceId && (
+            <div
+              data-testid="fullscreen-workspace-header"
+              data-workspace-id={fullscreenWorkspaceId}
+            >
+              <WorkspaceFrameHeaderContainer
+                diffIsOpen={false}
+                isMinimized={false}
+                onHeaderClick={noop}
+                onMinimize={noop}
+                reviewIsOpen={false}
+                subLayout={layout}
+                workspaceId={fullscreenWorkspaceId}
+              />
+            </div>
           )}
+          <div className="relative min-h-0 flex-1">
+            <WorkspaceFrames
+              activePaneId={activePaneId}
+              diffWorkspaceId={diffPaneOpen ? diffWorkspaceId : null}
+              layout={layout}
+              reviewWorkspaceId={reviewPaneOpen ? reviewWorkspaceId : null}
+              workspaceOrder={workspaceOrder}
+              workspaceTileLayout={workspaceTileLayout}
+            />
+            {/* Fullscreen portal target — panes portal into this overlay
+                when fullscreened. Positioned absolutely to cover the
+                workspace frames area (below the workspace header) without
+                affecting the normal layout flow. */}
+            {fullscreenPaneId && (
+              <div className="absolute inset-0 z-10" ref={setPortalElement} />
+            )}
+          </div>
         </div>
       </FullscreenPortalContext.Provider>
     )

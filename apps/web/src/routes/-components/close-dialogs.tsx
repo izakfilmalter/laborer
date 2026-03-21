@@ -145,7 +145,20 @@ export function CloseWorkspaceDialog({
 
   return (
     <AlertDialog onOpenChange={onOpenChange} open={open}>
-      <AlertDialogContent>
+      <AlertDialogContent
+        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+          if (isExactEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            return
+          }
+          if (isMetaEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            handleConfirm()
+          }
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>Close workspace?</AlertDialogTitle>
           <AlertDialogDescription>
@@ -154,9 +167,13 @@ export function CloseWorkspaceDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel>
+            Cancel <Kbd>Esc</Kbd>
+          </AlertDialogCancel>
           <AlertDialogAction onClick={handleConfirm}>
             Close workspace
+            <Kbd>⌘</Kbd>
+            <Kbd>↵</Kbd>
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -272,7 +289,20 @@ export function ClosePanelTabDialog({
 
   return (
     <AlertDialog onOpenChange={onOpenChange} open={open}>
-      <AlertDialogContent>
+      <AlertDialogContent
+        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+          if (isExactEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            return
+          }
+          if (isMetaEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            handleConfirm()
+          }
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>Close tab?</AlertDialogTitle>
           <AlertDialogDescription>
@@ -281,9 +311,13 @@ export function ClosePanelTabDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel>
+            Cancel <Kbd>Esc</Kbd>
+          </AlertDialogCancel>
           <AlertDialogAction onClick={handleConfirm}>
             Close tab
+            <Kbd>⌘</Kbd>
+            <Kbd>↵</Kbd>
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -312,7 +346,20 @@ export function CloseWindowTabDialog({
 
   return (
     <AlertDialog onOpenChange={onOpenChange} open={open}>
-      <AlertDialogContent>
+      <AlertDialogContent
+        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+          if (isExactEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            return
+          }
+          if (isMetaEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            handleConfirm()
+          }
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>Close window tab?</AlertDialogTitle>
           <AlertDialogDescription>
@@ -321,9 +368,13 @@ export function CloseWindowTabDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel>
+            Cancel <Kbd>Esc</Kbd>
+          </AlertDialogCancel>
           <AlertDialogAction onClick={handleConfirm}>
             Close window tab
+            <Kbd>⌘</Kbd>
+            <Kbd>↵</Kbd>
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -349,7 +400,20 @@ export function CloseAppDialog({
 
   return (
     <AlertDialog onOpenChange={onOpenChange} open={open}>
-      <AlertDialogContent>
+      <AlertDialogContent
+        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+          if (isExactEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            return
+          }
+          if (isMetaEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            handleCloseToTray()
+          }
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>Close Laborer?</AlertDialogTitle>
           <AlertDialogDescription>
@@ -358,9 +422,13 @@ export function CloseAppDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel>
+            Cancel <Kbd>Esc</Kbd>
+          </AlertDialogCancel>
           <AlertDialogAction onClick={handleCloseToTray}>
             Close
+            <Kbd>⌘</Kbd>
+            <Kbd>↵</Kbd>
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

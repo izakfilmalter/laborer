@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
@@ -55,6 +56,7 @@ interface McpRegistrarOptions {
   readonly codexConfigPath?: string
   readonly mcpEntryPath?: string
   readonly opencodeConfigPath?: string
+  readonly opencodePluginPath?: string
 }
 
 interface McpServerConfig {
@@ -506,6 +508,168 @@ const registerCodexConfig = ({
     )
   )
 
+// ---------------------------------------------------------------------------
+// OpenCode hook plugin — agent lifecycle status reporting
+//
+// The plugin is installed at `~/.config/opencode/plugins/laborer-hook.js`
+// at server startup and removed on shutdown. It reads LABORER_TERMINAL_ID
+// and LABORER_HOOK_URL from the terminal's environment (set at spawn time)
+// to report agent lifecycle transitions back to the terminal service.
+//
+// @see packages/terminal/src/routes/agent-hook.ts — POST /hook/agent-status
+// @see .reference/opencode/packages/web/src/content/docs/plugins.mdx
+// ---------------------------------------------------------------------------
+
+const OPENCODE_PLUGIN_PATH = join(
+  homedir(),
+  '.config',
+  'opencode',
+  'plugins',
+  'laborer-hook.js'
+)
+
+/**
+ * OpenCode plugin JS that reports agent lifecycle events to laborer.
+ *
+ * Reads LABORER_TERMINAL_ID and LABORER_HOOK_URL from the process
+ * environment. Tracks root vs sub-agent sessions via `session.created`
+ * events. Uses `session.status` (not deprecated `session.idle`) to
+ * detect idle/busy transitions. Only root sessions (no parentID)
+ * trigger status changes — sub-agent completions are ignored.
+ *
+ * @see .reference/opencode/packages/web/src/content/docs/plugins.mdx
+ */
+const OPENCODE_HOOK_PLUGIN = `
+export const LaborerHookPlugin = async () => {
+  const terminalId = process.env.LABORER_TERMINAL_ID
+  const hookUrl = process.env.LABORER_HOOK_URL
+  if (!terminalId || !hookUrl) return {}
+
+  const children = new Set()
+
+  const post = async (event) => {
+    try {
+      await fetch(hookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ terminalId, event }),
+      })
+    } catch {}
+  }
+
+  return {
+    event: async ({ event }) => {
+      if (event.type === "session.created") {
+        if (event.properties.info.parentID) {
+          children.add(event.properties.info.id)
+        } else {
+          await post("active")
+        }
+        return
+      }
+
+      if (event.type === "session.status") {
+        const sid = event.properties.sessionID
+        if (children.has(sid)) return
+        if (event.properties.status.type === "busy") {
+          await post("active")
+        } else if (event.properties.status.type === "idle") {
+          await post("waiting_for_input")
+        }
+        return
+      }
+
+      if (event.type === "session.error") {
+        const sid = event.properties.sessionID
+        if (sid && children.has(sid)) return
+        await post("waiting_for_input")
+      }
+    },
+  }
+}
+`.trim()
+
+/**
+ * Install the OpenCode hook plugin at server startup.
+ * Idempotent — skips if the file already has the correct content.
+ */
+const ensureOpencodePlugin = ({
+  opencodePluginPath = OPENCODE_PLUGIN_PATH,
+}: McpRegistrarOptions = {}): Effect.Effect<readonly string[], never> =>
+  Effect.gen(function* () {
+    const installed = yield* Effect.try({
+      try: () => {
+        if (existsSync(opencodePluginPath)) {
+          const existing = readFileSync(opencodePluginPath, 'utf-8')
+          if (existing === OPENCODE_HOOK_PLUGIN) {
+            return false
+          }
+        }
+
+        mkdirSync(dirname(opencodePluginPath), { recursive: true })
+        writeFileSync(opencodePluginPath, OPENCODE_HOOK_PLUGIN, 'utf-8')
+        return true
+      },
+      catch: (cause) =>
+        new RegistrarIOError({
+          message: `Failed to install OpenCode hook plugin at ${opencodePluginPath}`,
+          cause,
+        }),
+    })
+
+    if (!installed) {
+      return [] as const
+    }
+
+    yield* Effect.logInfo(
+      `Installed OpenCode hook plugin: ${opencodePluginPath}`
+    ).pipe(Effect.annotateLogs('module', logPrefix))
+    return [opencodePluginPath] as const
+  }).pipe(
+    Effect.catchAll((error) =>
+      Effect.logWarning(`${error.message}: ${String(error.cause)}`).pipe(
+        Effect.annotateLogs('module', logPrefix),
+        Effect.map(() => [] as const)
+      )
+    )
+  )
+
+/**
+ * Remove the OpenCode hook plugin on shutdown.
+ * Prevents stale hooks from running when OpenCode is used outside Laborer.
+ */
+const removeOpencodePlugin = ({
+  opencodePluginPath = OPENCODE_PLUGIN_PATH,
+}: McpRegistrarOptions = {}): Effect.Effect<void, never> =>
+  Effect.try({
+    try: () => {
+      if (existsSync(opencodePluginPath)) {
+        rmSync(opencodePluginPath)
+        return opencodePluginPath
+      }
+      return null
+    },
+    catch: (cause) =>
+      new RegistrarIOError({
+        message: `Failed to remove OpenCode hook plugin at ${opencodePluginPath}`,
+        cause,
+      }),
+  }).pipe(
+    Effect.tap((removed) =>
+      removed !== null
+        ? Effect.logInfo(`Removed OpenCode hook plugin: ${removed}`).pipe(
+            Effect.annotateLogs('module', logPrefix)
+          )
+        : Effect.void
+    ),
+    Effect.catchAll((error) =>
+      Effect.logWarning(`${error.message}: ${String(error.cause)}`).pipe(
+        Effect.annotateLogs('module', logPrefix)
+      )
+    ),
+    Effect.asVoid
+  )
+
 class McpRegistrar extends Context.Tag('@laborer/McpRegistrar')<
   McpRegistrar,
   {
@@ -530,10 +694,16 @@ class McpRegistrar extends Context.Tag('@laborer/McpRegistrar')<
               registerOpencodeConfig(options),
               registerClaudeConfig(options),
               registerCodexConfig(options),
+              ensureOpencodePlugin(options),
             ]).pipe(Effect.map((updatedFiles) => updatedFiles.flat())),
         })
 
         yield* service.registerTargets()
+
+        // Remove the OpenCode hook plugin on shutdown so stale hooks
+        // don't fire when OpenCode runs outside Laborer.
+        yield* Effect.addFinalizer(() => removeOpencodePlugin(options))
+
         return service
       })
     )
@@ -556,6 +726,7 @@ export {
   mergeCodexConfig,
   mergeOpencodeConfig,
   OPENCODE_CONFIG_PATH,
+  OPENCODE_PLUGIN_PATH,
   registerClaudeConfig,
   registerCodexConfig,
   registerOpencodeConfig,

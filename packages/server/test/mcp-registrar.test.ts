@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   readFileSync,
   rmSync,
@@ -312,36 +313,149 @@ describe('registerCodexConfig', () => {
   })
 })
 
+describe('OpenCode hook plugin', () => {
+  it('installs a valid JS plugin that exports a named function', async () => {
+    const dir = join(testRoot, 'plugin-content')
+    const opencodePluginPath = join(dir, 'laborer-hook.js')
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* McpRegistrar
+          const content = readFileSync(opencodePluginPath, 'utf-8')
+          // Must be a valid ESM export that OpenCode can import
+          expect(content).toContain('export const LaborerHookPlugin')
+          // Must read env vars for terminal identification
+          expect(content).toContain('LABORER_TERMINAL_ID')
+          expect(content).toContain('LABORER_HOOK_URL')
+          // Must handle the session.status event for idle/busy detection
+          expect(content).toContain('session.status')
+          expect(content).toContain('waiting_for_input')
+        })
+      ).pipe(
+        Effect.provide(
+          McpRegistrar.makeLayer({
+            opencodePluginPath,
+            opencodeConfigPath: join(dir, 'opencode.json'),
+            claudeConfigPath: join(dir, 'claude.json'),
+            codexConfigPath: join(dir, 'config.toml'),
+          }).pipe(Layer.provide(DummyLaborerStoreLayer))
+        )
+      )
+    )
+  })
+
+  it('does not rewrite the plugin when content is already current', async () => {
+    const dir = join(testRoot, 'plugin-idempotent')
+    const opencodePluginPath = join(dir, 'laborer-hook.js')
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registrar = yield* McpRegistrar
+
+          // Plugin was installed during layer construction.
+          // Record the mtime.
+          const before = statSync(opencodePluginPath).mtimeMs
+
+          // Wait so mtime would change if rewritten
+          yield* Effect.sleep('25 millis')
+
+          // Re-register — should be a no-op for the plugin file
+          yield* registrar.registerTargets()
+
+          const after = statSync(opencodePluginPath).mtimeMs
+          expect(after).toBe(before)
+        })
+      ).pipe(
+        Effect.provide(
+          McpRegistrar.makeLayer({
+            opencodePluginPath,
+            opencodeConfigPath: join(dir, 'opencode.json'),
+            claudeConfigPath: join(dir, 'claude.json'),
+            codexConfigPath: join(dir, 'config.toml'),
+          }).pipe(Layer.provide(DummyLaborerStoreLayer))
+        )
+      )
+    )
+  })
+
+  it('overwrites a stale plugin with outdated content', async () => {
+    const dir = join(testRoot, 'plugin-stale')
+    mkdirSync(dir, { recursive: true })
+    const opencodePluginPath = join(dir, 'laborer-hook.js')
+    writeFileSync(opencodePluginPath, '// old version\n', 'utf-8')
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* McpRegistrar
+          const content = readFileSync(opencodePluginPath, 'utf-8')
+          expect(content).not.toContain('old version')
+          expect(content).toContain('export const LaborerHookPlugin')
+        })
+      ).pipe(
+        Effect.provide(
+          McpRegistrar.makeLayer({
+            opencodePluginPath,
+            opencodeConfigPath: join(dir, 'opencode.json'),
+            claudeConfigPath: join(dir, 'claude.json'),
+            codexConfigPath: join(dir, 'config.toml'),
+          }).pipe(Layer.provide(DummyLaborerStoreLayer))
+        )
+      )
+    )
+  })
+})
+
 describe('McpRegistrar.layer', () => {
-  it('runs registration during layer startup', async () => {
+  it('runs registration during layer startup and cleans up on shutdown', async () => {
     const opencodeConfigPath = join(testRoot, 'startup', 'opencode.json')
     const claudeConfigPath = join(testRoot, 'startup', 'claude.json')
     const codexConfigPath = join(testRoot, 'startup', 'config.toml')
+    const opencodePluginPath = join(
+      testRoot,
+      'startup',
+      'plugins',
+      'laborer-hook.js'
+    )
 
     await Effect.runPromise(
-      Effect.flatMap(McpRegistrar, () => Effect.void).pipe(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* McpRegistrar
+
+          // Verify all configs were written during startup
+          expect(readJson(opencodeConfigPath)).toEqual({
+            mcp: {
+              laborer: getDesiredOpencodeMcpConfig(DEFAULT_MCP_ENTRY_PATH),
+            },
+          })
+          expect(readJson(claudeConfigPath)).toEqual({
+            mcpServers: {
+              laborer: getDesiredMcpServerConfig(DEFAULT_MCP_ENTRY_PATH),
+            },
+          })
+          expect(readFileSync(codexConfigPath, 'utf-8')).toBe(
+            getDesiredCodexMcpConfigBlock(DEFAULT_MCP_ENTRY_PATH)
+          )
+
+          // Verify OpenCode hook plugin was installed
+          expect(existsSync(opencodePluginPath)).toBe(true)
+        })
+      ).pipe(
         Effect.provide(
           McpRegistrar.makeLayer({
             claudeConfigPath,
             codexConfigPath,
             opencodeConfigPath,
+            opencodePluginPath,
           }).pipe(Layer.provide(DummyLaborerStoreLayer))
         )
       )
     )
 
-    expect(readJson(opencodeConfigPath)).toEqual({
-      mcp: {
-        laborer: getDesiredOpencodeMcpConfig(DEFAULT_MCP_ENTRY_PATH),
-      },
-    })
-    expect(readJson(claudeConfigPath)).toEqual({
-      mcpServers: {
-        laborer: getDesiredMcpServerConfig(DEFAULT_MCP_ENTRY_PATH),
-      },
-    })
-    expect(readFileSync(codexConfigPath, 'utf-8')).toBe(
-      getDesiredCodexMcpConfigBlock(DEFAULT_MCP_ENTRY_PATH)
-    )
+    // After the scope closes, the plugin should be cleaned up
+    expect(existsSync(opencodePluginPath)).toBe(false)
   })
 })

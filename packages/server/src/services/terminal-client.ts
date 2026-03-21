@@ -23,8 +23,8 @@
  * @see Issue #16: Lazy sidecar connections
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RpcError, TerminalRpcs } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
@@ -332,88 +332,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       }
 
       /**
-       * OpenCode plugin JS that reports agent lifecycle events to laborer.
-       *
-       * Reads LABORER_TERMINAL_ID and LABORER_HOOK_URL from the process
-       * environment. Tracks root vs sub-agent sessions via `session.created`
-       * events. Uses `session.status` (not deprecated `session.idle`) to
-       * detect idle/busy transitions. Only root sessions (no parentID)
-       * trigger status changes — sub-agent completions are ignored.
-       *
-       * @see .reference/opencode/packages/web/src/content/docs/plugins.mdx
-       */
-      const OPENCODE_HOOK_PLUGIN = `
-export const LaborerHookPlugin = async () => {
-  const terminalId = process.env.LABORER_TERMINAL_ID
-  const hookUrl = process.env.LABORER_HOOK_URL
-  if (!terminalId || !hookUrl) return {}
-
-  const children = new Set()
-
-  const post = async (event) => {
-    try {
-      await fetch(hookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ terminalId, event }),
-      })
-    } catch {}
-  }
-
-  return {
-    event: async ({ event }) => {
-      if (event.type === "session.created") {
-        if (event.properties.info.parentID) {
-          children.add(event.properties.info.id)
-        } else {
-          await post("active")
-        }
-        return
-      }
-
-      if (event.type === "session.status") {
-        const sid = event.properties.sessionID
-        if (children.has(sid)) return
-        if (event.properties.status.type === "busy") {
-          await post("active")
-        } else if (event.properties.status.type === "idle") {
-          await post("waiting_for_input")
-        }
-        return
-      }
-
-      if (event.type === "session.error") {
-        const sid = event.properties.sessionID
-        if (sid && children.has(sid)) return
-        await post("waiting_for_input")
-      }
-    },
-  }
-}
-`.trim()
-
-      /**
-       * Ensure the OpenCode hook plugin exists in the global
-       * `~/.config/opencode/plugins/` directory so it's available
-       * to every workspace without polluting individual repos.
-       * Idempotent — skips if the file already has the correct content.
-       */
-      const ensureOpencodePlugin = (): void => {
-        const pluginDir = join(homedir(), '.config', 'opencode', 'plugins')
-        const pluginPath = join(pluginDir, 'laborer-hook.js')
-
-        if (existsSync(pluginPath)) {
-          const existing = readFileSync(pluginPath, 'utf-8')
-          if (existing === OPENCODE_HOOK_PLUGIN) {
-            return
-          }
-        }
-
-        mkdirSync(pluginDir, { recursive: true })
-        writeFileSync(pluginPath, OPENCODE_HOOK_PLUGIN, 'utf-8')
-      }
-
-      /**
        * Convert a TerminalRpcError from the terminal service into a
        * server-side RpcError for propagation to the web client.
        */
@@ -638,15 +556,6 @@ export const LaborerHookPlugin = async () => {
           // Pre-generate terminal ID when spawning an agent so we can
           // inject it into the hook settings/env before the PTY starts.
           const terminalId = isAgent ? crypto.randomUUID() : undefined
-
-          // Ensure the OpenCode hook plugin exists in the global
-          // ~/.config/opencode/plugins/ directory before spawning.
-          // The plugin reads env vars to report state.
-          if (command === 'opencode') {
-            yield* Effect.try(() => ensureOpencodePlugin()).pipe(
-              Effect.catchAll(() => Effect.void)
-            )
-          }
 
           // Build the command, potentially wrapping it with hook settings
           const { command: agentCmd, extraEnv } =

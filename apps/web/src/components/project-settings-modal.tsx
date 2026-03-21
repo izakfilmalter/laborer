@@ -1,6 +1,13 @@
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import { Plus, Settings, Trash2 } from 'lucide-react'
-import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
@@ -8,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -22,6 +30,7 @@ import {
   FieldSet,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Kbd } from '@/components/ui/kbd'
 import {
   Select,
   SelectContent,
@@ -36,6 +45,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { useWhenPhase } from '@/hooks/use-when-phase'
+import { isMetaEnter } from '@/lib/dialog-keys'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import {
@@ -106,6 +116,7 @@ function ProjectSettingsForm({
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [isSaving, setIsSaving] = useState(false)
   const lastLoadErrorMessageRef = useRef<string | null>(null)
+  const formRef = useRef<HTMLFormElement>(null)
 
   const loadErrorMessage =
     configResult._tag === 'Failure'
@@ -228,7 +239,18 @@ function ProjectSettingsForm({
   }
 
   return (
-    <form className="contents" onSubmit={handleSubmit}>
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Form needs Cmd+Enter keyboard shortcut to submit
+    <form
+      className="contents"
+      onKeyDown={(event: KeyboardEvent<HTMLFormElement>) => {
+        if (isMetaEnter(event.nativeEvent) && !isSaving && isServerReady) {
+          event.preventDefault()
+          formRef.current?.requestSubmit()
+        }
+      }}
+      onSubmit={handleSubmit}
+      ref={formRef}
+    >
       <div className="grid gap-4 py-2">
         <FieldSet>
           <Field>
@@ -538,9 +560,14 @@ function ProjectSettingsForm({
         </FieldSet>
       </div>
       <DialogFooter>
+        <DialogClose render={<Button variant="outline" />}>
+          Cancel <Kbd>Esc</Kbd>
+        </DialogClose>
         <Button disabled={!isServerReady || isSaving} type="submit">
           {isSaving && <Spinner className="size-3.5" />}
           {isSaving ? 'Saving...' : 'Save'}
+          <Kbd>⌘</Kbd>
+          <Kbd>↵</Kbd>
         </Button>
       </DialogFooter>
     </form>

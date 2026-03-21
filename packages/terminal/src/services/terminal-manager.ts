@@ -579,6 +579,68 @@ const isIdleTitle = (title: string): boolean => {
 }
 
 /**
+ * Build a ProcessDetectionResult from an OSC title change.
+ *
+ * This function is the safety boundary between OSC-based (heuristic) and
+ * ps-based (authoritative) process detection. The key invariant:
+ *
+ * **OSC detection may only UPGRADE hasChildProcess (false->true), never
+ * DOWNGRADE it (true->false).** Only the ps-based detection fiber has
+ * authority to set hasChildProcess=false because it actually checks
+ * the OS process tree via `ps -eo pid=,ppid=,comm=`.
+ *
+ * When the title looks idle, we preserve hasChildProcess from the last
+ * ps snapshot. If no snapshot exists yet, returns null to signal that
+ * no emission should occur — let the ps fiber establish the baseline.
+ *
+ * @param title - The terminal title from OSC 0/2
+ * @param previousSnapshot - The last ps-based detection result (may be undefined)
+ * @returns Detection result, or null to skip emission
+ */
+const buildDetectionFromTitle = (
+  title: string,
+  previousSnapshot: ProcessDetectionResult | undefined
+): ProcessDetectionResult | null => {
+  const idle = isIdleTitle(title)
+
+  if (idle) {
+    // No ps snapshot yet — skip emission so the ps fiber establishes
+    // the authoritative baseline first.
+    if (previousSnapshot === undefined) {
+      return null
+    }
+    // Preserve ps-based hasChildProcess — never downgrade to false.
+    return {
+      foregroundProcess: null,
+      hasChildProcess: previousSnapshot.hasChildProcess,
+      processChain: previousSnapshot.processChain,
+    }
+  }
+
+  // Non-idle title — classify the process
+  const classified = classifyProcess(title)
+  if (classified !== null && classified.category !== 'shell') {
+    return {
+      foregroundProcess: classified,
+      hasChildProcess: true,
+      processChain: [classified],
+    }
+  }
+
+  // Unknown or shell process in title — upgrade but never downgrade
+  const hasChild =
+    classified !== null || (previousSnapshot?.hasChildProcess ?? false)
+  return {
+    foregroundProcess: classified,
+    hasChildProcess: hasChild,
+    processChain:
+      classified !== null
+        ? [classified]
+        : (previousSnapshot?.processChain ?? []),
+  }
+}
+
+/**
  * Fallback timeout for non-OSC shells. When a terminal has not received
  * any OSC title or prompt signals, the newline-based "running" heuristic
  * auto-resets to idle after this duration. Prevents permanent false-running
@@ -863,6 +925,9 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
        * Called when the headless terminal detects a title change. Uses
        * the title to build a ForegroundProcess and immediately emits
        * so the sidebar updates without waiting for the next ps tick.
+       *
+       * Delegates to `buildDetectionFromTitle` which enforces the key
+       * invariant: OSC may upgrade hasChildProcess but never downgrade it.
        */
       const emitTitleBasedProcessChanged = (
         terminalId: string,
@@ -874,33 +939,17 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           return
         }
 
-        const idle = isIdleTitle(title)
+        const previousSnapshot = lastProcessSnapshot.get(terminalId)
+        const detected = buildDetectionFromTitle(title, previousSnapshot)
 
-        // Build detection result from the title
-        let detected: ProcessDetectionResult
-        if (idle) {
-          detected = EMPTY_DETECTION
-        } else {
-          // Try to classify the title as a known process
-          const classified = classifyProcess(title)
-          if (classified !== null && classified.category !== 'shell') {
-            detected = {
-              foregroundProcess: classified,
-              hasChildProcess: true,
-              processChain: [classified],
-            }
-          } else {
-            // Unknown process running — still mark as having a child
-            detected = {
-              foregroundProcess: classified,
-              hasChildProcess: classified !== null,
-              processChain: classified !== null ? [classified] : [],
-            }
-          }
+        // null means "skip emission" — no ps baseline yet
+        if (detected === null) {
+          return
         }
 
-        // Update the snapshot so the ps-based detection doesn't
-        // override with stale data on its next tick
+        // Update the snapshot so the next ps-based detection tick can
+        // diff against the latest state. The ps tick will override
+        // hasChildProcess with its own authoritative result.
         lastProcessSnapshot.set(terminalId, detected)
 
         const record = toTerminalRecord(terminal, detected)
@@ -2049,13 +2098,23 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
   )
 }
 
-export { classifyProcess, TerminalManager }
+export {
+  buildDetectionFromTitle,
+  classifyProcess,
+  detectForShellPid,
+  detectProcessesForPids,
+  EMPTY_DETECTION,
+  isIdleTitle,
+  parsePsOutput,
+  TerminalManager,
+}
 export type {
   AgentStatus,
   ForegroundProcess,
   ManagedTerminal,
   OutputSubscriber,
   ProcessCategory,
+  ProcessDetectionResult,
   SpawnPayload,
   TerminalExitedEvent,
   TerminalLifecycleEvent,

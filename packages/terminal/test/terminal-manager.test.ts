@@ -1590,6 +1590,517 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     })
   })
 
+  // -------------------------------------------------------------------------
+  // OSC title should not downgrade hasChildProcess
+  // -------------------------------------------------------------------------
+
+  it('OSC idle title must not emit ProcessChanged with hasChildProcess=false while process runs', async () => {
+    // This is the core bug: a process like opencode sets the terminal title
+    // to a path (e.g. ~/projects/foo) via OSC 0. The isIdleTitle() heuristic
+    // classifies paths as "idle" and emitTitleBasedProcessChanged immediately
+    // emits a ProcessChanged event with hasChildProcess=false. The frontend
+    // uses these events (not listTerminals) for close confirmation gating.
+    //
+    // The fix: OSC-based detection should never downgrade hasChildProcess
+    // from true to false. Only ps-based detection should do that.
+    await withGracePeriod(60_000, async (runLocalEffect) => {
+      const collectedEvents: TerminalLifecycleEvent[] = []
+
+      const terminalId = await runLocalEffect(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const tm = yield* TerminalManager
+
+            const dequeue = yield* tm.lifecycleEvents.subscribe
+
+            const collectFiber = yield* Effect.fork(
+              Effect.gen(function* () {
+                while (true) {
+                  const event = yield* Queue.take(dequeue)
+                  collectedEvents.push(event)
+                }
+              })
+            )
+
+            // Spawn an interactive shell that runs a long-lived child
+            // process and then emits an idle-looking OSC title.
+            // This simulates what programs like opencode do: they run
+            // as a child of the shell but set the terminal title to
+            // the cwd (a path starting with ~ or /).
+            //
+            // The script:
+            // 1. Starts 'sleep 999' in the background (child process)
+            // 2. Emits an OSC 0 title that looks idle (a path)
+            // 3. Waits (keeps the shell and sleep alive)
+            const terminal = yield* tm.spawn({
+              command: '/bin/sh',
+              args: [
+                '-c',
+                'sleep 999 & printf "\\033]0;~/projects/my-app\\007"; wait',
+              ],
+              cwd: TEST_CWD,
+              cols: 80,
+              rows: 24,
+              workspaceId: TEST_WORKSPACE_ID,
+            })
+
+            // Wait for shellPid to be set, the detection fiber to
+            // establish hasChildProcess=true, AND the OSC title to be
+            // processed by the headless terminal.
+            yield* Effect.sleep(2000)
+
+            yield* Fiber.interrupt(collectFiber)
+            return terminal.id
+          })
+        )
+      )
+
+      // First verify that ps-based detection saw the child process.
+      // ProcessChanged events should include at least one with
+      // hasChildProcess=true (from the ps detection seeing 'sleep').
+      const goodEvents = collectedEvents.filter(
+        (e) =>
+          e._tag === 'ProcessChanged' &&
+          e.terminal.id === terminalId &&
+          e.terminal.hasChildProcess === true
+      )
+      assert.isTrue(
+        goodEvents.length >= 1,
+        `Expected at least 1 ProcessChanged with hasChildProcess=true, got ${goodEvents.length}`
+      )
+
+      // The critical assertion: no ProcessChanged event should have
+      // set hasChildProcess=false while the process is still running.
+      // The frontend reads these events to gate close confirmation.
+      //
+      // With the bug, the OSC title "~/projects/my-app" triggers
+      // emitTitleBasedProcessChanged which classifies it as idle and
+      // emits ProcessChanged with hasChildProcess=false.
+      const badEvents = collectedEvents.filter(
+        (e) =>
+          e._tag === 'ProcessChanged' &&
+          e.terminal.id === terminalId &&
+          e.terminal.hasChildProcess === false &&
+          e.terminal.status === 'running'
+      )
+      assert.strictEqual(
+        badEvents.length,
+        0,
+        `Expected zero ProcessChanged events with hasChildProcess=false while sleep is running, got ${badEvents.length}`
+      )
+
+      // Clean up
+      await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          yield* tm.kill(terminalId)
+        })
+      )
+    })
+  })
+
+  it('repeated idle-looking OSC titles never cause hasChildProcess=false while process runs', async () => {
+    // Simulate an opencode-like scenario: a long-running process that
+    // periodically sets the terminal title to the cwd, a shell name,
+    // or other idle-looking strings. Each title change should NOT
+    // cause hasChildProcess to become false.
+    await withGracePeriod(60_000, async (runLocalEffect) => {
+      const collectedEvents: TerminalLifecycleEvent[] = []
+
+      const terminalId = await runLocalEffect(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const tm = yield* TerminalManager
+
+            const dequeue = yield* tm.lifecycleEvents.subscribe
+
+            const collectFiber = yield* Effect.fork(
+              Effect.gen(function* () {
+                while (true) {
+                  const event = yield* Queue.take(dequeue)
+                  collectedEvents.push(event)
+                }
+              })
+            )
+
+            // Spawn an interactive shell, then write commands to it.
+            // This ensures sh is the parent and sleep is a child.
+            const terminal = yield* tm.spawn({
+              command: '/bin/sh',
+              cwd: TEST_CWD,
+              cols: 80,
+              rows: 24,
+              workspaceId: TEST_WORKSPACE_ID,
+            })
+
+            // Wait for shell to start
+            yield* Effect.sleep(500)
+
+            // Background a long-lived process
+            yield* tm.write(terminal.id, 'sleep 999 &\n')
+
+            // Wait for ps to detect the child process
+            yield* Effect.sleep(1000)
+
+            // Clear events — we only care about what happens AFTER
+            // the baseline with hasChildProcess=true is established.
+            collectedEvents.length = 0
+
+            // Emit several idle-looking OSC titles in sequence.
+            // These go through the shell to stdout → headless terminal
+            // → title callback → emitTitleBasedProcessChanged.
+            yield* tm.write(
+              terminal.id,
+              'printf "\\033]0;~/projects/my-app\\007"\n'
+            )
+            yield* Effect.sleep(300)
+            yield* tm.write(terminal.id, 'printf "\\033]0;zsh\\007"\n')
+            yield* Effect.sleep(300)
+            yield* tm.write(
+              terminal.id,
+              'printf "\\033]0;/Users/dev/code\\007"\n'
+            )
+            yield* Effect.sleep(300)
+            yield* tm.write(
+              terminal.id,
+              'printf "\\033]0;user@host:/tmp\\007"\n'
+            )
+
+            // Wait for all titles to be processed + ps ticks
+            yield* Effect.sleep(1000)
+
+            yield* Fiber.interrupt(collectFiber)
+            return terminal.id
+          })
+        )
+      )
+
+      // ZERO ProcessChanged events should have hasChildProcess=false
+      // while the background process is still running. After we cleared
+      // events, any new events from the title changes + ps ticks should
+      // all maintain hasChildProcess=true.
+      const badEvents = collectedEvents.filter(
+        (e) =>
+          e._tag === 'ProcessChanged' &&
+          e.terminal.id === terminalId &&
+          e.terminal.hasChildProcess === false &&
+          e.terminal.status === 'running'
+      )
+      assert.strictEqual(
+        badEvents.length,
+        0,
+        `Expected zero ProcessChanged with hasChildProcess=false during rapid title changes, got ${badEvents.length}`
+      )
+
+      // Also verify via listTerminals that hasChildProcess is still true
+      const terminals = await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          return yield* tm.listTerminals()
+        })
+      )
+      const terminal = terminals.find((t) => t.id === terminalId)
+      assert.isDefined(terminal)
+      assert.strictEqual(
+        terminal?.hasChildProcess,
+        true,
+        'hasChildProcess must still be true after rapid idle title changes'
+      )
+
+      // Clean up
+      await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          yield* tm.kill(terminalId)
+        })
+      )
+    })
+  })
+
+  it('ps-based detection correctly transitions hasChildProcess to false when process exits', async () => {
+    // Complementary test: when a child process genuinely exits, the ps
+    // detection fiber must transition hasChildProcess from true to false.
+    // This ensures the fix (preserving hasChildProcess on OSC idle) does
+    // not prevent legitimate idle detection by the ps fiber.
+    await withGracePeriod(60_000, async (runLocalEffect) => {
+      const collectedEvents: TerminalLifecycleEvent[] = []
+
+      const terminalId = await runLocalEffect(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const tm = yield* TerminalManager
+
+            const dequeue = yield* tm.lifecycleEvents.subscribe
+
+            const collectFiber = yield* Effect.fork(
+              Effect.gen(function* () {
+                while (true) {
+                  const event = yield* Queue.take(dequeue)
+                  collectedEvents.push(event)
+                }
+              })
+            )
+
+            // Spawn a shell that runs a short-lived child process.
+            // 'sleep 1' runs for 1 second then exits, leaving the shell
+            // idle at its prompt.
+            const terminal = yield* tm.spawn({
+              command: '/bin/sh',
+              args: ['-c', 'sleep 1 & wait'],
+              cwd: TEST_CWD,
+              cols: 80,
+              rows: 24,
+              workspaceId: TEST_WORKSPACE_ID,
+            })
+
+            // Wait for ps detection to see the child process
+            yield* Effect.sleep(500)
+
+            // Verify hasChildProcess is true while sleep is running
+            const duringTerminals = yield* tm.listTerminals()
+            const during = duringTerminals.find((t) => t.id === terminal.id)
+            assert.strictEqual(
+              during?.hasChildProcess,
+              true,
+              'Expected hasChildProcess=true while sleep is running'
+            )
+
+            // Wait for sleep to exit and the detection fiber to notice
+            yield* Effect.sleep(2000)
+
+            yield* Fiber.interrupt(collectFiber)
+            return terminal.id
+          })
+        )
+      )
+
+      // After sleep exits, listTerminals should report hasChildProcess=false
+      const afterTerminals = await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          return yield* tm.listTerminals()
+        })
+      )
+
+      const terminal = afterTerminals.find((t) => t.id === terminalId)
+      // Terminal may have stopped (sh exits after wait completes), or
+      // if still running, hasChildProcess should be false.
+      if (terminal !== undefined && terminal.status === 'running') {
+        assert.strictEqual(
+          terminal.hasChildProcess,
+          false,
+          'hasChildProcess must be false after sleep exits'
+        )
+      }
+
+      // Also check events: after sleep exits, a ProcessChanged with
+      // hasChildProcess=false should eventually appear (from ps detection).
+      const transitionEvents = collectedEvents.filter(
+        (e) =>
+          e._tag === 'ProcessChanged' &&
+          e.terminal.id === terminalId &&
+          e.terminal.hasChildProcess === false
+      )
+      assert.isTrue(
+        transitionEvents.length >= 1,
+        `Expected at least 1 ProcessChanged with hasChildProcess=false after sleep exits, got ${transitionEvents.length}`
+      )
+
+      // Clean up — terminal may already be stopped after sleep/sh exit
+      await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          yield* tm.remove(terminalId)
+        })
+      )
+    })
+  })
+
+  it('non-OSC fallback timer must not clear hasChildProcess while process runs', async () => {
+    // For shells that don't emit OSC sequences, a fallback timer resets
+    // the terminal to "idle" after 10 seconds. This calls
+    // emitTitleBasedProcessChanged(id, '') which should NOT set
+    // hasChildProcess=false if a child process is still running.
+    //
+    // We use a shorter fallback (set via env) to avoid a 10s test wait.
+    // Actually the fallback is hardcoded to 10s, so we write to the
+    // terminal to trigger it, then wait. The test verifies that after
+    // the fallback fires, the close confirmation gate is still correct.
+    await withGracePeriod(60_000, async (runLocalEffect) => {
+      const collectedEvents: TerminalLifecycleEvent[] = []
+
+      const terminalId = await runLocalEffect(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const tm = yield* TerminalManager
+
+            const dequeue = yield* tm.lifecycleEvents.subscribe
+
+            const collectFiber = yield* Effect.fork(
+              Effect.gen(function* () {
+                while (true) {
+                  const event = yield* Queue.take(dequeue)
+                  collectedEvents.push(event)
+                }
+              })
+            )
+
+            // Spawn an interactive shell with a backgrounded child.
+            // Using /bin/sh directly (not via -c) so the shell is
+            // interactive. This shell won't emit OSC sequences.
+            const terminal = yield* tm.spawn({
+              command: '/bin/sh',
+              cwd: TEST_CWD,
+              cols: 80,
+              rows: 24,
+              workspaceId: TEST_WORKSPACE_ID,
+            })
+
+            // Wait for baseline ps detection
+            yield* Effect.sleep(1500)
+
+            // Background a process and send a newline to trigger
+            // the non-OSC fallback timer (fires after 10 seconds).
+            yield* tm.write(terminal.id, 'sleep 999 &\n')
+
+            // Wait for the fallback timer to fire (10 seconds) plus
+            // a buffer for ps detection ticks.
+            yield* Effect.sleep(11_000)
+
+            yield* Fiber.interrupt(collectFiber)
+            return terminal.id
+          })
+        )
+      )
+
+      // Verify ps detection found the child process at some point.
+      const goodEvents = collectedEvents.filter(
+        (e) =>
+          e._tag === 'ProcessChanged' &&
+          e.terminal.id === terminalId &&
+          e.terminal.hasChildProcess === true
+      )
+      assert.isTrue(
+        goodEvents.length >= 1,
+        `Expected at least 1 ProcessChanged with hasChildProcess=true, got ${goodEvents.length}`
+      )
+
+      // Also verify via listTerminals that hasChildProcess is still true.
+      const terminals = await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          return yield* tm.listTerminals()
+        })
+      )
+
+      const terminal = terminals.find((t) => t.id === terminalId)
+      assert.isDefined(terminal)
+      assert.strictEqual(
+        terminal?.hasChildProcess,
+        true,
+        'hasChildProcess must be true — sleep is still running after fallback timer fired'
+      )
+
+      // Clean up
+      await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          yield* tm.kill(terminalId)
+        })
+      )
+    })
+  })
+
+  it('OSC 133 prompt-idle must not emit ProcessChanged with hasChildProcess=false while background process runs', async () => {
+    // When a shell emits OSC 133 "A" (returned to prompt), the handler
+    // calls emitTitleBasedProcessChanged('') which is idle. But if a
+    // background process (like sleep 999 &) is still running, the ps
+    // detection correctly has hasChildProcess=true.
+    //
+    // The fix ensures emitTitleBasedProcessChanged preserves the
+    // ps-based hasChildProcess even when OSC 133 says "idle".
+    await withGracePeriod(60_000, async (runLocalEffect) => {
+      const collectedEvents: TerminalLifecycleEvent[] = []
+
+      const terminalId = await runLocalEffect(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const tm = yield* TerminalManager
+
+            const dequeue = yield* tm.lifecycleEvents.subscribe
+
+            const collectFiber = yield* Effect.fork(
+              Effect.gen(function* () {
+                while (true) {
+                  const event = yield* Queue.take(dequeue)
+                  collectedEvents.push(event)
+                }
+              })
+            )
+
+            // Spawn a shell that:
+            // 1. Backgrounds a long-lived process (sleep 999)
+            // 2. Emits OSC 133 "A" (prompt marker = idle)
+            // 3. Waits to keep everything alive
+            //
+            // This simulates a shell returning to its prompt while a
+            // background job is still running.
+            const terminal = yield* tm.spawn({
+              command: '/bin/sh',
+              args: ['-c', 'sleep 999 & printf "\\033]133;A\\007"; wait'],
+              cwd: TEST_CWD,
+              cols: 80,
+              rows: 24,
+              workspaceId: TEST_WORKSPACE_ID,
+            })
+
+            // Wait for ps detection to establish hasChildProcess=true
+            // and for the OSC 133 marker to be processed.
+            yield* Effect.sleep(2000)
+
+            yield* Fiber.interrupt(collectFiber)
+            return terminal.id
+          })
+        )
+      )
+
+      // Verify ps detection found the child process at some point.
+      const goodEvents = collectedEvents.filter(
+        (e) =>
+          e._tag === 'ProcessChanged' &&
+          e.terminal.id === terminalId &&
+          e.terminal.hasChildProcess === true
+      )
+      assert.isTrue(
+        goodEvents.length >= 1,
+        `Expected at least 1 ProcessChanged with hasChildProcess=true, got ${goodEvents.length}`
+      )
+
+      // No ProcessChanged should have hasChildProcess=false while
+      // the background process is still running.
+      const badEvents = collectedEvents.filter(
+        (e) =>
+          e._tag === 'ProcessChanged' &&
+          e.terminal.id === terminalId &&
+          e.terminal.hasChildProcess === false &&
+          e.terminal.status === 'running'
+      )
+      assert.strictEqual(
+        badEvents.length,
+        0,
+        `Expected zero ProcessChanged with hasChildProcess=false while background process runs, got ${badEvents.length}`
+      )
+
+      // Clean up
+      await runLocalEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          yield* tm.kill(terminalId)
+        })
+      )
+    })
+  })
+
   it('setAgentStatusFromHook emits ProcessChanged immediately', async () => {
     // When a hook sets the agent status, a ProcessChanged event should
     // be emitted immediately (not waiting for the next 200ms tick).

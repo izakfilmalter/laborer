@@ -47,7 +47,7 @@ function getInstance(): WebHaptics | null {
     return null
   }
   if (!instance) {
-    instance = new WebHaptics()
+    instance = new WebHaptics({ debug: true })
   }
   return instance
 }

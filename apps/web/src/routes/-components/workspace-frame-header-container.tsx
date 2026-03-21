@@ -26,6 +26,7 @@ const refreshPrMutation = LaborerClient.mutation('workspace.refreshPr')
  */
 export function WorkspaceFrameHeaderContainer({
   diffIsOpen,
+  isActiveFrame,
   workspaceId,
   subLayout,
   dragHandleRef,
@@ -39,6 +40,7 @@ export function WorkspaceFrameHeaderContainer({
   readonly dragHandleRef?:
     | { readonly current: HTMLDivElement | null }
     | undefined
+  readonly isActiveFrame: boolean
   readonly isMinimized: boolean
   readonly onHeaderClick: () => void
   readonly onMinimize: () => void
@@ -135,6 +137,7 @@ export function WorkspaceFrameHeaderContainer({
       branchName={workspaceData.branchName}
       diffIsOpen={diffIsOpen ?? false}
       dragHandleRef={dragHandleRef}
+      isActiveFrame={isActiveFrame}
       isContainerized={workspaceData.isContainerized}
       isMinimized={isMinimized}
       onHeaderClick={onHeaderClick}

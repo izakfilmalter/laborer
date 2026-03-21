@@ -57,6 +57,8 @@ interface WorkspaceFrameHeaderProps {
   readonly dragHandleRef?:
     | { readonly current: HTMLDivElement | null }
     | undefined
+  /** Whether this workspace frame is the currently active/focused one. */
+  readonly isActiveFrame?: boolean | undefined
   /** Whether the workspace runs in a container (shows dev server toggle). */
   readonly isContainerized: boolean
   /** Whether the workspace frame is minimized (collapsed to header only). */
@@ -194,6 +196,7 @@ function WorkspaceFrameHeader({
   behindCount,
   diffIsOpen,
   dragHandleRef,
+  isActiveFrame = false,
   isContainerized,
   isMinimized,
   onHeaderClick,
@@ -232,6 +235,7 @@ function WorkspaceFrameHeader({
     <div
       className={cn(
         'flex h-8 shrink-0 items-center justify-between border-b px-2',
+        isActiveFrame && !needsAttention && 'border-b-2 border-b-primary',
         needsAttention && 'border-b-amber-400/50 bg-amber-400/5',
         isMinimized && 'cursor-pointer'
       )}

@@ -672,4 +672,61 @@ describe('WorkspaceFrameHeader', () => {
 
     expect(screen.queryByText('needs input')).toBeNull()
   })
+
+  // ---------------------------------------------------------------------------
+  // Active frame: accent bottom border on header
+  // ---------------------------------------------------------------------------
+
+  it('applies accent bottom border when isActiveFrame is true', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader {...BASE_PROPS} actions={actions} isActiveFrame />
+    )
+
+    const header = screen.getByTestId('workspace-frame-header')
+    expect(header.className).toContain('border-b-2')
+    expect(header.className).toContain('border-b-primary')
+  })
+
+  it('does not apply accent bottom border when isActiveFrame is false', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isActiveFrame={false}
+      />
+    )
+
+    const header = screen.getByTestId('workspace-frame-header')
+    expect(header.className).not.toContain('border-b-2')
+    expect(header.className).not.toContain('border-b-primary')
+  })
+
+  it('does not apply accent bottom border when isActiveFrame is not provided', () => {
+    const actions = mockActions()
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+    const header = screen.getByTestId('workspace-frame-header')
+    expect(header.className).not.toContain('border-b-2')
+    expect(header.className).not.toContain('border-b-primary')
+  })
+
+  it('suppresses accent bottom border when needsAttention overrides active state', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        agentStatus="waiting_for_input"
+        isActiveFrame
+      />
+    )
+
+    const header = screen.getByTestId('workspace-frame-header')
+    // The amber attention border should take priority over the active accent border
+    expect(header.className).not.toContain('border-b-2')
+    expect(header.className).not.toContain('border-b-primary')
+    expect(header.className).toContain('border-b-amber-400/50')
+  })
 })

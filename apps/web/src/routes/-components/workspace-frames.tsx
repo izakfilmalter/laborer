@@ -761,7 +761,7 @@ function WorkspaceFrame({
 
   return (
     <div
-      className={`relative flex ${isMinimized ? 'h-auto' : 'h-full'} flex-col border-2 ${isActiveFrame ? 'border-primary' : 'border-transparent'} ${isDragging ? 'opacity-40' : ''}`}
+      className={`relative flex ${isMinimized ? 'h-auto' : 'h-full'} flex-col ${isDragging ? 'opacity-40' : ''}`}
       data-testid="workspace-frame"
       ref={frameRef}
     >
@@ -774,6 +774,7 @@ function WorkspaceFrame({
       <WorkspaceFrameHeaderContainer
         diffIsOpen={showDiff}
         dragHandleRef={dragHandleRef}
+        isActiveFrame={isActiveFrame}
         isMinimized={isMinimized}
         onHeaderClick={handleHeaderClick}
         onMinimize={handleMinimize}

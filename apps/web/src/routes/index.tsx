@@ -1011,9 +1011,7 @@ function HomeComponent() {
                   </>
                 )}
                 {mainView === 'dashboard' && (
-                  <div
-                    className={`flex h-full flex-col border-2 ${activePaneId ? 'border-primary' : 'border-transparent'}`}
-                  >
+                  <div className="flex h-full flex-col">
                     <div className="min-h-0 flex-1">
                       <WorkspaceDashboard />
                     </div>

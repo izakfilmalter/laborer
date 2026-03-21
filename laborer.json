@@ -2,6 +2,9 @@
   "devServer": {
     "startCommand": "bun dev"
   },
-  "setupScripts": ["sh ./scripts/worktree-setup.sh"],
-  "agent": "opencode"
+  "setupScripts": [
+    "sh ./scripts/worktree-setup.sh --no-ports"
+  ],
+  "agent": "opencode",
+  "worktreeDir": "/Users/izakfilmalter/Projects/izakfilmalter/laborer.worktrees"
 }

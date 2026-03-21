@@ -18,6 +18,7 @@
  */
 
 import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import type { LeafNode } from '@laborer/shared/types'
 import {
   AlertTriangle,
   AppWindow,
@@ -48,22 +49,14 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import type {
-  AgentStatus,
-  ForegroundProcess,
-  TerminalInfo,
-} from '@/hooks/use-terminal-list'
-import {
-  upsertTerminalListItem,
-  useTerminalList,
-} from '@/hooks/use-terminal-list'
+import type { AgentStatus, ForegroundProcess } from '@/hooks/use-terminal-list'
+import { useTerminalList } from '@/hooks/use-terminal-list'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
-import { usePanelActions } from '@/panels/panel-context'
+import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
 
-const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
 const restartTerminalMutation =
   TerminalServiceClient.mutation('terminal.restart')
 
@@ -77,24 +70,6 @@ interface TerminalListProps {
   /** The workspace ID to filter terminals for. */
   readonly workspaceId: string
 }
-
-const buildOptimisticTerminalInfo = (terminal: {
-  readonly command: string
-  readonly id: string
-  readonly status: 'running' | 'stopped'
-  readonly workspaceId: string
-}): TerminalInfo => ({
-  agentStatus: null,
-  args: [],
-  command: terminal.command,
-  cwd: '',
-  foregroundProcess: null,
-  hasChildProcess: false,
-  id: terminal.id,
-  processChain: [],
-  status: terminal.status,
-  workspaceId: terminal.workspaceId,
-})
 
 /**
  * Terminal list for a single workspace.
@@ -119,8 +94,8 @@ function TerminalSpawnButtons({
   readonly isServiceAvailable: boolean
   readonly isSpawning: boolean
   readonly isSpawningAgent: boolean
-  readonly onSpawnAgent: () => void
-  readonly onSpawnTerminal: () => void
+  readonly onSpawnAgent: (event: React.MouseEvent) => void
+  readonly onSpawnTerminal: (event: React.MouseEvent) => void
 }) {
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const AgentIcon =
@@ -175,14 +150,12 @@ function TerminalList({
     terminals: terminalList,
   } = useTerminalList()
   const panelActions = usePanelActions()
-  const spawnTerminal = useAtomSet(spawnTerminalMutation, {
-    mode: 'promise',
-  })
+  const activePaneId = useActivePaneId()
   const restartTerminal = useAtomSet(restartTerminalMutation, {
     mode: 'promise',
   })
-  const [isSpawning, setIsSpawning] = useState(false)
-  const [isSpawningAgent, setIsSpawningAgent] = useState(false)
+  const [isSpawning] = useState(false)
+  const [isSpawningAgent] = useState(false)
 
   // Fetch the project config to determine which agent to use
   const configGet$ = useMemo(
@@ -213,65 +186,57 @@ function TerminalList({
     onAgentStatusChange?.(workspaceAgentStatus)
   }, [onAgentStatusChange, workspaceAgentStatus])
 
-  const handleSpawnTerminal = useCallback(async () => {
-    if (!isServiceAvailable) {
-      toast.error('Terminal service unavailable')
-      return
-    }
-    setIsSpawning(true)
-    try {
-      const result = await spawnTerminal({
-        payload: { workspaceId },
-      })
-      upsertTerminalListItem(buildOptimisticTerminalInfo(result))
-      toast.success(`Terminal spawned: ${result.command}`)
-      // Create a panel tab with the terminal directly. This works
-      // correctly even when the workspace has no existing panel tabs,
-      // unlike assignTerminalToPane which requires an active window tab.
-      if (panelActions) {
-        panelActions.addPanelTab?.(workspaceId, 'terminal', {
-          terminalId: result.id,
-        })
+  const handleSpawnTerminal = useCallback(
+    (event: React.MouseEvent) => {
+      if (!isServiceAvailable) {
+        toast.error('Terminal service unavailable')
+        return
       }
-    } catch (error) {
-      toast.error(`Failed to spawn terminal: ${extractErrorMessage(error)}`)
-    } finally {
-      setIsSpawning(false)
-    }
-  }, [isServiceAvailable, spawnTerminal, workspaceId, panelActions])
+      if (!panelActions) {
+        return
+      }
+      // Cmd+click → split down, default → split right.
+      // When an active pane exists, split from it; otherwise fall back
+      // to creating a new panel tab (which handles bootstrapping the
+      // workspace into the main area). Both paths auto-spawn a terminal.
+      const direction = event.metaKey ? 'vertical' : 'horizontal'
+      if (activePaneId) {
+        panelActions.splitPane(activePaneId, direction, {
+          paneType: 'terminal',
+          workspaceId,
+        } as Partial<LeafNode>)
+      } else {
+        panelActions.addPanelTab?.(workspaceId, 'terminal')
+      }
+    },
+    [isServiceAvailable, workspaceId, panelActions, activePaneId]
+  )
 
-  const handleSpawnAgent = useCallback(async () => {
-    if (!isServiceAvailable) {
-      toast.error('Terminal service unavailable')
-      return
-    }
-    setIsSpawningAgent(true)
-    try {
-      const result = await spawnTerminal({
-        payload: { workspaceId, command: agentProvider },
-      })
-      upsertTerminalListItem(buildOptimisticTerminalInfo(result))
-      toast.success(`Agent spawned: ${agentProvider}`)
-      // Create a panel tab with the terminal directly. This works
-      // correctly even when the workspace has no existing panel tabs,
-      // unlike assignTerminalToPane which requires an active window tab.
-      if (panelActions) {
-        panelActions.addPanelTab?.(workspaceId, 'terminal', {
-          terminalId: result.id,
-        })
+  const handleSpawnAgent = useCallback(
+    (event: React.MouseEvent) => {
+      if (!isServiceAvailable) {
+        toast.error('Terminal service unavailable')
+        return
       }
-    } catch (error) {
-      toast.error(`Failed to spawn agent: ${extractErrorMessage(error)}`)
-    } finally {
-      setIsSpawningAgent(false)
-    }
-  }, [
-    isServiceAvailable,
-    spawnTerminal,
-    workspaceId,
-    panelActions,
-    agentProvider,
-  ])
+      if (!panelActions) {
+        return
+      }
+      // Cmd+click → split down, default → split right.
+      // When an active pane exists, split from it; otherwise fall back
+      // to creating a new panel tab. Both paths auto-spawn a terminal
+      // with the configured agent command.
+      const direction = event.metaKey ? 'vertical' : 'horizontal'
+      if (activePaneId) {
+        panelActions.splitPane(activePaneId, direction, {
+          paneType: 'agent',
+          workspaceId,
+        } as Partial<LeafNode>)
+      } else {
+        panelActions.addPanelTab?.(workspaceId, 'agent')
+      }
+    },
+    [isServiceAvailable, workspaceId, panelActions, activePaneId]
+  )
 
   const handleCloseTerminal = useCallback(
     (terminalId: string) => {

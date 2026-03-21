@@ -165,6 +165,7 @@ vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
   ),
 }))
 
+import type { WorkspaceTileNode } from '@laborer/shared/types'
 // Import after mocks are set up
 import { WorkspaceFrames } from '../src/routes/-components/workspace-frames'
 
@@ -191,10 +192,56 @@ const layout = {
   sizes: [50, 50],
 }
 
+/** Tile layout with two workspace leaves in a vertical split. */
+const tileLayout: WorkspaceTileNode = {
+  _tag: 'WorkspaceTileSplit',
+  id: 'tile-root',
+  direction: 'vertical',
+  children: [
+    {
+      _tag: 'WorkspaceTileLeaf',
+      id: 'tile-leaf-1',
+      workspaceId: 'ws-1',
+      activePanelTabId: 'tab-1',
+      panelTabs: [
+        {
+          id: 'tab-1',
+          panelLayout: {
+            _tag: 'PanelLeafNode',
+            id: 'pane-1',
+            paneType: 'terminal',
+            terminalId: 'term-1',
+            workspaceId: 'ws-1',
+          },
+        },
+      ],
+    },
+    {
+      _tag: 'WorkspaceTileLeaf',
+      id: 'tile-leaf-2',
+      workspaceId: 'ws-2',
+      activePanelTabId: 'tab-2',
+      panelTabs: [
+        {
+          id: 'tab-2',
+          panelLayout: {
+            _tag: 'PanelLeafNode',
+            id: 'pane-2',
+            paneType: 'terminal',
+            terminalId: 'term-2',
+            workspaceId: 'ws-2',
+          },
+        },
+      ],
+    },
+  ],
+  sizes: [50, 50],
+}
+
 const MINIMIZE_WS_1_RE = /minimize ws-1/i
 const EXPAND_WS_1_RE = /expand ws-1/i
 
-describe('WorkspaceFrames minimize behavior', () => {
+describe('WorkspaceFrames minimize behavior (legacy path)', () => {
   beforeEach(() => {
     panelApis.length = 0
   })
@@ -232,5 +279,101 @@ describe('WorkspaceFrames minimize behavior', () => {
 
     fireEvent.click(screen.getByRole('button', { name: EXPAND_WS_1_RE }))
     expect(panelApis[0]?.expand).toHaveBeenCalledOnce()
+  })
+})
+
+describe('WorkspaceFrames minimize behavior (tile layout path)', () => {
+  beforeEach(() => {
+    panelApis.length = 0
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('renders tile leaf panels as collapsible', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        layout={layout}
+        workspaceOrder={null}
+        workspaceTileLayout={tileLayout}
+      />
+    )
+
+    const panels = screen.getAllByTestId('resizable-panel')
+    expect(panels).toHaveLength(2)
+    expect(panels[0]?.getAttribute('data-collapsible')).toBe('true')
+    expect(panels[1]?.getAttribute('data-collapsible')).toBe('true')
+  })
+
+  it('collapses the resizable panel when minimize is clicked', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        layout={layout}
+        workspaceOrder={null}
+        workspaceTileLayout={tileLayout}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: MINIMIZE_WS_1_RE }))
+    expect(panelApis[0]?.collapse).toHaveBeenCalledOnce()
+  })
+
+  it('expands the resizable panel when expand is clicked after minimizing', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        layout={layout}
+        workspaceOrder={null}
+        workspaceTileLayout={tileLayout}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: MINIMIZE_WS_1_RE }))
+    fireEvent.click(screen.getByRole('button', { name: EXPAND_WS_1_RE }))
+    expect(panelApis[0]?.expand).toHaveBeenCalledOnce()
+  })
+
+  it('hides panel content when minimized', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        layout={layout}
+        workspaceOrder={null}
+        workspaceTileLayout={tileLayout}
+      />
+    )
+
+    // Content is initially visible
+    const managers = screen.getAllByTestId('panel-manager')
+    expect(managers.length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole('button', { name: MINIMIZE_WS_1_RE }))
+
+    // The workspace frame for ws-1 should no longer render its panel manager.
+    // ws-2 should still have its panel manager visible.
+    const managersAfter = screen.getAllByTestId('panel-manager')
+    expect(managersAfter).toHaveLength(managers.length - 1)
+  })
+
+  it('shows panel content again when expanded after minimizing', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        layout={layout}
+        workspaceOrder={null}
+        workspaceTileLayout={tileLayout}
+      />
+    )
+
+    const managersBefore = screen.getAllByTestId('panel-manager')
+
+    fireEvent.click(screen.getByRole('button', { name: MINIMIZE_WS_1_RE }))
+    fireEvent.click(screen.getByRole('button', { name: EXPAND_WS_1_RE }))
+
+    const managersAfter = screen.getAllByTestId('panel-manager')
+    expect(managersAfter).toHaveLength(managersBefore.length)
   })
 })

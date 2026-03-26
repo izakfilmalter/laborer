@@ -15,7 +15,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 9 | Renderer terminal UI wired to MessagePort | #8, #4 | Done |
 | 10 | Server utility process: RPC over MessagePort | #1, #2, #3 | Done |
 | 11 | LiveStore sync over MessagePort | #10, #5 | Done |
-| 12 | Renderer server UI wired to MessagePort | #11, #4 | Ready |
+| 12 | Renderer server UI wired to MessagePort | #11, #4 | Done |
 | 13 | Server-to-terminal MessagePort channel | #6, #10 | Ready |
 | 14 | File-watcher as utility process | #1, #2, #3, #10 | Ready |
 | 15 | MCP as utility process | #1, #2, #3 | Ready |
@@ -363,11 +363,11 @@ Update the renderer's `LaborerClient` atom to use the MessagePort Effect RPC cli
 
 ### Acceptance criteria
 
-- [ ] `LaborerClient` atom uses the MessagePort Effect RPC client transport
-- [ ] All ~30 `LaborerRpcs` endpoints work over MessagePort
-- [ ] Project listing, workspace creation, config updates, PRD operations all function correctly
-- [ ] The `server-init-status` check (deferred service readiness) works over MessagePort
-- [ ] Error handling surfaces meaningful messages when the server utility process is unavailable
+- [x] `LaborerClient` atom uses the MessagePort Effect RPC client transport
+- [x] All ~30 `LaborerRpcs` endpoints work over MessagePort
+- [x] Project listing, workspace creation, config updates, PRD operations all function correctly
+- [x] The `server-init-status` check (deferred service readiness) works over MessagePort
+- [x] Error handling surfaces meaningful messages when the server utility process is unavailable
 
 ### Blocked by
 

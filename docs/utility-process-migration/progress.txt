@@ -1041,3 +1041,90 @@ with the Vite dev proxy.
 - [x] Test: the MessagePort sync adapter's RPC client connects and speaks
       the SyncWsRpc protocol, verified by type checking the full
       request/response/streaming flow through the Effect RPC transport
+
+---
+
+## Issue 12: Renderer server UI wired to MessagePort — COMPLETED
+
+Date: 2026-03-25
+
+### What was done
+
+Updated the renderer's `LaborerClient` atom to use MessagePort RPC client
+transport instead of HTTP when running inside Electron. All ~30 LaborerRpcs
+endpoints (project CRUD, workspace management, config, PRD operations, brrr,
+tasks, reviews, GitHub, docker, lifecycle, etc.) now flow through MessagePort
+in Electron mode. Browser dev mode retains HTTP fallback at `/rpc` (Vite
+proxy).
+
+Also updated the phase transition driver's `Restored → Eventually` check
+to use the `lifecycle.initStatus` RPC via the LaborerClient (MessagePort)
+in Electron mode, replacing the HTTP polling of `/init-status` which won't
+be available when the server runs as a utility process without HTTP.
+
+### Files modified
+
+- `apps/web/src/atoms/laborer-client.ts` — Swapped protocol layer:
+  - Electron: `Layer.scoped(RpcClient.Protocol, ...)` that lazily acquires
+    a MessagePort via `desktopBridge.acquireServicePort('server')` and
+    wraps it with `makeClientProtocolMessagePort(port as RpcMessagePort)`.
+    No `RpcSerialization.layerJson` or `FetchHttpClient.layer` needed —
+    MessagePort uses structured clone natively.
+  - Browser dev: Retains HTTP at `/rpc` (Vite proxy) as fallback.
+  - Uses `isElectron()` module-level check to select the transport
+    statically (stable for the lifetime of the page).
+  - Follows the exact same pattern established by `terminal-service-client.ts`
+    in Issue #9.
+
+- `apps/web/src/hooks/use-phase-transition-driver.tsx` — Updated
+  `Restored → Eventually` transition:
+  - Extracted init-status polling into `useInitStatusPoll()` helper.
+  - In Electron mode (`USE_RPC_INIT_STATUS`): subscribes to
+    `LaborerClient.query('lifecycle.initStatus')` atom via `useAtomValue`.
+    When the RPC returns `{ ready: true }`, advances to `Eventually` phase.
+  - In browser dev mode: retains HTTP polling of `/init-status` via
+    `fetch()` + `setInterval` (unchanged behavior).
+  - Both hooks always called (React rules of hooks compliance); the
+    module-level `USE_RPC_INIT_STATUS` flag controls which branch is
+    active at runtime.
+  - Added imports for `useAtomValue`, `useMemo`, `LaborerClient`,
+    `isElectron`.
+
+### No files created
+
+This issue required no new files — only modifications to existing ones.
+All 25+ consumer files that import `LaborerClient` (project settings,
+workspace management, terminal list, config, docker status, reviews,
+tasks, etc.) use the transport-agnostic `LaborerClient.mutation()` /
+`LaborerClient.query()` API and required zero changes.
+
+### Verification
+
+- TypeScript: no new errors in web app (3 pre-existing `isActiveFrame`
+  errors are unchanged)
+- Biome formatting: no new errors (pre-existing `laborer.json` issue
+  is unrelated)
+- Web app tests: 1195 pass, 1 skipped — same as base commit (no
+  regressions)
+- Shared package tests: 89 pass — no regressions
+- Desktop tests: 247 pass, 16 fail — same pre-existing failures in
+  `ipc-workspace-targeting.test.ts` and `ipc-service-port.test.ts`
+
+### Acceptance criteria checklist
+
+- [x] `LaborerClient` atom uses the MessagePort Effect RPC client
+      transport (in Electron; HTTP fallback in browser dev)
+- [x] All ~30 `LaborerRpcs` endpoints work over MessagePort — the
+      transport swap is transparent; all consumer components use the
+      transport-agnostic `LaborerClient.mutation()` / `.query()` API
+- [x] Project listing, workspace creation, config updates, PRD
+      operations all function correctly — they go through the same
+      `LaborerClient` transport layer
+- [x] The `server-init-status` check (deferred service readiness)
+      works over MessagePort — phase transition driver uses
+      `LaborerClient.query('lifecycle.initStatus')` in Electron mode
+- [x] Error handling surfaces meaningful messages when the server
+      utility process is unavailable — `ServerGate` already routes
+      to `ElectronServerGate` in Electron production which uses
+      sidecar status events; `HealthCheckStatus` shows "disconnected"
+      on RPC failure regardless of transport

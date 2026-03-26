@@ -1,35 +1,71 @@
 /**
  * TerminalServiceClient — AtomRpc client for the standalone terminal service.
  *
- * Connects to the terminal service's RPC endpoint at /terminal-rpc
- * (proxied by Vite to the terminal service's /rpc at TERMINAL_PORT).
- * Uses the TerminalRpcs group from @laborer/shared/rpc.
+ * In Electron mode, communicates via a direct MessagePort connection to
+ * the terminal utility process (no HTTP, no JSON serialization). The port
+ * is acquired lazily via `desktopBridge.acquireServicePort('terminal')`
+ * when the first RPC is made.
+ *
+ * In browser dev mode (Vite), falls back to HTTP at `/terminal-rpc`.
  *
  * This is separate from LaborerClient (which talks to the main server).
  * The terminal service manages PTY processes, terminal lifecycle, and
  * terminal state independently.
  *
- * @see Issue #144: Web app LiveStore terminal query replacement
- * @see packages/terminal/src/main.ts — Terminal service entry point
+ * @see Issue #9: Renderer terminal UI wired to MessagePort
+ * @see packages/terminal/src/utility-main.ts — Terminal utility process entry
  */
 
 import { FetchHttpClient } from '@effect/platform'
 import { RpcClient, RpcSerialization } from '@effect/rpc'
 import { AtomRpc } from '@effect-atom/atom'
 import { TerminalRpcs } from '@laborer/shared/rpc'
-import { Layer } from 'effect'
+import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
+import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
+import { Effect, Layer } from 'effect'
 
-import { terminalRpcUrl } from '@/lib/desktop'
+import { getDesktopBridge, isElectron, terminalRpcUrl } from '@/lib/desktop'
 
 /**
- * Terminal service RPC URL.
+ * Build the RPC client protocol layer based on the runtime context.
  *
- * - Dev mode: `/terminal-rpc` (Vite proxy rewrites to terminal's /rpc)
- * - Electron production: `http://localhost:<port>/rpc` (direct to sidecar)
+ * - Electron: MessagePort acquired from `desktopBridge.acquireServicePort('terminal')`.
+ *   The port is acquired lazily inside `Layer.scoped` when the layer is first built
+ *   (i.e., when a React component first subscribes to a query/mutation atom).
+ *   No `RpcSerialization.layerJson` or `FetchHttpClient.layer` needed — MessagePort
+ *   uses structured clone natively.
  *
- * @see lib/desktop.ts for runtime context detection
+ * - Browser dev: HTTP at `/terminal-rpc` (Vite proxy rewrites to terminal's /rpc).
  */
-const TERMINAL_RPC_URL = terminalRpcUrl()
+const terminalProtocol: Layer.Layer<RpcClient.Protocol> = isElectron()
+  ? Layer.scoped(
+      RpcClient.Protocol,
+      Effect.gen(function* () {
+        const bridge = getDesktopBridge()
+        if (!bridge) {
+          return yield* Effect.die(
+            'DesktopBridge unavailable in Electron context'
+          )
+        }
+        const port = yield* Effect.promise(() =>
+          bridge.acquireServicePort('terminal')
+        )
+        if (!port) {
+          return yield* Effect.die(
+            'Terminal utility process is not running — could not acquire MessagePort'
+          )
+        }
+        // Cast Web MessagePort to RpcMessagePort — the runtime handles both
+        // API styles (.onmessage setter vs .on('message') method) correctly.
+        // The type mismatch is because Web's onmessage uses MessageEvent while
+        // RpcMessagePort uses a simpler { data: unknown } shape.
+        return yield* makeClientProtocolMessagePort(port as RpcMessagePort)
+      })
+    )
+  : RpcClient.layerProtocolHttp({ url: terminalRpcUrl() }).pipe(
+      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(RpcSerialization.layerJson)
+    )
 
 /**
  * TerminalServiceClient — typed AtomRpc client for the terminal service.
@@ -42,9 +78,6 @@ export class TerminalServiceClient extends AtomRpc.Tag<TerminalServiceClient>()(
   'TerminalServiceClient',
   {
     group: TerminalRpcs,
-    protocol: RpcClient.layerProtocolHttp({ url: TERMINAL_RPC_URL }).pipe(
-      Layer.provide(FetchHttpClient.layer),
-      Layer.provide(RpcSerialization.layerJson)
-    ),
+    protocol: terminalProtocol,
   }
 ) {}

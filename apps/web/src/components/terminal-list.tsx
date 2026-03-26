@@ -271,8 +271,8 @@ function TerminalList({
   )
 
   const unavailableMessage = errorMessage
-    ? `${errorMessage}. Start terminal service with turbo dev.`
-    : 'Start terminal service with turbo dev.'
+    ? `${errorMessage}. The terminal service may be starting or crashed.`
+    : 'The terminal service is unavailable. Check sidecar status.'
 
   const unavailableAlert = isServiceAvailable ? null : (
     <Alert className="rounded-md" variant="destructive">

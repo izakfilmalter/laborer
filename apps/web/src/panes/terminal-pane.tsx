@@ -1,29 +1,30 @@
 /**
  * Terminal pane component — renders PTY output via xterm.js using a
- * dedicated WebSocket connection for terminal data.
+ * dedicated data channel connection for terminal I/O.
  *
  * Data flow:
  * 1. Terminal service PTY emits output via node-pty `onData`
  * 2. TerminalManager writes to headless terminal + notifies subscribers
- * 3. Terminal WebSocket route forwards data as text frames to connected clients
- * 4. This component receives text frames via `useTerminalWebSocket` hook
+ * 3. Data channel forwards output to the renderer
+ * 4. This component receives data via the terminal connection hook
  * 5. Output is written directly to xterm.js Terminal instance
+ *
+ * Transport selection:
+ * - **Electron**: MessagePort data channel via `desktopBridge.acquireTerminalDataPort()`
+ *   (zero-copy ArrayBuffer transfer, no HTTP/WebSocket overhead)
+ * - **Browser dev**: WebSocket connection via Vite proxy
  *
  * Input flow:
  * - Keystrokes captured by xterm.js `onData` callback
- * - Sent as raw WebSocket text frames (NOT via terminal.write RPC)
- * - Terminal service WebSocket route forwards to PTY via PtyHostClient.write()
+ * - Sent as data channel messages (NOT via terminal.write RPC)
+ * - Terminal service forwards to PTY via PtyHostClient.write()
  *
  * Terminal status:
- * Terminal status is derived from WebSocket control messages sent by
- * the terminal service, NOT from LiveStore `queryDb(terminals)`. The
- * terminal service sends JSON control messages:
+ * Terminal status is derived from control messages sent by the terminal
+ * service (same format for both MessagePort and WebSocket):
  * - `{"type":"status","status":"running"}` — on initial connection
  * - `{"type":"status","status":"stopped","exitCode":N}` — PTY process exited
  * - `{"type":"status","status":"restarted"}` — terminal was restarted
- *
- * The `useTerminalWebSocket` hook parses these messages and exposes
- * `terminalStatus` for UI decisions.
  *
  * Keyboard shortcut scope isolation (Issue #80):
  * - xterm.js greedily captures all keyboard events within its canvas.
@@ -32,10 +33,12 @@
  *   returned as `false` so they bubble to TanStack Hotkeys on document.
  * - Ctrl+B enters prefix mode for tmux-style sequences.
  *
- * @see packages/terminal/src/routes/terminal-ws.ts — WebSocket endpoint
+ * @see packages/terminal/src/services/terminal-data-channel.ts — MessagePort endpoint
  * @see packages/terminal/src/services/terminal-manager.ts — headless terminal + subscribers
- * @see apps/web/src/hooks/use-terminal-websocket.ts — WebSocket hook
+ * @see apps/web/src/hooks/use-terminal-messageport.ts — MessagePort hook (Electron)
+ * @see apps/web/src/hooks/use-terminal-websocket.ts — WebSocket hook (browser dev)
  * @see apps/web/src/lib/keybinds.ts — centralized keybind definitions
+ * @see Issue #9: Renderer terminal UI wired to MessagePort
  */
 
 import { useAtomSet } from '@effect-atom/atom-react/Hooks'
@@ -51,12 +54,11 @@ import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
-import {
-  type TerminalStatus,
-  useTerminalWebSocket,
-} from '@/hooks/use-terminal-websocket'
+import type { TerminalStatus } from '@/hooks/use-terminal-messageport'
+import { useTerminalMessagePort } from '@/hooks/use-terminal-messageport'
+import { useTerminalWebSocket } from '@/hooks/use-terminal-websocket'
 import { useWhenPhase } from '@/hooks/use-when-phase'
-import { openExternalUrl } from '@/lib/desktop'
+import { isElectron, openExternalUrl } from '@/lib/desktop'
 import { isPrefixKey, shouldBypassTerminal } from '@/lib/keybinds'
 
 /** Module-level mutation atom for terminal.resize — shared across all TerminalPane instances. */
@@ -83,6 +85,19 @@ const PREFIX_MODE_TIMEOUT = 1500
  * both dimensions together.
  */
 const RESIZE_DEBOUNCE_MS = 100
+
+/**
+ * Whether to use MessagePort transport (Electron) or WebSocket (browser dev).
+ * Determined once at module load — stable for the lifetime of the page.
+ */
+const USE_MESSAGEPORT = isElectron()
+
+/** Connection result shape — shared by both MessagePort and WebSocket hooks. */
+interface TerminalConnection {
+  readonly send: (data: string) => void
+  readonly status: 'connecting' | 'connected' | 'disconnected'
+  readonly terminalStatus: TerminalStatus
+}
 
 interface TerminalPaneProps {
   /**
@@ -146,29 +161,134 @@ function TerminalConnectingPlaceholder() {
 }
 
 /**
- * Inner terminal pane component — only rendered after Phase 3 (Restored)
- * when the terminal sidecar is available.
+ * Inner terminal pane component — selects the appropriate data channel
+ * transport based on the runtime context:
+ * - Electron: MessagePort via `useTerminalMessagePort`
+ * - Browser dev: WebSocket via `useTerminalWebSocket`
  *
- * It initializes an xterm.js Terminal, connects to the terminal service
- * via a dedicated WebSocket (`/terminal?id=<terminalId>`), and pipes
- * output directly to xterm.js. Keyboard input is sent as WebSocket text
- * frames.
+ * Both transports have identical interfaces so the shared renderer
+ * component works with either.
+ */
+function TerminalPaneContent(props: TerminalPaneProps) {
+  if (USE_MESSAGEPORT) {
+    return <TerminalPaneMessagePort {...props} />
+  }
+  return <TerminalPaneWebSocket {...props} />
+}
+
+/** Connects via MessagePort and renders the terminal. */
+function TerminalPaneMessagePort({
+  terminalId,
+  onTerminalExit,
+  onTitleChange,
+}: TerminalPaneProps) {
+  const terminalRef = useRef<Terminal | null>(null)
+
+  const handleTerminalData = useCallback((data: string) => {
+    terminalRef.current?.write(data)
+  }, [])
+
+  const handleTerminalStatus = useCallback(
+    (status: TerminalStatus, _exitCode: number | undefined) => {
+      if (status === 'restarted') {
+        terminalRef.current?.clear()
+      }
+      if (status === 'stopped') {
+        onTerminalExit?.()
+      }
+    },
+    [onTerminalExit]
+  )
+
+  const connection = useTerminalMessagePort({
+    terminalId,
+    onData: handleTerminalData,
+    onStatus: handleTerminalStatus,
+  })
+
+  return (
+    <TerminalPaneRenderer
+      connection={connection}
+      onTitleChange={onTitleChange}
+      terminalId={terminalId}
+      terminalRef={terminalRef}
+    />
+  )
+}
+
+/** Connects via WebSocket and renders the terminal. */
+function TerminalPaneWebSocket({
+  terminalId,
+  onTerminalExit,
+  onTitleChange,
+}: TerminalPaneProps) {
+  const terminalRef = useRef<Terminal | null>(null)
+
+  const handleTerminalData = useCallback((data: string) => {
+    terminalRef.current?.write(data)
+  }, [])
+
+  const handleTerminalStatus = useCallback(
+    (status: TerminalStatus, _exitCode: number | undefined) => {
+      if (status === 'restarted') {
+        terminalRef.current?.clear()
+      }
+      if (status === 'stopped') {
+        onTerminalExit?.()
+      }
+    },
+    [onTerminalExit]
+  )
+
+  const connection = useTerminalWebSocket({
+    terminalId,
+    onData: handleTerminalData,
+    onStatus: handleTerminalStatus,
+  })
+
+  return (
+    <TerminalPaneRenderer
+      connection={connection}
+      onTitleChange={onTitleChange}
+      terminalId={terminalId}
+      terminalRef={terminalRef}
+    />
+  )
+}
+
+/** Props for the shared terminal renderer component. */
+interface TerminalPaneRendererProps {
+  readonly connection: TerminalConnection
+  readonly onTitleChange?: ((title: string) => void) | undefined
+  readonly terminalId: string
+  readonly terminalRef: React.RefObject<Terminal | null>
+}
+
+/**
+ * Shared terminal renderer — handles xterm.js initialization, keyboard
+ * input, resize, and UI overlays. Transport-agnostic: receives connection
+ * state and send function via props.
  *
- * On reconnection (page reload), the server sends a compact screen state
- * snapshot (~4KB) as initial text frames, restoring the terminal's state.
+ * On reconnection, the server sends a compact screen state snapshot (~4KB)
+ * as initial data frames, restoring the terminal's state.
  *
  * When the container is resized (by panel splits, window resize, etc.),
  * the fit addon recalculates cols/rows and the new dimensions are sent
  * to the server PTY via the `terminal.resize` RPC mutation.
  */
-function TerminalPaneContent({
+function TerminalPaneRenderer({
   terminalId,
-  onTerminalExit,
   onTitleChange,
-}: TerminalPaneProps) {
+  connection,
+  terminalRef,
+}: TerminalPaneRendererProps) {
+  const {
+    send: connectionSend,
+    status: connectionStatus,
+    terminalStatus,
+  } = connection
   const resizeTerminal = useAtomSet(terminalResizeMutation)
   const containerRef = useRef<HTMLDivElement>(null)
-  const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
 
   /**
@@ -196,66 +316,12 @@ function TerminalPaneContent({
    *
    * When the terminal pane first mounts, no output has arrived yet.
    * `hasReceivedData` starts as `false` and flips to `true` on the
-   * first WebSocket data frame. A loading overlay is shown while false.
+   * first data frame. A loading overlay is shown while false.
    * Uses a ref for the hot-path check (every data frame) and state
    * for React rendering.
    */
   const [hasReceivedData, setHasReceivedData] = useState(false)
   const hasReceivedDataRef = useRef(false)
-
-  /**
-   * Callback for terminal output data received via WebSocket.
-   * Writes raw UTF-8 data directly to xterm.js.
-   * On first data receipt, clears the loading overlay.
-   */
-  const handleTerminalData = useCallback((data: string) => {
-    const terminal = terminalRef.current
-    if (terminal) {
-      terminal.write(data)
-    }
-
-    // Clear loading overlay on first data.
-    // Ref check avoids calling setState on every subsequent data frame.
-    if (!hasReceivedDataRef.current) {
-      hasReceivedDataRef.current = true
-      setHasReceivedData(true)
-    }
-  }, [])
-
-  /**
-   * Callback for terminal status control messages received via WebSocket.
-   * Handles "restarted" status by clearing the xterm.js buffer.
-   * Handles "stopped" status by invoking onTerminalExit to auto-close the pane.
-   */
-  const handleTerminalStatus = useCallback(
-    (status: TerminalStatus, _exitCode: number | undefined) => {
-      if (status === 'restarted') {
-        const terminal = terminalRef.current
-        if (terminal) {
-          terminal.clear()
-        }
-      }
-      if (status === 'stopped') {
-        onTerminalExit?.()
-      }
-    },
-    [onTerminalExit]
-  )
-
-  /**
-   * WebSocket connection to the terminal output endpoint.
-   * Provides: screen state on connect, live output streaming, input via send(),
-   * terminal status via control messages.
-   */
-  const {
-    send: wsSend,
-    status: wsStatus,
-    terminalStatus,
-  } = useTerminalWebSocket({
-    terminalId,
-    onData: handleTerminalData,
-    onStatus: handleTerminalStatus,
-  })
 
   const isRunning = terminalStatus !== 'stopped'
 
@@ -263,19 +329,38 @@ function TerminalPaneContent({
   const isRunningRef = useRef(isRunning)
   isRunningRef.current = isRunning
 
-  // Ref to hold latest wsSend for the xterm.js onData callback
-  const wsSendRef = useRef(wsSend)
-  wsSendRef.current = wsSend
+  // Ref to hold latest connectionSend for the xterm.js onData callback
+  const connectionSendRef = useRef(connectionSend)
+  connectionSendRef.current = connectionSend
 
   /** Ref for onTitleChange to avoid stale closures in terminal event callbacks. */
   const onTitleChangeRef = useRef(onTitleChange)
   onTitleChangeRef.current = onTitleChange
 
   /**
+   * Track first data receipt to dismiss loading overlay.
+   * Uses xterm.js onWriteParsed event to detect when data has been written.
+   */
+  useEffect(() => {
+    const terminal = terminalRef.current
+    if (!terminal) {
+      return
+    }
+    const disposable = terminal.onWriteParsed(() => {
+      if (!hasReceivedDataRef.current) {
+        hasReceivedDataRef.current = true
+        setHasReceivedData(true)
+      }
+    })
+    return () => disposable.dispose()
+  }, [terminalRef])
+
+  /**
    * Initialize xterm.js instance.
    *
    * Creates the Terminal, attaches addons (fit, WebGL, Image, Unicode11,
-   * WebLinks), opens in the container, and wires keyboard input to WebSocket.
+   * WebLinks), opens in the container, and wires keyboard input to the
+   * data channel.
    */
   useEffect(() => {
     const container = containerRef.current
@@ -452,7 +537,7 @@ function TerminalPaneContent({
       return true
     })
 
-    // Wire keyboard input to server PTY via WebSocket text frames.
+    // Wire keyboard input to server PTY via the data channel.
     // xterm.js's onData fires for every keystroke (including special keys
     // like enter, backspace, ctrl-c, arrows) with the data already encoded
     // as the correct ANSI escape sequences.
@@ -463,7 +548,7 @@ function TerminalPaneContent({
       if (!isRunningRef.current) {
         return
       }
-      wsSendRef.current(data)
+      connectionSendRef.current(data)
     })
 
     // Subscribe to OSC title changes (OSC 0 and OSC 2 escape sequences).
@@ -488,7 +573,7 @@ function TerminalPaneContent({
       }
       prefixModeRef.current = false
     }
-  }, [terminalId])
+  }, [terminalId, terminalRef])
 
   /**
    * Handle container resize — re-fit the terminal when the
@@ -516,7 +601,7 @@ function TerminalPaneContent({
         payload: { id: terminalId, cols, rows },
       })
     }
-  }, [terminalId])
+  }, [terminalId, terminalRef])
 
   /**
    * Observe the container element for size changes using ResizeObserver.
@@ -563,7 +648,7 @@ function TerminalPaneContent({
 
       {/* Loading overlay — shown while the PTY is spawning
           and no output has arrived yet. Covers the blank terminal canvas
-          with a spinner and message. Disappears on first WebSocket data frame.
+          with a spinner and message. Disappears on first data frame.
           Only shown for running terminals (stopped terminals get immediate
           screen state on reconnection). */}
       {!hasReceivedData && isRunning && <TerminalLoadingOverlay />}
@@ -583,11 +668,13 @@ function TerminalPaneContent({
         </div>
       )}
 
-      {/* WebSocket disconnection indicator */}
-      {wsStatus === 'disconnected' && isRunning && <DisconnectedBanner />}
+      {/* Data channel disconnection indicator */}
+      {connectionStatus === 'disconnected' && isRunning && (
+        <DisconnectedBanner />
+      )}
 
-      {/* Reconnecting indicator */}
-      {wsStatus === 'connecting' && isRunning && <ReconnectingBanner />}
+      {/* Connecting indicator */}
+      {connectionStatus === 'connecting' && isRunning && <ReconnectingBanner />}
 
       {/* Status banner — shown when terminal process has exited */}
       {!isRunning && (
@@ -613,7 +700,7 @@ function TerminalLoadingOverlay() {
   )
 }
 
-/** Banner shown when the WebSocket is disconnected but the terminal is still running. */
+/** Banner shown when the data channel is disconnected but the terminal is still running. */
 function DisconnectedBanner() {
   return (
     <div className="absolute inset-x-0 top-0 border-destructive/50 border-b bg-destructive/10 px-3 py-1 text-center text-destructive text-xs backdrop-blur-sm">
@@ -622,7 +709,7 @@ function DisconnectedBanner() {
   )
 }
 
-/** Banner shown while the WebSocket is reconnecting. */
+/** Banner shown while the data channel is connecting. */
 function ReconnectingBanner() {
   return (
     <div className="absolute inset-x-0 top-0 border-warning/50 border-b bg-warning/10 px-3 py-1 text-center text-warning text-xs backdrop-blur-sm">

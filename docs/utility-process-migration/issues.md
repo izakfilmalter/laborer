@@ -12,7 +12,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 6 | Terminal utility process: basic PTY spawn via MessagePort RPC | #1, #2, #3 | Done |
 | 7 | Terminal utility process: full RPC surface | #6 | Done |
 | 8 | Terminal PTY I/O data channel over MessagePort | #7, #5 | Done |
-| 9 | Renderer terminal UI wired to MessagePort | #8, #4 | Ready |
+| 9 | Renderer terminal UI wired to MessagePort | #8, #4 | Done |
 | 10 | Server utility process: RPC over MessagePort | #1, #2, #3 | Done |
 | 11 | LiveStore sync over MessagePort | #10, #5 | Ready |
 | 12 | Renderer server UI wired to MessagePort | #11, #4 | Blocked |
@@ -278,14 +278,14 @@ Key files to change:
 
 ### Acceptance criteria
 
-- [ ] `TerminalServiceClient` atom uses the MessagePort Effect RPC client transport
-- [ ] Terminal list loads via MessagePort RPC (`terminal.list`)
-- [ ] Creating a new terminal calls `terminal.spawn` via MessagePort RPC
-- [ ] Terminal I/O (typing, output rendering) flows through the MessagePort data channel
-- [ ] Terminal resize events are sent via MessagePort RPC
-- [ ] Terminal kill/remove works via MessagePort RPC
-- [ ] Error state shows meaningful message when the terminal utility process is unavailable (not the old HTTP error)
-- [ ] The `terminal.events` stream works over MessagePort for real-time terminal list updates
+- [x] `TerminalServiceClient` atom uses the MessagePort Effect RPC client transport
+- [x] Terminal list loads via MessagePort RPC (`terminal.list`)
+- [x] Creating a new terminal calls `terminal.spawn` via MessagePort RPC
+- [x] Terminal I/O (typing, output rendering) flows through the MessagePort data channel
+- [x] Terminal resize events are sent via MessagePort RPC
+- [x] Terminal kill/remove works via MessagePort RPC
+- [x] Error state shows meaningful message when the terminal utility process is unavailable (not the old HTTP error)
+- [x] The `terminal.events` stream works over MessagePort for real-time terminal list updates
 
 ### Blocked by
 

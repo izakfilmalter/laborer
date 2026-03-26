@@ -839,3 +839,89 @@ keystrokes, flow control acks, status/screenState control messages).
       network stack — under 50ms keystroke-to-echo verified in tests)
 - [x] Test: spawn a terminal, connect the data channel, send input,
       verify output arrives via the MessagePort
+
+---
+
+## Issue 9: Renderer terminal UI wired to MessagePort — COMPLETED
+
+Date: 2026-03-25
+
+### What was done
+
+Updated the renderer's terminal UI components to use MessagePort transport
+instead of HTTP/WebSocket when running inside Electron. This is the
+end-to-end tracer bullet: the terminal list loads, terminals spawn, and
+PTY I/O flows entirely through MessagePort in Electron mode. Browser dev
+mode retains WebSocket fallback for compatibility with the Vite dev proxy.
+
+### Files created
+
+- `apps/web/src/hooks/use-terminal-messageport.ts` — MessagePort data
+  channel hook (Electron equivalent of `useTerminalWebSocket`):
+  - Acquires a per-terminal MessagePort via `desktopBridge.acquireTerminalDataPort()`
+  - Handles PTY output as strings or ArrayBuffer (zero-copy for large output)
+  - Parses JSON control messages (status, screenState, error) — same
+    format as the WebSocket protocol for compatibility
+  - Sends keyboard input and flow control ack messages via postMessage
+  - Exposes `send`, `status` (ConnectionStatus), and `terminalStatus`
+    (TerminalStatus) — identical interface to useTerminalWebSocket
+  - No reconnection logic — MessagePort lifecycle is tied to the utility
+    process, not a network connection
+
+### Files modified
+
+- `apps/web/src/atoms/terminal-service-client.ts` — Swapped protocol layer:
+  - Electron: `Layer.scoped(RpcClient.Protocol, ...)` that lazily acquires
+    a MessagePort via `desktopBridge.acquireServicePort('terminal')` and
+    wraps it with `makeClientProtocolMessagePort(port)`. No
+    `RpcSerialization.layerJson` or `FetchHttpClient.layer` needed.
+  - Browser dev: Retains HTTP at `/terminal-rpc` (Vite proxy) as fallback.
+  - Uses `isElectron()` module-level check to select the transport
+    statically (stable for the lifetime of the page).
+
+- `apps/web/src/panes/terminal-pane.tsx` — Restructured to support both
+  transports without conditional hooks:
+  - `TerminalPaneContent` branches to `TerminalPaneMessagePort` or
+    `TerminalPaneWebSocket` based on module-level `USE_MESSAGEPORT` flag
+  - Each wrapper component calls its respective hook and passes the
+    connection result to a shared `TerminalPaneRenderer` component
+  - `TerminalPaneRenderer` is transport-agnostic: uses `connectionSend`,
+    `connectionStatus`, `terminalStatus` props instead of WebSocket-specific
+    variables (`wsSend`, `wsStatus`)
+  - Updated comments and banner labels from "WebSocket" to "data channel"
+  - Both transports have identical interfaces (send, status, terminalStatus)
+
+- `apps/web/src/components/terminal-list.tsx` — Updated error message:
+  - Changed "Start terminal service with turbo dev" to a transport-agnostic
+    message: "The terminal service is unavailable. Check sidecar status."
+  - This reflects the utility process architecture where services are
+    managed by the LifecycleMonitor, not manually started
+
+### Verification
+
+- TypeScript: no new errors in web app (3 pre-existing isActiveFrame errors)
+- Biome formatting: no new errors (pre-existing laborer.json issue only)
+- Web app tests: 706 pass, 248 fail, same as base commit (no regressions)
+- Shared package tests: 62 pass, 1 fail (pre-existing @effect/vitest issue)
+
+### Acceptance criteria checklist
+
+- [x] `TerminalServiceClient` atom uses the MessagePort Effect RPC client
+      transport (in Electron; HTTP fallback in browser dev)
+- [x] Terminal list loads via MessagePort RPC (`terminal.list`) — the
+      `terminalListAtom` uses `TerminalServiceClient.runtime.atom(...)` which
+      now acquires a MessagePort lazily when first subscribed
+- [x] Creating a new terminal calls `terminal.spawn` via MessagePort RPC —
+      spawn mutations go through the same `TerminalServiceClient` transport
+- [x] Terminal I/O (typing, output rendering) flows through the MessagePort
+      data channel — `useTerminalMessagePort` hook handles bidirectional I/O
+- [x] Terminal resize events are sent via MessagePort RPC — the
+      `terminal.resize` mutation goes through `TerminalServiceClient`
+- [x] Terminal kill/remove works via MessagePort RPC — all mutations
+      go through the same transport
+- [x] Error state shows meaningful message when the terminal utility process
+      is unavailable (updated from "Start terminal service with turbo dev"
+      to sidecar-status-aware messaging)
+- [x] The `terminal.events` stream works over MessagePort for real-time
+      terminal list updates — streaming RPC flows through the same
+      MessagePort client transport

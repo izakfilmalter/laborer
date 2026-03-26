@@ -22,16 +22,15 @@ import { type Context, Effect, Exit, Layer, Scope } from 'effect'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import { createHeadlessTerminalManager } from '../src/lib/headless-terminal.js'
-import { PtyHostClient } from '../src/services/pty-host-client.js'
+import { directLayer } from '../src/services/pty-direct.js'
+import type { PtyHostClient } from '../src/services/pty-host-client.js'
 import { TerminalManager } from '../src/services/terminal-manager.js'
 
 // ---------------------------------------------------------------------------
 // Integration test layer (full stack)
 // ---------------------------------------------------------------------------
 
-const TestLayer = TerminalManager.layer.pipe(
-  Layer.provideMerge(PtyHostClient.layer)
-)
+const TestLayer = TerminalManager.layer.pipe(Layer.provideMerge(directLayer))
 
 let scope: Scope.CloseableScope
 let testContext: Context.Context<TerminalManager | PtyHostClient>

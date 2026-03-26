@@ -23,7 +23,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 17 | Dev mode hot reload (tsdown --watch + auto-restart) | #2, #16 | Ready |
 | 18 | Terminal session persistence across restarts | #6, #16 | Ready |
 | 19 | Remove HTTP servers, Vite proxy, dev:web, URL resolution | #9, #12, #14, #15 | Done |
-| 20 | Build script update + port reservation removal | #19 | Ready |
+| 20 | Build script update + port reservation removal | #19 | Done |
 
 ---
 
@@ -608,17 +608,17 @@ Update the build script (`scripts/build-desktop-artifact.ts`) to work with the u
 
 ### Acceptance criteria
 
-- [ ] Build script includes the bootstrap entry point script in the staging directory
-- [ ] Build script no longer relies on `ELECTRON_RUN_AS_NODE` (not set anywhere in the build or runtime)
-- [ ] Staging directory structure updated for utility process entry points
-- [ ] `apps/desktop/src/ports.ts` (port reservation module) deleted
-- [ ] `apps/desktop/src/sidecar.ts` (old SidecarManager) deleted
-- [ ] `apps/desktop/src/health.ts` (old HealthMonitor) deleted
-- [ ] Auth token generation removed (no longer needed — MessagePort is inherently secure)
-- [ ] `bun build:app` produces a working `.dmg` where all four services start as utility processes
-- [ ] Native modules (`node-pty`, `@parcel/watcher`) load correctly in the built app on macOS arm64 and x64
-- [ ] The built app starts all services and the terminal is functional
-- [ ] Test: build the app, install it, open it, verify no "Terminal service unavailable" error
+- [x] Build script includes the bootstrap entry point script in the staging directory
+- [x] Build script no longer relies on `ELECTRON_RUN_AS_NODE` (not set anywhere in the build or runtime)
+- [x] Staging directory structure updated for utility process entry points
+- [x] `apps/desktop/src/ports.ts` (port reservation module) deleted
+- [x] `apps/desktop/src/sidecar.ts` (old SidecarManager) deleted
+- [x] `apps/desktop/src/health.ts` (old HealthMonitor) deleted
+- [x] Auth token generation removed (no longer needed — MessagePort is inherently secure)
+- [x] `bun build:app` produces a working `.dmg` where all four services start as utility processes
+- [x] Native modules (`node-pty`, `@parcel/watcher`) load correctly in the built app on macOS arm64 and x64
+- [x] The built app starts all services and the terminal is functional
+- [x] Test: build the app, install it, open it, verify no "Terminal service unavailable" error
 
 ### Blocked by
 

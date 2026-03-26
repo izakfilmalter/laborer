@@ -1,15 +1,14 @@
 /**
  * TerminalClient — Effect Service
  *
- * RPC client connecting to the standalone terminal service. Supports two
- * transport modes:
+ * RPC client connecting to the terminal utility process via a direct
+ * MessagePort brokered by the Electron main process. No HTTP, no port
+ * allocation — the server and terminal processes communicate via
+ * structured clone over MessagePort.
  *
- * 1. **MessagePort** (utility process mode): When a `TerminalRpcPort` is
- *    provided in the layer context, the client uses a direct MessagePort
- *    brokered by the Electron main process. No HTTP, no port allocation.
- *
- * 2. **HTTP** (legacy/fallback): When no `TerminalRpcPort` is available,
- *    falls back to `http://localhost:${TERMINAL_PORT}/rpc` with JSON RPC.
+ * Requires a `TerminalRpcPort` service tag in the layer context,
+ * provided by the server's utility-main.ts when the main process
+ * brokers a server-to-terminal MessagePort.
  *
  * Responsibilities:
  * - RPC client for TerminalRpcs operations (spawn, kill, list)
@@ -20,13 +19,13 @@
  *
  * Connection is established lazily on first RPC call, not during layer
  * construction. This allows the server to start and serve health checks
- * without waiting for the terminal sidecar to be running.
+ * without waiting for the terminal utility process to be ready.
  *
  * @see PRD-terminal-extraction.md
  * @see Issue #143: Server TerminalClient + remove server terminal modules
  * @see Issue #163: Worktree detection polish — worktree existence check before spawn
- * @see Issue #16: Lazy sidecar connections
  * @see Issue #13: Server-to-terminal MessagePort channel
+ * @see Issue #20: Build script update + port reservation removal
  */
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -52,7 +51,6 @@ import { LaborerStore } from './laborer-store.js'
 import { ProjectRegistry } from './project-registry.js'
 import {
   createMessagePortRpcClient,
-  createSidecarRpcClient,
   sidecarEventStreamSchedule,
 } from './sidecar-rpc.js'
 import { WorkspaceProvider } from './workspace-provider.js'
@@ -78,17 +76,21 @@ interface TerminalRecord {
   readonly workspaceId: string
 }
 
+/**
+ * Helper used solely for type inference. Never called at runtime.
+ * Uses `createMessagePortRpcClient` (same as the real code path)
+ * to derive the return type of the terminal RPC client.
+ */
+const _inferTerminalRpc = (port: RpcMessagePort, scope: Scope.Scope) =>
+  createMessagePortRpcClient(TerminalRpcs, port, scope)
+
 /** The inferred type of the terminal RPC client. */
-const _makeTerminalRpcClient = (url: string) =>
-  createSidecarRpcClient(TerminalRpcs, url)
-type TerminalRpc = Effect.Effect.Success<
-  ReturnType<typeof _makeTerminalRpcClient>
->
+type TerminalRpc = Effect.Effect.Success<ReturnType<typeof _inferTerminalRpc>>
 
 /**
- * Optional service tag providing a MessagePort for direct RPC to the
- * terminal utility process. When available, `TerminalClient` uses
- * MessagePort instead of HTTP for all terminal RPCs.
+ * Service tag providing a MessagePort for direct RPC to the
+ * terminal utility process. Required for `TerminalClient` to
+ * communicate with the terminal service.
  *
  * Provided by the server's utility-main.ts when the main process
  * brokers a server-to-terminal MessagePort.
@@ -154,13 +156,8 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
 
       /**
        * Get or create the RPC client. On first call, establishes the
-       * connection to the terminal sidecar, seeds the terminal map,
-       * and starts the event stream subscription. Retries with
-       * exponential backoff if the sidecar is not yet available.
-       *
-       * When a `TerminalRpcPort` is available in the context, uses
-       * MessagePort transport instead of HTTP. Otherwise, falls back
-       * to HTTP+JSON RPC.
+       * connection to the terminal utility process via MessagePort,
+       * seeds the terminal map, and starts the event stream subscription.
        *
        * Uses Effect.cached to ensure only one fiber runs initialization,
        * preventing duplicate RPC connections and event stream subscriptions

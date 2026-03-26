@@ -34,7 +34,8 @@ import {
 } from 'effect'
 import { afterAll, beforeAll, it } from 'vitest'
 
-import { PtyHostClient } from '../src/services/pty-host-client.js'
+import { directLayer } from '../src/services/pty-direct.js'
+import type { PtyHostClient } from '../src/services/pty-host-client.js'
 import {
   type TerminalLifecycleEvent,
   TerminalManager,
@@ -45,12 +46,10 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Full test layer: TerminalManager with PtyHostClient.
+ * Full test layer: TerminalManager with direct PtyHostClient (node-pty).
  * No LiveStore, no WorkspaceProvider.
  */
-const TestLayer = TerminalManager.layer.pipe(
-  Layer.provideMerge(PtyHostClient.layer)
-)
+const TestLayer = TerminalManager.layer.pipe(Layer.provideMerge(directLayer))
 
 // ---------------------------------------------------------------------------
 // Helper: run an Effect program against the test layer

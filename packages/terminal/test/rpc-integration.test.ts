@@ -21,7 +21,7 @@ import { Effect, Either, Exit, Fiber, Layer, Scope, Stream } from 'effect'
 import { afterAll, beforeAll, it } from 'vitest'
 
 import { TerminalRpcsLive } from '../src/rpc/handlers.js'
-import { PtyHostClient } from '../src/services/pty-host-client.js'
+import { directLayer } from '../src/services/pty-direct.js'
 import { TerminalManager } from '../src/services/terminal-manager.js'
 
 // ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ import { TerminalManager } from '../src/services/terminal-manager.js'
  */
 const TestLayer = TerminalRpcsLive.pipe(
   Layer.provide(TerminalManager.layer),
-  Layer.provideMerge(PtyHostClient.layer)
+  Layer.provideMerge(directLayer)
 )
 
 /**

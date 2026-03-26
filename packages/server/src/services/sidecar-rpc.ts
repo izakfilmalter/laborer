@@ -1,32 +1,24 @@
 /**
  * Shared utilities for sidecar RPC client connections.
  *
- * Both TerminalClient and FileWatcherClient use the same pattern for
- * connecting to their respective sidecar services: HTTP+JSON RPC with
- * exponential-backoff retry. This module extracts the shared schedule
- * and client creation logic to avoid duplication.
+ * Both TerminalClient and FileWatcherClient use MessagePort-based RPC
+ * clients to communicate with their respective utility processes. The
+ * main process brokers MessagePort pairs between services.
  *
- * In utility process mode, `createMessagePortRpcClient` provides the
- * same RPC client interface but over a MessagePort instead of HTTP.
+ * `createMessagePortRpcClient` creates an Effect RPC client over a
+ * MessagePort — no HTTP, no JSON serialization. MessagePort uses
+ * structured clone natively.
  *
  * @see Issue #13: Server-to-terminal MessagePort channel
+ * @see Issue #14: File-watcher as utility process
+ * @see Issue #20: Build script update + port reservation removal
  */
 
-import { FetchHttpClient } from '@effect/platform'
 import type { Rpc, RpcGroup } from '@effect/rpc'
-import { RpcClient, RpcSerialization } from '@effect/rpc'
+import { RpcClient } from '@effect/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
 import { Effect, Layer, Schedule, Scope } from 'effect'
-
-/**
- * Retry schedule for initial sidecar RPC connections:
- * exponential backoff starting at 1s, capped at 30s, up to 5 attempts.
- */
-export const sidecarConnectionSchedule = Schedule.exponential('1 second').pipe(
-  Schedule.union(Schedule.spaced('30 seconds')),
-  Schedule.compose(Schedule.recurs(5))
-)
 
 /**
  * Retry schedule for sidecar event stream reconnections (unbounded).
@@ -37,29 +29,11 @@ export const sidecarEventStreamSchedule = Schedule.exponential('1 second').pipe(
 )
 
 /**
- * Create an RPC client for a sidecar service with the standard
- * HTTP+JSON transport and connection retry schedule.
- */
-export const createSidecarRpcClient = <Rpcs extends Rpc.Any>(
-  rpcs: RpcGroup.RpcGroup<Rpcs>,
-  url: string
-) =>
-  RpcClient.make(rpcs).pipe(
-    Effect.provide(
-      RpcClient.layerProtocolHttp({ url }).pipe(
-        Layer.provide(FetchHttpClient.layer),
-        Layer.provide(RpcSerialization.layerJson)
-      )
-    ),
-    Effect.retry(sidecarConnectionSchedule)
-  )
-
-/**
  * Create an RPC client for a sidecar service over a MessagePort.
  *
- * Replaces `createSidecarRpcClient` when running inside an Electron
- * utility process with a brokered MessagePort to the target service.
- * No HTTP, no JSON serialization — MessagePort uses structured clone.
+ * Used when running inside an Electron utility process with a brokered
+ * MessagePort to the target service. No HTTP, no JSON serialization —
+ * MessagePort uses structured clone.
  *
  * The scope parameter ties the client protocol's lifecycle to the
  * enclosing layer scope.

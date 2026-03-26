@@ -1,15 +1,12 @@
 /**
  * FileWatcherClient — Effect Service
  *
- * RPC client connecting to the file-watcher service. Supports two
- * transport modes:
+ * RPC client connecting to the file-watcher utility process via a direct
+ * MessagePort brokered by the Electron main process for zero-copy IPC.
  *
- * 1. **MessagePort mode** (utility process): When a `FileWatcherRpcPort`
- *    service tag is available in the context, uses a direct MessagePort
- *    brokered by the Electron main process for zero-copy IPC.
- *
- * 2. **HTTP mode** (legacy fallback): When no `FileWatcherRpcPort` is
- *    available, connects via HTTP at `http://localhost:${FILE_WATCHER_PORT}`.
+ * Requires a `FileWatcherRpcPort` service tag in the layer context,
+ * provided by the server's utility-main.ts when the main process
+ * brokers a server-to-file-watcher MessagePort.
  *
  * Responsibilities:
  * - RPC client for FileWatcherRpcs operations (subscribe, unsubscribe, list)
@@ -21,11 +18,11 @@
  *
  * Connection is established lazily on first RPC call, not during layer
  * construction. This allows the server to start and serve health checks
- * without waiting for the file-watcher sidecar to be running.
+ * without waiting for the file-watcher utility process to be ready.
  *
  * @see PRD-file-watcher-extraction.md
  * @see Issue #14: File-watcher as utility process
- * @see Issue #16: Lazy sidecar connections
+ * @see Issue #20: Build script update + port reservation removal
  */
 
 import {
@@ -56,9 +53,9 @@ interface FileEventSubscription {
 }
 
 /**
- * Optional service tag providing a MessagePort for direct RPC to the
- * file-watcher utility process. When available, `FileWatcherClient` uses
- * MessagePort instead of HTTP for all file-watcher RPCs.
+ * Service tag providing a MessagePort for direct RPC to the
+ * file-watcher utility process. Required for `FileWatcherClient` to
+ * communicate with the file-watcher service.
  *
  * Provided by the server's utility-main.ts when the main process
  * brokers a server-to-file-watcher MessagePort.
@@ -148,13 +145,8 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
 
       /**
        * Get or create the RPC client. On first call, establishes the
-       * connection to the file-watcher sidecar and starts the event
-       * stream subscription. Retries with exponential backoff if the
-       * sidecar is not yet available.
-       *
-       * When a `FileWatcherRpcPort` is available in the context, uses
-       * MessagePort transport instead of HTTP. Otherwise, falls back
-       * to HTTP+JSON RPC.
+       * connection to the file-watcher utility process via MessagePort
+       * and starts the event stream subscription.
        *
        * Uses Effect.cached to ensure only one fiber runs initialization,
        * preventing duplicate RPC connections and event stream subscriptions

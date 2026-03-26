@@ -140,3 +140,77 @@ migration — all subsequent issues depend on it.
       on `before-quit`
 - [x] A test verifies: fork a process, verify spawn event, verify MessagePort
       communication, kill, verify exit event
+
+---
+
+## Issue 3: MessagePort Effect RPC transport (server side) — COMPLETED
+
+Date: 2026-03-25
+
+### What was done
+
+Created the server-side MessagePort RPC transport that provides an
+`RpcServer.Protocol` implementation over MessagePort. This replaces
+`RpcServer.layerProtocolHttp({ path: '/rpc' })` in utility process entry
+points. The transport uses structured clone via `postMessage()` — no JSON
+serialization layer (`RpcSerialization.layerJson`) is needed.
+
+The implementation follows the `withRun` pattern from Effect RPC internals,
+using `RpcServer.Protocol.make(Effect.fnUntraced(function*(writeRequest) {...}))`
+to create a protocol that:
+- Bridges sync MessagePort event listeners to the Effect runtime via an
+  unbounded queue drained by a scoped fiber
+- Supports a generic `RpcMessagePort` interface that works with Electron
+  `MessagePortMain`, Node.js `worker_threads.MessagePort`, and Web
+  `MessagePort`
+- Handles point-to-point connections (single client ID = 0)
+- Supports `ArrayBuffer` transfer for zero-copy data (supportsTransferables)
+- Cleans up listeners and closes the port on scope finalization
+
+### Files created
+
+- `packages/shared/src/rpc-transport-messageport.ts` — Server-side transport:
+  - `RpcMessagePort` interface: minimal abstraction covering Electron, Node.js,
+    and Web MessagePort APIs
+  - `makeProtocolMessagePort(port)`: creates an `RpcServer.Protocol` from a port
+  - `layerProtocolMessagePort(port)`: Layer wrapper for easy composition
+  - Message flow: port.on('message') → Queue.unsafeOffer → fiber drains
+    queue → writeRequest(clientId, data) → RPC handler pipeline
+  - Response flow: RPC handler → send(clientId, response) → port.postMessage()
+
+- `packages/shared/test/rpc-transport-messageport.test.ts` — 7 unit tests:
+  1. Handles echo request/response
+  2. Handles add request/response
+  3. Propagates RPC errors
+  4. Handles streaming RPC (count 0..4, verifies Chunk + Exit messages)
+  5. Handles multiple concurrent requests
+  6. Handles unknown RPC tag (returns Defect)
+  7. Cleans up when scope is closed
+
+### Files modified
+
+- `packages/shared/package.json` — Added export for
+  `./rpc-transport-messageport` pointing to the new module
+
+### Verification
+
+- All 82 shared package tests pass (75 existing + 7 new)
+- TypeScript: no errors
+- Biome formatting: no new errors (pre-existing issues in .opencode/package.json
+  and laborer.json are unrelated)
+
+### Acceptance criteria checklist
+
+- [x] A module exports an Effect Layer that serves an RPC group over a
+      MessagePort
+- [x] The adapter receives a `MessagePort` and handles incoming RPC request
+      messages
+- [x] Request/response RPC works: client sends a request message, server
+      processes via the RPC handler, sends a response message
+- [x] Streaming RPC works: server sends multiple messages for a single request
+      (e.g., `terminal.events` stream)
+- [x] Errors in RPC handlers are serialized and sent back as error response
+      messages
+- [x] The adapter cleans up when the MessagePort closes
+- [x] Unit tests verify all of the above using Node.js `MessageChannel` (no
+      Electron dependency needed for testing)

@@ -6,19 +6,19 @@ Parent PRD: [PRD.md](./PRD.md)
 |---|-------|-----------|--------|
 | 1 | Bootstrap entry point script | None | Done |
 | 2 | UtilityProcessManager core (fork, kill, restart) | #1 | Done |
-| 3 | MessagePort Effect RPC transport (server side) | None | Ready |
-| 4 | MessagePort Effect RPC transport (client side) | #3 | Blocked |
+| 3 | MessagePort Effect RPC transport (server side) | None | Done |
+| 4 | MessagePort Effect RPC transport (client side) | #3 | Ready |
 | 5 | Preload MessagePort acquisition | #2 | Ready |
-| 6 | Terminal utility process: basic PTY spawn via MessagePort RPC | #1, #2, #3 | Blocked |
+| 6 | Terminal utility process: basic PTY spawn via MessagePort RPC | #1, #2, #3 | Ready |
 | 7 | Terminal utility process: full RPC surface | #6 | Blocked |
 | 8 | Terminal PTY I/O data channel over MessagePort | #7, #5 | Blocked |
 | 9 | Renderer terminal UI wired to MessagePort | #8, #4 | Blocked |
-| 10 | Server utility process: RPC over MessagePort | #1, #2, #3 | Blocked |
+| 10 | Server utility process: RPC over MessagePort | #1, #2, #3 | Ready |
 | 11 | LiveStore sync over MessagePort | #10, #5 | Blocked |
 | 12 | Renderer server UI wired to MessagePort | #11, #4 | Blocked |
 | 13 | Server-to-terminal MessagePort channel | #6, #10 | Blocked |
 | 14 | File-watcher as utility process | #1, #2, #3, #10 | Blocked |
-| 15 | MCP as utility process | #1, #2, #3 | Blocked |
+| 15 | MCP as utility process | #1, #2, #3 | Ready |
 | 16 | Lifecycle Monitor (replaces HealthMonitor) | #2 | Ready |
 | 17 | Dev mode hot reload (tsdown --watch + auto-restart) | #2, #16 | Blocked |
 | 18 | Terminal session persistence across restarts | #6, #16 | Blocked |
@@ -97,13 +97,13 @@ This replaces `RpcServer.layerProtocolHttp` currently used in all sidecar `main.
 
 ### Acceptance criteria
 
-- [ ] A module exports an Effect Layer that serves an RPC group over a MessagePort
-- [ ] The adapter receives a `MessagePort` and handles incoming RPC request messages
-- [ ] Request/response RPC works: client sends a request message, server processes via the RPC handler, sends a response message
-- [ ] Streaming RPC works: server sends multiple messages for a single request (e.g., `terminal.events` stream)
-- [ ] Errors in RPC handlers are serialized and sent back as error response messages
-- [ ] The adapter cleans up when the MessagePort closes
-- [ ] Unit tests verify all of the above using Node.js `MessageChannel` (no Electron dependency needed for testing)
+- [x] A module exports an Effect Layer that serves an RPC group over a MessagePort
+- [x] The adapter receives a `MessagePort` and handles incoming RPC request messages
+- [x] Request/response RPC works: client sends a request message, server processes via the RPC handler, sends a response message
+- [x] Streaming RPC works: server sends multiple messages for a single request (e.g., `terminal.events` stream)
+- [x] Errors in RPC handlers are serialized and sent back as error response messages
+- [x] The adapter cleans up when the MessagePort closes
+- [x] Unit tests verify all of the above using Node.js `MessageChannel` (no Electron dependency needed for testing)
 
 ### Blocked by
 

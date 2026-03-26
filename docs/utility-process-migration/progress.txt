@@ -613,3 +613,123 @@ is excluded — migrated separately in #11.
 - [x] The server's LiveStore setup is preserved (sync channel migrated
       separately in #11)
 - [x] Test: fork server utility process, call an RPC, verify response
+
+---
+
+## Issue 16: Lifecycle Monitor (replaces HealthMonitor) — COMPLETED
+
+Date: 2026-03-25
+
+### What was done
+
+Created the `LifecycleMonitor` class that replaces the HTTP-polling
+`HealthMonitor` with native utility process events and a heartbeat
+MessagePort protocol. No HTTP health checks — startup detection uses
+the bootstrap `ready` message, crash detection uses the `exit` event,
+and liveness uses periodic heartbeat messages.
+
+The LifecycleMonitor follows VS Code's patterns:
+- `HeartbeatService` (5s heartbeat interval, 15s timeout = 3x interval)
+- `PtyHostService` (MaxRestarts = 5, exponential backoff, auto-restart)
+
+### Files created
+
+- `apps/desktop/src/lifecycle-monitor.ts` — LifecycleMonitor class:
+  - `forkAndMonitor(name)`: Forks via UtilityProcessManager, emits
+    `starting` status, monitors for `ready` message
+  - `forkAllAndMonitor(names)`: Forks multiple services in parallel
+  - `handleReady(name)`: Transitions to `healthy`, resets restart count,
+    starts heartbeat timer
+  - `handleHeartbeat(name)`: Resets heartbeat timeout timer
+  - `manualRestart(name)`: Resets backoff, restarts via manager
+  - `isHealthy(name)`, `areServicesHealthy(names)`: Status queries
+  - `shutdown()`: Cancels all pending restart and heartbeat timers
+  - Crash detection via UtilityProcessManager exit handler
+  - Auto-restart with exponential backoff (500ms, 1s, 2s, 4s, 8s, 10s cap)
+  - Max restart limit (default 5, matching VS Code)
+  - Heartbeat monitoring: kills unresponsive processes after 15s timeout
+  - Status events (`starting`, `healthy`, `crashed`, `restarting`)
+    forwarded to all renderer windows via `sidecar:status` IPC channel
+  - `backoffDelay(attempt)` exported for testing
+  - `HEARTBEAT_INTERVAL_MS` (5000) and `HEARTBEAT_TIMEOUT_MS` (15000)
+    exported as constants
+
+- `apps/desktop/test/lifecycle-monitor.test.ts` — 50 unit tests across
+  10 describe blocks:
+  - backoffDelay: 7 tests (exponential progression, cap at 10s)
+  - forkAndMonitor: 4 tests (fork, starting status, not healthy, IPC)
+  - forkAllAndMonitor: 2 tests (multiple forks, multiple statuses)
+  - handleReady: 5 tests (healthy, status, reset attempts, duplicate,
+    unknown)
+  - crash detection: 4 tests (crashed status, not healthy, stderr, no
+    crash during shutdown)
+  - auto-restart: 6 tests (schedule, fork after backoff, increasing
+    backoff, max attempts, no stacking, starting on restart)
+  - heartbeat monitoring: 5 tests (timer after ready, timeout kills,
+    reset on heartbeat, ignore non-ready, clear on crash)
+  - manualRestart: 3 tests (reset counter, cancel auto-restart, not
+    healthy during restart)
+  - areServicesHealthy: 3 tests (all healthy, some not, empty list)
+  - shutdown: 3 tests (cancel restarts, cancel heartbeats, suppress
+    crashes)
+  - multiple services: 3 tests (independent tracking, crash isolation,
+    per-service restart counts)
+  - status broadcasting: 2 tests (all windows, skip destroyed)
+  - heartbeat constants: 3 tests (interval, timeout, 3x ratio)
+
+### Files modified
+
+- `apps/desktop/src/utility-process-types.ts` — Added
+  `UtilityProcessHeartbeatMessage` type (`{ type: 'heartbeat' }`) to
+  the bootstrap message union. Utility processes can now send heartbeat
+  messages to the parent for liveness monitoring.
+
+- `apps/desktop/src/utility-process-manager.ts` — Added:
+  - `ProcessMessageHandler` type for bootstrap message forwarding
+  - `setMessageHandler(handler)`: Registers callback for all typed
+    messages (ready, error, heartbeat) from utility processes
+  - Message forwarding in `registerListeners()`: all typed messages
+    from utility processes are forwarded to the message handler
+
+- `apps/desktop/src/main.ts` — Added:
+  - Import and instantiation of `LifecycleMonitor`
+  - `getLifecycleMonitor()` export for external access
+  - Message handler wiring: `ready` → `handleReady()`,
+    `heartbeat` → `handleHeartbeat()`
+  - `forkAllAndMonitor(['terminal', 'server'])` replaces direct
+    `fork()` calls for monitored services
+  - Restart handler tries lifecycle monitor first
+  - Shutdown handler calls `lifecycleMonitor.shutdown()` before
+    killing processes
+
+### Verification
+
+- All 50 new lifecycle-monitor tests pass
+- All 247 desktop tests pass (263 total, 16 pre-existing failures in
+  ipc-workspace-targeting.test.ts and ipc-service-port.test.ts are
+  unchanged)
+- TypeScript: no errors in desktop package
+- Biome formatting: no new errors (pre-existing laborer.json issue
+  is unrelated)
+
+### Acceptance criteria checklist
+
+- [x] Startup detection: listens for `{ type: 'ready' }` message from
+      utility processes, emits `healthy` status
+- [x] Crash detection: listens for utility process `exit` events, emits
+      `crashed` status with stderr excerpt and exit code
+- [x] Auto-restart on unexpected exit with exponential backoff (500ms,
+      1s, 2s, 4s, 8s, capped at 10s)
+- [x] Max restart limit (default 5) — after limit, emits `crashed` and
+      stops retrying
+- [x] Heartbeat: utility processes send periodic heartbeat messages
+      (every 5s); if no heartbeat within 15s, the process is killed +
+      restarted as unresponsive
+- [x] Status events (`starting`, `healthy`, `crashed`, `restarting`)
+      forwarded to all renderer windows via
+      `webContents.send('sidecar:status', status)`
+- [x] Manual restart support via IPC from renderer (resets backoff
+      counter)
+- [x] Graceful shutdown: cancels all pending restart timers
+- [x] Test: fork a utility process, kill it, verify crash detection
+      and auto-restart

@@ -67,6 +67,12 @@ export type ProcessExitHandler = (
   lastStderr: string
 ) => void
 
+/** Callback invoked when a utility process sends a bootstrap message. */
+export type ProcessMessageHandler = (
+  name: ServiceName,
+  message: UtilityProcessBootstrapMessage
+) => void
+
 /** A tracked utility process with its metadata. */
 interface TrackedProcess {
   /** Whether the process was intentionally stopped (not a crash). */
@@ -186,6 +192,7 @@ function buildProcessEnv(name: ServiceName): Record<string, string> {
 export class UtilityProcessManager {
   private readonly processes = new Map<ServiceName, TrackedProcess>()
   private onUnexpectedExit: ProcessExitHandler | null = null
+  private onMessage: ProcessMessageHandler | null = null
   private isQuitting = false
 
   /**
@@ -194,6 +201,15 @@ export class UtilityProcessManager {
    */
   setExitHandler(handler: ProcessExitHandler): void {
     this.onUnexpectedExit = handler
+  }
+
+  /**
+   * Register a handler called when a utility process sends a bootstrap
+   * protocol message (ready, error, heartbeat).
+   * Used by the LifecycleMonitor to detect startup and liveness.
+   */
+  setMessageHandler(handler: ProcessMessageHandler): void {
+    this.onMessage = handler
   }
 
   /**
@@ -298,6 +314,11 @@ export class UtilityProcessManager {
         console.info(`[utility:${name}] Service ready`)
       } else if (msg?.type === 'error') {
         console.error(`[utility:${name}] Bootstrap error: ${msg.message}`)
+      }
+
+      // Forward all typed messages to the message handler (LifecycleMonitor).
+      if (msg?.type) {
+        this.onMessage?.(name, msg)
       }
     })
 

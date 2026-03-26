@@ -22,10 +22,22 @@ export interface UtilityProcessErrorMessage {
   readonly type: 'error'
 }
 
-/** All messages the bootstrap can send to the parent process. */
+/**
+ * Periodic heartbeat sent by utility processes to indicate liveness.
+ * The LifecycleMonitor uses these to detect unresponsive processes.
+ *
+ * @see VS Code's HeartbeatService at
+ *   `.reference/vscode/src/vs/platform/terminal/node/heartbeatService.ts`
+ */
+export interface UtilityProcessHeartbeatMessage {
+  readonly type: 'heartbeat'
+}
+
+/** All messages a utility process can send to the parent process. */
 export type UtilityProcessBootstrapMessage =
   | UtilityProcessReadyMessage
   | UtilityProcessErrorMessage
+  | UtilityProcessHeartbeatMessage
 
 // ---------------------------------------------------------------------------
 // Port transfer messages (parent -> utility process)

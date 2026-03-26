@@ -22,6 +22,7 @@ import {
   setTrayCountHandler,
   setUtilityProcessManager,
 } from './ipc.js'
+import { LifecycleMonitor } from './lifecycle-monitor.js'
 import { configureApplicationMenu } from './menu.js'
 import { reserveServicePorts, type ServicePorts } from './ports.js'
 import {
@@ -128,6 +129,13 @@ let healthMonitor: HealthMonitor | null = null
  */
 let utilityProcessManager: UtilityProcessManager | null = null
 
+/**
+ * Lifecycle monitor for utility process health, crash detection, and
+ * automatic restart with exponential backoff and heartbeat monitoring.
+ * Replaces HealthMonitor for utility process-based services.
+ */
+let lifecycleMonitor: LifecycleMonitor | null = null
+
 /** System tray icon manager. */
 const trayManager = new TrayManager()
 
@@ -165,6 +173,11 @@ export function getHealthMonitor(): HealthMonitor | null {
 /** Get the utility process manager (null in dev mode). */
 export function getUtilityProcessManager(): UtilityProcessManager | null {
   return utilityProcessManager
+}
+
+/** Get the lifecycle monitor (null in dev mode). */
+export function getLifecycleMonitor(): LifecycleMonitor | null {
+  return lifecycleMonitor
 }
 
 function getMainWindow(): BrowserWindow | null {
@@ -340,18 +353,33 @@ app
       // at a time in subsequent issues.
       utilityProcessManager = new UtilityProcessManager()
 
+      // Create the lifecycle monitor for utility process health monitoring.
+      // Replaces HealthMonitor for MessagePort-based services: uses native
+      // process events and heartbeat messages instead of HTTP health polling.
+      lifecycleMonitor = new LifecycleMonitor(utilityProcessManager)
+
+      // Wire bootstrap messages (ready, heartbeat) from utility processes
+      // to the lifecycle monitor for startup detection and liveness.
+      utilityProcessManager.setMessageHandler((name, message) => {
+        if (message.type === 'ready') {
+          lifecycleMonitor?.handleReady(name)
+        } else if (message.type === 'heartbeat') {
+          lifecycleMonitor?.handleHeartbeat(name)
+        }
+      })
+
       // Share the utility process manager with the IPC module so the
       // renderer can acquire direct MessagePort connections to services.
       setUtilityProcessManager(utilityProcessManager)
 
-      // Fork utility processes with MessagePort RPC transport.
+      // Fork utility processes via the lifecycle monitor, which handles
+      // startup detection, crash recovery, and status events.
       // The returned MessagePortMain for each is available via
       // utilityProcessManager.getPort(name) for RPC communication.
       // During migration, these run alongside the HTTP-based sidecars
       // (which are still used by the renderer). The renderer will be
       // switched to use MessagePort-based services in issues #9, #12.
-      utilityProcessManager.fork('terminal')
-      utilityProcessManager.fork('server')
+      lifecycleMonitor.forkAllAndMonitor(['terminal', 'server'])
 
       // Forward sidecar status events to the renderer.
       healthMonitor.setStatusListener((status) => {
@@ -399,17 +427,23 @@ app
       trayManager.updateWorkspaceCount(count)
     })
 
-    // Wire sidecar restart requests from the renderer to the health monitor
-    // or utility process manager.
+    // Wire sidecar restart requests from the renderer to the lifecycle
+    // monitor, utility process manager, health monitor, or sidecar manager.
     setRestartSidecarHandler(async (name) => {
       const validNames = ['server', 'terminal', 'file-watcher', 'mcp'] as const
       type ValidName = (typeof validNames)[number]
       if (!validNames.includes(name as ValidName)) {
         return
       }
-      // Try the utility process manager first (for migrated services),
-      // then fall back to the HTTP-based health monitor / sidecar manager.
-      if (utilityProcessManager?.isRunning(name as ValidName)) {
+      // Try the lifecycle monitor first (for utility process services with
+      // proper health tracking), then fall back to direct restart, then to
+      // the HTTP-based health monitor / sidecar manager.
+      if (
+        lifecycleMonitor &&
+        utilityProcessManager?.isRunning(name as ValidName)
+      ) {
+        await lifecycleMonitor.manualRestart(name as ValidName)
+      } else if (utilityProcessManager?.isRunning(name as ValidName)) {
         await utilityProcessManager.restart(name as ValidName)
       } else if (healthMonitor) {
         await healthMonitor.manualRestart(name as ValidName)
@@ -500,8 +534,12 @@ function shutdown(): void {
   // Stop auto-update timers.
   shutdownAutoUpdater()
 
-  // Stop the health monitor first — cancels pending restart timers
-  // so killed processes aren't immediately re-spawned.
+  // Stop monitors first — cancels pending restart timers and heartbeat
+  // timers so killed processes aren't immediately re-spawned.
+  if (lifecycleMonitor) {
+    lifecycleMonitor.shutdown()
+  }
+
   if (healthMonitor) {
     healthMonitor.shutdown()
   }

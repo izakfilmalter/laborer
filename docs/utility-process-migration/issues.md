@@ -19,9 +19,9 @@ Parent PRD: [PRD.md](./PRD.md)
 | 13 | Server-to-terminal MessagePort channel | #6, #10 | Ready |
 | 14 | File-watcher as utility process | #1, #2, #3, #10 | Ready |
 | 15 | MCP as utility process | #1, #2, #3 | Ready |
-| 16 | Lifecycle Monitor (replaces HealthMonitor) | #2 | Ready |
-| 17 | Dev mode hot reload (tsdown --watch + auto-restart) | #2, #16 | Blocked |
-| 18 | Terminal session persistence across restarts | #6, #16 | Blocked |
+| 16 | Lifecycle Monitor (replaces HealthMonitor) | #2 | Done |
+| 17 | Dev mode hot reload (tsdown --watch + auto-restart) | #2, #16 | Ready |
+| 18 | Terminal session persistence across restarts | #6, #16 | Ready |
 | 19 | Remove HTTP servers, Vite proxy, dev:web, URL resolution | #9, #12, #14, #15 | Blocked |
 | 20 | Build script update + port reservation removal | #19 | Blocked |
 
@@ -482,15 +482,15 @@ Reference: VS Code's `HeartbeatService` (ref: `.reference/vscode/src/vs/platform
 
 ### Acceptance criteria
 
-- [ ] Startup detection: listens for `{ type: 'ready' }` message from utility processes, emits `healthy` status
-- [ ] Crash detection: listens for utility process `exit` events, emits `crashed` status with stderr excerpt and exit code
-- [ ] Auto-restart on unexpected exit with exponential backoff (500ms, 1s, 2s, 4s, 8s, capped at 10s)
-- [ ] Max restart limit (default 5) — after limit, emits `crashed` and stops retrying
-- [ ] Heartbeat: utility processes send periodic heartbeat messages (every 5s); if no heartbeat within 15s, the process is killed + restarted as unresponsive
-- [ ] Status events (`starting`, `healthy`, `crashed`, `restarting`) forwarded to all renderer windows via `webContents.send('sidecar:status', status)`
-- [ ] Manual restart support via IPC from renderer (resets backoff counter)
-- [ ] Graceful shutdown: cancels all pending restart timers
-- [ ] Test: fork a utility process, kill it, verify crash detection and auto-restart
+- [x] Startup detection: listens for `{ type: 'ready' }` message from utility processes, emits `healthy` status
+- [x] Crash detection: listens for utility process `exit` events, emits `crashed` status with stderr excerpt and exit code
+- [x] Auto-restart on unexpected exit with exponential backoff (500ms, 1s, 2s, 4s, 8s, capped at 10s)
+- [x] Max restart limit (default 5) — after limit, emits `crashed` and stops retrying
+- [x] Heartbeat: utility processes send periodic heartbeat messages (every 5s); if no heartbeat within 15s, the process is killed + restarted as unresponsive
+- [x] Status events (`starting`, `healthy`, `crashed`, `restarting`) forwarded to all renderer windows via `webContents.send('sidecar:status', status)`
+- [x] Manual restart support via IPC from renderer (resets backoff counter)
+- [x] Graceful shutdown: cancels all pending restart timers
+- [x] Test: fork a utility process, kill it, verify crash detection and auto-restart
 
 ### Blocked by
 

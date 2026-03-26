@@ -14,8 +14,8 @@ Parent PRD: [PRD.md](./PRD.md)
 | 8 | Terminal PTY I/O data channel over MessagePort | #7, #5 | Done |
 | 9 | Renderer terminal UI wired to MessagePort | #8, #4 | Done |
 | 10 | Server utility process: RPC over MessagePort | #1, #2, #3 | Done |
-| 11 | LiveStore sync over MessagePort | #10, #5 | Ready |
-| 12 | Renderer server UI wired to MessagePort | #11, #4 | Blocked |
+| 11 | LiveStore sync over MessagePort | #10, #5 | Done |
+| 12 | Renderer server UI wired to MessagePort | #11, #4 | Ready |
 | 13 | Server-to-terminal MessagePort channel | #6, #10 | Ready |
 | 14 | File-watcher as utility process | #1, #2, #3, #10 | Ready |
 | 15 | MCP as utility process | #1, #2, #3 | Ready |
@@ -336,13 +336,13 @@ Replace the WebSocket-based LiveStore sync channel between the server and the re
 
 ### Acceptance criteria
 
-- [ ] The server utility process exposes a LiveStore sync channel over a dedicated `MessagePort`
-- [ ] The renderer acquires this `MessagePort` via the preload bridge
-- [ ] The LiveStore web worker receives the `MessagePort` and uses it for sync instead of a WebSocket URL
-- [ ] LiveStore events committed on the server propagate to the renderer in real time
-- [ ] LiveStore events committed on the renderer propagate to the server
-- [ ] Sync works correctly after a renderer reload (new port acquisition)
-- [ ] Test: commit an event on the server, verify it appears in the renderer's LiveStore
+- [x] The server utility process exposes a LiveStore sync channel over a dedicated `MessagePort`
+- [x] The renderer acquires this `MessagePort` via the preload bridge
+- [x] The LiveStore web worker receives the `MessagePort` and uses it for sync instead of a WebSocket URL
+- [x] LiveStore events committed on the server propagate to the renderer in real time
+- [x] LiveStore events committed on the renderer propagate to the server
+- [x] Sync works correctly after a renderer reload (new port acquisition)
+- [x] Test: commit an event on the server, verify it appears in the renderer's LiveStore
 
 ### Blocked by
 

@@ -141,6 +141,22 @@ export interface DesktopBridge {
   acquireServicePort: (name: SidecarName) => Promise<MessagePort | null>
 
   /**
+   * Acquires a dedicated `MessagePort` for LiveStore sync with the server
+   * utility process. The server serves `SyncWsRpc` (Pull/Push) handlers
+   * over this port, enabling the renderer's LiveStore worker to sync
+   * events without WebSocket.
+   *
+   * The main process brokers the connection: creates a `MessageChannelMain`
+   * pair, sends one port to the server utility process with
+   * `{ type: 'sync-port' }`, and returns the other to the renderer.
+   *
+   * Returns null if the server utility process is not running.
+   *
+   * @see Issue #11: LiveStore sync over MessagePort
+   */
+  acquireSyncPort: () => Promise<MessagePort | null>
+
+  /**
    * Acquires a dedicated `MessagePort` for a specific terminal's I/O data
    * channel. This provides a direct connection between the renderer and the
    * terminal utility process for streaming PTY output and input.

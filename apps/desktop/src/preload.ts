@@ -31,6 +31,8 @@ const SERVICE_PORT_RESPONSE_CHANNEL = 'laborer:service-port-response'
 const ACQUIRE_TERMINAL_DATA_PORT_CHANNEL = 'laborer:acquire-terminal-data-port'
 const TERMINAL_DATA_PORT_RESPONSE_CHANNEL =
   'laborer:terminal-data-port-response'
+const ACQUIRE_SYNC_PORT_CHANNEL = 'laborer:acquire-sync-port'
+const SYNC_PORT_RESPONSE_CHANNEL = 'laborer:sync-port-response'
 
 // ---------------------------------------------------------------------------
 // Service URLs — injected via `additionalArguments` from the main process.
@@ -90,6 +92,47 @@ contextBridge.exposeInMainWorld('desktopBridge', {
 
       ipcRenderer.on(SERVICE_PORT_RESPONSE_CHANNEL, listener)
       ipcRenderer.send(ACQUIRE_SERVICE_PORT_CHANNEL, { name, requestId })
+    })
+  },
+
+  acquireSyncPort: () => {
+    return new Promise<MessagePort | null>((resolve) => {
+      const requestId = crypto.randomUUID()
+
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        response: unknown
+      ) => {
+        if (
+          typeof response !== 'object' ||
+          response === null ||
+          !('requestId' in response)
+        ) {
+          return
+        }
+
+        const { requestId: responseId, success } = response as {
+          requestId: unknown
+          success: unknown
+        }
+
+        if (responseId !== requestId) {
+          return
+        }
+
+        ipcRenderer.removeListener(SYNC_PORT_RESPONSE_CHANNEL, listener)
+
+        if (success !== true) {
+          resolve(null)
+          return
+        }
+
+        const port = _event.ports[0]
+        resolve(port ?? null)
+      }
+
+      ipcRenderer.on(SYNC_PORT_RESPONSE_CHANNEL, listener)
+      ipcRenderer.send(ACQUIRE_SYNC_PORT_CHANNEL, { requestId })
     })
   },
 

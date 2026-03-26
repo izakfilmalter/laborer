@@ -49,6 +49,8 @@ export const ACQUIRE_TERMINAL_DATA_PORT_CHANNEL =
   'laborer:acquire-terminal-data-port'
 export const TERMINAL_DATA_PORT_RESPONSE_CHANNEL =
   'laborer:terminal-data-port-response'
+export const ACQUIRE_SYNC_PORT_CHANNEL = 'laborer:acquire-sync-port'
+export const SYNC_PORT_RESPONSE_CHANNEL = 'laborer:sync-port-response'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -625,6 +627,63 @@ export function registerIpcHandlers(
     // Transfer the renderer-side port to the requesting renderer window.
     senderWindow.webContents.postMessage(
       TERMINAL_DATA_PORT_RESPONSE_CHANNEL,
+      { requestId, success: true },
+      [rendererPort]
+    )
+  })
+
+  // -- Acquire sync port ----------------------------------------------------
+  // Creates a MessagePort pair for LiveStore sync between the renderer's
+  // LiveStore worker and the server utility process. One port goes to the
+  // server utility process with `{ type: 'sync-port' }`, the other goes
+  // to the renderer which passes it to its LiveStore worker.
+  //
+  // @see Issue #11: LiveStore sync over MessagePort
+  ipcMain.removeAllListeners(ACQUIRE_SYNC_PORT_CHANNEL)
+  ipcMain.on(ACQUIRE_SYNC_PORT_CHANNEL, (event, payload: unknown) => {
+    if (typeof payload !== 'object' || payload === null) {
+      return
+    }
+
+    const { requestId } = payload as { requestId: unknown }
+
+    if (typeof requestId !== 'string') {
+      return
+    }
+
+    const senderWindow = BrowserWindow.fromWebContents(event.sender)
+    if (!senderWindow || senderWindow.isDestroyed()) {
+      return
+    }
+
+    // Sync port always connects to the 'server' utility process.
+    if (!utilityProcessManagerRef?.isRunning('server')) {
+      senderWindow.webContents.postMessage(SYNC_PORT_RESPONSE_CHANNEL, {
+        requestId,
+        success: false,
+      })
+      return
+    }
+
+    const utilityProcess = utilityProcessManagerRef.getProcess('server')
+    if (!utilityProcess) {
+      senderWindow.webContents.postMessage(SYNC_PORT_RESPONSE_CHANNEL, {
+        requestId,
+        success: false,
+      })
+      return
+    }
+
+    // Create a MessagePort pair for the renderer-to-server sync channel.
+    const { port1: rendererPort, port2: utilityPort } = new MessageChannelMain()
+
+    // Send the utility-side port to the server with `{ type: 'sync-port' }`
+    // so the server utility process starts serving SyncWsRpc on it.
+    utilityProcess.postMessage({ type: 'sync-port' }, [utilityPort])
+
+    // Transfer the renderer-side port to the requesting renderer window.
+    senderWindow.webContents.postMessage(
+      SYNC_PORT_RESPONSE_CHANNEL,
       { requestId, success: true },
       [rendererPort]
     )

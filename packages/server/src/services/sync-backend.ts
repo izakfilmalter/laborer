@@ -555,7 +555,7 @@ const SyncBackendServiceLive = Layer.scoped(
 )
 
 /**
- * The complete sync RPC server layer.
+ * The complete sync RPC server layer (WebSocket transport).
  *
  * Handles `SyncWsRpc.Pull` and `SyncWsRpc.Push` RPC methods over
  * WebSocket. Uses layerProtocolWebsocket to register a GET /rpc handler
@@ -571,4 +571,40 @@ const SyncRpcLive = RpcServer.layer(SyncWsRpc).pipe(
   Layer.provide(SyncBackendServiceLive)
 )
 
-export { SyncRpcLive }
+// ---------------------------------------------------------------------------
+// MessagePort sync transport (Issue #11)
+// ---------------------------------------------------------------------------
+
+/**
+ * Serves `SyncWsRpc` (Pull/Push) handlers over a dedicated MessagePort.
+ *
+ * Each call creates a scoped `RpcServer` on the given port backed by a
+ * shared `SyncBackendService` (SQLite). The server runs in a forked
+ * fiber that lives until the port closes or the process shuts down.
+ *
+ * Call this once per incoming sync port from the renderer's LiveStore
+ * worker. Multiple ports can be active simultaneously.
+ *
+ * @param port - The MessagePort to serve sync RPCs over.
+ * @returns A fiber handle that can be interrupted to stop serving.
+ */
+const serveSyncOnPort = (
+  port: import('@laborer/shared/rpc-transport-messageport').RpcMessagePort
+) => {
+  // Dynamic import to avoid circular dependency issues when
+  // sync-backend.ts is loaded before the shared package resolves.
+  const { layerProtocolMessagePort } =
+    require('@laborer/shared/rpc-transport-messageport') as typeof import('@laborer/shared/rpc-transport-messageport')
+
+  const SyncServerOnPort = RpcServer.layer(SyncWsRpc).pipe(
+    Layer.provide(layerProtocolMessagePort(port)),
+    Layer.provide(SyncRpcHandlersLive),
+    Layer.provide(SyncBackendServiceLive)
+  )
+
+  // Launch the sync server in a forked fiber. It stays alive until
+  // the port closes (triggering scope finalization) or the process exits.
+  return Effect.runFork(SyncServerOnPort.pipe(Layer.launch, Effect.scoped))
+}
+
+export { serveSyncOnPort, SyncRpcLive }

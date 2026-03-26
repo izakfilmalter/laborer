@@ -10,6 +10,13 @@
  * - **Dedicated worker**: Owns the canonical OPFS SQLite databases
  * - **Shared worker**: Coordinates leader election across tabs
  *
+ * Sync transport selection (Issue #11):
+ * - **Electron mode**: Main thread acquires a sync MessagePort from the
+ *   server utility process via `desktopBridge.acquireSyncPort()`, then
+ *   transfers it to the worker. Worker uses `makeMessagePortSync`.
+ * - **Browser dev mode**: Worker uses `makeWsSync` over WebSocket to
+ *   the Vite proxy at `/rpc`.
+ *
  * Usage in components:
  * ```tsx
  * const store = useLaborerStore()
@@ -18,6 +25,7 @@
  * ```
  *
  * @see packages/shared/src/schema.ts for the full LiveStore schema
+ * @see Issue #11: LiveStore sync over MessagePort
  * @see Issue #17: LiveStore client adapter setup
  */
 
@@ -27,7 +35,7 @@ import { makePersistedAdapter } from '@livestore/adapter-web'
 import LiveStoreSharedWorker from '@livestore/adapter-web/shared-worker?sharedworker'
 import { useStore } from '@livestore/react'
 import { unstable_batchedUpdates as batchUpdates } from 'react-dom'
-import { serverWsSyncUrl } from '../lib/desktop'
+import { getDesktopBridge, isElectron, serverWsSyncUrl } from '../lib/desktop'
 import LiveStoreWorkerUrl from '../livestore.worker.ts?worker&url'
 
 /**
@@ -49,23 +57,63 @@ if (resetPersistence) {
 }
 
 /**
- * Create the LiveStore dedicated worker with the sync URL injected as a
- * search parameter.
+ * Detect whether we should use MessagePort sync (Electron production).
  *
- * In Electron production, `location.origin` is `laborer://app` which
- * can't resolve WebSocket URLs. The main thread has access to the
- * DesktopBridge and can resolve the real server URL, but the worker
- * runs in an isolated context without `window.desktopBridge`.
+ * In Electron production, the DesktopBridge provides `acquireSyncPort()`
+ * which returns a MessagePort connected to the server utility process.
+ * In dev mode (browser or Electron dev), we use WebSocket sync.
+ */
+const USE_MESSAGEPORT_SYNC = isElectron() && import.meta.env.PROD
+
+/**
+ * Create the LiveStore dedicated worker.
  *
- * We solve this by appending `?syncUrl=<wsUrl>` to the worker script URL.
- * The worker reads this from `self.location.search` at initialization time.
+ * In Electron MessagePort mode, the worker URL includes
+ * `?transport=messageport` to signal the worker should wait for a
+ * MessagePort transfer instead of creating a WebSocket connection.
  *
- * In dev mode (browser or Electron dev), the worker's origin-based URL
- * resolution works fine through the Vite proxy, so no param is needed.
+ * In browser/dev mode, the worker URL may include `?syncUrl=<wsUrl>`
+ * for non-origin-based sync URLs (Electron production with HTTP fallback).
+ *
+ * After creating the worker, in MessagePort mode, the main thread
+ * acquires a sync port from the server utility process and transfers
+ * it to the worker.
  */
 function createLiveStoreWorker(options: { name: string }): Worker {
   let workerUrl = LiveStoreWorkerUrl
 
+  if (USE_MESSAGEPORT_SYNC) {
+    // Signal the worker to wait for a MessagePort transfer.
+    const separator = workerUrl.includes('?') ? '&' : '?'
+    workerUrl = `${workerUrl}${separator}transport=messageport`
+
+    const worker = new Worker(workerUrl, { type: 'module', name: options.name })
+
+    // Acquire a sync MessagePort from the server utility process and
+    // transfer it to the worker. This happens asynchronously — the worker
+    // waits for the port before initializing LiveStore.
+    const bridge = getDesktopBridge()
+    if (bridge) {
+      bridge
+        .acquireSyncPort()
+        .then((port) => {
+          if (port) {
+            worker.postMessage({ type: 'sync-port' }, [port])
+          } else {
+            console.warn(
+              '[LiveStore.store] Failed to acquire sync port — server utility process may not be running'
+            )
+          }
+        })
+        .catch((error: unknown) => {
+          console.error('[LiveStore.store] Error acquiring sync port:', error)
+        })
+    }
+
+    return worker
+  }
+
+  // Browser/dev mode: use WebSocket sync URL injection.
   const syncUrl = serverWsSyncUrl()
   const isOriginBased = syncUrl.startsWith(`${globalThis.location.origin}/`)
 

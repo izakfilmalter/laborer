@@ -73,6 +73,7 @@ import { ProjectRegistry } from './services/project-registry.js'
 import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
 import { ReviewCommentFetcher } from './services/review-comment-fetcher.js'
+import { serveSyncOnPort } from './services/sync-backend.js'
 import { TaskManager } from './services/task-manager.js'
 import { TerminalClient } from './services/terminal-client.js'
 import { WorkspaceProvider } from './services/workspace-provider.js'
@@ -116,14 +117,20 @@ function getParentPort(): ParentPort {
 // MessagePort reception
 // ---------------------------------------------------------------------------
 
+interface PortResult {
+  parentPort: ParentPort
+  rpcPort: RpcMessagePort
+}
+
 /**
  * Wait for the parent process to transfer a MessagePort via
- * `process.parentPort`. Returns a promise that resolves with the port.
+ * `process.parentPort`. Returns a promise that resolves with the port
+ * and a reference to parentPort for continued message listening.
  *
  * The UtilityProcessManager sends `{ type: 'port' }` with the actual
  * `MessagePort` in the `ports` array after the utility process spawns.
  */
-function waitForPort(): Promise<RpcMessagePort> {
+function waitForPort(): Promise<PortResult> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error('Timed out waiting for MessagePort from parent'))
@@ -138,7 +145,7 @@ function waitForPort(): Promise<RpcMessagePort> {
         const port = event.ports[0] as RpcMessagePort
         // Electron MessagePortMain requires start() to begin receiving
         port.start?.()
-        resolve(port)
+        resolve({ rpcPort: port, parentPort })
       }
     })
   })
@@ -357,17 +364,16 @@ const DeferredServicesProxyLive = Layer.scopedContext(
  *     + LaborerStoreLive                  — LiveStore + SQLite persistence
  */
 async function main(): Promise<void> {
-  const port = await waitForPort()
+  const { rpcPort, parentPort } = await waitForPort()
 
   // Build the RPC layer with MessagePort transport.
   // Unlike the HTTP entry point, we don't need:
   // - NodeHttpServer / ServerLive (no HTTP server)
   // - RpcSerialization.layerJson (MessagePort uses structured clone)
   // - CustomRoutesLive (no HTTP health/init-status routes)
-  // - SyncRpcLive (LiveStore WebSocket sync — migrated in #11)
   // - HttpRouter / HttpMiddleware / CORS
   const RpcLive = RpcServer.layer(LaborerRpcs).pipe(
-    Layer.provide(layerProtocolMessagePort(port)),
+    Layer.provide(layerProtocolMessagePort(rpcPort)),
     Layer.provide(LaborerRpcsLive)
   )
 
@@ -384,13 +390,33 @@ async function main(): Promise<void> {
     Layer.provide(LaborerStoreLive)
   )
 
-  // Launch the layer — keeps running until the process is killed.
+  // Launch the main service layer — keeps running until killed.
   const program = ServiceLayer.pipe(Layer.launch, Effect.scoped)
 
   // Use Effect.runPromise instead of NodeRuntime.runMain to avoid
   // installing duplicate signal handlers in the utility process.
   // The parent process manages the lifecycle (kill/restart).
-  await Effect.runPromise(program)
+  const runningPromise = Effect.runPromise(program)
+
+  // Listen for sync-port messages from the parent process.
+  // Each sync-port message transfers a dedicated MessagePort for a
+  // LiveStore sync client (the renderer's LiveStore worker).
+  //
+  // Each incoming sync port gets a standalone `RpcServer` serving
+  // `SyncWsRpc` handlers backed by a shared SQLite sync database.
+  // Multiple ports can be active simultaneously (one per window).
+  //
+  // @see Issue #11: LiveStore sync over MessagePort
+  parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
+    const data = event.data as { type?: string }
+    if (data?.type === 'sync-port' && event.ports.length > 0) {
+      const syncPort = event.ports[0] as RpcMessagePort
+      syncPort.start?.()
+      serveSyncOnPort(syncPort)
+    }
+  })
+
+  await runningPromise
 }
 
 main().catch((error) => {

@@ -187,12 +187,6 @@ export interface DesktopBridge {
    */
   focusWindowForWorkspace: (workspaceId: string) => Promise<boolean>
 
-  /** Returns the HTTP base URL for the server service (e.g., "http://127.0.0.1:12345"). */
-  getServerUrl: () => string
-
-  /** Returns the HTTP base URL for the terminal service (e.g., "http://127.0.0.1:12346"). */
-  getTerminalUrl: () => string
-
   /** Returns the current auto-update state. */
   getUpdateState: () => Promise<DesktopUpdateState>
 

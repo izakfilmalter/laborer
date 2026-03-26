@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "with-env": "dotenv -e ../../.env.local --",
-    "dev": "bun run with-env wait-on \"tcp:${VITE_SERVER_PORT:-2100}\" && vite",
+    "dev": "vite",
     "build": "vite build",
     "serve": "vite preview",
     "start": "vite",

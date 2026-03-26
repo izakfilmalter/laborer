@@ -5,6 +5,7 @@ import { parseWindowBootstrapArgs } from './window-identity.js'
 
 // ---------------------------------------------------------------------------
 // IPC channel constants (must match ipc.ts)
+// Alphabetical order for easier lookup.
 // ---------------------------------------------------------------------------
 
 const PICK_FOLDER_CHANNEL = 'desktop:pick-folder'
@@ -35,16 +36,14 @@ const ACQUIRE_SYNC_PORT_CHANNEL = 'laborer:acquire-sync-port'
 const SYNC_PORT_RESPONSE_CHANNEL = 'laborer:sync-port-response'
 
 // ---------------------------------------------------------------------------
-// Service URLs — injected via `additionalArguments` from the main process.
+// Window identity — injected via `additionalArguments` from the main process.
 //
 // In sandbox mode, `process.env` is unavailable. Instead, the main process
-// passes URLs as `--laborer-<key>=<value>` arguments via BrowserWindow's
-// `webPreferences.additionalArguments`. These appear in `process.argv`.
+// passes the window ID as `--laborer-window-id=<value>` via BrowserWindow's
+// `webPreferences.additionalArguments`. This appears in `process.argv`.
 // ---------------------------------------------------------------------------
 
-const { serverUrl, terminalUrl, windowId } = parseWindowBootstrapArgs(
-  process.argv
-)
+const { windowId } = parseWindowBootstrapArgs(process.argv)
 
 // ---------------------------------------------------------------------------
 // DesktopBridge implementation
@@ -186,8 +185,6 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     })
   },
 
-  getServerUrl: () => serverUrl,
-  getTerminalUrl: () => terminalUrl,
   getWindowId: () => windowId,
 
   pickFolder: () => ipcRenderer.invoke(PICK_FOLDER_CHANNEL),

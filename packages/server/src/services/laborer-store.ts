@@ -54,7 +54,6 @@
 import { env } from '@laborer/env/server'
 import { schema, tables } from '@laborer/shared/schema'
 import { createStore, provideOtel } from '@livestore/livestore'
-import { makeWsSync } from '@livestore/sync-cf/client'
 import { Cause, Context, Effect, Layer } from 'effect'
 
 /**
@@ -90,14 +89,6 @@ class LaborerStore extends Context.Tag('LaborerStore')<
  * all worktrees of the same repo share the same database.
  */
 const DATA_DIRECTORY = env.DATA_DIR
-
-/**
- * WebSocket URL for the server-side store to connect to its own sync
- * backend. Uses the same `/rpc` endpoint that browser clients connect to.
- * The `makeWsSync` client handles reconnection automatically, so the
- * store can start connecting before the HTTP server is fully ready.
- */
-const syncUrl = `ws://localhost:${env.PORT}/rpc`
 
 /**
  * Log prefix for structured logging.
@@ -151,13 +142,11 @@ const makeStore = Effect.gen(function* () {
 
   const adapter = makeAdapter({
     storage: { type: 'fs', baseDirectory: DATA_DIRECTORY },
-    sync: {
-      backend: makeWsSync({ url: syncUrl }),
-      onSyncError: 'ignore',
-    },
   })
 
-  yield* Effect.logInfo(`${logPrefix} Connecting to sync backend at ${syncUrl}`)
+  yield* Effect.logInfo(
+    `${logPrefix} Initializing server-side store (no sync — server is the authority)`
+  )
   yield* Effect.logInfo(
     `${logPrefix} Schema state hash: ${String(schema.state.sqlite.hash)}, ` +
       `migrations strategy: ${schema.state.sqlite.migrations.strategy}, ` +

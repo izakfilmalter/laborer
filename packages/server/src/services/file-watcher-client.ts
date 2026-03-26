@@ -37,19 +37,11 @@ import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { Context, Effect, Layer, Option, Scope, Stream } from 'effect'
 import {
   createMessagePortRpcClient,
-  createSidecarRpcClient,
   sidecarEventStreamSchedule,
 } from './sidecar-rpc.js'
 
 /** Logger tag used for structured Effect.log output in this module. */
 const logPrefix = 'FileWatcherClient'
-
-/** The inferred type of the file-watcher RPC client. */
-const _makeFileWatcherRpcClient = (url: string) =>
-  createSidecarRpcClient(FileWatcherRpcs, url)
-type FileWatcherRpc = Effect.Effect.Success<
-  ReturnType<typeof _makeFileWatcherRpcClient>
->
 
 /**
  * Callback for receiving file events from the file-watcher service.
@@ -174,39 +166,24 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
        */
       const getOrCreateClient = yield* Effect.cached(
         Effect.gen(function* () {
-          let client: FileWatcherRpc
-
-          // Choose transport based on whether a MessagePort is available.
-          if (Option.isSome(fileWatcherRpcPort)) {
-            // MessagePort mode — direct process-to-process communication.
-            // The main process brokered a MessagePort between the server
-            // and file-watcher utility processes.
-            yield* Effect.log(
-              'Connecting to file-watcher service via MessagePort'
-            ).pipe(Effect.annotateLogs('module', logPrefix))
-
-            client = yield* createMessagePortRpcClient(
-              FileWatcherRpcs,
-              fileWatcherRpcPort.value.port,
-              layerScope
+          // MessagePort mode — direct process-to-process communication.
+          // The main process brokers a MessagePort between the server
+          // and file-watcher utility processes.
+          if (Option.isNone(fileWatcherRpcPort)) {
+            return yield* Effect.die(
+              'FileWatcherRpcPort is not available — cannot connect to file-watcher service'
             )
-          } else {
-            // HTTP fallback — legacy mode for non-utility-process environments.
-            // Resolve port lazily to avoid import-time side effects.
-            const { env } = yield* Effect.promise(
-              () => import('@laborer/env/server')
-            )
-            const fileWatcherServiceUrl = `http://localhost:${env.FILE_WATCHER_PORT}`
-
-            yield* Effect.log(
-              `Connecting to file-watcher service via HTTP at ${fileWatcherServiceUrl}`
-            ).pipe(Effect.annotateLogs('module', logPrefix))
-
-            client = yield* createSidecarRpcClient(
-              FileWatcherRpcs,
-              `${fileWatcherServiceUrl}/rpc`
-            ).pipe(Effect.provideService(Scope.Scope, layerScope))
           }
+
+          yield* Effect.log(
+            'Connecting to file-watcher service via MessagePort'
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          const client = yield* createMessagePortRpcClient(
+            FileWatcherRpcs,
+            fileWatcherRpcPort.value.port,
+            layerScope
+          )
 
           // Start event stream subscription
           yield* client.watcher.events().pipe(

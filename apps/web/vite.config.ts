@@ -2,7 +2,7 @@ import path from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig, loadEnv, type Plugin } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 
 /**
  * Patches xterm.js ESM to fix a Rollup tree-shaking bug with `const enum`.
@@ -18,7 +18,7 @@ import { defineConfig, loadEnv, type Plugin } from 'vite'
  * This plugin rewrites `(r||={})` to `(r||=(r={}))` which forces Rollup to
  * keep the declaration since `r` is now read within the expression.
  */
-function patchXtermEnumPlugin(): Plugin {
+function patchXtermEnumPlugin() {
   return {
     name: 'patch-xterm-enum',
     transform(code: string, id: string) {
@@ -38,17 +38,11 @@ function patchXtermEnumPlugin(): Plugin {
   }
 }
 
-/** Regex for stripping the /terminal-rpc prefix when proxying to the terminal service. */
-const TERMINAL_RPC_PREFIX = /^\/terminal-rpc/
-
 const root = path.resolve(import.meta.dirname, '../..')
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, root)
 
-  const serverPort = Number(env.VITE_SERVER_PORT ?? 2100)
-  const terminalPort = Number(env.VITE_TERMINAL_PORT ?? 2102)
-  const fileWatcherPort = Number(env.VITE_FILE_WATCHER_PORT ?? 2104)
   const vitePort = Number(env.VITE_PORT ?? 2101)
 
   return {
@@ -74,36 +68,6 @@ export default defineConfig(({ mode }) => {
       hmr: {
         protocol: 'ws',
         host: 'localhost',
-      },
-      proxy: {
-        '/server-health': {
-          target: `http://localhost:${serverPort}`,
-          rewrite: () => '/',
-        },
-        '/server-init-status': {
-          target: `http://localhost:${serverPort}`,
-          rewrite: () => '/init-status',
-        },
-        '/terminal-health': {
-          target: `http://localhost:${terminalPort}`,
-          rewrite: () => '/',
-        },
-        '/file-watcher-health': {
-          target: `http://localhost:${fileWatcherPort}`,
-          rewrite: () => '/',
-        },
-        '/rpc': {
-          target: `http://localhost:${serverPort}`,
-          ws: true,
-        },
-        '/terminal-rpc': {
-          target: `http://localhost:${terminalPort}`,
-          rewrite: (p) => p.replace(TERMINAL_RPC_PREFIX, '/rpc'),
-        },
-        '/terminal': {
-          target: `http://localhost:${terminalPort}`,
-          ws: true,
-        },
       },
     },
     worker: {

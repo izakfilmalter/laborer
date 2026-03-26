@@ -175,41 +175,24 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
        */
       const getOrCreateClient = yield* Effect.cached(
         Effect.gen(function* () {
-          let client: TerminalRpc
-          let terminalPort = 0
-
-          // Choose transport based on whether a MessagePort is available.
-          if (Option.isSome(terminalRpcPort)) {
-            // MessagePort mode — direct process-to-process communication.
-            // The main process brokered a MessagePort between the server
-            // and terminal utility processes.
-            yield* Effect.log(
-              'Connecting to terminal service via MessagePort'
-            ).pipe(Effect.annotateLogs('module', logPrefix))
-
-            client = yield* createMessagePortRpcClient(
-              TerminalRpcs,
-              terminalRpcPort.value.port,
-              layerScope
+          // MessagePort mode — direct process-to-process communication.
+          // The main process brokers a MessagePort between the server
+          // and terminal utility processes.
+          if (Option.isNone(terminalRpcPort)) {
+            return yield* Effect.die(
+              'TerminalRpcPort is not available — cannot connect to terminal service'
             )
-          } else {
-            // HTTP fallback — legacy mode for non-utility-process environments.
-            // Resolve port lazily to avoid import-time side effects.
-            const { env } = yield* Effect.promise(
-              () => import('@laborer/env/server')
-            )
-            terminalPort = env.TERMINAL_PORT
-            const terminalServiceUrl = `http://localhost:${terminalPort}`
-
-            yield* Effect.log(
-              `Connecting to terminal service via HTTP at ${terminalServiceUrl}`
-            ).pipe(Effect.annotateLogs('module', logPrefix))
-
-            client = yield* createSidecarRpcClient(
-              TerminalRpcs,
-              `${terminalServiceUrl}/rpc`
-            ).pipe(Effect.provideService(Scope.Scope, layerScope))
           }
+
+          yield* Effect.log(
+            'Connecting to terminal service via MessagePort'
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          const client = yield* createMessagePortRpcClient(
+            TerminalRpcs,
+            terminalRpcPort.value.port,
+            layerScope
+          )
 
           // Seed the map from the terminal service's current terminal list.
           // This handles the case where the server restarts but the terminal
@@ -268,6 +251,13 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           yield* Effect.log('Connected to terminal service').pipe(
             Effect.annotateLogs('module', logPrefix)
           )
+
+          // TODO: Agent hook mechanism needs redesign for utility processes.
+          // Previously, agents called back to http://localhost:TERMINAL_PORT/hook/agent-status
+          // via curl. With utility processes, there's no HTTP server. The hook
+          // URL is set to 0 (non-functional) until a replacement mechanism
+          // (e.g., Unix domain socket or IPC) is implemented.
+          const terminalPort = 0
 
           return { client, terminalPort }
         })

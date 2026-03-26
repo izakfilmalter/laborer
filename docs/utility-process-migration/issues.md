@@ -22,8 +22,8 @@ Parent PRD: [PRD.md](./PRD.md)
 | 16 | Lifecycle Monitor (replaces HealthMonitor) | #2 | Done |
 | 17 | Dev mode hot reload (tsdown --watch + auto-restart) | #2, #16 | Ready |
 | 18 | Terminal session persistence across restarts | #6, #16 | Ready |
-| 19 | Remove HTTP servers, Vite proxy, dev:web, URL resolution | #9, #12, #14, #15 | Ready |
-| 20 | Build script update + port reservation removal | #19 | Blocked |
+| 19 | Remove HTTP servers, Vite proxy, dev:web, URL resolution | #9, #12, #14, #15 | Done |
+| 20 | Build script update + port reservation removal | #19 | Ready |
 
 ---
 
@@ -574,17 +574,17 @@ With all four services running as utility processes with MessagePort IPC, remove
 
 ### Acceptance criteria
 
-- [ ] HTTP server code removed from `packages/terminal/` (NodeHttpServer, health route, WebSocket upgrade, HTTP RPC route)
-- [ ] HTTP server code removed from `packages/server/` (NodeHttpServer, health route, init-status route, HTTP RPC route, WebSocket sync upgrade)
-- [ ] HTTP server code removed from `packages/file-watcher/` (NodeHttpServer, health route, HTTP RPC route)
-- [ ] Vite proxy routes removed from `apps/web/vite.config.ts` (`/rpc`, `/terminal-rpc`, `/terminal`, `/*-health`)
-- [ ] `dev:web` script removed from root `package.json`
-- [ ] URL resolver functions removed from `apps/web/src/lib/desktop.ts` (`serverRpcUrl`, `terminalRpcUrl`, `serverWsSyncUrl`, `terminalWsUrl`, `serverInitStatusUrl`)
-- [ ] `getServerUrl()` and `getTerminalUrl()` removed from `DesktopBridge` interface and preload
-- [ ] Preload URL argument parsing removed (`--laborer-serverUrl`, `--laborer-terminalUrl`, `--laborer-fileWatcherUrl`)
-- [ ] `buildPreloadArgs()` in `main.ts` no longer passes service URLs
-- [ ] `@laborer/env` server port configs (`PORT`, `TERMINAL_PORT`, `FILE_WATCHER_PORT`) removed or deprecated
-- [ ] No remaining references to HTTP-based service communication in the codebase
+- [x] HTTP server code removed from `packages/terminal/` (NodeHttpServer, health route, WebSocket upgrade, HTTP RPC route)
+- [x] HTTP server code removed from `packages/server/` (NodeHttpServer, health route, init-status route, HTTP RPC route, WebSocket sync upgrade)
+- [x] HTTP server code removed from `packages/file-watcher/` (NodeHttpServer, health route, HTTP RPC route)
+- [x] Vite proxy routes removed from `apps/web/vite.config.ts` (`/rpc`, `/terminal-rpc`, `/terminal`, `/*-health`)
+- [x] `dev:web` script removed from root `package.json`
+- [x] URL resolver functions removed from `apps/web/src/lib/desktop.ts` (`serverRpcUrl`, `terminalRpcUrl`, `serverWsSyncUrl`, `terminalWsUrl`, `serverInitStatusUrl`)
+- [x] `getServerUrl()` and `getTerminalUrl()` removed from `DesktopBridge` interface and preload
+- [x] Preload URL argument parsing removed (`--laborer-serverUrl`, `--laborer-terminalUrl`, `--laborer-fileWatcherUrl`)
+- [x] `buildPreloadArgs()` in `main.ts` no longer passes service URLs
+- [x] `@laborer/env` server port configs (`PORT`, `TERMINAL_PORT`, `FILE_WATCHER_PORT`) removed or deprecated
+- [x] No remaining references to HTTP-based service communication in the codebase
 
 ### Blocked by
 

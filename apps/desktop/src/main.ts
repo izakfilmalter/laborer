@@ -11,7 +11,6 @@ import {
   triggerInstallUpdate,
 } from './auto-updater.js'
 import { fixPath } from './fix-path.js'
-import { HealthMonitor } from './health.js'
 import {
   getWorkspaceWindowRegistry,
   registerIpcHandlers,
@@ -24,14 +23,12 @@ import {
 } from './ipc.js'
 import { LifecycleMonitor } from './lifecycle-monitor.js'
 import { configureApplicationMenu } from './menu.js'
-import { reserveServicePorts, type ServicePorts } from './ports.js'
 import {
   DESKTOP_SCHEME,
   registerDesktopProtocol,
   registerSchemeAsPrivileged,
   resolveStaticRoot,
 } from './protocol.js'
-import { SidecarManager } from './sidecar.js'
 import { registerGlobalShortcut, TrayManager } from './tray.js'
 import { UtilityProcessManager } from './utility-process-manager.js'
 import { buildWindowBootstrapArgs, createWindowId } from './window-identity.js'
@@ -91,8 +88,8 @@ const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 
 /**
  * Whether we are in development mode.
- * In dev mode, services are run separately via `turbo dev` and the
- * Electron shell does NOT spawn them as child processes.
+ * In dev mode, the renderer loads from the Vite dev server.
+ * Utility processes are forked in both dev and production modes.
  */
 const isDev = Boolean(VITE_DEV_SERVER_URL)
 
@@ -103,36 +100,14 @@ const openWindows = new Set<BrowserWindow>()
 let mainWindow: BrowserWindow | null = null
 
 /**
- * Reserved ports and auth token for child process communication.
- * Populated during bootstrap before the window is created.
- * Used by child process spawning and preload bridge.
- */
-let servicePorts: ServicePorts | null = null
-
-/**
- * Sidecar manager for child process lifecycle.
- * Only created in production mode (when services need to be spawned).
- */
-let sidecarManager: SidecarManager | null = null
-
-/**
- * Health monitor for sidecar health checking, crash detection, and
- * automatic restart with exponential backoff.
- * Only created in production mode.
- */
-let healthMonitor: HealthMonitor | null = null
-
-/**
  * Utility process manager for MessagePort-based service lifecycle.
- * Created in production mode alongside sidecarManager during migration.
- * Will eventually replace sidecarManager entirely.
+ * Created on `app.whenReady()` in both dev and production modes.
  */
 let utilityProcessManager: UtilityProcessManager | null = null
 
 /**
  * Lifecycle monitor for utility process health, crash detection, and
  * automatic restart with exponential backoff and heartbeat monitoring.
- * Replaces HealthMonitor for utility process-based services.
  */
 let lifecycleMonitor: LifecycleMonitor | null = null
 
@@ -152,30 +127,12 @@ let unregisterShortcut: (() => void) | null = null
  */
 let isQuitting = false
 
-/** Get the reserved service ports. Throws if called before bootstrap. */
-export function getServicePorts(): ServicePorts {
-  if (!servicePorts) {
-    throw new Error('Service ports not yet initialized')
-  }
-  return servicePorts
-}
-
-/** Get the sidecar manager (null in dev mode). */
-export function getSidecarManager(): SidecarManager | null {
-  return sidecarManager
-}
-
-/** Get the health monitor (null in dev mode). */
-export function getHealthMonitor(): HealthMonitor | null {
-  return healthMonitor
-}
-
-/** Get the utility process manager (null in dev mode). */
+/** Get the utility process manager (null before app.whenReady). */
 export function getUtilityProcessManager(): UtilityProcessManager | null {
   return utilityProcessManager
 }
 
-/** Get the lifecycle monitor (null in dev mode). */
+/** Get the lifecycle monitor (null before app.whenReady). */
 export function getLifecycleMonitor(): LifecycleMonitor | null {
   return lifecycleMonitor
 }
@@ -223,7 +180,7 @@ function createWindow(record?: WindowRecord): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      additionalArguments: buildPreloadArgs(windowId),
+      additionalArguments: buildWindowBootstrapArgs({ windowId }),
     },
   })
 
@@ -299,27 +256,6 @@ function createWindow(record?: WindowRecord): BrowserWindow {
 }
 
 /**
- * Build the `additionalArguments` array for the preload script.
- *
- * Electron's sandbox mode blocks access to `process.env` in the preload,
- * so we pass service URLs as command-line arguments that the preload
- * can read from `process.argv`.
- *
- * Format: `--laborer-<key>=<value>` (prefixed to avoid collisions).
- */
-function buildPreloadArgs(windowId: string): string[] {
-  if (!servicePorts) {
-    return []
-  }
-
-  return buildWindowBootstrapArgs({
-    serverUrl: `http://127.0.0.1:${servicePorts.serverPort}`,
-    terminalUrl: `http://127.0.0.1:${servicePorts.terminalPort}`,
-    windowId,
-  })
-}
-
-/**
  * Broker direct MessagePort channels between utility processes that
  * need to communicate with each other.
  *
@@ -329,7 +265,7 @@ function buildPreloadArgs(windowId: string): string[] {
  * either service, since old ports die with old processes.
  */
 function brokerInterProcessPorts(): void {
-  // Server ↔ Terminal: server's TerminalClient calls TerminalRpcs
+  // Server <-> Terminal: server's TerminalClient calls TerminalRpcs
   // @see Issue #13: Server-to-terminal MessagePort channel
   if (
     lifecycleMonitor?.isHealthy('terminal') &&
@@ -343,7 +279,7 @@ function brokerInterProcessPorts(): void {
     )
   }
 
-  // Server ↔ File-watcher: server's FileWatcherClient calls FileWatcherRpcs
+  // Server <-> File-watcher: server's FileWatcherClient calls FileWatcherRpcs
   // @see Issue #14: File-watcher as utility process
   if (
     lifecycleMonitor?.isHealthy('file-watcher') &&
@@ -357,7 +293,7 @@ function brokerInterProcessPorts(): void {
     )
   }
 
-  // MCP ↔ Server: MCP's LaborerRpcClient calls LaborerRpcs
+  // MCP <-> Server: MCP's LaborerRpcClient calls LaborerRpcs
   // The MCP utility process receives the port as 'server-rpc-port',
   // the server receives it as 'port' (additional RPC port).
   // @see Issue #15: MCP as utility process
@@ -376,10 +312,7 @@ function brokerInterProcessPorts(): void {
 
 app
   .whenReady()
-  .then(async () => {
-    // Reserve ephemeral ports for services and generate auth token.
-    servicePorts = await reserveServicePorts()
-
+  .then(() => {
     // In production, register the custom laborer:// protocol handler
     // that serves the built frontend from disk.
     if (!isDev) {
@@ -396,77 +329,38 @@ app
       }
     }
 
-    // In production, spawn sidecar services with health monitoring.
-    // In dev mode, services are run separately via `turbo dev`.
-    if (!isDev) {
-      sidecarManager = new SidecarManager(servicePorts)
-      healthMonitor = new HealthMonitor(sidecarManager, servicePorts)
+    // Create the utility process manager for MessagePort-based services.
+    // All services run as utility processes in both dev and production.
+    utilityProcessManager = new UtilityProcessManager()
 
-      // Create the utility process manager for MessagePort-based services.
-      // During migration, this coexists with sidecarManager. Services will
-      // be moved from sidecar (HTTP) to utility process (MessagePort) one
-      // at a time in subsequent issues.
-      utilityProcessManager = new UtilityProcessManager()
+    // Create the lifecycle monitor for utility process health monitoring.
+    // Uses native process events and heartbeat messages instead of HTTP
+    // health polling.
+    lifecycleMonitor = new LifecycleMonitor(utilityProcessManager)
 
-      // Create the lifecycle monitor for utility process health monitoring.
-      // Replaces HealthMonitor for MessagePort-based services: uses native
-      // process events and heartbeat messages instead of HTTP health polling.
-      lifecycleMonitor = new LifecycleMonitor(utilityProcessManager)
+    // Wire bootstrap messages (ready, heartbeat) from utility processes
+    // to the lifecycle monitor for startup detection and liveness.
+    utilityProcessManager.setMessageHandler((name, message) => {
+      if (message.type === 'ready') {
+        lifecycleMonitor?.handleReady(name)
+        brokerInterProcessPorts()
+      } else if (message.type === 'heartbeat') {
+        lifecycleMonitor?.handleHeartbeat(name)
+      }
+    })
 
-      // Wire bootstrap messages (ready, heartbeat) from utility processes
-      // to the lifecycle monitor for startup detection and liveness.
-      utilityProcessManager.setMessageHandler((name, message) => {
-        if (message.type === 'ready') {
-          lifecycleMonitor?.handleReady(name)
-          brokerInterProcessPorts()
-        } else if (message.type === 'heartbeat') {
-          lifecycleMonitor?.handleHeartbeat(name)
-        }
-      })
+    // Share the utility process manager with the IPC module so the
+    // renderer can acquire direct MessagePort connections to services.
+    setUtilityProcessManager(utilityProcessManager)
 
-      // Share the utility process manager with the IPC module so the
-      // renderer can acquire direct MessagePort connections to services.
-      setUtilityProcessManager(utilityProcessManager)
-
-      // Fork utility processes via the lifecycle monitor, which handles
-      // startup detection, crash recovery, and status events.
-      // The returned MessagePortMain for each is available via
-      // utilityProcessManager.getPort(name) for RPC communication.
-      // During migration, these run alongside the HTTP-based sidecars
-      // (which are still used by the renderer). The renderer will be
-      // switched to use MessagePort-based services in issues #9, #12.
-      lifecycleMonitor.forkAllAndMonitor([
-        'terminal',
-        'server',
-        'file-watcher',
-        'mcp',
-      ])
-
-      // Forward sidecar status events to the renderer.
-      healthMonitor.setStatusListener((status) => {
-        if (status.state === 'crashed') {
-          console.error(
-            `[main] Sidecar ${status.name} crashed: ${status.error}`
-          )
-        }
-
-        for (const window of BrowserWindow.getAllWindows()) {
-          window.webContents.send('sidecar:status', status)
-        }
-      })
-
-      // Spawn all three sidecars in parallel without blocking the window.
-      // Each sidecar reports healthy independently via status events.
-      // The renderer's lifecycle phase service advances phases as each
-      // sidecar becomes ready (Starting -> Ready -> Restored -> Eventually).
-      healthMonitor.spawnServices().then((servicesOk) => {
-        if (!servicesOk) {
-          console.error(
-            '[main] One or more services failed to become healthy on startup'
-          )
-        }
-      })
-    }
+    // Fork utility processes via the lifecycle monitor, which handles
+    // startup detection, crash recovery, and status events.
+    lifecycleMonitor.forkAllAndMonitor([
+      'terminal',
+      'server',
+      'file-watcher',
+      'mcp',
+    ])
 
     // Register x-github-desktop-dev-auth:// as a protocol handler so
     // the OAuth callback from GitHub lands back in this app.
@@ -489,16 +383,15 @@ app
     })
 
     // Wire sidecar restart requests from the renderer to the lifecycle
-    // monitor, utility process manager, health monitor, or sidecar manager.
+    // monitor or utility process manager.
     setRestartSidecarHandler(async (name) => {
       const validNames = ['server', 'terminal', 'file-watcher', 'mcp'] as const
       type ValidName = (typeof validNames)[number]
       if (!validNames.includes(name as ValidName)) {
         return
       }
-      // Try the lifecycle monitor first (for utility process services with
-      // proper health tracking), then fall back to direct restart, then to
-      // the HTTP-based health monitor / sidecar manager.
+      // Try the lifecycle monitor first (proper health tracking),
+      // then fall back to direct restart via the utility process manager.
       if (
         lifecycleMonitor &&
         utilityProcessManager?.isRunning(name as ValidName)
@@ -506,10 +399,6 @@ app
         await lifecycleMonitor.manualRestart(name as ValidName)
       } else if (utilityProcessManager?.isRunning(name as ValidName)) {
         await utilityProcessManager.restart(name as ValidName)
-      } else if (healthMonitor) {
-        await healthMonitor.manualRestart(name as ValidName)
-      } else if (sidecarManager) {
-        await sidecarManager.restart(name as ValidName)
       }
     })
 
@@ -575,7 +464,7 @@ app.on('window-all-closed', () => {
 
 /**
  * Shutdown handler: cancel pending restarts, unregister global shortcut,
- * destroy the tray, then kill all sidecar child processes before the app exits.
+ * destroy the tray, then kill all utility processes before the app exits.
  */
 function shutdown(): void {
   if (isQuitting) {
@@ -595,18 +484,10 @@ function shutdown(): void {
   // Stop auto-update timers.
   shutdownAutoUpdater()
 
-  // Stop monitors first — cancels pending restart timers and heartbeat
-  // timers so killed processes aren't immediately re-spawned.
+  // Stop the lifecycle monitor first — cancels pending restart timers and
+  // heartbeat timers so killed processes aren't immediately re-spawned.
   if (lifecycleMonitor) {
     lifecycleMonitor.shutdown()
-  }
-
-  if (healthMonitor) {
-    healthMonitor.shutdown()
-  }
-
-  if (sidecarManager) {
-    sidecarManager.killAll()
   }
 
   // Kill all utility processes (MessagePort-based services).

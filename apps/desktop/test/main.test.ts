@@ -127,18 +127,6 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     triggerInstallUpdate: vi.fn(),
   }))
   vi.doMock('../src/fix-path.js', () => ({ fixPath: vi.fn() }))
-  vi.doMock('../src/health.js', () => ({
-    HealthMonitor: class {
-      setStatusListener = noop
-      spawnServices(): Promise<boolean> {
-        return Promise.resolve(true)
-      }
-      manualRestart(): Promise<void> {
-        return Promise.resolve()
-      }
-      shutdown = noop
-    },
-  }))
   vi.doMock('../src/ipc.js', () => ({
     getWorkspaceWindowRegistry: () => ({ remove: vi.fn() }),
     registerIpcHandlers: registerIpcHandlersMock,
@@ -147,30 +135,43 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     setInstallUpdateHandler: vi.fn(),
     setRestartSidecarHandler: vi.fn(),
     setTrayCountHandler: vi.fn(),
+    setUtilityProcessManager: vi.fn(),
+  }))
+  vi.doMock('../src/utility-process-manager.js', () => ({
+    UtilityProcessManager: class {
+      fork = vi.fn()
+      kill = vi.fn()
+      restart = vi.fn()
+      killAll = vi.fn()
+      setMessageHandler = vi.fn()
+      isRunning = vi.fn(() => false)
+      getPort = vi.fn()
+      getProcess = vi.fn()
+      brokerInterProcessPort = vi.fn()
+    },
+  }))
+  vi.doMock('../src/lifecycle-monitor.js', () => ({
+    LifecycleMonitor: class {
+      forkAllAndMonitor = vi.fn()
+      handleReady = vi.fn()
+      handleHeartbeat = vi.fn()
+      manualRestart = vi.fn()
+      isHealthy = vi.fn(() => false)
+      areServicesHealthy = vi.fn(() => false)
+      shutdown = vi.fn()
+    },
   }))
   vi.doMock('../src/menu.js', () => ({
     configureApplicationMenu: vi.fn(),
   }))
-  vi.doMock('../src/ports.js', () => ({
-    reserveServicePorts: async () => ({
-      serverPort: 3100,
-      terminalPort: 3200,
-    }),
-  }))
+
   vi.doMock('../src/protocol.js', () => ({
     DESKTOP_SCHEME: 'laborer',
     registerDesktopProtocol: vi.fn(),
     registerSchemeAsPrivileged: vi.fn(),
     resolveStaticRoot: vi.fn(() => null),
   }))
-  vi.doMock('../src/sidecar.js', () => ({
-    SidecarManager: class {
-      restart(): Promise<void> {
-        return Promise.resolve()
-      }
-      killAll = noop
-    },
-  }))
+
   vi.doMock('../src/tray.js', () => ({
     TrayManager: class {
       create = noop
@@ -180,17 +181,7 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     registerGlobalShortcut: () => () => undefined,
   }))
   vi.doMock('../src/window-identity.js', () => ({
-    buildWindowBootstrapArgs: ({
-      serverUrl,
-      terminalUrl,
-      windowId,
-    }: {
-      readonly serverUrl: string
-      readonly terminalUrl: string
-      readonly windowId: string
-    }) => [
-      `--laborer-server-url=${serverUrl}`,
-      `--laborer-terminal-url=${terminalUrl}`,
+    buildWindowBootstrapArgs: ({ windowId }: { readonly windowId: string }) => [
       `--laborer-window-id=${windowId}`,
     ],
     createWindowId: () => 'new-window-id',

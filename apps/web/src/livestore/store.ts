@@ -10,12 +10,9 @@
  * - **Dedicated worker**: Owns the canonical OPFS SQLite databases
  * - **Shared worker**: Coordinates leader election across tabs
  *
- * Sync transport selection (Issue #11):
- * - **Electron mode**: Main thread acquires a sync MessagePort from the
- *   server utility process via `desktopBridge.acquireSyncPort()`, then
- *   transfers it to the worker. Worker uses `makeMessagePortSync`.
- * - **Browser dev mode**: Worker uses `makeWsSync` over WebSocket to
- *   the Vite proxy at `/rpc`.
+ * Sync transport: Main thread acquires a sync MessagePort from the server
+ * utility process via `desktopBridge.acquireSyncPort()`, then transfers
+ * it to the worker. Worker uses `makeMessagePortSync`.
  *
  * Usage in components:
  * ```tsx
@@ -35,7 +32,7 @@ import { makePersistedAdapter } from '@livestore/adapter-web'
 import LiveStoreSharedWorker from '@livestore/adapter-web/shared-worker?sharedworker'
 import { useStore } from '@livestore/react'
 import { unstable_batchedUpdates as batchUpdates } from 'react-dom'
-import { getDesktopBridge, isElectron, serverWsSyncUrl } from '../lib/desktop'
+import { getDesktopBridge } from '../lib/desktop'
 import LiveStoreWorkerUrl from '../livestore.worker.ts?worker&url'
 
 /**
@@ -57,72 +54,46 @@ if (resetPersistence) {
 }
 
 /**
- * Detect whether we should use MessagePort sync (Electron production).
- *
- * In Electron production, the DesktopBridge provides `acquireSyncPort()`
- * which returns a MessagePort connected to the server utility process.
- * In dev mode (browser or Electron dev), we use WebSocket sync.
- */
-const USE_MESSAGEPORT_SYNC = isElectron() && import.meta.env.PROD
-
-/**
  * Create the LiveStore dedicated worker.
  *
- * In Electron MessagePort mode, the worker URL includes
- * `?transport=messageport` to signal the worker should wait for a
- * MessagePort transfer instead of creating a WebSocket connection.
+ * The worker URL includes `?transport=messageport` to signal the worker
+ * should wait for a MessagePort transfer instead of creating a WebSocket
+ * connection.
  *
- * In browser/dev mode, the worker URL may include `?syncUrl=<wsUrl>`
- * for non-origin-based sync URLs (Electron production with HTTP fallback).
- *
- * After creating the worker, in MessagePort mode, the main thread
- * acquires a sync port from the server utility process and transfers
- * it to the worker.
+ * After creating the worker, the main thread acquires a sync port from
+ * the server utility process and transfers it to the worker.
  */
 function createLiveStoreWorker(options: { name: string }): Worker {
   let workerUrl = LiveStoreWorkerUrl
 
-  if (USE_MESSAGEPORT_SYNC) {
-    // Signal the worker to wait for a MessagePort transfer.
-    const separator = workerUrl.includes('?') ? '&' : '?'
-    workerUrl = `${workerUrl}${separator}transport=messageport`
+  // Signal the worker to wait for a MessagePort transfer.
+  const separator = workerUrl.includes('?') ? '&' : '?'
+  workerUrl = `${workerUrl}${separator}transport=messageport`
 
-    const worker = new Worker(workerUrl, { type: 'module', name: options.name })
+  const worker = new Worker(workerUrl, { type: 'module', name: options.name })
 
-    // Acquire a sync MessagePort from the server utility process and
-    // transfer it to the worker. This happens asynchronously — the worker
-    // waits for the port before initializing LiveStore.
-    const bridge = getDesktopBridge()
-    if (bridge) {
-      bridge
-        .acquireSyncPort()
-        .then((port) => {
-          if (port) {
-            worker.postMessage({ type: 'sync-port' }, [port])
-          } else {
-            console.warn(
-              '[LiveStore.store] Failed to acquire sync port — server utility process may not be running'
-            )
-          }
-        })
-        .catch((error: unknown) => {
-          console.error('[LiveStore.store] Error acquiring sync port:', error)
-        })
-    }
-
-    return worker
+  // Acquire a sync MessagePort from the server utility process and
+  // transfer it to the worker. This happens asynchronously — the worker
+  // waits for the port before initializing LiveStore.
+  const bridge = getDesktopBridge()
+  if (bridge) {
+    bridge
+      .acquireSyncPort()
+      .then((port) => {
+        if (port) {
+          worker.postMessage({ type: 'sync-port' }, [port])
+        } else {
+          console.warn(
+            '[LiveStore.store] Failed to acquire sync port — server utility process may not be running'
+          )
+        }
+      })
+      .catch((error: unknown) => {
+        console.error('[LiveStore.store] Error acquiring sync port:', error)
+      })
   }
 
-  // Browser/dev mode: use WebSocket sync URL injection.
-  const syncUrl = serverWsSyncUrl()
-  const isOriginBased = syncUrl.startsWith(`${globalThis.location.origin}/`)
-
-  if (!isOriginBased) {
-    const separator = workerUrl.includes('?') ? '&' : '?'
-    workerUrl = `${workerUrl}${separator}syncUrl=${encodeURIComponent(syncUrl)}`
-  }
-
-  return new Worker(workerUrl, { type: 'module', name: options.name })
+  return worker
 }
 
 /**

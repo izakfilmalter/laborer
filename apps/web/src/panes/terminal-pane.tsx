@@ -9,10 +9,8 @@
  * 4. This component receives data via the terminal connection hook
  * 5. Output is written directly to xterm.js Terminal instance
  *
- * Transport selection:
- * - **Electron**: MessagePort data channel via `desktopBridge.acquireTerminalDataPort()`
- *   (zero-copy ArrayBuffer transfer, no HTTP/WebSocket overhead)
- * - **Browser dev**: WebSocket connection via Vite proxy
+ * Transport: MessagePort data channel via `desktopBridge.acquireTerminalDataPort()`
+ * (zero-copy ArrayBuffer transfer, no HTTP/WebSocket overhead)
  *
  * Input flow:
  * - Keystrokes captured by xterm.js `onData` callback
@@ -21,7 +19,7 @@
  *
  * Terminal status:
  * Terminal status is derived from control messages sent by the terminal
- * service (same format for both MessagePort and WebSocket):
+ * service over the MessagePort data channel:
  * - `{"type":"status","status":"running"}` — on initial connection
  * - `{"type":"status","status":"stopped","exitCode":N}` — PTY process exited
  * - `{"type":"status","status":"restarted"}` — terminal was restarted
@@ -35,8 +33,7 @@
  *
  * @see packages/terminal/src/services/terminal-data-channel.ts — MessagePort endpoint
  * @see packages/terminal/src/services/terminal-manager.ts — headless terminal + subscribers
- * @see apps/web/src/hooks/use-terminal-messageport.ts — MessagePort hook (Electron)
- * @see apps/web/src/hooks/use-terminal-websocket.ts — WebSocket hook (browser dev)
+ * @see apps/web/src/hooks/use-terminal-messageport.ts — MessagePort hook
  * @see apps/web/src/lib/keybinds.ts — centralized keybind definitions
  * @see Issue #9: Renderer terminal UI wired to MessagePort
  */
@@ -56,9 +53,8 @@ import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
 import type { TerminalStatus } from '@/hooks/use-terminal-messageport'
 import { useTerminalMessagePort } from '@/hooks/use-terminal-messageport'
-import { useTerminalWebSocket } from '@/hooks/use-terminal-websocket'
 import { useWhenPhase } from '@/hooks/use-when-phase'
-import { isElectron, openExternalUrl } from '@/lib/desktop'
+import { openExternalUrl } from '@/lib/desktop'
 import { isPrefixKey, shouldBypassTerminal } from '@/lib/keybinds'
 
 /** Module-level mutation atom for terminal.resize — shared across all TerminalPane instances. */
@@ -86,13 +82,7 @@ const PREFIX_MODE_TIMEOUT = 1500
  */
 const RESIZE_DEBOUNCE_MS = 100
 
-/**
- * Whether to use MessagePort transport (Electron) or WebSocket (browser dev).
- * Determined once at module load — stable for the lifetime of the page.
- */
-const USE_MESSAGEPORT = isElectron()
-
-/** Connection result shape — shared by both MessagePort and WebSocket hooks. */
+/** Connection result shape for the MessagePort data channel hook. */
 interface TerminalConnection {
   readonly send: (data: string) => void
   readonly status: 'connecting' | 'connected' | 'disconnected'
@@ -161,19 +151,11 @@ function TerminalConnectingPlaceholder() {
 }
 
 /**
- * Inner terminal pane component — selects the appropriate data channel
- * transport based on the runtime context:
- * - Electron: MessagePort via `useTerminalMessagePort`
- * - Browser dev: WebSocket via `useTerminalWebSocket`
- *
- * Both transports have identical interfaces so the shared renderer
- * component works with either.
+ * Inner terminal pane component — connects via MessagePort data channel
+ * and renders the terminal.
  */
 function TerminalPaneContent(props: TerminalPaneProps) {
-  if (USE_MESSAGEPORT) {
-    return <TerminalPaneMessagePort {...props} />
-  }
-  return <TerminalPaneWebSocket {...props} />
+  return <TerminalPaneMessagePort {...props} />
 }
 
 /** Connects via MessagePort and renders the terminal. */
@@ -201,46 +183,6 @@ function TerminalPaneMessagePort({
   )
 
   const connection = useTerminalMessagePort({
-    terminalId,
-    onData: handleTerminalData,
-    onStatus: handleTerminalStatus,
-  })
-
-  return (
-    <TerminalPaneRenderer
-      connection={connection}
-      onTitleChange={onTitleChange}
-      terminalId={terminalId}
-      terminalRef={terminalRef}
-    />
-  )
-}
-
-/** Connects via WebSocket and renders the terminal. */
-function TerminalPaneWebSocket({
-  terminalId,
-  onTerminalExit,
-  onTitleChange,
-}: TerminalPaneProps) {
-  const terminalRef = useRef<Terminal | null>(null)
-
-  const handleTerminalData = useCallback((data: string) => {
-    terminalRef.current?.write(data)
-  }, [])
-
-  const handleTerminalStatus = useCallback(
-    (status: TerminalStatus, _exitCode: number | undefined) => {
-      if (status === 'restarted') {
-        terminalRef.current?.clear()
-      }
-      if (status === 'stopped') {
-        onTerminalExit?.()
-      }
-    },
-    [onTerminalExit]
-  )
-
-  const connection = useTerminalWebSocket({
     terminalId,
     onData: handleTerminalData,
     onStatus: handleTerminalStatus,

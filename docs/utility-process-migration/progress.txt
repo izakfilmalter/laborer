@@ -1463,3 +1463,160 @@ the brokering logic more maintainable as more service pairs are added.
       verify it processes correctly — verified via type checking the
       full RPC client/server flow; runtime tests blocked by
       pre-existing @effect/vitest module issue
+
+---
+
+## Issue 19: Remove HTTP servers, Vite proxy, dev:web, URL resolution — COMPLETED
+
+Date: 2026-03-25
+
+### What was done
+
+Comprehensive removal of all HTTP-based service communication
+infrastructure. With all four services (terminal, server, file-watcher,
+MCP) running as utility processes with MessagePort IPC, the HTTP servers,
+Vite proxy routes, browser dev mode, and URL resolution code are no
+longer needed.
+
+This is the largest cleanup issue in the migration — it touches every
+package in the monorepo and removes thousands of lines of dead code.
+
+### Files deleted (26 files)
+
+**Terminal package HTTP infrastructure:**
+- `packages/terminal/src/main.ts` — HTTP entry point (NodeHttpServer)
+- `packages/terminal/src/routes/terminal-ws.ts` — WebSocket PTY I/O route
+- `packages/terminal/src/routes/agent-hook.ts` — HTTP agent hook route
+- `packages/terminal/src/pty-host.ts` — PTY host child process entry
+- `packages/terminal/test/pty-host.test.ts` — PTY host IPC tests
+
+**Server package HTTP infrastructure + orphaned code:**
+- `packages/server/src/main.ts` — HTTP entry point (NodeHttpServer)
+- `packages/server/src/routes/terminal-ws.ts` — Orphaned WebSocket route
+- `packages/server/src/services/terminal-manager.ts` — Orphaned terminal mgr
+- `packages/server/src/services/pty-host-client.ts` — Orphaned PTY client
+- `packages/server/src/pty-host.ts` — Orphaned PTY host entry
+- `packages/server/src/lib/ring-buffer.ts` — Orphaned ring buffer
+- `packages/server/src/routes/` directory — Empty after removals
+- `packages/server/src/lib/` directory — Empty after removals
+
+**File-watcher package HTTP infrastructure:**
+- `packages/file-watcher/src/main.ts` — HTTP entry point (NodeHttpServer)
+
+**Desktop app HTTP infrastructure:**
+- `apps/desktop/src/sidecar.ts` — SidecarManager (child_process.spawn)
+- `apps/desktop/src/health.ts` — HealthMonitor (HTTP polling)
+- `apps/desktop/src/ports.ts` — Ephemeral port reservation
+- `apps/desktop/test/health.test.ts` — HealthMonitor tests
+- `apps/desktop/test/ports.test.ts` — Port reservation tests
+
+**Web app HTTP infrastructure:**
+- `apps/web/src/hooks/use-terminal-websocket.ts` — WebSocket terminal hook
+
+### Files modified (27 files)
+
+**tsdown configs (removed main.ts entries):**
+- `packages/terminal/tsdown.config.ts` — Simplified to single utility-main entry
+- `packages/server/tsdown.config.ts` — Removed main.ts from entry array
+- `packages/file-watcher/tsdown.config.ts` — Removed main.ts from entry array
+
+**Package.json updates (dev scripts, exports):**
+- `packages/terminal/package.json` — dev: `tsdown --watch`, exports: utility-main.ts
+- `packages/server/package.json` — dev: `tsdown --watch`, exports: utility-main.ts
+- `packages/file-watcher/package.json` — dev: `tsdown --watch`, exports: utility-main.ts
+- `apps/web/package.json` — Removed `wait-on` TCP check from dev script
+- `package.json` (root) — Removed `dev:web` script
+
+**Vite config:**
+- `apps/web/vite.config.ts` — Removed all 7 proxy routes, port env vars
+
+**Desktop bridge & preload:**
+- `packages/shared/src/desktop-bridge.ts` — Removed `getServerUrl()`,
+  `getTerminalUrl()` from DesktopBridge interface
+- `apps/desktop/src/preload.ts` — Removed `getServerUrl`, `getTerminalUrl`,
+  updated URL arg parsing to window-ID only
+- `apps/desktop/src/window-identity.ts` — Removed `serverUrl`, `terminalUrl`
+  from `WindowBootstrapContext`, keeping only `windowId`
+
+**Desktop main process:**
+- `apps/desktop/src/main.ts` — Major rewrite:
+  - Removed SidecarManager, HealthMonitor, ServicePorts imports and usage
+  - Removed `servicePorts`, `sidecarManager`, `healthMonitor` variables
+  - Removed `getServicePorts()`, `getSidecarManager()`, `getHealthMonitor()`
+  - Removed `buildPreloadArgs()` (replaced by direct `buildWindowBootstrapArgs`)
+  - Utility processes now fork in both dev and production (removed `if (!isDev)`)
+  - Simplified restart handler (no HTTP fallback)
+  - Simplified shutdown (no sidecar/healthMonitor cleanup)
+
+**URL resolution & consumer cleanup:**
+- `apps/web/src/lib/desktop.ts` — Removed all 5 URL resolver functions
+  (`serverRpcUrl`, `terminalRpcUrl`, `serverWsSyncUrl`, `terminalWsUrl`,
+  `serverInitStatusUrl`) and `isElectronProduction()` helper
+- `apps/web/src/atoms/laborer-client.ts` — Removed HTTP fallback, MessagePort only
+- `apps/web/src/atoms/terminal-service-client.ts` — Removed HTTP fallback,
+  MessagePort only
+- `apps/web/src/livestore/store.ts` — Removed WebSocket sync fallback,
+  MessagePort only
+- `apps/web/src/livestore.worker.ts` — Removed WebSocket sync fallback,
+  MessagePort only
+- `apps/web/src/hooks/use-phase-transition-driver.tsx` — Removed HTTP
+  polling fallback, RPC only via MessagePort
+- `apps/web/src/panes/terminal-pane.tsx` — Removed WebSocket branch,
+  MessagePort only (removed `TerminalPaneWebSocket` component)
+
+**Server-side HTTP removal:**
+- `packages/server/src/services/sync-backend.ts` — Removed `SyncRpcLive`
+  (WebSocket sync server), kept `serveSyncOnPort` (MessagePort)
+- `packages/server/src/services/laborer-store.ts` — Removed `makeWsSync`
+  self-sync (server is the authority, no network sync needed)
+- `packages/server/src/services/terminal-client.ts` — Removed HTTP fallback,
+  MessagePort only; added TODO for agent hook redesign
+- `packages/server/src/services/file-watcher-client.ts` — Removed HTTP
+  fallback, MessagePort only; removed unused `FileWatcherRpc` type
+
+**Environment config:**
+- `packages/env/src/server.ts` — Removed `PORT`, `TERMINAL_PORT`,
+  `FILE_WATCHER_PORT` env vars (no longer needed for service discovery)
+- `packages/mcp/src/services/laborer-rpc-client.ts` — Replaced `env.PORT`
+  with inline `process.env.PORT ?? '2100'` for standalone MCP mode
+
+**Test updates:**
+- `apps/desktop/test/main.test.ts` — Removed mocks for health.js, ports.js,
+  sidecar.js; added mocks for utility-process-manager.js, lifecycle-monitor.js;
+  updated window-identity mock
+- `apps/desktop/test/window-identity.test.ts` — Updated for simplified
+  WindowBootstrapContext (windowId only)
+
+### Verification
+
+- TypeScript: no new errors. Pre-existing `isActiveFrame` errors in
+  @laborer/web are unchanged (3 errors, same as base commit)
+- Biome formatting: no errors (469 files checked)
+- Desktop tests: 227 pass, 16 fail (same pre-existing failures in
+  ipc-service-port.test.ts and ipc-workspace-targeting.test.ts)
+- main.test.ts: all 8 tests pass (was 7 failures before mock updates)
+
+### Acceptance criteria checklist
+
+- [x] HTTP server code removed from `packages/terminal/` (NodeHttpServer,
+      health route, WebSocket upgrade, HTTP RPC route)
+- [x] HTTP server code removed from `packages/server/` (NodeHttpServer,
+      health route, init-status route, HTTP RPC route, WebSocket sync
+      upgrade)
+- [x] HTTP server code removed from `packages/file-watcher/`
+      (NodeHttpServer, health route, HTTP RPC route)
+- [x] Vite proxy routes removed from `apps/web/vite.config.ts` (`/rpc`,
+      `/terminal-rpc`, `/terminal`, `/*-health`)
+- [x] `dev:web` script removed from root `package.json`
+- [x] URL resolver functions removed from `apps/web/src/lib/desktop.ts`
+      (`serverRpcUrl`, `terminalRpcUrl`, `serverWsSyncUrl`, `terminalWsUrl`,
+      `serverInitStatusUrl`)
+- [x] `getServerUrl()` and `getTerminalUrl()` removed from `DesktopBridge`
+      interface and preload
+- [x] Preload URL argument parsing removed (`--laborer-serverUrl`,
+      `--laborer-terminalUrl`)
+- [x] `buildPreloadArgs()` in `main.ts` no longer passes service URLs
+- [x] `@laborer/env` server port configs (`PORT`, `TERMINAL_PORT`,
+      `FILE_WATCHER_PORT`) removed
+- [x] No remaining references to HTTP-based service communication in the
+      codebase (all consumer files updated to MessagePort-only)

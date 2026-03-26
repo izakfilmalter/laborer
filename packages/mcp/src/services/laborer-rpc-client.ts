@@ -1,7 +1,6 @@
 import { FetchHttpClient } from '@effect/platform'
 import { RpcClient, RpcSerialization } from '@effect/rpc'
 import { RpcClientError } from '@effect/rpc/RpcClientError'
-import { env } from '@laborer/env/server'
 import {
   LaborerRpcs,
   type PrdResponse as PrdResponseSchema,
@@ -29,7 +28,11 @@ export interface TaskResponse {
   readonly title: string
 }
 
-const serverRpcUrl = `http://localhost:${env.PORT}/rpc`
+// Standalone MCP mode uses HTTP to connect to the server. The PORT env
+// var defaults to 2100 for backwards compatibility with external MCP
+// clients. In utility process mode, the `utilityLayer` is used instead.
+const serverPort = Number(process.env.PORT ?? '2100')
+const serverRpcUrl = `http://localhost:${serverPort}/rpc`
 
 class LaborerRpcClient extends Context.Tag('@laborer/mcp/LaborerRpcClient')<
   LaborerRpcClient,

@@ -1,0 +1,52 @@
+## Issue 1: Bootstrap entry point script — COMPLETED
+
+Date: 2026-03-25
+
+### What was done
+
+Created the bootstrap entry point script that all utility processes will use
+when forked via `utilityProcess.fork()`. This is the foundational piece that
+enables the entire utility process migration.
+
+### Files created
+
+- `apps/desktop/src/utility-process-bootstrap.ts` — Bootstrap script that:
+  - Detects utility process context via `process.parentPort`
+  - Reads `LABORER_ENTRYPOINT` env var and dynamically imports the service module
+  - Sends `{ type: 'ready' }` to parent on successful load
+  - Sends `{ type: 'error', message }` and exits with code 1 on failure
+  - Uses `return` after `process.exit()` for testability
+
+- `apps/desktop/src/utility-process-types.ts` — Shared types for the bootstrap
+  protocol (`UtilityProcessReadyMessage`, `UtilityProcessErrorMessage`,
+  `UtilityProcessBootstrapMessage`)
+
+- `apps/desktop/test/utility-process-bootstrap.test.ts` — 4 unit tests:
+  1. Exits with code 1 when process.parentPort is not available
+  2. Exits with code 1 and sends error when LABORER_ENTRYPOINT is not set
+  3. Sends ready message when entrypoint loads successfully
+  4. Sends error message and exits with code 1 when entrypoint fails to load
+
+- `apps/desktop/test/fixtures/dummy-entrypoint.mjs` — Test fixture
+
+### Files modified
+
+- `apps/desktop/tsdown.config.ts` — Added bootstrap as third build entry,
+  producing `dist-electron/utility-process-bootstrap.cjs`
+
+### Verification
+
+- All 163 desktop tests pass (including 4 new bootstrap tests)
+- TypeScript: no errors
+- Biome formatting: no new errors (pre-existing issues in .opencode/package.json
+  and laborer.json are unrelated)
+- Build: produces utility-process-bootstrap.cjs (1.84 kB)
+
+### Acceptance criteria checklist
+
+- [x] A bootstrap script exists that can be passed to `utilityProcess.fork()`
+- [x] The bootstrap reads `LABORER_ENTRYPOINT` from the environment and dynamically imports it
+- [x] The bootstrap detects the utility process context via `process.parentPort`
+- [x] After the entrypoint module is loaded, a `{ type: 'ready' }` message is sent to the parent process
+- [x] If the entrypoint fails to load, an error message is sent to the parent and the process exits with code 1
+- [x] A test verifies: fork the bootstrap with a dummy entrypoint, receive the ready message, kill the process

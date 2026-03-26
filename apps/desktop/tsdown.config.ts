@@ -19,4 +19,12 @@ export default defineConfig([
     entry: ['src/preload.ts'],
     noExternal: (id: string) => id.startsWith('@laborer/'),
   },
+  {
+    // Bootstrap for utility processes — standalone entry loaded by
+    // utilityProcess.fork(). Uses CJS like main/preload so it's
+    // consistent, but uses dynamic import() to load ESM sidecar modules.
+    ...shared,
+    entry: ['src/utility-process-bootstrap.ts'],
+    noExternal: (id: string) => id.startsWith('@laborer/'),
+  },
 ])

@@ -4,8 +4,8 @@ Parent PRD: [PRD.md](./PRD.md)
 
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
-| 1 | Bootstrap entry point script | None | Ready |
-| 2 | UtilityProcessManager core (fork, kill, restart) | #1 | Blocked |
+| 1 | Bootstrap entry point script | None | Done |
+| 2 | UtilityProcessManager core (fork, kill, restart) | #1 | Ready |
 | 3 | MessagePort Effect RPC transport (server side) | None | Ready |
 | 4 | MessagePort Effect RPC transport (client side) | #3 | Blocked |
 | 5 | Preload MessagePort acquisition | #2 | Blocked |
@@ -37,12 +37,12 @@ This follows VS Code's `bootstrap-fork.ts` pattern (ref: `.reference/vscode/src/
 
 ### Acceptance criteria
 
-- [ ] A bootstrap script exists that can be passed to `utilityProcess.fork()` as the module path
-- [ ] The bootstrap reads `LABORER_ENTRYPOINT` from the environment and dynamically imports it
-- [ ] The bootstrap detects the utility process context via `process.parentPort`
-- [ ] After the entrypoint module is loaded, a `{ type: 'ready' }` message is sent to the parent process
-- [ ] If the entrypoint fails to load, an error message is sent to the parent and the process exits with code 1
-- [ ] A test verifies: fork the bootstrap with a dummy entrypoint, receive the ready message, kill the process
+- [x] A bootstrap script exists that can be passed to `utilityProcess.fork()` as the module path
+- [x] The bootstrap reads `LABORER_ENTRYPOINT` from the environment and dynamically imports it
+- [x] The bootstrap detects the utility process context via `process.parentPort`
+- [x] After the entrypoint module is loaded, a `{ type: 'ready' }` message is sent to the parent process
+- [x] If the entrypoint fails to load, an error message is sent to the parent and the process exits with code 1
+- [x] A test verifies: fork the bootstrap with a dummy entrypoint, receive the ready message, kill the process
 
 ### Blocked by
 

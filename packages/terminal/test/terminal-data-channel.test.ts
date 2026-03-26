@@ -165,7 +165,10 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     // Wait for output data to arrive.
     await delay(2000)
 
-    // Should have received at least a status message and screen state.
+    // Should have received at least a status message and some PTY output.
+    // The data channel no longer sends a screenState control message.
+    // Instead, buffered PTY output is replayed directly as raw data
+    // (matching VS Code's _initialDataEvents pattern).
     assert.isTrue(
       receivedMessages.length >= 2,
       `Expected at least 2 messages, got ${receivedMessages.length}: ${JSON.stringify(receivedMessages.slice(0, 3))}`
@@ -178,15 +181,16 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     assert.strictEqual(parsed.type, 'status')
     assert.strictEqual(parsed.status, 'running')
 
-    // Second message should be a screen state snapshot.
-    const secondMsg = receivedMessages[1]
-    assert.strictEqual(typeof secondMsg, 'string')
-    const screenState = JSON.parse(secondMsg as string) as Record<
-      string,
-      unknown
-    >
-    assert.strictEqual(screenState.type, 'screenState')
-    assert.strictEqual(typeof screenState.data, 'string')
+    // Remaining messages should be raw PTY output data (replayed buffer
+    // or live output). These are sent as plain strings, not JSON
+    // control messages.
+    const hasOutput = receivedMessages
+      .slice(1)
+      .some((msg) => typeof msg === 'string' && msg.length > 0)
+    assert.isTrue(
+      hasOutput,
+      'Expected at least one raw PTY output message after status'
+    )
 
     // Clean up.
     rendererPort.close()

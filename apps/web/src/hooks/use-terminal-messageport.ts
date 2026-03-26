@@ -287,10 +287,7 @@ function useTerminalMessagePort({
   }, [terminalId, handleMessage])
 
   const send = useCallback((data: string) => {
-    const port = portRef.current
-    if (port) {
-      port.postMessage(data)
-    }
+    portRef.current?.postMessage(data)
   }, [])
 
   return { send, status: connectionStatus, terminalStatus }

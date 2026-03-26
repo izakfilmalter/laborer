@@ -215,9 +215,17 @@ function setupSessionPersistence(
           case 'Spawned': {
             persistence.registerTerminal(event.terminal.id, 80, 24)
 
-            yield* tm.subscribe(event.terminal.id, (data: string) => {
-              persistence.writeOutput(event.terminal.id, data)
-            })
+            // Subscribe with replay=false so the session persistence
+            // subscriber does NOT drain the replay buffer. The buffer
+            // must remain intact for the renderer's data channel, which
+            // subscribes later with replay=true (the default).
+            yield* tm.subscribe(
+              event.terminal.id,
+              (data: string) => {
+                persistence.writeOutput(event.terminal.id, data)
+              },
+              { replay: false }
+            )
             break
           }
 
@@ -302,23 +310,11 @@ async function main(): Promise<void> {
   // dropping messages that arrive during initialization.
   parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
     const data = event.data as { terminalId?: string; type?: string }
-    console.log(
-      '[terminal-utility] parentPort message:',
-      data?.type,
-      'ports:',
-      event.ports?.length ?? 0,
-      'hasHandler:',
-      !!messageHandler
-    )
     if (
       data?.type === 'terminal-data-port' &&
       typeof data.terminalId === 'string' &&
       event.ports.length > 0
     ) {
-      console.log(
-        '[terminal-utility] Received data port for terminal:',
-        data.terminalId
-      )
       const dataPort = event.ports[0] as RpcMessagePort
       // Do NOT call start() here — the data channel will call start()
       // after attaching its message listener. Starting before a listener
@@ -335,9 +331,6 @@ async function main(): Promise<void> {
       }
     } else if (data?.type === 'port' && event.ports.length > 0) {
       const additionalRpcPort = event.ports[0] as RpcMessagePort
-      console.log(
-        '[terminal-utility] Serving TerminalRpcs on additional port (inter-process)'
-      )
       const msg: BufferedMessage = { type: 'port', port: additionalRpcPort }
       if (messageHandler) {
         messageHandler(msg)

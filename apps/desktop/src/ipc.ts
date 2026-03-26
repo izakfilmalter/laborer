@@ -591,9 +591,6 @@ export function registerIpcHandlers(
     }
 
     const { port1: rendererPort, port2: utilityPort } = new MessageChannelMain()
-    console.log(
-      `[ipc] acquireTerminalDataPort: terminalId=${terminalId} nonce=${nonce} — sending utilityPort to terminal, rendererPort to renderer`
-    )
     utilityProcess.postMessage({ type: 'terminal-data-port', terminalId }, [
       utilityPort,
     ])

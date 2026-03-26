@@ -8,7 +8,10 @@
  *
  * Each headless terminal:
  * - Receives all PTY output in parallel with live subscribers
- * - Responds to device queries (DA1/DSR) by forwarding responses to the PTY
+ * - Uses `disableStdin: true` to suppress device query responses
+ *   (DA1/DSR) — only the renderer xterm.js handles these (matches
+ *   VS Code's pattern where the headless XtermSerializer never
+ *   subscribes to onData)
  * - Is resized in sync with the real PTY
  * - Provides `getScreenState()` for compact VT escape sequence serialization
  * - Detects terminal title changes via OSC 0/2 escape sequences for
@@ -37,19 +40,25 @@ const { Terminal } = XtermHeadless
 
 /**
  * Per-terminal headless state. Tracks the headless xterm instance,
- * serialization addon, and disposables for the onData handler
- * (device query responses) and OSC title/prompt handlers.
+ * serialization addon, and disposables for OSC title/prompt handlers.
+ *
+ * The headless terminal uses `disableStdin: true` to suppress device
+ * query responses (DA1/DSR). This matches VS Code's pattern where only
+ * the renderer xterm.js generates responses — the headless terminal is
+ * a passive mirror. Without this, both the headless and renderer xterm
+ * would respond to DA1/DSR queries, causing duplicate responses that
+ * corrupt TUI rendering.
  */
 interface HeadlessTerminalState {
-  readonly onDataDisposable: { dispose: () => void }
   readonly oscDisposable: { dispose: () => void }
   readonly serializeAddon: SerializeAddon
   readonly terminal: InstanceType<typeof Terminal>
 }
 
 /**
- * Callback for writing device query responses back to the PTY.
- * Called when the headless terminal generates responses to DA1/DSR queries.
+ * @deprecated No longer used — the headless terminal no longer generates
+ * device query responses. Kept for API compatibility with existing callers
+ * until they are updated.
  */
 type PtyWriteCallback = (data: string) => void
 
@@ -93,16 +102,20 @@ type PromptStateCallback = (
 interface HeadlessTerminalManager {
   /**
    * Create a headless terminal for the given terminal ID.
-   * Initializes `@xterm/headless` with `@xterm/addon-serialize`,
-   * wires the `onData` handler to forward device query responses
-   * (DA1/DSR) back to the PTY, and registers OSC handlers for
-   * title changes (OSC 0/2) and semantic prompt markers (OSC 133).
+   * Initializes `@xterm/headless` with `@xterm/addon-serialize` and
+   * `disableStdin: true` (no device query responses), and registers
+   * OSC handlers for title changes (OSC 0/2) and semantic prompt
+   * markers (OSC 133).
+   *
+   * The `ptyWrite` parameter is accepted for API compatibility but
+   * is no longer used — device query responses are handled exclusively
+   * by the renderer xterm.js (matching VS Code's pattern).
    */
   readonly create: (
     terminalId: string,
     cols: number,
     rows: number,
-    ptyWrite: PtyWriteCallback
+    ptyWrite?: PtyWriteCallback
   ) => void
 
   /**
@@ -167,9 +180,11 @@ interface HeadlessTerminalManagerOptions {
  * Create a new HeadlessTerminalManager instance.
  *
  * The manager maintains headless xterm instances in an internal Map.
- * Each instance mirrors PTY output for screen state serialization,
- * responds to device queries on the backend, and detects terminal
- * title changes and semantic prompt markers via OSC escape sequences.
+ * Each instance mirrors PTY output for screen state serialization
+ * and detects terminal title changes and semantic prompt markers
+ * via OSC escape sequences. Device query responses (DA1/DSR) are
+ * suppressed via `disableStdin: true` — only the renderer xterm.js
+ * handles them.
  *
  * @param options - Optional callbacks for title changes and prompt state
  */
@@ -182,12 +197,11 @@ const createHeadlessTerminalManager = (
     terminalId: string,
     cols: number,
     rows: number,
-    ptyWrite: PtyWriteCallback
+    _ptyWrite?: PtyWriteCallback
   ): void => {
     // Dispose existing instance if present (e.g., on restart)
     const existing = terminals.get(terminalId)
     if (existing !== undefined) {
-      existing.onDataDisposable.dispose()
       existing.oscDisposable.dispose()
       existing.terminal.dispose()
     }
@@ -196,14 +210,14 @@ const createHeadlessTerminalManager = (
       allowProposedApi: true,
       cols,
       rows,
-    })
-
-    // Forward device query responses (DA1/DSR) from the headless
-    // terminal back to the PTY. TUI applications send these queries
-    // to detect terminal capabilities; the headless terminal provides
-    // responses even before the frontend renderer mounts.
-    const onDataDisposable = terminal.onData((data: string) => {
-      ptyWrite(data)
+      // Suppress device query responses (DA1/DSR). The renderer
+      // xterm.js handles these exclusively. Without this, both
+      // headless and renderer xterm would respond to DA1/DSR
+      // queries, causing duplicate responses that corrupt TUI
+      // rendering (e.g., OpenCode's alternate screen redraws).
+      // This matches VS Code's pattern where the headless xterm
+      // (XtermSerializer) never subscribes to onData.
+      disableStdin: true,
     })
 
     // Register OSC handlers for title changes and semantic prompt
@@ -253,7 +267,6 @@ const createHeadlessTerminalManager = (
     terminals.set(terminalId, {
       terminal,
       serializeAddon,
-      onDataDisposable,
       oscDisposable,
     })
   }
@@ -283,7 +296,6 @@ const createHeadlessTerminalManager = (
   const dispose = (terminalId: string): void => {
     const state = terminals.get(terminalId)
     if (state !== undefined) {
-      state.onDataDisposable.dispose()
       state.oscDisposable.dispose()
       state.terminal.dispose()
       terminals.delete(terminalId)
@@ -292,7 +304,6 @@ const createHeadlessTerminalManager = (
 
   const disposeAll = (): void => {
     for (const [terminalId, state] of terminals) {
-      state.onDataDisposable.dispose()
       state.oscDisposable.dispose()
       state.terminal.dispose()
       terminals.delete(terminalId)

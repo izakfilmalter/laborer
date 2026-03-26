@@ -120,48 +120,30 @@ function acquirePort(
   requestPayload: Record<string, unknown>
 ): Promise<MessagePort | null> {
   const nonce = crypto.randomUUID()
-  console.log(
-    `[acquirePort] START nonce=${nonce} request=${requestChannel} response=${responseChannel}`
-  )
 
   // Step 1: Install window listener FIRST — must be ready before the
   // IPC response arrives to avoid a race condition.
   const portPromise = new Promise<MessagePort | null>((resolve) => {
     const timeout = setTimeout(() => {
-      console.log(
-        `[acquirePort] TIMEOUT nonce=${nonce} — no port received in 10s`
-      )
       window.removeEventListener('message', handler)
       resolve(null)
     }, 10_000)
 
     const handler = (event: MessageEvent) => {
-      console.log(
-        `[acquirePort] window message: data=${JSON.stringify(event.data)?.slice(0, 100)} ports=${event.ports.length} source=${event.source === window ? 'self' : 'other'}`
-      )
       if (event.data === nonce && event.source === window) {
         clearTimeout(timeout)
         window.removeEventListener('message', handler)
-        const port = event.ports[0] ?? null
-        console.log(
-          `[acquirePort] GOT PORT nonce=${nonce} port=${port} isMessagePort=${port instanceof MessagePort} constructor=${port?.constructor?.name}`
-        )
-        resolve(port)
+        resolve(event.ports[0] ?? null)
       }
     }
     window.addEventListener('message', handler)
-    console.log(`[acquirePort] window listener installed nonce=${nonce}`)
   })
 
   // Step 2: Tell the preload to listen on the responseChannel and
   // relay the port via window.postMessage when it arrives.
-  console.log(
-    `[acquirePort] calling ipcMessagePort.acquire(${responseChannel}, ${nonce})`
-  )
   bridge.ipcMessagePort.acquire(responseChannel, nonce)
 
   // Step 3: Send the request to the main process.
-  console.log(`[acquirePort] calling ipcSend(${requestChannel}, ...)`)
   bridge.ipcSend(requestChannel, { ...requestPayload, nonce })
 
   return portPromise

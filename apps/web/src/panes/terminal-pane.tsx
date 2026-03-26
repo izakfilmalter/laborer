@@ -410,7 +410,7 @@ function TerminalPaneRenderer({
         })
       }
     } catch {
-      // Container may not have dimensions yet
+      // Ignore errors during initial fit (container may have 0 dimensions)
     }
 
     // Keyboard shortcut scope isolation (Issue #80).

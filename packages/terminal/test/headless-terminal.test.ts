@@ -2,7 +2,10 @@
  * Headless Terminal State Manager tests.
  *
  * Tests the headless xterm terminal management module that provides
- * compact screen state serialization and backend device query handling.
+ * compact screen state serialization. The headless terminal uses
+ * `disableStdin: true` to suppress device query responses (DA1/DSR),
+ * matching VS Code's pattern where only the renderer xterm handles
+ * these queries.
  *
  * @see PRD-ghostty-web-migration.md — Module 1: Backend: Headless Terminal State Manager
  * @see Issue #7: Backend: Headless terminal state manager
@@ -11,17 +14,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createHeadlessTerminalManager } from '../src/lib/headless-terminal.js'
-
-/** No-op callback for tests that don't need PTY write responses. */
-// biome-ignore lint/suspicious/noEmptyBlockStatements: intentional no-op for tests
-const noop = (): void => {}
-
-/** Regex matching the start of a DA1 response: ESC [ */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: ESC character is intentional for VT escape sequence detection
-const DA1_RESPONSE_START = /^\x1b\[/
-
-/** Regex matching the end of a DA1 response: ends with 'c' */
-const DA1_RESPONSE_END = /c$/
 
 /** Helper to wait for xterm async processing. */
 const waitForXterm = (ms = 50): Promise<void> =>
@@ -43,7 +35,7 @@ describe('HeadlessTerminalManager', () => {
   it('creates a headless terminal with SerializeAddon without error', () => {
     manager = createHeadlessTerminalManager()
     expect(() => {
-      manager.create('test-1', 80, 24, noop)
+      manager.create('test-1', 80, 24)
     }).not.toThrow()
   })
 
@@ -58,7 +50,7 @@ describe('HeadlessTerminalManager', () => {
 
   it('serializes written text in screen state', async () => {
     manager = createHeadlessTerminalManager()
-    manager.create('test-1', 80, 24, noop)
+    manager.create('test-1', 80, 24)
 
     // Write some text and wait for xterm to process it
     manager.write('test-1', 'Hello, World!')
@@ -73,7 +65,7 @@ describe('HeadlessTerminalManager', () => {
 
   it('returns empty string for terminal with no output', async () => {
     manager = createHeadlessTerminalManager()
-    manager.create('test-1', 80, 24, noop)
+    manager.create('test-1', 80, 24)
 
     // Give a moment for initialization
     await waitForXterm(20)
@@ -85,28 +77,29 @@ describe('HeadlessTerminalManager', () => {
   })
 
   // ---------------------------------------------------------------
-  // Device query handling (DA1/DSR)
+  // Device query handling (DA1/DSR) — suppressed via disableStdin
   // ---------------------------------------------------------------
 
-  it('forwards DA1 device query response back to PTY', async () => {
+  it('does NOT forward DA1 device query responses (disableStdin: true)', async () => {
     manager = createHeadlessTerminalManager()
     const ptyWrite = vi.fn()
 
+    // Even when a ptyWrite callback is provided, the headless
+    // terminal uses disableStdin: true which suppresses all
+    // triggerDataEvent calls (including DA1/DSR responses).
+    // This matches VS Code's pattern where only the renderer
+    // xterm.js handles device queries.
     manager.create('test-1', 80, 24, ptyWrite)
 
     // Send a DA1 query (Primary Device Attributes request)
-    // The headless terminal should respond with its capabilities
     manager.write('test-1', '\x1b[0c')
 
     // xterm processes asynchronously — wait for response
     await waitForXterm()
 
-    // The headless terminal should have forwarded a DA1 response
-    // DA1 responses start with ESC[? and end with c
-    expect(ptyWrite).toHaveBeenCalled()
-    const response = ptyWrite.mock.calls[0]?.[0] as string
-    expect(response).toMatch(DA1_RESPONSE_START)
-    expect(response).toMatch(DA1_RESPONSE_END)
+    // The headless terminal should NOT have forwarded any response
+    // because disableStdin: true prevents triggerDataEvent from firing
+    expect(ptyWrite).not.toHaveBeenCalled()
   })
 
   // ---------------------------------------------------------------
@@ -115,7 +108,7 @@ describe('HeadlessTerminalManager', () => {
 
   it('resizes headless terminal and reflects in serialized state', async () => {
     manager = createHeadlessTerminalManager()
-    manager.create('test-1', 80, 24, noop)
+    manager.create('test-1', 80, 24)
 
     // Write text that fills a line at 80 columns
     const longLine = `${'A'.repeat(80)}${'B'.repeat(10)}`
@@ -153,7 +146,7 @@ describe('HeadlessTerminalManager', () => {
 
   it('serialized state includes alternate screen mode switch', async () => {
     manager = createHeadlessTerminalManager()
-    manager.create('test-1', 80, 24, noop)
+    manager.create('test-1', 80, 24)
 
     // Enter alternate screen mode (used by vim, htop, etc.)
     manager.write('test-1', '\x1b[?1049h')
@@ -177,9 +170,8 @@ describe('HeadlessTerminalManager', () => {
 
   it('disposes a headless terminal cleanly', async () => {
     manager = createHeadlessTerminalManager()
-    const ptyWrite = vi.fn()
 
-    manager.create('test-1', 80, 24, ptyWrite)
+    manager.create('test-1', 80, 24)
     manager.write('test-1', 'Hello')
 
     await waitForXterm()
@@ -205,8 +197,8 @@ describe('HeadlessTerminalManager', () => {
 
   it('disposeAll cleans up all terminals', async () => {
     manager = createHeadlessTerminalManager()
-    manager.create('test-1', 80, 24, noop)
-    manager.create('test-2', 80, 24, noop)
+    manager.create('test-1', 80, 24)
+    manager.create('test-2', 80, 24)
 
     manager.write('test-1', 'Hello 1')
     manager.write('test-2', 'Hello 2')
@@ -225,7 +217,7 @@ describe('HeadlessTerminalManager', () => {
 
   it('re-creating a terminal disposes the old one and creates fresh', async () => {
     manager = createHeadlessTerminalManager()
-    manager.create('test-1', 80, 24, noop)
+    manager.create('test-1', 80, 24)
 
     manager.write('test-1', 'Old content')
     await waitForXterm()
@@ -234,7 +226,7 @@ describe('HeadlessTerminalManager', () => {
     expect(stateBefore).toContain('Old content')
 
     // Re-create with same ID (simulates restart)
-    manager.create('test-1', 80, 24, noop)
+    manager.create('test-1', 80, 24)
 
     await waitForXterm(20)
 

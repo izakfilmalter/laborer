@@ -70,10 +70,22 @@ type OutputSubscriber = (data: string) => void
  */
 interface ManagedTerminal {
   readonly args: readonly string[]
+  /**
+   * Last known column count. Updated on resize so the terminal can
+   * be restarted at the correct dimensions (instead of falling back
+   * to 80x24).
+   */
+  readonly cols: number
   readonly command: string
   readonly cwd: string
   readonly env: Record<string, string>
   readonly id: string
+  /**
+   * Last known row count. Updated on resize so the terminal can be
+   * restarted at the correct dimensions (instead of falling back
+   * to 80x24).
+   */
+  readonly rows: number
   /**
    * PID of the shell process inside the PTY. Set when the PTY Host
    * confirms the spawn. Used to detect whether the shell has child
@@ -91,6 +103,14 @@ interface ManagedTerminal {
  * reconnecting clients can receive screen state from the headless terminal.
  */
 interface TerminalSubscriberState {
+  /**
+   * Buffer of raw PTY output captured before any subscriber connected.
+   * Replayed to the first subscriber on connect, then set to null.
+   *
+   * This matches VS Code's `_initialDataEvents` pattern — no data is
+   * lost between PTY spawn and the renderer's data channel connecting.
+   */
+  replayBuffer: string[] | null
   readonly subscribers: Map<string, OutputSubscriber>
 }
 
@@ -776,7 +796,8 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
      */
     readonly subscribe: (
       terminalId: string,
-      callback: (data: string) => void
+      callback: (data: string) => void,
+      options?: { readonly replay?: boolean }
     ) => Effect.Effect<{ readonly subscriberId: string }, TerminalRpcError>
 
     /** Unsubscribe a WebSocket connection from terminal output. */
@@ -784,6 +805,17 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       terminalId: string,
       subscriberId: string
     ) => Effect.Effect<void>
+
+    /**
+     * Force a full screen redraw by re-issuing the PTY's current
+     * dimensions. This triggers SIGWINCH, causing TUI applications
+     * to perform a complete screen repaint. Used after a data channel
+     * connects to ensure the renderer gets a full initial render
+     * instead of just incremental updates.
+     */
+    readonly forceRedraw: (
+      terminalId: string
+    ) => Effect.Effect<void, TerminalRpcError>
 
     /** Check if a terminal exists (running or stopped). */
     readonly terminalExists: (terminalId: string) => Effect.Effect<boolean>
@@ -1052,6 +1084,9 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         if (state === undefined) {
           state = {
             subscribers: new Map(),
+            // Start buffering PTY output until the first subscriber connects.
+            // This matches VS Code's _initialDataEvents pattern.
+            replayBuffer: [],
           }
           subscriberStates.set(terminalId, state)
         }
@@ -1198,8 +1233,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           workspaceId,
           command,
           args: [...args],
+          cols,
           cwd,
           env: { ...env },
+          rows,
           shellPid: undefined,
           status: 'running',
         }
@@ -1212,11 +1249,11 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
         const subState = getOrCreateSubscriberState(id)
 
-        // Create headless terminal for screen state serialization and
-        // backend device query handling (DA1/DSR).
-        headlessManager.create(id, cols, rows, (data: string) => {
-          ptyHostClient.write(id, data)
-        })
+        // Create headless terminal for screen state serialization.
+        // Device query responses (DA1/DSR) are handled exclusively by
+        // the renderer xterm.js — the headless terminal uses
+        // disableStdin: true to suppress them (matching VS Code).
+        headlessManager.create(id, cols, rows)
 
         ptyHostClient.spawn(
           {
@@ -1236,9 +1273,25 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           // Data callback: write to headless terminal + notify subscribers.
           // No escape sequence buffering — xterm.js handles partial
           // sequences internally (matching VS Code's approach).
+          //
+          // PTY output flows to two destinations:
+          // 1. replayBuffer — captures all output until the renderer's
+          //    data channel subscribes with replay=true (which drains
+          //    and nulls the buffer). This matches VS Code's
+          //    _initialDataEvents pattern — no output is lost between
+          //    PTY spawn and data channel connection.
+          // 2. Live subscribers — internal consumers like session
+          //    persistence that subscribe with replay=false. These
+          //    receive data immediately without affecting the buffer.
           (data: string) => {
             headlessManager.write(id, data)
 
+            // Buffer for future data channel replay (if still active).
+            if (subState.replayBuffer !== null) {
+              subState.replayBuffer.push(data)
+            }
+
+            // Deliver to all live subscribers.
             for (const subscriber of subState.subscribers.values()) {
               try {
                 subscriber(data)
@@ -1383,6 +1436,34 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         // Keep headless terminal in sync with the real PTY dimensions
         // so serialized screen state is always dimensionally accurate.
         headlessManager.resize(terminalId, cols, rows)
+
+        // Store last known dimensions so restart uses the correct size.
+        yield* Ref.update(terminalsRef, (m) => {
+          const next = new Map(m)
+          const existing = next.get(terminalId)
+          if (existing !== undefined) {
+            next.set(terminalId, { ...existing, cols, rows })
+          }
+          return next
+        })
+      })
+
+      // ---------------------------------------------------------------
+      // forceRedraw — re-issue current dimensions to trigger SIGWINCH
+      // ---------------------------------------------------------------
+      const forceRedraw = Effect.fn('TerminalManager.forceRedraw')(function* (
+        terminalId: string
+      ) {
+        const map = yield* Ref.get(terminalsRef)
+        const terminal = map.get(terminalId)
+
+        if (terminal === undefined || terminal.status !== 'running') {
+          return
+        }
+
+        // Re-issue the PTY's current dimensions. This triggers SIGWINCH
+        // which causes TUI apps to perform a full screen redraw.
+        ptyHostClient.resize(terminalId, terminal.cols, terminal.rows)
       })
 
       // ---------------------------------------------------------------
@@ -1612,11 +1693,15 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
           noOscIdleFallbacks.delete(terminalId)
         }
 
+        // Use last known dimensions (stored on resize) instead of
+        // hardcoded 80x24. This ensures restarted TUIs render at the
+        // correct size immediately.
+        const restartCols = terminal.cols
+        const restartRows = terminal.rows
+
         // Re-create headless terminal for the restarted PTY.
         // This disposes the old instance and creates a fresh one.
-        headlessManager.create(terminalId, 80, 24, (data: string) => {
-          ptyHostClient.write(terminalId, data)
-        })
+        headlessManager.create(terminalId, restartCols, restartRows)
 
         // Respawn PTY
         ptyHostClient.spawn(
@@ -1631,20 +1716,27 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
               TERM: 'xterm-256color',
               COLORTERM: 'truecolor',
             } as Record<string, string>,
-            cols: 80,
-            rows: 24,
+            cols: restartCols,
+            rows: restartRows,
           },
           // Data callback: write to headless terminal + notify subscribers.
-          // No escape sequence buffering — xterm.js handles partial
-          // sequences internally (matching VS Code's approach).
+          // Same buffering pattern as spawn — if somehow no subscribers
+          // exist at restart time, data is captured until one connects.
           (data: string) => {
             headlessManager.write(terminalId, data)
 
-            for (const subscriber of restartSubState.subscribers.values()) {
-              try {
-                subscriber(data)
-              } catch {
-                // Subscriber errors silently ignored
+            if (
+              restartSubState.subscribers.size === 0 &&
+              restartSubState.replayBuffer !== null
+            ) {
+              restartSubState.replayBuffer.push(data)
+            } else {
+              for (const subscriber of restartSubState.subscribers.values()) {
+                try {
+                  subscriber(data)
+                } catch {
+                  // Subscriber errors silently ignored
+                }
               }
             }
           },
@@ -1852,13 +1944,41 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       )
 
       // ---------------------------------------------------------------
+      // Subscribe helpers (extracted to reduce cognitive complexity)
+      // ---------------------------------------------------------------
+
+      /**
+       * Replay buffered PTY output to a subscriber, then null the buffer.
+       * Only called for data channel subscribers (replay=true).
+       */
+      const replayBufferToSubscriber = (
+        state: TerminalSubscriberState,
+        callback: (data: string) => void
+      ): void => {
+        if (state.replayBuffer !== null && state.replayBuffer.length > 0) {
+          for (const data of state.replayBuffer) {
+            try {
+              callback(data)
+            } catch {
+              // Subscriber errors silently ignored
+            }
+          }
+        }
+        // Stop buffering — future data goes directly to subscribers.
+        state.replayBuffer = null
+      }
+
+      // ---------------------------------------------------------------
       // WebSocket subscriber management
       // ---------------------------------------------------------------
 
       const subscribe = Effect.fn('TerminalManager.subscribe')(function* (
         terminalId: string,
-        callback: (data: string) => void
+        callback: (data: string) => void,
+        options?: { readonly replay?: boolean }
       ) {
+        const shouldReplay = options?.replay !== false
+
         const map = yield* Ref.get(terminalsRef)
         const terminal = map.get(terminalId)
 
@@ -1874,8 +1994,12 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         state.subscribers.set(subscriberId, callback)
         clearGraceTimeout(terminalId)
 
+        if (shouldReplay) {
+          replayBufferToSubscriber(state, callback)
+        }
+
         yield* Effect.log(
-          `WebSocket subscribed to terminal ${terminalId} (subscriber=${subscriberId})`
+          `WebSocket subscribed to terminal ${terminalId} (subscriber=${subscriberId}, replay=${String(shouldReplay)})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
         return { subscriberId }
@@ -2089,6 +2213,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         spawn,
         write,
         resize,
+        forceRedraw,
         kill,
         remove,
         restart,

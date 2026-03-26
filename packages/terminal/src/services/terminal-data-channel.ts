@@ -6,7 +6,6 @@
  * gets its own MessagePort for bidirectional data:
  *
  * - **Output** (utility process -> renderer): Raw PTY output as strings
- *   or ArrayBuffer for zero-copy transfer
  * - **Input** (renderer -> utility process): Keystroke data and flow
  *   control ack messages
  * - **Control messages**: Screen state snapshots and lifecycle status
@@ -41,12 +40,6 @@ import {
 // ---------------------------------------------------------------------------
 // Control message helpers (matches terminal-ws.ts format)
 // ---------------------------------------------------------------------------
-
-/**
- * Encode a screen state snapshot into a JSON control message string.
- */
-const encodeScreenState = (data: string): string =>
-  JSON.stringify({ type: 'screenState', data })
 
 /**
  * Build a JSON status control message string.
@@ -129,7 +122,14 @@ const attachDataChannel = (
       return
     }
 
-    // Build a synchronous send function for the subscriber callback.
+    /**
+     * Send data to the renderer via the MessagePort.
+     *
+     * Always sends as a string. Electron's `MessagePortMain.postMessage()`
+     * only accepts `MessagePortMain[]` as the transfer list — NOT
+     * `Transferable[]` like the Web `MessagePort` API — so ArrayBuffer
+     * zero-copy transfer is not available in this context.
+     */
     const portSend = (data: string): void => {
       try {
         port.postMessage(data)
@@ -138,64 +138,21 @@ const attachDataChannel = (
       }
     }
 
-    /**
-     * Send PTY output using ArrayBuffer transfer for zero-copy when
-     * the data is large enough to justify the overhead. For small
-     * data (< 1KB), string postMessage is cheaper than encoding +
-     * transferring an ArrayBuffer.
-     */
-    const portSendOutput = (data: string): void => {
-      try {
-        if (data.length >= 1024) {
-          // Zero-copy ArrayBuffer transfer for large chunks
-          const encoder = new TextEncoder()
-          const buffer = encoder.encode(data).buffer
-          port.postMessage(buffer, [buffer])
-        } else {
-          port.postMessage(data)
-        }
-      } catch {
-        // Port may already be closed
-      }
-    }
-
     // Send initial status control message.
     portSend(encodeStatus('running'))
 
-    // Race-free attach: subscribe-before-serialize pattern.
+    // Subscribe to live PTY output. The subscribe call replays any
+    // buffered output that was generated between PTY spawn and now
+    // (VS Code's _initialDataEvents pattern — no data is lost).
     //
-    // 1. Subscribe to live PTY output FIRST, queuing any data
-    //    that arrives during screen state serialization.
-    // 2. Serialize the headless terminal's screen state.
-    // 3. Send the screen state as the first data frame.
-    // 4. Flush any queued output that arrived during serialization.
-    // 5. Switch to direct sending for all subsequent output.
-    const outputQueue: string[] = []
-    let sendDirect = false
-
+    // All replayed + live data goes through portSend which sends
+    // it directly to the renderer's xterm.js.
     const { subscriberId } = yield* terminalManager.subscribe(
       terminalId,
       (data: string) => {
-        if (sendDirect) {
-          portSendOutput(data)
-        } else {
-          outputQueue.push(data)
-        }
+        portSend(data)
       }
     )
-
-    // Serialize screen state AFTER subscription is set up.
-    const screenState = terminalManager.getScreenState(terminalId)
-    portSend(encodeScreenState(screenState))
-
-    // Flush any output that arrived during serialization.
-    for (const queued of outputQueue) {
-      portSendOutput(queued)
-    }
-    outputQueue.length = 0
-
-    // Switch to direct sending.
-    sendDirect = true
 
     // Subscribe to lifecycle events for status control messages.
     const lifecycleQueue = yield* PubSub.subscribe(
@@ -231,9 +188,24 @@ const attachDataChannel = (
     }
 
     // Attach message listener based on port API style.
+    // Electron's MessagePortMain.on('message') delivers a MessageEvent-like
+    // object {data, ports}, NOT raw data. We must unwrap .data for both paths.
+    const unwrapData = (value: unknown): unknown => {
+      if (typeof value === 'object' && value !== null && 'data' in value) {
+        return (value as { data: unknown }).data
+      }
+      return value
+    }
+
+    // Node/Electron EventEmitter path: value is a MessageEvent-like {data, ports}
+    const nodeListener = (value: unknown): void => {
+      messageHandler(unwrapData(value))
+    }
+
     if (typeof port.on === 'function') {
-      port.on('message', messageHandler)
+      port.on('message', nodeListener)
     } else {
+      // Web MessagePort path: onmessage handler receives a MessageEvent
       port.onmessage = (event: { data: unknown }) => {
         messageHandler(event.data)
       }
@@ -252,9 +224,9 @@ const attachDataChannel = (
 
         // Remove message listener.
         if (typeof port.off === 'function') {
-          port.off('message', messageHandler)
+          port.off('message', nodeListener)
         } else if (typeof port.removeListener === 'function') {
-          port.removeListener('message', messageHandler)
+          port.removeListener('message', nodeListener)
         } else {
           port.onmessage = null
         }

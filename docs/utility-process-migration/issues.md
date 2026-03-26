@@ -5,10 +5,10 @@ Parent PRD: [PRD.md](./PRD.md)
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
 | 1 | Bootstrap entry point script | None | Done |
-| 2 | UtilityProcessManager core (fork, kill, restart) | #1 | Ready |
+| 2 | UtilityProcessManager core (fork, kill, restart) | #1 | Done |
 | 3 | MessagePort Effect RPC transport (server side) | None | Ready |
 | 4 | MessagePort Effect RPC transport (client side) | #3 | Blocked |
-| 5 | Preload MessagePort acquisition | #2 | Blocked |
+| 5 | Preload MessagePort acquisition | #2 | Ready |
 | 6 | Terminal utility process: basic PTY spawn via MessagePort RPC | #1, #2, #3 | Blocked |
 | 7 | Terminal utility process: full RPC surface | #6 | Blocked |
 | 8 | Terminal PTY I/O data channel over MessagePort | #7, #5 | Blocked |
@@ -19,7 +19,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 13 | Server-to-terminal MessagePort channel | #6, #10 | Blocked |
 | 14 | File-watcher as utility process | #1, #2, #3, #10 | Blocked |
 | 15 | MCP as utility process | #1, #2, #3 | Blocked |
-| 16 | Lifecycle Monitor (replaces HealthMonitor) | #2 | Blocked |
+| 16 | Lifecycle Monitor (replaces HealthMonitor) | #2 | Ready |
 | 17 | Dev mode hot reload (tsdown --watch + auto-restart) | #2, #16 | Blocked |
 | 18 | Terminal session persistence across restarts | #6, #16 | Blocked |
 | 19 | Remove HTTP servers, Vite proxy, dev:web, URL resolution | #9, #12, #14, #15 | Blocked |
@@ -65,15 +65,15 @@ The manager forks utility processes using the bootstrap script from issue #1, cr
 
 ### Acceptance criteria
 
-- [ ] `UtilityProcessManager` class with methods: `fork(name, entrypoint)`, `kill(name)`, `restart(name)`, `killAll()`, `killAllAndWait(timeout)`
-- [ ] Each forked process gets a `MessageChannelMain` pair — one port sent to the utility process, one retained by the manager
-- [ ] stdout/stderr are captured in pipe mode and stored in a per-process ring buffer (last 50 lines)
-- [ ] Process lifecycle tracked: `spawn` event sets PID, `exit` event records code
-- [ ] Kill sends SIGTERM, escalates to force-kill after 2 seconds (matching current SidecarManager behavior)
-- [ ] `restart()` kills the old process, waits for exit, then forks a new one
-- [ ] Environment construction deep-clones `process.env`, strips dangerous vars (`DEBUG`, `ELECTRON_RUN_AS_NODE`), sets `LABORER_ENTRYPOINT` (ref: VS Code line 276: `createEnv()`)
-- [ ] Wired into `main.ts` app lifecycle: fork on `app.whenReady()`, kill all on `before-quit`
-- [ ] A test verifies: fork a process, verify spawn event, verify MessagePort communication, kill, verify exit event
+- [x] `UtilityProcessManager` class with methods: `fork(name, entrypoint)`, `kill(name)`, `restart(name)`, `killAll()`, `killAllAndWait(timeout)`
+- [x] Each forked process gets a `MessageChannelMain` pair — one port sent to the utility process, one retained by the manager
+- [x] stdout/stderr are captured in pipe mode and stored in a per-process ring buffer (last 50 lines)
+- [x] Process lifecycle tracked: `spawn` event sets PID, `exit` event records code
+- [x] Kill sends SIGTERM, escalates to force-kill after 2 seconds (matching current SidecarManager behavior)
+- [x] `restart()` kills the old process, waits for exit, then forks a new one
+- [x] Environment construction deep-clones `process.env`, strips dangerous vars (`DEBUG`, `ELECTRON_RUN_AS_NODE`), sets `LABORER_ENTRYPOINT` (ref: VS Code line 276: `createEnv()`)
+- [x] Wired into `main.ts` app lifecycle: fork on `app.whenReady()`, kill all on `before-quit`
+- [x] A test verifies: fork a process, verify spawn event, verify MessagePort communication, kill, verify exit event
 
 ### Blocked by
 

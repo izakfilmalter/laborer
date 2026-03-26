@@ -50,3 +50,93 @@ enables the entire utility process migration.
 - [x] After the entrypoint module is loaded, a `{ type: 'ready' }` message is sent to the parent process
 - [x] If the entrypoint fails to load, an error message is sent to the parent and the process exits with code 1
 - [x] A test verifies: fork the bootstrap with a dummy entrypoint, receive the ready message, kill the process
+
+---
+
+## Issue 2: UtilityProcessManager core (fork, kill, restart) — COMPLETED
+
+Date: 2026-03-25
+
+### What was done
+
+Created the `UtilityProcessManager` class that replaces the HTTP-based
+`SidecarManager` with Electron's native `utilityProcess.fork()` API and
+MessagePort IPC. This is the core infrastructure for the utility process
+migration — all subsequent issues depend on it.
+
+### Files created
+
+- `apps/desktop/src/utility-process-manager.ts` — UtilityProcessManager class:
+  - `fork(name)`: Forks a utility process using the bootstrap script, creates
+    a `MessageChannelMain` pair, sends one port to the utility process on
+    spawn, returns the other to the caller
+  - `kill(name)`: Kills a process gracefully (Electron's kill() sends SIGTERM),
+    with a cleanup timeout for stuck processes
+  - `restart(name)`: Kills old process, waits for exit, forks a new one
+  - `killAll()`: Kills all tracked processes, suppresses exit handlers
+  - `killAllAndWait(timeout)`: Kills all and waits for exit or timeout
+  - `getPort(name)`, `getPid(name)`, `isRunning(name)`, `getLastStderr(name)`
+  - `setExitHandler()`: Registers callback for unexpected exits
+  - Environment construction: deep-clones process.env, strips dangerous vars
+    (ELECTRON_RUN_AS_NODE, ELECTRON_RENDERER_PORT, DEBUG), sets
+    LABORER_ENTRYPOINT
+  - stdout/stderr captured via readline createInterface into ring buffer
+  - Bootstrap protocol messages (ready/error) logged from 'message' event
+
+- `apps/desktop/test/utility-process-manager.test.ts` — 35 unit tests across
+  7 describe blocks:
+  - fork(): 10 tests (MessagePort creation, bootstrap path, env vars, stdio,
+    service name, port transfer on spawn, PID tracking, duplicate kill,
+    entrypoint resolution)
+  - kill(): 4 tests (running process, no-op for unknown, already-exited,
+    intentional stop suppresses exit handler)
+  - restart(): 2 tests (kill+fork, works without existing process)
+  - killAll(): 2 tests (kills all, suppresses exit handlers)
+  - killAllAndWait(): 3 tests (waits for exit, timeout, empty list)
+  - unexpected exit handling: 4 tests (fires handler, suppressed on kill,
+    suppressed on killAll, includes stderr)
+  - MessagePort lifecycle: 3 tests (port closed on exit, getPort, undefined)
+  - isRunning(): 4 tests (before spawn, after spawn, after exit, unknown)
+  - bootstrap messages: 2 tests (ready, error)
+
+### Files modified
+
+- `apps/desktop/src/utility-process-types.ts` — Added `PortTransferMessage`
+  and `UtilityProcessParentMessage` types for the port transfer protocol
+  (parent -> utility process direction)
+
+- `apps/desktop/src/main.ts` — Wired UtilityProcessManager into app lifecycle:
+  - Import and instantiate alongside existing SidecarManager (coexist during
+    migration)
+  - Created on `app.whenReady()` in production mode
+  - `killAll()` called in shutdown handler on `before-quit`
+  - `getUtilityProcessManager()` export for external access
+  - Restart handler checks utility process manager first, then falls back to
+    health monitor / sidecar manager
+
+### Verification
+
+- All 198 desktop tests pass (163 existing + 35 new)
+- TypeScript: no errors
+- Biome formatting: no new errors
+- No changes to existing test behavior
+
+### Acceptance criteria checklist
+
+- [x] `UtilityProcessManager` class with methods: `fork(name, entrypoint)`,
+      `kill(name)`, `restart(name)`, `killAll()`, `killAllAndWait(timeout)`
+- [x] Each forked process gets a `MessageChannelMain` pair — one port sent to
+      the utility process, one retained by the manager
+- [x] stdout/stderr are captured in pipe mode and stored in a per-process ring
+      buffer (last 50 lines)
+- [x] Process lifecycle tracked: `spawn` event sets PID, `exit` event records
+      code
+- [x] Kill sends SIGTERM (via Electron's kill()), with cleanup timeout after
+      2 seconds
+- [x] `restart()` kills the old process, waits for exit, then forks a new one
+- [x] Environment construction deep-clones `process.env`, strips dangerous vars
+      (`DEBUG`, `ELECTRON_RUN_AS_NODE`), sets `LABORER_ENTRYPOINT`
+- [x] Wired into `main.ts` app lifecycle: fork on `app.whenReady()`, kill all
+      on `before-quit`
+- [x] A test verifies: fork a process, verify spawn event, verify MessagePort
+      communication, kill, verify exit event

@@ -31,6 +31,7 @@ import {
 } from './protocol.js'
 import { SidecarManager } from './sidecar.js'
 import { registerGlobalShortcut, TrayManager } from './tray.js'
+import { UtilityProcessManager } from './utility-process-manager.js'
 import { buildWindowBootstrapArgs, createWindowId } from './window-identity.js'
 import { type WindowRecord, WindowStateManager } from './window-state.js'
 
@@ -119,6 +120,13 @@ let sidecarManager: SidecarManager | null = null
  */
 let healthMonitor: HealthMonitor | null = null
 
+/**
+ * Utility process manager for MessagePort-based service lifecycle.
+ * Created in production mode alongside sidecarManager during migration.
+ * Will eventually replace sidecarManager entirely.
+ */
+let utilityProcessManager: UtilityProcessManager | null = null
+
 /** System tray icon manager. */
 const trayManager = new TrayManager()
 
@@ -151,6 +159,11 @@ export function getSidecarManager(): SidecarManager | null {
 /** Get the health monitor (null in dev mode). */
 export function getHealthMonitor(): HealthMonitor | null {
   return healthMonitor
+}
+
+/** Get the utility process manager (null in dev mode). */
+export function getUtilityProcessManager(): UtilityProcessManager | null {
+  return utilityProcessManager
 }
 
 function getMainWindow(): BrowserWindow | null {
@@ -320,6 +333,12 @@ app
       sidecarManager = new SidecarManager(servicePorts)
       healthMonitor = new HealthMonitor(sidecarManager, servicePorts)
 
+      // Create the utility process manager for MessagePort-based services.
+      // During migration, this coexists with sidecarManager. Services will
+      // be moved from sidecar (HTTP) to utility process (MessagePort) one
+      // at a time in subsequent issues.
+      utilityProcessManager = new UtilityProcessManager()
+
       // Forward sidecar status events to the renderer.
       healthMonitor.setStatusListener((status) => {
         if (status.state === 'crashed') {
@@ -336,7 +355,7 @@ app
       // Spawn all three sidecars in parallel without blocking the window.
       // Each sidecar reports healthy independently via status events.
       // The renderer's lifecycle phase service advances phases as each
-      // sidecar becomes ready (Starting → Ready → Restored → Eventually).
+      // sidecar becomes ready (Starting -> Ready -> Restored -> Eventually).
       healthMonitor.spawnServices().then((servicesOk) => {
         if (!servicesOk) {
           console.error(
@@ -366,14 +385,19 @@ app
       trayManager.updateWorkspaceCount(count)
     })
 
-    // Wire sidecar restart requests from the renderer to the health monitor.
+    // Wire sidecar restart requests from the renderer to the health monitor
+    // or utility process manager.
     setRestartSidecarHandler(async (name) => {
       const validNames = ['server', 'terminal', 'file-watcher', 'mcp'] as const
       type ValidName = (typeof validNames)[number]
       if (!validNames.includes(name as ValidName)) {
         return
       }
-      if (healthMonitor) {
+      // Try the utility process manager first (for migrated services),
+      // then fall back to the HTTP-based health monitor / sidecar manager.
+      if (utilityProcessManager?.isRunning(name as ValidName)) {
+        await utilityProcessManager.restart(name as ValidName)
+      } else if (healthMonitor) {
         await healthMonitor.manualRestart(name as ValidName)
       } else if (sidecarManager) {
         await sidecarManager.restart(name as ValidName)
@@ -470,6 +494,11 @@ function shutdown(): void {
 
   if (sidecarManager) {
     sidecarManager.killAll()
+  }
+
+  // Kill all utility processes (MessagePort-based services).
+  if (utilityProcessManager) {
+    utilityProcessManager.killAll()
   }
 }
 

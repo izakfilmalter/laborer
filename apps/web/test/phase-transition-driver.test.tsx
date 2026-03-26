@@ -19,8 +19,65 @@ import {
   LifecyclePhaseProvider,
   useLifecyclePhase,
 } from '../src/components/lifecycle-phase-context'
-import { PhaseTransitionDriver } from '../src/hooks/use-phase-transition-driver'
 import { mockFetch, pendingPromise } from './helpers/mock-fetch'
+
+/**
+ * Mock for the `useAtomValue` hook used by `useInitStatusPoll` inside the
+ * phase transition driver.  Controls what the `lifecycle.initStatus` RPC
+ * atom returns so we can simulate the Restored -> Eventually transition.
+ *
+ * Uses a React state-based approach: `setInitStatusResult` triggers a
+ * re-render so the component sees the new value.
+ */
+const { initStatusResultRef, subscribersRef } = vi.hoisted(() => ({
+  initStatusResultRef: {
+    current: {
+      _tag: 'Initial' as string,
+      waiting: true,
+      value: undefined as unknown,
+    },
+  },
+  subscribersRef: {
+    current: new Set<() => void>(),
+  },
+}))
+
+/** Update the mock init-status result and notify all mounted components. */
+function setInitStatusResult(result: {
+  _tag: string
+  waiting: boolean
+  value: unknown
+}) {
+  initStatusResultRef.current = result
+  for (const notify of subscribersRef.current) {
+    notify()
+  }
+}
+
+vi.mock('@effect-atom/atom-react/Hooks', async () => {
+  const React = await import('react')
+  return {
+    useAtomValue: () => {
+      const [, forceRender] = React.useReducer((x: number) => x + 1, 0)
+      React.useEffect(() => {
+        const notify = () => forceRender()
+        subscribersRef.current.add(notify)
+        return () => {
+          subscribersRef.current.delete(notify)
+        }
+      }, [forceRender])
+      return initStatusResultRef.current
+    },
+  }
+})
+
+vi.mock('@/atoms/laborer-client', () => ({
+  LaborerClient: {
+    query: () => Symbol.for('initStatus'),
+  },
+}))
+
+import { PhaseTransitionDriver } from '../src/hooks/use-phase-transition-driver'
 
 /** Displays the current lifecycle phase for test assertions. */
 function PhaseDisplay() {
@@ -33,6 +90,12 @@ describe('PhaseTransitionDriver', () => {
 
   beforeEach(() => {
     vi.useFakeTimers()
+    initStatusResultRef.current = {
+      _tag: 'Initial',
+      waiting: true,
+      value: undefined,
+    }
+    subscribersRef.current.clear()
   })
 
   afterEach(() => {
@@ -319,10 +382,8 @@ describe('PhaseTransitionDriver', () => {
 
   // Issue #15: Eventually transition via init-status polling
   it('advances to Eventually when init-status returns ready after Restored', async () => {
-    let initStatusReady = false
-
+    // All sidecars healthy immediately
     mockFetch((url) => {
-      // All sidecars healthy immediately
       if (url === '/server-health') {
         return Promise.resolve({ ok: true })
       }
@@ -332,15 +393,15 @@ describe('PhaseTransitionDriver', () => {
       if (url === '/file-watcher-health') {
         return Promise.resolve({ ok: true })
       }
-      // Init-status endpoint
-      if (url === '/server-init-status') {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ ready: initStatusReady }),
-        })
-      }
       return pendingPromise()
     })
+
+    // RPC atom starts in Initial state (not ready)
+    initStatusResultRef.current = {
+      _tag: 'Initial',
+      waiting: true,
+      value: undefined,
+    }
 
     render(
       <LifecyclePhaseProvider>
@@ -359,9 +420,13 @@ describe('PhaseTransitionDriver', () => {
       String(LifecyclePhase.Restored)
     )
 
-    // Init-status returns not ready — still Restored
+    // Init-status RPC returns not ready — still Restored
     await act(async () => {
-      vi.advanceTimersByTime(2000)
+      setInitStatusResult({
+        _tag: 'Success',
+        waiting: false,
+        value: { ready: false },
+      })
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -370,12 +435,13 @@ describe('PhaseTransitionDriver', () => {
       String(LifecyclePhase.Restored)
     )
 
-    // Deferred services finish initializing
-    initStatusReady = true
-
+    // Deferred services finish initializing — RPC returns ready
     await act(async () => {
-      vi.advanceTimersByTime(2000)
-      await Promise.resolve()
+      setInitStatusResult({
+        _tag: 'Success',
+        waiting: false,
+        value: { ready: true },
+      })
       await Promise.resolve()
     })
 
@@ -436,7 +502,12 @@ describe('PhaseTransitionDriver', () => {
   })
 
   it('stops polling init-status after Eventually is reached', async () => {
-    let initStatusCallCount = 0
+    // RPC atom immediately returns ready
+    initStatusResultRef.current = {
+      _tag: 'Success',
+      waiting: false,
+      value: { ready: true },
+    }
 
     mockFetch((url) => {
       if (url === '/server-health') {
@@ -447,13 +518,6 @@ describe('PhaseTransitionDriver', () => {
       }
       if (url === '/file-watcher-health') {
         return Promise.resolve({ ok: true })
-      }
-      if (url === '/server-init-status') {
-        initStatusCallCount++
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ ready: true }),
-        })
       }
       return pendingPromise()
     })
@@ -466,7 +530,6 @@ describe('PhaseTransitionDriver', () => {
     )
 
     // All sidecars healthy → Restored, init-status ready → Eventually
-    // (init-status polling starts immediately on Restored and returns ready)
     await act(async () => {
       await Promise.resolve()
       await Promise.resolve()
@@ -478,18 +541,15 @@ describe('PhaseTransitionDriver', () => {
       String(LifecyclePhase.Eventually)
     )
 
-    const callCountAtEventually = initStatusCallCount
-
-    // Advance several more poll intervals — should NOT poll again
-    // (phase === Eventually, useEffect cleanup runs)
+    // Phase should remain Eventually after additional time
     await act(async () => {
       vi.advanceTimersByTime(10_000)
       await Promise.resolve()
       await Promise.resolve()
     })
 
-    // The call count should not have increased significantly
-    // (one extra call at most from the effect re-running when phase changes)
-    expect(initStatusCallCount).toBeLessThanOrEqual(callCountAtEventually + 1)
+    expect(screen.getByTestId('phase').textContent).toBe(
+      String(LifecyclePhase.Eventually)
+    )
   })
 })

@@ -94,6 +94,7 @@ export function PanelContent({
             >
               <WorkspaceFrameHeaderContainer
                 diffIsOpen={false}
+                isActiveFrame
                 isMinimized={false}
                 onHeaderClick={noop}
                 onMinimize={noop}

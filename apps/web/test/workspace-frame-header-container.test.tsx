@@ -108,6 +108,7 @@ describe('WorkspaceFrameHeaderContainer', () => {
 
     render(
       <WorkspaceFrameHeaderContainer
+        isActiveFrame
         isMinimized={false}
         onHeaderClick={() => undefined}
         onMinimize={() => undefined}
@@ -131,6 +132,7 @@ describe('WorkspaceFrameHeaderContainer', () => {
 
     render(
       <WorkspaceFrameHeaderContainer
+        isActiveFrame={false}
         isMinimized={false}
         onHeaderClick={() => undefined}
         onMinimize={() => undefined}

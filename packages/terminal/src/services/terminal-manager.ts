@@ -807,6 +807,13 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
       event: 'active' | 'waiting_for_input' | 'clear'
     ) => Effect.Effect<void, TerminalRpcError>
 
+    /**
+     * Get all terminal metadata without process detection.
+     * Returns the raw ManagedTerminal data synchronously via an Effect.
+     * Used for session persistence serialization on graceful shutdown.
+     */
+    readonly getTerminals: () => Effect.Effect<readonly ManagedTerminal[]>
+
     /** The PubSub for lifecycle events. Consumers subscribe to receive events. */
     readonly lifecycleEvents: PubSub.PubSub<TerminalLifecycleEvent>
   }
@@ -2092,6 +2099,8 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         unsubscribe,
         terminalExists,
         setAgentStatusFromHook,
+        getTerminals: () =>
+          Effect.map(Ref.get(terminalsRef), (map) => [...map.values()]),
         lifecycleEvents: lifecyclePubSub,
       })
     })

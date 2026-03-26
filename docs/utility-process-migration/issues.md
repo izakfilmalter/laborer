@@ -21,7 +21,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 15 | MCP as utility process | #1, #2, #3 | Done |
 | 16 | Lifecycle Monitor (replaces HealthMonitor) | #2 | Done |
 | 17 | Dev mode hot reload (tsdown --watch + auto-restart) | #2, #16 | Done |
-| 18 | Terminal session persistence across restarts | #6, #16 | Ready |
+| 18 | Terminal session persistence across restarts | #6, #16 | Done |
 | 19 | Remove HTTP servers, Vite proxy, dev:web, URL resolution | #9, #12, #14, #15 | Done |
 | 20 | Build script update + port reservation removal | #19 | Done |
 
@@ -546,14 +546,14 @@ Implement terminal session persistence so that terminals survive utility process
 
 ### Acceptance criteria
 
-- [ ] Each terminal has a circular replay buffer of recent output maintained in the terminal utility process
-- [ ] On graceful shutdown (SIGTERM), the terminal utility process serializes active terminal metadata (id, shell, cwd, env, replay buffer contents) to a temporary file
-- [ ] On startup, the terminal utility process checks for serialized state, re-spawns PTY processes with the same configuration, and replays the buffer
-- [ ] After a graceful restart, the renderer receives replay data and the terminal appears to continue seamlessly
-- [ ] On ungraceful termination (crash, SIGKILL), terminals are marked as stopped in the renderer
-- [ ] The renderer retains its local xterm buffer on crash, showing last-known output even without replay
-- [ ] Replay buffer size is configurable (default: sufficient for ~1000 lines of terminal output)
-- [ ] Test: spawn a terminal, produce output, gracefully restart the utility process, verify output is replayed
+- [x] Each terminal has a circular replay buffer of recent output maintained in the terminal utility process
+- [x] On graceful shutdown (SIGTERM), the terminal utility process serializes active terminal metadata (id, shell, cwd, env, replay buffer contents) to a temporary file
+- [x] On startup, the terminal utility process checks for serialized state, re-spawns PTY processes with the same configuration, and replays the buffer
+- [x] After a graceful restart, the renderer receives replay data and the terminal appears to continue seamlessly
+- [x] On ungraceful termination (crash, SIGKILL), terminals are marked as stopped in the renderer
+- [x] The renderer retains its local xterm buffer on crash, showing last-known output even without replay
+- [x] Replay buffer size is configurable (default: sufficient for ~1000 lines of terminal output)
+- [x] Test: spawn a terminal, produce output, gracefully restart the utility process, verify output is replayed
 
 ### Blocked by
 

@@ -1,9 +1,8 @@
 /**
  * Terminal Service — Utility Process Entry Point
  *
- * Alternative entry point for running the terminal service as an Electron
- * utility process with MessagePort RPC transport. Replaces the HTTP-based
- * `main.ts` entry point.
+ * Entry point for running the terminal service as an Electron utility process
+ * with MessagePort RPC transport.
  *
  * Architecture (flattened):
  * - Runs inside an Electron utility process (forked via bootstrap script)
@@ -13,49 +12,38 @@
  * - TerminalManager and RPC handlers are unchanged — only the transport
  *   and PtyHostClient layers are swapped
  *
- * MessagePort reception protocol:
- * 1. The bootstrap script loads this module via dynamic import
- * 2. The UtilityProcessManager sends a `{ type: 'port' }` message with a
- *    MessagePort in the `ports` array via `process.parentPort`
- * 3. This module receives the port and uses it for RPC via
- *    `layerProtocolMessagePort(port)`
- * 4. Subsequent `{ type: 'terminal-data-port', terminalId }` messages
- *    carry per-terminal MessagePorts for PTY I/O data channels
+ * Session persistence (Issue #18):
+ * - Each terminal has a circular replay buffer of recent output
+ * - On graceful shutdown (SIGTERM), terminal metadata and replay buffers
+ *   are serialized to a temporary file
+ * - On startup, persisted state is loaded and terminals are respawned
+ *   with the same configuration
+ * - On ungraceful termination (crash), terminals are marked as stopped
+ *   in the renderer (renderer retains its local xterm buffer)
  *
- * Layer composition:
- *   RpcServer.layer(TerminalRpcs)
- *     + layerProtocolMessagePort(port)    — MessagePort transport (no HTTP)
- *     + TerminalRpcsLive                  — RPC handler implementations
- *     + TerminalManager.layer             — Terminal lifecycle management
- *     + PtyHostClient directLayer         — Direct node-pty (no child process)
- *
- * @see main.ts — HTTP-based entry point (to be removed after migration)
  * @see .reference/vscode/src/vs/platform/terminal/node/ptyHostMain.ts
+ * @see .reference/vscode/src/vs/platform/terminal/node/ptyService.ts line 343
  * @see services/terminal-data-channel.ts — Per-terminal data channel handler
+ * @see services/terminal-session-persistence.ts — Replay buffer and serialization
  */
 
 import { RpcServer } from '@effect/rpc'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { Effect, Layer, ManagedRuntime } from 'effect'
+import { Effect, Layer, ManagedRuntime, Runtime, Stream } from 'effect'
 
 import { TerminalRpcsLive } from './rpc/handlers.js'
 import { directLayer as PtyDirectLayer } from './services/pty-direct.js'
 import { handleTerminalDataPort } from './services/terminal-data-channel.js'
 import { TerminalManager } from './services/terminal-manager.js'
+import type { SerializedState } from './services/terminal-session-persistence.js'
+import { createTerminalSessionPersistence } from './services/terminal-session-persistence.js'
 
 // ---------------------------------------------------------------------------
 // Electron utility process types
 // ---------------------------------------------------------------------------
 
-/**
- * Electron's `process.parentPort` is only available inside utility processes.
- * Since the terminal package doesn't depend on Electron types, we define
- * the minimal interface needed here.
- *
- * @see .reference/vscode/src/vs/base/parts/sandbox/node/electronTypes.ts
- */
 interface ParentPort {
   on(
     event: 'message',
@@ -63,10 +51,6 @@ interface ParentPort {
   ): void
 }
 
-/**
- * Access `process.parentPort` with proper typing.
- * This property only exists in Electron utility processes.
- */
 function getParentPort(): ParentPort {
   const pp = (process as unknown as { parentPort?: ParentPort }).parentPort
   if (!pp) {
@@ -81,16 +65,6 @@ function getParentPort(): ParentPort {
 // MessagePort reception
 // ---------------------------------------------------------------------------
 
-/**
- * Wait for the parent process to transfer the initial RPC MessagePort via
- * `process.parentPort`. Returns a promise that resolves with the port.
- *
- * The UtilityProcessManager sends `{ type: 'port' }` with the actual
- * `MessagePort` in the `ports` array after the utility process spawns.
- *
- * After the RPC port is received, subsequent `{ type: 'terminal-data-port' }`
- * messages are handled by the data channel listener set up in `main()`.
- */
 function waitForRpcPort(): Promise<{
   parentPort: ParentPort
   rpcPort: RpcMessagePort
@@ -107,7 +81,6 @@ function waitForRpcPort(): Promise<{
       if (data?.type === 'port' && event.ports.length > 0) {
         clearTimeout(timeout)
         const port = event.ports[0] as RpcMessagePort
-        // Electron MessagePortMain requires start() to begin receiving
         port.start?.()
         resolve({ parentPort, rpcPort: port })
       }
@@ -119,23 +92,6 @@ function waitForRpcPort(): Promise<{
 // Additional RPC port handling
 // ---------------------------------------------------------------------------
 
-/**
- * Serve `TerminalRpcs` on an additional MessagePort.
- *
- * Used when the main process brokers a MessagePort between the server
- * and terminal utility processes. The terminal creates a new `RpcServer`
- * on the given port, backed by the same `TerminalManager` and
- * `PtyHostClient` instances as the primary RPC server.
- *
- * The server runs as a long-lived forked fiber — it stays alive until
- * the port closes or the runtime is disposed.
- *
- * @param port - The brokered MessagePort to serve RPC on
- * @param managedRuntime - The managed runtime providing TerminalManager + PtyHostClient
- * @param servicesLayer - Layer providing TerminalManager + PtyHostClient
- *
- * @see Issue #13: Server-to-terminal MessagePort channel
- */
 function serveRpcOnPort<R>(
   port: RpcMessagePort,
   managedRuntime: ManagedRuntime.ManagedRuntime<R, never>,
@@ -152,67 +108,160 @@ function serveRpcOnPort<R>(
 }
 
 // ---------------------------------------------------------------------------
-// Service composition and launch
+// Session persistence integration
 // ---------------------------------------------------------------------------
 
 /**
- * Build and launch the terminal service layer with MessagePort RPC.
- *
- * This is the main entry point logic. It:
- * 1. Waits for the RPC MessagePort from the parent process
- * 2. Builds the shared services layer (TerminalManager + PtyDirect)
- * 3. Creates a ManagedRuntime to keep services alive and provide a
- *    runtime for data channel handlers
- * 4. Builds the RPC server using the same service instances
- * 5. Listens for per-terminal data port messages from the parent
+ * Set up session persistence: subscribe to lifecycle events to track
+ * terminal spawn/removal, subscribe to terminal output to feed the
+ * replay buffer, and register a SIGTERM handler for graceful shutdown
+ * serialization.
  */
+function setupSessionPersistence(
+  managedRuntime: ManagedRuntime.ManagedRuntime<TerminalManager, never>,
+  persistedState: SerializedState | null
+): void {
+  const persistence = createTerminalSessionPersistence()
+
+  const program = Effect.gen(function* () {
+    const tm = yield* TerminalManager
+
+    // Capture the runtime for synchronous access in the SIGTERM handler
+    const rt = yield* Effect.runtime<TerminalManager>()
+    const runSync = Runtime.runSync(rt)
+
+    // ---------------------------------------------------------------
+    // Restore persisted terminals
+    // ---------------------------------------------------------------
+    if (persistedState !== null) {
+      console.log(
+        `[terminal-utility] Restoring ${persistedState.terminals.length} persisted terminal(s)`
+      )
+
+      for (const saved of persistedState.terminals) {
+        const spawnResult = yield* Effect.either(
+          tm.spawn({
+            id: saved.id,
+            command: saved.command,
+            args: [...saved.args],
+            cwd: saved.cwd,
+            env: { ...saved.env },
+            cols: saved.cols,
+            rows: saved.rows,
+            workspaceId: saved.workspaceId,
+          })
+        )
+
+        if (spawnResult._tag === 'Right') {
+          const record = spawnResult.right
+          persistence.registerTerminal(record.id, saved.cols, saved.rows)
+
+          if (saved.replayBuffer.length > 0) {
+            persistence.writeOutput(record.id, saved.replayBuffer)
+          }
+
+          console.log(
+            `[terminal-utility] Restored terminal ${record.id} (${saved.command})`
+          )
+        } else {
+          console.error(
+            `[terminal-utility] Failed to restore terminal ${saved.id}: ${String(spawnResult.left)}`
+          )
+        }
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // Subscribe to lifecycle events for replay buffer tracking
+    // ---------------------------------------------------------------
+    const lifecycleStream = Stream.fromPubSub(tm.lifecycleEvents)
+
+    yield* Stream.runForEach(lifecycleStream, (event) =>
+      Effect.gen(function* () {
+        switch (event._tag) {
+          case 'Spawned': {
+            persistence.registerTerminal(event.terminal.id, 80, 24)
+
+            yield* tm.subscribe(event.terminal.id, (data: string) => {
+              persistence.writeOutput(event.terminal.id, data)
+            })
+            break
+          }
+
+          case 'Removed': {
+            persistence.unregisterTerminal(event.id)
+            break
+          }
+
+          default:
+            break
+        }
+      })
+    ).pipe(Effect.forkDaemon)
+
+    // ---------------------------------------------------------------
+    // SIGTERM handler for graceful shutdown serialization
+    // ---------------------------------------------------------------
+    const handleShutdown = (): void => {
+      try {
+        const terminals = runSync(tm.getTerminals())
+
+        persistence.serializeState(
+          () =>
+            terminals.map((t) => ({
+              id: t.id,
+              workspaceId: t.workspaceId,
+              command: t.command,
+              args: t.args,
+              cwd: t.cwd,
+              env: t.env,
+              status: t.status,
+            })),
+          (terminalId) => tm.getScreenState(terminalId)
+        )
+      } catch (error) {
+        console.error(
+          `[terminal-utility] Failed to serialize state on shutdown: ${String(error)}`
+        )
+      }
+    }
+
+    process.on('SIGTERM', handleShutdown)
+    process.on('SIGINT', handleShutdown)
+  })
+
+  managedRuntime.runFork(program)
+}
+
+// ---------------------------------------------------------------------------
+// Service composition and launch
+// ---------------------------------------------------------------------------
+
 async function main(): Promise<void> {
+  // Load persisted state before setting up services
+  const persistence = createTerminalSessionPersistence()
+  const persistedState = persistence.loadPersistedState()
+
   const { parentPort, rpcPort } = await waitForRpcPort()
 
-  // Services layer — provides both TerminalManager and PtyHostClient.
-  //
-  // PtyDirectLayer provides PtyHostClient (the direct node-pty impl).
-  // TerminalManager.layer requires PtyHostClient and provides TerminalManager.
-  // By merging them with PtyDirectLayer as the dependency, both services
-  // are available in the output context — needed by the data channel
-  // handlers which call ptyHostClient.write() and ptyHostClient.ack().
   const ServicesLayer = Layer.merge(TerminalManager.layer, PtyDirectLayer).pipe(
     Layer.provide(PtyDirectLayer)
   )
 
-  // RPC server layer — serves TerminalRpcs over MessagePort.
   const RpcLive = RpcServer.layer(TerminalRpcs).pipe(
     Layer.provide(layerProtocolMessagePort(rpcPort)),
     Layer.provide(TerminalRpcsLive),
     Layer.provide(ServicesLayer)
   )
 
-  // Full layer: RPC server + services passthrough.
-  // The RPC server runs as part of the layer (long-lived).
-  // The services passthrough gives the ManagedRuntime access to
-  // TerminalManager + PtyHostClient for data channel handlers.
   const FullLayer = Layer.merge(RpcLive, ServicesLayer)
 
-  // Create managed runtime. This:
-  // 1. Builds the layer (starts TerminalManager, PtyDirect, RPC server)
-  // 2. Keeps everything alive until dispose() is called
-  // 3. Provides a runtime with TerminalManager + PtyHostClient for
-  //    forking data channel handlers
   const managedRuntime = ManagedRuntime.make(FullLayer)
   const runtime = await managedRuntime.runtime()
 
-  // Listen for additional port messages from the parent.
-  //
-  // - `terminal-data-port`: Per-terminal MessagePort for PTY I/O streaming.
-  //   Arrives when the renderer requests a dedicated I/O channel via
-  //   `acquireTerminalDataPort()`.
-  //   @see Issue #8: Terminal PTY I/O data channel over MessagePort
-  //
-  // - `port`: Additional RPC port for inter-process communication.
-  //   Arrives when the main process brokers a MessagePort between the
-  //   server and terminal utility processes. The terminal serves
-  //   `TerminalRpcs` on the new port using the same service instances.
-  //   @see Issue #13: Server-to-terminal MessagePort channel
+  // Set up session persistence (replay buffers, SIGTERM handler, restore)
+  setupSessionPersistence(managedRuntime, persistedState)
+
   parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
     const data = event.data as { terminalId?: string; type?: string }
     if (
@@ -224,9 +273,6 @@ async function main(): Promise<void> {
       dataPort.start?.()
       handleTerminalDataPort(dataPort, data.terminalId, runtime)
     } else if (data?.type === 'port' && event.ports.length > 0) {
-      // Additional RPC port — serve TerminalRpcs on it.
-      // This enables the server utility process to call terminal RPCs
-      // via a direct MessagePort instead of HTTP.
       const additionalRpcPort = event.ports[0] as RpcMessagePort
       additionalRpcPort.start?.()
       console.log(
@@ -236,9 +282,6 @@ async function main(): Promise<void> {
     }
   })
 
-  // Keep the process alive indefinitely. The parent process manages
-  // the lifecycle (kill/restart). The managed runtime keeps the layer
-  // alive until dispose() is called.
   await new Promise(() => {
     // Never resolves — process stays alive
   })

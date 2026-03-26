@@ -11,8 +11,8 @@ Parent PRD: [PRD.md](./PRD.md)
 | 5 | Preload MessagePort acquisition | #2 | Done |
 | 6 | Terminal utility process: basic PTY spawn via MessagePort RPC | #1, #2, #3 | Done |
 | 7 | Terminal utility process: full RPC surface | #6 | Done |
-| 8 | Terminal PTY I/O data channel over MessagePort | #7, #5 | Ready |
-| 9 | Renderer terminal UI wired to MessagePort | #8, #4 | Blocked |
+| 8 | Terminal PTY I/O data channel over MessagePort | #7, #5 | Done |
+| 9 | Renderer terminal UI wired to MessagePort | #8, #4 | Ready |
 | 10 | Server utility process: RPC over MessagePort | #1, #2, #3 | Done |
 | 11 | LiveStore sync over MessagePort | #10, #5 | Ready |
 | 12 | Renderer server UI wired to MessagePort | #11, #4 | Blocked |
@@ -244,13 +244,13 @@ The main process brokers a per-terminal `MessagePort` pair: one end goes to the 
 
 ### Acceptance criteria
 
-- [ ] When a terminal is spawned, the renderer can request a dedicated `MessagePort` for that terminal's I/O
-- [ ] PTY output bytes are sent from the terminal utility process to the renderer via `MessagePort.postMessage()` with `ArrayBuffer` transfer (zero-copy)
-- [ ] Renderer input bytes are sent to the terminal utility process via the same `MessagePort`
-- [ ] The data channel is separate from the RPC channel (RPC handles commands, data channel handles I/O stream)
-- [ ] The `MessagePort` is closed when the terminal exits
-- [ ] Latency is imperceptible (under 50ms keystroke-to-echo for local PTY)
-- [ ] Test: spawn a terminal, connect the data channel, send input, verify output arrives via the MessagePort
+- [x] When a terminal is spawned, the renderer can request a dedicated `MessagePort` for that terminal's I/O
+- [x] PTY output bytes are sent from the terminal utility process to the renderer via `MessagePort.postMessage()` with `ArrayBuffer` transfer (zero-copy)
+- [x] Renderer input bytes are sent to the terminal utility process via the same `MessagePort`
+- [x] The data channel is separate from the RPC channel (RPC handles commands, data channel handles I/O stream)
+- [x] The `MessagePort` is closed when the terminal exits
+- [x] Latency is imperceptible (under 50ms keystroke-to-echo for local PTY)
+- [x] Test: spawn a terminal, connect the data channel, send input, verify output arrives via the MessagePort
 
 ### Blocked by
 

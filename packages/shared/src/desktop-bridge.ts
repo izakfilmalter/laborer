@@ -139,6 +139,21 @@ export interface DesktopBridge {
    *   `.reference/vscode/src/vs/base/parts/ipc/electron-browser/ipc.mp.ts`
    */
   acquireServicePort: (name: SidecarName) => Promise<MessagePort | null>
+
+  /**
+   * Acquires a dedicated `MessagePort` for a specific terminal's I/O data
+   * channel. This provides a direct connection between the renderer and the
+   * terminal utility process for streaming PTY output and input.
+   *
+   * The data channel is separate from the RPC channel — it handles only
+   * raw I/O data (output strings, input keystrokes, flow control acks)
+   * and control messages (status, screen state).
+   *
+   * Returns null if the terminal utility process is not running.
+   *
+   * @see Issue #8: Terminal PTY I/O data channel over MessagePort
+   */
+  acquireTerminalDataPort: (terminalId: string) => Promise<MessagePort | null>
   /** Shows a native confirmation dialog with Yes/No buttons. Returns true if confirmed. */
   confirm: (message: string) => Promise<boolean>
 

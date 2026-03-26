@@ -51,5 +51,21 @@ export interface PortTransferMessage {
   readonly type: 'port'
 }
 
+/**
+ * Sent by the main process to transfer a per-terminal data channel
+ * MessagePort to the terminal utility process. The actual MessagePort
+ * is in the `ports` array of the MessageEvent.
+ *
+ * The terminal utility process uses this port for bidirectional
+ * PTY I/O streaming (output from node-pty, input from the renderer)
+ * instead of the WebSocket data channel.
+ */
+export interface TerminalDataPortMessage {
+  readonly terminalId: string
+  readonly type: 'terminal-data-port'
+}
+
 /** All messages the main process can send to a utility process. */
-export type UtilityProcessParentMessage = PortTransferMessage
+export type UtilityProcessParentMessage =
+  | PortTransferMessage
+  | TerminalDataPortMessage

@@ -28,6 +28,9 @@ const GITHUB_OAUTH_CALLBACK_CHANNEL = 'desktop:github-oauth-callback'
 const START_GITHUB_OAUTH_CHANNEL = 'desktop:start-github-oauth'
 const ACQUIRE_SERVICE_PORT_CHANNEL = 'laborer:acquire-service-port'
 const SERVICE_PORT_RESPONSE_CHANNEL = 'laborer:service-port-response'
+const ACQUIRE_TERMINAL_DATA_PORT_CHANNEL = 'laborer:acquire-terminal-data-port'
+const TERMINAL_DATA_PORT_RESPONSE_CHANNEL =
+  'laborer:terminal-data-port-response'
 
 // ---------------------------------------------------------------------------
 // Service URLs — injected via `additionalArguments` from the main process.
@@ -87,6 +90,56 @@ contextBridge.exposeInMainWorld('desktopBridge', {
 
       ipcRenderer.on(SERVICE_PORT_RESPONSE_CHANNEL, listener)
       ipcRenderer.send(ACQUIRE_SERVICE_PORT_CHANNEL, { name, requestId })
+    })
+  },
+
+  acquireTerminalDataPort: (terminalId) => {
+    return new Promise<MessagePort | null>((resolve) => {
+      const requestId = crypto.randomUUID()
+
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        response: unknown
+      ) => {
+        if (
+          typeof response !== 'object' ||
+          response === null ||
+          !('requestId' in response)
+        ) {
+          return
+        }
+
+        const { requestId: responseId, success } = response as {
+          requestId: unknown
+          success: unknown
+        }
+
+        // Ignore responses for other requests.
+        if (responseId !== requestId) {
+          return
+        }
+
+        // Remove this one-shot listener.
+        ipcRenderer.removeListener(
+          TERMINAL_DATA_PORT_RESPONSE_CHANNEL,
+          listener
+        )
+
+        if (success !== true) {
+          resolve(null)
+          return
+        }
+
+        // The MessagePort is transferred in the event's ports array.
+        const port = _event.ports[0]
+        resolve(port ?? null)
+      }
+
+      ipcRenderer.on(TERMINAL_DATA_PORT_RESPONSE_CHANNEL, listener)
+      ipcRenderer.send(ACQUIRE_TERMINAL_DATA_PORT_CHANNEL, {
+        terminalId,
+        requestId,
+      })
     })
   },
 

@@ -45,6 +45,10 @@ export const GITHUB_OAUTH_CALLBACK_CHANNEL = 'desktop:github-oauth-callback'
 export const START_GITHUB_OAUTH_CHANNEL = 'desktop:start-github-oauth'
 export const ACQUIRE_SERVICE_PORT_CHANNEL = 'laborer:acquire-service-port'
 export const SERVICE_PORT_RESPONSE_CHANNEL = 'laborer:service-port-response'
+export const ACQUIRE_TERMINAL_DATA_PORT_CHANNEL =
+  'laborer:acquire-terminal-data-port'
+export const TERMINAL_DATA_PORT_RESPONSE_CHANNEL =
+  'laborer:terminal-data-port-response'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -556,6 +560,71 @@ export function registerIpcHandlers(
     // Transfer the renderer-side port to the requesting renderer window.
     senderWindow.webContents.postMessage(
       SERVICE_PORT_RESPONSE_CHANNEL,
+      { requestId, success: true },
+      [rendererPort]
+    )
+  })
+
+  // -- Acquire terminal data port ------------------------------------------
+  // Creates a per-terminal MessagePort pair for PTY I/O streaming.
+  // One port goes to the terminal utility process (attached to a specific
+  // PTY via `{ type: 'terminal-data-port', terminalId }`), the other goes
+  // to the renderer (attached to the xterm.js instance).
+  //
+  // This is separate from the RPC channel — RPC handles structured commands,
+  // the data channel handles high-frequency I/O streaming.
+  //
+  // @see Issue #8: Terminal PTY I/O data channel over MessagePort
+  ipcMain.removeAllListeners(ACQUIRE_TERMINAL_DATA_PORT_CHANNEL)
+  ipcMain.on(ACQUIRE_TERMINAL_DATA_PORT_CHANNEL, (event, payload: unknown) => {
+    if (typeof payload !== 'object' || payload === null) {
+      return
+    }
+
+    const { terminalId, requestId } = payload as {
+      terminalId: unknown
+      requestId: unknown
+    }
+
+    if (typeof terminalId !== 'string' || typeof requestId !== 'string') {
+      return
+    }
+
+    const senderWindow = BrowserWindow.fromWebContents(event.sender)
+    if (!senderWindow || senderWindow.isDestroyed()) {
+      return
+    }
+
+    // The terminal data port is always on the 'terminal' utility process.
+    if (!utilityProcessManagerRef?.isRunning('terminal')) {
+      senderWindow.webContents.postMessage(
+        TERMINAL_DATA_PORT_RESPONSE_CHANNEL,
+        { requestId, success: false }
+      )
+      return
+    }
+
+    const utilityProcess = utilityProcessManagerRef.getProcess('terminal')
+    if (!utilityProcess) {
+      senderWindow.webContents.postMessage(
+        TERMINAL_DATA_PORT_RESPONSE_CHANNEL,
+        { requestId, success: false }
+      )
+      return
+    }
+
+    // Create a MessagePort pair for the renderer-to-terminal data channel.
+    const { port1: rendererPort, port2: utilityPort } = new MessageChannelMain()
+
+    // Send the utility-side port with the terminal ID so the terminal
+    // utility process can attach it to the correct PTY.
+    utilityProcess.postMessage({ type: 'terminal-data-port', terminalId }, [
+      utilityPort,
+    ])
+
+    // Transfer the renderer-side port to the requesting renderer window.
+    senderWindow.webContents.postMessage(
+      TERMINAL_DATA_PORT_RESPONSE_CHANNEL,
       { requestId, success: true },
       [rendererPort]
     )

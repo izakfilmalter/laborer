@@ -161,25 +161,27 @@ export const makeMessagePortSync =
       // Track the backend ID across pull responses for push requests.
       let currentBackendId: Option.Option<string> = Option.none()
 
-      // Cast the client to `any` to work around TypeScript's limitation
-      // with dot-separated RPC tag names (e.g. `SyncWsRpc.Pull`). The
-      // Effect RPC client types use complex mapped types that TypeScript
-      // resolves to `never` for the input parameter when accessed via
-      // bracket notation with dotted keys. This is the same pattern used
-      // in the codebase's MessagePort RPC test files.
+      // Effect RPC client objects use nested namespaces for dotted tag
+      // names. For `SyncWsRpc.Pull` the runtime structure is:
+      //   { SyncWsRpc: { Pull: fn, Push: fn } }
+      // We cast through `unknown` because TypeScript resolves the mapped
+      // types to `never` for input parameters on prefixed RPC methods.
       const typedClient = rpcClient as unknown as {
-        'SyncWsRpc.Pull': (
-          args: typeof PullPayload.Type
-        ) => Stream.Stream<PullResponseType, InvalidPullError>
-        'SyncWsRpc.Push': (
-          args: typeof PushPayload.Type
-        ) => Effect.Effect<typeof PushAck.Type, InvalidPushError>
+        SyncWsRpc: {
+          Pull: (
+            args: typeof PullPayload.Type
+          ) => Stream.Stream<PullResponseType, InvalidPullError>
+          Push: (
+            args: typeof PushPayload.Type
+          ) => Effect.Effect<typeof PushAck.Type, InvalidPushError>
+        }
       }
 
-      const pullRpc = typedClient['SyncWsRpc.Pull']
-      const pushRpc = typedClient['SyncWsRpc.Push']
+      const pullRpc = typedClient.SyncWsRpc.Pull
+      const pushRpc = typedClient.SyncWsRpc.Push
 
       const ping = Effect.gen(function* () {
+        console.log('[messageport-sync] ping: issuing non-live pull')
         // Ping by issuing a non-live pull with no cursor — if it succeeds,
         // the connection is healthy.
         const stream = pullRpc({
@@ -189,9 +191,13 @@ export const makeMessagePortSync =
         })
         // Take the first response to confirm connectivity.
         yield* Stream.runHead(stream)
+        console.log('[messageport-sync] ping: success, marking connected')
         yield* SubscriptionRef.set(isConnected, true)
       }).pipe(
-        Effect.catchAll(() => SubscriptionRef.set(isConnected, false)),
+        Effect.catchAll((err) => {
+          console.error('[messageport-sync] ping: FAILED', err)
+          return SubscriptionRef.set(isConnected, false)
+        }),
         Effect.asVoid
       )
 
@@ -206,6 +212,7 @@ export const makeMessagePortSync =
           }>,
           options?: { live?: boolean }
         ) => {
+          const isLive = options?.live === true
           const rpcCursor = cursor.pipe(
             Option.map((c) => ({
               eventSequenceNumber: c.eventSequenceNumber,
@@ -213,20 +220,45 @@ export const makeMessagePortSync =
             }))
           )
 
+          console.log(
+            `[messageport-sync] pull called: live=${String(isLive)} cursor=${cursor._tag === 'Some' ? String(cursor.value.eventSequenceNumber) : 'None'} backendId=${Option.getOrElse(currentBackendId, () => 'None')}`
+          )
+
+          let chunkCount = 0
+
           return pullRpc({
             storeId,
-            live: options?.live === true,
+            live: isLive,
             cursor: rpcCursor,
           }).pipe(
             Stream.tap((res) =>
               Effect.sync(() => {
+                chunkCount++
                 currentBackendId = Option.some(res.backendId)
+                console.log(
+                  `[messageport-sync] pull chunk #${String(chunkCount)}: live=${String(isLive)} batchLen=${String(res.batch.length)} pageInfo=${res.pageInfo._tag}`
+                )
               })
             ),
             Stream.map((res) => ({
               batch: res.batch,
               pageInfo: res.pageInfo,
-            }))
+            })),
+            Stream.tapError((err) =>
+              Effect.sync(() =>
+                console.error(
+                  `[messageport-sync] pull stream ERROR: live=${String(isLive)}`,
+                  err
+                )
+              )
+            ),
+            Stream.ensuring(
+              Effect.sync(() =>
+                console.log(
+                  `[messageport-sync] pull stream FINALIZED: live=${String(isLive)} totalChunks=${String(chunkCount)}`
+                )
+              )
+            )
           )
         },
 
@@ -235,6 +267,10 @@ export const makeMessagePortSync =
             if (batch.length === 0) {
               return
             }
+
+            console.log(
+              `[messageport-sync] push: batchLen=${String(batch.length)}`
+            )
 
             yield* pushRpc({
               storeId,

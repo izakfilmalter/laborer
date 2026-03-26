@@ -167,14 +167,23 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
             )
           }
 
-          yield* Effect.log(
-            'Connecting to file-watcher service via MessagePort'
-          ).pipe(Effect.annotateLogs('module', logPrefix))
+          yield* Effect.log('Creating RPC client...').pipe(
+            Effect.annotateLogs('module', logPrefix)
+          )
 
+          // Smoke test: send directly on the port to verify connectivity
+          fileWatcherRpcPort.value.port.postMessage?.({
+            type: 'ping2',
+            timestamp: Date.now(),
+          })
           const client = yield* createMessagePortRpcClient(
             FileWatcherRpcs,
             fileWatcherRpcPort.value.port,
             layerScope
+          )
+
+          yield* Effect.log('RPC client created — subscribing to events').pipe(
+            Effect.annotateLogs('module', logPrefix)
           )
 
           // Start event stream subscription

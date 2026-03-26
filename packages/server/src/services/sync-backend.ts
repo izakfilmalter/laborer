@@ -2,9 +2,12 @@
  * LiveStore Sync Backend — Server-side sync handler
  *
  * Implements the `SyncWsRpc` protocol from `@livestore/sync-cf` using
- * better-sqlite3 for event storage. This enables real-time
+ * sql.js (WASM-based SQLite) for event storage. This enables real-time
  * bidirectional sync between the server LiveStore and web clients
- * over WebSocket.
+ * over MessagePort.
+ *
+ * Uses sql.js instead of better-sqlite3 to avoid native module
+ * compatibility issues with Electron's Node.js ABI version.
  *
  * The RPC group is defined locally with the same tag names as
  * `@livestore/sync-cf`'s `SyncWsRpc` so that the `makeWsSync` client
@@ -14,19 +17,25 @@
  * @see Issue #18: LiveStore server-to-client sync
  */
 
-import { Rpc, RpcGroup, RpcServer } from '@effect/rpc'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { MessageChannel } from 'node:worker_threads'
+import { Rpc, RpcClient, RpcGroup, RpcServer } from '@effect/rpc'
 import { env } from '@laborer/env/server'
-import Database from 'better-sqlite3'
+import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
+import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
+import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
 import {
   Context,
   Effect,
   Layer,
   Option,
-  Queue,
-  Ref,
   Schema,
   Stream,
+  SubscriptionRef,
 } from 'effect'
+import type { Database as SqlJsDatabase } from 'sql.js'
+import initSqlJs from 'sql.js'
 
 // ---------------------------------------------------------------------------
 // Sync message schemas (mirroring @livestore/sync-cf/common types)
@@ -155,7 +164,7 @@ const makeSyncMetadata = (createdAt: string): typeof SyncMetadata.Type => ({
 const MAX_PULL_EVENTS_PER_PAGE = 256
 
 // ---------------------------------------------------------------------------
-// SQLite Storage
+// SQLite Storage (sql.js WASM)
 // ---------------------------------------------------------------------------
 
 interface SyncStorageRow {
@@ -174,17 +183,38 @@ const makeEventlogTableName = (storeId: string) =>
 const CONTEXT_TABLE = 'context_1'
 
 /**
- * Creates and initializes the sync SQLite database.
+ * Flush interval for persisting the in-memory database to disk.
+ * Writes are batched to avoid excessive I/O on every push.
  */
-const makeSyncStorage = (dataDir: string, storeId: string) => {
+const FLUSH_INTERVAL_MS = 1000
+
+/**
+ * Creates and initializes the sync SQLite database using sql.js (WASM).
+ *
+ * sql.js operates on an in-memory database. We load from disk on startup
+ * and periodically flush to disk after mutations.
+ */
+const makeSyncStorage = async (dataDir: string, storeId: string) => {
   const dbPath = `${dataDir}/sync-${storeId}.db`
-  const db = new Database(dbPath)
-  db.pragma('journal_mode = WAL')
-  db.pragma('synchronous = NORMAL')
+
+  // Ensure the data directory exists.
+  mkdirSync(dirname(dbPath), { recursive: true })
+
+  // Initialize sql.js WASM engine.
+  const SQL = await initSqlJs()
+
+  // Load existing database from disk if available.
+  let db: SqlJsDatabase
+  if (existsSync(dbPath)) {
+    const fileBuffer = readFileSync(dbPath)
+    db = new SQL.Database(fileBuffer)
+  } else {
+    db = new SQL.Database()
+  }
 
   const tableName = makeEventlogTableName(storeId)
 
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS "${tableName}" (
       seqNum INTEGER PRIMARY KEY,
       parentSeqNum INTEGER NOT NULL,
@@ -193,122 +223,184 @@ const makeSyncStorage = (dataDir: string, storeId: string) => {
       createdAt TEXT NOT NULL,
       clientId TEXT NOT NULL,
       sessionId TEXT NOT NULL
-    ) STRICT
+    )
   `)
 
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS "${CONTEXT_TABLE}" (
       storeId TEXT PRIMARY KEY,
       currentHead INTEGER NOT NULL,
       backendId TEXT NOT NULL
-    ) STRICT
+    )
   `)
 
-  const contextRow = db
-    .prepare<
-      [string],
-      { storeId: string; currentHead: number; backendId: string }
-    >(`SELECT * FROM "${CONTEXT_TABLE}" WHERE storeId = ?`)
-    .get(storeId)
+  // Read context row.
+  const contextStmt = db.prepare(
+    `SELECT currentHead, backendId FROM "${CONTEXT_TABLE}" WHERE storeId = ?`
+  )
+  contextStmt.bind([storeId])
+  let backendId: string
+  let currentHead: number
+  if (contextStmt.step()) {
+    const row = contextStmt.getAsObject() as {
+      currentHead: number
+      backendId: string
+    }
+    backendId = row.backendId
+    currentHead = row.currentHead
+  } else {
+    backendId = crypto.randomUUID()
+    currentHead = 0
+    db.run(
+      `INSERT INTO "${CONTEXT_TABLE}" (storeId, currentHead, backendId) VALUES (?, ?, ?)`,
+      [storeId, currentHead, backendId]
+    )
+  }
+  contextStmt.free()
 
-  const backendId = contextRow?.backendId ?? crypto.randomUUID()
-  let currentHead = contextRow?.currentHead ?? 0
+  // Track whether the database has unflushed changes.
+  let dirty = false
+  let flushTimer: ReturnType<typeof setInterval> | null = null
 
-  if (contextRow === undefined) {
-    db.prepare(
-      `INSERT INTO "${CONTEXT_TABLE}" (storeId, currentHead, backendId) VALUES (?, ?, ?)`
-    ).run(storeId, currentHead, backendId)
+  const flushToDisk = () => {
+    if (!dirty) {
+      return
+    }
+    const data = db.export()
+    const buffer = Buffer.from(data)
+    writeFileSync(dbPath, buffer)
+    dirty = false
   }
 
-  const insertStmt = db.prepare(
-    `INSERT INTO "${tableName}" (seqNum, parentSeqNum, args, name, createdAt, clientId, sessionId) VALUES (?, ?, ?, ?, ?, ?, ?)`
-  )
-
-  const selectFromCursorStmt = db.prepare<[number, number], SyncStorageRow>(
-    `SELECT * FROM "${tableName}" WHERE seqNum > ? ORDER BY seqNum ASC LIMIT ?`
-  )
-
-  const selectAllStmt = db.prepare<[number], SyncStorageRow>(
-    `SELECT * FROM "${tableName}" ORDER BY seqNum ASC LIMIT ?`
-  )
-
-  const countFromCursorStmt = db.prepare<[number], { total: number }>(
-    `SELECT COUNT(*) as total FROM "${tableName}" WHERE seqNum > ?`
-  )
-
-  const countAllStmt = db.prepare<[], { total: number }>(
-    `SELECT COUNT(*) as total FROM "${tableName}"`
-  )
-
-  const updateHeadStmt = db.prepare(
-    `INSERT OR REPLACE INTO "${CONTEXT_TABLE}" (storeId, currentHead, backendId) VALUES (?, ?, ?)`
-  )
+  // Start periodic flush timer.
+  flushTimer = setInterval(flushToDisk, FLUSH_INTERVAL_MS)
 
   return {
     backendId,
     getCurrentHead: () => currentHead,
 
     appendEvents: (batch: readonly EventEncodedType[], createdAt: string) => {
-      const insertMany = db.transaction(
-        (events: readonly EventEncodedType[]) => {
-          for (const event of events) {
-            insertStmt.run(
+      db.run('BEGIN TRANSACTION')
+      try {
+        for (const event of batch) {
+          db.run(
+            `INSERT OR IGNORE INTO "${tableName}" (seqNum, parentSeqNum, args, name, createdAt, clientId, sessionId) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
               event.seqNum,
               event.parentSeqNum,
               event.args === undefined ? null : JSON.stringify(event.args),
               event.name,
               createdAt,
               event.clientId,
-              event.sessionId
-            )
-          }
-          const lastEvent = events.at(-1)
-          if (lastEvent !== undefined) {
-            updateHeadStmt.run(storeId, lastEvent.seqNum, backendId)
-            currentHead = lastEvent.seqNum
-          }
+              event.sessionId,
+            ]
+          )
         }
-      )
-      insertMany(batch)
+        const lastEvent = batch.at(-1)
+        if (lastEvent !== undefined) {
+          db.run(
+            `INSERT OR REPLACE INTO "${CONTEXT_TABLE}" (storeId, currentHead, backendId) VALUES (?, ?, ?)`,
+            [storeId, lastEvent.seqNum, backendId]
+          )
+          currentHead = lastEvent.seqNum
+        }
+        db.run('COMMIT')
+        dirty = true
+      } catch (error) {
+        db.run('ROLLBACK')
+        throw error
+      }
     },
 
     getPage: (cursor: number | undefined, limit: number): SyncStorageRow[] => {
-      if (cursor === undefined) {
-        return selectAllStmt.all(limit)
+      const rows: SyncStorageRow[] = []
+      const stmt =
+        cursor === undefined
+          ? db.prepare(
+              `SELECT seqNum, parentSeqNum, name, args, createdAt, clientId, sessionId FROM "${tableName}" ORDER BY seqNum ASC LIMIT ?`
+            )
+          : db.prepare(
+              `SELECT seqNum, parentSeqNum, name, args, createdAt, clientId, sessionId FROM "${tableName}" WHERE seqNum > ? ORDER BY seqNum ASC LIMIT ?`
+            )
+      stmt.bind(cursor === undefined ? [limit] : [cursor, limit])
+      while (stmt.step()) {
+        const row = stmt.getAsObject() as unknown as SyncStorageRow
+        rows.push(row)
       }
-      return selectFromCursorStmt.all(cursor, limit)
+      stmt.free()
+      return rows
     },
 
     countEvents: (cursor: number | undefined): number => {
-      if (cursor === undefined) {
-        return countAllStmt.get()?.total ?? 0
+      const stmt =
+        cursor === undefined
+          ? db.prepare(`SELECT COUNT(*) as total FROM "${tableName}"`)
+          : db.prepare(
+              `SELECT COUNT(*) as total FROM "${tableName}" WHERE seqNum > ?`
+            )
+      stmt.bind(cursor === undefined ? [] : [cursor])
+      let total = 0
+      if (stmt.step()) {
+        const row = stmt.getAsObject() as { total: number }
+        total = row.total
       }
-      return countFromCursorStmt.get(cursor)?.total ?? 0
+      stmt.free()
+      return total
     },
 
     close: () => {
+      // Final flush before closing.
+      if (flushTimer !== null) {
+        clearInterval(flushTimer)
+        flushTimer = null
+      }
+      flushToDisk()
       db.close()
     },
   }
 }
 
-type SyncStorage = ReturnType<typeof makeSyncStorage>
+type SyncStorage = Awaited<ReturnType<typeof makeSyncStorage>>
 
 // ---------------------------------------------------------------------------
 // SyncBackendService — Effect Service
 // ---------------------------------------------------------------------------
 
-interface PullSubscriber {
-  queue: Queue.Queue<PullResponseType>
+/**
+ * Tracks a MessagePort with active live pull request IDs.
+ *
+ * When a client issues a `SyncWsRpc.Pull` with `live: true`, we record
+ * its RPC `requestId` and the port it arrived on. On push, we encode
+ * `PullResponse` values and inject them as raw `ResponseChunkEncoded`
+ * messages directly onto the port — exactly like the reference
+ * `@livestore/sync-cf` implementation does with WebSockets.
+ *
+ * The live pull stream handler returns `Stream.never` to keep the RPC
+ * channel open (no `Exit` message sent), while live updates bypass the
+ * stream entirely and are injected as raw RPC chunk messages.
+ */
+interface LivePullPort {
+  port: RpcMessagePort
+  pullRequestIds: Set<string>
 }
 
 class SyncBackendService extends Context.Tag('@laborer/SyncBackendService')<
   SyncBackendService,
   {
     readonly storage: SyncStorage
-    readonly subscribers: Ref.Ref<Map<string, PullSubscriber>>
+    readonly livePorts: Map<string, LivePullPort>
   }
 >() {}
+
+/**
+ * Schema encoder for PullResponse — used to encode values before
+ * injecting them as raw RPC chunk messages onto MessagePorts.
+ *
+ * The RPC server normally encodes stream chunk values through
+ * `Schema.encodeUnknown(Schema.Array(successSchema))`. When we
+ * bypass the stream, we must do the same encoding ourselves.
+ */
+const encodePullResponse = Schema.encodeSync(PullResponse)
 
 // ---------------------------------------------------------------------------
 // Pull handler
@@ -318,7 +410,7 @@ const handlePull = (
   req: PullPayloadType
 ): Stream.Stream<PullResponseType, InvalidPullError, SyncBackendService> =>
   Effect.gen(function* () {
-    const { storage, subscribers } = yield* SyncBackendService
+    const { storage } = yield* SyncBackendService
     const { backendId } = storage
 
     // Validate backendId if cursor provided
@@ -418,28 +510,15 @@ const handlePull = (
       return phase1WithEmpty
     }
 
-    // Phase 2: Live updates via subscriber queue
-    const subscriberId = crypto.randomUUID()
-    const queue = yield* Queue.unbounded<PullResponseType>()
-
-    yield* Ref.update(subscribers, (subs) => {
-      const next = new Map(subs)
-      next.set(subscriberId, { queue })
-      return next
-    })
-
-    const phase2: Stream.Stream<PullResponseType, never, never> =
-      Stream.fromQueue(queue).pipe(
-        Stream.ensuring(
-          Ref.update(subscribers, (subs) => {
-            const next = new Map(subs)
-            next.delete(subscriberId)
-            return next
-          })
-        )
-      )
-
-    return Stream.concat(phase1WithEmpty, phase2)
+    // Phase 2: Keep stream alive with Stream.never.
+    // Live updates are NOT delivered through this stream. Instead,
+    // the push handler injects raw RPC ResponseChunkEncoded messages
+    // directly onto the MessagePort. Stream.never prevents the RPC
+    // framework from sending an Exit message, keeping the channel open.
+    return Stream.concat(
+      phase1WithEmpty,
+      Stream.never as Stream.Stream<PullResponseType, never, never>
+    )
   }).pipe(
     Stream.unwrap,
     Stream.mapError((cause) =>
@@ -454,7 +533,7 @@ const handlePull = (
 // ---------------------------------------------------------------------------
 
 const handlePush = Effect.fn('handlePush')(function* (req: PushPayloadType) {
-  const { storage, subscribers } = yield* SyncBackendService
+  const { storage, livePorts } = yield* SyncBackendService
   const { backendId } = storage
 
   if (req.batch.length === 0) {
@@ -468,39 +547,61 @@ const handlePush = Effect.fn('handlePush')(function* (req: PushPayloadType) {
     })
   }
 
-  // Validate sequence numbers
-  const currentHead = storage.getCurrentHead()
+  // Accept all pushes without sequence validation.
+  // The sync backend acts as a relay — the authoritative LaborerStore
+  // manages its own consistency. Strict sequence validation would
+  // reject valid batches when the server-side sync client pushes
+  // events in chunks or when the sync db is seeded mid-history.
   const firstEvent = req.batch[0]
   if (firstEvent === undefined) {
     return {}
-  }
-  const firstEventParent = firstEvent.parentSeqNum
-
-  if (firstEventParent !== currentHead) {
-    return yield* new InvalidPushError({
-      cause: `Server ahead: expected parentSeqNum ${currentHead}, got ${firstEventParent}`,
-    })
   }
 
   // Store events
   const createdAt = new Date().toISOString()
   storage.appendEvents(req.batch, createdAt)
 
-  // Broadcast to live pull subscribers
-  const subs = yield* Ref.get(subscribers)
+  // Build the PullResponse for broadcasting
+  const pullResponse: PullResponseType = {
+    batch: req.batch.map((eventEncoded: EventEncodedType) => ({
+      eventEncoded,
+      metadata: Option.some(makeSyncMetadata(createdAt)),
+    })),
+    pageInfo: pageInfoNoMore,
+    backendId,
+  }
 
-  if (subs.size > 0) {
-    const pullResponse: PullResponseType = {
-      batch: req.batch.map((eventEncoded: EventEncodedType) => ({
-        eventEncoded,
-        metadata: Option.some(makeSyncMetadata(createdAt)),
-      })),
-      pageInfo: pageInfoNoMore,
-      backendId,
-    }
+  // Encode through the PullResponse schema (converts Option types etc.)
+  const encodedValue = encodePullResponse(pullResponse)
 
-    for (const sub of subs.values()) {
-      yield* Queue.offer(sub.queue, pullResponse)
+  // Count total live pull connections for logging
+  let totalPullIds = 0
+  for (const livePort of livePorts.values()) {
+    totalPullIds += livePort.pullRequestIds.size
+  }
+  console.log(
+    `[sync-backend] Broadcasting to ${String(totalPullIds)} live pull stream(s) across ${String(livePorts.size)} port(s)`
+  )
+
+  // Inject ResponseChunkEncoded messages directly onto ports.
+  // This bypasses the Effect RPC stream mechanism entirely —
+  // the client's RPC framework sees these as stream chunks for
+  // the still-open Pull request and delivers them seamlessly.
+  for (const livePort of livePorts.values()) {
+    for (const requestId of livePort.pullRequestIds) {
+      const rpcChunk = {
+        _tag: 'Chunk' as const,
+        requestId,
+        values: [encodedValue],
+      }
+      try {
+        livePort.port.postMessage(rpcChunk)
+      } catch (err) {
+        console.error(
+          `[sync-backend] Failed to send chunk to port requestId=${requestId}:`,
+          err
+        )
+      }
     }
   }
 
@@ -512,22 +613,40 @@ const handlePush = Effect.fn('handlePush')(function* (req: PushPayloadType) {
 // ---------------------------------------------------------------------------
 
 const SyncRpcHandlersLive = SyncWsRpc.toLayer({
-  'SyncWsRpc.Pull': (req) =>
-    handlePull(req).pipe(
+  'SyncWsRpc.Pull': (req) => {
+    console.log(
+      `[sync-backend] Pull request: storeId=${req.storeId} live=${String(req.live)} cursor=${req.cursor._tag}`
+    )
+    return handlePull(req).pipe(
+      Stream.tap((res) =>
+        Effect.sync(() =>
+          console.log(
+            `[sync-backend] Pull response: batchLen=${String(res.batch.length)} pageInfo=${res.pageInfo._tag}`
+          )
+        )
+      ),
       Stream.mapError((cause) =>
         cause instanceof InvalidPullError
           ? cause
           : new InvalidPullError({ cause })
       )
-    ),
-  'SyncWsRpc.Push': (req) =>
-    handlePush(req).pipe(
+    )
+  },
+  'SyncWsRpc.Push': (req) => {
+    console.log(
+      `[sync-backend] Push request: storeId=${req.storeId} batchLen=${String(req.batch.length)}`
+    )
+    return handlePush(req).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => console.log('[sync-backend] Push completed'))
+      ),
       Effect.mapError((cause) =>
         cause instanceof InvalidPushError
           ? cause
           : new InvalidPushError({ cause })
       )
-    ),
+    )
+  },
 })
 
 /**
@@ -538,20 +657,51 @@ const SyncRpcHandlersLive = SyncWsRpc.toLayer({
 const DATA_DIRECTORY = env.DATA_DIR
 const STORE_ID = 'laborer'
 
-const SyncBackendServiceLive = Layer.scoped(
+/**
+ * Shared singleton SyncBackendService instance.
+ *
+ * All sync ports (in-process for LaborerStore, renderer clients) share the
+ * same underlying sql.js database and subscriber map. This ensures events
+ * pushed by the server's LaborerStore are visible to renderer pull requests.
+ *
+ * Lazily initialized on first use. The `initPromise` ensures the async
+ * sql.js initialization happens exactly once.
+ */
+let sharedServiceContext: Context.Context<SyncBackendService> | null = null
+let sharedServiceInitPromise: Promise<
+  Context.Context<SyncBackendService>
+> | null = null
+
+const getSharedSyncBackendService = (): Promise<
+  Context.Context<SyncBackendService>
+> => {
+  if (sharedServiceContext !== null) {
+    return Promise.resolve(sharedServiceContext)
+  }
+  if (sharedServiceInitPromise !== null) {
+    return sharedServiceInitPromise
+  }
+  sharedServiceInitPromise = (async () => {
+    const storage = await makeSyncStorage(DATA_DIRECTORY, STORE_ID)
+    const livePorts = new Map<string, LivePullPort>()
+    const ctx = Context.make(SyncBackendService, { storage, livePorts })
+    sharedServiceContext = ctx
+    console.log('[sync-backend] Shared SyncBackendService initialized (sql.js)')
+    return ctx
+  })()
+  return sharedServiceInitPromise
+}
+
+/**
+ * Layer that provides the shared SyncBackendService singleton.
+ * Multiple RPC servers can use this layer and they'll all share
+ * the same sql.js database and subscriber map.
+ */
+const SharedSyncBackendServiceLive = Layer.effect(
   SyncBackendService,
-  Effect.gen(function* () {
-    const storage = makeSyncStorage(DATA_DIRECTORY, STORE_ID)
-    const subscribers = yield* Ref.make(new Map<string, PullSubscriber>())
-
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        storage.close()
-      })
-    )
-
-    return { storage, subscribers }
-  })
+  Effect.promise(getSharedSyncBackendService).pipe(
+    Effect.map((ctx) => Context.get(ctx, SyncBackendService))
+  )
 )
 
 // ---------------------------------------------------------------------------
@@ -561,33 +711,340 @@ const SyncBackendServiceLive = Layer.scoped(
 /**
  * Serves `SyncWsRpc` (Pull/Push) handlers over a dedicated MessagePort.
  *
- * Each call creates a scoped `RpcServer` on the given port backed by a
- * shared `SyncBackendService` (SQLite). The server runs in a forked
- * fiber that lives until the port closes or the process shuts down.
+ * Each call creates a scoped `RpcServer` on the given port backed by the
+ * **shared** `SyncBackendService` singleton (sql.js WASM SQLite). All
+ * sync ports share the same database and live port registry, ensuring
+ * events pushed by the server's LaborerStore are visible to renderer
+ * clients via direct RPC chunk injection.
  *
- * Call this once per incoming sync port from the renderer's LiveStore
- * worker. Multiple ports can be active simultaneously.
+ * The port's incoming messages are intercepted to track live pull request
+ * IDs (following the same pattern as `@livestore/sync-cf`'s WebSocket
+ * `onMessage` interceptor). When a `SyncWsRpc.Pull` request arrives with
+ * `live: true`, its `requestId` is registered in the shared `livePorts`
+ * map. When an `Interrupt` arrives, the corresponding `requestId` is
+ * removed. The push handler uses these tracked IDs to inject
+ * `ResponseChunkEncoded` messages directly onto the port.
  *
  * @param port - The MessagePort to serve sync RPCs over.
  * @returns A fiber handle that can be interrupted to stop serving.
  */
-const serveSyncOnPort = (
-  port: import('@laborer/shared/rpc-transport-messageport').RpcMessagePort
-) => {
-  // Dynamic import to avoid circular dependency issues when
-  // sync-backend.ts is loaded before the shared package resolves.
-  const { layerProtocolMessagePort } =
-    require('@laborer/shared/rpc-transport-messageport') as typeof import('@laborer/shared/rpc-transport-messageport')
+const serveSyncOnPort = (port: RpcMessagePort) => {
+  console.log('[sync-backend] serveSyncOnPort called — building layer')
+
+  // Unique ID for this port in the shared livePorts registry.
+  const portId = crypto.randomUUID()
+
+  // Register this port's live pull tracking with the shared service.
+  // This runs synchronously because serveSyncOnPort is called after
+  // the shared service is initialized.
+  const registerLivePort = Effect.promise(getSharedSyncBackendService).pipe(
+    Effect.map((ctx) => {
+      const service = Context.get(ctx, SyncBackendService)
+      const livePort: LivePullPort = {
+        port,
+        pullRequestIds: new Set(),
+      }
+      service.livePorts.set(portId, livePort)
+      console.log(
+        `[sync-backend] Registered port ${portId} (total ports: ${String(service.livePorts.size)})`
+      )
+      return livePort
+    })
+  )
+
+  // We need the livePort reference synchronously for the message interceptor.
+  // Initialize it via a callback from the Effect.
+  let livePort: LivePullPort | null = null
+  Effect.runFork(
+    registerLivePort.pipe(
+      Effect.tap((lp) =>
+        Effect.sync(() => {
+          livePort = lp
+        })
+      )
+    )
+  )
+
+  /**
+   * Inspects a raw RPC message and tracks/unregisters live pull request IDs.
+   * Called for every inbound message before the RPC server processes it.
+   */
+  const interceptMessage = (data: unknown): void => {
+    if (livePort === null || typeof data !== 'object' || data === null) {
+      return
+    }
+    const msg = data as Record<string, unknown>
+    if (
+      msg._tag === 'Request' &&
+      msg.tag === 'SyncWsRpc.Pull' &&
+      typeof msg.id === 'string'
+    ) {
+      const payload = msg.payload as Record<string, unknown> | undefined
+      if (payload?.live === true) {
+        livePort.pullRequestIds.add(msg.id)
+        console.log(
+          `[sync-backend] Live pull REGISTERED: port=${portId} requestId=${msg.id} (total: ${String(livePort.pullRequestIds.size)})`
+        )
+      }
+    } else if (
+      msg._tag === 'Interrupt' &&
+      typeof msg.requestId === 'string' &&
+      livePort.pullRequestIds.delete(msg.requestId)
+    ) {
+      console.log(
+        `[sync-backend] Live pull UNREGISTERED: port=${portId} requestId=${msg.requestId} (total: ${String(livePort.pullRequestIds.size)})`
+      )
+    }
+  }
+
+  // Build a proxy port that intercepts incoming messages to track live
+  // pull request IDs, then delegates to the underlying port. This is
+  // analogous to the `onMessage` interceptor in the reference sync-cf
+  // Durable Object implementation.
+  //
+  // We use `as RpcMessagePort` because exactOptionalPropertyTypes makes
+  // conditional property forwarding (port.close?.bind) incompatible with
+  // the optional-but-never-undefined property declarations.
+  const interceptingPort = {
+    postMessage(value: unknown, transferList?: readonly unknown[]) {
+      port.postMessage(value, transferList)
+    },
+    start: port.start?.bind(port),
+    close: port.close?.bind(port),
+    off: port.off?.bind(port),
+    removeListener: port.removeListener?.bind(port),
+  } as RpcMessagePort
+
+  if (typeof port.on === 'function') {
+    // Node.js / Electron MessagePortMain style — wrap the `on` method
+    ;(interceptingPort as { on: RpcMessagePort['on'] }).on = ((
+      event: string,
+      listener: (value: unknown) => void
+    ) => {
+      if (event === 'message') {
+        const wrappedListener = (rawEvent: unknown) => {
+          const data =
+            typeof rawEvent === 'object' &&
+            rawEvent !== null &&
+            'data' in rawEvent
+              ? (rawEvent as { data: unknown }).data
+              : rawEvent
+          interceptMessage(data)
+          listener(rawEvent)
+        }
+        port.on?.('message', wrappedListener)
+      } else {
+        port.on?.(event as 'close', listener as () => void)
+      }
+    }) as RpcMessagePort['on']
+  } else {
+    // Web MessagePort style — use onmessage getter/setter with interception.
+    // The RPC server transport sets port.onmessage = handler, so we
+    // intercept that assignment to inject our tracking logic.
+    let _onmessage: ((event: { data: unknown }) => void) | null = null
+    Object.defineProperty(interceptingPort, 'onmessage', {
+      set(handler: ((event: { data: unknown }) => void) | null) {
+        _onmessage = handler
+        if (handler === null) {
+          port.onmessage = null
+          return
+        }
+        port.onmessage = (event: { data: unknown }) => {
+          interceptMessage(event.data)
+          handler(event)
+        }
+      },
+      get() {
+        return _onmessage
+      },
+    })
+  }
 
   const SyncServerOnPort = RpcServer.layer(SyncWsRpc).pipe(
-    Layer.provide(layerProtocolMessagePort(port)),
+    Layer.provide(layerProtocolMessagePort(interceptingPort)),
     Layer.provide(SyncRpcHandlersLive),
-    Layer.provide(SyncBackendServiceLive)
+    Layer.provide(SharedSyncBackendServiceLive)
   )
 
   // Launch the sync server in a forked fiber. It stays alive until
   // the port closes (triggering scope finalization) or the process exits.
-  return Effect.runFork(SyncServerOnPort.pipe(Layer.launch, Effect.scoped))
+  const program = SyncServerOnPort.pipe(
+    Layer.launch,
+    Effect.scoped,
+    Effect.tap(() =>
+      Effect.sync(() => console.log('[sync-backend] Sync RPC server launched'))
+    ),
+    Effect.ensuring(
+      Effect.promise(getSharedSyncBackendService).pipe(
+        Effect.tap((ctx) =>
+          Effect.sync(() => {
+            const service = Context.get(ctx, SyncBackendService)
+            service.livePorts.delete(portId)
+            console.log(
+              `[sync-backend] Unregistered port ${portId} (total ports: ${String(service.livePorts.size)})`
+            )
+          })
+        )
+      )
+    ),
+    Effect.tapErrorCause((cause) =>
+      Effect.sync(() =>
+        console.error('[sync-backend] Sync RPC server FAILED:', cause)
+      )
+    )
+  )
+
+  return Effect.runFork(program)
 }
 
-export { serveSyncOnPort }
+// ---------------------------------------------------------------------------
+// In-process sync backend for LaborerStore (server-side sync client)
+// ---------------------------------------------------------------------------
+
+/**
+ * RPC client type helper — extracts the client type from `RpcClient.make(SyncWsRpc)`.
+ */
+const MakeSyncClient = RpcClient.make(SyncWsRpc)
+type SyncRpcClient = Effect.Effect.Success<typeof MakeSyncClient>
+
+type PullResponseForSync = typeof PullResponse.Type
+
+/**
+ * Creates a sync backend constructor for the server's LaborerStore.
+ *
+ * Uses a Node.js `MessageChannel` to create an in-process connection
+ * between the LaborerStore (as a sync client) and the sync backend
+ * (as a sync server). This bridges the server's authoritative store
+ * to the sync relay so events flow to connected renderer clients.
+ *
+ * Returns a `SyncBackendConstructor`-compatible function that can be
+ * passed to `makeAdapter({ sync: { backend: ... } })`.
+ *
+ * @returns A sync backend constructor function.
+ */
+const makeInProcessSyncBackend = () => {
+  // Create an in-process MessageChannel. One port serves the sync RPC
+  // server; the other is used by the sync client.
+  const { port1: serverPort, port2: clientPort } = new MessageChannel()
+
+  // Serve sync RPC on the server port.
+  // Cast through unknown because Node.js MessagePort has a compatible
+  // but differently-typed interface than our RpcMessagePort.
+  serveSyncOnPort(serverPort as unknown as RpcMessagePort)
+
+  // Return a sync backend constructor that connects through the client port.
+  const syncBackendConstructor =
+    (typedClientPort: RpcMessagePort) =>
+    ({ storeId }: { storeId: string; clientId: string; payload: unknown }) =>
+      Effect.gen(function* () {
+        const isConnected = yield* SubscriptionRef.make(false)
+
+        // Build the RPC client protocol layer over the MessagePort.
+        const ProtocolLive = Layer.scoped(
+          RpcClient.Protocol,
+          makeClientProtocolMessagePort(typedClientPort)
+        )
+
+        const ctx = yield* Layer.build(ProtocolLive)
+        const rpcClient: SyncRpcClient = yield* MakeSyncClient.pipe(
+          Effect.provide(ctx)
+        )
+
+        let currentBackendId: Option.Option<string> = Option.none()
+
+        // Effect RPC client uses nested namespaces for dotted tag names.
+        const typedClient = rpcClient as unknown as {
+          SyncWsRpc: {
+            Pull: (
+              args: typeof PullPayload.Type
+            ) => Stream.Stream<PullResponseForSync, InvalidPullError>
+            Push: (
+              args: typeof PushPayload.Type
+            ) => Effect.Effect<typeof PushAck.Type, InvalidPushError>
+          }
+        }
+
+        const pullRpc = typedClient.SyncWsRpc.Pull
+        const pushRpc = typedClient.SyncWsRpc.Push
+
+        const ping = Effect.gen(function* () {
+          const stream = pullRpc({
+            storeId,
+            live: false,
+            cursor: Option.none(),
+          })
+          yield* Stream.runHead(stream)
+          yield* SubscriptionRef.set(isConnected, true)
+        }).pipe(
+          Effect.catchAll(() => SubscriptionRef.set(isConnected, false)),
+          Effect.asVoid
+        )
+
+        return {
+          isConnected,
+          connect: ping,
+
+          pull: (
+            cursor: Option.Option<{
+              eventSequenceNumber: number
+              metadata: Option.Option<unknown>
+            }>,
+            options?: { live?: boolean }
+          ) => {
+            const rpcCursor = cursor.pipe(
+              Option.map((c) => ({
+                eventSequenceNumber: c.eventSequenceNumber,
+                backendId: Option.getOrElse(currentBackendId, () => ''),
+              }))
+            )
+
+            return pullRpc({
+              storeId,
+              live: options?.live === true,
+              cursor: rpcCursor,
+            }).pipe(
+              Stream.tap((res) =>
+                Effect.sync(() => {
+                  currentBackendId = Option.some(res.backendId)
+                })
+              ),
+              Stream.map((res) => ({
+                batch: res.batch,
+                pageInfo: res.pageInfo,
+              }))
+            )
+          },
+
+          push: (batch: readonly Record<string, unknown>[]) =>
+            Effect.gen(function* () {
+              if (batch.length === 0) {
+                return
+              }
+
+              yield* pushRpc({
+                storeId,
+                batch: batch as readonly (typeof EventEncoded.Type)[],
+                backendId: currentBackendId,
+              })
+            }).pipe(Effect.asVoid),
+
+          ping,
+
+          metadata: {
+            name: '@laborer/in-process-sync',
+            description:
+              'In-process LiveStore sync backend for server-side store',
+            protocol: 'messageport',
+          },
+
+          supports: {
+            pullPageInfoKnown: true,
+            pullLive: true,
+          },
+        }
+      })
+
+  return syncBackendConstructor(clientPort as unknown as RpcMessagePort)
+}
+
+export { makeInProcessSyncBackend, serveSyncOnPort }

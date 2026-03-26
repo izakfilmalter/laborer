@@ -188,38 +188,36 @@ async function main(): Promise<void> {
   // Dynamically import the service modules after the port is available.
   // This avoids loading @effect/ai and other heavy dependencies until needed.
   const { Effect, Layer, Logger } = await import('effect')
-  const { McpServer } = await import('@effect/ai')
-  const { NodeSink, NodeStream } = await import('@effect/platform-node')
   const { LaborerRpcClient } = await import('./services/laborer-rpc-client.js')
   const { ProjectDiscovery } = await import('./services/project-discovery.js')
-  const { PrdToolsLayer } = await import('./tools/prd-tools.js')
-  const { IssueToolsLayer } = await import('./tools/issue-tools.js')
 
   // Build the LaborerRpcClient layer backed by the brokered MessagePort.
   const LaborerRpcClientLive = LaborerRpcClient.utilityLayer(serverRpcPort)
 
-  // The MCP server layer uses stdio for communication with external MCP
-  // clients. In the utility process context, stdin may not be available
-  // (Electron utility processes have stdin set to 'ignore'). The MCP
-  // server will gracefully handle this — if no external client connects,
-  // the tools are simply not invoked via stdio, but the service stays
-  // alive for management by the main process.
-  const McpLive = McpServer.layerStdio({
-    name: 'laborer',
-    version: '0.0.0',
-    stdin: NodeStream.stdin,
-    stdout: NodeSink.stdout,
-  })
-
-  const AppLive = PrdToolsLayer.pipe(
-    Layer.merge(IssueToolsLayer),
-    Layer.provide(ProjectDiscovery.layer),
+  // The utility process does NOT serve MCP tools via stdio.
+  // Electron utility processes have stdin set to 'ignore', so
+  // McpServer.layerStdio would fail immediately (causing "All fibers
+  // interrupted without errors").
+  //
+  // External MCP clients (Claude, OpenCode, Codex) use the standalone
+  // `main.ts` entry point instead, which IS registered by the server's
+  // McpRegistrar service and has proper stdin/stdout access.
+  //
+  // This utility process keeps the LaborerRpcClient and ProjectDiscovery
+  // services alive for future inter-process MCP management features
+  // (e.g., spawning MCP server child processes on demand).
+  const AppLive = ProjectDiscovery.layer.pipe(
     Layer.provide(LaborerRpcClientLive),
-    Layer.provide(McpLive),
     Layer.provide(Logger.add(Logger.prettyLogger({ stderr: true })))
   )
 
-  const program = AppLive.pipe(Layer.launch, Effect.scoped)
+  // Build the layer and keep the process alive until interrupted.
+  // Layer.launch keeps the scoped resources alive; Effect.never ensures
+  // the process doesn't exit (the parent manages lifecycle via kill).
+  const program = Effect.gen(function* () {
+    yield* AppLive.pipe(Layer.launch, Effect.forkScoped)
+    return yield* Effect.never
+  }).pipe(Effect.scoped)
 
   // Use Effect.runPromise instead of NodeRuntime.runMain to avoid
   // installing duplicate signal handlers in the utility process.

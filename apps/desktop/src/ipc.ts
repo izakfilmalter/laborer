@@ -491,25 +491,31 @@ export function registerIpcHandlers(
   })
 
   // -- Acquire service port ------------------------------------------------
-  // Uses ipcMain.on() + webContents.postMessage() instead of ipcMain.handle()
-  // because handle/invoke cannot transfer MessagePort objects. The renderer
-  // sends a request with a unique `requestId`; we respond via postMessage
-  // with the port in the transfer array.
+  // Creates a MessagePort pair: one end goes to the named utility process,
+  // the other goes to the requesting renderer window.
   //
-  // Follows VS Code's acquirePort() pattern:
-  // @see .reference/vscode/src/vs/base/parts/ipc/electron-browser/ipc.mp.ts
+  // Protocol (matching VS Code's acquirePort pattern):
+  // 1. Renderer calls `ipcSend(ACQUIRE_SERVICE_PORT_CHANNEL, { name, nonce })`
+  // 2. Renderer has already installed a preload relay via
+  //    `ipcMessagePort.acquire(SERVICE_PORT_RESPONSE_CHANNEL, nonce)`
+  // 3. Main process responds with the nonce as data and the port in the
+  //    transfer array via `webContents.postMessage(responseChannel, nonce, [port])`
+  // 4. Preload relay fires, calls `window.postMessage(nonce, '*', e.ports)`
+  // 5. Renderer catches the port via `window.addEventListener('message')`
+  //
+  // @see .reference/vscode/src/vs/platform/terminal/electron-main/electronPtyHostStarter.ts
   ipcMain.removeAllListeners(ACQUIRE_SERVICE_PORT_CHANNEL)
   ipcMain.on(ACQUIRE_SERVICE_PORT_CHANNEL, (event, payload: unknown) => {
     if (typeof payload !== 'object' || payload === null) {
       return
     }
 
-    const { name, requestId } = payload as {
+    const { name, nonce } = payload as {
       name: unknown
-      requestId: unknown
+      nonce: unknown
     }
 
-    if (typeof name !== 'string' || typeof requestId !== 'string') {
+    if (typeof name !== 'string' || typeof nonce !== 'string') {
       return
     }
 
@@ -524,47 +530,30 @@ export function registerIpcHandlers(
     }
 
     const serviceName = name as SidecarName
-    const senderWindow = BrowserWindow.fromWebContents(event.sender)
-    if (!senderWindow || senderWindow.isDestroyed()) {
-      return
-    }
-
-    // Check if the utility process manager is available and the service is running.
     if (!utilityProcessManagerRef?.isRunning(serviceName)) {
-      // Service not running — respond with null (no port).
-      senderWindow.webContents.postMessage(SERVICE_PORT_RESPONSE_CHANNEL, {
-        requestId,
-        success: false,
-      })
       return
     }
 
-    // Create a MessagePort pair for the renderer-to-utility-process connection.
-    // One port goes to the renderer, the other goes to the utility process.
-    const { port1: rendererPort, port2: utilityPort } = new MessageChannelMain()
-
-    // Transfer the utility-side port to the utility process.
-    // The utility process receives this via process.parentPort's 'message'
-    // event with the port in the `ports` array.
     const utilityProcess = utilityProcessManagerRef.getProcess(serviceName)
     if (!utilityProcess) {
-      rendererPort.close()
-      utilityPort.close()
-      senderWindow.webContents.postMessage(SERVICE_PORT_RESPONSE_CHANNEL, {
-        requestId,
-        success: false,
-      })
       return
     }
 
-    utilityProcess.postMessage({ type: 'port' }, [utilityPort])
+    if (event.sender.isDestroyed()) {
+      return
+    }
 
-    // Transfer the renderer-side port to the requesting renderer window.
-    senderWindow.webContents.postMessage(
-      SERVICE_PORT_RESPONSE_CHANNEL,
-      { requestId, success: true },
-      [rendererPort]
+    console.log(
+      `[ipc] acquireServicePort: name=${serviceName} nonce=${nonce} — creating MessageChannelMain pair`
     )
+    const { port1: rendererPort, port2: utilityPort } = new MessageChannelMain()
+    utilityProcess.postMessage({ type: 'port' }, [utilityPort])
+    console.log(
+      `[ipc] acquireServicePort: sent utilityPort to ${serviceName}, sending rendererPort to renderer via ${SERVICE_PORT_RESPONSE_CHANNEL}`
+    )
+    event.sender.postMessage(SERVICE_PORT_RESPONSE_CHANNEL, nonce, [
+      rendererPort,
+    ])
   })
 
   // -- Acquire terminal data port ------------------------------------------
@@ -583,109 +572,60 @@ export function registerIpcHandlers(
       return
     }
 
-    const { terminalId, requestId } = payload as {
+    const { terminalId, nonce } = payload as {
       terminalId: unknown
-      requestId: unknown
+      nonce: unknown
     }
 
-    if (typeof terminalId !== 'string' || typeof requestId !== 'string') {
+    if (typeof terminalId !== 'string' || typeof nonce !== 'string') {
       return
     }
 
-    const senderWindow = BrowserWindow.fromWebContents(event.sender)
-    if (!senderWindow || senderWindow.isDestroyed()) {
-      return
-    }
-
-    // The terminal data port is always on the 'terminal' utility process.
     if (!utilityProcessManagerRef?.isRunning('terminal')) {
-      senderWindow.webContents.postMessage(
-        TERMINAL_DATA_PORT_RESPONSE_CHANNEL,
-        { requestId, success: false }
-      )
       return
     }
 
     const utilityProcess = utilityProcessManagerRef.getProcess('terminal')
-    if (!utilityProcess) {
-      senderWindow.webContents.postMessage(
-        TERMINAL_DATA_PORT_RESPONSE_CHANNEL,
-        { requestId, success: false }
-      )
+    if (!utilityProcess || event.sender.isDestroyed()) {
       return
     }
 
-    // Create a MessagePort pair for the renderer-to-terminal data channel.
     const { port1: rendererPort, port2: utilityPort } = new MessageChannelMain()
-
-    // Send the utility-side port with the terminal ID so the terminal
-    // utility process can attach it to the correct PTY.
+    console.log(
+      `[ipc] acquireTerminalDataPort: terminalId=${terminalId} nonce=${nonce} — sending utilityPort to terminal, rendererPort to renderer`
+    )
     utilityProcess.postMessage({ type: 'terminal-data-port', terminalId }, [
       utilityPort,
     ])
-
-    // Transfer the renderer-side port to the requesting renderer window.
-    senderWindow.webContents.postMessage(
-      TERMINAL_DATA_PORT_RESPONSE_CHANNEL,
-      { requestId, success: true },
-      [rendererPort]
-    )
+    event.sender.postMessage(TERMINAL_DATA_PORT_RESPONSE_CHANNEL, nonce, [
+      rendererPort,
+    ])
   })
 
   // -- Acquire sync port ----------------------------------------------------
-  // Creates a MessagePort pair for LiveStore sync between the renderer's
-  // LiveStore worker and the server utility process. One port goes to the
-  // server utility process with `{ type: 'sync-port' }`, the other goes
-  // to the renderer which passes it to its LiveStore worker.
-  //
-  // @see Issue #11: LiveStore sync over MessagePort
   ipcMain.removeAllListeners(ACQUIRE_SYNC_PORT_CHANNEL)
   ipcMain.on(ACQUIRE_SYNC_PORT_CHANNEL, (event, payload: unknown) => {
     if (typeof payload !== 'object' || payload === null) {
       return
     }
 
-    const { requestId } = payload as { requestId: unknown }
+    const { nonce } = payload as { nonce: unknown }
 
-    if (typeof requestId !== 'string') {
+    if (typeof nonce !== 'string') {
       return
     }
 
-    const senderWindow = BrowserWindow.fromWebContents(event.sender)
-    if (!senderWindow || senderWindow.isDestroyed()) {
-      return
-    }
-
-    // Sync port always connects to the 'server' utility process.
     if (!utilityProcessManagerRef?.isRunning('server')) {
-      senderWindow.webContents.postMessage(SYNC_PORT_RESPONSE_CHANNEL, {
-        requestId,
-        success: false,
-      })
       return
     }
 
     const utilityProcess = utilityProcessManagerRef.getProcess('server')
-    if (!utilityProcess) {
-      senderWindow.webContents.postMessage(SYNC_PORT_RESPONSE_CHANNEL, {
-        requestId,
-        success: false,
-      })
+    if (!utilityProcess || event.sender.isDestroyed()) {
       return
     }
 
-    // Create a MessagePort pair for the renderer-to-server sync channel.
     const { port1: rendererPort, port2: utilityPort } = new MessageChannelMain()
-
-    // Send the utility-side port to the server with `{ type: 'sync-port' }`
-    // so the server utility process starts serving SyncWsRpc on it.
     utilityProcess.postMessage({ type: 'sync-port' }, [utilityPort])
-
-    // Transfer the renderer-side port to the requesting renderer window.
-    senderWindow.webContents.postMessage(
-      SYNC_PORT_RESPONSE_CHANNEL,
-      { requestId, success: true },
-      [rendererPort]
-    )
+    event.sender.postMessage(SYNC_PORT_RESPONSE_CHANNEL, nonce, [rendererPort])
   })
 }

@@ -10,12 +10,14 @@
  *
  * Protocol:
  * - On successful load: sends `{ type: 'ready' }` to the parent
+ * - After ready: sends `{ type: 'heartbeat' }` every 5s for liveness monitoring
  * - On load failure: sends `{ type: 'error', message }` and exits with code 1
  *
  * Follows VS Code's bootstrap-fork pattern where the entry point is passed
  * via an environment variable (VS Code uses `VSCODE_ESM_ENTRYPOINT`).
  *
  * @see .reference/vscode/src/vs/platform/utilityProcess/electron-main/utilityProcess.ts
+ * @see lifecycle-monitor.ts — HEARTBEAT_INTERVAL_MS / HEARTBEAT_TIMEOUT_MS
  */
 
 import type { UtilityProcessBootstrapMessage } from './utility-process-types.js'
@@ -83,6 +85,15 @@ async function bootstrap(): Promise<void> {
 
     // Signal readiness to the parent process.
     sendToParent({ type: 'ready' })
+
+    // Start periodic heartbeat messages so the LifecycleMonitor knows
+    // this process is alive. The interval (5s) must be shorter than
+    // the monitor's timeout (15s = 3x interval). The timer is unref'd
+    // so it doesn't prevent the process from exiting naturally.
+    const heartbeatTimer = setInterval(() => {
+      sendToParent({ type: 'heartbeat' })
+    }, 5000)
+    heartbeatTimer.unref()
   } catch (error: unknown) {
     const message =
       error instanceof Error

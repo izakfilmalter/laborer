@@ -31,7 +31,7 @@ import { RpcServer } from '@effect/rpc'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { Effect, Layer, ManagedRuntime, Runtime, Stream } from 'effect'
+import { Context, Effect, Layer, ManagedRuntime, Runtime, Stream } from 'effect'
 
 import { TerminalRpcsLive } from './rpc/handlers.js'
 import { directLayer as PtyDirectLayer } from './services/pty-direct.js'
@@ -46,6 +46,10 @@ import { createTerminalSessionPersistence } from './services/terminal-session-pe
 
 interface ParentPort {
   on(
+    event: 'message',
+    listener: (event: { data: unknown; ports: unknown[] }) => void
+  ): void
+  removeListener(
     event: 'message',
     listener: (event: { data: unknown; ports: unknown[] }) => void
   ): void
@@ -76,15 +80,19 @@ function waitForRpcPort(): Promise<{
 
     const parentPort = getParentPort()
 
-    parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
+    const listener = (event: { data: unknown; ports: unknown[] }) => {
       const data = event.data as { type?: string }
       if (data?.type === 'port' && event.ports.length > 0) {
         clearTimeout(timeout)
+        // Remove this listener so it doesn't fire for subsequent
+        // brokered ports (which would call start() prematurely).
+        parentPort.removeListener('message', listener)
         const port = event.ports[0] as RpcMessagePort
         port.start?.()
         resolve({ parentPort, rpcPort: port })
       }
-    })
+    }
+    parentPort.on('message', listener)
   })
 }
 
@@ -92,19 +100,44 @@ function waitForRpcPort(): Promise<{
 // Additional RPC port handling
 // ---------------------------------------------------------------------------
 
-function serveRpcOnPort<R>(
+/**
+ * Serve TerminalRpcs on an additional MessagePort, sharing the existing
+ * TerminalManager instance from the managed runtime.
+ *
+ * Takes a pre-built `sharedServicesLayer` (a `Layer.succeedContext` snapshot
+ * of the live services) instead of the raw `ServicesLayer`. This ensures all
+ * ports — the initial RPC port, brokered inter-process ports, and renderer
+ * ports — share the same TerminalManager and see the same terminals.
+ *
+ * Follows VS Code's pty-host pattern where a single `PtyService` is registered
+ * as a channel on an `IPCServer` and automatically shared with every incoming
+ * MessagePort connection.
+ *
+ * @see .reference/vscode/src/vs/platform/terminal/node/ptyHostMain.ts
+ * @see .reference/vscode/src/vs/base/parts/ipc/node/ipc.mp.ts (Server)
+ */
+function serveRpcOnPort(
   port: RpcMessagePort,
-  managedRuntime: ManagedRuntime.ManagedRuntime<R, never>,
-  servicesLayer: Layer.Layer<TerminalManager>
+  sharedServicesLayer: Layer.Layer<TerminalManager>
 ): void {
   const RpcLive = RpcServer.layer(TerminalRpcs).pipe(
     Layer.provide(layerProtocolMessagePort(port)),
     Layer.provide(TerminalRpcsLive),
-    Layer.provide(servicesLayer)
+    Layer.provide(sharedServicesLayer)
   )
 
-  const program = Layer.launch(RpcLive).pipe(Effect.scoped)
-  managedRuntime.runFork(program)
+  const program = Layer.launch(RpcLive).pipe(
+    Effect.scoped,
+    Effect.tapErrorCause((cause) =>
+      Effect.sync(() => {
+        console.error(
+          '[terminal-utility] serveRpcOnPort failed:',
+          String(cause)
+        )
+      })
+    )
+  )
+  Effect.runFork(program)
 }
 
 // ---------------------------------------------------------------------------
@@ -256,31 +289,89 @@ async function main(): Promise<void> {
 
   const FullLayer = Layer.merge(RpcLive, ServicesLayer)
 
-  const managedRuntime = ManagedRuntime.make(FullLayer)
-  const runtime = await managedRuntime.runtime()
+  // Buffer additional ports and data ports that arrive before the
+  // runtime is ready. The brokered inter-process port may arrive
+  // during managedRuntime initialization.
+  type BufferedMessage =
+    | { type: 'port'; port: RpcMessagePort }
+    | { type: 'data-port'; port: RpcMessagePort; terminalId: string }
+  const bufferedMessages: BufferedMessage[] = []
+  let messageHandler: ((msg: BufferedMessage) => void) | null = null
 
-  // Set up session persistence (replay buffers, SIGTERM handler, restore)
-  setupSessionPersistence(managedRuntime, persistedState)
-
+  // Register the listener BEFORE awaiting the runtime to avoid
+  // dropping messages that arrive during initialization.
   parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
     const data = event.data as { terminalId?: string; type?: string }
+    console.log(
+      '[terminal-utility] parentPort message:',
+      data?.type,
+      'ports:',
+      event.ports?.length ?? 0,
+      'hasHandler:',
+      !!messageHandler
+    )
     if (
       data?.type === 'terminal-data-port' &&
       typeof data.terminalId === 'string' &&
       event.ports.length > 0
     ) {
+      console.log(
+        '[terminal-utility] Received data port for terminal:',
+        data.terminalId
+      )
       const dataPort = event.ports[0] as RpcMessagePort
-      dataPort.start?.()
-      handleTerminalDataPort(dataPort, data.terminalId, runtime)
+      // Do NOT call start() here — the data channel will call start()
+      // after attaching its message listener. Starting before a listener
+      // exists causes input messages (keypresses) to be silently dropped.
+      const msg: BufferedMessage = {
+        type: 'data-port',
+        port: dataPort,
+        terminalId: data.terminalId,
+      }
+      if (messageHandler) {
+        messageHandler(msg)
+      } else {
+        bufferedMessages.push(msg)
+      }
     } else if (data?.type === 'port' && event.ports.length > 0) {
       const additionalRpcPort = event.ports[0] as RpcMessagePort
-      additionalRpcPort.start?.()
       console.log(
         '[terminal-utility] Serving TerminalRpcs on additional port (inter-process)'
       )
-      serveRpcOnPort(additionalRpcPort, managedRuntime, ServicesLayer)
+      const msg: BufferedMessage = { type: 'port', port: additionalRpcPort }
+      if (messageHandler) {
+        messageHandler(msg)
+      } else {
+        bufferedMessages.push(msg)
+      }
     }
   })
+
+  const managedRuntime = ManagedRuntime.make(FullLayer)
+  const runtime = await managedRuntime.runtime()
+
+  // Extract the live TerminalManager from the managed runtime's context.
+  const sharedServicesLayer = Layer.succeedContext(
+    Context.make(TerminalManager, Context.get(runtime.context, TerminalManager))
+  )
+
+  // Set up session persistence (replay buffers, SIGTERM handler, restore)
+  setupSessionPersistence(managedRuntime, persistedState)
+
+  // Wire up the message handler now that the runtime is ready.
+  const processMessage = (msg: BufferedMessage) => {
+    if (msg.type === 'data-port') {
+      handleTerminalDataPort(msg.port, msg.terminalId, runtime)
+    } else {
+      serveRpcOnPort(msg.port, sharedServicesLayer)
+    }
+  }
+  messageHandler = processMessage
+
+  // Drain any messages that arrived during initialization.
+  for (const msg of bufferedMessages) {
+    processMessage(msg)
+  }
 
   await new Promise(() => {
     // Never resolves — process stays alive

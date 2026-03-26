@@ -37,7 +37,7 @@ import { RpcServer } from '@effect/rpc'
 import { FileWatcherRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { Effect, Layer, ManagedRuntime } from 'effect'
+import { Context, Effect, Layer, ManagedRuntime } from 'effect'
 
 import { FileWatcherRpcsLive } from './rpc/handlers.js'
 import { FileWatcher } from './services/file-watcher.js'
@@ -56,6 +56,10 @@ import { WatcherManager } from './services/watcher-manager.js'
  */
 interface ParentPort {
   on(
+    event: 'message',
+    listener: (event: { data: unknown; ports: unknown[] }) => void
+  ): void
+  removeListener(
     event: 'message',
     listener: (event: { data: unknown; ports: unknown[] }) => void
   ): void
@@ -100,16 +104,20 @@ function waitForRpcPort(): Promise<{
 
     const parentPort = getParentPort()
 
-    parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
+    const listener = (event: { data: unknown; ports: unknown[] }) => {
       const data = event.data as { type?: string }
       if (data?.type === 'port' && event.ports.length > 0) {
         clearTimeout(timeout)
+        // Remove this listener so it doesn't fire for subsequent
+        // brokered ports (which would call start() prematurely).
+        parentPort.removeListener('message', listener)
         const port = event.ports[0] as RpcMessagePort
         // Electron MessagePortMain requires start() to begin receiving
         port.start?.()
         resolve({ parentPort, rpcPort: port })
       }
-    })
+    }
+    parentPort.on('message', listener)
   })
 }
 
@@ -118,35 +126,46 @@ function waitForRpcPort(): Promise<{
 // ---------------------------------------------------------------------------
 
 /**
- * Serve `FileWatcherRpcs` on an additional MessagePort.
+ * Serve `FileWatcherRpcs` on an additional MessagePort, sharing the
+ * existing WatcherManager instance from the managed runtime.
  *
- * Used when the main process brokers a MessagePort between the server
- * and file-watcher utility processes. The file-watcher creates a new
- * `RpcServer` on the given port, backed by the same `WatcherManager`
- * and `FileWatcher` instances as the primary RPC server.
+ * Takes a pre-built `sharedServicesLayer` (a `Layer.succeedContext`
+ * snapshot of the live services) instead of the raw `ServicesLayer`.
+ * This ensures all ports share the same WatcherManager and FileWatcher.
  *
- * The server runs as a long-lived forked fiber — it stays alive until
- * the port closes or the runtime is disposed.
- *
- * @param port - The brokered MessagePort to serve RPC on
- * @param managedRuntime - The managed runtime providing WatcherManager + FileWatcher
- * @param servicesLayer - Layer providing WatcherManager + FileWatcher
- *
+ * @see .reference/vscode/src/vs/base/parts/ipc/node/ipc.mp.ts (Server)
  * @see Issue #14: File-watcher as utility process
  */
-function serveRpcOnPort<R>(
+function serveRpcOnPort(
   port: RpcMessagePort,
-  managedRuntime: ManagedRuntime.ManagedRuntime<R, never>,
-  servicesLayer: Layer.Layer<WatcherManager>
+  sharedServicesLayer: Layer.Layer<WatcherManager>
 ): void {
   const RpcLive = RpcServer.layer(FileWatcherRpcs).pipe(
     Layer.provide(layerProtocolMessagePort(port)),
     Layer.provide(FileWatcherRpcsLive),
-    Layer.provide(servicesLayer)
+    Layer.provide(sharedServicesLayer)
   )
 
-  const program = Layer.launch(RpcLive).pipe(Effect.scoped)
-  managedRuntime.runFork(program)
+  console.log(
+    '[file-watcher-utility] serveRpcOnPort: launching RPC server layer...'
+  )
+  const program = Effect.gen(function* () {
+    console.log(
+      '[file-watcher-utility] serveRpcOnPort: inside Effect.gen, about to Layer.launch'
+    )
+    return yield* Layer.launch(RpcLive)
+  }).pipe(
+    Effect.scoped,
+    Effect.tapErrorCause((cause) =>
+      Effect.sync(() => {
+        console.error(
+          '[file-watcher-utility] serveRpcOnPort failed:',
+          String(cause)
+        )
+      })
+    )
+  )
+  Effect.runFork(program)
 }
 
 // ---------------------------------------------------------------------------
@@ -195,30 +214,76 @@ async function main(): Promise<void> {
   // 2. Keeps everything alive until dispose() is called
   // 3. Provides a runtime with WatcherManager + FileWatcher for
   //    forking additional RPC handlers
-  const managedRuntime = ManagedRuntime.make(FullLayer)
-  await managedRuntime.runtime()
+  // Buffer additional ports that arrive before the runtime is ready.
+  // The brokered inter-process port may arrive during managedRuntime
+  // initialization (after waitForRpcPort's listener is removed but
+  // before the main handler is registered). Buffering ensures no
+  // ports are lost.
+  const bufferedPorts: RpcMessagePort[] = []
+  let portHandler: ((port: RpcMessagePort) => void) | null = null
 
-  // Listen for additional port messages from the parent.
-  //
-  // - `port`: Additional RPC port for inter-process communication.
-  //   Arrives when the main process brokers a MessagePort between the
-  //   server and file-watcher utility processes. The file-watcher serves
-  //   `FileWatcherRpcs` on the new port using the same service instances.
-  //   @see Issue #14: File-watcher as utility process
+  // Register the message listener BEFORE awaiting the runtime to
+  // avoid dropping messages that arrive during initialization.
   parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
     const data = event.data as { type?: string }
     if (data?.type === 'port' && event.ports.length > 0) {
-      // Additional RPC port — serve FileWatcherRpcs on it.
-      // This enables the server utility process to call file-watcher RPCs
-      // via a direct MessagePort instead of HTTP.
       const additionalRpcPort = event.ports[0] as RpcMessagePort
-      additionalRpcPort.start?.()
       console.log(
         '[file-watcher-utility] Serving FileWatcherRpcs on additional port (inter-process)'
       )
-      serveRpcOnPort(additionalRpcPort, managedRuntime, ServicesLayer)
+      if (portHandler) {
+        portHandler(additionalRpcPort)
+      } else {
+        bufferedPorts.push(additionalRpcPort)
+      }
     }
   })
+
+  const managedRuntime = ManagedRuntime.make(FullLayer)
+  const runtime = await managedRuntime.runtime()
+
+  // Extract the live WatcherManager from the managed runtime's context.
+  const sharedServicesLayer = Layer.succeedContext(
+    Context.make(WatcherManager, Context.get(runtime.context, WatcherManager))
+  )
+
+  // Wire up the port handler now that the runtime is ready.
+  portHandler = (port) => {
+    // Test: attach a raw listener to verify port connectivity
+    if (typeof port.on === 'function') {
+      port.on('message', (msg: unknown) => {
+        console.log(
+          '[file-watcher-utility] RAW message on brokered port:',
+          typeof msg,
+          JSON.stringify(msg)?.slice(0, 200)
+        )
+      })
+      port.start?.()
+      console.log(
+        '[file-watcher-utility] RAW listener attached + started on brokered port'
+      )
+    }
+    serveRpcOnPort(port, sharedServicesLayer)
+  }
+
+  // Drain any ports that arrived during initialization.
+  for (const port of bufferedPorts) {
+    // Same raw listener test for buffered ports
+    if (typeof port.on === 'function') {
+      port.on('message', (msg: unknown) => {
+        console.log(
+          '[file-watcher-utility] RAW message on BUFFERED port:',
+          typeof msg,
+          JSON.stringify(msg)?.slice(0, 200)
+        )
+      })
+      port.start?.()
+      console.log(
+        '[file-watcher-utility] RAW listener attached + started on BUFFERED port'
+      )
+    }
+    serveRpcOnPort(port, sharedServicesLayer)
+  }
 
   // Keep the process alive indefinitely. The parent process manages
   // the lifecycle (kill/restart). The managed runtime keeps the layer

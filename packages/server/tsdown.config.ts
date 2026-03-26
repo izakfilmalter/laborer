@@ -15,7 +15,9 @@ export default defineConfig({
   // so they resolve from node_modules at runtime (installed by the packaging
   // step via electron-builder's dependency bundling).
   external: [
-    'better-sqlite3',
+    // sql.js loads WASM assets at runtime and must be resolved from
+    // node_modules (not bundled inline).
+    'sql.js',
     // LiveStore packages use wa-sqlite WASM and native SQLite adapters
     // that must be resolved from node_modules at runtime.
     '@livestore/adapter-node',

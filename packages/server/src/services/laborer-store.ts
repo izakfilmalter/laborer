@@ -54,7 +54,10 @@
 import { env } from '@laborer/env/server'
 import { schema, tables } from '@laborer/shared/schema'
 import { createStore, provideOtel } from '@livestore/livestore'
+import type { makeWsSync } from '@livestore/sync-cf/client'
 import { Cause, Context, Effect, Layer } from 'effect'
+
+import { makeInProcessSyncBackend } from './sync-backend.js'
 
 /**
  * Derive the concrete Store type from our schema so that consumers
@@ -140,12 +143,23 @@ const loadAdapterNode = (): Promise<typeof import('@livestore/adapter-node')> =>
 const makeStore = Effect.gen(function* () {
   const { makeAdapter } = yield* Effect.promise(loadAdapterNode)
 
+  // Create an in-process sync backend that bridges the LaborerStore to
+  // the sync relay. This ensures events committed by server services
+  // are propagated to connected renderer clients, and vice versa.
+  const syncBackend = makeInProcessSyncBackend()
+
   const adapter = makeAdapter({
     storage: { type: 'fs', baseDirectory: DATA_DIRECTORY },
+    sync: {
+      // Cast through unknown because LiveStore's SyncBackendConstructor
+      // uses branded number types internally that are structurally
+      // identical to plain numbers at runtime.
+      backend: syncBackend as unknown as ReturnType<typeof makeWsSync>,
+    },
   })
 
   yield* Effect.logInfo(
-    `${logPrefix} Initializing server-side store (no sync — server is the authority)`
+    `${logPrefix} Initializing server-side store with in-process sync`
   )
   yield* Effect.logInfo(
     `${logPrefix} Schema state hash: ${String(schema.state.sqlite.hash)}, ` +

@@ -76,8 +76,16 @@ export const makeClientProtocolMessagePort = (
 
       // Attach listeners based on the port's API style.
       if (typeof port.on === 'function') {
-        // Node.js / Electron MessagePortMain style
-        port.on('message', messageHandler)
+        // Node.js / Electron MessagePortMain style.
+        // MessagePortMain's 'message' event passes a MessageEvent-like
+        // object { data, ports } — unwrap .data to get the raw payload.
+        port.on('message', (event: unknown) => {
+          const data =
+            typeof event === 'object' && event !== null && 'data' in event
+              ? (event as { data: unknown }).data
+              : event
+          messageHandler(data)
+        })
       } else {
         // Web MessagePort style
         port.onmessage = (event: { data: unknown }) => {
@@ -86,7 +94,12 @@ export const makeClientProtocolMessagePort = (
       }
 
       // Web MessagePorts require .start() to begin receiving messages.
+      console.log(
+        '[rpc-client-transport] Calling port.start(), hasOn:',
+        typeof port.on === 'function'
+      )
       port.start?.()
+      console.log('[rpc-client-transport] port.start() called successfully')
 
       // Clean up listeners when the scope is finalized.
       yield* Scope.addFinalizer(
@@ -107,6 +120,11 @@ export const makeClientProtocolMessagePort = (
         send(request, transferables) {
           return Effect.try({
             try: () => {
+              console.log(
+                '[rpc-client-transport] send:',
+                typeof request,
+                JSON.stringify(request)?.slice(0, 200)
+              )
               port.postMessage(request, transferables as readonly unknown[])
             },
             catch: (cause) =>

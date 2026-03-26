@@ -845,8 +845,20 @@ class RepositoryWatchCoordinator extends Context.Tag(
         watchAll,
       })
 
-      // Bootstrap: reconcile and watch all existing projects
-      yield* watchAll()
+      // Bootstrap: reconcile and watch all existing projects.
+      // Forked as a daemon so the layer completes immediately — watchAll
+      // may block on FileWatcherClient RPC subscribe calls which depend
+      // on the file-watcher utility process responding to each subscription.
+      yield* Effect.forkDaemon(
+        watchAll().pipe(
+          Effect.catchAllCause((cause) =>
+            Effect.logError(
+              '[RepositoryWatchCoordinator] watchAll bootstrap failed',
+              cause
+            )
+          )
+        )
+      )
 
       return service
     })

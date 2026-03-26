@@ -27,7 +27,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { getDesktopBridge } from '@/lib/desktop'
+import { acquireTerminalDataPort } from '@/lib/desktop'
 
 /** Connection state for UI indicators — same shape as WebSocket hook. */
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
@@ -251,12 +251,8 @@ function useTerminalMessagePort({
     let port: MessagePort | null = null
 
     const acquire = async (): Promise<MessagePort | null> => {
-      const bridge = getDesktopBridge()
-      if (!bridge) {
-        return null
-      }
       try {
-        return await bridge.acquireTerminalDataPort(terminalId)
+        return await acquireTerminalDataPort(terminalId)
       } catch {
         return null
       }

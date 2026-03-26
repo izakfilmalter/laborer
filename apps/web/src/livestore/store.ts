@@ -32,7 +32,7 @@ import { makePersistedAdapter } from '@livestore/adapter-web'
 import LiveStoreSharedWorker from '@livestore/adapter-web/shared-worker?sharedworker'
 import { useStore } from '@livestore/react'
 import { unstable_batchedUpdates as batchUpdates } from 'react-dom'
-import { getDesktopBridge } from '../lib/desktop'
+import { acquireSyncPort } from '../lib/desktop'
 import LiveStoreWorkerUrl from '../livestore.worker.ts?worker&url'
 
 /**
@@ -75,23 +75,19 @@ function createLiveStoreWorker(options: { name: string }): Worker {
   // Acquire a sync MessagePort from the server utility process and
   // transfer it to the worker. This happens asynchronously — the worker
   // waits for the port before initializing LiveStore.
-  const bridge = getDesktopBridge()
-  if (bridge) {
-    bridge
-      .acquireSyncPort()
-      .then((port) => {
-        if (port) {
-          worker.postMessage({ type: 'sync-port' }, [port])
-        } else {
-          console.warn(
-            '[LiveStore.store] Failed to acquire sync port — server utility process may not be running'
-          )
-        }
-      })
-      .catch((error: unknown) => {
-        console.error('[LiveStore.store] Error acquiring sync port:', error)
-      })
-  }
+  acquireSyncPort()
+    .then((port) => {
+      if (port) {
+        worker.postMessage({ type: 'sync-port' }, [port])
+      } else {
+        console.warn(
+          '[LiveStore.store] Failed to acquire sync port — server utility process may not be running'
+        )
+      }
+    })
+    .catch((error: unknown) => {
+      console.error('[LiveStore.store] Error acquiring sync port:', error)
+    })
 
   return worker
 }

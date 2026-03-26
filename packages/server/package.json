@@ -40,16 +40,16 @@
     "@opentelemetry/sdk-trace-node": "^2.0.0",
     "@opentelemetry/sdk-trace-web": "^2.0.0",
     "@opentelemetry/semantic-conventions": "^1.33.0",
-    "better-sqlite3": "^12.6.2",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "sql.js": "^1.14.1"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@vitest/coverage-v8": "^3.2.4",
     "@laborer/config": "workspace:*",
     "@laborer/file-watcher": "workspace:*",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.3",
+    "@types/sql.js": "^1.4.10",
+    "@vitest/coverage-v8": "^3.2.4",
     "tsdown": "^0.20.3",
     "tsx": "^4.19.4",
     "typescript": "catalog:",

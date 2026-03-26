@@ -125,51 +125,6 @@ export interface AgentNotificationPayload {
  * undefined and the renderer falls back to browser-native equivalents.
  */
 export interface DesktopBridge {
-  /**
-   * Acquires a direct `MessagePort` connection to a utility process.
-   *
-   * The main process creates a `MessageChannelMain` pair, sends one port to the
-   * named utility process, and returns the other to the renderer via port
-   * transfer. The renderer gets a direct MessagePort to the utility process,
-   * bypassing the main process for data.
-   *
-   * Returns null if the utility process is not running.
-   *
-   * @see VS Code's `acquirePort()` pattern in
-   *   `.reference/vscode/src/vs/base/parts/ipc/electron-browser/ipc.mp.ts`
-   */
-  acquireServicePort: (name: SidecarName) => Promise<MessagePort | null>
-
-  /**
-   * Acquires a dedicated `MessagePort` for LiveStore sync with the server
-   * utility process. The server serves `SyncWsRpc` (Pull/Push) handlers
-   * over this port, enabling the renderer's LiveStore worker to sync
-   * events without WebSocket.
-   *
-   * The main process brokers the connection: creates a `MessageChannelMain`
-   * pair, sends one port to the server utility process with
-   * `{ type: 'sync-port' }`, and returns the other to the renderer.
-   *
-   * Returns null if the server utility process is not running.
-   *
-   * @see Issue #11: LiveStore sync over MessagePort
-   */
-  acquireSyncPort: () => Promise<MessagePort | null>
-
-  /**
-   * Acquires a dedicated `MessagePort` for a specific terminal's I/O data
-   * channel. This provides a direct connection between the renderer and the
-   * terminal utility process for streaming PTY output and input.
-   *
-   * The data channel is separate from the RPC channel — it handles only
-   * raw I/O data (output strings, input keystrokes, flow control acks)
-   * and control messages (status, screen state).
-   *
-   * Returns null if the terminal utility process is not running.
-   *
-   * @see Issue #8: Terminal PTY I/O data channel over MessagePort
-   */
-  acquireTerminalDataPort: (terminalId: string) => Promise<MessagePort | null>
   /** Shows a native confirmation dialog with Yes/No buttons. Returns true if confirmed. */
   confirm: (message: string) => Promise<boolean>
 
@@ -195,6 +150,34 @@ export interface DesktopBridge {
 
   /** Triggers quit-and-install of a downloaded update. */
   installUpdate: () => Promise<DesktopUpdateActionResult>
+  /**
+   * Low-level MessagePort relay following VS Code's pattern.
+   *
+   * `acquire(responseChannel, nonce)` installs a one-shot `ipcRenderer`
+   * listener on `responseChannel`. When the main process responds with a
+   * MessagePort in the IPC event's `ports` array, the preload relays it
+   * to the renderer world via `window.postMessage(nonce, '*', e.ports)`.
+   *
+   * The renderer must listen on `window` for a `message` event with
+   * `event.data === nonce` to receive the actual `MessagePort` in
+   * `event.ports[0]`.
+   *
+   * This is necessary because `contextBridge` uses structured clone which
+   * cannot transfer `MessagePort` objects. The `window.postMessage` transfer
+   * mechanism bypasses the context isolation boundary.
+   *
+   * @see VS Code's `ipcMessagePort.acquire()` in
+   *   `.reference/vscode/src/vs/base/parts/sandbox/electron-browser/preload.ts`
+   */
+  ipcMessagePort: {
+    acquire: (responseChannel: string, nonce: string) => void
+  }
+
+  /**
+   * Send an IPC message to the main process (fire-and-forget).
+   * Wraps `ipcRenderer.send(channel, ...args)`.
+   */
+  ipcSend: (channel: string, ...args: unknown[]) => void
 
   /**
    * Subscribes to workspace activation events from the main process.

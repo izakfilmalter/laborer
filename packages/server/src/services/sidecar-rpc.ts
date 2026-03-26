@@ -36,7 +36,11 @@ export const sidecarEventStreamSchedule = Schedule.exponential('1 second').pipe(
  * MessagePort uses structured clone.
  *
  * The scope parameter ties the client protocol's lifecycle to the
- * enclosing layer scope.
+ * enclosing layer scope. The Protocol layer is built into this scope
+ * via `Layer.buildWithScope` so that listeners and the queue drain
+ * fiber survive for the lifetime of the scope (instead of being torn
+ * down when `RpcClient.make` returns, which is what happens with
+ * `Effect.provide(Layer.scoped(...))`).
  *
  * @see Issue #13: Server-to-terminal MessagePort channel
  */
@@ -45,9 +49,14 @@ export const createMessagePortRpcClient = <Rpcs extends Rpc.Any>(
   port: RpcMessagePort,
   scope: Scope.Scope
 ) =>
-  RpcClient.make(rpcs).pipe(
-    Effect.provide(
-      Layer.scoped(RpcClient.Protocol, makeClientProtocolMessagePort(port))
+  Effect.flatMap(
+    Layer.buildWithScope(
+      Layer.scoped(RpcClient.Protocol, makeClientProtocolMessagePort(port)),
+      scope
     ),
-    Effect.provideService(Scope.Scope, scope)
+    (context) =>
+      RpcClient.make(rpcs).pipe(
+        Effect.provide(context),
+        Effect.provideService(Scope.Scope, scope)
+      )
   )

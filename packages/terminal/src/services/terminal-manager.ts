@@ -30,7 +30,6 @@ import {
   Runtime,
   Schedule,
 } from 'effect'
-import { createBufferedDataHandler } from '../lib/buffered-data-handler.js'
 import { createHeadlessTerminalManager } from '../lib/headless-terminal.js'
 import { PtyHostClient } from './pty-host-client.js'
 
@@ -1234,9 +1233,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             cols,
             rows,
           },
-          // Data callback: buffer incomplete escape sequences, then write
-          // to headless terminal + notify subscribers
-          createBufferedDataHandler((data: string) => {
+          // Data callback: write to headless terminal + notify subscribers.
+          // No escape sequence buffering — xterm.js handles partial
+          // sequences internally (matching VS Code's approach).
+          (data: string) => {
             headlessManager.write(id, data)
 
             for (const subscriber of subState.subscribers.values()) {
@@ -1246,7 +1246,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
                 // Subscriber errors silently ignored
               }
             }
-          }),
+          },
           // Exit callback: mark as stopped (retain in memory)
           (exitCode: number, signal: number) => {
             clearGraceTimeout(id)
@@ -1634,9 +1634,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
             cols: 80,
             rows: 24,
           },
-          // Data callback: buffer incomplete escape sequences, then write
-          // to headless terminal + notify subscribers
-          createBufferedDataHandler((data: string) => {
+          // Data callback: write to headless terminal + notify subscribers.
+          // No escape sequence buffering — xterm.js handles partial
+          // sequences internally (matching VS Code's approach).
+          (data: string) => {
             headlessManager.write(terminalId, data)
 
             for (const subscriber of restartSubState.subscribers.values()) {
@@ -1646,7 +1647,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
                 // Subscriber errors silently ignored
               }
             }
-          }),
+          },
           (exitCode: number, signal: number) => {
             clearGraceTimeout(terminalId)
 

@@ -21,7 +21,7 @@ import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
 import { Effect, Layer } from 'effect'
 
-import { getDesktopBridge } from '@/lib/desktop'
+import { acquireServicePort } from '@/lib/desktop'
 
 /**
  * Build the RPC client protocol layer.
@@ -35,15 +35,7 @@ import { getDesktopBridge } from '@/lib/desktop'
 const terminalProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
   RpcClient.Protocol,
   Effect.gen(function* () {
-    const bridge = getDesktopBridge()
-    if (!bridge) {
-      return yield* Effect.die(
-        'DesktopBridge unavailable — TerminalServiceClient requires Electron context'
-      )
-    }
-    const port = yield* Effect.promise(() =>
-      bridge.acquireServicePort('terminal')
-    )
+    const port = yield* Effect.promise(() => acquireServicePort('terminal'))
     if (!port) {
       return yield* Effect.die(
         'Terminal utility process is not running — could not acquire MessagePort'
@@ -53,7 +45,9 @@ const terminalProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
     // API styles (.onmessage setter vs .on('message') method) correctly.
     // The type mismatch is because Web's onmessage uses MessageEvent while
     // RpcMessagePort uses a simpler { data: unknown } shape.
-    return yield* makeClientProtocolMessagePort(port as RpcMessagePort)
+    return yield* makeClientProtocolMessagePort(
+      port as unknown as RpcMessagePort
+    )
   })
 )
 

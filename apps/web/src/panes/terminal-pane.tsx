@@ -280,24 +280,6 @@ function TerminalPaneRenderer({
   onTitleChangeRef.current = onTitleChange
 
   /**
-   * Track first data receipt to dismiss loading overlay.
-   * Uses xterm.js onWriteParsed event to detect when data has been written.
-   */
-  useEffect(() => {
-    const terminal = terminalRef.current
-    if (!terminal) {
-      return
-    }
-    const disposable = terminal.onWriteParsed(() => {
-      if (!hasReceivedDataRef.current) {
-        hasReceivedDataRef.current = true
-        setHasReceivedData(true)
-      }
-    })
-    return () => disposable.dispose()
-  }, [terminalRef])
-
-  /**
    * Initialize xterm.js instance.
    *
    * Creates the Terminal, attaches addons (fit, WebGL, Image, Unicode11,
@@ -357,6 +339,17 @@ function TerminalPaneRenderer({
 
     // Open terminal in the container
     terminal.open(container)
+
+    // Track first data receipt to dismiss the loading overlay.
+    // Must be registered here (after Terminal creation) rather than in a
+    // separate useEffect, because a separate effect would run before the
+    // Terminal exists and never re-run (terminalRef identity is stable).
+    const onWriteParsedDisposable = terminal.onWriteParsed(() => {
+      if (!hasReceivedDataRef.current) {
+        hasReceivedDataRef.current = true
+        setHasReceivedData(true)
+      }
+    })
 
     // Attempt WebGL rendering for better performance (GPU-accelerated).
     // Critical for scroll performance with 100k+ lines — WebGL renders
@@ -503,6 +496,7 @@ function TerminalPaneRenderer({
 
     // Cleanup on unmount
     return () => {
+      onWriteParsedDisposable.dispose()
       onDataDisposable.dispose()
       onTitleChangeDisposable.dispose()
       terminal.dispose()

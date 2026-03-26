@@ -360,7 +360,7 @@ describe('UtilityProcessManager', () => {
         (p) => (p.options.env as Record<string, string>).LABORER_ENTRYPOINT
       )
 
-      expect(envs[0]).toContain('packages/server/dist/main.mjs')
+      expect(envs[0]).toContain('packages/server/dist/utility-main.mjs')
       expect(envs[1]).toContain('packages/terminal/dist/utility-main.mjs')
       expect(envs[2]).toContain('packages/file-watcher/dist/main.mjs')
       expect(envs[3]).toContain('packages/mcp/dist/main.mjs')

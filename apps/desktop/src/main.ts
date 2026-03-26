@@ -344,13 +344,14 @@ app
       // renderer can acquire direct MessagePort connections to services.
       setUtilityProcessManager(utilityProcessManager)
 
-      // Fork the terminal as a utility process with MessagePort RPC.
-      // The returned MessagePortMain is available via
-      // utilityProcessManager.getPort('terminal') for RPC communication.
-      // During migration, this runs alongside the HTTP-based terminal
-      // sidecar (which is still used by the renderer). The renderer will
-      // be switched to use the MessagePort-based terminal in issue #9.
+      // Fork utility processes with MessagePort RPC transport.
+      // The returned MessagePortMain for each is available via
+      // utilityProcessManager.getPort(name) for RPC communication.
+      // During migration, these run alongside the HTTP-based sidecars
+      // (which are still used by the renderer). The renderer will be
+      // switched to use MessagePort-based services in issues #9, #12.
       utilityProcessManager.fork('terminal')
+      utilityProcessManager.fork('server')
 
       // Forward sidecar status events to the renderer.
       healthMonitor.setStatusListener((status) => {

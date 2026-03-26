@@ -127,7 +127,7 @@ function resolveEntryPath(name: ServiceName): string {
   // instead of `main.mjs` which starts an HTTP server.
   switch (name) {
     case 'server':
-      return join(root, 'packages/server/dist/main.mjs')
+      return join(root, 'packages/server/dist/utility-main.mjs')
     case 'terminal':
       return join(root, 'packages/terminal/dist/utility-main.mjs')
     case 'file-watcher':

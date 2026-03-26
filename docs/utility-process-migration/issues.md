@@ -13,11 +13,11 @@ Parent PRD: [PRD.md](./PRD.md)
 | 7 | Terminal utility process: full RPC surface | #6 | Done |
 | 8 | Terminal PTY I/O data channel over MessagePort | #7, #5 | Ready |
 | 9 | Renderer terminal UI wired to MessagePort | #8, #4 | Blocked |
-| 10 | Server utility process: RPC over MessagePort | #1, #2, #3 | Ready |
-| 11 | LiveStore sync over MessagePort | #10, #5 | Blocked |
+| 10 | Server utility process: RPC over MessagePort | #1, #2, #3 | Done |
+| 11 | LiveStore sync over MessagePort | #10, #5 | Ready |
 | 12 | Renderer server UI wired to MessagePort | #11, #4 | Blocked |
-| 13 | Server-to-terminal MessagePort channel | #6, #10 | Blocked |
-| 14 | File-watcher as utility process | #1, #2, #3, #10 | Blocked |
+| 13 | Server-to-terminal MessagePort channel | #6, #10 | Ready |
+| 14 | File-watcher as utility process | #1, #2, #3, #10 | Ready |
 | 15 | MCP as utility process | #1, #2, #3 | Ready |
 | 16 | Lifecycle Monitor (replaces HealthMonitor) | #2 | Ready |
 | 17 | Dev mode hot reload (tsdown --watch + auto-restart) | #2, #16 | Blocked |
@@ -307,13 +307,13 @@ Fork the main server as an Electron utility process and serve `LaborerRpcs` hand
 
 ### Acceptance criteria
 
-- [ ] Server forks as a utility process via `UtilityProcessManager.fork('server', ...)`
-- [ ] `LaborerRpcs` handlers are served over the MessagePort RPC transport
-- [ ] The server's deferred service initialization pattern is preserved (ready message sent after core layers, deferred services build in background)
-- [ ] A simple RPC call (e.g., `health` or `project.list`) works from the main process via MessagePort
-- [ ] Server-to-terminal and server-to-file-watcher connections are temporarily stubbed or left as HTTP (migrated in #13, #14)
-- [ ] The server's LiveStore setup is preserved (sync channel migrated separately in #11)
-- [ ] Test: fork server utility process, call an RPC, verify response
+- [x] Server forks as a utility process via `UtilityProcessManager.fork('server', ...)`
+- [x] `LaborerRpcs` handlers are served over the MessagePort RPC transport
+- [x] The server's deferred service initialization pattern is preserved (ready message sent after core layers, deferred services build in background)
+- [x] A simple RPC call (e.g., `health` or `project.list`) works from the main process via MessagePort
+- [x] Server-to-terminal and server-to-file-watcher connections are temporarily stubbed or left as HTTP (migrated in #13, #14)
+- [x] The server's LiveStore setup is preserved (sync channel migrated separately in #11)
+- [x] Test: fork server utility process, call an RPC, verify response
 
 ### Blocked by
 

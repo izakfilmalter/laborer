@@ -528,3 +528,88 @@ all operations. This issue focused on:
       `packages/shared/src/rpc.ts`
 - [x] Tests verify each RPC handler end-to-end through the MessagePort
       transport
+
+---
+
+## Issue 10: Server utility process: RPC over MessagePort — COMPLETED
+
+Date: 2026-03-25
+
+### What was done
+
+Created the server utility process entry point that serves all ~40
+LaborerRpcs handlers over MessagePort instead of HTTP. This is the
+critical path item — completing it unblocks issues #11, #13, and #14.
+
+The server's complex deferred service initialization pattern is
+preserved intact: 14 services start as Ref-backed proxies returning
+SERVICE_INITIALIZING errors, then a background fiber builds the real
+implementations and swaps the Refs. The LiveStore sync channel (WebSocket)
+is excluded — migrated separately in #11.
+
+### Files created
+
+- `packages/server/src/utility-main.ts` — Server utility process entry
+  point:
+  - Waits for MessagePort from parent via `process.parentPort`
+  - Uses `layerProtocolMessagePort(port)` instead of HTTP transport
+  - Layer composition mirrors main.ts but without:
+    - NodeHttpServer / ServerLive (no HTTP server)
+    - RpcSerialization.layerJson (MessagePort uses structured clone)
+    - CustomRoutesLive (no HTTP health/init-status routes)
+    - SyncRpcLive (LiveStore WebSocket sync — migrated in #11)
+    - HttpRouter / HttpMiddleware / CORS
+  - All 14 deferred services + DeferredServicesProxyLive preserved
+  - LaborerStoreLive, ConfigService, RepositoryIdentity preserved
+  - Uses `Effect.runPromise` instead of `NodeRuntime.runMain`
+
+- `packages/server/test/rpc/messageport-rpc.test.ts` — 6 integration
+  tests through real MessagePort transport:
+  1. health.check returns ok via MessagePort
+  2. lifecycle.initStatus returns ready state via MessagePort
+  3. docker.status returns placeholder data via MessagePort
+  4. deferred service RPC returns SERVICE_INITIALIZING via MessagePort
+  5. handles multiple concurrent requests via MessagePort
+  6. core RPCs work while deferred services return errors
+
+### Files modified
+
+- `packages/server/tsdown.config.ts` — Added `src/utility-main.ts` as
+  second build entry, producing `dist/utility-main.mjs`
+
+- `apps/desktop/src/utility-process-manager.ts` — Updated
+  `resolveEntryPath('server')` to point to `utility-main.mjs` instead
+  of `main.mjs`
+
+- `apps/desktop/src/main.ts` — Added `utilityProcessManager.fork('server')`
+  call alongside terminal fork in production mode
+
+- `apps/desktop/test/utility-process-manager.test.ts` — Updated test
+  expectation for server entrypoint path: `main.mjs` -> `utility-main.mjs`
+
+### Verification
+
+- All 57 server RPC tests pass (51 existing + 6 new)
+- All 39 utility-process-manager tests pass (updated expectations)
+- TypeScript: no errors in server or desktop packages
+- Biome formatting: no new errors
+- Pre-existing test failures in ipc-workspace-targeting.test.ts (12) and
+  ipc-service-port.test.ts (4) are unchanged — confirmed by stashing
+  changes and verifying the same failures exist on the base commit
+
+### Acceptance criteria checklist
+
+- [x] Server forks as a utility process via
+      `UtilityProcessManager.fork('server', ...)`
+- [x] `LaborerRpcs` handlers are served over the MessagePort RPC
+      transport
+- [x] The server's deferred service initialization pattern is preserved
+      (ready message sent after core layers, deferred services build in
+      background)
+- [x] A simple RPC call (e.g., `health` or `project.list`) works from
+      the main process via MessagePort
+- [x] Server-to-terminal and server-to-file-watcher connections are
+      temporarily stubbed or left as HTTP (migrated in #13, #14)
+- [x] The server's LiveStore setup is preserved (sync channel migrated
+      separately in #11)
+- [x] Test: fork server utility process, call an RPC, verify response

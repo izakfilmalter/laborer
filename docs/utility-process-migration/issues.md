@@ -16,7 +16,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 10 | Server utility process: RPC over MessagePort | #1, #2, #3 | Done |
 | 11 | LiveStore sync over MessagePort | #10, #5 | Done |
 | 12 | Renderer server UI wired to MessagePort | #11, #4 | Done |
-| 13 | Server-to-terminal MessagePort channel | #6, #10 | Ready |
+| 13 | Server-to-terminal MessagePort channel | #6, #10 | Done |
 | 14 | File-watcher as utility process | #1, #2, #3, #10 | Ready |
 | 15 | MCP as utility process | #1, #2, #3 | Ready |
 | 16 | Lifecycle Monitor (replaces HealthMonitor) | #2 | Done |
@@ -392,12 +392,12 @@ The main process brokers the connection: creates a `MessageChannelMain` pair, se
 
 ### Acceptance criteria
 
-- [ ] Main process creates a `MessageChannelMain` pair and transfers ports to server and terminal utility processes
-- [ ] Server's `TerminalClient` uses the MessagePort RPC client instead of HTTP
-- [ ] `createSidecarRpcClient()` in `sidecar-rpc.ts` supports MessagePort transport (or is replaced)
-- [ ] Server can call `terminal.spawn`, `terminal.write`, etc. on the terminal utility process via MessagePort
-- [ ] The lazy connection pattern is preserved (server doesn't block startup if terminal isn't ready yet)
-- [ ] Test: server calls terminal RPC via the brokered MessagePort
+- [x] Main process creates a `MessageChannelMain` pair and transfers ports to server and terminal utility processes
+- [x] Server's `TerminalClient` uses the MessagePort RPC client instead of HTTP
+- [x] `createSidecarRpcClient()` in `sidecar-rpc.ts` supports MessagePort transport (or is replaced)
+- [x] Server can call `terminal.spawn`, `terminal.write`, etc. on the terminal utility process via MessagePort
+- [x] The lazy connection pattern is preserved (server doesn't block startup if terminal isn't ready yet)
+- [x] Test: server calls terminal RPC via the brokered MessagePort
 
 ### Blocked by
 

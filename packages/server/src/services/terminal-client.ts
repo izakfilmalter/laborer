@@ -1,10 +1,15 @@
 /**
  * TerminalClient — Effect Service
  *
- * RPC client connecting to the standalone terminal service at
- * `http://localhost:${TERMINAL_PORT}`. This service replaces the server's
- * local TerminalManager, PtyHostClient, and terminal WebSocket route by
- * delegating all terminal operations to the extracted terminal service.
+ * RPC client connecting to the standalone terminal service. Supports two
+ * transport modes:
+ *
+ * 1. **MessagePort** (utility process mode): When a `TerminalRpcPort` is
+ *    provided in the layer context, the client uses a direct MessagePort
+ *    brokered by the Electron main process. No HTTP, no port allocation.
+ *
+ * 2. **HTTP** (legacy/fallback): When no `TerminalRpcPort` is available,
+ *    falls back to `http://localhost:${TERMINAL_PORT}/rpc` with JSON RPC.
  *
  * Responsibilities:
  * - RPC client for TerminalRpcs operations (spawn, kill, list)
@@ -21,12 +26,14 @@
  * @see Issue #143: Server TerminalClient + remove server terminal modules
  * @see Issue #163: Worktree detection polish — worktree existence check before spawn
  * @see Issue #16: Lazy sidecar connections
+ * @see Issue #13: Server-to-terminal MessagePort channel
  */
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RpcError, TerminalRpcs } from '@laborer/shared/rpc'
+import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { tables } from '@laborer/shared/schema'
 import {
   Array as Arr,
@@ -34,6 +41,7 @@ import {
   Duration,
   Effect,
   Layer,
+  Option,
   pipe,
   Ref,
   Scope,
@@ -43,6 +51,7 @@ import { ConfigService } from './config-service.js'
 import { LaborerStore } from './laborer-store.js'
 import { ProjectRegistry } from './project-registry.js'
 import {
+  createMessagePortRpcClient,
   createSidecarRpcClient,
   sidecarEventStreamSchedule,
 } from './sidecar-rpc.js'
@@ -75,6 +84,23 @@ const _makeTerminalRpcClient = (url: string) =>
 type TerminalRpc = Effect.Effect.Success<
   ReturnType<typeof _makeTerminalRpcClient>
 >
+
+/**
+ * Optional service tag providing a MessagePort for direct RPC to the
+ * terminal utility process. When available, `TerminalClient` uses
+ * MessagePort instead of HTTP for all terminal RPCs.
+ *
+ * Provided by the server's utility-main.ts when the main process
+ * brokers a server-to-terminal MessagePort.
+ *
+ * @see Issue #13: Server-to-terminal MessagePort channel
+ */
+class TerminalRpcPort extends Context.Tag('@laborer/TerminalRpcPort')<
+  TerminalRpcPort,
+  { readonly port: RpcMessagePort }
+>() {}
+
+export { TerminalRpcPort }
 
 class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
   TerminalClient,
@@ -120,11 +146,21 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
       // Populated by the event stream subscriber.
       const terminalMapRef = yield* Ref.make<TerminalWorkspaceMap>(new Map())
 
+      // Check if a MessagePort for the terminal is available (utility
+      // process mode). When running as an Electron utility process, the
+      // main process brokers a direct MessagePort between the server and
+      // terminal processes.
+      const terminalRpcPort = yield* Effect.serviceOption(TerminalRpcPort)
+
       /**
        * Get or create the RPC client. On first call, establishes the
        * connection to the terminal sidecar, seeds the terminal map,
        * and starts the event stream subscription. Retries with
        * exponential backoff if the sidecar is not yet available.
+       *
+       * When a `TerminalRpcPort` is available in the context, uses
+       * MessagePort transport instead of HTTP. Otherwise, falls back
+       * to HTTP+JSON RPC.
        *
        * Uses Effect.cached to ensure only one fiber runs initialization,
        * preventing duplicate RPC connections and event stream subscriptions
@@ -139,17 +175,41 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
        */
       const getOrCreateClient = yield* Effect.cached(
         Effect.gen(function* () {
-          // Resolve port lazily to avoid import-time side effects
-          const { env } = yield* Effect.promise(
-            () => import('@laborer/env/server')
-          )
-          const terminalPort = env.TERMINAL_PORT
-          const terminalServiceUrl = `http://localhost:${terminalPort}`
+          let client: TerminalRpc
+          let terminalPort = 0
 
-          const client = yield* createSidecarRpcClient(
-            TerminalRpcs,
-            `${terminalServiceUrl}/rpc`
-          ).pipe(Effect.provideService(Scope.Scope, layerScope))
+          // Choose transport based on whether a MessagePort is available.
+          if (Option.isSome(terminalRpcPort)) {
+            // MessagePort mode — direct process-to-process communication.
+            // The main process brokered a MessagePort between the server
+            // and terminal utility processes.
+            yield* Effect.log(
+              'Connecting to terminal service via MessagePort'
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+
+            client = yield* createMessagePortRpcClient(
+              TerminalRpcs,
+              terminalRpcPort.value.port,
+              layerScope
+            )
+          } else {
+            // HTTP fallback — legacy mode for non-utility-process environments.
+            // Resolve port lazily to avoid import-time side effects.
+            const { env } = yield* Effect.promise(
+              () => import('@laborer/env/server')
+            )
+            terminalPort = env.TERMINAL_PORT
+            const terminalServiceUrl = `http://localhost:${terminalPort}`
+
+            yield* Effect.log(
+              `Connecting to terminal service via HTTP at ${terminalServiceUrl}`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+
+            client = yield* createSidecarRpcClient(
+              TerminalRpcs,
+              `${terminalServiceUrl}/rpc`
+            ).pipe(Effect.provideService(Scope.Scope, layerScope))
+          }
 
           // Seed the map from the terminal service's current terminal list.
           // This handles the case where the server restarts but the terminal
@@ -205,9 +265,9 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             Effect.forkIn(layerScope)
           )
 
-          yield* Effect.log(
-            `Connected to terminal service at ${terminalServiceUrl}`
-          ).pipe(Effect.annotateLogs('module', logPrefix))
+          yield* Effect.log('Connected to terminal service').pipe(
+            Effect.annotateLogs('module', logPrefix)
+          )
 
           return { client, terminalPort }
         })

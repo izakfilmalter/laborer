@@ -1128,3 +1128,104 @@ tasks, etc.) use the transport-agnostic `LaborerClient.mutation()` /
       to `ElectronServerGate` in Electron production which uses
       sidecar status events; `HealthCheckStatus` shows "disconnected"
       on RPC failure regardless of transport
+
+---
+
+## Issue 13: Server-to-terminal MessagePort channel — COMPLETED
+
+Date: 2026-03-25
+
+### What was done
+
+Replaced the HTTP-based RPC connection between the server and terminal
+utility processes with a direct MessagePort channel brokered by the
+Electron main process. The server's `TerminalClient` now supports both
+MessagePort (utility process mode) and HTTP (legacy fallback) transports,
+selected automatically based on whether a `TerminalRpcPort` service tag
+is available in the Effect context.
+
+Architecture:
+- Main process creates a `MessageChannelMain` pair after both terminal
+  and server utility processes are healthy
+- One port goes to the server with `{ type: 'terminal-rpc-port' }`
+- Other port goes to the terminal with `{ type: 'port' }`
+- Terminal serves `TerminalRpcs` on the additional port
+- Server's `TerminalClient` creates an RPC client over the MessagePort
+  via `createMessagePortRpcClient(TerminalRpcs, port, scope)`
+- Re-brokered automatically after either service restarts
+
+### Files created
+
+None — all changes are modifications to existing files.
+
+### Files modified
+
+- `apps/desktop/src/utility-process-types.ts` — Added
+  `TerminalRpcPortMessage` type (`{ type: 'terminal-rpc-port' }`)
+  to `UtilityProcessParentMessage` union
+
+- `apps/desktop/src/utility-process-manager.ts` — Added
+  `brokerInterProcessPort(fromName, fromMessage, toName, toMessage)`
+  method that creates a `MessageChannelMain` pair and transfers one
+  port to each utility process
+
+- `apps/desktop/src/main.ts` — Added auto-brokering logic in the
+  `setMessageHandler` callback: when both terminal and server are
+  healthy after a `ready` message, calls `brokerInterProcessPort()`
+  to establish the server-to-terminal channel
+
+- `packages/server/src/services/sidecar-rpc.ts` — Added
+  `createMessagePortRpcClient(rpcs, port, scope)` function: creates
+  an Effect RPC client over a MessagePort using
+  `makeClientProtocolMessagePort` + `RpcClient.make`, no HTTP/JSON
+
+- `packages/server/src/services/terminal-client.ts` — Added:
+  - `TerminalRpcPort` service tag (optional dependency)
+  - `Effect.serviceOption(TerminalRpcPort)` in `getOrCreateClient`
+  - If `TerminalRpcPort` is `Some`: uses `createMessagePortRpcClient`
+  - If `TerminalRpcPort` is `None`: falls back to HTTP (unchanged)
+  - Updated module JSDoc to document both transport modes
+
+- `packages/server/src/utility-main.ts` — Added:
+  - `TerminalRpcPort` import and deferred promise pattern
+  - `TerminalRpcPortLive` layer that waits for the brokered port
+  - `terminal-rpc-port` handler in `parentPort.on('message', ...)`
+  - `TerminalRpcPortLive` provided to `DeferredServicesLive`
+
+- `packages/terminal/src/utility-main.ts` — Added:
+  - `serveRpcOnPort(port, managedRuntime, servicesLayer)` function
+  - `{ type: 'port' }` handler in `parentPort.on('message', ...)`
+    for additional RPC ports (inter-process communication)
+  - Additional ports get a new `RpcServer` backed by the same
+    `TerminalManager` + `PtyHostClient` as the primary RPC server
+
+- `apps/desktop/test/utility-process-manager.test.ts` — Added 5
+  tests for `brokerInterProcessPort()`:
+  1. Creates a MessagePort pair and transfers to both processes
+  2. Returns false when the "from" process is not running
+  3. Returns false when the "to" process is not running
+  4. Returns false when both processes are not running
+  5. Returns false when "from" process has not spawned yet
+
+### Verification
+
+- All 44 desktop utility-process-manager tests pass (39 existing + 5 new)
+- TypeScript: no errors in server, terminal, or desktop packages
+- Biome formatting: no new errors
+- Pre-existing test failures in ipc-workspace-targeting.test.ts and
+  ipc-service-port.test.ts are unchanged
+
+### Acceptance criteria checklist
+
+- [x] Main process creates a `MessageChannelMain` pair and transfers
+      ports to server and terminal utility processes
+- [x] Server's `TerminalClient` uses the MessagePort RPC client
+      instead of HTTP (when `TerminalRpcPort` is in context)
+- [x] `createSidecarRpcClient()` in `sidecar-rpc.ts` supports
+      MessagePort transport via new `createMessagePortRpcClient()`
+- [x] Server can call `terminal.spawn`, `terminal.write`, etc. on the
+      terminal utility process via MessagePort
+- [x] The lazy connection pattern is preserved (server doesn't block
+      startup if terminal isn't ready yet — uses `Effect.cached` +
+      `TerminalRpcPortLive` which awaits the brokered port)
+- [x] Test: brokerInterProcessPort creates pairs and transfers ports

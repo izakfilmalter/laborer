@@ -75,7 +75,7 @@ import { RepositoryWatchCoordinator } from './services/repository-watch-coordina
 import { ReviewCommentFetcher } from './services/review-comment-fetcher.js'
 import { serveSyncOnPort } from './services/sync-backend.js'
 import { TaskManager } from './services/task-manager.js'
-import { TerminalClient } from './services/terminal-client.js'
+import { TerminalClient, TerminalRpcPort } from './services/terminal-client.js'
 import { WorkspaceProvider } from './services/workspace-provider.js'
 import { WorkspaceSyncService } from './services/workspace-sync-service.js'
 import { WorktreeDetector } from './services/worktree-detector.js'
@@ -152,6 +152,50 @@ function waitForPort(): Promise<PortResult> {
 }
 
 // ---------------------------------------------------------------------------
+// Terminal RPC port — deferred resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Deferred resolver for the terminal RPC MessagePort.
+ *
+ * The main process brokers a `MessageChannelMain` pair between the server
+ * and terminal utility processes after both are healthy. The port arrives
+ * via `process.parentPort` with `{ type: 'terminal-rpc-port' }`.
+ *
+ * The `TerminalRpcPortLayer` provides this port to the `TerminalClient`
+ * service via the `TerminalRpcPort` tag. Since `TerminalClient` is a
+ * deferred service (built in a background fiber), the port typically
+ * arrives before the client tries to connect.
+ *
+ * @see Issue #13: Server-to-terminal MessagePort channel
+ */
+let resolveTerminalRpcPort: ((port: RpcMessagePort) => void) | null = null
+const terminalRpcPortPromise = new Promise<RpcMessagePort>((resolve) => {
+  resolveTerminalRpcPort = resolve
+})
+
+/**
+ * Layer providing `TerminalRpcPort` that awaits the brokered port
+ * from the main process. Used by `TerminalClient.layer` to create
+ * a MessagePort RPC client instead of HTTP.
+ *
+ * This layer blocks until the main process sends a `terminal-rpc-port`
+ * message with the brokered MessagePort. Since `TerminalClient` is a
+ * deferred service (built in a background fiber), this blocking does
+ * not affect the server's ability to serve health checks immediately.
+ */
+const TerminalRpcPortLive = Layer.effect(
+  TerminalRpcPort,
+  Effect.gen(function* () {
+    const port = yield* Effect.promise(() => terminalRpcPortPromise)
+    yield* Effect.log('Received terminal RPC port from main process').pipe(
+      Effect.annotateLogs('module', 'ServerUtility')
+    )
+    return { port }
+  })
+)
+
+// ---------------------------------------------------------------------------
 // Deferred Layers — Real implementations (built in background fiber)
 // ---------------------------------------------------------------------------
 
@@ -224,8 +268,15 @@ const DeferredTopLayers = Layer.mergeAll(
  *
  * External requirements after composition: LaborerStore, ConfigService,
  * RepositoryIdentity (provided by core infrastructure layers).
+ *
+ * `TerminalRpcPortLive` provides the brokered MessagePort to the terminal
+ * utility process. `TerminalClient.layer` uses `Effect.serviceOption` to
+ * detect this and uses MessagePort RPC instead of HTTP.
+ *
+ * @see Issue #13: Server-to-terminal MessagePort channel
  */
 const DeferredServicesLive = DeferredTopLayers.pipe(
+  Layer.provide(TerminalRpcPortLive),
   Layer.provideMerge(DeferredServiceStack),
   Layer.provideMerge(DeferredLeafLayers)
 )
@@ -398,21 +449,32 @@ async function main(): Promise<void> {
   // The parent process manages the lifecycle (kill/restart).
   const runningPromise = Effect.runPromise(program)
 
-  // Listen for sync-port messages from the parent process.
-  // Each sync-port message transfers a dedicated MessagePort for a
-  // LiveStore sync client (the renderer's LiveStore worker).
+  // Listen for additional port messages from the parent process.
   //
-  // Each incoming sync port gets a standalone `RpcServer` serving
-  // `SyncWsRpc` handlers backed by a shared SQLite sync database.
-  // Multiple ports can be active simultaneously (one per window).
+  // - `sync-port`: LiveStore sync channel for the renderer's worker.
+  //   Each incoming sync port gets a standalone `RpcServer` serving
+  //   `SyncWsRpc` handlers backed by a shared SQLite sync database.
+  //   Multiple ports can be active simultaneously (one per window).
+  //   @see Issue #11: LiveStore sync over MessagePort
   //
-  // @see Issue #11: LiveStore sync over MessagePort
+  // - `terminal-rpc-port`: Direct MessagePort to the terminal utility
+  //   process, brokered by the main process. Resolves the deferred
+  //   `TerminalRpcPortLive` layer so `TerminalClient` uses MessagePort
+  //   RPC instead of HTTP.
+  //   @see Issue #13: Server-to-terminal MessagePort channel
   parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
     const data = event.data as { type?: string }
     if (data?.type === 'sync-port' && event.ports.length > 0) {
       const syncPort = event.ports[0] as RpcMessagePort
       syncPort.start?.()
       serveSyncOnPort(syncPort)
+    } else if (data?.type === 'terminal-rpc-port' && event.ports.length > 0) {
+      const terminalPort = event.ports[0] as RpcMessagePort
+      terminalPort.start?.()
+      console.log(
+        '[server-utility] Received terminal RPC port from main process'
+      )
+      resolveTerminalRpcPort?.(terminalPort)
     }
   })
 

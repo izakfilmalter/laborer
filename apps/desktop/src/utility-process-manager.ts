@@ -545,6 +545,50 @@ export class UtilityProcessManager {
     }
     return tracked.process
   }
+
+  /**
+   * Broker a MessagePort pair between two utility processes.
+   *
+   * Creates a `MessageChannelMain` pair and transfers one port to each
+   * process with the specified message types. This enables direct
+   * process-to-process communication without going through the main process.
+   *
+   * Both processes must be running. Returns `false` if either process
+   * is not available.
+   *
+   * @param fromName - Service receiving `fromMessage` with port1
+   * @param fromMessage - Message data sent to `fromName` (e.g., `{ type: 'terminal-rpc-port' }`)
+   * @param toName - Service receiving `toMessage` with port2
+   * @param toMessage - Message data sent to `toName` (e.g., `{ type: 'port' }`)
+   *
+   * @see Issue #13: Server-to-terminal MessagePort channel
+   */
+  brokerInterProcessPort(
+    fromName: ServiceName,
+    fromMessage: Record<string, unknown>,
+    toName: ServiceName,
+    toMessage: Record<string, unknown>
+  ): boolean {
+    const fromProcess = this.getProcess(fromName)
+    const toProcess = this.getProcess(toName)
+
+    if (!(fromProcess && toProcess)) {
+      console.warn(
+        `[utility] Cannot broker port between ${fromName} and ${toName} — one or both not running`
+      )
+      return false
+    }
+
+    const { port1, port2 } = new MessageChannelMain()
+
+    fromProcess.postMessage(fromMessage, [port1])
+    toProcess.postMessage(toMessage, [port2])
+
+    console.info(
+      `[utility] Brokered MessagePort between ${fromName} and ${toName}`
+    )
+    return true
+  }
 }
 
 // ---------------------------------------------------------------------------

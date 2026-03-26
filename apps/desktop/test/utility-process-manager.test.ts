@@ -702,4 +702,119 @@ describe('UtilityProcessManager', () => {
       })
     })
   })
+
+  // -----------------------------------------------------------------------
+  // brokerInterProcessPort()
+  // -----------------------------------------------------------------------
+
+  describe('brokerInterProcessPort()', () => {
+    it('creates a MessagePort pair and transfers to both processes', () => {
+      manager.fork('server')
+      manager.fork('terminal')
+      const serverProcess = getProcess(0)
+      const terminalProcess = getProcess(1)
+      serverProcess.simulateSpawn(100)
+      terminalProcess.simulateSpawn(200)
+
+      const channelsBefore = createdChannels.length
+
+      const result = manager.brokerInterProcessPort(
+        'server',
+        { type: 'terminal-rpc-port' },
+        'terminal',
+        { type: 'port' }
+      )
+
+      expect(result).toBe(true)
+
+      // A new MessageChannelMain was created for the broker.
+      expect(createdChannels.length).toBe(channelsBefore + 1)
+
+      // Server received the { type: 'terminal-rpc-port' } message with a port.
+      const serverMessages = serverProcess.getPostedMessages()
+      const serverBrokerMsg = serverMessages.find(
+        (m) => (m.message as { type: string }).type === 'terminal-rpc-port'
+      )
+      expect(serverBrokerMsg).toBeDefined()
+      expect(serverBrokerMsg?.transfer?.length).toBe(1)
+
+      // Terminal received the { type: 'port' } message with a port.
+      // Note: terminal also receives an initial `{ type: 'port' }` from fork(),
+      // so we check for the last one.
+      const terminalMessages = terminalProcess.getPostedMessages()
+      const terminalPortMessages = terminalMessages.filter(
+        (m) => (m.message as { type: string }).type === 'port'
+      )
+      // At least 2 port messages: one from fork(), one from broker
+      expect(terminalPortMessages.length).toBeGreaterThanOrEqual(2)
+      const terminalBrokerMsg = terminalPortMessages.at(-1)
+      expect(terminalBrokerMsg?.transfer?.length).toBe(1)
+
+      // The two ports should be from the same MessageChannelMain pair:
+      // the server got port1 and the terminal got port2 (or vice versa).
+      const serverBrokerPort = serverBrokerMsg?.transfer?.[0]
+      const terminalBrokerPort = terminalBrokerMsg?.transfer?.[0]
+      expect(serverBrokerPort).not.toBe(terminalBrokerPort)
+    })
+
+    it('returns false when the "from" process is not running', () => {
+      manager.fork('terminal')
+      const terminalProcess = getProcess(0)
+      terminalProcess.simulateSpawn(200)
+
+      // Server was never forked.
+      const result = manager.brokerInterProcessPort(
+        'server',
+        { type: 'terminal-rpc-port' },
+        'terminal',
+        { type: 'port' }
+      )
+
+      expect(result).toBe(false)
+    })
+
+    it('returns false when the "to" process is not running', () => {
+      manager.fork('server')
+      const serverProcess = getProcess(0)
+      serverProcess.simulateSpawn(100)
+
+      // Terminal was never forked.
+      const result = manager.brokerInterProcessPort(
+        'server',
+        { type: 'terminal-rpc-port' },
+        'terminal',
+        { type: 'port' }
+      )
+
+      expect(result).toBe(false)
+    })
+
+    it('returns false when both processes are not running', () => {
+      const result = manager.brokerInterProcessPort(
+        'server',
+        { type: 'terminal-rpc-port' },
+        'terminal',
+        { type: 'port' }
+      )
+
+      expect(result).toBe(false)
+    })
+
+    it('returns false when "from" process has not spawned yet', () => {
+      manager.fork('server')
+      manager.fork('terminal')
+      // Server not spawned yet (no simulateSpawn call).
+      const terminalProcess = getProcess(1)
+      terminalProcess.simulateSpawn(200)
+
+      const result = manager.brokerInterProcessPort(
+        'server',
+        { type: 'terminal-rpc-port' },
+        'terminal',
+        { type: 'port' }
+      )
+
+      expect(result).toBe(false)
+    })
+  })
 })

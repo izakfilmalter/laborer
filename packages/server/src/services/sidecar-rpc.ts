@@ -5,12 +5,19 @@
  * connecting to their respective sidecar services: HTTP+JSON RPC with
  * exponential-backoff retry. This module extracts the shared schedule
  * and client creation logic to avoid duplication.
+ *
+ * In utility process mode, `createMessagePortRpcClient` provides the
+ * same RPC client interface but over a MessagePort instead of HTTP.
+ *
+ * @see Issue #13: Server-to-terminal MessagePort channel
  */
 
 import { FetchHttpClient } from '@effect/platform'
 import type { Rpc, RpcGroup } from '@effect/rpc'
 import { RpcClient, RpcSerialization } from '@effect/rpc'
-import { Effect, Layer, Schedule } from 'effect'
+import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
+import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
+import { Effect, Layer, Schedule, Scope } from 'effect'
 
 /**
  * Retry schedule for initial sidecar RPC connections:
@@ -45,4 +52,28 @@ export const createSidecarRpcClient = <Rpcs extends Rpc.Any>(
       )
     ),
     Effect.retry(sidecarConnectionSchedule)
+  )
+
+/**
+ * Create an RPC client for a sidecar service over a MessagePort.
+ *
+ * Replaces `createSidecarRpcClient` when running inside an Electron
+ * utility process with a brokered MessagePort to the target service.
+ * No HTTP, no JSON serialization — MessagePort uses structured clone.
+ *
+ * The scope parameter ties the client protocol's lifecycle to the
+ * enclosing layer scope.
+ *
+ * @see Issue #13: Server-to-terminal MessagePort channel
+ */
+export const createMessagePortRpcClient = <Rpcs extends Rpc.Any>(
+  rpcs: RpcGroup.RpcGroup<Rpcs>,
+  port: RpcMessagePort,
+  scope: Scope.Scope
+) =>
+  RpcClient.make(rpcs).pipe(
+    Effect.provide(
+      Layer.scoped(RpcClient.Protocol, makeClientProtocolMessagePort(port))
+    ),
+    Effect.provideService(Scope.Scope, scope)
   )

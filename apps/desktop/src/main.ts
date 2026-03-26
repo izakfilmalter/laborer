@@ -363,6 +363,26 @@ app
       utilityProcessManager.setMessageHandler((name, message) => {
         if (message.type === 'ready') {
           lifecycleMonitor?.handleReady(name)
+
+          // When both terminal and server are healthy, broker a direct
+          // MessagePort between them so the server's TerminalClient can
+          // call TerminalRpcs via MessagePort instead of HTTP.
+          //
+          // This is re-brokered after every restart of either service,
+          // since the old ports die with the old processes.
+          //
+          // @see Issue #13: Server-to-terminal MessagePort channel
+          if (
+            lifecycleMonitor?.isHealthy('terminal') &&
+            lifecycleMonitor?.isHealthy('server')
+          ) {
+            utilityProcessManager?.brokerInterProcessPort(
+              'server',
+              { type: 'terminal-rpc-port' },
+              'terminal',
+              { type: 'port' }
+            )
+          }
         } else if (message.type === 'heartbeat') {
           lifecycleMonitor?.handleHeartbeat(name)
         }

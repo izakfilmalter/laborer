@@ -38,7 +38,7 @@ import { RpcServer } from '@effect/rpc'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { Layer, ManagedRuntime } from 'effect'
+import { Effect, Layer, ManagedRuntime } from 'effect'
 
 import { TerminalRpcsLive } from './rpc/handlers.js'
 import { directLayer as PtyDirectLayer } from './services/pty-direct.js'
@@ -116,6 +116,42 @@ function waitForRpcPort(): Promise<{
 }
 
 // ---------------------------------------------------------------------------
+// Additional RPC port handling
+// ---------------------------------------------------------------------------
+
+/**
+ * Serve `TerminalRpcs` on an additional MessagePort.
+ *
+ * Used when the main process brokers a MessagePort between the server
+ * and terminal utility processes. The terminal creates a new `RpcServer`
+ * on the given port, backed by the same `TerminalManager` and
+ * `PtyHostClient` instances as the primary RPC server.
+ *
+ * The server runs as a long-lived forked fiber — it stays alive until
+ * the port closes or the runtime is disposed.
+ *
+ * @param port - The brokered MessagePort to serve RPC on
+ * @param managedRuntime - The managed runtime providing TerminalManager + PtyHostClient
+ * @param servicesLayer - Layer providing TerminalManager + PtyHostClient
+ *
+ * @see Issue #13: Server-to-terminal MessagePort channel
+ */
+function serveRpcOnPort<R>(
+  port: RpcMessagePort,
+  managedRuntime: ManagedRuntime.ManagedRuntime<R, never>,
+  servicesLayer: Layer.Layer<TerminalManager>
+): void {
+  const RpcLive = RpcServer.layer(TerminalRpcs).pipe(
+    Layer.provide(layerProtocolMessagePort(port)),
+    Layer.provide(TerminalRpcsLive),
+    Layer.provide(servicesLayer)
+  )
+
+  const program = Layer.launch(RpcLive).pipe(Effect.scoped)
+  managedRuntime.runFork(program)
+}
+
+// ---------------------------------------------------------------------------
 // Service composition and launch
 // ---------------------------------------------------------------------------
 
@@ -165,9 +201,18 @@ async function main(): Promise<void> {
   const managedRuntime = ManagedRuntime.make(FullLayer)
   const runtime = await managedRuntime.runtime()
 
-  // Listen for per-terminal data port messages from the parent.
-  // These arrive when the renderer requests a dedicated I/O channel
-  // for a specific terminal via `acquireTerminalDataPort()`.
+  // Listen for additional port messages from the parent.
+  //
+  // - `terminal-data-port`: Per-terminal MessagePort for PTY I/O streaming.
+  //   Arrives when the renderer requests a dedicated I/O channel via
+  //   `acquireTerminalDataPort()`.
+  //   @see Issue #8: Terminal PTY I/O data channel over MessagePort
+  //
+  // - `port`: Additional RPC port for inter-process communication.
+  //   Arrives when the main process brokers a MessagePort between the
+  //   server and terminal utility processes. The terminal serves
+  //   `TerminalRpcs` on the new port using the same service instances.
+  //   @see Issue #13: Server-to-terminal MessagePort channel
   parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
     const data = event.data as { terminalId?: string; type?: string }
     if (
@@ -178,6 +223,16 @@ async function main(): Promise<void> {
       const dataPort = event.ports[0] as RpcMessagePort
       dataPort.start?.()
       handleTerminalDataPort(dataPort, data.terminalId, runtime)
+    } else if (data?.type === 'port' && event.ports.length > 0) {
+      // Additional RPC port — serve TerminalRpcs on it.
+      // This enables the server utility process to call terminal RPCs
+      // via a direct MessagePort instead of HTTP.
+      const additionalRpcPort = event.ports[0] as RpcMessagePort
+      additionalRpcPort.start?.()
+      console.log(
+        '[terminal-utility] Serving TerminalRpcs on additional port (inter-process)'
+      )
+      serveRpcOnPort(additionalRpcPort, managedRuntime, ServicesLayer)
     }
   })
 

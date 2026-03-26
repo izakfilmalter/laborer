@@ -15,6 +15,7 @@ const OPEN_EXTERNAL_CHANNEL = 'desktop:open-external'
 const MENU_ACTION_CHANNEL = 'desktop:menu-action'
 const UPDATE_TRAY_COUNT_CHANNEL = 'desktop:update-tray-count'
 const RESTART_SIDECAR_CHANNEL = 'desktop:restart-sidecar'
+const GET_SIDECAR_STATUSES_CHANNEL = 'desktop:get-sidecar-statuses'
 const SIDECAR_STATUS_CHANNEL = 'sidecar:status'
 const SEND_NOTIFICATION_CHANNEL = 'desktop:send-notification'
 const NOTIFICATION_CLICKED_CHANNEL = 'desktop:notification-clicked'
@@ -89,6 +90,8 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     )
     ipcRenderer.send(channel, ...args)
   },
+
+  getSidecarStatuses: () => ipcRenderer.invoke(GET_SIDECAR_STATUSES_CHANNEL),
 
   getWindowId: () => windowId,
 

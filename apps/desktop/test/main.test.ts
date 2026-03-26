@@ -131,6 +131,7 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     getWorkspaceWindowRegistry: () => ({ remove: vi.fn() }),
     registerIpcHandlers: registerIpcHandlersMock,
     setDownloadUpdateHandler: vi.fn(),
+    setGetSidecarStatusesHandler: vi.fn(),
     setGetUpdateStateHandler: vi.fn(),
     setInstallUpdateHandler: vi.fn(),
     setRestartSidecarHandler: vi.fn(),
@@ -153,6 +154,7 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
   vi.doMock('../src/lifecycle-monitor.js', () => ({
     LifecycleMonitor: class {
       forkAllAndMonitor = vi.fn()
+      getCurrentStatuses = vi.fn(() => [])
       handleReady = vi.fn()
       handleHeartbeat = vi.fn()
       manualRestart = vi.fn()

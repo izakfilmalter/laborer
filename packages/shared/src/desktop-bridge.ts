@@ -142,6 +142,13 @@ export interface DesktopBridge {
    */
   focusWindowForWorkspace: (workspaceId: string) => Promise<boolean>
 
+  /**
+   * Returns the current status of all sidecar services.
+   * Used on mount to catch up on statuses that were broadcast before the
+   * window was created or ready to receive IPC events.
+   */
+  getSidecarStatuses: () => Promise<SidecarStatusEvent[]>
+
   /** Returns the current auto-update state. */
   getUpdateState: () => Promise<DesktopUpdateState>
 

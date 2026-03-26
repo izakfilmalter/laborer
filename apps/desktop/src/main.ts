@@ -17,6 +17,7 @@ import {
   getWorkspaceWindowRegistry,
   registerIpcHandlers,
   setDownloadUpdateHandler,
+  setGetSidecarStatusesHandler,
   setGetUpdateStateHandler,
   setInstallUpdateHandler,
   setRestartSidecarHandler,
@@ -423,6 +424,12 @@ app
       } else if (utilityProcessManager?.isRunning(name as ValidName)) {
         await utilityProcessManager.restart(name as ValidName)
       }
+    })
+
+    // Wire sidecar status query so the renderer can get current statuses
+    // on mount (avoids missing broadcast events due to timing).
+    setGetSidecarStatusesHandler(() => {
+      return lifecycleMonitor?.getCurrentStatuses() ?? []
     })
 
     // Wire auto-update IPC handlers.

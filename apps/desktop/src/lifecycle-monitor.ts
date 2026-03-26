@@ -232,6 +232,29 @@ export class LifecycleMonitor {
   }
 
   /**
+   * Get the current status of all monitored services.
+   * Used to replay status to windows that missed the initial broadcast
+   * (e.g., windows created after services were already healthy).
+   */
+  getCurrentStatuses(): LifecycleStatus[] {
+    const statuses: LifecycleStatus[] = []
+    for (const [name, state] of this.services) {
+      if (state.isReady) {
+        statuses.push({ state: 'healthy', name })
+      } else if (state.restartTimer) {
+        statuses.push({
+          state: 'restarting',
+          name,
+          delayMs: 0,
+        })
+      } else {
+        statuses.push({ state: 'starting', name })
+      }
+    }
+    return statuses
+  }
+
+  /**
    * Signal that the app is shutting down. Cancels all pending restarts
    * and heartbeat timers, suppresses future restart attempts.
    */

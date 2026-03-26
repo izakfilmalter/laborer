@@ -4,6 +4,7 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateState,
   SidecarName,
+  SidecarStatusEvent,
 } from '@laborer/shared/desktop-bridge'
 import {
   BrowserWindow,
@@ -43,6 +44,7 @@ export const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
 export const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
 export const GITHUB_OAUTH_CALLBACK_CHANNEL = 'desktop:github-oauth-callback'
 export const START_GITHUB_OAUTH_CHANNEL = 'desktop:start-github-oauth'
+export const GET_SIDECAR_STATUSES_CHANNEL = 'desktop:get-sidecar-statuses'
 export const ACQUIRE_SERVICE_PORT_CHANNEL = 'laborer:acquire-service-port'
 export const SERVICE_PORT_RESPONSE_CHANNEL = 'laborer:service-port-response'
 export const ACQUIRE_TERMINAL_DATA_PORT_CHANNEL =
@@ -168,12 +170,14 @@ export function getWorkspaceWindowRegistry(): WorkspaceWindowRegistry {
 
 type TrayCountCallback = (count: number) => void
 type RestartSidecarCallback = (name: string) => Promise<void>
+type GetSidecarStatusesCallback = () => SidecarStatusEvent[]
 type GetUpdateStateCallback = () => DesktopUpdateState
 type DownloadUpdateCallback = () => Promise<DesktopUpdateActionResult>
 type InstallUpdateCallback = () => Promise<DesktopUpdateActionResult>
 
 let trayCountCallback: TrayCountCallback | null = null
 let restartSidecarCallback: RestartSidecarCallback | null = null
+let getSidecarStatusesCallback: GetSidecarStatusesCallback | null = null
 let getUpdateStateCallback: GetUpdateStateCallback | null = null
 let downloadUpdateCallback: DownloadUpdateCallback | null = null
 let installUpdateCallback: InstallUpdateCallback | null = null
@@ -187,6 +191,13 @@ export function setTrayCountHandler(cb: TrayCountCallback): void {
 /** Set the callback invoked when the renderer requests a sidecar restart. */
 export function setRestartSidecarHandler(cb: RestartSidecarCallback): void {
   restartSidecarCallback = cb
+}
+
+/** Set the callback for getting current sidecar statuses. */
+export function setGetSidecarStatusesHandler(
+  cb: GetSidecarStatusesCallback
+): void {
+  getSidecarStatusesCallback = cb
 }
 
 /** Set the callback for getting current update state. */
@@ -356,6 +367,15 @@ export function registerIpcHandlers(
       return
     }
     await restartSidecarCallback?.(name)
+  })
+
+  // -- Get sidecar statuses (initial query) ----------------------------------
+  // Allows the renderer to request the current status of all services on
+  // mount, avoiding the race where broadcast events are missed because
+  // the window was created after services were already healthy.
+  ipcMain.removeHandler(GET_SIDECAR_STATUSES_CHANNEL)
+  ipcMain.handle(GET_SIDECAR_STATUSES_CHANNEL, () => {
+    return getSidecarStatusesCallback?.() ?? []
   })
 
   // -- Auto-update: get state -----------------------------------------------

@@ -70,7 +70,9 @@ function useSidecarStatuses(): SidecarStatuses {
     setStatuses(deriveSidecarStatuses(eventsRef.current))
   }, [])
 
-  // Electron production: subscribe to sidecar status events via IPC.
+  // Electron production: subscribe to sidecar status events via IPC,
+  // and query current statuses on mount to catch up on events that
+  // were broadcast before the window was ready.
   useEffect(() => {
     if (!useIpcEvents) {
       return
@@ -80,6 +82,14 @@ function useSidecarStatuses(): SidecarStatuses {
     if (!bridge) {
       return
     }
+
+    // Query current statuses immediately to catch up on events
+    // that were broadcast before the window was created.
+    bridge.getSidecarStatuses().then((statuses) => {
+      for (const status of statuses) {
+        handleEvent(status)
+      }
+    })
 
     return bridge.onSidecarStatus(handleEvent)
   }, [handleEvent])

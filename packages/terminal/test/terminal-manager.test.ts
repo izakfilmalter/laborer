@@ -1224,13 +1224,14 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     )
 
     // After clearing, ps-based detection takes over. The agentStatusMap
-    // was synced to 'active' by the hook, so the ps-based state machine
-    // sees "was active, now idle" → 'waiting_for_input'. This is correct:
-    // clearing a hook doesn't erase the agent context, it just removes
-    // the override so the ps-based transitions resume naturally.
+    // was synced to 'active' by the hook, but the foreground process is
+    // `cat` (category 'unknown' — not a shell and not an agent). The
+    // ps-based state machine sees "previous=active, non-shell foreground
+    // process running" and treats it as "a non-agent command took over",
+    // clearing agent status to null.
     const terminal = terminals.find((t) => t.id === result.id)
     assert.isDefined(terminal)
-    assert.strictEqual(terminal?.agentStatus, 'waiting_for_input')
+    assert.strictEqual(terminal?.agentStatus, null)
 
     await runEffect(
       Effect.gen(function* () {

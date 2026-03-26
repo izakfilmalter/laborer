@@ -698,7 +698,6 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
         workspaceId: string
       ): Effect.Effect<number, never> =>
         Effect.gen(function* () {
-          const { client: rpcClient } = yield* getOrCreateClient
           const map = yield* Ref.get(terminalMapRef)
           const workspaceTerminalIds = pipe(
             [...map.entries()],
@@ -709,6 +708,8 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
           if (workspaceTerminalIds.length === 0) {
             return 0
           }
+
+          const { client: rpcClient } = yield* getOrCreateClient
 
           let killedCount = 0
           yield* Effect.forEach(

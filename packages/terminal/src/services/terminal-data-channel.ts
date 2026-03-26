@@ -60,6 +60,12 @@ const encodeStatus = (status: string, exitCode?: number): string => {
 }
 
 /**
+ * Build a JSON error control message string.
+ */
+const encodeError = (message: string): string =>
+  JSON.stringify({ type: 'error', message })
+
+/**
  * Parse an incoming message from the renderer. Returns the type and
  * payload for flow control ack messages, or null for raw terminal input.
  */
@@ -118,12 +124,7 @@ const attachDataChannel = (
     // Verify the terminal exists before attaching.
     const exists = yield* terminalManager.terminalExists(terminalId)
     if (!exists) {
-      port.postMessage(
-        JSON.stringify({
-          type: 'error',
-          message: `Terminal not found: ${terminalId}`,
-        })
-      )
+      port.postMessage(encodeError(`Terminal not found: ${terminalId}`))
       port.close?.()
       return
     }

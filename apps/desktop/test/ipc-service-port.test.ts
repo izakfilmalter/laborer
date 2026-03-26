@@ -81,11 +81,13 @@ vi.mock('electron', () => ({
   Menu: {
     buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })),
   },
-  MessageChannelMain: vi.fn(() => {
-    const channel = { port1: mockPort(), port2: mockPort() }
-    mockMessageChannelInstances.push(channel)
-    return channel
-  }),
+  MessageChannelMain: class {
+    port1 = mockPort()
+    port2 = mockPort()
+    constructor() {
+      mockMessageChannelInstances.push(this as never)
+    }
+  },
   Notification: class {
     on(): void {
       // no-op

@@ -7,7 +7,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 1 | Bootstrap entry point script | None | Done |
 | 2 | UtilityProcessManager core (fork, kill, restart) | #1 | Done |
 | 3 | MessagePort Effect RPC transport (server side) | None | Done |
-| 4 | MessagePort Effect RPC transport (client side) | #3 | Ready |
+| 4 | MessagePort Effect RPC transport (client side) | #3 | Done |
 | 5 | Preload MessagePort acquisition | #2 | Ready |
 | 6 | Terminal utility process: basic PTY spawn via MessagePort RPC | #1, #2, #3 | Ready |
 | 7 | Terminal utility process: full RPC surface | #6 | Blocked |
@@ -126,12 +126,12 @@ The adapter wraps a `MessagePort` in an Effect RPC client that supports both req
 
 ### Acceptance criteria
 
-- [ ] A module exports an Effect Layer that provides an RPC client over a MessagePort
-- [ ] The client sends request messages and receives response messages over the port
-- [ ] Streaming responses work: the client receives multiple messages for a single stream request and yields them as an Effect Stream
-- [ ] Error responses from the server are deserialized and surfaced as Effect RPC errors
-- [ ] The client handles port disconnection gracefully (surfaces as a connection error)
-- [ ] Unit tests verify request/response, streaming, error propagation, and disconnection using Node.js `MessageChannel` paired with the server adapter from #3
+- [x] A module exports an Effect Layer that provides an RPC client over a MessagePort
+- [x] The client sends request messages and receives response messages over the port
+- [x] Streaming responses work: the client receives multiple messages for a single stream request and yields them as an Effect Stream
+- [x] Error responses from the server are deserialized and surfaced as Effect RPC errors
+- [x] The client handles port disconnection gracefully (surfaces as a connection error)
+- [x] Unit tests verify request/response, streaming, error propagation, and disconnection using Node.js `MessageChannel` paired with the server adapter from #3
 
 ### Blocked by
 

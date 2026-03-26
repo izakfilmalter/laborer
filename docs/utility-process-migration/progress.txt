@@ -214,3 +214,78 @@ to create a protocol that:
 - [x] The adapter cleans up when the MessagePort closes
 - [x] Unit tests verify all of the above using Node.js `MessageChannel` (no
       Electron dependency needed for testing)
+
+---
+
+## Issue 4: MessagePort Effect RPC transport (client side) — COMPLETED
+
+Date: 2026-03-25
+
+### What was done
+
+Created the client-side MessagePort RPC transport that provides an
+`RpcClient.Protocol` implementation over MessagePort. This replaces
+`RpcClient.layerProtocolHttp({ url })` in the renderer. The transport uses
+structured clone via `postMessage()` — no JSON serialization layer
+(`RpcSerialization.layerJson`) or `FetchHttpClient.layer` is needed.
+
+The implementation mirrors the server-side transport, using
+`RpcClient.Protocol.make(Effect.fnUntraced(function*(writeResponse) {...}))`
+to create a protocol that:
+- Bridges sync MessagePort event listeners to the Effect runtime via an
+  unbounded queue drained by a scoped fiber
+- Reuses the `RpcMessagePort` interface from the server-side transport
+- Sends `FromClientEncoded` requests via `port.postMessage()`
+- Receives `FromServerEncoded` responses via the message listener
+- Wraps send errors as `RpcClientError` with reason 'Protocol'
+- Supports `ArrayBuffer` transfer for zero-copy data (supportsTransferables)
+- Cleans up listeners and closes the port on scope finalization
+
+### Files created
+
+- `packages/shared/src/rpc-transport-messageport-client.ts` — Client-side
+  transport:
+  - `makeClientProtocolMessagePort(port)`: creates an `RpcClient.Protocol`
+    from a port (scoped effect)
+  - `layerClientProtocolMessagePort(port)`: Layer wrapper for easy composition
+  - Message flow: client calls RPC → send(request) → port.postMessage() →
+    server processes → server posts response → port.on('message') →
+    Queue.unsafeOffer → fiber drains queue → writeResponse(data) →
+    RPC client pipeline delivers result
+
+- `packages/shared/test/rpc-transport-messageport-client.test.ts` — 7 tests
+  using end-to-end client+server pairs over Node.js `MessageChannel`:
+  1. Handles echo request/response
+  2. Handles add request/response
+  3. Propagates RPC errors (TestRpcError surfaces as Left)
+  4. Handles streaming RPC (count 0..4, verifies collected values)
+  5. Handles multiple concurrent requests (3 parallel RPCs)
+  6. Handles port disconnection gracefully
+  7. Cleans up when scope is closed
+
+### Files modified
+
+- `packages/shared/package.json` — Added export for
+  `./rpc-transport-messageport-client` pointing to the new module
+
+### Verification
+
+- All 89 shared package tests pass (82 existing + 7 new)
+- TypeScript: no errors
+- Biome formatting: no new errors
+
+### Acceptance criteria checklist
+
+- [x] A module exports an Effect Layer that provides an RPC client over a
+      MessagePort
+- [x] The client sends request messages and receives response messages over
+      the port
+- [x] Streaming responses work: the client receives multiple messages for a
+      single stream request and yields them as an Effect Stream
+- [x] Error responses from the server are deserialized and surfaced as Effect
+      RPC errors
+- [x] The client handles port disconnection gracefully (surfaces as a
+      connection error)
+- [x] Unit tests verify request/response, streaming, error propagation, and
+      disconnection using Node.js `MessageChannel` paired with the server
+      adapter from #3

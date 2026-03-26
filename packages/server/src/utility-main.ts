@@ -517,6 +517,12 @@ async function main(): Promise<void> {
   //   `TerminalRpcPortLive` layer so `TerminalClient` uses MessagePort
   //   RPC instead of HTTP.
   //   @see Issue #13: Server-to-terminal MessagePort channel
+  //
+  // - `port`: Additional RPC port for inter-process communication.
+  //   Serves `LaborerRpcs` on a new standalone server backed by a
+  //   fresh set of deferred service proxies. Used by MCP utility
+  //   process to call server RPCs via MessagePort.
+  //   @see Issue #15: MCP as utility process
   parentPort.on('message', (event: { data: unknown; ports: unknown[] }) => {
     const data = event.data as { type?: string }
     if (data?.type === 'sync-port' && event.ports.length > 0) {
@@ -540,6 +546,33 @@ async function main(): Promise<void> {
         '[server-utility] Received file-watcher RPC port from main process'
       )
       resolveFileWatcherRpcPort?.(fileWatcherPort)
+    } else if (data?.type === 'port' && event.ports.length > 0) {
+      // Additional RPC port — serve LaborerRpcs on it.
+      // This enables other utility processes (e.g., MCP) to call
+      // server RPCs via a direct MessagePort instead of HTTP.
+      const additionalRpcPort = event.ports[0] as RpcMessagePort
+      additionalRpcPort.start?.()
+      console.log(
+        '[server-utility] Serving LaborerRpcs on additional port (inter-process)'
+      )
+      // Build a standalone RPC server on the additional port.
+      // Uses the same layer stack as the primary server — deferred
+      // services resolve to the same SQLite database (LaborerStoreLive
+      // shares the same DB path), so state is consistent.
+      const AdditionalRpcLive = RpcServer.layer(LaborerRpcs).pipe(
+        Layer.provide(layerProtocolMessagePort(additionalRpcPort)),
+        Layer.provide(LaborerRpcsLive),
+        Layer.provide(DeferredServicesProxyLive),
+        Layer.provide(DeferredServicesReadyLayer),
+        Layer.provide(ConfigService.layer),
+        Layer.provide(RepositoryIdentity.layer),
+        Layer.provide(LaborerStoreLive)
+      )
+      const additionalProgram = AdditionalRpcLive.pipe(
+        Layer.launch,
+        Effect.scoped
+      )
+      Effect.runFork(additionalProgram)
     }
   })
 

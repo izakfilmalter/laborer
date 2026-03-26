@@ -8,6 +8,8 @@ import {
   type ProjectResponse,
   RpcError,
 } from '@laborer/shared/rpc'
+import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
+import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
 import type { TaskStatus } from '@laborer/shared/types'
 import { Context, Effect, Layer } from 'effect'
 
@@ -69,6 +71,11 @@ class LaborerRpcClient extends Context.Tag('@laborer/mcp/LaborerRpcClient')<
     }) => Effect.Effect<TaskResponse, RpcError>
   }
 >() {
+  /**
+   * HTTP-based layer for standalone MCP server mode (stdio entry point).
+   * Uses `FetchHttpClient` + JSON serialization to connect to the server's
+   * `/rpc` HTTP endpoint.
+   */
   static readonly layer = Layer.scoped(
     LaborerRpcClient,
     Effect.gen(function* () {
@@ -83,106 +90,132 @@ class LaborerRpcClient extends Context.Tag('@laborer/mcp/LaborerRpcClient')<
         )
       )
 
-      const listProjects = Effect.fn('LaborerRpcClient.listProjects')(
-        function* () {
-          return yield* rpcClient.project
-            .list()
-            .pipe(Effect.mapError(toRpcError))
-        }
-      )
-
-      const createPrd = Effect.fn('LaborerRpcClient.createPrd')(
-        function* (input: {
-          readonly projectId: string
-          readonly title: string
-          readonly content: string
-        }) {
-          return yield* rpcClient.prd
-            .create(input)
-            .pipe(Effect.mapError(toRpcError))
-        }
-      )
-
-      const listPrds = Effect.fn('LaborerRpcClient.listPrds')(
-        function* (input: { readonly projectId: string }) {
-          return yield* rpcClient.prd
-            .list(input)
-            .pipe(Effect.mapError(toRpcError))
-        }
-      )
-
-      const readPrd = Effect.fn('LaborerRpcClient.readPrd')(function* (input: {
-        readonly prdId: string
-      }) {
-        return yield* rpcClient.prd
-          .read(input)
-          .pipe(Effect.mapError(toRpcError))
-      })
-
-      const updatePrd = Effect.fn('LaborerRpcClient.updatePrd')(
-        function* (input: {
-          readonly prdId: string
-          readonly content: string
-        }) {
-          return yield* rpcClient.prd
-            .update(input)
-            .pipe(Effect.mapError(toRpcError))
-        }
-      )
-
-      const createIssue = Effect.fn('LaborerRpcClient.createIssue')(
-        function* (input: {
-          readonly prdId: string
-          readonly title: string
-          readonly body: string
-        }) {
-          return yield* rpcClient.prd
-            .createIssue(input)
-            .pipe(Effect.mapError(toRpcError))
-        }
-      )
-
-      const readIssues = Effect.fn('LaborerRpcClient.readIssues')(
-        function* (input: { readonly prdId: string }) {
-          return yield* rpcClient.prd
-            .readIssues(input)
-            .pipe(Effect.mapError(toRpcError))
-        }
-      )
-
-      const listRemainingIssues = Effect.fn(
-        'LaborerRpcClient.listRemainingIssues'
-      )(function* (input: { readonly prdId: string }) {
-        return yield* rpcClient.prd
-          .listRemainingIssues(input)
-          .pipe(Effect.mapError(toRpcError))
-      })
-
-      const updateIssue = Effect.fn('LaborerRpcClient.updateIssue')(
-        function* (input: {
-          readonly taskId: string
-          readonly body?: string | undefined
-          readonly status?: TaskStatus | undefined
-        }) {
-          return yield* rpcClient.prd
-            .updateIssue(input)
-            .pipe(Effect.mapError(toRpcError))
-        }
-      )
-
-      return LaborerRpcClient.of({
-        createIssue,
-        createPrd,
-        listRemainingIssues,
-        listPrds,
-        listProjects,
-        readPrd,
-        readIssues,
-        updateIssue,
-        updatePrd,
-      })
+      return wrapRpcClient(rpcClient)
     })
   )
+
+  /**
+   * MessagePort-based layer for utility process mode.
+   * Uses a brokered MessagePort to the server utility process for
+   * `LaborerRpcs` calls. No HTTP, no JSON serialization — MessagePort
+   * uses structured clone natively.
+   *
+   * @param port - The brokered MessagePort to the server utility process
+   *
+   * @see Issue #15: MCP as utility process
+   */
+  static utilityLayer(port: RpcMessagePort): Layer.Layer<LaborerRpcClient> {
+    return Layer.scoped(
+      LaborerRpcClient,
+      Effect.gen(function* () {
+        const rpcClient = yield* RpcClient.make(LaborerRpcs).pipe(
+          Effect.provide(
+            Layer.scoped(
+              RpcClient.Protocol,
+              makeClientProtocolMessagePort(port)
+            )
+          )
+        )
+
+        return wrapRpcClient(rpcClient)
+      })
+    )
+  }
+}
+
+/**
+ * Infer the RPC client type from `RpcClient.make(LaborerRpcs)`.
+ */
+const MakeLaborerClient = RpcClient.make(LaborerRpcs)
+type LaborerRpc = Effect.Effect.Success<typeof MakeLaborerClient>
+
+/**
+ * Wrap an RPC client instance into the LaborerRpcClient service interface.
+ * Shared between the HTTP and MessagePort layers.
+ */
+function wrapRpcClient(rpcClient: LaborerRpc): LaborerRpcClient['Type'] {
+  const listProjects = Effect.fn('LaborerRpcClient.listProjects')(function* () {
+    return yield* rpcClient.project.list().pipe(Effect.mapError(toRpcError))
+  })
+
+  const createPrd = Effect.fn('LaborerRpcClient.createPrd')(function* (input: {
+    readonly projectId: string
+    readonly title: string
+    readonly content: string
+  }) {
+    return yield* rpcClient.prd.create(input).pipe(Effect.mapError(toRpcError))
+  })
+
+  const listPrds = Effect.fn('LaborerRpcClient.listPrds')(function* (input: {
+    readonly projectId: string
+  }) {
+    return yield* rpcClient.prd.list(input).pipe(Effect.mapError(toRpcError))
+  })
+
+  const readPrd = Effect.fn('LaborerRpcClient.readPrd')(function* (input: {
+    readonly prdId: string
+  }) {
+    return yield* rpcClient.prd.read(input).pipe(Effect.mapError(toRpcError))
+  })
+
+  const updatePrd = Effect.fn('LaborerRpcClient.updatePrd')(function* (input: {
+    readonly prdId: string
+    readonly content: string
+  }) {
+    return yield* rpcClient.prd.update(input).pipe(Effect.mapError(toRpcError))
+  })
+
+  const createIssue = Effect.fn('LaborerRpcClient.createIssue')(
+    function* (input: {
+      readonly prdId: string
+      readonly title: string
+      readonly body: string
+    }) {
+      return yield* rpcClient.prd
+        .createIssue(input)
+        .pipe(Effect.mapError(toRpcError))
+    }
+  )
+
+  const readIssues = Effect.fn('LaborerRpcClient.readIssues')(
+    function* (input: { readonly prdId: string }) {
+      return yield* rpcClient.prd
+        .readIssues(input)
+        .pipe(Effect.mapError(toRpcError))
+    }
+  )
+
+  const listRemainingIssues = Effect.fn('LaborerRpcClient.listRemainingIssues')(
+    function* (input: { readonly prdId: string }) {
+      return yield* rpcClient.prd
+        .listRemainingIssues(input)
+        .pipe(Effect.mapError(toRpcError))
+    }
+  )
+
+  const updateIssue = Effect.fn('LaborerRpcClient.updateIssue')(
+    function* (input: {
+      readonly taskId: string
+      readonly body?: string | undefined
+      readonly status?: TaskStatus | undefined
+    }) {
+      return yield* rpcClient.prd
+        .updateIssue(input)
+        .pipe(Effect.mapError(toRpcError))
+    }
+  )
+
+  return LaborerRpcClient.of({
+    createIssue,
+    createPrd,
+    listRemainingIssues,
+    listPrds,
+    listProjects,
+    readPrd,
+    readIssues,
+    updateIssue,
+    updatePrd,
+  })
 }
 
 const toRpcError = (error: unknown) =>

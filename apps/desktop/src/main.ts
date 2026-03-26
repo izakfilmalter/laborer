@@ -319,6 +319,61 @@ function buildPreloadArgs(windowId: string): string[] {
   })
 }
 
+/**
+ * Broker direct MessagePort channels between utility processes that
+ * need to communicate with each other.
+ *
+ * Called whenever a utility process becomes ready. Checks which pairs
+ * of services are both healthy and creates brokered connections for
+ * those that are. Each pair is re-brokered after every restart of
+ * either service, since old ports die with old processes.
+ */
+function brokerInterProcessPorts(): void {
+  // Server ↔ Terminal: server's TerminalClient calls TerminalRpcs
+  // @see Issue #13: Server-to-terminal MessagePort channel
+  if (
+    lifecycleMonitor?.isHealthy('terminal') &&
+    lifecycleMonitor?.isHealthy('server')
+  ) {
+    utilityProcessManager?.brokerInterProcessPort(
+      'server',
+      { type: 'terminal-rpc-port' },
+      'terminal',
+      { type: 'port' }
+    )
+  }
+
+  // Server ↔ File-watcher: server's FileWatcherClient calls FileWatcherRpcs
+  // @see Issue #14: File-watcher as utility process
+  if (
+    lifecycleMonitor?.isHealthy('file-watcher') &&
+    lifecycleMonitor?.isHealthy('server')
+  ) {
+    utilityProcessManager?.brokerInterProcessPort(
+      'server',
+      { type: 'file-watcher-rpc-port' },
+      'file-watcher',
+      { type: 'port' }
+    )
+  }
+
+  // MCP ↔ Server: MCP's LaborerRpcClient calls LaborerRpcs
+  // The MCP utility process receives the port as 'server-rpc-port',
+  // the server receives it as 'port' (additional RPC port).
+  // @see Issue #15: MCP as utility process
+  if (
+    lifecycleMonitor?.isHealthy('mcp') &&
+    lifecycleMonitor?.isHealthy('server')
+  ) {
+    utilityProcessManager?.brokerInterProcessPort(
+      'mcp',
+      { type: 'server-rpc-port' },
+      'server',
+      { type: 'port' }
+    )
+  }
+}
+
 app
   .whenReady()
   .then(async () => {
@@ -363,46 +418,7 @@ app
       utilityProcessManager.setMessageHandler((name, message) => {
         if (message.type === 'ready') {
           lifecycleMonitor?.handleReady(name)
-
-          // When both terminal and server are healthy, broker a direct
-          // MessagePort between them so the server's TerminalClient can
-          // call TerminalRpcs via MessagePort instead of HTTP.
-          //
-          // This is re-brokered after every restart of either service,
-          // since the old ports die with the old processes.
-          //
-          // @see Issue #13: Server-to-terminal MessagePort channel
-          if (
-            lifecycleMonitor?.isHealthy('terminal') &&
-            lifecycleMonitor?.isHealthy('server')
-          ) {
-            utilityProcessManager?.brokerInterProcessPort(
-              'server',
-              { type: 'terminal-rpc-port' },
-              'terminal',
-              { type: 'port' }
-            )
-          }
-
-          // When both file-watcher and server are healthy, broker a direct
-          // MessagePort between them so the server's FileWatcherClient can
-          // call FileWatcherRpcs via MessagePort instead of HTTP.
-          //
-          // This is re-brokered after every restart of either service,
-          // since the old ports die with the old processes.
-          //
-          // @see Issue #14: File-watcher as utility process
-          if (
-            lifecycleMonitor?.isHealthy('file-watcher') &&
-            lifecycleMonitor?.isHealthy('server')
-          ) {
-            utilityProcessManager?.brokerInterProcessPort(
-              'server',
-              { type: 'file-watcher-rpc-port' },
-              'file-watcher',
-              { type: 'port' }
-            )
-          }
+          brokerInterProcessPorts()
         } else if (message.type === 'heartbeat') {
           lifecycleMonitor?.handleHeartbeat(name)
         }
@@ -419,7 +435,12 @@ app
       // During migration, these run alongside the HTTP-based sidecars
       // (which are still used by the renderer). The renderer will be
       // switched to use MessagePort-based services in issues #9, #12.
-      lifecycleMonitor.forkAllAndMonitor(['terminal', 'server', 'file-watcher'])
+      lifecycleMonitor.forkAllAndMonitor([
+        'terminal',
+        'server',
+        'file-watcher',
+        'mcp',
+      ])
 
       // Forward sidecar status events to the renderer.
       healthMonitor.setStatusListener((status) => {

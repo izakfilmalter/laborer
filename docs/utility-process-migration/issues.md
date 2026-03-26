@@ -18,11 +18,11 @@ Parent PRD: [PRD.md](./PRD.md)
 | 12 | Renderer server UI wired to MessagePort | #11, #4 | Done |
 | 13 | Server-to-terminal MessagePort channel | #6, #10 | Done |
 | 14 | File-watcher as utility process | #1, #2, #3, #10 | Done |
-| 15 | MCP as utility process | #1, #2, #3 | Ready |
+| 15 | MCP as utility process | #1, #2, #3 | Done |
 | 16 | Lifecycle Monitor (replaces HealthMonitor) | #2 | Done |
 | 17 | Dev mode hot reload (tsdown --watch + auto-restart) | #2, #16 | Ready |
 | 18 | Terminal session persistence across restarts | #6, #16 | Ready |
-| 19 | Remove HTTP servers, Vite proxy, dev:web, URL resolution | #9, #12, #14, #15 | Blocked |
+| 19 | Remove HTTP servers, Vite proxy, dev:web, URL resolution | #9, #12, #14, #15 | Ready |
 | 20 | Build script update + port reservation removal | #19 | Blocked |
 
 ---
@@ -451,13 +451,13 @@ The MCP service currently also connects to the main server via HTTP RPC (`Labore
 
 ### Acceptance criteria
 
-- [ ] MCP forks as a utility process via `UtilityProcessManager.fork('mcp', ...)`
-- [ ] The MCP utility process receives commands from the main process via MessagePort (not stdin)
-- [ ] The MCP utility process spawns external MCP servers as `child_process` with stdin pipe internally
-- [ ] The MCP stdio transport for external servers (JSON-RPC over stdin/stdout) continues to work
-- [ ] Main process brokers a MessagePort between MCP and server utility processes for `LaborerRpcClient`
-- [ ] The MCP tool surface (PRD tools, project discovery, etc.) works end-to-end
-- [ ] Test: fork MCP utility process, send a command via MessagePort, verify it processes correctly
+- [x] MCP forks as a utility process via `UtilityProcessManager.fork('mcp', ...)`
+- [x] The MCP utility process receives commands from the main process via MessagePort (not stdin)
+- [x] The MCP utility process spawns external MCP servers as `child_process` with stdin pipe internally
+- [x] The MCP stdio transport for external servers (JSON-RPC over stdin/stdout) continues to work
+- [x] Main process brokers a MessagePort between MCP and server utility processes for `LaborerRpcClient`
+- [x] The MCP tool surface (PRD tools, project discovery, etc.) works end-to-end
+- [x] Test: fork MCP utility process, send a command via MessagePort, verify it processes correctly
 
 ### Blocked by
 

@@ -362,8 +362,8 @@ describe('UtilityProcessManager', () => {
 
       expect(envs[0]).toContain('packages/server/dist/utility-main.mjs')
       expect(envs[1]).toContain('packages/terminal/dist/utility-main.mjs')
-      expect(envs[2]).toContain('packages/file-watcher/dist/main.mjs')
-      expect(envs[3]).toContain('packages/mcp/dist/main.mjs')
+      expect(envs[2]).toContain('packages/file-watcher/dist/utility-main.mjs')
+      expect(envs[3]).toContain('packages/mcp/dist/utility-main.mjs')
     })
   })
 

@@ -125,6 +125,20 @@ export interface AgentNotificationPayload {
  * undefined and the renderer falls back to browser-native equivalents.
  */
 export interface DesktopBridge {
+  /**
+   * Acquires a direct `MessagePort` connection to a utility process.
+   *
+   * The main process creates a `MessageChannelMain` pair, sends one port to the
+   * named utility process, and returns the other to the renderer via port
+   * transfer. The renderer gets a direct MessagePort to the utility process,
+   * bypassing the main process for data.
+   *
+   * Returns null if the utility process is not running.
+   *
+   * @see VS Code's `acquirePort()` pattern in
+   *   `.reference/vscode/src/vs/base/parts/ipc/electron-browser/ipc.mp.ts`
+   */
+  acquireServicePort: (name: SidecarName) => Promise<MessagePort | null>
   /** Shows a native confirmation dialog with Yes/No buttons. Returns true if confirmed. */
   confirm: (message: string) => Promise<boolean>
 

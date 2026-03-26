@@ -8,7 +8,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 2 | UtilityProcessManager core (fork, kill, restart) | #1 | Done |
 | 3 | MessagePort Effect RPC transport (server side) | None | Done |
 | 4 | MessagePort Effect RPC transport (client side) | #3 | Done |
-| 5 | Preload MessagePort acquisition | #2 | Ready |
+| 5 | Preload MessagePort acquisition | #2 | Done |
 | 6 | Terminal utility process: basic PTY spawn via MessagePort RPC | #1, #2, #3 | Done |
 | 7 | Terminal utility process: full RPC surface | #6 | Blocked |
 | 8 | Terminal PTY I/O data channel over MessagePort | #7, #5 | Blocked |
@@ -156,13 +156,13 @@ For direct renderer-to-utility-process connections (ref: VS Code's `localTermina
 
 ### Acceptance criteria
 
-- [ ] `DesktopBridge` interface gains `acquireServicePort(serviceName: string): Promise<MessagePort>`
-- [ ] Preload exposes the method via `contextBridge.exposeInMainWorld()`
-- [ ] Main process handles `laborer:acquire-service-port` IPC: creates `MessageChannelMain`, transfers one port to the utility process, returns the other to the requesting renderer window
-- [ ] The renderer receives a working `MessagePort` that can send/receive messages to/from the utility process
-- [ ] Multiple ports can be acquired for different services
-- [ ] Port acquisition works after a utility process restart (new port to new process)
-- [ ] Test: renderer acquires a port, sends a ping, receives a pong from the utility process
+- [x] `DesktopBridge` interface gains `acquireServicePort(serviceName: string): Promise<MessagePort>`
+- [x] Preload exposes the method via `contextBridge.exposeInMainWorld()`
+- [x] Main process handles `laborer:acquire-service-port` IPC: creates `MessageChannelMain`, transfers one port to the utility process, returns the other to the requesting renderer window
+- [x] The renderer receives a working `MessagePort` that can send/receive messages to/from the utility process
+- [x] Multiple ports can be acquired for different services
+- [x] Port acquisition works after a utility process restart (new port to new process)
+- [x] Test: renderer acquires a port, sends a ping, receives a pong from the utility process
 
 ### Blocked by
 

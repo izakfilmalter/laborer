@@ -20,6 +20,7 @@ import {
   setInstallUpdateHandler,
   setRestartSidecarHandler,
   setTrayCountHandler,
+  setUtilityProcessManager,
 } from './ipc.js'
 import { configureApplicationMenu } from './menu.js'
 import { reserveServicePorts, type ServicePorts } from './ports.js'
@@ -338,6 +339,10 @@ app
       // be moved from sidecar (HTTP) to utility process (MessagePort) one
       // at a time in subsequent issues.
       utilityProcessManager = new UtilityProcessManager()
+
+      // Share the utility process manager with the IPC module so the
+      // renderer can acquire direct MessagePort connections to services.
+      setUtilityProcessManager(utilityProcessManager)
 
       // Fork the terminal as a utility process with MessagePort RPC.
       // The returned MessagePortMain is available via

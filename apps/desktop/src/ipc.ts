@@ -3,6 +3,7 @@ import type {
   ContextMenuItem,
   DesktopUpdateActionResult,
   DesktopUpdateState,
+  SidecarName,
 } from '@laborer/shared/desktop-bridge'
 import {
   BrowserWindow,
@@ -11,9 +12,11 @@ import {
   ipcMain,
   Menu,
   type MenuItemConstructorOptions,
+  MessageChannelMain,
   type OpenDialogOptions,
   shell,
 } from 'electron'
+import type { UtilityProcessManager } from './utility-process-manager.js'
 
 // ---------------------------------------------------------------------------
 // IPC channel constants (must match preload.ts)
@@ -40,6 +43,8 @@ export const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
 export const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
 export const GITHUB_OAUTH_CALLBACK_CHANNEL = 'desktop:github-oauth-callback'
 export const START_GITHUB_OAUTH_CHANNEL = 'desktop:start-github-oauth'
+export const ACQUIRE_SERVICE_PORT_CHANNEL = 'laborer:acquire-service-port'
+export const SERVICE_PORT_RESPONSE_CHANNEL = 'laborer:service-port-response'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -166,6 +171,7 @@ let restartSidecarCallback: RestartSidecarCallback | null = null
 let getUpdateStateCallback: GetUpdateStateCallback | null = null
 let downloadUpdateCallback: DownloadUpdateCallback | null = null
 let installUpdateCallback: InstallUpdateCallback | null = null
+let utilityProcessManagerRef: UtilityProcessManager | null = null
 
 /** Set the callback invoked when the renderer updates the tray workspace count. */
 export function setTrayCountHandler(cb: TrayCountCallback): void {
@@ -190,6 +196,13 @@ export function setDownloadUpdateHandler(cb: DownloadUpdateCallback): void {
 /** Set the callback for installing a downloaded update. */
 export function setInstallUpdateHandler(cb: InstallUpdateCallback): void {
   installUpdateCallback = cb
+}
+
+/** Set the utility process manager for MessagePort acquisition. */
+export function setUtilityProcessManager(
+  manager: UtilityProcessManager | null
+): void {
+  utilityProcessManagerRef = manager
 }
 
 // ---------------------------------------------------------------------------
@@ -469,5 +482,82 @@ export function registerIpcHandlers(
       `&scope=${scope}` +
       `&state=${state}`
     await shell.openExternal(url)
+  })
+
+  // -- Acquire service port ------------------------------------------------
+  // Uses ipcMain.on() + webContents.postMessage() instead of ipcMain.handle()
+  // because handle/invoke cannot transfer MessagePort objects. The renderer
+  // sends a request with a unique `requestId`; we respond via postMessage
+  // with the port in the transfer array.
+  //
+  // Follows VS Code's acquirePort() pattern:
+  // @see .reference/vscode/src/vs/base/parts/ipc/electron-browser/ipc.mp.ts
+  ipcMain.removeAllListeners(ACQUIRE_SERVICE_PORT_CHANNEL)
+  ipcMain.on(ACQUIRE_SERVICE_PORT_CHANNEL, (event, payload: unknown) => {
+    if (typeof payload !== 'object' || payload === null) {
+      return
+    }
+
+    const { name, requestId } = payload as {
+      name: unknown
+      requestId: unknown
+    }
+
+    if (typeof name !== 'string' || typeof requestId !== 'string') {
+      return
+    }
+
+    const validNames: readonly SidecarName[] = [
+      'server',
+      'terminal',
+      'file-watcher',
+      'mcp',
+    ]
+    if (!validNames.includes(name as SidecarName)) {
+      return
+    }
+
+    const serviceName = name as SidecarName
+    const senderWindow = BrowserWindow.fromWebContents(event.sender)
+    if (!senderWindow || senderWindow.isDestroyed()) {
+      return
+    }
+
+    // Check if the utility process manager is available and the service is running.
+    if (!utilityProcessManagerRef?.isRunning(serviceName)) {
+      // Service not running — respond with null (no port).
+      senderWindow.webContents.postMessage(SERVICE_PORT_RESPONSE_CHANNEL, {
+        requestId,
+        success: false,
+      })
+      return
+    }
+
+    // Create a MessagePort pair for the renderer-to-utility-process connection.
+    // One port goes to the renderer, the other goes to the utility process.
+    const { port1: rendererPort, port2: utilityPort } = new MessageChannelMain()
+
+    // Transfer the utility-side port to the utility process.
+    // The utility process receives this via process.parentPort's 'message'
+    // event with the port in the `ports` array.
+    const utilityProcess = utilityProcessManagerRef.getProcess(serviceName)
+    if (!utilityProcess) {
+      rendererPort.close()
+      utilityPort.close()
+      senderWindow.webContents.postMessage(SERVICE_PORT_RESPONSE_CHANNEL, {
+        requestId,
+        success: false,
+      })
+      return
+    }
+
+    utilityProcess.postMessage({ type: 'port' }, [utilityPort])
+
+    // Transfer the renderer-side port to the requesting renderer window.
+    senderWindow.webContents.postMessage(
+      SERVICE_PORT_RESPONSE_CHANNEL,
+      { requestId, success: true },
+      [rendererPort]
+    )
   })
 }

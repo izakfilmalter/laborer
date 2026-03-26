@@ -643,6 +643,40 @@ describe('UtilityProcessManager', () => {
   })
 
   // -----------------------------------------------------------------------
+  // getProcess()
+  // -----------------------------------------------------------------------
+
+  describe('getProcess()', () => {
+    it('returns the UtilityProcess after spawn', () => {
+      manager.fork('terminal')
+      const child = getProcess(0)
+      child.simulateSpawn(1234)
+
+      const proc = manager.getProcess('terminal')
+      expect(proc).toBeDefined()
+      expect(proc).toBe(child)
+    })
+
+    it('returns undefined before spawn', () => {
+      manager.fork('terminal')
+      expect(manager.getProcess('terminal')).toBeUndefined()
+    })
+
+    it('returns undefined after exit', () => {
+      manager.fork('terminal')
+      const child = getProcess(0)
+      child.simulateSpawn(1234)
+      child.simulateExit(0)
+
+      expect(manager.getProcess('terminal')).toBeUndefined()
+    })
+
+    it('returns undefined for unknown service', () => {
+      expect(manager.getProcess('terminal')).toBeUndefined()
+    })
+  })
+
+  // -----------------------------------------------------------------------
   // Bootstrap message handling
   // -----------------------------------------------------------------------
 

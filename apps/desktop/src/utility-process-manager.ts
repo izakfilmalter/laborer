@@ -509,6 +509,21 @@ export class UtilityProcessManager {
     }
     return tracked.process.pid !== undefined
   }
+
+  /**
+   * Get the underlying Electron UtilityProcess instance for a running service.
+   * Returns undefined if the process is not running or hasn't spawned yet.
+   *
+   * Used by the main process to transfer additional MessagePorts (e.g., for
+   * direct renderer-to-utility-process connections).
+   */
+  getProcess(name: ServiceName): UtilityProcess | undefined {
+    const tracked = this.processes.get(name)
+    if (!tracked || tracked.process.pid === undefined) {
+      return undefined
+    }
+    return tracked.process
+  }
 }
 
 // ---------------------------------------------------------------------------

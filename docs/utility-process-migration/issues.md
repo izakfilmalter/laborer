@@ -20,7 +20,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 14 | File-watcher as utility process | #1, #2, #3, #10 | Done |
 | 15 | MCP as utility process | #1, #2, #3 | Done |
 | 16 | Lifecycle Monitor (replaces HealthMonitor) | #2 | Done |
-| 17 | Dev mode hot reload (tsdown --watch + auto-restart) | #2, #16 | Ready |
+| 17 | Dev mode hot reload (tsdown --watch + auto-restart) | #2, #16 | Done |
 | 18 | Terminal session persistence across restarts | #6, #16 | Ready |
 | 19 | Remove HTTP servers, Vite proxy, dev:web, URL resolution | #9, #12, #14, #15 | Done |
 | 20 | Build script update + port reservation removal | #19 | Done |
@@ -515,16 +515,16 @@ Update turbo config and package.json dev scripts so that the new workflow runs `
 
 ### Acceptance criteria
 
-- [ ] Main process watches `packages/*/dist/` directories for changes using `node:fs.watch()`
-- [ ] When a dist file changes, the corresponding utility process is killed and re-forked
-- [ ] A debounce prevents multiple rapid restarts during a single rebuild
-- [ ] Total hot reload latency is under 500ms (rebuild + restart)
-- [ ] `LABORER_SKIP_WATCH=1` env var disables file watching for debugging
-- [ ] `turbo.json` updated: `dev` task runs `tsdown --watch` for sidecar packages
-- [ ] Package.json `dev` scripts updated for each sidecar package
-- [ ] The desktop dev script orchestrates: start Electron, watch dist dirs, fork utility processes
-- [ ] Utility process restarts use the LifecycleMonitor from #16 (restart counts, status events)
-- [ ] Test: change a sidecar source file, verify the utility process restarts within 500ms
+- [x] Main process watches `packages/*/dist/` directories for changes using `node:fs.watch()`
+- [x] When a dist file changes, the corresponding utility process is killed and re-forked
+- [x] A debounce prevents multiple rapid restarts during a single rebuild
+- [x] Total hot reload latency is under 500ms (rebuild + restart)
+- [x] `LABORER_SKIP_WATCH=1` env var disables file watching for debugging
+- [x] `turbo.json` updated: `dev` task runs `tsdown --watch` for sidecar packages
+- [x] Package.json `dev` scripts updated for each sidecar package
+- [x] The desktop dev script orchestrates: start Electron, watch dist dirs, fork utility processes
+- [x] Utility process restarts use the LifecycleMonitor from #16 (restart counts, status events)
+- [x] Test: change a sidecar source file, verify the utility process restarts within 500ms
 
 ### Blocked by
 

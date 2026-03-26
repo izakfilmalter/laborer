@@ -1,3 +1,4 @@
+import { watch } from 'node:fs'
 import { join } from 'node:path'
 
 import { app, BrowserWindow, shell } from 'electron'
@@ -10,6 +11,7 @@ import {
   triggerDownloadUpdate,
   triggerInstallUpdate,
 } from './auto-updater.js'
+import { DevWatcher } from './dev-watcher.js'
 import { fixPath } from './fix-path.js'
 import {
   getWorkspaceWindowRegistry,
@@ -110,6 +112,13 @@ let utilityProcessManager: UtilityProcessManager | null = null
  * automatic restart with exponential backoff and heartbeat monitoring.
  */
 let lifecycleMonitor: LifecycleMonitor | null = null
+
+/**
+ * Dev mode file watcher for hot reload. Watches sidecar dist directories
+ * and triggers utility process restarts when files change.
+ * Only created in dev mode, unless `LABORER_SKIP_WATCH=1` is set.
+ */
+let devWatcher: DevWatcher | null = null
 
 /** System tray icon manager. */
 const trayManager = new TrayManager()
@@ -362,6 +371,20 @@ app
       'mcp',
     ])
 
+    // In dev mode, watch sidecar dist directories for changes and auto-restart
+    // utility processes. `tsdown --watch` rebuilds dist/utility-main.mjs on
+    // source changes; DevWatcher detects the rebuild and triggers a restart.
+    // Disabled by setting LABORER_SKIP_WATCH=1 for debugging.
+    if (isDev && process.env.LABORER_SKIP_WATCH !== '1') {
+      const repoRoot = join(import.meta.dirname, '..', '..', '..')
+      devWatcher = new DevWatcher({
+        lifecycleMonitor,
+        repoRoot,
+        watchFn: watch,
+      })
+      devWatcher.startWatching()
+    }
+
     // Register x-github-desktop-dev-auth:// as a protocol handler so
     // the OAuth callback from GitHub lands back in this app.
     app.setAsDefaultProtocolClient(GITHUB_OAUTH_PROTOCOL)
@@ -484,7 +507,13 @@ function shutdown(): void {
   // Stop auto-update timers.
   shutdownAutoUpdater()
 
-  // Stop the lifecycle monitor first — cancels pending restart timers and
+  // Stop the dev watcher first — prevents file changes from triggering
+  // restarts during shutdown.
+  if (devWatcher) {
+    devWatcher.shutdown()
+  }
+
+  // Stop the lifecycle monitor — cancels pending restart timers and
   // heartbeat timers so killed processes aren't immediately re-spawned.
   if (lifecycleMonitor) {
     lifecycleMonitor.shutdown()

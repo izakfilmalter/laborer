@@ -339,6 +339,14 @@ app
       // at a time in subsequent issues.
       utilityProcessManager = new UtilityProcessManager()
 
+      // Fork the terminal as a utility process with MessagePort RPC.
+      // The returned MessagePortMain is available via
+      // utilityProcessManager.getPort('terminal') for RPC communication.
+      // During migration, this runs alongside the HTTP-based terminal
+      // sidecar (which is still used by the renderer). The renderer will
+      // be switched to use the MessagePort-based terminal in issue #9.
+      utilityProcessManager.fork('terminal')
+
       // Forward sidecar status events to the renderer.
       healthMonitor.setStatusListener((status) => {
         if (status.state === 'crashed') {

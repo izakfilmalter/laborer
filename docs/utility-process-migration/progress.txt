@@ -289,3 +289,84 @@ to create a protocol that:
 - [x] Unit tests verify request/response, streaming, error propagation, and
       disconnection using Node.js `MessageChannel` paired with the server
       adapter from #3
+
+---
+
+## Issue 6: Terminal utility process: basic PTY spawn via MessagePort RPC — COMPLETED
+
+Date: 2026-03-25
+
+### What was done
+
+Created the terminal utility process with flattened architecture — node-pty
+runs directly in the utility process (no separate pty-host child process).
+The terminal service communicates via MessagePort RPC transport instead of
+HTTP. All existing RPC handlers and TerminalManager logic are preserved;
+only the transport and PTY hosting layers are swapped.
+
+### Files created
+
+- `packages/terminal/src/services/pty-direct.ts` — Direct PtyHostClient layer:
+  - Implements the same `PtyHostClient` service interface as pty-host-client.ts
+  - Uses node-pty directly via `createRequire` (no child process)
+  - Data coalescing (5ms buffer) matching pty-host.ts behavior
+  - Flow control (high/low watermark) matching pty-host.ts behavior
+  - Spawn-helper permission fix on layer construction
+  - Scoped cleanup: all PTYs killed and buffers flushed on finalization
+
+- `packages/terminal/src/utility-main.ts` — Utility process entry point:
+  - Waits for MessagePort from parent via `process.parentPort`
+  - Uses `layerProtocolMessagePort(port)` instead of HTTP transport
+  - Layer composition: RpcServer + TerminalRpcsLive + TerminalManager +
+    PtyDirectLayer (no HTTP server, no RpcSerialization.layerJson)
+  - Typed access to Electron's `process.parentPort` without Electron
+    dependency via local ParentPort interface
+
+- `packages/terminal/test/pty-direct.test.ts` — 7 integration tests:
+  1. terminal.spawn creates a terminal and returns TerminalInfo
+  2. terminal.spawn with args passes them correctly
+  3. terminal.kill stops a running terminal
+  4. terminal.events emits Spawned event when a terminal is created
+  5. terminal.list returns spawned terminals
+  6. terminal.kill returns error for non-existent terminal
+  7. terminal.write sends data to a running terminal
+
+### Files modified
+
+- `packages/terminal/tsdown.config.ts` — Added `utility-main.ts` as third
+  build entry, producing `dist/utility-main.mjs` (bundles @laborer/*,
+  externals node-pty)
+
+- `apps/desktop/src/utility-process-manager.ts` — Updated
+  `resolveEntryPath('terminal')` to point to `utility-main.mjs` instead
+  of `main.mjs`
+
+- `apps/desktop/src/main.ts` — Added `utilityProcessManager.fork('terminal')`
+  call after UtilityProcessManager creation in production mode (coexists
+  with HTTP-based sidecar during migration)
+
+- `apps/desktop/test/utility-process-manager.test.ts` — Updated 2 test
+  expectations for terminal entrypoint path: `main.mjs` -> `utility-main.mjs`
+
+### Verification
+
+- All 130 terminal package tests pass (123 existing + 7 new)
+- All 198 desktop package tests pass (updated expectations)
+- TypeScript: no errors in terminal or desktop packages
+- Biome formatting: no new errors
+
+### Acceptance criteria checklist
+
+- [x] Terminal service forks as a utility process via
+      `UtilityProcessManager.fork('terminal', ...)`
+- [x] The utility process imports `node-pty` directly (no separate
+      pty-host child process)
+- [x] `terminal.spawn` RPC: creates a PTY via `node-pty.spawn()`, returns
+      terminal metadata (id, pid, shell, cwd)
+- [x] `terminal.kill` RPC: kills the PTY process, returns confirmation
+- [x] PTY output data is available via the MessagePort (data event through
+      TerminalManager's data coalescing and subscriber pipeline)
+- [x] The existing `TerminalManager` Effect service logic is preserved,
+      only the transport and pty-host layers change
+- [x] Test: fork the terminal utility process, call `spawn`, verify PTY
+      produces output, call `kill`, verify exit

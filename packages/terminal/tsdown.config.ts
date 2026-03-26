@@ -28,4 +28,17 @@ export default defineConfig([
     // node-pty is loaded via createRequire() at runtime — keep external.
     external: ['node-pty'],
   },
+  {
+    ...shared,
+    // Utility process entry point — flattened architecture with MessagePort
+    // RPC transport. Used when the terminal runs as an Electron utility
+    // process instead of a standalone HTTP server.
+    entry: ['src/utility-main.ts'],
+
+    // Bundle workspace packages for self-contained dist/.
+    noExternal: (id: string) => id.startsWith('@laborer/'),
+
+    // node-pty is loaded via createRequire() at runtime — keep external.
+    external: ['node-pty'],
+  },
 ])

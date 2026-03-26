@@ -9,7 +9,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 3 | MessagePort Effect RPC transport (server side) | None | Done |
 | 4 | MessagePort Effect RPC transport (client side) | #3 | Done |
 | 5 | Preload MessagePort acquisition | #2 | Ready |
-| 6 | Terminal utility process: basic PTY spawn via MessagePort RPC | #1, #2, #3 | Ready |
+| 6 | Terminal utility process: basic PTY spawn via MessagePort RPC | #1, #2, #3 | Done |
 | 7 | Terminal utility process: full RPC surface | #6 | Blocked |
 | 8 | Terminal PTY I/O data channel over MessagePort | #7, #5 | Blocked |
 | 9 | Renderer terminal UI wired to MessagePort | #8, #4 | Blocked |
@@ -185,13 +185,13 @@ Implement the two most essential RPC handlers (`terminal.spawn` and `terminal.ki
 
 ### Acceptance criteria
 
-- [ ] Terminal service forks as a utility process via `UtilityProcessManager.fork('terminal', ...)`
-- [ ] The utility process imports `node-pty` directly (no separate pty-host child process)
-- [ ] `terminal.spawn` RPC: creates a PTY via `node-pty.spawn()`, returns terminal metadata (id, pid, shell, cwd)
-- [ ] `terminal.kill` RPC: kills the PTY process, returns confirmation
-- [ ] PTY output data is available via the MessagePort (at minimum, a data event or callback)
-- [ ] The existing `TerminalManager` Effect service logic is preserved, only the transport and pty-host layers change
-- [ ] Test: fork the terminal utility process, call `spawn`, verify PTY produces output, call `kill`, verify exit
+- [x] Terminal service forks as a utility process via `UtilityProcessManager.fork('terminal', ...)`
+- [x] The utility process imports `node-pty` directly (no separate pty-host child process)
+- [x] `terminal.spawn` RPC: creates a PTY via `node-pty.spawn()`, returns terminal metadata (id, pid, shell, cwd)
+- [x] `terminal.kill` RPC: kills the PTY process, returns confirmation
+- [x] PTY output data is available via the MessagePort (at minimum, a data event or callback)
+- [x] The existing `TerminalManager` Effect service logic is preserved, only the transport and pty-host layers change
+- [x] Test: fork the terminal utility process, call `spawn`, verify PTY produces output, call `kill`, verify exit
 
 ### Blocked by
 

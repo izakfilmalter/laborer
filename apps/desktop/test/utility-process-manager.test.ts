@@ -257,7 +257,7 @@ describe('UtilityProcessManager', () => {
       const env = proc.options.env as Record<string, string>
       expect(env.LABORER_ENTRYPOINT).toBeDefined()
       expect(env.LABORER_ENTRYPOINT).toContain(
-        'packages/terminal/dist/main.mjs'
+        'packages/terminal/dist/utility-main.mjs'
       )
     })
 
@@ -361,7 +361,7 @@ describe('UtilityProcessManager', () => {
       )
 
       expect(envs[0]).toContain('packages/server/dist/main.mjs')
-      expect(envs[1]).toContain('packages/terminal/dist/main.mjs')
+      expect(envs[1]).toContain('packages/terminal/dist/utility-main.mjs')
       expect(envs[2]).toContain('packages/file-watcher/dist/main.mjs')
       expect(envs[3]).toContain('packages/mcp/dist/main.mjs')
     })

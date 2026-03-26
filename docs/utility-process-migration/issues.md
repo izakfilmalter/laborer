@@ -10,8 +10,8 @@ Parent PRD: [PRD.md](./PRD.md)
 | 4 | MessagePort Effect RPC transport (client side) | #3 | Done |
 | 5 | Preload MessagePort acquisition | #2 | Done |
 | 6 | Terminal utility process: basic PTY spawn via MessagePort RPC | #1, #2, #3 | Done |
-| 7 | Terminal utility process: full RPC surface | #6 | Blocked |
-| 8 | Terminal PTY I/O data channel over MessagePort | #7, #5 | Blocked |
+| 7 | Terminal utility process: full RPC surface | #6 | Done |
+| 8 | Terminal PTY I/O data channel over MessagePort | #7, #5 | Ready |
 | 9 | Renderer terminal UI wired to MessagePort | #8, #4 | Blocked |
 | 10 | Server utility process: RPC over MessagePort | #1, #2, #3 | Ready |
 | 11 | LiveStore sync over MessagePort | #10, #5 | Blocked |
@@ -215,14 +215,14 @@ Extend the terminal utility process to implement the complete `TerminalRpcs` sur
 
 ### Acceptance criteria
 
-- [ ] `terminal.write` RPC: sends input data to a PTY
-- [ ] `terminal.resize` RPC: changes PTY dimensions (cols, rows)
-- [ ] `terminal.list` RPC: returns all active terminals with metadata
-- [ ] `terminal.remove` RPC: removes a terminal from the manager
-- [ ] `terminal.restart` RPC: kills and re-spawns a terminal with the same config
-- [ ] `terminal.events` streaming RPC: emits terminal lifecycle events (spawned, output, exited) as an Effect Stream over MessagePort
-- [ ] All RPCs match the existing `TerminalRpcs` type definitions in `packages/shared/src/rpc.ts`
-- [ ] Tests verify each RPC handler end-to-end through the MessagePort transport
+- [x] `terminal.write` RPC: sends input data to a PTY
+- [x] `terminal.resize` RPC: changes PTY dimensions (cols, rows)
+- [x] `terminal.list` RPC: returns all active terminals with metadata
+- [x] `terminal.remove` RPC: removes a terminal from the manager
+- [x] `terminal.restart` RPC: kills and re-spawns a terminal with the same config
+- [x] `terminal.events` streaming RPC: emits terminal lifecycle events (spawned, output, exited) as an Effect Stream over MessagePort
+- [x] All RPCs match the existing `TerminalRpcs` type definitions in `packages/shared/src/rpc.ts`
+- [x] Tests verify each RPC handler end-to-end through the MessagePort transport
 
 ### Blocked by
 

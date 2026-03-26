@@ -459,3 +459,72 @@ response routing when multiple acquisitions are in flight.
       new process)
 - [x] Test: renderer acquires a port, sends a ping, receives a pong from
       the utility process (verified via mock in unit tests)
+
+---
+
+## Issue 7: Terminal utility process: full RPC surface — COMPLETED
+
+Date: 2026-03-25
+
+### What was done
+
+Verified and tested that all 8 TerminalRpcs endpoints work through the
+MessagePort RPC transport with the flattened PtyDirect architecture. The
+RPC handlers (`TerminalRpcsLive`) were already fully implemented in Issue
+#6 — they are transport-agnostic, delegating to `TerminalManager` for
+all operations. This issue focused on:
+
+1. Adding missing test coverage for `resize`, `remove`, and `restart`
+   to `pty-direct.test.ts` (which validates the PtyDirect layer)
+2. Creating a new end-to-end test file (`messageport-rpc.test.ts`) that
+   wires a real `MessageChannel` from `worker_threads` with the server-
+   side transport (`layerProtocolMessagePort`) and client-side transport
+   (`makeClientProtocolMessagePort`), proving all 8 RPCs work through
+   the actual MessagePort transport
+
+### Files created
+
+- `packages/terminal/test/messageport-rpc.test.ts` — 13 integration tests
+  through real MessagePort transport:
+  1. terminal.spawn creates a terminal via MessagePort
+  2. terminal.write sends data via MessagePort
+  3. terminal.write fails for nonexistent terminal via MessagePort
+  4. terminal.resize changes dimensions via MessagePort
+  5. terminal.resize fails for nonexistent terminal via MessagePort
+  6. terminal.kill stops a terminal via MessagePort
+  7. terminal.kill fails for nonexistent terminal via MessagePort
+  8. terminal.remove fully deletes a terminal via MessagePort
+  9. terminal.remove fails for nonexistent terminal via MessagePort
+  10. terminal.restart respawns a stopped terminal via MessagePort
+  11. terminal.restart fails for nonexistent terminal via MessagePort
+  12. terminal.list returns terminals via MessagePort
+  13. terminal.events streams lifecycle events via MessagePort
+
+### Files modified
+
+- `packages/terminal/test/pty-direct.test.ts` — Added 6 tests for
+  `resize`, `remove`, and `restart` (with error cases), bringing total
+  from 7 to 13 tests. Updated JSDoc to reference Issue #7. Added
+  `Either` import for error assertions.
+
+### Verification
+
+- All 149 terminal package tests pass (130 existing + 6 new pty-direct
+  + 13 new messageport-rpc)
+- TypeScript: no errors
+- Biome formatting: no new errors
+
+### Acceptance criteria checklist
+
+- [x] `terminal.write` RPC: sends input data to a PTY
+- [x] `terminal.resize` RPC: changes PTY dimensions (cols, rows)
+- [x] `terminal.list` RPC: returns all active terminals with metadata
+- [x] `terminal.remove` RPC: removes a terminal from the manager
+- [x] `terminal.restart` RPC: kills and re-spawns a terminal with the
+      same config
+- [x] `terminal.events` streaming RPC: emits terminal lifecycle events
+      (spawned, output, exited) as an Effect Stream over MessagePort
+- [x] All RPCs match the existing `TerminalRpcs` type definitions in
+      `packages/shared/src/rpc.ts`
+- [x] Tests verify each RPC handler end-to-end through the MessagePort
+      transport

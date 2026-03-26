@@ -5,9 +5,12 @@
  * node-pty directly without a child process) works correctly with
  * TerminalManager and the RPC handlers.
  *
- * These tests validate Issue #6: Terminal utility process: basic PTY spawn
- * via MessagePort RPC. They prove the flattened architecture works:
+ * These tests validate Issue #6 (basic PTY spawn) and Issue #7 (full RPC
+ * surface). They prove the flattened architecture works end-to-end:
  *   RPC handler -> TerminalManager -> PtyHostClient (directLayer) -> node-pty
+ *
+ * All 8 TerminalRpcs endpoints are covered:
+ *   spawn, kill, write, resize, remove, restart, list, events (streaming)
  *
  * The test uses `RpcTest.makeClient` for in-memory RPC (same pattern as
  * `rpc-integration.test.ts`), but swaps `PtyHostClient.layer` for
@@ -18,12 +21,13 @@
  *
  * @see packages/terminal/src/services/pty-direct.ts
  * @see Issue #6: Terminal utility process: basic PTY spawn via MessagePort RPC
+ * @see Issue #7: Terminal utility process: full RPC surface
  */
 
 import { RpcTest } from '@effect/rpc'
 import { assert, describe } from '@effect/vitest'
 import { TerminalRpcs } from '@laborer/shared/rpc'
-import { Effect, Exit, Fiber, Layer, Scope, Stream } from 'effect'
+import { Effect, Either, Exit, Fiber, Layer, Scope, Stream } from 'effect'
 import { afterAll, beforeAll, it } from 'vitest'
 
 import { TerminalRpcsLive } from '../src/rpc/handlers.js'
@@ -282,6 +286,152 @@ describe(
       // Clean up
       await run(client.terminal.kill({ id: terminal.id }))
       await delay(500)
+    })
+
+    // -----------------------------------------------------------------------
+    // terminal.resize — validates PTY dimension changes
+    // -----------------------------------------------------------------------
+
+    it('terminal.resize changes dimensions of a running terminal', async () => {
+      const terminal = await run(
+        client.terminal.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      )
+
+      await delay(500)
+
+      // Resize should succeed without error
+      await run(
+        client.terminal.resize({
+          id: terminal.id,
+          cols: 120,
+          rows: 40,
+        })
+      )
+
+      // Verify PTY is still alive by writing to it
+      await run(
+        client.terminal.write({
+          id: terminal.id,
+          data: 'after-direct-resize\n',
+        })
+      )
+
+      // Clean up
+      await run(client.terminal.kill({ id: terminal.id }))
+      await delay(500)
+    })
+
+    it('terminal.resize fails for a nonexistent terminal', async () => {
+      const result = await run(
+        Effect.either(
+          client.terminal.resize({
+            id: 'nonexistent-resize-id',
+            cols: 100,
+            rows: 50,
+          })
+        )
+      )
+
+      assert.isTrue(Either.isLeft(result))
+    })
+
+    // -----------------------------------------------------------------------
+    // terminal.remove — validates full deletion from memory
+    // -----------------------------------------------------------------------
+
+    it('terminal.remove fully deletes a terminal', async () => {
+      const terminal = await run(
+        client.terminal.spawn({
+          command: 'echo "to-be-removed-direct"',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      )
+
+      // Wait for the short-lived echo to exit
+      await delay(2000)
+
+      // Terminal should be stopped after echo exits
+      const beforeRemove = await run(client.terminal.list())
+      assert.strictEqual(
+        beforeRemove.find((t) => t.id === terminal.id)?.status,
+        'stopped'
+      )
+
+      // Remove it
+      await run(client.terminal.remove({ id: terminal.id }))
+
+      // Should no longer appear in list
+      const afterRemove = await run(client.terminal.list())
+      assert.isUndefined(afterRemove.find((t) => t.id === terminal.id))
+    })
+
+    it('terminal.remove fails for a nonexistent terminal', async () => {
+      const result = await run(
+        Effect.either(client.terminal.remove({ id: 'nonexistent-remove-id' }))
+      )
+
+      assert.isTrue(Either.isLeft(result))
+    })
+
+    // -----------------------------------------------------------------------
+    // terminal.restart — validates kill + respawn with same config
+    // -----------------------------------------------------------------------
+
+    it('terminal.restart respawns a stopped terminal', async () => {
+      const terminal = await run(
+        client.terminal.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      )
+
+      await delay(500)
+
+      // Kill it first
+      await run(client.terminal.kill({ id: terminal.id }))
+      await delay(500)
+
+      // Restart through RPC
+      const restarted = await run(client.terminal.restart({ id: terminal.id }))
+
+      assert.strictEqual(restarted.id, terminal.id)
+      assert.strictEqual(restarted.command, 'cat')
+      assert.strictEqual(restarted.cwd, TEST_CWD)
+      assert.strictEqual(restarted.status, 'running')
+      assert.strictEqual(restarted.workspaceId, TEST_WORKSPACE_ID)
+      assert.strictEqual(typeof restarted.hasChildProcess, 'boolean')
+
+      // Verify it's alive by writing
+      await run(
+        client.terminal.write({
+          id: terminal.id,
+          data: 'after-direct-restart\n',
+        })
+      )
+
+      // Clean up
+      await run(client.terminal.kill({ id: terminal.id }))
+      await delay(500)
+    })
+
+    it('terminal.restart fails for a nonexistent terminal', async () => {
+      const result = await run(
+        Effect.either(client.terminal.restart({ id: 'nonexistent-restart-id' }))
+      )
+
+      assert.isTrue(Either.isLeft(result))
     })
   }
 )

@@ -383,6 +383,26 @@ app
               { type: 'port' }
             )
           }
+
+          // When both file-watcher and server are healthy, broker a direct
+          // MessagePort between them so the server's FileWatcherClient can
+          // call FileWatcherRpcs via MessagePort instead of HTTP.
+          //
+          // This is re-brokered after every restart of either service,
+          // since the old ports die with the old processes.
+          //
+          // @see Issue #14: File-watcher as utility process
+          if (
+            lifecycleMonitor?.isHealthy('file-watcher') &&
+            lifecycleMonitor?.isHealthy('server')
+          ) {
+            utilityProcessManager?.brokerInterProcessPort(
+              'server',
+              { type: 'file-watcher-rpc-port' },
+              'file-watcher',
+              { type: 'port' }
+            )
+          }
         } else if (message.type === 'heartbeat') {
           lifecycleMonitor?.handleHeartbeat(name)
         }
@@ -399,7 +419,7 @@ app
       // During migration, these run alongside the HTTP-based sidecars
       // (which are still used by the renderer). The renderer will be
       // switched to use MessagePort-based services in issues #9, #12.
-      lifecycleMonitor.forkAllAndMonitor(['terminal', 'server'])
+      lifecycleMonitor.forkAllAndMonitor(['terminal', 'server', 'file-watcher'])
 
       // Forward sidecar status events to the renderer.
       healthMonitor.setStatusListener((status) => {

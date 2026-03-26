@@ -1229,3 +1229,105 @@ None — all changes are modifications to existing files.
       startup if terminal isn't ready yet — uses `Effect.cached` +
       `TerminalRpcPortLive` which awaits the brokered port)
 - [x] Test: brokerInterProcessPort creates pairs and transfers ports
+
+---
+
+## Issue 14: File-watcher as utility process — COMPLETED
+
+Date: 2026-03-25
+
+### What was done
+
+Migrated the file-watcher service from `child_process.spawn()` + HTTP to
+`utilityProcess.fork()` + MessagePort. All 5 `FileWatcherRpcs` handlers
+(subscribe, unsubscribe, updateIgnore, list, events) are now served over
+MessagePort RPC transport. The main process brokers a MessagePort between
+the server and file-watcher utility processes, and the server's
+`FileWatcherClient` supports both MessagePort and HTTP transports.
+
+### Files created
+
+- `packages/file-watcher/src/utility-main.ts` — File-watcher utility
+  process entry point:
+  - Waits for MessagePort from parent via `process.parentPort`
+  - Uses `layerProtocolMessagePort(port)` instead of HTTP transport
+  - Layer composition: RpcServer + FileWatcherRpcsLive + WatcherManager +
+    FileWatcher (no HTTP server, no RpcSerialization.layerJson)
+  - `serveRpcOnPort()` for additional brokered ports (inter-process)
+  - Listens for additional `{ type: 'port' }` messages for server-to-
+    file-watcher direct RPC communication
+  - ManagedRuntime keeps services alive for shared state across ports
+
+- `packages/file-watcher/test/messageport-rpc.test.ts` — 6 integration
+  tests through real MessagePort transport:
+  1. watcher.subscribe creates a subscription via MessagePort
+  2. watcher.list returns active subscriptions via MessagePort
+  3. watcher.unsubscribe removes a subscription via MessagePort
+  4. watcher.updateIgnore changes ignore patterns via MessagePort
+  5. watcher.events streams file change events via MessagePort
+  6. handles multiple concurrent requests via MessagePort
+
+### Files modified
+
+- `packages/file-watcher/tsdown.config.ts` — Added `src/utility-main.ts`
+  as second build entry, producing `dist/utility-main.mjs`
+
+- `apps/desktop/src/utility-process-manager.ts` — Updated
+  `resolveEntryPath('file-watcher')` to point to `utility-main.mjs`
+  instead of `main.mjs`
+
+- `apps/desktop/src/utility-process-types.ts` — Added
+  `FileWatcherRpcPortMessage` type (`{ type: 'file-watcher-rpc-port' }`)
+  to `UtilityProcessParentMessage` union
+
+- `apps/desktop/src/main.ts` — Added:
+  - `'file-watcher'` to `forkAllAndMonitor(['terminal', 'server',
+    'file-watcher'])` call
+  - Auto-brokering logic: when both file-watcher and server are healthy
+    after a `ready` message, calls `brokerInterProcessPort()` to establish
+    the server-to-file-watcher channel with `{ type:
+    'file-watcher-rpc-port' }` / `{ type: 'port' }`
+
+- `packages/server/src/services/file-watcher-client.ts` — Added:
+  - `FileWatcherRpcPort` service tag (optional dependency)
+  - `FileWatcherRpc` type alias for the inferred RPC client type
+  - `Effect.serviceOption(FileWatcherRpcPort)` in `getOrCreateClient`
+  - If `FileWatcherRpcPort` is `Some`: uses `createMessagePortRpcClient`
+  - If `FileWatcherRpcPort` is `None`: falls back to HTTP (unchanged)
+  - Updated imports: added `Option`, `createMessagePortRpcClient`,
+    `RpcMessagePort`
+  - Exported `FileWatcherRpcPort` alongside `FileWatcherClient`
+
+- `packages/server/src/utility-main.ts` — Added:
+  - `FileWatcherRpcPort` import from file-watcher-client
+  - Deferred promise pattern for file-watcher RPC port
+    (`resolveFileWatcherRpcPort` / `fileWatcherRpcPortPromise`)
+  - `FileWatcherRpcPortLive` layer that waits for the brokered port
+  - `file-watcher-rpc-port` handler in `parentPort.on('message', ...)`
+  - `FileWatcherRpcPortLive` provided to `DeferredLeafLayers` (which
+    contains `FileWatcherClient.layer`)
+
+### Verification
+
+- All 6 new file-watcher MessagePort RPC tests pass
+- TypeScript: no errors in file-watcher, server, or desktop packages
+- Biome formatting: no new errors (pre-existing issues unchanged)
+- Shared package: 62 pass (1 pre-existing fail)
+- Pre-existing test failures in desktop (Electron mock), server
+  (@effect/vitest), and file-watcher (@effect/vitest) are unchanged
+
+### Acceptance criteria checklist
+
+- [x] File-watcher forks as a utility process via
+      `UtilityProcessManager.fork('file-watcher', ...)`
+- [x] `FileWatcherRpcs` handlers served over MessagePort RPC transport
+- [x] `@parcel/watcher` native module loads correctly in the utility
+      process (remains external in tsdown config, loaded at runtime)
+- [x] Main process brokers a MessagePort between server and file-watcher
+      utility processes (auto-brokered when both are healthy)
+- [x] Server's `FileWatcherClient` uses MessagePort RPC client instead
+      of HTTP (when `FileWatcherRpcPort` is in context)
+- [x] `fileWatcher.subscribe`, `fileWatcher.events` (streaming), and
+      other RPCs work over MessagePort (verified in 6 integration tests)
+- [x] Test: fork file-watcher, subscribe to a directory, create a file,
+      verify event received (test #5 in messageport-rpc.test.ts)

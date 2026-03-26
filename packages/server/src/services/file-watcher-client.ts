@@ -1,10 +1,15 @@
 /**
  * FileWatcherClient — Effect Service
  *
- * RPC client connecting to the standalone file-watcher service at
- * `http://localhost:${FILE_WATCHER_PORT}`. This service replaces the
- * server's local FileWatcher and RepositoryEventBus by delegating
- * filesystem watching to the extracted file-watcher service.
+ * RPC client connecting to the file-watcher service. Supports two
+ * transport modes:
+ *
+ * 1. **MessagePort mode** (utility process): When a `FileWatcherRpcPort`
+ *    service tag is available in the context, uses a direct MessagePort
+ *    brokered by the Electron main process for zero-copy IPC.
+ *
+ * 2. **HTTP mode** (legacy fallback): When no `FileWatcherRpcPort` is
+ *    available, connects via HTTP at `http://localhost:${FILE_WATCHER_PORT}`.
  *
  * Responsibilities:
  * - RPC client for FileWatcherRpcs operations (subscribe, unsubscribe, list)
@@ -19,6 +24,7 @@
  * without waiting for the file-watcher sidecar to be running.
  *
  * @see PRD-file-watcher-extraction.md
+ * @see Issue #14: File-watcher as utility process
  * @see Issue #16: Lazy sidecar connections
  */
 
@@ -27,14 +33,23 @@ import {
   FileWatcherRpcs,
   type WatchFileEvent,
 } from '@laborer/shared/rpc'
-import { Context, Effect, Layer, Scope, Stream } from 'effect'
+import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
+import { Context, Effect, Layer, Option, Scope, Stream } from 'effect'
 import {
+  createMessagePortRpcClient,
   createSidecarRpcClient,
   sidecarEventStreamSchedule,
 } from './sidecar-rpc.js'
 
 /** Logger tag used for structured Effect.log output in this module. */
 const logPrefix = 'FileWatcherClient'
+
+/** The inferred type of the file-watcher RPC client. */
+const _makeFileWatcherRpcClient = (url: string) =>
+  createSidecarRpcClient(FileWatcherRpcs, url)
+type FileWatcherRpc = Effect.Effect.Success<
+  ReturnType<typeof _makeFileWatcherRpcClient>
+>
 
 /**
  * Callback for receiving file events from the file-watcher service.
@@ -47,6 +62,21 @@ type FileEventHandler = (event: WatchFileEvent) => void
 interface FileEventSubscription {
   readonly unsubscribe: () => void
 }
+
+/**
+ * Optional service tag providing a MessagePort for direct RPC to the
+ * file-watcher utility process. When available, `FileWatcherClient` uses
+ * MessagePort instead of HTTP for all file-watcher RPCs.
+ *
+ * Provided by the server's utility-main.ts when the main process
+ * brokers a server-to-file-watcher MessagePort.
+ *
+ * @see Issue #14: File-watcher as utility process
+ */
+class FileWatcherRpcPort extends Context.Tag('@laborer/FileWatcherRpcPort')<
+  FileWatcherRpcPort,
+  { readonly port: RpcMessagePort }
+>() {}
 
 class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
   FileWatcherClient,
@@ -118,11 +148,21 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
       // Mutations are synchronous and single-threaded.
       const handlers: FileEventHandler[] = []
 
+      // Check if a MessagePort for the file-watcher is available (utility
+      // process mode). When running as an Electron utility process, the
+      // main process brokers a direct MessagePort between the server and
+      // file-watcher processes.
+      const fileWatcherRpcPort = yield* Effect.serviceOption(FileWatcherRpcPort)
+
       /**
        * Get or create the RPC client. On first call, establishes the
        * connection to the file-watcher sidecar and starts the event
        * stream subscription. Retries with exponential backoff if the
        * sidecar is not yet available.
+       *
+       * When a `FileWatcherRpcPort` is available in the context, uses
+       * MessagePort transport instead of HTTP. Otherwise, falls back
+       * to HTTP+JSON RPC.
        *
        * Uses Effect.cached to ensure only one fiber runs initialization,
        * preventing duplicate RPC connections and event stream subscriptions
@@ -134,20 +174,39 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
        */
       const getOrCreateClient = yield* Effect.cached(
         Effect.gen(function* () {
-          // Resolve port lazily to avoid import-time side effects
-          const { env } = yield* Effect.promise(
-            () => import('@laborer/env/server')
-          )
-          const fileWatcherServiceUrl = `http://localhost:${env.FILE_WATCHER_PORT}`
+          let client: FileWatcherRpc
 
-          const client = yield* createSidecarRpcClient(
-            FileWatcherRpcs,
-            `${fileWatcherServiceUrl}/rpc`
-          ).pipe(Effect.provideService(Scope.Scope, layerScope))
+          // Choose transport based on whether a MessagePort is available.
+          if (Option.isSome(fileWatcherRpcPort)) {
+            // MessagePort mode — direct process-to-process communication.
+            // The main process brokered a MessagePort between the server
+            // and file-watcher utility processes.
+            yield* Effect.log(
+              'Connecting to file-watcher service via MessagePort'
+            ).pipe(Effect.annotateLogs('module', logPrefix))
 
-          yield* Effect.log(
-            `Connected to file-watcher service at ${fileWatcherServiceUrl}`
-          ).pipe(Effect.annotateLogs('module', logPrefix))
+            client = yield* createMessagePortRpcClient(
+              FileWatcherRpcs,
+              fileWatcherRpcPort.value.port,
+              layerScope
+            )
+          } else {
+            // HTTP fallback — legacy mode for non-utility-process environments.
+            // Resolve port lazily to avoid import-time side effects.
+            const { env } = yield* Effect.promise(
+              () => import('@laborer/env/server')
+            )
+            const fileWatcherServiceUrl = `http://localhost:${env.FILE_WATCHER_PORT}`
+
+            yield* Effect.log(
+              `Connecting to file-watcher service via HTTP at ${fileWatcherServiceUrl}`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+
+            client = yield* createSidecarRpcClient(
+              FileWatcherRpcs,
+              `${fileWatcherServiceUrl}/rpc`
+            ).pipe(Effect.provideService(Scope.Scope, layerScope))
+          }
 
           // Start event stream subscription
           yield* client.watcher.events().pipe(
@@ -261,4 +320,9 @@ class FileWatcherClient extends Context.Tag('@laborer/FileWatcherClient')<
   )
 }
 
-export { FileWatcherClient, type FileEventHandler, type FileEventSubscription }
+export {
+  FileWatcherClient,
+  type FileEventHandler,
+  type FileEventSubscription,
+  FileWatcherRpcPort,
+}

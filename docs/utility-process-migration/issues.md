@@ -17,7 +17,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 11 | LiveStore sync over MessagePort | #10, #5 | Done |
 | 12 | Renderer server UI wired to MessagePort | #11, #4 | Done |
 | 13 | Server-to-terminal MessagePort channel | #6, #10 | Done |
-| 14 | File-watcher as utility process | #1, #2, #3, #10 | Ready |
+| 14 | File-watcher as utility process | #1, #2, #3, #10 | Done |
 | 15 | MCP as utility process | #1, #2, #3 | Ready |
 | 16 | Lifecycle Monitor (replaces HealthMonitor) | #2 | Done |
 | 17 | Dev mode hot reload (tsdown --watch + auto-restart) | #2, #16 | Ready |
@@ -419,13 +419,13 @@ Migrate the file-watcher service from `child_process.spawn()` + HTTP to `utility
 
 ### Acceptance criteria
 
-- [ ] File-watcher forks as a utility process via `UtilityProcessManager.fork('file-watcher', ...)`
-- [ ] `FileWatcherRpcs` handlers served over MessagePort RPC transport
-- [ ] `@parcel/watcher` native module loads correctly in the utility process
-- [ ] Main process brokers a MessagePort between server and file-watcher utility processes
-- [ ] Server's `FileWatcherClient` uses MessagePort RPC client instead of HTTP
-- [ ] `fileWatcher.subscribe`, `fileWatcher.events` (streaming), and other RPCs work over MessagePort
-- [ ] Test: fork file-watcher, subscribe to a directory, create a file, verify event received
+- [x] File-watcher forks as a utility process via `UtilityProcessManager.fork('file-watcher', ...)`
+- [x] `FileWatcherRpcs` handlers served over MessagePort RPC transport
+- [x] `@parcel/watcher` native module loads correctly in the utility process
+- [x] Main process brokers a MessagePort between server and file-watcher utility processes
+- [x] Server's `FileWatcherClient` uses MessagePort RPC client instead of HTTP
+- [x] `fileWatcher.subscribe`, `fileWatcher.events` (streaming), and other RPCs work over MessagePort
+- [x] Test: fork file-watcher, subscribe to a directory, create a file, verify event received
 
 ### Blocked by
 

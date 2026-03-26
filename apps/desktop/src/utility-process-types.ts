@@ -95,9 +95,25 @@ export interface TerminalRpcPortMessage {
   readonly type: 'terminal-rpc-port'
 }
 
+/**
+ * Sent by the main process to transfer a MessagePort for file-watcher RPC
+ * to the server utility process. The actual MessagePort is in the
+ * `ports` array of the MessageEvent.
+ *
+ * The server utility process uses this port as an RPC client to call
+ * `FileWatcherRpcs` on the file-watcher utility process, replacing the
+ * HTTP-based `createSidecarRpcClient(FileWatcherRpcs, url)`.
+ *
+ * @see Issue #14: File-watcher as utility process
+ */
+export interface FileWatcherRpcPortMessage {
+  readonly type: 'file-watcher-rpc-port'
+}
+
 /** All messages the main process can send to a utility process. */
 export type UtilityProcessParentMessage =
   | PortTransferMessage
   | TerminalDataPortMessage
   | SyncPortMessage
   | TerminalRpcPortMessage
+  | FileWatcherRpcPortMessage

@@ -137,7 +137,7 @@ function resolveEntryPath(name: ServiceName): string {
     case 'terminal':
       return join(root, 'packages/terminal/dist/utility-main.mjs')
     case 'file-watcher':
-      return join(root, 'packages/file-watcher/dist/main.mjs')
+      return join(root, 'packages/file-watcher/dist/utility-main.mjs')
     default:
       return join(root, 'packages/mcp/dist/main.mjs')
   }

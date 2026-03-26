@@ -62,7 +62,10 @@ import {
 import { DepsImageService } from './services/deps-image-service.js'
 import { DiffService } from './services/diff-service.js'
 import { DockerDetection } from './services/docker-detection.js'
-import { FileWatcherClient } from './services/file-watcher-client.js'
+import {
+  FileWatcherClient,
+  FileWatcherRpcPort,
+} from './services/file-watcher-client.js'
 import { GithubTaskImporter } from './services/github-task-importer.js'
 import { LaborerStoreLive } from './services/laborer-store.js'
 import { LinearTaskImporter } from './services/linear-task-importer.js'
@@ -196,6 +199,50 @@ const TerminalRpcPortLive = Layer.effect(
 )
 
 // ---------------------------------------------------------------------------
+// File-watcher RPC port — deferred resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Deferred resolver for the file-watcher RPC MessagePort.
+ *
+ * The main process brokers a `MessageChannelMain` pair between the server
+ * and file-watcher utility processes after both are healthy. The port arrives
+ * via `process.parentPort` with `{ type: 'file-watcher-rpc-port' }`.
+ *
+ * The `FileWatcherRpcPortLive` provides this port to the `FileWatcherClient`
+ * service via the `FileWatcherRpcPort` tag. Since `FileWatcherClient` is a
+ * deferred service (built in a background fiber), the port typically
+ * arrives before the client tries to connect.
+ *
+ * @see Issue #14: File-watcher as utility process
+ */
+let resolveFileWatcherRpcPort: ((port: RpcMessagePort) => void) | null = null
+const fileWatcherRpcPortPromise = new Promise<RpcMessagePort>((resolve) => {
+  resolveFileWatcherRpcPort = resolve
+})
+
+/**
+ * Layer providing `FileWatcherRpcPort` that awaits the brokered port
+ * from the main process. Used by `FileWatcherClient.layer` to create
+ * a MessagePort RPC client instead of HTTP.
+ *
+ * This layer blocks until the main process sends a `file-watcher-rpc-port`
+ * message with the brokered MessagePort. Since `FileWatcherClient` is a
+ * deferred service (built in a background fiber), this blocking does
+ * not affect the server's ability to serve health checks immediately.
+ */
+const FileWatcherRpcPortLive = Layer.effect(
+  FileWatcherRpcPort,
+  Effect.gen(function* () {
+    const port = yield* Effect.promise(() => fileWatcherRpcPortPromise)
+    yield* Effect.log('Received file-watcher RPC port from main process').pipe(
+      Effect.annotateLogs('module', 'ServerUtility')
+    )
+    return { port }
+  })
+)
+
+// ---------------------------------------------------------------------------
 // Deferred Layers — Real implementations (built in background fiber)
 // ---------------------------------------------------------------------------
 
@@ -273,12 +320,20 @@ const DeferredTopLayers = Layer.mergeAll(
  * utility process. `TerminalClient.layer` uses `Effect.serviceOption` to
  * detect this and uses MessagePort RPC instead of HTTP.
  *
+ * `FileWatcherRpcPortLive` provides the brokered MessagePort to the
+ * file-watcher utility process. `FileWatcherClient.layer` uses
+ * `Effect.serviceOption` to detect this and uses MessagePort RPC instead
+ * of HTTP.
+ *
  * @see Issue #13: Server-to-terminal MessagePort channel
+ * @see Issue #14: File-watcher as utility process
  */
 const DeferredServicesLive = DeferredTopLayers.pipe(
   Layer.provide(TerminalRpcPortLive),
   Layer.provideMerge(DeferredServiceStack),
-  Layer.provideMerge(DeferredLeafLayers)
+  Layer.provideMerge(
+    DeferredLeafLayers.pipe(Layer.provide(FileWatcherRpcPortLive))
+  )
 )
 
 // ---------------------------------------------------------------------------
@@ -475,6 +530,16 @@ async function main(): Promise<void> {
         '[server-utility] Received terminal RPC port from main process'
       )
       resolveTerminalRpcPort?.(terminalPort)
+    } else if (
+      data?.type === 'file-watcher-rpc-port' &&
+      event.ports.length > 0
+    ) {
+      const fileWatcherPort = event.ports[0] as RpcMessagePort
+      fileWatcherPort.start?.()
+      console.log(
+        '[server-utility] Received file-watcher RPC port from main process'
+      )
+      resolveFileWatcherRpcPort?.(fileWatcherPort)
     }
   })
 

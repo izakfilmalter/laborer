@@ -165,29 +165,29 @@ vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
   ),
 }))
 
-import type { WorkspaceTileNode } from '@laborer/shared/types'
+import type { PanelNode, WorkspaceTileNode } from '@laborer/shared/types'
 // Import after mocks are set up
 import { WorkspaceFrames } from '../src/routes/-components/workspace-frames'
 
-const layout = {
-  _tag: 'SplitNode' as const,
+const layout: PanelNode = {
+  _tag: 'SplitNode',
   children: [
     {
-      _tag: 'LeafNode' as const,
+      _tag: 'LeafNode',
       id: 'pane-1',
-      paneType: 'terminal' as const,
+      paneType: 'terminal',
       terminalId: 'term-1',
       workspaceId: 'ws-1',
     },
     {
-      _tag: 'LeafNode' as const,
+      _tag: 'LeafNode',
       id: 'pane-2',
-      paneType: 'terminal' as const,
+      paneType: 'terminal',
       terminalId: 'term-2',
       workspaceId: 'ws-2',
     },
   ],
-  direction: 'vertical' as const,
+  direction: 'vertical',
   id: 'root',
   sizes: [50, 50],
 }
@@ -207,7 +207,7 @@ const tileLayout: WorkspaceTileNode = {
         {
           id: 'tab-1',
           panelLayout: {
-            _tag: 'PanelLeafNode',
+            _tag: 'LeafNode',
             id: 'pane-1',
             paneType: 'terminal',
             terminalId: 'term-1',
@@ -225,7 +225,7 @@ const tileLayout: WorkspaceTileNode = {
         {
           id: 'tab-2',
           panelLayout: {
-            _tag: 'PanelLeafNode',
+            _tag: 'LeafNode',
             id: 'pane-2',
             paneType: 'terminal',
             terminalId: 'term-2',

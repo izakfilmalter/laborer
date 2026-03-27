@@ -3,7 +3,7 @@
  *
  * Tests the pure functions added to `window-tab-utils.ts` for focus
  * resolution and persistence across tab switches:
- * - `getFirstPanelTreeLeafId` — gets the first leaf pane ID from a PanelTreeNode
+ * - `getFirstPanelTreeLeafId` — gets the first leaf pane ID from a PanelNode
  * - `resolveActivePaneForPanelTab` — resolves focus for a panel tab
  * - `resolveActivePaneForWindowTab` — resolves focus for a window tab
  * - `saveFocusedPaneId` — saves focus state on the matching panel tab
@@ -13,10 +13,10 @@
  */
 
 import type {
-  PanelLeafNode,
-  PanelSplitNode,
+  LeafNode,
+  PanelNode,
   PanelTab,
-  PanelTreeNode,
+  SplitNode,
   WindowLayout,
   WindowTab,
   WorkspaceTileLeaf,
@@ -43,9 +43,9 @@ function makeLeaf(
     | 'review'
     | 'devServerTerminal' = 'terminal',
   workspaceId?: string
-): PanelLeafNode {
+): LeafNode {
   return {
-    _tag: 'PanelLeafNode',
+    _tag: 'LeafNode',
     id,
     paneType,
     workspaceId,
@@ -54,11 +54,11 @@ function makeLeaf(
 
 function makeSplit(
   id: string,
-  children: PanelTreeNode[],
+  children: PanelNode[],
   direction: 'horizontal' | 'vertical' = 'horizontal'
-): PanelSplitNode {
+): SplitNode {
   return {
-    _tag: 'PanelSplitNode',
+    _tag: 'SplitNode',
     id,
     direction,
     children,
@@ -68,7 +68,7 @@ function makeSplit(
 
 function makePanelTab(
   id: string,
-  layout: PanelTreeNode,
+  layout: PanelNode,
   focusedPaneId?: string
 ): PanelTab {
   return {
@@ -127,8 +127,8 @@ describe('getFirstPanelTreeLeafId', () => {
   })
 
   it('returns undefined for a split with no children', () => {
-    const split: PanelSplitNode = {
-      _tag: 'PanelSplitNode',
+    const split: SplitNode = {
+      _tag: 'SplitNode',
       id: 'empty-split',
       direction: 'horizontal',
       children: [],

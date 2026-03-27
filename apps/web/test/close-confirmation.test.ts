@@ -9,10 +9,10 @@
  */
 
 import type {
-  PanelLeafNode,
-  PanelSplitNode,
+  LeafNode,
+  PanelNode,
   PanelTab,
-  PanelTreeNode,
+  SplitNode,
   WindowTab,
   WorkspaceTileLeaf,
   WorkspaceTileSplit,
@@ -38,9 +38,9 @@ function makeLeaf(
     | 'diff'
     | 'review'
     | 'devServerTerminal' = 'terminal'
-): PanelLeafNode {
+): LeafNode {
   return {
-    _tag: 'PanelLeafNode',
+    _tag: 'LeafNode',
     id,
     paneType,
     terminalId,
@@ -50,11 +50,11 @@ function makeLeaf(
 
 function makePanelTab(
   id: string,
-  panelLayout: PanelTreeNode,
+  panelLayout: PanelNode,
   focusedPaneId?: string
 ): PanelTab {
   const firstLeafId =
-    panelLayout._tag === 'PanelLeafNode' ? panelLayout.id : undefined
+    panelLayout._tag === 'LeafNode' ? panelLayout.id : undefined
   return {
     id,
     panelLayout,
@@ -62,9 +62,9 @@ function makePanelTab(
   }
 }
 
-function makeSplit(id: string, children: PanelTreeNode[]): PanelSplitNode {
+function makeSplit(id: string, children: PanelNode[]): SplitNode {
   return {
-    _tag: 'PanelSplitNode',
+    _tag: 'SplitNode',
     id,
     direction: 'horizontal',
     children,

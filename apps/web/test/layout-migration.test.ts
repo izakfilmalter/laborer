@@ -9,10 +9,7 @@
 
 import type {
   LeafNode,
-  PanelLeafNode,
   PanelNode,
-  PanelSplitNode,
-  PanelTreeNode,
   SplitNode,
   WorkspaceTileLeaf,
   WorkspaceTileSplit,
@@ -29,7 +26,7 @@ import {
 // Test fixtures — OLD (legacy) flat layout types
 // ---------------------------------------------------------------------------
 
-/** Create a legacy LeafNode for testing. */
+/** Create a legacy LeafNode for testing (untyped — legacy type deleted). */
 function makeOldLeaf(
   id: string,
   opts?: {
@@ -40,11 +37,11 @@ function makeOldLeaf(
     devServerOpen?: boolean
     devServerTerminalId?: string
   }
-): LeafNode {
+) {
   return {
-    _tag: 'LeafNode',
+    _tag: 'LeafNode' as const,
     id,
-    paneType: opts?.paneType ?? 'terminal',
+    paneType: opts?.paneType ?? ('terminal' as const),
     ...(opts?.workspaceId !== undefined
       ? { workspaceId: opts.workspaceId }
       : {}),
@@ -59,15 +56,15 @@ function makeOldLeaf(
   }
 }
 
-/** Create a legacy SplitNode for testing. */
+/** Create a legacy SplitNode for testing (untyped — legacy type deleted). */
 function makeOldSplit(
   id: string,
   direction: 'horizontal' | 'vertical',
   children: PanelNode[],
   sizes?: number[]
-): SplitNode {
+) {
   return {
-    _tag: 'SplitNode',
+    _tag: 'SplitNode' as const,
     id,
     direction,
     children,
@@ -85,7 +82,7 @@ describe('convertLeafNode', () => {
     const result = convertLeafNode(old)
 
     expect(result).toStrictEqual({
-      _tag: 'PanelLeafNode',
+      _tag: 'LeafNode',
       id: 'leaf-1',
       paneType: 'terminal',
     })
@@ -97,7 +94,7 @@ describe('convertLeafNode', () => {
     })
     const result = convertLeafNode(old)
 
-    expect(result._tag).toBe('PanelLeafNode')
+    expect(result._tag).toBe('LeafNode')
     expect(result.terminalId).toBe('term-1')
   })
 
@@ -107,7 +104,7 @@ describe('convertLeafNode', () => {
     })
     const result = convertLeafNode(old)
 
-    expect(result._tag).toBe('PanelLeafNode')
+    expect(result._tag).toBe('LeafNode')
     expect(result.workspaceId).toBe('ws-1')
   })
 
@@ -118,7 +115,7 @@ describe('convertLeafNode', () => {
     })
     const result = convertLeafNode(old)
 
-    expect(result._tag).toBe('PanelLeafNode')
+    expect(result._tag).toBe('LeafNode')
     expect(result.terminalId).toBe('term-1')
     expect(result.workspaceId).toBe('ws-1')
   })
@@ -130,7 +127,7 @@ describe('convertLeafNode', () => {
     })
     const result = convertLeafNode(old)
 
-    expect(result._tag).toBe('PanelLeafNode')
+    expect(result._tag).toBe('LeafNode')
     expect('diffOpen' in result).toBe(false)
   })
 
@@ -141,7 +138,7 @@ describe('convertLeafNode', () => {
     })
     const result = convertLeafNode(old)
 
-    expect(result._tag).toBe('PanelLeafNode')
+    expect(result._tag).toBe('LeafNode')
     expect('devServerOpen' in result).toBe(false)
     expect('devServerTerminalId' in result).toBe(false)
   })
@@ -184,7 +181,7 @@ describe('convertPanelTree', () => {
     })
     const result = convertPanelTree(old)
 
-    expect(result._tag).toBe('PanelLeafNode')
+    expect(result._tag).toBe('LeafNode')
     expect(result.id).toBe('leaf-1')
   })
 
@@ -195,12 +192,12 @@ describe('convertPanelTree', () => {
     ])
     const result = convertPanelTree(old)
 
-    expect(result._tag).toBe('PanelSplitNode')
-    const split = result as PanelSplitNode
+    expect(result._tag).toBe('SplitNode')
+    const split = result as SplitNode
     expect(split.direction).toBe('horizontal')
     expect(split.children).toHaveLength(2)
-    expect(split.children[0]?._tag).toBe('PanelLeafNode')
-    expect(split.children[1]?._tag).toBe('PanelLeafNode')
+    expect(split.children[0]?._tag).toBe('LeafNode')
+    expect(split.children[1]?._tag).toBe('LeafNode')
   })
 
   it('preserves sizes from the old split', () => {
@@ -210,7 +207,7 @@ describe('convertPanelTree', () => {
       [makeOldLeaf('leaf-1'), makeOldLeaf('leaf-2')],
       [30, 70]
     )
-    const result = convertPanelTree(old) as PanelSplitNode
+    const result = convertPanelTree(old) as SplitNode
 
     expect(result.sizes).toStrictEqual([30, 70])
   })
@@ -225,10 +222,10 @@ describe('convertPanelTree', () => {
     ])
     const result = convertPanelTree(old)
 
-    expect(result._tag).toBe('PanelSplitNode')
-    const outer = result as PanelSplitNode
-    expect(outer.children[1]?._tag).toBe('PanelSplitNode')
-    const inner = outer.children[1] as PanelSplitNode
+    expect(result._tag).toBe('SplitNode')
+    const outer = result as SplitNode
+    expect(outer.children[1]?._tag).toBe('SplitNode')
+    const inner = outer.children[1] as SplitNode
     expect(inner.direction).toBe('vertical')
     expect(inner.children).toHaveLength(2)
   })
@@ -242,7 +239,7 @@ describe('convertPanelTree', () => {
         workspaceId: 'ws-1',
       }),
     ])
-    const result = convertPanelTree(old) as PanelSplitNode
+    const result = convertPanelTree(old) as SplitNode
 
     for (const child of result.children) {
       expect('diffOpen' in child).toBe(false)
@@ -351,8 +348,8 @@ describe('migrateToWindowLayout', () => {
 
       // Panel tab contains the converted tree
       const panelTab = tile.panelTabs[0]
-      expect(panelTab?.panelLayout._tag).toBe('PanelLeafNode')
-      const leaf = panelTab?.panelLayout as PanelLeafNode
+      expect(panelTab?.panelLayout._tag).toBe('LeafNode')
+      const leaf = panelTab?.panelLayout as LeafNode
       expect(leaf.terminalId).toBe('term-1')
       expect(leaf.paneType).toBe('terminal')
     })
@@ -376,8 +373,8 @@ describe('migrateToWindowLayout', () => {
       // One panel tab with a split tree inside
       expect(tile.panelTabs).toHaveLength(1)
       const panelTab = tile.panelTabs[0]
-      expect(panelTab?.panelLayout._tag).toBe('PanelSplitNode')
-      const split = panelTab?.panelLayout as PanelSplitNode
+      expect(panelTab?.panelLayout._tag).toBe('SplitNode')
+      const split = panelTab?.panelLayout as SplitNode
       expect(split.children).toHaveLength(2)
     })
 
@@ -441,9 +438,9 @@ describe('migrateToWindowLayout', () => {
       // Second tab is the diff tab
       const diffTab = tile.panelTabs[1]
       expect(diffTab?.label).toBe('Diff')
-      expect(diffTab?.panelLayout._tag).toBe('PanelLeafNode')
-      expect((diffTab?.panelLayout as PanelLeafNode).paneType).toBe('diff')
-      expect((diffTab?.panelLayout as PanelLeafNode).workspaceId).toBe('ws-1')
+      expect(diffTab?.panelLayout._tag).toBe('LeafNode')
+      expect((diffTab?.panelLayout as LeafNode).paneType).toBe('diff')
+      expect((diffTab?.panelLayout as LeafNode).workspaceId).toBe('ws-1')
     })
 
     it('creates an additional devServer panel tab when devServerOpen is true', () => {
@@ -459,8 +456,8 @@ describe('migrateToWindowLayout', () => {
 
       const devServerTab = tile.panelTabs[1]
       expect(devServerTab?.label).toBe('Dev Server')
-      expect(devServerTab?.panelLayout._tag).toBe('PanelLeafNode')
-      const devLeaf = devServerTab?.panelLayout as PanelLeafNode
+      expect(devServerTab?.panelLayout._tag).toBe('LeafNode')
+      const devLeaf = devServerTab?.panelLayout as LeafNode
       expect(devLeaf.paneType).toBe('devServerTerminal')
       expect(devLeaf.terminalId).toBe('dev-term-1')
       expect(devLeaf.workspaceId).toBe('ws-1')
@@ -515,7 +512,7 @@ describe('migrateToWindowLayout', () => {
 
       const tile = result.tabs[0]?.workspaceLayout as WorkspaceTileLeaf
       const devTab = tile.panelTabs[1]
-      const devLeaf = devTab?.panelLayout as PanelLeafNode
+      const devLeaf = devTab?.panelLayout as LeafNode
       expect(devLeaf.terminalId).toBeUndefined()
     })
 
@@ -693,7 +690,7 @@ describe('migrateToWindowLayout', () => {
 
       // Panel tab contains a split tree
       const panelLayout = tile.panelTabs[0]?.panelLayout
-      expect(panelLayout?._tag).toBe('PanelSplitNode')
+      expect(panelLayout?._tag).toBe('SplitNode')
     })
 
     it('handles deeply nested multi-workspace tree', () => {
@@ -771,9 +768,9 @@ describe('migrateToWindowLayout', () => {
       expect(panelTab?.id).toBeDefined()
       expect(panelTab?.panelLayout).toBeDefined()
 
-      // PanelLeafNode
-      const leaf = panelTab?.panelLayout as PanelLeafNode
-      expect(leaf._tag).toBe('PanelLeafNode')
+      // LeafNode
+      const leaf = panelTab?.panelLayout as LeafNode
+      expect(leaf._tag).toBe('LeafNode')
     })
 
     it('does not mutate the input tree', () => {
@@ -896,8 +893,8 @@ describe('migrateToWindowLayout', () => {
 
       // ws-1's main panel tab should have a split tree with 2 leaves
       const ws1MainTab = secondTile.panelTabs[0]
-      expect(ws1MainTab?.panelLayout._tag).toBe('PanelSplitNode')
-      const ws1Split = ws1MainTab?.panelLayout as PanelSplitNode
+      expect(ws1MainTab?.panelLayout._tag).toBe('SplitNode')
+      const ws1Split = ws1MainTab?.panelLayout as SplitNode
       expect(ws1Split.children).toHaveLength(2)
 
       // activePaneId leaf-2 belongs to ws-1, should be focused there
@@ -946,18 +943,18 @@ function collectAllIdsToArray(
   }
 }
 
-function collectPanelTreeIds(node: PanelTreeNode, ids: Set<string>): void {
+function collectPanelTreeIds(node: PanelNode, ids: Set<string>): void {
   ids.add(node.id)
-  if (node._tag === 'PanelSplitNode') {
+  if (node._tag === 'SplitNode') {
     for (const child of node.children) {
       collectPanelTreeIds(child, ids)
     }
   }
 }
 
-function collectPanelTreeIdsToArray(node: PanelTreeNode, arr: string[]): void {
+function collectPanelTreeIdsToArray(node: PanelNode, arr: string[]): void {
   arr.push(node.id)
-  if (node._tag === 'PanelSplitNode') {
+  if (node._tag === 'SplitNode') {
     for (const child of node.children) {
       collectPanelTreeIdsToArray(child, arr)
     }

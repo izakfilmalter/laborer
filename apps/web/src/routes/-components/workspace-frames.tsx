@@ -8,7 +8,6 @@ import { reorder } from '@atlaskit/pragmatic-drag-and-drop/reorder'
 import { projects, workspaces } from '@laborer/shared/schema'
 import type {
   PanelNode,
-  PanelTreeNode,
   PaneType,
   SplitDirection,
   WorkspaceTileLeaf,
@@ -688,7 +687,7 @@ function WorkspaceFrame({
     tileLeaf !== undefined && tileLeaf.panelTabs.length === 0
 
   // The layout to render: in hierarchical mode, the caller (WorkspaceTileLeafFrame)
-  // has already converted the active panel tab's PanelTreeNode to legacy PanelNode
+  // has already converted the active panel tab's PanelNode to legacy PanelNode
   // and passed it as subLayout. We only need to check for the empty workspace case.
   const effectiveLayout: PanelNode | null = useMemo(() => {
     if (tileLeaf) {
@@ -813,8 +812,8 @@ function WorkspaceFrame({
  * Derive a display label for a panel tab from its root pane type.
  * Used as a fallback when no explicit label is set on the tab.
  */
-function getPanelTabLabel(layout: PanelTreeNode): string {
-  if (layout._tag === 'PanelLeafNode') {
+function getPanelTabLabel(layout: PanelNode): string {
+  if (layout._tag === 'LeafNode') {
     switch (layout.paneType) {
       case 'agent':
         return 'Agent'
@@ -925,7 +924,7 @@ function WorkspaceTileLeafFrame({
   // When it doesn't (pre-migration), fall back to extracting from the flat tree.
   const subLayout = useMemo(() => {
     if (leaf.panelTabs.length > 0) {
-      // Convert the active tab's PanelTreeNode to legacy PanelNode so that
+      // Convert the active tab's PanelNode to legacy PanelNode so that
       // the header's getScopedActivePaneId and getLeafNodes calls work correctly.
       const activeTab = leaf.panelTabs.find(
         (t) => t.id === leaf.activePanelTabId

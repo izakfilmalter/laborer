@@ -6,7 +6,7 @@ Parent PRD: [PRD.md](./PRD.md)
 
 ## Issue 1: Rename hierarchical types and delete legacy type definitions
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

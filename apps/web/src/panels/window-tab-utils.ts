@@ -12,9 +12,9 @@
  */
 
 import type {
-  PanelLeafNode,
+  LeafNode,
+  PanelNode,
   PanelTab,
-  PanelTreeNode,
   PaneType,
   SplitDirection,
   WindowLayout,
@@ -382,10 +382,10 @@ function findTerminalInWorkspaceTile(
  * Returns the pane (leaf) ID if found.
  */
 function findTerminalInPanelTree(
-  node: PanelTreeNode,
+  node: PanelNode,
   terminalId: string
 ): string | undefined {
-  if (node._tag === 'PanelLeafNode') {
+  if (node._tag === 'LeafNode') {
     return node.terminalId === terminalId ? node.id : undefined
   }
   for (const child of node.children) {
@@ -438,11 +438,11 @@ function getActiveWindowTab(layout: WindowLayout): WindowTab | undefined {
 // ---------------------------------------------------------------------------
 
 /**
- * Get the first leaf pane ID from a PanelTreeNode tree (DFS order).
+ * Get the first leaf pane ID from a PanelNode tree (DFS order).
  * Used as a fallback when `focusedPaneId` is not set on a panel tab.
  */
-function getFirstPanelTreeLeafId(node: PanelTreeNode): string | undefined {
-  if (node._tag === 'PanelLeafNode') {
+function getFirstPanelTreeLeafId(node: PanelNode): string | undefined {
+  if (node._tag === 'LeafNode') {
     return node.id
   }
   for (const child of node.children) {
@@ -574,10 +574,10 @@ function saveFocusInWorkspaceTile(
 }
 
 /**
- * Check if a PanelTreeNode tree contains a pane with the given ID.
+ * Check if a PanelNode tree contains a pane with the given ID.
  */
-function panelTreeContainsPane(node: PanelTreeNode, paneId: string): boolean {
-  if (node._tag === 'PanelLeafNode') {
+function panelTreeContainsPane(node: PanelNode, paneId: string): boolean {
+  if (node._tag === 'LeafNode') {
     return node.id === paneId
   }
   return node.children.some((child) => panelTreeContainsPane(child, paneId))
@@ -782,30 +782,28 @@ interface TerminalProcessInfo {
 }
 
 /**
- * Collect all terminal IDs from a PanelTreeNode.
+ * Collect all terminal IDs from a PanelNode.
  */
-function collectTerminalIdsFromPanelTree(
-  node: PanelTreeNode
-): readonly string[] {
-  if (node._tag === 'PanelLeafNode') {
+function collectTerminalIdsFromPanelTree(node: PanelNode): readonly string[] {
+  if (node._tag === 'LeafNode') {
     return node.terminalId !== undefined ? [node.terminalId] : []
   }
   return node.children.flatMap(collectTerminalIdsFromPanelTree)
 }
 
 /**
- * Assign a terminal ID to a specific pane leaf within a PanelTreeNode tree.
+ * Assign a terminal ID to a specific pane leaf within a PanelNode tree.
  *
  * Recursively walks the tree and replaces the `terminalId` on the leaf
  * whose `id` matches `paneId`. Returns the original tree unchanged
  * (referential equality) if no matching leaf is found.
  */
 function assignTerminalInPanelTree(
-  node: PanelTreeNode,
+  node: PanelNode,
   paneId: string,
   terminalId: string
-): PanelTreeNode {
-  if (node._tag === 'PanelLeafNode') {
+): PanelNode {
+  if (node._tag === 'LeafNode') {
     if (node.id === paneId) {
       return { ...node, terminalId }
     }
@@ -925,10 +923,10 @@ type ProgressiveCloseAction =
     }
 
 /**
- * Count the number of leaf panes in a PanelTreeNode tree.
+ * Count the number of leaf panes in a PanelNode tree.
  */
-function countPanelLeaves(node: PanelTreeNode): number {
-  if (node._tag === 'PanelLeafNode') {
+function countPanelLeaves(node: PanelNode): number {
+  if (node._tag === 'LeafNode') {
     return 1
   }
   let count = 0
@@ -943,9 +941,9 @@ function countPanelLeaves(node: PanelTreeNode): number {
  * Returns the single remaining child, a new split node, or undefined if empty.
  */
 function collapseChildren(
-  parent: PanelTreeNode & { readonly _tag: 'PanelSplitNode' },
-  children: PanelTreeNode[]
-): PanelTreeNode | undefined {
+  parent: PanelNode & { readonly _tag: 'SplitNode' },
+  children: PanelNode[]
+): PanelNode | undefined {
   if (children.length === 0) {
     return undefined
   }
@@ -961,21 +959,21 @@ function collapseChildren(
 }
 
 /**
- * Close a pane (leaf) in a PanelTreeNode tree by its ID.
+ * Close a pane (leaf) in a PanelNode tree by its ID.
  * Returns the updated tree, or undefined if the pane was the root
  * (meaning the entire tree is now empty).
  */
 function closePaneInPanelTree(
-  root: PanelTreeNode,
+  root: PanelNode,
   paneId: string
-): PanelTreeNode | undefined {
-  if (root._tag === 'PanelLeafNode') {
+): PanelNode | undefined {
+  if (root._tag === 'LeafNode') {
     return root.id === paneId ? undefined : root
   }
 
   // Check if a direct child is the target
   const targetIndex = root.children.findIndex(
-    (child) => child._tag === 'PanelLeafNode' && child.id === paneId
+    (child) => child._tag === 'LeafNode' && child.id === paneId
   )
   if (targetIndex !== -1) {
     const remaining = root.children.filter((_, i) => i !== targetIndex)
@@ -983,11 +981,11 @@ function closePaneInPanelTree(
   }
 
   // Recurse into split children
-  const newChildren: PanelTreeNode[] = []
+  const newChildren: PanelNode[] = []
   let changed = false
 
   for (const child of root.children) {
-    if (child._tag === 'PanelSplitNode') {
+    if (child._tag === 'SplitNode') {
       const result = closePaneInPanelTree(child, paneId)
       if (result !== child) {
         changed = true
@@ -1010,45 +1008,45 @@ function closePaneInPanelTree(
 }
 
 /**
- * Split a pane in a PanelTreeNode tree by inserting a new sibling leaf.
+ * Split a pane in a PanelNode tree by inserting a new sibling leaf.
  *
  * The original pane stays in place and a new leaf is inserted next to it.
  * If the target pane is already a direct child of a split with the same
  * direction, the new pane is inserted adjacent instead of nesting — keeping
  * the tree flat when possible.
  *
- * @param root - The root PanelTreeNode tree
+ * @param root - The root PanelNode tree
  * @param paneId - The ID of the leaf to split
  * @param direction - "horizontal" or "vertical"
  * @param newPaneContent - Optional partial content for the new leaf
  * @returns The updated tree (original unchanged if paneId not found)
  */
 function splitPaneInPanelTree(
-  root: PanelTreeNode,
+  root: PanelNode,
   paneId: string,
   direction: SplitDirection,
-  newPaneContent?: Partial<PanelLeafNode>
-): PanelTreeNode {
+  newPaneContent?: Partial<LeafNode>
+): PanelNode {
   return splitPanelTreeRecursive(root, paneId, direction, newPaneContent)
 }
 
 function splitPanelTreeRecursive(
-  node: PanelTreeNode,
+  node: PanelNode,
   paneId: string,
   direction: SplitDirection,
-  newPaneContent?: Partial<PanelLeafNode>
-): PanelTreeNode {
+  newPaneContent?: Partial<LeafNode>
+): PanelNode {
   // Found the target leaf — wrap it in a split with a new sibling
-  if (node._tag === 'PanelLeafNode' && node.id === paneId) {
-    const newPane: PanelLeafNode = {
-      _tag: 'PanelLeafNode',
+  if (node._tag === 'LeafNode' && node.id === paneId) {
+    const newPane: LeafNode = {
+      _tag: 'LeafNode',
       id: generateId('pane'),
       paneType: (newPaneContent?.paneType ?? 'terminal') as PaneType,
       terminalId: newPaneContent?.terminalId,
       workspaceId: newPaneContent?.workspaceId ?? node.workspaceId,
     }
     return {
-      _tag: 'PanelSplitNode',
+      _tag: 'SplitNode',
       id: generateId('split'),
       direction,
       children: [node, newPane],
@@ -1056,18 +1054,18 @@ function splitPanelTreeRecursive(
     }
   }
 
-  // Recurse into PanelSplitNode children
-  if (node._tag === 'PanelSplitNode') {
+  // Recurse into SplitNode children
+  if (node._tag === 'SplitNode') {
     // Check if any direct child is the target and has the same direction.
     // If so, insert adjacent instead of nesting.
     if (node.direction === direction) {
       const targetIndex = node.children.findIndex(
-        (child) => child._tag === 'PanelLeafNode' && child.id === paneId
+        (child) => child._tag === 'LeafNode' && child.id === paneId
       )
       if (targetIndex !== -1) {
-        const targetChild = node.children[targetIndex] as PanelLeafNode
-        const newPane: PanelLeafNode = {
-          _tag: 'PanelLeafNode',
+        const targetChild = node.children[targetIndex] as LeafNode
+        const newPane: LeafNode = {
+          _tag: 'LeafNode',
           id: generateId('pane'),
           paneType: (newPaneContent?.paneType ?? 'terminal') as PaneType,
           terminalId: newPaneContent?.terminalId,
@@ -1102,14 +1100,14 @@ function splitPanelTreeRecursive(
 }
 
 /**
- * Find a leaf by ID in a PanelTreeNode tree.
+ * Find a leaf by ID in a PanelNode tree.
  * Returns the leaf if found, or undefined.
  */
 function findPanelTreeLeaf(
-  node: PanelTreeNode,
+  node: PanelNode,
   paneId: string
-): PanelLeafNode | undefined {
-  if (node._tag === 'PanelLeafNode') {
+): LeafNode | undefined {
+  if (node._tag === 'LeafNode') {
     return node.id === paneId ? node : undefined
   }
   for (const child of node.children) {
@@ -1122,23 +1120,23 @@ function findPanelTreeLeaf(
 }
 
 /**
- * Collect all leaf IDs from a PanelTreeNode tree (DFS order).
+ * Collect all leaf IDs from a PanelNode tree (DFS order).
  */
-function getPanelTreeLeafIds(node: PanelTreeNode): string[] {
-  if (node._tag === 'PanelLeafNode') {
+function getPanelTreeLeafIds(node: PanelNode): string[] {
+  if (node._tag === 'LeafNode') {
     return [node.id]
   }
   return node.children.flatMap(getPanelTreeLeafIds)
 }
 
 /**
- * Find the new leaf added to a PanelTreeNode tree after a split.
+ * Find the new leaf added to a PanelNode tree after a split.
  * Compares leaf IDs before and after to find the new one.
  */
 function findNewPanelTreeLeaf(
-  before: PanelTreeNode,
-  after: PanelTreeNode
-): PanelLeafNode | undefined {
+  before: PanelNode,
+  after: PanelNode
+): LeafNode | undefined {
   const beforeIds = new Set(getPanelTreeLeafIds(before))
   const afterIds = getPanelTreeLeafIds(after)
   const newId = afterIds.find((id) => !beforeIds.has(id))
@@ -1149,19 +1147,19 @@ function findNewPanelTreeLeaf(
 }
 
 /**
- * Find the sibling pane ID for a given pane in a PanelTreeNode tree.
+ * Find the sibling pane ID for a given pane in a PanelNode tree.
  * Used to determine where focus should go after closing a pane.
  */
 function findSiblingPaneIdInPanelTree(
-  root: PanelTreeNode,
+  root: PanelNode,
   paneId: string
 ): string | undefined {
-  if (root._tag === 'PanelLeafNode') {
+  if (root._tag === 'LeafNode') {
     return undefined
   }
   // Check if the target is a direct child of this split
   const idx = root.children.findIndex(
-    (child) => child._tag === 'PanelLeafNode' && child.id === paneId
+    (child) => child._tag === 'LeafNode' && child.id === paneId
   )
   if (idx !== -1) {
     // Prefer the sibling after, then before
@@ -1436,14 +1434,14 @@ interface StaleTerminalLeaf {
 }
 
 /**
- * Collect all terminal leaves from a PanelTreeNode whose terminalId is
+ * Collect all terminal leaves from a PanelNode whose terminalId is
  * not in the live terminal set. These are candidates for respawning.
  */
 function getStaleTerminalLeavesFromPanelTree(
-  node: PanelTreeNode,
+  node: PanelNode,
   liveTerminalIds: ReadonlySet<string>
 ): readonly StaleTerminalLeaf[] {
-  if (node._tag === 'PanelLeafNode') {
+  if (node._tag === 'LeafNode') {
     if (
       node.terminalId !== undefined &&
       !liveTerminalIds.has(node.terminalId)
@@ -1501,16 +1499,16 @@ function getStaleTerminalLeavesHierarchical(
 }
 
 /**
- * Reconcile a PanelTreeNode by replacing stale terminal IDs with
+ * Reconcile a PanelNode by replacing stale terminal IDs with
  * respawned ones. If a stale leaf has no mapping entry, terminalId
  * becomes undefined. Preserves referential equality when no changes.
  */
 function reconcilePanelTree(
-  node: PanelTreeNode,
+  node: PanelNode,
   liveTerminalIds: ReadonlySet<string>,
   respawnedIds: ReadonlyMap<string, string>
-): PanelTreeNode {
-  if (node._tag === 'PanelLeafNode') {
+): PanelNode {
+  if (node._tag === 'LeafNode') {
     if (
       node.terminalId !== undefined &&
       !liveTerminalIds.has(node.terminalId)
@@ -1664,35 +1662,35 @@ interface RepairWindowLayoutResult {
 }
 
 /**
- * Repair a PanelTreeNode (PanelLeafNode or PanelSplitNode).
+ * Repair a PanelNode (LeafNode or SplitNode).
  * Validates structure and drops invalid nodes.
  * Returns undefined if the node is completely invalid.
  */
-function repairPanelTreeNode(
+function repairPanelNode(
   node: unknown
-): { tree: PanelTreeNode; repaired: boolean } | undefined {
+): { tree: PanelNode; repaired: boolean } | undefined {
   if (!isRecord(node) || typeof node._tag !== 'string') {
     return undefined
   }
 
-  if (node._tag === 'PanelLeafNode') {
-    return repairPanelLeafNode(node)
+  if (node._tag === 'LeafNode') {
+    return repairLeafNode(node)
   }
 
-  if (node._tag === 'PanelSplitNode') {
-    return repairPanelSplitNode(node)
+  if (node._tag === 'SplitNode') {
+    return repairSplitNode(node)
   }
 
   return undefined
 }
 
 /**
- * Repair a PanelLeafNode.
+ * Repair a LeafNode.
  * Validates id and paneType, strips invalid optional fields.
  */
-function repairPanelLeafNode(
+function repairLeafNode(
   node: Record<string, unknown>
-): { tree: PanelTreeNode; repaired: boolean } | undefined {
+): { tree: PanelNode; repaired: boolean } | undefined {
   if (typeof node.id !== 'string' || node.id === '') {
     return undefined
   }
@@ -1706,7 +1704,7 @@ function repairPanelLeafNode(
 
   let repaired = false
   const result: Record<string, unknown> = {
-    _tag: 'PanelLeafNode',
+    _tag: 'LeafNode',
     id: node.id,
     paneType: node.paneType,
   }
@@ -1727,16 +1725,16 @@ function repairPanelLeafNode(
     }
   }
 
-  return { tree: result as unknown as PanelTreeNode, repaired }
+  return { tree: result as unknown as PanelNode, repaired }
 }
 
 /**
- * Repair a PanelSplitNode.
+ * Repair a SplitNode.
  * Validates structure, recursively repairs children, collapses single-child splits.
  */
-function repairPanelSplitNode(
+function repairSplitNode(
   node: Record<string, unknown>
-): { tree: PanelTreeNode; repaired: boolean } | undefined {
+): { tree: PanelNode; repaired: boolean } | undefined {
   if (typeof node.id !== 'string' || node.id === '') {
     return undefined
   }
@@ -1751,9 +1749,9 @@ function repairPanelSplitNode(
   }
 
   let repaired = false
-  const validChildren: PanelTreeNode[] = []
+  const validChildren: PanelNode[] = []
   for (const child of node.children) {
-    const result = repairPanelTreeNode(child)
+    const result = repairPanelNode(child)
     if (result) {
       validChildren.push(result.tree)
       if (result.repaired) {
@@ -1784,7 +1782,7 @@ function repairPanelSplitNode(
 
   return {
     tree: {
-      _tag: 'PanelSplitNode',
+      _tag: 'SplitNode',
       id: node.id,
       direction: node.direction as 'horizontal' | 'vertical',
       children: validChildren,
@@ -1808,7 +1806,7 @@ function repairPanelTab(
     return undefined
   }
 
-  const layoutResult = repairPanelTreeNode(tab.panelLayout)
+  const layoutResult = repairPanelNode(tab.panelLayout)
   if (!layoutResult) {
     return undefined
   }
@@ -2068,7 +2066,7 @@ function repairWindowTab(
  * - WindowTab: validates `id`, `label`, and `workspaceLayout`
  * - WorkspaceTileNode: validates leaves (workspace ID, panel tabs) and splits
  * - PanelTab: validates `id`, `panelLayout`, optional fields
- * - PanelTreeNode: validates leaves (pane type, terminal ID) and splits
+ * - PanelNode: validates leaves (pane type, terminal ID) and splits
  *
  * Invalid nodes are dropped. Single-child splits are collapsed.
  * Sizes are redistributed when invalid.

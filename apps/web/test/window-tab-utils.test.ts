@@ -9,7 +9,7 @@
  */
 
 import type {
-  PanelLeafNode,
+  LeafNode,
   PanelTab,
   WindowLayout,
   WindowTab,
@@ -41,9 +41,9 @@ function makeLeaf(
   id: string,
   terminalId?: string,
   workspaceId?: string
-): PanelLeafNode {
+): LeafNode {
   return {
-    _tag: 'PanelLeafNode',
+    _tag: 'LeafNode',
     id,
     paneType: 'terminal',
     terminalId,
@@ -54,7 +54,7 @@ function makeLeaf(
 /** A panel tab wrapping a single leaf. */
 function makePanelTab(
   id: string,
-  leaf: PanelLeafNode,
+  leaf: LeafNode,
   focusedPaneId?: string
 ): PanelTab {
   return {

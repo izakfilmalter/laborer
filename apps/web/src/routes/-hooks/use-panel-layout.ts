@@ -158,7 +158,7 @@ const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
  * legacy flat `PanelNode` tree, this function mirrors the change into the
  * hierarchical `WindowLayout` by:
  * 1. Extracting the affected workspace's subtree from the mutated legacy tree
- * 2. Converting it to a `PanelTreeNode`
+ * 2. Converting it to a `PanelNode`
  * 3. Updating the active panel tab's `panelLayout` in the hierarchical tree
  *
  * @param windowLayout - The current hierarchical window layout (may be undefined during migration)
@@ -181,7 +181,7 @@ function syncLegacyTreeToHierarchical(
     return undefined
   }
 
-  // Convert to the new PanelTreeNode format
+  // Convert to the new PanelNode format
   const newPanelLayout = convertPanelTree(workspaceSubTree)
 
   // Update the active panel tab's layout in the hierarchical tree.
@@ -1823,7 +1823,7 @@ export function usePanelLayout() {
         )
         // The newly added tab is always the last one and is set as active
         const newTab = updated.panelTabs.at(-1)
-        if (newTab?.panelLayout._tag === 'PanelLeafNode') {
+        if (newTab?.panelLayout._tag === 'LeafNode') {
           newPaneId = newTab.panelLayout.id
         }
         return updated

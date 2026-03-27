@@ -1,2 +1,35 @@
 # Progress: Remove Legacy Panel Layout Tree (DB Nuke)
 
+## Issue 1: Rename hierarchical types and delete legacy type definitions — DONE
+
+**Date:** 2026-03-26
+
+### What was done
+
+1. Deleted the legacy `PanelLayout` interface and `PanelLayoutSchema` from `types.ts`.
+2. Renamed hierarchical types to take the freed names:
+   - `PanelLeafNode` -> `LeafNode`
+   - `PanelSplitNode` -> `SplitNode`
+   - `PanelTreeNode` -> `PanelNode`
+   - `PanelLeafNodeSchema` -> `LeafNodeSchema`
+   - `PanelSplitNodeSchema` -> `SplitNodeSchema`
+   - `PanelTreeNodeSchema` -> `PanelNodeSchema`
+3. Updated `_tag` discriminant values: `'PanelLeafNode'` -> `'LeafNode'`, `'PanelSplitNode'` -> `'SplitNode'`.
+4. Updated all imports and type references across ~30 files (source + tests).
+5. Kept deprecated sidebar flags (`devServerOpen`, `devServerTerminalId`, `diffOpen`) as optional fields on `LeafNode` with `@deprecated` annotations. These are needed by existing code that will be refactored in Issues 7/8. The fields are also included in `LeafNodeSchema` for backward compatibility with serialized data.
+6. `PanelTab.panelLayout` type updated from `PanelTreeNode` to `PanelNode`.
+7. Updated comments referencing old type names.
+8. `bun run check` passes (typecheck + format + all tests across all packages).
+
+### Files changed
+
+- `packages/shared/src/types.ts` — Deleted legacy types section, renamed hierarchical types
+- `packages/shared/test/schema.test.ts` — Updated _tag values in hierarchical fixtures
+- `packages/shared/test/hierarchical-layout-types.test.ts` — Updated imports, _tag values, removed legacy test section
+- `apps/web/src/panels/window-tab-utils.ts` — Updated imports and all _tag checks
+- `apps/web/src/panels/layout-migration.ts` — Updated imports and _tag values
+- `apps/web/src/panels/panel-tab-utils.ts` — Updated _tag value and comments
+- `apps/web/src/routes/-components/workspace-frames.tsx` — Updated import and _tag check
+- `apps/web/src/routes/-hooks/use-panel-layout.ts` — Updated _tag check and comments
+- `apps/web/test/` — Updated 19 test files (imports, _tag values, type annotations)
+

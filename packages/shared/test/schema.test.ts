@@ -825,7 +825,7 @@ describe('LiveStore schema', () => {
   // ---------------------------------------------------------------------------
 
   const singlePanelLeaf = {
-    _tag: 'PanelLeafNode',
+    _tag: 'LeafNode',
     id: 'panel-1',
     paneType: 'terminal',
     terminalId: 'term-1',
@@ -842,7 +842,7 @@ describe('LiveStore schema', () => {
   const panelTab2 = {
     id: 'ptab-2',
     panelLayout: {
-      _tag: 'PanelLeafNode',
+      _tag: 'LeafNode',
       id: 'panel-2',
       paneType: 'diff',
       workspaceId: 'ws-1',
@@ -1247,19 +1247,19 @@ describe('LiveStore schema', () => {
                   {
                     id: 'ptab-1',
                     panelLayout: {
-                      _tag: 'PanelSplitNode',
+                      _tag: 'SplitNode',
                       id: 'split-1',
                       direction: 'horizontal',
                       children: [
                         {
-                          _tag: 'PanelLeafNode',
+                          _tag: 'LeafNode',
                           id: 'panel-1',
                           paneType: 'terminal',
                           terminalId: 'term-1',
                           workspaceId: 'ws-1',
                         },
                         {
-                          _tag: 'PanelLeafNode',
+                          _tag: 'LeafNode',
                           id: 'panel-2',
                           paneType: 'diff',
                           workspaceId: 'ws-1',
@@ -1290,8 +1290,8 @@ describe('LiveStore schema', () => {
         assert.strictEqual(workspace?._tag, 'WorkspaceTileLeaf')
         if (workspace?._tag === 'WorkspaceTileLeaf') {
           const panelLayout = workspace.panelTabs[0]?.panelLayout
-          assert.strictEqual(panelLayout?._tag, 'PanelSplitNode')
-          if (panelLayout?._tag === 'PanelSplitNode') {
+          assert.strictEqual(panelLayout?._tag, 'SplitNode')
+          if (panelLayout?._tag === 'SplitNode') {
             assert.strictEqual(panelLayout.children.length, 2)
             assert.deepStrictEqual(panelLayout.sizes, [0.5, 0.5])
           }

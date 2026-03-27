@@ -47,7 +47,7 @@ vi.mock('@/lib/workspace-agent-status', () => ({
 }))
 
 vi.mock('@/panels/layout-utils', () => ({
-  findNodeById: () => ({ _tag: 'LeafNode', diffOpen: false }),
+  findNodeById: () => ({ _tag: 'LeafNode' }),
   getLeafNodes: (node: { _tag: string; paneType?: string }) =>
     node._tag === 'LeafNode' ? [node] : [],
   getScopedActivePaneId: (_subLayout: unknown, activePaneId: string | null) =>

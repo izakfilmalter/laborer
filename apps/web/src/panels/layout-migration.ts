@@ -7,7 +7,7 @@
  * The migration:
  * 1. Extracts unique workspace IDs from the old flat tree
  * 2. Filters the tree per workspace using `filterTreeByWorkspace`
- * 3. Converts old `LeafNode`/`SplitNode` to new `PanelLeafNode`/`PanelSplitNode`
+ * 3. Converts old `LeafNode`/`SplitNode` to new `LeafNode`/`SplitNode`
  * 4. Promotes sidebar toggle flags to independent panel tabs:
  *    - `diffOpen: true` → additional diff panel tab
  *    - `devServerOpen: true` → additional devServer panel tab
@@ -23,11 +23,8 @@
 
 import type {
   LeafNode,
-  PanelLeafNode,
   PanelNode,
-  PanelSplitNode,
   PanelTab,
-  PanelTreeNode,
   SplitNode,
   WindowLayout,
   WindowTab,
@@ -53,13 +50,13 @@ function generateMigrationId(prefix: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Convert an old `LeafNode` to a new `PanelLeafNode`.
+ * Convert an old `LeafNode` to a new `LeafNode`.
  * Strips the sidebar toggle flags (`diffOpen`, `devServerOpen`,
  * `devServerTerminalId`) since those are promoted to independent panel types.
  */
-function convertLeafNode(node: LeafNode): PanelLeafNode {
+function convertLeafNode(node: LeafNode): LeafNode {
   return {
-    _tag: 'PanelLeafNode',
+    _tag: 'LeafNode',
     id: node.id,
     paneType: node.paneType,
     ...(node.terminalId !== undefined ? { terminalId: node.terminalId } : {}),
@@ -70,18 +67,18 @@ function convertLeafNode(node: LeafNode): PanelLeafNode {
 }
 
 /**
- * Convert an old `PanelNode` tree to a new `PanelTreeNode` tree.
- * Recursively converts all `LeafNode`s to `PanelLeafNode`s and
- * all `SplitNode`s to `PanelSplitNode`s.
+ * Convert an old `PanelNode` tree to a new `PanelNode` tree.
+ * Recursively converts all `LeafNode`s to `LeafNode`s and
+ * all `SplitNode`s to `SplitNode`s.
  */
-function convertPanelTree(node: PanelNode): PanelTreeNode {
+function convertPanelTree(node: PanelNode): PanelNode {
   if (node._tag === 'LeafNode') {
     return convertLeafNode(node)
   }
 
   const children = node.children.map(convertPanelTree)
-  const result: PanelSplitNode = {
-    _tag: 'PanelSplitNode',
+  const result: SplitNode = {
+    _tag: 'SplitNode',
     id: node.id,
     direction: node.direction,
     children,
@@ -95,15 +92,15 @@ function convertPanelTree(node: PanelNode): PanelTreeNode {
 // ---------------------------------------------------------------------------
 
 /**
- * Convert a new `PanelTreeNode` tree back to a legacy `PanelNode` tree.
+ * Convert a new `PanelNode` tree back to a legacy `PanelNode` tree.
  *
  * This is needed because `PanelManager` and `layout-utils` functions operate
  * on the legacy `PanelNode` type (`LeafNode` / `SplitNode`). When the
- * hierarchical layout provides a `PanelTreeNode` (from a panel tab's layout),
+ * hierarchical layout provides a `PanelNode` (from a panel tab's layout),
  * it must be converted to a `PanelNode` before passing to these consumers.
  */
-function convertPanelTreeToLegacy(node: PanelTreeNode): PanelNode {
-  if (node._tag === 'PanelLeafNode') {
+function convertPanelTreeToLegacy(node: PanelNode): PanelNode {
+  if (node._tag === 'LeafNode') {
     const leaf: LeafNode = {
       _tag: 'LeafNode',
       id: node.id,
@@ -209,8 +206,8 @@ function buildWorkspaceTile(
   // Create additional panel tabs for promoted sidebar panels
   if (flags.diffOpen) {
     const diffTabId = generateMigrationId('panel-tab')
-    const diffLeaf: PanelLeafNode = {
-      _tag: 'PanelLeafNode',
+    const diffLeaf: LeafNode = {
+      _tag: 'LeafNode',
       id: generateMigrationId('pane'),
       paneType: 'diff',
       ...(workspaceId !== undefined ? { workspaceId } : {}),
@@ -225,8 +222,8 @@ function buildWorkspaceTile(
 
   if (flags.devServerOpen) {
     const devServerTabId = generateMigrationId('panel-tab')
-    const devServerLeaf: PanelLeafNode = {
-      _tag: 'PanelLeafNode',
+    const devServerLeaf: LeafNode = {
+      _tag: 'LeafNode',
       id: generateMigrationId('pane'),
       paneType: 'devServerTerminal',
       ...(flags.devServerTerminalId !== undefined
@@ -259,7 +256,7 @@ function buildWorkspaceTile(
  * Otherwise, fall back to the first leaf.
  */
 function resolveFocusedPaneId(
-  tree: PanelTreeNode,
+  tree: PanelNode,
   activePaneId: string | null
 ): string | undefined {
   const leafIds = collectPanelLeafIds(tree)
@@ -270,13 +267,10 @@ function resolveFocusedPaneId(
 }
 
 /**
- * Collect all leaf IDs from a PanelTreeNode in DFS order.
+ * Collect all leaf IDs from a PanelNode in DFS order.
  */
-function collectPanelLeafIds(
-  node: PanelTreeNode,
-  acc: string[] = []
-): string[] {
-  if (node._tag === 'PanelLeafNode') {
+function collectPanelLeafIds(node: PanelNode, acc: string[] = []): string[] {
+  if (node._tag === 'LeafNode') {
     acc.push(node.id)
     return acc
   }

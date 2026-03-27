@@ -8,7 +8,7 @@
  */
 
 import type {
-  PanelLeafNode,
+  LeafNode,
   PanelTab,
   WorkspaceTileLeaf,
 } from '@laborer/shared/types'
@@ -37,9 +37,9 @@ function makeLeaf(
     | 'review'
     | 'devServerTerminal' = 'terminal',
   terminalId?: string
-): PanelLeafNode {
+): LeafNode {
   return {
-    _tag: 'PanelLeafNode',
+    _tag: 'LeafNode',
     id,
     paneType,
     terminalId,
@@ -49,7 +49,7 @@ function makeLeaf(
 /** A panel tab wrapping a single leaf. */
 function makePanelTab(
   id: string,
-  leaf: PanelLeafNode,
+  leaf: LeafNode,
   focusedPaneId?: string
 ): PanelTab {
   return {
@@ -121,8 +121,8 @@ describe('addPanelTab', () => {
     expect(result.activePanelTabId).toBe(result.panelTabs[0]?.id)
 
     const tab = result.panelTabs[0]
-    expect(tab?.panelLayout._tag).toBe('PanelLeafNode')
-    const leaf = tab?.panelLayout as PanelLeafNode
+    expect(tab?.panelLayout._tag).toBe('LeafNode')
+    const leaf = tab?.panelLayout as LeafNode
     expect(leaf.paneType).toBe('terminal')
     expect(leaf.workspaceId).toBe('ws-1')
   })
@@ -135,7 +135,7 @@ describe('addPanelTab', () => {
     expect(result.activePanelTabId).toBe(result.panelTabs[2]?.id)
 
     const newTab = result.panelTabs[2]
-    const leaf = newTab?.panelLayout as PanelLeafNode
+    const leaf = newTab?.panelLayout as LeafNode
     expect(leaf.paneType).toBe('diff')
   })
 
@@ -149,7 +149,7 @@ describe('addPanelTab', () => {
       'devServerTerminal',
     ] as const) {
       const result = addPanelTab(ws, paneType)
-      const leaf = result.panelTabs[0]?.panelLayout as PanelLeafNode
+      const leaf = result.panelTabs[0]?.panelLayout as LeafNode
       expect(leaf.paneType).toBe(paneType)
     }
   })
@@ -173,7 +173,7 @@ describe('addPanelTab', () => {
     const ws = makeEmptyWorkspace('ws-tile-1', 'ws-1')
     const result = addPanelTab(ws, 'terminal', { terminalId: 'term-42' })
 
-    const leaf = result.panelTabs[0]?.panelLayout as PanelLeafNode
+    const leaf = result.panelTabs[0]?.panelLayout as LeafNode
     expect(leaf.terminalId).toBe('term-42')
   })
 
@@ -201,7 +201,7 @@ describe('addPanelTab', () => {
     const result = addPanelTab(ws, 'terminal')
 
     const tab = result.panelTabs[0]
-    const leaf = tab?.panelLayout as PanelLeafNode
+    const leaf = tab?.panelLayout as LeafNode
     expect(tab?.focusedPaneId).toBe(leaf.id)
   })
 })

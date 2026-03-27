@@ -1,7 +1,7 @@
 /**
  * Schema round-trip tests for the hierarchical layout types.
  *
- * Verifies that all new types (PanelLeafNode, PanelSplitNode, PanelTab,
+ * Verifies that all new types (LeafNode, SplitNode, PanelTab,
  * WorkspaceTileLeaf, WorkspaceTileSplit, WindowTab, WindowLayout) encode
  * and decode correctly through their Effect Schema definitions, including
  * deeply nested recursive trees.
@@ -14,10 +14,9 @@ import { Schema } from 'effect'
 import { describe, expect, it } from 'vitest'
 import type {
   LeafNode,
-  PanelLeafNode,
-  PanelSplitNode,
+  PanelNode,
   PanelTab,
-  PanelTreeNode,
+  SplitNode,
   WindowLayout,
   WindowTab,
   WorkspaceTileLeaf,
@@ -25,10 +24,9 @@ import type {
 } from '../src/types.js'
 import {
   LeafNodeSchema,
-  PanelLeafNodeSchema,
-  PanelSplitNodeSchema,
+  PanelNodeSchema,
   PanelTabSchema,
-  PanelTreeNodeSchema,
+  SplitNodeSchema,
   WindowLayoutSchema,
   WindowTabSchema,
   WorkspaceTileLeafSchema,
@@ -50,51 +48,51 @@ function roundTrip<T>(schema: Schema.Schema<T>, value: T): T {
 // Test fixtures
 // ---------------------------------------------------------------------------
 
-const terminalLeaf: PanelLeafNode = {
-  _tag: 'PanelLeafNode',
+const terminalLeaf: LeafNode = {
+  _tag: 'LeafNode',
   id: 'pane-1',
   paneType: 'terminal',
   terminalId: 'term-1',
   workspaceId: 'ws-1',
 }
 
-const diffLeaf: PanelLeafNode = {
-  _tag: 'PanelLeafNode',
+const diffLeaf: LeafNode = {
+  _tag: 'LeafNode',
   id: 'pane-2',
   paneType: 'diff',
   workspaceId: 'ws-1',
 }
 
-const reviewLeaf: PanelLeafNode = {
-  _tag: 'PanelLeafNode',
+const reviewLeaf: LeafNode = {
+  _tag: 'LeafNode',
   id: 'pane-3',
   paneType: 'review',
 }
 
-const devServerLeaf: PanelLeafNode = {
-  _tag: 'PanelLeafNode',
+const devServerLeaf: LeafNode = {
+  _tag: 'LeafNode',
   id: 'pane-4',
   paneType: 'devServerTerminal',
   terminalId: 'dev-term-1',
   workspaceId: 'ws-1',
 }
 
-const panelSplit: PanelSplitNode = {
-  _tag: 'PanelSplitNode',
+const panelSplit: SplitNode = {
+  _tag: 'SplitNode',
   id: 'panel-split-1',
   direction: 'horizontal',
   children: [terminalLeaf, diffLeaf],
   sizes: [60, 40],
 }
 
-const nestedPanelSplit: PanelSplitNode = {
-  _tag: 'PanelSplitNode',
+const nestedPanelSplit: SplitNode = {
+  _tag: 'SplitNode',
   id: 'panel-split-outer',
   direction: 'horizontal',
   children: [
     terminalLeaf,
     {
-      _tag: 'PanelSplitNode',
+      _tag: 'SplitNode',
       id: 'panel-split-inner',
       direction: 'vertical',
       children: [diffLeaf, reviewLeaf],
@@ -148,22 +146,22 @@ const workspaceTileSplit: WorkspaceTileSplit = {
 }
 
 // ---------------------------------------------------------------------------
-// PanelLeafNode
+// LeafNode
 // ---------------------------------------------------------------------------
 
-describe('PanelLeafNodeSchema', () => {
+describe('LeafNodeSchema', () => {
   it('round-trips a terminal leaf with all fields', () => {
-    const result = roundTrip(PanelLeafNodeSchema, terminalLeaf)
+    const result = roundTrip(LeafNodeSchema, terminalLeaf)
     expect(result).toStrictEqual(terminalLeaf)
   })
 
   it('round-trips a leaf with minimal fields (no optional properties)', () => {
-    const minimal: PanelLeafNode = {
-      _tag: 'PanelLeafNode',
+    const minimal: LeafNode = {
+      _tag: 'LeafNode',
       id: 'pane-min',
       paneType: 'review',
     }
-    const result = roundTrip(PanelLeafNodeSchema, minimal)
+    const result = roundTrip(LeafNodeSchema, minimal)
     expect(result).toStrictEqual(minimal)
   })
 
@@ -175,88 +173,88 @@ describe('PanelLeafNodeSchema', () => {
       'devServerTerminal',
       'review',
     ] as const) {
-      const leaf: PanelLeafNode = {
-        _tag: 'PanelLeafNode',
+      const leaf: LeafNode = {
+        _tag: 'LeafNode',
         id: `pane-${paneType}`,
         paneType,
       }
-      const result = roundTrip(PanelLeafNodeSchema, leaf)
+      const result = roundTrip(LeafNodeSchema, leaf)
       expect(result).toStrictEqual(leaf)
     }
   })
 })
 
 // ---------------------------------------------------------------------------
-// PanelSplitNode
+// SplitNode
 // ---------------------------------------------------------------------------
 
-describe('PanelSplitNodeSchema', () => {
+describe('SplitNodeSchema', () => {
   it('round-trips a flat split with two children', () => {
-    const result = roundTrip(PanelSplitNodeSchema, panelSplit)
+    const result = roundTrip(SplitNodeSchema, panelSplit)
     expect(result).toStrictEqual(panelSplit)
   })
 
   it('round-trips a nested split (3 levels deep)', () => {
-    const result = roundTrip(PanelSplitNodeSchema, nestedPanelSplit)
+    const result = roundTrip(SplitNodeSchema, nestedPanelSplit)
     expect(result).toStrictEqual(nestedPanelSplit)
   })
 
   it('round-trips a vertical split', () => {
-    const vertical: PanelSplitNode = {
-      _tag: 'PanelSplitNode',
+    const vertical: SplitNode = {
+      _tag: 'SplitNode',
       id: 'v-split',
       direction: 'vertical',
       children: [terminalLeaf, reviewLeaf],
       sizes: [70, 30],
     }
-    const result = roundTrip(PanelSplitNodeSchema, vertical)
+    const result = roundTrip(SplitNodeSchema, vertical)
     expect(result).toStrictEqual(vertical)
   })
 })
 
 // ---------------------------------------------------------------------------
-// PanelTreeNode (union)
+// PanelNode (union)
 // ---------------------------------------------------------------------------
 
-describe('PanelTreeNodeSchema', () => {
+describe('PanelNodeSchema', () => {
   it('round-trips a leaf through the union', () => {
-    const result = roundTrip(PanelTreeNodeSchema, terminalLeaf)
+    const result = roundTrip(PanelNodeSchema, terminalLeaf)
     expect(result).toStrictEqual(terminalLeaf)
   })
 
   it('round-trips a split through the union', () => {
-    const result = roundTrip(PanelTreeNodeSchema, panelSplit)
+    const result = roundTrip(PanelNodeSchema, panelSplit)
     expect(result).toStrictEqual(panelSplit)
   })
 
   it('round-trips a deeply nested tree (5 levels)', () => {
-    const deep: PanelTreeNode = {
-      _tag: 'PanelSplitNode',
+    const deep: PanelNode = {
+      _tag: 'SplitNode',
       id: 'l1',
       direction: 'horizontal',
       children: [
         {
-          _tag: 'PanelSplitNode',
+          _tag: 'SplitNode',
           id: 'l2',
           direction: 'vertical',
           children: [
             {
-              _tag: 'PanelSplitNode',
+              _tag: 'SplitNode',
               id: 'l3',
               direction: 'horizontal',
               children: [
                 {
-                  _tag: 'PanelSplitNode',
+                  _tag: 'SplitNode',
                   id: 'l4',
                   direction: 'vertical',
                   children: [
                     {
-                      _tag: 'PanelLeafNode',
+                      _tag: 'LeafNode',
                       id: 'l5-a',
                       paneType: 'terminal',
                     },
                     {
-                      _tag: 'PanelLeafNode',
+                      _tag: 'LeafNode',
                       id: 'l5-b',
                       paneType: 'diff',
                     },
@@ -264,7 +262,7 @@ describe('PanelTreeNodeSchema', () => {
                   sizes: [50, 50],
                 },
                 {
-                  _tag: 'PanelLeafNode',
+                  _tag: 'LeafNode',
                   id: 'l3-b',
                   paneType: 'review',
                 },
@@ -272,7 +270,7 @@ describe('PanelTreeNodeSchema', () => {
               sizes: [60, 40],
             },
             {
-              _tag: 'PanelLeafNode',
+              _tag: 'LeafNode',
               id: 'l2-b',
               paneType: 'devServerTerminal',
             },
@@ -280,14 +278,14 @@ describe('PanelTreeNodeSchema', () => {
           sizes: [70, 30],
         },
         {
-          _tag: 'PanelLeafNode',
+          _tag: 'LeafNode',
           id: 'l1-b',
           paneType: 'terminal',
         },
       ],
       sizes: [80, 20],
     }
-    const result = roundTrip(PanelTreeNodeSchema, deep)
+    const result = roundTrip(PanelNodeSchema, deep)
     expect(result).toStrictEqual(deep)
   })
 })
@@ -536,27 +534,5 @@ describe('WindowLayoutSchema', () => {
     }
     const result = roundTrip(WindowLayoutSchema, layout)
     expect(result).toStrictEqual(layout)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Legacy types preserved (old LeafNode, SplitNode, PanelNode)
-// ---------------------------------------------------------------------------
-
-describe('Legacy PanelNode types are preserved', () => {
-  it('old LeafNodeSchema still encodes/decodes with sidebar toggle flags', () => {
-    const oldLeaf: LeafNode = {
-      _tag: 'LeafNode',
-      id: 'old-pane-1',
-      paneType: 'terminal',
-      diffOpen: true,
-      devServerOpen: false,
-      devServerTerminalId: 'dev-1',
-      terminalId: 'term-1',
-      workspaceId: 'ws-1',
-    }
-    const encoded = Schema.encodeSync(LeafNodeSchema)(oldLeaf)
-    const decoded = Schema.decodeSync(LeafNodeSchema)(encoded)
-    expect(decoded).toStrictEqual(oldLeaf)
   })
 })

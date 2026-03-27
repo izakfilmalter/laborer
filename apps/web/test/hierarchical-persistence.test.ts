@@ -10,10 +10,10 @@
  */
 
 import type {
-  PanelLeafNode,
-  PanelSplitNode,
+  LeafNode,
+  PanelNode,
   PanelTab,
-  PanelTreeNode,
+  SplitNode,
   WindowLayout,
   WindowTab,
   WorkspaceTileLeaf,
@@ -35,11 +35,11 @@ function makeLeaf(
   terminalId?: string,
   workspaceId?: string,
   paneType = 'terminal'
-): PanelLeafNode {
+): LeafNode {
   return {
-    _tag: 'PanelLeafNode',
+    _tag: 'LeafNode',
     id,
-    paneType: paneType as PanelLeafNode['paneType'],
+    paneType: paneType as LeafNode['paneType'],
     terminalId,
     workspaceId,
   }
@@ -47,11 +47,11 @@ function makeLeaf(
 
 function makeSplit(
   id: string,
-  children: PanelTreeNode[],
+  children: PanelNode[],
   direction: 'horizontal' | 'vertical' = 'horizontal'
-): PanelSplitNode {
+): SplitNode {
   return {
-    _tag: 'PanelSplitNode',
+    _tag: 'SplitNode',
     id,
     direction,
     children,
@@ -61,7 +61,7 @@ function makeSplit(
 
 function makePanelTab(
   id: string,
-  panelLayout: PanelTreeNode,
+  panelLayout: PanelNode,
   focusedPaneId?: string
 ): PanelTab {
   return {
@@ -69,7 +69,7 @@ function makePanelTab(
     panelLayout,
     focusedPaneId:
       focusedPaneId ??
-      (panelLayout._tag === 'PanelLeafNode' ? panelLayout.id : undefined),
+      (panelLayout._tag === 'LeafNode' ? panelLayout.id : undefined),
   }
 }
 
@@ -276,7 +276,7 @@ describe('reconcileWindowLayout', () => {
     expect(result).not.toBe(layout)
     const reconciledLeaf = (
       result.tabs[0]?.workspaceLayout as WorkspaceTileLeaf
-    ).panelTabs[0]?.panelLayout as PanelLeafNode
+    ).panelTabs[0]?.panelLayout as LeafNode
     expect(reconciledLeaf.terminalId).toBe('term-new')
   })
 
@@ -290,7 +290,7 @@ describe('reconcileWindowLayout', () => {
 
     const reconciledLeaf = (
       result.tabs[0]?.workspaceLayout as WorkspaceTileLeaf
-    ).panelTabs[0]?.panelLayout as PanelLeafNode
+    ).panelTabs[0]?.panelLayout as LeafNode
     expect(reconciledLeaf.terminalId).toBeUndefined()
   })
 
@@ -313,10 +313,10 @@ describe('reconcileWindowLayout', () => {
 
     const reconciledTile = result.tabs[0]?.workspaceLayout as WorkspaceTileLeaf
     expect(
-      (reconciledTile.panelTabs[0]?.panelLayout as PanelLeafNode).terminalId
+      (reconciledTile.panelTabs[0]?.panelLayout as LeafNode).terminalId
     ).toBe('term-new-1')
     expect(
-      (reconciledTile.panelTabs[1]?.panelLayout as PanelLeafNode).terminalId
+      (reconciledTile.panelTabs[1]?.panelLayout as LeafNode).terminalId
     ).toBe('term-new-2')
   })
 
@@ -345,9 +345,9 @@ describe('reconcileWindowLayout', () => {
 
     expect(result.tabs).toHaveLength(2)
     const tab1Leaf = (result.tabs[0]?.workspaceLayout as WorkspaceTileLeaf)
-      .panelTabs[0]?.panelLayout as PanelLeafNode
+      .panelTabs[0]?.panelLayout as LeafNode
     const tab2Leaf = (result.tabs[1]?.workspaceLayout as WorkspaceTileLeaf)
-      .panelTabs[0]?.panelLayout as PanelLeafNode
+      .panelTabs[0]?.panelLayout as LeafNode
     expect(tab1Leaf.terminalId).toBe('term-new-1')
     expect(tab2Leaf.terminalId).toBe('term-new-2')
   })
@@ -368,11 +368,11 @@ describe('reconcileWindowLayout', () => {
 
     const reconciledSplit = (
       result.tabs[0]?.workspaceLayout as WorkspaceTileLeaf
-    ).panelTabs[0]?.panelLayout as PanelSplitNode
-    expect((reconciledSplit.children[0] as PanelLeafNode).terminalId).toBe(
+    ).panelTabs[0]?.panelLayout as SplitNode
+    expect((reconciledSplit.children[0] as LeafNode).terminalId).toBe(
       'term-live'
     )
-    expect((reconciledSplit.children[1] as PanelLeafNode).terminalId).toBe(
+    expect((reconciledSplit.children[1] as LeafNode).terminalId).toBe(
       'term-new'
     )
   })
@@ -412,11 +412,11 @@ describe('reconcileWindowLayout', () => {
     const reconciledTile1 = reconciledSplit.children[0] as WorkspaceTileLeaf
     const reconciledTile2 = reconciledSplit.children[1] as WorkspaceTileLeaf
     expect(
-      (reconciledTile1.panelTabs[0]?.panelLayout as PanelLeafNode).terminalId
+      (reconciledTile1.panelTabs[0]?.panelLayout as LeafNode).terminalId
     ).toBe('term-new-1')
     // term-2 had no mapping, so it becomes undefined
     expect(
-      (reconciledTile2.panelTabs[0]?.panelLayout as PanelLeafNode).terminalId
+      (reconciledTile2.panelTabs[0]?.panelLayout as LeafNode).terminalId
     ).toBeUndefined()
   })
 })
@@ -594,7 +594,7 @@ describe('repairWindowLayout', () => {
               {
                 id: 'tab-1',
                 panelLayout: {
-                  _tag: 'PanelSplitNode',
+                  _tag: 'SplitNode',
                   id: 'split-1',
                   direction: 'horizontal',
                   children: [leaf],
@@ -613,7 +613,7 @@ describe('repairWindowLayout', () => {
     expect(result.wasRepaired).toBe(true)
     const tile = result.windowLayout?.tabs[0]
       ?.workspaceLayout as WorkspaceTileLeaf
-    expect(tile.panelTabs[0]?.panelLayout._tag).toBe('PanelLeafNode')
+    expect(tile.panelTabs[0]?.panelLayout._tag).toBe('LeafNode')
   })
 
   it('repairs invalid panel leaf pane types', () => {
@@ -629,7 +629,7 @@ describe('repairWindowLayout', () => {
               {
                 id: 'tab-1',
                 panelLayout: {
-                  _tag: 'PanelLeafNode',
+                  _tag: 'LeafNode',
                   id: 'pane-1',
                   paneType: 'invalid-type',
                 },
@@ -676,7 +676,7 @@ describe('repairWindowLayout', () => {
               {
                 id: 'tab-1',
                 panelLayout: {
-                  _tag: 'PanelLeafNode',
+                  _tag: 'LeafNode',
                   id: 'pane-1',
                   paneType: 'terminal',
                   terminalId: 42, // invalid — should be string
@@ -695,7 +695,7 @@ describe('repairWindowLayout', () => {
     expect(result.wasRepaired).toBe(true)
     const tile = result.windowLayout?.tabs[0]
       ?.workspaceLayout as WorkspaceTileLeaf
-    const repairedLeaf = tile.panelTabs[0]?.panelLayout as PanelLeafNode
+    const repairedLeaf = tile.panelTabs[0]?.panelLayout as LeafNode
     expect(repairedLeaf.terminalId).toBeUndefined()
     expect(repairedLeaf.workspaceId).toBe('ws-1')
   })
@@ -715,7 +715,7 @@ describe('repairWindowLayout', () => {
               {
                 id: 'tab-1',
                 panelLayout: {
-                  _tag: 'PanelSplitNode',
+                  _tag: 'SplitNode',
                   id: 'split-1',
                   direction: 'horizontal',
                   children: [leaf1, leaf2],
@@ -734,7 +734,7 @@ describe('repairWindowLayout', () => {
     expect(result.wasRepaired).toBe(true)
     const tile = result.windowLayout?.tabs[0]
       ?.workspaceLayout as WorkspaceTileLeaf
-    const split = tile.panelTabs[0]?.panelLayout as PanelSplitNode
+    const split = tile.panelTabs[0]?.panelLayout as SplitNode
     expect(split.sizes).toEqual([50, 50])
   })
 

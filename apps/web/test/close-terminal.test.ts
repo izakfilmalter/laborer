@@ -34,8 +34,8 @@ describe('getTerminalIdsToRemove', () => {
       id: 'pane-A',
       paneType: 'terminal',
       terminalId: 'term-1',
-      workspaceId: 'ws-1',
       devServerTerminalId: 'term-dev-1',
+      workspaceId: 'ws-1',
     }
 
     const ids = getTerminalIdsToRemove(layout, 'pane-A')

@@ -63,8 +63,8 @@ describe('getWorkspaceTerminalIds', () => {
       id: 'pane-A',
       paneType: 'terminal',
       terminalId: 'term-1',
-      workspaceId: 'ws-1',
       devServerTerminalId: 'term-dev-1',
+      workspaceId: 'ws-1',
     }
 
     const ids = getWorkspaceTerminalIds(layout, 'ws-1')
@@ -274,8 +274,8 @@ describe('getWorkspaceActiveTerminals', () => {
       id: 'pane-A',
       paneType: 'terminal',
       terminalId: 'term-1',
-      workspaceId: 'ws-1',
       devServerTerminalId: 'term-dev-1',
+      workspaceId: 'ws-1',
     }
 
     const terminals = [

@@ -126,16 +126,24 @@ export class Diff extends Schema.Class<Diff>('Diff')({
 }) {}
 
 // ---------------------------------------------------------------------------
-// Panel Layout Tree
+// Panel Layout Tree (Hierarchical)
 // ---------------------------------------------------------------------------
 
+/**
+ * A leaf node in the panel split tree. Represents a single pane that can
+ * hold a terminal, agent, diff, dev server, or review session.
+ *
+ * The `devServerOpen`, `devServerTerminalId`, and `diffOpen` fields are
+ * deprecated legacy sidebar flags. They will be removed when the consuming
+ * code is ported to the hierarchical panel tab model (Issues 7/8).
+ */
 export interface LeafNode {
   readonly _tag: 'LeafNode'
-  /** Whether the dev server terminal sidebar is open for this pane. */
+  /** @deprecated Legacy sidebar flag — will be removed in Issue 7/8. */
   readonly devServerOpen?: boolean | undefined
-  /** Terminal ID for the dev server session inside the container. */
+  /** @deprecated Legacy sidebar flag — will be removed in Issue 7/8. */
   readonly devServerTerminalId?: string | undefined
-  /** Whether the integrated diff sidebar is open for this pane. */
+  /** @deprecated Legacy sidebar flag — will be removed in Issue 7/8. */
   readonly diffOpen?: boolean | undefined
   readonly id: string
   readonly paneType: PaneType
@@ -156,8 +164,11 @@ export type PanelNode = LeafNode | SplitNode
 export const LeafNodeSchema: Schema.Schema<LeafNode> = Schema.TaggedStruct(
   'LeafNode',
   {
+    /** @deprecated Legacy sidebar flag — will be removed in Issue 7/8. */
     devServerOpen: Schema.optional(Schema.Boolean),
+    /** @deprecated Legacy sidebar flag — will be removed in Issue 7/8. */
     devServerTerminalId: Schema.optional(Schema.String),
+    /** @deprecated Legacy sidebar flag — will be removed in Issue 7/8. */
     diffOpen: Schema.optional(Schema.Boolean),
     id: Schema.String,
     paneType: PaneType,
@@ -183,69 +194,9 @@ export const PanelNodeSchema: Schema.Schema<PanelNode> = Schema.Union(
   SplitNodeSchema
 )
 
-export interface PanelLayout {
-  readonly activePaneId?: string | undefined
-  readonly root: PanelNode
-}
-
-export const PanelLayoutSchema: Schema.Schema<PanelLayout> = Schema.Struct({
-  root: PanelNodeSchema,
-  activePaneId: Schema.optional(Schema.String),
-})
-
 // ---------------------------------------------------------------------------
 // Hierarchical Layout Tree (Window Tabs > Workspace Tiles > Panel Tabs)
 // ---------------------------------------------------------------------------
-
-// -- Panel Leaf (updated, without sidebar toggle flags) ---------------------
-
-/**
- * A leaf node in the new hierarchical layout model.
- * Unlike the legacy `LeafNode`, this does not carry sidebar toggle flags
- * (`diffOpen`, `devServerOpen`, `devServerTerminalId`). Diff, review, and
- * dev server are promoted to independent panel types created as separate
- * panes in the panel split tree.
- */
-export interface PanelLeafNode {
-  readonly _tag: 'PanelLeafNode'
-  readonly id: string
-  readonly paneType: PaneType
-  readonly terminalId?: string | undefined
-  readonly workspaceId?: string | undefined
-}
-
-export interface PanelSplitNode {
-  readonly _tag: 'PanelSplitNode'
-  readonly children: readonly PanelTreeNode[]
-  readonly direction: SplitDirection
-  readonly id: string
-  readonly sizes: readonly number[]
-}
-
-export type PanelTreeNode = PanelLeafNode | PanelSplitNode
-
-export const PanelLeafNodeSchema: Schema.Schema<PanelLeafNode> =
-  Schema.TaggedStruct('PanelLeafNode', {
-    id: Schema.String,
-    paneType: PaneType,
-    terminalId: Schema.optional(Schema.String),
-    workspaceId: Schema.optional(Schema.String),
-  })
-
-export const PanelSplitNodeSchema: Schema.Schema<PanelSplitNode> =
-  Schema.TaggedStruct('PanelSplitNode', {
-    id: Schema.String,
-    direction: SplitDirection,
-    children: Schema.Array(
-      Schema.suspend((): Schema.Schema<PanelTreeNode> => PanelTreeNodeSchema)
-    ),
-    sizes: Schema.Array(Schema.Number),
-  })
-
-export const PanelTreeNodeSchema: Schema.Schema<PanelTreeNode> = Schema.Union(
-  PanelLeafNodeSchema,
-  PanelSplitNodeSchema
-)
 
 // -- Panel Tab --------------------------------------------------------------
 
@@ -257,13 +208,13 @@ export interface PanelTab {
   readonly focusedPaneId?: string | undefined
   readonly id: string
   readonly label?: string | undefined
-  readonly panelLayout: PanelTreeNode
+  readonly panelLayout: PanelNode
 }
 
 export const PanelTabSchema: Schema.Schema<PanelTab> = Schema.Struct({
   id: Schema.String,
   label: Schema.optional(Schema.String),
-  panelLayout: PanelTreeNodeSchema,
+  panelLayout: PanelNodeSchema,
   focusedPaneId: Schema.optional(Schema.String),
 })
 

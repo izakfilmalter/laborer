@@ -15,10 +15,10 @@
  */
 
 import type {
-  PanelLeafNode,
-  PanelSplitNode,
+  LeafNode,
+  PanelNode,
   PanelTab,
-  PanelTreeNode,
+  SplitNode,
   WindowLayout,
   WindowTab,
   WorkspaceTileLeaf,
@@ -35,9 +35,9 @@ function makeLeaf(
   id: string,
   terminalId?: string,
   workspaceId?: string
-): PanelLeafNode {
+): LeafNode {
   return {
-    _tag: 'PanelLeafNode',
+    _tag: 'LeafNode',
     id,
     paneType: 'terminal',
     terminalId,
@@ -47,11 +47,11 @@ function makeLeaf(
 
 function makePanelTab(
   id: string,
-  panelLayout: PanelTreeNode,
+  panelLayout: PanelNode,
   focusedPaneId?: string
 ): PanelTab {
   const firstLeafId =
-    panelLayout._tag === 'PanelLeafNode' ? panelLayout.id : undefined
+    panelLayout._tag === 'LeafNode' ? panelLayout.id : undefined
   return {
     id,
     panelLayout,
@@ -74,12 +74,9 @@ function makeWorkspaceTile(
   }
 }
 
-function makeSplitLayout(
-  id: string,
-  children: PanelTreeNode[]
-): PanelSplitNode {
+function makeSplitLayout(id: string, children: PanelNode[]): SplitNode {
   return {
-    _tag: 'PanelSplitNode',
+    _tag: 'SplitNode',
     id,
     direction: 'horizontal',
     children,
@@ -665,7 +662,7 @@ describe('computeProgressiveCloseAction', () => {
       const splitLayout = makeSplitLayout('split-1', [
         makeLeaf('pane-1', 'term-1', 'ws-1'),
         {
-          _tag: 'PanelLeafNode' as const,
+          _tag: 'LeafNode' as const,
           id: 'pane-diff',
           paneType: 'diff' as const,
           workspaceId: 'ws-1',

@@ -6,13 +6,13 @@
  * an ordered list of panel tabs, and these utilities manage adding, removing,
  * switching, and reordering those tabs.
  *
- * Panel tabs contain a `PanelTreeNode` split tree (the existing panel split
+ * Panel tabs contain a `PanelNode` split tree (the existing panel split
  * model), so existing split/close/navigate functions continue to work within
  * a tab's content.
  *
  * All functions return a new workspace tile leaf — the original is never mutated.
  *
- * @see packages/shared/src/types.ts — WorkspaceTileLeaf, PanelTab, PanelTreeNode
+ * @see packages/shared/src/types.ts — WorkspaceTileLeaf, PanelTab, PanelNode
  * @see apps/web/src/panels/window-tab-utils.ts — window tab CRUD utilities
  * @see apps/web/src/panels/workspace-tile-utils.ts — workspace tile utilities
  */
@@ -77,7 +77,7 @@ function addPanelTab(
     id: generatePanelTabId(),
     label: options?.label,
     panelLayout: {
-      _tag: 'PanelLeafNode',
+      _tag: 'LeafNode',
       id: paneId,
       paneType: panelType,
       terminalId: options?.terminalId,

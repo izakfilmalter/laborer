@@ -182,3 +182,49 @@
 - `apps/web/src/routes/index.tsx` — Changed `activeWorkspaceId` to use `resolveActiveWorkspaceId`, added import
 - `apps/web/test/focus-consistency.test.ts` — Added 6 tests for `resolveActiveWorkspaceId`
 
+## Issue 7: Mutation handlers operate on WindowLayout directly — DONE
+
+**Date:** 2026-03-26
+
+### What was done
+
+1. Rewrote all mutation handlers in `use-panel-layout.ts` to operate directly on `WindowLayout` instead of through the legacy flat `PanelNode` tree with `syncLegacyTreeToHierarchical` bridge:
+   - **`handleSplitPane`**: Walks all workspace tile leaves to find the pane, calls `splitPaneInTree` on the active panel tab's `PanelNode`, updates focus to the new pane, commits `windowLayoutUpdated` with `reason: 'split'`.
+   - **`handleClosePane`**: Uses extracted `closePaneInLayout` helper that finds the pane across workspaces, closes it with `closePaneInTree`, transfers focus to sibling via `findSiblingPaneId`. Removes the panel tab entirely if it was the last pane. Detects empty layouts and resets for re-seeding.
+   - **`handleAssignTerminalToPane`**: Uses extracted `navigateToTerminal` for existing terminals, `ensureWorkspaceInActiveTab` to ensure workspace presence, and `assignTerminalInWorkspace` for the actual assignment (handles direct pane assignment, empty pane reuse, and auto-split).
+   - **`handleCloseWorkspace`**: Walks hierarchical tree to collect terminal IDs from workspace tile leaves instead of using `getWorkspaceTerminalIds` on the legacy tree.
+   - **`handleCloseTerminalPane`**: Removed legacy fast-path. Uses `closeTerminalInWindowLayout` as the sole search path across all panel tabs.
+   - **`handleToggleDevServerPane`**: Completely rewritten to create/remove `devServerTerminal` panel tabs instead of toggling `devServerOpen`/`devServerTerminalId` sidebar flags on leaf nodes. Uses `findWorkspaceForPane` to locate the workspace, `addPanelTab` to create, and `removePanelTab` to remove.
+   - **`handleResizePane`**: Walks workspace tile leaves to find the active panel tab containing the pane, then calls `computeResize` on that panel tab's tree.
+2. Deleted `syncLegacyTreeToHierarchical` function (65 lines) — the bridge between legacy and hierarchical trees is no longer needed.
+3. Deleted `commitAssignment` helper — replaced by inline `assignTerminalInWorkspace` pure function.
+4. Deleted `commitDevServerUpdate` helper — replaced by panel tab operations.
+5. Deleted `DEFAULT_NEW_WINDOW_LAYOUT` constant — seeding now uses `initialLayout` directly.
+6. Removed `persistedLayoutTree` (always `undefined` after DB nuke), `persistedLayoutRepair`, `persistedWorkspaceOrder` (always `null`).
+7. Removed `defaultLayout` (was `nativeWindowId ? DEFAULT_NEW_WINDOW_LAYOUT : initialLayout`) — simplified to use `initialLayout` directly.
+8. Removed imports of `convertPanelTree`, `migrateToWindowLayout`, `filterTreeByWorkspace` from `layout-migration.ts`.
+9. Removed imports of `closePane`, `splitPane`, `computeTerminalPaneAssignment`, `findLeafByTerminalId`, `getTerminalIdsToRemove`, `getWorkspaceTerminalIds`, `replaceNode`, `getStaleTerminalLeaves`, `findNewLeafAfterSplit` from `layout-utils.ts`. Only `findNodeById`, `getLeafIds`, `getLeafNodes` remain (used by the derived `layout` for Issue 8 consumers).
+10. Added imports from `panel-tree-utils.ts`: `closePaneInTree`, `findLeaf`, `findSiblingPaneId`, `getPanelTreeLeafIds`, `splitPaneInTree`, `NavigationDirection` type.
+11. Added import of `getAllWorkspaceTileLeaves` from `window-layout-utils.ts`.
+12. Extracted 5 pure helper functions at module level to reduce cognitive complexity below lint threshold (max 20):
+    - `closePaneInLayout` — finds and closes a pane across all workspace tile leaves
+    - `navigateToTerminal` — switches to the tab/panel tab containing a terminal
+    - `findWorkspaceForPane` — locates the workspace tile leaf containing a pane
+    - `ensureWorkspaceInActiveTab` — ensures a workspace exists in the active window tab
+    - `assignTerminalInWorkspace` — assigns a terminal to a workspace's active panel tab (handles direct, empty, and split cases)
+    - `findEmptyTerminalPaneInTree` — finds an unoccupied terminal pane in a panel tree
+13. Kept `deriveLegacyTreeFromHierarchical` for the `layout` derivation — consumers (`PanelHotkeys`, `PanelContent`, `WorkspaceFrames`, `index.tsx`) still depend on the flat tree. Will be ported in Issue 8.
+14. Kept `layout-utils.ts` imports for `findNodeById`, `getLeafIds`, `getLeafNodes` — used by the derived `layout` value passed to consumers. Will be removed in Issue 8.
+15. `bun run check` passes (typecheck + format + all 1270 web tests, all packages pass).
+
+### Notes on deferred work
+
+- `layout-migration.ts` still has `deriveLegacyTreeFromHierarchical` used by the `layout` derivation — will be removed in Issue 8 when consumers are ported.
+- `layout-utils.ts` still has `findNodeById`, `getLeafIds`, `getLeafNodes` used by the derived `layout` value — will be removed in Issue 8.
+- The 13 `it.todo()` tests in `use-panel-layout.test.ts` from Issue 2 still need to be rewritten with `WindowLayout` fixtures — these are for Issues 8/9.
+- The deprecated sidebar flags (`devServerOpen`, `devServerTerminalId`, `diffOpen`) on `LeafNode` are no longer written by mutation handlers but may still be read by rendering code (`TerminalPaneWithSidebars`). Full removal is in Issue 8.
+
+### Files changed
+
+- `apps/web/src/routes/-hooks/use-panel-layout.ts` — Rewrote all mutation handlers, deleted `syncLegacyTreeToHierarchical`, `commitAssignment`, `commitDevServerUpdate`, `DEFAULT_NEW_WINDOW_LAYOUT`, `persistedLayoutTree`, simplified imports
+

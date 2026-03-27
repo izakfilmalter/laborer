@@ -299,7 +299,7 @@ Vertical slices:
 
 ## Issue 7: Mutation handlers operate on WindowLayout directly
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

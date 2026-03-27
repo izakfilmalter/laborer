@@ -25,28 +25,8 @@ import {
   getDesktopBridge,
 } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
-import {
-  convertPanelTree,
-  deriveLegacyTreeFromHierarchical,
-  migrateToWindowLayout,
-} from '@/panels/layout-migration'
-import type { NavigationDirection } from '@/panels/layout-utils'
-import {
-  closePane,
-  computeResize,
-  computeTerminalPaneAssignment,
-  filterTreeByWorkspace,
-  findLeafByTerminalId,
-  findNewLeafAfterSplit,
-  findNodeById,
-  getLeafIds,
-  getLeafNodes,
-  getStaleTerminalLeaves,
-  getTerminalIdsToRemove,
-  getWorkspaceTerminalIds,
-  replaceNode,
-  splitPane,
-} from '@/panels/layout-utils'
+import { deriveLegacyTreeFromHierarchical } from '@/panels/layout-migration'
+import { getLeafIds } from '@/panels/layout-utils'
 import type { AssignTerminalToPaneOptions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import {
@@ -57,9 +37,17 @@ import {
   switchPanelTabByIndex,
   switchPanelTabRelative,
 } from '@/panels/panel-tab-utils'
+import type { NavigationDirection } from '@/panels/panel-tree-utils'
 import {
   assignTerminal as assignTerminalInPanelTree,
+  closePane as closePaneInTree,
   collectTerminalIds as collectTerminalIdsFromPanelTree,
+  computeResize,
+  findLeaf,
+  findNewLeafAfterSplit,
+  findSiblingPaneId,
+  getLeafIds as getPanelTreeLeafIds,
+  splitPane as splitPaneInTree,
 } from '@/panels/panel-tree-utils'
 import {
   createSpawnGuard,
@@ -74,6 +62,7 @@ import {
   findTerminalLocation,
   findWorkspaceLocation,
   getActiveWindowTab,
+  getAllWorkspaceTileLeaves,
   getStaleTerminalLeavesHierarchical,
   reconcileWindowLayout,
   removeWindowTab,
@@ -100,13 +89,262 @@ import { useInitialLayout } from './use-initial-layout'
 /** Browser fallback until every renderer boot path has a native window ID. */
 const DEFAULT_PANEL_WINDOW_ID = 'default'
 
-/** Deterministic blank session used for newly created native windows in v1. */
-const DEFAULT_NEW_WINDOW_LAYOUT: LeafNode = {
-  _tag: 'LeafNode',
-  id: 'pane-default',
-  paneType: 'terminal',
-  terminalId: undefined,
-  workspaceId: undefined,
+/**
+ * Close a pane in the hierarchical layout by searching all workspace tile
+ * leaves' active panel tabs. Returns the updated layout and terminal IDs
+ * to remove.
+ */
+function closePaneInLayout(
+  windowLayout: WindowLayout,
+  paneId: string
+): {
+  resultLayout: WindowLayout
+  paneFound: boolean
+  terminalIdsToRemove: readonly string[]
+} {
+  const allLeaves = getAllWorkspaceTileLeaves(windowLayout)
+  for (const wsLeaf of allLeaves) {
+    const activePanelTab = wsLeaf.panelTabs.find(
+      (t) => t.id === wsLeaf.activePanelTabId
+    )
+    if (!activePanelTab) {
+      continue
+    }
+    const paneNode = findLeaf(activePanelTab.panelLayout, paneId)
+    if (!paneNode) {
+      continue
+    }
+
+    const terminalIdsToRemove: string[] = []
+    if (paneNode.terminalId) {
+      terminalIdsToRemove.push(paneNode.terminalId)
+    }
+
+    const siblingId = findSiblingPaneId(activePanelTab.panelLayout, paneId)
+    const newTree = closePaneInTree(activePanelTab.panelLayout, paneId)
+    if (newTree) {
+      const resultLayout = updateWorkspaceTileLeaf(
+        windowLayout,
+        wsLeaf.workspaceId,
+        (leaf) => ({
+          ...leaf,
+          panelTabs: leaf.panelTabs.map((tab) =>
+            tab.id === activePanelTab.id
+              ? {
+                  ...tab,
+                  panelLayout: newTree,
+                  focusedPaneId: siblingId ?? tab.focusedPaneId,
+                }
+              : tab
+          ),
+        })
+      )
+      return { resultLayout, paneFound: true, terminalIdsToRemove }
+    }
+    // Last pane in the panel tab — remove the panel tab entirely.
+    const resultLayout = updateWorkspaceTileLeaf(
+      windowLayout,
+      wsLeaf.workspaceId,
+      (leaf) => removePanelTab(leaf, activePanelTab.id)
+    )
+    return { resultLayout, paneFound: true, terminalIdsToRemove }
+  }
+  return {
+    resultLayout: windowLayout,
+    paneFound: false,
+    terminalIdsToRemove: [],
+  }
+}
+
+/**
+ * Find the workspace tile leaf that contains a given pane.
+ */
+function findWorkspaceForPane(
+  windowLayout: WindowLayout,
+  paneId: string
+): import('@laborer/shared/types').WorkspaceTileLeaf | undefined {
+  const allLeaves = getAllWorkspaceTileLeaves(windowLayout)
+  for (const wsLeaf of allLeaves) {
+    for (const panelTab of wsLeaf.panelTabs) {
+      if (findLeaf(panelTab.panelLayout, paneId)) {
+        return wsLeaf
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Ensure a workspace exists in the active window tab. If it doesn't,
+ * move it from its current location.
+ */
+function ensureWorkspaceInActiveTab(
+  windowLayout: WindowLayout,
+  workspaceId: string
+): WindowLayout {
+  const activeTab = getActiveWindowTab(windowLayout)
+  if (!activeTab) {
+    return windowLayout
+  }
+  const existing = findWorkspaceLocation(windowLayout, workspaceId)
+  if (existing?.tabId === activeTab.id) {
+    return windowLayout
+  }
+  return addWorkspaceToTabUnique(
+    windowLayout,
+    workspaceId,
+    activeTab.id,
+    removeWorkspaceFromTab,
+    addWorkspaceToTab
+  )
+}
+
+/**
+ * Navigate to a terminal's exact location in the hierarchical layout.
+ * Switches window tab, panel tab, and saves focus.
+ */
+function navigateToTerminal(
+  windowLayout: WindowLayout,
+  terminalId: string
+): WindowLayout | undefined {
+  const location = findTerminalLocation(windowLayout, terminalId)
+  if (!location) {
+    return undefined
+  }
+  let result = windowLayout
+  if (result.activeTabId !== location.tabId) {
+    result = switchWindowTab(result, location.tabId)
+  }
+  result = updateWorkspaceTileLeaf(result, location.workspaceId, (leaf) =>
+    switchPanelTab(leaf, location.panelTabId)
+  )
+  return saveFocusedPaneId(result, location.paneId)
+}
+
+/**
+ * Find an empty terminal pane in a panel tree.
+ * An empty terminal pane is a LeafNode with paneType 'terminal' and no
+ * terminalId assigned. Returns the pane ID if found.
+ */
+function findEmptyTerminalPaneInTree(node: PanelNode): string | undefined {
+  if (node._tag === 'LeafNode') {
+    return node.paneType === 'terminal' && node.terminalId === undefined
+      ? node.id
+      : undefined
+  }
+  for (const child of node.children) {
+    const found = findEmptyTerminalPaneInTree(child)
+    if (found) {
+      return found
+    }
+  }
+  return undefined
+}
+
+/**
+ * Assign a terminal to a pane in a workspace's active panel tab.
+ * If a specific paneId is given, assigns to that pane.
+ * If no paneId is given, finds an empty pane or splits to create one.
+ * Returns the updated layout and the focused pane ID.
+ */
+function assignTerminalInWorkspace(
+  baseLayout: WindowLayout,
+  workspaceId: string,
+  terminalId: string,
+  paneId: string | undefined
+): { layout: WindowLayout; focusPaneId: string | undefined } {
+  if (paneId) {
+    const updated = updateWorkspaceTileLeaf(
+      baseLayout,
+      workspaceId,
+      (leaf) => ({
+        ...leaf,
+        panelTabs: leaf.panelTabs.map((tab) => ({
+          ...tab,
+          panelLayout: assignTerminalInPanelTree(
+            tab.panelLayout,
+            paneId,
+            terminalId
+          ),
+        })),
+      })
+    )
+    return { layout: saveFocusedPaneId(updated, paneId), focusPaneId: paneId }
+  }
+
+  // Find the workspace leaf and its active panel tab
+  const allLeaves = getAllWorkspaceTileLeaves(baseLayout)
+  const wsLeaf = allLeaves.find((l) => l.workspaceId === workspaceId)
+  if (!wsLeaf) {
+    return { layout: baseLayout, focusPaneId: undefined }
+  }
+
+  const activePTab = wsLeaf.panelTabs.find(
+    (t) => t.id === wsLeaf.activePanelTabId
+  )
+  if (!activePTab) {
+    return { layout: baseLayout, focusPaneId: undefined }
+  }
+
+  // Look for an empty terminal pane
+  const emptyPaneId = findEmptyTerminalPaneInTree(activePTab.panelLayout)
+  if (emptyPaneId) {
+    const updated = updateWorkspaceTileLeaf(
+      baseLayout,
+      workspaceId,
+      (leaf) => ({
+        ...leaf,
+        panelTabs: leaf.panelTabs.map((tab) =>
+          tab.id === activePTab.id
+            ? {
+                ...tab,
+                panelLayout: assignTerminalInPanelTree(
+                  tab.panelLayout,
+                  emptyPaneId,
+                  terminalId
+                ),
+              }
+            : tab
+        ),
+      })
+    )
+    return {
+      layout: saveFocusedPaneId(updated, emptyPaneId),
+      focusPaneId: emptyPaneId,
+    }
+  }
+
+  // No empty pane — split and assign
+  const paneIds = getPanelTreeLeafIds(activePTab.panelLayout)
+  const lastPaneId = paneIds.at(-1)
+  if (!lastPaneId) {
+    return { layout: baseLayout, focusPaneId: undefined }
+  }
+
+  const oldTree = activePTab.panelLayout
+  const newTree = splitPaneInTree(oldTree, lastPaneId, 'vertical', {
+    paneType: 'terminal',
+    terminalId,
+    workspaceId,
+  })
+  const newLeaf = findNewLeafAfterSplit(oldTree, newTree)
+  const updated = updateWorkspaceTileLeaf(baseLayout, workspaceId, (leaf) => ({
+    ...leaf,
+    panelTabs: leaf.panelTabs.map((tab) =>
+      tab.id === activePTab.id
+        ? {
+            ...tab,
+            panelLayout: newTree,
+            focusedPaneId: newLeaf?.id ?? tab.focusedPaneId,
+          }
+        : tab
+    ),
+  }))
+  const focusId = newLeaf?.id
+  return {
+    layout: focusId ? saveFocusedPaneId(updated, focusId) : updated,
+    focusPaneId: focusId,
+  }
 }
 
 /**
@@ -134,68 +372,6 @@ const configGetMutation = LaborerClient.mutation('config.get')
 const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
 
 /**
- * Sync a legacy tree mutation to the hierarchical WindowLayout.
- *
- * After a pane-level mutation (split, close, assign terminal) updates the
- * legacy flat `PanelNode` tree, this function mirrors the change into the
- * hierarchical `WindowLayout` by:
- * 1. Extracting the affected workspace's subtree from the mutated legacy tree
- * 2. Converting it to a `PanelNode`
- * 3. Updating the active panel tab's `panelLayout` in the hierarchical tree
- *
- * @param windowLayout - The current hierarchical window layout (may be undefined during migration)
- * @param legacyTree - The mutated legacy PanelNode tree
- * @param workspaceId - The workspace whose panel tab should be updated
- * @returns The updated WindowLayout, or undefined if no sync was possible
- */
-function syncLegacyTreeToHierarchical(
-  windowLayout: WindowLayout | undefined,
-  legacyTree: PanelNode,
-  workspaceId: string | undefined
-): WindowLayout | undefined {
-  if (!(windowLayout && workspaceId)) {
-    return undefined
-  }
-
-  // Extract the workspace's subtree from the mutated legacy tree
-  const workspaceSubTree = filterTreeByWorkspace(legacyTree, workspaceId)
-  if (!workspaceSubTree) {
-    return undefined
-  }
-
-  // Convert to the new PanelNode format
-  const newPanelLayout = convertPanelTree(workspaceSubTree)
-
-  // Update the active panel tab's layout in the hierarchical tree.
-  // If the workspace tile has no panel tabs yet (e.g. it was just added
-  // to the tab by ensureWorkspaceInActiveTab), create a new panel tab
-  // from the legacy tree's layout so the terminal has somewhere to render.
-  return updateWorkspaceTileLeaf(windowLayout, workspaceId, (leaf) => {
-    const activeTabId = leaf.activePanelTabId
-    if (!activeTabId || leaf.panelTabs.length === 0) {
-      // Create a new panel tab with the synced layout
-      const newTabId = `panel-tab-sync-${Math.random().toString(36).slice(2, 8)}`
-      const newTab: import('@laborer/shared/types').PanelTab = {
-        id: newTabId,
-        panelLayout: newPanelLayout,
-      }
-      return {
-        ...leaf,
-        panelTabs: [newTab],
-        activePanelTabId: newTabId,
-      }
-    }
-    const updatedTabs = leaf.panelTabs.map((tab) => {
-      if (tab.id !== activeTabId) {
-        return tab
-      }
-      return { ...tab, panelLayout: newPanelLayout }
-    })
-    return { ...leaf, panelTabs: updatedTabs }
-  })
-}
-
-/**
  * Manages the panel layout state, providing split and close actions
  * that mutate the tree and persist changes to LiveStore.
  *
@@ -215,9 +391,6 @@ export function usePanelLayout() {
   const registry = usePanelGroupRegistry()
   const nativeWindowId = getCurrentWindowId()
   const panelWindowId = nativeWindowId ?? DEFAULT_PANEL_WINDOW_ID
-  const defaultLayout = nativeWindowId
-    ? DEFAULT_NEW_WINDOW_LAYOUT
-    : initialLayout
 
   // Read the persisted layout from LiveStore reactively.
   // Returns all rows; this hook still targets a single window-scoped row.
@@ -225,19 +398,6 @@ export function usePanelLayout() {
   const persistedRow = persistedRows.find(
     (row) => row.windowId === panelWindowId
   )
-  const persistedLayoutRepair = useMemo(() => {
-    // Legacy `layoutTree` column has been removed from the table.
-    // After DB nuke there is no legacy data to repair.
-    return {
-      layoutTree: undefined as PanelNode | undefined,
-      wasRepaired: false,
-    }
-  }, [])
-
-  // The persisted layout tree, if one exists in LiveStore.
-  const persistedLayoutTree = persistedLayoutRepair.layoutTree
-  // Legacy columns removed — always null after DB nuke.
-  const persistedWorkspaceOrder: string[] | null = null
 
   // Read and repair the hierarchical window layout from the new columns.
   // If the layout was repaired, we'll re-persist it.
@@ -252,30 +412,12 @@ export function usePanelLayout() {
     return repairWindowLayout(raw)
   }, [persistedRow])
 
-  // Effective window layout: repaired if available, or migrated from legacy.
-  // Migration only runs in useMemo (no side effects) — the migrated layout
-  // is persisted via a one-time effect below.
-  const persistedWindowLayout = useMemo(() => {
-    if (windowLayoutRepair.windowLayout) {
-      return windowLayoutRepair.windowLayout
-    }
-    // Migrate legacy layout to hierarchical format if the old column has
-    // data but the new column is empty. This ensures the hierarchical layout
-    // is available immediately on the first render after upgrade.
-    if (persistedLayoutTree) {
-      return migrateToWindowLayout(
-        persistedLayoutTree,
-        null,
-        persistedWorkspaceOrder
-      )
-    }
-    return undefined
-  }, [windowLayoutRepair.windowLayout, persistedLayoutTree])
+  // The hierarchical WindowLayout is the single source of truth.
+  const persistedWindowLayout = windowLayoutRepair.windowLayout
 
-  // Determine the effective layout. When a hierarchical window layout is
-  // available, derive the legacy flat tree from it so that hotkeys and other
-  // legacy consumers see pane IDs that match the rendered layout. Falls back
-  // to the persisted legacy tree or the auto-generated default layout.
+  // Derive a legacy flat tree for consumers that haven't been ported yet
+  // (PanelHotkeys, PanelContent, WorkspaceFrames, index.tsx callbacks).
+  // These will be ported to use WindowLayout directly in Issue 8.
   //
   // When a window layout exists but has no tabs (all tabs closed by user),
   // return undefined so the UI shows the empty state instead of falling back
@@ -290,8 +432,8 @@ export function usePanelLayout() {
         return derived
       }
     }
-    return persistedLayoutTree ?? defaultLayout
-  }, [persistedWindowLayout, persistedLayoutTree, defaultLayout])
+    return initialLayout
+  }, [persistedWindowLayout, initialLayout])
 
   // Derive the active pane ID exclusively from the hierarchical layout.
   // Walks: active window tab > active workspace tile > active panel tab >
@@ -308,33 +450,8 @@ export function usePanelLayout() {
     return resolveActivePaneForWindowTab(activeTab) ?? null
   }, [persistedWindowLayout])
 
-  // Re-persist the layout if the legacy layout tree needed repair.
-  // Focus repair is no longer needed here — focus is tracked hierarchically
-  // via PanelTab.focusedPaneId inside the windowLayout JSON.
-  useEffect(() => {
-    if (!(persistedRow && persistedLayoutRepair.wasRepaired)) {
-      return
-    }
-
-    if (persistedWindowLayout) {
-      store.commit(
-        windowLayoutUpdated({
-          windowId: panelWindowId,
-          windowLayout: persistedWindowLayout,
-          reason: 'repair',
-        })
-      )
-    }
-  }, [
-    panelWindowId,
-    persistedLayoutRepair.wasRepaired,
-    persistedRow,
-    persistedWindowLayout,
-    store,
-  ])
-
-  // Persist repaired window layout to LiveStore (not migration — that
-  // happens during reconciliation). Only fires when repair was needed.
+  // Persist repaired window layout to LiveStore.
+  // Only fires when repair was needed.
   const hasPersistedWindowRepair = useRef(false)
   useEffect(() => {
     if (
@@ -370,13 +487,11 @@ export function usePanelLayout() {
   // @see Issue #150: Guaranteed active pane invariant
   const hasSeeded = useRef(false)
   useEffect(() => {
-    if (!persistedRow && defaultLayout && !hasSeeded.current) {
+    if (!persistedRow && initialLayout && !hasSeeded.current) {
       hasSeeded.current = true
-      // Seed: create a minimal WindowLayout from the default leaf.
-      // The legacy seeding path committed layoutRestored; now we commit
-      // windowLayoutUpdated with a freshly constructed WindowLayout.
+      // Seed: create a minimal WindowLayout from the initial layout leaf.
       const seedWorkspaceId =
-        defaultLayout._tag === 'LeafNode' ? defaultLayout.workspaceId : ''
+        initialLayout._tag === 'LeafNode' ? initialLayout.workspaceId : ''
       const seedTabId = `wtab-seed-${Math.random().toString(36).slice(2, 8)}`
       const seedPanelTabId = `ptab-seed-${Math.random().toString(36).slice(2, 8)}`
       const seedTileId = `tile-seed-${Math.random().toString(36).slice(2, 8)}`
@@ -391,8 +506,8 @@ export function usePanelLayout() {
               panelTabs: [
                 {
                   id: seedPanelTabId,
-                  panelLayout: defaultLayout,
-                  focusedPaneId: defaultLayout.id,
+                  panelLayout: initialLayout,
+                  focusedPaneId: initialLayout.id,
                 },
               ],
               activePanelTabId: seedPanelTabId,
@@ -409,7 +524,7 @@ export function usePanelLayout() {
         })
       )
     }
-  }, [defaultLayout, panelWindowId, persistedRow, store])
+  }, [initialLayout, panelWindowId, persistedRow, store])
 
   // -------------------------------------------------------------------
   // Reconcile persisted layout against live terminal state on startup.
@@ -437,12 +552,11 @@ export function usePanelLayout() {
   const removeTerminal = useAtomSet(removeTerminalMutation, {
     mode: 'promise',
   })
-  // Start as "reconciling" when any persisted layout exists — this prevents
+  // Start as "reconciling" when a persisted layout exists — this prevents
   // rendering TerminalPane components with potentially stale terminal IDs
   // before we've checked them against the live terminal service.
   const [isReconciling, setIsReconciling] = useState(
-    () =>
-      persistedLayoutTree !== undefined || persistedWindowLayout !== undefined
+    () => persistedWindowLayout !== undefined
   )
   const hasReconciled = useRef(false)
 
@@ -457,26 +571,19 @@ export function usePanelLayout() {
   )
 
   /**
-   * Collect stale terminal leaves from both legacy and hierarchical layouts.
-   * Prefers hierarchical when available.
+   * Collect stale terminal leaves from the hierarchical layout.
    */
   const collectStaleLeaves = useCallback(
     (liveIds: ReadonlySet<string>) => {
-      const hierarchicalStale = persistedWindowLayout
+      return persistedWindowLayout
         ? getStaleTerminalLeavesHierarchical(persistedWindowLayout, liveIds)
         : []
-      if (hierarchicalStale.length > 0) {
-        return hierarchicalStale
-      }
-      return persistedLayoutTree
-        ? getStaleTerminalLeaves(persistedLayoutTree, liveIds)
-        : []
     },
-    [persistedLayoutTree, persistedWindowLayout]
+    [persistedWindowLayout]
   )
 
   /**
-   * Commit reconciled layouts (both legacy and hierarchical) to LiveStore.
+   * Commit reconciled layout to LiveStore.
    */
   const commitReconciledLayouts = useCallback(
     (liveIds: ReadonlySet<string>, respawnedIds: Map<string, string>) => {
@@ -485,12 +592,6 @@ export function usePanelLayout() {
         (row) => row.windowId === panelWindowId
       )
 
-      // Legacy layout tree reconciliation removed — layoutTree column no longer exists.
-      // After DB nuke, only hierarchical windowLayout is used.
-
-      // Reconcile the hierarchical window layout if present.
-      // If the layout was migrated from legacy format (no windowLayout in
-      // persisted row), also persist the migrated+reconciled layout.
       const currentWindowLayout = currentRow?.windowLayout as
         | WindowLayout
         | undefined
@@ -501,7 +602,6 @@ export function usePanelLayout() {
           liveIds,
           respawnedIds
         )
-        // Persist if the layout changed OR if this is a first-time migration
         if (reconciledWindow !== currentWindowLayout) {
           store.commit(
             windowLayoutUpdated({
@@ -521,7 +621,7 @@ export function usePanelLayout() {
       return
     }
 
-    if (!(persistedLayoutTree || persistedWindowLayout)) {
+    if (!persistedWindowLayout) {
       hasReconciled.current = true
       setIsReconciling(false)
       return
@@ -571,7 +671,6 @@ export function usePanelLayout() {
   }, [
     terminalsLoading,
     liveTerminals,
-    persistedLayoutTree,
     persistedWindowLayout,
     collectStaleLeaves,
     commitReconciledLayouts,
@@ -582,19 +681,19 @@ export function usePanelLayout() {
   // Report visible workspaces to the desktop main process.
   // -------------------------------------------------------------------
   // When the layout changes, extract the set of unique workspace IDs
-  // from all leaf panes and send them to the Electron main process.
-  // The main process uses this to route notification clicks and other
-  // workspace-targeting actions to the correct window.
+  // from all workspace tile leaves and send them to the Electron main
+  // process. The main process uses this to route notification clicks and
+  // other workspace-targeting actions to the correct window.
   useEffect(() => {
     const bridge = getDesktopBridge()
-    if (!(bridge && layout)) {
+    if (!(bridge && persistedWindowLayout)) {
       return
     }
 
-    const leafNodes = getLeafNodes(layout)
+    const allLeaves = getAllWorkspaceTileLeaves(persistedWindowLayout)
     const workspaceIds = [
       ...new Set(
-        leafNodes
+        allLeaves
           .map((leaf) => leaf.workspaceId)
           .filter((id): id is string => id !== undefined)
       ),
@@ -603,7 +702,7 @@ export function usePanelLayout() {
     bridge.reportVisibleWorkspaces(workspaceIds).catch(() => {
       // Silently ignore — reporting is best-effort
     })
-  }, [layout])
+  }, [persistedWindowLayout])
 
   /**
    * Ref to hold the latest `handleAssignTerminalToPane` callback.
@@ -626,15 +725,9 @@ export function usePanelLayout() {
       direction: 'horizontal' | 'vertical',
       newPaneContent?: Partial<LeafNode>
     ) => {
-      const base = persistedLayoutTree ?? defaultLayout
-      if (!base) {
+      if (!persistedWindowLayout) {
         return
       }
-
-      // Resolve the workspace for the pane being split (needed for hierarchical sync)
-      const sourceNode = findNodeById(base, paneId)
-      const splitWorkspaceId =
-        sourceNode?._tag === 'LeafNode' ? sourceNode.workspaceId : undefined
 
       // Agent panes are terminals running the configured agent command.
       // Store as 'terminal' so the renderer treats them uniformly.
@@ -643,30 +736,55 @@ export function usePanelLayout() {
           ? { ...newPaneContent, paneType: 'terminal' as const }
           : newPaneContent
 
-      const newTree = splitPane(base, paneId, direction, effectiveContent)
+      // Find which workspace contains the pane being split, then split
+      // the panel tree within the active panel tab of that workspace.
+      let newLeaf: LeafNode | undefined
+      let resultLayout = persistedWindowLayout
+      const allLeaves = getAllWorkspaceTileLeaves(persistedWindowLayout)
+      for (const wsLeaf of allLeaves) {
+        const activePanelTab = wsLeaf.panelTabs.find(
+          (t) => t.id === wsLeaf.activePanelTabId
+        )
+        if (!activePanelTab) {
+          continue
+        }
+        const paneExists = findLeaf(activePanelTab.panelLayout, paneId)
+        if (!paneExists) {
+          continue
+        }
+        const oldTree = activePanelTab.panelLayout
+        const newTree = splitPaneInTree(
+          oldTree,
+          paneId,
+          direction,
+          effectiveContent
+        )
+        newLeaf = findNewLeafAfterSplit(oldTree, newTree)
+        // Update the panel tab's layout and save focus to the new pane
+        resultLayout = updateWorkspaceTileLeaf(
+          persistedWindowLayout,
+          wsLeaf.workspaceId,
+          (leaf) => ({
+            ...leaf,
+            panelTabs: leaf.panelTabs.map((tab) =>
+              tab.id === activePanelTab.id
+                ? {
+                    ...tab,
+                    panelLayout: newTree,
+                    focusedPaneId: newLeaf?.id ?? tab.focusedPaneId,
+                  }
+                : tab
+            ),
+          })
+        )
+        break
+      }
 
-      // Find the newly created pane via leaf-diffing
-      const newLeaf = findNewLeafAfterSplit(base, newTree)
-
-      // Sync the split to the hierarchical tree and commit a single event.
-      const currentRows = store.query(persistedLayout$)
-      const currentRow = currentRows.find(
-        (row) => row.windowId === panelWindowId
-      )
-      const freshWindowLayout =
-        (currentRow?.windowLayout as WindowLayout | undefined) ??
-        persistedWindowLayout
-
-      const updatedWindowLayout = syncLegacyTreeToHierarchical(
-        freshWindowLayout,
-        newTree,
-        splitWorkspaceId
-      )
-      if (updatedWindowLayout) {
+      if (resultLayout !== persistedWindowLayout) {
         store.commit(
           windowLayoutUpdated({
             windowId: panelWindowId,
-            windowLayout: updatedWindowLayout,
+            windowLayout: resultLayout,
             reason: 'split',
           })
         )
@@ -723,9 +841,6 @@ export function usePanelLayout() {
             return
           }
           // Read the CURRENT layout from the store — NOT a stale snapshot.
-          // Multiple splits may have occurred between when this spawn was
-          // initiated and when it completed. Using a stale snapshot would
-          // overwrite those other splits, collapsing the layout.
           const currentRows = store.query(persistedLayout$)
           const currentRow = currentRows.find(
             (row) => row.windowId === panelWindowId
@@ -736,10 +851,6 @@ export function usePanelLayout() {
           if (!currentWindowLayout) {
             return
           }
-          // Assign the terminal directly into the hierarchical layout,
-          // bypassing the legacy assignTerminalToPane path that can
-          // trigger step 5 (auto-split) cascades when pane IDs diverge
-          // between the legacy and hierarchical trees.
           const updated = updateWorkspaceTileLeaf(
             currentWindowLayout,
             wsId,
@@ -767,59 +878,48 @@ export function usePanelLayout() {
           console.warn('[split-pane] auto-spawn failed:', error)
         })
     },
-    [
-      persistedLayoutTree,
-      defaultLayout,
-      panelWindowId,
-      persistedWindowLayout,
-      store,
-      getConfig,
-      spawnTerminal,
-    ]
+    [panelWindowId, persistedWindowLayout, store, getConfig, spawnTerminal]
   )
 
   const handleClosePane = useCallback(
     (paneId: string) => {
-      const base = persistedLayoutTree ?? defaultLayout
-      if (!base) {
+      if (!persistedWindowLayout) {
         return
       }
 
-      // Resolve the workspace for the pane being closed (needed for hierarchical sync)
-      const closingNode = findNodeById(base, paneId)
-      const closeWorkspaceId =
-        closingNode?._tag === 'LeafNode' ? closingNode.workspaceId : undefined
+      const { resultLayout, paneFound, terminalIdsToRemove } =
+        closePaneInLayout(persistedWindowLayout, paneId)
+
+      if (!paneFound) {
+        return
+      }
 
       // Kill terminal processes associated with the pane being closed.
-      // You shouldn't have running terminals that aren't in a pane.
-      const terminalIds = getTerminalIdsToRemove(base, paneId)
-      for (const terminalId of terminalIds) {
+      for (const terminalId of terminalIdsToRemove) {
         removeTerminalOptimistically(terminalId, '[close-pane]')
       }
 
-      const newTree = closePane(base, paneId)
-      if (newTree) {
-        // Sync the close to the hierarchical tree and commit a single event
-        const updatedWindowLayout = syncLegacyTreeToHierarchical(
-          persistedWindowLayout,
-          newTree,
-          closeWorkspaceId
-        )
-        if (updatedWindowLayout) {
+      if (resultLayout !== persistedWindowLayout) {
+        // Check if the layout is effectively empty (no tabs or no workspaces)
+        const hasContent = resultLayout.tabs.some((tab) => {
+          if (!tab.workspaceLayout) {
+            return false
+          }
+          const leaves = getWorkspaceTileLeaves(tab.workspaceLayout)
+          return leaves.some((l) => l.panelTabs.length > 0)
+        })
+
+        if (hasContent) {
           store.commit(
             windowLayoutUpdated({
               windowId: panelWindowId,
-              windowLayout: updatedWindowLayout,
+              windowLayout: resultLayout,
               reason: 'pane-closed',
             })
           )
-        }
-      } else {
-        // All panes closed — commit an empty window layout so the
-        // empty state renders and a new initial layout can seed.
-        if (persistedWindowLayout) {
+        } else {
           const emptyLayout: WindowLayout = {
-            ...persistedWindowLayout,
+            ...resultLayout,
             tabs: [],
             activeTabId: undefined,
           }
@@ -830,18 +930,11 @@ export function usePanelLayout() {
               reason: 'all-panes-closed',
             })
           )
+          hasSeeded.current = false
         }
-        hasSeeded.current = false
       }
     },
-    [
-      persistedLayoutTree,
-      defaultLayout,
-      panelWindowId,
-      persistedWindowLayout,
-      store,
-      removeTerminalOptimistically,
-    ]
+    [panelWindowId, persistedWindowLayout, store, removeTerminalOptimistically]
   )
 
   const handleSetActivePaneId = useCallback(
@@ -894,64 +987,6 @@ export function usePanelLayout() {
     ((paneId: string) => Promise<boolean>) | null
   >(null)
 
-  /**
-   * Helper: commit a layout assignment and optionally auto-open the dev
-   * server pane for containerized workspaces. Extracted to reduce cognitive
-   * complexity in `handleAssignTerminalToPane`.
-   */
-  const commitAssignment = useCallback(
-    (
-      layoutTree: PanelNode,
-      activePaneId: string,
-      workspaceId: string,
-      triggerDevServer: boolean
-    ) => {
-      // Ensure the workspace has a tile in the active window tab before
-      // syncing the legacy tree. Without this, assigning a terminal for a
-      // workspace that has no tile in the current tab leaves the terminal
-      // invisible (sidebar shows it, panel area doesn't).
-      let baseWindowLayout = persistedWindowLayout
-      if (baseWindowLayout) {
-        const activeTab = getActiveWindowTab(baseWindowLayout)
-        if (activeTab) {
-          const existing = findWorkspaceLocation(baseWindowLayout, workspaceId)
-          if (existing?.tabId !== activeTab.id) {
-            baseWindowLayout = addWorkspaceToTabUnique(
-              baseWindowLayout,
-              workspaceId,
-              activeTab.id,
-              removeWorkspaceFromTab,
-              addWorkspaceToTab
-            )
-          }
-        }
-      }
-
-      // Sync the mutation to the hierarchical tree and commit
-      const updatedWindowLayout = syncLegacyTreeToHierarchical(
-        baseWindowLayout,
-        layoutTree,
-        workspaceId
-      )
-      if (updatedWindowLayout) {
-        store.commit(
-          windowLayoutUpdated({
-            windowId: panelWindowId,
-            windowLayout: updatedWindowLayout,
-            reason: 'terminal-assigned',
-          })
-        )
-      }
-
-      if (triggerDevServer && isWorkspaceContainerized(workspaceId)) {
-        autoOpenDevServerRef.current?.(activePaneId)?.catch((error) => {
-          console.warn('[auto-open] dev server spawn failed:', error)
-        })
-      }
-    },
-    [panelWindowId, store, isWorkspaceContainerized, persistedWindowLayout]
-  )
-
   const handleAssignTerminalToPane = useCallback(
     async (
       terminalId: string,
@@ -967,34 +1002,20 @@ export function usePanelLayout() {
         return
       }
 
+      if (!persistedWindowLayout) {
+        return
+      }
+
       // If the terminal already exists in the hierarchical layout,
       // navigate to its exact location (switch window tab, panel tab,
       // and focus the pane) instead of creating a new pane.
-      if (!paneId && persistedWindowLayout) {
-        const location = findTerminalLocation(persistedWindowLayout, terminalId)
-        if (location) {
-          let layout = persistedWindowLayout
-
-          // 1. Switch to the correct window tab (if not already active)
-          if (layout.activeTabId !== location.tabId) {
-            layout = switchWindowTab(layout, location.tabId)
-          }
-
-          // 2. Switch to the correct panel tab within the workspace
-          layout = updateWorkspaceTileLeaf(
-            layout,
-            location.workspaceId,
-            (leaf) => switchPanelTab(leaf, location.panelTabId)
-          )
-
-          // 3. Save focus to the pane containing the terminal
-          layout = saveFocusedPaneId(layout, location.paneId)
-
-          // Commit the combined navigation as a single event
+      if (!paneId) {
+        const navLayout = navigateToTerminal(persistedWindowLayout, terminalId)
+        if (navLayout) {
           store.commit(
             windowLayoutUpdated({
               windowId: panelWindowId,
-              windowLayout: layout,
+              windowLayout: navLayout,
               reason: 'navigate-to-terminal',
             })
           )
@@ -1002,29 +1023,42 @@ export function usePanelLayout() {
         }
       }
 
-      const base = persistedLayoutTree ?? defaultLayout
-      const result = computeTerminalPaneAssignment(
-        base,
+      // Ensure the workspace has a tile in the active window tab.
+      const baseLayout = ensureWorkspaceInActiveTab(
+        persistedWindowLayout,
+        workspaceId
+      )
+
+      // Assign the terminal directly into the hierarchical layout.
+      const { layout: resultLayout, focusPaneId } = assignTerminalInWorkspace(
+        baseLayout,
+        workspaceId,
         terminalId,
-        workspaceId,
-        paneId,
-        options
+        paneId
       )
-      commitAssignment(
-        result.layoutTree,
-        result.activePaneId,
-        workspaceId,
-        result.triggerDevServer
-      )
+
+      if (resultLayout !== persistedWindowLayout) {
+        store.commit(
+          windowLayoutUpdated({
+            windowId: panelWindowId,
+            windowLayout: resultLayout,
+            reason: 'terminal-assigned',
+          })
+        )
+      }
+
+      // Auto-open dev server for containerized workspaces
+      const shouldAutoOpenDevServer = options?.autoOpenDevServer === true
+      if (shouldAutoOpenDevServer && isWorkspaceContainerized(workspaceId)) {
+        const devPaneId = focusPaneId ?? paneId
+        if (devPaneId) {
+          autoOpenDevServerRef.current?.(devPaneId)?.catch((error) => {
+            console.warn('[auto-open] dev server spawn failed:', error)
+          })
+        }
+      }
     },
-    [
-      persistedLayoutTree,
-      defaultLayout,
-      commitAssignment,
-      persistedWindowLayout,
-      panelWindowId,
-      store,
-    ]
+    [persistedWindowLayout, panelWindowId, store, isWorkspaceContainerized]
   )
 
   // Keep the assign-terminal ref in sync with the latest handler
@@ -1043,24 +1077,40 @@ export function usePanelLayout() {
    */
   const handleResizePane = useCallback(
     (paneId: string, direction: NavigationDirection) => {
-      const base = persistedLayoutTree ?? defaultLayout
-      if (!base) {
+      if (!persistedWindowLayout) {
         return
       }
 
-      const result = computeResize(base, paneId, direction)
-      if (!result) {
+      // Find the pane in the active panel tab's tree and compute resize.
+      const allLeaves = getAllWorkspaceTileLeaves(persistedWindowLayout)
+      for (const wsLeaf of allLeaves) {
+        const activePanelTab = wsLeaf.panelTabs.find(
+          (t) => t.id === wsLeaf.activePanelTabId
+        )
+        if (!activePanelTab) {
+          continue
+        }
+        const paneNode = findLeaf(activePanelTab.panelLayout, paneId)
+        if (!paneNode) {
+          continue
+        }
+        const result = computeResize(
+          activePanelTab.panelLayout,
+          paneId,
+          direction
+        )
+        if (!result) {
+          return
+        }
+        const groupHandle = registry?.getGroupRef(result.splitNodeId)
+        if (!groupHandle) {
+          return
+        }
+        groupHandle.setLayout(result.newSizes)
         return
       }
-
-      const groupHandle = registry?.getGroupRef(result.splitNodeId)
-      if (!groupHandle) {
-        return
-      }
-
-      groupHandle.setLayout(result.newSizes)
     },
-    [persistedLayoutTree, defaultLayout, registry]
+    [persistedWindowLayout, registry]
   )
 
   /**
@@ -1086,118 +1136,105 @@ export function usePanelLayout() {
   }, [])
 
   /**
-   * Toggle the dev server terminal alongside a terminal pane.
+   * Toggle the dev server terminal as a panel tab.
    *
-   * When toggling ON with no existing dev server terminal: spawns a new
-   * container terminal with `autoRun: true` so setup scripts and the dev
-   * server start command are auto-typed. Sets `devServerTerminalId` and
-   * `devServerOpen` on the leaf node so the UI renders it in the right-hand
-   * sidebar.
+   * When toggling ON: creates a new 'devServerTerminal' panel tab in the
+   * workspace that contains the given pane, then spawns a container terminal
+   * with `autoRun: true`.
    *
-   * When toggling ON with an existing `devServerTerminalId`: just flips
-   * `devServerOpen` to true (reconnects to the existing terminal).
-   *
-   * When toggling OFF: flips `devServerOpen` to false. The terminal
-   * session stays alive for later reconnection.
+   * When toggling OFF: removes the dev server panel tab from the workspace.
+   * The terminal session is killed.
    *
    * @see Issue #8: Dev server terminal pane type + toggle
    */
-  const commitDevServerUpdate = useCallback(
-    (
-      tree: PanelNode,
-      leafPaneId: string,
-      updatedLeaf: LeafNode,
-      reason: string
-    ) => {
-      const newTree = replaceNode(tree, leafPaneId, updatedLeaf)
-      const wsId = updatedLeaf.workspaceId
-      const updated = wsId
-        ? syncLegacyTreeToHierarchical(persistedWindowLayout, newTree, wsId)
-        : undefined
-      if (updated) {
+  const handleToggleDevServerPane = useCallback(
+    async (paneId: string): Promise<boolean> => {
+      if (!persistedWindowLayout) {
+        return false
+      }
+
+      // Find which workspace the pane belongs to
+      const targetWsLeaf = findWorkspaceForPane(persistedWindowLayout, paneId)
+      if (!targetWsLeaf) {
+        return false
+      }
+
+      const wsId = targetWsLeaf.workspaceId
+
+      // Check if a dev server panel tab already exists
+      const existingDevTab = targetWsLeaf.panelTabs.find((tab) => {
+        return (
+          tab.panelLayout._tag === 'LeafNode' &&
+          tab.panelLayout.paneType === 'devServerTerminal'
+        )
+      })
+
+      if (existingDevTab) {
+        // Toggle OFF — remove the dev server panel tab and kill its terminal
+        const terminalIds = collectTerminalIdsFromPanelTree(
+          existingDevTab.panelLayout
+        )
+        for (const terminalId of terminalIds) {
+          removeTerminalOptimistically(terminalId, '[dev-server-toggle-off]')
+        }
+        const newLayout = updateWorkspaceTileLeaf(
+          persistedWindowLayout,
+          wsId,
+          (leaf) => removePanelTab(leaf, existingDevTab.id)
+        )
         store.commit(
           windowLayoutUpdated({
             windowId: panelWindowId,
-            windowLayout: updated,
-            reason,
+            windowLayout: newLayout,
+            reason: 'dev-server-toggle-off',
           })
         )
-      }
-    },
-    [persistedWindowLayout, panelWindowId, store]
-  )
-
-  const handleToggleDevServerPane = useCallback(
-    async (paneId: string): Promise<boolean> => {
-      const base = persistedLayoutTree ?? defaultLayout
-      if (!base) {
         return false
       }
 
-      const targetNode = findNodeById(base, paneId)
-      if (
-        !targetNode ||
-        targetNode._tag !== 'LeafNode' ||
-        targetNode.paneType !== 'terminal' ||
-        !targetNode.workspaceId
-      ) {
-        return false
-      }
-
-      // Toggling OFF — just hide the dev server pane
-      if (targetNode.devServerOpen) {
-        commitDevServerUpdate(
-          base,
-          paneId,
-          { ...targetNode, devServerOpen: false },
-          'dev-server-toggle-off'
-        )
-        return false
-      }
-
-      // Toggling ON — reconnect to existing terminal if available
-      if (targetNode.devServerTerminalId) {
-        commitDevServerUpdate(
-          base,
-          paneId,
-          { ...targetNode, devServerOpen: true },
-          'dev-server-toggle-on'
-        )
-        return true
-      }
-
-      // Toggling ON — spawn a new dev server terminal with autoRun
+      // Toggle ON — spawn a new dev server terminal with autoRun
       const result = await spawnTerminal({
         payload: {
-          workspaceId: targetNode.workspaceId,
+          workspaceId: wsId,
           autoRun: true,
         },
       })
 
       // Re-read the layout to avoid overwriting concurrent changes.
-      const currentTree = defaultLayout
-      if (!currentTree) {
+      const currentRows = store.query(persistedLayout$)
+      const currentRow = currentRows.find(
+        (row) => row.windowId === panelWindowId
+      )
+      const currentWindowLayout = currentRow?.windowLayout as
+        | WindowLayout
+        | undefined
+      if (!currentWindowLayout) {
         return false
       }
 
-      const currentTarget = findNodeById(currentTree, paneId)
-      if (!currentTarget || currentTarget._tag !== 'LeafNode') {
-        return false
-      }
-
-      commitDevServerUpdate(
-        currentTree,
-        paneId,
-        {
-          ...currentTarget,
-          devServerOpen: true,
-          devServerTerminalId: result.id,
-        },
-        'dev-server-spawn'
+      // Add a new dev server panel tab to the workspace
+      const newLayout = updateWorkspaceTileLeaf(
+        currentWindowLayout,
+        wsId,
+        (leaf) =>
+          addPanelTab(leaf, 'devServerTerminal', { terminalId: result.id })
+      )
+      store.commit(
+        windowLayoutUpdated({
+          windowId: panelWindowId,
+          windowLayout: newLayout,
+          reason: 'dev-server-toggle-on',
+        })
       )
       return true
     },
-    [persistedLayoutTree, defaultLayout, commitDevServerUpdate, spawnTerminal]
+    [
+      persistedWindowLayout,
+      panelWindowId,
+      store,
+      spawnTerminal,
+      removeTerminalOptimistically,
+    ]
   )
 
   // Keep the auto-open ref in sync with the latest toggle handler
@@ -1209,24 +1246,10 @@ export function usePanelLayout() {
    * Close a terminal and its associated pane (ungated — no confirmation).
    * If the terminal has no pane, removes it from the service directly.
    *
-   * Searches the active panel tab's legacy tree first (fast path), then
-   * falls back to searching all panel tabs in the hierarchical layout.
-   * This ensures that closing a terminal from the sidebar works even
-   * when the terminal is in a non-active panel tab.
+   * Searches all panel tabs in the hierarchical layout for the terminal.
    */
   const handleCloseTerminalPane = useCallback(
     (terminalId: string) => {
-      // Fast path: terminal is in the active panel tab's legacy tree
-      const base = persistedLayoutTree ?? defaultLayout
-      if (base) {
-        const leaf = findLeafByTerminalId(base, terminalId)
-        if (leaf) {
-          handleClosePane(leaf.id)
-          return
-        }
-      }
-
-      // Slow path: search all panel tabs in the hierarchical layout
       if (persistedWindowLayout) {
         const newLayout = closeTerminalInWindowLayout(
           persistedWindowLayout,
@@ -1245,18 +1268,10 @@ export function usePanelLayout() {
         }
       }
 
-      // No pane found anywhere — remove the terminal from the service directly
+      // No pane found — remove the terminal from the service directly
       removeTerminalOptimistically(terminalId, '[close-terminal-pane]')
     },
-    [
-      persistedLayoutTree,
-      defaultLayout,
-      persistedWindowLayout,
-      panelWindowId,
-      store,
-      handleClosePane,
-      removeTerminalOptimistically,
-    ]
+    [persistedWindowLayout, panelWindowId, store, removeTerminalOptimistically]
   )
 
   /**
@@ -1266,44 +1281,42 @@ export function usePanelLayout() {
    */
   const handleCloseWorkspace = useCallback(
     (workspaceId: string) => {
-      const base = persistedLayoutTree ?? defaultLayout
-      if (!base) {
+      if (!persistedWindowLayout) {
         return
       }
 
-      // Kill all terminals belonging to this workspace
-      const terminalIds = getWorkspaceTerminalIds(base, workspaceId)
-      for (const terminalId of terminalIds) {
-        removeTerminalOptimistically(terminalId, '[close-workspace]')
-      }
-
-      // Remove the workspace tile from the hierarchical layout so the
-      // workspace frame disappears from the UI.
-      if (persistedWindowLayout) {
-        const updatedWindowLayout = removeWorkspaceFromLayout(
-          persistedWindowLayout,
-          workspaceId,
-          removeWorkspaceFromTab
-        )
-        if (updatedWindowLayout !== persistedWindowLayout) {
-          store.commit(
-            windowLayoutUpdated({
-              windowId: panelWindowId,
-              windowLayout: updatedWindowLayout,
-              reason: 'workspace-closed',
-            })
+      // Kill all terminals belonging to this workspace by walking the
+      // hierarchical tree.
+      const allLeaves = getAllWorkspaceTileLeaves(persistedWindowLayout)
+      const wsLeaf = allLeaves.find((l) => l.workspaceId === workspaceId)
+      if (wsLeaf) {
+        for (const panelTab of wsLeaf.panelTabs) {
+          const terminalIds = collectTerminalIdsFromPanelTree(
+            panelTab.panelLayout
           )
+          for (const terminalId of terminalIds) {
+            removeTerminalOptimistically(terminalId, '[close-workspace]')
+          }
         }
       }
+
+      // Remove the workspace tile from the hierarchical layout
+      const updatedWindowLayout = removeWorkspaceFromLayout(
+        persistedWindowLayout,
+        workspaceId,
+        removeWorkspaceFromTab
+      )
+      if (updatedWindowLayout !== persistedWindowLayout) {
+        store.commit(
+          windowLayoutUpdated({
+            windowId: panelWindowId,
+            windowLayout: updatedWindowLayout,
+            reason: 'workspace-closed',
+          })
+        )
+      }
     },
-    [
-      persistedLayoutTree,
-      defaultLayout,
-      panelWindowId,
-      persistedWindowLayout,
-      store,
-      removeTerminalOptimistically,
-    ]
+    [panelWindowId, persistedWindowLayout, store, removeTerminalOptimistically]
   )
 
   /**
@@ -1968,6 +1981,6 @@ export function usePanelLayout() {
     leafPaneIds,
     isReconciling,
     liveTerminals,
-    workspaceOrder: persistedWorkspaceOrder,
+    workspaceOrder: null as string[] | null,
   }
 }

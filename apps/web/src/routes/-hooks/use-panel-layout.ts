@@ -373,17 +373,16 @@ const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
 
 /**
  * Manages the panel layout state, providing split and close actions
- * that mutate the tree and persist changes to LiveStore.
+ * that mutate the `WindowLayout` and persist changes to LiveStore.
  *
  * Layout persistence flow:
- * 1. Read the persisted layout from LiveStore's `panelLayout` table.
- * 2. If no persisted layout exists, fall back to the auto-generated layout
- *    from terminals/workspaces and commit it as a `layoutRestored` event.
- * 3. On split/close, compute the new tree and commit the appropriate
- *    layout event (`layoutSplit` / `layoutPaneClosed`) to LiveStore.
+ * 1. Read the persisted `WindowLayout` from LiveStore's `panelLayout` table.
+ * 2. If no persisted layout exists, seed from the auto-generated
+ *    `WindowLayout` (via `useInitialLayout`) and commit it as a
+ *    `windowLayoutUpdated` event.
+ * 3. On mutations (split, close, assign, etc.), compute the new
+ *    `WindowLayout` and commit a single `windowLayoutUpdated` event.
  * 4. The materializer upserts the row, and the reactive query re-fires.
- *
- * @see Issue #73: PanelManager — serialize layout to LiveStore
  */
 export function usePanelLayout() {
   const store = useLaborerStore()
@@ -464,43 +463,15 @@ export function usePanelLayout() {
 
   // Seed LiveStore with the initial layout when there's no persisted layout
   // but we have an auto-generated one from terminals/workspaces.
-  // Sets activePaneId to the first leaf so keyboard shortcuts work immediately.
-  // @see Issue #150: Guaranteed active pane invariant
+  // `useInitialLayout` returns a complete `WindowLayout` ready to commit.
   const hasSeeded = useRef(false)
   useEffect(() => {
     if (!persistedRow && initialLayout && !hasSeeded.current) {
       hasSeeded.current = true
-      // Seed: create a minimal WindowLayout from the initial layout leaf.
-      const seedWorkspaceId =
-        initialLayout._tag === 'LeafNode' ? initialLayout.workspaceId : ''
-      const seedTabId = `wtab-seed-${Math.random().toString(36).slice(2, 8)}`
-      const seedPanelTabId = `ptab-seed-${Math.random().toString(36).slice(2, 8)}`
-      const seedTileId = `tile-seed-${Math.random().toString(36).slice(2, 8)}`
-      const seedLayout: WindowLayout = {
-        tabs: [
-          {
-            id: seedTabId,
-            workspaceLayout: {
-              _tag: 'WorkspaceTileLeaf' as const,
-              id: seedTileId,
-              workspaceId: seedWorkspaceId ?? '',
-              panelTabs: [
-                {
-                  id: seedPanelTabId,
-                  panelLayout: initialLayout,
-                  focusedPaneId: initialLayout.id,
-                },
-              ],
-              activePanelTabId: seedPanelTabId,
-            },
-          },
-        ],
-        activeTabId: seedTabId,
-      }
       store.commit(
         windowLayoutUpdated({
           windowId: panelWindowId,
-          windowLayout: seedLayout,
+          windowLayout: initialLayout,
           reason: 'seed',
         })
       )
@@ -1345,9 +1316,8 @@ export function usePanelLayout() {
    * Reorder workspace frames by persisting an explicit workspace ID ordering.
    * Called when the user drag-and-drops workspace frames to rearrange them.
    *
-   * Handles both the hierarchical tile layout path (updates the WorkspaceTileNode
-   * tree within the active WindowTab) and the legacy flat layout path (persists
-   * a workspaceOrder array).
+   * Updates the WorkspaceTileNode tree within the active WindowTab and
+   * commits a single `windowLayoutUpdated` event.
    */
   const handleReorderWorkspaces = useCallback(
     (workspaceOrder: (string | undefined)[]) => {
@@ -1678,11 +1648,7 @@ export function usePanelLayout() {
             if (!currentWindowLayout) {
               return
             }
-            // Directly update the hierarchical layout to assign the
-            // terminal to the pane. Going through the legacy
-            // `assignTerminalToPane` doesn't work here because the
-            // pane ID only exists in the hierarchical layout, not in
-            // the legacy `persistedLayoutTree`.
+            // Assign the terminal to the pane in the hierarchical layout.
             const updated = updateWorkspaceTileLeaf(
               currentWindowLayout,
               workspaceId,
@@ -1718,8 +1684,7 @@ export function usePanelLayout() {
 
   /**
    * When removing a panel tab leaves the workspace empty (zero tabs),
-   * auto-close the workspace by cleaning up the legacy layout tree and
-   * removing the workspace tile from the hierarchical layout.
+   * auto-close the workspace by removing the workspace tile from the layout.
    *
    * @returns `true` if the workspace was auto-closed, `false` otherwise.
    */

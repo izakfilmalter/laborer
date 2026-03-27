@@ -369,3 +369,30 @@
 - `apps/web/src/routes/-hooks/use-panel-layout.ts` — Changed import and call from `repairWindowLayout` to `decodeWindowLayout`
 - `apps/web/test/hierarchical-persistence.test.ts` — Replaced 15 old `repairWindowLayout` tests with 15 new `decodeWindowLayout` tests
 
+## Issue 9: Seeding and reconciliation — hierarchical only — DONE
+
+**Date:** 2026-03-26
+
+### What was done
+
+1. Refactored `useInitialLayout` to return `WindowLayout` directly instead of `PanelNode`. The hook now builds a complete `WindowLayout` (with window tab, workspace tile leaf, and panel tab) ready to commit to LiveStore. Extracted a `buildSeedWindowLayout` helper for constructing the seed layout from a panel tree root and workspace ID.
+2. Simplified the seeding effect in `use-panel-layout.ts` — removed the inline `WindowLayout` construction (random ID generation, manual tab/tile/panel-tab assembly). The effect now simply commits `initialLayout` directly since it's already a `WindowLayout`.
+3. Cleaned up stale comments referencing legacy patterns:
+   - Updated `usePanelLayout` doc comment to describe the current `WindowLayout`-only flow (removed references to `layoutRestored`, `layoutSplit`, `layoutPaneClosed`).
+   - Removed stale comment referencing `persistedLayoutTree` in the panel tab auto-spawn callback.
+   - Updated `handleReorderWorkspaces` comment to remove mention of "legacy flat layout path".
+   - Updated `autoCloseEmptyWorkspace` comment to remove mention of "legacy layout tree".
+4. Verified all acceptance criteria:
+   - `use-panel-layout.ts` does not reference `persistedLayoutTree`, `rawPersistedActivePaneId`, or `persistedWorkspaceOrder` (all removed in Issues 6/7, stale comment cleaned up here).
+   - `migrateToWindowLayout` is not called from production code (only exists in dead code `layout-migration.ts` and tests).
+   - `repairPanelLayoutTree` is not called from production code (only exists in dead code `layout-utils.ts` and tests).
+   - Seeding creates a `WindowLayout` directly via `useInitialLayout`.
+   - Reconciliation only uses hierarchical stale-terminal detection (`getStaleTerminalLeavesHierarchical`).
+   - Reconciliation commits a single `windowLayoutUpdated` event with `reason: 'reconciliation'`.
+5. `bun run check` passes (typecheck + format + all 1270 web tests, all packages pass).
+
+### Files changed
+
+- `apps/web/src/routes/-hooks/use-initial-layout.ts` — Refactored to return `WindowLayout` instead of `PanelNode`, added `buildSeedWindowLayout` helper
+- `apps/web/src/routes/-hooks/use-panel-layout.ts` — Simplified seeding effect, cleaned up 4 stale comments
+

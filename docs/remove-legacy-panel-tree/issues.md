@@ -416,7 +416,7 @@ Most consumer porting is verified by existing integration tests and typecheck. F
 
 ## Issue 9: Seeding and reconciliation -- hierarchical only
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

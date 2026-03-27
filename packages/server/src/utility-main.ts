@@ -47,7 +47,7 @@ import { RpcServer } from '@effect/rpc'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { Context, Effect, Layer, pipe, Queue, Ref } from 'effect'
+import { Context, Effect, Fiber, Layer, pipe, Queue, Ref } from 'effect'
 
 import { LaborerRpcsLive } from './rpc/handlers.js'
 import { BackgroundFetchService } from './services/background-fetch-service.js'
@@ -412,7 +412,7 @@ const DeferredServicesProxyLive = Layer.scopedContext(
       // doesn't block other groups (e.g., TerminalClient in top layers).
 
       // Fork: Service stack (may hang on FileWatcherClient)
-      yield* Effect.gen(function* () {
+      const stackFiber = yield* Effect.gen(function* () {
         yield* Effect.logInfo('[deferred-init] Building service stack...')
         const stackCtx = yield* Layer.build(
           DeferredServiceStack.pipe(
@@ -478,7 +478,7 @@ const DeferredServicesProxyLive = Layer.scopedContext(
       // construction time, so we provide the deferred proxies here. When
       // spawnInWorkspace is actually called, the real implementations
       // should be swapped in from the service stack fiber.
-      yield* Effect.gen(function* () {
+      const terminalFiber = yield* Effect.gen(function* () {
         yield* Effect.logInfo('[deferred-init] Building TerminalClient...')
         const termCtx = yield* Layer.build(
           TerminalClient.layer.pipe(
@@ -508,9 +508,17 @@ const DeferredServicesProxyLive = Layer.scopedContext(
         Context.get(leafCtx, DepsImageService)
       )
 
-      // Note: DeferredServicesReady stays false until all groups complete.
-      // For now, individual services become available as their fibers finish.
-      // The ready flag is set by whichever group finishes last.
+      // Wait for both forked groups to complete, then mark all deferred
+      // services as ready. This unblocks `lifecycle.initStatus` which
+      // returns `{ ready: true }`, allowing the client to advance to
+      // LifecyclePhase.Eventually and show the file tree, review pane,
+      // and other gated features.
+      yield* Fiber.join(stackFiber)
+      yield* Fiber.join(terminalFiber)
+      yield* Ref.set(ready.ref, true)
+      yield* Effect.logInfo(
+        '[deferred-init] All groups complete — DeferredServicesReady set to true'
+      )
     }).pipe(
       Effect.catchAllCause((cause) =>
         Effect.gen(function* () {

@@ -6,7 +6,7 @@ import { BackgroundFetchService } from '../../src/services/background-fetch-serv
 import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
 import { ConfigService } from '../../src/services/config-service.js'
 import { ContainerService } from '../../src/services/container-service.js'
-import { DeferredServicesReadyLayer } from '../../src/services/deferred-service.js'
+import { DeferredServicesReady } from '../../src/services/deferred-service.js'
 import { DepsImageService } from '../../src/services/deps-image-service.js'
 import { DiffService } from '../../src/services/diff-service.js'
 import { DockerDetection } from '../../src/services/docker-detection.js'
@@ -196,7 +196,23 @@ const DeferredServiceStack = WorkspaceProvider.layer.pipe(
 // ---------------------------------------------------------------------------
 
 /**
+ * Layer that provides DeferredServicesReady with the ref already set
+ * to `true`. Used in test layers where all services are built eagerly
+ * (no deferred proxy pattern). This matches the production state where
+ * all deferred services have completed initialization.
+ */
+const DeferredServicesReadyTrueLayer = Layer.effect(
+  DeferredServicesReady,
+  Effect.gen(function* () {
+    const ref = yield* Ref.make(true)
+    return DeferredServicesReady.of({ ref })
+  })
+)
+
+/**
  * All layers (core + deferred) composed for full RPC testing.
+ * Uses DeferredServicesReadyTrueLayer because all services are built
+ * eagerly, matching the production state after deferred init completes.
  */
 export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(TestTerminalClient),
@@ -204,7 +220,7 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(DeferredServiceStack),
   Layer.provide(DeferredLeafLayers),
   Layer.provide(CoreLeafLayers),
-  Layer.provide(DeferredServicesReadyLayer),
+  Layer.provide(DeferredServicesReadyTrueLayer),
   Layer.provide(TestLaborerStore)
 )
 
@@ -214,7 +230,7 @@ const TestLaborerRpcWithStoreLayer = LaborerRpcsLive.pipe(
   Layer.provide(DeferredServiceStack),
   Layer.provide(DeferredLeafLayers),
   Layer.provide(CoreLeafLayers),
-  Layer.provide(DeferredServicesReadyLayer),
+  Layer.provide(DeferredServicesReadyTrueLayer),
   Layer.provideMerge(TestLaborerStore)
 )
 

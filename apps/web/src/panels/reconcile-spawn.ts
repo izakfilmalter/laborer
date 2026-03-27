@@ -153,21 +153,40 @@ async function respawnStaleTerminals(
 }
 
 // ---------------------------------------------------------------------------
-// Spawn guard — prevents concurrent terminal spawns for the same pane.
+// Spawn guard — prevents concurrent terminal spawns for the same pane
+// and supports cancellation when a pane is closed mid-spawn.
 // ---------------------------------------------------------------------------
 
 /**
- * Guard that prevents concurrent terminal spawns for the same pane.
+ * Guard that prevents concurrent terminal spawns for the same pane and
+ * tracks cancellation state for panes closed while a spawn is in-flight.
  *
- * Follows VS Code's `_isTerminalBeingCreated` pattern: a spawn is tracked
- * by key (typically pane ID) and subsequent spawn requests for the same
- * key are silently dropped while a spawn is in-flight. The guard is
- * cleared in a `.finally()` handler so it always unblocks, even if the
- * spawn fails.
+ * Combines two VS Code patterns:
+ * - `_isTerminalBeingCreated`: a spawn is tracked by key (pane ID) and
+ *   subsequent spawn requests for the same key are silently dropped.
+ * - `_isDisposed` check in `TerminalProcessManager.createProcess()`: after
+ *   the async spawn completes, the caller checks whether the pane was
+ *   closed (cancelled) during the await and, if so, kills the terminal.
  *
- * @see VS Code `terminalView.ts` — `_isTerminalBeingCreated` boolean flag
+ * @see VS Code `terminalProcessManager.ts` — `_isDisposed` guard after
+ *   async process spawn
  */
 interface SpawnGuard {
+  /**
+   * Mark a pane as cancelled. If a spawn is in-flight for this key,
+   * {@link isCancelled} will return `true` so the `.then()` handler
+   * can kill the orphaned terminal instead of assigning it.
+   *
+   * Follows VS Code's `TerminalProcessManager.dispose()` pattern:
+   * set `_isDisposed = true` so the async `createProcess` path can
+   * detect that the instance was torn down during the await.
+   */
+  readonly cancel: (key: string) => void
+  /**
+   * Check whether a spawn was cancelled for the given key.
+   * The caller should kill the spawned terminal instead of assigning it.
+   */
+  readonly isCancelled: (key: string) => boolean
   /** Check whether a spawn is currently in-flight for the given key. */
   readonly isSpawning: (key: string) => boolean
   /**
@@ -181,8 +200,13 @@ interface SpawnGuard {
 
 function createSpawnGuard(): SpawnGuard {
   const inFlight = new Set<string>()
+  const cancelled = new Set<string>()
 
   return {
+    cancel: (key: string) => {
+      cancelled.add(key)
+    },
+    isCancelled: (key: string) => cancelled.has(key),
     isSpawning: (key: string) => inFlight.has(key),
     run: async <T>(
       key: string,
@@ -191,6 +215,8 @@ function createSpawnGuard(): SpawnGuard {
       if (inFlight.has(key)) {
         return undefined
       }
+      // Clear any stale cancellation from a previous spawn cycle.
+      cancelled.delete(key)
       inFlight.add(key)
       try {
         return await fn()
@@ -198,6 +224,13 @@ function createSpawnGuard(): SpawnGuard {
         return undefined
       } finally {
         inFlight.delete(key)
+        // NOTE: We intentionally do NOT clear `cancelled` here.
+        // The `.then()` handler that checks `isCancelled()` runs
+        // as a microtask after this promise resolves. If we cleared
+        // the flag here (even via queueMicrotask), it would race
+        // with the `.then()` and the cancellation would be missed.
+        // The `cancelled` set only holds UUIDs for panes closed
+        // mid-spawn — a negligible number per session.
       }
     },
   }

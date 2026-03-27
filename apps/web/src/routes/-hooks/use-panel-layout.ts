@@ -523,6 +523,31 @@ export function usePanelLayout() {
   )
 
   /**
+   * Cancel in-flight spawns and kill assigned terminals for all panes in
+   * a panel tree. Used by close handlers to ensure no orphaned terminals
+   * survive when a pane, panel tab, or workspace is removed.
+   *
+   * Follows VS Code's `TerminalProcessManager.dispose()` pattern: marks
+   * spawns as cancelled so the async `.then()` handler kills the orphaned
+   * terminal instead of assigning it.
+   */
+  const cancelSpawnsAndKillTerminals = useCallback(
+    (panelLayout: PanelNode, logContext: string) => {
+      const paneIds = getPanelTreeLeafIds(panelLayout)
+      for (const leafPaneId of paneIds) {
+        if (paneSpawnGuard.isSpawning(leafPaneId)) {
+          paneSpawnGuard.cancel(leafPaneId)
+        }
+      }
+      const terminalIds = collectTerminalIdsFromPanelTree(panelLayout)
+      for (const terminalId of terminalIds) {
+        removeTerminalOptimistically(terminalId, logContext)
+      }
+    },
+    [removeTerminalOptimistically]
+  )
+
+  /**
    * Collect stale terminal leaves from the hierarchical layout.
    */
   const collectStaleLeaves = useCallback(
@@ -792,6 +817,15 @@ export function usePanelLayout() {
           if (!result) {
             return
           }
+          // VS Code pattern: after the async spawn, check if the pane
+          // was closed (disposed) while we were awaiting. If so, kill
+          // the orphaned terminal immediately instead of assigning it.
+          // @see VS Code TerminalProcessManager.createProcess() —
+          //   `if (this._isDisposed) { newProcess.shutdown(false); }`
+          if (paneSpawnGuard.isCancelled(newPaneId)) {
+            removeTerminalOptimistically(result.id, '[split-pane-cancelled]')
+            return
+          }
           // Read the CURRENT layout from the store — NOT a stale snapshot.
           const currentRows = store.query(persistedLayout$)
           const currentRow = currentRows.find(
@@ -801,6 +835,19 @@ export function usePanelLayout() {
             | WindowLayout
             | undefined
           if (!currentWindowLayout) {
+            return
+          }
+          // Double-check the pane still exists in the current layout.
+          // It may have been removed by a close action that raced with
+          // the spawn but didn't trigger the cancellation path (e.g.
+          // a workspace-level close that removed the entire tile).
+          const paneStillExists = getAllWorkspaceTileLeaves(
+            currentWindowLayout
+          ).some((leaf) =>
+            leaf.panelTabs.some((tab) => findLeaf(tab.panelLayout, newPaneId))
+          )
+          if (!paneStillExists) {
+            removeTerminalOptimistically(result.id, '[split-pane-orphaned]')
             return
           }
           const updated = updateWorkspaceTileLeaf(
@@ -830,7 +877,14 @@ export function usePanelLayout() {
           console.warn('[split-pane] auto-spawn failed:', error)
         })
     },
-    [panelWindowId, persistedWindowLayout, store, getConfig, spawnTerminal]
+    [
+      panelWindowId,
+      persistedWindowLayout,
+      store,
+      getConfig,
+      spawnTerminal,
+      removeTerminalOptimistically,
+    ]
   )
 
   const handleClosePane = useCallback(
@@ -844,6 +898,15 @@ export function usePanelLayout() {
 
       if (!paneFound) {
         return
+      }
+
+      // Cancel any in-flight terminal spawn for this pane. Follows
+      // VS Code's TerminalProcessManager.dispose() pattern: set the
+      // cancelled flag so that when the async spawn completes, the
+      // .then() handler kills the orphaned terminal instead of
+      // assigning it to a pane that no longer exists.
+      if (paneSpawnGuard.isSpawning(paneId)) {
+        paneSpawnGuard.cancel(paneId)
       }
 
       // Kill terminal processes associated with the pane being closed.
@@ -1237,18 +1300,16 @@ export function usePanelLayout() {
         return
       }
 
-      // Kill all terminals belonging to this workspace by walking the
-      // hierarchical tree.
+      // Cancel in-flight spawns and kill all terminals belonging to
+      // this workspace by walking the hierarchical tree.
       const allLeaves = getAllWorkspaceTileLeaves(persistedWindowLayout)
       const wsLeaf = allLeaves.find((l) => l.workspaceId === workspaceId)
       if (wsLeaf) {
         for (const panelTab of wsLeaf.panelTabs) {
-          const terminalIds = collectTerminalIdsFromPanelTree(
-            panelTab.panelLayout
+          cancelSpawnsAndKillTerminals(
+            panelTab.panelLayout,
+            '[close-workspace]'
           )
-          for (const terminalId of terminalIds) {
-            removeTerminalOptimistically(terminalId, '[close-workspace]')
-          }
         }
       }
 
@@ -1268,7 +1329,7 @@ export function usePanelLayout() {
         )
       }
     },
-    [panelWindowId, persistedWindowLayout, store, removeTerminalOptimistically]
+    [panelWindowId, persistedWindowLayout, store, cancelSpawnsAndKillTerminals]
   )
 
   /**
@@ -1634,6 +1695,16 @@ export function usePanelLayout() {
             if (!result) {
               return
             }
+            // VS Code pattern: after the async spawn, check if the pane
+            // was closed (disposed) while we were awaiting. If so, kill
+            // the orphaned terminal immediately instead of assigning it.
+            if (paneSpawnGuard.isCancelled(paneId)) {
+              removeTerminalOptimistically(
+                result.id,
+                '[add-panel-tab-cancelled]'
+              )
+              return
+            }
             // Read the CURRENT layout from the store — NOT a stale snapshot.
             // Multiple layout mutations may have occurred between when this
             // spawn was initiated and when it completed. Using a stale
@@ -1646,6 +1717,19 @@ export function usePanelLayout() {
               | WindowLayout
               | undefined
             if (!currentWindowLayout) {
+              return
+            }
+            // Double-check the pane still exists in the current layout.
+            const paneStillExists = getAllWorkspaceTileLeaves(
+              currentWindowLayout
+            ).some((leaf) =>
+              leaf.panelTabs.some((tab) => findLeaf(tab.panelLayout, paneId))
+            )
+            if (!paneStillExists) {
+              removeTerminalOptimistically(
+                result.id,
+                '[add-panel-tab-orphaned]'
+              )
               return
             }
             // Assign the terminal to the pane in the hierarchical layout.
@@ -1679,6 +1763,7 @@ export function usePanelLayout() {
       spawnTerminal,
       store,
       panelWindowId,
+      removeTerminalOptimistically,
     ]
   )
 
@@ -1725,7 +1810,7 @@ export function usePanelLayout() {
         return
       }
 
-      // Kill terminal processes owned by the panel tab being removed.
+      // Cancel in-flight spawns and kill terminals for the panel tab.
       const activeTab = getActiveWindowTab(persistedWindowLayout)
       const tileLayout = activeTab?.workspaceLayout
       if (tileLayout) {
@@ -1733,12 +1818,10 @@ export function usePanelLayout() {
         const leaf = leaves.find((l) => l.workspaceId === workspaceId)
         const panelTab = leaf?.panelTabs.find((t) => t.id === tabId)
         if (panelTab) {
-          const terminalIds = collectTerminalIdsFromPanelTree(
-            panelTab.panelLayout
+          cancelSpawnsAndKillTerminals(
+            panelTab.panelLayout,
+            '[close-panel-tab]'
           )
-          for (const terminalId of terminalIds) {
-            removeTerminalOptimistically(terminalId, '[close-panel-tab]')
-          }
         }
       }
 
@@ -1759,7 +1842,7 @@ export function usePanelLayout() {
     [
       persistedWindowLayout,
       commitPanelTabLayout,
-      removeTerminalOptimistically,
+      cancelSpawnsAndKillTerminals,
       autoCloseEmptyWorkspace,
     ]
   )

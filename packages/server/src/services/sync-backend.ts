@@ -95,6 +95,11 @@ class InvalidPushError extends Schema.TaggedError<InvalidPushError>()(
   { cause: Schema.Unknown }
 ) {}
 
+class PostMessageError extends Schema.TaggedError<PostMessageError>()(
+  'PostMessageError',
+  { message: Schema.String, cause: Schema.Unknown }
+) {}
+
 // ---------------------------------------------------------------------------
 // Pull/Push request types (inline, avoid .members access)
 // ---------------------------------------------------------------------------
@@ -594,14 +599,20 @@ const handlePush = Effect.fn('handlePush')(function* (req: PushPayloadType) {
         requestId,
         values: [encodedValue],
       }
-      try {
-        livePort.port.postMessage(rpcChunk)
-      } catch (err) {
-        console.error(
-          `[sync-backend] Failed to send chunk to port requestId=${requestId}:`,
-          err
+      yield* Effect.try({
+        try: () => livePort.port.postMessage(rpcChunk),
+        catch: (cause) =>
+          new PostMessageError({
+            message: `Failed to send chunk to port requestId=${requestId}`,
+            cause,
+          }),
+      }).pipe(
+        Effect.catchTag('PostMessageError', (err) =>
+          Effect.sync(() =>
+            console.error(`[sync-backend] ${err.message}:`, err.cause)
+          )
         )
-      }
+      )
     }
   }
 

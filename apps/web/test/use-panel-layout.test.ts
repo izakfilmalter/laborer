@@ -143,7 +143,6 @@ const WINDOW_B_LAYOUT: PanelNode = {
 type PersistedLayoutRow = (typeof persistedRowsRef.current)[number]
 
 interface PersistedLayoutEvent {
-  // biome-ignore lint/suspicious/noExplicitAny: test mock captures any event shape
   payload: any
   type: string
 }

@@ -25,3 +25,25 @@ Status: COMPLETE
 - All type checks pass (15/15 tasks)
 - All tests pass (352 passed, 1 skipped)
 - Formatting clean (471 files checked, no fixes needed)
+
+## Issue #3: Git status porcelain v2 parser + unit tests
+Status: COMPLETE
+
+### What was done:
+- Implemented `parseGitStatusV2` pure function in `packages/server/src/lib/parse-git-status-v2.ts`
+  - Parses `git status -z --porcelain=v2` null-delimited output into `GitStatusEntry[]`
+  - Handles all entry types: ordinary (type `1`), rename/copy (type `2`), unmerged (type `u`), untracked (type `?`), ignored (type `!`)
+  - Maps porcelain v2 XY status codes to `'added' | 'deleted' | 'modified'` per PRD rules
+  - Handles partially staged files with severity precedence: deleted > modified > added
+  - Handles rename entries: `'modified'` for new path + `'deleted'` for old path
+  - All conflict states (UU, AA, DD, AU, UA, UD, DU) map to `'modified'`
+  - Output is sorted alphabetically by path for consistent results
+  - Uses Effect `Array`, `Record`, `Order`, and `pipe` for data manipulation
+  - No side effects — pure function with no git process spawning
+- Wrote comprehensive unit tests in `packages/server/test/parse-git-status-v2.test.ts`
+  - 41 tests covering: empty input, ordinary changed entries (modified/added/deleted/type-changed), untracked files, renamed/copied entries, all conflict types, ignored files, severity precedence, files with spaces/unicode/emoji, mixed entry types, deduplication, sorting, entries without trailing NUL, multiple consecutive renames, rename edge cases
+
+### Verification:
+- All 41 parser tests pass
+- TypeScript compiles with no errors
+- Formatting clean (473 files checked, no fixes needed)

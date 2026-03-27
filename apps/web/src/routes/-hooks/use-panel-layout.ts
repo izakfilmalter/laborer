@@ -58,6 +58,7 @@ import {
   addWorkspaceToTabUnique,
   closeTerminalInWindowLayout,
   collectTerminalIdsFromTileTree,
+  decodeWindowLayout,
   findTerminalLocation,
   findWorkspaceLocation,
   getActiveTabLeafIds,
@@ -69,7 +70,6 @@ import {
   removeWorkspaceFromLayout,
   renameWindowTab,
   reorderWindowTabs,
-  repairWindowLayout,
   resolveActivePaneForPanelTab,
   resolveActivePaneForWindowTab,
   saveFocusedPaneId,
@@ -399,8 +399,9 @@ export function usePanelLayout() {
     (row) => row.windowId === panelWindowId
   )
 
-  // Read and repair the hierarchical window layout from the new columns.
-  // If the layout was repaired, we'll re-persist it.
+  // Read and decode the hierarchical window layout from the persisted row.
+  // Uses Effect Schema decode with repair transforms. If the layout was
+  // repaired, we'll re-persist it.
   const windowLayoutRepair = useMemo(() => {
     const raw = persistedRow?.windowLayout
     if (!raw) {
@@ -409,7 +410,7 @@ export function usePanelLayout() {
         wasRepaired: false,
       }
     }
-    return repairWindowLayout(raw)
+    return decodeWindowLayout(raw)
   }, [persistedRow])
 
   // The hierarchical WindowLayout is the single source of truth.

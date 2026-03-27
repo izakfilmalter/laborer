@@ -23,6 +23,14 @@ import type {
   WorkspaceTileLeaf,
   WorkspaceTileNode,
 } from '@laborer/shared/types'
+import {
+  PanelNodeSchema,
+  PanelTabSchema,
+  WindowLayoutSchema,
+  WindowTabSchema,
+  WorkspaceTileNodeSchema,
+} from '@laborer/shared/types'
+import { Either, Schema } from 'effect'
 
 import { generateId } from './id-utils'
 import { removePanelTab } from './panel-tab-utils'
@@ -1156,20 +1164,16 @@ function reconcileWindowLayout(
 }
 
 // ---------------------------------------------------------------------------
-// Hierarchical layout repair
+// Schema-based layout decode and repair
 // ---------------------------------------------------------------------------
 
-/** Valid pane types for repair validation. */
-const VALID_PANE_TYPES = new Set([
-  'agent',
-  'terminal',
-  'diff',
-  'devServerTerminal',
-  'review',
-])
-
-/** Valid split directions for repair validation. */
-const VALID_DIRECTIONS = new Set(['horizontal', 'vertical'])
+/**
+ * Result of decoding/repairing a WindowLayout.
+ */
+interface RepairWindowLayoutResult {
+  readonly wasRepaired: boolean
+  readonly windowLayout: WindowLayout | undefined
+}
 
 /** Type guard for record-like objects. */
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1177,474 +1181,498 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Validate and rebuild split sizes.
+ * Decode and repair a deserialized `WindowLayout` using Effect Schema.
+ *
+ * Replaces the 490-line manual `repairWindowLayout` function with a
+ * Schema decode pipeline. Handles all the same edge cases:
+ *
+ * 1. Non-object input → `undefined` layout
+ * 2. Missing/invalid `tabs` → empty layout
+ * 3. Invalid nodes dropped (bad `_tag`, empty `id`, invalid `paneType`)
+ * 4. Single-child splits collapsed to their child
+ * 5. Invalid sizes redistributed as equal
+ * 6. Stale `activeTabId` / `activePanelTabId` resolved to first valid
+ * 7. Invalid optional fields stripped (`terminalId`, `label`, `focusedPaneId`)
+ *
+ * Returns `{ windowLayout, wasRepaired }` — same shape as `repairWindowLayout`
+ * for drop-in replacement at the call site.
  */
-function repairSplitSizes(
-  rawSizes: unknown,
-  validCount: number,
-  originalCount: number
-): { sizes: readonly number[]; repaired: boolean } {
-  const sizes = Array.isArray(rawSizes) ? (rawSizes as number[]) : []
+function decodeWindowLayout(input: unknown): RepairWindowLayoutResult {
+  // Step 1: Try strict Schema decode first (fast path for valid data)
+  const decodeResult = Schema.decodeUnknownEither(WindowLayoutSchema)(input)
+
+  if (Either.isRight(decodeResult)) {
+    // Valid layout — apply repair transforms (collapse splits, fix sizes, etc.)
+    const decoded = decodeResult.right
+    const repaired = repairTransforms(decoded)
+    const wasRepaired = !deepEqual(decoded, repaired)
+    return { windowLayout: repaired, wasRepaired }
+  }
+
+  // Step 2: Schema decode failed — attempt lenient field-by-field recovery
+  return lenientDecodeWindowLayout(input)
+}
+
+/**
+ * Apply repair transformations to a structurally valid WindowLayout:
+ * - Collapse single-child splits to their child
+ * - Redistribute invalid sizes
+ * - Filter out tabs/nodes with empty IDs
+ * - Resolve stale `activeTabId` to first valid tab
+ * - Resolve stale `activePanelTabId` to first valid panel tab
+ */
+function repairTransforms(layout: WindowLayout): WindowLayout {
+  const repairedTabs = layout.tabs
+    .filter((t) => t.id !== '')
+    .map(repairWindowTabTransform)
+  const activeTabId = resolveActiveTabId(layout.activeTabId, repairedTabs)
+  return { tabs: repairedTabs, activeTabId }
+}
+
+function repairWindowTabTransform(tab: WindowTab): WindowTab {
+  if (!tab.workspaceLayout) {
+    return tab
+  }
+  const repairedLayout = repairWorkspaceTileTransform(tab.workspaceLayout)
+  if (repairedLayout === tab.workspaceLayout) {
+    return tab
+  }
+  return { ...tab, workspaceLayout: repairedLayout }
+}
+
+function repairWorkspaceTileTransform(
+  node: WorkspaceTileNode
+): WorkspaceTileNode {
+  if (node._tag === 'WorkspaceTileLeaf') {
+    const repairedTabs = node.panelTabs.map(repairPanelTabTransform)
+    const activeId = resolveActiveId(
+      node.activePanelTabId,
+      repairedTabs.map((t) => t.id)
+    )
+    const changed =
+      repairedTabs !== node.panelTabs || activeId !== node.activePanelTabId
+    return changed
+      ? { ...node, panelTabs: repairedTabs, activePanelTabId: activeId }
+      : node
+  }
+
+  // WorkspaceTileSplit
+  const repairedChildren = node.children.map(repairWorkspaceTileTransform)
+
+  // Collapse single-child
+  if (repairedChildren.length === 1 && repairedChildren[0]) {
+    return repairedChildren[0]
+  }
+
+  const sizes = repairSizesTransform(node.sizes, repairedChildren.length)
+  const changed = repairedChildren !== node.children || sizes !== node.sizes
+  return changed ? { ...node, children: repairedChildren, sizes } : node
+}
+
+function repairPanelTabTransform(tab: PanelTab): PanelTab {
+  const repairedLayout = repairPanelNodeTransform(tab.panelLayout)
+  if (repairedLayout === tab.panelLayout) {
+    return tab
+  }
+  return { ...tab, panelLayout: repairedLayout }
+}
+
+function repairPanelNodeTransform(node: PanelNode): PanelNode {
+  if (node._tag === 'LeafNode') {
+    return node
+  }
+
+  // SplitNode
+  const repairedChildren = node.children.map(repairPanelNodeTransform)
+
+  // Collapse single-child
+  if (repairedChildren.length === 1 && repairedChildren[0]) {
+    return repairedChildren[0]
+  }
+
+  const sizes = repairSizesTransform(node.sizes, repairedChildren.length)
+  const changed = repairedChildren !== node.children || sizes !== node.sizes
+  return changed ? { ...node, children: repairedChildren, sizes } : node
+}
+
+function repairSizesTransform(
+  sizes: readonly number[],
+  expectedLength: number
+): readonly number[] {
   if (
-    sizes.length === validCount &&
+    sizes.length === expectedLength &&
     sizes.every((s) => typeof s === 'number' && s > 0)
   ) {
-    return {
-      sizes,
-      repaired: validCount !== originalCount,
-    }
+    return sizes
   }
-  const equalSize = 100 / validCount
-  return {
-    sizes: Array.from({ length: validCount }, () => equalSize),
-    repaired: true,
+  const equalSize = 100 / expectedLength
+  return Array.from({ length: expectedLength }, () => equalSize)
+}
+
+function resolveActiveTabId(
+  activeTabId: string | undefined,
+  tabs: readonly WindowTab[]
+): string | undefined {
+  if (activeTabId && tabs.some((t) => t.id === activeTabId)) {
+    return activeTabId
   }
+  return tabs[0]?.id
+}
+
+function resolveActiveId(
+  current: string | undefined,
+  validIds: readonly string[]
+): string | undefined {
+  if (current && validIds.includes(current)) {
+    return current
+  }
+  return validIds[0]
 }
 
 /**
- * Result of repairing a WindowLayout.
+ * Simple deep equality check for WindowLayout structures.
+ * Compares JSON serializations for structural equality.
  */
-interface RepairWindowLayoutResult {
-  readonly wasRepaired: boolean
-  readonly windowLayout: WindowLayout | undefined
+function deepEqual(a: WindowLayout, b: WindowLayout): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
 }
 
-/**
- * Repair a PanelNode (LeafNode or SplitNode).
- */
-function repairPanelNode(
-  node: unknown
-): { tree: PanelNode; repaired: boolean } | undefined {
-  if (!isRecord(node) || typeof node._tag !== 'string') {
-    return undefined
-  }
-
-  if (node._tag === 'LeafNode') {
-    return repairLeafNode(node)
-  }
-
-  if (node._tag === 'SplitNode') {
-    return repairSplitNode(node)
-  }
-
-  return undefined
-}
+// Schema decoders (cached at module level for performance)
+const decodeWindowTab = Schema.decodeUnknownEither(WindowTabSchema)
+const decodePanelNode = Schema.decodeUnknownEither(PanelNodeSchema)
+const decodePanelTab = Schema.decodeUnknownEither(PanelTabSchema)
+const decodeTileNode = Schema.decodeUnknownEither(WorkspaceTileNodeSchema)
 
 /**
- * Repair a LeafNode.
- */
-function repairLeafNode(
-  node: Record<string, unknown>
-): { tree: PanelNode; repaired: boolean } | undefined {
-  if (typeof node.id !== 'string' || node.id === '') {
-    return undefined
-  }
-
-  if (
-    typeof node.paneType !== 'string' ||
-    !VALID_PANE_TYPES.has(node.paneType)
-  ) {
-    return undefined
-  }
-
-  let repaired = false
-  const result: Record<string, unknown> = {
-    _tag: 'LeafNode',
-    id: node.id,
-    paneType: node.paneType,
-  }
-
-  if (node.terminalId !== undefined) {
-    if (typeof node.terminalId === 'string') {
-      result.terminalId = node.terminalId
-    } else {
-      repaired = true
-    }
-  }
-  if (node.workspaceId !== undefined) {
-    if (typeof node.workspaceId === 'string') {
-      result.workspaceId = node.workspaceId
-    } else {
-      repaired = true
-    }
-  }
-
-  return { tree: result as unknown as PanelNode, repaired }
-}
-
-/**
- * Repair a SplitNode.
- */
-function repairSplitNode(
-  node: Record<string, unknown>
-): { tree: PanelNode; repaired: boolean } | undefined {
-  if (typeof node.id !== 'string' || node.id === '') {
-    return undefined
-  }
-  if (
-    typeof node.direction !== 'string' ||
-    !VALID_DIRECTIONS.has(node.direction)
-  ) {
-    return undefined
-  }
-  if (!Array.isArray(node.children)) {
-    return undefined
-  }
-
-  let repaired = false
-  const validChildren: PanelNode[] = []
-  for (const child of node.children) {
-    const result = repairPanelNode(child)
-    if (result) {
-      validChildren.push(result.tree)
-      if (result.repaired) {
-        repaired = true
-      }
-    } else {
-      repaired = true
-    }
-  }
-
-  if (validChildren.length === 0) {
-    return undefined
-  }
-  const onlyChild = validChildren.length === 1 ? validChildren[0] : undefined
-  if (onlyChild) {
-    return { tree: onlyChild, repaired: true }
-  }
-
-  const sizesResult = repairSplitSizes(
-    node.sizes,
-    validChildren.length,
-    (node.children as unknown[]).length
-  )
-  if (sizesResult.repaired) {
-    repaired = true
-  }
-
-  return {
-    tree: {
-      _tag: 'SplitNode',
-      id: node.id,
-      direction: node.direction as 'horizontal' | 'vertical',
-      children: validChildren,
-      sizes: sizesResult.sizes,
-    },
-    repaired,
-  }
-}
-
-/**
- * Repair a PanelTab.
- */
-function repairPanelTab(
-  tab: unknown
-): { tab: PanelTab; repaired: boolean } | undefined {
-  if (!isRecord(tab)) {
-    return undefined
-  }
-  if (typeof tab.id !== 'string' || tab.id === '') {
-    return undefined
-  }
-
-  const layoutResult = repairPanelNode(tab.panelLayout)
-  if (!layoutResult) {
-    return undefined
-  }
-
-  let repaired = layoutResult.repaired
-  const result: Record<string, unknown> = {
-    id: tab.id,
-    panelLayout: layoutResult.tree,
-  }
-
-  if (tab.label !== undefined) {
-    if (typeof tab.label === 'string') {
-      result.label = tab.label
-    } else {
-      repaired = true
-    }
-  }
-  if (tab.focusedPaneId !== undefined) {
-    if (typeof tab.focusedPaneId === 'string') {
-      result.focusedPaneId = tab.focusedPaneId
-    } else {
-      repaired = true
-    }
-  }
-
-  return { tab: result as unknown as PanelTab, repaired }
-}
-
-/**
- * Repair a WorkspaceTileNode (leaf or split).
- */
-function repairWorkspaceTileNode(
-  node: unknown
-): { tile: WorkspaceTileNode; repaired: boolean } | undefined {
-  if (!isRecord(node) || typeof node._tag !== 'string') {
-    return undefined
-  }
-
-  if (node._tag === 'WorkspaceTileLeaf') {
-    return repairWorkspaceTileLeaf(node)
-  }
-
-  if (node._tag === 'WorkspaceTileSplit') {
-    return repairWorkspaceTileSplit(node)
-  }
-
-  return undefined
-}
-
-/**
- * Repair panel tabs from a raw array.
- */
-function repairPanelTabsArray(rawTabs: unknown): {
-  tabs: PanelTab[]
-  repaired: boolean
-} {
-  if (!Array.isArray(rawTabs)) {
-    return { tabs: [], repaired: true }
-  }
-
-  let repaired = false
-  const validTabs: PanelTab[] = []
-  for (const rawTab of rawTabs) {
-    const result = repairPanelTab(rawTab)
-    if (result) {
-      validTabs.push(result.tab)
-      if (result.repaired) {
-        repaired = true
-      }
-    } else {
-      repaired = true
-    }
-  }
-  return { tabs: validTabs, repaired }
-}
-
-/**
- * Validate and resolve activePanelTabId against valid tabs.
- */
-function resolveActivePanelTabId(
-  raw: unknown,
-  validTabs: readonly PanelTab[]
-): { id: string | undefined; repaired: boolean } {
-  if (typeof raw === 'string') {
-    const tabExists = validTabs.some((t) => t.id === raw)
-    if (tabExists) {
-      return { id: raw, repaired: false }
-    }
-    return { id: validTabs[0]?.id, repaired: true }
-  }
-  return {
-    id: validTabs[0]?.id,
-    repaired: true,
-  }
-}
-
-/**
- * Repair a WorkspaceTileLeaf.
- */
-function repairWorkspaceTileLeaf(
-  node: Record<string, unknown>
-): { tile: WorkspaceTileNode; repaired: boolean } | undefined {
-  if (typeof node.id !== 'string' || node.id === '') {
-    return undefined
-  }
-  if (typeof node.workspaceId !== 'string' || node.workspaceId === '') {
-    return undefined
-  }
-
-  const tabsResult = repairPanelTabsArray(node.panelTabs)
-  const activeResult = resolveActivePanelTabId(
-    node.activePanelTabId,
-    tabsResult.tabs
-  )
-  const repaired = tabsResult.repaired || activeResult.repaired
-
-  return {
-    tile: {
-      _tag: 'WorkspaceTileLeaf',
-      id: node.id,
-      workspaceId: node.workspaceId as string,
-      panelTabs: tabsResult.tabs,
-      activePanelTabId: activeResult.id,
-    },
-    repaired,
-  }
-}
-
-/**
- * Repair the children array of a workspace tile split.
- */
-function repairTileSplitChildren(rawChildren: unknown[]): {
-  children: WorkspaceTileNode[]
-  repaired: boolean
-} {
-  let repaired = false
-  const validChildren: WorkspaceTileNode[] = []
-  for (const child of rawChildren) {
-    const result = repairWorkspaceTileNode(child)
-    if (result) {
-      validChildren.push(result.tile)
-      if (result.repaired) {
-        repaired = true
-      }
-    } else {
-      repaired = true
-    }
-  }
-  return { children: validChildren, repaired }
-}
-
-/**
- * Repair a WorkspaceTileSplit.
- */
-function repairWorkspaceTileSplit(
-  node: Record<string, unknown>
-): { tile: WorkspaceTileNode; repaired: boolean } | undefined {
-  if (typeof node.id !== 'string' || node.id === '') {
-    return undefined
-  }
-  if (
-    typeof node.direction !== 'string' ||
-    !VALID_DIRECTIONS.has(node.direction)
-  ) {
-    return undefined
-  }
-  if (!Array.isArray(node.children)) {
-    return undefined
-  }
-
-  const childrenResult = repairTileSplitChildren(node.children)
-  const { children: validChildren } = childrenResult
-  let repaired = childrenResult.repaired
-
-  if (validChildren.length === 0) {
-    return undefined
-  }
-  const onlyTileChild =
-    validChildren.length === 1 ? validChildren[0] : undefined
-  if (onlyTileChild) {
-    return { tile: onlyTileChild, repaired: true }
-  }
-
-  const sizesResult = repairSplitSizes(
-    node.sizes,
-    validChildren.length,
-    node.children.length
-  )
-  if (sizesResult.repaired) {
-    repaired = true
-  }
-
-  return {
-    tile: {
-      _tag: 'WorkspaceTileSplit',
-      id: node.id,
-      direction: node.direction as 'horizontal' | 'vertical',
-      children: validChildren,
-      sizes: sizesResult.sizes,
-    },
-    repaired,
-  }
-}
-
-/**
- * Repair a WindowTab.
- */
-function repairWindowTab(
-  tab: unknown
-): { tab: WindowTab; repaired: boolean } | undefined {
-  if (!isRecord(tab)) {
-    return undefined
-  }
-  if (typeof tab.id !== 'string' || tab.id === '') {
-    return undefined
-  }
-
-  let repaired = false
-  const result: Record<string, unknown> = { id: tab.id }
-
-  if (tab.label !== undefined) {
-    if (typeof tab.label === 'string') {
-      result.label = tab.label
-    } else {
-      repaired = true
-    }
-  }
-
-  if (tab.workspaceLayout !== undefined && tab.workspaceLayout !== null) {
-    const tileResult = repairWorkspaceTileNode(tab.workspaceLayout)
-    if (tileResult) {
-      result.workspaceLayout = tileResult.tile
-      if (tileResult.repaired) {
-        repaired = true
-      }
-    } else {
-      repaired = true
-    }
-  }
-
-  return { tab: result as unknown as WindowTab, repaired }
-}
-
-/**
- * Repair a deserialized WindowLayout.
+ * Lenient decode of a WindowLayout from `unknown` input.
  *
- * Validates every node in the hierarchy recursively. Invalid nodes are
- * dropped. Single-child splits are collapsed. Sizes are redistributed
- * when invalid.
+ * When strict Schema decode fails (some nodes are malformed), this function
+ * processes the input field-by-field: it tries Schema decode on each node
+ * individually, dropping nodes that fail, and applying repair transforms
+ * (collapse single-child splits, redistribute sizes, resolve active IDs).
  */
-function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
-  if (!isRecord(layout)) {
+function lenientDecodeWindowLayout(input: unknown): RepairWindowLayoutResult {
+  if (!isRecord(input)) {
     return { windowLayout: undefined, wasRepaired: true }
   }
 
-  if (!Array.isArray(layout.tabs)) {
+  if (!Array.isArray(input.tabs)) {
     return { windowLayout: undefined, wasRepaired: true }
   }
 
-  let repaired = false
   const validTabs: WindowTab[] = []
-  for (const rawTab of layout.tabs) {
-    const result = repairWindowTab(rawTab)
-    if (result) {
-      validTabs.push(result.tab)
-      if (result.repaired) {
-        repaired = true
-      }
-    } else {
-      repaired = true
+  for (const rawTab of input.tabs) {
+    const decoded = lenientDecodeWindowTab(rawTab)
+    if (decoded) {
+      validTabs.push(decoded)
     }
   }
 
   if (validTabs.length === 0) {
     return {
       windowLayout: { tabs: [], activeTabId: undefined },
-      wasRepaired: repaired,
+      wasRepaired: true,
     }
   }
 
-  let activeTabId: string | undefined
-  if (typeof layout.activeTabId === 'string') {
-    const tabExists = validTabs.some((t) => t.id === layout.activeTabId)
-    if (tabExists) {
-      activeTabId = layout.activeTabId as string
-    } else {
-      activeTabId = validTabs[0]?.id
-      repaired = true
-    }
-  } else {
-    activeTabId = validTabs[0]?.id
-    repaired = true
+  const activeTabId = resolveActiveTabId(
+    typeof input.activeTabId === 'string' ? input.activeTabId : undefined,
+    validTabs
+  )
+  const layout: WindowLayout = { tabs: validTabs, activeTabId }
+  const repaired = repairTransforms(layout)
+  return { windowLayout: repaired, wasRepaired: true }
+}
+
+/**
+ * Lenient decode of a WindowTab. Returns undefined if the tab is irrecoverable.
+ */
+function lenientDecodeWindowTab(raw: unknown): WindowTab | undefined {
+  // Try strict Schema decode first
+  const result = decodeWindowTab(raw)
+  if (Either.isRight(result) && result.right.id !== '') {
+    return result.right
   }
+
+  // Lenient: validate required fields manually
+  if (!isRecord(raw)) {
+    return undefined
+  }
+  if (typeof raw.id !== 'string' || raw.id === '') {
+    return undefined
+  }
+
+  const tab: Record<string, unknown> = { id: raw.id }
+  if (typeof raw.label === 'string') {
+    tab.label = raw.label
+  }
+  if (raw.workspaceLayout !== undefined && raw.workspaceLayout !== null) {
+    const tile = lenientDecodeTileNode(raw.workspaceLayout)
+    if (tile) {
+      tab.workspaceLayout = tile
+    }
+  }
+
+  return tab as unknown as WindowTab
+}
+
+/**
+ * Lenient decode of a WorkspaceTileNode.
+ */
+function lenientDecodeTileNode(raw: unknown): WorkspaceTileNode | undefined {
+  // Try strict Schema decode
+  const result = decodeTileNode(raw)
+  if (Either.isRight(result)) {
+    return result.right
+  }
+
+  if (!isRecord(raw) || typeof raw._tag !== 'string') {
+    return undefined
+  }
+
+  if (raw._tag === 'WorkspaceTileLeaf') {
+    return lenientDecodeTileLeaf(raw)
+  }
+
+  if (raw._tag === 'WorkspaceTileSplit') {
+    return lenientDecodeTileSplit(raw)
+  }
+
+  return undefined
+}
+
+/**
+ * Lenient decode of a WorkspaceTileLeaf.
+ */
+function lenientDecodeTileLeaf(
+  raw: Record<string, unknown>
+): WorkspaceTileLeaf | undefined {
+  if (typeof raw.id !== 'string' || raw.id === '') {
+    return undefined
+  }
+  if (typeof raw.workspaceId !== 'string' || raw.workspaceId === '') {
+    return undefined
+  }
+
+  const panelTabs: PanelTab[] = []
+  if (Array.isArray(raw.panelTabs)) {
+    for (const rawTab of raw.panelTabs) {
+      const decoded = lenientDecodePanelTab(rawTab)
+      if (decoded) {
+        panelTabs.push(decoded)
+      }
+    }
+  }
+
+  const activePanelTabId = resolveActiveId(
+    typeof raw.activePanelTabId === 'string' ? raw.activePanelTabId : undefined,
+    panelTabs.map((t) => t.id)
+  )
 
   return {
-    windowLayout: { tabs: validTabs, activeTabId },
-    wasRepaired: repaired,
+    _tag: 'WorkspaceTileLeaf',
+    id: raw.id,
+    workspaceId: raw.workspaceId,
+    panelTabs,
+    activePanelTabId,
+  }
+}
+
+/**
+ * Lenient decode of a WorkspaceTileSplit.
+ */
+function lenientDecodeTileSplit(
+  raw: Record<string, unknown>
+): WorkspaceTileNode | undefined {
+  if (typeof raw.id !== 'string' || raw.id === '') {
+    return undefined
+  }
+  if (typeof raw.direction !== 'string') {
+    return undefined
+  }
+  if (raw.direction !== 'horizontal' && raw.direction !== 'vertical') {
+    return undefined
+  }
+  if (!Array.isArray(raw.children)) {
+    return undefined
+  }
+
+  const validChildren: WorkspaceTileNode[] = []
+  for (const child of raw.children) {
+    const decoded = lenientDecodeTileNode(child)
+    if (decoded) {
+      validChildren.push(decoded)
+    }
+  }
+
+  if (validChildren.length === 0) {
+    return undefined
+  }
+  if (validChildren.length === 1 && validChildren[0]) {
+    return validChildren[0]
+  }
+
+  const sizes = repairSizesTransform(
+    Array.isArray(raw.sizes) ? (raw.sizes as readonly number[]) : [],
+    validChildren.length
+  )
+
+  return {
+    _tag: 'WorkspaceTileSplit',
+    id: raw.id,
+    direction: raw.direction,
+    children: validChildren,
+    sizes,
+  }
+}
+
+/**
+ * Lenient decode of a PanelTab.
+ */
+function lenientDecodePanelTab(raw: unknown): PanelTab | undefined {
+  // Try strict Schema decode first
+  const result = decodePanelTab(raw)
+  if (Either.isRight(result) && result.right.id !== '') {
+    return result.right
+  }
+
+  // Lenient: validate required fields
+  if (!isRecord(raw)) {
+    return undefined
+  }
+  if (typeof raw.id !== 'string' || raw.id === '') {
+    return undefined
+  }
+
+  const panelLayout = lenientDecodePanelNode(raw.panelLayout)
+  if (!panelLayout) {
+    return undefined
+  }
+
+  const tab: Record<string, unknown> = {
+    id: raw.id,
+    panelLayout,
+  }
+  if (typeof raw.label === 'string') {
+    tab.label = raw.label
+  }
+  if (typeof raw.focusedPaneId === 'string') {
+    tab.focusedPaneId = raw.focusedPaneId
+  }
+
+  return tab as unknown as PanelTab
+}
+
+/**
+ * Lenient decode of a PanelNode (LeafNode or SplitNode).
+ */
+function lenientDecodePanelNode(raw: unknown): PanelNode | undefined {
+  // Try strict Schema decode first
+  const result = decodePanelNode(raw)
+  if (Either.isRight(result)) {
+    return result.right
+  }
+
+  if (!isRecord(raw) || typeof raw._tag !== 'string') {
+    return undefined
+  }
+
+  if (raw._tag === 'LeafNode') {
+    return lenientDecodeLeafNode(raw)
+  }
+
+  if (raw._tag === 'SplitNode') {
+    return lenientDecodeSplitNode(raw)
+  }
+
+  return undefined
+}
+
+/**
+ * Lenient decode of a LeafNode.
+ */
+function lenientDecodeLeafNode(
+  raw: Record<string, unknown>
+): PanelNode | undefined {
+  if (typeof raw.id !== 'string' || raw.id === '') {
+    return undefined
+  }
+  if (typeof raw.paneType !== 'string') {
+    return undefined
+  }
+
+  const validPaneTypes = new Set([
+    'agent',
+    'terminal',
+    'diff',
+    'devServerTerminal',
+    'review',
+  ])
+  if (!validPaneTypes.has(raw.paneType)) {
+    return undefined
+  }
+
+  const result: Record<string, unknown> = {
+    _tag: 'LeafNode',
+    id: raw.id,
+    paneType: raw.paneType,
+  }
+
+  if (typeof raw.terminalId === 'string') {
+    result.terminalId = raw.terminalId
+  }
+  if (typeof raw.workspaceId === 'string') {
+    result.workspaceId = raw.workspaceId
+  }
+
+  return result as unknown as PanelNode
+}
+
+/**
+ * Lenient decode of a SplitNode.
+ */
+function lenientDecodeSplitNode(
+  raw: Record<string, unknown>
+): PanelNode | undefined {
+  if (typeof raw.id !== 'string' || raw.id === '') {
+    return undefined
+  }
+  if (typeof raw.direction !== 'string') {
+    return undefined
+  }
+  if (raw.direction !== 'horizontal' && raw.direction !== 'vertical') {
+    return undefined
+  }
+  if (!Array.isArray(raw.children)) {
+    return undefined
+  }
+
+  const validChildren: PanelNode[] = []
+  for (const child of raw.children) {
+    const decoded = lenientDecodePanelNode(child)
+    if (decoded) {
+      validChildren.push(decoded)
+    }
+  }
+
+  if (validChildren.length === 0) {
+    return undefined
+  }
+  if (validChildren.length === 1 && validChildren[0]) {
+    return validChildren[0]
+  }
+
+  const sizes = repairSizesTransform(
+    Array.isArray(raw.sizes) ? (raw.sizes as readonly number[]) : [],
+    validChildren.length
+  )
+
+  return {
+    _tag: 'SplitNode',
+    id: raw.id,
+    direction: raw.direction,
+    children: validChildren,
+    sizes,
   }
 }
 
@@ -2005,6 +2033,7 @@ export {
   computeClosePaneGateAction,
   computeCloseWorkspaceAction,
   computeProgressiveCloseAction,
+  decodeWindowLayout,
   findLeafByTerminalIdInLayout,
   findPaneAcrossAllTabs,
   findPaneInActiveTab,
@@ -2023,7 +2052,6 @@ export {
   removeWorkspaceFromLayout,
   renameWindowTab,
   reorderWindowTabs,
-  repairWindowLayout,
   resolveActivePaneForPanelTab,
   resolveActivePaneForWindowTab,
   resolveActiveWorkspaceId,

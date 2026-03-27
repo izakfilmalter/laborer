@@ -321,3 +321,51 @@
 - `apps/web/test/workspace-frames-minimize.test.tsx` — Removed legacy layout props
 - `apps/web/test/workspace-frame-header-container.test.tsx` — Updated mock path for `getScopedActivePaneId`
 
+## Issue 4: Replace repair code with Effect Schema decode — DONE
+
+**Date:** 2026-03-26
+
+### What was done
+
+1. Created `decodeWindowLayout` function in `window-layout-utils.ts` — a Schema-based replacement for the ~490-line manual `repairWindowLayout` function and its 12+ helper functions.
+2. The new function uses a two-phase approach:
+   - **Phase 1 (fast path):** `Schema.decodeUnknownEither(WindowLayoutSchema)` for strict validation. Valid layouts hit this path and skip all manual validation. Post-decode repair transforms handle edge cases like single-child split collapse, size redistribution, stale active ID resolution, and empty ID filtering.
+   - **Phase 2 (lenient fallback):** When strict Schema decode fails (malformed data), a lenient decode pipeline processes the input field-by-field. It tries `Schema.decodeUnknownEither` at each node level (WindowTab, PanelTab, PanelNode, WorkspaceTileNode), falling back to manual field validation only when Schema decode fails at that level. Invalid nodes are dropped, valid ones are preserved.
+3. Deleted the old `repairWindowLayout` function and all 14 helper functions (~490 lines removed):
+   - `VALID_PANE_TYPES`, `VALID_DIRECTIONS`, `isRecord` (old copy), `repairSplitSizes`, `repairPanelNode`, `repairLeafNode`, `repairSplitNode`, `repairPanelTab`, `repairWorkspaceTileNode`, `repairPanelTabsArray`, `resolveActivePanelTabId`, `repairWorkspaceTileLeaf`, `repairTileSplitChildren`, `repairWorkspaceTileSplit`, `repairWindowTab`, `repairWindowLayout`.
+4. Added Effect Schema imports: `PanelNodeSchema`, `PanelTabSchema`, `WindowLayoutSchema`, `WindowTabSchema`, `WorkspaceTileNodeSchema`, plus `Either` and `Schema` from `effect`.
+5. Module-level cached Schema decoders for performance: `decodeWindowTab`, `decodePanelNode`, `decodePanelTab`, `decodeTileNode`.
+6. Shared repair transform functions used by both fast and lenient paths: `repairTransforms`, `repairWindowTabTransform`, `repairWorkspaceTileTransform`, `repairPanelTabTransform`, `repairPanelNodeTransform`, `repairSizesTransform`, `resolveActiveTabId`, `resolveActiveId`, `deepEqual`.
+7. Replaced the call site in `use-panel-layout.ts`: `repairWindowLayout(raw)` → `decodeWindowLayout(raw)`. Updated import from `repairWindowLayout` to `decodeWindowLayout`.
+8. Wrote 15 TDD tests for `decodeWindowLayout` in `hierarchical-persistence.test.ts` covering all edge cases from the old `repairWindowLayout` tests:
+   - Valid layout round-trip (no repair needed)
+   - Non-object input returns undefined
+   - Missing/invalid tabs returns undefined
+   - All tabs invalid returns empty layout
+   - Stale activeTabId resolved to first valid tab
+   - Invalid window tabs (empty id) dropped
+   - Invalid panel tabs dropped
+   - Stale activePanelTabId resolved
+   - Single-child workspace tile splits collapsed
+   - Single-child panel split nodes collapsed
+   - Invalid pane types cause panel tab to be dropped
+   - Valid diff/review pane types preserved
+   - Invalid optional fields stripped (non-string terminalId)
+   - Invalid sizes redistributed as equal
+   - Deeply nested hierarchies handled
+9. Deleted the old 15 `repairWindowLayout` tests — replaced by the equivalent `decodeWindowLayout` tests.
+10. Removed `repairWindowLayout` from the export list.
+11. `bun run check` passes (typecheck + format + all tests across all packages).
+
+### Notes
+
+- The `RepairWindowLayoutResult` interface is preserved with the same shape (`{ wasRepaired: boolean; windowLayout: WindowLayout | undefined }`) for backward compatibility with the call site.
+- The `isRecord` type guard is kept (single definition) since it's used by the lenient decode pipeline.
+- The lenient decode pipeline is structurally similar to the old manual repair code but is significantly more concise because it delegates to Schema decode at each level first, only falling back to manual checks when Schema fails.
+
+### Files changed
+
+- `apps/web/src/panels/window-layout-utils.ts` — Deleted ~490 lines of manual repair code, added ~280 lines of Schema-based decode + lenient fallback + repair transforms. Net reduction: ~210 lines.
+- `apps/web/src/routes/-hooks/use-panel-layout.ts` — Changed import and call from `repairWindowLayout` to `decodeWindowLayout`
+- `apps/web/test/hierarchical-persistence.test.ts` — Replaced 15 old `repairWindowLayout` tests with 15 new `decodeWindowLayout` tests
+

@@ -21,9 +21,9 @@ import type {
 } from '@laborer/shared/types'
 import { describe, expect, it } from 'vitest'
 import {
+  decodeWindowLayout,
   getStaleTerminalLeavesHierarchical,
   reconcileWindowLayout,
-  repairWindowLayout,
 } from '../src/panels/window-layout-utils'
 
 // ---------------------------------------------------------------------------
@@ -422,48 +422,48 @@ describe('reconcileWindowLayout', () => {
 })
 
 // ---------------------------------------------------------------------------
-// repairWindowLayout
+// decodeWindowLayout (Schema-based layout decode and repair)
 // ---------------------------------------------------------------------------
 
-describe('repairWindowLayout', () => {
+describe('decodeWindowLayout', () => {
+  it('decodes a valid layout without changes (round-trip)', () => {
+    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
+    const tab = makePanelTab('tab-1', leaf)
+    const tile = makeWorkspaceTile('tile-1', 'ws-1', [tab])
+    const layout = makeLayout([makeWindowTab('wt-1', tile)])
+
+    const result = decodeWindowLayout(layout)
+    expect(result.wasRepaired).toBe(false)
+    expect(result.windowLayout).toEqual(layout)
+  })
+
   it('returns undefined for non-object input', () => {
-    expect(repairWindowLayout(null)).toEqual({
+    expect(decodeWindowLayout(null)).toEqual({
       windowLayout: undefined,
       wasRepaired: true,
     })
-    expect(repairWindowLayout('string')).toEqual({
+    expect(decodeWindowLayout('string')).toEqual({
       windowLayout: undefined,
       wasRepaired: true,
     })
-    expect(repairWindowLayout(42)).toEqual({
+    expect(decodeWindowLayout(42)).toEqual({
       windowLayout: undefined,
       wasRepaired: true,
     })
   })
 
   it('returns undefined when tabs is not an array', () => {
-    expect(repairWindowLayout({ tabs: 'not-array' })).toEqual({
+    expect(decodeWindowLayout({ tabs: 'not-array' })).toEqual({
       windowLayout: undefined,
       wasRepaired: true,
     })
   })
 
   it('returns empty layout when all tabs are invalid', () => {
-    expect(repairWindowLayout({ tabs: [{ id: '' }, { id: 42 }] })).toEqual({
+    expect(decodeWindowLayout({ tabs: [{ id: '' }, { id: 42 }] })).toEqual({
       windowLayout: { tabs: [], activeTabId: undefined },
       wasRepaired: true,
     })
-  })
-
-  it('repairs a valid layout without changes', () => {
-    const leaf = makeLeaf('pane-1', 'term-1', 'ws-1')
-    const tab = makePanelTab('tab-1', leaf)
-    const tile = makeWorkspaceTile('tile-1', 'ws-1', [tab])
-    const layout = makeLayout([makeWindowTab('wt-1', tile)])
-
-    const result = repairWindowLayout(layout)
-    expect(result.wasRepaired).toBe(false)
-    expect(result.windowLayout).toEqual(layout)
   })
 
   it('repairs activeTabId pointing to non-existent tab', () => {
@@ -475,7 +475,7 @@ describe('repairWindowLayout', () => {
       activeTabId: 'non-existent',
     }
 
-    const result = repairWindowLayout(layout)
+    const result = decodeWindowLayout(layout)
     expect(result.wasRepaired).toBe(true)
     expect(result.windowLayout?.activeTabId).toBe('wt-1')
   })
@@ -492,7 +492,7 @@ describe('repairWindowLayout', () => {
       activeTabId: 'wt-1',
     }
 
-    const result = repairWindowLayout(layout)
+    const result = decodeWindowLayout(layout)
     expect(result.wasRepaired).toBe(true)
     expect(result.windowLayout?.tabs).toHaveLength(1)
     expect(result.windowLayout?.tabs[0]?.id).toBe('wt-1')
@@ -519,7 +519,7 @@ describe('repairWindowLayout', () => {
       activeTabId: 'wt-1',
     }
 
-    const result = repairWindowLayout(layout)
+    const result = decodeWindowLayout(layout)
     expect(result.wasRepaired).toBe(true)
     const tile = result.windowLayout?.tabs[0]
       ?.workspaceLayout as WorkspaceTileLeaf
@@ -546,7 +546,7 @@ describe('repairWindowLayout', () => {
       activeTabId: 'wt-1',
     }
 
-    const result = repairWindowLayout(layout)
+    const result = decodeWindowLayout(layout)
     expect(result.wasRepaired).toBe(true)
     const tile = result.windowLayout?.tabs[0]
       ?.workspaceLayout as WorkspaceTileLeaf
@@ -573,7 +573,7 @@ describe('repairWindowLayout', () => {
       activeTabId: 'wt-1',
     }
 
-    const result = repairWindowLayout(layout)
+    const result = decodeWindowLayout(layout)
     expect(result.wasRepaired).toBe(true)
     expect(result.windowLayout?.tabs[0]?.workspaceLayout?._tag).toBe(
       'WorkspaceTileLeaf'
@@ -609,7 +609,7 @@ describe('repairWindowLayout', () => {
       activeTabId: 'wt-1',
     }
 
-    const result = repairWindowLayout(layout)
+    const result = decodeWindowLayout(layout)
     expect(result.wasRepaired).toBe(true)
     const tile = result.windowLayout?.tabs[0]
       ?.workspaceLayout as WorkspaceTileLeaf
@@ -642,7 +642,7 @@ describe('repairWindowLayout', () => {
       activeTabId: 'wt-1',
     }
 
-    const result = repairWindowLayout(layout)
+    const result = decodeWindowLayout(layout)
     expect(result.wasRepaired).toBe(true)
     // The invalid pane type causes the panel tab to be dropped
     const tile = result.windowLayout?.tabs[0]
@@ -658,7 +658,7 @@ describe('repairWindowLayout', () => {
     const tile = makeWorkspaceTile('tile-1', 'ws-1', [tab1, tab2])
     const layout = makeLayout([makeWindowTab('wt-1', tile)])
 
-    const result = repairWindowLayout(layout)
+    const result = decodeWindowLayout(layout)
     expect(result.wasRepaired).toBe(false)
     expect(result.windowLayout).toEqual(layout)
   })
@@ -691,7 +691,7 @@ describe('repairWindowLayout', () => {
       activeTabId: 'wt-1',
     }
 
-    const result = repairWindowLayout(layout)
+    const result = decodeWindowLayout(layout)
     expect(result.wasRepaired).toBe(true)
     const tile = result.windowLayout?.tabs[0]
       ?.workspaceLayout as WorkspaceTileLeaf
@@ -730,7 +730,7 @@ describe('repairWindowLayout', () => {
       activeTabId: 'wt-1',
     }
 
-    const result = repairWindowLayout(layout)
+    const result = decodeWindowLayout(layout)
     expect(result.wasRepaired).toBe(true)
     const tile = result.windowLayout?.tabs[0]
       ?.workspaceLayout as WorkspaceTileLeaf
@@ -757,7 +757,7 @@ describe('repairWindowLayout', () => {
       makeWindowTab('wt-2', tile1),
     ])
 
-    const result = repairWindowLayout(layout)
+    const result = decodeWindowLayout(layout)
     expect(result.wasRepaired).toBe(false)
     expect(result.windowLayout).toEqual(layout)
   })

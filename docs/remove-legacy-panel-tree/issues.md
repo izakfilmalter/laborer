@@ -144,7 +144,7 @@ Factory functions in test files should use the renamed types (`LeafNode`, `Split
 
 ## Issue 4: Replace repair code with Effect Schema decode
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

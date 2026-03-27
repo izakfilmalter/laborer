@@ -47,3 +47,26 @@ Status: COMPLETE
 - All 41 parser tests pass
 - TypeScript compiles with no errors
 - Formatting clean (473 files checked, no fixes needed)
+
+## Issue #2: TreePane renders `<FileTree>` from stream data
+Status: COMPLETE
+
+### What was done:
+- Installed `@pierre/trees` package (was declared in package.json but not in node_modules)
+- Replaced empty TreePane placeholder with a fully wired `<FileTree>` component in `apps/web/src/panes/tree-pane.tsx`
+  - Subscribes to `fileTree.subscribe` streaming RPC via `LaborerClient.query()` which returns a pull-based atom for streaming RPCs
+  - Uses `useMemo` to create per-workspace atom keyed on `workspaceId`
+  - Extracts the latest `FileTreeSnapshot` from the pull result's accumulated items array
+  - Passes `files` and `gitStatus` as controlled props to `<FileTree>`
+  - Configured `@pierre/trees` with `flattenEmptyDirectories: true`, `sort: true`, `virtualize: { threshold: 200 }`
+  - Shows loading skeleton (animated spinner + placeholder lines) before first snapshot arrives
+  - Shows "No files in worktree" empty state when file list is empty
+  - Gated behind `LifecyclePhase.Eventually` since FileTreeService is in DeferredGroup1Layers
+  - Clean subscription lifecycle: atom is scoped to component mount, tears down on unmount
+- No CSS import needed — `@pierre/trees` uses Shadow DOM for style encapsulation
+- Existing tree panel layout tests continue to pass (they mock TreePane entirely)
+
+### Verification:
+- All type checks pass (7/7 tasks)
+- All tests pass (393 passed, 1 skipped across 47 test files)
+- Formatting clean (473 files checked, no fixes needed)

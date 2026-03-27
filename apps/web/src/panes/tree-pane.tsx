@@ -1,12 +1,45 @@
 /**
- * File tree pane component — renders a file tree using @pierre/trees.
+ * File tree pane component — renders a live file tree using @pierre/trees.
+ *
+ * Subscribes to the `fileTree.subscribe` streaming RPC which provides
+ * the full list of tracked + untracked files and git status entries for
+ * a workspace's worktree. Data is fed directly into @pierre/trees'
+ * React `<FileTree>` component as controlled `files` and `gitStatus`
+ * props.
  *
  * Displayed as a left-side panel alongside workspace frames, mirroring
  * how the diff pane is rendered on the right side.
  *
- * For now, renders an empty tree placeholder. A server-side service
- * will provide the file list via LiveStore (similar to DiffService).
+ * @see packages/server/src/services/file-tree-service.ts — server-side service
+ * @see docs/file-tree-git-status/PRD.md — feature PRD
  */
+
+import { Result } from '@effect-atom/atom'
+import { useAtomValue } from '@effect-atom/atom-react/Hooks'
+import type { FileTreeSnapshot } from '@laborer/shared/rpc'
+import { FileTree } from '@pierre/trees/react'
+import { Loader2 } from 'lucide-react'
+import { useMemo } from 'react'
+import { LaborerClient } from '@/atoms/laborer-client'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { useWhenPhase } from '@/hooks/use-when-phase'
+
+/**
+ * Options for the @pierre/trees FileTree component.
+ * Configured once and reused across renders.
+ *
+ * - `flattenEmptyDirectories`: Collapses single-child directories
+ *   (e.g., `src/components/` shown as one row when `components/`
+ *   has no siblings), matching VS Code's compact folder display.
+ * - `sort`: Alphabetical ordering, folders first.
+ * - `virtualize`: Enables virtualized rendering for large repos,
+ *   only rendering visible rows when the file count exceeds the threshold.
+ */
+const fileTreeOptions = {
+  flattenEmptyDirectories: true,
+  sort: true,
+  virtualize: { threshold: 200 },
+} as const
 
 interface TreePaneProps {
   /** Callback to close the tree pane. */
@@ -15,7 +48,101 @@ interface TreePaneProps {
   readonly workspaceId: string
 }
 
+/**
+ * Extract the latest snapshot from the streaming RPC pull result.
+ *
+ * The pull-based atom accumulates stream items in `result.value.items`.
+ * Since each FileTreeSnapshot is a complete replacement (not a delta),
+ * we only care about the most recent item in the array.
+ */
+function useFileTreeSnapshot(workspaceId: string): {
+  snapshot: FileTreeSnapshot | null
+  isLoading: boolean
+} {
+  const fileTreeAtom = useMemo(
+    () => LaborerClient.query('fileTree.subscribe', { workspaceId }),
+    [workspaceId]
+  )
+  const result = useAtomValue(fileTreeAtom)
+
+  if (Result.isInitial(result) || result.waiting) {
+    return { snapshot: null, isLoading: true }
+  }
+
+  if (Result.isFailure(result)) {
+    return { snapshot: null, isLoading: false }
+  }
+
+  // Pull result success value has shape { done, items: NonEmptyArray<T> }
+  const { items } = result.value
+  const latestSnapshot = items.at(-1) ?? null
+  return { snapshot: latestSnapshot, isLoading: false }
+}
+
+/**
+ * Loading skeleton shown before the first file tree snapshot arrives.
+ * Renders animated placeholder lines that mimic a file tree structure.
+ */
+function TreePaneLoading() {
+  return (
+    <div className="flex flex-col gap-1.5 p-2" data-testid="tree-pane-loading">
+      <div className="flex items-center gap-2">
+        <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+        <span className="text-muted-foreground text-xs">Loading files...</span>
+      </div>
+      {/* Skeleton lines to hint at tree structure */}
+      <div className="flex flex-col gap-1 pt-1 pl-1">
+        <div className="h-4 w-3/4 animate-pulse rounded bg-muted" />
+        <div className="h-4 w-1/2 animate-pulse rounded bg-muted pl-4" />
+        <div className="h-4 w-2/3 animate-pulse rounded bg-muted pl-4" />
+        <div className="h-4 w-5/8 animate-pulse rounded bg-muted" />
+        <div className="h-4 w-1/3 animate-pulse rounded bg-muted pl-4" />
+        <div className="h-4 w-3/5 animate-pulse rounded bg-muted" />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Inner content of the tree pane, mounted only after Phase 4 (Eventually)
+ * when the FileTreeService's deferred proxy has been swapped for the real
+ * service. Subscribes to the streaming RPC and renders @pierre/trees.
+ */
+function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
+  const { snapshot, isLoading } = useFileTreeSnapshot(workspaceId)
+
+  if (isLoading || snapshot === null) {
+    return <TreePaneLoading />
+  }
+
+  if (snapshot.files.length === 0) {
+    return (
+      <div className="flex items-center justify-center p-4">
+        <span className="text-muted-foreground text-xs">
+          No files in worktree
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <FileTree
+      className="h-full"
+      files={snapshot.files as string[]}
+      gitStatus={
+        snapshot.gitStatus as {
+          path: string
+          status: 'added' | 'deleted' | 'modified'
+        }[]
+      }
+      options={fileTreeOptions}
+    />
+  )
+}
+
 function TreePane({ workspaceId, onClose }: TreePaneProps) {
+  const isEventually = useWhenPhase(LifecyclePhase.Eventually)
+
   return (
     <div
       className="flex h-full flex-col overflow-hidden"
@@ -36,7 +163,11 @@ function TreePane({ workspaceId, onClose }: TreePaneProps) {
         )}
       </div>
       <div className="min-h-0 flex-1">
-        {/* File tree will be populated once the server provides file data */}
+        {isEventually ? (
+          <TreePaneContent workspaceId={workspaceId} />
+        ) : (
+          <TreePaneLoading />
+        )}
       </div>
     </div>
   )

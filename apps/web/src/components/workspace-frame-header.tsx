@@ -17,6 +17,7 @@
 import {
   ClipboardCheck,
   FileCode2,
+  FolderTree,
   Minus,
   Plus,
   Server,
@@ -79,6 +80,8 @@ interface WorkspaceFrameHeaderProps {
   readonly prUrl: string | null
   /** Whether the review pane is currently open for the active workspace. */
   readonly reviewIsOpen?: boolean | undefined
+  /** Whether the file tree pane is currently open for the active workspace. */
+  readonly treeIsOpen?: boolean | undefined
   /** The workspace ID, used for the close-workspace action. */
   readonly workspaceId: string | undefined
 }
@@ -187,6 +190,47 @@ function ReviewButtonWithCount({
   )
 }
 
+/**
+ * Icon-only file tree toggle button.
+ */
+function TreeToggleButton({
+  disabled,
+  onClick,
+  treeIsOpen,
+}: {
+  readonly disabled: boolean
+  readonly onClick: () => void
+  readonly treeIsOpen: boolean
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label={treeIsOpen ? 'Close file tree' : 'Open file tree'}
+            aria-pressed={treeIsOpen}
+            className={treeIsOpen ? 'bg-accent text-foreground' : ''}
+            disabled={disabled}
+            onClick={onClick}
+            size="icon-sm"
+            variant="ghost"
+          />
+        }
+      >
+        <FolderTree className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipContent>
+        {treeIsOpen ? 'Close file tree' : 'Open file tree'}
+        <KbdGroup>
+          <Kbd>^</Kbd>
+          <Kbd>B</Kbd>
+          <Kbd>T</Kbd>
+        </KbdGroup>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 function WorkspaceFrameHeader({
   activePaneId,
   actions,
@@ -207,6 +251,7 @@ function WorkspaceFrameHeader({
   prUrl,
   projectName,
   reviewIsOpen = false,
+  treeIsOpen = false,
   workspaceId,
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
@@ -337,6 +382,11 @@ function WorkspaceFrameHeader({
                 </TooltipContent>
               </Tooltip>
             )}
+            <TreeToggleButton
+              disabled={!hasActivePane}
+              onClick={withFocus((paneId) => actions?.toggleTreePane(paneId))}
+              treeIsOpen={treeIsOpen}
+            />
             <Tooltip>
               <TooltipTrigger
                 render={

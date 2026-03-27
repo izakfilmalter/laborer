@@ -66,6 +66,7 @@ function mockActions(): PanelActions {
     toggleDiffPane: vi.fn(),
     toggleFullscreenPane: vi.fn(),
     toggleReviewPane: vi.fn(),
+    toggleTreePane: vi.fn(() => false),
     addPanelTab: vi.fn(),
     addWorkspaceToCurrentTab: vi.fn(),
     addWindowTab: vi.fn(),

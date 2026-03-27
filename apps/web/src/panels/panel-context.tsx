@@ -331,6 +331,21 @@ interface PanelActions {
   readonly toggleReviewPane: (paneId: string) => boolean
 
   /**
+   * Toggle a file tree pane for a workspace.
+   *
+   * When toggled ON: shows a left-side panel with the workspace's file
+   * tree alongside the main content.
+   * When toggled OFF: closes the file tree panel.
+   *
+   * The tree panel is forced to the left side, unlike diff and review
+   * which are on the right.
+   *
+   * @param paneId - The ID of the pane (used to inherit workspaceId)
+   * @returns Whether the tree pane is now visible (true = toggled on)
+   */
+  readonly toggleTreePane: (paneId: string) => boolean
+
+  /**
    * The current window layout (for rendering the tab bar).
    */
   readonly windowLayout: WindowLayout | undefined

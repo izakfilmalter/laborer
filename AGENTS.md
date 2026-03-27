@@ -134,6 +134,7 @@ The `.reference/` directory contains shallow clones of key dependency repositori
 - `.reference/ghostty/` — [Ghostty](https://github.com/ghostty-org/ghostty) fast, native terminal emulator (Zig, GPU-accelerated rendering, platform integration)
 - `.reference/ghostty-web/` — [ghostty-web](https://github.com/coder/ghostty-web) Ghostty terminal emulator compiled for the web (WebAssembly, browser-based terminal)
 - `.reference/mux/` — [Mux](https://github.com/coder/mux) desktop app for isolated, parallel agentic development (coding agent multiplexer, Electron, TypeScript)
+- `.reference/pierre/` — [Pierre](https://github.com/pierrecomputer/pierre) monorepo (@pierre/trees file tree UI, @pierre/diffs diff viewer, Shadow DOM components)
 
 <!-- effect-solutions:start -->
 ## Effect Best Practices

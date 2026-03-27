@@ -88,7 +88,7 @@ Use a real in-memory LiveStore (prior art: `schema.test.ts`). Vertical slices:
 
 ## Issue 3: Reorganize utility files into 3 modules by tree level
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

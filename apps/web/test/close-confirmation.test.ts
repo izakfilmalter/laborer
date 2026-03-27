@@ -18,11 +18,11 @@ import type {
   WorkspaceTileSplit,
 } from '@laborer/shared/types'
 import { describe, expect, it } from 'vitest'
-import type { TerminalProcessInfo } from '../src/panels/window-tab-utils'
+import type { TerminalProcessInfo } from '../src/panels/window-layout-utils'
 import {
   shouldConfirmClosePanelTab,
   shouldConfirmCloseWindowTab,
-} from '../src/panels/window-tab-utils'
+} from '../src/panels/window-layout-utils'
 
 // ---------------------------------------------------------------------------
 // Test fixtures

@@ -52,7 +52,7 @@ import { getDesktopBridge } from '@/lib/desktop'
 import type { NavigationDirection } from '@/panels/layout-utils'
 import { findNodeById, findPaneInDirection } from '@/panels/layout-utils'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
-import { computeProgressiveCloseAction } from '@/panels/window-tab-utils'
+import { computeProgressiveCloseAction } from '@/panels/window-layout-utils'
 
 /** Timeout for the prefix key sequence (ms). */
 const SEQUENCE_TIMEOUT = 1500

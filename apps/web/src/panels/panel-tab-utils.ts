@@ -13,7 +13,7 @@
  * All functions return a new workspace tile leaf — the original is never mutated.
  *
  * @see packages/shared/src/types.ts — WorkspaceTileLeaf, PanelTab, PanelNode
- * @see apps/web/src/panels/window-tab-utils.ts — window tab CRUD utilities
+ * @see apps/web/src/panels/window-layout-utils.ts — window layout utilities
  * @see apps/web/src/panels/workspace-tile-utils.ts — workspace tile utilities
  */
 

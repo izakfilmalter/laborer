@@ -24,7 +24,7 @@ import {
   getStaleTerminalLeavesHierarchical,
   reconcileWindowLayout,
   repairWindowLayout,
-} from '../src/panels/window-tab-utils'
+} from '../src/panels/window-layout-utils'
 
 // ---------------------------------------------------------------------------
 // Test fixtures

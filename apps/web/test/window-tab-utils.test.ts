@@ -24,13 +24,13 @@ import {
   findWorkspaceLocation,
   getActiveWindowTab,
   getAllWorkspaceTileLeaves,
-  getWorkspaceTileLeaves,
   removeWindowTab,
   reorderWindowTabs,
   switchWindowTab,
   switchWindowTabByIndex,
   switchWindowTabRelative,
-} from '../src/panels/window-tab-utils'
+} from '../src/panels/window-layout-utils'
+import { getWorkspaceTileLeaves } from '../src/panels/workspace-tile-utils'
 
 // ---------------------------------------------------------------------------
 // Test fixtures

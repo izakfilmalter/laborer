@@ -23,12 +23,12 @@ import type {
   WorkspaceTileSplit,
 } from '@laborer/shared/types'
 import { describe, expect, it } from 'vitest'
+import { getFirstLeafId as getFirstPanelTreeLeafId } from '../src/panels/panel-tree-utils'
 import {
-  getFirstPanelTreeLeafId,
   resolveActivePaneForPanelTab,
   resolveActivePaneForWindowTab,
   saveFocusedPaneId,
-} from '../src/panels/window-tab-utils'
+} from '../src/panels/window-layout-utils'
 
 // ---------------------------------------------------------------------------
 // Test fixtures

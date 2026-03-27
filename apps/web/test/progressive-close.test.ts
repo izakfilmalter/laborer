@@ -25,7 +25,7 @@ import type {
   WorkspaceTileSplit,
 } from '@laborer/shared/types'
 import { describe, expect, it } from 'vitest'
-import { computeProgressiveCloseAction } from '../src/panels/window-tab-utils'
+import { computeProgressiveCloseAction } from '../src/panels/window-layout-utils'
 
 // ---------------------------------------------------------------------------
 // Test fixtures

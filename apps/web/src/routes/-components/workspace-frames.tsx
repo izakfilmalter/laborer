@@ -48,7 +48,7 @@ import {
 } from '@/panels/layout-utils'
 import { usePanelActions } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
-import { getAllWorkspaceTileLeaves } from '@/panels/window-tab-utils'
+import { getAllWorkspaceTileLeaves } from '@/panels/window-layout-utils'
 import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
 import { DiffPane } from '@/panes/diff-pane'
 import { ReviewPane } from '@/panes/review-pane'

@@ -1,22 +1,22 @@
 /**
- * Window tab layout manipulation utilities.
+ * Window layout manipulation utilities.
  *
- * Pure functions that operate on the `WindowLayout` type to support
- * window tab CRUD operations, workspace location lookups, and terminal
- * navigation across the hierarchical layout tree.
+ * Pure functions that operate on `WindowLayout` — the top-level structure
+ * containing window tabs, workspace tiles, and panel trees. Handles window
+ * tab CRUD, workspace location lookups, focus resolution, terminal
+ * navigation, close confirmation, progressive close, reconciliation, and
+ * layout repair.
  *
  * All functions return a new layout — the original is never mutated.
  *
  * @see packages/shared/src/types.ts — WindowLayout, WindowTab, WorkspaceTileNode
- * @see apps/web/src/panels/layout-utils.ts — panel-level tree utilities
+ * @see apps/web/src/panels/panel-tree-utils.ts — panel-level tree utilities
+ * @see apps/web/src/panels/workspace-tile-utils.ts — workspace tile utilities
  */
 
 import type {
-  LeafNode,
   PanelNode,
   PanelTab,
-  PaneType,
-  SplitDirection,
   WindowLayout,
   WindowTab,
   WorkspaceTileLeaf,
@@ -25,7 +25,15 @@ import type {
 
 import { generateId } from './id-utils'
 import { removePanelTab } from './panel-tab-utils'
+import {
+  closePane,
+  collectTerminalIds,
+  containsPane,
+  countLeaves,
+  getFirstLeafId,
+} from './panel-tree-utils'
 import { generateRandomTabName } from './random-name'
+import { getWorkspaceTileLeaves } from './workspace-tile-utils'
 
 // ---------------------------------------------------------------------------
 // ID generation
@@ -44,10 +52,6 @@ function generateWindowTabId(): string {
  * Add a new window tab to the layout.
  * If a `tab` is provided, it is appended as-is. Otherwise an empty tab is
  * created. The new tab becomes the active tab.
- *
- * @param layout - The current window layout
- * @param tab - Optional pre-configured tab to add
- * @returns A new WindowLayout with the tab appended and active
  */
 function addWindowTab(layout: WindowLayout, tab?: WindowTab): WindowLayout {
   const newTab: WindowTab = tab ?? {
@@ -66,10 +70,6 @@ function addWindowTab(layout: WindowLayout, tab?: WindowTab): WindowLayout {
  * - Prefer the tab to the right (next index)
  * - Fall back to the tab to the left (previous index)
  * - If no tabs remain, activeTabId becomes undefined
- *
- * @param layout - The current window layout
- * @param tabId - The ID of the tab to remove
- * @returns A new WindowLayout without the tab
  */
 function removeWindowTab(layout: WindowLayout, tabId: string): WindowLayout {
   const index = layout.tabs.findIndex((t) => t.id === tabId)
@@ -99,11 +99,6 @@ function removeWindowTab(layout: WindowLayout, tabId: string): WindowLayout {
 /**
  * Rename a window tab by ID.
  * If the tabId doesn't exist in the layout, returns the layout unchanged.
- *
- * @param layout - The current window layout
- * @param tabId - The ID of the tab to rename
- * @param label - The new label for the tab
- * @returns A new WindowLayout with the tab renamed
  */
 function renameWindowTab(
   layout: WindowLayout,
@@ -121,10 +116,6 @@ function renameWindowTab(
 /**
  * Switch the active window tab by ID.
  * If the tabId doesn't exist in the layout, returns the layout unchanged.
- *
- * @param layout - The current window layout
- * @param tabId - The ID of the tab to activate
- * @returns A new WindowLayout with the active tab updated
  */
 function switchWindowTab(layout: WindowLayout, tabId: string): WindowLayout {
   const exists = layout.tabs.some((t) => t.id === tabId)
@@ -139,10 +130,6 @@ function switchWindowTab(layout: WindowLayout, tabId: string): WindowLayout {
  * Indices 1-8 map to tabs at positions 0-7.
  * Index 9 always maps to the last tab.
  * Out-of-range indices return the layout unchanged.
- *
- * @param layout - The current window layout
- * @param index - 1-based tab index (1-8, or 9 for last)
- * @returns A new WindowLayout with the active tab updated
  */
 function switchWindowTabByIndex(
   layout: WindowLayout,
@@ -171,10 +158,6 @@ function switchWindowTabByIndex(
  * Cycle the active window tab by a relative delta.
  * A delta of +1 moves to the next tab, -1 to the previous tab.
  * Wraps around: moving past the last tab goes to the first, and vice versa.
- *
- * @param layout - The current window layout
- * @param delta - Number of positions to move (+1 = next, -1 = previous)
- * @returns A new WindowLayout with the active tab updated
  */
 function switchWindowTabRelative(
   layout: WindowLayout,
@@ -201,11 +184,6 @@ function switchWindowTabRelative(
  * Reorder window tabs by moving a tab from one index to another.
  * Both indices are 0-based. If either index is out of range, returns
  * the layout unchanged.
- *
- * @param layout - The current window layout
- * @param fromIndex - The 0-based index of the tab to move
- * @param toIndex - The 0-based target index
- * @returns A new WindowLayout with tabs reordered
  */
 function reorderWindowTabs(
   layout: WindowLayout,
@@ -264,10 +242,6 @@ interface TerminalLocation {
  * Find which window tab contains a specific workspace.
  * Searches all tabs' workspace tile trees for a tile leaf with the
  * given workspace ID.
- *
- * @param layout - The window layout to search
- * @param workspaceId - The workspace ID to find
- * @returns The location of the workspace, or undefined if not found
  */
 function findWorkspaceLocation(
   layout: WindowLayout,
@@ -307,13 +281,6 @@ function findWorkspaceInTileTree(
 /**
  * Find the exact location of a terminal across all tabs, workspaces,
  * panel tabs, and panes.
- *
- * Searches: all tabs > all workspace tile leaves > all panel tabs > all
- * pane leaves in their split trees.
- *
- * @param layout - The window layout to search
- * @param terminalId - The terminal ID to find
- * @returns The full location path, or undefined if not found
  */
 function findTerminalLocation(
   layout: WindowLayout,
@@ -398,21 +365,8 @@ function findTerminalInPanelTree(
 }
 
 // ---------------------------------------------------------------------------
-// Utility: collect all workspace tile leaves from a tile tree
+// Utility: collect all workspace tile leaves across all tabs
 // ---------------------------------------------------------------------------
-
-/**
- * Collect all workspace tile leaves from a workspace tile tree.
- * Useful for listing all workspaces in a window tab.
- */
-function getWorkspaceTileLeaves(
-  node: WorkspaceTileNode
-): readonly WorkspaceTileLeaf[] {
-  if (node._tag === 'WorkspaceTileLeaf') {
-    return [node]
-  }
-  return node.children.flatMap(getWorkspaceTileLeaves)
-}
 
 /**
  * Collect all workspace tile leaves across all tabs.
@@ -438,23 +392,6 @@ function getActiveWindowTab(layout: WindowLayout): WindowTab | undefined {
 // ---------------------------------------------------------------------------
 
 /**
- * Get the first leaf pane ID from a PanelNode tree (DFS order).
- * Used as a fallback when `focusedPaneId` is not set on a panel tab.
- */
-function getFirstPanelTreeLeafId(node: PanelNode): string | undefined {
-  if (node._tag === 'LeafNode') {
-    return node.id
-  }
-  for (const child of node.children) {
-    const leafId = getFirstPanelTreeLeafId(child)
-    if (leafId) {
-      return leafId
-    }
-  }
-  return undefined
-}
-
-/**
  * Resolve the pane that should receive focus for a given panel tab.
  * Prefers `focusedPaneId` if set, falls back to the first leaf pane.
  */
@@ -462,7 +399,7 @@ function resolveActivePaneForPanelTab(tab: PanelTab): string | undefined {
   if (tab.focusedPaneId) {
     return tab.focusedPaneId
   }
-  return getFirstPanelTreeLeafId(tab.panelLayout)
+  return getFirstLeafId(tab.panelLayout)
 }
 
 /**
@@ -470,20 +407,15 @@ function resolveActivePaneForPanelTab(tab: PanelTab): string | undefined {
  *
  * Walks the hierarchy: active workspace tile > active panel tab > focusedPaneId.
  * Falls back at each level if the preferred value is not available.
- *
- * @param tab - The window tab to resolve focus for
- * @returns The pane ID that should receive focus, or undefined
  */
 function resolveActivePaneForWindowTab(tab: WindowTab): string | undefined {
   if (!tab.workspaceLayout) {
     return undefined
   }
-  // Get the first workspace tile leaf as a fallback
   const leaves = getWorkspaceTileLeaves(tab.workspaceLayout)
   if (leaves.length === 0) {
     return undefined
   }
-  // Prefer the first workspace that has panel tabs
   for (const leaf of leaves) {
     const activeTab = leaf.panelTabs.find((t) => t.id === leaf.activePanelTabId)
     if (activeTab) {
@@ -492,7 +424,6 @@ function resolveActivePaneForWindowTab(tab: WindowTab): string | undefined {
         return paneId
       }
     }
-    // Fallback: first panel tab of this workspace
     const firstTab = leaf.panelTabs[0]
     if (firstTab) {
       const paneId = resolveActivePaneForPanelTab(firstTab)
@@ -508,10 +439,6 @@ function resolveActivePaneForWindowTab(tab: WindowTab): string | undefined {
  * Save the current focusedPaneId on the active panel tab of the workspace
  * that contains the given pane. Walks all tabs > all workspaces > all panel
  * tabs to find the pane and update its panel tab's focusedPaneId.
- *
- * @param layout - The window layout
- * @param paneId - The pane that is now focused
- * @returns A new WindowLayout with focusedPaneId updated on the matching panel tab
  */
 function saveFocusedPaneId(layout: WindowLayout, paneId: string): WindowLayout {
   const newTabs = layout.tabs.map((tab) => {
@@ -559,7 +486,7 @@ function saveFocusInWorkspaceTile(
   paneId: string
 ): WorkspaceTileLeaf {
   const newPanelTabs = tile.panelTabs.map((tab) => {
-    if (panelTreeContainsPane(tab.panelLayout, paneId)) {
+    if (containsPane(tab.panelLayout, paneId)) {
       if (tab.focusedPaneId === paneId) {
         return tab
       }
@@ -573,29 +500,13 @@ function saveFocusInWorkspaceTile(
   return { ...tile, panelTabs: newPanelTabs }
 }
 
-/**
- * Check if a PanelNode tree contains a pane with the given ID.
- */
-function panelTreeContainsPane(node: PanelNode, paneId: string): boolean {
-  if (node._tag === 'LeafNode') {
-    return node.id === paneId
-  }
-  return node.children.some((child) => panelTreeContainsPane(child, paneId))
-}
-
 // ---------------------------------------------------------------------------
 // Workspace tile leaf update
 // ---------------------------------------------------------------------------
 
 /**
  * Apply a transform to the workspace tile node that matches a given
- * workspace ID within a tile tree. Returns a new tree with the leaf
- * replaced by the transform's return value.
- *
- * @param node - The workspace tile tree to search
- * @param workspaceId - The workspace ID to find
- * @param transform - Function that receives the leaf and returns the updated leaf
- * @returns A new tile tree with the leaf updated, or the original tree if not found
+ * workspace ID within a tile tree.
  */
 function updateTileLeaf(
   node: WorkspaceTileNode,
@@ -608,7 +519,6 @@ function updateTileLeaf(
   const newChildren = node.children.map((child) =>
     updateTileLeaf(child, workspaceId, transform)
   )
-  // Only create a new split if something changed
   if (newChildren.every((child, i) => child === node.children[i])) {
     return node
   }
@@ -617,13 +527,7 @@ function updateTileLeaf(
 
 /**
  * Apply a transform to a workspace tile leaf within a WindowLayout.
- * Searches all tabs for the workspace and applies the transform to the
- * matching leaf. Returns a new WindowLayout with the update applied.
- *
- * @param layout - The window layout to search
- * @param workspaceId - The workspace ID to find
- * @param transform - Function that receives the leaf and returns the updated leaf
- * @returns A new WindowLayout with the workspace updated
+ * Searches all tabs for the workspace and applies the transform.
  */
 function updateWorkspaceTileLeaf(
   layout: WindowLayout,
@@ -644,7 +548,6 @@ function updateWorkspaceTileLeaf(
     }
     return { ...tab, workspaceLayout: newLayout }
   })
-  // Only create new layout if something changed
   if (newTabs.every((tab, i) => tab === layout.tabs[i])) {
     return layout
   }
@@ -657,17 +560,7 @@ function updateWorkspaceTileLeaf(
 
 /**
  * Remove a workspace from whatever tab it currently lives in across the
- * entire layout.  Uses `findWorkspaceLocation` to locate the workspace
- * and then `removeWorkspaceFromTab` (from `workspace-tile-utils.ts`) to
- * strip it from the owning tab.
- *
- * If the workspace is not found anywhere in the layout, returns the
- * layout unchanged (referential equality).
- *
- * @param layout - The current window layout
- * @param workspaceId - The workspace ID to remove
- * @param removeFromTab - A function that removes a workspace from a tab (injected to avoid circular imports)
- * @returns A new WindowLayout with the workspace removed from its previous location
+ * entire layout.
  */
 function removeWorkspaceFromLayout(
   layout: WindowLayout,
@@ -683,7 +576,6 @@ function removeWorkspaceFromLayout(
     tab.id === location.tabId ? removeFromTab(tab, workspaceId) : tab
   )
 
-  // Only create a new layout if something changed
   if (newTabs.every((tab, i) => tab === layout.tabs[i])) {
     return layout
   }
@@ -693,19 +585,7 @@ function removeWorkspaceFromLayout(
 
 /**
  * Move a workspace from its current location (any tab in the layout) to
- * a specific target tab.  This is the core of workspace uniqueness
- * enforcement: if the workspace already lives in a tab, it is removed
- * from the old tab before being added to the new one.
- *
- * If the workspace is already in the target tab, the layout is returned
- * unchanged (no-op).
- *
- * @param layout - The current window layout
- * @param workspaceId - The workspace ID to move
- * @param targetTabId - The ID of the tab to move the workspace into
- * @param removeFromTab - Injected `removeWorkspaceFromTab` to avoid circular imports
- * @param addToTab - Injected `addWorkspaceToTab` to avoid circular imports
- * @returns A new WindowLayout with the workspace in the target tab only
+ * a specific target tab.
  */
 function moveWorkspace(
   layout: WindowLayout,
@@ -742,16 +622,6 @@ function moveWorkspace(
 /**
  * Enforce workspace uniqueness within a layout by adding a workspace to
  * a target tab after removing it from any other tab.
- *
- * This is the primary entry point for the within-window uniqueness
- * enforcement path.
- *
- * @param layout - The current window layout
- * @param workspaceId - The workspace ID to add
- * @param targetTabId - The ID of the tab to add the workspace to
- * @param removeFromTab - Injected `removeWorkspaceFromTab`
- * @param addToTab - Injected `addWorkspaceToTab`
- * @returns A new WindowLayout with the workspace only in the target tab
  */
 function addWorkspaceToTabUnique(
   layout: WindowLayout,
@@ -782,41 +652,16 @@ interface TerminalProcessInfo {
 }
 
 /**
- * Collect all terminal IDs from a PanelNode.
+ * Collect all terminal IDs from a WorkspaceTileNode tree.
+ * Walks workspace tiles > panel tabs > panel tree nodes.
  */
-function collectTerminalIdsFromPanelTree(node: PanelNode): readonly string[] {
-  if (node._tag === 'LeafNode') {
-    return node.terminalId !== undefined ? [node.terminalId] : []
+function collectTerminalIdsFromTileTree(
+  node: WorkspaceTileNode
+): readonly string[] {
+  if (node._tag === 'WorkspaceTileLeaf') {
+    return node.panelTabs.flatMap((tab) => collectTerminalIds(tab.panelLayout))
   }
-  return node.children.flatMap(collectTerminalIdsFromPanelTree)
-}
-
-/**
- * Assign a terminal ID to a specific pane leaf within a PanelNode tree.
- *
- * Recursively walks the tree and replaces the `terminalId` on the leaf
- * whose `id` matches `paneId`. Returns the original tree unchanged
- * (referential equality) if no matching leaf is found.
- */
-function assignTerminalInPanelTree(
-  node: PanelNode,
-  paneId: string,
-  terminalId: string
-): PanelNode {
-  if (node._tag === 'LeafNode') {
-    if (node.id === paneId) {
-      return { ...node, terminalId }
-    }
-    return node
-  }
-  const newChildren = node.children.map((child) =>
-    assignTerminalInPanelTree(child, paneId, terminalId)
-  )
-  // Only create a new object if something changed
-  if (newChildren.every((child, i) => child === node.children[i])) {
-    return node
-  }
-  return { ...node, children: newChildren }
+  return node.children.flatMap(collectTerminalIdsFromTileTree)
 }
 
 /**
@@ -834,47 +679,17 @@ function hasRunningProcess(
 
 /**
  * Determine whether closing a panel tab should show a confirmation dialog.
- *
- * Returns true when the panel tab contains any terminal with a running
- * child process. This prevents accidental loss of running work when
- * the progressive close chain removes a panel tab.
- *
- * @param panelTab - The panel tab to check
- * @param terminals - The live terminal list with hasChildProcess info
- * @returns Whether the close confirmation dialog should be shown
  */
 function shouldConfirmClosePanelTab(
   panelTab: PanelTab,
   terminals: readonly TerminalProcessInfo[]
 ): boolean {
-  const terminalIds = collectTerminalIdsFromPanelTree(panelTab.panelLayout)
+  const terminalIds = collectTerminalIds(panelTab.panelLayout)
   return hasRunningProcess(terminalIds, terminals)
 }
 
 /**
- * Collect all terminal IDs from a WorkspaceTileNode tree.
- * Walks workspace tiles > panel tabs > panel tree nodes.
- */
-function collectTerminalIdsFromTileTree(
-  node: WorkspaceTileNode
-): readonly string[] {
-  if (node._tag === 'WorkspaceTileLeaf') {
-    return node.panelTabs.flatMap((tab) =>
-      collectTerminalIdsFromPanelTree(tab.panelLayout)
-    )
-  }
-  return node.children.flatMap(collectTerminalIdsFromTileTree)
-}
-
-/**
  * Determine whether closing a window tab should show a confirmation dialog.
- *
- * Returns true when the window tab contains any terminal (across all
- * workspaces and panel tabs) with a running child process.
- *
- * @param windowTab - The window tab to check
- * @param terminals - The live terminal list with hasChildProcess info
- * @returns Whether the close confirmation dialog should be shown
  */
 function shouldConfirmCloseWindowTab(
   windowTab: WindowTab,
@@ -897,7 +712,7 @@ function shouldConfirmCloseWindowTab(
  */
 type ProgressiveCloseAction =
   | {
-      /** Close a pane within a panel tab's split tree (existing behavior). */
+      /** Close a pane within a panel tab's split tree. */
       readonly kind: 'close-pane'
       readonly paneId: string
     }
@@ -908,12 +723,12 @@ type ProgressiveCloseAction =
       readonly workspaceId: string
     }
   | {
-      /** Remove a workspace from the active window tab (last panel tab in workspace). */
+      /** Remove a workspace from the active window tab. */
       readonly kind: 'close-workspace'
       readonly workspaceId: string
     }
   | {
-      /** Close the active window tab (no workspaces left). */
+      /** Close the active window tab. */
       readonly kind: 'close-window-tab'
       readonly tabId: string
     }
@@ -923,261 +738,152 @@ type ProgressiveCloseAction =
     }
 
 /**
- * Count the number of leaf panes in a PanelNode tree.
+ * Find a workspace tile leaf by workspace ID in a tile tree.
  */
-function countPanelLeaves(node: PanelNode): number {
-  if (node._tag === 'LeafNode') {
-    return 1
+function findWorkspaceTileLeaf(
+  node: WorkspaceTileNode,
+  workspaceId: string
+): WorkspaceTileLeaf | undefined {
+  if (node._tag === 'WorkspaceTileLeaf') {
+    return node.workspaceId === workspaceId ? node : undefined
   }
-  let count = 0
   for (const child of node.children) {
-    count += countPanelLeaves(child)
+    const found = findWorkspaceTileLeaf(child, workspaceId)
+    if (found) {
+      return found
+    }
   }
-  return count
+  return undefined
 }
 
 /**
- * Collapse a list of panel tree children after a removal.
- * Returns the single remaining child, a new split node, or undefined if empty.
+ * Determine whether closing the last item at this level should escalate
+ * to closing the window tab.
  */
-function collapseChildren(
-  parent: PanelNode & { readonly _tag: 'SplitNode' },
-  children: PanelNode[]
-): PanelNode | undefined {
-  if (children.length === 0) {
-    return undefined
+function resolveLastWorkspaceCloseAction(
+  _layout: WindowLayout,
+  activeTab: WindowTab
+): ProgressiveCloseAction {
+  return { kind: 'close-window-tab', tabId: activeTab.id }
+}
+
+/**
+ * Determine the close action when the workspace has no active panel tab.
+ */
+function resolveEmptyWorkspaceAction(
+  layout: WindowLayout,
+  activeTab: WindowTab,
+  activeWorkspaceId: string
+): ProgressiveCloseAction {
+  if (!activeTab.workspaceLayout) {
+    return resolveLastWorkspaceCloseAction(layout, activeTab)
   }
-  if (children.length === 1) {
-    return children[0]
+  const allLeaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+  if (allLeaves.length <= 1) {
+    return resolveLastWorkspaceCloseAction(layout, activeTab)
   }
-  const equalSize = 100 / children.length
+  return { kind: 'close-workspace', workspaceId: activeWorkspaceId }
+}
+
+/**
+ * Determine the close action when the active panel tab has exactly one pane.
+ */
+function resolveLastPaneCloseAction(
+  activePanelTabId: string,
+  activeWorkspaceId: string
+): ProgressiveCloseAction {
   return {
-    ...parent,
-    children,
-    sizes: children.map(() => equalSize),
+    kind: 'close-panel-tab',
+    tabId: activePanelTabId,
+    workspaceId: activeWorkspaceId,
   }
 }
 
 /**
- * Close a pane (leaf) in a PanelNode tree by its ID.
- * Returns the updated tree, or undefined if the pane was the root
- * (meaning the entire tree is now empty).
+ * Resolve the close action when no pane is focused.
  */
-function closePaneInPanelTree(
-  root: PanelNode,
-  paneId: string
-): PanelNode | undefined {
-  if (root._tag === 'LeafNode') {
-    return root.id === paneId ? undefined : root
-  }
-
-  // Check if a direct child is the target
-  const targetIndex = root.children.findIndex(
-    (child) => child._tag === 'LeafNode' && child.id === paneId
-  )
-  if (targetIndex !== -1) {
-    const remaining = root.children.filter((_, i) => i !== targetIndex)
-    return collapseChildren(root, remaining)
-  }
-
-  // Recurse into split children
-  const newChildren: PanelNode[] = []
-  let changed = false
-
-  for (const child of root.children) {
-    if (child._tag === 'SplitNode') {
-      const result = closePaneInPanelTree(child, paneId)
-      if (result !== child) {
-        changed = true
-        if (result) {
-          newChildren.push(result)
-        }
-      } else {
-        newChildren.push(child)
+function resolveNullPaneCloseAction(
+  layout: WindowLayout | undefined
+): ProgressiveCloseAction {
+  if (layout) {
+    const activeTab = getActiveWindowTab(layout)
+    if (activeTab) {
+      const resolvedPaneId = resolveActivePaneForWindowTab(activeTab)
+      if (resolvedPaneId) {
+        return { kind: 'close-pane', paneId: resolvedPaneId }
       }
-    } else {
-      newChildren.push(child)
+      return { kind: 'close-window-tab', tabId: activeTab.id }
     }
   }
-
-  if (!changed) {
-    return root
-  }
-
-  return collapseChildren(root, newChildren)
+  return { kind: 'close-app' }
 }
 
 /**
- * Split a pane in a PanelNode tree by inserting a new sibling leaf.
+ * Determine the correct close action for the progressive `Cmd+W` chain.
  *
- * The original pane stays in place and a new leaf is inserted next to it.
- * If the target pane is already a direct child of a split with the same
- * direction, the new pane is inserted adjacent instead of nesting — keeping
- * the tree flat when possible.
- *
- * @param root - The root PanelNode tree
- * @param paneId - The ID of the leaf to split
- * @param direction - "horizontal" or "vertical"
- * @param newPaneContent - Optional partial content for the new leaf
- * @returns The updated tree (original unchanged if paneId not found)
+ * The chain escalates from innermost to outermost:
+ * 1. If the active panel tab has multiple panes → close the active pane
+ * 2. If the active panel tab has exactly 1 pane → close the panel tab
+ * 3. If that was the last panel tab → remove the workspace from the window tab
+ * 4. If that was the last workspace → close the window tab
+ * 5. If that was the last window tab → close the app
  */
-function splitPaneInPanelTree(
-  root: PanelNode,
-  paneId: string,
-  direction: SplitDirection,
-  newPaneContent?: Partial<LeafNode>
-): PanelNode {
-  return splitPanelTreeRecursive(root, paneId, direction, newPaneContent)
-}
+function computeProgressiveCloseAction(
+  layout: WindowLayout | undefined,
+  activePaneId: string | null,
+  activeWorkspaceId: string | undefined
+): ProgressiveCloseAction {
+  if (!activePaneId) {
+    return resolveNullPaneCloseAction(layout)
+  }
 
-function splitPanelTreeRecursive(
-  node: PanelNode,
-  paneId: string,
-  direction: SplitDirection,
-  newPaneContent?: Partial<LeafNode>
-): PanelNode {
-  // Found the target leaf — wrap it in a split with a new sibling
-  if (node._tag === 'LeafNode' && node.id === paneId) {
-    const newPane: LeafNode = {
-      _tag: 'LeafNode',
-      id: generateId('pane'),
-      paneType: (newPaneContent?.paneType ?? 'terminal') as PaneType,
-      terminalId: newPaneContent?.terminalId,
-      workspaceId: newPaneContent?.workspaceId ?? node.workspaceId,
+  if (!layout) {
+    return { kind: 'close-pane', paneId: activePaneId }
+  }
+
+  const activeTab = getActiveWindowTab(layout)
+  if (!activeTab) {
+    return { kind: 'close-app' }
+  }
+
+  if (!activeWorkspaceId) {
+    if (!activeTab.workspaceLayout) {
+      return { kind: 'close-window-tab', tabId: activeTab.id }
     }
-    return {
-      _tag: 'SplitNode',
-      id: generateId('split'),
-      direction,
-      children: [node, newPane],
-      sizes: [50, 50],
+    const leaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+    if (leaves.length === 0) {
+      return { kind: 'close-window-tab', tabId: activeTab.id }
     }
+    return { kind: 'close-pane', paneId: activePaneId }
   }
 
-  // Recurse into SplitNode children
-  if (node._tag === 'SplitNode') {
-    // Check if any direct child is the target and has the same direction.
-    // If so, insert adjacent instead of nesting.
-    if (node.direction === direction) {
-      const targetIndex = node.children.findIndex(
-        (child) => child._tag === 'LeafNode' && child.id === paneId
-      )
-      if (targetIndex !== -1) {
-        const targetChild = node.children[targetIndex] as LeafNode
-        const newPane: LeafNode = {
-          _tag: 'LeafNode',
-          id: generateId('pane'),
-          paneType: (newPaneContent?.paneType ?? 'terminal') as PaneType,
-          terminalId: newPaneContent?.terminalId,
-          workspaceId: newPaneContent?.workspaceId ?? targetChild.workspaceId,
-        }
-        const newChildren = [
-          ...node.children.slice(0, targetIndex + 1),
-          newPane,
-          ...node.children.slice(targetIndex + 1),
-        ]
-        const equalSize = 100 / newChildren.length
-        return {
-          ...node,
-          children: newChildren,
-          sizes: newChildren.map(() => equalSize),
-        }
-      }
-    }
+  const workspaceLeaf = activeTab.workspaceLayout
+    ? findWorkspaceTileLeaf(activeTab.workspaceLayout, activeWorkspaceId)
+    : undefined
 
-    // Recurse into children
-    const newChildren = node.children.map((child) =>
-      splitPanelTreeRecursive(child, paneId, direction, newPaneContent)
-    )
-    const changed = newChildren.some((child, i) => child !== node.children[i])
-    if (!changed) {
-      return node
-    }
-    return { ...node, children: newChildren }
+  if (!workspaceLeaf) {
+    return { kind: 'close-pane', paneId: activePaneId }
   }
 
-  return node
-}
-
-/**
- * Find a leaf by ID in a PanelNode tree.
- * Returns the leaf if found, or undefined.
- */
-function findPanelTreeLeaf(
-  node: PanelNode,
-  paneId: string
-): LeafNode | undefined {
-  if (node._tag === 'LeafNode') {
-    return node.id === paneId ? node : undefined
-  }
-  for (const child of node.children) {
-    const found = findPanelTreeLeaf(child, paneId)
-    if (found) {
-      return found
-    }
-  }
-  return undefined
-}
-
-/**
- * Collect all leaf IDs from a PanelNode tree (DFS order).
- */
-function getPanelTreeLeafIds(node: PanelNode): string[] {
-  if (node._tag === 'LeafNode') {
-    return [node.id]
-  }
-  return node.children.flatMap(getPanelTreeLeafIds)
-}
-
-/**
- * Find the new leaf added to a PanelNode tree after a split.
- * Compares leaf IDs before and after to find the new one.
- */
-function findNewPanelTreeLeaf(
-  before: PanelNode,
-  after: PanelNode
-): LeafNode | undefined {
-  const beforeIds = new Set(getPanelTreeLeafIds(before))
-  const afterIds = getPanelTreeLeafIds(after)
-  const newId = afterIds.find((id) => !beforeIds.has(id))
-  if (!newId) {
-    return undefined
-  }
-  return findPanelTreeLeaf(after, newId)
-}
-
-/**
- * Find the sibling pane ID for a given pane in a PanelNode tree.
- * Used to determine where focus should go after closing a pane.
- */
-function findSiblingPaneIdInPanelTree(
-  root: PanelNode,
-  paneId: string
-): string | undefined {
-  if (root._tag === 'LeafNode') {
-    return undefined
-  }
-  // Check if the target is a direct child of this split
-  const idx = root.children.findIndex(
-    (child) => child._tag === 'LeafNode' && child.id === paneId
+  const activePanelTab = workspaceLeaf.panelTabs.find(
+    (t) => t.id === workspaceLeaf.activePanelTabId
   )
-  if (idx !== -1) {
-    // Prefer the sibling after, then before
-    const sibling = root.children[idx + 1] ?? root.children[idx - 1]
-    if (sibling) {
-      return getFirstPanelTreeLeafId(sibling)
-    }
-    return undefined
+
+  if (!activePanelTab) {
+    return resolveEmptyWorkspaceAction(layout, activeTab, activeWorkspaceId)
   }
-  // Recurse
-  for (const child of root.children) {
-    const found = findSiblingPaneIdInPanelTree(child, paneId)
-    if (found) {
-      return found
-    }
+
+  const paneCount = countLeaves(activePanelTab.panelLayout)
+  if (paneCount > 1) {
+    return { kind: 'close-pane', paneId: activePaneId }
   }
-  return undefined
+
+  return resolveLastPaneCloseAction(activePanelTab.id, activeWorkspaceId)
 }
+
+// ---------------------------------------------------------------------------
+// Close terminal in hierarchical layout
+// ---------------------------------------------------------------------------
 
 /**
  * Close a terminal's pane in the hierarchical window layout.
@@ -1185,8 +891,6 @@ function findSiblingPaneIdInPanelTree(
  * Searches all window tabs, workspaces, and panel tabs for the terminal.
  * If the pane is the only one in its panel tab, removes the entire panel tab.
  * Otherwise, removes just the pane from the panel tree.
- *
- * Returns the updated WindowLayout, or the original if nothing changed.
  */
 function closeTerminalInWindowLayout(
   layout: WindowLayout,
@@ -1211,28 +915,25 @@ function closeTerminalInWindowLayout(
       }
       const panelTab = tile.panelTabs.find((t) => t.id === location.panelTabId)
       if (panelTab) {
-        return countPanelLeaves(panelTab.panelLayout)
+        return countLeaves(panelTab.panelLayout)
       }
     }
     return 0
   })()
 
   if (paneCount <= 1) {
-    // Last pane in the panel tab — remove the entire panel tab
     return updateWorkspaceTileLeaf(layout, location.workspaceId, (leaf) =>
       removePanelTab(leaf, location.panelTabId)
     )
   }
 
-  // Multiple panes — remove just the pane from the panel tree
   return updateWorkspaceTileLeaf(layout, location.workspaceId, (leaf) => {
     const newTabs = leaf.panelTabs.map((tab) => {
       if (tab.id !== location.panelTabId) {
         return tab
       }
-      const newLayout = closePaneInPanelTree(tab.panelLayout, location.paneId)
+      const newLayout = closePane(tab.panelLayout, location.paneId)
       if (!newLayout) {
-        // Should not happen since paneCount > 1, but handle defensively
         return tab
       }
       return { ...tab, panelLayout: newLayout }
@@ -1241,191 +942,12 @@ function closeTerminalInWindowLayout(
   })
 }
 
-/**
- * Determine whether closing the last item at this level should escalate
- * to closing the window tab.
- *
- * Previously, the last remaining tab escalated to `close-app`. Now every
- * tab — including the last one — can be closed, which leaves the window
- * in an empty-tabs state that shows the workspace picker.
- */
-function resolveLastWorkspaceCloseAction(
-  _layout: WindowLayout,
-  activeTab: WindowTab
-): ProgressiveCloseAction {
-  return { kind: 'close-window-tab', tabId: activeTab.id }
-}
-
-/**
- * Determine the close action when the workspace has no active panel tab
- * (empty workspace state).
- */
-function resolveEmptyWorkspaceAction(
-  layout: WindowLayout,
-  activeTab: WindowTab,
-  activeWorkspaceId: string
-): ProgressiveCloseAction {
-  if (!activeTab.workspaceLayout) {
-    return resolveLastWorkspaceCloseAction(layout, activeTab)
-  }
-  const allLeaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
-  if (allLeaves.length <= 1) {
-    return resolveLastWorkspaceCloseAction(layout, activeTab)
-  }
-  return { kind: 'close-workspace', workspaceId: activeWorkspaceId }
-}
-
-/**
- * Determine the close action when the active panel tab has exactly one
- * pane — always close the panel tab rather than escalating.
- *
- * This gives the user an explicit step before the progressive chain
- * escalates to workspace/window-tab/app level on subsequent Cmd+W presses.
- */
-function resolveLastPaneCloseAction(
-  activePanelTabId: string,
-  activeWorkspaceId: string
-): ProgressiveCloseAction {
-  return {
-    kind: 'close-panel-tab',
-    tabId: activePanelTabId,
-    workspaceId: activeWorkspaceId,
-  }
-}
-
-/**
- * Resolve the close action when no pane is focused (activePaneId is null).
- * Tries to find a pane via the layout hierarchy before falling back to
- * closing the window tab or the app.
- */
-function resolveNullPaneCloseAction(
-  layout: WindowLayout | undefined
-): ProgressiveCloseAction {
-  if (layout) {
-    const activeTab = getActiveWindowTab(layout)
-    if (activeTab) {
-      const resolvedPaneId = resolveActivePaneForWindowTab(activeTab)
-      if (resolvedPaneId) {
-        return { kind: 'close-pane', paneId: resolvedPaneId }
-      }
-      // Active tab exists but has no panes — close the tab
-      return { kind: 'close-window-tab', tabId: activeTab.id }
-    }
-  }
-  return { kind: 'close-app' }
-}
-
-/**
- * Determine the correct close action for the progressive `Cmd+W` chain.
- *
- * The chain escalates from innermost to outermost:
- * 1. If the active panel tab has multiple panes → close the active pane
- * 2. If the active panel tab has exactly 1 pane → close the panel tab
- * 3. If that was the last panel tab → remove the workspace from the window tab
- * 4. If that was the last workspace → close the window tab
- * 5. If that was the last window tab → close the app
- *
- * Falls back to `close-pane` with `activePaneId` if the hierarchical layout
- * is not available (legacy mode).
- *
- * @param layout - The hierarchical window layout (may be undefined for legacy mode)
- * @param activePaneId - The currently focused pane ID
- * @param activeWorkspaceId - The workspace ID of the active pane (used for tab/workspace lookup)
- * @returns A discriminated union describing the action to take
- */
-function computeProgressiveCloseAction(
-  layout: WindowLayout | undefined,
-  activePaneId: string | null,
-  activeWorkspaceId: string | undefined
-): ProgressiveCloseAction {
-  // No active pane — attempt to resolve one from the layout before
-  // falling back to close-app. This handles the case where the user
-  // clicks outside any pane (deselecting focus) then presses Cmd+W.
-  if (!activePaneId) {
-    return resolveNullPaneCloseAction(layout)
-  }
-
-  // No hierarchical layout available → fall back to simple pane close
-  if (!layout) {
-    return { kind: 'close-pane', paneId: activePaneId }
-  }
-
-  // Find the active window tab
-  const activeTab = getActiveWindowTab(layout)
-  if (!activeTab) {
-    return { kind: 'close-app' }
-  }
-
-  // If no workspace context, check whether the active tab is empty.
-  // When all workspaces have been closed, the legacy layout tree still
-  // contains a "pane-empty" placeholder, so activePaneId is non-null but
-  // stale. In that case, close the window tab rather than trying to close
-  // a phantom pane.
-  if (!activeWorkspaceId) {
-    if (!activeTab.workspaceLayout) {
-      return { kind: 'close-window-tab', tabId: activeTab.id }
-    }
-    const leaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
-    if (leaves.length === 0) {
-      return { kind: 'close-window-tab', tabId: activeTab.id }
-    }
-    return { kind: 'close-pane', paneId: activePaneId }
-  }
-
-  // Find the workspace tile leaf
-  const workspaceLeaf = activeTab.workspaceLayout
-    ? findWorkspaceTileLeaf(activeTab.workspaceLayout, activeWorkspaceId)
-    : undefined
-
-  if (!workspaceLeaf) {
-    return { kind: 'close-pane', paneId: activePaneId }
-  }
-
-  // Find the active panel tab
-  const activePanelTab = workspaceLeaf.panelTabs.find(
-    (t) => t.id === workspaceLeaf.activePanelTabId
-  )
-
-  if (!activePanelTab) {
-    return resolveEmptyWorkspaceAction(layout, activeTab, activeWorkspaceId)
-  }
-
-  // Multiple panes → close the active pane
-  const paneCount = countPanelLeaves(activePanelTab.panelLayout)
-  if (paneCount > 1) {
-    return { kind: 'close-pane', paneId: activePaneId }
-  }
-
-  // Single pane → close the panel tab
-  return resolveLastPaneCloseAction(activePanelTab.id, activeWorkspaceId)
-}
-
-/**
- * Find a workspace tile leaf by workspace ID in a tile tree.
- */
-function findWorkspaceTileLeaf(
-  node: WorkspaceTileNode,
-  workspaceId: string
-): WorkspaceTileLeaf | undefined {
-  if (node._tag === 'WorkspaceTileLeaf') {
-    return node.workspaceId === workspaceId ? node : undefined
-  }
-  for (const child of node.children) {
-    const found = findWorkspaceTileLeaf(child, workspaceId)
-    if (found) {
-      return found
-    }
-  }
-  return undefined
-}
-
 // ---------------------------------------------------------------------------
 // Hierarchical reconciliation: stale terminal detection + ID replacement
 // ---------------------------------------------------------------------------
 
 /**
  * Stale terminal leaf info within the hierarchical layout.
- * Contains the terminal leaf details plus its location in the hierarchy.
  */
 interface StaleTerminalLeaf {
   readonly paneId: string
@@ -1435,7 +957,7 @@ interface StaleTerminalLeaf {
 
 /**
  * Collect all terminal leaves from a PanelNode whose terminalId is
- * not in the live terminal set. These are candidates for respawning.
+ * not in the live terminal set.
  */
 function getStaleTerminalLeavesFromPanelTree(
   node: PanelNode,
@@ -1463,7 +985,6 @@ function getStaleTerminalLeavesFromPanelTree(
 
 /**
  * Collect all stale terminal leaves from a WorkspaceTileNode tree.
- * Walks workspace tiles > panel tabs > panel tree nodes.
  */
 function getStaleTerminalLeavesFromTileTree(
   node: WorkspaceTileNode,
@@ -1481,11 +1002,6 @@ function getStaleTerminalLeavesFromTileTree(
 
 /**
  * Collect all stale terminal leaves from a WindowLayout.
- * Searches all window tabs > workspace tiles > panel tabs > panel splits.
- *
- * @param layout - The hierarchical window layout
- * @param liveTerminalIds - Set of terminal IDs that are currently live
- * @returns Array of stale terminal leaf info
  */
 function getStaleTerminalLeavesHierarchical(
   layout: WindowLayout,
@@ -1500,8 +1016,7 @@ function getStaleTerminalLeavesHierarchical(
 
 /**
  * Reconcile a PanelNode by replacing stale terminal IDs with
- * respawned ones. If a stale leaf has no mapping entry, terminalId
- * becomes undefined. Preserves referential equality when no changes.
+ * respawned ones.
  */
 function reconcilePanelTree(
   node: PanelNode,
@@ -1573,13 +1088,7 @@ function reconcileTileTree(
  * Reconcile a WindowLayout by replacing stale terminal IDs with
  * respawned ones across all window tabs, workspace tiles, and panel tabs.
  *
- * Preserves referential equality when no changes are made (returns
- * the same object reference).
- *
- * @param layout - The hierarchical window layout
- * @param liveTerminalIds - Set of terminal IDs that are currently live
- * @param respawnedIds - Map of old stale terminal ID → new respawned terminal ID
- * @returns The reconciled layout (same reference if unchanged)
+ * Preserves referential equality when no changes are made.
  */
 function reconcileWindowLayout(
   layout: WindowLayout,
@@ -1629,7 +1138,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Validate and rebuild split sizes.
- * Returns even distribution if the original sizes are invalid.
  */
 function repairSplitSizes(
   rawSizes: unknown,
@@ -1663,8 +1171,6 @@ interface RepairWindowLayoutResult {
 
 /**
  * Repair a PanelNode (LeafNode or SplitNode).
- * Validates structure and drops invalid nodes.
- * Returns undefined if the node is completely invalid.
  */
 function repairPanelNode(
   node: unknown
@@ -1686,7 +1192,6 @@ function repairPanelNode(
 
 /**
  * Repair a LeafNode.
- * Validates id and paneType, strips invalid optional fields.
  */
 function repairLeafNode(
   node: Record<string, unknown>
@@ -1709,7 +1214,6 @@ function repairLeafNode(
     paneType: node.paneType,
   }
 
-  // Validate optional fields
   if (node.terminalId !== undefined) {
     if (typeof node.terminalId === 'string') {
       result.terminalId = node.terminalId
@@ -1730,7 +1234,6 @@ function repairLeafNode(
 
 /**
  * Repair a SplitNode.
- * Validates structure, recursively repairs children, collapses single-child splits.
  */
 function repairSplitNode(
   node: Record<string, unknown>
@@ -1770,7 +1273,6 @@ function repairSplitNode(
     return { tree: onlyChild, repaired: true }
   }
 
-  // Validate/rebuild sizes
   const sizesResult = repairSplitSizes(
     node.sizes,
     validChildren.length,
@@ -1794,7 +1296,6 @@ function repairSplitNode(
 
 /**
  * Repair a PanelTab.
- * Validates structure and repairs the inner panelLayout.
  */
 function repairPanelTab(
   tab: unknown
@@ -1858,7 +1359,6 @@ function repairWorkspaceTileNode(
 
 /**
  * Repair panel tabs from a raw array.
- * Returns valid tabs and whether any repairs were made.
  */
 function repairPanelTabsArray(rawTabs: unknown): {
   tabs: PanelTab[]
@@ -1900,15 +1400,12 @@ function resolveActivePanelTabId(
   }
   return {
     id: validTabs[0]?.id,
-    // Always flag as repaired when activePanelTabId is being set from a
-    // non-string value so the caller re-persists the corrected layout.
     repaired: true,
   }
 }
 
 /**
  * Repair a WorkspaceTileLeaf.
- * Validates structure, repairs panel tabs, drops invalid tabs.
  */
 function repairWorkspaceTileLeaf(
   node: Record<string, unknown>
@@ -1940,12 +1437,7 @@ function repairWorkspaceTileLeaf(
 }
 
 /**
- * Repair a WorkspaceTileSplit.
- * Validates structure, recursively repairs children, collapses single-child splits.
- */
-/**
  * Repair the children array of a workspace tile split.
- * Returns valid children and whether any repairs were made.
  */
 function repairTileSplitChildren(rawChildren: unknown[]): {
   children: WorkspaceTileNode[]
@@ -1967,6 +1459,9 @@ function repairTileSplitChildren(rawChildren: unknown[]): {
   return { children: validChildren, repaired }
 }
 
+/**
+ * Repair a WorkspaceTileSplit.
+ */
 function repairWorkspaceTileSplit(
   node: Record<string, unknown>
 ): { tile: WorkspaceTileNode; repaired: boolean } | undefined {
@@ -2019,7 +1514,6 @@ function repairWorkspaceTileSplit(
 
 /**
  * Repair a WindowTab.
- * Validates structure and repairs the workspace tile tree.
  */
 function repairWindowTab(
   tab: unknown
@@ -2050,7 +1544,6 @@ function repairWindowTab(
         repaired = true
       }
     } else {
-      // Invalid workspace layout — drop it (tab becomes empty)
       repaired = true
     }
   }
@@ -2061,21 +1554,9 @@ function repairWindowTab(
 /**
  * Repair a deserialized WindowLayout.
  *
- * Validates every node in the hierarchy recursively:
- * - WindowLayout: validates `tabs` array and `activeTabId`
- * - WindowTab: validates `id`, `label`, and `workspaceLayout`
- * - WorkspaceTileNode: validates leaves (workspace ID, panel tabs) and splits
- * - PanelTab: validates `id`, `panelLayout`, optional fields
- * - PanelNode: validates leaves (pane type, terminal ID) and splits
- *
- * Invalid nodes are dropped. Single-child splits are collapsed.
- * Sizes are redistributed when invalid.
- *
- * Returns `{ windowLayout, wasRepaired }`. If `wasRepaired` is true,
- * the caller should re-persist the repaired layout.
- *
- * @param layout - The raw deserialized WindowLayout (may be malformed)
- * @returns The repaired layout and whether any repairs were made
+ * Validates every node in the hierarchy recursively. Invalid nodes are
+ * dropped. Single-child splits are collapsed. Sizes are redistributed
+ * when invalid.
  */
 function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
   if (!isRecord(layout)) {
@@ -2101,16 +1582,12 @@ function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
   }
 
   if (validTabs.length === 0) {
-    // Empty tabs is a valid state (all tabs were closed by the user).
-    // Return an empty layout rather than undefined so downstream code
-    // can distinguish "no tabs" from "no window layout data at all".
     return {
       windowLayout: { tabs: [], activeTabId: undefined },
       wasRepaired: repaired,
     }
   }
 
-  // Validate activeTabId
   let activeTabId: string | undefined
   if (typeof layout.activeTabId === 'string') {
     const tabExists = validTabs.some((t) => t.id === layout.activeTabId)
@@ -2122,8 +1599,6 @@ function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
     }
   } else {
     activeTabId = validTabs[0]?.id
-    // Always flag as repaired when activeTabId is being set from a
-    // non-string value (undefined or invalid type) so the caller re-persists.
     repaired = true
   }
 
@@ -2140,23 +1615,14 @@ function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
 export {
   addWindowTab,
   addWorkspaceToTabUnique,
-  assignTerminalInPanelTree,
-  closePaneInPanelTree,
   closeTerminalInWindowLayout,
-  collectTerminalIdsFromPanelTree,
   collectTerminalIdsFromTileTree,
   computeProgressiveCloseAction,
-  findNewPanelTreeLeaf,
-  findPanelTreeLeaf,
-  findSiblingPaneIdInPanelTree,
   findTerminalLocation,
   findWorkspaceLocation,
   getActiveWindowTab,
   getAllWorkspaceTileLeaves,
-  getFirstPanelTreeLeafId,
-  getPanelTreeLeafIds,
   getStaleTerminalLeavesHierarchical,
-  getWorkspaceTileLeaves,
   moveWorkspace,
   reconcileWindowLayout,
   removeWindowTab,
@@ -2169,7 +1635,6 @@ export {
   saveFocusedPaneId,
   shouldConfirmClosePanelTab,
   shouldConfirmCloseWindowTab,
-  splitPaneInPanelTree,
   switchWindowTab,
   switchWindowTabByIndex,
   switchWindowTabRelative,

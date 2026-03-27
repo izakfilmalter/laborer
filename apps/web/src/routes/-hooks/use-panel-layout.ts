@@ -59,6 +59,10 @@ import {
   switchPanelTabRelative,
 } from '@/panels/panel-tab-utils'
 import {
+  assignTerminal as assignTerminalInPanelTree,
+  collectTerminalIds as collectTerminalIdsFromPanelTree,
+} from '@/panels/panel-tree-utils'
+import {
   createSpawnGuard,
   respawnStaleTerminals,
   retryOnInitializing,
@@ -66,15 +70,12 @@ import {
 import {
   addWindowTab,
   addWorkspaceToTabUnique,
-  assignTerminalInPanelTree,
   closeTerminalInWindowLayout,
-  collectTerminalIdsFromPanelTree,
   collectTerminalIdsFromTileTree,
   findTerminalLocation,
   findWorkspaceLocation,
   getActiveWindowTab,
   getStaleTerminalLeavesHierarchical,
-  getWorkspaceTileLeaves,
   reconcileWindowLayout,
   removeWindowTab,
   removeWorkspaceFromLayout,
@@ -88,9 +89,10 @@ import {
   switchWindowTabByIndex,
   switchWindowTabRelative,
   updateWorkspaceTileLeaf,
-} from '@/panels/window-tab-utils'
+} from '@/panels/window-layout-utils'
 import {
   addWorkspaceToTab,
+  getWorkspaceTileLeaves,
   removeWorkspaceFromTab,
   reorderWorkspaceTiles,
 } from '@/panels/workspace-tile-utils'

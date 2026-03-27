@@ -48,10 +48,10 @@ import { PanelGroupRegistryProvider } from '@/panels/panel-group-registry'
 import { PanelHotkeys } from '@/panels/panel-hotkeys'
 import {
   getActiveWindowTab,
-  getWorkspaceTileLeaves,
   shouldConfirmClosePanelTab,
   shouldConfirmCloseWindowTab,
-} from '@/panels/window-tab-utils'
+} from '@/panels/window-layout-utils'
+import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
 import {
   CloseAppDialog,
   ClosePanelTabDialog,

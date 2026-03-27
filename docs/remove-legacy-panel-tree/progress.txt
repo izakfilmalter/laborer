@@ -63,3 +63,65 @@
 - `apps/web/src/routes/-hooks/use-panel-layout.ts` — Converted all ~30 commit sites to `windowLayoutUpdated`, updated helpers, extracted `commitDevServerUpdate`
 - `apps/web/test/use-panel-layout.test.ts` — Replaced event mocks with `windowLayoutUpdatedMock`, converted 13 tests to `it.todo()`
 
+## Issue 3: Reorganize utility files into 3 modules by tree level — DONE
+
+**Date:** 2026-03-26
+
+### What was done
+
+1. Created `panel-tree-utils.ts` — new file containing all PanelNode-level (split tree) operations:
+   - Extracted from `window-tab-utils.ts`: `splitPane` (renamed from `splitPaneInPanelTree`), `closePane` (renamed from `closePaneInPanelTree`), `findLeaf` (renamed from `findPanelTreeLeaf`), `findSiblingPaneId` (renamed from `findSiblingPaneIdInPanelTree`), `findNewLeafAfterSplit` (renamed from `findNewPanelTreeLeaf`), `getFirstLeafId` (renamed from `getFirstPanelTreeLeafId`), `getLeafIds` (renamed from `getPanelTreeLeafIds`), `collectTerminalIds` (renamed from `collectTerminalIdsFromPanelTree`), `assignTerminal` (renamed from `assignTerminalInPanelTree`), `countLeaves` (renamed from `countPanelLeaves`), `containsPane` (renamed from `panelTreeContainsPane`), `buildPath`.
+   - Ported from `layout-utils.ts`: `findPaneInDirection`, `computeResize` (with `buildPath`, `getEdgeLeaf`, `tryNavigateAtAncestor`, `getResizeDelta`, `applyResizeDelta`, `computeResizeFromPath` helpers). Adapted for renamed types (`LeafNode`/`SplitNode` tags).
+   - New `NavigationDirection` type exported.
+2. Created `window-layout-utils.ts` — new file containing all WindowLayout-level operations:
+   - Extracted all WindowLayout CRUD functions from `window-tab-utils.ts`: `addWindowTab`, `removeWindowTab`, `renameWindowTab`, `switchWindowTab`, `switchWindowTabByIndex`, `switchWindowTabRelative`, `reorderWindowTabs`.
+   - Extracted workspace location lookups: `findWorkspaceLocation`, `findTerminalLocation`.
+   - Extracted focus resolution: `resolveActivePaneForPanelTab`, `resolveActivePaneForWindowTab`, `saveFocusedPaneId`.
+   - Extracted workspace tile leaf update: `updateWorkspaceTileLeaf`.
+   - Extracted workspace uniqueness: `removeWorkspaceFromLayout`, `moveWorkspace`, `addWorkspaceToTabUnique`.
+   - Extracted close confirmation: `shouldConfirmClosePanelTab`, `shouldConfirmCloseWindowTab`, `collectTerminalIdsFromTileTree`.
+   - Extracted progressive close: `computeProgressiveCloseAction`.
+   - Extracted terminal close: `closeTerminalInWindowLayout`.
+   - Extracted utility queries: `getAllWorkspaceTileLeaves`, `getActiveWindowTab`.
+   - Extracted reconciliation: `getStaleTerminalLeavesHierarchical`, `reconcileWindowLayout`.
+   - Extracted repair: `repairWindowLayout` (and all helpers).
+   - All type exports preserved: `ProgressiveCloseAction`, `RepairWindowLayoutResult`, `StaleTerminalLeaf`, `TerminalLocation`, `TerminalProcessInfo`, `WorkspaceLocation`.
+3. `workspace-tile-utils.ts` — kept as-is (already well-organized at tile-tree level). `getWorkspaceTileLeaves` now serves as the single source of truth (duplicate in old `window-tab-utils.ts` is gone).
+4. `panel-tab-utils.ts` — kept as-is (already well-organized at panel-tab level).
+5. Deleted `window-tab-utils.ts` entirely (2186 lines).
+6. Updated all 10 consumer files to import from the new module paths:
+   - `use-panel-layout.ts` — split imports across `panel-tree-utils`, `window-layout-utils`, and `workspace-tile-utils`
+   - `workspace-frames.tsx` — updated to `window-layout-utils`
+   - `index.tsx` — split across `window-layout-utils` and `workspace-tile-utils`
+   - `panel-hotkeys.tsx` — updated to `window-layout-utils`
+   - 6 test files — updated import paths, used rename aliases where function names changed (e.g., `getFirstLeafId as getFirstPanelTreeLeafId`)
+7. Updated stale `@see` comments in `panel-tab-utils.ts` and `workspace-tile-utils.ts`.
+8. Created `panel-tree-utils.test.ts` with 53 tests covering all ported functions:
+   - `getFirstLeafId` (3 tests), `getLeafIds` (2 tests), `findLeaf` (3 tests), `containsPane` (3 tests), `collectTerminalIds` (3 tests), `countLeaves` (2 tests), `splitPane` (4 tests), `closePane` (5 tests), `findSiblingPaneId` (5 tests), `findNewLeafAfterSplit` (2 tests), `assignTerminal` (3 tests), `findPaneInDirection` (10 tests), `computeResize` (8 tests).
+9. `bun run check` passes (typecheck + format + all 1252 tests across all packages).
+
+### Notes on deferred work
+
+- `layout-utils.ts` is NOT deleted yet — it's still imported by production code (`use-panel-layout.ts`, `index.tsx`, `workspace-frames.tsx`, `panel-hotkeys.tsx`, `panel-content.tsx`, `workspace-frame-header-container.tsx`). These consumers will be ported in Issues 7 and 8 to use the new module hierarchy.
+- `layout-migration.ts` is NOT deleted yet — it's still imported by `use-panel-layout.ts` and `workspace-frames.tsx`. These will be cleaned up in Issues 7/8/10.
+- The existing `window-tab-utils.test.ts` file still exists but imports are updated to point to `window-layout-utils.ts` and `workspace-tile-utils.ts`.
+
+### Files changed
+
+- `apps/web/src/panels/panel-tree-utils.ts` — NEW: PanelNode-level operations (split tree)
+- `apps/web/src/panels/window-layout-utils.ts` — NEW: WindowLayout-level operations
+- `apps/web/src/panels/window-tab-utils.ts` — DELETED
+- `apps/web/src/panels/panel-tab-utils.ts` — Updated @see comment
+- `apps/web/src/panels/workspace-tile-utils.ts` — Updated @see comment
+- `apps/web/src/routes/-hooks/use-panel-layout.ts` — Updated imports
+- `apps/web/src/routes/-components/workspace-frames.tsx` — Updated imports
+- `apps/web/src/routes/index.tsx` — Updated imports
+- `apps/web/src/panels/panel-hotkeys.tsx` — Updated imports
+- `apps/web/test/panel-tree-utils.test.ts` — NEW: 53 tests for panel tree operations
+- `apps/web/test/window-tab-utils.test.ts` — Updated imports
+- `apps/web/test/hierarchical-persistence.test.ts` — Updated imports
+- `apps/web/test/workspace-uniqueness.test.ts` — Updated imports
+- `apps/web/test/progressive-close.test.ts` — Updated imports
+- `apps/web/test/focus-consistency.test.ts` — Updated imports
+- `apps/web/test/close-confirmation.test.ts` — Updated imports
+

@@ -10,7 +10,7 @@
  *
  * @see packages/shared/src/types.ts — WorkspaceTileNode, WorkspaceTileLeaf, WorkspaceTileSplit, WindowTab
  * @see apps/web/src/panels/layout-utils.ts — panel-level tree utilities
- * @see apps/web/src/panels/window-tab-utils.ts — window tab CRUD utilities
+ * @see apps/web/src/panels/window-layout-utils.ts — window layout utilities
  */
 
 import type {

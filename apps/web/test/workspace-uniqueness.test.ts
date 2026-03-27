@@ -22,7 +22,7 @@ import {
   addWorkspaceToTabUnique,
   moveWorkspace,
   removeWorkspaceFromLayout,
-} from '../src/panels/window-tab-utils'
+} from '../src/panels/window-layout-utils'
 import {
   addWorkspaceToTab,
   removeWorkspaceFromTab,

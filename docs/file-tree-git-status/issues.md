@@ -6,10 +6,10 @@ Parent PRD: [PRD.md](./PRD.md)
 
 | # | Title | Blocked by | Status |
 |---|-------|-----------|--------|
-| 1 | Streaming RPC contract + FileTreeService with git ls-files | None | Ready |
-| 2 | TreePane renders `<FileTree>` from stream data | #1 | Blocked |
+| 1 | Streaming RPC contract + FileTreeService with git ls-files | None | Done |
+| 2 | TreePane renders `<FileTree>` from stream data | #1 | Ready |
 | 3 | Git status porcelain v2 parser + unit tests | None | Ready |
-| 4 | Wire git status into FileTreeService and TreePane | #1, #3 | Blocked |
+| 4 | Wire git status into FileTreeService and TreePane | #1, #3 | Blocked (#3) |
 | 5 | FileWatcher subscription + debounced refresh | #4 | Blocked |
 | 6 | Stream deduplication + lifecycle management | #5 | Blocked |
 | 7 | Error states + cancellation + cleanup | #6 | Blocked |

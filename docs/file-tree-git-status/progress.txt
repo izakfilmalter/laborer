@@ -1,0 +1,27 @@
+## Issue #1: Streaming RPC contract + FileTreeService with git ls-files
+Status: COMPLETE
+
+### What was done:
+- Defined `GitStatusEntry` and `FileTreeSnapshot` schemas in `packages/shared/src/rpc.ts`
+- Added `fileTree.subscribe` streaming RPC to `LaborerRpcs` with `stream: true`
+- Implemented `FileTreeService` as `Context.Tag + Layer.scoped` in `packages/server/src/services/file-tree-service.ts`
+  - Runs `git ls-files -z --others --exclude-standard --cached` in the workspace's worktree
+  - Parses null-delimited output into sorted string[] of relative file paths
+  - Sets `GIT_OPTIONAL_LOCKS=0` env var to avoid lock contention
+  - Returns a Stream that emits one FileTreeSnapshot (with gitStatus: []) and stays open
+  - Looks up workspace via LiveStore to resolve worktreePath from workspaceId
+- Wired RPC handler in `packages/server/src/rpc/handlers.ts` using `Stream.unwrap(Effect.gen(...))`
+- Composed service layer in `packages/server/src/utility-main.ts`:
+  - Added to DeferredGroup1Layers
+  - Created Ref-backed delegating proxy
+  - Added Ref.set swap after service stack build
+  - Added to context output (now 15 proxies)
+- Updated all test files to provide FileTreeService:
+  - `test/rpc/core-layers.test.ts` — added makeServiceProxy stub
+  - `test/rpc/messageport-rpc.test.ts` — added makeServiceProxy stub
+  - `test/rpc/test-layer.ts` — added FileTreeService.layer to DeferredGroup1Layers
+
+### Verification:
+- All type checks pass (15/15 tasks)
+- All tests pass (352 passed, 1 skipped)
+- Formatting clean (471 files checked, no fixes needed)

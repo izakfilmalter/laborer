@@ -10,6 +10,7 @@ import { DeferredServicesReadyLayer } from '../../src/services/deferred-service.
 import { DepsImageService } from '../../src/services/deps-image-service.js'
 import { DiffService } from '../../src/services/diff-service.js'
 import { DockerDetection } from '../../src/services/docker-detection.js'
+import { FileTreeService } from '../../src/services/file-tree-service.js'
 import { GithubTaskImporter } from '../../src/services/github-task-importer.js'
 import { LaborerStore } from '../../src/services/laborer-store.js'
 import { LinearTaskImporter } from '../../src/services/linear-task-importer.js'
@@ -150,6 +151,7 @@ const DeferredGroup1Layers = Layer.mergeAll(
   ContainerService.layer,
   PrdStorageService.layer,
   DiffService.layer,
+  FileTreeService.layer,
   PrWatcher.layer,
   WorktreeReconciler.layer
 )

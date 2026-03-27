@@ -367,6 +367,32 @@ const ReviewFetchVerdictResponse = Schema.Struct({
 })
 
 // ---------------------------------------------------------------------------
+// File Tree Schemas
+// ---------------------------------------------------------------------------
+
+/**
+ * Git status type for a single file, compatible with `@pierre/trees`.
+ * Maps the full porcelain v2 status codes down to three types.
+ */
+export const GitStatusEntry = Schema.Struct({
+  path: Schema.String,
+  status: Schema.Literal('added', 'deleted', 'modified'),
+})
+
+export type GitStatusEntry = typeof GitStatusEntry.Type
+
+/**
+ * A snapshot of the file tree for a workspace's worktree.
+ * Contains the full list of tracked + untracked files and their git status.
+ */
+export const FileTreeSnapshot = Schema.Struct({
+  files: Schema.Array(Schema.String),
+  gitStatus: Schema.Array(GitStatusEntry),
+})
+
+export type FileTreeSnapshot = typeof FileTreeSnapshot.Type
+
+// ---------------------------------------------------------------------------
 // RPC Definitions
 // ---------------------------------------------------------------------------
 
@@ -929,6 +955,28 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       workspaceId: Schema.String,
       reviewId: Schema.Number,
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // File Tree RPCs
+  // -----------------------------------------------------------------------
+
+  /**
+   * Streaming RPC that pushes file tree snapshots for a workspace's worktree.
+   *
+   * The first emission is the initial snapshot (full file listing); subsequent
+   * emissions are pushed when files change on disk. The stream stays open
+   * until the client disconnects (panel close / unmount).
+   *
+   * @see PRD: Live File Tree with Git Status Decorations
+   */
+  Rpc.make('fileTree.subscribe', {
+    success: FileTreeSnapshot,
+    error: RpcError,
+    stream: true,
+    payload: {
+      workspaceId: Schema.String,
     },
   })
 ) {}

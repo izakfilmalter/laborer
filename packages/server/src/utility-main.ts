@@ -62,6 +62,7 @@ import {
 import { DepsImageService } from './services/deps-image-service.js'
 import { DiffService } from './services/diff-service.js'
 import { DockerDetection } from './services/docker-detection.js'
+import { FileTreeService } from './services/file-tree-service.js'
 import {
   FileWatcherClient,
   FileWatcherRpcPort,
@@ -267,6 +268,7 @@ const DeferredGroup1Layers = Layer.mergeAll(
   ContainerService.layer,
   PrdStorageService.layer,
   DiffService.layer,
+  FileTreeService.layer,
   PrWatcher.layer,
   WorktreeReconciler.layer
 )
@@ -350,6 +352,7 @@ const DeferredServicesProxyLive = Layer.scopedContext(
 
     const containerService = yield* makeRefDelegatingService(ContainerService)
     const diffService = yield* makeRefDelegatingService(DiffService)
+    const fileTreeService = yield* makeRefDelegatingService(FileTreeService)
     const dockerDetection = yield* makeRefDelegatingService(DockerDetection, {
       // DockerDetection.check() has no error channel — return valid data
       check: () => Effect.succeed({ available: false }),
@@ -425,6 +428,10 @@ const DeferredServicesProxyLive = Layer.scopedContext(
           Context.get(stackCtx, ContainerService)
         )
         yield* Ref.set(diffService.ref, Context.get(stackCtx, DiffService))
+        yield* Ref.set(
+          fileTreeService.ref,
+          Context.get(stackCtx, FileTreeService)
+        )
         yield* Ref.set(
           githubTaskImporter.ref,
           Context.get(stackCtx, GithubTaskImporter)
@@ -515,11 +522,12 @@ const DeferredServicesProxyLive = Layer.scopedContext(
       Effect.withSpan('deferred.init.all')
     )
 
-    // Return context with all 14 proxies
+    // Return context with all 15 proxies
     return pipe(
       Context.empty(),
       Context.add(ContainerService, containerService.proxy),
       Context.add(DiffService, diffService.proxy),
+      Context.add(FileTreeService, fileTreeService.proxy),
       Context.add(DockerDetection, dockerDetection.proxy),
       Context.add(GithubTaskImporter, githubTaskImporter.proxy),
       Context.add(LinearTaskImporter, linearTaskImporter.proxy),

@@ -28,6 +28,7 @@ import {
 import { DepsImageService } from '../../src/services/deps-image-service.js'
 import { DiffService } from '../../src/services/diff-service.js'
 import { DockerDetection } from '../../src/services/docker-detection.js'
+import { FileTreeService } from '../../src/services/file-tree-service.js'
 import { GithubTaskImporter } from '../../src/services/github-task-importer.js'
 import { LinearTaskImporter } from '../../src/services/linear-task-importer.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
@@ -63,6 +64,7 @@ const DeferredServiceStubs = Layer.mergeAll(
   Layer.succeed(TaskManager, makeServiceProxy('TaskManager')),
   Layer.succeed(WorkspaceProvider, makeServiceProxy('WorkspaceProvider')),
   Layer.succeed(DiffService, makeServiceProxy('DiffService')),
+  Layer.succeed(FileTreeService, makeServiceProxy('FileTreeService')),
   Layer.succeed(PrWatcher, makeServiceProxy('PrWatcher')),
   Layer.succeed(WorkspaceSyncService, makeServiceProxy('WorkspaceSyncService')),
   Layer.succeed(TerminalClient, makeServiceProxy('TerminalClient')),

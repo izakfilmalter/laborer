@@ -14,13 +14,14 @@
 import { join } from 'node:path'
 import { LaborerRpcs, RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import { Array, Effect, pipe, Ref, Schema } from 'effect'
+import { Array, Effect, pipe, Ref, Schema, Stream } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { ContainerService } from '../services/container-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
 import { DiffService } from '../services/diff-service.js'
 import { DockerDetection } from '../services/docker-detection.js'
+import { FileTreeService } from '../services/file-tree-service.js'
 import { GithubTaskImporter } from '../services/github-task-importer.js'
 import { LaborerStore } from '../services/laborer-store.js'
 import { LinearTaskImporter } from '../services/linear-task-importer.js'
@@ -1267,5 +1268,16 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           tokenType: body.token_type ?? 'bearer',
         }
       }),
+
+    // -------------------------------------------------------------------
+    // File Tree RPCs
+    // -------------------------------------------------------------------
+    'fileTree.subscribe': ({ workspaceId }) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const fileTreeService = yield* FileTreeService
+          return fileTreeService.subscribe(workspaceId)
+        })
+      ),
   })
 )

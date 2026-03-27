@@ -1002,10 +1002,12 @@ const makeInProcessSyncBackend = () => {
             }>,
             options?: { live?: boolean }
           ) => {
-            const rpcCursor = cursor.pipe(
-              Option.map((c) => ({
+            // If we have a cursor but no backendId yet, drop the cursor
+            // to avoid a Backend ID mismatch error on the server.
+            const rpcCursor = Option.flatMap(cursor, (c) =>
+              Option.map(currentBackendId, (backendId) => ({
                 eventSequenceNumber: c.eventSequenceNumber,
-                backendId: Option.getOrElse(currentBackendId, () => ''),
+                backendId,
               }))
             )
 

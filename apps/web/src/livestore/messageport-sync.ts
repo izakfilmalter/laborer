@@ -213,10 +213,14 @@ export const makeMessagePortSync =
           options?: { live?: boolean }
         ) => {
           const isLive = options?.live === true
-          const rpcCursor = cursor.pipe(
-            Option.map((c) => ({
+          // If we have a cursor but no backendId yet (e.g. resumed session
+          // before the first pull/ping response), drop the cursor entirely.
+          // A cursor without a valid backendId would cause a Backend ID
+          // mismatch error on the server.
+          const rpcCursor = Option.flatMap(cursor, (c) =>
+            Option.map(currentBackendId, (backendId) => ({
               eventSequenceNumber: c.eventSequenceNumber,
-              backendId: Option.getOrElse(currentBackendId, () => ''),
+              backendId,
             }))
           )
 

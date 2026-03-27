@@ -15,12 +15,26 @@
  * to coalesce rapid changes (e.g., build output) into a single git
  * invocation.
  *
+ * Stream deduplication: each subscription maintains a fingerprint of the
+ * last emitted snapshot (file count + status count + content hash). When
+ * a debounced refresh produces a snapshot identical to the previous one,
+ * the emission is suppressed. This prevents redundant renders when a file
+ * watcher fires but git state hasn't changed (e.g., a .gitignore'd file
+ * was modified, or a log file was appended to).
+ *
+ * Lifecycle: each call to `subscribe` creates an independent stream with
+ * its own file watcher subscription, debounce timer, and dedup state.
+ * Closing and reopening the panel creates a fresh stream — no stale data.
+ * The `Effect.addFinalizer` in `Stream.asyncPush` ensures all resources
+ * (watcher, timer, event subscription) are torn down on disconnect.
+ *
  * Follows the `Context.Tag + Layer.scoped` pattern from DiffService.
  *
  * @see PRD: Live File Tree with Git Status Decorations
  * @see Issue #1: Streaming RPC contract + FileTreeService with git ls-files
  * @see Issue #4: Wire git status into FileTreeService and TreePane
  * @see Issue #5: FileWatcher subscription + debounced refresh
+ * @see Issue #6: Stream deduplication + lifecycle management
  */
 
 import type { FileTreeSnapshot } from '@laborer/shared/rpc'
@@ -43,6 +57,24 @@ import { LaborerStore } from './laborer-store.js'
 
 /** Debounce interval for file watcher events (ms). */
 const FILE_EVENT_DEBOUNCE_MS = 300
+
+/**
+ * Compute a fingerprint string for a FileTreeSnapshot.
+ *
+ * Used for deduplication: if the fingerprint matches the previous emission,
+ * the new snapshot is suppressed to avoid redundant client renders.
+ *
+ * The fingerprint encodes file count, status count, and content.
+ * We use JSON.stringify since both arrays are already sorted (files by
+ * `parseLsFilesOutput`, gitStatus by `parseGitStatusV2`), so identical
+ * content always produces identical strings.
+ *
+ * For very large repos, a content hash would be more memory-efficient,
+ * but since snapshots are already held in memory for emission this
+ * approach adds negligible overhead and is simpler.
+ */
+const snapshotFingerprint = (snapshot: FileTreeSnapshot): string =>
+  `${snapshot.files.length}:${snapshot.gitStatus.length}:${JSON.stringify(snapshot.files)}:${JSON.stringify(snapshot.gitStatus)}`
 
 /**
  * Helper: spawn a git command in a worktree and capture stdout/stderr.
@@ -226,6 +258,10 @@ class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
 
             // Build a push-based stream: emit the initial snapshot, then
             // push new snapshots when the file watcher fires.
+            // Deduplication state: tracks the fingerprint of the last
+            // emitted snapshot so redundant emissions are suppressed.
+            let previousFingerprint = snapshotFingerprint(initialSnapshot)
+
             const reactiveStream = Stream.asyncPush<FileTreeSnapshot, RpcError>(
               (emit) =>
                 Effect.gen(function* () {
@@ -281,11 +317,22 @@ class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
                         debounceTimer = undefined
                         runPromise(
                           computeSnapshot(worktreePath).pipe(
-                            Effect.tap((snapshot) =>
-                              Effect.sync(() => {
-                                emit.single(snapshot)
-                              })
-                            ),
+                            Effect.flatMap((snapshot) => {
+                              // Deduplication: compare fingerprint with
+                              // the previous emission to suppress redundant
+                              // pushes when git state hasn't changed.
+                              const fingerprint = snapshotFingerprint(snapshot)
+                              if (fingerprint === previousFingerprint) {
+                                return Effect.logDebug(
+                                  `[FileTreeService] workspace=${workspaceId} SKIPPED — snapshot unchanged (files=${snapshot.files.length} gitStatus=${snapshot.gitStatus.length})`
+                                )
+                              }
+                              previousFingerprint = fingerprint
+                              emit.single(snapshot)
+                              return Effect.logDebug(
+                                `[FileTreeService] workspace=${workspaceId} emitted snapshot (files=${snapshot.files.length} gitStatus=${snapshot.gitStatus.length})`
+                              )
+                            }),
                             Effect.tapErrorCause((cause) =>
                               Effect.logWarning(
                                 `[FileTreeService] workspace=${workspaceId} refresh failed`,

@@ -11,8 +11,8 @@ Parent PRD: [PRD.md](./PRD.md)
 | 3 | Git status porcelain v2 parser + unit tests | None | Done |
 | 4 | Wire git status into FileTreeService and TreePane | #1, #3 | Done |
 | 5 | FileWatcher subscription + debounced refresh | #4 | Done |
-| 6 | Stream deduplication + lifecycle management | #5 | Ready |
-| 7 | Error states + cancellation + cleanup | #6 | Blocked |
+| 6 | Stream deduplication + lifecycle management | #5 | Done |
+| 7 | Error states + cancellation + cleanup | #6 | Ready |
 | 8 | Polish + large repo performance | #7 | Blocked |
 
 ---

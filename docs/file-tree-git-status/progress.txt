@@ -131,3 +131,32 @@ Status: COMPLETE
 - All 57 RPC tests pass (11 test files)
 - All 7 tree panel layout tests pass
 - Formatting clean (473 files checked, no fixes needed)
+
+## Issue #6: Stream deduplication + lifecycle management
+Status: COMPLETE
+
+### What was done:
+- Added snapshot fingerprinting for deduplication in `packages/server/src/services/file-tree-service.ts`
+  - `snapshotFingerprint()` helper computes a string from file count + status count + JSON-serialized content
+  - Both `files` and `gitStatus` arrays are already sorted (by `parseLsFilesOutput` and `parseGitStatusV2`), so identical content always produces identical fingerprints
+  - Fingerprint is computed for the initial snapshot and stored as `previousFingerprint`
+  - On each debounced refresh, new fingerprint is compared against previous
+  - If identical, emission is suppressed with a debug log ("SKIPPED — snapshot unchanged")
+  - If different, `previousFingerprint` is updated and the new snapshot is emitted with a debug log
+- Lifecycle management was already correct from Issue #5:
+  - Each call to `subscribe` creates a fully independent stream with its own file watcher, debounce timer, and dedup state
+  - Closing the panel triggers `Effect.addFinalizer` which clears the debounce timer, unsubscribes from file events, and tears down the file watcher
+  - Reopening the panel creates a fresh stream with a new `computeSnapshot` call — no stale data
+  - Multiple rapid close/open cycles don't leak because each stream's finalizer is run on scope close
+  - The `previousFingerprint` variable is scoped to the `Stream.unwrap(Effect.gen(...))` closure, so it's per-subscription and garbage collected on unsubscribe
+- Replaced `Effect.tap` + `Effect.sync` with `Effect.flatMap` in the debounce callback for proper Effect logging of dedup decisions
+- Updated module JSDoc to reflect Issue #6 changes (deduplication and lifecycle documentation)
+
+### Key design decisions:
+- JSON.stringify-based fingerprinting (not content hash): since the snapshot objects are already held in memory for potential emission, computing a JSON string adds negligible overhead. A content hash (e.g., SHA-256) would reduce memory for the cached fingerprint but add CPU for hashing — not worth the complexity given snapshots are already bounded by debounce rate.
+- Per-subscription dedup state (mutable `let` in closure) rather than a service-level `Ref<Map>` (like DiffService): the FileTreeService stream is inherently per-subscriber, so there's no need for a shared map. A local variable is simpler, avoids fiber contention, and is automatically cleaned up when the closure is GC'd.
+
+### Verification:
+- All type checks pass (7/7 tasks)
+- All 393 tests pass (1 skipped across 47 test files)
+- Formatting clean (473 files checked, no fixes needed)

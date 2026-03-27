@@ -1352,6 +1352,26 @@ export function usePanelLayout() {
     return false
   }, [])
 
+  /**
+   * Toggle a full-height file tree panel for a workspace.
+   *
+   * NOTE: This is a placeholder implementation. The actual tree panel
+   * toggle is handled at the route level (index.tsx) where the full-height
+   * tree panel state is managed. This hook's version is overridden by
+   * the route's gatedPanelActions to provide the full-height behavior.
+   *
+   * The tree panel is forced to the left side, unlike diff/review which
+   * are on the right.
+   *
+   * @param _paneId - The pane ID (unused in this stub implementation)
+   * @returns Always false since the actual implementation is in index.tsx
+   */
+  const handleToggleTreePane = useCallback((_paneId: string): boolean => {
+    // This is overridden by gatedPanelActions in index.tsx
+    // to provide full-height tree panel behavior
+    return false
+  }, [])
+
   // -------------------------------------------------------------------
   // Window tab actions — operate on the hierarchical WindowLayout.
   // -------------------------------------------------------------------
@@ -1948,6 +1968,7 @@ export function usePanelLayout() {
       toggleDiffPane: handleToggleDiffPane,
       toggleDevServerPane: handleToggleDevServerPane,
       toggleReviewPane: handleToggleReviewPane,
+      toggleTreePane: handleToggleTreePane,
       resizePane: handleResizePane,
       closeTerminalPane: handleCloseTerminalPane,
       removePanelTab: handleRemovePanelTab,
@@ -1977,6 +1998,7 @@ export function usePanelLayout() {
       handleToggleDiffPane,
       handleToggleDevServerPane,
       handleToggleReviewPane,
+      handleToggleTreePane,
       handleResizePane,
       handleCloseTerminalPane,
       handleRemovePanelTab,

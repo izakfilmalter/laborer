@@ -219,10 +219,23 @@ function HomeComponent() {
     null
   )
 
-  // Auto-close review/diff panels when the workspace no longer exists
+  // Tree panel state — transient UI mode (not persisted to LiveStore).
+  // When set to a workspace ID, the full-height file tree panel is shown
+  // on the LEFT side of the workspace frames. Unlike diff/review which
+  // are forced to the right, the tree panel is forced to the left.
+  const [treePaneWorkspaceId, setTreePaneWorkspaceId] = useState<string | null>(
+    null
+  )
+
+  // Auto-close review/diff/tree panels when the workspace no longer exists
   // in the layout (e.g., if the workspace was closed while a side panel was open).
   useEffect(() => {
-    if (!((reviewPaneWorkspaceId || diffPaneWorkspaceId) && windowLayout)) {
+    if (
+      !(
+        (reviewPaneWorkspaceId || diffPaneWorkspaceId || treePaneWorkspaceId) &&
+        windowLayout
+      )
+    ) {
       return
     }
     const leaves = getActiveTabLeafNodes(windowLayout)
@@ -238,7 +251,18 @@ function HomeComponent() {
         setDiffPaneWorkspaceId(null)
       }
     }
-  }, [reviewPaneWorkspaceId, diffPaneWorkspaceId, windowLayout])
+    if (treePaneWorkspaceId) {
+      const exists = leaves.some((l) => l.workspaceId === treePaneWorkspaceId)
+      if (!exists) {
+        setTreePaneWorkspaceId(null)
+      }
+    }
+  }, [
+    reviewPaneWorkspaceId,
+    diffPaneWorkspaceId,
+    treePaneWorkspaceId,
+    windowLayout,
+  ])
 
   /**
    * Toggle the full-height review panel for the workspace of the given pane.
@@ -310,6 +334,44 @@ function HomeComponent() {
       return diffPaneWorkspaceId !== workspaceId
     },
     [windowLayout, diffPaneWorkspaceId]
+  )
+
+  /**
+   * Toggle the full-height file tree panel for the workspace of the given pane.
+   * If the tree panel is already open for that workspace, closes it.
+   * If it's open for a different workspace, switches to the new workspace.
+   *
+   * The tree panel is forced to the left side, unlike diff/review.
+   *
+   * @param paneId - The pane ID to get the workspace from
+   * @returns Whether the tree panel is now open
+   */
+  const toggleTreePane = useCallback(
+    (paneId: string): boolean => {
+      if (!windowLayout) {
+        return false
+      }
+
+      const found = findPaneInActiveTab(windowLayout, paneId)
+      if (!found?.workspaceId) {
+        return false
+      }
+
+      const workspaceId = found.workspaceId
+
+      setTreePaneWorkspaceId((current) => {
+        if (current === workspaceId) {
+          // Already showing tree panel for this workspace — close it
+          return null
+        }
+        // Open tree panel for this workspace
+        return workspaceId
+      })
+
+      // Return true if the panel will be open after this toggle
+      return treePaneWorkspaceId !== workspaceId
+    },
+    [windowLayout, treePaneWorkspaceId]
   )
 
   // Close-terminal confirmation dialog state — the pane ID is stored in
@@ -688,6 +750,7 @@ function HomeComponent() {
       toggleFullscreenPane,
       toggleReviewPane,
       toggleDiffPane,
+      toggleTreePane,
       showPanelTypePicker,
     }),
     [
@@ -700,6 +763,7 @@ function HomeComponent() {
       toggleFullscreenPane,
       toggleReviewPane,
       toggleDiffPane,
+      toggleTreePane,
       showPanelTypePicker,
     ]
   )
@@ -1009,6 +1073,8 @@ function HomeComponent() {
                       isReconciling={isReconciling}
                       reviewPaneOpen={reviewPaneWorkspaceId !== null}
                       reviewWorkspaceId={reviewPaneWorkspaceId}
+                      treePaneOpen={treePaneWorkspaceId !== null}
+                      treeWorkspaceId={treePaneWorkspaceId}
                       windowLayout={windowLayout}
                       workspaceTileLayout={workspaceTileLayout}
                     />

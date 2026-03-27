@@ -19,6 +19,8 @@ interface PanelContentProps {
   readonly isReconciling: boolean
   readonly reviewPaneOpen?: boolean
   readonly reviewWorkspaceId?: string | null
+  readonly treePaneOpen?: boolean
+  readonly treeWorkspaceId?: string | null
   /** The hierarchical window layout — used for fullscreen pane workspace resolution. */
   readonly windowLayout?: WindowLayout | undefined
   readonly workspaceTileLayout?: WorkspaceTileNode | undefined
@@ -46,6 +48,8 @@ export function PanelContent({
   isEmptyWindowTab = false,
   reviewPaneOpen = false,
   reviewWorkspaceId = null,
+  treePaneOpen = false,
+  treeWorkspaceId = null,
   diffPaneOpen = false,
   diffWorkspaceId = null,
 }: PanelContentProps) {
@@ -107,6 +111,7 @@ export function PanelContent({
               activePaneId={activePaneId}
               diffWorkspaceId={diffPaneOpen ? diffWorkspaceId : null}
               reviewWorkspaceId={reviewPaneOpen ? reviewWorkspaceId : null}
+              treeWorkspaceId={treePaneOpen ? treeWorkspaceId : null}
               workspaceTileLayout={workspaceTileLayout}
             />
             {/* Fullscreen portal target — panes portal into this overlay

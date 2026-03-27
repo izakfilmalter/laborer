@@ -484,6 +484,21 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
     { timeout: SEQUENCE_TIMEOUT }
   )
 
+  // Ctrl+b then t → toggle file tree panel on the left side
+  useHotkeySequence(
+    ['Control+B', 'T'],
+    (event) => {
+      event.preventDefault()
+      if (!actions) {
+        return
+      }
+      if (activePaneId) {
+        actions.toggleTreePane(activePaneId)
+      }
+    },
+    { timeout: SEQUENCE_TIMEOUT }
+  )
+
   // Ctrl+b then s → create a new dev server terminal panel in a right-side split
   useHotkeySequence(
     ['Control+B', 'S'],

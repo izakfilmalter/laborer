@@ -32,6 +32,7 @@
     "@livestore/react": "0.4.0-dev.22",
     "@livestore/sync-cf": "0.4.0-dev.22",
     "@pierre/diffs": "^1.0.11",
+    "@pierre/trees": "0.0.1-beta.3",
     "@platejs/basic-nodes": "^52.0.11",
     "@platejs/code-block": "^52.0.11",
     "@platejs/link": "^52.0.11",

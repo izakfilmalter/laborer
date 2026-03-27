@@ -35,7 +35,6 @@ import {
   closePane,
   computeResize,
   computeTerminalPaneAssignment,
-  ensureValidActivePaneId,
   filterTreeByWorkspace,
   findLeafByTerminalId,
   findNewLeafAfterSplit,
@@ -238,7 +237,6 @@ export function usePanelLayout() {
   // The persisted layout tree, if one exists in LiveStore.
   const persistedLayoutTree = persistedLayoutRepair.layoutTree
   // Legacy columns removed — always null after DB nuke.
-  const rawPersistedActivePaneId: string | null = null
   const persistedWorkspaceOrder: string[] | null = null
 
   // Read and repair the hierarchical window layout from the new columns.
@@ -267,7 +265,7 @@ export function usePanelLayout() {
     if (persistedLayoutTree) {
       return migrateToWindowLayout(
         persistedLayoutTree,
-        rawPersistedActivePaneId,
+        null,
         persistedWorkspaceOrder
       )
     }
@@ -295,24 +293,26 @@ export function usePanelLayout() {
     return persistedLayoutTree ?? defaultLayout
   }, [persistedWindowLayout, persistedLayoutTree, defaultLayout])
 
-  // Enforce the guaranteed active pane invariant: when a layout exists,
-  // activePaneId must reference a valid leaf node. If it's null or stale
-  // (pointing to a removed pane), fall back to the first leaf.
-  // @see Issue #150: Guaranteed active pane invariant
-  const persistedActivePaneId = layout
-    ? ensureValidActivePaneId(layout, rawPersistedActivePaneId)
-    : null
-
-  useEffect(() => {
-    if (!(persistedRow && layout)) {
-      return
+  // Derive the active pane ID exclusively from the hierarchical layout.
+  // Walks: active window tab > active workspace tile > active panel tab >
+  // focusedPaneId. Falls back at each level if the preferred value is
+  // unavailable. Returns null when there is no layout.
+  const persistedActivePaneId = useMemo(() => {
+    if (!persistedWindowLayout) {
+      return null
     }
+    const activeTab = getActiveWindowTab(persistedWindowLayout)
+    if (!activeTab) {
+      return null
+    }
+    return resolveActivePaneForWindowTab(activeTab) ?? null
+  }, [persistedWindowLayout])
 
-    const shouldRepairPersistedSession =
-      persistedLayoutRepair.wasRepaired ||
-      persistedActivePaneId !== rawPersistedActivePaneId
-
-    if (!shouldRepairPersistedSession) {
+  // Re-persist the layout if the legacy layout tree needed repair.
+  // Focus repair is no longer needed here — focus is tracked hierarchically
+  // via PanelTab.focusedPaneId inside the windowLayout JSON.
+  useEffect(() => {
+    if (!(persistedRow && persistedLayoutRepair.wasRepaired)) {
       return
     }
 
@@ -326,9 +326,7 @@ export function usePanelLayout() {
       )
     }
   }, [
-    layout,
     panelWindowId,
-    persistedActivePaneId,
     persistedLayoutRepair.wasRepaired,
     persistedRow,
     persistedWindowLayout,
@@ -848,46 +846,31 @@ export function usePanelLayout() {
 
   const handleSetActivePaneId = useCallback(
     (paneId: string | null) => {
-      // Use the effective layout (which includes pane IDs from the
-      // hierarchical window layout) instead of the raw persisted legacy
-      // tree. When using the hierarchical layout path, pane IDs are
-      // derived from panel tab layouts and may not exist in the legacy
-      // tree — validating against the legacy tree would silently replace
-      // the clicked pane ID with a stale fallback.
-      const effectiveLayout = layout ?? persistedLayoutTree ?? defaultLayout
-      if (!effectiveLayout) {
+      if (!persistedWindowLayout) {
         return
       }
-      // Enforce the invariant: do not accept null when panes exist.
-      // If null is passed (e.g., by legacy code), fall back to the first leaf.
-      // @see Issue #150: Guaranteed active pane invariant
-      const validatedPaneId = ensureValidActivePaneId(effectiveLayout, paneId)
+      // Resolve the effective pane ID. If null is passed, fall back to
+      // the hierarchically resolved active pane for the current window tab.
+      const activeTab = getActiveWindowTab(persistedWindowLayout)
+      const validatedPaneId =
+        paneId ?? (activeTab ? resolveActivePaneForWindowTab(activeTab) : null)
+      if (!validatedPaneId) {
+        return
+      }
       // Save focusedPaneId on the hierarchical layout so that
       // switching tabs can restore focus later.
-      if (validatedPaneId && persistedWindowLayout) {
-        const updated = saveFocusedPaneId(
-          persistedWindowLayout,
-          validatedPaneId
+      const updated = saveFocusedPaneId(persistedWindowLayout, validatedPaneId)
+      if (updated !== persistedWindowLayout) {
+        store.commit(
+          windowLayoutUpdated({
+            windowId: panelWindowId,
+            windowLayout: updated,
+            reason: 'focus-changed',
+          })
         )
-        if (updated !== persistedWindowLayout) {
-          store.commit(
-            windowLayoutUpdated({
-              windowId: panelWindowId,
-              windowLayout: updated,
-              reason: 'focus-changed',
-            })
-          )
-        }
       }
     },
-    [
-      layout,
-      persistedLayoutTree,
-      defaultLayout,
-      panelWindowId,
-      store,
-      persistedWindowLayout,
-    ]
+    [panelWindowId, store, persistedWindowLayout]
   )
 
   /**

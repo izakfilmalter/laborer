@@ -48,6 +48,7 @@ import { PanelGroupRegistryProvider } from '@/panels/panel-group-registry'
 import { PanelHotkeys } from '@/panels/panel-hotkeys'
 import {
   getActiveWindowTab,
+  resolveActiveWorkspaceId,
   shouldConfirmClosePanelTab,
   shouldConfirmCloseWindowTab,
 } from '@/panels/window-layout-utils'
@@ -104,14 +105,16 @@ function HomeComponent() {
     workspaceOrder,
   } = usePanelLayout()
 
-  // Derive the active workspace ID from the active pane for sidebar highlighting.
+  // Derive the active workspace ID from the hierarchical window layout.
+  // Walks: active window tab > workspace tile leaves > active panel tab >
+  // focusedPaneId to find the workspace containing the focused pane.
   const activeWorkspaceId = useMemo(() => {
-    if (!(activePaneId && layout)) {
+    const windowLayout = panelActions.windowLayout
+    if (!windowLayout) {
       return null
     }
-    const node = findNodeById(layout, activePaneId)
-    return node?._tag === 'LeafNode' ? (node.workspaceId ?? null) : null
-  }, [activePaneId, layout])
+    return resolveActiveWorkspaceId(windowLayout) ?? null
+  }, [panelActions.windowLayout])
 
   // Extract the active window tab's workspace tile layout for bidirectional tiling.
   // When available, WorkspaceFrames uses this for hierarchical rendering instead

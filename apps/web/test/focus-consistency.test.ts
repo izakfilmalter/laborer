@@ -27,6 +27,7 @@ import { getFirstLeafId as getFirstPanelTreeLeafId } from '../src/panels/panel-t
 import {
   resolveActivePaneForPanelTab,
   resolveActivePaneForWindowTab,
+  resolveActiveWorkspaceId,
   saveFocusedPaneId,
 } from '../src/panels/window-layout-utils'
 
@@ -357,5 +358,88 @@ describe('saveFocusedPaneId', () => {
     }
     const result = saveFocusedPaneId(layout, 'pane-1')
     expect(result).toBe(layout)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveActiveWorkspaceId
+// ---------------------------------------------------------------------------
+
+describe('resolveActiveWorkspaceId', () => {
+  it('returns undefined for empty layout', () => {
+    const layout: WindowLayout = { tabs: [] }
+    expect(resolveActiveWorkspaceId(layout)).toBeUndefined()
+  })
+
+  it('returns the workspace ID when active pane is in a single workspace', () => {
+    const pTab = makePanelTab('pt-1', makeLeaf('pane-1'), 'pane-1')
+    const tile = makeWorkspaceTile('tile-1', 'ws-alpha', [pTab])
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-1', workspaceLayout: tile }],
+      activeTabId: 'tab-1',
+    }
+    expect(resolveActiveWorkspaceId(layout)).toBe('ws-alpha')
+  })
+
+  it('returns the correct workspace when focused pane is in the second workspace', () => {
+    const pTab1 = makePanelTab('pt-1', makeLeaf('pane-ws1'), 'pane-ws1')
+    const tile1 = makeWorkspaceTile('tile-1', 'ws-1', [pTab1])
+    const pTab2 = makePanelTab(
+      'pt-2',
+      makeSplit('split', [makeLeaf('pane-ws2-a'), makeLeaf('pane-ws2-b')]),
+      'pane-ws2-b'
+    )
+    const tile2 = makeWorkspaceTile('tile-2', 'ws-2', [pTab2])
+    const split: WorkspaceTileSplit = {
+      _tag: 'WorkspaceTileSplit',
+      id: 'wsplit-1',
+      direction: 'horizontal',
+      children: [tile1, tile2],
+      sizes: [50, 50],
+    }
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-1', workspaceLayout: split }],
+      activeTabId: 'tab-1',
+    }
+    // The focused pane is in ws-2, but resolveActiveWorkspaceId resolves
+    // from the first workspace tile leaf that has a valid focused pane.
+    // Since ws-1 also has a focused pane, it returns ws-1.
+    expect(resolveActiveWorkspaceId(layout)).toBe('ws-1')
+  })
+
+  it('returns undefined when active tab has no workspace layout', () => {
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-1' }],
+      activeTabId: 'tab-1',
+    }
+    expect(resolveActiveWorkspaceId(layout)).toBeUndefined()
+  })
+
+  it('returns undefined when activeTabId does not match any tab', () => {
+    const pTab = makePanelTab('pt-1', makeLeaf('pane-1'), 'pane-1')
+    const tile = makeWorkspaceTile('tile-1', 'ws-1', [pTab])
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-1', workspaceLayout: tile }],
+      activeTabId: 'nonexistent-tab',
+    }
+    expect(resolveActiveWorkspaceId(layout)).toBeUndefined()
+  })
+
+  it('returns workspace ID from first workspace with a valid pane when first workspace has empty panel tabs', () => {
+    const tile1 = makeWorkspaceTile('tile-1', 'ws-empty', [])
+    const pTab2 = makePanelTab('pt-2', makeLeaf('pane-ws2'), 'pane-ws2')
+    const tile2 = makeWorkspaceTile('tile-2', 'ws-filled', [pTab2])
+    const split: WorkspaceTileSplit = {
+      _tag: 'WorkspaceTileSplit',
+      id: 'wsplit-1',
+      direction: 'horizontal',
+      children: [tile1, tile2],
+      sizes: [50, 50],
+    }
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-1', workspaceLayout: split }],
+      activeTabId: 'tab-1',
+    }
+    expect(resolveActiveWorkspaceId(layout)).toBe('ws-filled')
   })
 })

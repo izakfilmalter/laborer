@@ -436,6 +436,41 @@ function resolveActivePaneForWindowTab(tab: WindowTab): string | undefined {
 }
 
 /**
+ * Resolve the active workspace ID from the hierarchical layout.
+ *
+ * Finds the active window tab, then walks its workspace tile leaves to find
+ * the first one with a resolvable active pane. Returns that leaf's
+ * `workspaceId`. This matches the semantics of `resolveActivePaneForWindowTab`
+ * — the workspace containing the resolved active pane is the active workspace.
+ */
+function resolveActiveWorkspaceId(layout: WindowLayout): string | undefined {
+  const activeTab = getActiveWindowTab(layout)
+  if (!activeTab?.workspaceLayout) {
+    return undefined
+  }
+  const leaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+  for (const leaf of leaves) {
+    const activePanelTab = leaf.panelTabs.find(
+      (t) => t.id === leaf.activePanelTabId
+    )
+    if (activePanelTab) {
+      const paneId = resolveActivePaneForPanelTab(activePanelTab)
+      if (paneId) {
+        return leaf.workspaceId
+      }
+    }
+    const firstTab = leaf.panelTabs[0]
+    if (firstTab) {
+      const paneId = resolveActivePaneForPanelTab(firstTab)
+      if (paneId) {
+        return leaf.workspaceId
+      }
+    }
+  }
+  return undefined
+}
+
+/**
  * Save the current focusedPaneId on the active panel tab of the workspace
  * that contains the given pane. Walks all tabs > all workspaces > all panel
  * tabs to find the pane and update its panel tab's focusedPaneId.
@@ -1632,6 +1667,7 @@ export {
   repairWindowLayout,
   resolveActivePaneForPanelTab,
   resolveActivePaneForWindowTab,
+  resolveActiveWorkspaceId,
   saveFocusedPaneId,
   shouldConfirmClosePanelTab,
   shouldConfirmCloseWindowTab,

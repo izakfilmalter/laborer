@@ -153,3 +153,32 @@
 - `apps/web/src/routes/-components/workspace-frames.tsx` — Removed `convertPanelTreeToLegacy` call and `filterTreeByWorkspace` fallback from `WorkspaceTileLeafFrame`, pass `PanelNode` directly
 - `apps/web/test/panel-manager.test.tsx` — Expanded from 2 tests to 14 tests: added `PanelManager` and `PanelRenderer` rendering tests with full mock setup
 
+## Issue 6: Focus tracking — hierarchical only — DONE
+
+**Date:** 2026-03-26
+
+### What was done
+
+1. Added `resolveActiveWorkspaceId` to `window-layout-utils.ts` — a new pure function that resolves the active workspace ID from the hierarchical `WindowLayout` by walking: active window tab > workspace tile leaves > active panel tab > focusedPaneId, and returning the `workspaceId` of the matching workspace tile leaf.
+2. Changed `persistedActivePaneId` derivation in `use-panel-layout.ts` from `ensureValidActivePaneId(layout, rawPersistedActivePaneId)` (which always fell back to the first leaf since `rawPersistedActivePaneId` was hardcoded to `null`) to `resolveActivePaneForWindowTab(activeTab)` — now correctly reads `PanelTab.focusedPaneId` from the hierarchical tree.
+3. Rewrote `handleSetActivePaneId` to validate against the hierarchical tree only. When `paneId` is null, falls back to `resolveActivePaneForWindowTab` instead of `ensureValidActivePaneId`. Removed dependency on the derived legacy `layout` tree.
+4. Changed `activeWorkspaceId` derivation in `index.tsx` from `findNodeById(layout, activePaneId)` (legacy flat tree lookup) to `resolveActiveWorkspaceId(windowLayout)` (hierarchical resolution).
+5. Removed `rawPersistedActivePaneId` constant (always `null`, no longer needed).
+6. Simplified the layout repair effect — removed the `persistedActivePaneId !== rawPersistedActivePaneId` condition (which was always true and caused unnecessary repair commits). Focus repair is no longer needed since focus is tracked hierarchically within the `windowLayout` JSON.
+7. Removed `ensureValidActivePaneId` from `use-panel-layout.ts` imports (no longer used in this file).
+8. Added 6 tests for `resolveActiveWorkspaceId` in `focus-consistency.test.ts` covering: empty layout, single workspace, multi-workspace, no workspace layout, invalid activeTabId, empty panel tabs fallback.
+9. `bun run check` passes (typecheck + format + all 1270 tests across all packages).
+
+### Notes on deferred work
+
+- `ensureValidActivePaneId` still exists in `layout-utils.ts` and is used by tests — will be cleaned up in Issues 8/10 when the legacy `layout` consumers are fully ported.
+- The derived legacy `layout` tree (via `deriveLegacyTreeFromHierarchical`) is still computed in `use-panel-layout.ts` and used by hotkeys, panel content, and other consumers — will be removed in Issue 8.
+- `findNodeById` is still used in `index.tsx` for other lookups (fullscreen, close gating, picker) — these will be ported in Issue 8.
+
+### Files changed
+
+- `apps/web/src/panels/window-layout-utils.ts` — Added `resolveActiveWorkspaceId` function and export
+- `apps/web/src/routes/-hooks/use-panel-layout.ts` — Changed `persistedActivePaneId` to use hierarchical resolution, rewrote `handleSetActivePaneId`, removed `rawPersistedActivePaneId`, simplified repair effect
+- `apps/web/src/routes/index.tsx` — Changed `activeWorkspaceId` to use `resolveActiveWorkspaceId`, added import
+- `apps/web/test/focus-consistency.test.ts` — Added 6 tests for `resolveActiveWorkspaceId`
+

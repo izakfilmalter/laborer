@@ -243,7 +243,7 @@ Prior art: existing `panel-manager.test.tsx` (component rendering with `@testing
 
 ## Issue 6: Focus tracking -- hierarchical only
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

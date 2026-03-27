@@ -396,3 +396,66 @@
 - `apps/web/src/routes/-hooks/use-initial-layout.ts` — Refactored to return `WindowLayout` instead of `PanelNode`, added `buildSeedWindowLayout` helper
 - `apps/web/src/routes/-hooks/use-panel-layout.ts` — Simplified seeding effect, cleaned up 4 stale comments
 
+## Issue 10: Dead code removal — DONE
+
+**Date:** 2026-03-27
+
+### What was done
+
+1. Moved `isWorkspaceFrameData` and `WORKSPACE_FRAME_TYPE` from `layout-utils.ts` to `window-layout-utils.ts` — the only two production-used exports from the legacy file.
+2. Updated `workspace-frames.tsx` import to source these from `window-layout-utils.ts`.
+3. Deleted `layout-utils.ts` entirely (1736 lines) — all 40 exports were either superseded by hierarchical equivalents in `panel-tree-utils.ts`/`window-layout-utils.ts` or only used by tests for dead functions.
+4. Deleted `layout-migration.ts` entirely — not imported by any production code (only by its own test file). Contains `deriveLegacyTreeFromHierarchical`, `convertPanelTreeToLegacy`, `migrateToWindowLayout`, etc.
+5. Replaced `TerminalPaneWithSidebars` with a direct `TerminalPane` call in `PaneContent` (`panel-manager.tsx`). Since mutation handlers no longer write the deprecated sidebar flags (`devServerOpen`, `devServerTerminalId`, `diffOpen`), the `TerminalPaneWithSidebars` component always rendered the plain `TerminalPane` fallback.
+6. Deleted `terminal-pane-with-sidebars.tsx` (98 lines).
+7. Removed deprecated sidebar flags from `LeafNode` interface and `LeafNodeSchema` in `types.ts`: `devServerOpen`, `devServerTerminalId`, `diffOpen` and their `@deprecated` annotations.
+8. Deleted 6 dead test files that exclusively tested superseded legacy functions:
+   - `layout-utils.test.ts` (2043 lines) — tested 22 functions from `layout-utils.ts`, all superseded
+   - `layout-migration.test.ts` — tested functions from the deleted `layout-migration.ts`
+   - `close-workspace.test.ts` — tested `closeWorkspacePanes`, `getWorkspaceActiveTerminals`, `getWorkspaceTerminalIds`, `shouldConfirmCloseWorkspace` (all superseded by `window-layout-utils`)
+   - `close-terminal.test.ts` — tested `getTerminalIdsToRemove` (superseded by `closeTerminalInWindowLayout`)
+   - `close-pane-gating.test.ts` — tested `computeClosePaneAction`, `computeClosePaneGateAction`, `computeCloseWorkspaceAction` (superseded by `window-layout-utils` versions)
+   - `workspace-frame-reorder.test.tsx` — tested `sortWorkspaceLayouts`, `filterTreeByWorkspace`, `getWorkspaceIds` (all dead/superseded)
+9. Updated `panel-manager.test.tsx`:
+   - Removed `TerminalPaneWithSidebars` import and mock
+   - Removed `use-responsive-layout` mock (only used by `TerminalPaneWithSidebars`)
+   - Deleted the 2 `TerminalPaneWithSidebars` tests (sidebar rendering with deprecated flags)
+   - Removed `within` import (no longer needed)
+10. Updated `fullscreen-portal.test.tsx`:
+    - Replaced `terminal-pane-with-sidebars` mock with `terminal-pane` mock
+    - Updated test assertions to query panes by `data-pane-id` attribute (matches production `LeafPaneRenderer`) instead of mock-generated `data-testid`
+11. Cleaned up stale comments referencing deleted files:
+    - `id-utils.ts` — updated module list (removed `window-tab-utils` and `layout-migration`, added `panel-tree-utils` and `window-layout-utils`)
+    - `panel-manager.tsx` — updated `@see` reference from `layout-utils.ts` to `panel-tree-utils.ts`
+    - `workspace-tile-utils.ts` — updated description and `@see` references
+    - `window-layout-utils.ts` — removed "Replaces X from layout-utils" comments (5 occurrences), renamed section header
+    - `panel-context.tsx` — removed "Duplicated from layout-utils" comment
+12. `bun run check` passes (typecheck + format + all tests across all packages — 0 failures).
+
+### Net code reduction
+
+- **Production code deleted:** ~2,870 lines (`layout-utils.ts` 1736 + `layout-migration.ts` ~940 + `terminal-pane-with-sidebars.tsx` 98 + deprecated fields in `types.ts` ~20)
+- **Test code deleted:** ~5,200 lines (6 test files + 2 tests from `panel-manager.test.tsx`)
+- **Total removed:** ~8,070 lines
+
+### Files changed
+
+- `apps/web/src/panels/window-layout-utils.ts` — Added `isWorkspaceFrameData`, `WORKSPACE_FRAME_TYPE`, cleaned up stale comments
+- `apps/web/src/routes/-components/workspace-frames.tsx` — Updated import from `layout-utils` to `window-layout-utils`
+- `apps/web/src/panels/layout-utils.ts` — DELETED
+- `apps/web/src/panels/layout-migration.ts` — DELETED
+- `apps/web/src/panels/terminal-pane-with-sidebars.tsx` — DELETED
+- `apps/web/src/panels/panel-manager.tsx` — Replaced `TerminalPaneWithSidebars` with direct `TerminalPane`, updated imports and comments
+- `packages/shared/src/types.ts` — Removed `devServerOpen`, `devServerTerminalId`, `diffOpen` from `LeafNode` and `LeafNodeSchema`
+- `apps/web/src/panels/id-utils.ts` — Updated module list comment
+- `apps/web/src/panels/workspace-tile-utils.ts` — Updated description and `@see` references
+- `apps/web/src/panels/panel-context.tsx` — Removed stale comment
+- `apps/web/test/layout-utils.test.ts` — DELETED
+- `apps/web/test/layout-migration.test.ts` — DELETED
+- `apps/web/test/close-workspace.test.ts` — DELETED
+- `apps/web/test/close-terminal.test.ts` — DELETED
+- `apps/web/test/close-pane-gating.test.ts` — DELETED
+- `apps/web/test/workspace-frame-reorder.test.tsx` — DELETED
+- `apps/web/test/panel-manager.test.tsx` — Removed `TerminalPaneWithSidebars` tests and mock
+- `apps/web/test/fullscreen-portal.test.tsx` — Updated mock and assertions for `TerminalPane` (no more `TerminalPaneWithSidebars`)
+

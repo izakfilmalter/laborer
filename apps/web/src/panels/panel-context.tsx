@@ -19,10 +19,7 @@ import type {
 } from '@laborer/shared/types'
 import { createContext, useContext } from 'react'
 
-/**
- * Direction for pane resize operations.
- * Duplicated from layout-utils to avoid circular imports.
- */
+/** Direction for pane resize operations. */
 type ResizeDirection = 'left' | 'right' | 'up' | 'down'
 
 interface AssignTerminalToPaneOptions {

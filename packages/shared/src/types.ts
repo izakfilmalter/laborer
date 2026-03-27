@@ -132,19 +132,9 @@ export class Diff extends Schema.Class<Diff>('Diff')({
 /**
  * A leaf node in the panel split tree. Represents a single pane that can
  * hold a terminal, agent, diff, dev server, or review session.
- *
- * The `devServerOpen`, `devServerTerminalId`, and `diffOpen` fields are
- * deprecated legacy sidebar flags. They will be removed when the consuming
- * code is ported to the hierarchical panel tab model (Issues 7/8).
  */
 export interface LeafNode {
   readonly _tag: 'LeafNode'
-  /** @deprecated Legacy sidebar flag — will be removed in Issue 7/8. */
-  readonly devServerOpen?: boolean | undefined
-  /** @deprecated Legacy sidebar flag — will be removed in Issue 7/8. */
-  readonly devServerTerminalId?: string | undefined
-  /** @deprecated Legacy sidebar flag — will be removed in Issue 7/8. */
-  readonly diffOpen?: boolean | undefined
   readonly id: string
   readonly paneType: PaneType
   readonly terminalId?: string | undefined
@@ -164,12 +154,6 @@ export type PanelNode = LeafNode | SplitNode
 export const LeafNodeSchema: Schema.Schema<LeafNode> = Schema.TaggedStruct(
   'LeafNode',
   {
-    /** @deprecated Legacy sidebar flag — will be removed in Issue 7/8. */
-    devServerOpen: Schema.optional(Schema.Boolean),
-    /** @deprecated Legacy sidebar flag — will be removed in Issue 7/8. */
-    devServerTerminalId: Schema.optional(Schema.String),
-    /** @deprecated Legacy sidebar flag — will be removed in Issue 7/8. */
-    diffOpen: Schema.optional(Schema.Boolean),
     id: Schema.String,
     paneType: PaneType,
     terminalId: Schema.optional(Schema.String),

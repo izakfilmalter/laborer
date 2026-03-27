@@ -37,14 +37,14 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { TabBar, type TabBarItem } from '@/components/ui/tab-bar'
 import { TabErrorBoundary } from '@/components/ui/tab-error-boundary'
 import { useLaborerStore } from '@/livestore/store'
-import {
-  isWorkspaceFrameData,
-  WORKSPACE_FRAME_TYPE,
-} from '@/panels/layout-utils'
 import { usePanelActions } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
 import { containsPane, getFirstLeafId } from '@/panels/panel-tree-utils'
-import { getAllWorkspaceTileLeaves } from '@/panels/window-layout-utils'
+import {
+  getAllWorkspaceTileLeaves,
+  isWorkspaceFrameData,
+  WORKSPACE_FRAME_TYPE,
+} from '@/panels/window-layout-utils'
 import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
 import { DiffPane } from '@/panes/diff-pane'
 import { ReviewPane } from '@/panes/review-pane'

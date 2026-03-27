@@ -32,7 +32,7 @@
  *
  * @see packages/shared/src/types.ts — PanelNode, LeafNode, SplitNode types
  * @see apps/web/src/panes/terminal-pane.tsx — Terminal pane component
- * @see apps/web/src/panels/layout-utils.ts — Tree manipulation functions
+ * @see apps/web/src/panels/panel-tree-utils.ts — Tree manipulation functions
  * @see apps/web/src/panels/panel-context.tsx — PanelActionsContext
  * @see Issue #66: PanelManager — single pane rendering
  * @see Issue #67: PanelManager — horizontal split
@@ -93,10 +93,10 @@ import {
   usePendingPicker,
 } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
-import { TerminalPaneWithSidebars } from '@/panels/terminal-pane-with-sidebars'
 import { DevServerTerminalPane } from '@/panes/dev-server-terminal-pane'
 import { DiffPane } from '@/panes/diff-pane'
 import { ReviewPane } from '@/panes/review-pane'
+import { TerminalPane } from '@/panes/terminal-pane'
 import { PaneCloseConfirmDialog } from '@/routes/-components/close-dialogs'
 
 const allWorkspaces$ = queryDb(workspaces, { label: 'paneWorkspaces' })
@@ -401,17 +401,14 @@ interface PaneContentProps {
 
 /**
  * Renders the content of a single pane based on its type and assigned IDs.
- *
- * Terminal panes with `diffOpen: true` render the diff as an integrated
- * sidebar (resizable) alongside the terminal within the same pane container.
- * Dev server terminal panes render with `devServerOpen: true` as a right-hand
- * sidebar beside the main terminal. This matches the diff viewer placement
- * while keeping the dev server terminal visually coupled to its workspace.
  */
 function PaneContent({ node, onTerminalExit }: PaneContentProps) {
   if (node.paneType === 'terminal' && node.terminalId) {
     return (
-      <TerminalPaneWithSidebars node={node} onTerminalExit={onTerminalExit} />
+      <TerminalPane
+        onTerminalExit={onTerminalExit}
+        terminalId={node.terminalId}
+      />
     )
   }
 

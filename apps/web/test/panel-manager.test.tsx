@@ -1,13 +1,6 @@
 import type { LeafNode, SplitNode } from '@laborer/shared/types'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { TerminalPaneWithSidebars } from '../src/panels/terminal-pane-with-sidebars'
-
-vi.mock('@/hooks/use-responsive-layout', () => ({
-  useResponsiveLayout: () => ({
-    paneMin: '10%',
-  }),
-}))
 
 vi.mock('@/components/ui/resizable', () => ({
   ResizableHandle: () => <div data-testid="resizable-handle" />,
@@ -78,17 +71,6 @@ vi.mock('@/panels/panel-context', () => ({
 vi.mock('@/panels/panel-group-registry', () => ({
   usePanelGroupRegistry: () => null,
 }))
-
-vi.mock('@/panels/terminal-pane-with-sidebars', async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import('../src/panels/terminal-pane-with-sidebars')
-    >()
-  return {
-    ...actual,
-    // Keep the real implementation for TerminalPaneWithSidebars tests
-  }
-})
 
 vi.mock('@/components/terminal-overlay-toolbar', () => ({
   TerminalOverlayToolbar: () => null,
@@ -315,52 +297,5 @@ describe('PanelRenderer', () => {
     }
     render(<PanelRenderer node={leaf} />)
     expect(screen.getByText('review:ws-1')).toBeTruthy()
-  })
-})
-
-// ---------- TerminalPaneWithSidebars tests ----------
-
-describe('TerminalPaneWithSidebars', () => {
-  it('renders the dev server terminal to the right of the terminal', () => {
-    render(
-      <TerminalPaneWithSidebars
-        node={createTerminalLeaf({
-          devServerOpen: true,
-          devServerTerminalId: 'dev-1',
-        })}
-      />
-    )
-
-    const groups = Array.from(document.querySelectorAll('[data-orientation]'))
-    expect(groups).toHaveLength(1)
-    expect(groups[0]?.getAttribute('data-orientation')).toBe('horizontal')
-
-    const group = groups[0] as HTMLElement
-    expect(within(group).getByText('terminal:term-1')).toBeTruthy()
-    expect(within(group).getByText('dev-server:dev-1')).toBeTruthy()
-  })
-
-  it('stacks diff above dev server in the right sidebar when both are open', () => {
-    render(
-      <TerminalPaneWithSidebars
-        node={createTerminalLeaf({
-          devServerOpen: true,
-          devServerTerminalId: 'dev-1',
-          diffOpen: true,
-        })}
-      />
-    )
-
-    const groups = Array.from(document.querySelectorAll('[data-orientation]'))
-    expect(groups).toHaveLength(2)
-    expect(groups[0]?.getAttribute('data-orientation')).toBe('horizontal')
-    expect(groups[1]?.getAttribute('data-orientation')).toBe('vertical')
-
-    const horizontalGroup = groups[0] as HTMLElement
-    const verticalGroup = groups[1] as HTMLElement
-
-    expect(within(horizontalGroup).getByText('terminal:term-1')).toBeTruthy()
-    expect(within(verticalGroup).getByText('diff:ws-1')).toBeTruthy()
-    expect(within(verticalGroup).getByText('dev-server:dev-1')).toBeTruthy()
   })
 })

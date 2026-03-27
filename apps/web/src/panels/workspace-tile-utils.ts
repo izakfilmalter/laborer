@@ -3,13 +3,13 @@
  *
  * Pure functions that operate on the workspace tile tree within a `WindowTab`
  * to support adding, removing, splitting, resizing, and reordering workspace
- * tiles. These follow the same patterns as `layout-utils.ts` (panel-level
+ * tiles. These follow the same patterns as `panel-tree-utils.ts` (panel-level
  * splits/closes) but operate one level higher — on `WorkspaceTileNode` trees.
  *
  * All functions return a new tree — the original is never mutated.
  *
  * @see packages/shared/src/types.ts — WorkspaceTileNode, WorkspaceTileLeaf, WorkspaceTileSplit, WindowTab
- * @see apps/web/src/panels/layout-utils.ts — panel-level tree utilities
+ * @see apps/web/src/panels/panel-tree-utils.ts — panel-level tree utilities
  * @see apps/web/src/panels/window-layout-utils.ts — window layout utilities
  */
 

@@ -1677,7 +1677,7 @@ function lenientDecodeSplitNode(
 }
 
 // ---------------------------------------------------------------------------
-// Hierarchical pane/leaf lookups (replaces flat-tree layout-utils functions)
+// Pane/leaf lookups
 // ---------------------------------------------------------------------------
 
 /**
@@ -1742,8 +1742,6 @@ function findPaneAcrossAllTabs(
 /**
  * Find a leaf pane by terminal ID across all panel tabs in the active
  * window tab. Returns the leaf node and its workspace ID.
- *
- * Replaces `findLeafByTerminalId(layout, terminalId)` from layout-utils.
  */
 function findLeafByTerminalIdInLayout(
   layout: WindowLayout,
@@ -1787,8 +1785,6 @@ function findLeafByTerminalIdInTree(
 /**
  * Get all leaf nodes from the active window tab's workspace tile leaves'
  * active panel tabs. Returns only the visible leaves.
- *
- * Replaces `getLeafNodes(layout)` from layout-utils.
  */
 function getActiveTabLeafNodes(layout: WindowLayout): LeafNode[] {
   const activeTab = getActiveWindowTab(layout)
@@ -1824,8 +1820,6 @@ function collectLeafNodes(node: PanelNode, result: LeafNode[]): void {
 /**
  * Get all leaf pane IDs from the active window tab's workspace tile leaves'
  * active panel tabs. Returns only the visible pane IDs.
- *
- * Replaces `getLeafIds(layout)` from layout-utils.
  */
 function getActiveTabLeafIds(layout: WindowLayout): string[] {
   const activeTab = getActiveWindowTab(layout)
@@ -1854,8 +1848,7 @@ function getActiveTabLeafIds(layout: WindowLayout): string[] {
  * it is returned as-is. Otherwise, falls back to the first leaf so that
  * header buttons always operate on a pane within their own workspace.
  *
- * Replaces `getScopedActivePaneId` from layout-utils — this version
- * operates on `PanelNode` directly (same as the original).
+ * Operates on `PanelNode` directly.
  */
 function getScopedActivePaneId(
   subLayout: PanelNode,
@@ -1876,8 +1869,6 @@ function getScopedActivePaneId(
  * Determines whether closing a pane should proceed immediately or show
  * a confirmation dialog. Checks if the terminal has a running process
  * and if the pane is the last for a merged-PR workspace.
- *
- * Replaces `computeClosePaneGateAction` from layout-utils.
  */
 function computeClosePaneGateAction(
   layout: WindowLayout | undefined,
@@ -1944,8 +1935,6 @@ function computeClosePaneGateAction(
  *
  * Uses the hierarchical layout to find all terminals in the workspace's
  * panel tabs and checks if any have running child processes.
- *
- * Replaces `computeCloseWorkspaceAction` from layout-utils.
  */
 function computeCloseWorkspaceAction(
   layout: WindowLayout | undefined,
@@ -2062,6 +2051,24 @@ export {
   switchWindowTabByIndex,
   switchWindowTabRelative,
   updateWorkspaceTileLeaf,
+  isWorkspaceFrameData,
+  WORKSPACE_FRAME_TYPE,
+}
+
+// ---------------------------------------------------------------------------
+// Workspace frame drag-and-drop helpers
+// ---------------------------------------------------------------------------
+
+/** Custom data type identifier for workspace frame drag operations. */
+const WORKSPACE_FRAME_TYPE = 'workspace-frame'
+
+/** Type guard: check if drag source data is a workspace frame. */
+function isWorkspaceFrameData(data: Record<string, unknown>): data is {
+  type: typeof WORKSPACE_FRAME_TYPE
+  workspaceId: string
+  index: number
+} {
+  return data.type === WORKSPACE_FRAME_TYPE
 }
 
 export type {

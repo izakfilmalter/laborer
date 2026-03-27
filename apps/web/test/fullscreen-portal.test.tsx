@@ -74,10 +74,15 @@ vi.mock('@/panels/panel-group-registry', () => ({
   usePanelGroupRegistry: () => null,
 }))
 
-vi.mock('@/panels/terminal-pane-with-sidebars', () => ({
-  TerminalPaneWithSidebars: ({ node }: { node: LeafNode }) => (
-    <div data-pane-type="terminal" data-testid={`terminal-${node.id}`}>
-      terminal:{node.terminalId}
+vi.mock('@/panes/terminal-pane', () => ({
+  TerminalPane: ({
+    terminalId,
+  }: {
+    terminalId: string
+    onTerminalExit?: (() => void) | undefined
+  }) => (
+    <div data-pane-type="terminal" data-testid={'terminal-pane'}>
+      terminal:{terminalId}
     </div>
   ),
 }))
@@ -219,12 +224,21 @@ describe('Fullscreen portal behavior', () => {
     cleanup()
   })
 
+  /** Helper: find a pane container by its `data-pane-id` attribute. */
+  function getPane(paneId: string): HTMLElement {
+    const el = document.querySelector(`[data-pane-id="${paneId}"]`)
+    if (!el) {
+      throw new Error(`Pane with data-pane-id="${paneId}" not found`)
+    }
+    return el as HTMLElement
+  }
+
   it('renders all panes in the normal tree when no pane is fullscreened', () => {
     render(<TestHarness layout={SPLIT_LAYOUT} />)
 
     const normalTree = screen.getByTestId('normal-tree')
-    const pane1 = screen.getByTestId('terminal-pane-1')
-    const pane2 = screen.getByTestId('terminal-pane-2')
+    const pane1 = getPane('pane-1')
+    const pane2 = getPane('pane-2')
 
     // Both terminals are inside the normal tree
     expect(normalTree.contains(pane1)).toBe(true)
@@ -239,7 +253,7 @@ describe('Fullscreen portal behavior', () => {
     render(<TestHarness fullscreenPaneId="pane-1" layout={SPLIT_LAYOUT} />)
 
     const portalContainer = screen.getByTestId('fullscreen-container')
-    const pane1 = screen.getByTestId('terminal-pane-1')
+    const pane1 = getPane('pane-1')
 
     // The fullscreened pane renders inside the portal container
     expect(portalContainer.contains(pane1)).toBe(true)
@@ -249,7 +263,7 @@ describe('Fullscreen portal behavior', () => {
     render(<TestHarness fullscreenPaneId="pane-1" layout={SPLIT_LAYOUT} />)
 
     const normalTree = screen.getByTestId('normal-tree')
-    const pane2 = screen.getByTestId('terminal-pane-2')
+    const pane2 = getPane('pane-2')
 
     // The non-fullscreened sibling stays in the normal tree
     expect(normalTree.contains(pane2)).toBe(true)
@@ -262,16 +276,14 @@ describe('Fullscreen portal behavior', () => {
 
     // Verify pane-1 is in the portal
     const portalContainer = screen.getByTestId('fullscreen-container')
-    expect(
-      portalContainer.contains(screen.getByTestId('terminal-pane-1'))
-    ).toBe(true)
+    expect(portalContainer.contains(getPane('pane-1'))).toBe(true)
 
     // Exit fullscreen by re-rendering with null
     rerender(<TestHarness fullscreenPaneId={null} layout={SPLIT_LAYOUT} />)
 
     const normalTree = screen.getByTestId('normal-tree')
-    const pane1 = screen.getByTestId('terminal-pane-1')
-    const pane2 = screen.getByTestId('terminal-pane-2')
+    const pane1 = getPane('pane-1')
+    const pane2 = getPane('pane-2')
 
     // Both panes are back in the normal tree
     expect(normalTree.contains(pane1)).toBe(true)
@@ -286,7 +298,7 @@ describe('Fullscreen portal behavior', () => {
     render(<TestHarness fullscreenPaneId="pane-1" layout={LEAF_1} />)
 
     const portalContainer = screen.getByTestId('fullscreen-container')
-    const pane1 = screen.getByTestId('terminal-pane-1')
+    const pane1 = getPane('pane-1')
 
     expect(portalContainer.contains(pane1)).toBe(true)
   })

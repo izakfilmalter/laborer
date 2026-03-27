@@ -462,7 +462,7 @@ Vertical slices:
 
 ## Issue 10: Dead code removal
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

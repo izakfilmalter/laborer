@@ -3,18 +3,20 @@
  *
  * Provides a live file tree listing for a workspace's worktree directory.
  * Runs `git ls-files -z --others --exclude-standard` to produce the full
- * list of tracked and untracked files (respecting .gitignore), then streams
+ * list of tracked and untracked files (respecting .gitignore), and
+ * `git status -z --porcelain=v2` for git status decorations, then streams
  * snapshots to subscribers via Effect Stream.
  *
- * This is the foundational slice: the service emits a single snapshot on
- * subscribe (the initial file listing) and keeps the stream open. No git
- * status parsing, no file watching, no reactivity yet — those are added
- * in subsequent issues.
+ * Both git commands run in parallel for each snapshot. The service emits
+ * a single snapshot on subscribe (the initial file listing + status) and
+ * keeps the stream open. No file watching or reactivity yet — those are
+ * added in subsequent issues.
  *
  * Follows the `Context.Tag + Layer.scoped` pattern from DiffService.
  *
  * @see PRD: Live File Tree with Git Status Decorations
  * @see Issue #1: Streaming RPC contract + FileTreeService with git ls-files
+ * @see Issue #4: Wire git status into FileTreeService and TreePane
  */
 
 import type { FileTreeSnapshot } from '@laborer/shared/rpc'
@@ -29,6 +31,7 @@ import {
   pipe,
   Stream,
 } from 'effect'
+import { parseGitStatusV2 } from '../lib/parse-git-status-v2.js'
 import { spawn } from '../lib/spawn.js'
 import { LaborerStore } from './laborer-store.js'
 
@@ -102,6 +105,38 @@ const getFileList = Effect.fn('FileTreeService.getFileList')(function* (
   return parseLsFilesOutput(result.stdout)
 })
 
+/**
+ * Run `git status -z --porcelain=v2` to get the change metadata for
+ * a worktree directory.
+ *
+ * Uses `-z` for null-delimited output (safe parsing of paths with spaces
+ * and unicode) and `--porcelain=v2` for structured status output with
+ * two-character status codes.
+ *
+ * Returns `GitStatusEntry[]` compatible with `@pierre/trees`' `gitStatus` prop.
+ */
+const getGitStatus = Effect.fn('FileTreeService.getGitStatus')(function* (
+  worktreePath: string
+) {
+  const result = yield* Effect.tryPromise({
+    try: () => spawnGit(['status', '-z', '--porcelain=v2'], worktreePath),
+    catch: (error) =>
+      new RpcError({
+        message: `Failed to spawn git status: ${String(error)}`,
+        code: 'GIT_STATUS_FAILED',
+      }),
+  })
+
+  if (result.exitCode !== 0) {
+    return yield* new RpcError({
+      message: `git status failed (exit ${result.exitCode}): ${result.stderr.trim()}`,
+      code: 'GIT_STATUS_FAILED',
+    })
+  }
+
+  return parseGitStatusV2(result.stdout)
+})
+
 class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
   FileTreeService,
   {
@@ -151,16 +186,19 @@ class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
               `[FileTreeService] subscribing to file tree for workspace=${workspaceId} worktreePath=${worktreePath}`
             )
 
-            // Get the initial file list
-            const files = yield* getFileList(worktreePath)
+            // Get the initial file list and git status in parallel
+            const [files, gitStatus] = yield* Effect.all(
+              [getFileList(worktreePath), getGitStatus(worktreePath)],
+              { concurrency: 'unbounded' }
+            )
 
             yield* Effect.logDebug(
-              `[FileTreeService] workspace=${workspaceId} initial file count=${files.length}`
+              `[FileTreeService] workspace=${workspaceId} initial file count=${files.length} gitStatus count=${gitStatus.length}`
             )
 
             const initialSnapshot: FileTreeSnapshot = {
               files,
-              gitStatus: [],
+              gitStatus,
             }
 
             // Emit the initial snapshot and keep the stream open.

@@ -70,3 +70,26 @@ Status: COMPLETE
 - All type checks pass (7/7 tasks)
 - All tests pass (393 passed, 1 skipped across 47 test files)
 - Formatting clean (473 files checked, no fixes needed)
+
+## Issue #4: Wire git status into FileTreeService and TreePane
+Status: COMPLETE
+
+### What was done:
+- Added `getGitStatus` Effect function to `packages/server/src/services/file-tree-service.ts`
+  - Runs `git status -z --porcelain=v2` in the workspace's worktree
+  - Uses `GIT_OPTIONAL_LOCKS=0` env var to avoid lock contention (same as `getFileList`)
+  - Parses output via `parseGitStatusV2` from `packages/server/src/lib/parse-git-status-v2.ts`
+  - Returns `GitStatusEntry[]` compatible with `@pierre/trees`' `gitStatus` prop
+  - Proper error handling with `RpcError` for spawn failures and non-zero exit codes
+- Modified `subscribe` to run both `getFileList` and `getGitStatus` in parallel
+  - Uses `Effect.all([...], { concurrency: 'unbounded' })` for parallel execution
+  - Both commands execute concurrently, not sequentially
+  - `FileTreeSnapshot` now emits populated `gitStatus` array (previously always `[]`)
+- Updated module JSDoc to reflect Issue #4 changes
+- No client-side changes needed — TreePane already passes `gitStatus` prop through to `<FileTree>` (wired in Issue #2)
+
+### Verification:
+- All type checks pass (7/7 tasks)
+- All 41 parser tests pass
+- All 7 tree panel layout tests pass
+- Formatting clean (473 files checked, no fixes needed)

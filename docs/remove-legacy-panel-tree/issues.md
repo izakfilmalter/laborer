@@ -43,7 +43,7 @@ None -- can start immediately.
 
 ## Issue 2: Schema -- single event, minimal table, delete legacy events
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

@@ -25,7 +25,7 @@ import type { FileTreeSnapshot } from '@laborer/shared/rpc'
 import { FileTree } from '@pierre/trees/react'
 import { Cause, pipe } from 'effect'
 import { AlertCircle, Loader2 } from 'lucide-react'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState, useTransition } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { useWhenPhase } from '@/hooks/use-when-phase'
@@ -145,19 +145,46 @@ function TreePaneError({ message }: { readonly message: string }) {
  * Inner content of the tree pane, mounted only after Phase 4 (Eventually)
  * when the FileTreeService's deferred proxy has been swapped for the real
  * service. Subscribes to the streaming RPC and renders @pierre/trees.
+ *
+ * Uses `useTransition` to defer re-renders when snapshot data changes.
+ * For large repos (10k+ files), re-rendering the `<FileTree>` component
+ * can be expensive (virtualization recalculation, git status badge
+ * computation). By wrapping the state update in a transition, the update
+ * is marked as non-urgent so it doesn't block user interactions like
+ * scrolling, expanding/collapsing folders, or typing in terminals.
+ *
+ * The pattern mirrors DiffPane's approach: the streaming RPC pushes new
+ * snapshots, which are stored in `deferredSnapshot` via `startTransition`.
+ * While the transition is pending, the previous tree content remains
+ * visible and interactive.
  */
 function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
   const { snapshot, isLoading, error } = useFileTreeSnapshot(workspaceId)
+
+  // --- Deferred rendering via useTransition ---
+  // FileTree can be expensive to re-render for large repos (virtualization
+  // recalc, git status badge computation, folder propagation). useTransition
+  // marks the re-render as non-urgent so it doesn't block user interactions
+  // (scrolling, expanding/collapsing folders, typing in terminals).
+  const [, startTransition] = useTransition()
+  const [deferredSnapshot, setDeferredSnapshot] =
+    useState<FileTreeSnapshot | null>(snapshot)
+
+  useEffect(() => {
+    startTransition(() => {
+      setDeferredSnapshot(snapshot)
+    })
+  }, [snapshot])
 
   if (error !== null) {
     return <TreePaneError message={error} />
   }
 
-  if (isLoading || snapshot === null) {
+  if (isLoading || deferredSnapshot === null) {
     return <TreePaneLoading />
   }
 
-  if (snapshot.files.length === 0) {
+  if (deferredSnapshot.files.length === 0) {
     return (
       <div className="flex items-center justify-center p-4">
         <span className="text-muted-foreground text-xs">
@@ -170,9 +197,9 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
   return (
     <FileTree
       className="h-full"
-      files={snapshot.files as string[]}
+      files={deferredSnapshot.files as string[]}
       gitStatus={
-        snapshot.gitStatus as {
+        deferredSnapshot.gitStatus as {
           path: string
           status: 'added' | 'deleted' | 'modified'
         }[]

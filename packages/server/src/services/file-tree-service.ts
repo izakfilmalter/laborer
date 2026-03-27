@@ -299,6 +299,103 @@ const waitForWorktree = Effect.fn('FileTreeService.waitForWorktree')(function* (
   })
 })
 
+/**
+ * Clean up all resources held by a file tree stream subscription.
+ *
+ * Extracted from the addFinalizer closure to reduce cognitive complexity
+ * of the subscribe method.
+ */
+const cleanupStreamResources = (opts: {
+  refreshAbortController: AbortController | undefined
+  abortController: AbortController
+  debounceTimer: ReturnType<typeof setTimeout> | undefined
+  eventSubscription: { unsubscribe: () => void }
+  watchSubscription:
+    | {
+        readonly id: string
+        readonly ignoreGlobs: readonly string[]
+        readonly path: string
+        readonly recursive: boolean
+      }
+    | undefined
+  workspaceId: string
+  fileWatcherClient: {
+    unsubscribe: (id: string) => Effect.Effect<void, { message: string }>
+  }
+}) =>
+  Effect.gen(function* () {
+    // Abort any in-flight git processes immediately.
+    // This prevents orphaned child processes when the
+    // stream is torn down (panel close, workspace destroy).
+    if (opts.refreshAbortController !== undefined) {
+      opts.refreshAbortController.abort()
+    }
+    opts.abortController.abort()
+
+    // Clear pending debounce timer
+    if (opts.debounceTimer !== undefined) {
+      clearTimeout(opts.debounceTimer)
+    }
+
+    // Unsubscribe from file events
+    opts.eventSubscription.unsubscribe()
+
+    // Unsubscribe the file watcher for this worktree
+    if (opts.watchSubscription !== undefined) {
+      yield* opts.fileWatcherClient
+        .unsubscribe(opts.watchSubscription.id)
+        .pipe(
+          Effect.catchAll((error) =>
+            Effect.logWarning(
+              `[FileTreeService] workspace=${opts.workspaceId} failed to unsubscribe file watcher: ${error.message}`
+            )
+          )
+        )
+    }
+
+    yield* Effect.logDebug(
+      `[FileTreeService] workspace=${opts.workspaceId} stream cleaned up (git processes aborted, watcher unsubscribed)`
+    )
+  })
+
+/**
+ * Build an Effect that computes a new snapshot, deduplicates against the
+ * previous emission, and pushes to the stream emitter if changed.
+ *
+ * Extracted from the subscribe closure to reduce cognitive complexity of
+ * the stream setup code.
+ */
+const makeRefreshEffect = (opts: {
+  worktreePath: string
+  workspaceId: string
+  signal: AbortSignal
+  emit: { single: (snapshot: FileTreeSnapshot) => void }
+  getPreviousFingerprint: () => string
+  setPreviousFingerprint: (fp: string) => void
+}) =>
+  computeSnapshot(opts.worktreePath, opts.signal).pipe(
+    Effect.flatMap((snapshot) => {
+      const fingerprint = snapshotFingerprint(snapshot)
+      if (fingerprint === opts.getPreviousFingerprint()) {
+        return Effect.logDebug(
+          `[FileTreeService] workspace=${opts.workspaceId} SKIPPED — snapshot unchanged (files=${snapshot.files.length} gitStatus=${snapshot.gitStatus.length})`
+        )
+      }
+      opts.setPreviousFingerprint(fingerprint)
+      opts.emit.single(snapshot)
+      return Effect.logDebug(
+        `[FileTreeService] workspace=${opts.workspaceId} emitted snapshot (files=${snapshot.files.length} gitStatus=${snapshot.gitStatus.length})`
+      )
+    }),
+    Effect.tapErrorCause((cause) =>
+      Effect.logWarning(
+        `[FileTreeService] workspace=${opts.workspaceId} refresh failed`,
+        cause
+      )
+    ),
+    Effect.catchAll(() => Effect.void)
+  )
+
 class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
   FileTreeService,
   {
@@ -384,9 +481,15 @@ class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
             // 'creating' workspaces where the directory may not be ready yet.
             yield* waitForWorktree(worktreePath, workspaceId)
 
-            // AbortController for cancelling in-flight git processes.
-            // Aborted during stream cleanup (unsubscribe / panel close).
+            // AbortController for cancelling in-flight git processes on
+            // stream teardown (unsubscribe / panel close).
             const abortController = new AbortController()
+
+            // Per-refresh AbortController: cancels the previous refresh's
+            // in-flight git processes when a new debounced refresh starts.
+            // This prevents stale results from a slow git command overwriting
+            // results from a newer, faster one.
+            let refreshAbortController: AbortController | undefined
 
             // Compute the initial snapshot before creating the stream
             // so the first emission is immediate.
@@ -465,35 +568,26 @@ class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
                           return
                         }
 
+                        // Cancel any previous in-flight refresh. This
+                        // prevents stale results from a slow git command
+                        // overwriting results from a newer, faster one.
+                        if (refreshAbortController !== undefined) {
+                          refreshAbortController.abort()
+                        }
+                        refreshAbortController = new AbortController()
+                        const refreshSignal = refreshAbortController.signal
+
                         runPromise(
-                          computeSnapshot(
+                          makeRefreshEffect({
                             worktreePath,
-                            abortController.signal
-                          ).pipe(
-                            Effect.flatMap((snapshot) => {
-                              // Deduplication: compare fingerprint with
-                              // the previous emission to suppress redundant
-                              // pushes when git state hasn't changed.
-                              const fingerprint = snapshotFingerprint(snapshot)
-                              if (fingerprint === previousFingerprint) {
-                                return Effect.logDebug(
-                                  `[FileTreeService] workspace=${workspaceId} SKIPPED — snapshot unchanged (files=${snapshot.files.length} gitStatus=${snapshot.gitStatus.length})`
-                                )
-                              }
-                              previousFingerprint = fingerprint
-                              emit.single(snapshot)
-                              return Effect.logDebug(
-                                `[FileTreeService] workspace=${workspaceId} emitted snapshot (files=${snapshot.files.length} gitStatus=${snapshot.gitStatus.length})`
-                              )
-                            }),
-                            Effect.tapErrorCause((cause) =>
-                              Effect.logWarning(
-                                `[FileTreeService] workspace=${workspaceId} refresh failed`,
-                                cause
-                              )
-                            ),
-                            Effect.catchAll(() => Effect.void)
-                          )
+                            workspaceId,
+                            signal: refreshSignal,
+                            emit,
+                            getPreviousFingerprint: () => previousFingerprint,
+                            setPreviousFingerprint: (fp) => {
+                              previousFingerprint = fp
+                            },
+                          })
                         ).catch(() => undefined)
                       }, FILE_EVENT_DEBOUNCE_MS)
                     }
@@ -503,37 +597,14 @@ class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
                   // debounce timer, unsubscribe from file events, and tear
                   // down file watcher.
                   yield* Effect.addFinalizer(() =>
-                    Effect.gen(function* () {
-                      // Abort any in-flight git processes immediately.
-                      // This prevents orphaned child processes when the
-                      // stream is torn down (panel close, workspace destroy).
-                      abortController.abort()
-
-                      // Clear pending debounce timer
-                      if (debounceTimer !== undefined) {
-                        clearTimeout(debounceTimer)
-                        debounceTimer = undefined
-                      }
-
-                      // Unsubscribe from file events
-                      eventSubscription.unsubscribe()
-
-                      // Unsubscribe the file watcher for this worktree
-                      if (watchSubscription !== undefined) {
-                        yield* fileWatcherClient
-                          .unsubscribe(watchSubscription.id)
-                          .pipe(
-                            Effect.catchAll((error) =>
-                              Effect.logWarning(
-                                `[FileTreeService] workspace=${workspaceId} failed to unsubscribe file watcher: ${error.message}`
-                              )
-                            )
-                          )
-                      }
-
-                      yield* Effect.logDebug(
-                        `[FileTreeService] workspace=${workspaceId} stream cleaned up (git processes aborted, watcher unsubscribed)`
-                      )
+                    cleanupStreamResources({
+                      refreshAbortController,
+                      abortController,
+                      debounceTimer,
+                      eventSubscription,
+                      watchSubscription,
+                      workspaceId,
+                      fileWatcherClient,
                     })
                   )
                 })

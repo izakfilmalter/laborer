@@ -13,7 +13,7 @@ Parent PRD: [PRD.md](./PRD.md)
 | 5 | FileWatcher subscription + debounced refresh | #4 | Done |
 | 6 | Stream deduplication + lifecycle management | #5 | Done |
 | 7 | Error states + cancellation + cleanup | #6 | Done |
-| 8 | Polish + large repo performance | #7 | Ready |
+| 8 | Polish + large repo performance | #7 | Done |
 
 ---
 

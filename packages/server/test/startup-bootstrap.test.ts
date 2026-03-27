@@ -16,7 +16,7 @@ import { WorktreeReconciler } from '../src/services/worktree-reconciler.js'
 import { git, initRepo } from './helpers/git-helpers.js'
 import { TestFileWatcherClientRealLayer } from './helpers/test-file-watcher-client.js'
 import { TestLaborerStore } from './helpers/test-store.js'
-import { delay, waitForWithNudge } from './helpers/timing-helpers.js'
+import { delay, waitFor, waitForWithNudge } from './helpers/timing-helpers.js'
 
 const tempRoots: string[] = []
 
@@ -179,8 +179,20 @@ describe('Startup bootstrap and project lifecycle integration', () => {
 
       yield* Layer.buildWithScope(fullLayer, scope)
 
-      // After layer construction, watchAll has run: reconciliation
-      // should have created a workspace for the main checkout
+      // watchAll is forked as a daemon so the layer completes
+      // before reconciliation finishes — poll until it does.
+      yield* Effect.promise(() =>
+        waitFor(
+          () =>
+            Promise.resolve(
+              store.query(tables.workspaces.where('projectId', projectId))
+                .length > 0
+            ),
+          10_000,
+          'watchAll reconciliation for persisted project'
+        )
+      )
+
       const workspaces = store.query(
         tables.workspaces.where('projectId', projectId)
       )
@@ -271,7 +283,20 @@ describe('Startup bootstrap and project lifecycle integration', () => {
 
         yield* Layer.buildWithScope(fullLayer, scope)
 
-        // After startup, the offline worktree addition should be reconciled
+        // watchAll is forked as a daemon — poll until reconciliation
+        // detects both the offline worktree addition and branch change.
+        yield* Effect.promise(() =>
+          waitFor(
+            () =>
+              Promise.resolve(
+                store.query(tables.workspaces.where('projectId', projectId))
+                  .length === 2
+              ),
+            10_000,
+            'watchAll reconciliation for offline worktree addition'
+          )
+        )
+
         const workspaces = store.query(
           tables.workspaces.where('projectId', projectId)
         )
@@ -281,7 +306,22 @@ describe('Startup bootstrap and project lifecycle integration', () => {
           'Startup should detect worktree added while offline'
         )
 
-        // The branch change on main should be reconciled
+        // Wait for branch refresh to complete as well
+        yield* Effect.promise(() =>
+          waitFor(
+            () => {
+              const ws = store.query(
+                tables.workspaces.where('id', workspaceId)
+              ) as readonly { readonly branchName: string }[]
+              return Promise.resolve(
+                ws[0]?.branchName === 'feature/offline-change'
+              )
+            },
+            10_000,
+            'watchAll branch refresh for offline changes'
+          )
+        )
+
         const mainWorkspace = store.query(
           tables.workspaces.where('id', workspaceId)
         ) as readonly { readonly branchName: string }[]
@@ -500,6 +540,20 @@ describe('Startup bootstrap and project lifecycle integration', () => {
 
         yield* Layer.buildWithScope(fullLayer, scope)
 
+        // watchAll is forked as a daemon — poll until reconciliation
+        // creates workspace records for both worktrees.
+        yield* Effect.promise(() =>
+          waitFor(
+            () =>
+              Promise.resolve(
+                store.query(tables.workspaces.where('projectId', projectId))
+                  .length === 2
+              ),
+            10_000,
+            'watchAll reconciliation for persisted identity'
+          )
+        )
+
         // Verify worktree reconciliation ran: both the main
         // checkout and the linked worktree should have workspace records.
         const workspaces = store.query(
@@ -614,6 +668,21 @@ describe('Startup bootstrap and project lifecycle integration', () => {
         const fullLayer = CoordinatorLayer.pipe(Layer.provide(storeLayer))
 
         yield* Layer.buildWithScope(fullLayer, scope)
+
+        // watchAll is forked as a daemon — poll until reconciliation
+        // creates workspace records matching the fresh registration count.
+        yield* Effect.promise(() =>
+          waitFor(
+            () =>
+              Promise.resolve(
+                store.query(
+                  tables.workspaces.where('projectId', restoredProjectId)
+                ).length === freshWorkspaces.length
+              ),
+            10_000,
+            'watchAll reconciliation for restored project'
+          )
+        )
 
         // Compare restored state against fresh registration state
         const restoredWorkspaces = store.query(

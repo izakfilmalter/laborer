@@ -125,7 +125,13 @@ describe('RepositoryWatchCoordinator', () => {
       const linkedA = join(repoA, '.worktrees', 'watcher-all-a-one')
       git(`worktree add -b watcher/all-a ${linkedA}`, repoA)
 
+      const coordinator = yield* RepositoryWatchCoordinator
       const { store } = yield* LaborerStore
+
+      // Allow the daemon watchAll (fired during layer construction)
+      // to complete on the empty store before seeding projects.
+      yield* Effect.promise(() => delay(200))
+
       store.commit(
         events.projectCreated({
           id: 'project-watch-all-a',
@@ -143,7 +149,6 @@ describe('RepositoryWatchCoordinator', () => {
         })
       )
 
-      const coordinator = yield* RepositoryWatchCoordinator
       yield* coordinator.watchAll()
 
       // After watchAll, reconciliation should have run synchronously

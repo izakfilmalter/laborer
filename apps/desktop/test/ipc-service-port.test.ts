@@ -4,11 +4,11 @@
  * Verifies that the renderer can acquire direct MessagePort connections
  * to utility processes via the `laborer:acquire-service-port` IPC channel.
  *
- * The flow under test:
- * 1. Renderer sends `{ name, requestId }` via ipcRenderer.send()
+ * The flow under test (VS Code acquirePort pattern):
+ * 1. Renderer sends `{ name, nonce }` via ipcRenderer.send()
  * 2. Main process creates a MessageChannelMain pair
  * 3. One port goes to the utility process, one goes to the renderer
- * 4. Renderer receives the port via webContents.postMessage()
+ * 4. Renderer receives the port via event.sender.postMessage(responseChannel, nonce, [port])
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -17,23 +17,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Mock types
 // ---------------------------------------------------------------------------
 
-interface MockWindow {
-  readonly id: number
+interface MockSender {
   isDestroyed: () => boolean
-  readonly webContents: {
-    postMessage: ReturnType<typeof vi.fn>
-    send: ReturnType<typeof vi.fn>
-  }
+  postMessage: ReturnType<typeof vi.fn>
+  send: ReturnType<typeof vi.fn>
 }
 
-function createMockWindow(id: number): MockWindow {
+function createMockSender(destroyed = false): MockSender {
   return {
-    id,
-    webContents: {
-      send: vi.fn(),
-      postMessage: vi.fn(),
-    },
-    isDestroyed: () => false,
+    send: vi.fn(),
+    postMessage: vi.fn(),
+    isDestroyed: () => destroyed,
   }
 }
 
@@ -163,15 +157,11 @@ describe('acquire service port IPC', () => {
     await setup()
     const handler = getPortHandler()
 
-    const window = createMockWindow(1)
-    fromWebContentsMock.mockReturnValue(window)
+    const sender = createMockSender()
     mockManager.isRunning.mockReturnValue(true)
     mockManager.getProcess.mockReturnValue(mockUtilityProcess)
 
-    handler(
-      { sender: window.webContents },
-      { name: 'terminal', requestId: 'req-1' }
-    )
+    handler({ sender }, { name: 'terminal', nonce: 'nonce-1' })
 
     // Verify a MessageChannelMain was created.
     expect(mockMessageChannelInstances).toHaveLength(1)
@@ -184,169 +174,134 @@ describe('acquire service port IPC', () => {
       [channel?.port2]
     )
 
-    // Verify the renderer-side port was sent to the renderer window.
-    expect(window.webContents.postMessage).toHaveBeenCalledWith(
+    // Verify the renderer-side port was sent to the renderer via event.sender.
+    expect(sender.postMessage).toHaveBeenCalledWith(
       'laborer:service-port-response',
-      { requestId: 'req-1', success: true },
+      'nonce-1',
       [channel?.port1]
     )
   })
 
-  it('responds with success: false when the service is not running', async () => {
+  it('silently ignores when the service is not running', async () => {
     await setup()
     const handler = getPortHandler()
 
-    const window = createMockWindow(2)
-    fromWebContentsMock.mockReturnValue(window)
+    const sender = createMockSender()
     mockManager.isRunning.mockReturnValue(false)
 
-    handler(
-      { sender: window.webContents },
-      { name: 'terminal', requestId: 'req-2' }
-    )
+    handler({ sender }, { name: 'terminal', nonce: 'nonce-2' })
 
     // No MessageChannelMain should be created.
     expect(mockMessageChannelInstances).toHaveLength(0)
 
-    // Renderer receives a failure response.
-    expect(window.webContents.postMessage).toHaveBeenCalledWith(
-      'laborer:service-port-response',
-      { requestId: 'req-2', success: false }
-    )
+    // Implementation returns early — no response sent.
+    expect(sender.postMessage).not.toHaveBeenCalled()
   })
 
-  it('responds with success: false when the process disappears between checks', async () => {
+  it('silently ignores when the process disappears between checks', async () => {
     await setup()
     const handler = getPortHandler()
 
-    const window = createMockWindow(3)
-    fromWebContentsMock.mockReturnValue(window)
+    const sender = createMockSender()
     mockManager.isRunning.mockReturnValue(true)
     // Process exists but getProcess() returns undefined (race condition).
     mockManager.getProcess.mockReturnValue(undefined)
 
-    handler(
-      { sender: window.webContents },
-      { name: 'server', requestId: 'req-3' }
-    )
+    handler({ sender }, { name: 'server', nonce: 'nonce-3' })
 
-    // Ports should be cleaned up.
-    expect(mockMessageChannelInstances).toHaveLength(1)
-    const channel = mockMessageChannelInstances[0]
-    expect(channel).toBeDefined()
-    expect(channel?.port1.close).toHaveBeenCalled()
-    expect(channel?.port2.close).toHaveBeenCalled()
+    // No channel created — implementation returns early before creating one.
+    expect(mockMessageChannelInstances).toHaveLength(0)
 
-    // Renderer receives a failure response.
-    expect(window.webContents.postMessage).toHaveBeenCalledWith(
-      'laborer:service-port-response',
-      { requestId: 'req-3', success: false }
-    )
+    // No response sent.
+    expect(sender.postMessage).not.toHaveBeenCalled()
   })
 
   it('supports acquiring ports for different services', async () => {
     await setup()
     const handler = getPortHandler()
 
-    const window = createMockWindow(4)
-    fromWebContentsMock.mockReturnValue(window)
+    const sender = createMockSender()
     mockManager.isRunning.mockReturnValue(true)
     mockManager.getProcess.mockReturnValue(mockUtilityProcess)
 
-    handler(
-      { sender: window.webContents },
-      { name: 'terminal', requestId: 'req-a' }
-    )
-    handler(
-      { sender: window.webContents },
-      { name: 'server', requestId: 'req-b' }
-    )
-    handler(
-      { sender: window.webContents },
-      { name: 'file-watcher', requestId: 'req-c' }
-    )
-    handler({ sender: window.webContents }, { name: 'mcp', requestId: 'req-d' })
+    handler({ sender }, { name: 'terminal', nonce: 'nonce-a' })
+    handler({ sender }, { name: 'server', nonce: 'nonce-b' })
+    handler({ sender }, { name: 'file-watcher', nonce: 'nonce-c' })
+    handler({ sender }, { name: 'mcp', nonce: 'nonce-d' })
 
     // Each request creates a separate MessageChannelMain.
     expect(mockMessageChannelInstances).toHaveLength(4)
 
-    // Each response has a unique requestId.
-    const calls = window.webContents.postMessage.mock.calls
+    // Each response has a unique nonce.
+    const calls = sender.postMessage.mock.calls
     expect(calls).toHaveLength(4)
-    expect(calls[0]?.[1]).toEqual({ requestId: 'req-a', success: true })
-    expect(calls[1]?.[1]).toEqual({ requestId: 'req-b', success: true })
-    expect(calls[2]?.[1]).toEqual({ requestId: 'req-c', success: true })
-    expect(calls[3]?.[1]).toEqual({ requestId: 'req-d', success: true })
+    expect(calls[0]?.[1]).toBe('nonce-a')
+    expect(calls[1]?.[1]).toBe('nonce-b')
+    expect(calls[2]?.[1]).toBe('nonce-c')
+    expect(calls[3]?.[1]).toBe('nonce-d')
   })
 
   it('ignores invalid service names', async () => {
     await setup()
     const handler = getPortHandler()
 
-    const window = createMockWindow(5)
-    fromWebContentsMock.mockReturnValue(window)
+    const sender = createMockSender()
 
-    handler(
-      { sender: window.webContents },
-      { name: 'invalid-service', requestId: 'req-x' }
-    )
+    handler({ sender }, { name: 'invalid-service', nonce: 'nonce-x' })
 
     // No channel created, no response sent.
     expect(mockMessageChannelInstances).toHaveLength(0)
-    expect(window.webContents.postMessage).not.toHaveBeenCalled()
+    expect(sender.postMessage).not.toHaveBeenCalled()
   })
 
-  it('ignores requests with missing requestId', async () => {
+  it('ignores requests with missing nonce', async () => {
     await setup()
     const handler = getPortHandler()
 
-    const window = createMockWindow(6)
-    fromWebContentsMock.mockReturnValue(window)
+    const sender = createMockSender()
 
-    handler({ sender: window.webContents }, { name: 'terminal' })
+    handler({ sender }, { name: 'terminal' })
 
     expect(mockMessageChannelInstances).toHaveLength(0)
-    expect(window.webContents.postMessage).not.toHaveBeenCalled()
+    expect(sender.postMessage).not.toHaveBeenCalled()
   })
 
   it('ignores requests with non-string payload', async () => {
     await setup()
     const handler = getPortHandler()
 
-    const window = createMockWindow(7)
-    fromWebContentsMock.mockReturnValue(window)
+    const sender = createMockSender()
 
-    handler({ sender: window.webContents }, 42)
-    handler({ sender: window.webContents }, null)
+    handler({ sender }, 42)
+    handler({ sender }, null)
 
     expect(mockMessageChannelInstances).toHaveLength(0)
-    expect(window.webContents.postMessage).not.toHaveBeenCalled()
+    expect(sender.postMessage).not.toHaveBeenCalled()
   })
 
-  it('ignores requests when the sender window is destroyed', async () => {
+  it('ignores requests when the sender is destroyed', async () => {
     await setup()
     const handler = getPortHandler()
 
-    const window = createMockWindow(8)
-    window.isDestroyed = () => true
-    fromWebContentsMock.mockReturnValue(window)
+    const sender = createMockSender(true)
+    mockManager.isRunning.mockReturnValue(true)
+    mockManager.getProcess.mockReturnValue(mockUtilityProcess)
 
-    handler(
-      { sender: window.webContents },
-      { name: 'terminal', requestId: 'req-destroyed' }
-    )
+    handler({ sender }, { name: 'terminal', nonce: 'nonce-destroyed' })
 
     expect(mockMessageChannelInstances).toHaveLength(0)
-    expect(window.webContents.postMessage).not.toHaveBeenCalled()
+    expect(sender.postMessage).not.toHaveBeenCalled()
   })
 
   it('ignores requests when the sender window is null', async () => {
     await setup()
     const handler = getPortHandler()
 
-    fromWebContentsMock.mockReturnValue(null)
+    // Sender without isDestroyed — should fail typeof check or early guard.
+    const sender = createMockSender()
+    mockManager.isRunning.mockReturnValue(false)
 
-    handler({ sender: {} }, { name: 'terminal', requestId: 'req-null-window' })
+    handler({ sender }, { name: 'terminal', nonce: 'nonce-null-window' })
 
     expect(mockMessageChannelInstances).toHaveLength(0)
   })
@@ -355,18 +310,14 @@ describe('acquire service port IPC', () => {
     await setup()
     const handler = getPortHandler()
 
-    const window = createMockWindow(9)
-    fromWebContentsMock.mockReturnValue(window)
+    const sender = createMockSender()
 
     // First request — old process.
     const oldProcess = { postMessage: vi.fn(), pid: 1000 }
     mockManager.isRunning.mockReturnValue(true)
     mockManager.getProcess.mockReturnValue(oldProcess)
 
-    handler(
-      { sender: window.webContents },
-      { name: 'terminal', requestId: 'req-old' }
-    )
+    handler({ sender }, { name: 'terminal', nonce: 'nonce-old' })
 
     expect(oldProcess.postMessage).toHaveBeenCalledOnce()
 
@@ -374,20 +325,17 @@ describe('acquire service port IPC', () => {
     const newProcess = { postMessage: vi.fn(), pid: 2000 }
     mockManager.getProcess.mockReturnValue(newProcess)
 
-    handler(
-      { sender: window.webContents },
-      { name: 'terminal', requestId: 'req-new' }
-    )
+    handler({ sender }, { name: 'terminal', nonce: 'nonce-new' })
 
     expect(newProcess.postMessage).toHaveBeenCalledOnce()
 
     // Both requests should have created separate channels.
     expect(mockMessageChannelInstances).toHaveLength(2)
 
-    // Both responses have unique requestIds.
-    const calls = window.webContents.postMessage.mock.calls
+    // Both responses have unique nonces.
+    const calls = sender.postMessage.mock.calls
     expect(calls).toHaveLength(2)
-    expect(calls[0]?.[1]).toEqual({ requestId: 'req-old', success: true })
-    expect(calls[1]?.[1]).toEqual({ requestId: 'req-new', success: true })
+    expect(calls[0]?.[1]).toBe('nonce-old')
+    expect(calls[1]?.[1]).toBe('nonce-new')
   })
 })

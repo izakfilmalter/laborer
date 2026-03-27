@@ -78,6 +78,11 @@ import {
   switchPanelTabRelative,
 } from '@/panels/panel-tab-utils'
 import {
+  createSpawnGuard,
+  respawnStaleTerminals,
+  retryOnInitializing,
+} from '@/panels/reconcile-spawn'
+import {
   addWindowTab,
   addWorkspaceToTabUnique,
   assignTerminalInPanelTree,
@@ -121,6 +126,13 @@ const DEFAULT_NEW_WINDOW_LAYOUT: LeafNode = {
   terminalId: undefined,
   workspaceId: undefined,
 }
+
+/**
+ * Module-level spawn guard — prevents concurrent terminal spawns for the
+ * same pane. Follows VS Code's `_isTerminalBeingCreated` pattern.
+ * @see reconcile-spawn.ts — createSpawnGuard
+ */
+const paneSpawnGuard = createSpawnGuard()
 
 /** Query the persisted panel layout from LiveStore. */
 const persistedLayout$ = queryDb(panelLayout, {
@@ -540,43 +552,33 @@ export function usePanelLayout() {
     hasReconciled.current = true
 
     // Spawn new terminals for stale panes sequentially, then update the
-    // layout tree with the new terminal IDs.
-    const respawnStaleTerminals = async () => {
-      const respawnedIds = new Map<string, string>()
-
-      for (const leaf of staleLeavesToRespawn) {
-        const wsId = 'workspaceId' in leaf ? leaf.workspaceId : undefined
-        const termId = 'terminalId' in leaf ? leaf.terminalId : undefined
-        if (!(wsId && termId)) {
-          continue
-        }
-        try {
-          const result = await spawnTerminal({
-            payload: { workspaceId: wsId },
-          })
-          respawnedIds.set(termId, result.id)
-          upsertTerminalListItem({
-            agentStatus: null,
-            args: [],
-            command: result.command,
-            cwd: '',
-            foregroundProcess: null,
-            hasChildProcess: false,
-            id: result.id,
-            processChain: [],
-            status: result.status,
-            workspaceId: wsId,
-          })
-        } catch (error) {
-          console.error('[reconcile] spawn failed for workspace:', wsId, error)
-        }
-      }
-
-      commitReconciledLayouts(liveIds, respawnedIds)
-      setIsReconciling(false)
-    }
-
-    respawnStaleTerminals()
+    // layout tree with the new terminal IDs. Uses retry logic to handle
+    // the case where the server is still initializing at startup, and
+    // preserves stale terminal IDs in the layout when all retries fail
+    // (preventing a cascading spawn-remove loop).
+    respawnStaleTerminals({
+      staleLeaves: staleLeavesToRespawn,
+      spawnFn: (payload) => spawnTerminal({ payload }),
+      liveIds,
+      commitReconciledLayouts: (effectiveLiveIds, respawnedIds) => {
+        commitReconciledLayouts(effectiveLiveIds, respawnedIds)
+        setIsReconciling(false)
+      },
+      onTerminalSpawned: (result, wsId) => {
+        upsertTerminalListItem({
+          agentStatus: null,
+          args: [],
+          command: result.command,
+          cwd: '',
+          foregroundProcess: null,
+          hasChildProcess: false,
+          id: result.id,
+          processChain: [],
+          status: result.status as 'running' | 'stopped',
+          workspaceId: wsId,
+        })
+      },
+    })
   }, [
     terminalsLoading,
     liveTerminals,
@@ -732,12 +734,60 @@ export function usePanelLayout() {
         }
       }
 
-      resolveCommand()
-        .then((command) =>
-          spawnTerminal({ payload: { workspaceId: wsId, command } })
-        )
+      // Use the spawn guard to prevent concurrent spawns for the same
+      // pane. If a spawn is already in-flight for newPaneId, this is a
+      // no-op. Follows VS Code's _isTerminalBeingCreated pattern.
+      paneSpawnGuard
+        .run(newPaneId, async () => {
+          const command = await resolveCommand()
+          return retryOnInitializing(() =>
+            spawnTerminal({ payload: { workspaceId: wsId, command } })
+          )
+        })
         .then((result) => {
-          assignTerminalToPaneRef.current?.(result.id, wsId, newPaneId)
+          if (!result) {
+            return
+          }
+          // Read the CURRENT layout from the store — NOT a stale snapshot.
+          // Multiple splits may have occurred between when this spawn was
+          // initiated and when it completed. Using a stale snapshot would
+          // overwrite those other splits, collapsing the layout.
+          const currentRows = store.query(persistedLayout$)
+          const currentRow = currentRows.find(
+            (row) => row.windowId === panelWindowId
+          )
+          const currentWindowLayout = currentRow?.windowLayout as
+            | WindowLayout
+            | undefined
+          if (!currentWindowLayout) {
+            return
+          }
+          // Assign the terminal directly into the hierarchical layout,
+          // bypassing the legacy assignTerminalToPane path that can
+          // trigger step 5 (auto-split) cascades when pane IDs diverge
+          // between the legacy and hierarchical trees.
+          const updated = updateWorkspaceTileLeaf(
+            currentWindowLayout,
+            wsId,
+            (leaf) => ({
+              ...leaf,
+              panelTabs: leaf.panelTabs.map((tab) => ({
+                ...tab,
+                panelLayout: assignTerminalInPanelTree(
+                  tab.panelLayout,
+                  newPaneId,
+                  result.id
+                ),
+              })),
+            })
+          )
+          store.commit(
+            windowLayoutRestored({
+              windowId: panelWindowId,
+              windowLayout: updated,
+              activeWindowTabId: updated.activeTabId ?? null,
+            })
+          )
         })
         .catch((error) => {
           console.warn('[split-pane] auto-spawn failed:', error)
@@ -1790,11 +1840,6 @@ export function usePanelLayout() {
         !options?.terminalId
       ) {
         const paneId = newPaneId
-        // Capture the layout that was just committed — the `.then()`
-        // callback fires asynchronously and `persistedWindowLayout`
-        // may be stale, but `newLayout` is the exact layout we just
-        // committed with the empty pane.
-        const layoutSnapshot = newLayout
 
         // Resolve the spawn command: for agents, look up the workspace's
         // project config to determine which agent provider to use.
@@ -1817,18 +1862,40 @@ export function usePanelLayout() {
           }
         }
 
-        resolveCommand()
-          .then((command) =>
-            spawnTerminal({ payload: { workspaceId, command } })
-          )
+        // Use the spawn guard to prevent concurrent spawns for the same
+        // pane. Follows VS Code's _isTerminalBeingCreated pattern.
+        paneSpawnGuard
+          .run(paneId, async () => {
+            const command = await resolveCommand()
+            return retryOnInitializing(() =>
+              spawnTerminal({ payload: { workspaceId, command } })
+            )
+          })
           .then((result) => {
+            if (!result) {
+              return
+            }
+            // Read the CURRENT layout from the store — NOT a stale snapshot.
+            // Multiple layout mutations may have occurred between when this
+            // spawn was initiated and when it completed. Using a stale
+            // snapshot would overwrite those mutations, collapsing the layout.
+            const currentRows = store.query(persistedLayout$)
+            const currentRow = currentRows.find(
+              (row) => row.windowId === panelWindowId
+            )
+            const currentWindowLayout = currentRow?.windowLayout as
+              | WindowLayout
+              | undefined
+            if (!currentWindowLayout) {
+              return
+            }
             // Directly update the hierarchical layout to assign the
             // terminal to the pane. Going through the legacy
             // `assignTerminalToPane` doesn't work here because the
             // pane ID only exists in the hierarchical layout, not in
             // the legacy `persistedLayoutTree`.
             const updated = updateWorkspaceTileLeaf(
-              layoutSnapshot,
+              currentWindowLayout,
               workspaceId,
               (leaf) => ({
                 ...leaf,

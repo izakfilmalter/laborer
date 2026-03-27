@@ -296,7 +296,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         // on the main worktree modifies .git/HEAD which fs.watch sees.
         const repoPath = initRepo('coord-branch-refresh', tempRoots)
 
+        const coordinator = yield* RepositoryWatchCoordinator
         const { store } = yield* LaborerStore
+
         const projectId = 'project-coord-branch'
         store.commit(
           events.projectCreated({
@@ -307,8 +309,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
           })
         )
 
-        const coordinator = yield* RepositoryWatchCoordinator
-        yield* coordinator.watchAll()
+        // Use watchProject (idempotent) instead of watchAll to avoid
+        // racing with the daemon watchAll fired during layer construction.
+        yield* coordinator.watchProject(projectId, repoPath)
         // Allow @parcel/watcher FSEvents subscription to fully initialize
         yield* Effect.promise(() => delay(500))
 
@@ -373,7 +376,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         git(`worktree add -b feature/linked-existing ${linkedPath}`, repoPath)
         const canonicalRepoPath = realpathSync(repoPath)
 
+        const coordinator = yield* RepositoryWatchCoordinator
         const { store } = yield* LaborerStore
+
         const projectId = 'project-coord-main-branch-with-linked'
         store.commit(
           events.projectCreated({
@@ -384,8 +389,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
           })
         )
 
-        const coordinator = yield* RepositoryWatchCoordinator
-        yield* coordinator.watchAll()
+        // Use watchProject (idempotent) instead of watchAll to avoid
+        // racing with the daemon watchAll fired during layer construction.
+        yield* coordinator.watchProject(projectId, repoPath)
         // Allow @parcel/watcher FSEvents subscription to fully initialize
         yield* Effect.promise(() => delay(500))
 
@@ -448,7 +454,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
         git(`worktree add -b feature/linked-start ${linkedPath}`, repoPath)
         const canonicalLinkedPath = realpathSync(linkedPath)
 
+        const coordinator = yield* RepositoryWatchCoordinator
         const { store } = yield* LaborerStore
+
         const projectId = 'project-coord-linked-branch-refresh'
         store.commit(
           events.projectCreated({
@@ -459,8 +467,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
           })
         )
 
-        const coordinator = yield* RepositoryWatchCoordinator
-        yield* coordinator.watchAll()
+        // Use watchProject (idempotent) instead of watchAll to avoid
+        // racing with the daemon watchAll fired during layer construction.
+        yield* coordinator.watchProject(projectId, repoPath)
         // Allow @parcel/watcher FSEvents subscription to fully initialize
         yield* Effect.promise(() => delay(500))
 
@@ -516,7 +525,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
       Effect.gen(function* () {
         const repoPath = initRepo('coord-both-triggers', tempRoots)
 
+        const coordinator = yield* RepositoryWatchCoordinator
         const { store } = yield* LaborerStore
+
         const projectId = 'project-coord-both'
         store.commit(
           events.projectCreated({
@@ -527,8 +538,9 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
           })
         )
 
-        const coordinator = yield* RepositoryWatchCoordinator
-        yield* coordinator.watchAll()
+        // Use watchProject (idempotent) instead of watchAll to avoid
+        // racing with the daemon watchAll fired during layer construction.
+        yield* coordinator.watchProject(projectId, repoPath)
         // Allow @parcel/watcher FSEvents subscription to fully initialize
         yield* Effect.promise(() => delay(500))
 

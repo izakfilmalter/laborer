@@ -28,6 +28,18 @@
  * The `Effect.addFinalizer` in `Stream.asyncPush` ensures all resources
  * (watcher, timer, event subscription) are torn down on disconnect.
  *
+ * Error handling: the service handles unhappy paths gracefully:
+ * - Workspace not found -> stream fails with NOT_FOUND
+ * - Workspace in non-active state (destroyed/errored/stopped) -> stream
+ *   fails with INVALID_STATE
+ * - Worktree directory doesn't exist -> retries with backoff up to a
+ *   maximum number of attempts before failing with WORKTREE_NOT_READY
+ * - Git command failures -> logged as warnings, stream continues with
+ *   last known good snapshot (for debounced refreshes) or fails for
+ *   initial snapshot
+ * - In-flight git processes are killed on stream unsubscribe via the
+ *   `AbortController` pattern, preventing orphaned child processes
+ *
  * Follows the `Context.Tag + Layer.scoped` pattern from DiffService.
  *
  * @see PRD: Live File Tree with Git Status Decorations
@@ -35,8 +47,10 @@
  * @see Issue #4: Wire git status into FileTreeService and TreePane
  * @see Issue #5: FileWatcher subscription + debounced refresh
  * @see Issue #6: Stream deduplication + lifecycle management
+ * @see Issue #7: Error states + cancellation + cleanup
  */
 
+import { existsSync } from 'node:fs'
 import type { FileTreeSnapshot } from '@laborer/shared/rpc'
 import { RpcError } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
@@ -57,6 +71,12 @@ import { LaborerStore } from './laborer-store.js'
 
 /** Debounce interval for file watcher events (ms). */
 const FILE_EVENT_DEBOUNCE_MS = 300
+
+/** Maximum number of retry attempts when waiting for worktree directory to exist. */
+const WORKTREE_WAIT_MAX_RETRIES = 10
+
+/** Delay between worktree existence checks (ms). */
+const WORKTREE_WAIT_DELAY_MS = 1000
 
 /**
  * Compute a fingerprint string for a FileTreeSnapshot.
@@ -80,11 +100,19 @@ const snapshotFingerprint = (snapshot: FileTreeSnapshot): string =>
  * Helper: spawn a git command in a worktree and capture stdout/stderr.
  * Uses `GIT_OPTIONAL_LOCKS=0` to avoid lock contention with concurrent
  * git operations (same technique VS Code uses).
+ *
+ * Returns a promise that resolves with the exit code, stdout, and stderr,
+ * plus a `kill` function to terminate the process early. The optional
+ * `signal` parameter allows external abort via `AbortController`.
  */
-const spawnGit = async (
+const spawnGit = (
   args: readonly string[],
-  cwd: string
-): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
+  cwd: string,
+  signal?: AbortSignal
+): {
+  kill: () => void
+  result: Promise<{ exitCode: number; stdout: string; stderr: string }>
+} => {
   const proc = spawn(['git', ...args], {
     cwd,
     stdout: 'pipe',
@@ -94,10 +122,34 @@ const spawnGit = async (
       GIT_OPTIONAL_LOCKS: '0',
     },
   })
-  const exitCode = await proc.exited
-  const stdout = await new Response(proc.stdout).text()
-  const stderr = await new Response(proc.stderr).text()
-  return { exitCode, stdout, stderr }
+
+  // If an abort signal is provided, kill the process when it fires
+  const onAbort = () => {
+    proc.kill()
+  }
+  if (signal !== undefined) {
+    if (signal.aborted) {
+      proc.kill()
+    } else {
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
+  }
+
+  const result = (async () => {
+    const exitCode = await proc.exited
+    const stdout = await new Response(proc.stdout).text()
+    const stderr = await new Response(proc.stderr).text()
+    // Clean up the abort listener once the process has exited
+    if (signal !== undefined) {
+      signal.removeEventListener('abort', onAbort)
+    }
+    return { exitCode, stdout, stderr }
+  })()
+
+  return {
+    kill: () => proc.kill(),
+    result,
+  }
 }
 
 /**
@@ -119,16 +171,22 @@ const parseLsFilesOutput = (output: string): string[] =>
  * Uses `-z` for null-delimited output (safe parsing of paths with spaces
  * and unicode), `--others --exclude-standard` to include untracked files
  * while respecting .gitignore.
+ *
+ * The optional `signal` parameter enables cancellation of the git process
+ * when the stream subscription ends.
  */
 const getFileList = Effect.fn('FileTreeService.getFileList')(function* (
-  worktreePath: string
+  worktreePath: string,
+  signal?: AbortSignal
 ) {
-  const result = yield* Effect.tryPromise({
-    try: () =>
-      spawnGit(
-        ['ls-files', '-z', '--others', '--exclude-standard', '--cached'],
-        worktreePath
-      ),
+  const { result } = spawnGit(
+    ['ls-files', '-z', '--others', '--exclude-standard', '--cached'],
+    worktreePath,
+    signal
+  )
+
+  const output = yield* Effect.tryPromise({
+    try: () => result,
     catch: (error) =>
       new RpcError({
         message: `Failed to spawn git ls-files: ${String(error)}`,
@@ -136,14 +194,14 @@ const getFileList = Effect.fn('FileTreeService.getFileList')(function* (
       }),
   })
 
-  if (result.exitCode !== 0) {
+  if (output.exitCode !== 0) {
     return yield* new RpcError({
-      message: `git ls-files failed (exit ${result.exitCode}): ${result.stderr.trim()}`,
+      message: `git ls-files failed (exit ${output.exitCode}): ${output.stderr.trim()}`,
       code: 'GIT_LS_FILES_FAILED',
     })
   }
 
-  return parseLsFilesOutput(result.stdout)
+  return parseLsFilesOutput(output.stdout)
 })
 
 /**
@@ -155,12 +213,22 @@ const getFileList = Effect.fn('FileTreeService.getFileList')(function* (
  * two-character status codes.
  *
  * Returns `GitStatusEntry[]` compatible with `@pierre/trees`' `gitStatus` prop.
+ *
+ * The optional `signal` parameter enables cancellation of the git process
+ * when the stream subscription ends.
  */
 const getGitStatus = Effect.fn('FileTreeService.getGitStatus')(function* (
-  worktreePath: string
+  worktreePath: string,
+  signal?: AbortSignal
 ) {
-  const result = yield* Effect.tryPromise({
-    try: () => spawnGit(['status', '-z', '--porcelain=v2'], worktreePath),
+  const { result } = spawnGit(
+    ['status', '-z', '--porcelain=v2'],
+    worktreePath,
+    signal
+  )
+
+  const output = yield* Effect.tryPromise({
+    try: () => result,
     catch: (error) =>
       new RpcError({
         message: `Failed to spawn git status: ${String(error)}`,
@@ -168,28 +236,67 @@ const getGitStatus = Effect.fn('FileTreeService.getGitStatus')(function* (
       }),
   })
 
-  if (result.exitCode !== 0) {
+  if (output.exitCode !== 0) {
     return yield* new RpcError({
-      message: `git status failed (exit ${result.exitCode}): ${result.stderr.trim()}`,
+      message: `git status failed (exit ${output.exitCode}): ${output.stderr.trim()}`,
       code: 'GIT_STATUS_FAILED',
     })
   }
 
-  return parseGitStatusV2(result.stdout)
+  return parseGitStatusV2(output.stdout)
 })
 
 /**
  * Compute a fresh FileTreeSnapshot by running git ls-files and git status
  * in parallel.
+ *
+ * The optional `signal` parameter is forwarded to both git commands,
+ * enabling cancellation of in-flight processes when the stream is torn down.
  */
 const computeSnapshot = Effect.fn('FileTreeService.computeSnapshot')(function* (
-  worktreePath: string
+  worktreePath: string,
+  signal?: AbortSignal
 ) {
   const [files, gitStatus] = yield* Effect.all(
-    [getFileList(worktreePath), getGitStatus(worktreePath)],
+    [getFileList(worktreePath, signal), getGitStatus(worktreePath, signal)],
     { concurrency: 'unbounded' }
   )
   return { files, gitStatus } satisfies FileTreeSnapshot
+})
+
+/**
+ * Wait for a worktree directory to exist, with retries and backoff.
+ * Returns the path if it exists, or fails with WORKTREE_NOT_READY if
+ * the maximum number of retries is exceeded.
+ *
+ * This handles the case where a workspace is still being created and
+ * the worktree directory doesn't exist yet.
+ */
+const waitForWorktree = Effect.fn('FileTreeService.waitForWorktree')(function* (
+  worktreePath: string,
+  workspaceId: string
+) {
+  for (let attempt = 0; attempt < WORKTREE_WAIT_MAX_RETRIES; attempt++) {
+    if (existsSync(worktreePath)) {
+      return worktreePath
+    }
+
+    yield* Effect.logDebug(
+      `[FileTreeService] workspace=${workspaceId} worktree not ready (attempt ${attempt + 1}/${WORKTREE_WAIT_MAX_RETRIES}), retrying in ${WORKTREE_WAIT_DELAY_MS}ms`
+    )
+
+    yield* Effect.sleep(WORKTREE_WAIT_DELAY_MS)
+  }
+
+  // Final check after all retries
+  if (existsSync(worktreePath)) {
+    return worktreePath
+  }
+
+  return yield* new RpcError({
+    message: `Worktree directory does not exist after ${WORKTREE_WAIT_MAX_RETRIES} retries: ${worktreePath}`,
+    code: 'WORKTREE_NOT_READY',
+  })
 })
 
 class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
@@ -202,8 +309,16 @@ class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
      * and pushes updated snapshots reactively when files change on disk.
      * File change events are debounced at 300ms.
      *
-     * The stream cleans up file watcher subscriptions and debounce timers
-     * when the subscriber disconnects (panel close / unmount).
+     * The stream cleans up file watcher subscriptions, debounce timers,
+     * and in-flight git processes when the subscriber disconnects
+     * (panel close / unmount).
+     *
+     * Error handling:
+     * - Workspace not found: stream fails with NOT_FOUND
+     * - Workspace destroyed/errored/stopped: stream fails with INVALID_STATE
+     * - Worktree not ready: waits with retries, then fails with WORKTREE_NOT_READY
+     * - Git failures during refresh: logged as warnings, stream continues
+     * - Git failures on initial snapshot: stream fails with the git error
      *
      * @param workspaceId - ID of the workspace whose worktree to list
      */
@@ -242,15 +357,43 @@ class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
             }
 
             const workspace = workspaceOpt.value
+
+            // Reject subscriptions for workspaces in non-active states.
+            // Only 'running' and 'creating' workspaces should have their
+            // file tree streamed. 'creating' is allowed because we wait
+            // for the worktree directory to appear.
+            if (
+              workspace.status !== 'running' &&
+              workspace.status !== 'creating'
+            ) {
+              return Stream.fail(
+                new RpcError({
+                  message: `Workspace ${workspaceId} is in "${workspace.status}" state`,
+                  code: 'INVALID_STATE',
+                })
+              )
+            }
+
             const worktreePath = workspace.worktreePath
 
             yield* Effect.logDebug(
-              `[FileTreeService] subscribing to file tree for workspace=${workspaceId} worktreePath=${worktreePath}`
+              `[FileTreeService] subscribing to file tree for workspace=${workspaceId} worktreePath=${worktreePath} status=${workspace.status}`
             )
+
+            // Wait for the worktree directory to exist. This handles
+            // 'creating' workspaces where the directory may not be ready yet.
+            yield* waitForWorktree(worktreePath, workspaceId)
+
+            // AbortController for cancelling in-flight git processes.
+            // Aborted during stream cleanup (unsubscribe / panel close).
+            const abortController = new AbortController()
 
             // Compute the initial snapshot before creating the stream
             // so the first emission is immediate.
-            const initialSnapshot = yield* computeSnapshot(worktreePath)
+            const initialSnapshot = yield* computeSnapshot(
+              worktreePath,
+              abortController.signal
+            )
 
             yield* Effect.logDebug(
               `[FileTreeService] workspace=${workspaceId} initial file count=${initialSnapshot.files.length} gitStatus count=${initialSnapshot.gitStatus.length}`
@@ -315,8 +458,18 @@ class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
 
                       debounceTimer = setTimeout(() => {
                         debounceTimer = undefined
+
+                        // Guard: if aborted (stream torn down), don't
+                        // start new git processes.
+                        if (abortController.signal.aborted) {
+                          return
+                        }
+
                         runPromise(
-                          computeSnapshot(worktreePath).pipe(
+                          computeSnapshot(
+                            worktreePath,
+                            abortController.signal
+                          ).pipe(
                             Effect.flatMap((snapshot) => {
                               // Deduplication: compare fingerprint with
                               // the previous emission to suppress redundant
@@ -346,10 +499,16 @@ class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
                     }
                   )
 
-                  // Register cleanup: clear debounce timer, unsubscribe
-                  // from file events, and tear down file watcher.
+                  // Register cleanup: abort in-flight git processes, clear
+                  // debounce timer, unsubscribe from file events, and tear
+                  // down file watcher.
                   yield* Effect.addFinalizer(() =>
                     Effect.gen(function* () {
+                      // Abort any in-flight git processes immediately.
+                      // This prevents orphaned child processes when the
+                      // stream is torn down (panel close, workspace destroy).
+                      abortController.abort()
+
                       // Clear pending debounce timer
                       if (debounceTimer !== undefined) {
                         clearTimeout(debounceTimer)
@@ -373,7 +532,7 @@ class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
                       }
 
                       yield* Effect.logDebug(
-                        `[FileTreeService] workspace=${workspaceId} stream cleaned up`
+                        `[FileTreeService] workspace=${workspaceId} stream cleaned up (git processes aborted, watcher unsubscribed)`
                       )
                     })
                   )

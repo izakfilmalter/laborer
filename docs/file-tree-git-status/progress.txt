@@ -160,3 +160,32 @@ Status: COMPLETE
 - All type checks pass (7/7 tasks)
 - All 393 tests pass (1 skipped across 47 test files)
 - Formatting clean (473 files checked, no fixes needed)
+
+## Issue #7: Error states + cancellation + cleanup
+Status: COMPLETE
+
+### What was done:
+
+#### Server-side: `packages/server/src/services/file-tree-service.ts`
+- **Workspace status validation**: Added guard that rejects subscriptions for workspaces in non-active states (`destroyed`, `errored`, `stopped`). Only `running` and `creating` are allowed — `creating` is permitted because we wait for the worktree to appear.
+- **Worktree directory existence check with retry**: Added `waitForWorktree` helper that polls for the worktree directory to exist with configurable retries (10 attempts, 1s delay). This handles workspaces still being created where the directory doesn't exist yet. Uses `existsSync` consistent with the rest of the codebase (workspace-provider, terminal-client, etc.).
+- **In-flight git process cancellation**: Refactored `spawnGit` to return both a `kill` function and a result promise. Added `AbortController` per stream subscription — the signal is passed through `computeSnapshot` -> `getFileList`/`getGitStatus` -> `spawnGit`. When the abort signal fires, in-flight git processes are killed immediately via `proc.kill()`. The abort listener is cleaned up when the process exits normally.
+- **Abort on stream teardown**: The `Effect.addFinalizer` in `Stream.asyncPush` now calls `abortController.abort()` first, killing any in-flight git processes before clearing timers and unsubscribing watchers.
+- **Debounce guard**: The debounce callback checks `abortController.signal.aborted` before spawning new git processes, preventing unnecessary work after stream teardown.
+- **Updated JSDoc**: Module-level documentation updated to reflect all error handling, cancellation, and cleanup behaviors.
+
+#### Client-side: `apps/web/src/panes/tree-pane.tsx`
+- **Error state in hook**: `useFileTreeSnapshot` now returns an `error: string | null` field. When `Result.isFailure`, the error message is extracted from the `Cause` using `Cause.failures()` to get the first failure's message.
+- **Error UI component**: Added `TreePaneError` component that renders an `AlertCircle` icon and the error message. Uses `data-testid="tree-pane-error"` for testability.
+- **Error-first rendering**: `TreePaneContent` checks for errors before loading state, ensuring errors are shown immediately rather than stuck in a loading state.
+- **New imports**: Added `Cause` and `pipe` from `effect`, `AlertCircle` from `lucide-react`.
+
+### Key design decisions:
+- **AbortController over fiber interruption**: Used `AbortController` + `signal` to cancel git processes rather than Effect fiber interruption. This provides true process-level cancellation — `proc.kill()` sends SIGTERM to the git child process, preventing orphaned processes. Effect's fiber interruption would only discard the promise result, leaving the git process running to completion.
+- **Retry with fixed delay (not exponential backoff)**: The worktree wait uses a fixed 1s delay rather than exponential backoff. Worktree creation is a short-lived operation (typically completes within a few seconds), so a fixed delay provides a simpler and more predictable experience.
+- **Error message extraction via Cause.failures()**: The client extracts errors from Effect's `Cause` type using `Cause.failures()`, which yields the typed error values from the cause chain. This is more robust than string-casting the cause.
+
+### Verification:
+- All type checks pass (7/7 tasks)
+- All 393 tests pass (1 skipped across 47 test files)
+- Formatting clean (473 files checked, no fixes needed)

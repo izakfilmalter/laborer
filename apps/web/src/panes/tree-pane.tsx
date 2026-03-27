@@ -10,6 +10,11 @@
  * Displayed as a left-side panel alongside workspace frames, mirroring
  * how the diff pane is rendered on the right side.
  *
+ * Error handling: when the streaming RPC fails (workspace not found,
+ * workspace in invalid state, worktree not ready, git errors), the
+ * component renders a user-friendly error message instead of a blank
+ * screen or crash.
+ *
  * @see packages/server/src/services/file-tree-service.ts — server-side service
  * @see docs/file-tree-git-status/PRD.md — feature PRD
  */
@@ -18,7 +23,8 @@ import { Result } from '@effect-atom/atom'
 import { useAtomValue } from '@effect-atom/atom-react/Hooks'
 import type { FileTreeSnapshot } from '@laborer/shared/rpc'
 import { FileTree } from '@pierre/trees/react'
-import { Loader2 } from 'lucide-react'
+import { Cause, pipe } from 'effect'
+import { AlertCircle, Loader2 } from 'lucide-react'
 import { useMemo } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
@@ -54,10 +60,14 @@ interface TreePaneProps {
  * The pull-based atom accumulates stream items in `result.value.items`.
  * Since each FileTreeSnapshot is a complete replacement (not a delta),
  * we only care about the most recent item in the array.
+ *
+ * Returns error information when the stream fails so the UI can render
+ * a user-friendly message instead of a blank screen.
  */
 function useFileTreeSnapshot(workspaceId: string): {
-  snapshot: FileTreeSnapshot | null
+  error: string | null
   isLoading: boolean
+  snapshot: FileTreeSnapshot | null
 } {
   const fileTreeAtom = useMemo(
     () => LaborerClient.query('fileTree.subscribe', { workspaceId }),
@@ -66,17 +76,27 @@ function useFileTreeSnapshot(workspaceId: string): {
   const result = useAtomValue(fileTreeAtom)
 
   if (Result.isInitial(result) || result.waiting) {
-    return { snapshot: null, isLoading: true }
+    return { snapshot: null, isLoading: true, error: null }
   }
 
   if (Result.isFailure(result)) {
-    return { snapshot: null, isLoading: false }
+    // Extract a user-friendly error message from the Cause.
+    // The cause wraps RpcError which has `{ message: string, code?: string }`.
+    const errorMessage = pipe(Cause.failures(result.cause), (chunk) => {
+      const first = chunk[Symbol.iterator]().next()
+      if (first.done !== true && first.value !== undefined) {
+        const err = first.value as { message?: string }
+        return err.message ?? 'Failed to load file tree'
+      }
+      return 'Failed to load file tree'
+    })
+    return { snapshot: null, isLoading: false, error: errorMessage }
   }
 
   // Pull result success value has shape { done, items: NonEmptyArray<T> }
   const { items } = result.value
   const latestSnapshot = items.at(-1) ?? null
-  return { snapshot: latestSnapshot, isLoading: false }
+  return { snapshot: latestSnapshot, isLoading: false, error: null }
 }
 
 /**
@@ -104,12 +124,34 @@ function TreePaneLoading() {
 }
 
 /**
+ * Error state shown when the streaming RPC fails.
+ * Displays a user-friendly message with an icon, without crashing the panel.
+ */
+function TreePaneError({ message }: { readonly message: string }) {
+  return (
+    <div
+      className="flex flex-col items-center gap-2 p-4"
+      data-testid="tree-pane-error"
+    >
+      <AlertCircle className="size-5 text-muted-foreground" />
+      <span className="text-center text-muted-foreground text-xs">
+        {message}
+      </span>
+    </div>
+  )
+}
+
+/**
  * Inner content of the tree pane, mounted only after Phase 4 (Eventually)
  * when the FileTreeService's deferred proxy has been swapped for the real
  * service. Subscribes to the streaming RPC and renders @pierre/trees.
  */
 function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
-  const { snapshot, isLoading } = useFileTreeSnapshot(workspaceId)
+  const { snapshot, isLoading, error } = useFileTreeSnapshot(workspaceId)
+
+  if (error !== null) {
+    return <TreePaneError message={error} />
+  }
 
   if (isLoading || snapshot === null) {
     return <TreePaneLoading />

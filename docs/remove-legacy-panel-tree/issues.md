@@ -1,543 +1,498 @@
-# Issues: Remove Legacy Panel Layout Tree
+# Issues: Remove Legacy Panel Layout Tree (DB Nuke)
 
 Parent PRD: [PRD.md](./PRD.md)
 
 ---
 
-## Issue 1: PanelManager renders PanelTreeNode directly
+## Issue 1: Rename hierarchical types and delete legacy type definitions
 
 **Status:** open
 
 ### What to build
 
-Update the `PanelManager` rendering pipeline to accept and render `PanelTreeNode` (`PanelLeafNode | PanelSplitNode`) directly, instead of requiring a conversion from legacy `PanelNode` (`LeafNode | SplitNode`). This is the foundation that all other slices depend on.
+Delete the legacy types and their Effect Schemas from `types.ts`, then rename the hierarchical types to take the freed names:
 
-- Update `PanelRenderer` to dispatch on `'PanelLeafNode'` and `'PanelSplitNode'` tags instead of `'LeafNode'` and `'SplitNode'`.
-- Update `LeafPaneRenderer` to accept `PanelLeafNode` instead of `LeafNode`. The sidebar flags (`devServerOpen`, `devServerTerminalId`, `diffOpen`) are not present on `PanelLeafNode` and should be removed from the rendering logic.
-- Update `SplitPanelRenderer` to accept `PanelSplitNode` instead of `SplitNode`.
-- In `WorkspaceTileLeafFrame`, pass the `PanelTreeNode` from the active panel tab directly to `PanelManager` instead of calling `convertPanelTreeToLegacy`. Remove the `filterTreeByWorkspace` fallback for pre-migration tiles.
-- Update `PanelContent` and `WorkspaceFrame` props to accept `PanelTreeNode` instead of `PanelNode` for the sub-layout.
-- Update `panel-manager.test.tsx` to use `PanelTreeNode` fixtures.
+- Delete: `LeafNode`, `SplitNode`, `PanelNode`, `PanelLayout`, `LeafNodeSchema`, `SplitNodeSchema`, `PanelNodeSchema`, `PanelLayoutSchema`.
+- Rename: `PanelLeafNode` -> `LeafNode`, `PanelSplitNode` -> `SplitNode`, `PanelTreeNode` -> `PanelNode`.
+- Update all imports and references across the entire codebase.
+- Update the `_tag` discriminant values: `'PanelLeafNode'` -> `'LeafNode'`, `'PanelSplitNode'` -> `'SplitNode'`.
 
-See PRD Module 1: "PanelTreeNode rendering pipeline".
+This is a mechanical find-and-replace verified by `tsc`.
+
+### TDD approach
+
+This module is a mechanical rename. TDD is not applicable -- correctness is verified by `tsc` (typecheck) and `bun run check`.
 
 ### Acceptance criteria
 
-- [ ] `PanelManager` accepts `PanelTreeNode | undefined` as its `layout` prop
-- [ ] `PanelRenderer` dispatches on `'PanelLeafNode'` / `'PanelSplitNode'` tags
-- [ ] `LeafPaneRenderer` renders `PanelLeafNode` without referencing `devServerOpen`, `devServerTerminalId`, or `diffOpen`
-- [ ] `WorkspaceTileLeafFrame` passes `PanelTreeNode` to `PanelManager` without calling `convertPanelTreeToLegacy`
-- [ ] `WorkspaceFrame` props use `PanelTreeNode` for `subLayout`
-- [ ] Existing panel rendering behavior is preserved (terminals render, splits work, empty panes show CTA)
-- [ ] `panel-manager.test.tsx` passes with `PanelTreeNode` fixtures
-- [ ] `getLeafNodes` in `WorkspaceFrame` is replaced with a `PanelTreeNode`-aware leaf collection
+- [ ] Legacy types `LeafNode`, `SplitNode`, `PanelNode`, `PanelLayout` and their schemas are deleted from `types.ts`
+- [ ] Hierarchical types are renamed: `PanelLeafNode` -> `LeafNode`, `PanelSplitNode` -> `SplitNode`, `PanelTreeNode` -> `PanelNode`
+- [ ] `_tag` discriminant values updated to `'LeafNode'` and `'SplitNode'`
+- [ ] All imports and references updated across the codebase
+- [ ] `bun run check` passes (typecheck + format + tests)
 
 ### Blocked by
 
-None - can start immediately.
+None -- can start immediately.
+
+### User stories addressed
+
+- User story 21 (simpler codebase)
+
+---
+
+## Issue 2: Schema -- single event, minimal table, delete legacy events
+
+**Status:** open
+
+### What to build
+
+Overhaul the LiveStore schema:
+
+- **Delete** all 5 legacy event definitions and materializers: `layoutSplit`, `layoutPaneClosed`, `layoutPaneAssigned`, `layoutRestored`, `layoutWorkspacesReordered`.
+- **Delete** all 13 hierarchical event definitions and materializers: `windowTabCreated`, `windowTabClosed`, `windowTabSwitched`, `windowTabRenamed`, `windowTabsReordered`, `panelTabCreated`, `panelTabClosed`, `panelTabSwitched`, `panelTabsReordered`, `windowLayoutRestored`, `windowLayoutSplit`, `windowLayoutPaneClosed`, `windowLayoutPaneAssigned`.
+- **Create** a single event: `windowLayoutUpdated` with schema `{ windowId: string, windowLayout: WindowLayout, reason?: string }`.
+- **Simplify** the `panelLayout` state table to two columns: `windowId` (text, PK) and `windowLayout` (JSON `WindowLayout`). Drop `layoutTree`, `activePaneId`, `workspaceOrder`, and `activeWindowTabId`.
+- The materializer is a single upsert: `panelLayout.insert({ windowId, windowLayout }).onConflict('windowId', 'update', { windowLayout })`.
+
+### TDD approach
+
+Use a real in-memory LiveStore (prior art: `schema.test.ts`). Vertical slices:
+
+1. RED: Test that committing `windowLayoutUpdated` with a valid `WindowLayout` persists and is queryable. GREEN: Define the event, table, and materializer.
+2. RED: Test that committing a second event for the same `windowId` upserts (overwrites). GREEN: Verify materializer uses `onConflict`.
+3. RED: Test that the `reason` field is optional and does not affect materialization. GREEN: Verify schema accepts missing `reason`.
+4. RED: Test that querying `panelLayout` returns only `windowId` and `windowLayout` columns. GREEN: Verify table definition.
+
+### Acceptance criteria
+
+- [ ] All 5 legacy event definitions are deleted
+- [ ] All 13 hierarchical event definitions are deleted
+- [ ] Single `windowLayoutUpdated` event is defined with correct schema
+- [ ] `panelLayout` table has only `windowId` and `windowLayout` columns
+- [ ] Materializer correctly upserts on `windowId`
+- [ ] `reason` field is optional
+- [ ] Schema tests pass with real in-memory LiveStore
+- [ ] `bun run check` passes
+
+### Blocked by
+
+- Issue 1 (type renames must be done first so schema references the new types)
+
+### User stories addressed
+
+- User story 19 (clean fresh state after DB nuke)
+- User story 21 (simpler codebase)
+
+---
+
+## Issue 3: Reorganize utility files into 3 modules by tree level
+
+**Status:** open
+
+### What to build
+
+Consolidate the scattered utility functions into three files organized by the tree level they operate on. Move existing hierarchical utility functions from their current locations into the new structure. Delete legacy-only functions.
+
+- **`panel-tree-utils.ts`** -- Pure functions operating on `PanelNode` (the split tree within a single panel tab): `splitPane`, `closePane`, `findLeaf`, `findSiblingPaneId`, `collectTerminalIds`, `getLeafIds`, `getFirstLeafId`, `findNewLeafAfterSplit`, `findPaneInDirection`, `computeResize`, `buildPath`. Source: renamed functions from `window-tab-utils.ts` (e.g., `splitPaneInPanelTree` -> `splitPane`) plus ported algorithms from `layout-utils.ts` (e.g., `findPaneInDirection`, `computeResize`).
+- **`workspace-tile-utils.ts`** -- Pure functions operating on `WorkspaceTileNode`: `addWorkspace`, `removeWorkspace`, `reorderTiles`, `getLeaves`, `findWorkspaceByPaneId`, `buildTilePath`, `collectTerminalIdsFromTileTree`. Deduplicate `getWorkspaceTileLeaves` to a single definition here.
+- **`window-layout-utils.ts`** -- Pure functions operating on `WindowLayout`: `addWindowTab`, `removeWindowTab`, `switchWindowTab`, `renameWindowTab`, `reorderWindowTabs`, `findTerminalLocation`, `findWorkspaceLocation`, `resolveActivePaneForWindowTab`, `saveFocusedPaneId`, `assignTerminal`, `closeTerminal`, `removeWorkspaceFromLayout`, `reconcileWindowLayout`, `computeProgressiveCloseAction`, `getStaleTerminalLeaves`.
+
+Inline trivial wrappers (e.g., `addWorkspaceToTabUnique` which is a one-liner around `moveWorkspace`).
+
+Delete `layout-utils.ts` (all functions either ported to new files or deleted as legacy-only). Delete `layout-migration.ts` entirely.
+
+### TDD approach
+
+For each utility file, migrate existing tests alongside the functions. Use vertical slices for any new or ported functions:
+
+**panel-tree-utils.ts** (highest priority -- core algorithms):
+1. RED: `splitPane` creates a new leaf as sibling. GREEN: Port from `splitPaneInPanelTree`.
+2. RED: `closePane` removes a leaf and promotes sibling. GREEN: Port from `closePaneInPanelTree`.
+3. RED: `findSiblingPaneId` returns the adjacent leaf. GREEN: Port from `findSiblingPaneIdInPanelTree`.
+4. RED: `findPaneInDirection` navigates to the correct pane. GREEN: Port algorithm from `layout-utils.ts`, adapted for renamed types.
+5. RED: `computeResize` adjusts split sizes correctly. GREEN: Port from `layout-utils.ts`, adapted for renamed types.
+
+**workspace-tile-utils.ts**: Migrate existing tests from `workspace-tile-utils.test.ts`. Add tests for any functions that move from other files.
+
+**window-layout-utils.ts**: Migrate existing tests from `window-tab-utils.test.ts`. Add tests for `computeProgressiveCloseAction` and reconciliation functions.
+
+Factory functions in test files should use the renamed types (`LeafNode`, `SplitNode`, `PanelNode`).
+
+### Acceptance criteria
+
+- [ ] `panel-tree-utils.ts` contains all split-tree-level operations
+- [ ] `workspace-tile-utils.ts` contains all tile-tree-level operations
+- [ ] `window-layout-utils.ts` contains all top-level layout operations
+- [ ] `getWorkspaceTileLeaves` exists in exactly one file (`workspace-tile-utils.ts`)
+- [ ] `layout-utils.ts` is deleted
+- [ ] `layout-migration.ts` is deleted
+- [ ] Old utility files (`window-tab-utils.ts`, `panel-tab-utils.ts`) are deleted or emptied
+- [ ] All ported functions have tests in the corresponding new test files
+- [ ] `findPaneInDirection` and `computeResize` are ported and tested with renamed types
+- [ ] `bun run check` passes
+
+### Blocked by
+
+- Issue 1 (type renames)
+
+### User stories addressed
+
+- User story 21 (simpler codebase)
+
+---
+
+## Issue 4: Replace repair code with Effect Schema decode
+
+**Status:** open
+
+### What to build
+
+Replace the ~520-line `repairWindowLayout` function and its 12+ helper functions with an Effect Schema decode pipeline.
+
+Define the `WindowLayout` schema with `Schema.withDefault(...)` and `Schema.optional(...)` annotations that automatically produce valid defaults for missing or malformed fields. A single `Schema.decodeUnknown(WindowLayoutSchema)` call replaces all manual validation.
+
+Handle edge cases:
+- Missing `tabs` array -> default to empty array
+- Missing `activeTabId` -> default to first tab's ID or `undefined`
+- Missing `focusedPaneId` on `PanelTab` -> default to first leaf in the panel tree
+- Malformed `WorkspaceTileNode` -> default to a single leaf
+- Missing `activePanelTabId` on `WorkspaceTileLeaf` -> default to first panel tab
+
+Delete `repairWindowLayout` and all its helper functions from `window-tab-utils.ts` (or whichever file they end up in after the reorganization).
+
+### TDD approach
+
+Vertical slices testing the decode behavior:
+
+1. RED: Valid `WindowLayout` JSON decodes to itself (round-trip). GREEN: Define schema with decode.
+2. RED: Missing `tabs` key decodes to `{ tabs: [], activeTabId: undefined }`. GREEN: Add `Schema.withDefault`.
+3. RED: Tab with missing `activeTabId` gets first tab ID as default. GREEN: Add transformation.
+4. RED: `PanelTab` with missing `focusedPaneId` gets first leaf ID. GREEN: Add transformation.
+5. RED: `WorkspaceTileLeaf` with missing `activePanelTabId` gets first panel tab ID. GREEN: Add transformation.
+6. RED: Completely malformed JSON (wrong types, extra fields) decodes to a valid empty layout. GREEN: Add catch-all fallback.
+
+### Acceptance criteria
+
+- [ ] `repairWindowLayout` and all its helper functions are deleted
+- [ ] `WindowLayoutSchema` decode handles all edge cases with defaults
+- [ ] Valid layouts decode unchanged (round-trip fidelity)
+- [ ] Malformed layouts decode to valid layouts with sensible defaults
+- [ ] No manual field-by-field validation code remains
+- [ ] All decode behaviors are tested
+- [ ] `bun run check` passes
+
+### Blocked by
+
+- Issue 1 (type renames)
+- Issue 3 (file reorganization -- need to know where the schema lives)
+
+### User stories addressed
+
+- User story 14 (layout persists across restarts)
+- User story 23 (Schema decode replaces manual validation)
+
+---
+
+## Issue 5: PanelManager renders renamed types directly
+
+**Status:** open
+
+### What to build
+
+Update the `PanelManager` rendering pipeline to accept and render `PanelNode` (`LeafNode | SplitNode`) with the renamed types.
+
+- `PanelRenderer` dispatches on `'LeafNode'` and `'SplitNode'` tags.
+- `LeafPaneRenderer` accepts `LeafNode` without sidebar flags (`devServerOpen`, `devServerTerminalId`, `diffOpen` are gone).
+- `WorkspaceTileLeafFrame` passes the `PanelNode` from the active panel tab directly to `PanelManager` without any conversion.
+- Remove `convertPanelTreeToLegacy` call. Remove `filterTreeByWorkspace` fallback.
+
+### TDD approach
+
+Vertical slices for rendering behavior:
+
+1. RED: Single `LeafNode` renders a terminal pane with the correct terminal ID. GREEN: Update `PanelRenderer` to dispatch on `'LeafNode'`.
+2. RED: `SplitNode` with two children renders two panels in the correct direction. GREEN: Update to dispatch on `'SplitNode'`.
+3. RED: Nested splits render correctly (split within a split). GREEN: Verify recursive rendering.
+4. RED: Empty pane (no terminal assigned) shows the CTA. GREEN: Verify leaf with no `terminalId`.
+5. RED: `WorkspaceTileLeafFrame` passes `PanelNode` to `PanelManager` without conversion. GREEN: Remove `convertPanelTreeToLegacy` call.
+
+Prior art: existing `panel-manager.test.tsx` (component rendering with `@testing-library/react`, mock UI components with `data-testid`).
+
+### Acceptance criteria
+
+- [ ] `PanelManager` accepts `PanelNode | undefined` as its layout prop
+- [ ] `PanelRenderer` dispatches on `'LeafNode'` / `'SplitNode'` tags
+- [ ] `LeafPaneRenderer` does not reference `devServerOpen`, `devServerTerminalId`, or `diffOpen`
+- [ ] `convertPanelTreeToLegacy` is not called anywhere
+- [ ] `filterTreeByWorkspace` is not called anywhere
+- [ ] Existing rendering behavior preserved
+- [ ] Tests pass with renamed type fixtures
+- [ ] `bun run check` passes
+
+### Blocked by
+
+- Issue 1 (type renames)
 
 ### User stories addressed
 
 - User story 1 (focus border tracks active panel)
 - User story 2 (focus follows between workspace frames)
-- User story 3 (keyboard shortcuts operate on correct panel)
 
 ---
 
-## Issue 2: Schema: no-op legacy materializers and remove deprecated columns
+## Issue 6: Focus tracking -- hierarchical only
 
 **Status:** open
 
 ### What to build
 
-Update the LiveStore schema to stop reading/writing the deprecated legacy columns (`layoutTree`, `activePaneId`, `workspaceOrder`) and make legacy event materializers no-ops.
+Remove the legacy `activePaneId` column dependency. Focus is tracked exclusively via the 3-level hierarchical model:
 
-- Remove the `layoutTree`, `activePaneId`, and `workspaceOrder` columns from the `panelLayout` state table definition.
-- Make materializers for legacy events (`v1.LayoutSplit`, `v1.LayoutPaneClosed`, `v1.LayoutPaneAssigned`, `v1.LayoutRestored`, `v1.LayoutWorkspacesReordered`) into no-ops that do not fail. Old events in the eventlog must still rematerialize without errors.
-- Keep the legacy event definitions in the schema (LiveStore eventlog is immutable).
-- Verify the already-defined hierarchical events (`windowLayoutSplit`, `windowLayoutPaneClosed`, `windowLayoutPaneAssigned`) have correct materializers that write to `windowLayout` and `activeWindowTabId`.
+- `WindowLayout.activeTabId` -> active window tab
+- `WorkspaceTileLeaf.activePanelTabId` -> active panel tab per workspace
+- `PanelTab.focusedPaneId` -> focused pane per panel tab
 
-See PRD Module 5: "Schema changes".
+Rewrite `handleSetActivePaneId` to use `saveFocusedPaneId` on the hierarchical tree and commit `windowLayoutUpdated` with `reason: 'focus-changed'`.
 
-### Acceptance criteria
+Derive `persistedActivePaneId` from `resolveActivePaneForWindowTab` at read time instead of from a column.
 
-- [ ] `layoutTree`, `activePaneId`, and `workspaceOrder` columns are removed from the `panelLayout` table definition
-- [ ] Legacy event materializers are no-ops (e.g., no SQL update)
-- [ ] Legacy event definitions still exist in the schema
-- [ ] `windowLayoutSplit`, `windowLayoutPaneClosed`, `windowLayoutPaneAssigned` materializers correctly update `windowLayout` and `activeWindowTabId`
-- [ ] `schema.test.ts` passes — old events rematerialize without errors
-- [ ] `hierarchical-layout-types.test.ts` passes
+Derive `activeWorkspaceId` from the workspace tile leaf containing the focused pane.
 
-### Blocked by
+Remove all `layoutPaneAssigned` commits from focus-restoration callbacks.
 
-None - can start immediately.
+### TDD approach
 
-### User stories addressed
+Vertical slices:
 
-- User story 19 (clean upgrade for legacy-only users)
-
----
-
-## Issue 3: handleSetActivePaneId uses hierarchical focus only
-
-**Status:** open
-
-### What to build
-
-Rewrite `handleSetActivePaneId` to save focus exclusively via the hierarchical tree's `saveFocusedPaneId` and commit `windowLayoutPaneAssigned` instead of `layoutPaneAssigned`. Remove the legacy `activePaneId` column dependency.
-
-- `handleSetActivePaneId` calls `saveFocusedPaneId(persistedWindowLayout, paneId)` and commits `windowLayoutPaneAssigned`.
-- `persistedActivePaneId` is derived from `resolveActivePaneForWindowTab` on the hierarchical tree instead of reading the legacy `activePaneId` column.
-- `PanelActionsProvider` receives `activePaneId` derived from the hierarchical tree.
-- `activeWorkspaceId` is derived from the workspace tile leaf that contains the focused pane.
-- Remove all `layoutPaneAssigned` commits from focus-restoration callbacks (`commitWindowTabSwitchWithFocus`, `commitPanelTabSwitchWithFocus`, `handleCloseWindowTab`, `handleAssignTerminalToPane` step 3).
-- Update `use-panel-layout.test.ts` to verify focus changes commit hierarchical events.
-
-See PRD Module 3: "Focus tracking consolidation" and the focus border fix analysis from the original bug investigation.
+1. RED: Setting active pane ID on a leaf in the current panel tab updates `focusedPaneId`. GREEN: Wire `handleSetActivePaneId` to `saveFocusedPaneId`.
+2. RED: Setting active pane ID on a leaf in a different workspace switches `activeTabId` context. GREEN: Handle cross-workspace focus.
+3. RED: `resolveActivePaneForWindowTab` returns the correct pane for a single-tab layout. GREEN: Verify derivation.
+4. RED: `resolveActivePaneForWindowTab` returns the correct pane after switching window tabs. GREEN: Verify tab-switch focus restoration.
+5. RED: `activeWorkspaceId` reflects the workspace containing the focused pane. GREEN: Verify derivation from tile leaves.
 
 ### Acceptance criteria
 
-- [ ] `handleSetActivePaneId` commits `windowLayoutPaneAssigned` (not `layoutPaneAssigned`)
-- [ ] `persistedActivePaneId` is derived from `resolveActivePaneForWindowTab` on the hierarchical tree
+- [ ] `handleSetActivePaneId` commits `windowLayoutUpdated` (not `layoutPaneAssigned`)
+- [ ] `persistedActivePaneId` is derived from `resolveActivePaneForWindowTab`
 - [ ] `activeWorkspaceId` is derived from the workspace tile leaf containing the focused pane
-- [ ] No code in `use-panel-layout.ts` commits `layoutPaneAssigned`
-- [ ] Focus border correctly shifts when clicking between workspace frames
-- [ ] Panel tab switches restore focus to the destination tab's `focusedPaneId`
-- [ ] Window tab switches restore focus to the destination tab's last-focused pane
-- [ ] `use-panel-layout.test.ts` passes with updated assertions
+- [ ] No code commits `layoutPaneAssigned`
+- [ ] Focus border shifts correctly when clicking between workspace frames
+- [ ] Panel tab switches restore focus to `focusedPaneId`
+- [ ] Window tab switches restore focus to last-focused pane
+- [ ] `bun run check` passes
 
 ### Blocked by
 
-- Blocked by "PanelManager renders PanelTreeNode directly"
-- Blocked by "Schema: no-op legacy materializers and remove deprecated columns"
+- Issue 2 (schema changes -- need the single event)
+- Issue 5 (PanelManager renders renamed types)
 
 ### User stories addressed
 
-- User story 1 (focus border tracks active panel)
-- User story 2 (focus follows between workspace frames)
-- User story 4 (panel tab switches restore focus)
-- User story 5 (window tab switches restore focus)
+- User story 1 (focus border)
+- User story 2 (focus follows between workspaces)
+- User story 4 (panel tab focus restoration)
+- User story 5 (window tab focus restoration)
 - User story 8 (sidebar active workspace highlight)
 
 ---
 
-## Issue 4: handleSplitPane operates on hierarchical tree
+## Issue 7: Mutation handlers operate on WindowLayout directly
 
 **Status:** open
 
 ### What to build
 
-Rewrite `handleSplitPane` to split panes directly on the `PanelTreeNode` within the active panel tab of the hierarchical `WindowLayout`, instead of mutating the legacy tree and syncing.
+Rewrite all mutation handlers in `use-panel-layout.ts` to operate directly on `WindowLayout`, committing a single `windowLayoutUpdated` event:
 
-- Use `splitPaneInPanelTree` (already in `window-tab-utils.ts`) on the active panel tab's `panelLayout`.
-- Find the workspace containing the pane by searching workspace tile leaves.
-- Use `findNewPanelTreeLeaf` to identify the newly created pane.
-- Update `focusedPaneId` on the panel tab to the new pane.
-- Commit `windowLayoutSplit` instead of `layoutSplit`.
-- Auto-spawn terminal in the new pane using the hierarchical `assignTerminalInPanelTree`.
-- Remove the `syncLegacyTreeToHierarchical` call and legacy `layoutSplit` commit.
-- Add tests for `splitPaneInPanelTree` in `window-tab-utils.test.ts`.
+- **`handleSplitPane`**: Use `splitPane` on active panel tab's `PanelNode`. Focus new pane. Auto-spawn terminal. Commit `windowLayoutUpdated` with `reason: 'split'`.
+- **`handleClosePane`**: Use `closePane`. Transfer focus to sibling. Kill terminal. Commit with `reason: 'pane-closed'`.
+- **`handleAssignTerminalToPane`**: Use `assignTerminal`. Commit with `reason: 'terminal-assigned'`.
+- **`handleCloseWorkspace`**: Use `removeWorkspaceFromLayout`. Kill terminals. Commit with `reason: 'workspace-closed'`.
+- **`handleCloseTerminalPane`**: Use `closeTerminal` as sole path. No legacy fast-path.
+- **`handleToggleDevServerPane`**: Create/remove `devServerTerminal` panel tab. No sidebar flags.
+- **`handleResizePane`**: Use `computeResize` on active panel tab's `PanelNode`.
 
-See PRD Module 2: "handleSplitPane" section.
+Delete `syncLegacyTreeToHierarchical`, `deriveLegacyTreeFromHierarchical`, all legacy event commits, `commitAssignment` helper, `defaultLayout` constant, `DEFAULT_NEW_WINDOW_LAYOUT`.
+
+### TDD approach
+
+Vertical slices per handler (using mock store, prior art: `use-panel-layout.test.ts`):
+
+1. RED: `handleSplitPane` produces a layout with one additional leaf in the active panel tab. GREEN: Wire to `splitPane`.
+2. RED: `handleSplitPane` sets `focusedPaneId` to the new leaf. GREEN: Update focus after split.
+3. RED: `handleClosePane` removes the leaf and promotes sibling. GREEN: Wire to `closePane`.
+4. RED: `handleClosePane` transfers focus to sibling. GREEN: Use `findSiblingPaneId`.
+5. RED: `handleAssignTerminalToPane` updates the leaf's `terminalId`. GREEN: Wire to `assignTerminal`.
+6. RED: `handleCloseWorkspace` removes all panes for the workspace. GREEN: Wire to `removeWorkspaceFromLayout`.
+7. RED: `handleToggleDevServerPane` ON creates a new panel tab. GREEN: Add panel tab with `paneType: 'devServerTerminal'`.
+8. RED: `handleToggleDevServerPane` OFF removes the panel tab. GREEN: Remove by panel tab ID.
+9. RED: `handleResizePane` adjusts split sizes. GREEN: Wire to `computeResize`.
 
 ### Acceptance criteria
 
-- [ ] `handleSplitPane` commits `windowLayoutSplit` (not `layoutSplit`)
-- [ ] `handleSplitPane` does not call `syncLegacyTreeToHierarchical`
-- [ ] Split creates a new pane in the correct panel tab's `PanelTreeNode`
-- [ ] Focus transfers to the new pane after split
-- [ ] Auto-spawned terminal is assigned to the new pane via hierarchical tree
-- [ ] Adjacent insertion optimization works (same-direction splits don't nest)
-- [ ] Agent pane splits auto-run the agent command
-- [ ] `splitPaneInPanelTree` has unit tests in `window-tab-utils.test.ts`
+- [ ] All handlers commit `windowLayoutUpdated` (no legacy events)
+- [ ] `syncLegacyTreeToHierarchical` is deleted
+- [ ] `deriveLegacyTreeFromHierarchical` is not called
+- [ ] `commitAssignment` helper is deleted
+- [ ] `defaultLayout` legacy constant is deleted
+- [ ] Each handler operates directly on `WindowLayout`
+- [ ] Dev server toggle creates/removes panel tabs (no sidebar flags)
+- [ ] All handler behaviors tested
+- [ ] `bun run check` passes
 
 ### Blocked by
 
-- Blocked by "Schema: no-op legacy materializers and remove deprecated columns"
-- Blocked by "handleSetActivePaneId uses hierarchical focus only"
+- Issue 2 (schema changes)
+- Issue 3 (utility file reorganization)
+- Issue 6 (focus tracking)
 
 ### User stories addressed
 
 - User story 3 (keyboard shortcuts operate correctly)
-- User story 6 (splitting focuses new pane and spawns terminal)
-
----
-
-## Issue 5: handleClosePane operates on hierarchical tree
-
-**Status:** open
-
-### What to build
-
-Rewrite `handleClosePane` to close panes directly on the `PanelTreeNode` within the active panel tab, instead of mutating the legacy tree and syncing.
-
-- Use `closePaneInPanelTree` (already in `window-tab-utils.ts`) on the active panel tab's `panelLayout`.
-- Use `findSiblingPaneIdInPanelTree` (already in `window-tab-utils.ts`) to determine focus transfer target before closing.
-- Kill terminals associated with the closing pane via `collectTerminalIdsFromPanelTree`.
-- Commit `windowLayoutPaneClosed` instead of `layoutPaneClosed`.
-- Handle the "all panes closed" edge case by removing the panel tab or showing empty state.
-- Remove the `syncLegacyTreeToHierarchical` call and legacy `layoutPaneClosed` commit.
-
-See PRD Module 2: "handleClosePane" section.
-
-### Acceptance criteria
-
-- [ ] `handleClosePane` commits `windowLayoutPaneClosed` (not `layoutPaneClosed`)
-- [ ] `handleClosePane` does not call `syncLegacyTreeToHierarchical`
-- [ ] Focus transfers to sibling pane after close
-- [ ] Terminals associated with the closed pane are killed
-- [ ] Closing the last pane in a panel tab handles the edge case correctly
-- [ ] `findSiblingPaneIdInPanelTree` has unit tests
-
-### Blocked by
-
-- Blocked by "Schema: no-op legacy materializers and remove deprecated columns"
-- Blocked by "handleSetActivePaneId uses hierarchical focus only"
-
-### User stories addressed
-
-- User story 3 (keyboard shortcuts operate correctly)
-- User story 7 (closing transfers focus to sibling)
-- User story 13 (close confirmation for running processes)
-
----
-
-## Issue 6: handleAssignTerminalToPane uses hierarchical tree
-
-**Status:** open
-
-### What to build
-
-Rewrite `handleAssignTerminalToPane` to assign terminals directly on the hierarchical tree, removing the legacy `computeTerminalPaneAssignment` and `commitAssignment` dual-write pattern.
-
-- The fast path (terminal already in the hierarchical layout) already works — it navigates to the terminal's exact location via `findTerminalLocation`.
-- The fallback path (new terminal assignment) should use `assignTerminalInPanelTree` within `updateWorkspaceTileLeaf` directly, committing `windowLayoutPaneAssigned`.
-- Remove `commitAssignment` helper that commits `layoutPaneAssigned` and calls `syncLegacyTreeToHierarchical`.
-- Ensure workspace-in-active-tab enforcement (`addWorkspaceToTabUnique`) still works.
-
-See PRD Module 2: "handleAssignTerminalToPane" section.
-
-### Acceptance criteria
-
-- [ ] Terminal assignment commits `windowLayoutPaneAssigned` (not `layoutPaneAssigned`)
-- [ ] `commitAssignment` helper is removed
-- [ ] Fast path (terminal already exists) navigates correctly
-- [ ] Fallback path assigns terminal to correct pane in hierarchical tree
-- [ ] Workspace is added to active tab if not present
-- [ ] `syncLegacyTreeToHierarchical` is not called
-
-### Blocked by
-
-- Blocked by "Schema: no-op legacy materializers and remove deprecated columns"
-- Blocked by "handleSetActivePaneId uses hierarchical focus only"
-
-### User stories addressed
-
-- User story 3 (keyboard shortcuts operate correctly)
-- User story 15 (sidebar terminal assignment works)
-
----
-
-## Issue 7: handleCloseWorkspace and handleCloseTerminalPane use hierarchical tree
-
-**Status:** open
-
-### What to build
-
-Rewrite `handleCloseWorkspace` and `handleCloseTerminalPane` to operate exclusively on the hierarchical tree.
-
-- **`handleCloseWorkspace`**: Use `removeWorkspaceFromLayout` (already exists) and `collectTerminalIdsFromTileTree` to kill terminals. Commit `windowLayoutPaneClosed`. Remove legacy `layoutPaneClosed` commits and `closeWorkspacePanes` usage.
-- **`handleCloseTerminalPane`**: Remove the legacy fast-path (`findLeafByTerminalId` on `persistedLayoutTree`). Use `closeTerminalInWindowLayout` (already exists) as the sole path. It searches all tabs/workspaces/panel-tabs for the terminal.
-
-See PRD Module 2: "handleCloseWorkspace" and "handleCloseTerminalPane" sections.
-
-### Acceptance criteria
-
-- [ ] `handleCloseWorkspace` commits only hierarchical events
-- [ ] `handleCloseWorkspace` does not reference `persistedLayoutTree` or `defaultLayout`
-- [ ] Terminals belonging to the workspace are killed
-- [ ] `handleCloseTerminalPane` uses `closeTerminalInWindowLayout` as the sole path
-- [ ] `handleCloseTerminalPane` does not reference `persistedLayoutTree` or `defaultLayout`
-- [ ] Closing a terminal from the sidebar works when the terminal is in a non-active panel tab
-
-### Blocked by
-
-- Blocked by "handleClosePane operates on hierarchical tree"
-- Blocked by "handleAssignTerminalToPane uses hierarchical tree"
-
-### User stories addressed
-
-- User story 3 (keyboard shortcuts operate correctly)
-- User story 13 (close confirmation for running processes)
-- User story 17 (auto-close review/diff when workspace removed)
-
----
-
-## Issue 8: handleToggleDevServerPane as panel tab toggle
-
-**Status:** open
-
-### What to build
-
-Rewrite `handleToggleDevServerPane` to create/remove a dedicated `devServerTerminal` panel tab instead of using the legacy sidebar flags (`devServerOpen`, `devServerTerminalId`) on `LeafNode`.
-
-- Toggling ON adds a new panel tab with `paneType: 'devServerTerminal'` to the workspace's tab list, spawns a terminal with `autoRun: true`, and assigns it to the pane.
-- Toggling OFF removes the `devServerTerminal` panel tab and optionally kills the terminal.
-- Remove all references to `devServerOpen`, `devServerTerminalId`, and `replaceNode` from this handler.
-- The handler no longer reads from or writes to the legacy `layoutTree` column.
-
-See PRD Module 2: "handleToggleDevServerPane" section.
-
-### Acceptance criteria
-
-- [ ] Toggle ON creates a `devServerTerminal` panel tab with auto-spawned terminal
-- [ ] Toggle OFF removes the `devServerTerminal` panel tab
-- [ ] No references to `devServerOpen`, `devServerTerminalId`, or `replaceNode`
-- [ ] No legacy event commits
-- [ ] Dev server terminal renders correctly in its own panel tab
-- [ ] Re-toggling ON reconnects to existing dev server terminal if still running
-
-### Blocked by
-
-- Blocked by "handleSplitPane operates on hierarchical tree"
-- Blocked by "handleClosePane operates on hierarchical tree"
-
-### User stories addressed
-
-- User story 9 (dev server toggle opens a panel tab)
-
----
-
-## Issue 9: handleResizePane walks PanelTreeNode
-
-**Status:** open
-
-### What to build
-
-Rewrite `computeResize` (and its helpers `buildPath`, `computeResizeFromPath`, `getResizeDelta`) to walk `PanelTreeNode` instead of legacy `PanelNode`. The algorithm is identical — only tag name checks change (`'PanelSplitNode'` instead of `'SplitNode'`, `'PanelLeafNode'` instead of `'LeafNode'`).
-
-- Port `computeResize` to accept `PanelTreeNode` as root.
-- Port `buildPath` to walk `PanelTreeNode`.
-- `handleResizePane` uses the active panel tab's `PanelTreeNode` instead of `persistedLayoutTree ?? defaultLayout`.
-- The imperative `groupHandle.setLayout()` call remains unchanged.
-
-See PRD Module 2: "handleResizePane" section.
-
-### Acceptance criteria
-
-- [ ] `computeResize` accepts `PanelTreeNode` as root parameter
-- [ ] `handleResizePane` does not reference `persistedLayoutTree` or `defaultLayout`
-- [ ] Keyboard resize (Shift+arrow) adjusts the correct split
-- [ ] Existing resize behavior is preserved
-- [ ] Unit tests for `computeResize` updated to use `PanelTreeNode` fixtures
-
-### Blocked by
-
-- Blocked by "PanelManager renders PanelTreeNode directly"
-
-### User stories addressed
-
-- User story 3 (keyboard shortcuts operate correctly)
-- User story 12 (pane resize works)
-
----
-
-## Issue 10: Port index.tsx consumers to hierarchical tree
-
-**Status:** open
-
-### What to build
-
-Port all consumers of the derived `layout` (`PanelNode`) in `index.tsx` to use the hierarchical `WindowLayout` directly.
-
-- **`activeWorkspaceId` derivation**: Resolve from the active window tab's workspace tile leaves + `activePanelTabId` instead of `findNodeById(layout, activePaneId)`.
-- **`getPanePrState`**: Use `findTerminalLocation` or walk workspace tile leaves to find the workspace containing a pane.
-- **Fullscreen auto-exit**: Check pane existence via hierarchical tree (`findPanelTreeLeaf` across all panel tabs).
-- **Auto-close review/diff**: Check workspace existence via `getWorkspaceTileLeaves` instead of `getLeafNodes`.
-- **`toggleReviewPane` / `toggleDiffPane`**: Resolve workspace from pane via hierarchical tree.
-- **Close gate logic**: Port `computeClosePaneGateAction` and `computeCloseWorkspaceAction` to use `collectTerminalIdsFromPanelTree` and `shouldConfirmClosePanelTab`.
-- **`gatedCloseTerminalPane`**: Use `findTerminalLocation` instead of `findLeafByTerminalId`.
-- **`handleNotificationClicked`**: Use `findWorkspaceLocation` + `resolveActivePaneForWindowTab`.
-- Remove the `layout` return value from `usePanelLayout()` (or stop consuming it in index.tsx).
-
-See PRD Module 4: "Consumer porting" section.
-
-### Acceptance criteria
-
-- [ ] `index.tsx` does not import or use `findNodeById`, `getLeafNodes`, `findLeafByTerminalId`, `computeClosePaneGateAction`, or `computeCloseWorkspaceAction` from `layout-utils`
-- [ ] `activeWorkspaceId` is derived from the hierarchical tree
-- [ ] Fullscreen auto-exit checks hierarchical tree
-- [ ] Review/diff auto-close checks hierarchical tree
-- [ ] Close gate dialogs work correctly with hierarchical tree
-- [ ] Notification clicks navigate to correct workspace
-- [ ] All existing behaviors preserved
-
-### Blocked by
-
-- Blocked by "PanelManager renders PanelTreeNode directly"
-- Blocked by "handleSetActivePaneId uses hierarchical focus only"
-
-### User stories addressed
-
-- User story 8 (sidebar active workspace highlight)
+- User story 6 (split focuses new pane)
+- User story 7 (close transfers focus)
+- User story 9 (dev server as panel tab)
+- User story 12 (resize works)
 - User story 13 (close confirmation)
-- User story 16 (fullscreen mode works)
-- User story 17 (auto-close review/diff)
-- User story 18 (notification clicks navigate correctly)
+- User story 15 (terminal assignment)
 
 ---
 
-## Issue 11: Port PanelHotkeys to hierarchical tree
+## Issue 8: Port all consumers to hierarchical tree
 
 **Status:** open
 
 ### What to build
 
-Port the `PanelHotkeys` component to use the hierarchical `WindowLayout` tree instead of the legacy `PanelNode` layout.
+Port every consumer of the derived legacy `layout` (`PanelNode`) to use `WindowLayout`:
 
-- Workspace resolution (`findNodeById(layout, activePaneId)` for split/tab/diff/review shortcuts): Derive `activeWorkspaceId` from the hierarchical tree's workspace tile leaf context.
-- Directional navigation (`findPaneInDirection`): Port to walk `PanelTreeNode`. The algorithm is identical to the legacy version — only tag name checks change.
-- Pane cycling (`leafPaneIds` for o/p keys): Use `getPanelTreeLeafIds` on the active panel tab's `PanelTreeNode` instead of `getLeafIds` on the legacy layout.
-- Remove the `layout` and `leafPaneIds` props from `PanelHotkeys`. Accept `windowLayout` or derive needed data from context.
+- **`index.tsx`**: `activeWorkspaceId` from workspace tile leaves. Pane-to-workspace lookup via `findTerminalLocation`. Fullscreen auto-exit, auto-close review/diff, close gate logic, notification click handler.
+- **`PanelHotkeys`**: Directional navigation walks `PanelNode`. Pane cycling uses `getLeafIds`. Remove legacy `layout` prop.
+- **`WorkspaceFrames`**: Remove `LegacyWorkspaceFrames`, `flatLayout` prop, `workspaceOrder` prop. Hierarchical tile renderer is the sole path.
+- **`WorkspaceFrameHeaderContainer`**: `getScopedActivePaneId` uses hierarchical leaf list.
+- **`PanelContent`**: Remove `layout` prop. `workspaceTileLayout` is the sole source.
 
-See PRD Module 4: "PanelHotkeys" section.
+### TDD approach
+
+Most consumer porting is verified by existing integration tests and typecheck. Focus TDD on behavioral changes:
+
+1. RED: `PanelHotkeys` directional navigation from a pane finds the correct neighbor. GREEN: Wire to ported `findPaneInDirection`.
+2. RED: `PanelHotkeys` pane cycling visits all visible panes. GREEN: Wire to `getLeafIds` on active panel tab.
+3. RED: `computeProgressiveCloseAction` returns correct action for each level. GREEN: Verify through public interface.
 
 ### Acceptance criteria
 
-- [ ] `PanelHotkeys` does not accept a `PanelNode` layout prop
-- [ ] Directional navigation (Ctrl+B then arrows / Cmd+Option+arrows) works correctly
-- [ ] Pane cycling (o/p keys) cycles through all visible panes
-- [ ] Workspace resolution for split/tab shortcuts works correctly
-- [ ] `findPaneInDirection` ported to `PanelTreeNode` with unit tests
+- [ ] `index.tsx` does not import from `layout-utils.ts`
+- [ ] `PanelHotkeys` does not accept a legacy `PanelNode` layout prop
+- [ ] `LegacyWorkspaceFrames` is deleted
+- [ ] `WorkspaceFrames` does not accept `layout` or `workspaceOrder` props
+- [ ] `PanelContent` does not accept a `layout` prop
+- [ ] `filterTreeByWorkspace` is not called anywhere
+- [ ] Directional navigation works correctly
+- [ ] Pane cycling works correctly
+- [ ] Progressive close chain works
+- [ ] `bun run check` passes
 
 ### Blocked by
 
-- Blocked by "PanelManager renders PanelTreeNode directly"
-- Blocked by "handleSetActivePaneId uses hierarchical focus only"
+- Issue 5 (PanelManager renders renamed types)
+- Issue 6 (focus tracking)
+- Issue 7 (mutation handlers)
 
 ### User stories addressed
 
-- User story 3 (keyboard shortcuts operate correctly)
+- User story 3 (keyboard shortcuts)
+- User story 8 (sidebar highlight)
 - User story 10 (directional navigation)
 - User story 11 (pane cycling)
-- User story 12 (pane resize via keyboard)
+- User story 13 (close confirmation)
+- User story 16 (fullscreen mode)
+- User story 17 (auto-close review/diff)
+- User story 18 (notification clicks)
+- User story 22 (progressive close)
 
 ---
 
-## Issue 12: Seeding and reconciliation: hierarchical only
+## Issue 9: Seeding and reconciliation -- hierarchical only
 
 **Status:** open
 
 ### What to build
 
-Simplify the seeding and reconciliation logic to operate exclusively on the hierarchical `WindowLayout`, removing all legacy tree paths.
+Simplify seeding and reconciliation to operate exclusively on `WindowLayout`:
 
-- **Seeding**: Rewrite the seed effect to create a `WindowLayout` directly from the initial terminal/workspace state. Remove `migrateToWindowLayout`. Users with legacy-only data get a fresh `WindowLayout` with one empty tab.
-- **Reconciliation**: Remove `collectStaleLeaves` dual-path logic. Use only `getStaleTerminalLeavesHierarchical`. Remove `commitReconciledLayouts` dual-write (legacy + hierarchical). Commit only `windowLayoutRestored`.
-- **Repair**: Remove `repairPanelLayoutTree`. Only `repairWindowLayout` is needed.
-- **useInitialLayout**: Either change its return type or convert its output to `WindowLayout` at the call site.
-- Remove `persistedLayoutTree`, `rawPersistedActivePaneId`, `persistedWorkspaceOrder`, `persistedLayoutRepair`, and all associated `useMemo`/`useEffect` blocks.
+- **Seeding**: Create a `WindowLayout` directly from initial terminal/workspace state. No `migrateToWindowLayout`.
+- **Reconciliation**: Only hierarchical stale-terminal detection. Single `windowLayoutUpdated` commit.
+- **Repair**: Replaced by Schema decode (Issue 4). Remove `repairPanelLayoutTree`.
+- **`useInitialLayout`**: Return data that directly seeds a `WindowLayout`.
+- Remove `persistedLayoutTree`, `rawPersistedActivePaneId`, `persistedWorkspaceOrder`, and all associated state.
 
-See PRD Module 6: "Seeding and reconciliation".
+### TDD approach
+
+Vertical slices:
+
+1. RED: Cold start with no persisted layout creates a `WindowLayout` with one tab and the initial workspace. GREEN: Implement seeding.
+2. RED: Warm start with persisted layout containing stale terminal IDs detects and replaces them. GREEN: Implement stale-terminal reconciliation.
+3. RED: Warm start preserves non-stale terminals unchanged. GREEN: Verify reconciliation preserves valid state.
+4. RED: Reconciliation commits a single `windowLayoutUpdated` event. GREEN: Verify single commit.
 
 ### Acceptance criteria
 
 - [ ] `use-panel-layout.ts` does not reference `persistedLayoutTree`, `rawPersistedActivePaneId`, or `persistedWorkspaceOrder`
 - [ ] `migrateToWindowLayout` is not called
 - [ ] `repairPanelLayoutTree` is not called
-- [ ] `reconcileLayout` (legacy) is not called
 - [ ] Seeding creates a `WindowLayout` directly
 - [ ] Reconciliation only uses hierarchical stale-terminal detection
-- [ ] App starts cleanly from cold state (no persisted layout)
-- [ ] App starts cleanly from warm state (persisted hierarchical layout with stale terminal IDs)
-- [ ] Legacy-only users get a fresh empty tab
+- [ ] App starts cleanly from cold state
+- [ ] App starts cleanly from warm state with stale terminals
+- [ ] `bun run check` passes
 
 ### Blocked by
 
-- Blocked by "handleSetActivePaneId uses hierarchical focus only"
-- Blocked by "handleSplitPane operates on hierarchical tree"
-- Blocked by "handleClosePane operates on hierarchical tree"
-- Blocked by "handleAssignTerminalToPane uses hierarchical tree"
-- Blocked by "handleCloseWorkspace and handleCloseTerminalPane use hierarchical tree"
+- Issue 6 (focus tracking)
+- Issue 7 (mutation handlers)
 
 ### User stories addressed
 
 - User story 14 (layout persists across restarts)
-- User story 19 (clean upgrade for legacy-only users)
+- User story 19 (clean fresh state)
 
 ---
 
-## Issue 13: Remove LegacyWorkspaceFrames and flatLayout prop
+## Issue 10: Dead code removal
 
 **Status:** open
 
 ### What to build
 
-Remove the legacy rendering path entirely from `WorkspaceFrames`.
+Final cleanup pass after all other issues are complete:
 
-- Remove `LegacyWorkspaceFrames` component and all its internal helpers (`getWorkspaceIds`, `sortWorkspaceLayouts`, `filterTreeByWorkspace` usage).
-- Remove the `layout` / `flatLayout` prop from `WorkspaceFrames`, `WorkspaceTileRenderer`, `WorkspaceTileResizableChild`, `WorkspaceTileLeafFrame`.
-- Remove the `workspaceOrder` prop from `WorkspaceFrames` and `PanelContent`.
-- `WorkspaceTileLeafFrame` no longer needs the `filterTreeByWorkspace` fallback — panel tabs are always present.
-- Remove the `layout` prop from `PanelContent`. The `workspaceTileLayout` prop is the sole layout source.
-- Update `WorkspaceFrameHeaderContainer` to use `getScopedActivePaneId` based on hierarchical leaf list instead of legacy `getLeafNodes`.
+- Delete `layout-migration.ts` if not already deleted in Issue 3.
+- Delete all unused functions remaining in any utility file.
+- Delete all legacy type exports from `types.ts` if not already deleted in Issue 1.
+- Remove or update tests that exclusively test deleted functions (`layout-utils.test.ts`, `layout-migration.test.ts`).
+- Remove all unused imports across all files.
+- Run `bun run format:fix` to clean up formatting.
 
-See PRD Module 4: "WorkspaceFrames" and "PanelContent" sections.
+### TDD approach
 
-### Acceptance criteria
-
-- [ ] `LegacyWorkspaceFrames` component is removed
-- [ ] `WorkspaceFrames` does not accept a `layout` (PanelNode) prop
-- [ ] `PanelContent` does not accept a `layout` prop or `workspaceOrder` prop
-- [ ] `WorkspaceTileLeafFrame` does not accept a `flatLayout` prop
-- [ ] `filterTreeByWorkspace` is not called anywhere in workspace-frames
-- [ ] `sortWorkspaceLayouts` and `getWorkspaceIds` are not called
-- [ ] Workspace frames render correctly from the hierarchical tile layout
-- [ ] Workspace frame reorder (drag-and-drop) still works
-
-### Blocked by
-
-- Blocked by "PanelManager renders PanelTreeNode directly"
-- Blocked by "Port index.tsx consumers to hierarchical tree"
-- Blocked by "Seeding and reconciliation: hierarchical only"
-
-### User stories addressed
-
-- User story 20 (drag-and-drop reorder persists correctly)
-
----
-
-## Issue 14: Dead code removal
-
-**Status:** open
-
-### What to build
-
-Remove all dead code left over from the legacy tree removal. This is a cleanup pass after all other issues are complete.
-
-- **layout-migration.ts**: Remove `migrateToWindowLayout`, `deriveLegacyTreeFromHierarchical`, `convertPanelTreeToLegacy`, `convertPanelTree`, `collectSidebarFlags`, and all internal helpers. Delete the file if empty.
-- **layout-utils.ts**: Remove all functions that are no longer imported anywhere (`splitPane`, `closePane`, `replaceNode`, `computeTerminalPaneAssignment`, `reconcileLayout`, `repairPanelLayoutTree`, `filterTreeByWorkspace`, `findNodeById`, `findLeafByTerminalId`, `findSiblingPaneId`, `findNewLeafAfterSplit`, `getFirstLeafId`, `getStaleTerminalLeaves`, `getTerminalIdsToRemove`, `getWorkspaceTerminalIds`, `closeWorkspacePanes`, `sortWorkspaceLayouts`, `getWorkspaceIds`, `getScopedActivePaneId`, `computeClosePaneGateAction`, `computeCloseWorkspaceAction`, `shouldConfirmClose`, `shouldConfirmCloseWorkspace`, `findPaneInDirection`, `buildPath`, `ensureValidActivePaneId`). Keep functions still used by other code (e.g., `isWorkspaceFrameData`, `WORKSPACE_FRAME_TYPE`).
-- **use-panel-layout.ts**: Remove `syncLegacyTreeToHierarchical`, all legacy event imports (`layoutSplit`, `layoutPaneClosed`, `layoutPaneAssigned`, `layoutRestored`, `layoutWorkspacesReordered`), the `defaultLayout` legacy constant, and `DEFAULT_NEW_WINDOW_LAYOUT`.
-- **types.ts**: Deprecate or remove `LeafNode`, `SplitNode`, `PanelNode`, `PanelNodeSchema`, `LeafNodeSchema`, `SplitNodeSchema`, `PanelLayout`, `PanelLayoutSchema` exports if no external consumers exist.
-- **Test files**: Remove or update tests that exclusively test legacy functions: `layout-utils.test.ts` (prune dead function tests), `layout-migration.test.ts` (remove if all functions deleted), `use-panel-layout.test.ts` (remove legacy event assertions).
-- Remove unused imports across all files.
-
-See PRD Module 7: "Legacy code removal".
+Not applicable -- this is a deletion-only cleanup verified by `tsc` and `bun run check`.
 
 ### Acceptance criteria
 
-- [ ] No code in the web app imports from `layout-migration.ts` (file can be deleted)
-- [ ] `layout-utils.ts` only contains functions that are still actively used
-- [ ] No legacy event names (`layoutSplit`, `layoutPaneClosed`, `layoutPaneAssigned`, `layoutRestored`) are committed anywhere in the app
-- [ ] `syncLegacyTreeToHierarchical` is removed
-- [ ] `LeafNode`, `SplitNode`, `PanelNode` types are deprecated or removed
+- [ ] `layout-migration.ts` does not exist
+- [ ] `layout-utils.ts` does not exist (or contains only non-layout utilities like `isWorkspaceFrameData`)
+- [ ] No legacy event names are referenced anywhere in the codebase
+- [ ] `syncLegacyTreeToHierarchical` does not exist
+- [ ] No legacy types (`LeafNode` with sidebar flags, `PanelNode` as union of old types) exist
 - [ ] All tests pass
-- [ ] `bun run check` passes (typecheck + format + tests)
+- [ ] `bun run check` passes with zero regressions
 
 ### Blocked by
 
-- Blocked by all other issues (1-13)
+- All other issues (1-9)
 
 ### User stories addressed
 
-N/A - cleanup issue.
+- User story 21 (simpler codebase)

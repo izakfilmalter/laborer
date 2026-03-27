@@ -12,17 +12,17 @@ fi
 # This prompt is basic, we'll expand it later.
 for ((i=1; i<=$1; i++)); do
 result=$(opencode --model anthropic/claude-opus-4-6 run \
-"@docs/utility-process-migration/PRD.md @docs/utility-process-migration/issues.md @docs/utility-process-migration/progress.txt \
-1. Decide which task to work on next from docs/utility-process-migration/issues.md. \
+"@docs/remove-legacy-panel-tree/PRD.md @docs/remove-legacy-panel-tree/issues.md @docs/remove-legacy-panel-tree/progress.txt \
+1. Decide which task to work on next from docs/remove-legacy-panel-tree/issues.md. \
 This should be the one YOU decide has the highest priority, \
 - not necessarily the first in the list. \
 2. Check any feedback loops, such as types and tests. \
-3. Append your progress to the docs/utility-process-migration/progress.txt file. \
-4. Update status of tasks in docs/utility-process-migration/issues.md \
+3. Append your progress to the docs/remove-legacy-panel-tree/progress.txt file. \
+4. Update status of tasks in docs/remove-legacy-panel-tree/issues.md \
 5. Make a git commit of that feature. \
 ONLY WORK ON A SINGLE TASK / FEATURE. \
 If, while implementing the feature, you notice that all work \
-is complete in docs/utility-process-migration/issues.md, output <promise>COMPLETE</promise>. \
+is complete in docs/remove-legacy-panel-tree/issues.md, output <promise>COMPLETE</promise>. \
 ")
 
   echo "$result"

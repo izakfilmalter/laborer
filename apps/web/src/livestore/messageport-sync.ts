@@ -180,24 +180,41 @@ export const makeMessagePortSync =
       const pullRpc = typedClient.SyncWsRpc.Pull
       const pushRpc = typedClient.SyncWsRpc.Push
 
-      const ping = Effect.gen(function* () {
-        console.log('[messageport-sync] ping: issuing non-live pull')
-        // Ping by issuing a non-live pull with no cursor — if it succeeds,
-        // the connection is healthy.
+      /**
+       * Fetches the backendId from the sync backend by issuing a
+       * non-live pull with no cursor. Called during ping and lazily
+       * during pull if the backendId hasn't been learned yet.
+       *
+       * Without a valid backendId, cursored pulls fall back to
+       * cursor=None which causes the server to return ALL events
+       * from the beginning. LiveStore's SyncState.merge then rejects
+       * them as "incoming events must be greater than upstream head",
+       * which kills the pull fiber permanently.
+       */
+      const fetchBackendId = Effect.gen(function* () {
+        if (currentBackendId._tag === 'Some') {
+          return currentBackendId.value
+        }
         const stream = pullRpc({
           storeId,
           live: false,
           cursor: Option.none(),
         })
-        // Take the first response to confirm connectivity.
-        yield* Stream.runHead(stream)
-        console.log('[messageport-sync] ping: success, marking connected')
+        const head = yield* Stream.runHead(stream)
+        if (head._tag === 'Some') {
+          currentBackendId = Option.some(head.value.backendId)
+          return head.value.backendId
+        }
+        return yield* new InvalidPullError({
+          cause: 'Failed to fetch backendId: empty pull response',
+        })
+      })
+
+      const ping = Effect.gen(function* () {
+        yield* fetchBackendId
         yield* SubscriptionRef.set(isConnected, true)
       }).pipe(
-        Effect.catchAll((err) => {
-          console.error('[messageport-sync] ping: FAILED', err)
-          return SubscriptionRef.set(isConnected, false)
-        }),
+        Effect.catchAll(() => SubscriptionRef.set(isConnected, false)),
         Effect.asVoid
       )
 
@@ -212,54 +229,43 @@ export const makeMessagePortSync =
           }>,
           options?: { live?: boolean }
         ) => {
-          const isLive = options?.live === true
-          // If we have a cursor but no backendId yet (e.g. resumed session
-          // before the first pull/ping response), drop the cursor entirely.
-          // A cursor without a valid backendId would cause a Backend ID
-          // mismatch error on the server.
-          const rpcCursor = Option.flatMap(cursor, (c) =>
-            Option.map(currentBackendId, (backendId) => ({
-              eventSequenceNumber: c.eventSequenceNumber,
+          // Build the cursor with backendId. If we have a cursor but
+          // no backendId yet, we MUST learn it first via a non-live
+          // pull. Dropping the cursor causes the server to return all
+          // events from the beginning, which SyncState.merge rejects
+          // as "incoming events must be greater than upstream head".
+          const buildRpcCursor = Effect.gen(function* () {
+            if (cursor._tag === 'None') {
+              return Option.none<{
+                eventSequenceNumber: number
+                backendId: string
+              }>()
+            }
+            // Ensure we have the backendId before constructing cursor
+            const backendId = yield* fetchBackendId
+            return Option.some({
+              eventSequenceNumber: cursor.value.eventSequenceNumber,
               backendId,
-            }))
-          )
+            })
+          })
 
-          console.log(
-            `[messageport-sync] pull called: live=${String(isLive)} cursor=${cursor._tag === 'Some' ? String(cursor.value.eventSequenceNumber) : 'None'} backendId=${Option.getOrElse(currentBackendId, () => 'None')}`
-          )
-
-          let chunkCount = 0
-
-          return pullRpc({
-            storeId,
-            live: isLive,
-            cursor: rpcCursor,
-          }).pipe(
-            Stream.tap((res) =>
-              Effect.sync(() => {
-                chunkCount++
-                currentBackendId = Option.some(res.backendId)
-                console.log(
-                  `[messageport-sync] pull chunk #${String(chunkCount)}: live=${String(isLive)} batchLen=${String(res.batch.length)} pageInfo=${res.pageInfo._tag}`
-                )
-              })
-            ),
-            Stream.map((res) => ({
-              batch: res.batch,
-              pageInfo: res.pageInfo,
-            })),
-            Stream.tapError((err) =>
-              Effect.sync(() =>
-                console.error(
-                  `[messageport-sync] pull stream ERROR: live=${String(isLive)}`,
-                  err
-                )
-              )
-            ),
-            Stream.ensuring(
-              Effect.sync(() =>
-                console.log(
-                  `[messageport-sync] pull stream FINALIZED: live=${String(isLive)} totalChunks=${String(chunkCount)}`
+          return Stream.unwrap(
+            buildRpcCursor.pipe(
+              Effect.map((rpcCursor) =>
+                pullRpc({
+                  storeId,
+                  live: options?.live === true,
+                  cursor: rpcCursor,
+                }).pipe(
+                  Stream.tap((res) =>
+                    Effect.sync(() => {
+                      currentBackendId = Option.some(res.backendId)
+                    })
+                  ),
+                  Stream.map((res) => ({
+                    batch: res.batch,
+                    pageInfo: res.pageInfo,
+                  }))
                 )
               )
             )
@@ -271,10 +277,6 @@ export const makeMessagePortSync =
             if (batch.length === 0) {
               return
             }
-
-            console.log(
-              `[messageport-sync] push: batchLen=${String(batch.length)}`
-            )
 
             yield* pushRpc({
               storeId,

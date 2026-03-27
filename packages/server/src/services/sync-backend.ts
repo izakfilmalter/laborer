@@ -579,15 +579,6 @@ const handlePush = Effect.fn('handlePush')(function* (req: PushPayloadType) {
   // Encode through the PullResponse schema (converts Option types etc.)
   const encodedValue = encodePullResponse(pullResponse)
 
-  // Count total live pull connections for logging
-  let totalPullIds = 0
-  for (const livePort of livePorts.values()) {
-    totalPullIds += livePort.pullRequestIds.size
-  }
-  console.log(
-    `[sync-backend] Broadcasting to ${String(totalPullIds)} live pull stream(s) across ${String(livePorts.size)} port(s)`
-  )
-
   // Inject ResponseChunkEncoded messages directly onto ports.
   // This bypasses the Effect RPC stream mechanism entirely —
   // the client's RPC framework sees these as stream chunks for
@@ -978,13 +969,32 @@ const makeInProcessSyncBackend = () => {
         const pullRpc = typedClient.SyncWsRpc.Pull
         const pushRpc = typedClient.SyncWsRpc.Push
 
-        const ping = Effect.gen(function* () {
+        /**
+         * Fetches the backendId from the sync backend by issuing a
+         * non-live pull with no cursor. Called during ping and lazily
+         * during pull if the backendId hasn't been learned yet.
+         */
+        const fetchBackendId = Effect.gen(function* () {
+          if (currentBackendId._tag === 'Some') {
+            return currentBackendId.value
+          }
           const stream = pullRpc({
             storeId,
             live: false,
             cursor: Option.none(),
           })
-          yield* Stream.runHead(stream)
+          const head = yield* Stream.runHead(stream)
+          if (head._tag === 'Some') {
+            currentBackendId = Option.some(head.value.backendId)
+            return head.value.backendId
+          }
+          return yield* new InvalidPullError({
+            cause: 'Failed to fetch backendId: empty pull response',
+          })
+        })
+
+        const ping = Effect.gen(function* () {
+          yield* fetchBackendId
           yield* SubscriptionRef.set(isConnected, true)
         }).pipe(
           Effect.catchAll(() => SubscriptionRef.set(isConnected, false)),
@@ -1002,29 +1012,46 @@ const makeInProcessSyncBackend = () => {
             }>,
             options?: { live?: boolean }
           ) => {
-            // If we have a cursor but no backendId yet, drop the cursor
-            // to avoid a Backend ID mismatch error on the server.
-            const rpcCursor = Option.flatMap(cursor, (c) =>
-              Option.map(currentBackendId, (backendId) => ({
-                eventSequenceNumber: c.eventSequenceNumber,
+            // Build the cursor with backendId. If we have a cursor but
+            // no backendId yet, we MUST learn it first via a non-live
+            // pull. Dropping the cursor causes the server to return all
+            // events from the beginning, which SyncState.merge rejects
+            // as "incoming events must be greater than upstream head".
+            const buildRpcCursor = Effect.gen(function* () {
+              if (cursor._tag === 'None') {
+                return Option.none<{
+                  eventSequenceNumber: number
+                  backendId: string
+                }>()
+              }
+              // Ensure we have the backendId before constructing cursor
+              const backendId = yield* fetchBackendId
+              return Option.some({
+                eventSequenceNumber: cursor.value.eventSequenceNumber,
                 backendId,
-              }))
-            )
+              })
+            })
 
-            return pullRpc({
-              storeId,
-              live: options?.live === true,
-              cursor: rpcCursor,
-            }).pipe(
-              Stream.tap((res) =>
-                Effect.sync(() => {
-                  currentBackendId = Option.some(res.backendId)
-                })
-              ),
-              Stream.map((res) => ({
-                batch: res.batch,
-                pageInfo: res.pageInfo,
-              }))
+            return Stream.unwrap(
+              buildRpcCursor.pipe(
+                Effect.map((rpcCursor) =>
+                  pullRpc({
+                    storeId,
+                    live: options?.live === true,
+                    cursor: rpcCursor,
+                  }).pipe(
+                    Stream.tap((res) =>
+                      Effect.sync(() => {
+                        currentBackendId = Option.some(res.backendId)
+                      })
+                    ),
+                    Stream.map((res) => ({
+                      batch: res.batch,
+                      pageInfo: res.pageInfo,
+                    }))
+                  )
+                )
+              )
             )
           },
 

@@ -125,3 +125,31 @@
 - `apps/web/test/focus-consistency.test.ts` — Updated imports
 - `apps/web/test/close-confirmation.test.ts` — Updated imports
 
+## Issue 5: PanelManager renders renamed types directly — DONE
+
+**Date:** 2026-03-26
+
+### What was done
+
+1. Verified that `PanelManager` already accepts `PanelNode | undefined` and `PanelRenderer` already dispatches on `'LeafNode'` / `'SplitNode'` tags (renamed types from Issue 1). No changes needed to the rendering dispatch logic.
+2. Removed the `convertPanelTreeToLegacy` call from `WorkspaceTileLeafFrame` — the active panel tab's `panelLayout` (already a `PanelNode`) is now passed directly to `WorkspaceFrame` -> `PanelManager` without any identity conversion.
+3. Removed the `filterTreeByWorkspace` fallback from `WorkspaceTileLeafFrame` — pre-migration tiles (with no panel tabs) are no longer supported after the DB nuke. If no active panel tab is found, a simple empty terminal leaf is used as fallback.
+4. Marked the `flatLayout` parameter on `WorkspaceTileLeafFrame` as unused (renamed to `_flatLayout`) — still in the type signature because callers pass it; will be removed from the call chain in Issues 8/10.
+5. Added 12 new tests to `panel-manager.test.tsx` covering the `PanelManager` and `PanelRenderer` rendering pipeline:
+   - `PanelManager`: empty state rendering, accepts `PanelNode` directly without conversion.
+   - `PanelRenderer`: single `LeafNode` with terminal, `SplitNode` horizontal/vertical, nested splits, empty terminal pane CTA, `_tag` dispatch for `LeafNode` and `SplitNode`, dev server terminal pane, diff pane, review pane.
+6. Preserved existing `TerminalPaneWithSidebars` tests (2 tests).
+7. `LeafPaneRenderer` does not directly reference the deprecated sidebar flags (`devServerOpen`, `devServerTerminalId`, `diffOpen`) — those are consumed only by `TerminalPaneWithSidebars`, which will be simplified when dev server/diff toggles are converted to panel tabs in Issue 7.
+8. `bun run check` passes (typecheck + format + all 1264 web tests, 1833 total across all packages).
+
+### Notes on deferred work
+
+- `convertPanelTreeToLegacy` still exists in `layout-migration.ts` and is called by `deriveLegacyTreeFromHierarchical` — will be deleted in Issue 10 (dead code removal).
+- `filterTreeByWorkspace` is still imported by `workspace-frames.tsx` and used in `LegacyWorkspaceFrames` — will be removed when `LegacyWorkspaceFrames` is deleted in Issue 8.
+- The `flatLayout` parameter threading through `WorkspaceFrames` -> `WorkspaceTileRenderer` -> `WorkspaceTileResizableChild` -> `WorkspaceTileLeafFrame` is now dead in the tile path but preserved for the legacy fallback in `WorkspaceFrames` — will be removed in Issue 8.
+
+### Files changed
+
+- `apps/web/src/routes/-components/workspace-frames.tsx` — Removed `convertPanelTreeToLegacy` call and `filterTreeByWorkspace` fallback from `WorkspaceTileLeafFrame`, pass `PanelNode` directly
+- `apps/web/test/panel-manager.test.tsx` — Expanded from 2 tests to 14 tests: added `PanelManager` and `PanelRenderer` rendering tests with full mock setup
+

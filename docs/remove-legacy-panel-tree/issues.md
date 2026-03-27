@@ -196,7 +196,7 @@ Vertical slices testing the decode behavior:
 
 ## Issue 5: PanelManager renders renamed types directly
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

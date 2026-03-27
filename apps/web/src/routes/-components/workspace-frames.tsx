@@ -37,7 +37,6 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { TabBar, type TabBarItem } from '@/components/ui/tab-bar'
 import { TabErrorBoundary } from '@/components/ui/tab-error-boundary'
 import { useLaborerStore } from '@/livestore/store'
-import { convertPanelTreeToLegacy } from '@/panels/layout-migration'
 import {
   filterTreeByWorkspace,
   getLeafNodes,
@@ -892,14 +891,16 @@ function WorkspaceFrameResizableChild({
 /**
  * Renders a WorkspaceTileLeaf as a WorkspaceFrame with panel tab support.
  *
- * When the leaf has panel tabs, the active tab's panel layout is rendered
- * via the WorkspaceFrame's built-in TabBar and PanelManager integration.
- * Falls back to extracting a sub-layout from the legacy flat tree when
- * the leaf has no panel tabs (backward compatibility during migration).
+ * When the leaf has panel tabs, the active tab's panel layout is passed
+ * directly to PanelManager without conversion. If no active panel tab
+ * is found, falls back to an empty terminal leaf.
  */
 function WorkspaceTileLeafFrame({
   leaf,
-  flatLayout,
+  // flatLayout is still passed by callers but unused here after removing
+  // the convertPanelTreeToLegacy / filterTreeByWorkspace bridge.
+  // It will be removed from the call chain in Issue 8/10.
+  flatLayout: _flatLayout,
   activePaneId,
   index,
   diffWorkspaceId = null,
@@ -920,29 +921,23 @@ function WorkspaceTileLeafFrame({
     | { readonly current: PanelImperativeHandle | null }
     | undefined
 }) {
-  // When the leaf has panel tabs, use the active tab's layout.
-  // When it doesn't (pre-migration), fall back to extracting from the flat tree.
+  // Pass the active panel tab's layout directly to PanelManager.
+  // PanelNode types are used throughout — no conversion needed.
   const subLayout = useMemo(() => {
-    if (leaf.panelTabs.length > 0) {
-      // Convert the active tab's PanelNode to legacy PanelNode so that
-      // the header's getScopedActivePaneId and getLeafNodes calls work correctly.
-      const activeTab = leaf.panelTabs.find(
-        (t) => t.id === leaf.activePanelTabId
-      )
-      if (activeTab) {
-        return convertPanelTreeToLegacy(activeTab.panelLayout)
-      }
+    const activeTab = leaf.panelTabs.find((t) => t.id === leaf.activePanelTabId)
+    if (activeTab) {
+      return activeTab.panelLayout
     }
-    return (
-      filterTreeByWorkspace(flatLayout, leaf.workspaceId) ?? {
-        _tag: 'LeafNode' as const,
-        id: `pane-tile-${leaf.id}`,
-        paneType: 'terminal' as const,
-        terminalId: undefined,
-        workspaceId: leaf.workspaceId,
-      }
-    )
-  }, [flatLayout, leaf])
+    // No active tab found — return an empty terminal leaf as fallback.
+    const fallbackLeaf: PanelNode = {
+      _tag: 'LeafNode' as const,
+      id: `pane-tile-${leaf.id}`,
+      paneType: 'terminal' as const,
+      terminalId: undefined,
+      workspaceId: leaf.workspaceId,
+    }
+    return fallbackLeaf
+  }, [leaf])
 
   return (
     <WorkspaceFrame

@@ -10,8 +10,8 @@ Parent PRD: [PRD.md](./PRD.md)
 | 2 | TreePane renders `<FileTree>` from stream data | #1 | Done |
 | 3 | Git status porcelain v2 parser + unit tests | None | Done |
 | 4 | Wire git status into FileTreeService and TreePane | #1, #3 | Done |
-| 5 | FileWatcher subscription + debounced refresh | #4 | Ready |
-| 6 | Stream deduplication + lifecycle management | #5 | Blocked |
+| 5 | FileWatcher subscription + debounced refresh | #4 | Done |
+| 6 | Stream deduplication + lifecycle management | #5 | Ready |
 | 7 | Error states + cancellation + cleanup | #6 | Blocked |
 | 8 | Polish + large repo performance | #7 | Blocked |
 

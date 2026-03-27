@@ -93,3 +93,41 @@ Status: COMPLETE
 - All 41 parser tests pass
 - All 7 tree panel layout tests pass
 - Formatting clean (473 files checked, no fixes needed)
+
+## Issue #5: FileWatcher subscription + debounced refresh
+Status: COMPLETE
+
+### What was done:
+- Rewrote `FileTreeService.subscribe` to use `Stream.asyncPush` for reactive stream emission
+  - Emits initial snapshot immediately on subscribe (same as before)
+  - Then pushes updated snapshots when files change on disk
+- Added `FileWatcherClient` as a dependency of `FileTreeService.layer`
+  - Yields `FileWatcherClient` during layer construction (same pattern as DiffService)
+  - Captures `Runtime.runPromise` for bridging sync event callbacks to Effect
+- Each stream subscription creates a recursive file watcher via `fileWatcherClient.subscribe(worktreePath, { recursive: true })`
+  - Watches the workspace's worktree directory for file changes
+  - Graceful degradation: if file watcher subscription fails, logs warning and continues without reactivity
+- File change events are filtered by subscription ID (only react to events from our watcher)
+- Events are debounced at 300ms (matching DiffService's `EVENT_DEBOUNCE_MS`)
+  - Rapid successive changes coalesce into a single git invocation
+  - Uses `setTimeout`/`clearTimeout` pattern from DiffService
+- On debounce fire: re-runs `getFileList` + `getGitStatus` in parallel via `computeSnapshot`
+  - Extracted `computeSnapshot` helper function for reuse
+  - Errors during refresh are logged but don't kill the stream (`Effect.catchAll`)
+- Cleanup via `Effect.addFinalizer` in `Stream.asyncPush`'s register function:
+  - Clears pending debounce timer
+  - Unsubscribes from `onFileEvent` event bus
+  - Unsubscribes the file watcher for the worktree path (with error handling)
+- Updated module JSDoc to reflect Issue #5 changes
+
+### Key design decisions:
+- Used `Stream.asyncPush` (Effect 3.6+) instead of `Stream.make + Stream.never` — provides scoped cleanup and synchronous `emit.single()` API
+- Created per-subscription file watcher (not global) — workspace worktree paths are outside the repo root and not watched by RepositoryWatchCoordinator
+- Events filtered by subscription ID to avoid cross-talk between multiple workspace subscriptions
+
+### Verification:
+- All type checks pass (7/7 tasks)
+- All 41 parser tests pass
+- All 57 RPC tests pass (11 test files)
+- All 7 tree panel layout tests pass
+- Formatting clean (473 files checked, no fixes needed)

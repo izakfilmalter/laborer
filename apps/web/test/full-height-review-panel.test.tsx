@@ -8,7 +8,11 @@
  * @see Issue: Diff and review panel placement
  */
 
-import type { PanelNode } from '@laborer/shared/types'
+import type {
+  PanelNode,
+  WorkspaceTileLeaf,
+  WorkspaceTileNode,
+} from '@laborer/shared/types'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -182,35 +186,65 @@ vi.mock('@/components/ui/resizable', () => ({
 // Import after mocks are set up
 import { WorkspaceFrames } from '../src/routes/-components/workspace-frames'
 
-const TWO_WORKSPACE_LAYOUT: PanelNode = {
-  _tag: 'SplitNode',
-  id: 'split-root',
-  direction: 'vertical',
-  children: [
-    {
-      _tag: 'LeafNode',
-      id: 'pane-1',
-      paneType: 'terminal',
-      terminalId: 'term-1',
-      workspaceId: 'workspace-1',
-    },
-    {
-      _tag: 'LeafNode',
-      id: 'pane-2',
-      paneType: 'terminal',
-      terminalId: 'term-2',
-      workspaceId: 'workspace-2',
-    },
-  ],
-  sizes: [50, 50],
-}
-
 const SINGLE_WORKSPACE_LAYOUT: PanelNode = {
   _tag: 'LeafNode',
   id: 'pane-1',
   paneType: 'terminal',
   terminalId: 'term-1',
   workspaceId: 'workspace-1',
+}
+
+const SINGLE_WORKSPACE_TILE: WorkspaceTileLeaf = {
+  _tag: 'WorkspaceTileLeaf',
+  id: 'tile-1',
+  workspaceId: 'workspace-1',
+  panelTabs: [{ id: 'tab-1', panelLayout: SINGLE_WORKSPACE_LAYOUT }],
+  activePanelTabId: 'tab-1',
+}
+
+const TWO_WORKSPACE_TILE: WorkspaceTileNode = {
+  _tag: 'WorkspaceTileSplit',
+  id: 'tile-root',
+  direction: 'vertical',
+  children: [
+    {
+      _tag: 'WorkspaceTileLeaf',
+      id: 'tile-1',
+      workspaceId: 'workspace-1',
+      panelTabs: [
+        {
+          id: 'tab-1',
+          panelLayout: {
+            _tag: 'LeafNode',
+            id: 'pane-1',
+            paneType: 'terminal',
+            terminalId: 'term-1',
+            workspaceId: 'workspace-1',
+          },
+        },
+      ],
+      activePanelTabId: 'tab-1',
+    },
+    {
+      _tag: 'WorkspaceTileLeaf',
+      id: 'tile-2',
+      workspaceId: 'workspace-2',
+      panelTabs: [
+        {
+          id: 'tab-2',
+          panelLayout: {
+            _tag: 'LeafNode',
+            id: 'pane-2',
+            paneType: 'terminal',
+            terminalId: 'term-2',
+            workspaceId: 'workspace-2',
+          },
+        },
+      ],
+      activePanelTabId: 'tab-2',
+    },
+  ],
+  sizes: [50, 50],
 }
 
 describe('Workspace-scoped review panel', () => {
@@ -225,9 +259,8 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
 
@@ -241,9 +274,8 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId={null}
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
 
@@ -254,9 +286,8 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        layout={TWO_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
+        workspaceTileLayout={TWO_WORKSPACE_TILE}
       />
     )
 
@@ -285,9 +316,8 @@ describe('Workspace-scoped review panel', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        layout={TWO_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-2"
-        workspaceOrder={null}
+        workspaceTileLayout={TWO_WORKSPACE_TILE}
       />
     )
 
@@ -309,8 +339,7 @@ describe('Workspace-scoped diff panel', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-1"
-        layout={SINGLE_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
 
@@ -324,8 +353,7 @@ describe('Workspace-scoped diff panel', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId={null}
-        layout={SINGLE_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
 
@@ -337,8 +365,7 @@ describe('Workspace-scoped diff panel', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-2"
-        layout={TWO_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
+        workspaceTileLayout={TWO_WORKSPACE_TILE}
       />
     )
 
@@ -361,9 +388,8 @@ describe('Both panels in same workspace', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-1"
-        layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
 
@@ -376,9 +402,8 @@ describe('Both panels in same workspace', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-1"
-        layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
 
@@ -396,8 +421,7 @@ describe('Both panels in same workspace', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-1"
-        layout={SINGLE_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
 
@@ -412,9 +436,8 @@ describe('Both panels in same workspace', () => {
     render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        layout={SINGLE_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
 
@@ -428,9 +451,8 @@ describe('Both panels in same workspace', () => {
       <WorkspaceFrames
         activePaneId="pane-1"
         diffWorkspaceId="workspace-2"
-        layout={TWO_WORKSPACE_LAYOUT}
         reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
+        workspaceTileLayout={TWO_WORKSPACE_TILE}
       />
     )
 
@@ -474,10 +496,9 @@ describe('PanelContent passes through side panel state', () => {
         activePaneId="pane-1"
         fullscreenPaneId={null}
         isReconciling={true}
-        layout={TWO_WORKSPACE_LAYOUT}
         reviewPaneOpen
         reviewWorkspaceId="workspace-1"
-        workspaceOrder={null}
+        workspaceTileLayout={TWO_WORKSPACE_TILE}
       />
     )
 

@@ -8,8 +8,8 @@ import { WorkspaceFrameHeader } from '@/components/workspace-frame-header'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
 import { useLaborerStore } from '@/livestore/store'
-import { getScopedActivePaneId } from '@/panels/layout-utils'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
+import { getScopedActivePaneId } from '@/panels/window-layout-utils'
 
 /** LiveStore query for projects (used by PanelHeaderBar to resolve names). */
 const allProjects$ = queryDb(projects, { label: 'headerProjects' })
@@ -36,7 +36,7 @@ export function WorkspaceFrameHeaderContainer({
   reviewIsOpen,
 }: {
   readonly workspaceId: string | undefined
-  readonly subLayout: PanelNode
+  readonly subLayout?: PanelNode | undefined
   readonly dragHandleRef?:
     | { readonly current: HTMLDivElement | null }
     | undefined
@@ -58,7 +58,10 @@ export function WorkspaceFrameHeaderContainer({
   // always operate on a pane within their own workspace, not the globally
   // focused one that may belong to a different workspace.
   const scopedActivePaneId = useMemo(
-    () => getScopedActivePaneId(subLayout, globalActivePaneId),
+    () =>
+      subLayout
+        ? getScopedActivePaneId(subLayout, globalActivePaneId)
+        : globalActivePaneId,
     [subLayout, globalActivePaneId]
   )
 

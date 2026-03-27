@@ -1,8 +1,8 @@
-import type { PanelNode, WorkspaceTileNode } from '@laborer/shared/types'
+import type { WindowLayout, WorkspaceTileNode } from '@laborer/shared/types'
 import { useMemo, useState } from 'react'
-import { findNodeById } from '@/panels/layout-utils'
 import { FullscreenPortalContext } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
+import { findPaneAcrossAllTabs } from '@/panels/window-layout-utils'
 import { WorkspaceFrameHeaderContainer } from './workspace-frame-header-container'
 import { EmptyWindowTabState, WorkspaceFrames } from './workspace-frames'
 
@@ -17,10 +17,10 @@ interface PanelContentProps {
   /** True when the active window tab exists but has no workspace layout. */
   readonly isEmptyWindowTab?: boolean
   readonly isReconciling: boolean
-  readonly layout: PanelNode | undefined
   readonly reviewPaneOpen?: boolean
   readonly reviewWorkspaceId?: string | null
-  readonly workspaceOrder: string[] | null
+  /** The hierarchical window layout — used for fullscreen pane workspace resolution. */
+  readonly windowLayout?: WindowLayout | undefined
   readonly workspaceTileLayout?: WorkspaceTileNode | undefined
 }
 
@@ -39,10 +39,9 @@ interface PanelContentProps {
  */
 export function PanelContent({
   isReconciling,
-  layout,
   activePaneId,
   fullscreenPaneId,
-  workspaceOrder,
+  windowLayout,
   workspaceTileLayout,
   isEmptyWindowTab = false,
   reviewPaneOpen = false,
@@ -55,15 +54,15 @@ export function PanelContent({
   // Resolve the workspace ID for the fullscreened pane so we can render
   // its workspace header above the fullscreen overlay.
   const fullscreenWorkspaceId = useMemo(() => {
-    if (!(fullscreenPaneId && layout)) {
+    if (!(fullscreenPaneId && windowLayout)) {
       return undefined
     }
-    const node = findNodeById(layout, fullscreenPaneId)
-    if (node && node._tag === 'LeafNode') {
-      return node.workspaceId
+    const found = findPaneAcrossAllTabs(windowLayout, fullscreenPaneId)
+    if (found) {
+      return found.workspaceId
     }
     return undefined
-  }, [fullscreenPaneId, layout])
+  }, [fullscreenPaneId, windowLayout])
 
   if (isReconciling) {
     return (
@@ -80,7 +79,7 @@ export function PanelContent({
     return <EmptyWindowTabState />
   }
 
-  if (layout) {
+  if (workspaceTileLayout) {
     return (
       <FullscreenPortalContext.Provider value={portalElement}>
         <div className="relative flex h-full w-full flex-col">
@@ -99,7 +98,6 @@ export function PanelContent({
                 onHeaderClick={noop}
                 onMinimize={noop}
                 reviewIsOpen={false}
-                subLayout={layout}
                 workspaceId={fullscreenWorkspaceId}
               />
             </div>
@@ -108,9 +106,7 @@ export function PanelContent({
             <WorkspaceFrames
               activePaneId={activePaneId}
               diffWorkspaceId={diffPaneOpen ? diffWorkspaceId : null}
-              layout={layout}
               reviewWorkspaceId={reviewPaneOpen ? reviewWorkspaceId : null}
-              workspaceOrder={workspaceOrder}
               workspaceTileLayout={workspaceTileLayout}
             />
             {/* Fullscreen portal target — panes portal into this overlay

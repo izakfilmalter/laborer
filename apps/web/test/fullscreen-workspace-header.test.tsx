@@ -8,7 +8,12 @@
  * still see project name, branch, PR status, and workspace-level actions.
  */
 
-import type { PanelNode } from '@laborer/shared/types'
+import type {
+  PanelNode,
+  WindowLayout,
+  WorkspaceTileLeaf,
+  WorkspaceTileNode,
+} from '@laborer/shared/types'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -152,35 +157,88 @@ vi.mock('@/components/ui/resizable', () => ({
 
 import { PanelContent } from '../src/routes/-components/panel-content'
 
-const SINGLE_WORKSPACE_LAYOUT: PanelNode = {
-  _tag: 'LeafNode',
-  id: 'pane-1',
-  paneType: 'terminal',
-  terminalId: 'term-1',
+const SINGLE_WORKSPACE_TILE: WorkspaceTileLeaf = {
+  _tag: 'WorkspaceTileLeaf',
+  id: 'tile-1',
   workspaceId: 'workspace-1',
+  panelTabs: [
+    {
+      id: 'tab-1',
+      panelLayout: {
+        _tag: 'LeafNode',
+        id: 'pane-1',
+        paneType: 'terminal',
+        terminalId: 'term-1',
+        workspaceId: 'workspace-1',
+      },
+    },
+  ],
+  activePanelTabId: 'tab-1',
 }
 
-const TWO_WORKSPACE_LAYOUT: PanelNode = {
-  _tag: 'SplitNode',
-  id: 'split-root',
+const TWO_WORKSPACE_TILE: WorkspaceTileNode = {
+  _tag: 'WorkspaceTileSplit',
+  id: 'tile-root',
   direction: 'vertical',
   children: [
     {
-      _tag: 'LeafNode',
-      id: 'pane-1',
-      paneType: 'terminal',
-      terminalId: 'term-1',
+      _tag: 'WorkspaceTileLeaf',
+      id: 'tile-1',
       workspaceId: 'workspace-1',
+      panelTabs: [
+        {
+          id: 'tab-1',
+          panelLayout: {
+            _tag: 'LeafNode',
+            id: 'pane-1',
+            paneType: 'terminal',
+            terminalId: 'term-1',
+            workspaceId: 'workspace-1',
+          },
+        },
+      ],
+      activePanelTabId: 'tab-1',
     },
     {
-      _tag: 'LeafNode',
-      id: 'pane-2',
-      paneType: 'terminal',
-      terminalId: 'term-2',
+      _tag: 'WorkspaceTileLeaf',
+      id: 'tile-2',
       workspaceId: 'workspace-2',
+      panelTabs: [
+        {
+          id: 'tab-2',
+          panelLayout: {
+            _tag: 'LeafNode',
+            id: 'pane-2',
+            paneType: 'terminal',
+            terminalId: 'term-2',
+            workspaceId: 'workspace-2',
+          },
+        },
+      ],
+      activePanelTabId: 'tab-2',
     },
   ],
   sizes: [50, 50],
+}
+
+const SINGLE_WINDOW_LAYOUT: WindowLayout = {
+  activeTabId: 'win-tab-1',
+  tabs: [
+    {
+      id: 'win-tab-1',
+      workspaceLayout: SINGLE_WORKSPACE_TILE,
+    },
+  ],
+}
+
+const TWO_WORKSPACE_WINDOW_LAYOUT: WindowLayout = {
+  activeTabId: 'win-tab-1',
+  tabs: [
+    {
+      id: 'win-tab-1',
+      workspaceLayout: TWO_WORKSPACE_TILE,
+    },
+  ],
 }
 
 describe('Workspace header visibility during fullscreen', () => {
@@ -194,8 +252,8 @@ describe('Workspace header visibility during fullscreen', () => {
         activePaneId="pane-1"
         fullscreenPaneId={null}
         isReconciling={false}
-        layout={SINGLE_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
+        windowLayout={SINGLE_WINDOW_LAYOUT}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
 
@@ -209,8 +267,8 @@ describe('Workspace header visibility during fullscreen', () => {
         activePaneId="pane-1"
         fullscreenPaneId="pane-1"
         isReconciling={false}
-        layout={SINGLE_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
+        windowLayout={SINGLE_WINDOW_LAYOUT}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
 
@@ -228,8 +286,8 @@ describe('Workspace header visibility during fullscreen', () => {
         activePaneId="pane-2"
         fullscreenPaneId="pane-2"
         isReconciling={false}
-        layout={TWO_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
+        windowLayout={TWO_WORKSPACE_WINDOW_LAYOUT}
+        workspaceTileLayout={TWO_WORKSPACE_TILE}
       />
     )
 
@@ -244,8 +302,8 @@ describe('Workspace header visibility during fullscreen', () => {
         activePaneId="pane-1"
         fullscreenPaneId={null}
         isReconciling={false}
-        layout={SINGLE_WORKSPACE_LAYOUT}
-        workspaceOrder={null}
+        windowLayout={SINGLE_WINDOW_LAYOUT}
+        workspaceTileLayout={SINGLE_WORKSPACE_TILE}
       />
     )
 

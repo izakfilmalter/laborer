@@ -38,15 +38,12 @@ import { TabBar, type TabBarItem } from '@/components/ui/tab-bar'
 import { TabErrorBoundary } from '@/components/ui/tab-error-boundary'
 import { useLaborerStore } from '@/livestore/store'
 import {
-  filterTreeByWorkspace,
-  getLeafNodes,
-  getWorkspaceIds,
   isWorkspaceFrameData,
-  sortWorkspaceLayouts,
   WORKSPACE_FRAME_TYPE,
 } from '@/panels/layout-utils'
 import { usePanelActions } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
+import { containsPane, getFirstLeafId } from '@/panels/panel-tree-utils'
 import { getAllWorkspaceTileLeaves } from '@/panels/window-layout-utils'
 import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
 import { DiffPane } from '@/panes/diff-pane'
@@ -508,10 +505,9 @@ function WorkspaceFrame({
   const actions = usePanelActions()
 
   // Check if the active pane belongs to this workspace frame
-  const leaves = useMemo(() => getLeafNodes(subLayout), [subLayout])
   const activePaneInFrame = useMemo(
-    () => activePaneId != null && leaves.some((l) => l.id === activePaneId),
-    [activePaneId, leaves]
+    () => activePaneId != null && containsPane(subLayout, activePaneId),
+    [activePaneId, subLayout]
   )
   const isActiveFrame = activePaneInFrame
 
@@ -522,11 +518,11 @@ function WorkspaceFrame({
       return
     }
     // Focus the first leaf pane in this workspace frame
-    const firstLeaf = leaves[0]
+    const firstLeaf = getFirstLeafId(subLayout)
     if (firstLeaf) {
-      actions?.setActivePaneId(firstLeaf.id)
+      actions?.setActivePaneId(firstLeaf)
     }
-  }, [isMinimized, leaves, actions])
+  }, [isMinimized, subLayout, actions])
 
   const handleMinimize = useCallback(() => {
     setIsMinimized((prev) => !prev)
@@ -629,8 +625,8 @@ function WorkspaceFrame({
       return activePaneId
     }
 
-    return leaves[0]?.id ?? null
-  }, [activePaneInFrame, activePaneId, leaves])
+    return getFirstLeafId(subLayout) ?? null
+  }, [activePaneInFrame, activePaneId, subLayout])
 
   const closeSidePanel = useCallback(
     (togglePanel: ((paneId: string) => boolean) | undefined) => {
@@ -836,54 +832,6 @@ function getPanelTabLabel(layout: PanelNode): string {
   return 'Panel'
 }
 
-/**
- * A single resizable child within the WorkspaceFrames vertical stack.
- * Extracted to keep the map clean and provide stable keys.
- */
-function WorkspaceFrameResizableChild({
-  workspaceId,
-  subLayout,
-  activePaneId,
-  defaultSize,
-  index,
-  diffWorkspaceId = null,
-  reviewWorkspaceId = null,
-}: {
-  readonly workspaceId: string | undefined
-  readonly subLayout: PanelNode
-  readonly activePaneId: string | null
-  readonly defaultSize: number
-  readonly index: number
-  readonly diffWorkspaceId?: string | null
-  readonly reviewWorkspaceId?: string | null
-}) {
-  const panelRef = useRef<PanelImperativeHandle | null>(null)
-
-  return (
-    <>
-      {index > 0 && <ResizableHandle />}
-      <ResizablePanel
-        collapsedSize="2.5rem"
-        collapsible
-        defaultSize={`${defaultSize}%`}
-        minSize="10%"
-        panelRef={panelRef}
-      >
-        <WorkspaceFrame
-          activePaneId={activePaneId}
-          diffWorkspaceId={diffWorkspaceId}
-          index={index}
-          isCollapsible
-          panelRef={panelRef}
-          reviewWorkspaceId={reviewWorkspaceId}
-          subLayout={subLayout}
-          workspaceId={workspaceId}
-        />
-      </ResizablePanel>
-    </>
-  )
-}
-
 // ---------------------------------------------------------------------------
 // Hierarchical workspace tile rendering
 // ---------------------------------------------------------------------------
@@ -897,10 +845,6 @@ function WorkspaceFrameResizableChild({
  */
 function WorkspaceTileLeafFrame({
   leaf,
-  // flatLayout is still passed by callers but unused here after removing
-  // the convertPanelTreeToLegacy / filterTreeByWorkspace bridge.
-  // It will be removed from the call chain in Issue 8/10.
-  flatLayout: _flatLayout,
   activePaneId,
   index,
   diffWorkspaceId = null,
@@ -910,7 +854,6 @@ function WorkspaceTileLeafFrame({
   panelRef,
 }: {
   readonly leaf: WorkspaceTileLeaf
-  readonly flatLayout: PanelNode
   readonly activePaneId: string | null
   readonly index: number
   readonly diffWorkspaceId?: string | null
@@ -961,7 +904,6 @@ function WorkspaceTileLeafFrame({
  */
 function WorkspaceTileResizableChild({
   tileNode,
-  flatLayout,
   activePaneId,
   defaultSize,
   index,
@@ -970,7 +912,6 @@ function WorkspaceTileResizableChild({
   parentDirection,
 }: {
   readonly tileNode: WorkspaceTileNode
-  readonly flatLayout: PanelNode
   readonly activePaneId: string | null
   readonly defaultSize: number
   readonly index: number
@@ -994,7 +935,6 @@ function WorkspaceTileResizableChild({
         <WorkspaceTileRenderer
           activePaneId={activePaneId}
           diffWorkspaceId={diffWorkspaceId}
-          flatLayout={flatLayout}
           index={index}
           isCollapsible={isLeaf}
           panelRef={isLeaf ? panelRef : undefined}
@@ -1011,7 +951,7 @@ function WorkspaceTileResizableChild({
  * Recursively renders a `WorkspaceTileNode` tree.
  *
  * - `WorkspaceTileLeaf` → renders a `WorkspaceFrame` with the workspace's
- *   sub-layout extracted from the legacy flat tree (bridge for now).
+ *   panel layout from the active panel tab.
  * - `WorkspaceTileSplit` → renders a `ResizablePanelGroup` with the correct
  *   orientation (horizontal or vertical), recursing into children.
  *
@@ -1020,7 +960,6 @@ function WorkspaceTileResizableChild({
  */
 function WorkspaceTileRenderer({
   tileNode,
-  flatLayout,
   activePaneId,
   index = 0,
   diffWorkspaceId = null,
@@ -1030,7 +969,6 @@ function WorkspaceTileRenderer({
   panelRef,
 }: {
   readonly tileNode: WorkspaceTileNode
-  readonly flatLayout: PanelNode
   readonly activePaneId: string | null
   readonly index?: number
   readonly diffWorkspaceId?: string | null
@@ -1047,7 +985,6 @@ function WorkspaceTileRenderer({
         <WorkspaceTileLeafFrame
           activePaneId={activePaneId}
           diffWorkspaceId={diffWorkspaceId}
-          flatLayout={flatLayout}
           index={index}
           isCollapsible={isCollapsible}
           leaf={tileNode}
@@ -1074,7 +1011,6 @@ function WorkspaceTileRenderer({
             activePaneId={activePaneId}
             defaultSize={size}
             diffWorkspaceId={diffWorkspaceId}
-            flatLayout={flatLayout}
             index={childIndex}
             key={child.id}
             parentDirection={tileNode.direction}
@@ -1102,17 +1038,13 @@ function WorkspaceTileRenderer({
  * is available (backward compatibility).
  */
 export function WorkspaceFrames({
-  layout,
   activePaneId,
-  workspaceOrder,
   workspaceTileLayout,
   diffWorkspaceId = null,
   reviewWorkspaceId = null,
 }: {
-  readonly layout: PanelNode
   readonly activePaneId: string | null
-  readonly workspaceOrder: string[] | null
-  readonly workspaceTileLayout?: WorkspaceTileNode | undefined
+  readonly workspaceTileLayout: WorkspaceTileNode
   readonly diffWorkspaceId?: string | null
   readonly reviewWorkspaceId?: string | null
 }) {
@@ -1166,139 +1098,13 @@ export function WorkspaceFrames({
     })
   }, [tileWorkspaceIds, actions])
 
-  // -------------------------------------------------------------------
-  // Hierarchical tile layout path — bidirectional workspace tiling
-  // -------------------------------------------------------------------
-  // When a workspace tile layout is provided (from the active WindowTab),
-  // use the recursive WorkspaceTileRenderer for bidirectional tiling.
-  // The flat PanelNode tree is kept for backward compatibility with
-  // legacy layout paths.
-  if (workspaceTileLayout) {
-    return (
-      <WorkspaceTileRenderer
-        activePaneId={activePaneId}
-        diffWorkspaceId={diffWorkspaceId}
-        flatLayout={layout}
-        reviewWorkspaceId={reviewWorkspaceId}
-        tileNode={workspaceTileLayout}
-      />
-    )
-  }
-
-  // -------------------------------------------------------------------
-  // Legacy flat layout path — vertical-only workspace stacking
-  // -------------------------------------------------------------------
+  // Hierarchical tile layout — bidirectional workspace tiling
   return (
-    <LegacyWorkspaceFrames
+    <WorkspaceTileRenderer
       activePaneId={activePaneId}
       diffWorkspaceId={diffWorkspaceId}
-      layout={layout}
       reviewWorkspaceId={reviewWorkspaceId}
-      workspaceOrder={workspaceOrder}
+      tileNode={workspaceTileLayout}
     />
-  )
-}
-
-/**
- * Legacy rendering: extracts workspaces from the flat PanelNode tree and
- * stacks them vertically. Preserved for backward compatibility when no
- * hierarchical workspace tile layout is available.
- */
-function LegacyWorkspaceFrames({
-  layout,
-  activePaneId,
-  workspaceOrder,
-  diffWorkspaceId = null,
-  reviewWorkspaceId = null,
-}: {
-  readonly layout: PanelNode
-  readonly activePaneId: string | null
-  readonly workspaceOrder: string[] | null
-  readonly diffWorkspaceId?: string | null
-  readonly reviewWorkspaceId?: string | null
-}) {
-  const workspaceIds = useMemo(() => getWorkspaceIds(layout), [layout])
-
-  const workspaceLayouts = useMemo(() => {
-    const layouts: {
-      workspaceId: string | undefined
-      subLayout: PanelNode
-    }[] = []
-    for (const wsId of workspaceIds) {
-      const subTree = filterTreeByWorkspace(layout, wsId)
-      if (subTree) {
-        layouts.push({ workspaceId: wsId, subLayout: subTree })
-      }
-    }
-
-    return sortWorkspaceLayouts(layouts, workspaceOrder)
-  }, [layout, workspaceIds, workspaceOrder])
-
-  // Wire up the monitor to handle workspace frame drops (reordering)
-  const actions = usePanelActions()
-  useEffect(() => {
-    return monitorForElements({
-      canMonitor: ({ source }) => isWorkspaceFrameData(source.data),
-      onDrop: ({ source, location }) => {
-        const destination = location.current.dropTargets[0]
-        if (!destination) {
-          return
-        }
-        const sourceData = source.data
-        const destData = destination.data
-        if (
-          !(isWorkspaceFrameData(sourceData) && isWorkspaceFrameData(destData))
-        ) {
-          return
-        }
-        if (sourceData.index === destData.index) {
-          return
-        }
-
-        const reordered = reorder({
-          list: workspaceLayouts.map((entry) => entry.workspaceId),
-          startIndex: sourceData.index,
-          finishIndex: destData.index,
-        })
-        actions?.reorderWorkspaces(reordered)
-      },
-    })
-  }, [workspaceLayouts, actions])
-
-  // Single workspace — no need for resizable splitting
-  if (workspaceLayouts.length <= 1) {
-    const entry = workspaceLayouts[0]
-    if (!entry) {
-      return <PanelManager layout={undefined} />
-    }
-    return (
-      <WorkspaceFrame
-        activePaneId={activePaneId}
-        diffWorkspaceId={diffWorkspaceId}
-        index={0}
-        reviewWorkspaceId={reviewWorkspaceId}
-        subLayout={entry.subLayout}
-        workspaceId={entry.workspaceId}
-      />
-    )
-  }
-
-  // Multiple workspaces — stack vertically with resizable handles
-  const equalSize = 100 / workspaceLayouts.length
-  return (
-    <ResizablePanelGroup orientation="vertical">
-      {workspaceLayouts.map((entry, index) => (
-        <WorkspaceFrameResizableChild
-          activePaneId={activePaneId}
-          defaultSize={equalSize}
-          diffWorkspaceId={diffWorkspaceId}
-          index={index}
-          key={entry.workspaceId ?? 'no-workspace'}
-          reviewWorkspaceId={reviewWorkspaceId}
-          subLayout={entry.subLayout}
-          workspaceId={entry.workspaceId}
-        />
-      ))}
-    </ResizablePanelGroup>
   )
 }

@@ -25,8 +25,7 @@ import {
   getDesktopBridge,
 } from '@/lib/desktop'
 import { useLaborerStore } from '@/livestore/store'
-import { deriveLegacyTreeFromHierarchical } from '@/panels/layout-migration'
-import { getLeafIds } from '@/panels/layout-utils'
+
 import type { AssignTerminalToPaneOptions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import {
@@ -61,6 +60,7 @@ import {
   collectTerminalIdsFromTileTree,
   findTerminalLocation,
   findWorkspaceLocation,
+  getActiveTabLeafIds,
   getActiveWindowTab,
   getAllWorkspaceTileLeaves,
   getStaleTerminalLeavesHierarchical,
@@ -414,26 +414,6 @@ export function usePanelLayout() {
 
   // The hierarchical WindowLayout is the single source of truth.
   const persistedWindowLayout = windowLayoutRepair.windowLayout
-
-  // Derive a legacy flat tree for consumers that haven't been ported yet
-  // (PanelHotkeys, PanelContent, WorkspaceFrames, index.tsx callbacks).
-  // These will be ported to use WindowLayout directly in Issue 8.
-  //
-  // When a window layout exists but has no tabs (all tabs closed by user),
-  // return undefined so the UI shows the empty state instead of falling back
-  // to the default layout which would re-create panes.
-  const layout = useMemo(() => {
-    if (persistedWindowLayout) {
-      if (persistedWindowLayout.tabs.length === 0) {
-        return undefined
-      }
-      const derived = deriveLegacyTreeFromHierarchical(persistedWindowLayout)
-      if (derived) {
-        return derived
-      }
-    }
-    return initialLayout
-  }, [persistedWindowLayout, initialLayout])
 
   // Derive the active pane ID exclusively from the hierarchical layout.
   // Walks: active window tab > active workspace tile > active panel tab >
@@ -1968,19 +1948,20 @@ export function usePanelLayout() {
     ]
   )
 
-  // Compute leaf pane IDs for keyboard navigation
+  // Compute leaf pane IDs for keyboard navigation from the hierarchical layout.
+  // Collects all leaf pane IDs from the active window tab's workspace tile leaves'
+  // active panel tabs.
   const leafPaneIds = useMemo(
-    () => (layout ? getLeafIds(layout) : []),
-    [layout]
+    () =>
+      persistedWindowLayout ? getActiveTabLeafIds(persistedWindowLayout) : [],
+    [persistedWindowLayout]
   )
 
   return {
-    layout,
     panelActions,
     activePaneId: persistedActivePaneId,
     leafPaneIds,
     isReconciling,
     liveTerminals,
-    workspaceOrder: null as string[] | null,
   }
 }

@@ -15,6 +15,7 @@
  */
 
 import type {
+  LeafNode,
   PanelNode,
   PanelTab,
   WindowLayout,
@@ -25,12 +26,16 @@ import type {
 
 import { generateId } from './id-utils'
 import { removePanelTab } from './panel-tab-utils'
+
 import {
   closePane,
   collectTerminalIds,
   containsPane,
   countLeaves,
+  findLeaf,
+  findPaneInDirection,
   getFirstLeafId,
+  getLeafIds,
 } from './panel-tree-utils'
 import { generateRandomTabName } from './random-name'
 import { getWorkspaceTileLeaves } from './workspace-tile-utils'
@@ -1644,6 +1649,351 @@ function repairWindowLayout(layout: unknown): RepairWindowLayoutResult {
 }
 
 // ---------------------------------------------------------------------------
+// Hierarchical pane/leaf lookups (replaces flat-tree layout-utils functions)
+// ---------------------------------------------------------------------------
+
+/**
+ * Find a leaf pane by ID across all workspace tile leaves' active panel tabs
+ * in the active window tab. Searches only the active panel tab of each
+ * workspace tile leaf (the visible panes).
+ *
+ * Replaces `findNodeById(layout, paneId)` for the common case of looking
+ * up a pane in the currently visible layout.
+ */
+function findPaneInActiveTab(
+  layout: WindowLayout,
+  paneId: string
+): { leaf: LeafNode; workspaceId: string | undefined } | undefined {
+  const activeTab = getActiveWindowTab(layout)
+  if (!activeTab?.workspaceLayout) {
+    return undefined
+  }
+  const leaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+  for (const tileLeaf of leaves) {
+    const activePanel = tileLeaf.panelTabs.find(
+      (t) => t.id === tileLeaf.activePanelTabId
+    )
+    const panelTree =
+      activePanel?.panelLayout ?? tileLeaf.panelTabs[0]?.panelLayout
+    if (!panelTree) {
+      continue
+    }
+    const found = findLeaf(panelTree, paneId)
+    if (found) {
+      return { leaf: found, workspaceId: tileLeaf.workspaceId }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Find a leaf pane by ID across ALL panel tabs (not just active) in the
+ * active window tab. Useful for checking if a pane exists anywhere in the
+ * layout, not just in the currently visible tabs.
+ */
+function findPaneAcrossAllTabs(
+  layout: WindowLayout,
+  paneId: string
+): { leaf: LeafNode; workspaceId: string | undefined } | undefined {
+  const activeTab = getActiveWindowTab(layout)
+  if (!activeTab?.workspaceLayout) {
+    return undefined
+  }
+  const leaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+  for (const tileLeaf of leaves) {
+    for (const panelTab of tileLeaf.panelTabs) {
+      const found = findLeaf(panelTab.panelLayout, paneId)
+      if (found) {
+        return { leaf: found, workspaceId: tileLeaf.workspaceId }
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Find a leaf pane by terminal ID across all panel tabs in the active
+ * window tab. Returns the leaf node and its workspace ID.
+ *
+ * Replaces `findLeafByTerminalId(layout, terminalId)` from layout-utils.
+ */
+function findLeafByTerminalIdInLayout(
+  layout: WindowLayout,
+  terminalId: string
+): { leaf: LeafNode; workspaceId: string | undefined } | undefined {
+  const activeTab = getActiveWindowTab(layout)
+  if (!activeTab?.workspaceLayout) {
+    return undefined
+  }
+  const leaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+  for (const tileLeaf of leaves) {
+    for (const panelTab of tileLeaf.panelTabs) {
+      const found = findLeafByTerminalIdInTree(panelTab.panelLayout, terminalId)
+      if (found) {
+        return { leaf: found, workspaceId: tileLeaf.workspaceId }
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Recursively search a panel tree for a terminal ID. Returns the leaf node.
+ */
+function findLeafByTerminalIdInTree(
+  node: PanelNode,
+  terminalId: string
+): LeafNode | undefined {
+  if (node._tag === 'LeafNode') {
+    return node.terminalId === terminalId ? node : undefined
+  }
+  for (const child of node.children) {
+    const found = findLeafByTerminalIdInTree(child, terminalId)
+    if (found) {
+      return found
+    }
+  }
+  return undefined
+}
+
+/**
+ * Get all leaf nodes from the active window tab's workspace tile leaves'
+ * active panel tabs. Returns only the visible leaves.
+ *
+ * Replaces `getLeafNodes(layout)` from layout-utils.
+ */
+function getActiveTabLeafNodes(layout: WindowLayout): LeafNode[] {
+  const activeTab = getActiveWindowTab(layout)
+  if (!activeTab?.workspaceLayout) {
+    return []
+  }
+  const leaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+  const result: LeafNode[] = []
+  for (const tileLeaf of leaves) {
+    const activePanel = tileLeaf.panelTabs.find(
+      (t) => t.id === tileLeaf.activePanelTabId
+    )
+    const panelTree =
+      activePanel?.panelLayout ?? tileLeaf.panelTabs[0]?.panelLayout
+    if (panelTree) {
+      collectLeafNodes(panelTree, result)
+    }
+  }
+  return result
+}
+
+/** Recursively collect leaf nodes from a panel tree. */
+function collectLeafNodes(node: PanelNode, result: LeafNode[]): void {
+  if (node._tag === 'LeafNode') {
+    result.push(node)
+    return
+  }
+  for (const child of node.children) {
+    collectLeafNodes(child, result)
+  }
+}
+
+/**
+ * Get all leaf pane IDs from the active window tab's workspace tile leaves'
+ * active panel tabs. Returns only the visible pane IDs.
+ *
+ * Replaces `getLeafIds(layout)` from layout-utils.
+ */
+function getActiveTabLeafIds(layout: WindowLayout): string[] {
+  const activeTab = getActiveWindowTab(layout)
+  if (!activeTab?.workspaceLayout) {
+    return []
+  }
+  const leaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+  const result: string[] = []
+  for (const tileLeaf of leaves) {
+    const activePanel = tileLeaf.panelTabs.find(
+      (t) => t.id === tileLeaf.activePanelTabId
+    )
+    const panelTree =
+      activePanel?.panelLayout ?? tileLeaf.panelTabs[0]?.panelLayout
+    if (panelTree) {
+      result.push(...getLeafIds(panelTree))
+    }
+  }
+  return result
+}
+
+/**
+ * Resolve the active pane ID scoped to a specific workspace's sub-layout.
+ *
+ * If the global `activePaneId` belongs to one of this workspace's leaves,
+ * it is returned as-is. Otherwise, falls back to the first leaf so that
+ * header buttons always operate on a pane within their own workspace.
+ *
+ * Replaces `getScopedActivePaneId` from layout-utils — this version
+ * operates on `PanelNode` directly (same as the original).
+ */
+function getScopedActivePaneId(
+  subLayout: PanelNode,
+  globalActivePaneId: string | null
+): string | null {
+  if (
+    globalActivePaneId != null &&
+    containsPane(subLayout, globalActivePaneId)
+  ) {
+    return globalActivePaneId
+  }
+  return getFirstLeafId(subLayout) ?? null
+}
+
+/**
+ * Compute the close-pane gating action for the hierarchical layout.
+ *
+ * Determines whether closing a pane should proceed immediately or show
+ * a confirmation dialog. Checks if the terminal has a running process
+ * and if the pane is the last for a merged-PR workspace.
+ *
+ * Replaces `computeClosePaneGateAction` from layout-utils.
+ */
+function computeClosePaneGateAction(
+  layout: WindowLayout | undefined,
+  paneId: string,
+  terminals: ReadonlyArray<{
+    readonly id: string
+    readonly hasChildProcess: boolean
+  }>,
+  prState: string | null
+): ClosePaneGateResult {
+  if (!layout) {
+    return { action: 'close' }
+  }
+
+  const found = findPaneAcrossAllTabs(layout, paneId)
+  if (!found || found.leaf._tag !== 'LeafNode') {
+    return { action: 'close' }
+  }
+
+  const node = found.leaf
+  const hasProcess =
+    node.terminalId != null &&
+    terminals.some(
+      (t) => t.id === node.terminalId && t.hasChildProcess === true
+    )
+  const workspaceId = found.workspaceId
+  const isPrMerged = prState === 'MERGED'
+
+  // Check if this is the last pane for the workspace across all panel tabs
+  let isLastPaneForWorkspace = false
+  if (workspaceId != null && isPrMerged) {
+    const activeTab = getActiveWindowTab(layout)
+    if (activeTab?.workspaceLayout) {
+      const tileLeaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+      const wsTile = tileLeaves.find((l) => l.workspaceId === workspaceId)
+      if (wsTile) {
+        let totalPanes = 0
+        for (const pt of wsTile.panelTabs) {
+          totalPanes += countLeaves(pt.panelLayout)
+        }
+        isLastPaneForWorkspace = totalPanes === 1
+      }
+    }
+  }
+
+  if (hasProcess && isLastPaneForWorkspace && workspaceId != null) {
+    return { action: 'confirm-with-destroy', workspaceId }
+  }
+
+  if (hasProcess) {
+    return { action: 'confirm' }
+  }
+
+  if (isLastPaneForWorkspace && workspaceId != null) {
+    return { action: 'prompt-destroy', workspaceId }
+  }
+
+  return { action: 'close' }
+}
+
+/**
+ * Compute whether closing a workspace should proceed immediately or show
+ * a confirmation dialog.
+ *
+ * Uses the hierarchical layout to find all terminals in the workspace's
+ * panel tabs and checks if any have running child processes.
+ *
+ * Replaces `computeCloseWorkspaceAction` from layout-utils.
+ */
+function computeCloseWorkspaceAction(
+  layout: WindowLayout | undefined,
+  workspaceId: string,
+  terminals: ReadonlyArray<{
+    readonly id: string
+    readonly hasChildProcess: boolean
+  }>
+): 'close' | 'confirm' {
+  if (!layout) {
+    return 'close'
+  }
+  const activeTab = getActiveWindowTab(layout)
+  if (!activeTab?.workspaceLayout) {
+    return 'close'
+  }
+  const tileLeaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+  const wsTile = tileLeaves.find((l) => l.workspaceId === workspaceId)
+  if (!wsTile) {
+    return 'close'
+  }
+  // Collect all terminal IDs across all panel tabs
+  const terminalIds: string[] = []
+  for (const pt of wsTile.panelTabs) {
+    terminalIds.push(...collectTerminalIds(pt.panelLayout))
+  }
+  const hasRunning = terminalIds.some((id) => {
+    const terminal = terminals.find((t) => t.id === id)
+    return terminal?.hasChildProcess === true
+  })
+  return hasRunning ? 'confirm' : 'close'
+}
+
+/**
+ * Navigate to a pane in the given direction within the active panel tab's
+ * panel tree. Scoped to the workspace containing the active pane.
+ *
+ * Replaces `findPaneInDirection(layout, activePaneId, direction)` which
+ * operated on the flat legacy tree. This version finds the workspace
+ * containing the active pane, gets its active panel tab tree, and delegates
+ * to `findPaneInDirection` on that tree.
+ */
+function navigateDirection(
+  layout: WindowLayout,
+  activePaneId: string,
+  direction: 'left' | 'right' | 'up' | 'down'
+): string | undefined {
+  const activeTab = getActiveWindowTab(layout)
+  if (!activeTab?.workspaceLayout) {
+    return undefined
+  }
+  const tileLeaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
+  for (const tileLeaf of tileLeaves) {
+    const activePanel = tileLeaf.panelTabs.find(
+      (t) => t.id === tileLeaf.activePanelTabId
+    )
+    const panelTree =
+      activePanel?.panelLayout ?? tileLeaf.panelTabs[0]?.panelLayout
+    if (!panelTree) {
+      continue
+    }
+    if (containsPane(panelTree, activePaneId)) {
+      return findPaneInDirection(panelTree, activePaneId, direction)
+    }
+  }
+  return undefined
+}
+
+/** Result of the close-pane gating action. */
+type ClosePaneGateResult =
+  | { readonly action: 'close' }
+  | { readonly action: 'confirm' }
+  | { readonly action: 'confirm-with-destroy'; readonly workspaceId: string }
+  | { readonly action: 'prompt-destroy'; readonly workspaceId: string }
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -1652,13 +2002,22 @@ export {
   addWorkspaceToTabUnique,
   closeTerminalInWindowLayout,
   collectTerminalIdsFromTileTree,
+  computeClosePaneGateAction,
+  computeCloseWorkspaceAction,
   computeProgressiveCloseAction,
+  findLeafByTerminalIdInLayout,
+  findPaneAcrossAllTabs,
+  findPaneInActiveTab,
   findTerminalLocation,
   findWorkspaceLocation,
+  getActiveTabLeafIds,
+  getActiveTabLeafNodes,
   getActiveWindowTab,
   getAllWorkspaceTileLeaves,
+  getScopedActivePaneId,
   getStaleTerminalLeavesHierarchical,
   moveWorkspace,
+  navigateDirection,
   reconcileWindowLayout,
   removeWindowTab,
   removeWorkspaceFromLayout,
@@ -1678,6 +2037,7 @@ export {
 }
 
 export type {
+  ClosePaneGateResult,
   ProgressiveCloseAction,
   RepairWindowLayoutResult,
   StaleTerminalLeaf,

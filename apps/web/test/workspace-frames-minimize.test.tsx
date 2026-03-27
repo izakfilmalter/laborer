@@ -165,32 +165,9 @@ vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
   ),
 }))
 
-import type { PanelNode, WorkspaceTileNode } from '@laborer/shared/types'
+import type { WorkspaceTileNode } from '@laborer/shared/types'
 // Import after mocks are set up
 import { WorkspaceFrames } from '../src/routes/-components/workspace-frames'
-
-const layout: PanelNode = {
-  _tag: 'SplitNode',
-  children: [
-    {
-      _tag: 'LeafNode',
-      id: 'pane-1',
-      paneType: 'terminal',
-      terminalId: 'term-1',
-      workspaceId: 'ws-1',
-    },
-    {
-      _tag: 'LeafNode',
-      id: 'pane-2',
-      paneType: 'terminal',
-      terminalId: 'term-2',
-      workspaceId: 'ws-2',
-    },
-  ],
-  direction: 'vertical',
-  id: 'root',
-  sizes: [50, 50],
-}
 
 /** Tile layout with two workspace leaves in a vertical split. */
 const tileLayout: WorkspaceTileNode = {
@@ -252,11 +229,7 @@ describe('WorkspaceFrames minimize behavior (legacy path)', () => {
 
   it('renders workspace panels as collapsible when multiple workspaces are stacked', () => {
     render(
-      <WorkspaceFrames
-        activePaneId="pane-1"
-        layout={layout}
-        workspaceOrder={null}
-      />
+      <WorkspaceFrames activePaneId="pane-1" workspaceTileLayout={tileLayout} />
     )
 
     const panels = screen.getAllByTestId('resizable-panel')
@@ -267,11 +240,7 @@ describe('WorkspaceFrames minimize behavior (legacy path)', () => {
 
   it('collapses and re-expands the workspace panel when minimize is toggled', () => {
     render(
-      <WorkspaceFrames
-        activePaneId="pane-1"
-        layout={layout}
-        workspaceOrder={null}
-      />
+      <WorkspaceFrames activePaneId="pane-1" workspaceTileLayout={tileLayout} />
     )
 
     fireEvent.click(screen.getByRole('button', { name: MINIMIZE_WS_1_RE }))
@@ -293,12 +262,7 @@ describe('WorkspaceFrames minimize behavior (tile layout path)', () => {
 
   it('renders tile leaf panels as collapsible', () => {
     render(
-      <WorkspaceFrames
-        activePaneId="pane-1"
-        layout={layout}
-        workspaceOrder={null}
-        workspaceTileLayout={tileLayout}
-      />
+      <WorkspaceFrames activePaneId="pane-1" workspaceTileLayout={tileLayout} />
     )
 
     const panels = screen.getAllByTestId('resizable-panel')
@@ -309,12 +273,7 @@ describe('WorkspaceFrames minimize behavior (tile layout path)', () => {
 
   it('collapses the resizable panel when minimize is clicked', () => {
     render(
-      <WorkspaceFrames
-        activePaneId="pane-1"
-        layout={layout}
-        workspaceOrder={null}
-        workspaceTileLayout={tileLayout}
-      />
+      <WorkspaceFrames activePaneId="pane-1" workspaceTileLayout={tileLayout} />
     )
 
     fireEvent.click(screen.getByRole('button', { name: MINIMIZE_WS_1_RE }))
@@ -323,12 +282,7 @@ describe('WorkspaceFrames minimize behavior (tile layout path)', () => {
 
   it('expands the resizable panel when expand is clicked after minimizing', () => {
     render(
-      <WorkspaceFrames
-        activePaneId="pane-1"
-        layout={layout}
-        workspaceOrder={null}
-        workspaceTileLayout={tileLayout}
-      />
+      <WorkspaceFrames activePaneId="pane-1" workspaceTileLayout={tileLayout} />
     )
 
     fireEvent.click(screen.getByRole('button', { name: MINIMIZE_WS_1_RE }))
@@ -338,12 +292,7 @@ describe('WorkspaceFrames minimize behavior (tile layout path)', () => {
 
   it('hides panel content when minimized', () => {
     render(
-      <WorkspaceFrames
-        activePaneId="pane-1"
-        layout={layout}
-        workspaceOrder={null}
-        workspaceTileLayout={tileLayout}
-      />
+      <WorkspaceFrames activePaneId="pane-1" workspaceTileLayout={tileLayout} />
     )
 
     // Content is initially visible
@@ -360,12 +309,7 @@ describe('WorkspaceFrames minimize behavior (tile layout path)', () => {
 
   it('shows panel content again when expanded after minimizing', () => {
     render(
-      <WorkspaceFrames
-        activePaneId="pane-1"
-        layout={layout}
-        workspaceOrder={null}
-        workspaceTileLayout={tileLayout}
-      />
+      <WorkspaceFrames activePaneId="pane-1" workspaceTileLayout={tileLayout} />
     )
 
     const managersBefore = screen.getAllByTestId('panel-manager')

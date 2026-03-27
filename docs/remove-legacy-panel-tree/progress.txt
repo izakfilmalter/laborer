@@ -228,3 +228,96 @@
 
 - `apps/web/src/routes/-hooks/use-panel-layout.ts` — Rewrote all mutation handlers, deleted `syncLegacyTreeToHierarchical`, `commitAssignment`, `commitDevServerUpdate`, `DEFAULT_NEW_WINDOW_LAYOUT`, `persistedLayoutTree`, simplified imports
 
+## Issue 8: Port all consumers to hierarchical tree — DONE
+
+**Date:** 2026-03-26
+
+### What was done
+
+1. Added 10 new hierarchical utility functions to `window-layout-utils.ts` that replace flat-tree `layout-utils.ts` functions:
+   - `findPaneInActiveTab` — finds a pane by ID in visible layout (replaces `findNodeById`)
+   - `findPaneAcrossAllTabs` — finds a pane across ALL panel tabs (replaces `findNodeById` for existence checks)
+   - `findLeafByTerminalIdInLayout` — finds a leaf by terminal ID (replaces `findLeafByTerminalId`)
+   - `getActiveTabLeafNodes` — gets all visible leaf nodes (replaces `getLeafNodes`)
+   - `getActiveTabLeafIds` — gets all visible pane IDs (replaces `getLeafIds`)
+   - `getScopedActivePaneId` — scopes active pane to workspace sub-tree (moved from `layout-utils.ts`)
+   - `computeClosePaneGateAction` — close-pane gating with hierarchical layout (replaces `layout-utils` version)
+   - `computeCloseWorkspaceAction` — close-workspace gating with hierarchical layout (replaces `layout-utils` version)
+   - `navigateDirection` — directional navigation within a workspace's active panel tab
+   - `collectLeafNodes` — internal helper for DFS leaf collection
+
+2. Ported `PanelHotkeys`:
+   - Removed `layout` prop (no longer accepts a flat `PanelNode` tree)
+   - Derived `activeWorkspaceId` from hierarchical layout via `findPaneInActiveTab`
+   - Directional navigation uses `navigateDirection` on the hierarchical layout
+   - Cmd+Option+Arrow navigation uses the same hierarchical path
+   - All `NavigationDirection` imports now come from `panel-tree-utils`
+
+3. Ported `index.tsx` (HomeComponent):
+   - Removed `layout` and `workspaceOrder` from `usePanelLayout()` destructuring
+   - Added `windowLayout` derived from `panelActions.windowLayout`
+   - `getPanePrState` uses `findPaneInActiveTab` instead of `findNodeById`
+   - Fullscreen auto-exit uses `findPaneAcrossAllTabs` instead of `findNodeById`
+   - Review/diff auto-close uses `getActiveTabLeafNodes` instead of `getLeafNodes`
+   - `toggleReviewPane` and `toggleDiffPane` use `findPaneInActiveTab`
+   - `gatedClosePane` uses hierarchical `computeClosePaneGateAction`
+   - `gatedCloseTerminalPane` uses `findLeafByTerminalIdInLayout`
+   - `gatedCloseWorkspace` uses hierarchical `computeCloseWorkspaceAction`
+   - `handleNotificationClicked` uses `getActiveTabLeafNodes`
+   - Removed `layout` prop from `<PanelHotkeys>`
+   - Replaced `layout` and `workspaceOrder` props with `windowLayout` on `<PanelContent>`
+
+4. Ported `WorkspaceFrames`:
+   - Removed `layout` and `workspaceOrder` props — now requires only `workspaceTileLayout: WorkspaceTileNode`
+   - Deleted `LegacyWorkspaceFrames` function entirely (~110 lines)
+   - Deleted `WorkspaceFrameResizableChild` (only used by legacy path, ~47 lines)
+   - Removed `flatLayout` prop threading through `WorkspaceTileRenderer`, `WorkspaceTileResizableChild`, `WorkspaceTileLeafFrame`
+   - Replaced `getLeafNodes(subLayout)` with `containsPane` and `getFirstLeafId` from `panel-tree-utils`
+   - Removed imports of `filterTreeByWorkspace`, `getLeafNodes`, `getWorkspaceIds`, `sortWorkspaceLayouts` from `layout-utils`
+
+5. Ported `WorkspaceFrameHeaderContainer`:
+   - Made `subLayout` optional (no longer required for fullscreen header)
+   - Replaced `getScopedActivePaneId` import from `layout-utils` to `window-layout-utils`
+   - Falls back to `globalActivePaneId` when no `subLayout` provided
+
+6. Ported `PanelContent`:
+   - Removed `layout` and `workspaceOrder` props
+   - Added `windowLayout?: WindowLayout` prop for fullscreen pane workspace resolution
+   - `fullscreenWorkspaceId` resolved via `findPaneAcrossAllTabs` on hierarchical layout
+   - Guard condition changed from `if (layout)` to `if (workspaceTileLayout)`
+
+7. Removed legacy layout derivation from `use-panel-layout.ts`:
+   - Deleted `deriveLegacyTreeFromHierarchical` import from `layout-migration.ts`
+   - Deleted `getLeafIds` import from `layout-utils.ts`
+   - Deleted the `layout` useMemo (which called `deriveLegacyTreeFromHierarchical`)
+   - `leafPaneIds` now computed from `getActiveTabLeafIds(persistedWindowLayout)` (hierarchical)
+   - Removed `layout` and `workspaceOrder` from the return value
+
+8. Updated test files:
+   - `full-height-review-panel.test.tsx` — replaced `layout`/`workspaceOrder` props with `workspaceTileLayout`, added WorkspaceTileLeaf fixtures
+   - `fullscreen-workspace-header.test.tsx` — replaced `layout`/`workspaceOrder` with `windowLayout`/`workspaceTileLayout`, added WindowLayout fixtures
+   - `workspace-frames-minimize.test.tsx` — removed `layout`/`workspaceOrder` props, using existing tile fixtures
+   - `workspace-frame-header-container.test.tsx` — updated mock from `layout-utils` to `window-layout-utils` for `getScopedActivePaneId`
+
+9. `bun run check` passes (typecheck + format + all 1270 web tests, all packages pass).
+
+### Notes on deferred work
+
+- `layout-utils.ts` still exists with many functions — it's still imported by tests (`layout-utils.test.ts`, `close-workspace.test.ts`, `close-terminal.test.ts`, `close-pane-gating.test.ts`, `workspace-frame-reorder.test.tsx`) and the remaining `isWorkspaceFrameData`/`WORKSPACE_FRAME_TYPE` constants are used by `workspace-frames.tsx`. Full deletion is Issue 10.
+- `layout-migration.ts` still exists — `deriveLegacyTreeFromHierarchical` and `convertPanelTreeToLegacy` are no longer called from production code but the file is not deleted yet. Full deletion is Issue 10.
+- The deprecated sidebar flags (`devServerOpen`, `devServerTerminalId`, `diffOpen`) on `LeafNode` are no longer read by any production consumer — cleanup in Issue 10.
+
+### Files changed
+
+- `apps/web/src/panels/window-layout-utils.ts` — Added 10 new hierarchical utility functions, new imports from panel-tree-utils
+- `apps/web/src/panels/panel-hotkeys.tsx` — Removed `layout` prop, ported directional navigation to hierarchical
+- `apps/web/src/routes/index.tsx` — Removed all `layout`/`workspaceOrder` usage, ported all callbacks to hierarchical
+- `apps/web/src/routes/-components/workspace-frames.tsx` — Deleted `LegacyWorkspaceFrames`, `WorkspaceFrameResizableChild`, removed `flatLayout` prop threading, removed `layout`/`workspaceOrder` props
+- `apps/web/src/routes/-components/workspace-frame-header-container.tsx` — Made `subLayout` optional, moved `getScopedActivePaneId` import
+- `apps/web/src/routes/-components/panel-content.tsx` — Replaced `layout`/`workspaceOrder` with `windowLayout`/`workspaceTileLayout`
+- `apps/web/src/routes/-hooks/use-panel-layout.ts` — Removed `deriveLegacyTreeFromHierarchical`, `getLeafIds`, `layout` derivation, simplified return value
+- `apps/web/test/full-height-review-panel.test.tsx` — Updated props to hierarchical types
+- `apps/web/test/fullscreen-workspace-header.test.tsx` — Updated props and added WindowLayout fixtures
+- `apps/web/test/workspace-frames-minimize.test.tsx` — Removed legacy layout props
+- `apps/web/test/workspace-frame-header-container.test.tsx` — Updated mock path for `getScopedActivePaneId`
+

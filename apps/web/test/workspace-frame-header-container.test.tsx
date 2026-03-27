@@ -46,13 +46,14 @@ vi.mock('@/lib/workspace-agent-status', () => ({
   deriveWorkspaceAgentStatus: () => null,
 }))
 
-vi.mock('@/panels/layout-utils', () => ({
-  findNodeById: () => ({ _tag: 'LeafNode' }),
-  getLeafNodes: (node: { _tag: string; paneType?: string }) =>
-    node._tag === 'LeafNode' ? [node] : [],
-  getScopedActivePaneId: (_subLayout: unknown, activePaneId: string | null) =>
-    activePaneId,
-}))
+vi.mock('@/panels/window-layout-utils', async (importOriginal) => {
+  const original = await importOriginal<Record<string, unknown>>()
+  return {
+    ...original,
+    getScopedActivePaneId: (_subLayout: unknown, activePaneId: string | null) =>
+      activePaneId,
+  }
+})
 
 vi.mock('@/panels/panel-context', () => ({
   useActivePaneId: () => activePaneIdMock(),

@@ -361,7 +361,7 @@ Vertical slices per handler (using mock store, prior art: `use-panel-layout.test
 
 ## Issue 8: Port all consumers to hierarchical tree
 
-**Status:** open
+**Status:** done
 
 ### What to build
 

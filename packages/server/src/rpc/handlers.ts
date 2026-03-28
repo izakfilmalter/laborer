@@ -14,7 +14,7 @@
 import { join } from 'node:path'
 import { LaborerRpcs, RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
-import { Array, Effect, pipe, Ref, Schema, Stream } from 'effect'
+import { Array, Effect, pipe, Schema, Stream } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { ContainerService } from '../services/container-service.js'
@@ -733,11 +733,17 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // Lifecycle — Deferred service initialization status (Issue #15)
     // -------------------------------------------------------------------
     'lifecycle.initStatus': () =>
-      Effect.gen(function* () {
-        const { ref } = yield* DeferredServicesReady
-        const ready = yield* Ref.get(ref)
-        return { ready }
-      }),
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const { ref } = yield* DeferredServicesReady
+          return ref.changes.pipe(
+            Stream.map((ready) => ({ ready })),
+            // Complete after emitting { ready: true } — client only needs
+            // this signal once and keeping the stream open wastes resources.
+            Stream.takeUntil(({ ready }) => ready)
+          )
+        })
+      ),
 
     // -------------------------------------------------------------------
     // Docker Prerequisite Detection (Issue 2)

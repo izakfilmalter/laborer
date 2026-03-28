@@ -7,8 +7,8 @@
  *
  * - **Starting -> Ready:** Server sidecar reports `healthy`
  * - **Ready -> Restored:** Terminal + file-watcher sidecars both report `healthy`
- * - **Restored -> Eventually:** Server's `lifecycle.initStatus` RPC reports
- *   all deferred services ready
+ * - **Restored -> Eventually:** Server's `lifecycle.initStatus` streaming RPC
+ *   pushes `{ ready: true }` when all deferred services are initialized
  *
  * Rendered as a renderless component in the app root, inside the
  * `LifecyclePhaseProvider`.
@@ -20,8 +20,9 @@
  * @see apps/web/src/hooks/use-sidecar-statuses.ts — sidecar status source
  */
 
-import { useAtomValue } from '@effect-atom/atom-react/Hooks'
-import { useEffect, useMemo } from 'react'
+import { Result } from '@effect-atom/atom'
+import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useEffect, useMemo, useRef } from 'react'
 
 import { LaborerClient } from '@/atoms/laborer-client'
 import {
@@ -37,8 +38,9 @@ import { useSidecarStatuses } from '@/hooks/use-sidecar-statuses'
  * to reactively track service health and calls `advanceTo()` when transition
  * conditions are met.
  *
- * The Restored -> Eventually transition uses the `lifecycle.initStatus` RPC
- * via MessagePort to the server utility process.
+ * The Restored -> Eventually transition subscribes to the `lifecycle.initStatus`
+ * streaming RPC. The server pushes `{ ready: true }` when all deferred services
+ * complete initialization — no client-side polling needed.
  */
 function usePhaseTransitionDriver(): void {
   const { phase, advanceTo } = useLifecyclePhase()
@@ -63,27 +65,32 @@ function usePhaseTransitionDriver(): void {
     }
   }, [statuses, advanceTo])
 
-  // Restored -> Eventually: poll server's init-status via RPC
-  useInitStatusPoll(phase, advanceTo)
+  // Restored -> Eventually: subscribe to server's init-status stream
+  useInitStatusStream(phase, advanceTo)
 }
 
 // ---------------------------------------------------------------------------
-// Restored -> Eventually: init-status via RPC
+// Restored -> Eventually: init-status streaming RPC
 // ---------------------------------------------------------------------------
 
 /**
- * Subscribe to the server's init-status to detect when all deferred services
- * are ready. Uses the `lifecycle.initStatus` RPC via the LaborerClient
- * (MessagePort to server utility process).
+ * Subscribe to the server's init-status streaming RPC to detect when all
+ * deferred services are ready. The server pushes `{ ready: true }` when
+ * initialization completes — no polling or manual refresh needed.
+ *
+ * Uses `LaborerClient.query` which creates a pull-based stream atom.
+ * The atom receives pushed values from the server and re-renders the
+ * component when new items arrive.
  */
-function useInitStatusPoll(
+function useInitStatusStream(
   phase: LifecyclePhase,
   advanceTo: (target: LifecyclePhase) => void
 ): void {
-  const shouldPoll =
+  const shouldAdvance =
     phase >= LifecyclePhase.Restored && phase < LifecyclePhase.Eventually
 
-  // Subscribe to the RPC query atom for init status.
+  // Subscribe to the streaming RPC. The atom receives pushed values
+  // from the server as the SubscriptionRef changes.
   const initStatusAtom = useMemo(
     () =>
       // biome-ignore lint/suspicious/noConfusingVoidType: Effect RPC uses void for empty payloads
@@ -92,16 +99,60 @@ function useInitStatusPoll(
   )
   const rpcResult = useAtomValue(initStatusAtom)
 
-  // Advance when the RPC returns ready: true
+  // The pull-based stream atom only auto-fetches the first item.
+  // Subsequent items require writing `void` to the atom to trigger
+  // the next pull. We poll every 500ms while waiting for ready=true.
+  const pullNext = useAtomSet(initStatusAtom)
+  const pullIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   useEffect(() => {
-    if (!shouldPoll) {
+    // Only poll while we're in the Restored phase waiting for Eventually
+    if (!shouldAdvance) {
       return
     }
 
-    if (rpcResult._tag === 'Success' && rpcResult.value.ready === true) {
-      advanceTo(LifecyclePhase.Eventually)
+    // Already got ready=true — no need to poll
+    if (
+      Result.isSuccess(rpcResult) &&
+      rpcResult.value.items.at(-1)?.ready === true
+    ) {
+      return
     }
-  }, [rpcResult, shouldPoll, advanceTo])
+
+    // Start polling for the next stream item
+    if (pullIntervalRef.current === null) {
+      pullIntervalRef.current = setInterval(() => {
+        // biome-ignore lint/suspicious/noConfusingVoidType: pull atom write type is void
+        pullNext(undefined as void)
+      }, 500)
+    }
+
+    return () => {
+      if (pullIntervalRef.current !== null) {
+        clearInterval(pullIntervalRef.current)
+        pullIntervalRef.current = null
+      }
+    }
+  }, [shouldAdvance, rpcResult, pullNext])
+
+  // Advance when the stream pushes { ready: true }.
+  // The pull-based atom accumulates items — check the latest.
+  useEffect(() => {
+    if (!shouldAdvance) {
+      return
+    }
+
+    if (Result.isInitial(rpcResult) || rpcResult.waiting) {
+      return
+    }
+
+    if (Result.isSuccess(rpcResult)) {
+      const latestItem = rpcResult.value.items.at(-1)
+      if (latestItem?.ready === true) {
+        advanceTo(LifecyclePhase.Eventually)
+      }
+    }
+  }, [rpcResult, shouldAdvance, advanceTo])
 }
 
 /**

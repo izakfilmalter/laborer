@@ -22,9 +22,12 @@ import {
 import { mockFetch, pendingPromise } from './helpers/mock-fetch'
 
 /**
- * Mock for the `useAtomValue` hook used by `useInitStatusPoll` inside the
- * phase transition driver.  Controls what the `lifecycle.initStatus` RPC
- * atom returns so we can simulate the Restored -> Eventually transition.
+ * Mock for the `useAtomValue` hook used by `useInitStatusStream` inside the
+ * phase transition driver.  Controls what the `lifecycle.initStatus` streaming
+ * RPC atom returns so we can simulate the Restored -> Eventually transition.
+ *
+ * The streaming RPC atom returns `{ _tag, waiting, value: { items } }` where
+ * `items` is an array of received stream values.
  *
  * Uses a React state-based approach: `setInitStatusResult` triggers a
  * re-render so the component sees the new value.
@@ -68,6 +71,9 @@ vi.mock('@effect-atom/atom-react/Hooks', async () => {
       }, [forceRender])
       return initStatusResultRef.current
     },
+    // Pull-based stream atoms need useAtomSet to trigger subsequent pulls.
+    // In tests, the mock is a no-op since we control the result directly.
+    useAtomSet: () => () => undefined,
   }
 })
 
@@ -380,8 +386,8 @@ describe('PhaseTransitionDriver', () => {
     )
   })
 
-  // Issue #15: Eventually transition via init-status polling
-  it('advances to Eventually when init-status returns ready after Restored', async () => {
+  // Issue #15: Eventually transition via init-status streaming RPC
+  it('advances to Eventually when init-status stream pushes ready after Restored', async () => {
     // All sidecars healthy immediately
     mockFetch((url) => {
       if (url === '/server-health') {
@@ -420,12 +426,12 @@ describe('PhaseTransitionDriver', () => {
       String(LifecyclePhase.Restored)
     )
 
-    // Init-status RPC returns not ready — still Restored
+    // Init-status stream pushes not ready — still Restored
     await act(async () => {
       setInitStatusResult({
         _tag: 'Success',
         waiting: false,
-        value: { ready: false },
+        value: { items: [{ ready: false }] },
       })
       await Promise.resolve()
       await Promise.resolve()
@@ -435,12 +441,12 @@ describe('PhaseTransitionDriver', () => {
       String(LifecyclePhase.Restored)
     )
 
-    // Deferred services finish initializing — RPC returns ready
+    // Deferred services finish initializing — stream pushes ready
     await act(async () => {
       setInitStatusResult({
         _tag: 'Success',
         waiting: false,
-        value: { ready: true },
+        value: { items: [{ ready: false }, { ready: true }] },
       })
       await Promise.resolve()
     })
@@ -450,7 +456,7 @@ describe('PhaseTransitionDriver', () => {
     )
   })
 
-  it('does not poll init-status before Restored phase', async () => {
+  it('does not advance from init-status stream before Restored phase', async () => {
     const initStatusCalls: string[] = []
 
     mockFetch((url) => {
@@ -501,12 +507,12 @@ describe('PhaseTransitionDriver', () => {
     )
   })
 
-  it('stops polling init-status after Eventually is reached', async () => {
-    // RPC atom immediately returns ready
+  it('stays at Eventually after stream delivers ready=true', async () => {
+    // Stream atom immediately has ready=true in items
     initStatusResultRef.current = {
       _tag: 'Success',
       waiting: false,
-      value: { ready: true },
+      value: { items: [{ ready: true }] },
     }
 
     mockFetch((url) => {

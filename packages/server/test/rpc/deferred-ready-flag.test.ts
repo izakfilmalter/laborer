@@ -24,7 +24,7 @@
 import { RpcTest } from '@effect/rpc'
 import { assert, describe, it } from '@effect/vitest'
 import { LaborerRpcs } from '@laborer/shared/rpc'
-import { Effect } from 'effect'
+import { Chunk, Effect, Stream } from 'effect'
 import { TestLaborerRpcLayer } from './test-layer.js'
 
 describe('DeferredServicesReady flag (file-tree-git-status)', () => {
@@ -41,19 +41,25 @@ describe('DeferredServicesReady flag (file-tree-git-status)', () => {
    * which starts at `false` and is never set to `true`.
    */
   it.scoped(
-    'lifecycle.initStatus returns ready=true when all services are built',
+    'lifecycle.initStatus stream emits ready=true when all services are built',
     () =>
       Effect.gen(function* () {
         const client = yield* RpcTest.makeClient(LaborerRpcs).pipe(
           Effect.provide(TestLaborerRpcLayer)
         )
 
-        const result = yield* client.lifecycle.initStatus()
+        // The stream uses takeUntil(ready), so when DeferredServicesReady
+        // starts at true (as in TestLaborerRpcLayer), the stream emits
+        // [{ ready: true }] and completes immediately.
+        const items = yield* client.lifecycle
+          .initStatus()
+          .pipe(Stream.runCollect, Effect.map(Chunk.toArray))
 
-        // All services are built and available — the RPC should report
+        // All services are built and available — the stream should emit
         // ready=true so the client advances to LifecyclePhase.Eventually
         // and the file tree becomes visible.
-        assert.strictEqual(result.ready, true)
+        assert.isTrue(items.length >= 1)
+        assert.strictEqual(items.at(-1)?.ready, true)
       })
   )
 })

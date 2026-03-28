@@ -30,7 +30,7 @@ import { LaborerRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
-import { Effect, Exit, Layer, Scope } from 'effect'
+import { Effect, Exit, Layer, Option, Scope, Stream } from 'effect'
 import { afterAll, beforeAll, it } from 'vitest'
 
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
@@ -194,12 +194,16 @@ describe('LaborerRpcs over MessagePort transport', { timeout: 30_000 }, () => {
   // lifecycle.initStatus — core RPC
   // -----------------------------------------------------------------------
 
-  it('lifecycle.initStatus returns ready state via MessagePort', async () => {
-    const result = await run(client.lifecycle.initStatus())
+  it('lifecycle.initStatus stream emits ready=false via MessagePort', async () => {
+    const first = await run(
+      client.lifecycle
+        .initStatus()
+        .pipe(Stream.take(1), Stream.runHead, Effect.map(Option.getOrThrow))
+    )
 
     // With DeferredServicesReadyLayer (not yet swapped to true),
-    // initStatus should return { ready: false }
-    assert.strictEqual(result.ready, false)
+    // initStatus stream should emit { ready: false } first.
+    assert.strictEqual(first.ready, false)
   })
 
   // -----------------------------------------------------------------------
@@ -244,7 +248,9 @@ describe('LaborerRpcs over MessagePort transport', { timeout: 30_000 }, () => {
     const [health, initStatus, docker] = await run(
       Effect.all([
         client.health.check(),
-        client.lifecycle.initStatus(),
+        client.lifecycle
+          .initStatus()
+          .pipe(Stream.take(1), Stream.runHead, Effect.map(Option.getOrThrow)),
         client.docker.status(),
       ])
     )

@@ -1,6 +1,6 @@
 import { RpcTest } from '@effect/rpc'
 import { LaborerRpcs } from '@laborer/shared/rpc'
-import { Context, Effect, Layer, Ref } from 'effect'
+import { Context, Effect, Layer, Ref, SubscriptionRef } from 'effect'
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
 import { BackgroundFetchService } from '../../src/services/background-fetch-service.js'
 import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
@@ -204,7 +204,7 @@ const DeferredServiceStack = WorkspaceProvider.layer.pipe(
 const DeferredServicesReadyTrueLayer = Layer.effect(
   DeferredServicesReady,
   Effect.gen(function* () {
-    const ref = yield* Ref.make(true)
+    const ref = yield* SubscriptionRef.make(true)
     return DeferredServicesReady.of({ ref })
   })
 )

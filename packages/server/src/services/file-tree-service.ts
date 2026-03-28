@@ -455,17 +455,15 @@ class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
 
             const workspace = workspaceOpt.value
 
-            // Reject subscriptions for workspaces in non-active states.
-            // Only 'running' and 'creating' workspaces should have their
-            // file tree streamed. 'creating' is allowed because we wait
-            // for the worktree directory to appear.
-            if (
-              workspace.status !== 'running' &&
-              workspace.status !== 'creating'
-            ) {
+            // Reject subscriptions only for destroyed workspaces.
+            // All other statuses (running, creating, stopped) are valid —
+            // the file tree is read-only git data and doesn't require a
+            // running container. The 'stopped' status is assigned to
+            // externally-detected worktrees and should not block the UI.
+            if (workspace.status === 'destroyed') {
               return Stream.fail(
                 new RpcError({
-                  message: `Workspace ${workspaceId} is in "${workspace.status}" state`,
+                  message: `Workspace ${workspaceId} has been destroyed`,
                   code: 'INVALID_STATE',
                 })
               )

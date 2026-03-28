@@ -337,13 +337,13 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
           `[DiffService.getDiff] workspace=${workspaceId} status=${workspace.status} branch=${workspace.branchName} worktreePath=${workspace.worktreePath} baseSha=${workspace.baseSha ?? 'null'}`
         )
 
-        // 2. Validate workspace is in an active state
-        if (workspace.status !== 'running' && workspace.status !== 'creating') {
+        // 2. Validate workspace is not destroyed
+        if (workspace.status === 'destroyed') {
           yield* Effect.logWarning(
-            `[DiffService.getDiff] REJECTED workspace=${workspaceId} — status="${workspace.status}" is not "running" or "creating". Diff computation skipped.`
+            `[DiffService.getDiff] REJECTED workspace=${workspaceId} — status="destroyed". Diff computation skipped.`
           )
           return yield* new RpcError({
-            message: `Workspace ${workspaceId} is in "${workspace.status}" state and cannot be diffed`,
+            message: `Workspace ${workspaceId} has been destroyed`,
             code: 'INVALID_STATE',
           })
         }
@@ -673,16 +673,13 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
             (w) => w.status !== 'destroyed'
           )
 
-          const activeWorkspaces = nonDestroyed.filter(
-            (w) => w.status === 'running' || w.status === 'creating'
-          )
-
-          const inactiveWorkspaces = nonDestroyed.filter(
-            (w) => w.status !== 'running' && w.status !== 'creating'
-          )
+          // All non-destroyed workspaces are active — the 'stopped' status
+          // only indicates the workspace was externally detected, not that it
+          // should be excluded from diff polling.
+          const activeWorkspaces = nonDestroyed
 
           yield* Effect.log(
-            `[DiffService.bootstrapPolling] found ${allWorkspaces.length} total workspaces, ${activeWorkspaces.length} active (running/creating), ${inactiveWorkspaces.length} inactive. Active: ${activeWorkspaces.map((w) => `${w.id.slice(0, 8)}(${w.status}/${w.branchName})`).join(', ') || 'none'}. Inactive: ${inactiveWorkspaces.map((w) => `${w.id.slice(0, 8)}(${w.status}/${w.branchName})`).join(', ') || 'none'}`
+            `[DiffService.bootstrapPolling] found ${allWorkspaces.length} total workspaces, ${activeWorkspaces.length} active. Active: ${activeWorkspaces.map((w) => `${w.id.slice(0, 8)}(${w.status}/${w.branchName})`).join(', ') || 'none'}`
           )
 
           // Start continuous polling for active workspaces
@@ -692,20 +689,8 @@ class DiffService extends Context.Tag('@laborer/DiffService')<
             { discard: true }
           )
 
-          // Run a one-time diff for inactive (stopped/errored) workspaces
-          // so their diff data is populated on startup without continuous polling.
-          yield* Effect.forEach(
-            inactiveWorkspaces,
-            (workspace) =>
-              getDiff(workspace.id).pipe(
-                Effect.catchAll((error) =>
-                  Effect.logDebug(
-                    `[DiffService.bootstrapPolling] one-time diff for inactive workspace ${workspace.id.slice(0, 8)}(${workspace.status}) skipped: ${error.message}`
-                  )
-                )
-              ),
-            { discard: true }
-          )
+          // All non-destroyed workspaces are now polled continuously —
+          // no separate one-time diff pass needed.
         }
       )
 

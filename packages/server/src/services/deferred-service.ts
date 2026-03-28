@@ -23,7 +23,7 @@
  */
 
 import { RpcError } from '@laborer/shared/rpc'
-import { Context, Effect, Layer, Ref } from 'effect'
+import { Context, Effect, Layer, Ref, SubscriptionRef } from 'effect'
 
 /**
  * Sentinel code used in RpcError to signal that a deferred service is
@@ -159,12 +159,15 @@ export const makeRefDelegatingService = <Id, S extends object>(
  */
 export class DeferredServicesReady extends Context.Tag(
   '@laborer/DeferredServicesReady'
-)<DeferredServicesReady, { readonly ref: Ref.Ref<boolean> }>() {}
+)<
+  DeferredServicesReady,
+  { readonly ref: SubscriptionRef.SubscriptionRef<boolean> }
+>() {}
 
 export const DeferredServicesReadyLayer = Layer.effect(
   DeferredServicesReady,
   Effect.gen(function* () {
-    const ref = yield* Ref.make(false)
+    const ref = yield* SubscriptionRef.make(false)
     return DeferredServicesReady.of({ ref })
   })
 )

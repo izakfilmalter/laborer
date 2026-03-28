@@ -415,6 +415,11 @@ export class LaborerRpcs extends RpcGroup.make(
    * when all deferred services have initialized, triggering the
    * Restored → Eventually phase transition.
    *
+   * This is a streaming RPC: the server immediately emits the current
+   * readiness state, then pushes `{ ready: true }` when all deferred
+   * services complete initialization. The stream stays open until the
+   * client disconnects.
+   *
    * @see Issue #15: Server "fully initialized" event
    * @see PRD section: "Server Layer Graph Splitting"
    */
@@ -423,6 +428,7 @@ export class LaborerRpcs extends RpcGroup.make(
       /** Whether all deferred services have finished initializing. */
       ready: Schema.Boolean,
     }),
+    stream: true,
   }),
 
   // -----------------------------------------------------------------------

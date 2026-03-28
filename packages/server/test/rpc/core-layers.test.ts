@@ -15,7 +15,7 @@
 import { RpcTest } from '@effect/rpc'
 import { assert, describe, it } from '@effect/vitest'
 import { LaborerRpcs } from '@laborer/shared/rpc'
-import { Context, Effect, Layer, Ref } from 'effect'
+import { Chunk, Context, Effect, Layer, Option, Ref, Stream } from 'effect'
 import { LaborerRpcsLive } from '../../src/rpc/handlers.js'
 import { ConfigService } from '../../src/services/config-service.js'
 import { ContainerService } from '../../src/services/container-service.js'
@@ -212,29 +212,42 @@ const makeScopedInitStatusContext = Effect.gen(function* () {
 
 describe('Lifecycle init status (Issue #15)', () => {
   it.scoped(
-    'lifecycle.initStatus returns { ready: false } before deferred services init',
+    'lifecycle.initStatus stream emits { ready: false } initially',
     () =>
       Effect.gen(function* () {
         const { client } = yield* makeScopedInitStatusContext
 
-        const result = yield* client.lifecycle.initStatus()
+        // The stream emits the current readiness state immediately.
+        // Since no one has set the ref to true, the first item is false.
+        const first = yield* client.lifecycle
+          .initStatus()
+          .pipe(Stream.take(1), Stream.runHead)
+        const result = Option.getOrThrow(first)
 
         assert.strictEqual(result.ready, false)
       })
   )
 
   it.scoped(
-    'lifecycle.initStatus returns { ready: true } after deferred services init',
+    'lifecycle.initStatus stream completes with { ready: true } after deferred services init',
     () =>
       Effect.gen(function* () {
         const { client, readyRef } = yield* makeScopedInitStatusContext
 
+        // Fork the stream collection before setting the ref.
+        // The stream uses takeUntil(ready), so it will collect
+        // [{ ready: false }, { ready: true }] then complete.
+        const fiber = yield* client.lifecycle
+          .initStatus()
+          .pipe(Stream.runCollect, Effect.fork)
+
         // Simulate background fiber completing deferred initialization
         yield* Ref.set(readyRef, true)
 
-        const result = yield* client.lifecycle.initStatus()
+        const items = yield* fiber.pipe(Effect.map(Chunk.toArray))
 
-        assert.strictEqual(result.ready, true)
+        assert.isTrue(items.length >= 1)
+        assert.strictEqual(items.at(-1)?.ready, true)
       })
   )
 
@@ -244,7 +257,10 @@ describe('Lifecycle init status (Issue #15)', () => {
 
       // Both core RPCs should work in the same session
       const health = yield* client.health.check()
-      const initStatus = yield* client.lifecycle.initStatus()
+      const first = yield* client.lifecycle
+        .initStatus()
+        .pipe(Stream.take(1), Stream.runHead)
+      const initStatus = Option.getOrThrow(first)
 
       assert.strictEqual(health.status, 'ok')
       assert.strictEqual(initStatus.ready, false)

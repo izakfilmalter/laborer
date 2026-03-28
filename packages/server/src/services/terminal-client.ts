@@ -660,13 +660,9 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
 
           const workspace = workspaceOpt.value
 
-          if (
-            workspace.status !== 'running' &&
-            workspace.status !== 'creating' &&
-            workspace.status !== 'stopped'
-          ) {
+          if (workspace.status === 'destroyed') {
             return yield* new RpcError({
-              message: `Workspace ${workspaceId} is in status "${workspace.status}" — cannot spawn terminal`,
+              message: `Workspace ${workspaceId} has been destroyed — cannot spawn terminal`,
               code: 'INVALID_STATE',
             })
           }

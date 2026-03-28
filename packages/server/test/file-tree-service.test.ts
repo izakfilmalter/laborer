@@ -196,12 +196,12 @@ describe('FileTreeService', () => {
     }).pipe(Effect.provide(TestFileTreeLayer))
   )
 
-  it.scoped('subscribe fails with INVALID_STATE for stopped workspace', () =>
+  it.scoped('subscribe fails with INVALID_STATE for destroyed workspace', () =>
     Effect.gen(function* () {
-      const repoPath = createTempDir('file-tree-stopped', tempRoots)
+      const repoPath = createTempDir('file-tree-destroyed', tempRoots)
 
       const { store } = yield* LaborerStore
-      const workspaceId = seedWorkspace(store, repoPath, 'stopped')
+      const workspaceId = seedWorkspace(store, repoPath, 'destroyed')
 
       const fileTreeService = yield* FileTreeService
       const stream = fileTreeService.subscribe(workspaceId)

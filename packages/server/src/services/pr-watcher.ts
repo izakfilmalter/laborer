@@ -362,28 +362,17 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
             .query(tables.workspaces)
             .filter((workspace) => workspace.status !== 'destroyed')
 
+          // All non-destroyed workspaces are active — the 'stopped' status
+          // only indicates the workspace was externally detected, not that it
+          // should be excluded from PR polling.
           const activeWorkspaces = allWorkspaces.filter(
-            (workspace) =>
-              workspace.status === 'running' || workspace.status === 'creating'
+            (workspace) => workspace.status !== 'destroyed'
           )
 
-          const inactiveWorkspaces = allWorkspaces.filter(
-            (workspace) =>
-              workspace.status !== 'running' && workspace.status !== 'creating'
-          )
-
-          // Start continuous polling for active workspaces
+          // Start continuous polling for all active workspaces
           yield* Effect.forEach(
             activeWorkspaces,
             (workspace) => startPolling(workspace.id),
-            { discard: true }
-          )
-
-          // Run a one-time PR check for inactive (stopped/errored) workspaces
-          // so their PR status is populated on startup without continuous polling.
-          yield* Effect.forEach(
-            inactiveWorkspaces,
-            (workspace) => checkPr(workspace.id),
             { discard: true }
           )
         }

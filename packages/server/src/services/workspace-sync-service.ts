@@ -314,25 +314,14 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
       const bootstrapPolling = Effect.fn(
         'WorkspaceSyncService.bootstrapPolling'
       )(function* () {
+        // All non-destroyed workspaces are active — poll them all.
         const workspaces = store
           .query(tables.workspaces)
           .filter((workspace) => workspace.status !== 'destroyed')
 
         yield* Effect.forEach(
-          workspaces.filter(
-            (workspace) =>
-              workspace.status === 'running' || workspace.status === 'creating'
-          ),
+          workspaces,
           (workspace) => startPolling(workspace.id),
-          { discard: true }
-        )
-
-        yield* Effect.forEach(
-          workspaces.filter(
-            (workspace) =>
-              workspace.status !== 'running' && workspace.status !== 'creating'
-          ),
-          (workspace) => checkStatus(workspace.id).pipe(Effect.ignore),
           { discard: true }
         )
       })

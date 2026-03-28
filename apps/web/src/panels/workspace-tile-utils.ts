@@ -588,6 +588,12 @@ function reorderWorkspaceTiles(
     }
   }
 
+  // Preserve the root split direction; default to 'vertical' (matches addWorkspaceToTab)
+  const rootDirection: SplitDirection =
+    tab.workspaceLayout._tag === 'WorkspaceTileSplit'
+      ? tab.workspaceLayout.direction
+      : 'vertical'
+
   const equalSize = 100 / ordered.length
   const newSizes = ordered.map(() => equalSize)
 
@@ -596,7 +602,7 @@ function reorderWorkspaceTiles(
     workspaceLayout: {
       _tag: 'WorkspaceTileSplit',
       id: generateTileId('ws-split'),
-      direction: 'horizontal',
+      direction: rootDirection,
       children: ordered,
       sizes: newSizes,
     },

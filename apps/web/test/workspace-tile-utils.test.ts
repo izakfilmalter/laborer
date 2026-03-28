@@ -704,6 +704,32 @@ describe('reorderWorkspaceTiles', () => {
     expect(getWorkspaceIds(newSplit)).toEqual(['ws-3', 'ws-2', 'ws-1'])
   })
 
+  it('preserves direction of a vertical split after reorder', () => {
+    const split = makeTileSplit('split-1', 'vertical', [
+      makeTile('tile-1', 'ws-1'),
+      makeTile('tile-2', 'ws-2'),
+    ])
+    const tab = makeTab('tab-1', split)
+
+    const result = reorderWorkspaceTiles(tab, ['ws-2', 'ws-1'])
+    const newSplit = result.workspaceLayout as WorkspaceTileSplit
+    expect(newSplit.direction).toBe('vertical')
+    expect(getWorkspaceIds(newSplit)).toEqual(['ws-2', 'ws-1'])
+  })
+
+  it('preserves direction of a horizontal split after reorder', () => {
+    const split = makeTileSplit('split-1', 'horizontal', [
+      makeTile('tile-1', 'ws-1'),
+      makeTile('tile-2', 'ws-2'),
+    ])
+    const tab = makeTab('tab-1', split)
+
+    const result = reorderWorkspaceTiles(tab, ['ws-2', 'ws-1'])
+    const newSplit = result.workspaceLayout as WorkspaceTileSplit
+    expect(newSplit.direction).toBe('horizontal')
+    expect(getWorkspaceIds(newSplit)).toEqual(['ws-2', 'ws-1'])
+  })
+
   it('preserves tile leaf panel tabs and state during reorder', () => {
     const panelTab1 = makePanelTab('pt-1', makeLeaf('pane-1', 'term-1'))
     const panelTab2 = makePanelTab('pt-2', makeLeaf('pane-2', 'term-2'))
@@ -773,8 +799,8 @@ describe('combined operations', () => {
     expect(firstChild).toBeDefined()
     const firstTileId = (firstChild as WorkspaceTileNode).id
 
-    // Resize first tile to the right
-    const resized = resizeWorkspaceTiles(tab, firstTileId, 'right')
+    // Resize first tile downward (vertical split after addWorkspaceToTab + reorder)
+    const resized = resizeWorkspaceTiles(tab, firstTileId, 'down')
     const resizedSplit = resized.workspaceLayout as WorkspaceTileSplit
     const expectedBase = 100 / 3
     expect(resizedSplit.sizes[0]).toBeCloseTo(expectedBase + 5)

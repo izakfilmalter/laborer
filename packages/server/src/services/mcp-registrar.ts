@@ -516,7 +516,7 @@ const registerCodexConfig = ({
 // and LABORER_HOOK_URL from the terminal's environment (set at spawn time)
 // to report agent lifecycle transitions back to the terminal service.
 //
-// @see packages/terminal/src/routes/agent-hook.ts — POST /hook/agent-status
+// @see packages/server/src/services/terminal-client.ts — startAgentHookServer
 // @see .reference/opencode/packages/web/src/content/docs/plugins.mdx
 // ---------------------------------------------------------------------------
 

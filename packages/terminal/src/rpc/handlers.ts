@@ -213,6 +213,12 @@ export const TerminalRpcsLive = TerminalRpcs.toLayer(
         }),
 
       // -------------------------------------------------------------------
+      // terminal.setAgentStatus — external hook status override
+      // -------------------------------------------------------------------
+      'terminal.setAgentStatus': ({ id, event }) =>
+        tm.setAgentStatusFromHook(id, event),
+
+      // -------------------------------------------------------------------
       // terminal.events — streaming lifecycle events
       // -------------------------------------------------------------------
       'terminal.events': () =>

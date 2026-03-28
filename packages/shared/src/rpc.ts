@@ -1338,6 +1338,29 @@ export class TerminalRpcs extends RpcGroup.make(
   }),
 
   // -----------------------------------------------------------------------
+  // terminal.setAgentStatus — external hook status override
+  // -----------------------------------------------------------------------
+  /**
+   * Set agent status for a terminal from an external hook.
+   *
+   * Called by the server-side HTTP hook proxy when an agent CLI
+   * (opencode, claude) reports a lifecycle transition. The agent
+   * POSTs to a lightweight HTTP endpoint in the server process,
+   * which forwards the event here via RPC.
+   *
+   * - `'active'` — agent is processing / busy
+   * - `'waiting_for_input'` — agent finished, needs user input
+   * - `'clear'` — remove hook override, revert to ps-based detection
+   */
+  Rpc.make('terminal.setAgentStatus', {
+    error: TerminalRpcError,
+    payload: {
+      id: Schema.String,
+      event: Schema.Literal('active', 'waiting_for_input', 'clear'),
+    },
+  }),
+
+  // -----------------------------------------------------------------------
   // terminal.events — streaming lifecycle events
   // -----------------------------------------------------------------------
   /**

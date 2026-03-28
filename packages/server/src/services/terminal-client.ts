@@ -29,6 +29,7 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RpcError, TerminalRpcs } from '@laborer/shared/rpc'
@@ -103,6 +104,98 @@ class TerminalRpcPort extends Context.Tag('@laborer/TerminalRpcPort')<
 >() {}
 
 export { TerminalRpcPort }
+
+// ---------------------------------------------------------------------------
+// Agent hook HTTP server
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the full request body as a string.
+ */
+const readBody = (req: IncomingMessage): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    req.on('data', (chunk: Buffer) => chunks.push(chunk))
+    req.on('end', () => resolve(Buffer.concat(chunks).toString()))
+    req.on('error', reject)
+  })
+
+/**
+ * Start a lightweight HTTP server that accepts agent hook POSTs and
+ * forwards them to the terminal service via the `terminal.setAgentStatus`
+ * RPC.
+ *
+ * The server listens on port 0 (OS-assigned random port). Spawned
+ * agent terminals receive this port via `LABORER_HOOK_URL` so their
+ * hook scripts/plugins can POST lifecycle events.
+ *
+ * Returns the port the server is listening on.
+ */
+const startAgentHookServer = (
+  rpcClient: TerminalRpc,
+  scope: Scope.Scope
+): Effect.Effect<number> =>
+  Effect.async<number>((resume) => {
+    const server: Server = createServer((req, res) => {
+      if (req.method !== 'POST' || req.url !== '/hook/agent-status') {
+        res.writeHead(404)
+        res.end()
+        return
+      }
+
+      readBody(req)
+        .then((body) => {
+          const parsed = JSON.parse(body) as {
+            terminalId?: string
+            event?: string
+          }
+          const { terminalId, event } = parsed
+
+          if (
+            typeof terminalId !== 'string' ||
+            (event !== 'active' &&
+              event !== 'waiting_for_input' &&
+              event !== 'clear')
+          ) {
+            res.writeHead(400)
+            res.end()
+            return
+          }
+
+          Effect.runPromise(
+            rpcClient.terminal.setAgentStatus({ id: terminalId, event })
+          )
+            .then(() => {
+              res.writeHead(200)
+              res.end()
+            })
+            .catch(() => {
+              res.writeHead(500)
+              res.end()
+            })
+        })
+        .catch(() => {
+          res.writeHead(400)
+          res.end()
+        })
+    })
+
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address()
+      const port = typeof addr === 'object' && addr !== null ? addr.port : 0
+      resume(Effect.succeed(port))
+    })
+
+    // Register a finalizer to close the server when the scope closes
+    Effect.runFork(
+      Scope.addFinalizer(
+        scope,
+        Effect.async<void>((done) => {
+          server.close(() => done(Effect.void))
+        })
+      )
+    )
+  })
 
 class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
   TerminalClient,
@@ -249,14 +342,17 @@ class TerminalClient extends Context.Tag('@laborer/TerminalClient')<
             Effect.annotateLogs('module', logPrefix)
           )
 
-          // TODO: Agent hook mechanism needs redesign for utility processes.
-          // Previously, agents called back to http://localhost:TERMINAL_PORT/hook/agent-status
-          // via curl. With utility processes, there's no HTTP server. The hook
-          // URL is set to 0 (non-functional) until a replacement mechanism
-          // (e.g., Unix domain socket or IPC) is implemented.
-          const terminalPort = 0
+          // Lightweight HTTP server for agent hook callbacks.
+          // Agent CLIs (opencode plugin, claude hooks) POST lifecycle
+          // events here. The server forwards them to the terminal
+          // service via the `terminal.setAgentStatus` RPC.
+          const hookPort = yield* startAgentHookServer(client, layerScope)
 
-          return { client, terminalPort }
+          yield* Effect.log(
+            `Agent hook server listening on port ${hookPort}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+
+          return { client, terminalPort: hookPort }
         })
       )
 

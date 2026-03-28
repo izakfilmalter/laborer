@@ -260,12 +260,14 @@ export const WorkspaceTileNodeSchema: Schema.Schema<WorkspaceTileNode> =
  * independent arrangement of workspaces as a tile tree.
  */
 export interface WindowTab {
+  readonly focusedWorkspaceTileId?: string | undefined
   readonly id: string
   readonly label?: string | undefined
   readonly workspaceLayout?: WorkspaceTileNode | undefined
 }
 
 export const WindowTabSchema: Schema.Schema<WindowTab> = Schema.Struct({
+  focusedWorkspaceTileId: Schema.optional(Schema.String),
   id: Schema.String,
   label: Schema.optional(Schema.String),
   workspaceLayout: Schema.optional(WorkspaceTileNodeSchema),

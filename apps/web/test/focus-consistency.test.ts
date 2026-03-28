@@ -235,6 +235,27 @@ describe('resolveActivePaneForWindowTab', () => {
     const tab = makeWindowTab('tab-1', split)
     expect(resolveActivePaneForWindowTab(tab)).toBe('pane-ws2')
   })
+
+  it('returns the pane from the focused workspace tile, not the first workspace', () => {
+    const pTab1 = makePanelTab('pt-1', makeLeaf('pane-ws1'), 'pane-ws1')
+    const tile1 = makeWorkspaceTile('tile-1', 'ws-1', [pTab1])
+    const pTab2 = makePanelTab('pt-2', makeLeaf('pane-ws2'), 'pane-ws2')
+    const tile2 = makeWorkspaceTile('tile-2', 'ws-2', [pTab2])
+    const split: WorkspaceTileSplit = {
+      _tag: 'WorkspaceTileSplit',
+      id: 'wsplit-1',
+      direction: 'horizontal',
+      children: [tile1, tile2],
+      sizes: [50, 50],
+    }
+    const tab: WindowTab = {
+      id: 'tab-1',
+      workspaceLayout: split,
+      focusedWorkspaceTileId: 'tile-2',
+    }
+    // Should resolve to pane-ws2 because focusedWorkspaceTileId points to tile-2
+    expect(resolveActivePaneForWindowTab(tab)).toBe('pane-ws2')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -274,7 +295,13 @@ describe('saveFocusedPaneId', () => {
     const pTab = makePanelTab('pt-1', leaf, 'pane-1')
     const tile = makeWorkspaceTile('tile-1', 'ws-1', [pTab])
     const layout: WindowLayout = {
-      tabs: [{ id: 'tab-1', workspaceLayout: tile }],
+      tabs: [
+        {
+          id: 'tab-1',
+          workspaceLayout: tile,
+          focusedWorkspaceTileId: 'tile-1',
+        },
+      ],
       activeTabId: 'tab-1',
     }
 
@@ -287,7 +314,13 @@ describe('saveFocusedPaneId', () => {
     const pTab2 = makePanelTab('pt-2', makeLeaf('pane-2'), 'pane-2')
     const tile = makeWorkspaceTile('tile-1', 'ws-1', [pTab1, pTab2])
     const layout: WindowLayout = {
-      tabs: [{ id: 'tab-1', workspaceLayout: tile }],
+      tabs: [
+        {
+          id: 'tab-1',
+          workspaceLayout: tile,
+          focusedWorkspaceTileId: 'tile-1',
+        },
+      ],
       activeTabId: 'tab-1',
     }
 
@@ -359,6 +392,62 @@ describe('saveFocusedPaneId', () => {
     const result = saveFocusedPaneId(layout, 'pane-1')
     expect(result).toBe(layout)
   })
+
+  it('updates focusedWorkspaceTileId on the window tab when saving focus', () => {
+    const pTab1 = makePanelTab('pt-1', makeLeaf('pane-ws1'), 'pane-ws1')
+    const tile1 = makeWorkspaceTile('tile-1', 'ws-1', [pTab1])
+    const pTab2 = makePanelTab(
+      'pt-2',
+      makeSplit('split-1', [makeLeaf('pane-ws2-a'), makeLeaf('pane-ws2-b')]),
+      'pane-ws2-a'
+    )
+    const tile2 = makeWorkspaceTile('tile-2', 'ws-2', [pTab2])
+    const split: WorkspaceTileSplit = {
+      _tag: 'WorkspaceTileSplit',
+      id: 'wsplit-1',
+      direction: 'horizontal',
+      children: [tile1, tile2],
+      sizes: [50, 50],
+    }
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-1', workspaceLayout: split }],
+      activeTabId: 'tab-1',
+    }
+
+    // Focus a pane in the second workspace
+    const result = saveFocusedPaneId(layout, 'pane-ws2-b')
+    // The window tab should now have focusedWorkspaceTileId pointing to tile-2
+    expect(result.tabs[0]?.focusedWorkspaceTileId).toBe('tile-2')
+  })
+
+  it('updates focusedWorkspaceTileId when switching focus to a different workspace', () => {
+    const pTab1 = makePanelTab('pt-1', makeLeaf('pane-ws1'), 'pane-ws1')
+    const tile1 = makeWorkspaceTile('tile-1', 'ws-1', [pTab1])
+    const pTab2 = makePanelTab('pt-2', makeLeaf('pane-ws2'), 'pane-ws2')
+    const tile2 = makeWorkspaceTile('tile-2', 'ws-2', [pTab2])
+    const split: WorkspaceTileSplit = {
+      _tag: 'WorkspaceTileSplit',
+      id: 'wsplit-1',
+      direction: 'horizontal',
+      children: [tile1, tile2],
+      sizes: [50, 50],
+    }
+    const layout: WindowLayout = {
+      tabs: [
+        {
+          id: 'tab-1',
+          workspaceLayout: split,
+          focusedWorkspaceTileId: 'tile-2',
+        },
+      ],
+      activeTabId: 'tab-1',
+    }
+
+    // Focus a pane in the first workspace
+    const result = saveFocusedPaneId(layout, 'pane-ws1')
+    // focusedWorkspaceTileId should now point to tile-1
+    expect(result.tabs[0]?.focusedWorkspaceTileId).toBe('tile-1')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -381,7 +470,7 @@ describe('resolveActiveWorkspaceId', () => {
     expect(resolveActiveWorkspaceId(layout)).toBe('ws-alpha')
   })
 
-  it('returns the correct workspace when focused pane is in the second workspace', () => {
+  it('returns the correct workspace when focusedWorkspaceTileId points to the second workspace', () => {
     const pTab1 = makePanelTab('pt-1', makeLeaf('pane-ws1'), 'pane-ws1')
     const tile1 = makeWorkspaceTile('tile-1', 'ws-1', [pTab1])
     const pTab2 = makePanelTab(
@@ -398,13 +487,18 @@ describe('resolveActiveWorkspaceId', () => {
       sizes: [50, 50],
     }
     const layout: WindowLayout = {
-      tabs: [{ id: 'tab-1', workspaceLayout: split }],
+      tabs: [
+        {
+          id: 'tab-1',
+          workspaceLayout: split,
+          focusedWorkspaceTileId: 'tile-2',
+        },
+      ],
       activeTabId: 'tab-1',
     }
-    // The focused pane is in ws-2, but resolveActiveWorkspaceId resolves
-    // from the first workspace tile leaf that has a valid focused pane.
-    // Since ws-1 also has a focused pane, it returns ws-1.
-    expect(resolveActiveWorkspaceId(layout)).toBe('ws-1')
+    // When focusedWorkspaceTileId points to ws-2's tile, resolveActiveWorkspaceId
+    // should return ws-2 — not ws-1.
+    expect(resolveActiveWorkspaceId(layout)).toBe('ws-2')
   })
 
   it('returns undefined when active tab has no workspace layout', () => {
@@ -423,6 +517,53 @@ describe('resolveActiveWorkspaceId', () => {
       activeTabId: 'nonexistent-tab',
     }
     expect(resolveActiveWorkspaceId(layout)).toBeUndefined()
+  })
+
+  it('falls back to first workspace (DFS order) when focusedWorkspaceTileId is not set (legacy data)', () => {
+    const pTab1 = makePanelTab('pt-1', makeLeaf('pane-ws1'), 'pane-ws1')
+    const tile1 = makeWorkspaceTile('tile-1', 'ws-1', [pTab1])
+    const pTab2 = makePanelTab('pt-2', makeLeaf('pane-ws2'), 'pane-ws2')
+    const tile2 = makeWorkspaceTile('tile-2', 'ws-2', [pTab2])
+    const split: WorkspaceTileSplit = {
+      _tag: 'WorkspaceTileSplit',
+      id: 'wsplit-1',
+      direction: 'horizontal',
+      children: [tile1, tile2],
+      sizes: [50, 50],
+    }
+    // No focusedWorkspaceTileId — legacy layout
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-1', workspaceLayout: split }],
+      activeTabId: 'tab-1',
+    }
+    // Falls back to first workspace in DFS order
+    expect(resolveActiveWorkspaceId(layout)).toBe('ws-1')
+  })
+
+  it('end-to-end: saveFocusedPaneId then resolveActiveWorkspaceId returns correct workspace', () => {
+    const pTab1 = makePanelTab('pt-1', makeLeaf('pane-ws1'), 'pane-ws1')
+    const tile1 = makeWorkspaceTile('tile-1', 'ws-1', [pTab1])
+    const pTab2 = makePanelTab('pt-2', makeLeaf('pane-ws2'), 'pane-ws2')
+    const tile2 = makeWorkspaceTile('tile-2', 'ws-2', [pTab2])
+    const split: WorkspaceTileSplit = {
+      _tag: 'WorkspaceTileSplit',
+      id: 'wsplit-1',
+      direction: 'horizontal',
+      children: [tile1, tile2],
+      sizes: [50, 50],
+    }
+    const layout: WindowLayout = {
+      tabs: [{ id: 'tab-1', workspaceLayout: split }],
+      activeTabId: 'tab-1',
+    }
+
+    // Focus pane in ws-2
+    const afterFocus = saveFocusedPaneId(layout, 'pane-ws2')
+    expect(resolveActiveWorkspaceId(afterFocus)).toBe('ws-2')
+
+    // Focus pane in ws-1
+    const afterFocusBack = saveFocusedPaneId(afterFocus, 'pane-ws1')
+    expect(resolveActiveWorkspaceId(afterFocusBack)).toBe('ws-1')
   })
 
   it('returns workspace ID from first workspace with a valid pane when first workspace has empty panel tabs', () => {

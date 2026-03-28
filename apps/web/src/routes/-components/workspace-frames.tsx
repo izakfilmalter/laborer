@@ -275,10 +275,10 @@ export function EmptyWindowTabState() {
             sidebar.
           </EmptyDescription>
         </EmptyHeader>
-        <EmptyContent>
+        <EmptyContent className="items-stretch">
           {hasAvailableWorkspaces ? (
             <ScrollArea className="max-h-48 w-full">
-              <div className="grid gap-2">
+              <div className="grid gap-3">
                 {groups.map((group) => (
                   <WorkspacePickerGroup
                     group={group}
@@ -317,8 +317,8 @@ function WorkspacePickerGroup({
   }
 
   return (
-    <div className="grid gap-1">
-      <span className="font-medium text-muted-foreground text-xs">
+    <div className="grid gap-0.5">
+      <span className="px-2 py-1 font-medium text-muted-foreground text-xs">
         {group.projectName}
       </span>
       {group.workspaces.map((ws) => (

@@ -383,7 +383,8 @@ export type GitStatusEntry = typeof GitStatusEntry.Type
 
 /**
  * A snapshot of the file tree for a workspace's worktree.
- * Contains the full list of tracked + untracked files and their git status.
+ * Contains all files from filesystem readdir (including gitignored files)
+ * and their git status decorations.
  */
 export const FileTreeSnapshot = Schema.Struct({
   files: Schema.Array(Schema.String),

@@ -518,7 +518,7 @@ function TreePane({ workspaceId, onClose }: TreePaneProps) {
           </button>
         )}
       </div>
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {isEventually ? (
           <TreePaneContent workspaceId={workspaceId} />
         ) : (

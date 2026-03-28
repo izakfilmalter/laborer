@@ -3,12 +3,12 @@
  *
  * Verifies that `FileTreeService.subscribe` produces a file tree snapshot
  * for a workspace with a valid git worktree. Tests the full data flow:
- *   git ls-files + git status → parse → FileTreeSnapshot → Stream emission
+ *   readdir walk + git status → parse → FileTreeSnapshot → Stream emission
  *
- * Uses a real temporary git repository to exercise the actual git commands.
+ * Uses a real temporary git repository to exercise the actual commands.
  *
  * @see file-tree-service.ts — FileTreeService implementation
- * @see Issue #1: Streaming RPC contract + FileTreeService with git ls-files
+ * @see Issue #1: Streaming RPC contract + FileTreeService
  * @see Issue #4: Wire git status into FileTreeService and TreePane
  */
 
@@ -144,7 +144,7 @@ describe('FileTreeService', () => {
           'Expected src/utils.ts in files'
         )
 
-        // Verify untracked file is included (git ls-files --others)
+        // Verify untracked file is included (readdir finds all files)
         assert.isTrue(
           snapshot.files.includes('untracked.txt'),
           'Expected untracked.txt in files'

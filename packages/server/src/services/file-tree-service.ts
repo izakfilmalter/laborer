@@ -2,25 +2,29 @@
  * FileTreeService — Effect Service
  *
  * Provides a live file tree listing for a workspace's worktree directory.
- * Runs `git ls-files -z --others --exclude-standard` to produce the full
- * list of tracked and untracked files (respecting .gitignore), and
- * `git status -z --porcelain=v2` for git status decorations, then streams
+ * Lists files via recursive `readdir` (matching VS Code's approach of
+ * reading the filesystem directly rather than relying on git), and runs
+ * `git status -z --porcelain=v2` for git status decorations. Streams
  * snapshots to subscribers via Effect Stream.
  *
- * Both git commands run in parallel for each snapshot. The stream emits
- * an initial snapshot on subscribe, then pushes updated snapshots whenever
- * files change on disk. File change detection uses `FileWatcherClient`:
- * the service subscribes a recursive file watcher on the worktree path
- * and listens for events via `onFileEvent`. Events are debounced at 300ms
- * to coalesce rapid changes (e.g., build output) into a single git
- * invocation.
+ * File listing uses the filesystem directly so that gitignored-but-present
+ * directories (e.g. `.reference/`, `data/`) are visible in the tree.
+ * Noisy directories like `node_modules`, `.git`, and build output are
+ * skipped using the same ignore patterns as the file watcher.
+ *
+ * The readdir walk and git status run in parallel for each snapshot. The
+ * stream emits an initial snapshot on subscribe, then pushes updated
+ * snapshots whenever files change on disk. File change detection uses
+ * `FileWatcherClient`: the service subscribes a recursive file watcher
+ * on the worktree path and listens for events via `onFileEvent`. Events
+ * are debounced at 300ms to coalesce rapid changes (e.g., build output)
+ * into a single refresh.
  *
  * Stream deduplication: each subscription maintains a fingerprint of the
  * last emitted snapshot (file count + status count + content hash). When
  * a debounced refresh produces a snapshot identical to the previous one,
  * the emission is suppressed. This prevents redundant renders when a file
- * watcher fires but git state hasn't changed (e.g., a .gitignore'd file
- * was modified, or a log file was appended to).
+ * watcher fires but the file listing hasn't changed.
  *
  * Lifecycle: each call to `subscribe` creates an independent stream with
  * its own file watcher subscription, debounce timer, and dedup state.
@@ -34,7 +38,7 @@
  *   fails with INVALID_STATE
  * - Worktree directory doesn't exist -> retries with backoff up to a
  *   maximum number of attempts before failing with WORKTREE_NOT_READY
- * - Git command failures -> logged as warnings, stream continues with
+ * - Readdir / git failures -> logged as warnings, stream continues with
  *   last known good snapshot (for debounced refreshes) or fails for
  *   initial snapshot
  * - In-flight git processes are killed on stream unsubscribe via the
@@ -51,6 +55,8 @@
  */
 
 import { existsSync } from 'node:fs'
+import { readdir } from 'node:fs/promises'
+import { join, relative } from 'node:path'
 import type { FileTreeSnapshot } from '@laborer/shared/rpc'
 import { RpcError } from '@laborer/shared/rpc'
 import { tables } from '@laborer/shared/schema'
@@ -152,56 +158,159 @@ const spawnGit = (
   }
 }
 
-/**
- * Parse null-delimited `git ls-files` output into a sorted array of
- * relative file paths. Empty entries (from trailing null bytes) are
- * filtered out.
- */
-const parseLsFilesOutput = (output: string): string[] =>
-  pipe(
-    output.split('\0'),
-    Arr.filter((entry) => entry.length > 0),
-    Arr.sort(Order.string)
-  )
+// ── Directory ignore rules ──────────────────────────────────────
+// Matches the file watcher's DEFAULT_IGNORED_PREFIXES so the tree
+// doesn't show noisy directories that would flood the UI.
 
 /**
- * Run `git ls-files` to get the full list of tracked + untracked files
- * in a worktree directory.
+ * Top-level directory names to skip during recursive readdir.
+ * These are the same directories the file watcher ignores to avoid
+ * flooding downstream services with irrelevant events.
+ */
+const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set([
+  // Git internals
+  '.git',
+  // Dependencies
+  'node_modules',
+  // Build output
+  'dist',
+  'build',
+  'out',
+  '.next',
+  '.nuxt',
+  '.svelte-kit',
+  '.turbo',
+  // Package manager caches
+  '.yarn',
+  '.pnpm-store',
+  // IDE / editor
+  '.idea',
+  // Coverage / test artifacts
+  'coverage',
+  '.nyc_output',
+])
+
+/**
+ * Individual file names to skip (OS metadata files that aren't useful
+ * in the tree and would just be noise).
+ */
+const IGNORED_FILES: ReadonlySet<string> = new Set(['.DS_Store', 'Thumbs.db'])
+
+/**
+ * Read a single directory and partition its entries into child directories
+ * (to recurse into) and files (to collect). Skips ignored directories and
+ * files. Returns empty arrays on read failure (directory deleted or
+ * permission denied).
+ */
+const readDirectoryEntries = async (
+  dirPath: string,
+  rootPath: string
+): Promise<{ childDirs: string[]; filePaths: string[] }> => {
+  let entries: {
+    name: string
+    isDirectory: () => boolean
+    isFile: () => boolean
+    isSymbolicLink: () => boolean
+  }[]
+  try {
+    const raw = await readdir(dirPath, { withFileTypes: true })
+    entries = raw.map((e) => ({
+      name: String(e.name),
+      isDirectory: () => e.isDirectory(),
+      isFile: () => e.isFile(),
+      isSymbolicLink: () => e.isSymbolicLink(),
+    }))
+  } catch {
+    // Directory may have been deleted between listing and reading,
+    // or we may lack permissions. Skip silently.
+    return { childDirs: [], filePaths: [] }
+  }
+
+  const childDirs: string[] = []
+  const filePaths: string[] = []
+
+  for (const entry of entries) {
+    const name = String(entry.name)
+
+    if (entry.isDirectory()) {
+      if (!IGNORED_DIRECTORIES.has(name)) {
+        childDirs.push(join(dirPath, name))
+      }
+    } else if (
+      (entry.isFile() || entry.isSymbolicLink()) &&
+      !IGNORED_FILES.has(name)
+    ) {
+      filePaths.push(relative(rootPath, join(dirPath, name)))
+    }
+  }
+
+  return { childDirs, filePaths }
+}
+
+/**
+ * Recursively walk a directory and collect all file paths relative to
+ * the root. Skips directories in IGNORED_DIRECTORIES and files in
+ * IGNORED_FILES.
  *
- * Uses `-z` for null-delimited output (safe parsing of paths with spaces
- * and unicode), `--others --exclude-standard` to include untracked files
- * while respecting .gitignore.
+ * This matches VS Code's approach of reading the filesystem directly
+ * rather than relying on `git ls-files`, so gitignored-but-present
+ * files/directories (like `.reference/`) appear in the tree.
  *
- * The optional `signal` parameter enables cancellation of the git process
+ * The optional `signal` parameter enables cancellation of the walk
+ * when the stream subscription ends.
+ */
+const walkDirectory = async (
+  rootPath: string,
+  signal?: AbortSignal
+): Promise<string[]> => {
+  const files: string[] = []
+  const queue: string[] = [rootPath]
+
+  while (queue.length > 0 && signal?.aborted !== true) {
+    const dirPath = queue.shift()
+    if (dirPath === undefined) {
+      break
+    }
+
+    const { childDirs, filePaths } = await readDirectoryEntries(
+      dirPath,
+      rootPath
+    )
+    for (const child of childDirs) {
+      queue.push(child)
+    }
+    for (const file of filePaths) {
+      files.push(file)
+    }
+  }
+
+  return files
+}
+
+/**
+ * Read the filesystem to get the full list of files in a worktree
+ * directory. Uses recursive readdir instead of git ls-files so that
+ * gitignored-but-present files (like .reference/) appear in the tree.
+ *
+ * Returns a sorted array of relative file paths.
+ *
+ * The optional `signal` parameter enables cancellation of the walk
  * when the stream subscription ends.
  */
 const getFileList = Effect.fn('FileTreeService.getFileList')(function* (
   worktreePath: string,
   signal?: AbortSignal
 ) {
-  const { result } = spawnGit(
-    ['ls-files', '-z', '--others', '--exclude-standard', '--cached'],
-    worktreePath,
-    signal
-  )
-
-  const output = yield* Effect.tryPromise({
-    try: () => result,
+  const files = yield* Effect.tryPromise({
+    try: () => walkDirectory(worktreePath, signal),
     catch: (error) =>
       new RpcError({
-        message: `Failed to spawn git ls-files: ${String(error)}`,
-        code: 'GIT_LS_FILES_FAILED',
+        message: `Failed to read directory: ${String(error)}`,
+        code: 'READDIR_FAILED',
       }),
   })
 
-  if (output.exitCode !== 0) {
-    return yield* new RpcError({
-      message: `git ls-files failed (exit ${output.exitCode}): ${output.stderr.trim()}`,
-      code: 'GIT_LS_FILES_FAILED',
-    })
-  }
-
-  return parseLsFilesOutput(output.stdout)
+  return pipe(files, Arr.sort(Order.string))
 })
 
 /**
@@ -247,11 +356,11 @@ const getGitStatus = Effect.fn('FileTreeService.getGitStatus')(function* (
 })
 
 /**
- * Compute a fresh FileTreeSnapshot by running git ls-files and git status
- * in parallel.
+ * Compute a fresh FileTreeSnapshot by running filesystem readdir and
+ * git status in parallel.
  *
- * The optional `signal` parameter is forwarded to both git commands,
- * enabling cancellation of in-flight processes when the stream is torn down.
+ * The optional `signal` parameter is forwarded to both operations,
+ * enabling cancellation when the stream is torn down.
  */
 const computeSnapshot = Effect.fn('FileTreeService.computeSnapshot')(function* (
   worktreePath: string,

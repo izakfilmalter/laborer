@@ -17,6 +17,7 @@ import { queryDb } from '@livestore/livestore'
 import { GitBranch, Layers, LayoutGrid, PanelTop } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PanelImperativeHandle } from 'react-resizable-panels'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Button } from '@/components/ui/button'
 import {
   Empty,
@@ -36,6 +37,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { TabBar, type TabBarItem } from '@/components/ui/tab-bar'
 import { TabErrorBoundary } from '@/components/ui/tab-error-boundary'
+import { useWhenPhase } from '@/hooks/use-when-phase'
 import { useLaborerStore } from '@/livestore/store'
 import { usePanelActions } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
@@ -48,7 +50,7 @@ import {
 import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
 import { DiffPane } from '@/panes/diff-pane'
 import { ReviewPane } from '@/panes/review-pane'
-import { TreePane } from '@/panes/tree-pane'
+import { FileTreePreloader, TreePane } from '@/panes/tree-pane'
 import { WorkspaceFrameHeaderContainer } from './workspace-frame-header-container'
 
 // ---------------------------------------------------------------------------
@@ -792,12 +794,20 @@ function WorkspaceFrame({
     />
   ) : null
 
+  // Preload file tree data in the background so it's ready when
+  // the user opens the Files panel. The FileTreePreloader starts
+  // the `fileTree.subscribe` streaming RPC without rendering anything.
+  const isEventually = useWhenPhase(LifecyclePhase.Eventually)
+
   return (
     <div
       className={`relative flex ${isMinimized ? 'h-auto' : 'h-full'} flex-col ${isDragging ? 'opacity-40' : ''}`}
       data-testid="workspace-frame"
       ref={frameRef}
     >
+      {isEventually && workspaceId && (
+        <FileTreePreloader workspaceId={workspaceId} />
+      )}
       {closestEdge === 'top' && (
         <div className="absolute inset-x-0 top-0 z-10 h-0.5 bg-primary" />
       )}

@@ -20,7 +20,7 @@
  */
 
 import { Result } from '@effect-atom/atom'
-import { useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomMount, useAtomValue } from '@effect-atom/atom-react/Hooks'
 import type { FileTreeSnapshot } from '@laborer/shared/rpc'
 import { FileTree } from '@pierre/trees/react'
 import { Cause, pipe } from 'effect'
@@ -54,6 +54,51 @@ interface TreePaneProps {
   readonly workspaceId: string
 }
 
+// ---------------------------------------------------------------------------
+// Shared atom cache — ensures the preloader and TreePaneContent use the
+// same atom instance so the RPC subscription isn't duplicated.
+// ---------------------------------------------------------------------------
+
+const fileTreeAtomCache = new Map<
+  string,
+  ReturnType<typeof LaborerClient.query>
+>()
+
+/**
+ * Get or create the `fileTree.subscribe` pull atom for a workspace.
+ * Cached by workspaceId so all consumers share one RPC subscription.
+ */
+function getFileTreeAtom(workspaceId: string) {
+  let atom = fileTreeAtomCache.get(workspaceId)
+  if (!atom) {
+    atom = LaborerClient.query('fileTree.subscribe', { workspaceId })
+    fileTreeAtomCache.set(workspaceId, atom)
+  }
+  return atom
+}
+
+/**
+ * Preload the file tree data for a workspace.
+ *
+ * Renders as a hidden component inside WorkspaceFrame. Starts the
+ * `fileTree.subscribe` streaming RPC in the background once Phase 4
+ * (Eventually) is reached. When the user later opens the Files panel,
+ * the first snapshot is already available and renders instantly.
+ *
+ * Uses `useAtomMount` which mounts the atom in the registry (starting
+ * the RPC subscription) without subscribing to value changes, so this
+ * component causes zero re-renders after mount.
+ */
+function FileTreePreloader({
+  workspaceId,
+}: {
+  readonly workspaceId: string
+}): null {
+  const atom = useMemo(() => getFileTreeAtom(workspaceId), [workspaceId])
+  useAtomMount(atom)
+  return null
+}
+
 /**
  * Extract the latest snapshot from the streaming RPC pull result.
  *
@@ -70,7 +115,7 @@ function useFileTreeSnapshot(workspaceId: string): {
   snapshot: FileTreeSnapshot | null
 } {
   const fileTreeAtom = useMemo(
-    () => LaborerClient.query('fileTree.subscribe', { workspaceId }),
+    () => getFileTreeAtom(workspaceId),
     [workspaceId]
   )
   const result = useAtomValue(fileTreeAtom)
@@ -242,5 +287,5 @@ function TreePane({ workspaceId, onClose }: TreePaneProps) {
   )
 }
 
-export { TreePane }
+export { FileTreePreloader, TreePane }
 export type { TreePaneProps }

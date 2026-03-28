@@ -17,8 +17,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Hoisted mutable refs — shared between vi.mock factories and test body
 // ---------------------------------------------------------------------------
 
-const { activePaneIdRef, addPanelTabMock, splitPaneMock } = vi.hoisted(() => ({
+const {
+  activePaneIdRef,
+  activeWorkspaceIdRef,
+  addPanelTabMock,
+  splitPaneMock,
+} = vi.hoisted(() => ({
   activePaneIdRef: { current: null as string | null },
+  activeWorkspaceIdRef: { current: null as string | null },
   addPanelTabMock: vi.fn(),
   splitPaneMock: vi.fn(),
 }))
@@ -30,6 +36,7 @@ const { activePaneIdRef, addPanelTabMock, splitPaneMock } = vi.hoisted(() => ({
 // Panel context — expose splitPane and addPanelTab as spies
 vi.mock('@/panels/panel-context', () => ({
   useActivePaneId: () => activePaneIdRef.current,
+  useActiveWorkspaceId: () => activeWorkspaceIdRef.current,
   usePanelActions: () => ({
     assignTerminalToPane: vi.fn(),
     closePane: vi.fn(),
@@ -165,12 +172,14 @@ afterEach(() => {
 beforeEach(() => {
   vi.clearAllMocks()
   activePaneIdRef.current = null
+  activeWorkspaceIdRef.current = null
 })
 
 describe('TerminalList spawn buttons', () => {
-  describe('with an active pane', () => {
+  describe('with an active pane in the SAME workspace', () => {
     beforeEach(() => {
       activePaneIdRef.current = 'pane-1'
+      activeWorkspaceIdRef.current = 'ws-1'
     })
 
     it('clicking Agent button splits right from the active pane', () => {
@@ -247,6 +256,56 @@ describe('TerminalList spawn buttons', () => {
         })
       )
       expect(addPanelTabMock).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('with an active pane in a DIFFERENT workspace', () => {
+    beforeEach(() => {
+      // The active pane belongs to ws-other, but we'll render TerminalList
+      // for ws-1. The spawn should NOT split the other workspace's pane.
+      activePaneIdRef.current = 'pane-other'
+      activeWorkspaceIdRef.current = 'ws-other'
+    })
+
+    it('clicking New terminal button calls addPanelTab for the target workspace', () => {
+      render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
+
+      const terminalButton = screen.getByRole('button', {
+        name: 'New terminal',
+      })
+      fireEvent.click(terminalButton)
+
+      // Should NOT split the other workspace's pane
+      expect(splitPaneMock).not.toHaveBeenCalled()
+      // Should create a new panel tab in the correct workspace
+      expect(addPanelTabMock).toHaveBeenCalledWith('ws-1', 'terminal')
+    })
+
+    it('clicking Agent button calls addPanelTab for the target workspace', () => {
+      render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
+
+      const agentButton = screen.getByRole('button', {
+        name: 'Start opencode agent',
+      })
+      fireEvent.click(agentButton)
+
+      // Should NOT split the other workspace's pane
+      expect(splitPaneMock).not.toHaveBeenCalled()
+      // Should create a new panel tab in the correct workspace
+      expect(addPanelTabMock).toHaveBeenCalledWith('ws-1', 'agent')
+    })
+
+    it('Cmd+clicking New terminal button calls addPanelTab (not split) for different workspace', () => {
+      render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
+
+      const terminalButton = screen.getByRole('button', {
+        name: 'New terminal',
+      })
+      fireEvent.click(terminalButton, { metaKey: true })
+
+      // Even with Cmd+click, should NOT split the other workspace's pane
+      expect(splitPaneMock).not.toHaveBeenCalled()
+      expect(addPanelTabMock).toHaveBeenCalledWith('ws-1', 'terminal')
     })
   })
 

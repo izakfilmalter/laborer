@@ -55,7 +55,11 @@ import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
-import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
+import {
+  useActivePaneId,
+  useActiveWorkspaceId,
+  usePanelActions,
+} from '@/panels/panel-context'
 
 const restartTerminalMutation =
   TerminalServiceClient.mutation('terminal.restart')
@@ -151,6 +155,7 @@ function TerminalList({
   } = useTerminalList()
   const panelActions = usePanelActions()
   const activePaneId = useActivePaneId()
+  const activeWorkspaceId = useActiveWorkspaceId()
   const restartTerminal = useAtomSet(restartTerminalMutation, {
     mode: 'promise',
   })
@@ -196,11 +201,17 @@ function TerminalList({
         return
       }
       // Cmd+click → split down, default → split right.
-      // When an active pane exists, split from it; otherwise fall back
-      // to creating a new panel tab (which handles bootstrapping the
-      // workspace into the main area). Both paths auto-spawn a terminal.
+      // When an active pane exists AND belongs to the same workspace,
+      // split from it. Otherwise fall back to creating a new panel tab
+      // (which handles bootstrapping the workspace into the main area).
+      // Both paths auto-spawn a terminal.
+      //
+      // The workspace ownership check prevents a bug where clicking
+      // "New" on workspace B (while workspace A is focused) would split
+      // workspace A's pane instead of creating a new panel in workspace B.
       const direction = event.metaKey ? 'vertical' : 'horizontal'
-      if (activePaneId) {
+      const paneIsInThisWorkspace = activeWorkspaceId === workspaceId
+      if (activePaneId && paneIsInThisWorkspace) {
         panelActions.splitPane(activePaneId, direction, {
           paneType: 'terminal',
           workspaceId,
@@ -209,7 +220,13 @@ function TerminalList({
         panelActions.addPanelTab?.(workspaceId, 'terminal')
       }
     },
-    [isServiceAvailable, workspaceId, panelActions, activePaneId]
+    [
+      isServiceAvailable,
+      workspaceId,
+      panelActions,
+      activePaneId,
+      activeWorkspaceId,
+    ]
   )
 
   const handleSpawnAgent = useCallback(
@@ -222,11 +239,12 @@ function TerminalList({
         return
       }
       // Cmd+click → split down, default → split right.
-      // When an active pane exists, split from it; otherwise fall back
-      // to creating a new panel tab. Both paths auto-spawn a terminal
-      // with the configured agent command.
+      // When an active pane exists AND belongs to the same workspace,
+      // split from it. Otherwise fall back to creating a new panel tab.
+      // Both paths auto-spawn a terminal with the configured agent command.
       const direction = event.metaKey ? 'vertical' : 'horizontal'
-      if (activePaneId) {
+      const paneIsInThisWorkspace = activeWorkspaceId === workspaceId
+      if (activePaneId && paneIsInThisWorkspace) {
         panelActions.splitPane(activePaneId, direction, {
           paneType: 'agent',
           workspaceId,
@@ -235,7 +253,13 @@ function TerminalList({
         panelActions.addPanelTab?.(workspaceId, 'agent')
       }
     },
-    [isServiceAvailable, workspaceId, panelActions, activePaneId]
+    [
+      isServiceAvailable,
+      workspaceId,
+      panelActions,
+      activePaneId,
+      activeWorkspaceId,
+    ]
   )
 
   const handleCloseTerminal = useCallback(

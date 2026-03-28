@@ -296,4 +296,61 @@ describe('usePanelLayout', () => {
   it.todo(
     'reconciles the persisted layout tree with new terminal IDs after respawning'
   )
+
+  it('creates a panel tab when assigning a terminal to a workspace with no panel tabs', async () => {
+    // Layout: workspace-new has a tile leaf but zero panel tabs.
+    // This simulates the state after addWorkspaceToTab creates an empty tile.
+    const layoutWithEmptyWorkspace = {
+      tabs: [
+        {
+          id: 'win-tab-1',
+          label: 'Tab 1',
+          workspaceLayout: {
+            _tag: 'WorkspaceTileLeaf' as const,
+            id: 'ws-tile-new',
+            workspaceId: 'workspace-new',
+            panelTabs: [],
+            activePanelTabId: undefined,
+          },
+        },
+      ],
+      activeTabId: 'win-tab-1',
+    }
+    persistedRowsRef.current = [
+      {
+        windowId: 'window-a',
+        windowLayout: layoutWithEmptyWorkspace,
+      },
+    ]
+
+    const { result } = renderHook(() => usePanelLayout())
+
+    await act(async () => {
+      await result.current.panelActions.assignTerminalToPane(
+        'terminal-1',
+        'workspace-new'
+      )
+    })
+
+    // A windowLayoutUpdated event should have been committed
+    expect(windowLayoutUpdatedMock).toHaveBeenCalled()
+
+    // The committed layout should contain a panel tab with the terminal assigned
+    const lastCall = windowLayoutUpdatedMock.mock.calls.at(-1)?.[0]
+    const committedLayout = lastCall?.windowLayout
+    expect(committedLayout).toBeDefined()
+
+    // Find the workspace tile leaf in the committed layout
+    const tab = committedLayout.tabs[0]
+    const wsLeaf = tab?.workspaceLayout
+    expect(wsLeaf?._tag).toBe('WorkspaceTileLeaf')
+    expect(wsLeaf?.workspaceId).toBe('workspace-new')
+    // Should now have a panel tab
+    expect(wsLeaf?.panelTabs.length).toBeGreaterThan(0)
+    // The panel tab's leaf should have the terminal assigned
+    const panelTab = wsLeaf?.panelTabs[0]
+    expect(panelTab?.panelLayout._tag).toBe('LeafNode')
+    expect(panelTab?.panelLayout.terminalId).toBe('terminal-1')
+    expect(panelTab?.panelLayout.paneType).toBe('terminal')
+  })
 })

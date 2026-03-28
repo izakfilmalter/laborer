@@ -283,7 +283,26 @@ function assignTerminalInWorkspace(
     (t) => t.id === wsLeaf.activePanelTabId
   )
   if (!activePTab) {
-    return { layout: baseLayout, focusPaneId: undefined }
+    // Workspace has no panel tabs — create one with the terminal pre-assigned.
+    // This handles the case where a workspace tile was added to the layout
+    // (via addWorkspaceToTab) but no terminal panel tab was created yet.
+    const updated = updateWorkspaceTileLeaf(baseLayout, workspaceId, (leaf) =>
+      addPanelTab(leaf, 'terminal', { terminalId })
+    )
+    // Resolve the new pane ID for focus
+    const updatedLeaves = getAllWorkspaceTileLeaves(updated)
+    const updatedWsLeaf = updatedLeaves.find(
+      (l) => l.workspaceId === workspaceId
+    )
+    const newTab = updatedWsLeaf?.panelTabs.at(-1)
+    const newPaneId =
+      newTab?.panelLayout._tag === 'LeafNode'
+        ? newTab.panelLayout.id
+        : undefined
+    return {
+      layout: newPaneId ? saveFocusedPaneId(updated, newPaneId) : updated,
+      focusPaneId: newPaneId,
+    }
   }
 
   // Look for an empty terminal pane

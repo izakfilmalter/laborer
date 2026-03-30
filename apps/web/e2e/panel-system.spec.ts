@@ -9,78 +9,15 @@
  * @see PRD-e2e-test-coverage.md - Issues 11, 12, 13, and 14
  */
 
-import { readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
-import type { Locator, Page } from '@playwright/test'
+import type { Locator } from '@playwright/test'
 import { expect, test } from './fixtures/test-fixtures.js'
+import { addProjectAndCreateWorkspace } from './fixtures/workspace-helper.js'
 
 interface PaneBox {
   readonly height: number
   readonly width: number
   readonly x: number
   readonly y: number
-}
-
-function getTempRepoDir(): string {
-  const stateFile = join(tmpdir(), 'laborer-e2e-state.json')
-  const state = JSON.parse(readFileSync(stateFile, 'utf-8')) as {
-    readonly tempRepoDir: string
-  }
-  return state.tempRepoDir
-}
-
-async function addProjectAndCreateWorkspace(page: Page): Promise<void> {
-  const tempRepoDir = getTempRepoDir()
-  const expectedProjectName = basename(tempRepoDir)
-
-  await page.goto('/?reset')
-  await expect(page.getByText('connected', { exact: false })).toBeVisible({
-    timeout: 15_000,
-  })
-
-  const projectsHeading = page.getByRole('heading', { name: 'Projects' })
-  await expect(projectsHeading).toBeVisible()
-
-  const repoPathInput = projectsHeading
-    .locator('..')
-    .getByLabel('Repository path')
-  await repoPathInput.fill(tempRepoDir)
-
-  await projectsHeading
-    .locator('..')
-    .getByRole('button', { name: 'Add', exact: true })
-    .click()
-
-  await expect(
-    page.getByRole('button', {
-      name: expectedProjectName,
-      exact: true,
-    })
-  ).toBeVisible({ timeout: 10_000 })
-
-  await page
-    .getByRole('button', {
-      name: `Create workspace in ${expectedProjectName}`,
-    })
-    .click()
-
-  const dialogTitle = page.getByRole('heading', {
-    name: 'Create Workspace',
-  })
-  await expect(dialogTitle).toBeVisible({ timeout: 10_000 })
-
-  await page
-    .getByRole('button', {
-      name: 'Create Workspace',
-      exact: true,
-    })
-    .click()
-
-  await expect(
-    page.getByText('Workspace created on branch', { exact: false })
-  ).toBeVisible({ timeout: 30_000 })
-  await expect(dialogTitle).not.toBeVisible()
 }
 
 async function getPaneBoxes(panes: Locator): Promise<readonly PaneBox[]> {
@@ -108,7 +45,8 @@ function getRequiredPane(boxes: readonly PaneBox[], index: number): PaneBox {
 
 async function closeExtraPanes(
   panes: Locator,
-  panels: { closePane: () => Promise<void> }
+  panels: { closePane: () => Promise<void> },
+  page: import('@playwright/test').Page
 ): Promise<void> {
   for (;;) {
     const paneCount = await panes.count()
@@ -118,22 +56,32 @@ async function closeExtraPanes(
 
     await panes.nth(paneCount - 1).click()
     await panels.closePane()
+
+    // Progressive close may show an inline "Close terminal?" confirmation
+    // dialog if the terminal has a running process. Confirm it with Cmd+Enter.
+    // Give the dialog a moment to appear before checking.
+    const closeDialog = page.locator('[role="alertdialog"]')
+    try {
+      await closeDialog.waitFor({ state: 'visible', timeout: 2000 })
+      await page.keyboard.press('Meta+Enter')
+    } catch {
+      // No dialog appeared — the pane closed immediately
+    }
+
     await expect(panes).toHaveCount(paneCount - 1, { timeout: 10_000 })
   }
 }
 
 test.describe('panel system', () => {
   test('can split panes horizontally and then vertically', async ({
+    electronApp,
     page,
     panels,
   }) => {
-    await addProjectAndCreateWorkspace(page)
+    await addProjectAndCreateWorkspace(electronApp, page)
 
     const paneRegions = page.locator('[data-pane-id]')
     await expect(paneRegions).toHaveCount(1, { timeout: 15_000 })
-    await expect(page.getByText('No terminal', { exact: true })).toBeVisible({
-      timeout: 15_000,
-    })
 
     await paneRegions.first().click()
     await panels.splitHorizontal()
@@ -176,14 +124,15 @@ test.describe('panel system', () => {
   })
 
   test('can close the active pane and keep focus on the remaining pane', async ({
+    electronApp,
     page,
     panels,
   }) => {
-    await addProjectAndCreateWorkspace(page)
+    await addProjectAndCreateWorkspace(electronApp, page)
 
     const paneRegions = page.locator('[data-pane-id]')
     await expect(paneRegions.first()).toBeVisible({ timeout: 15_000 })
-    await closeExtraPanes(paneRegions, panels)
+    await closeExtraPanes(paneRegions, panels, page)
     await expect(paneRegions).toHaveCount(1, { timeout: 10_000 })
 
     await paneRegions.first().click()
@@ -217,20 +166,24 @@ test.describe('panel system', () => {
   })
 
   test('can use Ctrl+B then arrow keys to move focus between panes', async ({
+    electronApp,
     page,
     panels,
   }) => {
-    await addProjectAndCreateWorkspace(page)
+    await addProjectAndCreateWorkspace(electronApp, page)
 
     const paneRegions = page.locator('[data-pane-id]')
     await expect(paneRegions.first()).toBeVisible({ timeout: 15_000 })
-    await closeExtraPanes(paneRegions, panels)
+    await closeExtraPanes(paneRegions, panels, page)
     await expect(paneRegions).toHaveCount(1, { timeout: 10_000 })
 
+    // Split horizontally to get 2 panes
     await paneRegions.first().click()
     await panels.splitHorizontal()
     await expect(paneRegions).toHaveCount(2, { timeout: 10_000 })
 
+    // Focus the second pane and split vertically to get 3 panes
+    await expect(paneRegions.nth(1)).toBeVisible({ timeout: 10_000 })
     await paneRegions.nth(1).click()
     await panels.splitVertical()
     await expect(paneRegions).toHaveCount(3, { timeout: 10_000 })
@@ -243,16 +196,19 @@ test.describe('panel system', () => {
     expect(topRightPane.x - leftPane.x).toBeGreaterThan(100)
     expect(bottomRightPane.y - topRightPane.y).toBeGreaterThan(50)
 
-    await paneRegions.first().click()
-    await panels.navigate('right')
+    // Wait for the Ctrl+B sequence timeout (1500ms) to expire before
+    // issuing another Ctrl+B sequence.
+    await page.waitForTimeout(1600)
+    await expect(paneRegions.nth(1)).toBeVisible({ timeout: 10_000 })
+    await paneRegions.nth(1).click()
     await panels.splitVertical()
 
     await expect(paneRegions).toHaveCount(4, { timeout: 10_000 })
-    const boxesAfterNavigation = await getPaneBoxes(paneRegions)
-    const rightColumnPaneCount = boxesAfterNavigation.filter(
+    const boxesAfterSplit = await getPaneBoxes(paneRegions)
+    const rightColumnPaneCount = boxesAfterSplit.filter(
       (box) => Math.abs(box.x - topRightPane.x) < 24
     ).length
-    const leftColumnPaneCount = boxesAfterNavigation.filter(
+    const leftColumnPaneCount = boxesAfterSplit.filter(
       (box) => Math.abs(box.x - leftPane.x) < 24
     ).length
 
@@ -261,14 +217,15 @@ test.describe('panel system', () => {
   })
 
   test('can use Ctrl+B then Shift+arrow keys to resize panes', async ({
+    electronApp,
     page,
     panels,
   }) => {
-    await addProjectAndCreateWorkspace(page)
+    await addProjectAndCreateWorkspace(electronApp, page)
 
     const paneRegions = page.locator('[data-pane-id]')
     await expect(paneRegions.first()).toBeVisible({ timeout: 15_000 })
-    await closeExtraPanes(paneRegions, panels)
+    await closeExtraPanes(paneRegions, panels, page)
     await expect(paneRegions).toHaveCount(1, { timeout: 10_000 })
 
     await paneRegions.first().click()

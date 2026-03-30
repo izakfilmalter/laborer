@@ -858,6 +858,7 @@ function WorkspaceItem({
         needsAttention &&
           'animate-pulse border-amber-400/50 shadow-[0_0_8px_rgba(251,191,36,0.15)]'
       )}
+      data-testid={`workspace-card-${workspace.branchName}`}
       size="sm"
     >
       <CardHeader className="gap-2">

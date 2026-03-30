@@ -47,7 +47,7 @@ import { RpcServer } from '@effect/rpc'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { Context, Effect, Fiber, Layer, pipe, Queue, Ref } from 'effect'
+import { Context, Effect, Fiber, Layer, pipe, Queue, Ref, Stream } from 'effect'
 
 import { LaborerRpcsLive } from './rpc/handlers.js'
 import { BackgroundFetchService } from './services/background-fetch-service.js'
@@ -58,6 +58,7 @@ import {
   DeferredServicesReady,
   DeferredServicesReadyLayer,
   makeRefDelegatingService,
+  serviceInitializingError,
 } from './services/deferred-service.js'
 import { DepsImageService } from './services/deps-image-service.js'
 import { DiffService } from './services/diff-service.js'
@@ -352,7 +353,14 @@ const DeferredServicesProxyLive = Layer.scopedContext(
 
     const containerService = yield* makeRefDelegatingService(ContainerService)
     const diffService = yield* makeRefDelegatingService(DiffService)
-    const fileTreeService = yield* makeRefDelegatingService(FileTreeService)
+    const fileTreeService = yield* makeRefDelegatingService(FileTreeService, {
+      // FileTreeService.subscribe returns a Stream, not an Effect.
+      // The default proxy returns Effect.fail(...) which causes a
+      // server-wide Defect ("Not a valid effect") when the RPC framework
+      // tries to consume it as a Stream. Return Stream.fail instead.
+      subscribe: () =>
+        Stream.fail(serviceInitializingError('@laborer/FileTreeService')),
+    })
     const dockerDetection = yield* makeRefDelegatingService(DockerDetection, {
       // DockerDetection.check() has no error channel — return valid data
       check: () => Effect.succeed({ available: false }),

@@ -66,6 +66,16 @@ vi.mock('@/lib/haptics', () => ({
   haptics: { buttonTap: vi.fn(), heavyImpact: vi.fn() },
 }))
 
+// Stub lifecycle phase context
+vi.mock('@/components/lifecycle-phase-context', () => ({
+  LifecyclePhase: { Starting: 1, Ready: 2, Restored: 3, Eventually: 4 },
+  useLifecyclePhase: () => ({
+    phase: 4,
+    advanceTo: vi.fn(),
+    when: () => Promise.resolve(),
+  }),
+}))
+
 vi.mock('@/panels/panel-context', () => ({
   usePanelActions: () => mockActions,
   useActiveWorkspaceId: () => null,
@@ -358,21 +368,48 @@ describe('EmptyWindowTabState', () => {
     ).toBeDefined()
   })
 
-  it('falls back to project ID when project name is not found', () => {
+  it('excludes workspaces whose project has been removed', () => {
     setupQueryResults(
       [
         {
           id: 'ws-1',
-          projectId: 'unknown-proj',
-          branchName: 'branch-1',
+          projectId: 'removed-proj',
+          branchName: 'orphan-branch',
+          status: 'running',
+        },
+        {
+          id: 'ws-2',
+          projectId: 'existing-proj',
+          branchName: 'valid-branch',
           status: 'running',
         },
       ],
-      [] // no projects in DB
+      [{ id: 'existing-proj', name: 'Existing Project' }]
     )
     render(<EmptyWindowTabState />)
-    expect(screen.getByText('unknown-proj')).toBeDefined()
-    expect(screen.getByText('branch-1')).toBeDefined()
+    // Workspace from removed project should not appear
+    expect(screen.queryByText('orphan-branch')).toBeNull()
+    expect(screen.queryByText('removed-proj')).toBeNull()
+    // Workspace from existing project should appear
+    expect(screen.getByText('valid-branch')).toBeDefined()
+    expect(screen.getByText('Existing Project')).toBeDefined()
+  })
+
+  it('shows all workspaces open when only orphaned workspaces remain', () => {
+    setupQueryResults(
+      [
+        {
+          id: 'ws-1',
+          projectId: 'removed-proj',
+          branchName: 'orphan-branch',
+          status: 'running',
+        },
+      ],
+      [] // no projects in DB — project was removed
+    )
+    render(<EmptyWindowTabState />)
+    expect(screen.getByText(ALL_WORKSPACES_OPEN_REGEX)).toBeDefined()
+    expect(screen.queryByText('orphan-branch')).toBeNull()
   })
 
   it('shows all workspaces open message when all are in tabs', () => {

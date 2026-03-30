@@ -229,6 +229,10 @@ export function EmptyWindowTabState() {
       if (openWorkspaceIds.has(ws.id)) {
         continue
       }
+      // Skip workspaces whose project has been removed
+      if (!projectMap.has(ws.projectId)) {
+        continue
+      }
       const entries = byProject.get(ws.projectId) ?? []
       entries.push({
         id: ws.id,

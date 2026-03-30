@@ -11,14 +11,7 @@
  * React/Atom mocking infrastructure the hook tests require.
  */
 
-import { describe, expect, it } from 'vitest'
-
-// ---------------------------------------------------------------------------
-// Mocks — only the modules the source file imports at module level that
-// are unavailable in the test environment.
-// ---------------------------------------------------------------------------
-
-import { vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@effect-atom/atom', () => ({
   Atom: {
@@ -45,7 +38,12 @@ vi.mock('@/atoms/terminal-service-client', () => ({
   },
 }))
 
-import { applyEventToList } from '../src/hooks/use-terminal-list'
+import {
+  applyEventToList,
+  removeTerminalListItem,
+  resetTerminalListStore,
+  upsertTerminalListItem,
+} from '../src/hooks/use-terminal-list'
 
 // ---------------------------------------------------------------------------
 // Shared test data
@@ -232,5 +230,196 @@ describe('applyEventToList', () => {
     )
 
     expect(result).toEqual([EXISTING_TERMINAL])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Pending removal tests — verifies the "isDisposed" guard that prevents
+// the terminal.events stream from re-adding optimistically removed terminals.
+//
+// This addresses the bug where closing a terminal via Cmd+W would
+// optimistically remove it from the shared list, but the terminal.events
+// stream would re-add it on the next ProcessChanged event because the
+// stream's internal Ref still contained the terminal.
+//
+// @see .reference/vscode — TerminalInstance.isDisposed pattern
+// ---------------------------------------------------------------------------
+
+describe('applyEventToList — pending removal guard', () => {
+  beforeEach(() => {
+    resetTerminalListStore()
+  })
+
+  afterEach(() => {
+    resetTerminalListStore()
+  })
+
+  it('ProcessChanged is suppressed for optimistically removed terminals', () => {
+    // Simulate: terminal exists in the shared store
+    upsertTerminalListItem(EXISTING_TERMINAL)
+    // Simulate: user closes terminal via Cmd+W → optimistic removal
+    removeTerminalListItem(EXISTING_TERMINAL.id)
+
+    // Simulate: detection fiber emits ProcessChanged before the server
+    // processes the remove RPC — this is the race condition.
+    const updatedTerminal = { ...EXISTING_TERMINAL, hasChildProcess: true }
+    const result = applyEventToList(
+      { _tag: 'ProcessChanged', terminal: updatedTerminal },
+      [EXISTING_TERMINAL]
+    )
+
+    // The terminal should NOT be upserted back into the list.
+    expect(result).toEqual([EXISTING_TERMINAL])
+  })
+
+  it('Spawned is suppressed for optimistically removed terminals', () => {
+    upsertTerminalListItem(EXISTING_TERMINAL)
+    removeTerminalListItem(EXISTING_TERMINAL.id)
+
+    const result = applyEventToList(
+      {
+        _tag: 'Spawned',
+        id: EXISTING_TERMINAL.id,
+        workspaceId: 'ws-1',
+        command: '/bin/zsh',
+        status: 'running' as const,
+      },
+      []
+    )
+
+    expect(result).toEqual([])
+  })
+
+  it('StatusChanged is suppressed for optimistically removed terminals', () => {
+    upsertTerminalListItem(EXISTING_TERMINAL)
+    removeTerminalListItem(EXISTING_TERMINAL.id)
+
+    const result = applyEventToList(
+      {
+        _tag: 'StatusChanged',
+        id: EXISTING_TERMINAL.id,
+        status: 'stopped' as const,
+      },
+      [EXISTING_TERMINAL]
+    )
+
+    // List should be unchanged — the StatusChanged should not update
+    // the terminal that is pending removal.
+    expect(result).toEqual([EXISTING_TERMINAL])
+  })
+
+  it('Restarted is suppressed for optimistically removed terminals', () => {
+    upsertTerminalListItem(EXISTING_TERMINAL)
+    removeTerminalListItem(EXISTING_TERMINAL.id)
+
+    const result = applyEventToList(
+      {
+        _tag: 'Restarted',
+        id: EXISTING_TERMINAL.id,
+        workspaceId: 'ws-1',
+        command: 'npm run dev',
+        status: 'running' as const,
+      },
+      [EXISTING_TERMINAL]
+    )
+
+    expect(result).toEqual([EXISTING_TERMINAL])
+  })
+
+  it('Removed event keeps the pending removal flag to suppress stale events', () => {
+    upsertTerminalListItem(EXISTING_TERMINAL)
+    removeTerminalListItem(EXISTING_TERMINAL.id)
+
+    // Server confirms the removal
+    const afterRemoved = applyEventToList(
+      { _tag: 'Removed', id: EXISTING_TERMINAL.id },
+      [EXISTING_TERMINAL]
+    )
+    expect(afterRemoved).toHaveLength(0)
+
+    // A subsequent Spawned event with the same ID should still be suppressed.
+    // The pending removal flag is kept permanently to guard against stale
+    // ProcessChanged events arriving after the Removed event. Terminal IDs
+    // are unique UUIDs so a real respawn would use a new ID.
+    const afterRespawn = applyEventToList(
+      {
+        _tag: 'Spawned',
+        id: EXISTING_TERMINAL.id,
+        workspaceId: 'ws-1',
+        command: '/bin/zsh',
+        status: 'running' as const,
+      },
+      []
+    )
+    expect(afterRespawn).toHaveLength(0)
+  })
+
+  it('events for non-removed terminals are unaffected', () => {
+    const otherTerminal = { ...EXISTING_TERMINAL, id: 'term-other' }
+    upsertTerminalListItem(EXISTING_TERMINAL)
+    // Remove EXISTING_TERMINAL but not otherTerminal
+    removeTerminalListItem(EXISTING_TERMINAL.id)
+
+    // ProcessChanged for otherTerminal should still work
+    const updated = { ...otherTerminal, hasChildProcess: true }
+    const result = applyEventToList(
+      { _tag: 'ProcessChanged', terminal: updated },
+      [otherTerminal]
+    )
+
+    expect(result).toEqual([updated])
+  })
+
+  it('full Cmd+W scenario: optimistic remove → stream events → server confirmation', () => {
+    const termA = { ...EXISTING_TERMINAL, id: 'term-a' }
+    const termB = { ...EXISTING_TERMINAL, id: 'term-b', workspaceId: 'ws-2' }
+    const list = [termA, termB]
+
+    // User closes term-a via Cmd+W
+    upsertTerminalListItem(termA)
+    upsertTerminalListItem(termB)
+    removeTerminalListItem(termA.id)
+
+    // Stream delivers ProcessChanged for term-a (200ms detection fiber)
+    // This should NOT re-add term-a
+    const afterProcess = applyEventToList(
+      {
+        _tag: 'ProcessChanged',
+        terminal: { ...termA, hasChildProcess: true },
+      },
+      list
+    )
+    expect(afterProcess).toEqual(list) // list unchanged
+
+    // Stream delivers ProcessChanged for term-b (unrelated terminal)
+    // This should work normally
+    const updatedB = { ...termB, hasChildProcess: true }
+    const afterProcessB = applyEventToList(
+      { _tag: 'ProcessChanged', terminal: updatedB },
+      list
+    )
+    expect(afterProcessB).toEqual([termA, updatedB])
+
+    // Server confirms removal of term-a
+    const afterRemoved = applyEventToList({ _tag: 'Removed', id: termA.id }, [
+      termA,
+      updatedB,
+    ])
+    expect(afterRemoved).toEqual([updatedB])
+
+    // User spawns new agent for workspace → Spawned event for new terminal
+    // Should work since term-a's pending removal is cleared
+    const afterSpawn = applyEventToList(
+      {
+        _tag: 'Spawned',
+        id: 'term-new',
+        workspaceId: 'ws-1',
+        command: 'opencode',
+        status: 'running' as const,
+      },
+      [updatedB]
+    )
+    expect(afterSpawn).toHaveLength(2)
+    expect(afterSpawn[1]?.id).toBe('term-new')
   })
 })

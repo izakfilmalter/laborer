@@ -87,6 +87,17 @@ type TerminalServiceStatus = 'checking' | 'available' | 'unavailable'
 // External callers (e.g., spawn/restart handlers) use
 // `upsertTerminalListItem` and `removeTerminalListItem` to apply
 // optimistic updates before the server's ProcessChanged event arrives.
+//
+// **Pending removals set** — follows VS Code's `isDisposed` pattern:
+// when a terminal is optimistically removed, its ID is added to
+// `pendingRemovals`. The `terminal.events` stream filters out any
+// events for pending-removal IDs, preventing a race where a
+// `ProcessChanged` event (from the 200ms detection fiber) re-adds
+// a terminal that was just closed. The server's `Removed` event
+// clears the entry from the set.
+//
+// @see .reference/vscode/src/vs/workbench/contrib/terminal/browser/
+//   terminalInstance.ts — `isDisposed` guard prevents stale operations
 // ---------------------------------------------------------------------------
 
 type TerminalListListener = (terminals: readonly TerminalInfo[]) => void
@@ -95,6 +106,17 @@ const terminalListListeners = new Set<TerminalListListener>()
 
 let sharedTerminalList: readonly TerminalInfo[] = []
 let hasSharedTerminalListSnapshot = false
+
+/**
+ * Terminal IDs that have been optimistically removed but not yet
+ * confirmed by the server's `Removed` event. Events for these IDs
+ * are suppressed by the stream processing to prevent re-addition.
+ *
+ * Analogous to VS Code's `isDisposed` flag on `TerminalInstance` —
+ * once set, the terminal is considered dead and any incoming events
+ * (e.g., `ProcessChanged` from the detection fiber) are ignored.
+ */
+const pendingRemovals = new Set<string>()
 
 const publishTerminalList = (terminals: readonly TerminalInfo[]) => {
   sharedTerminalList = terminals
@@ -127,12 +149,14 @@ const upsertTerminalListItem = (terminal: TerminalInfo) => {
 }
 
 const removeTerminalListItem = (terminalId: string) => {
+  pendingRemovals.add(terminalId)
   publishTerminalList(sharedTerminalList.filter(({ id }) => id !== terminalId))
 }
 
 const resetTerminalListStore = () => {
   sharedTerminalList = []
   hasSharedTerminalListSnapshot = false
+  pendingRemovals.clear()
 }
 
 // ---------------------------------------------------------------------------
@@ -149,16 +173,34 @@ const applyEventToRef = (
 ): Effect.Effect<readonly TerminalInfo[]> =>
   Ref.updateAndGet(ref, (list) => applyEventToList(event, list))
 
-/** Pure function: apply event to a terminal list, return new list. */
+/**
+ * Pure function: apply event to a terminal list, return new list.
+ *
+ * Respects `pendingRemovals` — events for terminals that have been
+ * optimistically removed are suppressed to prevent the `terminal.events`
+ * stream from re-adding a terminal that the user just closed. This
+ * mirrors VS Code's `isDisposed` guard which prevents stale operations
+ * on disposed terminal instances.
+ *
+ * The `Removed` event is the server confirmation — it clears the
+ * pending-removal flag and filters the terminal from the list (idempotent
+ * since the optimistic removal already removed it).
+ */
 const applyEventToList = (
   event: TerminalLifecycleEventSchema,
   list: readonly TerminalInfo[]
 ): readonly TerminalInfo[] => {
   switch (event._tag) {
     case 'ProcessChanged': {
+      if (pendingRemovals.has((event.terminal as TerminalInfo).id)) {
+        return list
+      }
       return upsertInList(list, event.terminal as TerminalInfo)
     }
     case 'Spawned': {
+      if (pendingRemovals.has(event.id)) {
+        return list
+      }
       return upsertInList(list, {
         agentStatus: null,
         args: [],
@@ -173,6 +215,9 @@ const applyEventToList = (
       })
     }
     case 'StatusChanged': {
+      if (pendingRemovals.has(event.id)) {
+        return list
+      }
       const existing = list.find(({ id }) => id === event.id)
       if (existing !== undefined) {
         return upsertInList(list, { ...existing, status: event.status })
@@ -180,9 +225,19 @@ const applyEventToList = (
       return list
     }
     case 'Removed': {
+      // Server confirmation — keep the ID in pendingRemovals permanently
+      // so that any stale ProcessChanged events arriving after the Removed
+      // event are still suppressed. Terminal IDs are unique UUIDs so the
+      // set won't grow unboundedly within a session. This fixes a race
+      // where the detection fiber's ProcessChanged event is queued before
+      // the Removed event but delivered after — clearing pendingRemovals
+      // on Removed would allow that stale event to re-add the terminal.
       return list.filter(({ id }) => id !== event.id)
     }
     case 'Restarted': {
+      if (pendingRemovals.has(event.id)) {
+        return list
+      }
       const existing = list.find(({ id }) => id === event.id)
       if (existing !== undefined) {
         return upsertInList(list, {
@@ -255,15 +310,33 @@ const terminalListAtom = Atom.keepAlive(
       )
 
       // Publish to the shared store for external consumers.
-      publishTerminalList(initialList as readonly TerminalInfo[])
+      // Filter out any pending removals (should be empty at startup but
+      // guards against re-initialization races).
+      const filteredInitial =
+        pendingRemovals.size > 0
+          ? (initialList as readonly TerminalInfo[]).filter(
+              ({ id }) => !pendingRemovals.has(id)
+            )
+          : (initialList as readonly TerminalInfo[])
+      publishTerminalList(filteredInitial)
 
       // 2. Subscribe to terminal.events in a background fiber.
       //    On each event, update the ref and publish to the shared store.
+      //    Filters out terminals with pending optimistic removals before
+      //    publishing, preventing the stream from re-adding terminals
+      //    that the user just closed (VS Code's `isDisposed` pattern).
       yield* client('terminal.events', undefined).pipe(
         Stream.tap((event) =>
           Effect.gen(function* () {
             const updated = yield* applyEventToRef(event, listRef)
-            publishTerminalList(updated)
+            // Filter out any terminals that were optimistically removed.
+            // The listRef may still contain them from before the removal;
+            // the pending-removal set acts as a "disposed" guard.
+            const filtered =
+              pendingRemovals.size > 0
+                ? updated.filter(({ id }) => !pendingRemovals.has(id))
+                : updated
+            publishTerminalList(filtered)
           })
         ),
         Stream.runDrain,
@@ -425,9 +498,17 @@ function useTerminalList(): {
   const refresh = useCallback(async (): Promise<readonly TerminalInfo[]> => {
     const result = await listTerminals({ payload: undefined })
     const freshTerminals = result as readonly TerminalInfo[]
-    publishTerminalList(freshTerminals)
+    // Filter out terminals that have been optimistically removed but
+    // not yet fully cleaned up on the server. Without this filter,
+    // the full list from the server could re-add a terminal that was
+    // closed by the user, causing the ghost bug.
+    const filtered =
+      pendingRemovals.size > 0
+        ? freshTerminals.filter(({ id }) => !pendingRemovals.has(id))
+        : freshTerminals
+    publishTerminalList(filtered)
     publishStatus('available', null)
-    return freshTerminals
+    return filtered
   }, [listTerminals])
 
   return {

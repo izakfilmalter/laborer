@@ -535,6 +535,14 @@ export function usePanelLayout() {
     (terminalId: string, logContext: string) => {
       removeTerminalListItem(terminalId)
       removeTerminal({ payload: { id: terminalId } }).catch((error) => {
+        // Silently ignore "not found" — the terminal was already removed
+        // by another close path (e.g., progressive close escalation).
+        // Follows VS Code's idempotent disposal pattern where calling
+        // dispose() on an already-disposed instance is a no-op.
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.includes('not found') || message.includes('NOT_FOUND')) {
+          return
+        }
         console.warn(`${logContext} terminal remove failed:`, error)
       })
     },

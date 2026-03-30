@@ -109,6 +109,7 @@ vi.mock('@/panels/panel-context', () => ({
     setActivePaneId: vi.fn(),
     showPanelTypePicker: vi.fn(),
     splitPane: vi.fn(),
+    updatePaneType: vi.fn(),
     toggleDevServerPane: vi.fn(async () => false),
     toggleDiffPane: toggleDiffPaneMock,
     toggleFullscreenPane: vi.fn(),

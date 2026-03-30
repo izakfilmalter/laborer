@@ -16,6 +16,7 @@ import {
   createSpawnGuard,
   respawnStaleTerminals,
   retryOnInitializing,
+  type SpawnResult,
   spawnWithRetry,
 } from '../src/panels/reconcile-spawn'
 
@@ -318,6 +319,122 @@ describe('respawnStaleTerminals', () => {
     // Only the third leaf with both IDs should trigger a spawn
     expect(spawnFn).toHaveBeenCalledTimes(1)
     expect(spawnFn).toHaveBeenCalledWith({ workspaceId: 'ws-2' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Concurrent spawns across different panes
+// ---------------------------------------------------------------------------
+
+describe('concurrent spawns across different panes', () => {
+  it('both spawns succeed when the spawn function is truly independent per call', async () => {
+    const guard = createSpawnGuard()
+
+    // Simulate two independent spawn functions — each call gets its own
+    // Promise that resolves independently, mirroring VS Code's pattern
+    // where each TerminalInstance owns its own TerminalProcessManager.
+    let resolveFirst!: (value: SpawnResult) => void
+    let resolveSecond!: (value: SpawnResult) => void
+
+    const spawnFn = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<SpawnResult>((resolve) => {
+            resolveFirst = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<SpawnResult>((resolve) => {
+            resolveSecond = resolve
+          })
+      )
+
+    // Start spawns for two different panes concurrently
+    const firstPromise = guard.run('pane-1', () =>
+      retryOnInitializing(() => spawnFn(), { maxRetries: 0 })
+    )
+    const secondPromise = guard.run('pane-2', () =>
+      retryOnInitializing(() => spawnFn(), { maxRetries: 0 })
+    )
+
+    // Both spawns should be in-flight simultaneously
+    expect(guard.isSpawning('pane-1')).toBe(true)
+    expect(guard.isSpawning('pane-2')).toBe(true)
+    expect(spawnFn).toHaveBeenCalledTimes(2)
+
+    // Resolve them in reverse order to verify independence
+    resolveSecond({ id: 'term-2', command: '/bin/zsh', status: 'running' })
+    const secondResult = await secondPromise
+
+    // Second completes — first should still be in-flight
+    expect(secondResult).toEqual({
+      id: 'term-2',
+      command: '/bin/zsh',
+      status: 'running',
+    })
+    expect(guard.isSpawning('pane-1')).toBe(true)
+    expect(guard.isSpawning('pane-2')).toBe(false)
+
+    // Now resolve the first
+    resolveFirst({ id: 'term-1', command: '/bin/zsh', status: 'running' })
+    const firstResult = await firstPromise
+
+    expect(firstResult).toEqual({
+      id: 'term-1',
+      command: '/bin/zsh',
+      status: 'running',
+    })
+    expect(guard.isSpawning('pane-1')).toBe(false)
+  })
+
+  it('a "latest-wins" spawn function causes the first spawn to fail', async () => {
+    const guard = createSpawnGuard()
+
+    // Simulate the bug: a "latest-wins" spawn function where calling it
+    // a second time rejects the first call's promise. This models the
+    // AtomResultFn mutation atom behaviour that interrupts the previous
+    // fiber when a new value is set.
+    let rejectPrevious: ((reason: Error) => void) | undefined
+
+    const latestWinsSpawnFn = vi.fn().mockImplementation(() => {
+      // If a previous call is still in-flight, reject it
+      if (rejectPrevious) {
+        rejectPrevious(new Error('Interrupted by newer spawn'))
+      }
+      return new Promise<SpawnResult>((resolve, reject) => {
+        rejectPrevious = reject
+        // Auto-resolve after a short delay to simulate server response
+        setTimeout(
+          () =>
+            resolve({
+              id: `term-${Math.random()}`,
+              command: '/bin/zsh',
+              status: 'running',
+            }),
+          10
+        )
+      })
+    })
+
+    // Start spawns for two different panes concurrently
+    const firstPromise = guard.run('pane-1', () =>
+      retryOnInitializing(() => latestWinsSpawnFn(), { maxRetries: 0 })
+    )
+    const secondPromise = guard.run('pane-2', () =>
+      retryOnInitializing(() => latestWinsSpawnFn(), { maxRetries: 0 })
+    )
+
+    const firstResult = await firstPromise
+    const secondResult = await secondPromise
+
+    // The first spawn was interrupted — retryOnInitializing swallowed
+    // the error and returned undefined. This is the bug.
+    expect(firstResult).toBeUndefined()
+    // Only the second spawn succeeded
+    expect(secondResult).toBeDefined()
+    expect((secondResult as SpawnResult | undefined)?.id).toBeDefined()
   })
 })
 

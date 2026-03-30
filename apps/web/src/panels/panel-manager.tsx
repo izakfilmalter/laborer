@@ -43,7 +43,6 @@
  * @see Issue #148: Focused pane border fix — replaced ring with border
  */
 
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
 import { workspaces } from '@laborer/shared/schema'
 import type {
   LeafNode,
@@ -56,7 +55,6 @@ import { Layers, Plus, Server, Terminal as TerminalIcon } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { GroupImperativeHandle } from 'react-resizable-panels'
-import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalOverlayToolbar } from '@/components/terminal-overlay-toolbar'
 import { Button } from '@/components/ui/button'
 import {
@@ -81,6 +79,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
+import { useSpawnTerminal } from '@/hooks/use-spawn-terminal'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
@@ -100,7 +99,6 @@ import { TerminalPane } from '@/panes/terminal-pane'
 import { PaneCloseConfirmDialog } from '@/routes/-components/close-dialogs'
 
 const allWorkspaces$ = queryDb(workspaces, { label: 'paneWorkspaces' })
-const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
 
 /**
  * MIME type for terminal drag data. Must match the value used in
@@ -173,9 +171,7 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
   const store = useLaborerStore()
   const workspaceList = store.useQuery(allWorkspaces$)
   const panelActions = usePanelActions()
-  const spawnTerminal = useAtomSet(spawnTerminalMutation, {
-    mode: 'promise',
-  })
+  const spawnTerminal = useSpawnTerminal()
   const [isSpawning, setIsSpawning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('')
@@ -322,9 +318,7 @@ interface EmptyDevServerPaneProps {
  */
 function EmptyDevServerPane({ paneId, workspaceId }: EmptyDevServerPaneProps) {
   const panelActions = usePanelActions()
-  const spawnTerminal = useAtomSet(spawnTerminalMutation, {
-    mode: 'promise',
-  })
+  const spawnTerminal = useSpawnTerminal()
   const [isSpawning, setIsSpawning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const hasSpawned = useRef(false)

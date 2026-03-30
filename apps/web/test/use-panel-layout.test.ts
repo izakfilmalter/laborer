@@ -73,6 +73,10 @@ vi.mock('@/atoms/terminal-service-client', () => ({
   },
 }))
 
+vi.mock('@/hooks/use-spawn-terminal', () => ({
+  useSpawnTerminal: () => spawnTerminalMock,
+}))
+
 vi.mock('@/hooks/use-terminal-list', () => ({
   removeTerminalListItem: vi.fn(),
   upsertTerminalListItem: (...args: unknown[]) =>

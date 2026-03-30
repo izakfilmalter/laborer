@@ -14,6 +14,7 @@ import { queryDb } from '@livestore/livestore'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
+import { useSpawnTerminal } from '@/hooks/use-spawn-terminal'
 import {
   removeTerminalListItem,
   upsertTerminalListItem,
@@ -381,9 +382,6 @@ const persistedLayout$ = queryDb(panelLayout, {
 /** LiveStore query for workspaces (used by isWorkspaceContainerized). */
 const allWorkspaces$ = queryDb(workspaces, { label: 'homePanelWorkspaces' })
 
-/** Mutation atom for spawning terminals via the server's terminal.spawn RPC. */
-const spawnTerminalMutation = LaborerClient.mutation('terminal.spawn')
-
 /** Mutation atom for fetching the project config (used imperatively to resolve the agent provider). */
 const configGetMutation = LaborerClient.mutation('config.get')
 
@@ -514,9 +512,14 @@ export function usePanelLayout() {
   // back to the EmptyTerminalPane CTA.
   const { terminals: liveTerminals, isLoading: terminalsLoading } =
     useTerminalList()
-  const spawnTerminal = useAtomSet(spawnTerminalMutation, {
-    mode: 'promise',
-  })
+  // Use an independent spawner so concurrent spawns for different panes
+  // don't interrupt each other. The mutation atom (AtomResultFn) operates
+  // in "latest-wins" mode — calling it a second time interrupts the first
+  // in-flight fiber, causing the first spawn to silently fail. This
+  // follows VS Code's architecture where each TerminalInstance owns its
+  // own TerminalProcessManager for fully independent process creation.
+  // @see .reference/vscode/src/vs/workbench/contrib/terminal/browser/terminalProcessManager.ts
+  const spawnTerminal = useSpawnTerminal()
   const getConfig = useAtomSet(configGetMutation, {
     mode: 'promise',
   })

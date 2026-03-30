@@ -91,8 +91,8 @@ vi.mock('@/livestore/store', () => ({
   }),
 }))
 
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
-  useAtomSet: () => vi.fn(),
+vi.mock('@/hooks/use-spawn-terminal', () => ({
+  useSpawnTerminal: () => vi.fn(),
 }))
 
 vi.mock('@laborer/shared/schema', () => ({

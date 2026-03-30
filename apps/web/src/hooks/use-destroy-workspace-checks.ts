@@ -69,6 +69,18 @@ function useDestroyWorkspaceChecks(
     setIsCheckingDirtyFiles(true)
     setIsCheckingTerminals(true)
 
+    // Safety timeout: if checks don't complete within 10 seconds,
+    // stop the loading state so the dialog remains usable. This guards
+    // against RPC calls that hang indefinitely (e.g., due to a server
+    // Defect clearing the client's pending request entries).
+    setTimeout(() => {
+      if (requestIdRef.current !== requestId) {
+        return
+      }
+      setIsCheckingDirtyFiles(false)
+      setIsCheckingTerminals(false)
+    }, 10_000)
+
     checkDirty({ payload: { workspaceId } })
       .then((files) => {
         if (requestIdRef.current !== requestId) {

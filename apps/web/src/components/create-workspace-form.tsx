@@ -184,18 +184,15 @@ function CreateWorkspaceForm({ projectId, trigger }: CreateWorkspaceFormProps) {
   return (
     <Dialog
       onOpenChange={(value) => {
-        // Prevent closing dialog while workspace is being created
-        if (!form.state.isSubmitting) {
-          setOpen(value)
-          if (value) {
-            // Reset form when dialog opens
-            form.reset({
-              branchName: '',
-            })
-          }
-          if (!value) {
-            setCreationError(null)
-          }
+        setOpen(value)
+        if (value) {
+          // Reset form when dialog opens
+          form.reset({
+            branchName: '',
+          })
+        }
+        if (!value) {
+          setCreationError(null)
         }
       }}
       open={open}

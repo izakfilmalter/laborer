@@ -169,6 +169,11 @@ export const makeProtocolMessagePort = (
         disconnects,
         send(_clientId: number, response: FromServerEncoded, transferables) {
           return Effect.sync(() => {
+            console.log(
+              '[rpc-server-transport] send:',
+              typeof response,
+              JSON.stringify(response)?.slice(0, 200)
+            )
             port.postMessage(response, transferables as readonly unknown[])
           })
         },

@@ -50,6 +50,14 @@ import type { RpcMessagePort } from './rpc-transport-messageport.js'
  * listener. A forked fiber drains the queue and calls `writeResponse` for
  * each message, bridging the sync event world to the Effect runtime.
  *
+ * **Port close detection:** Unlike the original implementation, this version
+ * listens for `close` events on the MessagePort. When the port closes (e.g.,
+ * the utility process crashes or restarts), a synthetic `Defect` message is
+ * injected into the response queue. The Effect RPC client treats `Defect`
+ * messages by clearing all pending entries, which resolves (with failure)
+ * any in-flight `Effect.async` calls — preventing modals and other UI
+ * elements from getting permanently stuck in a loading state.
+ *
  * @param port - The MessagePort to send RPC requests over
  */
 export const makeClientProtocolMessagePort = (
@@ -62,6 +70,10 @@ export const makeClientProtocolMessagePort = (
       // Unbounded queue bridges sync event listeners to the Effect runtime.
       const messageQueue = yield* Queue.unbounded<FromServerEncoded>()
 
+      // Mutable flag tracking whether the port has been closed by the remote
+      // end. Used in `send()` to fail fast instead of posting into a dead port.
+      const portState = { closed: false }
+
       // Drain the queue in a fiber, calling writeResponse for each message.
       yield* Queue.take(messageQueue).pipe(
         Effect.flatMap((data) => writeResponse(data)),
@@ -72,6 +84,21 @@ export const makeClientProtocolMessagePort = (
       // Sync event handlers push to the queue.
       const messageHandler = (data: unknown): void => {
         Queue.unsafeOffer(messageQueue, data as FromServerEncoded)
+      }
+
+      // When the port closes, synthesize a Defect response to unblock
+      // all pending RPC requests. The Effect RPC client treats "Defect"
+      // messages by clearing all entries, which resolves (with failure)
+      // any in-flight Effect.async calls.
+      const closeHandler = (): void => {
+        console.warn(
+          '[rpc-client-transport] Port closed by remote end — synthesizing Defect to unblock pending requests'
+        )
+        portState.closed = true
+        Queue.unsafeOffer(messageQueue, {
+          _tag: 'Defect',
+          defect: 'MessagePort closed unexpectedly',
+        } as unknown as FromServerEncoded)
       }
 
       // Attach listeners based on the port's API style.
@@ -86,11 +113,13 @@ export const makeClientProtocolMessagePort = (
               : event
           messageHandler(data)
         })
+        port.on('close', closeHandler)
       } else {
         // Web MessagePort style
         port.onmessage = (event: { data: unknown }) => {
           messageHandler(event.data)
         }
+        port.onclose = closeHandler
       }
 
       // Web MessagePorts require .start() to begin receiving messages.
@@ -107,10 +136,13 @@ export const makeClientProtocolMessagePort = (
         Effect.sync(() => {
           if (typeof port.off === 'function') {
             port.off('message', messageHandler)
+            port.off('close', closeHandler)
           } else if (typeof port.removeListener === 'function') {
             port.removeListener('message', messageHandler)
+            port.removeListener('close', closeHandler)
           } else {
             port.onmessage = null
+            port.onclose = null
           }
           port.close?.()
         })
@@ -118,6 +150,18 @@ export const makeClientProtocolMessagePort = (
 
       return {
         send(request, transferables) {
+          // Check if the port has been closed before attempting to send.
+          // This provides a fast failure path instead of silently posting
+          // the message into a dead port.
+          if (portState.closed) {
+            return Effect.fail(
+              new RpcClientError({
+                reason: 'Protocol',
+                message:
+                  'MessagePort is closed — cannot send request. The server utility process may have restarted.',
+              })
+            )
+          }
           return Effect.try({
             try: () => {
               console.log(

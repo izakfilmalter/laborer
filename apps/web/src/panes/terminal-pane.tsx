@@ -68,19 +68,142 @@ const terminalResizeMutation = TerminalServiceClient.mutation('terminal.resize')
 const PREFIX_MODE_TIMEOUT = 1500
 
 /**
- * Debounce delay for ResizeObserver callbacks (ms).
+ * Debounce delay for horizontal (column) resize (ms).
  *
- * During panel drag-resizing, the ResizeObserver fires at up to 60fps.
- * Without debouncing, each observation triggers `fitAddon.fit()` (which
- * measures the DOM) and a `terminal.resize` RPC call. This floods the
- * event loop and network with unnecessary resize operations.
+ * VS Code's TerminalResizeDebouncer applies row changes immediately
+ * (cheap — just show more/fewer rows) but debounces column changes at
+ * 100ms because horizontal resizes trigger expensive text reflow across
+ * the entire scrollback buffer. We follow the same pattern.
  *
- * VS Code uses a 100ms debounce for horizontal resizes (which trigger
- * text reflow) and applies vertical resizes immediately (cheap). We use
- * a simpler 100ms debounce for all resizes since the fit addon handles
- * both dimensions together.
+ * @see .reference/vscode/src/vs/workbench/contrib/terminal/browser/terminalResizeDebouncer.ts
  */
-const RESIZE_DEBOUNCE_MS = 100
+const RESIZE_COLS_DEBOUNCE_MS = 100
+
+/**
+ * Normal buffer length threshold at which resize debouncing activates.
+ *
+ * When the terminal's normal buffer has fewer than this many lines,
+ * resizes are applied immediately (both cols and rows) because reflow
+ * is fast with small buffers. Above this threshold, column resizes
+ * are debounced to avoid janky reflow during drag-resize operations.
+ *
+ * Matches VS Code's `StartDebouncingThreshold` constant.
+ *
+ * @see .reference/vscode/src/vs/workbench/contrib/terminal/browser/terminalResizeDebouncer.ts
+ */
+const START_DEBOUNCING_THRESHOLD = 200
+
+/**
+ * Terminal resize debouncer — applies VS Code's independent X/Y resize
+ * strategy to prevent ghost/duplicate rendering during resize operations.
+ *
+ * Row changes are applied immediately (cheap — no reflow), while column
+ * changes are debounced because they trigger expensive text reflow across
+ * the entire scrollback buffer.
+ *
+ * @see .reference/vscode/src/vs/workbench/contrib/terminal/browser/terminalResizeDebouncer.ts
+ */
+const createResizeDebouncer = (
+  terminalRef: React.RefObject<Terminal | null>,
+  fitAddonRef: React.RefObject<FitAddon | null>,
+  resizeTerminalRef: React.RefObject<
+    (args: { payload: { id: string; cols: number; rows: number } }) => void
+  >,
+  terminalId: string
+) => {
+  let colsDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  /** Latest desired cols — updated on each observation, applied when debounce fires. */
+  let latestCols = 0
+
+  /**
+   * Apply new dimensions to the xterm.js terminal and send a resize
+   * RPC to the server PTY.
+   */
+  const applyResize = (cols: number, rows: number) => {
+    const terminal = terminalRef.current
+    if (!terminal || cols <= 0 || rows <= 0) {
+      return
+    }
+    terminal.resize(cols, rows)
+    resizeTerminalRef.current({
+      payload: { id: terminalId, cols, rows },
+    })
+  }
+
+  /** Schedule a debounced column resize. */
+  const debounceCols = () => {
+    if (colsDebounceTimer !== null) {
+      clearTimeout(colsDebounceTimer)
+    }
+    colsDebounceTimer = setTimeout(() => {
+      colsDebounceTimer = null
+      const t = terminalRef.current
+      if (t && latestCols > 0 && latestCols !== t.cols) {
+        applyResize(latestCols, t.rows)
+      }
+    }, RESIZE_COLS_DEBOUNCE_MS)
+  }
+
+  const handleResize = () => {
+    const fitAddon = fitAddonRef.current
+    const terminal = terminalRef.current
+    if (!(fitAddon && terminal)) {
+      return
+    }
+
+    // Use proposeDimensions() to calculate target cols/rows from the
+    // container's pixel dimensions WITHOUT applying them yet.
+    let dims: { cols: number; rows: number } | undefined
+    try {
+      dims = fitAddon.proposeDimensions()
+    } catch {
+      // Container may have 0 dimensions during layout transitions
+      return
+    }
+    if (!dims || dims.cols <= 0 || dims.rows <= 0) {
+      return
+    }
+
+    // No change — skip
+    if (dims.cols === terminal.cols && dims.rows === terminal.rows) {
+      return
+    }
+
+    latestCols = dims.cols
+    const colsChanged = dims.cols !== terminal.cols
+    const rowsChanged = dims.rows !== terminal.rows
+
+    // Small buffer optimization: reflow is fast with small buffers,
+    // so apply both dimensions immediately without debouncing.
+    if (terminal.buffer.normal.length < START_DEBOUNCING_THRESHOLD) {
+      if (colsDebounceTimer !== null) {
+        clearTimeout(colsDebounceTimer)
+        colsDebounceTimer = null
+      }
+      applyResize(dims.cols, dims.rows)
+      return
+    }
+
+    // Apply row change immediately (cheap — no reflow)
+    if (rowsChanged) {
+      applyResize(terminal.cols, dims.rows)
+    }
+
+    // Debounce column change (expensive — triggers text reflow)
+    if (colsChanged) {
+      debounceCols()
+    }
+  }
+
+  const dispose = () => {
+    if (colsDebounceTimer !== null) {
+      clearTimeout(colsDebounceTimer)
+      colsDebounceTimer = null
+    }
+  }
+
+  return { handleResize, dispose }
+}
 
 /** Connection result shape for the MessagePort data channel hook. */
 interface TerminalConnection {
@@ -512,39 +635,20 @@ function TerminalPaneRenderer({
   }, [terminalId, terminalRef])
 
   /**
-   * Handle container resize — re-fit the terminal when the
-   * pane dimensions change, then send new dimensions to the
-   * server PTY via `terminal.resize` RPC mutation.
-   */
-  const handleResize = useCallback(() => {
-    const fitAddon = fitAddonRef.current
-    const terminal = terminalRef.current
-    if (!(fitAddon && terminal)) {
-      return
-    }
-
-    try {
-      fitAddon.fit()
-    } catch {
-      // Ignore errors during resize (container may have 0 dimensions)
-      return
-    }
-
-    // Send new dimensions to the server PTY
-    const { cols, rows } = terminal
-    if (cols > 0 && rows > 0) {
-      resizeTerminalRef.current({
-        payload: { id: terminalId, cols, rows },
-      })
-    }
-  }, [terminalId, terminalRef])
-
-  /**
    * Observe the container element for size changes using ResizeObserver.
-   * This handles allotment pane resizing, window resizing, etc.
+   * This handles pane resizing, window resizing, fullscreen, etc.
    *
-   * Debounced at 100ms to avoid flooding the resize RPC during drag
-   * operations.
+   * Follows VS Code's TerminalResizeDebouncer pattern:
+   * - Row changes are applied immediately (cheap — no reflow)
+   * - Column changes are debounced at 100ms (expensive — triggers
+   *   text reflow across the entire scrollback buffer)
+   * - Small buffers (<200 lines) resize immediately since reflow is fast
+   *
+   * This prevents the "ghost/duplicate content" rendering artifacts
+   * that occur when TUI applications receive rapid SIGWINCH signals
+   * during drag-resize operations.
+   *
+   * @see .reference/vscode/src/vs/workbench/contrib/terminal/browser/terminalResizeDebouncer.ts
    */
   useEffect(() => {
     const container = containerRef.current
@@ -552,27 +656,24 @@ function TerminalPaneRenderer({
       return
     }
 
-    let resizeTimer: ReturnType<typeof setTimeout> | null = null
+    const debouncer = createResizeDebouncer(
+      terminalRef,
+      fitAddonRef,
+      resizeTerminalRef,
+      terminalId
+    )
 
     const resizeObserver = new ResizeObserver(() => {
-      if (resizeTimer !== null) {
-        clearTimeout(resizeTimer)
-      }
-      resizeTimer = setTimeout(() => {
-        resizeTimer = null
-        handleResize()
-      }, RESIZE_DEBOUNCE_MS)
+      debouncer.handleResize()
     })
 
     resizeObserver.observe(container)
 
     return () => {
-      if (resizeTimer !== null) {
-        clearTimeout(resizeTimer)
-      }
+      debouncer.dispose()
       resizeObserver.disconnect()
     }
-  }, [handleResize])
+  }, [terminalId, terminalRef])
 
   return (
     <div

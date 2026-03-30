@@ -355,6 +355,33 @@ function assignTerminal(
   return { ...node, children: newChildren }
 }
 
+/**
+ * Update the pane type of a specific leaf within a PanelNode tree.
+ *
+ * Recursively walks the tree and replaces the `paneType` on the leaf
+ * whose `id` matches `paneId`. Returns the original tree unchanged
+ * (referential equality) if no matching leaf is found.
+ */
+function updateLeafType(
+  node: PanelNode,
+  paneId: string,
+  paneType: PaneType
+): PanelNode {
+  if (node._tag === 'LeafNode') {
+    if (node.id === paneId) {
+      return { ...node, paneType }
+    }
+    return node
+  }
+  const newChildren = node.children.map((child) =>
+    updateLeafType(child, paneId, paneType)
+  )
+  if (newChildren.every((child, i) => child === node.children[i])) {
+    return node
+  }
+  return { ...node, children: newChildren }
+}
+
 // ---------------------------------------------------------------------------
 // Directional navigation
 // ---------------------------------------------------------------------------
@@ -657,6 +684,7 @@ export {
   getFirstLeafId,
   getLeafIds,
   splitPane,
+  updateLeafType,
 }
 
 export type { NavigationDirection }

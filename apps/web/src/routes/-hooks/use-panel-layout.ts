@@ -48,6 +48,7 @@ import {
   findSiblingPaneId,
   getLeafIds as getPanelTreeLeafIds,
   splitPane as splitPaneInTree,
+  updateLeafType as updateLeafTypeInTree,
 } from '@/panels/panel-tree-utils'
 import {
   createSpawnGuard,
@@ -731,9 +732,9 @@ export function usePanelLayout() {
       paneId: string,
       direction: 'horizontal' | 'vertical',
       newPaneContent?: Partial<LeafNode>
-    ) => {
+    ): string | undefined => {
       if (!persistedWindowLayout) {
-        return
+        return undefined
       }
 
       // Agent panes are terminals running the configured agent command.
@@ -798,7 +799,7 @@ export function usePanelLayout() {
       }
 
       if (!newLeaf?.workspaceId) {
-        return
+        return newLeaf?.id
       }
 
       // Only auto-spawn a terminal for terminal-type and agent-type
@@ -806,7 +807,7 @@ export function usePanelLayout() {
       // content.
       const newPaneType = newPaneContent?.paneType ?? 'terminal'
       if (newPaneType !== 'terminal' && newPaneType !== 'agent') {
-        return
+        return newLeaf.id
       }
 
       // Auto-spawn a terminal in the new pane. For agent panes, resolve
@@ -906,6 +907,162 @@ export function usePanelLayout() {
         .catch((error) => {
           console.warn('[split-pane] auto-spawn failed:', error)
         })
+
+      return newLeaf.id
+    },
+    [
+      panelWindowId,
+      persistedWindowLayout,
+      store,
+      getConfig,
+      spawnTerminal,
+      removeTerminalOptimistically,
+    ]
+  )
+
+  const handleUpdatePaneType = useCallback(
+    (paneId: string, paneType: PaneType) => {
+      if (!persistedWindowLayout) {
+        return
+      }
+
+      // Find which workspace contains this pane and update its type
+      let resultLayout = persistedWindowLayout
+      const allLeaves = getAllWorkspaceTileLeaves(persistedWindowLayout)
+      let foundWorkspaceId: string | undefined
+      for (const wsLeaf of allLeaves) {
+        const activePanelTab = wsLeaf.panelTabs.find(
+          (t) => t.id === wsLeaf.activePanelTabId
+        )
+        if (!activePanelTab) {
+          continue
+        }
+        const leaf = findLeaf(activePanelTab.panelLayout, paneId)
+        if (!leaf) {
+          continue
+        }
+        foundWorkspaceId = wsLeaf.workspaceId
+        const effectivePaneType =
+          paneType === 'agent' ? ('terminal' as const) : paneType
+        const newTree = updateLeafTypeInTree(
+          activePanelTab.panelLayout,
+          paneId,
+          effectivePaneType
+        )
+        resultLayout = updateWorkspaceTileLeaf(
+          persistedWindowLayout,
+          wsLeaf.workspaceId,
+          (wsLeafNode) => ({
+            ...wsLeafNode,
+            panelTabs: wsLeafNode.panelTabs.map((tab) =>
+              tab.id === activePanelTab.id
+                ? { ...tab, panelLayout: newTree }
+                : tab
+            ),
+          })
+        )
+        break
+      }
+
+      if (resultLayout !== persistedWindowLayout) {
+        store.commit(
+          windowLayoutUpdated({
+            windowId: panelWindowId,
+            windowLayout: resultLayout,
+            reason: 'update-pane-type',
+          })
+        )
+      }
+
+      // Auto-spawn a terminal for terminal/agent panes
+      if (
+        foundWorkspaceId &&
+        (paneType === 'terminal' || paneType === 'agent')
+      ) {
+        const wsId = foundWorkspaceId
+
+        const resolveCommand = async (): Promise<string | undefined> => {
+          if (paneType !== 'agent') {
+            return undefined
+          }
+          const wsList = store.query(allWorkspaces$)
+          const ws = wsList.find((w) => w.id === wsId)
+          if (!ws?.projectId) {
+            return 'opencode'
+          }
+          try {
+            const config = await getConfig({
+              payload: { projectId: ws.projectId },
+            })
+            return config.agent.value ?? 'opencode'
+          } catch {
+            return 'opencode'
+          }
+        }
+
+        paneSpawnGuard
+          .run(paneId, async () => {
+            const command = await resolveCommand()
+            return retryOnInitializing(() =>
+              spawnTerminal({ payload: { workspaceId: wsId, command } })
+            )
+          })
+          .then((result) => {
+            if (!result) {
+              return
+            }
+            if (paneSpawnGuard.isCancelled(paneId)) {
+              removeTerminalOptimistically(result.id, '[update-type-cancelled]')
+              return
+            }
+            const currentRows = store.query(persistedLayout$)
+            const currentRow = currentRows.find(
+              (row) => row.windowId === panelWindowId
+            )
+            const currentWindowLayout = currentRow?.windowLayout as
+              | WindowLayout
+              | undefined
+            if (!currentWindowLayout) {
+              return
+            }
+            const paneStillExists = getAllWorkspaceTileLeaves(
+              currentWindowLayout
+            ).some((wsLeafNode) =>
+              wsLeafNode.panelTabs.some((tab) =>
+                findLeaf(tab.panelLayout, paneId)
+              )
+            )
+            if (!paneStillExists) {
+              removeTerminalOptimistically(result.id, '[update-type-orphaned]')
+              return
+            }
+            const updated = updateWorkspaceTileLeaf(
+              currentWindowLayout,
+              wsId,
+              (wsLeafNode) => ({
+                ...wsLeafNode,
+                panelTabs: wsLeafNode.panelTabs.map((tab) => ({
+                  ...tab,
+                  panelLayout: assignTerminalInPanelTree(
+                    tab.panelLayout,
+                    paneId,
+                    result.id
+                  ),
+                })),
+              })
+            )
+            store.commit(
+              windowLayoutUpdated({
+                windowId: panelWindowId,
+                windowLayout: updated,
+                reason: 'update-type-terminal-assigned',
+              })
+            )
+          })
+          .catch((error) => {
+            console.warn('[update-pane-type] auto-spawn failed:', error)
+          })
+      }
     },
     [
       panelWindowId,
@@ -1991,6 +2148,7 @@ export function usePanelLayout() {
       addPanelTab: handleAddPanelTab,
       assignTerminalToPane: handleAssignTerminalToPane,
       splitPane: handleSplitPane,
+      updatePaneType: handleUpdatePaneType,
       closePane: handleClosePane,
       closeWorkspace: handleCloseWorkspace,
       forceCloseWorkspace: handleCloseWorkspace,
@@ -2022,6 +2180,7 @@ export function usePanelLayout() {
       handleAddPanelTab,
       handleAssignTerminalToPane,
       handleSplitPane,
+      handleUpdatePaneType,
       handleClosePane,
       handleCloseWorkspace,
       handleSetActivePaneId,

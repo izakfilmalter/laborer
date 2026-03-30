@@ -671,46 +671,78 @@ function HomeComponent() {
   // Panel type picker state — when set, shows the picker overlay on the
   // specified pane. On type selection, the pending action (split/new tab)
   // is performed. Follows the same pattern as pendingClosePaneId.
+  //
+  // For split actions, the split is created immediately with a placeholder
+  // type ('diff') so the picker appears on the NEW pane rather than the
+  // current one. On selection, the pane type is updated. On cancel, the
+  // new pane is removed.
   const [pickerMode, setPickerMode] = useState<PickerMode | null>(null)
+  // Track the new pane ID created by a split, so we can show the picker
+  // on it and close it on cancel.
+  const [splitNewPaneId, setSplitNewPaneId] = useState<string | null>(null)
 
   /**
-   * Show the panel type picker. When a type is selected, the corresponding
-   * split or new-tab action is performed and the picker is dismissed.
+   * Show the panel type picker. For split modes, immediately creates the
+   * split and shows the picker on the new pane. For new-tab mode, shows
+   * the picker on the current active pane.
    */
-  const showPanelTypePicker = useCallback((mode: PickerMode) => {
-    setPickerMode(mode)
-  }, [])
+  const showPanelTypePicker = useCallback(
+    (mode: PickerMode) => {
+      if (mode.kind === 'split-right' || mode.kind === 'split-down') {
+        // Create the split immediately with 'diff' as a placeholder type
+        // (diff panes don't auto-spawn terminals). The type will be
+        // updated when the user selects from the picker.
+        const direction =
+          mode.kind === 'split-right' ? 'horizontal' : 'vertical'
+        const newPaneId = panelActions.splitPane(mode.paneId, direction, {
+          paneType: 'diff',
+          workspaceId: mode.workspaceId,
+        } as Partial<LeafNode>)
+        if (newPaneId) {
+          setSplitNewPaneId(newPaneId)
+          setPickerMode(mode)
+        }
+      } else {
+        setSplitNewPaneId(null)
+        setPickerMode(mode)
+      }
+    },
+    [panelActions]
+  )
 
   const handlePickerSelect = useCallback(
     (type: PaneType) => {
       if (!pickerMode) {
         return
       }
-      if (pickerMode.kind === 'split-right') {
-        panelActions.splitPane(pickerMode.paneId, 'horizontal', {
-          paneType: type,
-          workspaceId: pickerMode.workspaceId,
-        } as Partial<LeafNode>)
-      } else if (pickerMode.kind === 'split-down') {
-        panelActions.splitPane(pickerMode.paneId, 'vertical', {
-          paneType: type,
-          workspaceId: pickerMode.workspaceId,
-        } as Partial<LeafNode>)
+      if (
+        (pickerMode.kind === 'split-right' ||
+          pickerMode.kind === 'split-down') &&
+        splitNewPaneId
+      ) {
+        // The split was already created — just update the pane type
+        panelActions.updatePaneType(splitNewPaneId, type)
       } else if (pickerMode.kind === 'new-tab') {
         panelActions.addPanelTab?.(pickerMode.workspaceId, type)
       }
       setPickerMode(null)
+      setSplitNewPaneId(null)
     },
-    [pickerMode, panelActions]
+    [pickerMode, splitNewPaneId, panelActions]
   )
 
   const handlePickerCancel = useCallback(() => {
+    // If we created a split pane for the picker, remove it on cancel
+    if (splitNewPaneId) {
+      panelActions.closePane(splitNewPaneId)
+    }
     setPickerMode(null)
-  }, [])
+    setSplitNewPaneId(null)
+  }, [splitNewPaneId, panelActions])
 
   /**
-   * The pane ID to show the picker on. For split actions, it's the pane
-   * being split. For new-tab, it's the workspace's active pane (if any).
+   * The pane ID to show the picker on. For split actions, it's the newly
+   * created pane. For new-tab, it's the workspace's active pane (if any).
    */
   const pickerPaneId = useMemo(() => {
     if (!pickerMode) {
@@ -720,8 +752,9 @@ function HomeComponent() {
       // For new-tab, show picker on the workspace's currently active pane
       return activePaneId
     }
-    return pickerMode.paneId
-  }, [pickerMode, activePaneId])
+    // For splits, show picker on the newly created pane
+    return splitNewPaneId
+  }, [pickerMode, activePaneId, splitNewPaneId])
 
   /** Context value for the panel type picker overlay. */
   const pendingPickerState: PendingPickerState = useMemo(

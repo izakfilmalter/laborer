@@ -222,12 +222,13 @@ interface PanelActions {
    * @param paneId - The ID of the LeafNode to split
    * @param direction - "horizontal" (side-by-side) or "vertical" (stacked)
    * @param newPaneContent - Optional content for the new pane
+   * @returns The ID of the newly created pane, or undefined if split failed
    */
   readonly splitPane: (
     paneId: string,
     direction: SplitDirection,
     newPaneContent?: Partial<LeafNode>
-  ) => void
+  ) => string | undefined
 
   /**
    * Switch the active panel tab by ID within a workspace.
@@ -344,6 +345,15 @@ interface PanelActions {
    * @returns Whether the tree pane is now visible (true = toggled on)
    */
   readonly toggleTreePane: (paneId: string) => boolean
+
+  /**
+   * Update the type of an existing pane. Used by the panel type picker
+   * after a split is created with a placeholder type.
+   *
+   * @param paneId - The ID of the LeafNode to update
+   * @param paneType - The new pane type
+   */
+  readonly updatePaneType: (paneId: string, paneType: PaneType) => void
 
   /**
    * The current window layout (for rendering the tab bar).

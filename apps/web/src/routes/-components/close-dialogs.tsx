@@ -382,6 +382,72 @@ export function CloseWindowTabDialog({
   )
 }
 
+/**
+ * Confirmation dialog shown when the user triggers app quit (Cmd+Q, tray Quit)
+ * while terminals with running processes exist. The user can choose to quit
+ * anyway (killing all processes) or cancel.
+ *
+ * This is different from `CloseAppDialog` which handles the hide-to-tray flow
+ * for the close button. This dialog handles the actual app quit flow.
+ */
+export function QuitAppDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+  runningTerminalCount,
+}: {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+  readonly onConfirm: () => void
+  readonly runningTerminalCount: number
+}) {
+  const handleConfirm = useCallback(() => {
+    onConfirm()
+    onOpenChange(false)
+  }, [onConfirm, onOpenChange])
+
+  const terminalLabel =
+    runningTerminalCount === 1
+      ? '1 terminal'
+      : `${runningTerminalCount} terminals`
+
+  return (
+    <AlertDialog onOpenChange={onOpenChange} open={open}>
+      <AlertDialogContent
+        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+          if (isExactEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            return
+          }
+          if (isMetaEnter(event.nativeEvent)) {
+            event.preventDefault()
+            event.stopPropagation()
+            handleConfirm()
+          }
+        }}
+      >
+        <AlertDialogHeader>
+          <AlertDialogTitle>Quit Laborer?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {terminalLabel} with running processes will be terminated.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>
+            Cancel <Kbd>Esc</Kbd>
+          </AlertDialogCancel>
+          <AlertDialogAction onClick={handleConfirm} variant="destructive">
+            Quit
+            <Kbd>⌘</Kbd>
+            <Kbd>↵</Kbd>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
 export function CloseAppDialog({
   open,
   onOpenChange,

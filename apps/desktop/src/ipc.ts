@@ -1,5 +1,6 @@
 import type {
   AgentNotificationPayload,
+  BeforeQuitPayload,
   ContextMenuItem,
   DesktopUpdateActionResult,
   DesktopUpdateState,
@@ -45,6 +46,9 @@ export const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
 export const GITHUB_OAUTH_CALLBACK_CHANNEL = 'desktop:github-oauth-callback'
 export const START_GITHUB_OAUTH_CHANNEL = 'desktop:start-github-oauth'
 export const GET_SIDECAR_STATUSES_CHANNEL = 'desktop:get-sidecar-statuses'
+export const BEFORE_QUIT_CHANNEL = 'desktop:before-quit'
+export const QUIT_REPLY_CHANNEL = 'desktop:quit-reply'
+export const QUIT_CONFIRMED_CHANNEL = 'desktop:quit-confirmed'
 export const ACQUIRE_SERVICE_PORT_CHANNEL = 'laborer:acquire-service-port'
 export const SERVICE_PORT_RESPONSE_CHANNEL = 'laborer:service-port-response'
 export const ACQUIRE_TERMINAL_DATA_PORT_CHANNEL =
@@ -220,6 +224,81 @@ export function setUtilityProcessManager(
   manager: UtilityProcessManager | null
 ): void {
   utilityProcessManagerRef = manager
+}
+
+// ---------------------------------------------------------------------------
+// Quit orchestration — veto-based quit flow (VS Code pattern)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ask all renderer windows whether they're ready to quit.
+ *
+ * Sends a `BeforeQuitPayload` to every non-destroyed `BrowserWindow` and
+ * waits for each to respond via `QUIT_REPLY_CHANNEL`. Any window can veto
+ * the quit by responding with `{ veto: true }`.
+ *
+ * Returns `true` if the quit was vetoed (i.e., the app should NOT exit).
+ */
+export async function askRenderersBeforeQuit(
+  reason: BeforeQuitPayload['reason'],
+  timeoutMs = 5000
+): Promise<boolean> {
+  const windows = BrowserWindow.getAllWindows().filter(
+    (w) => !w.isDestroyed() && w.webContents && !w.webContents.isDestroyed()
+  )
+
+  if (windows.length === 0) {
+    return false
+  }
+
+  const quitId = crypto.randomUUID()
+  const payload: BeforeQuitPayload = { id: quitId, reason }
+
+  // Collect replies from all windows.
+  const replyPromise = new Promise<boolean>((resolve) => {
+    let repliesReceived = 0
+    let vetoed = false
+
+    const onReply = (
+      _event: Electron.IpcMainEvent,
+      replyPayload: unknown
+    ): void => {
+      if (
+        typeof replyPayload !== 'object' ||
+        replyPayload === null ||
+        !('id' in replyPayload) ||
+        (replyPayload as { id: unknown }).id !== quitId
+      ) {
+        return
+      }
+
+      const reply = replyPayload as { id: string; veto: unknown }
+      if (reply.veto === true) {
+        vetoed = true
+      }
+
+      repliesReceived++
+      if (repliesReceived >= windows.length) {
+        ipcMain.removeListener(QUIT_REPLY_CHANNEL, onReply)
+        resolve(vetoed)
+      }
+    }
+
+    ipcMain.on(QUIT_REPLY_CHANNEL, onReply)
+
+    // Safety timeout — if windows don't respond in time, proceed with quit.
+    setTimeout(() => {
+      ipcMain.removeListener(QUIT_REPLY_CHANNEL, onReply)
+      resolve(vetoed)
+    }, timeoutMs).unref()
+  })
+
+  // Broadcast the before-quit payload to all renderer windows.
+  for (const window of windows) {
+    window.webContents.send(BEFORE_QUIT_CHANNEL, payload)
+  }
+
+  return await replyPromise
 }
 
 // ---------------------------------------------------------------------------

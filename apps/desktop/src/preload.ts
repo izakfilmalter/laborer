@@ -28,6 +28,8 @@ const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
 const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
 const GITHUB_OAUTH_CALLBACK_CHANNEL = 'desktop:github-oauth-callback'
 const START_GITHUB_OAUTH_CHANNEL = 'desktop:start-github-oauth'
+const BEFORE_QUIT_CHANNEL = 'desktop:before-quit'
+const QUIT_REPLY_CHANNEL = 'desktop:quit-reply'
 // Port acquisition channel constants are no longer needed in the preload.
 // The renderer sends IPC requests directly via `ipcSend()` and the preload
 // only needs to relay ports via `ipcMessagePort.acquire(responseChannel, nonce)`.
@@ -223,6 +225,32 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     return () => {
       ipcRenderer.removeListener(GITHUB_OAUTH_CALLBACK_CHANNEL, wrappedListener)
     }
+  },
+
+  onBeforeQuit: (listener) => {
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      payload: unknown
+    ) => {
+      if (
+        typeof payload !== 'object' ||
+        payload === null ||
+        !('id' in payload) ||
+        !('reason' in payload)
+      ) {
+        return
+      }
+      listener(payload as Parameters<typeof listener>[0])
+    }
+
+    ipcRenderer.on(BEFORE_QUIT_CHANNEL, wrappedListener)
+    return () => {
+      ipcRenderer.removeListener(BEFORE_QUIT_CHANNEL, wrappedListener)
+    }
+  },
+
+  respondToQuit: (id, veto) => {
+    ipcRenderer.send(QUIT_REPLY_CHANNEL, { id, veto })
   },
 
   startGithubOAuth: (state) =>

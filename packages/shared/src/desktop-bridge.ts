@@ -95,6 +95,30 @@ export interface DesktopUpdateActionResult {
 }
 
 // ---------------------------------------------------------------------------
+// App quit types
+// ---------------------------------------------------------------------------
+
+/**
+ * Reason the app is shutting down, sent to renderers via `onBeforeQuit`.
+ *
+ * - `quit`   — user explicitly quit the app (Cmd+Q, tray Quit, app.quit())
+ * - `reload` — the window is being reloaded (not a full app quit)
+ */
+export type QuitReason = 'quit' | 'reload'
+
+/**
+ * Payload sent from the main process to each renderer when a quit is requested.
+ * The renderer must call `respondToQuit` with `veto: true` to block the quit
+ * or `veto: false` to allow it.
+ */
+export interface BeforeQuitPayload {
+  /** Unique ID for this quit request, used to correlate the response. */
+  readonly id: string
+  /** Why the app is shutting down. */
+  readonly reason: QuitReason
+}
+
+// ---------------------------------------------------------------------------
 // Agent notification types
 // ---------------------------------------------------------------------------
 
@@ -196,6 +220,23 @@ export interface DesktopBridge {
   onActivateWorkspace: (listener: (workspaceId: string) => void) => () => void
 
   /**
+   * Subscribes to quit requests from the main process.
+   *
+   * When the main process wants to quit, it sends a `BeforeQuitPayload` to
+   * every renderer window. The renderer MUST call `respondToQuit` with the
+   * payload's `id` and a `veto` flag. If any window vetoes, the quit is
+   * cancelled.
+   *
+   * Use this to:
+   * - Flush pending LiveStore state
+   * - Prompt the user about running terminals/tasks
+   * - Clean up subscriptions and resources
+   *
+   * Returns an unsubscribe function.
+   */
+  onBeforeQuit: (listener: (payload: BeforeQuitPayload) => void) => () => void
+
+  /**
    * Subscribes to GitHub OAuth callback events.
    * Fired when the OS routes an `x-github-desktop-dev-auth://oauth?code=...&state=...`
    * URL to the app. The callback receives the full URL string.
@@ -243,6 +284,14 @@ export interface DesktopBridge {
    * workspace-targeting actions to the correct window.
    */
   reportVisibleWorkspaces: (workspaceIds: readonly string[]) => Promise<void>
+
+  /**
+   * Responds to a quit request from the main process.
+   *
+   * @param id    — The `id` from the `BeforeQuitPayload` this is responding to.
+   * @param veto  — `true` to block the quit, `false` to allow it to proceed.
+   */
+  respondToQuit: (id: string, veto: boolean) => void
 
   /** Manually restarts a sidecar service by name. */
   restartSidecar: (name: SidecarName) => Promise<void>

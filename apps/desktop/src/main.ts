@@ -1,8 +1,6 @@
 import { watch } from 'node:fs'
 import { join } from 'node:path'
-
-import { app, BrowserWindow, shell } from 'electron'
-
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import {
   broadcastUpdateStateToWindow,
   configureAutoUpdater,
@@ -14,7 +12,9 @@ import {
 import { DevWatcher } from './dev-watcher.js'
 import { fixPath } from './fix-path.js'
 import {
+  askRenderersBeforeQuit,
   getWorkspaceWindowRegistry,
+  QUIT_CONFIRMED_CHANNEL,
   registerIpcHandlers,
   setDownloadUpdateHandler,
   setGetSidecarStatusesHandler,
@@ -489,19 +489,38 @@ app.on('window-all-closed', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Graceful shutdown
+// Graceful shutdown — VS Code-style multi-phase quit flow
+//
+// The quit sequence is:
+//
+// 1. `before-quit`  — we ask renderer windows if they're ready to quit.
+//                     Any window can veto (e.g., unsaved work, running tasks).
+//                     If vetoed, the quit is cancelled.
+//
+// 2. (windows close) — Electron closes each window. If all windows close,
+//                      `window-all-closed` fires and re-triggers app.quit().
+//
+// 3. `will-quit`    — we preventDefault() to delay exit while we:
+//                     - Stop lifecycle monitor (prevent restarts)
+//                     - Kill utility processes with killAllAndWait()
+//                     - Wait for them to serialize state (terminal sessions, etc.)
+//                     Then re-call app.quit() to actually exit.
+//
+// Force-quit safety: a timeout ensures the app always exits even if
+// cleanup hangs (e.g., a utility process ignores SIGTERM).
 // ---------------------------------------------------------------------------
 
-/**
- * Shutdown handler: cancel pending restarts, unregister global shortcut,
- * destroy the tray, then kill all utility processes before the app exits.
- */
-function shutdown(): void {
-  if (isQuitting) {
-    return
-  }
-  isQuitting = true
+/** Maximum time to wait for renderer veto replies. */
+const RENDERER_QUIT_TIMEOUT_MS = 5000
 
+/** Maximum time to wait for utility processes to exit after SIGTERM. */
+const UTILITY_QUIT_TIMEOUT_MS = 5000
+
+/**
+ * Synchronous cleanup of main-process resources.
+ * Called once during shutdown — idempotent via `isQuitting`.
+ */
+function cleanupMainProcessResources(): void {
   // Unregister the global shortcut.
   if (unregisterShortcut) {
     unregisterShortcut()
@@ -519,33 +538,105 @@ function shutdown(): void {
   if (devWatcher) {
     devWatcher.shutdown()
   }
+}
 
+/**
+ * Async shutdown: stop lifecycle monitor, then kill all utility processes
+ * and WAIT for them to exit (so they can serialize state like terminal
+ * sessions before the process dies).
+ */
+async function shutdownUtilityProcesses(): Promise<void> {
   // Stop the lifecycle monitor — cancels pending restart timers and
   // heartbeat timers so killed processes aren't immediately re-spawned.
   if (lifecycleMonitor) {
     lifecycleMonitor.shutdown()
   }
 
-  // Kill all utility processes (MessagePort-based services).
+  // Kill all utility processes and wait for them to finish cleanup.
+  // This is critical: the terminal utility process serializes session
+  // state on SIGTERM. Using killAllAndWait ensures we don't exit before
+  // that serialization completes.
   if (utilityProcessManager) {
-    utilityProcessManager.killAll()
+    await utilityProcessManager.killAllAndWait(UTILITY_QUIT_TIMEOUT_MS)
   }
 }
 
-app.on('before-quit', () => {
-  shutdown()
+// Phase 1: `before-quit` — ask renderers for permission, with veto support.
+app.on('before-quit', (event) => {
+  if (isQuitting) {
+    // Already in shutdown — let the quit proceed to the `will-quit` phase.
+    return
+  }
+
+  // Prevent the quit while we ask renderers.
+  event.preventDefault()
+
+  // Ask renderer windows if they're OK with quitting.
+  askRenderersBeforeQuit('quit', RENDERER_QUIT_TIMEOUT_MS)
+    .then((vetoed: boolean) => {
+      if (vetoed) {
+        // A renderer vetoed — cancel the quit entirely.
+        console.info('[main] Quit vetoed by renderer')
+        return
+      }
+
+      // No veto — proceed with shutdown. Set the flag so the next
+      // before-quit pass-through doesn't re-ask renderers.
+      isQuitting = true
+      cleanupMainProcessResources()
+      app.quit()
+    })
+    .catch((error: unknown) => {
+      // On error, proceed with quit to avoid leaving the app in a stuck state.
+      console.error('[main] Error during renderer quit negotiation:', error)
+      isQuitting = true
+      cleanupMainProcessResources()
+      app.quit()
+    })
+})
+
+// Renderer confirmed quit after seeing the dialog — re-trigger app.quit().
+// The `before-quit` handler will fire again, but this time the renderer's
+// `forceAllowNextQuit` flag is set so it won't veto.
+ipcMain.on(QUIT_CONFIRMED_CHANNEL, () => {
+  console.info('[main] Renderer confirmed quit — re-triggering app.quit()')
+  app.quit()
+})
+
+// Phase 3: `will-quit` — async cleanup of utility processes.
+// We preventDefault() and re-quit after cleanup completes.
+app.once('will-quit', (event) => {
+  event.preventDefault()
+
+  shutdownUtilityProcesses()
+    .then(() => {
+      app.quit()
+    })
+    .catch((error: unknown) => {
+      console.error('[main] Error during utility process shutdown:', error)
+      app.quit()
+    })
 })
 
 // Handle SIGINT and SIGTERM for clean shutdown when the main process
 // is terminated externally (e.g., during development).
 if (process.platform !== 'win32') {
-  process.on('SIGINT', () => {
-    shutdown()
-    app.quit()
-  })
+  const handleSignal = () => {
+    if (isQuitting) {
+      return
+    }
+    isQuitting = true
+    cleanupMainProcessResources()
 
-  process.on('SIGTERM', () => {
-    shutdown()
-    app.quit()
-  })
+    shutdownUtilityProcesses()
+      .then(() => {
+        app.quit()
+      })
+      .catch(() => {
+        app.quit()
+      })
+  }
+
+  process.on('SIGINT', handleSignal)
+  process.on('SIGTERM', handleSignal)
 }

@@ -15,9 +15,11 @@ import { SyncStatusProvider } from '@/components/sync-status-context'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { useBeforeQuit } from '@/hooks/use-before-quit'
 import { PhaseTransitionDriver } from '@/hooks/use-phase-transition-driver'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
 import { LiveStoreProvider } from '@/livestore/provider'
+import { QuitAppDialog } from '@/routes/-components/close-dialogs'
 
 import '../index.css'
 
@@ -43,6 +45,28 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
     ],
   }),
 })
+
+/**
+ * Handles quit negotiation with the main process and renders the
+ * confirmation dialog when running terminals would be killed.
+ */
+function BeforeQuitHandler() {
+  const { isQuitDialogOpen, runningTerminalCount, confirmQuit, cancelQuit } =
+    useBeforeQuit()
+
+  return (
+    <QuitAppDialog
+      onConfirm={confirmQuit}
+      onOpenChange={(open: boolean) => {
+        if (!open) {
+          cancelQuit()
+        }
+      }}
+      open={isQuitDialogOpen}
+      runningTerminalCount={runningTerminalCount}
+    />
+  )
+}
 
 /** Renderless component that listens for sidecar crash/recovery events via DesktopBridge. */
 function SidecarCrashListener(): null {
@@ -79,6 +103,7 @@ function RootComponent() {
               </AtomRegistryProvider>
               <Toaster richColors />
               <PhaseTransitionDriver />
+              <BeforeQuitHandler />
               <SidecarCrashListener />
             </TooltipProvider>
           </HotkeysProvider>

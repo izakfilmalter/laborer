@@ -521,9 +521,19 @@ function useTerminalList(): {
   }
 }
 
+/**
+ * Returns the number of running terminals with child processes.
+ * Reads directly from the shared module-level store (no hook required).
+ * Used by the before-quit handler to decide whether to show a confirmation dialog.
+ */
+const getRunningTerminalCount = (): number =>
+  sharedTerminalList.filter((t) => t.status === 'running' && t.hasChildProcess)
+    .length
+
 export { useTerminalList }
 export {
   applyEventToList,
+  getRunningTerminalCount,
   removeTerminalListItem,
   resetTerminalListStore,
   upsertTerminalListItem,

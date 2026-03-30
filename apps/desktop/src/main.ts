@@ -47,6 +47,59 @@ fixPath()
 registerSchemeAsPrivileged()
 
 // ---------------------------------------------------------------------------
+// Guard against write-to-broken-pipe errors during shutdown
+// ---------------------------------------------------------------------------
+// When the parent dev process is killed (Ctrl+C), stdio streams may be
+// destroyed before the main process finishes cleanup. Any `console.*` call
+// then throws `Error: write EIO` (or EPIPE), which Electron surfaces as an
+// uncaught-exception dialog. Following VS Code's pattern, we silently ignore
+// these specific errors and install a SIGPIPE handler to prevent the default
+// signal behavior from terminating the process.
+//
+// @see https://github.com/microsoft/vscode/blob/main/src/bootstrap-node.ts
+// @see https://github.com/microsoft/vscode/blob/main/src/vs/base/common/errors.ts
+
+/**
+ * Returns true if the error is a write-to-broken-pipe error (EPIPE or EIO).
+ * These occur when writing to stdout/stderr after the stream has been destroyed.
+ */
+function isWritePipeError(e: unknown): boolean {
+  if (!e || typeof e !== 'object') {
+    return false
+  }
+  const err = e as { code?: string; syscall?: string }
+  return (
+    (err.code === 'EPIPE' || err.code === 'EIO') &&
+    err.syscall?.toUpperCase() === 'WRITE'
+  )
+}
+
+process.on('uncaughtException', (err: Error) => {
+  if (isWritePipeError(err)) {
+    // Silently ignore — the stream is already gone. Logging here would
+    // trigger another write-to-broken-pipe error, creating an infinite loop.
+    return
+  }
+  // Re-throw non-pipe errors so Electron's default handler can report them.
+  throw err
+})
+
+// Electron doesn't install a SIGPIPE handler by default (unlike Node.js).
+// Without one, a SIGPIPE signal terminates the process immediately.
+let didLogSigpipe = false
+process.on('SIGPIPE', () => {
+  // Log at most once — further logging may itself trigger SIGPIPE.
+  if (!didLogSigpipe) {
+    didLogSigpipe = true
+    try {
+      console.error('[main] Received SIGPIPE')
+    } catch {
+      // Stream already broken — nothing we can do.
+    }
+  }
+})
+
+// ---------------------------------------------------------------------------
 // GitHub OAuth protocol handler
 // ---------------------------------------------------------------------------
 // Register x-github-desktop-dev-auth:// so the OS routes the OAuth callback

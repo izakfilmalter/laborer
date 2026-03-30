@@ -184,13 +184,17 @@ export class DevWatcher {
 
   /**
    * Stop all file watchers and cancel pending debounce timers.
+   *
+   * NOTE: We intentionally avoid `console.info` here because shutdown often
+   * runs after the parent process's stdio streams have been destroyed (e.g.,
+   * Ctrl+C during dev mode). Writing to a broken pipe throws `Error: write
+   * EIO` which Electron surfaces as an uncaught-exception dialog.
    */
   shutdown(): void {
     this.isShutdown = true
 
-    for (const [name, watcher] of this.watchers) {
+    for (const [, watcher] of this.watchers) {
       watcher.close()
-      console.info(`[dev-watcher:${name}] Stopped watching`)
     }
     this.watchers.clear()
 

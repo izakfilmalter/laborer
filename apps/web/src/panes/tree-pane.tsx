@@ -252,7 +252,6 @@ function FileTreeContextMenu({
 
   return (
     <DropdownMenu
-      modal={false}
       onOpenChange={(open) => {
         if (!open) {
           onClose()

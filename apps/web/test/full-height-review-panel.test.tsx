@@ -499,7 +499,6 @@ describe('PanelContent passes through side panel state', () => {
         isReconciling={true}
         reviewPaneOpen
         reviewWorkspaceId="workspace-1"
-        workspaceTileLayout={TWO_WORKSPACE_TILE}
       />
     )
 

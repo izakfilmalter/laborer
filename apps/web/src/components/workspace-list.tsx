@@ -610,6 +610,7 @@ interface WorkspaceItemProps {
     readonly prState: string | null
     readonly aheadCount: number | null
     readonly behindCount: number | null
+    readonly errorMessage: string | null
   }
 }
 
@@ -926,16 +927,36 @@ function WorkspaceItem({
           <div className="flex min-w-0 items-center justify-between gap-2">
             {infraLabel}
             <div className="ml-auto flex shrink-0 items-center gap-1">
-              <Badge
-                className={cn(
-                  'shrink-0 border',
-                  getStatusClasses(displayStatus)
-                )}
-                variant="outline"
-              >
-                <StatusDot status={displayStatus} />
-                {displayStatus}
-              </Badge>
+              {displayStatus === 'errored' && workspace.errorMessage ? (
+                <Tooltip>
+                  <TooltipTrigger>
+                    <Badge
+                      className={cn(
+                        'shrink-0 border',
+                        getStatusClasses(displayStatus)
+                      )}
+                      variant="outline"
+                    >
+                      <StatusDot status={displayStatus} />
+                      {displayStatus}
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-sm whitespace-pre-wrap font-mono text-xs">
+                    {workspace.errorMessage}
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <Badge
+                  className={cn(
+                    'shrink-0 border',
+                    getStatusClasses(displayStatus)
+                  )}
+                  variant="outline"
+                >
+                  <StatusDot status={displayStatus} />
+                  {displayStatus}
+                </Badge>
+              )}
               {isContainerized ? (
                 <>
                   <ContainerPauseButton

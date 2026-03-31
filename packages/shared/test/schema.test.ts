@@ -142,6 +142,7 @@ describe('LiveStore schema', () => {
           aheadCount: null,
           behindCount: null,
           worktreeSetupStep: null,
+          errorMessage: null,
         })
 
         store.commit(

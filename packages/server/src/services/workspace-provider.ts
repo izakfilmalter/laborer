@@ -1205,7 +1205,11 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                 // whether to retry or destroy it. Never auto-destroy — the
                 // worktree may contain uncommitted work.
                 store.commit(
-                  events.workspaceStatusChanged({ id, status: 'errored' })
+                  events.workspaceStatusChanged({
+                    id,
+                    status: 'errored',
+                    errorMessage: String(err),
+                  })
                 )
               })
             )
@@ -1741,6 +1745,7 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
                   events.workspaceStatusChanged({
                     id: workspaceId,
                     status: 'errored',
+                    errorMessage: String(err),
                   })
                 )
               })

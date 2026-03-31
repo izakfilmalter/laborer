@@ -56,6 +56,8 @@ export const workspaces = State.SQLite.table({
     aheadCount: State.SQLite.integer({ nullable: true }),
     /** Number of upstream commits not yet pulled locally. Null when no upstream is configured. */
     behindCount: State.SQLite.integer({ nullable: true }),
+    /** Human-readable error message when the workspace is in 'errored' status. Null when not errored. */
+    errorMessage: State.SQLite.text({ nullable: true }),
   },
 })
 
@@ -199,6 +201,8 @@ export const workspaceStatusChanged = Events.synced({
   schema: Schema.Struct({
     id: Schema.String,
     status: Schema.String,
+    /** Human-readable error message when transitioning to 'errored'. Optional for backward compat with old events. */
+    errorMessage: Schema.optional(Schema.NullOr(Schema.String)),
   }),
 })
 
@@ -589,11 +593,21 @@ const materializers = State.SQLite.materializers(events, {
       prState: null,
       aheadCount: null,
       behindCount: null,
+      errorMessage: null,
     }),
-  'v1.WorkspaceStatusChanged': ({ id, status }) =>
-    status === 'running'
-      ? workspaces.update({ status, worktreeSetupStep: null }).where({ id })
-      : workspaces.update({ status }).where({ id }),
+  'v1.WorkspaceStatusChanged': ({ id, status, errorMessage }) => {
+    if (status === 'running') {
+      return workspaces
+        .update({ status, worktreeSetupStep: null, errorMessage: null })
+        .where({ id })
+    }
+    if (status === 'errored') {
+      return workspaces
+        .update({ status, errorMessage: errorMessage ?? null })
+        .where({ id })
+    }
+    return workspaces.update({ status, errorMessage: null }).where({ id })
+  },
   'v1.WorkspaceBranchChanged': ({ id, branchName }) =>
     workspaces.update({ branchName }).where({ id }),
   'v1.WorkspaceBaseShaUpdated': ({ id, baseSha }) =>

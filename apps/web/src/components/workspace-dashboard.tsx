@@ -45,6 +45,11 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { useTerminalList } from '@/hooks/use-terminal-list'
 import { cn } from '@/lib/utils'
 import { useLaborerStore } from '@/livestore/store'
@@ -325,6 +330,7 @@ interface ProjectSection {
     readonly containerUrl: string | null
     readonly containerPort: number | null
     readonly containerStatus: string | null
+    readonly errorMessage: string | null
   }>
 }
 
@@ -529,6 +535,7 @@ function DashboardWorkspaceRow({
     readonly containerUrl: string | null
     readonly containerPort: number | null
     readonly containerStatus: string | null
+    readonly errorMessage: string | null
   }
   readonly terminalCount: number
 }) {
@@ -575,21 +582,41 @@ function DashboardWorkspaceRow({
           {terminalCount} terminal{terminalCount !== 1 ? 's' : ''}
         </span>
       )}
-      <Badge
-        className={cn(
-          'ml-auto shrink-0 border',
-          getStatusClasses(displayStatus)
-        )}
-        title={
-          isDetectedWorkspace && workspace.status === 'stopped'
-            ? 'Detected from existing git worktree — never activated in Laborer'
-            : undefined
-        }
-        variant="outline"
-      >
-        <StatusDot status={displayStatus} />
-        {displayStatus}
-      </Badge>
+      {displayStatus === 'errored' && workspace.errorMessage ? (
+        <Tooltip>
+          <TooltipTrigger>
+            <Badge
+              className={cn(
+                'ml-auto shrink-0 border',
+                getStatusClasses(displayStatus)
+              )}
+              variant="outline"
+            >
+              <StatusDot status={displayStatus} />
+              {displayStatus}
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-sm whitespace-pre-wrap font-mono text-xs">
+            {workspace.errorMessage}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        <Badge
+          className={cn(
+            'ml-auto shrink-0 border',
+            getStatusClasses(displayStatus)
+          )}
+          title={
+            isDetectedWorkspace && workspace.status === 'stopped'
+              ? 'Detected from existing git worktree — never activated in Laborer'
+              : undefined
+          }
+          variant="outline"
+        >
+          <StatusDot status={displayStatus} />
+          {displayStatus}
+        </Badge>
+      )}
     </div>
   )
 }

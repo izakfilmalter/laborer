@@ -59,6 +59,7 @@ import { RpcError } from '@laborer/shared/rpc'
 import { events, tables } from '@laborer/shared/schema'
 import { Array as Arr, Context, Effect, Fiber, Layer, pipe, Ref } from 'effect'
 import { spawn } from '../lib/spawn.js'
+import { spawnGit } from '../lib/spawn-git.js'
 import { ConfigService } from './config-service.js'
 import { ContainerService } from './container-service.js'
 import { DepsImageService } from './deps-image-service.js'
@@ -1301,13 +1302,18 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
 
             const dirtyFiles = yield* Effect.tryPromise({
               try: async () => {
-                const proc = spawn(['git', 'status', '--porcelain'], {
-                  cwd: workspace.worktreePath,
-                  stdout: 'pipe',
-                  stderr: 'pipe',
-                })
-                const exitCode = await proc.exited
-                const stdout = await new Response(proc.stdout).text()
+                // Use spawnGit with readOnly to set GIT_OPTIONAL_LOCKS=0,
+                // preventing lock contention with concurrent git operations.
+                // Also reads stdout concurrently with exit to avoid pipe
+                // buffer deadlocks, and enforces a 15s timeout.
+                const { exitCode, stdout } = await spawnGit(
+                  ['status', '--porcelain'],
+                  {
+                    cwd: workspace.worktreePath,
+                    readOnly: true,
+                    timeoutMs: 15_000,
+                  }
+                )
                 if (exitCode !== 0 || stdout.trim().length === 0) {
                   return [] as string[]
                 }
@@ -1784,13 +1790,18 @@ class WorkspaceProvider extends Context.Tag('@laborer/WorkspaceProvider')<
 
           const dirtyFiles = yield* Effect.tryPromise({
             try: async () => {
-              const proc = spawn(['git', 'status', '--porcelain'], {
-                cwd: workspace.worktreePath,
-                stdout: 'pipe',
-                stderr: 'pipe',
-              })
-              const exitCode = await proc.exited
-              const stdout = await new Response(proc.stdout).text()
+              // Use spawnGit with readOnly to set GIT_OPTIONAL_LOCKS=0,
+              // preventing lock contention with concurrent git operations.
+              // Also reads stdout concurrently with exit to avoid pipe
+              // buffer deadlocks, and enforces a 15s timeout.
+              const { exitCode, stdout } = await spawnGit(
+                ['status', '--porcelain'],
+                {
+                  cwd: workspace.worktreePath,
+                  readOnly: true,
+                  timeoutMs: 15_000,
+                }
+              )
               if (exitCode !== 0 || stdout.trim().length === 0) {
                 return [] as string[]
               }

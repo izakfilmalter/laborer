@@ -71,7 +71,7 @@ import {
   Stream,
 } from 'effect'
 import { parseGitStatusV2 } from '../lib/parse-git-status-v2.js'
-import { spawn } from '../lib/spawn.js'
+import { spawnGit } from '../lib/spawn-git.js'
 import { FileWatcherClient } from './file-watcher-client.js'
 import { LaborerStore } from './laborer-store.js'
 
@@ -101,62 +101,6 @@ const WORKTREE_WAIT_DELAY_MS = 1000
  */
 const snapshotFingerprint = (snapshot: FileTreeSnapshot): string =>
   `${snapshot.files.length}:${snapshot.gitStatus.length}:${JSON.stringify(snapshot.files)}:${JSON.stringify(snapshot.gitStatus)}`
-
-/**
- * Helper: spawn a git command in a worktree and capture stdout/stderr.
- * Uses `GIT_OPTIONAL_LOCKS=0` to avoid lock contention with concurrent
- * git operations (same technique VS Code uses).
- *
- * Returns a promise that resolves with the exit code, stdout, and stderr,
- * plus a `kill` function to terminate the process early. The optional
- * `signal` parameter allows external abort via `AbortController`.
- */
-const spawnGit = (
-  args: readonly string[],
-  cwd: string,
-  signal?: AbortSignal
-): {
-  kill: () => void
-  result: Promise<{ exitCode: number; stdout: string; stderr: string }>
-} => {
-  const proc = spawn(['git', ...args], {
-    cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
-    env: {
-      ...process.env,
-      GIT_OPTIONAL_LOCKS: '0',
-    },
-  })
-
-  // If an abort signal is provided, kill the process when it fires
-  const onAbort = () => {
-    proc.kill()
-  }
-  if (signal !== undefined) {
-    if (signal.aborted) {
-      proc.kill()
-    } else {
-      signal.addEventListener('abort', onAbort, { once: true })
-    }
-  }
-
-  const result = (async () => {
-    const exitCode = await proc.exited
-    const stdout = await new Response(proc.stdout).text()
-    const stderr = await new Response(proc.stderr).text()
-    // Clean up the abort listener once the process has exited
-    if (signal !== undefined) {
-      signal.removeEventListener('abort', onAbort)
-    }
-    return { exitCode, stdout, stderr }
-  })()
-
-  return {
-    kill: () => proc.kill(),
-    result,
-  }
-}
 
 // ── Directory ignore rules ──────────────────────────────────────
 // Matches the file watcher's DEFAULT_IGNORED_PREFIXES so the tree
@@ -330,14 +274,13 @@ const getGitStatus = Effect.fn('FileTreeService.getGitStatus')(function* (
   worktreePath: string,
   signal?: AbortSignal
 ) {
-  const { result } = spawnGit(
-    ['status', '-z', '--porcelain=v2'],
-    worktreePath,
-    signal
-  )
-
   const output = yield* Effect.tryPromise({
-    try: () => result,
+    try: () =>
+      spawnGit(['status', '-z', '--porcelain=v2'], {
+        cwd: worktreePath,
+        readOnly: true,
+        ...(signal !== undefined ? { signal } : {}),
+      }),
     catch: (error) =>
       new RpcError({
         message: `Failed to spawn git status: ${String(error)}`,

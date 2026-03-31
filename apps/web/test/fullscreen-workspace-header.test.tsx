@@ -251,10 +251,11 @@ describe('Workspace header visibility during fullscreen', () => {
     render(
       <PanelContent
         activePaneId="pane-1"
+        activeTabId={SINGLE_WINDOW_LAYOUT.activeTabId}
         fullscreenPaneId={null}
         isReconciling={false}
         windowLayout={SINGLE_WINDOW_LAYOUT}
-        workspaceTileLayout={SINGLE_WORKSPACE_TILE}
+        windowTabs={SINGLE_WINDOW_LAYOUT.tabs}
       />
     )
 
@@ -266,10 +267,11 @@ describe('Workspace header visibility during fullscreen', () => {
     render(
       <PanelContent
         activePaneId="pane-1"
+        activeTabId={SINGLE_WINDOW_LAYOUT.activeTabId}
         fullscreenPaneId="pane-1"
         isReconciling={false}
         windowLayout={SINGLE_WINDOW_LAYOUT}
-        workspaceTileLayout={SINGLE_WORKSPACE_TILE}
+        windowTabs={SINGLE_WINDOW_LAYOUT.tabs}
       />
     )
 
@@ -285,10 +287,11 @@ describe('Workspace header visibility during fullscreen', () => {
     render(
       <PanelContent
         activePaneId="pane-2"
+        activeTabId={TWO_WORKSPACE_WINDOW_LAYOUT.activeTabId}
         fullscreenPaneId="pane-2"
         isReconciling={false}
         windowLayout={TWO_WORKSPACE_WINDOW_LAYOUT}
-        workspaceTileLayout={TWO_WORKSPACE_TILE}
+        windowTabs={TWO_WORKSPACE_WINDOW_LAYOUT.tabs}
       />
     )
 
@@ -301,10 +304,11 @@ describe('Workspace header visibility during fullscreen', () => {
     render(
       <PanelContent
         activePaneId="pane-1"
+        activeTabId={SINGLE_WINDOW_LAYOUT.activeTabId}
         fullscreenPaneId={null}
         isReconciling={false}
         windowLayout={SINGLE_WINDOW_LAYOUT}
-        workspaceTileLayout={SINGLE_WORKSPACE_TILE}
+        windowTabs={SINGLE_WINDOW_LAYOUT.tabs}
       />
     )
 

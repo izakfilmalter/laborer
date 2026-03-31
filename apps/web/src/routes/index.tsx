@@ -1099,6 +1099,7 @@ function HomeComponent() {
                     />
                     <PanelContent
                       activePaneId={activePaneId}
+                      activeTabId={windowLayout?.activeTabId}
                       diffPaneOpen={diffPaneWorkspaceId !== null}
                       diffWorkspaceId={diffPaneWorkspaceId}
                       fullscreenPaneId={fullscreenPaneId}
@@ -1109,7 +1110,7 @@ function HomeComponent() {
                       treePaneOpen={treePaneWorkspaceId !== null}
                       treeWorkspaceId={treePaneWorkspaceId}
                       windowLayout={windowLayout}
-                      workspaceTileLayout={workspaceTileLayout}
+                      windowTabs={windowLayout?.tabs}
                     />
                   </>
                 )}

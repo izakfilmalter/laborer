@@ -707,6 +707,16 @@ function TerminalPaneRenderer({
   }, [terminalId, terminalRef])
 
   /**
+   * Ref for replayStatus so the ResizeObserver callback (which captures
+   * a closure) can check the latest replay state without re-creating
+   * the observer on every status change.
+   *
+   * @see Issue #10: Replay input guard
+   */
+  const replayStatusRef = useRef(replayStatus)
+  replayStatusRef.current = replayStatus
+
+  /**
    * Observe the container element for size changes using ResizeObserver.
    * This handles pane resizing, window resizing, fullscreen, etc.
    *
@@ -720,7 +730,11 @@ function TerminalPaneRenderer({
    * that occur when TUI applications receive rapid SIGWINCH signals
    * during drag-resize operations.
    *
+   * Resize events are suppressed during replay to prevent corrupting
+   * the replayed terminal state.
+   *
    * @see .reference/vscode/src/vs/workbench/contrib/terminal/browser/terminalResizeDebouncer.ts
+   * @see Issue #10: Replay input guard
    */
   useEffect(() => {
     const container = containerRef.current
@@ -736,6 +750,9 @@ function TerminalPaneRenderer({
     )
 
     const resizeObserver = new ResizeObserver(() => {
+      if (replayStatusRef.current === 'replaying') {
+        return
+      }
       debouncer.handleResize()
     })
 

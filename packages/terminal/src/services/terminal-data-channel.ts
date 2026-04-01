@@ -164,6 +164,15 @@ const attachDataChannel = (
     const queuedOutput: string[] = []
     let isRestoringSnapshot = true
 
+    /**
+     * Replay input guard — drops incoming renderer messages (input, ack)
+     * during the replay window to prevent state corruption. Set to `true`
+     * when the replay payload is sent, cleared when `replayComplete` is sent.
+     *
+     * @see Issue #10: Replay input guard
+     */
+    let isReplayingToRenderer = false
+
     const sendOutput = (data: string): void => {
       if (isRestoringSnapshot) {
         queuedOutput.push(data)
@@ -187,6 +196,7 @@ const attachDataChannel = (
       yield* terminalManager.takeRevivedReplayEvent(terminalId)
 
     if (revivedReplayEvent !== undefined) {
+      isReplayingToRenderer = true
       portSend(encodeReplay(revivedReplayEvent))
     } else {
       const screenState = terminalManager.getScreenState(terminalId)
@@ -202,6 +212,7 @@ const attachDataChannel = (
 
     if (revivedReplayEvent !== undefined) {
       portSend(encodeReplayComplete())
+      isReplayingToRenderer = false
     }
 
     // Prompt TUI applications to repaint against the restored viewport.
@@ -229,7 +240,13 @@ const attachDataChannel = (
     )
 
     // Listen for incoming messages from the renderer (input + ack).
+    // During replay, all incoming messages are dropped to prevent state
+    // corruption — the renderer should not send input, resize, or ack
+    // messages until replay is complete.
     const messageHandler = (data: unknown): void => {
+      if (isReplayingToRenderer) {
+        return
+      }
       if (typeof data === 'string') {
         const ack = parseClientMessage(data)
         if (ack !== null) {

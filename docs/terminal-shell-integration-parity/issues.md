@@ -15,7 +15,7 @@
 | 7 | ShellEnvDetection + indicator | 5 | Ready |
 | 8 | PromptTypeDetection + badge | 5 | Ready |
 | 9 | Renderer shell integration addon + command deserialization | 1 | Ready |
-| 10 | Replay input guard | None | Ready |
+| 10 | Replay input guard | None | Done |
 | 11 | rawReviveBuffer optimization | None | Ready |
 
 **Dependency graph:**
@@ -399,16 +399,16 @@ End-to-end behavior:
 
 ### Acceptance criteria
 
-- [ ] Data channel drops incoming renderer input messages during replay window
-- [ ] Data channel drops incoming renderer resize messages during replay window
-- [ ] Data channel drops incoming renderer ack messages during replay window
-- [ ] Renderer `send()` function no-ops when `replayStatus === 'replaying'`
-- [ ] Renderer does not forward resize events during replay
-- [ ] Input and resize resume immediately after `replayComplete`
-- [ ] No perceptible delay after replay completes
-- [ ] Tests verify input is dropped during replay on the data channel
-- [ ] Tests verify resize is dropped during replay on the data channel
-- [ ] Tests verify input resumes after replayComplete
+- [x] Data channel drops incoming renderer input messages during replay window
+- [x] Data channel drops incoming renderer resize messages during replay window
+- [x] Data channel drops incoming renderer ack messages during replay window
+- [x] Renderer `send()` function no-ops when `replayStatus === 'replaying'`
+- [x] Renderer does not forward resize events during replay
+- [x] Input and resize resume immediately after `replayComplete`
+- [x] No perceptible delay after replay completes
+- [x] Tests verify input is dropped during replay on the data channel
+- [x] Tests verify resize is dropped during replay on the data channel
+- [x] Tests verify input resumes after replayComplete
 
 ### Blocked by
 

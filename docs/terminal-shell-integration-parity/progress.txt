@@ -128,3 +128,58 @@ terminal manager.
 - Issue 6: BufferMarkDetection + gutter UI
 - Issue 7: ShellEnvDetection + indicator
 - Issue 8: PromptTypeDetection + badge
+
+## Issue 10: Replay input guard — COMPLETED
+
+### Summary
+Added replay input guards to both the server-side data channel and the
+client-side renderer to prevent user input, resize events, and flow control
+ack messages from corrupting terminal state during replay. VS Code implements
+this as `_inReplay = true` on both sides — we now have equivalent protection.
+
+The guard operates at three layers:
+1. **Server-side (data channel)**: An `isReplayingToRenderer` flag is set when
+   the replay payload is sent and cleared after `replayComplete`. During this
+   window, all incoming renderer messages (input keystrokes, ack messages) are
+   dropped by the `messageHandler`.
+2. **Client-side (send guard)**: The `send()` function in
+   `useTerminalMessagePort` checks a `replayStatusRef` and no-ops when
+   `replaying`. Flow control acks are also suppressed during replay.
+3. **Client-side (resize guard)**: The `ResizeObserver` callback in
+   `TerminalPaneRenderer` checks a `replayStatusRef` and skips resize
+   processing during replay. The post-replay fit (already guarded by
+   `replayStatus !== 'complete'`) handles the initial resize after replay.
+
+### Changes
+- `packages/terminal/src/services/terminal-data-channel.ts`:
+  - Added `isReplayingToRenderer` flag, set to `true` before `encodeReplay()`
+    and cleared after `encodeReplayComplete()`
+  - Added early return in `messageHandler` when `isReplayingToRenderer` is true,
+    dropping all incoming renderer messages during the replay window
+
+- `apps/web/src/hooks/use-terminal-messageport.ts`:
+  - Added `replayStatusRef` to track replay status for memoized callbacks
+  - `send()` no-ops when `replayStatusRef.current === 'replaying'`
+  - `maybeAck()` suppresses ack messages during replay
+  - `handleControlMessage` syncs `replayStatusRef` alongside React state
+  - Effect cleanup resets `replayStatusRef` on remount
+
+- `apps/web/src/panes/terminal-pane.tsx`:
+  - Added `replayStatusRef` in `TerminalPaneRenderer` synced from props
+  - `ResizeObserver` callback skips resize when `replayStatusRef.current ===
+    'replaying'`
+
+- `packages/terminal/test/terminal-data-channel.test.ts`:
+  - Added test: replay and replayComplete sent in correct order with input
+    guard infrastructure in place, input works after replay completes
+  - Added test: input resumes correctly after replayComplete
+
+- `apps/web/test/use-terminal-messageport.test.ts`:
+  - Added test: `send()` no-ops during replay and resumes after replayComplete
+
+### Verification
+- TypeScript: `npx tsc --noEmit -p packages/terminal/tsconfig.json` passes
+- TypeScript: `npx tsc --noEmit -p apps/web/tsconfig.json` passes
+- Biome: `bunx biome check` passes on all 5 modified files
+- Tests: 12/12 data channel tests pass (2 new)
+- Tests: 2/2 messageport hook tests pass (1 new)

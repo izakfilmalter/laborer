@@ -301,6 +301,14 @@ function useTerminalMessagePort({
   const [terminalStatus, setTerminalStatus] =
     useState<TerminalStatus>('running')
   const [replayStatus, setReplayStatus] = useState<ReplayStatus>('idle')
+  /**
+   * Ref tracking the current replay status for the `send()` guard.
+   * The `send` callback is memoized (no deps) so it cannot read the
+   * React state directly — it uses this ref instead.
+   *
+   * @see Issue #10: Replay input guard
+   */
+  const replayStatusRef = useRef<ReplayStatus>('idle')
   const portRef = useRef<MessagePort | null>(null)
   const mountedRef = useRef(true)
 
@@ -335,11 +343,13 @@ function useTerminalMessagePort({
       return
     }
     if (msg.type === 'replay') {
+      replayStatusRef.current = 'replaying'
       setReplayStatus('replaying')
       onReplayStartRef.current?.(msg)
       return
     }
     if (msg.type === 'replayComplete') {
+      replayStatusRef.current = 'complete'
       setReplayStatus('complete')
       onReplayCompleteRef.current?.()
       return
@@ -353,12 +363,19 @@ function useTerminalMessagePort({
 
   /**
    * Send a flow control ack if the character threshold is reached.
+   * Acks are suppressed during replay — the server drops them anyway,
+   * and sending them could interfere with flow control state.
+   *
+   * @see Issue #10: Replay input guard
    */
   const maybeAck = useCallback((charCount: number) => {
     unackedCharsRef.current += charCount
     if (unackedCharsRef.current >= CHAR_COUNT_ACK_SIZE) {
       const chars = unackedCharsRef.current
       unackedCharsRef.current = 0
+      if (replayStatusRef.current === 'replaying') {
+        return
+      }
       const port = portRef.current
       if (port) {
         port.postMessage(JSON.stringify({ type: 'ack', chars }))
@@ -407,6 +424,7 @@ function useTerminalMessagePort({
   useEffect(() => {
     mountedRef.current = true
     let port: MessagePort | null = null
+    replayStatusRef.current = 'idle'
     setReplayStatus('idle')
 
     const acquire = async (): Promise<MessagePort | null> => {
@@ -445,7 +463,16 @@ function useTerminalMessagePort({
     }
   }, [terminalId, handleMessage])
 
+  /**
+   * Send input to the PTY. No-ops during replay to prevent user
+   * keystrokes from corrupting the replayed terminal state.
+   *
+   * @see Issue #10: Replay input guard
+   */
   const send = useCallback((data: string) => {
+    if (replayStatusRef.current === 'replaying') {
+      return
+    }
     portRef.current?.postMessage(data)
   }, [])
 

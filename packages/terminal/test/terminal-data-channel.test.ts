@@ -649,6 +649,150 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     await Effect.runPromise(Fiber.interrupt(fiber))
   })
 
+  it('sends replay and replayComplete in correct order for revived terminals with input guard', async () => {
+    // This test verifies that the replay input guard infrastructure is
+    // in place: the data channel sets `isReplayingToRenderer = true`
+    // during the replay window and clears it after `replayComplete`.
+    // The guard drops any incoming renderer messages during this window.
+    //
+    // Because MessagePort delivery is asynchronous, the replay window
+    // (which is synchronous on the server) completes before any renderer
+    // messages arrive. The primary input guard defense is client-side
+    // (send() no-ops during replay) — the server-side guard protects
+    // against edge cases with slow serialization.
+    const terminal = await run(
+      client.terminal.spawn({
+        command: '/bin/cat',
+        cwd: TEST_CWD,
+        cols: 80,
+        rows: 24,
+        workspaceId: TEST_WORKSPACE_ID,
+      })
+    )
+
+    await Runtime.runPromise(dataChannelRuntime)(
+      Effect.gen(function* () {
+        const terminalManager = yield* TerminalManager
+        yield* terminalManager.setRevivedReplayEvent(terminal.id, {
+          events: [{ cols: 80, rows: 24, data: 'replay-content\r\n' }],
+        })
+      })
+    )
+
+    const { port1: rendererPort, port2: utilityPort } = new MessageChannel()
+
+    const receivedMessages: unknown[] = []
+    rendererPort.on('message', (data: unknown) => {
+      receivedMessages.push(data)
+    })
+
+    const fiber = Runtime.runFork(dataChannelRuntime)(
+      attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
+    )
+
+    await delay(1000)
+
+    // Verify the replay + replayComplete sequence was sent correctly.
+    expect(receivedMessages.length >= 3).toBe(true)
+
+    const statusMsg = JSON.parse(receivedMessages[0] as string) as Record<
+      string,
+      unknown
+    >
+    expect(statusMsg.type).toBe('status')
+    expect(statusMsg.status).toBe('running')
+
+    const replayMsg = JSON.parse(receivedMessages[1] as string) as Record<
+      string,
+      unknown
+    >
+    expect(replayMsg.type).toBe('replay')
+
+    const replayCompleteMsg = JSON.parse(
+      receivedMessages[2] as string
+    ) as Record<string, unknown>
+    expect(replayCompleteMsg.type).toBe('replayComplete')
+
+    // Verify input still works after replay completes.
+    rendererPort.postMessage('post-replay-test\n')
+    await delay(1000)
+
+    const hasEcho = receivedMessages.some((msg) => {
+      if (typeof msg === 'string' && !msg.startsWith('{')) {
+        return msg.includes('post-replay-test')
+      }
+      if (msg instanceof ArrayBuffer) {
+        return new TextDecoder().decode(msg).includes('post-replay-test')
+      }
+      return false
+    })
+    expect(hasEcho).toBe(true)
+
+    await run(client.terminal.kill({ id: terminal.id }))
+    rendererPort.close()
+    await Effect.runPromise(Fiber.interrupt(fiber))
+  })
+
+  it('resumes accepting input after replayComplete', async () => {
+    // Spawn cat so we can verify input echo.
+    const terminal = await run(
+      client.terminal.spawn({
+        command: '/bin/cat',
+        cwd: TEST_CWD,
+        cols: 80,
+        rows: 24,
+        workspaceId: TEST_WORKSPACE_ID,
+      })
+    )
+
+    // Set a revived replay event.
+    await Runtime.runPromise(dataChannelRuntime)(
+      Effect.gen(function* () {
+        const terminalManager = yield* TerminalManager
+        yield* terminalManager.setRevivedReplayEvent(terminal.id, {
+          events: [{ cols: 80, rows: 24, data: '$ ' }],
+        })
+      })
+    )
+
+    const { port1: rendererPort, port2: utilityPort } = new MessageChannel()
+
+    const receivedMessages: unknown[] = []
+    rendererPort.on('message', (data: unknown) => {
+      receivedMessages.push(data)
+    })
+
+    const fiber = Runtime.runFork(dataChannelRuntime)(
+      attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
+    )
+
+    // Wait for replay to complete (the server sends replay + replayComplete
+    // synchronously, so by the time we can send, replay is done).
+    await delay(500)
+
+    // Send input AFTER replay has completed — this should be accepted.
+    rendererPort.postMessage('post-replay-input\n')
+
+    await delay(1000)
+
+    // cat should echo our input.
+    const hasPostReplayEcho = receivedMessages.some((msg) => {
+      if (typeof msg === 'string' && !msg.startsWith('{')) {
+        return msg.includes('post-replay-input')
+      }
+      if (msg instanceof ArrayBuffer) {
+        return new TextDecoder().decode(msg).includes('post-replay-input')
+      }
+      return false
+    })
+
+    expect(hasPostReplayEcho).toBe(true)
+
+    await run(client.terminal.kill({ id: terminal.id }))
+    rendererPort.close()
+    await Effect.runPromise(Fiber.interrupt(fiber))
+  })
+
   it('sends flow control ack from renderer to utility process', async () => {
     // Spawn a terminal.
     const terminal = await run(

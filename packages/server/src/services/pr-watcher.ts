@@ -6,16 +6,16 @@
  * authentication is handled by the user's existing GitHub login
  * (no API tokens needed in the app).
  *
+ * Adaptive polling based on panel visibility:
+ * - 5s when workspace has an open panel (responsive)
+ * - 30s when workspace has no open panel (background)
+ *
  * Responsibilities:
  * - Run `gh pr view --json number,url,title,state` in a workspace's worktree
  * - Commit WorkspacePrUpdated events to LiveStore when PR state changes
- * - Poll on interval (default 5s) for active workspaces
+ * - Poll on adaptive interval based on panel visibility
  * - Start/stop polling per workspace
  * - Deduplicate unchanged PR state to avoid unnecessary LiveStore events
- *
- * Modeled after DiffService's polling architecture with daemon fibers
- * per workspace, Ref-based fiber tracking, and Effect.addFinalizer
- * for cleanup.
  */
 
 import { events, tables } from '@laborer/shared/schema'
@@ -28,10 +28,14 @@ import {
   Layer,
   pipe,
   Ref,
-  Schedule,
 } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { LaborerStore } from './laborer-store.js'
+import {
+  PR_BACKGROUND_POLL_INTERVAL_MS,
+  PR_VISIBLE_POLL_INTERVAL_MS,
+} from './polling-intervals.js'
+import { getVisibleWorkspaceIds } from './visible-workspaces.js'
 
 /**
  * Shape of PR data returned by `gh pr view --json ...`.
@@ -56,12 +60,6 @@ const EMPTY_PR: PrData = {
   state: null,
 }
 
-/**
- * Default polling interval in milliseconds.
- * Keep PR status reasonably fresh while avoiding excessive `gh` churn.
- */
-const DEFAULT_POLL_INTERVAL_MS = 5000
-
 class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
   PrWatcher,
   {
@@ -76,13 +74,13 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
     readonly checkPr: (workspaceId: string) => Effect.Effect<PrData>
 
     /**
-     * Start polling PR status for a workspace on an interval.
+     * Start polling PR status for a workspace.
      *
-     * Runs `checkPr` every `intervalMs` milliseconds (default 5000).
+     * Uses adaptive polling: 5s when workspace has an open panel,
+     * 30s when running in background (no open panel).
      * Calling on an already-polled workspace is a no-op.
      *
      * @param workspaceId - ID of the workspace to poll
-     * @param intervalMs - Polling interval in milliseconds (default 5000)
      */
     readonly startPolling: (
       workspaceId: string,
@@ -210,12 +208,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
             `[PrWatcher] Workspace not found in LiveStore, cleaning up. workspaceId=${workspaceId}`
           )
 
-          // Commit a workspaceDestroyed event to ensure any stale references
-          // are cleaned up. This is idempotent — the materializer is a
-          // DELETE WHERE, safe even if the row is already gone.
           store.commit(events.workspaceDestroyed({ id: workspaceId }))
-
-          // Stop the polling fiber so this warning doesn't repeat every interval.
           yield* stopPolling(workspaceId)
 
           return EMPTY_PR
@@ -223,9 +216,6 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
 
         const workspace = workspaceOpt.value
 
-        // Skip destroyed workspaces (worktree is removed).
-        // All other statuses (running, creating, stopped, errored) still have
-        // a valid worktree path where `gh pr view` can run.
         if (workspace.status === 'destroyed') {
           return EMPTY_PR
         }
@@ -271,7 +261,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
 
       const startPolling = Effect.fn('PrWatcher.startPolling')(function* (
         workspaceId: string,
-        intervalMs?: number
+        _intervalMs?: number
       ) {
         // Check if already polling
         const currentFibers = yield* Ref.get(pollingFibers)
@@ -279,11 +269,22 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
           return
         }
 
-        const interval = intervalMs ?? DEFAULT_POLL_INTERVAL_MS
+        // Adaptive polling: check visibility on each tick and sleep
+        // for the appropriate interval.
+        const pollEffect = Effect.gen(function* () {
+          const visibleWorkspaces = getVisibleWorkspaceIds(store)
+          const isVisible = visibleWorkspaces.has(workspaceId)
+          const interval = isVisible
+            ? PR_VISIBLE_POLL_INTERVAL_MS
+            : PR_BACKGROUND_POLL_INTERVAL_MS
 
-        // Create polling effect that runs checkPr on a schedule.
-        const pollEffect = checkPr(workspaceId).pipe(
-          Effect.repeat(Schedule.spaced(Duration.millis(interval))),
+          yield* checkPr(workspaceId)
+          yield* Effect.sleep(Duration.millis(interval))
+        }).pipe(
+          Effect.catchAll(() =>
+            Effect.sleep(Duration.millis(PR_BACKGROUND_POLL_INTERVAL_MS))
+          ),
+          Effect.forever,
           Effect.asVoid
         )
 
@@ -296,7 +297,7 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
         })
 
         yield* Effect.log(
-          `[PrWatcher] started polling for workspace ${workspaceId} every ${interval}ms`
+          `[PrWatcher] started polling for workspace ${workspaceId} (adaptive: ${PR_VISIBLE_POLL_INTERVAL_MS}ms visible / ${PR_BACKGROUND_POLL_INTERVAL_MS}ms background)`
         )
       })
 
@@ -362,14 +363,10 @@ class PrWatcher extends Context.Tag('@laborer/PrWatcher')<
             .query(tables.workspaces)
             .filter((workspace) => workspace.status !== 'destroyed')
 
-          // All non-destroyed workspaces are active — the 'stopped' status
-          // only indicates the workspace was externally detected, not that it
-          // should be excluded from PR polling.
           const activeWorkspaces = allWorkspaces.filter(
             (workspace) => workspace.status !== 'destroyed'
           )
 
-          // Start continuous polling for all active workspaces
           yield* Effect.forEach(
             activeWorkspaces,
             (workspace) => startPolling(workspace.id),

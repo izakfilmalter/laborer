@@ -74,9 +74,7 @@ import { parseGitStatusV2 } from '../lib/parse-git-status-v2.js'
 import { spawnGit } from '../lib/spawn-git.js'
 import { FileWatcherClient } from './file-watcher-client.js'
 import { LaborerStore } from './laborer-store.js'
-
-/** Debounce interval for file watcher events (ms). */
-const FILE_EVENT_DEBOUNCE_MS = 300
+import { FILE_TREE_EVENT_DEBOUNCE_MS } from './polling-intervals.js'
 
 /** Maximum number of retry attempts when waiting for worktree directory to exist. */
 const WORKTREE_WAIT_MAX_RETRIES = 10
@@ -639,7 +637,7 @@ class FileTreeService extends Context.Tag('@laborer/FileTreeService')<
                             },
                           })
                         ).catch(() => undefined)
-                      }, FILE_EVENT_DEBOUNCE_MS)
+                      }, FILE_TREE_EVENT_DEBOUNCE_MS)
                     }
                   )
 

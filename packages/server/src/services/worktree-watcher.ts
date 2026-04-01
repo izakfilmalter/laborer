@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { tables } from '@laborer/shared/schema'
 import { Context, Data, Effect, Layer, Ref, Runtime } from 'effect'
 import { LaborerStore } from './laborer-store.js'
+import { WORKTREE_WATCHER_DEBOUNCE_MS } from './polling-intervals.js'
 import { WorktreeReconciler } from './worktree-reconciler.js'
 
 interface ProjectWatchState {
@@ -14,8 +15,6 @@ interface ProjectWatchState {
   timer: ReturnType<typeof setTimeout> | null
   readonly watcher: FSWatcher
 }
-
-const DEBOUNCE_MS = 500
 
 class GitCommandError extends Data.TaggedError('GitCommandError')<{
   readonly message: string
@@ -117,7 +116,7 @@ class WorktreeWatcher extends Context.Tag('@laborer/WorktreeWatcher')<
           runPromise(
             reconcileWithWarning(state.projectId, state.repoPath, reason)
           ).catch(() => undefined)
-        }, DEBOUNCE_MS)
+        }, WORKTREE_WATCHER_DEBOUNCE_MS)
       }
 
       const switchToWorktreesWatcher = (state: ProjectWatchState): void => {

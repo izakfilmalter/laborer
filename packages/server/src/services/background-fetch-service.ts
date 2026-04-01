@@ -33,31 +33,13 @@ import {
 } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { LaborerStore } from './laborer-store.js'
+import {
+  FETCH_HEAD_GUARD_MS,
+  FETCH_INTERVAL_MS,
+  FETCH_MINIMUM_INTERVAL_MS,
+  FETCH_SKEW_UPPER_BOUND_MS,
+} from './polling-intervals.js'
 import { withFsmonitorDisabled } from './repo-watching-git.js'
-
-/**
- * Default interval when the GitHub API does not provide x-poll-interval.
- * Matches GitHub Desktop's `DefaultFetchInterval`.
- */
-const DEFAULT_FETCH_INTERVAL_MS = 60 * 60 * 1000
-
-/**
- * Minimum fetch interval to protect against the server sending an
- * aggressively low value. Matches GitHub Desktop's `MinimumInterval`.
- */
-const MINIMUM_FETCH_INTERVAL_MS = 5 * 60 * 1000
-
-/**
- * Minimum time between actual `git fetch` invocations for a given repo,
- * checked via FETCH_HEAD mtime. Matches GitHub Desktop's app-level guard.
- */
-const FETCH_HEAD_GUARD_MS = 30 * 60 * 1000
-
-/**
- * Upper bound for random jitter added to each interval to prevent
- * clients from syncing up. Matches GitHub Desktop's `SkewUpperBound`.
- */
-const SKEW_UPPER_BOUND_MS = 30 * 1000
 
 const GITHUB_HTTPS_REMOTE_REGEX =
   /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/
@@ -72,7 +54,7 @@ const getSkewMs = (): number => {
   if (cachedSkew !== null) {
     return cachedSkew
   }
-  cachedSkew = Math.ceil(Math.random() * SKEW_UPPER_BOUND_MS)
+  cachedSkew = Math.ceil(Math.random() * FETCH_SKEW_UPPER_BOUND_MS)
   return cachedSkew
 }
 
@@ -202,8 +184,8 @@ const getGithubPollInterval = (
 const computeFetchInterval = (serverIntervalMs: number | null): number => {
   const baseInterval =
     serverIntervalMs !== null
-      ? Math.max(serverIntervalMs, MINIMUM_FETCH_INTERVAL_MS)
-      : DEFAULT_FETCH_INTERVAL_MS
+      ? Math.max(serverIntervalMs, FETCH_MINIMUM_INTERVAL_MS)
+      : FETCH_INTERVAL_MS
   return baseInterval + getSkewMs()
 }
 

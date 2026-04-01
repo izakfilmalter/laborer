@@ -14,6 +14,7 @@ import {
 import { spawn } from '../lib/spawn.js'
 import { BackgroundFetchService } from './background-fetch-service.js'
 import { LaborerStore } from './laborer-store.js'
+import { SYNC_STATUS_POLL_INTERVAL_MS } from './polling-intervals.js'
 import { PrWatcher } from './pr-watcher.js'
 import { withFsmonitorDisabled } from './repo-watching-git.js'
 
@@ -26,8 +27,6 @@ const EMPTY_SYNC_STATUS: WorkspaceSyncStatus = {
   aheadCount: null,
   behindCount: null,
 }
-
-const DEFAULT_POLL_INTERVAL_MS = 5000
 
 const BRANCH_AB_RE = /^# branch\.ab \+(\d+) -(\d+)$/u
 const LINE_SPLIT_RE = /\r?\n/u
@@ -257,7 +256,7 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
           // Start background fetching so tracking refs stay fresh
           yield* backgroundFetch.startFetching(workspaceId)
 
-          const interval = intervalMs ?? DEFAULT_POLL_INTERVAL_MS
+          const interval = intervalMs ?? SYNC_STATUS_POLL_INTERVAL_MS
           const fiber = yield* checkStatus(workspaceId).pipe(
             Effect.catchAll(() => Effect.void),
             Effect.repeat(Schedule.spaced(Duration.millis(interval))),

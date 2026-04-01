@@ -164,6 +164,183 @@ describe('HeadlessTerminalManager', () => {
     expect(screenState).toContain('Alternate Screen Content')
   })
 
+  it('serializes live VS Code shell integration command state', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write(
+      'test-1',
+      '\x1b]633;P;HasRichCommandDetection=True\x07' +
+        '\x1b]633;P;Cwd=/workspace/app\x07' +
+        '\x1b]633;A\x07' +
+        '\x1b]633;B\x07' +
+        '\x1b]633;E;echo\\x20hello\x07' +
+        '\x1b]633;C\x07' +
+        'hello\r\n' +
+        '\x1b]633;D;0\x07'
+    )
+
+    await waitForXterm()
+
+    expect(manager.getCommandDetectionState('test-1')).toEqual({
+      isWindowsPty: false,
+      hasRichCommandDetection: true,
+      promptInputModel: {
+        value: 'echo hello',
+        cursorIndex: 10,
+      },
+      commands: [
+        {
+          command: 'echo hello',
+          commandLineConfidence: 'high',
+          cwd: '/workspace/app',
+          exitCode: 0,
+          isTrusted: false,
+          timestamp: expect.any(Number),
+          duration: expect.any(Number),
+        },
+      ],
+    })
+  })
+
+  it('serializes prompt input model from live VS Code command line state', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write(
+      'test-1',
+      '\x1b]633;P;HasRichCommandDetection=True\x07' +
+        '\x1b]633;B\x07' +
+        '\x1b]633;E;git\x20status\x07'
+    )
+
+    await waitForXterm()
+
+    expect(manager.getCommandDetectionState('test-1')).toEqual({
+      isWindowsPty: false,
+      hasRichCommandDetection: true,
+      promptInputModel: {
+        value: 'git status',
+        cursorIndex: 10,
+      },
+      commands: [
+        {
+          command: 'git status',
+          commandLineConfidence: 'high',
+          duration: 0,
+          isTrusted: false,
+          timestamp: expect.any(Number),
+        },
+      ],
+    })
+  })
+
+  it('serializes prompt metadata from live VS Code shell integration properties', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write(
+      'test-1',
+      '\x1b]633;P;Prompt=user@host:\x20~/app\x20$\x20\x07' +
+        '\x1b]633;P;ContinuationPrompt=>\x20\x07' +
+        '\x1b]633;B\x07' +
+        '\x1b]633;E;git\x20status\x07'
+    )
+
+    await waitForXterm()
+
+    expect(manager.getCommandDetectionState('test-1')).toEqual({
+      isWindowsPty: false,
+      hasRichCommandDetection: false,
+      promptInputModel: {
+        value: 'git status',
+        cursorIndex: 10,
+        lastPromptLine: ' $ ',
+        continuationPrompt: '> ',
+      },
+      commands: [
+        {
+          command: 'git status',
+          commandLineConfidence: 'high',
+          duration: 0,
+          isTrusted: false,
+          timestamp: expect.any(Number),
+        },
+      ],
+    })
+  })
+
+  it('serializes the current in-flight command as a partial command entry', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write(
+      'test-1',
+      '\x1b]633;P;Cwd=/workspace/app\x07' +
+        '\x1b]633;B\x07' +
+        '\x1b]633;E;git\x20status\x07'
+    )
+
+    await waitForXterm()
+
+    expect(manager.getCommandDetectionState('test-1')).toEqual({
+      isWindowsPty: false,
+      hasRichCommandDetection: false,
+      promptInputModel: {
+        value: 'git status',
+        cursorIndex: 10,
+      },
+      commands: [
+        {
+          command: 'git status',
+          commandLineConfidence: 'high',
+          cwd: '/workspace/app',
+          duration: 0,
+          isTrusted: false,
+          timestamp: expect.any(Number),
+        },
+      ],
+    })
+  })
+
+  it('marks command lines as trusted when the shell integration nonce matches', async () => {
+    manager = createHeadlessTerminalManager({
+      shellIntegrationNonce: 'trusted-nonce',
+    })
+    manager.create('test-1', 80, 24)
+
+    manager.write(
+      'test-1',
+      '\x1b]633;P;Cwd=/workspace/app\x07' +
+        '\x1b]633;B\x07' +
+        '\x1b]633;E;git\x20status;trusted-nonce\x07' +
+        '\x1b]633;C\x07' +
+        '\x1b]633;D;0\x07'
+    )
+
+    await waitForXterm()
+
+    expect(manager.getCommandDetectionState('test-1')).toEqual({
+      isWindowsPty: false,
+      hasRichCommandDetection: false,
+      promptInputModel: {
+        value: 'git status',
+        cursorIndex: 10,
+      },
+      commands: [
+        {
+          command: 'git status',
+          commandLineConfidence: 'high',
+          cwd: '/workspace/app',
+          exitCode: 0,
+          duration: expect.any(Number),
+          isTrusted: true,
+          timestamp: expect.any(Number),
+        },
+      ],
+    })
+  })
+
   // ---------------------------------------------------------------
   // Dispose
   // ---------------------------------------------------------------

@@ -32,6 +32,10 @@ import {
 } from 'effect'
 import { createHeadlessTerminalManager } from '../lib/headless-terminal.js'
 import { PtyHostClient } from './pty-host-client.js'
+import type {
+  SerializedCommandDetectionCapability,
+  SerializedReplayEvent,
+} from './terminal-session-persistence.js'
 
 /** Logger tag used for structured Effect.log output in this module. */
 const logPrefix = 'TerminalManager'
@@ -785,6 +789,11 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
      */
     readonly getScreenState: (terminalId: string) => string
 
+    /** Get serialized command detection state inferred from shell integration. */
+    readonly getCommandDetectionState: (
+      terminalId: string
+    ) => SerializedCommandDetectionCapability | undefined
+
     /**
      * Subscribe to live terminal output for a WebSocket connection.
      * Returns a subscriber ID. The callback begins receiving live
@@ -845,6 +854,17 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
      */
     readonly getTerminals: () => Effect.Effect<readonly ManagedTerminal[]>
 
+    /** Store replay data to deliver when a revived terminal first attaches. */
+    readonly setRevivedReplayEvent: (
+      terminalId: string,
+      replayEvent: SerializedReplayEvent
+    ) => Effect.Effect<void, TerminalRpcError>
+
+    /** Take the pending replay data for a revived terminal, if any. */
+    readonly takeRevivedReplayEvent: (
+      terminalId: string
+    ) => Effect.Effect<SerializedReplayEvent | undefined, TerminalRpcError>
+
     /** The PubSub for lifecycle events. Consumers subscribe to receive events. */
     readonly lifecycleEvents: PubSub.PubSub<TerminalLifecycleEvent>
   }
@@ -876,6 +896,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
       // Per-terminal subscriber state (WebSocket connections).
       const subscriberStates = new Map<string, TerminalSubscriberState>()
+      const revivedReplayEvents = new Map<string, SerializedReplayEvent>()
       const graceTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
 
       // -------------------------------------------------------------------
@@ -1000,12 +1021,15 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         }
       }
 
+      const shellIntegrationNonce = crypto.randomUUID()
+
       // Headless terminal state manager for compact screen state
       // serialization (~4KB), backend device query handling, and
       // OSC-based title/prompt activity detection.
       const headlessManager = createHeadlessTerminalManager({
         onTitleChange: handleOscTitleChange,
         onPromptState: handleOscPromptState,
+        shellIntegrationNonce,
       })
 
       // Lifecycle event PubSub — unbounded so publishers never block.
@@ -1266,6 +1290,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
               ...env,
               TERM: 'xterm-256color',
               COLORTERM: 'truecolor',
+              VSCODE_NONCE: shellIntegrationNonce,
             } as Record<string, string>,
             cols,
             rows,
@@ -1537,6 +1562,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         })
 
         subscriberStates.delete(terminalId)
+        revivedReplayEvents.delete(terminalId)
         headlessManager.dispose(terminalId)
         agentStatusMap.delete(terminalId)
         hookAgentStatusMap.delete(terminalId)
@@ -1715,6 +1741,7 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
               ...terminal.env,
               TERM: 'xterm-256color',
               COLORTERM: 'truecolor',
+              VSCODE_NONCE: shellIntegrationNonce,
             } as Record<string, string>,
             cols: restartCols,
             rows: restartRows,
@@ -2029,6 +2056,36 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         }
       )
 
+      const setRevivedReplayEvent = Effect.fn(
+        'TerminalManager.setRevivedReplayEvent'
+      )(function* (terminalId: string, replayEvent: SerializedReplayEvent) {
+        const map = yield* Ref.get(terminalsRef)
+        if (!map.has(terminalId)) {
+          return yield* new TerminalRpcError({
+            message: `Terminal not found: ${terminalId}`,
+            code: 'TERMINAL_NOT_FOUND',
+          })
+        }
+
+        revivedReplayEvents.set(terminalId, replayEvent)
+      })
+
+      const takeRevivedReplayEvent = Effect.fn(
+        'TerminalManager.takeRevivedReplayEvent'
+      )(function* (terminalId: string) {
+        const map = yield* Ref.get(terminalsRef)
+        if (!map.has(terminalId)) {
+          return yield* new TerminalRpcError({
+            message: `Terminal not found: ${terminalId}`,
+            code: 'TERMINAL_NOT_FOUND',
+          })
+        }
+
+        const replayEvent = revivedReplayEvents.get(terminalId)
+        revivedReplayEvents.delete(terminalId)
+        return replayEvent
+      })
+
       // ---------------------------------------------------------------
       // setAgentStatusFromHook — external hook status override
       // ---------------------------------------------------------------
@@ -2221,12 +2278,16 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         killAllForWorkspace,
         getScreenState: (terminalId: string) =>
           headlessManager.getScreenState(terminalId),
+        getCommandDetectionState: (terminalId: string) =>
+          headlessManager.getCommandDetectionState(terminalId),
         subscribe,
         unsubscribe,
         terminalExists,
         setAgentStatusFromHook,
         getTerminals: () =>
           Effect.map(Ref.get(terminalsRef), (map) => [...map.values()]),
+        setRevivedReplayEvent,
+        takeRevivedReplayEvent,
         lifecycleEvents: lifecyclePubSub,
       })
     })

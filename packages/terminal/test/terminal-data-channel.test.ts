@@ -14,10 +14,11 @@
  * @see packages/terminal/src/services/terminal-data-channel.ts
  */
 
+import { strict as assert } from 'node:assert/strict'
 import { MessageChannel } from 'node:worker_threads'
 
 import { RpcClient, RpcServer } from '@effect/rpc'
-import { assert, describe } from '@effect/vitest'
+import { describe } from '@effect/vitest'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
@@ -31,7 +32,7 @@ import {
   Runtime,
   Scope,
 } from 'effect'
-import { afterAll, beforeAll, it } from 'vitest'
+import { afterAll, beforeAll, expect, it } from 'vitest'
 
 import { TerminalRpcsLive } from '../src/rpc/handlers.js'
 import { directLayer as PtyDirectLayer } from '../src/services/pty-direct.js'
@@ -165,14 +166,9 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     // Wait for output data to arrive.
     await delay(2000)
 
-    // Should have received at least a status message and some PTY output.
-    // The data channel no longer sends a screenState control message.
-    // Instead, buffered PTY output is replayed directly as raw data
-    // (matching VS Code's _initialDataEvents pattern).
-    assert.isTrue(
-      receivedMessages.length >= 2,
-      `Expected at least 2 messages, got ${receivedMessages.length}: ${JSON.stringify(receivedMessages.slice(0, 3))}`
-    )
+    // Should have received at least a status message and a screen-state
+    // snapshot or some live PTY output.
+    expect(receivedMessages.length >= 2).toBe(true)
 
     // First message should be a status control message.
     const firstMsg = receivedMessages[0]
@@ -181,16 +177,27 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     assert.strictEqual(parsed.type, 'status')
     assert.strictEqual(parsed.status, 'running')
 
-    // Remaining messages should be raw PTY output data (replayed buffer
-    // or live output). These are sent as plain strings, not JSON
-    // control messages.
+    const hasScreenState = receivedMessages.slice(1).some((msg) => {
+      if (typeof msg !== 'string') {
+        return false
+      }
+      try {
+        const parsed = JSON.parse(msg) as Record<string, unknown>
+        return (
+          parsed.type === 'screenState' &&
+          typeof parsed.data === 'string' &&
+          parsed.data.length > 0
+        )
+      } catch {
+        return false
+      }
+    })
+
+    // Remaining messages should contain a screen snapshot or raw PTY output.
     const hasOutput = receivedMessages
       .slice(1)
       .some((msg) => typeof msg === 'string' && msg.length > 0)
-    assert.isTrue(
-      hasOutput,
-      'Expected at least one raw PTY output message after status'
-    )
+    expect(hasScreenState || hasOutput).toBe(true)
 
     // Clean up.
     rendererPort.close()
@@ -243,9 +250,400 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       return false
     })
 
-    assert.isTrue(hasEcho, 'Expected to receive echoed input via data channel')
+    expect(hasEcho).toBe(true)
 
     // Kill the terminal and clean up.
+    await run(client.terminal.kill({ id: terminal.id }))
+    rendererPort.close()
+    await Effect.runPromise(Fiber.interrupt(fiber))
+  })
+
+  it('sends screenState before live output when attaching to an active terminal', async () => {
+    const terminal = await run(
+      client.terminal.spawn({
+        command: 'printf "snapshot-marker\n"; exec /bin/cat',
+        cwd: TEST_CWD,
+        cols: 80,
+        rows: 24,
+        workspaceId: TEST_WORKSPACE_ID,
+      })
+    )
+
+    await delay(500)
+
+    const { port1: rendererPort, port2: utilityPort } = new MessageChannel()
+
+    const receivedMessages: unknown[] = []
+    rendererPort.on('message', (data: unknown) => {
+      receivedMessages.push(data)
+    })
+
+    const fiber = Runtime.runFork(dataChannelRuntime)(
+      attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
+    )
+
+    await delay(1000)
+
+    expect(receivedMessages.length >= 2).toBe(true)
+
+    const statusMessage = JSON.parse(receivedMessages[0] as string) as {
+      status: string
+      type: string
+    }
+    assert.strictEqual(statusMessage.type, 'status')
+    assert.strictEqual(statusMessage.status, 'running')
+
+    const screenStateMessage = JSON.parse(receivedMessages[1] as string) as {
+      data: string
+      type: string
+    }
+    assert.strictEqual(screenStateMessage.type, 'screenState')
+    expect(screenStateMessage.data).toContain('snapshot-marker')
+
+    await run(client.terminal.kill({ id: terminal.id }))
+    rendererPort.close()
+    await Effect.runPromise(Fiber.interrupt(fiber))
+  })
+
+  it('sends replay payload and replayComplete when attaching to a revived terminal', async () => {
+    const terminal = await run(
+      client.terminal.spawn({
+        command: 'printf "live-process\n"; exec /bin/cat',
+        cwd: TEST_CWD,
+        cols: 80,
+        rows: 24,
+        workspaceId: TEST_WORKSPACE_ID,
+      })
+    )
+
+    await Runtime.runPromise(dataChannelRuntime)(
+      Effect.gen(function* () {
+        const terminalManager = yield* TerminalManager
+        yield* terminalManager.setRevivedReplayEvent(terminal.id, {
+          commands: {
+            isWindowsPty: false,
+            hasRichCommandDetection: true,
+            promptInputModel: undefined,
+            commands: [
+              {
+                command: 'ls',
+                commandLineConfidence: 'high',
+                isTrusted: true,
+                timestamp: 123,
+                duration: 45,
+                id: 'command-1',
+                cwd: '/tmp',
+                exitCode: 0,
+                commandStartLineContent: '$ ls',
+                markProperties: undefined,
+                executedX: 0,
+                startX: 0,
+                startLine: 1,
+                promptStartLine: 1,
+                endLine: 2,
+                executedLine: 1,
+              },
+            ],
+          },
+          events: [
+            {
+              cols: 91,
+              rows: 27,
+              data: 'revived-output\r\n',
+            },
+            {
+              cols: 120,
+              rows: 40,
+              data: '$ ',
+            },
+          ],
+        })
+      })
+    )
+
+    const { port1: rendererPort, port2: utilityPort } = new MessageChannel()
+
+    const receivedMessages: unknown[] = []
+    rendererPort.on('message', (data: unknown) => {
+      receivedMessages.push(data)
+    })
+
+    const fiber = Runtime.runFork(dataChannelRuntime)(
+      attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
+    )
+
+    await delay(1000)
+
+    expect(receivedMessages.length >= 3).toBe(true)
+
+    const statusMessage = JSON.parse(receivedMessages[0] as string) as {
+      status: string
+      type: string
+    }
+    assert.strictEqual(statusMessage.type, 'status')
+    assert.strictEqual(statusMessage.status, 'running')
+
+    const replayMessage = JSON.parse(receivedMessages[1] as string) as {
+      commands?: {
+        commands: Array<{ command: string; cwd?: string; exitCode?: number }>
+        hasRichCommandDetection: boolean
+        isWindowsPty: boolean
+      }
+      events: Array<{ cols: number; data: string; rows: number }>
+      type: string
+    }
+    assert.strictEqual(replayMessage.type, 'replay')
+    assert.deepEqual(replayMessage.events, [
+      {
+        cols: 91,
+        rows: 27,
+        data: 'revived-output\r\n',
+      },
+      {
+        cols: 120,
+        rows: 40,
+        data: '$ ',
+      },
+    ])
+    assert.deepEqual(replayMessage.commands, {
+      isWindowsPty: false,
+      hasRichCommandDetection: true,
+      commands: [
+        {
+          command: 'ls',
+          commandLineConfidence: 'high',
+          isTrusted: true,
+          timestamp: 123,
+          duration: 45,
+          id: 'command-1',
+          cwd: '/tmp',
+          exitCode: 0,
+          commandStartLineContent: '$ ls',
+          executedX: 0,
+          startX: 0,
+          startLine: 1,
+          promptStartLine: 1,
+          endLine: 2,
+          executedLine: 1,
+        },
+      ],
+    })
+
+    const replayCompleteMessage = JSON.parse(receivedMessages[2] as string) as {
+      type: string
+    }
+    assert.strictEqual(replayCompleteMessage.type, 'replayComplete')
+
+    await run(client.terminal.kill({ id: terminal.id }))
+    rendererPort.close()
+    await Effect.runPromise(Fiber.interrupt(fiber))
+  })
+
+  it('sends partial command replay state when attaching to a revived terminal', async () => {
+    const terminal = await run(
+      client.terminal.spawn({
+        command: 'printf "live-process\n"; exec /bin/cat',
+        cwd: TEST_CWD,
+        cols: 80,
+        rows: 24,
+        workspaceId: TEST_WORKSPACE_ID,
+      })
+    )
+
+    await Runtime.runPromise(dataChannelRuntime)(
+      Effect.gen(function* () {
+        const terminalManager = yield* TerminalManager
+        yield* terminalManager.setRevivedReplayEvent(terminal.id, {
+          commands: {
+            isWindowsPty: false,
+            hasRichCommandDetection: false,
+            promptInputModel: {
+              value: 'git status',
+              cursorIndex: 10,
+            },
+            commands: [
+              {
+                command: 'git status',
+                commandLineConfidence: 'high',
+                isTrusted: false,
+                timestamp: 123,
+                duration: 0,
+                cwd: '/tmp/repo',
+              },
+            ],
+          },
+          events: [
+            {
+              cols: 80,
+              rows: 24,
+              data: '$ git status',
+            },
+          ],
+        })
+      })
+    )
+
+    const { port1: rendererPort, port2: utilityPort } = new MessageChannel()
+
+    const receivedMessages: unknown[] = []
+    rendererPort.on('message', (data: unknown) => {
+      receivedMessages.push(data)
+    })
+
+    const fiber = Runtime.runFork(dataChannelRuntime)(
+      attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
+    )
+
+    await delay(1000)
+
+    expect(receivedMessages.length >= 3).toBe(true)
+
+    const replayMessage = JSON.parse(receivedMessages[1] as string) as {
+      commands?: {
+        commands: Array<{
+          command: string
+          commandLineConfidence: string
+          cwd?: string
+          duration: number
+          isTrusted: boolean
+          timestamp: number
+        }>
+        hasRichCommandDetection: boolean
+        isWindowsPty: boolean
+        promptInputModel?: {
+          cursorIndex: number
+          value: string
+        }
+      }
+      events: Array<{ cols: number; data: string; rows: number }>
+      type: string
+    }
+
+    assert.strictEqual(replayMessage.type, 'replay')
+    assert.deepEqual(replayMessage.events, [
+      {
+        cols: 80,
+        rows: 24,
+        data: '$ git status',
+      },
+    ])
+    assert.deepEqual(replayMessage.commands, {
+      isWindowsPty: false,
+      hasRichCommandDetection: false,
+      promptInputModel: {
+        value: 'git status',
+        cursorIndex: 10,
+      },
+      commands: [
+        {
+          command: 'git status',
+          commandLineConfidence: 'high',
+          isTrusted: false,
+          timestamp: 123,
+          duration: 0,
+          cwd: '/tmp/repo',
+        },
+      ],
+    })
+
+    const replayCompleteMessage = JSON.parse(receivedMessages[2] as string) as {
+      type: string
+    }
+    assert.strictEqual(replayCompleteMessage.type, 'replayComplete')
+
+    await run(client.terminal.kill({ id: terminal.id }))
+    rendererPort.close()
+    await Effect.runPromise(Fiber.interrupt(fiber))
+  })
+
+  it('sends trusted runtime command state in replay payloads for revived terminals', async () => {
+    const terminal = await run(
+      client.terminal.spawn({
+        command:
+          'printf \'\\033]633;P;Cwd=/tmp\\007\\033]633;B\\007\\033]633;E;git\\x20status;%s\\007\\033]633;C\\007\\033]633;D;0\\007\' "$VSCODE_NONCE"; sleep 5',
+        cwd: TEST_CWD,
+        cols: 80,
+        rows: 24,
+        workspaceId: TEST_WORKSPACE_ID,
+      })
+    )
+
+    await Runtime.runPromise(dataChannelRuntime)(
+      Effect.gen(function* () {
+        const terminalManager = yield* TerminalManager
+
+        yield* Effect.sleep('1 second')
+
+        const commandState = terminalManager.getCommandDetectionState(
+          terminal.id
+        )
+        expect(commandState).toBeDefined()
+
+        yield* terminalManager.setRevivedReplayEvent(terminal.id, {
+          commands: commandState,
+          events: [
+            {
+              cols: 80,
+              rows: 24,
+              data: terminalManager.getScreenState(terminal.id),
+            },
+          ],
+        })
+      })
+    )
+
+    const { port1: rendererPort, port2: utilityPort } = new MessageChannel()
+
+    const receivedMessages: unknown[] = []
+    rendererPort.on('message', (data: unknown) => {
+      receivedMessages.push(data)
+    })
+
+    const fiber = Runtime.runFork(dataChannelRuntime)(
+      attachDataChannel(toRpcPort(utilityPort), terminal.id).pipe(Effect.scoped)
+    )
+
+    await delay(1000)
+
+    expect(receivedMessages.length >= 3).toBe(true)
+
+    const replayMessage = JSON.parse(receivedMessages[1] as string) as {
+      commands?: {
+        commands: Array<{
+          command: string
+          commandLineConfidence: string
+          cwd?: string
+          exitCode?: number
+          isTrusted: boolean
+        }>
+        hasRichCommandDetection: boolean
+        isWindowsPty: boolean
+        promptInputModel?: {
+          cursorIndex: number
+          value: string
+        }
+      }
+      events: Array<{ cols: number; data: string; rows: number }>
+      type: string
+    }
+
+    assert.strictEqual(replayMessage.type, 'replay')
+    assert.strictEqual(replayMessage.commands?.isWindowsPty, false)
+    assert.strictEqual(replayMessage.commands?.hasRichCommandDetection, false)
+    assert.deepEqual(replayMessage.commands?.promptInputModel, {
+      value: 'git status',
+      cursorIndex: 10,
+    })
+    expect(replayMessage.commands?.commands).toEqual([
+      expect.objectContaining({
+        command: 'git status',
+        commandLineConfidence: 'high',
+        cwd: '/tmp',
+        exitCode: 0,
+        isTrusted: true,
+      }),
+    ])
+
     await run(client.terminal.kill({ id: terminal.id }))
     rendererPort.close()
     await Effect.runPromise(Fiber.interrupt(fiber))
@@ -324,10 +722,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
       }
     })
 
-    assert.isTrue(
-      hasStoppedStatus,
-      'Expected to receive stopped status when terminal exits'
-    )
+    expect(hasStoppedStatus).toBe(true)
 
     // Clean up.
     rendererPort.close()
@@ -353,10 +748,7 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
     await delay(500)
 
     // Should receive an error message.
-    assert.isTrue(
-      receivedMessages.length >= 1,
-      'Expected at least 1 message for non-existent terminal'
-    )
+    expect(receivedMessages.length >= 1).toBe(true)
 
     const errorMsg = receivedMessages[0]
     assert.strictEqual(typeof errorMsg, 'string')
@@ -396,16 +788,10 @@ describe('Terminal data channel over MessagePort', { timeout: 30_000 }, () => {
 
     // Verify RPC still works independently — list terminals via RPC.
     const terminals = await run(client.terminal.list())
-    assert.isTrue(
-      terminals.length > 0,
-      'RPC should still work while data channel is active'
-    )
+    expect(terminals.length > 0).toBe(true)
 
     // Verify data channel received data.
-    assert.isTrue(
-      dataMessages.length >= 2,
-      'Data channel should receive status + screen state'
-    )
+    expect(dataMessages.length >= 2).toBe(true)
 
     // Clean up.
     rendererPort.close()

@@ -20,6 +20,8 @@
  *   - `{"type":"status","status":"running"}` — sent on connect
  *   - `{"type":"status","status":"stopped","exitCode":N}` — PTY exited
  *   - `{"type":"status","status":"restarted"}` — terminal restarted
+ *   - `{"type":"replay","events":[...]}` — persisted revive payload
+ *   - `{"type":"replayComplete"}` — revive replay finished
  *   - `{"type":"screenState","data":"<VT sequences>"}` — screen snapshot
  * - Renderer -> Utility: Raw terminal input strings (keystrokes)
  * - Renderer -> Utility: `{"type":"ack","chars":N}` — flow control ack
@@ -36,6 +38,7 @@ import {
   type TerminalLifecycleEvent,
   TerminalManager,
 } from './terminal-manager.js'
+import type { SerializedReplayEvent } from './terminal-session-persistence.js'
 
 // ---------------------------------------------------------------------------
 // Control message helpers (matches terminal-ws.ts format)
@@ -57,6 +60,20 @@ const encodeStatus = (status: string, exitCode?: number): string => {
  */
 const encodeError = (message: string): string =>
   JSON.stringify({ type: 'error', message })
+
+/** Build a JSON screen-state control message string. */
+const encodeScreenState = (data: string): string =>
+  JSON.stringify({ type: 'screenState', data })
+
+const encodeReplay = (replayEvent: SerializedReplayEvent): string =>
+  JSON.stringify({
+    type: 'replay',
+    events: replayEvent.events,
+    commands: replayEvent.commands,
+  })
+
+const encodeReplayComplete = (): string =>
+  JSON.stringify({ type: 'replayComplete' })
 
 /**
  * Parse an incoming message from the renderer. Returns the type and
@@ -141,18 +158,53 @@ const attachDataChannel = (
     // Send initial status control message.
     portSend(encodeStatus('running'))
 
-    // Subscribe to live PTY output. The subscribe call replays any
-    // buffered output that was generated between PTY spawn and now
-    // (VS Code's _initialDataEvents pattern — no data is lost).
-    //
-    // All replayed + live data goes through portSend which sends
-    // it directly to the renderer's xterm.js.
+    // Subscribe before serializing screen state so output that arrives during
+    // the snapshot window is queued and flushed after the renderer restores.
+    const queuedOutput: string[] = []
+    let isRestoringSnapshot = true
+
+    const sendOutput = (data: string): void => {
+      if (isRestoringSnapshot) {
+        queuedOutput.push(data)
+        return
+      }
+
+      portSend(data)
+    }
+
     const { subscriberId } = yield* terminalManager.subscribe(
       terminalId,
       (data: string) => {
-        portSend(data)
-      }
+        sendOutput(data)
+      },
+      // The headless terminal snapshot is now the primary restore path.
+      // We only want live output after subscribe, not the raw initial buffer.
+      { replay: false }
     )
+
+    const revivedReplayEvent =
+      yield* terminalManager.takeRevivedReplayEvent(terminalId)
+
+    if (revivedReplayEvent !== undefined) {
+      portSend(encodeReplay(revivedReplayEvent))
+    } else {
+      const screenState = terminalManager.getScreenState(terminalId)
+      if (screenState.length > 0) {
+        portSend(encodeScreenState(screenState))
+      }
+    }
+
+    isRestoringSnapshot = false
+    for (const data of queuedOutput) {
+      portSend(data)
+    }
+
+    if (revivedReplayEvent !== undefined) {
+      portSend(encodeReplayComplete())
+    }
+
+    // Prompt TUI applications to repaint against the restored viewport.
+    yield* terminalManager.forceRedraw(terminalId)
 
     // Subscribe to lifecycle events for status control messages.
     const lifecycleQueue = yield* PubSub.subscribe(

@@ -32,7 +32,7 @@ import {
   Scope,
   Stream,
 } from 'effect'
-import { afterAll, beforeAll, it } from 'vitest'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 
 import { directLayer } from '../src/services/pty-direct.js'
 import type { PtyHostClient } from '../src/services/pty-host-client.js'
@@ -258,6 +258,91 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
         yield* tm.kill(result.id)
       })
     )
+  })
+
+  it('uses the runtime shell integration nonce to trust matching command lines', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command:
+            'printf \'\\033]633;P;Cwd=/tmp\\007\\033]633;B\\007\\033]633;E;git\\x20status;%s\\007\\033]633;C\\007\\033]633;D;0\\007\' "$VSCODE_NONCE"',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    await delay(1000)
+
+    const commandState = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return tm.getCommandDetectionState(result.id)
+      })
+    )
+
+    assert.isDefined(commandState)
+    assert.strictEqual(commandState?.isWindowsPty, false)
+    assert.strictEqual(commandState?.hasRichCommandDetection, false)
+    assert.deepStrictEqual(commandState?.promptInputModel, {
+      value: 'git status',
+      cursorIndex: 10,
+    })
+    assert.strictEqual(commandState?.commands.length, 1)
+    assert.strictEqual(commandState?.commands[0]?.command, 'git status')
+    assert.strictEqual(commandState?.commands[0]?.commandLineConfidence, 'high')
+    assert.strictEqual(commandState?.commands[0]?.cwd, '/tmp')
+    assert.strictEqual(commandState?.commands[0]?.exitCode, 0)
+    assert.strictEqual(commandState?.commands[0]?.isTrusted, true)
+    assert.isNumber(commandState?.commands[0]?.timestamp)
+    assert.isNumber(commandState?.commands[0]?.duration)
+  })
+
+  it('preserves trusted command detection after restart()', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command:
+            'printf \'\\033]633;P;Cwd=/tmp\\007\\033]633;B\\007\\033]633;E;git\\x20status;%s\\007\\033]633;C\\007\\033]633;D;0\\007\' "$VSCODE_NONCE"',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      })
+    )
+
+    await delay(1000)
+
+    const restarted = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.restart(result.id)
+      })
+    )
+
+    assert.strictEqual(restarted.id, result.id)
+
+    await delay(1000)
+
+    const commandState = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return tm.getCommandDetectionState(result.id)
+      })
+    )
+
+    assert.isDefined(commandState)
+    assert.strictEqual(commandState?.commands.length, 1)
+    assert.strictEqual(commandState?.commands[0]?.command, 'git status')
+    assert.strictEqual(commandState?.commands[0]?.commandLineConfidence, 'high')
+    assert.strictEqual(commandState?.commands[0]?.cwd, '/tmp')
+    assert.strictEqual(commandState?.commands[0]?.exitCode, 0)
+    assert.strictEqual(commandState?.commands[0]?.isTrusted, true)
   })
 
   it('kill() marks terminal as stopped but retains it in memory', async () => {
@@ -1407,6 +1492,53 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
         yield* tm.kill(restarted.id)
       })
     )
+  })
+
+  it('restart() does not log PTY reuse warnings while replacing the previous process', async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
+
+    try {
+      const result = await runEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          return yield* tm.spawn({
+            command: 'cat',
+            cwd: TEST_CWD,
+            cols: 80,
+            rows: 24,
+            workspaceId: TEST_WORKSPACE_ID,
+          })
+        })
+      )
+
+      await delay(500)
+
+      await runEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          yield* tm.restart(result.id)
+        })
+      )
+
+      await delay(500)
+
+      expect(
+        consoleErrorSpy.mock.calls.some(([message]) =>
+          String(message).includes('already exists')
+        )
+      ).toBe(false)
+
+      await runEffect(
+        Effect.gen(function* () {
+          const tm = yield* TerminalManager
+          yield* tm.kill(result.id)
+        })
+      )
+    } finally {
+      consoleErrorSpy.mockRestore()
+    }
   })
 
   it('spawn() with pre-generated id uses that ID', async () => {

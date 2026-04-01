@@ -125,6 +125,121 @@ class ReplayBuffer {
   }
 }
 
+interface ReplayRecorderEntry {
+  cols: number
+  data: string[]
+  rows: number
+}
+
+/**
+ * Tracks replay output across resize boundaries, mirroring VS Code's
+ * terminal recorder shape so restored terminals can rehydrate with the
+ * same sequence of size changes that produced the buffer.
+ */
+class ReplayRecorder {
+  private commands: SerializedCommandDetectionCapability | undefined = undefined
+  private entries: ReplayRecorderEntry[]
+  private readonly maxSize: number
+  private totalDataLength = 0
+
+  constructor(
+    cols: number,
+    rows: number,
+    maxSize: number = DEFAULT_REPLAY_BUFFER_SIZE
+  ) {
+    this.entries = [{ cols, rows, data: [] }]
+    this.maxSize = maxSize
+  }
+
+  handleData(data: string): void {
+    const lastEntry = this.entries.at(-1)
+    if (lastEntry === undefined) {
+      return
+    }
+
+    lastEntry.data.push(data)
+    this.totalDataLength += data.length
+
+    while (this.totalDataLength > this.maxSize) {
+      const firstEntry = this.entries[0]
+      const firstChunk = firstEntry?.data[0]
+      if (firstEntry === undefined || firstChunk === undefined) {
+        break
+      }
+
+      const remainingToDelete = this.totalDataLength - this.maxSize
+      if (remainingToDelete >= firstChunk.length) {
+        this.totalDataLength -= firstChunk.length
+        firstEntry.data.shift()
+        if (firstEntry.data.length === 0 && this.entries.length > 1) {
+          this.entries.shift()
+        }
+        continue
+      }
+
+      firstEntry.data[0] = firstChunk.slice(remainingToDelete)
+      this.totalDataLength -= remainingToDelete
+    }
+  }
+
+  handleResize(cols: number, rows: number): void {
+    const lastEntry = this.entries.at(-1)
+    if (lastEntry === undefined) {
+      this.entries.push({ cols, rows, data: [] })
+      return
+    }
+
+    if (lastEntry.data.length === 0) {
+      if (this.entries.length === 1) {
+        lastEntry.cols = cols
+        lastEntry.rows = rows
+        return
+      }
+
+      this.entries.pop()
+    }
+
+    const nextLastEntry = this.entries.at(-1)
+    if (
+      nextLastEntry !== undefined &&
+      nextLastEntry.cols === cols &&
+      nextLastEntry.rows === rows
+    ) {
+      return
+    }
+
+    this.entries.push({ cols, rows, data: [] })
+  }
+
+  loadReplayEvent(replayEvent: SerializedReplayEvent): void {
+    this.commands = replayEvent.commands
+    this.entries = replayEvent.events.map((event) => ({
+      cols: event.cols,
+      rows: event.rows,
+      data: event.data.length > 0 ? [event.data] : [],
+    }))
+    this.totalDataLength = replayEvent.events.reduce(
+      (total, event) => total + event.data.length,
+      0
+    )
+
+    if (this.entries.length === 0) {
+      this.entries = [{ cols: 0, rows: 0, data: [] }]
+    }
+  }
+
+  toReplayEvent(): SerializedReplayEvent {
+    return {
+      commands: this.commands,
+      events: this.entries.map((entry) => ({
+        cols: entry.cols,
+        rows: entry.rows,
+        data: entry.data.join(''),
+      })) as [SerializedReplayFrame, ...SerializedReplayFrame[]],
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Serialization Types
 // ---------------------------------------------------------------------------
@@ -141,9 +256,61 @@ interface SerializedTerminal {
   readonly env: Record<string, string>
   readonly id: string
   readonly replayBuffer: string
+  readonly replayEvent: SerializedReplayEvent
   readonly rows: number
   readonly screenState: string
   readonly workspaceId: string
+}
+
+interface SerializedReplayEvent {
+  readonly commands?: SerializedCommandDetectionCapability | undefined
+  readonly events: readonly [SerializedReplayFrame, ...SerializedReplayFrame[]]
+}
+
+interface SerializedMarkProperties {
+  readonly disableCommandStorage?: boolean | undefined
+  readonly hidden?: boolean | undefined
+  readonly hoverMessage?: string | undefined
+  readonly id?: string | undefined
+}
+
+interface SerializedTerminalCommand {
+  readonly command: string
+  readonly commandLineConfidence: 'low' | 'medium' | 'high'
+  readonly commandStartLineContent?: string | undefined
+  readonly cwd?: string | undefined
+  readonly duration: number
+  readonly endLine?: number | undefined
+  readonly executedLine?: number | undefined
+  readonly executedX?: number | undefined
+  readonly exitCode?: number | undefined
+  readonly id?: string | undefined
+  readonly isTrusted: boolean
+  readonly markProperties?: SerializedMarkProperties | undefined
+  readonly promptStartLine?: number | undefined
+  readonly startLine?: number | undefined
+  readonly startX?: number | undefined
+  readonly timestamp: number
+}
+
+interface SerializedPromptInputModel {
+  readonly continuationPrompt?: string | undefined
+  readonly cursorIndex: number
+  readonly lastPromptLine?: string | undefined
+  readonly value: string
+}
+
+interface SerializedCommandDetectionCapability {
+  readonly commands: readonly SerializedTerminalCommand[]
+  readonly hasRichCommandDetection: boolean
+  readonly isWindowsPty: boolean
+  readonly promptInputModel?: SerializedPromptInputModel | undefined
+}
+
+interface SerializedReplayFrame {
+  readonly cols: number
+  readonly data: string
+  readonly rows: number
 }
 
 /**
@@ -152,7 +319,7 @@ interface SerializedTerminal {
 interface SerializedState {
   readonly terminals: readonly SerializedTerminal[]
   readonly timestamp: number
-  readonly version: 1
+  readonly version: 2
 }
 
 /**
@@ -209,6 +376,11 @@ interface TerminalSessionPersistence {
    */
   readonly getReplayBuffer: (terminalId: string) => string | undefined
 
+  /** Get the structured replay event for a terminal. */
+  readonly getReplayEvent: (
+    terminalId: string
+  ) => SerializedReplayEvent | undefined
+
   /**
    * Load previously persisted terminal state from disk.
    * Returns null if no state file exists or if it's invalid/stale.
@@ -223,6 +395,12 @@ interface TerminalSessionPersistence {
     terminalId: string,
     cols: number,
     rows: number
+  ) => void
+
+  /** Restore a previously persisted replay event for a terminal. */
+  readonly restoreReplayEvent: (
+    terminalId: string,
+    replayEvent: SerializedReplayEvent
   ) => void
 
   /**
@@ -241,7 +419,10 @@ interface TerminalSessionPersistence {
       readonly env: Record<string, string>
       readonly status: 'running' | 'stopped'
     }>,
-    getScreenState: (terminalId: string) => string
+    getScreenState: (terminalId: string) => string,
+    getCommandDetectionState?: (
+      terminalId: string
+    ) => SerializedCommandDetectionCapability | undefined
   ) => void
 
   /**
@@ -296,6 +477,7 @@ function parseReplayBufferSize(): number {
  */
 function createTerminalSessionPersistence(): TerminalSessionPersistence {
   const replayBuffers = new Map<string, ReplayBuffer>()
+  const replayRecorders = new Map<string, ReplayRecorder>()
   const dimensions = new Map<string, TerminalDimensions>()
   const bufferSize = parseReplayBufferSize()
 
@@ -304,33 +486,71 @@ function createTerminalSessionPersistence(): TerminalSessionPersistence {
       if (!replayBuffers.has(terminalId)) {
         replayBuffers.set(terminalId, new ReplayBuffer(bufferSize))
       }
+      if (!replayRecorders.has(terminalId)) {
+        replayRecorders.set(
+          terminalId,
+          new ReplayRecorder(cols, rows, bufferSize)
+        )
+      }
       dimensions.set(terminalId, { cols, rows })
     },
 
     unregisterTerminal(terminalId: string): void {
       replayBuffers.delete(terminalId)
+      replayRecorders.delete(terminalId)
       dimensions.delete(terminalId)
     },
 
     writeOutput(terminalId: string, data: string): void {
-      const buffer = replayBuffers.get(terminalId)
-      if (buffer !== undefined) {
-        buffer.write(data)
-      }
+      replayBuffers.get(terminalId)?.write(data)
+      replayRecorders.get(terminalId)?.handleData(data)
     },
 
     updateDimensions(terminalId: string, cols: number, rows: number): void {
       if (dimensions.has(terminalId)) {
         dimensions.set(terminalId, { cols, rows })
       }
+      replayRecorders.get(terminalId)?.handleResize(cols, rows)
     },
 
     getReplayBuffer(terminalId: string): string | undefined {
       return replayBuffers.get(terminalId)?.getContents()
     },
 
+    getReplayEvent(terminalId: string): SerializedReplayEvent | undefined {
+      return replayRecorders.get(terminalId)?.toReplayEvent()
+    },
+
     getDimensions(terminalId: string): TerminalDimensions | undefined {
       return dimensions.get(terminalId)
+    },
+
+    restoreReplayEvent(
+      terminalId: string,
+      replayEvent: SerializedReplayEvent
+    ): void {
+      const buffer = replayBuffers.get(terminalId)
+      const recorder = replayRecorders.get(terminalId)
+      if (!(buffer && recorder)) {
+        return
+      }
+
+      buffer.clear()
+      for (const event of replayEvent.events) {
+        if (event.data.length > 0) {
+          buffer.write(event.data)
+        }
+      }
+
+      recorder.loadReplayEvent(replayEvent)
+
+      const lastEvent = replayEvent.events.at(-1)
+      if (lastEvent !== undefined) {
+        dimensions.set(terminalId, {
+          cols: lastEvent.cols,
+          rows: lastEvent.rows,
+        })
+      }
     },
 
     serializeState(
@@ -343,7 +563,10 @@ function createTerminalSessionPersistence(): TerminalSessionPersistence {
         readonly env: Record<string, string>
         readonly status: 'running' | 'stopped'
       }>,
-      getScreenState: (terminalId: string) => string
+      getScreenState: (terminalId: string) => string,
+      getCommandDetectionState?: (
+        terminalId: string
+      ) => SerializedCommandDetectionCapability | undefined
     ): void {
       const terminals = getTerminalMeta()
 
@@ -356,11 +579,17 @@ function createTerminalSessionPersistence(): TerminalSessionPersistence {
       }
 
       const serialized: SerializedState = {
-        version: 1,
+        version: 2,
         timestamp: Date.now(),
         terminals: runningTerminals.map((t) => {
           const dims = dimensions.get(t.id)
-          const buffer = replayBuffers.get(t.id)
+          const cols = dims?.cols ?? 80
+          const rows = dims?.rows ?? 24
+          const replayBuffer = replayBuffers.get(t.id)?.getContents() ?? ''
+          const replayEvent = replayRecorders.get(t.id)?.toReplayEvent() ?? {
+            events: [{ cols, rows, data: replayBuffer }],
+          }
+          const liveCommandState = getCommandDetectionState?.(t.id)
 
           return {
             id: t.id,
@@ -369,9 +598,16 @@ function createTerminalSessionPersistence(): TerminalSessionPersistence {
             args: [...t.args],
             cwd: t.cwd,
             env: { ...t.env },
-            cols: dims?.cols ?? 80,
-            rows: dims?.rows ?? 24,
-            replayBuffer: buffer?.getContents() ?? '',
+            cols,
+            rows,
+            replayBuffer,
+            replayEvent:
+              liveCommandState === undefined
+                ? replayEvent
+                : {
+                    ...replayEvent,
+                    commands: liveCommandState,
+                  },
             screenState: getScreenState(t.id),
           }
         }),
@@ -411,7 +647,7 @@ function createTerminalSessionPersistence(): TerminalSessionPersistence {
         const state = JSON.parse(raw) as SerializedState
 
         // Validate version
-        if (state.version !== 1) {
+        if (state.version !== 2) {
           console.log(
             `[terminal-persistence] Unsupported state version: ${String(state.version)}`
           )
@@ -454,6 +690,7 @@ function createTerminalSessionPersistence(): TerminalSessionPersistence {
 
     clear(): void {
       replayBuffers.clear()
+      replayRecorders.clear()
       dimensions.clear()
     },
   }
@@ -464,12 +701,19 @@ export {
   DEFAULT_REPLAY_BUFFER_SIZE,
   MAX_STATE_AGE_MS,
   PERSISTENCE_DIR,
+  ReplayRecorder,
   ReplayBuffer,
   STATE_FILE,
 }
 export type {
+  SerializedCommandDetectionCapability,
+  SerializedMarkProperties,
+  SerializedPromptInputModel,
   SerializedState,
+  SerializedTerminalCommand,
   SerializedTerminal,
+  SerializedReplayEvent,
+  SerializedReplayFrame,
   TerminalDimensions,
   TerminalSessionPersistence,
 }

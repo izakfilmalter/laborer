@@ -23,15 +23,6 @@ import { Effect, Layer } from 'effect'
 
 import { acquireServicePort } from '@/lib/desktop'
 
-/**
- * Build the RPC client protocol layer.
- *
- * MessagePort acquired from `desktopBridge.acquireServicePort('terminal')`.
- * The port is acquired lazily inside `Layer.scoped` when the layer is first
- * built (i.e., when a React component first subscribes to a query/mutation
- * atom). No `RpcSerialization.layerJson` or `FetchHttpClient.layer` needed —
- * MessagePort uses structured clone natively.
- */
 const terminalProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
   RpcClient.Protocol,
   Effect.gen(function* () {
@@ -41,10 +32,6 @@ const terminalProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
         'Terminal utility process is not running — could not acquire MessagePort'
       )
     }
-    // Cast Web MessagePort to RpcMessagePort — the runtime handles both
-    // API styles (.onmessage setter vs .on('message') method) correctly.
-    // The type mismatch is because Web's onmessage uses MessageEvent while
-    // RpcMessagePort uses a simpler { data: unknown } shape.
     return yield* makeClientProtocolMessagePort(
       port as unknown as RpcMessagePort
     )

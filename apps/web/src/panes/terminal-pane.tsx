@@ -51,7 +51,11 @@ import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
-import type { TerminalStatus } from '@/hooks/use-terminal-messageport'
+import type {
+  ReplayControlMessage,
+  ReplayStatus,
+  TerminalStatus,
+} from '@/hooks/use-terminal-messageport'
 import { useTerminalMessagePort } from '@/hooks/use-terminal-messageport'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { openExternalUrl } from '@/lib/desktop'
@@ -207,6 +211,7 @@ const createResizeDebouncer = (
 
 /** Connection result shape for the MessagePort data channel hook. */
 interface TerminalConnection {
+  readonly replayStatus: ReplayStatus
   readonly send: (data: string) => void
   readonly status: 'connecting' | 'connected' | 'disconnected'
   readonly terminalStatus: TerminalStatus
@@ -288,9 +293,39 @@ function TerminalPaneMessagePort({
   onTitleChange,
 }: TerminalPaneProps) {
   const terminalRef = useRef<Terminal | null>(null)
+  const [replayEpoch, setReplayEpoch] = useState(0)
 
   const handleTerminalData = useCallback((data: string) => {
     terminalRef.current?.write(data)
+  }, [])
+
+  const handleReplayStart = useCallback((replayEvent: ReplayControlMessage) => {
+    const terminal = terminalRef.current
+    if (!terminal) {
+      return
+    }
+
+    terminal.reset()
+    setReplayEpoch((current) => current + 1)
+
+    queueMicrotask(() => {
+      const activeTerminal = terminalRef.current
+      if (!activeTerminal) {
+        return
+      }
+
+      for (const frame of replayEvent.events) {
+        if (
+          activeTerminal.cols !== frame.cols ||
+          activeTerminal.rows !== frame.rows
+        ) {
+          activeTerminal.resize(frame.cols, frame.rows)
+        }
+        if (frame.data.length > 0) {
+          activeTerminal.write(frame.data)
+        }
+      }
+    })
   }, [])
 
   const handleTerminalStatus = useCallback(
@@ -308,6 +343,7 @@ function TerminalPaneMessagePort({
   const connection = useTerminalMessagePort({
     terminalId,
     onData: handleTerminalData,
+    onReplayStart: handleReplayStart,
     onStatus: handleTerminalStatus,
   })
 
@@ -315,6 +351,7 @@ function TerminalPaneMessagePort({
     <TerminalPaneRenderer
       connection={connection}
       onTitleChange={onTitleChange}
+      replayEpoch={replayEpoch}
       terminalId={terminalId}
       terminalRef={terminalRef}
     />
@@ -325,6 +362,7 @@ function TerminalPaneMessagePort({
 interface TerminalPaneRendererProps {
   readonly connection: TerminalConnection
   readonly onTitleChange?: ((title: string) => void) | undefined
+  readonly replayEpoch: number
   readonly terminalId: string
   readonly terminalRef: React.RefObject<Terminal | null>
 }
@@ -345,11 +383,13 @@ function TerminalPaneRenderer({
   terminalId,
   onTitleChange,
   connection,
+  replayEpoch,
   terminalRef,
 }: TerminalPaneRendererProps) {
   const {
     send: connectionSend,
     status: connectionStatus,
+    replayStatus,
     terminalStatus,
   } = connection
   const resizeTerminal = useAtomSet(terminalResizeMutation)
@@ -388,6 +428,15 @@ function TerminalPaneRenderer({
   const [hasReceivedData, setHasReceivedData] = useState(false)
   const hasReceivedDataRef = useRef(false)
 
+  useEffect(() => {
+    if (replayEpoch === 0) {
+      return
+    }
+
+    hasReceivedDataRef.current = false
+    setHasReceivedData(false)
+  }, [replayEpoch])
+
   const isRunning = terminalStatus !== 'stopped'
 
   /** Ref for isRunning so the xterm.js onData callback can check it. */
@@ -401,6 +450,29 @@ function TerminalPaneRenderer({
   /** Ref for onTitleChange to avoid stale closures in terminal event callbacks. */
   const onTitleChangeRef = useRef(onTitleChange)
   onTitleChangeRef.current = onTitleChange
+
+  useEffect(() => {
+    if (replayStatus !== 'complete') {
+      return
+    }
+
+    const fitAddon = fitAddonRef.current
+    const terminal = terminalRef.current
+    if (!(fitAddon && terminal)) {
+      return
+    }
+
+    try {
+      fitAddon.fit()
+      if (terminal.cols > 0 && terminal.rows > 0) {
+        resizeTerminalRef.current({
+          payload: { id: terminalId, cols: terminal.cols, rows: terminal.rows },
+        })
+      }
+    } catch {
+      // Ignore layout races during replay completion.
+    }
+  }, [replayStatus, terminalId, terminalRef])
 
   /**
    * Initialize xterm.js instance.
@@ -688,7 +760,15 @@ function TerminalPaneRenderer({
           with a spinner and message. Disappears on first data frame.
           Only shown for running terminals (stopped terminals get immediate
           screen state on reconnection). */}
-      {!hasReceivedData && isRunning && <TerminalLoadingOverlay />}
+      {(!hasReceivedData || replayStatus === 'replaying') && isRunning && (
+        <TerminalLoadingOverlay
+          message={
+            replayStatus === 'replaying'
+              ? 'Restoring terminal...'
+              : 'Starting terminal...'
+          }
+        />
+      )}
 
       {/* Prefix mode indicator (Issue #80) — shown when Ctrl+B was pressed
           and the terminal is waiting for the next key to complete a panel
@@ -728,11 +808,11 @@ function TerminalPaneRenderer({
  * Covers the blank terminal canvas with a centered spinner and status message.
  * Uses the terminal's background color (zinc-950) to blend seamlessly.
  */
-function TerminalLoadingOverlay() {
+function TerminalLoadingOverlay({ message }: { readonly message: string }) {
   return (
     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background">
       <Spinner className="size-6 text-muted-foreground" />
-      <p className="text-muted-foreground text-sm">Starting terminal...</p>
+      <p className="text-muted-foreground text-sm">{message}</p>
     </div>
   )
 }

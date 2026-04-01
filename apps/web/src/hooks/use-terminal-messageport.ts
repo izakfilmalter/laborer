@@ -38,6 +38,62 @@ type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
  */
 type TerminalStatus = 'running' | 'stopped' | 'restarted'
 
+type ReplayStatus = 'idle' | 'replaying' | 'complete'
+
+interface ReplayEventFrame {
+  readonly cols: number
+  readonly data: string
+  readonly rows: number
+}
+
+interface SerializedPromptInputModel {
+  readonly cursorIndex: number
+  readonly value: string
+}
+
+interface SerializedMarkProperties {
+  readonly disableCommandStorage?: boolean | undefined
+  readonly hidden?: boolean | undefined
+  readonly hoverMessage?: string | undefined
+  readonly id?: string | undefined
+}
+
+interface SerializedTerminalCommand {
+  readonly command: string
+  readonly commandLineConfidence: 'low' | 'medium' | 'high'
+  readonly commandStartLineContent?: string | undefined
+  readonly cwd?: string | undefined
+  readonly duration: number
+  readonly endLine?: number | undefined
+  readonly executedLine?: number | undefined
+  readonly executedX?: number | undefined
+  readonly exitCode?: number | undefined
+  readonly id?: string | undefined
+  readonly isTrusted: boolean
+  readonly markProperties?: SerializedMarkProperties | undefined
+  readonly promptStartLine?: number | undefined
+  readonly startLine?: number | undefined
+  readonly startX?: number | undefined
+  readonly timestamp: number
+}
+
+interface SerializedCommandDetectionCapability {
+  readonly commands: readonly SerializedTerminalCommand[]
+  readonly hasRichCommandDetection: boolean
+  readonly isWindowsPty: boolean
+  readonly promptInputModel?: SerializedPromptInputModel | undefined
+}
+
+interface ReplayControlMessage {
+  readonly commands?: SerializedCommandDetectionCapability | undefined
+  readonly events: readonly [ReplayEventFrame, ...ReplayEventFrame[]]
+  readonly type: 'replay'
+}
+
+interface ReplayCompleteControlMessage {
+  readonly type: 'replayComplete'
+}
+
 /**
  * Number of characters between ack frames sent to the utility process.
  * Matches the server-side LOW_WATERMARK_CHARS / CharCountAckSize (5,000).
@@ -66,6 +122,8 @@ interface ErrorControlMessage {
 /** Union of all control message types from the terminal service. */
 type ControlMessage =
   | ErrorControlMessage
+  | ReplayCompleteControlMessage
+  | ReplayControlMessage
   | ScreenStateControlMessage
   | StatusControlMessage
 
@@ -94,6 +152,30 @@ function parseControlMessage(data: string): ControlMessage | undefined {
         data: parsed.data,
       }
     }
+    if (
+      parsed.type === 'replay' &&
+      Array.isArray(parsed.events) &&
+      parsed.events.length > 0 &&
+      parsed.events.every(
+        (event) =>
+          typeof event === 'object' &&
+          event !== null &&
+          typeof event.cols === 'number' &&
+          typeof event.rows === 'number' &&
+          typeof event.data === 'string'
+      )
+    ) {
+      return {
+        type: 'replay',
+        commands: isSerializedCommandDetectionCapability(parsed.commands)
+          ? parsed.commands
+          : undefined,
+        events: parsed.events as unknown as ReplayControlMessage['events'],
+      }
+    }
+    if (parsed.type === 'replayComplete') {
+      return { type: 'replayComplete' }
+    }
     if (parsed.type === 'error' && typeof parsed.message === 'string') {
       return {
         type: 'error',
@@ -106,9 +188,66 @@ function parseControlMessage(data: string): ControlMessage | undefined {
   return undefined
 }
 
+function isSerializedCommandDetectionCapability(
+  value: unknown
+): value is SerializedCommandDetectionCapability {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const candidate = value as Record<string, unknown>
+  return (
+    typeof candidate.isWindowsPty === 'boolean' &&
+    typeof candidate.hasRichCommandDetection === 'boolean' &&
+    Array.isArray(candidate.commands) &&
+    candidate.commands.every(isSerializedTerminalCommand) &&
+    (candidate.promptInputModel === undefined ||
+      isSerializedPromptInputModel(candidate.promptInputModel))
+  )
+}
+
+function isSerializedPromptInputModel(
+  value: unknown
+): value is SerializedPromptInputModel {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const candidate = value as Record<string, unknown>
+  return (
+    typeof candidate.cursorIndex === 'number' &&
+    typeof candidate.value === 'string'
+  )
+}
+
+function isSerializedTerminalCommand(
+  value: unknown
+): value is SerializedTerminalCommand {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const candidate = value as Record<string, unknown>
+  return (
+    typeof candidate.command === 'string' &&
+    (candidate.commandLineConfidence === 'low' ||
+      candidate.commandLineConfidence === 'medium' ||
+      candidate.commandLineConfidence === 'high') &&
+    typeof candidate.isTrusted === 'boolean' &&
+    typeof candidate.timestamp === 'number' &&
+    typeof candidate.duration === 'number'
+  )
+}
+
 interface UseTerminalMessagePortOptions {
   /** Callback invoked with terminal output data (raw UTF-8). */
   readonly onData: (data: string) => void
+
+  /** Callback invoked after the terminal service completes replay. */
+  readonly onReplayComplete?: () => void
+
+  /** Callback invoked when a replay payload arrives for renderer rehydration. */
+  readonly onReplayStart?: (replayEvent: ReplayControlMessage) => void
 
   /**
    * Callback invoked when a status control message is received.
@@ -125,6 +264,8 @@ interface UseTerminalMessagePortOptions {
 }
 
 interface UseTerminalMessagePortResult {
+  /** Current restore/replay state for revived terminals. */
+  readonly replayStatus: ReplayStatus
   /** Send input data to the PTY via MessagePort. */
   readonly send: (data: string) => void
 
@@ -152,11 +293,14 @@ function useTerminalMessagePort({
   terminalId,
   onData,
   onStatus,
+  onReplayStart,
+  onReplayComplete,
 }: UseTerminalMessagePortOptions): UseTerminalMessagePortResult {
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>('connecting')
   const [terminalStatus, setTerminalStatus] =
     useState<TerminalStatus>('running')
+  const [replayStatus, setReplayStatus] = useState<ReplayStatus>('idle')
   const portRef = useRef<MessagePort | null>(null)
   const mountedRef = useRef(true)
 
@@ -168,6 +312,10 @@ function useTerminalMessagePort({
   onDataRef.current = onData
   const onStatusRef = useRef(onStatus)
   onStatusRef.current = onStatus
+  const onReplayStartRef = useRef(onReplayStart)
+  onReplayStartRef.current = onReplayStart
+  const onReplayCompleteRef = useRef(onReplayComplete)
+  onReplayCompleteRef.current = onReplayComplete
 
   /** Decode ArrayBuffer to string for zero-copy output data. */
   const textDecoder = useRef(new TextDecoder())
@@ -184,6 +332,16 @@ function useTerminalMessagePort({
     }
     if (msg.type === 'screenState') {
       onDataRef.current(msg.data)
+      return
+    }
+    if (msg.type === 'replay') {
+      setReplayStatus('replaying')
+      onReplayStartRef.current?.(msg)
+      return
+    }
+    if (msg.type === 'replayComplete') {
+      setReplayStatus('complete')
+      onReplayCompleteRef.current?.()
       return
     }
     if (msg.type === 'error') {
@@ -249,6 +407,7 @@ function useTerminalMessagePort({
   useEffect(() => {
     mountedRef.current = true
     let port: MessagePort | null = null
+    setReplayStatus('idle')
 
     const acquire = async (): Promise<MessagePort | null> => {
       try {
@@ -290,8 +449,20 @@ function useTerminalMessagePort({
     portRef.current?.postMessage(data)
   }, [])
 
-  return { send, status: connectionStatus, terminalStatus }
+  return {
+    send,
+    status: connectionStatus,
+    replayStatus,
+    terminalStatus,
+  }
 }
 
 export { useTerminalMessagePort }
-export type { ConnectionStatus, TerminalStatus, UseTerminalMessagePortResult }
+export type {
+  ConnectionStatus,
+  ReplayControlMessage,
+  ReplayEventFrame,
+  ReplayStatus,
+  TerminalStatus,
+  UseTerminalMessagePortResult,
+}

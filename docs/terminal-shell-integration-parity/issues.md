@@ -16,7 +16,7 @@
 | 8 | PromptTypeDetection + badge | 5 | Ready |
 | 9 | Renderer shell integration addon + command deserialization | 1 | Ready |
 | 10 | Replay input guard | None | Done |
-| 11 | rawReviveBuffer optimization | None | Ready |
+| 11 | rawReviveBuffer optimization | None | Done |
 
 **Dependency graph:**
 
@@ -436,14 +436,14 @@ End-to-end behavior:
 
 ### Acceptance criteria
 
-- [ ] Per-terminal interaction state tracks `None`, `ReplayOnly`, and `Session`
-- [ ] Raw revive buffer stored on terminal revival
-- [ ] Serialization in `None`/`ReplayOnly` state returns raw buffer directly
-- [ ] Serialization in `Session` state uses live xterm serialize addon
-- [ ] User input transitions state to `Session` and frees raw buffer
-- [ ] User resize transitions state to `Session` and frees raw buffer
-- [ ] Title change transitions state to `Session` and frees raw buffer
-- [ ] `freeRawReviveBuffer(terminalId)` method exposed on headless terminal manager
-- [ ] Tests verify raw buffer reuse for idle terminals
-- [ ] Tests verify fresh serialization after user interaction
-- [ ] Tests verify state transitions on each interaction type
+- [x] Per-terminal interaction state tracks `None`, `ReplayOnly`, and `Session`
+- [x] Raw revive buffer stored on terminal revival
+- [x] Serialization in `None`/`ReplayOnly` state returns raw buffer directly
+- [x] Serialization in `Session` state uses live xterm serialize addon
+- [x] User input transitions state to `Session` and frees raw buffer
+- [x] User resize transitions state to `Session` and frees raw buffer
+- [x] Title change transitions state to `Session` and frees raw buffer
+- [x] `freeRawReviveBuffer(terminalId)` method exposed on headless terminal manager
+- [x] Tests verify raw buffer reuse for idle terminals
+- [x] Tests verify fresh serialization after user interaction
+- [x] Tests verify state transitions on each interaction type

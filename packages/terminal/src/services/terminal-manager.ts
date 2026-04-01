@@ -781,14 +781,11 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
     ) => Effect.Effect<number, never>
 
     /**
-     * Get the serialized screen state for a terminal as a compact VT
-     * escape sequence string (~4KB). Used by the WebSocket attach
-     * protocol for fast reconnection instead of replaying the full
-     * ring buffer.
-     *
-     * Returns empty string if the terminal does not exist or has no output.
+     * Free the raw revive buffer for a terminal, transitioning it
+     * to 'session' interaction state. Called when the user interacts
+     * with the terminal (input, resize, title change).
      */
-    readonly getScreenState: (terminalId: string) => string
+    readonly freeRawReviveBuffer: (terminalId: string) => void
 
     /** Get serialized capability store state for a terminal. */
     readonly getCapabilityState: (
@@ -799,6 +796,28 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
     readonly getCommandDetectionState: (
       terminalId: string
     ) => SerializedCommandDetectionCapability | undefined
+
+    /**
+     * Get the serialized screen state for a terminal as a compact VT
+     * escape sequence string (~4KB). Used by the WebSocket attach
+     * protocol for fast reconnection instead of replaying the full
+     * ring buffer.
+     *
+     * Returns empty string if the terminal does not exist or has no output.
+     */
+    readonly getScreenState: (terminalId: string) => string
+
+    /**
+     * Transition a terminal to 'replay-only' interaction state.
+     * Called after the revived replay event has been sent to the renderer.
+     */
+    readonly markReplayed: (terminalId: string) => void
+
+    /**
+     * Store a raw revive buffer for a terminal. Called during terminal
+     * revival to enable the rawReviveBuffer optimization.
+     */
+    readonly setRawReviveBuffer: (terminalId: string, buffer: string) => void
 
     /**
      * Subscribe to live terminal output for a WebSocket connection.
@@ -1409,6 +1428,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
 
         ptyHostClient.write(terminalId, data)
 
+        // Free the raw revive buffer on user input — the terminal is
+        // no longer idle and must be serialized from live xterm state.
+        headlessManager.freeRawReviveBuffer(terminalId)
+
         // Mark the terminal as "running" when the user sends a newline
         // (submits a command). OSC handlers will flip it back to idle
         // when the prompt returns. For non-OSC shells, arm a fallback
@@ -1467,6 +1490,10 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         // Keep headless terminal in sync with the real PTY dimensions
         // so serialized screen state is always dimensionally accurate.
         headlessManager.resize(terminalId, cols, rows)
+
+        // Free the raw revive buffer on resize — the terminal is
+        // no longer idle and must be serialized from live xterm state.
+        headlessManager.freeRawReviveBuffer(terminalId)
 
         // Store last known dimensions so restart uses the correct size.
         yield* Ref.update(terminalsRef, (m) => {
@@ -2282,12 +2309,18 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         restart,
         listTerminals,
         killAllForWorkspace,
+        freeRawReviveBuffer: (terminalId: string) =>
+          headlessManager.freeRawReviveBuffer(terminalId),
         getScreenState: (terminalId: string) =>
           headlessManager.getScreenState(terminalId),
         getCapabilityState: (terminalId: string) =>
           headlessManager.getCapabilityState(terminalId),
         getCommandDetectionState: (terminalId: string) =>
           headlessManager.getCommandDetectionState(terminalId),
+        markReplayed: (terminalId: string) =>
+          headlessManager.markReplayed(terminalId),
+        setRawReviveBuffer: (terminalId: string, buffer: string) =>
+          headlessManager.setRawReviveBuffer(terminalId, buffer),
         subscribe,
         unsubscribe,
         terminalExists,

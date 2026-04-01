@@ -926,4 +926,133 @@ describe('createTerminalSessionPersistence', () => {
       headlessManager.disposeAll()
     })
   })
+
+  // ---------------------------------------------------------------
+  // rawReviveBuffer optimization
+  // ---------------------------------------------------------------
+
+  describe('rawReviveBuffer optimization', () => {
+    it('serializes raw revive buffer for idle terminal instead of live xterm state', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      // Write something to the headless terminal so serialize would produce output
+      headlessManager.write('term-1', 'live-content')
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      // Store raw revive buffer — simulating revival
+      const rawScreenState = 'raw-screen-state-from-previous-session'
+      headlessManager.setRawReviveBuffer('term-1', rawScreenState)
+
+      persistence.writeOutput('term-1', 'output')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        (id) => headlessManager.getScreenState(id),
+        (id) => headlessManager.getCommandDetectionState(id),
+        (id) => headlessManager.getCapabilityState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      // screenState should be the raw buffer, not the live xterm state
+      expect(state.terminals[0]?.screenState).toBe(rawScreenState)
+
+      headlessManager.disposeAll()
+    })
+
+    it('serializes live xterm state after raw buffer is freed', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      headlessManager.write('term-1', 'live-content')
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      // Store and then free the raw buffer (simulating user interaction)
+      headlessManager.setRawReviveBuffer('term-1', 'stale-buffer')
+      headlessManager.freeRawReviveBuffer('term-1')
+
+      persistence.writeOutput('term-1', 'output')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        (id) => headlessManager.getScreenState(id),
+        (id) => headlessManager.getCommandDetectionState(id),
+        (id) => headlessManager.getCapabilityState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      // screenState should be from the live xterm serialize addon, not the stale buffer
+      expect(state.terminals[0]?.screenState).not.toBe('stale-buffer')
+      expect(state.terminals[0]?.screenState).toContain('live-content')
+
+      headlessManager.disposeAll()
+    })
+
+    it('raw revive buffer survives replay-only transition', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      headlessManager.write('term-1', 'some-output')
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      // Store raw buffer and transition to replay-only
+      const rawScreenState = 'replay-only-raw-buffer'
+      headlessManager.setRawReviveBuffer('term-1', rawScreenState)
+      headlessManager.markReplayed('term-1')
+
+      persistence.writeOutput('term-1', 'output')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        (id) => headlessManager.getScreenState(id),
+        (id) => headlessManager.getCommandDetectionState(id),
+        (id) => headlessManager.getCapabilityState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      // screenState should still be the raw buffer in replay-only state
+      expect(state.terminals[0]?.screenState).toBe(rawScreenState)
+
+      headlessManager.disposeAll()
+    })
+  })
 })

@@ -192,6 +192,14 @@ function setupSessionPersistence(
 
           yield* tm.setRevivedReplayEvent(record.id, saved.replayEvent)
 
+          // Store the raw screen state for the rawReviveBuffer optimization.
+          // If this terminal remains idle (no user input or resize), the
+          // raw buffer will be reused on next serialization instead of
+          // re-serializing through the xterm serialize addon.
+          if (saved.screenState.length > 0) {
+            tm.setRawReviveBuffer(record.id, saved.screenState)
+          }
+
           console.log(
             `[terminal-utility] Restored terminal ${record.id} (${saved.command})`
           )

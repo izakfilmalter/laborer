@@ -877,4 +877,155 @@ describe('HeadlessTerminalManager', () => {
     const state = manager.getCapabilityState('test-1')
     expect(state).toBeUndefined()
   })
+
+  // ---------------------------------------------------------------
+  // rawReviveBuffer optimization
+  // ---------------------------------------------------------------
+
+  it('returns raw revive buffer for idle terminal (none state)', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Write some data to the headless terminal so serialize() produces output
+    manager.write('test-1', 'Hello, World!')
+    await waitForXterm()
+
+    const liveScreenState = manager.getScreenState('test-1')
+    expect(liveScreenState).toContain('Hello')
+
+    // Store a raw revive buffer — simulating a terminal revival
+    const rawBuffer = 'raw-revive-buffer-content'
+    manager.setRawReviveBuffer('test-1', rawBuffer)
+
+    // getScreenState should return the raw buffer, not the live state
+    expect(manager.getScreenState('test-1')).toBe(rawBuffer)
+  })
+
+  it('returns raw revive buffer for replay-only state', () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    const rawBuffer = 'raw-replay-only-buffer'
+    manager.setRawReviveBuffer('test-1', rawBuffer)
+
+    // Transition to replay-only
+    manager.markReplayed('test-1')
+
+    // getScreenState should still return the raw buffer
+    expect(manager.getScreenState('test-1')).toBe(rawBuffer)
+  })
+
+  it('returns live xterm state after user input frees raw buffer', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', 'Live content')
+    await waitForXterm()
+
+    const rawBuffer = 'stale-raw-buffer'
+    manager.setRawReviveBuffer('test-1', rawBuffer)
+
+    // Verify raw buffer is being used
+    expect(manager.getScreenState('test-1')).toBe(rawBuffer)
+
+    // Free the raw buffer (simulating user interaction)
+    manager.freeRawReviveBuffer('test-1')
+
+    // Now getScreenState should use the live serialize addon
+    const screenState = manager.getScreenState('test-1')
+    expect(screenState).not.toBe(rawBuffer)
+    expect(screenState).toContain('Live content')
+  })
+
+  it('freeRawReviveBuffer transitions state to session', () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    const rawBuffer = 'some-buffer'
+    manager.setRawReviveBuffer('test-1', rawBuffer)
+    manager.markReplayed('test-1')
+
+    // Before free: raw buffer is used
+    expect(manager.getScreenState('test-1')).toBe(rawBuffer)
+
+    // Free transitions to session
+    manager.freeRawReviveBuffer('test-1')
+
+    // After free: raw buffer gone, uses serialize addon (empty terminal)
+    expect(manager.getScreenState('test-1')).not.toBe(rawBuffer)
+  })
+
+  it('markReplayed only transitions from none to replay-only', () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    const rawBuffer = 'test-buffer'
+    manager.setRawReviveBuffer('test-1', rawBuffer)
+
+    // First markReplayed: none → replay-only (raw buffer still returned)
+    manager.markReplayed('test-1')
+    expect(manager.getScreenState('test-1')).toBe(rawBuffer)
+
+    // Free transitions to session
+    manager.freeRawReviveBuffer('test-1')
+    expect(manager.getScreenState('test-1')).not.toBe(rawBuffer)
+
+    // markReplayed after session should not go back to replay-only
+    manager.setRawReviveBuffer('test-1', rawBuffer)
+    manager.markReplayed('test-1')
+    // State is still 'session', so even with rawBuffer set,
+    // getScreenState uses the serialize addon
+    expect(manager.getScreenState('test-1')).not.toBe(rawBuffer)
+  })
+
+  it('freeRawReviveBuffer is no-op for non-existent terminal', () => {
+    manager = createHeadlessTerminalManager()
+    // Should not throw
+    expect(() => {
+      manager.freeRawReviveBuffer('non-existent')
+    }).not.toThrow()
+  })
+
+  it('setRawReviveBuffer is no-op for non-existent terminal', () => {
+    manager = createHeadlessTerminalManager()
+    expect(() => {
+      manager.setRawReviveBuffer('non-existent', 'buffer')
+    }).not.toThrow()
+  })
+
+  it('markReplayed is no-op for non-existent terminal', () => {
+    manager = createHeadlessTerminalManager()
+    expect(() => {
+      manager.markReplayed('non-existent')
+    }).not.toThrow()
+  })
+
+  it('resize after revival frees raw buffer via freeRawReviveBuffer', () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    const rawBuffer = 'pre-resize-buffer'
+    manager.setRawReviveBuffer('test-1', rawBuffer)
+    manager.markReplayed('test-1')
+
+    expect(manager.getScreenState('test-1')).toBe(rawBuffer)
+
+    // Simulating what terminal-manager does on resize:
+    manager.resize('test-1', 120, 40)
+    manager.freeRawReviveBuffer('test-1')
+
+    expect(manager.getScreenState('test-1')).not.toBe(rawBuffer)
+  })
+
+  it('without raw revive buffer set, getScreenState uses serialize addon', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', 'Normal output')
+    await waitForXterm()
+
+    // No raw buffer set — should use serialize addon
+    const state = manager.getScreenState('test-1')
+    expect(state).toContain('Normal output')
+  })
 })

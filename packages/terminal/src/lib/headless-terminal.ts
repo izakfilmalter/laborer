@@ -466,9 +466,38 @@ const handleVsCodeOscSequence = (
  * would respond to DA1/DSR queries, causing duplicate responses that
  * corrupt TUI rendering.
  */
+/**
+ * Interaction state for the rawReviveBuffer optimization.
+ *
+ * Tracks how the terminal has been interacted with since revival:
+ * - `'none'` — Terminal has never been interacted with (freshly spawned or just recovered)
+ * - `'replay-only'` — Terminal has been replayed to a renderer but user never typed or resized
+ * - `'session'` — User has directly interacted (input, resize, title change)
+ *
+ * When in `'none'` or `'replay-only'` state, `getScreenState()` returns the
+ * stored raw revive buffer instead of re-serializing through the xterm serialize
+ * addon, avoiding cumulative data loss from repeated serialize/deserialize cycles
+ * on idle terminals.
+ */
+type TerminalInteractionState = 'none' | 'replay-only' | 'session'
+
 interface HeadlessTerminalState {
   readonly commandState: HeadlessCommandState
+  /**
+   * Interaction state for the rawReviveBuffer optimization.
+   * Mutable so it can be updated on user interaction events.
+   */
+  interactionState: TerminalInteractionState
   readonly oscDisposable: { dispose: () => void }
+  /**
+   * Raw revive buffer stored on terminal revival. When the terminal
+   * is idle (interactionState is 'none' or 'replay-only'), this buffer
+   * is returned by `getScreenState()` instead of re-serializing through
+   * the xterm serialize addon, avoiding cumulative data loss.
+   *
+   * Freed (set to undefined) when the user interacts with the terminal.
+   */
+  rawReviveBuffer?: string | undefined
   readonly serializeAddon: SerializeAddon
   readonly terminal: InstanceType<typeof Terminal>
 }
@@ -548,6 +577,15 @@ interface HeadlessTerminalManager {
    */
   readonly disposeAll: () => void
 
+  /**
+   * Free the raw revive buffer for a terminal and transition to
+   * 'session' interaction state. Called when the user interacts with
+   * the terminal (input write, explicit resize from renderer, title
+   * change). After this, `getScreenState()` uses the live xterm
+   * serialize addon instead of the cached raw buffer.
+   */
+  readonly freeRawReviveBuffer: (terminalId: string) => void
+
   /** Get serialized capability store state for a terminal. */
   readonly getCapabilityState: (
     terminalId: string
@@ -571,12 +609,27 @@ interface HeadlessTerminalManager {
   readonly getScreenState: (terminalId: string) => string
 
   /**
+   * Transition a terminal to 'replay-only' interaction state.
+   * Called after the revived replay event has been sent to the renderer.
+   * The raw revive buffer remains available for re-serialization.
+   */
+  readonly markReplayed: (terminalId: string) => void
+
+  /**
    * Resize the headless terminal to match new PTY dimensions.
    * Must be called whenever the real PTY is resized to keep the
    * serialized state dimensionally accurate.
    * No-op if the terminal does not exist.
    */
   readonly resize: (terminalId: string, cols: number, rows: number) => void
+
+  /**
+   * Store a raw revive buffer for a terminal. Called during terminal
+   * revival when the persisted screen state is loaded. This buffer
+   * will be returned by `getScreenState()` for idle terminals
+   * instead of re-serializing through the xterm serialize addon.
+   */
+  readonly setRawReviveBuffer: (terminalId: string, buffer: string) => void
 
   /**
    * Write PTY output data to the headless terminal.
@@ -753,6 +806,7 @@ const createHeadlessTerminalManager = (
 
     terminals.set(terminalId, {
       commandState,
+      interactionState: 'none',
       terminal,
       serializeAddon,
       oscDisposable,
@@ -770,6 +824,17 @@ const createHeadlessTerminalManager = (
     const state = terminals.get(terminalId)
     if (state === undefined) {
       return ''
+    }
+    // rawReviveBuffer optimization: if the terminal has not been interacted
+    // with since revival, return the stored raw buffer instead of
+    // re-serializing through the xterm serialize addon. This avoids
+    // cumulative data loss from repeated serialize/deserialize cycles.
+    if (
+      state.rawReviveBuffer !== undefined &&
+      (state.interactionState === 'none' ||
+        state.interactionState === 'replay-only')
+    ) {
+      return state.rawReviveBuffer
     }
     return state.serializeAddon.serialize()
   }
@@ -852,13 +917,39 @@ const createHeadlessTerminalManager = (
     }
   }
 
+  const freeRawReviveBuffer = (terminalId: string): void => {
+    const state = terminals.get(terminalId)
+    if (state !== undefined) {
+      state.rawReviveBuffer = undefined
+      state.interactionState = 'session'
+    }
+  }
+
+  const setRawReviveBuffer = (terminalId: string, buffer: string): void => {
+    const state = terminals.get(terminalId)
+    if (state !== undefined) {
+      state.rawReviveBuffer = buffer
+      // Keep interactionState as 'none' — it was set at create time
+    }
+  }
+
+  const markReplayed = (terminalId: string): void => {
+    const state = terminals.get(terminalId)
+    if (state !== undefined && state.interactionState === 'none') {
+      state.interactionState = 'replay-only'
+    }
+  }
+
   return {
     create,
+    freeRawReviveBuffer,
     write,
     getScreenState,
     getCapabilityState,
     getCommandDetectionState,
+    markReplayed,
     resize,
+    setRawReviveBuffer,
     dispose,
     disposeAll,
   }

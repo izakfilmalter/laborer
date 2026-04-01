@@ -183,3 +183,69 @@ The guard operates at three layers:
 - Biome: `bunx biome check` passes on all 5 modified files
 - Tests: 12/12 data channel tests pass (2 new)
 - Tests: 2/2 messageport hook tests pass (1 new)
+
+## Issue 11: rawReviveBuffer optimization — COMPLETED
+
+### Summary
+Implemented the rawReviveBuffer optimization to avoid cumulative data loss from
+repeated serialize/deserialize cycles on idle terminals. When a terminal is
+revived from persisted state, the original raw screen state is stored alongside
+the headless xterm instance. If the terminal remains idle (no user input or
+renderer-initiated resize), `getScreenState()` returns the stored raw buffer
+instead of re-serializing through the xterm serialize addon. This bounds
+serialization degradation to one cycle per user interaction epoch.
+
+The optimization tracks per-terminal interaction state through three phases:
+- `'none'` — Terminal freshly created or recovered, no interaction yet
+- `'replay-only'` — Revived replay sent to renderer, but user never typed/resized
+- `'session'` — User has directly interacted; raw buffer freed, live serialize used
+
+### Changes
+- `packages/terminal/src/lib/headless-terminal.ts`:
+  - Added `TerminalInteractionState` type (`'none' | 'replay-only' | 'session'`)
+  - Extended `HeadlessTerminalState` with `interactionState` and `rawReviveBuffer`
+  - Updated `getScreenState()` to return raw buffer for idle terminals
+  - Added `setRawReviveBuffer()` — stores raw buffer on terminal revival
+  - Added `freeRawReviveBuffer()` — frees buffer and transitions to `'session'`
+  - Added `markReplayed()` — transitions from `'none'` to `'replay-only'`
+  - Updated `HeadlessTerminalManager` interface with three new methods
+
+- `packages/terminal/src/services/terminal-manager.ts`:
+  - Added `freeRawReviveBuffer`, `setRawReviveBuffer`, `markReplayed` to
+    `TerminalManager` interface and wired through to headless manager
+  - Added `freeRawReviveBuffer()` call in `write` handler (user input)
+  - Added `freeRawReviveBuffer()` call in `resize` handler (renderer resize)
+
+- `packages/terminal/src/services/terminal-data-channel.ts`:
+  - Added `markReplayed()` call after sending revived replay event to renderer
+
+- `packages/terminal/src/utility-main.ts`:
+  - Added `setRawReviveBuffer()` call during terminal restoration with the
+    persisted `screenState` value
+
+- `packages/terminal/test/headless-terminal.test.ts`:
+  - Added 10 new tests:
+    - Raw buffer returned for idle terminal (none state)
+    - Raw buffer returned for replay-only state
+    - Live xterm state returned after freeRawReviveBuffer
+    - freeRawReviveBuffer transitions state to session
+    - markReplayed only transitions from none to replay-only
+    - freeRawReviveBuffer no-op for non-existent terminal
+    - setRawReviveBuffer no-op for non-existent terminal
+    - markReplayed no-op for non-existent terminal
+    - Resize + free raw buffer combination
+    - Without raw buffer, getScreenState uses serialize addon
+
+- `packages/terminal/test/terminal-session-persistence.test.ts`:
+  - Added 3 new tests:
+    - Serializes raw revive buffer for idle terminal
+    - Serializes live xterm state after raw buffer is freed
+    - Raw revive buffer survives replay-only transition
+
+### Verification
+- TypeScript: `npx tsc --noEmit -p packages/terminal/tsconfig.json` passes
+- TypeScript: `npx tsc --noEmit -p apps/web/tsconfig.json` passes
+- Biome: `bunx biome check` passes on all 6 modified files
+- Tests: 48/48 headless-terminal tests pass (10 new)
+- Tests: 39/39 persistence tests pass (3 new)
+- All 125 tests across test files pass (pre-existing empty test suite failures unchanged)

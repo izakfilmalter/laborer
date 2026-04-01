@@ -198,6 +198,10 @@ const attachDataChannel = (
     if (revivedReplayEvent !== undefined) {
       isReplayingToRenderer = true
       portSend(encodeReplay(revivedReplayEvent))
+      // Transition to 'replay-only' — the raw revive buffer remains
+      // available for re-serialization but the terminal is now attached
+      // to a renderer.
+      terminalManager.markReplayed(terminalId)
     } else {
       const screenState = terminalManager.getScreenState(terminalId)
       if (screenState.length > 0) {

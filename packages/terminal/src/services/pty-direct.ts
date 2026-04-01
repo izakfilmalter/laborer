@@ -132,6 +132,7 @@ const directLayer = Layer.scoped(
     const crashCallbacks: CrashCallback[] = []
     const coalesceBuffers = new Map<string, CoalesceBuffer>()
     const flowControlStates = new Map<string, FlowControlState>()
+    const ptyGenerations = new Map<string, number>()
 
     // Fix spawn-helper permissions before anything else
     yield* Effect.promise(() => fixSpawnHelperPermissions())
@@ -215,6 +216,7 @@ const directLayer = Layer.scoped(
         exitCallbacks.clear()
         spawnedCallbacks.clear()
         flowControlStates.clear()
+        ptyGenerations.clear()
       })
     )
 
@@ -229,12 +231,20 @@ const directLayer = Layer.scoped(
         onExit: ExitCallback,
         onSpawned?: SpawnedCallback
       ) => {
-        if (ptys.has(params.id)) {
-          console.error(
-            `[pty-direct] PTY with id "${params.id}" already exists`
-          )
-          return
+        const existingPty = ptys.get(params.id)
+        if (existingPty !== undefined) {
+          try {
+            flushCoalesceBuffer(params.id)
+            existingPty.kill()
+          } catch (error) {
+            console.error(
+              `[pty-direct] Failed to replace existing PTY ${params.id}: ${String(error)}`
+            )
+          }
         }
+
+        const generation = (ptyGenerations.get(params.id) ?? 0) + 1
+        ptyGenerations.set(params.id, generation)
 
         // Register callbacks before spawning to avoid races
         dataCallbacks.set(params.id, onData)
@@ -264,11 +274,18 @@ const directLayer = Layer.scoped(
 
           // Forward PTY output through the coalescing buffer
           pty.onData((data: string) => {
+            if (ptyGenerations.get(params.id) !== generation) {
+              return
+            }
             bufferData(params.id, data)
           })
 
           // Forward PTY exit
           pty.onExit(({ exitCode, signal }) => {
+            if (ptyGenerations.get(params.id) !== generation) {
+              return
+            }
+
             const code = exitCode ?? -1
             const sig = signal ?? -1
 
@@ -277,6 +294,7 @@ const directLayer = Layer.scoped(
 
             ptys.delete(params.id)
             flowControlStates.delete(params.id)
+            ptyGenerations.delete(params.id)
 
             const exitCb = exitCallbacks.get(params.id)
             if (exitCb !== undefined) {
@@ -299,6 +317,7 @@ const directLayer = Layer.scoped(
           dataCallbacks.delete(params.id)
           exitCallbacks.delete(params.id)
           spawnedCallbacks.delete(params.id)
+          ptyGenerations.delete(params.id)
         }
       },
 

@@ -17,6 +17,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createHeadlessTerminalManager } from '../src/lib/headless-terminal.js'
 import type { SerializedState } from '../src/services/terminal-session-persistence.js'
 import {
   createTerminalSessionPersistence,
@@ -204,10 +205,12 @@ describe('createTerminalSessionPersistence', () => {
   })
 
   describe('serializeState', () => {
-    it('writes state to disk for running terminals', () => {
+    it('writes resize-bounded replay events to disk for running terminals', () => {
       const persistence = createTerminalSessionPersistence()
       persistence.registerTerminal('term-1', 80, 24)
-      persistence.writeOutput('term-1', 'Hello\r\n$ ')
+      persistence.writeOutput('term-1', 'Hello\r\n')
+      persistence.updateDimensions('term-1', 120, 40)
+      persistence.writeOutput('term-1', '$ ')
 
       persistence.serializeState(
         () => [
@@ -227,7 +230,7 @@ describe('createTerminalSessionPersistence', () => {
       expect(existsSync(stateFilePath)).toBe(true)
       const raw = readFileSync(stateFilePath, 'utf-8')
       const state = JSON.parse(raw) as SerializedState
-      expect(state.version).toBe(1)
+      expect(state.version).toBe(2)
       expect(state.terminals).toHaveLength(1)
       const first = state.terminals[0]
       expect(first).toBeDefined()
@@ -235,9 +238,23 @@ describe('createTerminalSessionPersistence', () => {
         id: 'term-1',
         command: '/bin/zsh',
         replayBuffer: 'Hello\r\n$ ',
+        replayEvent: {
+          events: [
+            {
+              cols: 80,
+              data: 'Hello\r\n',
+              rows: 24,
+            },
+            {
+              cols: 120,
+              data: '$ ',
+              rows: 40,
+            },
+          ],
+        },
         screenState: '<screen-state>',
-        cols: 80,
-        rows: 24,
+        cols: 120,
+        rows: 40,
       })
     })
 
@@ -264,6 +281,246 @@ describe('createTerminalSessionPersistence', () => {
       expect(existsSync(stateFilePath)).toBe(false)
     })
 
+    it('preserves restored command metadata when serializing again', () => {
+      const persistence = createTerminalSessionPersistence()
+      persistence.registerTerminal('term-1', 80, 24)
+      persistence.restoreReplayEvent('term-1', {
+        commands: {
+          isWindowsPty: false,
+          hasRichCommandDetection: true,
+          commands: [
+            {
+              command: 'ls',
+              commandLineConfidence: 'high',
+              isTrusted: true,
+              timestamp: 123,
+              duration: 45,
+            },
+          ],
+        },
+        events: [
+          {
+            cols: 80,
+            rows: 24,
+            data: 'restored output\r\n',
+          },
+        ],
+      })
+
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user',
+            env: { TERM: 'xterm-256color' },
+            status: 'running' as const,
+          },
+        ],
+        () => ''
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+      expect(state.terminals[0]?.replayEvent.commands).toEqual({
+        isWindowsPty: false,
+        hasRichCommandDetection: true,
+        commands: [
+          {
+            command: 'ls',
+            commandLineConfidence: 'high',
+            isTrusted: true,
+            timestamp: 123,
+            duration: 45,
+          },
+        ],
+      })
+    })
+
+    it('serializes live command metadata from terminal runtime state', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      headlessManager.write(
+        'term-1',
+        '\x1b]633;P;HasRichCommandDetection=True\x07' +
+          '\x1b]633;P;Prompt=/workspace/app\x20$\x20\x07' +
+          '\x1b]633;P;ContinuationPrompt=>\x20\x07' +
+          '\x1b]633;P;Cwd=/workspace/app\x07' +
+          '\x1b]633;A\x07' +
+          '\x1b]633;B\x07' +
+          '\x1b]633;E;pwd\x07' +
+          '\x1b]633;C\x07' +
+          '/workspace/app\r\n' +
+          '\x1b]633;D;0\x07'
+      )
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', '/workspace/app\r\n')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/workspace/app',
+            env: { TERM: 'xterm-256color' },
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(state.terminals[0]?.replayEvent.commands).toEqual({
+        isWindowsPty: false,
+        hasRichCommandDetection: true,
+        promptInputModel: {
+          value: 'pwd',
+          cursorIndex: 3,
+          lastPromptLine: ' $ ',
+          continuationPrompt: '> ',
+        },
+        commands: [
+          expect.objectContaining({
+            command: 'pwd',
+            commandLineConfidence: 'high',
+            cwd: '/workspace/app',
+            exitCode: 0,
+            isTrusted: false,
+          }),
+        ],
+      })
+
+      headlessManager.disposeAll()
+    })
+
+    it('persists the current in-flight command from terminal runtime state', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      headlessManager.write(
+        'term-1',
+        '\x1b]633;P;Cwd=/workspace/app\x07' +
+          '\x1b]633;B\x07' +
+          '\x1b]633;E;git\x20status\x07'
+      )
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', 'git status')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/workspace/app',
+            env: { TERM: 'xterm-256color' },
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(state.terminals[0]?.replayEvent.commands).toEqual({
+        isWindowsPty: false,
+        hasRichCommandDetection: false,
+        promptInputModel: {
+          value: 'git status',
+          cursorIndex: 10,
+        },
+        commands: [
+          {
+            command: 'git status',
+            commandLineConfidence: 'high',
+            cwd: '/workspace/app',
+            duration: 0,
+            isTrusted: false,
+            timestamp: expect.any(Number),
+          },
+        ],
+      })
+
+      headlessManager.disposeAll()
+    })
+
+    it('persists trusted command lines from shell integration nonce matches', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager({
+        shellIntegrationNonce: 'trusted-nonce',
+      })
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      headlessManager.write(
+        'term-1',
+        '\x1b]633;P;Cwd=/workspace/app\x07' +
+          '\x1b]633;B\x07' +
+          '\x1b]633;E;git\x20status;trusted-nonce\x07' +
+          '\x1b]633;C\x07' +
+          '\x1b]633;D;0\x07'
+      )
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', 'git status\r\n')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/workspace/app',
+            env: { TERM: 'xterm-256color' },
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(state.terminals[0]?.replayEvent.commands).toEqual({
+        isWindowsPty: false,
+        hasRichCommandDetection: false,
+        promptInputModel: {
+          value: 'git status',
+          cursorIndex: 10,
+        },
+        commands: [
+          expect.objectContaining({
+            command: 'git status',
+            commandLineConfidence: 'high',
+            cwd: '/workspace/app',
+            exitCode: 0,
+            isTrusted: true,
+          }),
+        ],
+      })
+
+      headlessManager.disposeAll()
+    })
+
     it('does not write when no terminals exist', () => {
       const persistence = createTerminalSessionPersistence()
       persistence.serializeState(
@@ -282,7 +539,7 @@ describe('createTerminalSessionPersistence', () => {
 
     it('loads valid state and deletes the file', () => {
       const state: SerializedState = {
-        version: 1,
+        version: 2,
         timestamp: Date.now(),
         terminals: [
           {
@@ -295,6 +552,9 @@ describe('createTerminalSessionPersistence', () => {
             cols: 80,
             rows: 24,
             replayBuffer: 'saved output',
+            replayEvent: {
+              events: [{ cols: 80, rows: 24, data: 'saved output' }],
+            },
             screenState: '<screen>',
           },
         ],
@@ -312,6 +572,9 @@ describe('createTerminalSessionPersistence', () => {
       expect(loadedFirst).toMatchObject({
         id: 'term-1',
         replayBuffer: 'saved output',
+        replayEvent: {
+          events: [{ cols: 80, rows: 24, data: 'saved output' }],
+        },
       })
 
       // File should be deleted after loading
@@ -320,7 +583,7 @@ describe('createTerminalSessionPersistence', () => {
 
     it('rejects stale state files', () => {
       const state: SerializedState = {
-        version: 1,
+        version: 2,
         timestamp: Date.now() - MAX_STATE_AGE_MS - 1000,
         terminals: [
           {
@@ -333,6 +596,9 @@ describe('createTerminalSessionPersistence', () => {
             cols: 80,
             rows: 24,
             replayBuffer: '',
+            replayEvent: {
+              events: [{ cols: 80, rows: 24, data: '' }],
+            },
             screenState: '',
           },
         ],
@@ -372,7 +638,7 @@ describe('createTerminalSessionPersistence', () => {
 
     it('rejects empty terminal arrays', () => {
       const state: SerializedState = {
-        version: 1,
+        version: 2,
         timestamp: Date.now(),
         terminals: [],
       }
@@ -430,6 +696,15 @@ describe('createTerminalSessionPersistence', () => {
         cols: 100,
         rows: 30,
         replayBuffer: 'output for terminal 1\r\n',
+        replayEvent: {
+          events: [
+            {
+              cols: 100,
+              data: 'output for terminal 1\r\n',
+              rows: 30,
+            },
+          ],
+        },
         screenState: '<screen-term-1>',
       })
       expect(t1?.env.SHELL).toBe('/bin/zsh')
@@ -441,6 +716,15 @@ describe('createTerminalSessionPersistence', () => {
         cols: 120,
         rows: 40,
         replayBuffer: 'output for terminal 2\r\n',
+        replayEvent: {
+          events: [
+            {
+              cols: 120,
+              data: 'output for terminal 2\r\n',
+              rows: 40,
+            },
+          ],
+        },
       })
     })
   })

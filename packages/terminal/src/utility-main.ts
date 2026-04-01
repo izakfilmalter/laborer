@@ -188,10 +188,9 @@ function setupSessionPersistence(
         if (spawnResult._tag === 'Right') {
           const record = spawnResult.right
           persistence.registerTerminal(record.id, saved.cols, saved.rows)
+          persistence.restoreReplayEvent(record.id, saved.replayEvent)
 
-          if (saved.replayBuffer.length > 0) {
-            persistence.writeOutput(record.id, saved.replayBuffer)
-          }
+          yield* tm.setRevivedReplayEvent(record.id, saved.replayEvent)
 
           console.log(
             `[terminal-utility] Restored terminal ${record.id} (${saved.command})`
@@ -258,7 +257,8 @@ function setupSessionPersistence(
               env: t.env,
               status: t.status,
             })),
-          (terminalId) => tm.getScreenState(terminalId)
+          (terminalId) => tm.getScreenState(terminalId),
+          (terminalId) => tm.getCommandDetectionState(terminalId)
         )
       } catch (error) {
         console.error(

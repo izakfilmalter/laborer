@@ -21,13 +21,6 @@ import { Effect, Layer } from 'effect'
 
 import { acquireServicePort } from '@/lib/desktop'
 
-/**
- * Build the RPC client protocol layer.
- *
- * MessagePort acquired via `acquireServicePort('server')` which follows
- * VS Code's `acquirePort()` pattern to transfer the port across the
- * context isolation boundary.
- */
 const serverProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
   RpcClient.Protocol,
   Effect.gen(function* () {

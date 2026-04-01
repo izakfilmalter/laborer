@@ -10,6 +10,7 @@ import { AppSettingsProvider } from '@/components/app-settings-context'
 import { AppSettingsModal } from '@/components/app-settings-modal'
 import { DockerStatusBanner } from '@/components/docker-status-banner'
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
+import { SidecarRuntimeBoundary } from '@/components/sidecar-runtime-boundary'
 import { SyncStatusBridge } from '@/components/sync-status-bridge'
 import { SyncStatusProvider } from '@/components/sync-status-context'
 import { ThemeProvider } from '@/components/theme-provider'
@@ -87,24 +88,28 @@ function RootComponent() {
         >
           <HotkeysProvider>
             <TooltipProvider>
-              <AtomRegistryProvider>
-                <AppSettingsProvider>
-                  <SyncStatusProvider>
-                    <div className="grid h-svh grid-rows-[auto_1fr]">
-                      <DockerStatusBanner />
-                      <LiveStoreProvider>
-                        <SyncStatusBridge />
-                        <AppSettingsModal />
-                        <Outlet />
-                      </LiveStoreProvider>
-                    </div>
-                  </SyncStatusProvider>
-                </AppSettingsProvider>
-              </AtomRegistryProvider>
-              <Toaster richColors />
-              <PhaseTransitionDriver />
-              <BeforeQuitHandler />
-              <SidecarCrashListener />
+              <SidecarRuntimeBoundary>
+                {(generation) => (
+                  <AtomRegistryProvider key={`atom-registry-${generation}`}>
+                    <AppSettingsProvider>
+                      <SyncStatusProvider>
+                        <div className="grid h-svh grid-rows-[auto_1fr]">
+                          <DockerStatusBanner />
+                          <LiveStoreProvider key={`livestore-${generation}`}>
+                            <SyncStatusBridge />
+                            <AppSettingsModal />
+                            <Outlet />
+                          </LiveStoreProvider>
+                        </div>
+                      </SyncStatusProvider>
+                    </AppSettingsProvider>
+                    <Toaster richColors />
+                    <PhaseTransitionDriver />
+                    <BeforeQuitHandler />
+                    <SidecarCrashListener />
+                  </AtomRegistryProvider>
+                )}
+              </SidecarRuntimeBoundary>
             </TooltipProvider>
           </HotkeysProvider>
         </ThemeProvider>

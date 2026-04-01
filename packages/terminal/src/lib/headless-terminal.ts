@@ -35,8 +35,266 @@
 
 import { SerializeAddon } from '@xterm/addon-serialize'
 import XtermHeadless from '@xterm/headless'
+import type {
+  SerializedCommandDetectionCapability,
+  SerializedPromptInputModel,
+  SerializedTerminalCommand,
+} from '../services/terminal-session-persistence.js'
 
 const { Terminal } = XtermHeadless
+
+interface InFlightCommand {
+  command: string
+  commandLineConfidence: 'low' | 'medium' | 'high'
+  cwd?: string | undefined
+  isTrusted: boolean
+  timestamp: number
+}
+
+interface HeadlessCommandState {
+  commands: SerializedTerminalCommand[]
+  currentCommand?: InFlightCommand | undefined
+  cwd?: string | undefined
+  hasRichCommandDetection: boolean
+  isWindowsPty: boolean
+  promptInputModel?:
+    | {
+        continuationPrompt?: string | undefined
+        cursorIndex: number
+        lastPromptLine?: string | undefined
+        value: string
+      }
+    | undefined
+}
+
+const ESCAPE_CHARACTER = String.fromCharCode(0x1b)
+const ANSI_SGR_SEQUENCE_REGEX = new RegExp(
+  `${ESCAPE_CHARACTER}\\[[0-9;]*m`,
+  'g'
+)
+
+const getPromptTerminator = (prompt: string): string => {
+  const sanitizedPrompt = prompt.replace(ANSI_SGR_SEQUENCE_REGEX, '')
+  const lastPromptLine = sanitizedPrompt.slice(
+    sanitizedPrompt.lastIndexOf('\n') + 1
+  )
+  const trimmedLastPromptLine = lastPromptLine.trim()
+
+  if (trimmedLastPromptLine.length <= 1) {
+    return lastPromptLine
+  }
+
+  const trimmedPromptLine = lastPromptLine.trimEnd()
+  const lastSpaceIndex = trimmedPromptLine.lastIndexOf(' ')
+  return lastSpaceIndex === -1
+    ? lastPromptLine
+    : lastPromptLine.slice(lastSpaceIndex)
+}
+
+const deserializeVsCodeOscValue = (value: string): string =>
+  value.replace(/\\(x[0-9a-fA-F]{2}|\\)/g, (match, escaped) => {
+    if (escaped === '\\') {
+      return '\\'
+    }
+
+    if (typeof escaped === 'string' && escaped.startsWith('x')) {
+      return String.fromCharCode(Number.parseInt(escaped.slice(1), 16))
+    }
+
+    return match
+  })
+
+const createEmptyCommandState = (): HeadlessCommandState => ({
+  commands: [],
+  hasRichCommandDetection: false,
+  isWindowsPty: false,
+})
+
+const parseBooleanOscProperty = (value: string): boolean => value === 'True'
+
+const updatePromptInputModel = (
+  commandState: HeadlessCommandState,
+  updates: Partial<NonNullable<HeadlessCommandState['promptInputModel']>>
+): void => {
+  commandState.promptInputModel = {
+    value: updates.value ?? commandState.promptInputModel?.value ?? '',
+    cursorIndex:
+      updates.cursorIndex ?? commandState.promptInputModel?.cursorIndex ?? 0,
+    continuationPrompt:
+      updates.continuationPrompt ??
+      commandState.promptInputModel?.continuationPrompt,
+    lastPromptLine:
+      updates.lastPromptLine ?? commandState.promptInputModel?.lastPromptLine,
+  }
+}
+
+const serializePromptInputModel = (
+  promptInputModel: HeadlessCommandState['promptInputModel']
+): SerializedPromptInputModel | undefined => {
+  if (promptInputModel === undefined) {
+    return undefined
+  }
+
+  return {
+    value: promptInputModel.value,
+    cursorIndex: promptInputModel.cursorIndex,
+    ...(promptInputModel.continuationPrompt === undefined
+      ? {}
+      : { continuationPrompt: promptInputModel.continuationPrompt }),
+    ...(promptInputModel.lastPromptLine === undefined
+      ? {}
+      : { lastPromptLine: promptInputModel.lastPromptLine }),
+  }
+}
+
+const serializeCurrentCommand = (
+  currentCommand: InFlightCommand | undefined
+): SerializedTerminalCommand | undefined => {
+  if (currentCommand === undefined) {
+    return undefined
+  }
+
+  return {
+    command: currentCommand.command,
+    commandLineConfidence: currentCommand.commandLineConfidence,
+    duration: 0,
+    isTrusted: currentCommand.isTrusted,
+    timestamp: currentCommand.timestamp,
+    ...(currentCommand.cwd === undefined ? {} : { cwd: currentCommand.cwd }),
+  }
+}
+
+const handleVsCodeOscSequence = (
+  commandState: HeadlessCommandState,
+  data: string,
+  shellIntegrationNonce?: string | undefined
+): void => {
+  const argsIndex = data.indexOf(';')
+  const command = argsIndex === -1 ? data : data.slice(0, argsIndex)
+  const args = argsIndex === -1 ? [] : data.slice(argsIndex + 1).split(';')
+
+  switch (command) {
+    case 'B': {
+      updatePromptInputModel(commandState, {
+        value: '',
+        cursorIndex: 0,
+      })
+      commandState.currentCommand = {
+        command: '',
+        commandLineConfidence: 'low',
+        cwd: commandState.cwd,
+        isTrusted: false,
+        timestamp: Date.now(),
+      }
+      return
+    }
+
+    case 'D': {
+      const currentCommand = commandState.currentCommand
+      if (currentCommand === undefined) {
+        return
+      }
+
+      const [exitCodeRaw] = args
+      commandState.commands.push({
+        command: currentCommand.command,
+        commandLineConfidence: currentCommand.commandLineConfidence,
+        cwd: currentCommand.cwd,
+        duration: Math.max(0, Date.now() - currentCommand.timestamp),
+        exitCode:
+          exitCodeRaw === undefined
+            ? undefined
+            : Number.parseInt(exitCodeRaw, 10),
+        isTrusted: currentCommand.isTrusted,
+        timestamp: currentCommand.timestamp,
+      })
+      commandState.currentCommand = undefined
+      return
+    }
+
+    case 'E': {
+      const [commandLineRaw, nonce] = args
+      const currentCommand =
+        commandState.currentCommand ??
+        ({
+          command: '',
+          commandLineConfidence: 'low',
+          cwd: commandState.cwd,
+          isTrusted: false,
+          timestamp: Date.now(),
+        } satisfies InFlightCommand)
+
+      currentCommand.command =
+        commandLineRaw === undefined
+          ? ''
+          : deserializeVsCodeOscValue(commandLineRaw)
+      currentCommand.commandLineConfidence = 'high'
+      currentCommand.isTrusted =
+        shellIntegrationNonce !== undefined && nonce === shellIntegrationNonce
+      updatePromptInputModel(commandState, {
+        value: currentCommand.command,
+        cursorIndex: currentCommand.command.length,
+      })
+      commandState.currentCommand = currentCommand
+      return
+    }
+
+    case 'P': {
+      const [propertyAssignment] = args
+      if (propertyAssignment === undefined) {
+        return
+      }
+
+      const equalsIndex = propertyAssignment.indexOf('=')
+      if (equalsIndex === -1) {
+        return
+      }
+
+      const property = propertyAssignment.slice(0, equalsIndex)
+      const value = deserializeVsCodeOscValue(
+        propertyAssignment.slice(equalsIndex + 1)
+      )
+
+      switch (property) {
+        case 'Cwd': {
+          commandState.cwd = value
+          if (commandState.currentCommand !== undefined) {
+            commandState.currentCommand.cwd = commandState.cwd
+          }
+          return
+        }
+
+        case 'ContinuationPrompt': {
+          updatePromptInputModel(commandState, { continuationPrompt: value })
+          return
+        }
+
+        case 'HasRichCommandDetection': {
+          commandState.hasRichCommandDetection = parseBooleanOscProperty(value)
+          return
+        }
+
+        case 'IsWindows': {
+          commandState.isWindowsPty = parseBooleanOscProperty(value)
+          return
+        }
+
+        case 'Prompt': {
+          updatePromptInputModel(commandState, {
+            lastPromptLine: getPromptTerminator(value),
+          })
+          return
+        }
+
+        default:
+          return
+      }
+    }
+
+    default:
+      return
+  }
+}
 
 /**
  * Per-terminal headless state. Tracks the headless xterm instance,
@@ -50,6 +308,7 @@ const { Terminal } = XtermHeadless
  * corrupt TUI rendering.
  */
 interface HeadlessTerminalState {
+  readonly commandState: HeadlessCommandState
   readonly oscDisposable: { dispose: () => void }
   readonly serializeAddon: SerializeAddon
   readonly terminal: InstanceType<typeof Terminal>
@@ -130,6 +389,11 @@ interface HeadlessTerminalManager {
    */
   readonly disposeAll: () => void
 
+  /** Get serialized command detection state inferred from shell integration. */
+  readonly getCommandDetectionState: (
+    terminalId: string
+  ) => SerializedCommandDetectionCapability | undefined
+
   /**
    * Get the serialized screen state for a terminal as a VT escape
    * sequence string. Returns an empty string if the terminal does not
@@ -174,6 +438,8 @@ interface HeadlessTerminalManagerOptions {
    * when running OpenCode, or "~/project" when idle at a shell prompt.
    */
   readonly onTitleChange?: TitleChangeCallback | undefined
+  /** Optional nonce used to verify trusted VS Code shell integration command lines. */
+  readonly shellIntegrationNonce?: string | undefined
 }
 
 /**
@@ -225,6 +491,7 @@ const createHeadlessTerminalManager = (
     // because xterm v6's headless mode doesn't reliably fire the
     // onTitleChange event (see Mux's comment in terminalService.ts).
     const oscDisposables: Array<{ dispose: () => void }> = []
+    const commandState = createEmptyCommandState()
 
     if (options?.onTitleChange !== undefined) {
       const titleCallback = options.onTitleChange
@@ -253,6 +520,17 @@ const createHeadlessTerminalManager = (
       )
     }
 
+    oscDisposables.push(
+      terminal.parser.registerOscHandler(633, (data: string): boolean => {
+        handleVsCodeOscSequence(
+          commandState,
+          data,
+          options?.shellIntegrationNonce
+        )
+        return false
+      })
+    )
+
     const oscDisposable = {
       dispose: () => {
         for (const d of oscDisposables) {
@@ -265,6 +543,7 @@ const createHeadlessTerminalManager = (
     terminal.loadAddon(serializeAddon)
 
     terminals.set(terminalId, {
+      commandState,
       terminal,
       serializeAddon,
       oscDisposable,
@@ -284,6 +563,32 @@ const createHeadlessTerminalManager = (
       return ''
     }
     return state.serializeAddon.serialize()
+  }
+
+  const getCommandDetectionState = (
+    terminalId: string
+  ): SerializedCommandDetectionCapability | undefined => {
+    const state = terminals.get(terminalId)
+    if (state === undefined) {
+      return undefined
+    }
+
+    return {
+      isWindowsPty: state.commandState.isWindowsPty,
+      hasRichCommandDetection: state.commandState.hasRichCommandDetection,
+      commands: [
+        ...state.commandState.commands,
+        ...(() => {
+          const currentCommand = serializeCurrentCommand(
+            state.commandState.currentCommand
+          )
+          return currentCommand === undefined ? [] : [currentCommand]
+        })(),
+      ],
+      promptInputModel: serializePromptInputModel(
+        state.commandState.promptInputModel
+      ),
+    }
   }
 
   const resize = (terminalId: string, cols: number, rows: number): void => {
@@ -314,6 +619,7 @@ const createHeadlessTerminalManager = (
     create,
     write,
     getScreenState,
+    getCommandDetectionState,
     resize,
     dispose,
     disposeAll,

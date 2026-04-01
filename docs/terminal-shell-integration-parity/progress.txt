@@ -49,3 +49,82 @@ and `commandStartLineContent` fields populated from live command tracking.
 - Issue 3: FinalTerm 133 command detection fallback
 - Issue 4: OSC 633;F/G/H/I (continuation + right prompt)
 - Issue 9: Renderer shell integration addon + command deserialization
+
+## Issue 5: Capability store + CwdDetection — COMPLETED
+
+### Summary
+Created the capability store infrastructure and implemented CwdDetection as the
+first capability. The capability store tracks per-terminal capabilities that are
+serializable alongside command detection. CwdDetection is fed by four OSC sources:
+OSC 633;P Cwd (VS Code), OSC 7 (standard file:// URI), OSC 9 (Windows-friendly),
+and OSC 1337 CurrentDir (iTerm2). Capabilities flow through all layers: headless
+terminal tracking, persistence serialization, data channel replay, and the
+terminal manager.
+
+### Changes
+- `packages/terminal/src/services/terminal-session-persistence.ts`:
+  - Added `SerializedCwdDetectionEntry`, `SerializedCwdDetection`, and
+    `SerializedCapabilityStore` types
+  - Added optional `capabilities` field to `SerializedReplayEvent`
+  - Updated `ReplayRecorder` to track and roundtrip `capabilities`
+  - Updated `serializeState()` to accept and persist `getCapabilityState` getter
+  - Exported all new types
+
+- `packages/terminal/src/lib/headless-terminal.ts`:
+  - Added `CwdDetectionState` interface for per-terminal cwd tracking
+  - Added `cwdDetection` field to `HeadlessCommandState`
+  - Added `recordCwdChange()` helper that feeds both legacy `commandState.cwd`
+    and the new `cwdDetection` capability state
+  - Added `parseFileUri()` helper for OSC 7 file:// URI parsing with
+    percent-decoding
+  - Updated OSC 633;P Cwd handler to use `recordCwdChange()` instead of
+    direct assignment
+  - Added OSC 7 handler: parses file:// URIs and feeds CwdDetection
+  - Added OSC 9 handler: parses Windows sub-command 9 format and feeds CwdDetection
+  - Added OSC 1337 handler: parses CurrentDir= payload and feeds CwdDetection
+  - Added `getCapabilityState()` method to `HeadlessTerminalManager` interface
+    and implementation, which serializes the cwd detection state
+
+- `packages/terminal/src/services/terminal-data-channel.ts`:
+  - Updated `encodeReplay()` to include `capabilities` field in JSON payload
+
+- `packages/terminal/src/services/terminal-manager.ts`:
+  - Added `getCapabilityState()` to the `TerminalManager` interface
+  - Wired through to `headlessManager.getCapabilityState()` in implementation
+
+- `packages/terminal/src/utility-main.ts`:
+  - Updated `serializeState()` call to pass `getCapabilityState` getter
+
+- `packages/terminal/test/headless-terminal.test.ts`:
+  - Added 13 new tests:
+    - CwdDetection from OSC 633;P Cwd
+    - CwdDetection from OSC 7 with hostname
+    - CwdDetection from OSC 7 with empty hostname
+    - CwdDetection from OSC 7 with percent-encoded characters
+    - CwdDetection from OSC 9;9 (Windows)
+    - CwdDetection from OSC 1337 CurrentDir
+    - Cwd history across multiple changes from different sources
+    - Cwd detection feeding into command cwd field
+    - Returns undefined when no cwd detected
+    - Returns undefined for non-existent terminal
+    - Ignores OSC 7 with non-file URI
+    - Ignores OSC 9 without sub-command 9 prefix
+    - Ignores OSC 1337 with non-CurrentDir payload
+
+- `packages/terminal/test/terminal-session-persistence.test.ts`:
+  - Added 4 new tests:
+    - Serializes live capability state from headless terminal cwd detection
+    - Preserves restored capability state when serializing again
+    - Serializes cwd detection from multiple OSC sources
+    - Omits capabilities when no capability state exists
+
+### Verification
+- TypeScript: `npx tsc --noEmit` passes with 0 errors
+- Biome: `bunx biome check` passes on all modified files
+- Tests: 38/38 headless-terminal tests pass, 36/36 persistence tests pass
+- All 208 tests across 10 test files pass
+
+### Unblocks
+- Issue 6: BufferMarkDetection + gutter UI
+- Issue 7: ShellEnvDetection + indicator
+- Issue 8: PromptTypeDetection + badge

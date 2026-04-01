@@ -258,7 +258,8 @@ function setupSessionPersistence(
               status: t.status,
             })),
           (terminalId) => tm.getScreenState(terminalId),
-          (terminalId) => tm.getCommandDetectionState(terminalId)
+          (terminalId) => tm.getCommandDetectionState(terminalId),
+          (terminalId) => tm.getCapabilityState(terminalId)
         )
       } catch (error) {
         console.error(

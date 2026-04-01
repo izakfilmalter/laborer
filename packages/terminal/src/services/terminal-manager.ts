@@ -33,6 +33,7 @@ import {
 import { createHeadlessTerminalManager } from '../lib/headless-terminal.js'
 import { PtyHostClient } from './pty-host-client.js'
 import type {
+  SerializedCapabilityStore,
   SerializedCommandDetectionCapability,
   SerializedReplayEvent,
 } from './terminal-session-persistence.js'
@@ -788,6 +789,11 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
      * Returns empty string if the terminal does not exist or has no output.
      */
     readonly getScreenState: (terminalId: string) => string
+
+    /** Get serialized capability store state for a terminal. */
+    readonly getCapabilityState: (
+      terminalId: string
+    ) => SerializedCapabilityStore | undefined
 
     /** Get serialized command detection state inferred from shell integration. */
     readonly getCommandDetectionState: (
@@ -2278,6 +2284,8 @@ class TerminalManager extends Context.Tag('@laborer/terminal/TerminalManager')<
         killAllForWorkspace,
         getScreenState: (terminalId: string) =>
           headlessManager.getScreenState(terminalId),
+        getCapabilityState: (terminalId: string) =>
+          headlessManager.getCapabilityState(terminalId),
         getCommandDetectionState: (terminalId: string) =>
           headlessManager.getCommandDetectionState(terminalId),
         subscribe,

@@ -10,10 +10,10 @@
 | 2 | Complete PromptInputModel | 1 | Ready |
 | 3 | FinalTerm 133 command detection fallback | 1 | Ready |
 | 4 | OSC 633;F/G/H/I (continuation + right prompt) | 1 | Ready |
-| 5 | Capability store + CwdDetection | None | Ready |
-| 6 | BufferMarkDetection + gutter UI | 5 | Blocked |
-| 7 | ShellEnvDetection + indicator | 5 | Blocked |
-| 8 | PromptTypeDetection + badge | 5 | Blocked |
+| 5 | Capability store + CwdDetection | None | Done |
+| 6 | BufferMarkDetection + gutter UI | 5 | Ready |
+| 7 | ShellEnvDetection + indicator | 5 | Ready |
+| 8 | PromptTypeDetection + badge | 5 | Ready |
 | 9 | Renderer shell integration addon + command deserialization | 1 | Ready |
 | 10 | Replay input guard | None | Ready |
 | 11 | rawReviveBuffer optimization | None | Ready |
@@ -202,21 +202,21 @@ End-to-end behavior:
 
 ### Acceptance criteria
 
-- [ ] New `CapabilityStore` module with typed capability registration and serialization
-- [ ] `CwdDetection` capability tracks cwd changes with history entries
-- [ ] OSC 7 handler parses `file://` URIs and feeds CwdDetection
-- [ ] OSC 9 handler parses Windows-friendly cwd and feeds CwdDetection
-- [ ] OSC 1337 CurrentDir handler feeds CwdDetection
-- [ ] OSC 633;P Cwd (existing) also feeds CwdDetection
-- [ ] `SerializedReplayEvent` includes optional `capabilities` field with `SerializedCapabilityStore`
-- [ ] `SerializedCapabilityStore` includes `cwdDetection` with current cwd and history
+- [x] New `CapabilityStore` module with typed capability registration and serialization
+- [x] `CwdDetection` capability tracks cwd changes with history entries
+- [x] OSC 7 handler parses `file://` URIs and feeds CwdDetection
+- [x] OSC 9 handler parses Windows-friendly cwd and feeds CwdDetection
+- [x] OSC 1337 CurrentDir handler feeds CwdDetection
+- [x] OSC 633;P Cwd (existing) also feeds CwdDetection
+- [x] `SerializedReplayEvent` includes optional `capabilities` field with `SerializedCapabilityStore`
+- [x] `SerializedCapabilityStore` includes `cwdDetection` with current cwd and history
 - [ ] Live cwd changes emit through lifecycle events to the renderer
 - [ ] Terminal sidebar list shows current cwd (truncated for long paths)
 - [ ] Cwd display updates reactively when the shell changes directory
-- [ ] Cwd restores correctly from persisted capability state after recovery
-- [ ] Tests in `headless-terminal.test.ts` verify cwd detection from all four OSC sources
-- [ ] Tests in `terminal-session-persistence.test.ts` verify capability store serialization roundtrip
-- [ ] Tests in `terminal-data-channel.test.ts` verify capabilities flow through replay events
+- [x] Cwd restores correctly from persisted capability state after recovery
+- [x] Tests in `headless-terminal.test.ts` verify cwd detection from all four OSC sources
+- [x] Tests in `terminal-session-persistence.test.ts` verify capability store serialization roundtrip
+- [x] Tests in `terminal-data-channel.test.ts` verify capabilities flow through replay events
 
 ### Blocked by
 

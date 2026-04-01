@@ -743,4 +743,187 @@ describe('createTerminalSessionPersistence', () => {
       expect(MAX_STATE_AGE_MS).toBe(5 * 60 * 1000)
     })
   })
+
+  describe('capability store serialization', () => {
+    it('serializes live capability state from headless terminal cwd detection', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      headlessManager.write('term-1', '\x1b]633;P;Cwd=/workspace/app\x07')
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', 'some output')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/workspace/app',
+            env: { TERM: 'xterm-256color' },
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id),
+        (id) => headlessManager.getCapabilityState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(state.terminals[0]?.replayEvent.capabilities).toEqual({
+        cwdDetection: {
+          cwd: '/workspace/app',
+          history: [
+            {
+              cwd: '/workspace/app',
+              line: expect.any(Number),
+            },
+          ],
+        },
+      })
+
+      headlessManager.disposeAll()
+    })
+
+    it('preserves restored capability state when serializing again', () => {
+      const persistence = createTerminalSessionPersistence()
+      persistence.registerTerminal('term-1', 80, 24)
+      persistence.restoreReplayEvent('term-1', {
+        capabilities: {
+          cwdDetection: {
+            cwd: '/home/user/project',
+            history: [
+              { cwd: '/home/user' },
+              { cwd: '/home/user/project', line: 5 },
+            ],
+          },
+        },
+        events: [
+          {
+            cols: 80,
+            rows: 24,
+            data: 'restored output\r\n',
+          },
+        ],
+      })
+
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user/project',
+            env: { TERM: 'xterm-256color' },
+            status: 'running' as const,
+          },
+        ],
+        () => ''
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(state.terminals[0]?.replayEvent.capabilities).toEqual({
+        cwdDetection: {
+          cwd: '/home/user/project',
+          history: [
+            { cwd: '/home/user' },
+            { cwd: '/home/user/project', line: 5 },
+          ],
+        },
+      })
+    })
+
+    it('serializes cwd detection from multiple OSC sources', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      // Set initial cwd via 633;P
+      headlessManager.write('term-1', '\x1b]633;P;Cwd=/home/user\x07')
+      // Change via OSC 7
+      headlessManager.write(
+        'term-1',
+        '\x1b]7;file://localhost/home/user/project\x07'
+      )
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', 'output')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user/project',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id),
+        (id) => headlessManager.getCapabilityState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      expect(
+        state.terminals[0]?.replayEvent.capabilities?.cwdDetection?.cwd
+      ).toBe('/home/user/project')
+      expect(
+        state.terminals[0]?.replayEvent.capabilities?.cwdDetection?.history
+      ).toHaveLength(2)
+
+      headlessManager.disposeAll()
+    })
+
+    it('omits capabilities when no capability state exists', async () => {
+      const persistence = createTerminalSessionPersistence()
+      const headlessManager = createHeadlessTerminalManager()
+      persistence.registerTerminal('term-1', 80, 24)
+      headlessManager.create('term-1', 80, 24)
+
+      headlessManager.write('term-1', 'plain output')
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      persistence.writeOutput('term-1', 'plain output')
+      persistence.serializeState(
+        () => [
+          {
+            id: 'term-1',
+            workspaceId: 'ws-1',
+            command: '/bin/zsh',
+            args: [],
+            cwd: '/home/user',
+            env: {},
+            status: 'running' as const,
+          },
+        ],
+        () => '',
+        (id) => headlessManager.getCommandDetectionState(id),
+        (id) => headlessManager.getCapabilityState(id)
+      )
+
+      const raw = readFileSync(stateFilePath, 'utf-8')
+      const state = JSON.parse(raw) as SerializedState
+
+      // No capabilities should be present when no cwd was detected
+      expect(state.terminals[0]?.replayEvent.capabilities).toBeUndefined()
+
+      headlessManager.disposeAll()
+    })
+  })
 })

@@ -36,7 +36,9 @@
 import { SerializeAddon } from '@xterm/addon-serialize'
 import XtermHeadless from '@xterm/headless'
 import type {
+  SerializedCapabilityStore,
   SerializedCommandDetectionCapability,
+  SerializedCwdDetectionEntry,
   SerializedPromptInputModel,
   SerializedTerminalCommand,
 } from '../services/terminal-session-persistence.js'
@@ -57,10 +59,23 @@ interface InFlightCommand {
   timestamp: number
 }
 
+/**
+ * Tracks cwd detection capability state per terminal.
+ * Fed by OSC 633;P Cwd, OSC 7, OSC 9, and OSC 1337 CurrentDir.
+ */
+interface CwdDetectionState {
+  /** Current working directory. */
+  cwd?: string | undefined
+  /** History of cwd changes with optional line numbers. */
+  history: Array<{ cwd: string; line?: number | undefined }>
+}
+
 interface HeadlessCommandState {
   commands: SerializedTerminalCommand[]
   currentCommand?: InFlightCommand | undefined
   cwd?: string | undefined
+  /** Cwd detection capability state, fed by multiple OSC sources. */
+  cwdDetection: CwdDetectionState
   hasRichCommandDetection: boolean
   isWindowsPty: boolean
   /** Tracks the prompt start line from OSC 633;A, consumed by 633;B */
@@ -114,11 +129,56 @@ const deserializeVsCodeOscValue = (value: string): string =>
 
 const createEmptyCommandState = (): HeadlessCommandState => ({
   commands: [],
+  cwdDetection: { history: [] },
   hasRichCommandDetection: false,
   isWindowsPty: false,
 })
 
 const parseBooleanOscProperty = (value: string): boolean => value === 'True'
+
+/**
+ * Record a cwd change in both the legacy commandState.cwd and the
+ * cwdDetection capability store. Optionally includes a line number
+ * from the terminal buffer at the point the change was detected.
+ */
+const recordCwdChange = (
+  commandState: HeadlessCommandState,
+  cwd: string,
+  line?: number | undefined
+): void => {
+  commandState.cwd = cwd
+  if (commandState.currentCommand !== undefined) {
+    commandState.currentCommand.cwd = cwd
+  }
+  commandState.cwdDetection.cwd = cwd
+  commandState.cwdDetection.history.push(
+    line !== undefined ? { cwd, line } : { cwd }
+  )
+}
+
+/**
+ * Parse a `file://` URI (OSC 7 format) into a filesystem path.
+ * Returns undefined if the URI is not a valid file:// URI.
+ * Example: `file://hostname/Users/me/project` → `/Users/me/project`
+ */
+const parseFileUri = (uri: string): string | undefined => {
+  if (!uri.startsWith('file://')) {
+    return undefined
+  }
+  // file://hostname/path or file:///path
+  const withoutScheme = uri.slice(7) // Remove 'file://'
+  const slashIndex = withoutScheme.indexOf('/')
+  if (slashIndex === -1) {
+    return undefined
+  }
+  // Decode percent-encoded characters in the path
+  const rawPath = withoutScheme.slice(slashIndex)
+  try {
+    return decodeURIComponent(rawPath)
+  } catch {
+    return rawPath
+  }
+}
 
 const updatePromptInputModel = (
   commandState: HeadlessCommandState,
@@ -248,6 +308,7 @@ const handleCommandFinished = (
  */
 const handlePropertySequence = (
   commandState: HeadlessCommandState,
+  terminal: InstanceType<typeof Terminal>,
   args: readonly string[]
 ): void => {
   const [propertyAssignment] = args
@@ -267,10 +328,7 @@ const handlePropertySequence = (
 
   switch (property) {
     case 'Cwd': {
-      commandState.cwd = value
-      if (commandState.currentCommand !== undefined) {
-        commandState.currentCommand.cwd = commandState.cwd
-      }
+      recordCwdChange(commandState, value, getAbsoluteCursorLine(terminal))
       return
     }
 
@@ -388,7 +446,7 @@ const handleVsCodeOscSequence = (
     }
 
     case 'P': {
-      handlePropertySequence(commandState, args)
+      handlePropertySequence(commandState, terminal, args)
       return
     }
 
@@ -489,6 +547,11 @@ interface HeadlessTerminalManager {
    * Dispose all headless terminals. Called during shutdown.
    */
   readonly disposeAll: () => void
+
+  /** Get serialized capability store state for a terminal. */
+  readonly getCapabilityState: (
+    terminalId: string
+  ) => SerializedCapabilityStore | undefined
 
   /** Get serialized command detection state inferred from shell integration. */
   readonly getCommandDetectionState: (
@@ -633,6 +696,50 @@ const createHeadlessTerminalManager = (
       })
     )
 
+    // OSC 7: SetCwd — Standard cwd reporting via file:// URI.
+    // Used by many shells (bash, zsh, fish) to report the current directory.
+    // Format: OSC 7 ; file://hostname/path ST
+    oscDisposables.push(
+      terminal.parser.registerOscHandler(7, (data: string): boolean => {
+        const path = parseFileUri(data)
+        if (path !== undefined && path.length > 0) {
+          recordCwdChange(commandState, path, getAbsoluteCursorLine(terminal))
+        }
+        return false
+      })
+    )
+
+    // OSC 9: SetWindowsFriendlyCwd — Windows-friendly cwd reporting.
+    // Used by ConEmu and compatible terminals on Windows.
+    // Format: OSC 9 ; 9 ; path ST
+    oscDisposables.push(
+      terminal.parser.registerOscHandler(9, (data: string): boolean => {
+        // Format is "9;<path>" where the first "9;" is the sub-command
+        if (data.startsWith('9;')) {
+          const path = data.slice(2)
+          if (path.length > 0) {
+            recordCwdChange(commandState, path, getAbsoluteCursorLine(terminal))
+          }
+        }
+        return false
+      })
+    )
+
+    // OSC 1337: iTerm2 proprietary sequences.
+    // Handles CurrentDir for cwd detection.
+    // Format: OSC 1337 ; CurrentDir=path ST
+    oscDisposables.push(
+      terminal.parser.registerOscHandler(1337, (data: string): boolean => {
+        if (data.startsWith('CurrentDir=')) {
+          const path = data.slice(11) // 'CurrentDir='.length === 11
+          if (path.length > 0) {
+            recordCwdChange(commandState, path, getAbsoluteCursorLine(terminal))
+          }
+        }
+        return false
+      })
+    )
+
     const oscDisposable = {
       dispose: () => {
         for (const d of oscDisposables) {
@@ -693,6 +800,34 @@ const createHeadlessTerminalManager = (
     }
   }
 
+  const getCapabilityState = (
+    terminalId: string
+  ): SerializedCapabilityStore | undefined => {
+    const state = terminals.get(terminalId)
+    if (state === undefined) {
+      return undefined
+    }
+
+    const { cwdDetection } = state.commandState
+    if (cwdDetection.cwd === undefined && cwdDetection.history.length === 0) {
+      return undefined
+    }
+
+    const history: SerializedCwdDetectionEntry[] = cwdDetection.history.map(
+      (entry) =>
+        entry.line !== undefined
+          ? { cwd: entry.cwd, line: entry.line }
+          : { cwd: entry.cwd }
+    )
+
+    return {
+      cwdDetection:
+        cwdDetection.cwd !== undefined
+          ? { cwd: cwdDetection.cwd, history }
+          : undefined,
+    }
+  }
+
   const resize = (terminalId: string, cols: number, rows: number): void => {
     const state = terminals.get(terminalId)
     if (state !== undefined) {
@@ -721,6 +856,7 @@ const createHeadlessTerminalManager = (
     create,
     write,
     getScreenState,
+    getCapabilityState,
     getCommandDetectionState,
     resize,
     dispose,

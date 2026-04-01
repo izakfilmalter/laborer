@@ -688,4 +688,193 @@ describe('HeadlessTerminalManager', () => {
     expect(cmd?.executedLine).toBeUndefined()
     expect(cmd?.executedX).toBeUndefined()
   })
+
+  // ---------------------------------------------------------------
+  // Capability store: CwdDetection from multiple OSC sources
+  // ---------------------------------------------------------------
+
+  it('detects cwd from OSC 633;P Cwd and populates capability state', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]633;P;Cwd=/workspace/app\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.cwdDetection?.cwd).toBe('/workspace/app')
+    expect(state?.cwdDetection?.history).toHaveLength(1)
+    expect(state?.cwdDetection?.history[0]?.cwd).toBe('/workspace/app')
+    expect(state?.cwdDetection?.history[0]?.line).toBeTypeOf('number')
+  })
+
+  it('detects cwd from OSC 7 file:// URI', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // OSC 7 format: file://hostname/path
+    manager.write('test-1', '\x1b]7;file://localhost/Users/me/project\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.cwdDetection?.cwd).toBe('/Users/me/project')
+    expect(state?.cwdDetection?.history).toHaveLength(1)
+    expect(state?.cwdDetection?.history[0]?.cwd).toBe('/Users/me/project')
+  })
+
+  it('detects cwd from OSC 7 file:// URI with empty hostname', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // OSC 7 with empty hostname: file:///path
+    manager.write('test-1', '\x1b]7;file:///home/user/workspace\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.cwdDetection?.cwd).toBe('/home/user/workspace')
+  })
+
+  it('detects cwd from OSC 7 with percent-encoded characters', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]7;file://localhost/Users/me/my%20project\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state?.cwdDetection?.cwd).toBe('/Users/me/my project')
+  })
+
+  it('detects cwd from OSC 9;9 (Windows-friendly cwd)', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // OSC 9 format: 9;path (sub-command 9 = cwd)
+    manager.write('test-1', '\x1b]9;9;C:\\Users\\me\\project\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.cwdDetection?.cwd).toBe('C:\\Users\\me\\project')
+    expect(state?.cwdDetection?.history).toHaveLength(1)
+  })
+
+  it('detects cwd from OSC 1337 CurrentDir', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // OSC 1337 iTerm format: CurrentDir=path
+    manager.write('test-1', '\x1b]1337;CurrentDir=/Users/me/project\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeDefined()
+    expect(state?.cwdDetection?.cwd).toBe('/Users/me/project')
+    expect(state?.cwdDetection?.history).toHaveLength(1)
+  })
+
+  it('tracks cwd history across multiple changes from different sources', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Initial cwd from 633;P
+    manager.write('test-1', '\x1b]633;P;Cwd=/home/user\x07')
+    // Change via OSC 7
+    manager.write('test-1', '\x1b]7;file://localhost/home/user/project\x07')
+    // Change via OSC 1337
+    manager.write('test-1', '\x1b]1337;CurrentDir=/home/user/project/src\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state?.cwdDetection?.cwd).toBe('/home/user/project/src')
+    expect(state?.cwdDetection?.history).toHaveLength(3)
+    expect(state?.cwdDetection?.history[0]?.cwd).toBe('/home/user')
+    expect(state?.cwdDetection?.history[1]?.cwd).toBe('/home/user/project')
+    expect(state?.cwdDetection?.history[2]?.cwd).toBe('/home/user/project/src')
+  })
+
+  it('cwd detection also feeds into command cwd field', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Set cwd via OSC 7 instead of 633;P
+    manager.write('test-1', '\x1b]7;file://localhost/workspace/app\x07')
+    manager.write(
+      'test-1',
+      '\x1b]633;B\x07' +
+        '\x1b]633;E;echo\\x20hello\x07' +
+        '\x1b]633;C\x07' +
+        'hello\r\n' +
+        '\x1b]633;D;0\x07'
+    )
+
+    await waitForXterm()
+
+    const cmdState = manager.getCommandDetectionState('test-1')
+    const cmd = cmdState?.commands[0]
+    expect(cmd?.cwd).toBe('/workspace/app')
+  })
+
+  it('returns undefined capability state when no cwd has been detected', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', 'Hello, World!')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeUndefined()
+  })
+
+  it('returns undefined capability state for non-existent terminal', () => {
+    manager = createHeadlessTerminalManager()
+    expect(manager.getCapabilityState('non-existent')).toBeUndefined()
+  })
+
+  it('ignores OSC 7 with non-file URI', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]7;https://example.com/path\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeUndefined()
+  })
+
+  it('ignores OSC 9 without sub-command 9 prefix', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // OSC 9 with a different sub-command (not cwd)
+    manager.write('test-1', '\x1b]9;4;some-data\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeUndefined()
+  })
+
+  it('ignores OSC 1337 with non-CurrentDir payload', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\x1b]1337;SetMark\x07')
+
+    await waitForXterm()
+
+    const state = manager.getCapabilityState('test-1')
+    expect(state).toBeUndefined()
+  })
 })

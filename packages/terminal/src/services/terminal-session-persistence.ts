@@ -137,6 +137,7 @@ interface ReplayRecorderEntry {
  * same sequence of size changes that produced the buffer.
  */
 class ReplayRecorder {
+  private capabilities: SerializedCapabilityStore | undefined = undefined
   private commands: SerializedCommandDetectionCapability | undefined = undefined
   private entries: ReplayRecorderEntry[]
   private readonly maxSize: number
@@ -212,6 +213,7 @@ class ReplayRecorder {
   }
 
   loadReplayEvent(replayEvent: SerializedReplayEvent): void {
+    this.capabilities = replayEvent.capabilities
     this.commands = replayEvent.commands
     this.entries = replayEvent.events.map((event) => ({
       cols: event.cols,
@@ -230,6 +232,7 @@ class ReplayRecorder {
 
   toReplayEvent(): SerializedReplayEvent {
     return {
+      capabilities: this.capabilities,
       commands: this.commands,
       events: this.entries.map((entry) => ({
         cols: entry.cols,
@@ -262,7 +265,22 @@ interface SerializedTerminal {
   readonly workspaceId: string
 }
 
+interface SerializedCwdDetectionEntry {
+  readonly cwd: string
+  readonly line?: number | undefined
+}
+
+interface SerializedCwdDetection {
+  readonly cwd: string
+  readonly history: readonly SerializedCwdDetectionEntry[]
+}
+
+interface SerializedCapabilityStore {
+  readonly cwdDetection?: SerializedCwdDetection | undefined
+}
+
 interface SerializedReplayEvent {
+  readonly capabilities?: SerializedCapabilityStore | undefined
   readonly commands?: SerializedCommandDetectionCapability | undefined
   readonly events: readonly [SerializedReplayFrame, ...SerializedReplayFrame[]]
 }
@@ -408,6 +426,8 @@ interface TerminalSessionPersistence {
    *
    * @param getTerminalMeta - Function to get terminal metadata (id, command, args, cwd, env, workspaceId)
    * @param getScreenState - Function to get headless terminal screen state
+   * @param getCommandDetectionState - Function to get command detection state
+   * @param getCapabilityState - Function to get capability store state
    */
   readonly serializeState: (
     getTerminalMeta: () => ReadonlyArray<{
@@ -422,7 +442,10 @@ interface TerminalSessionPersistence {
     getScreenState: (terminalId: string) => string,
     getCommandDetectionState?: (
       terminalId: string
-    ) => SerializedCommandDetectionCapability | undefined
+    ) => SerializedCommandDetectionCapability | undefined,
+    getCapabilityState?: (
+      terminalId: string
+    ) => SerializedCapabilityStore | undefined
   ) => void
 
   /**
@@ -566,7 +589,10 @@ function createTerminalSessionPersistence(): TerminalSessionPersistence {
       getScreenState: (terminalId: string) => string,
       getCommandDetectionState?: (
         terminalId: string
-      ) => SerializedCommandDetectionCapability | undefined
+      ) => SerializedCommandDetectionCapability | undefined,
+      getCapabilityState?: (
+        terminalId: string
+      ) => SerializedCapabilityStore | undefined
     ): void {
       const terminals = getTerminalMeta()
 
@@ -590,6 +616,7 @@ function createTerminalSessionPersistence(): TerminalSessionPersistence {
             events: [{ cols, rows, data: replayBuffer }],
           }
           const liveCommandState = getCommandDetectionState?.(t.id)
+          const liveCapabilityState = getCapabilityState?.(t.id)
 
           return {
             id: t.id,
@@ -601,13 +628,15 @@ function createTerminalSessionPersistence(): TerminalSessionPersistence {
             cols,
             rows,
             replayBuffer,
-            replayEvent:
-              liveCommandState === undefined
-                ? replayEvent
-                : {
-                    ...replayEvent,
-                    commands: liveCommandState,
-                  },
+            replayEvent: {
+              ...replayEvent,
+              ...(liveCommandState !== undefined
+                ? { commands: liveCommandState }
+                : {}),
+              ...(liveCapabilityState !== undefined
+                ? { capabilities: liveCapabilityState }
+                : {}),
+            },
             screenState: getScreenState(t.id),
           }
         }),
@@ -706,14 +735,17 @@ export {
   STATE_FILE,
 }
 export type {
+  SerializedCapabilityStore,
   SerializedCommandDetectionCapability,
+  SerializedCwdDetection,
+  SerializedCwdDetectionEntry,
   SerializedMarkProperties,
   SerializedPromptInputModel,
-  SerializedState,
-  SerializedTerminalCommand,
-  SerializedTerminal,
   SerializedReplayEvent,
   SerializedReplayFrame,
+  SerializedState,
+  SerializedTerminal,
+  SerializedTerminalCommand,
   TerminalDimensions,
   TerminalSessionPersistence,
 }

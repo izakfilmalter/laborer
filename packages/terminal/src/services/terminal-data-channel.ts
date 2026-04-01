@@ -70,6 +70,7 @@ const encodeReplay = (replayEvent: SerializedReplayEvent): string =>
     type: 'replay',
     events: replayEvent.events,
     commands: replayEvent.commands,
+    capabilities: replayEvent.capabilities,
   })
 
 const encodeReplayComplete = (): string =>

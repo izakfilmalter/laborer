@@ -450,9 +450,12 @@ describe('createTerminalSessionPersistence', () => {
           {
             command: 'git status',
             commandLineConfidence: 'high',
+            commandStartLineContent: expect.any(String),
             cwd: '/workspace/app',
             duration: 0,
             isTrusted: false,
+            startLine: expect.any(Number),
+            startX: expect.any(Number),
             timestamp: expect.any(Number),
           },
         ],

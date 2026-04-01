@@ -1,0 +1,51 @@
+## Issue 1: Positional metadata on commands (OSC 633;A + 633;C) — COMPLETED
+
+### Summary
+Added OSC 633;A (prompt start) and 633;C (command executed) handlers to the
+headless terminal's shell integration, and enhanced 633;B and 633;D to track
+positional metadata via xterm buffer positions. Serialized commands now include
+`promptStartLine`, `startLine`, `executedLine`, `endLine`, `startX`, `executedX`,
+and `commandStartLineContent` fields populated from live command tracking.
+
+### Changes
+- `packages/terminal/src/lib/headless-terminal.ts`:
+  - Added `getBufferLineContent()` and `getAbsoluteCursorLine()` helpers
+  - Added OSC 633;A handler: records prompt start line in `pendingPromptStartLine`
+  - Enhanced OSC 633;B handler: registers cursor line as `startLine`, captures
+    `startX` from `cursorX`, captures `commandStartLineContent` from buffer,
+    consumes `pendingPromptStartLine` as `promptStartLine`
+  - Added OSC 633;C handler: records `executedLine` and `executedX` on in-flight command
+  - Enhanced OSC 633;D handler: records `endLine` from cursor position, pushes
+    completed command with all positional fields
+  - Extended `InFlightCommand` interface with positional fields
+  - Added `pendingPromptStartLine` to `HeadlessCommandState`
+  - Updated `serializeCurrentCommand()` to include positional metadata for in-flight commands
+  - Extracted `handleCommandFinished()` and `handlePropertySequence()` helper
+    functions to keep complexity under Biome's limit
+
+- `packages/terminal/test/headless-terminal.test.ts`:
+  - Updated 5 existing tests to expect positional metadata fields
+  - Added 7 new tests:
+    - Full A->B->E->C->D lifecycle with positional ordering assertions
+    - `commandStartLineContent` capture from buffer at 633;B
+    - `startX` from cursor position at 633;B
+    - Multiple commands with ordering assertions
+    - 633;B without preceding 633;A (promptStartLine undefined)
+    - 633;D without preceding 633;C (executedLine/executedX undefined)
+    - In-flight command after A->B includes positional metadata but not endLine
+
+- `packages/terminal/test/terminal-session-persistence.test.ts`:
+  - Updated 1 test to expect positional metadata in persisted state
+
+### Verification
+- TypeScript: `npx tsc --noEmit` passes with 0 errors
+- Biome: `bunx biome check` passes on all modified files
+- Tests: 25/25 headless-terminal tests pass, 32/32 persistence tests pass
+- Data channel tests: pre-existing flaky failures confirmed unchanged
+- Terminal-manager tests: pre-existing infrastructure failure confirmed unchanged
+
+### Unblocks
+- Issue 2: Complete PromptInputModel
+- Issue 3: FinalTerm 133 command detection fallback
+- Issue 4: OSC 633;F/G/H/I (continuation + right prompt)
+- Issue 9: Renderer shell integration addon + command deserialization

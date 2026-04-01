@@ -164,7 +164,7 @@ describe('HeadlessTerminalManager', () => {
     expect(screenState).toContain('Alternate Screen Content')
   })
 
-  it('serializes live VS Code shell integration command state', async () => {
+  it('serializes live VS Code shell integration command state with positional metadata', async () => {
     manager = createHeadlessTerminalManager()
     manager.create('test-1', 80, 24)
 
@@ -182,7 +182,8 @@ describe('HeadlessTerminalManager', () => {
 
     await waitForXterm()
 
-    expect(manager.getCommandDetectionState('test-1')).toEqual({
+    const state = manager.getCommandDetectionState('test-1')
+    expect(state).toEqual({
       isWindowsPty: false,
       hasRichCommandDetection: true,
       promptInputModel: {
@@ -193,14 +194,31 @@ describe('HeadlessTerminalManager', () => {
         {
           command: 'echo hello',
           commandLineConfidence: 'high',
+          commandStartLineContent: expect.any(String),
           cwd: '/workspace/app',
+          endLine: expect.any(Number),
+          executedLine: expect.any(Number),
+          executedX: expect.any(Number),
           exitCode: 0,
           isTrusted: false,
+          promptStartLine: expect.any(Number),
+          startLine: expect.any(Number),
+          startX: expect.any(Number),
           timestamp: expect.any(Number),
           duration: expect.any(Number),
         },
       ],
     })
+
+    // Verify positional fields are populated (not undefined)
+    const cmd = state?.commands[0]
+    expect(cmd?.promptStartLine).toBeTypeOf('number')
+    expect(cmd?.startLine).toBeTypeOf('number')
+    expect(cmd?.executedLine).toBeTypeOf('number')
+    expect(cmd?.endLine).toBeTypeOf('number')
+    expect(cmd?.startX).toBeTypeOf('number')
+    expect(cmd?.executedX).toBeTypeOf('number')
+    expect(cmd?.commandStartLineContent).toBeTypeOf('string')
   })
 
   it('serializes prompt input model from live VS Code command line state', async () => {
@@ -227,8 +245,11 @@ describe('HeadlessTerminalManager', () => {
         {
           command: 'git status',
           commandLineConfidence: 'high',
+          commandStartLineContent: expect.any(String),
           duration: 0,
           isTrusted: false,
+          startLine: expect.any(Number),
+          startX: expect.any(Number),
           timestamp: expect.any(Number),
         },
       ],
@@ -262,8 +283,11 @@ describe('HeadlessTerminalManager', () => {
         {
           command: 'git status',
           commandLineConfidence: 'high',
+          commandStartLineContent: expect.any(String),
           duration: 0,
           isTrusted: false,
+          startLine: expect.any(Number),
+          startX: expect.any(Number),
           timestamp: expect.any(Number),
         },
       ],
@@ -283,7 +307,8 @@ describe('HeadlessTerminalManager', () => {
 
     await waitForXterm()
 
-    expect(manager.getCommandDetectionState('test-1')).toEqual({
+    const state = manager.getCommandDetectionState('test-1')
+    expect(state).toEqual({
       isWindowsPty: false,
       hasRichCommandDetection: false,
       promptInputModel: {
@@ -294,13 +319,25 @@ describe('HeadlessTerminalManager', () => {
         {
           command: 'git status',
           commandLineConfidence: 'high',
+          commandStartLineContent: expect.any(String),
           cwd: '/workspace/app',
           duration: 0,
           isTrusted: false,
+          startLine: expect.any(Number),
+          startX: expect.any(Number),
           timestamp: expect.any(Number),
         },
       ],
     })
+
+    // Partial commands should NOT have endLine or executedLine
+    const cmd = state?.commands[0]
+    expect(cmd?.endLine).toBeUndefined()
+    expect(cmd?.executedLine).toBeUndefined()
+    expect(cmd?.executedX).toBeUndefined()
+    // But should have startLine and startX
+    expect(cmd?.startLine).toBeTypeOf('number')
+    expect(cmd?.startX).toBeTypeOf('number')
   })
 
   it('marks command lines as trusted when the shell integration nonce matches', async () => {
@@ -331,10 +368,17 @@ describe('HeadlessTerminalManager', () => {
         {
           command: 'git status',
           commandLineConfidence: 'high',
+          commandStartLineContent: expect.any(String),
           cwd: '/workspace/app',
+          endLine: expect.any(Number),
+          executedLine: expect.any(Number),
+          executedX: expect.any(Number),
           exitCode: 0,
           duration: expect.any(Number),
           isTrusted: true,
+          promptStartLine: undefined,
+          startLine: expect.any(Number),
+          startX: expect.any(Number),
           timestamp: expect.any(Number),
         },
       ],
@@ -421,5 +465,227 @@ describe('HeadlessTerminalManager', () => {
     expect(() => {
       manager.write('non-existent', 'Hello')
     }).not.toThrow()
+  })
+
+  // ---------------------------------------------------------------
+  // Positional metadata on commands (OSC 633;A + 633;C)
+  // ---------------------------------------------------------------
+
+  it('tracks positional metadata through full A->B->E->C->D lifecycle', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Write a prompt, then the full OSC lifecycle
+    manager.write(
+      'test-1',
+      '$ ' + // Simulate prompt text on the line
+        '\x1b]633;A\x07' + // Prompt start
+        '\x1b]633;B\x07' + // Command start
+        '\x1b]633;E;ls\\x20-la\x07' + // Command line
+        '\x1b]633;C\x07' + // Command executed
+        'file1.txt\r\nfile2.txt\r\n' + // Command output
+        '\x1b]633;D;0\x07' // Command finished
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    expect(state?.commands).toHaveLength(1)
+
+    const cmd = state?.commands[0]
+    expect(cmd?.command).toBe('ls -la')
+    expect(cmd?.exitCode).toBe(0)
+
+    // All positional fields should be numbers (populated, not undefined)
+    expect(cmd?.promptStartLine).toBeTypeOf('number')
+    expect(cmd?.startLine).toBeTypeOf('number')
+    expect(cmd?.executedLine).toBeTypeOf('number')
+    expect(cmd?.endLine).toBeTypeOf('number')
+    expect(cmd?.startX).toBeTypeOf('number')
+    expect(cmd?.executedX).toBeTypeOf('number')
+    expect(cmd?.commandStartLineContent).toBeTypeOf('string')
+
+    // promptStartLine should be <= startLine (prompt starts at or before command)
+    expect(cmd?.promptStartLine).toBeLessThanOrEqual(cmd?.startLine ?? -1)
+    // executedLine should be >= startLine (execution is at or after command start)
+    expect(cmd?.executedLine).toBeGreaterThanOrEqual(cmd?.startLine ?? -1)
+    // endLine should be >= executedLine (end is at or after execution start)
+    expect(cmd?.endLine).toBeGreaterThanOrEqual(cmd?.executedLine ?? -1)
+  })
+
+  it('captures commandStartLineContent from the buffer at 633;B', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Write visible prompt text before the B marker
+    manager.write('test-1', 'user@host:~/app $ ')
+    await waitForXterm()
+
+    // Now send the command lifecycle
+    manager.write(
+      'test-1',
+      '\x1b]633;B\x07' +
+        '\x1b]633;E;echo\\x20test\x07' +
+        '\x1b]633;C\x07' +
+        'test\r\n' +
+        '\x1b]633;D;0\x07'
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    const cmd = state?.commands[0]
+
+    // The commandStartLineContent should contain the prompt text
+    expect(cmd?.commandStartLineContent).toContain('user@host:~/app $')
+  })
+
+  it('tracks startX from cursor position at 633;B', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Write some prompt text to move the cursor to a non-zero X
+    manager.write('test-1', '$ ')
+    await waitForXterm()
+
+    manager.write(
+      'test-1',
+      '\x1b]633;B\x07' +
+        '\x1b]633;E;echo\\x20hello\x07' +
+        '\x1b]633;C\x07' +
+        'hello\r\n' +
+        '\x1b]633;D;0\x07'
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    const cmd = state?.commands[0]
+
+    // startX should reflect the cursor X at command start (after "$ ")
+    expect(cmd?.startX).toBe(2)
+  })
+
+  it('tracks multiple commands with correct positional metadata', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // First command
+    manager.write(
+      'test-1',
+      '\x1b]633;A\x07' +
+        '\x1b]633;B\x07' +
+        '\x1b]633;E;echo\\x20one\x07' +
+        '\x1b]633;C\x07' +
+        'one\r\n' +
+        '\x1b]633;D;0\x07'
+    )
+
+    // Second command
+    manager.write(
+      'test-1',
+      '\x1b]633;A\x07' +
+        '\x1b]633;B\x07' +
+        '\x1b]633;E;echo\\x20two\x07' +
+        '\x1b]633;C\x07' +
+        'two\r\n' +
+        '\x1b]633;D;0\x07'
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    expect(state?.commands).toHaveLength(2)
+
+    const cmd1 = state?.commands[0]
+    const cmd2 = state?.commands[1]
+
+    // Both commands should have positional metadata
+    expect(cmd1?.startLine).toBeTypeOf('number')
+    expect(cmd2?.startLine).toBeTypeOf('number')
+
+    // Second command should start at or after first command ends
+    expect(cmd2?.promptStartLine).toBeGreaterThanOrEqual(cmd1?.endLine ?? -1)
+  })
+
+  it('handles 633;B without preceding 633;A (promptStartLine is undefined)', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // No 633;A before 633;B — promptStartLine should be undefined
+    manager.write(
+      'test-1',
+      '\x1b]633;B\x07' +
+        '\x1b]633;E;pwd\x07' +
+        '\x1b]633;C\x07' +
+        '/home/user\r\n' +
+        '\x1b]633;D;0\x07'
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    const cmd = state?.commands[0]
+
+    // promptStartLine should be undefined since no A was sent
+    expect(cmd?.promptStartLine).toBeUndefined()
+    // But other positional fields should be populated
+    expect(cmd?.startLine).toBeTypeOf('number')
+    expect(cmd?.executedLine).toBeTypeOf('number')
+    expect(cmd?.endLine).toBeTypeOf('number')
+  })
+
+  it('handles 633;D without preceding 633;C (executedLine is undefined)', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // Skip 633;C — executedLine/executedX should remain undefined
+    manager.write(
+      'test-1',
+      '\x1b]633;A\x07' +
+        '\x1b]633;B\x07' +
+        '\x1b]633;E;echo\\x20test\x07' +
+        'test\r\n' +
+        '\x1b]633;D;0\x07'
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    const cmd = state?.commands[0]
+
+    // promptStartLine and startLine should be populated
+    expect(cmd?.promptStartLine).toBeTypeOf('number')
+    expect(cmd?.startLine).toBeTypeOf('number')
+    // executedLine/executedX should be undefined since no C was sent
+    expect(cmd?.executedLine).toBeUndefined()
+    expect(cmd?.executedX).toBeUndefined()
+    // endLine should still be populated from D
+    expect(cmd?.endLine).toBeTypeOf('number')
+  })
+
+  it('in-flight command after A->B includes promptStartLine and startLine but not endLine', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write(
+      'test-1',
+      '\x1b]633;A\x07\x1b]633;B\x07\x1b]633;E;long-running-cmd\x07'
+    )
+
+    await waitForXterm()
+
+    const state = manager.getCommandDetectionState('test-1')
+    expect(state?.commands).toHaveLength(1)
+
+    const cmd = state?.commands[0]
+    expect(cmd?.command).toBe('long-running-cmd')
+    expect(cmd?.promptStartLine).toBeTypeOf('number')
+    expect(cmd?.startLine).toBeTypeOf('number')
+    expect(cmd?.startX).toBeTypeOf('number')
+    // In-flight command should NOT have endLine or executedLine
+    expect(cmd?.endLine).toBeUndefined()
+    expect(cmd?.executedLine).toBeUndefined()
+    expect(cmd?.executedX).toBeUndefined()
   })
 })

@@ -46,8 +46,14 @@ const { Terminal } = XtermHeadless
 interface InFlightCommand {
   command: string
   commandLineConfidence: 'low' | 'medium' | 'high'
+  commandStartLineContent?: string | undefined
   cwd?: string | undefined
+  executedLine?: number | undefined
+  executedX?: number | undefined
   isTrusted: boolean
+  promptStartLine?: number | undefined
+  startLine?: number | undefined
+  startX?: number | undefined
   timestamp: number
 }
 
@@ -57,6 +63,8 @@ interface HeadlessCommandState {
   cwd?: string | undefined
   hasRichCommandDetection: boolean
   isWindowsPty: boolean
+  /** Tracks the prompt start line from OSC 633;A, consumed by 633;B */
+  pendingPromptStartLine?: number | undefined
   promptInputModel?:
     | {
         continuationPrompt?: string | undefined
@@ -157,15 +165,145 @@ const serializeCurrentCommand = (
   return {
     command: currentCommand.command,
     commandLineConfidence: currentCommand.commandLineConfidence,
+    commandStartLineContent: currentCommand.commandStartLineContent,
     duration: 0,
+    executedLine: currentCommand.executedLine,
+    executedX: currentCommand.executedX,
     isTrusted: currentCommand.isTrusted,
+    promptStartLine: currentCommand.promptStartLine,
+    startLine: currentCommand.startLine,
+    startX: currentCommand.startX,
     timestamp: currentCommand.timestamp,
     ...(currentCommand.cwd === undefined ? {} : { cwd: currentCommand.cwd }),
   }
 }
 
+/**
+ * Read the text content of a specific line from the terminal buffer.
+ * Returns the trimmed line content, or undefined if the line is out of range.
+ */
+const getBufferLineContent = (
+  terminal: InstanceType<typeof Terminal>,
+  lineNumber: number
+): string | undefined => {
+  const buffer = terminal.buffer.active
+  const line = buffer.getLine(lineNumber)
+  if (line === undefined) {
+    return undefined
+  }
+  return line.translateToString(true)
+}
+
+/**
+ * Get the absolute line number of the cursor in the terminal buffer.
+ * This accounts for the viewport offset (baseY) to give the true
+ * scrollback-relative line number.
+ */
+const getAbsoluteCursorLine = (
+  terminal: InstanceType<typeof Terminal>
+): number => {
+  const buffer = terminal.buffer.active
+  return buffer.baseY + buffer.cursorY
+}
+
+/**
+ * Handle the 633;D (command finished) sequence: finalize the in-flight
+ * command with all positional metadata and push it to the completed list.
+ */
+const handleCommandFinished = (
+  commandState: HeadlessCommandState,
+  terminal: InstanceType<typeof Terminal>,
+  args: readonly string[]
+): void => {
+  const currentCommand = commandState.currentCommand
+  if (currentCommand === undefined) {
+    return
+  }
+
+  const endLine = getAbsoluteCursorLine(terminal)
+  const [exitCodeRaw] = args
+  commandState.commands.push({
+    command: currentCommand.command,
+    commandLineConfidence: currentCommand.commandLineConfidence,
+    commandStartLineContent: currentCommand.commandStartLineContent,
+    cwd: currentCommand.cwd,
+    duration: Math.max(0, Date.now() - currentCommand.timestamp),
+    endLine,
+    executedLine: currentCommand.executedLine,
+    executedX: currentCommand.executedX,
+    exitCode:
+      exitCodeRaw === undefined ? undefined : Number.parseInt(exitCodeRaw, 10),
+    isTrusted: currentCommand.isTrusted,
+    promptStartLine: currentCommand.promptStartLine,
+    startLine: currentCommand.startLine,
+    startX: currentCommand.startX,
+    timestamp: currentCommand.timestamp,
+  })
+  commandState.currentCommand = undefined
+}
+
+/**
+ * Handle the 633;P (property) sequence: set shell integration properties
+ * like Cwd, Prompt, ContinuationPrompt, etc.
+ */
+const handlePropertySequence = (
+  commandState: HeadlessCommandState,
+  args: readonly string[]
+): void => {
+  const [propertyAssignment] = args
+  if (propertyAssignment === undefined) {
+    return
+  }
+
+  const equalsIndex = propertyAssignment.indexOf('=')
+  if (equalsIndex === -1) {
+    return
+  }
+
+  const property = propertyAssignment.slice(0, equalsIndex)
+  const value = deserializeVsCodeOscValue(
+    propertyAssignment.slice(equalsIndex + 1)
+  )
+
+  switch (property) {
+    case 'Cwd': {
+      commandState.cwd = value
+      if (commandState.currentCommand !== undefined) {
+        commandState.currentCommand.cwd = commandState.cwd
+      }
+      return
+    }
+
+    case 'ContinuationPrompt': {
+      updatePromptInputModel(commandState, { continuationPrompt: value })
+      return
+    }
+
+    case 'HasRichCommandDetection': {
+      commandState.hasRichCommandDetection = parseBooleanOscProperty(value)
+      return
+    }
+
+    case 'IsWindows': {
+      commandState.isWindowsPty = parseBooleanOscProperty(value)
+      return
+    }
+
+    case 'Prompt': {
+      updatePromptInputModel(commandState, {
+        lastPromptLine: getPromptTerminator(value),
+      })
+      return
+    }
+
+    default:
+      return
+  }
+}
+
 const handleVsCodeOscSequence = (
   commandState: HeadlessCommandState,
+  terminal: InstanceType<typeof Terminal>,
   data: string,
   shellIntegrationNonce?: string | undefined
 ): void => {
@@ -174,7 +312,18 @@ const handleVsCodeOscSequence = (
   const args = argsIndex === -1 ? [] : data.slice(argsIndex + 1).split(';')
 
   switch (command) {
+    case 'A': {
+      // Prompt start: record the current line as the prompt start position.
+      // This is consumed by the next 633;B to set promptStartLine on the command.
+      commandState.pendingPromptStartLine = getAbsoluteCursorLine(terminal)
+      return
+    }
+
     case 'B': {
+      const cursorLine = getAbsoluteCursorLine(terminal)
+      const cursorX = terminal.buffer.active.cursorX
+      const lineContent = getBufferLineContent(terminal, cursorLine)
+
       updatePromptInputModel(commandState, {
         value: '',
         cursorIndex: 0,
@@ -182,33 +331,32 @@ const handleVsCodeOscSequence = (
       commandState.currentCommand = {
         command: '',
         commandLineConfidence: 'low',
+        commandStartLineContent: lineContent,
         cwd: commandState.cwd,
         isTrusted: false,
+        promptStartLine: commandState.pendingPromptStartLine,
+        startLine: cursorLine,
+        startX: cursorX,
         timestamp: Date.now(),
+      }
+      // Consume the pending prompt start line
+      commandState.pendingPromptStartLine = undefined
+      return
+    }
+
+    case 'C': {
+      // Command executed: record the executed marker position.
+      // This fires when the shell begins executing the command (after Enter).
+      const currentCommand = commandState.currentCommand
+      if (currentCommand !== undefined) {
+        currentCommand.executedLine = getAbsoluteCursorLine(terminal)
+        currentCommand.executedX = terminal.buffer.active.cursorX
       }
       return
     }
 
     case 'D': {
-      const currentCommand = commandState.currentCommand
-      if (currentCommand === undefined) {
-        return
-      }
-
-      const [exitCodeRaw] = args
-      commandState.commands.push({
-        command: currentCommand.command,
-        commandLineConfidence: currentCommand.commandLineConfidence,
-        cwd: currentCommand.cwd,
-        duration: Math.max(0, Date.now() - currentCommand.timestamp),
-        exitCode:
-          exitCodeRaw === undefined
-            ? undefined
-            : Number.parseInt(exitCodeRaw, 10),
-        isTrusted: currentCommand.isTrusted,
-        timestamp: currentCommand.timestamp,
-      })
-      commandState.currentCommand = undefined
+      handleCommandFinished(commandState, terminal, args)
       return
     }
 
@@ -240,55 +388,8 @@ const handleVsCodeOscSequence = (
     }
 
     case 'P': {
-      const [propertyAssignment] = args
-      if (propertyAssignment === undefined) {
-        return
-      }
-
-      const equalsIndex = propertyAssignment.indexOf('=')
-      if (equalsIndex === -1) {
-        return
-      }
-
-      const property = propertyAssignment.slice(0, equalsIndex)
-      const value = deserializeVsCodeOscValue(
-        propertyAssignment.slice(equalsIndex + 1)
-      )
-
-      switch (property) {
-        case 'Cwd': {
-          commandState.cwd = value
-          if (commandState.currentCommand !== undefined) {
-            commandState.currentCommand.cwd = commandState.cwd
-          }
-          return
-        }
-
-        case 'ContinuationPrompt': {
-          updatePromptInputModel(commandState, { continuationPrompt: value })
-          return
-        }
-
-        case 'HasRichCommandDetection': {
-          commandState.hasRichCommandDetection = parseBooleanOscProperty(value)
-          return
-        }
-
-        case 'IsWindows': {
-          commandState.isWindowsPty = parseBooleanOscProperty(value)
-          return
-        }
-
-        case 'Prompt': {
-          updatePromptInputModel(commandState, {
-            lastPromptLine: getPromptTerminator(value),
-          })
-          return
-        }
-
-        default:
-          return
-      }
+      handlePropertySequence(commandState, args)
+      return
     }
 
     default:
@@ -524,6 +625,7 @@ const createHeadlessTerminalManager = (
       terminal.parser.registerOscHandler(633, (data: string): boolean => {
         handleVsCodeOscSequence(
           commandState,
+          terminal,
           data,
           options?.shellIntegrationNonce
         )
